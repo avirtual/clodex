@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- A ticket started on a worktree role is no longer handed to another seat of that role while its own seat is still starting up.
 - The node API now serves its peers, teams, tickets, sandboxes and agent library read-only: `GET /api/<resource>` and `GET /api/<resource>/<id>` for each, listed in `GET /api/resources`. Tickets take `?team=` and `?state=`; a ticket id that exists in more than one team asks you to name the team.
 - Ticket hands can no longer poll: a third identical shell command in a row is denied by a hook with a one-line reason, and launching a subagent or a background command now tells the seat to end its turn and wait for the result.
 

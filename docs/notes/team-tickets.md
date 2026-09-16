@@ -37,3 +37,14 @@ caller; the reaping is still the review path's.)
 
 `ticket.reviewerTemplate` is written above BOTH save arms — the one-shot arm
 returns before the second save, so a write below it survives only on the standing-seat path.
+
+## _seatMintPending
+
+`createdAt` is the discriminator because `create()` writes it unconditionally
+while `_spawnTicketSeat`'s synchronous reservation stub does not — so the record
+answers "has a session ever existed under this name" with no second field to keep
+in sync. `ephemeral` alone cannot: a one-shot seat that genuinely died keeps its
+ephemeral record, and reading that as pending would freeze the degraded-pin
+inheritance `_ticketAssigneeSeat` depends on. Every rollback arm in
+`_spawnTicketSeat` removes the stub, so a failed mint leaves no ticket pinned to
+a name nothing will answer for.

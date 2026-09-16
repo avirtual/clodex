@@ -8341,6 +8341,113 @@ test('t351: the advance is MARKED as a replay, so a seat cannot read it as a fre
     'and the head must carry the instruction, not just the tag — the tag alone is satisfied by a body that still reads as "begin"');
 });
 
+function mkPersist(seed = {}) {
+  const recs = { ...seed };
+  return {
+    recs,
+    api: {
+      list: () => Object.values(recs),
+      get: (n) => recs[n] || null,
+      upsert: (e) => { recs[e.name] = { ...(recs[e.name] || {}), ...e }; },
+      remove: (n) => { delete recs[n]; },
+      setWorktree: (n, w) => { if (recs[n]) recs[n].worktree = w; },
+    },
+  };
+}
+
+const MINT_WEDGED_AT_TREE_ACQUISITION = { createWorktree: () => new Promise(() => {}) };
+
+test('t937: a ticket whose seat is still being minted is NOT advanced onto a live sibling', () => {
+  const P = mkPersist();
+  const f = mkTasks({
+    getPersistence: () => P.api, gitWorktree: MINT_WEDGED_AT_TREE_ACQUISITION,
+    AGENT_NAME_RE: require('../catalogs').AGENT_NAME_RE,
+  });
+  f.team.roles.hand.dispatch = 'worktree';
+  f.seat('lead'); f.seat('team-hand-1');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'team-hand-1', id: null, body: 'the sibling`s own work' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the freshly started one' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
+
+  assert.strictEqual(f.one('t2').assignee, 'team-hand-2',
+    'ENTER: start pinned t2 to the seat it is minting, which is the whole window under test');
+  assert.strictEqual(f.one('t2').role, 'hand', 'ENTER: and kept the role, which is what the degrade would fall back to');
+  assert.ok(!f.one('t2').worktree, 'ENTER: no tree yet — the worktree gate cannot be what saves this');
+  assert.ok(!f.m.sessions.has('team-hand-2'), 'ENTER: the seat is not live, so the pin looks dead to a liveness-only reading');
+  assert.ok(P.recs['team-hand-2'] && P.recs['team-hand-2'].ephemeral === true && !P.recs['team-hand-2'].createdAt,
+    'ENTER: production wrote the reservation stub, and it carries no createdAt — that absence is the whole discriminator');
+  assert.ok(f.one('t1').startedAt != null, 'ENTER: t1 is started, so closing it is a genuine completion edge');
+  f.gated.length = 0;
+
+  f.m._handleTask(f.seat('team-hand-1'), { type: 'task', sub: 'done', id: 't1', body: 'the report' });
+
+  assert.deepStrictEqual(f.gated.map((g) => [g.target, g.body]), [['lead', '[ticket t1 done] the report']],
+    'the report goes to the lead and NOTHING else — the sibling must not be handed a ticket whose own seat is starting up');
+  assert.strictEqual(f.one('t2').assignee, 'team-hand-2',
+    'and the assignee on disk is untouched: a re-pin here is what made the minted seat a stranger to its own ticket');
+  assert.strictEqual(f.one('t2').role, 'hand', 'the role is untouched too');
+
+  const minted = f.seat('team-hand-2');
+  P.api.upsert({ name: 'team-hand-2', createdAt: Date.now() });
+  f.m._stampSpecDelivered(f.team, 't2', { name: minted.name, incarnation: 1 }, { repin: false });
+  assert.strictEqual((f.one('t2').deliveredTo || {}).seat, 'team-hand-2',
+    'the minted seat`s own stamp is accepted — the whole point of not letting the ticket be re-pinned out from under it');
+});
+
+test('t937: a GENUINELY dead pin still degrades — no record, no tree, inherited by the live seat of its role', () => {
+  const P = mkPersist();
+  const f = mkTasks({ getPersistence: () => P.api });
+  f.seat('lead'); f.seat('team-hand-9');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'orphaned work' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.strictEqual(f.one('t1').assignee, 'team-hand-9', 'ENTER: t1 was pinned to the seat that has since died');
+  f.m.sessions.delete('team-hand-9');
+  f.seat('team-hand-2');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'team-hand-2', id: null, body: 'the survivor`s own work' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
+
+  assert.strictEqual(P.api.get('team-hand-9'), null,
+    'ENTER: no persistence record at all, which is the DEAD shape rather than the pending one');
+  assert.ok(!f.one('t1').worktree, 'ENTER: and no tree, so the worktree gate does not decide this');
+  assert.ok(f.one('t2').startedAt != null, 'ENTER: the closed ticket is started, so the advance runs');
+  f.gated.length = 0;
+
+  f.m._handleTask(f.seat('team-hand-2'), { type: 'task', sub: 'done', id: 't2', body: 'done with mine' });
+
+  assert.deepStrictEqual(f.gated.map((g) => [g.target, g.body]),
+    [['lead', '[ticket t2 done] done with mine'], ['team-hand-2', replayBody('t1', 'orphaned work')]],
+    'the dead seat`s ticket is inherited by the live seat of its role, exactly as before — the stub check must not freeze this');
+  assert.strictEqual(f.one('t1').assignee, 'team-hand-2', 'and it re-pins onto the seat that actually received it');
+});
+
+test('t937: _advanceSeat skips a queue head that resolves to another seat, and delivers nothing', () => {
+  const P = mkPersist();
+  const f = mkTasks({ getPersistence: () => P.api });
+  f.seat('lead');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'filed against the role' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  f.seat('team-hand-1'); f.seat('team-hand-2');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'team-hand-2', id: null, body: 'the closer`s own work' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
+
+  const queue = f.m._openTicketsFor(f.team, 'team-hand-2', 't2');
+  assert.deepStrictEqual(queue.map((t) => t.id), ['t1'],
+    'ENTER: the queue is NON-EMPTY going in — without this the empty delivery below is unmeasured');
+  assert.strictEqual(f.one('t1').assignee, 'hand', 'ENTER: t1 sits on the ROLE, which is how two seats can both match it');
+  assert.strictEqual(f.m._ticketAssigneeSeat(f.team, f.one('t1')), 'team-hand-1',
+    'ENTER: and the resolver answers the OTHER seat — the disagreement this guard is about');
+  f.gated.length = 0;
+
+  const next = f.m._advanceSeat(f.team, 'team-hand-2', f.one('t2'));
+
+  assert.strictEqual(next, null, 'the advance declines rather than reporting a hand-off it did not make');
+  assert.deepStrictEqual(f.gated.map((g) => [g.target, g.body]), [],
+    'and delivers to nobody — dispatching here sends team-hand-2`s advance to team-hand-1');
+  assert.strictEqual(f.one('t1').assignee, 'hand',
+    'the assignee is left alone: the skip must not re-pin the ticket on its way past');
+});
+
 test('t89 reject WAKES the assignee: reopening a ticket is a work assignment, not a status notice', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');

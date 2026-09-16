@@ -3302,11 +3302,6 @@ function createTicketMethods(deps, shared) {
     // otherwise take its whole queue with it — the tickets name something nothing
     // answers for, and no sibling of the same role can be handed them.
     //
-    // So the pin degrades to `ticket.role` once the pinned seat is not live, and it
-    // lives HERE, in the one resolver, not in the callers: a lister that degrades
-    // while this does not makes a ticket visible but undeliverable, and
-    // `_advanceSeat` then reports a hand-off it never performed.
-    //
     // Gated on `!ticket.worktree`, which keeps the worktree flow's one-shot
     // property: a tree is bound to the seat holding it, so handing a worktree
     // ticket to a sibling would drop it in another branch's checkout. A dead
@@ -3334,8 +3329,16 @@ function createTicketMethods(deps, shared) {
       };
       if (isRoleKey(a)) return firstSeatFor(a);
       if (live.includes(a)) return a;
+      if (this._seatMintPending(a)) return a;
       if (ticket.worktree || !isRoleKey(ticket.role)) return null;
       return firstSeatFor(ticket.role);
+    },
+
+    _seatMintPending(name) {
+      try {
+        const rec = getPersistence().get(name);
+        return !!(rec && rec.ephemeral === true && !rec.createdAt);
+      } catch { return false; }
     },
 
     // Re-pin a ROLE-assigned ticket to the concrete seat that is about to receive
@@ -4458,6 +4461,10 @@ function createTicketMethods(deps, shared) {
       if (!ticketStarted(closed)) return null;
       const next = this._openTicketsFor(team, seatName, closed && closed.id)[0];
       if (!next) return null;
+      if (this._ticketAssigneeSeat(team, next) !== seatName) {
+        log.info('intent', `advance for ${seatName} skipped ${next.id}: it resolves to another seat`);
+        return null;
+      }
       // Handing a queued ticket to a seat IS its dispatch — the only one it gets —
       // so it re-pins like the two lead-driven paths. Reloaded from the store
       // rather than saving the filtered array `_openTicketsFor` built, which is
