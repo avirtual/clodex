@@ -102,7 +102,7 @@ const DEFERRED_HINT = 'not available here: attach, kill, restart-app, deploy, un
 // changes no behaviour and makes the allowlist overstate what runs.
 
 // Verbs that run against the local contexts file and need NO wire client.
-const CTX_SUBS = ['add', 'use', 'list', 'ls', 'rm', 'remove', 'show', 'import', 'test'];
+const CTX_SUBS = ['add', 'use', 'current', 'list', 'ls', 'rm', 'remove', 'show', 'import', 'test'];
 
 // `list` for `ctx list`. The pane already shows the current context in its
 // status line, so a bare ctx subcommand reads as naturally here as `sessions`
@@ -503,6 +503,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     switch (sub) {
       case 'add': V.ctxAdd(bundle); break;
       case 'use': V.ctxUse(bundle); break;
+      case 'current': V.ctxCurrent(bundle); break;
       // `ctx list --json` prints entries VERBATIM (cli/src/verbs.js's ctxList),
       // tokens included, while `ctx show` redacts — an asymmetry that is
       // harmless writing to your own tty and is not harmless writing into
@@ -523,7 +524,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     // Any ctx write can change what `current` resolves to, so the warm
     // connection is no longer known-good for the next command. Dropping it is
     // the cheap correct move; wireFor re-dials only if the key really changed.
-    if (sub !== 'list' && sub !== 'ls' && sub !== 'show') closeWarm();
+    if (sub !== 'list' && sub !== 'ls' && sub !== 'show' && sub !== 'current') closeWarm();
     return EXIT.OK;
   }
 

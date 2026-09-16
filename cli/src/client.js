@@ -76,7 +76,9 @@ class WireClient {
     // Non-2xx → coded error. Prefer the server's own error string, else the
     // raw text, else the status.
     const detail = (body && (body.error || body._text)) || `HTTP ${res.status}`;
-    throw new CliError(exitForStatus(res.status), scrub(`${verb} failed: ${detail}`, this._token));
+    const err = new CliError(exitForStatus(res.status), scrub(`${verb} failed: ${detail}`, this._token));
+    err.body = body;
+    throw err;
   }
 
   get(pathAndQuery, verb, opts) { return this._call('GET', pathAndQuery, verb || 'request', undefined, opts); }

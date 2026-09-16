@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - The node API now serves its peers, teams, tickets, sandboxes and agent library read-only: `GET /api/<resource>` and `GET /api/<resource>/<id>` for each, listed in `GET /api/resources`. Tickets take `?team=` and `?state=`; a ticket id that exists in more than one team asks you to name the team.
+- `clodexctl get` and `describe` now cover `peers`, `teams`, `tickets`, `sandboxes` and `agents`, with `--team`/`--state` on tickets, and `ctx current` prints the active context name.
 
 ## 5.70.0 — 2026-09-16
 

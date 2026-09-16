@@ -175,12 +175,13 @@ async function dispatchCtx(rest, flags, printer, io) {
   switch (sub) {
     case 'add': V.ctxAdd(bundle); return EXIT.OK;
     case 'use': V.ctxUse(bundle); return EXIT.OK;
+    case 'current': V.ctxCurrent(bundle); return EXIT.OK;
     case 'list': case 'ls': V.ctxList(bundle); return EXIT.OK;
     case 'rm': case 'remove': V.ctxRm(bundle); return EXIT.OK;
     case 'show': V.ctxShow(bundle); return EXIT.OK;
     case 'import': V.ctxImport(bundle); return EXIT.OK;
     case 'test': return await ctxTest(store, flags, printer, io);
-    default: throw new CliError(EXIT.USAGE, `unknown ctx subcommand: ${sub || '(none)'} (add/use/list/rm/show/import/test)`);
+    default: throw new CliError(EXIT.USAGE, `unknown ctx subcommand: ${sub || '(none)'} (add/use/current/list/rm/show/import/test)`);
   }
 }
 
