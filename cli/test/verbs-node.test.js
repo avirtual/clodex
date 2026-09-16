@@ -7,6 +7,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { run, RENAMED_SECOND } = require('../src/main');
 const R = require('../src/resources');
+const V = require('../src/verbs');
 const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 function tmpCtx() {
@@ -138,7 +139,7 @@ test('no node output carries a token — json, yaml, wide, name, or describe', a
 
 test('`nodes` never reaches the wire resource gate — a node is a CLIENT record', async () => {
   const f = tmpCtx();
-  await cli(['create', 'node', 'home', '--url', 'http://127.0.0.1:7900', '--token', 't'], f);
+  await cli(['create', 'node', 'home', '--url', 'http://127.0.0.1:1', '--token', 't'], f);
   const asked = [];
   const client = { get: async (p) => { asked.push(p); throw new Error('the wire must not be consulted about nodes'); } };
   await assert.rejects(() => R.requireResource(client, 'nodes', 'list', 'home'),
@@ -150,13 +151,57 @@ test('`nodes` never reaches the wire resource gate — a node is a CLIENT record
   for (const argv of [
     ['get', 'nodes'], ['get', 'nodes', '--current'], ['get', 'nodes', '-o', 'json'],
     ['describe', 'node', 'home'],
-    ['create', 'node', 'other', '--url', 'http://127.0.0.1:7901'],
+    ['create', 'node', 'other', '--url', 'http://127.0.0.1:2'],
     ['use', 'node', 'other'],
     ['delete', 'node', 'other', '--force'],
   ]) {
     const r = await cli(argv, f, { spawnFn });
     assert.strictEqual(r.code, 0, `${argv.join(' ')} -> ${r.code}: ${r.stderr}`);
   }
+});
+
+test('-o json answers every node write with an object, not a human sentence', async () => {
+  const f = tmpCtx();
+  let r = await cli(['create', 'node', 'home', '--url', 'http://127.0.0.1:1', '-o', 'json'], f);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.deepStrictEqual(JSON.parse(r.stdout), { name: 'home', created: true, current: 'home' });
+
+  await cli(['create', 'node', 'work', '--ssh', 'u@box', '--remote-port', '7911'], f);
+  r = await cli(['use', 'node', 'work', '-o', 'json'], f);
+  assert.deepStrictEqual(JSON.parse(r.stdout), { current: 'work' });
+
+  r = await cli(['get', 'nodes', '-o', 'json'], f);
+  const row = JSON.parse(r.stdout).nodes.find((n) => n.name === 'work');
+  assert.deepStrictEqual(row.transport, { ssh: 'u@box', remotePort: 7911 },
+    'the structured transport survives -o json — the rendered locator is not the only machine-readable form');
+});
+
+test('the WIRE verbs refuse a node word outright — no dial, no silent success', async () => {
+  const client = { get: async (p) => { throw new Error(`dialled ${p}`); }, post: async () => { throw new Error('dialled'); }, del: async () => { throw new Error('dialled'); } };
+  const printed = [];
+  const printer = { line: (s) => printed.push(s), json: (o) => printed.push(JSON.stringify(o)) };
+  const bundle = { client, ctx: { name: 'home' }, printer, flags: {}, prompt: async () => 'x' };
+  for (const [verb, args] of [
+    ['get', ['nodes']],
+    ['get', ['node']],
+    ['describe', ['node', 'home']],
+    ['describe', ['nodes']],
+    ['create', ['node', 'x']],
+    ['delete', ['node', 'x']],
+  ]) {
+    const fn = verb === 'delete' ? V.delete : V[verb];
+    await assert.rejects(() => fn({ ...bundle, args }),
+      (e) => {
+        assert.strictEqual(e.exitCode, 2, `${verb} ${args.join(' ')} must be a USAGE error, not a dial or a silent resolve`);
+        assert.match(e.message, /LOCAL record/, `${verb} ${args.join(' ')}: ${e.message}`);
+        return true;
+      },
+      `${verb} ${args.join(' ')} resolved instead of throwing — the ctl tab would print nothing and exit 0`);
+  }
+  assert.deepStrictEqual(printed, [], 'nothing was rendered on the way to the refusal');
+
+  await assert.rejects(() => V.get({ ...bundle, args: ['pods'] }), /unknown resource: pods/,
+    'ENTER: an unrelated resource still reaches the normal parse path');
 });
 
 test('`use` bare names the resource it needs; `use session` is a USAGE error', async () => {

@@ -10,6 +10,7 @@ const { openGuarded } = require('./sse-guard');
 const R = require('./resources');
 const { VERSION } = require('./help');
 
+const NODE_IS_LOCAL = 'node is a LOCAL record (the contexts file), not a wire resource — node verbs run in clodexctl, not over the wire';
 
 async function info({ client, printer, flags }) {
   const hello = await client.get('/api/peer/hello', 'info');
@@ -19,6 +20,7 @@ async function info({ client, printer, flags }) {
 
 async function get({ client, ctx, printer, flags, args, io = {} }) {
   const target = R.parseTarget(args, 'get');
+  if (target.resource === 'nodes') throw new CliError(EXIT.USAGE, NODE_IS_LOCAL);
   const label = R.ctxLabel(ctx, flags);
   if (flags.subresource != null) {
     return getSubresource({ client, ctx, printer, flags, label, target, io });
@@ -169,6 +171,7 @@ async function getCatalogs({ client, printer, flags }) {
 
 async function describe({ client, ctx, printer, flags, args }) {
   const target = R.parseTarget(args, 'describe');
+  if (target.resource === 'nodes') throw new CliError(EXIT.USAGE, NODE_IS_LOCAL);
   const label = R.ctxLabel(ctx, flags);
   if (target.resource === 'catalogs') {
     await R.requireResource(client, 'catalogs', 'get', label);
@@ -425,6 +428,7 @@ function checkResourceWord(verb, args) {
 async function create(bundle) {
   const { word, rest } = takeResourceWord(bundle.args, 'create', CREATABLE);
   if (word === 'session') return createSession({ ...bundle, args: rest });
+  throw new CliError(EXIT.USAGE, NODE_IS_LOCAL);
 }
 
 async function createSession({ client, printer, flags, args, io = {} }) {
@@ -679,6 +683,7 @@ async function execPty({ client, ctx, printer, flags, args, mode = null }) {
 async function del(bundle) {
   const { word, rest } = takeResourceWord(bundle.args, 'delete', DELETABLE);
   if (word === 'session') return deleteSession({ ...bundle, args: rest });
+  throw new CliError(EXIT.USAGE, NODE_IS_LOCAL);
 }
 
 async function deleteSession({ client, ctx, printer, flags, args, prompt = defaultPrompt }) {
@@ -852,13 +857,15 @@ function nodeKind(e) {
 
 function nodeRow(name, entry, current) {
   const e = entry || {};
+  const { token, ...transport } = e;
   return {
     name,
     current: name === current,
     kind: nodeKind(e),
     locator: entryTarget(e),
     remotePort: e.remotePort || null,
-    tokenSet: !!e.token,
+    tokenSet: !!token,
+    transport,
   };
 }
 
@@ -924,6 +931,7 @@ function nodeCreate(bundle) {
   store.contexts[name] = entryFromFlags(flags);
   if (!store.current) store.current = name;
   saveStore(store);
+  if (flags.json) { printer.json({ name, created: true, current: store.current }); return; }
   printer.line(`node "${name}" created${store.current === name ? ' (current)' : ''}`);
 }
 
@@ -945,12 +953,13 @@ async function nodeDelete({ store, saveStore, printer, flags, args: raw, prompt 
   else printer.line(`node "${name}" deleted`);
 }
 
-function nodeUse({ store, saveStore, printer, args: raw }) {
+function nodeUse({ store, saveStore, printer, flags = {}, args: raw }) {
   const { rest: args } = takeResourceWord(raw, 'use', USABLE);
   const name = requireName(args[0], 'use node', 'node');
   if (!store.contexts[name]) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
   store.current = name;
   saveStore(store);
+  if (flags.json) { printer.json({ current: name }); return; }
   printer.line(`current node: ${name}`);
 }
 
