@@ -13,6 +13,7 @@ const { openTransport } = require('./transport');
 const { makePrinter } = require('./output');
 const { CliError, EXIT } = require('./errors');
 const V = require('./verbs');
+const R = require('./resources');
 const D = require('./deploy');
 const U = require('./undeploy');
 const UP = require('./upgrade');
@@ -24,7 +25,7 @@ const { parse } = require('./args');
 
 // Parser option spec shared by all verbs (a verb ignores flags it doesn't use).
 const PARSE_OPTS = {
-  booleans: ['force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'keep-ctx', 'keep-data', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'force-conflicts', 'all-workspaces', 'help', 'version'],
+  booleans: ['force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'keep-ctx', 'keep-data', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'force-conflicts', 'all-workspaces', 'docker', 'helm', 'fargate', 'help', 'version'],
   multi: ['arg', 'ssh-opt', 'volume', 'env', 'set', 'values', 'param'],
   greedy: ['tunnel'],
   aliases: { h: 'help', V: 'version', f: 'follow', o: 'output', n: 'workspace', A: 'all-workspaces', 'remote-port': 'remotePort' },
@@ -49,10 +50,30 @@ const RENAMED_VERBS = {
   send: 'dm',
 };
 
+const RENAMED_SECOND = {
+  deploy: {
+    ssh: () => 'deploy node <name> --ssh user@host',
+    ssm: () => 'deploy node <name> --ssm i-INSTANCE',
+    docker: () => 'deploy node <name> --docker',
+    helm: () => 'deploy node <name> --helm',
+    fargate: () => 'deploy node <name> --fargate',
+    '*': (tok) => `deploy node <name> --ssh ${tok}`,
+  },
+};
+
 const RENAMED_HELP_EXIT = 1;
 
 function renamedLine(old) {
   return `clodexctl ${old} was renamed: use clodexctl ${RENAMED_VERBS[old]}`;
+}
+
+function renamedSecondLine(verb, tok) {
+  const table = RENAMED_SECOND[verb];
+  if (!table) return null;
+  if (!tok || tok === 'node') return null;
+  const to = table[tok] || (R.resolveResource(tok) ? null : table['*']);
+  if (!to) return null;
+  return `clodexctl ${verb} ${tok} was renamed: use clodexctl ${to(tok)}`;
 }
 
 function renamedPointer(flags) {
@@ -144,6 +165,8 @@ async function run(argv, io = {}) {
   try {
     applyOutput(flags, verb);
     printer.format = flags.output === 'yaml' ? 'yaml' : 'json';
+    const secondLine = renamedSecondLine(verb, rest[0]);
+    if (secondLine) throw new CliError(RENAMED_HELP_EXIT, secondLine);
     if (verb === 'ctx') return await dispatchCtx(rest, flags, printer, io);
     if (verb === 'deploy') return await dispatchDeploy(rest, flags, printer, io);
     if (verb === 'undeploy') return await U.undeployVerb({ printer, flags, args: rest, io });
@@ -194,20 +217,24 @@ async function dispatchCtx(rest, flags, printer, io) {
   }
 }
 
-// deploy dispatch — sniff the first positional on a LITERAL token, not on the
-// shape of a dest (a bare hostname / ssh-config alias has no `@`, so an
-// `@`-sniff is the fragile one). `docker` → the container flavor; `ssm` → the
-// AWS RunCommand flavor; `helm` → the k8s chart flavor; `fargate` → the AWS
-// CloudFormation flavor; `ssh` → the explicit ssh alias (escape hatch for a
-// host literally named `docker`/`ssm`/`helm`/`fargate`); anything else → the
-// ssh flavor as shipped in T36d, argv unchanged.
+const DEPLOY_FLAVORS = [
+  { flag: 'ssh', verb: (D2) => D2.deployVerb },
+  { flag: 'ssm', verb: (D2) => D2.deploySsmVerb },
+  { flag: 'docker', verb: (D2) => D2.deployDockerVerb },
+  { flag: 'helm', verb: (D2) => D2.deployHelmVerb },
+  { flag: 'fargate', verb: (D2) => D2.deployFargateVerb },
+];
+
+const DEPLOY_FLAVOR_USAGE = DEPLOY_FLAVORS.map((f) => `--${f.flag}`).join(' | ');
+
 async function dispatchDeploy(rest, flags, printer, io) {
-  if (rest[0] === 'docker') { await D.deployDockerVerb({ printer, flags, args: rest.slice(1), io }); return EXIT.OK; }
-  if (rest[0] === 'ssm') { await D.deploySsmVerb({ printer, flags, args: rest.slice(1), io }); return EXIT.OK; }
-  if (rest[0] === 'helm') { await D.deployHelmVerb({ printer, flags, args: rest.slice(1), io }); return EXIT.OK; }
-  if (rest[0] === 'fargate') { await D.deployFargateVerb({ printer, flags, args: rest.slice(1), io }); return EXIT.OK; }
-  if (rest[0] === 'ssh') { await D.deployVerb({ printer, flags, args: rest.slice(1), io }); return EXIT.OK; }
-  await D.deployVerb({ printer, flags, args: rest, io });
+  V.takeResourceWord(rest, 'deploy', V.DEPLOYABLE);
+  const name = rest[1];
+  if (!name) throw new CliError(EXIT.USAGE, 'deploy node needs a name (e.g. deploy node mybox --docker)');
+  const chosen = DEPLOY_FLAVORS.filter((f) => flags[f.flag]);
+  if (chosen.length === 0) throw new CliError(EXIT.USAGE, `deploy node ${name} needs exactly one flavor (${DEPLOY_FLAVOR_USAGE})`);
+  if (chosen.length > 1) throw new CliError(EXIT.USAGE, `deploy node ${name}: ${chosen.map((f) => `--${f.flag}`).join(' and ')} are mutually exclusive — pass exactly one (${DEPLOY_FLAVOR_USAGE})`);
+  await chosen[0].verb(D)({ printer, flags, args: [name], io });
   return EXIT.OK;
 }
 
@@ -261,4 +288,4 @@ function safeLoad(io) {
 // the same lines this dispatcher does. A second copy of the flag table there
 // would drift silently, and the failure mode is invisible: a flag the terminal
 // CLI honours parsed as a positional in the REPL.
-module.exports = { run, TOP_VERBS, SPECIAL_VERBS, PARSE_OPTS, RENAMED_VERBS, renamedLine, renamedPointer, findDeletedJsonFlag, applyOutput, OUTPUT_FORMATS };
+module.exports = { run, TOP_VERBS, SPECIAL_VERBS, PARSE_OPTS, RENAMED_VERBS, RENAMED_SECOND, renamedLine, renamedSecondLine, renamedPointer, findDeletedJsonFlag, applyOutput, OUTPUT_FORMATS };

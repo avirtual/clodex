@@ -500,3 +500,89 @@ test('a literal --json in a verbatim tail or a tunnel argv is still just text', 
   assert.match(afterArg.stderr, /--json was replaced by -o json/,
     'only the token --arg consumes is skipped, not the rest of the line');
 });
+
+test('deploy without the resource word is a usage error naming it, nothing runs', async () => {
+  let dialled = false;
+  const io = { spawnFn: () => { dialled = true; throw new Error('spawnFn called'); },
+    execFn: async () => { dialled = true; throw new Error('execFn called'); } };
+  const bare = await cli(['deploy'], null, io);
+  assert.strictEqual(bare.code, 2);
+  assert.match(bare.stderr, /deploy needs a resource \(node\)/);
+  const wrong = await cli(['deploy', 'sessions', 'x', '--docker'], null, io);
+  assert.strictEqual(wrong.code, 2);
+  assert.match(wrong.stderr, /deploy sessions is not supported \(node\)/);
+  assert.strictEqual(dialled, false, 'a bad resource word runs nothing');
+});
+
+test('deploy node without a name is a usage error, nothing runs', async () => {
+  let dialled = false;
+  const { code, stderr } = await cli(['deploy', 'node', '--docker'], null, {
+    spawnFn: () => { dialled = true; throw new Error('spawnFn called'); },
+  });
+  assert.strictEqual(code, 2);
+  assert.match(stderr, /deploy node needs a name/);
+  assert.strictEqual(dialled, false);
+});
+
+test('deploy node <name> needs exactly one flavor flag — zero and two both fail', async () => {
+  let dialled = false;
+  const io = { spawnFn: () => { dialled = true; throw new Error('spawnFn called'); },
+    execFn: async () => { dialled = true; throw new Error('execFn called'); } };
+  const none = await cli(['deploy', 'node', 'x'], null, io);
+  assert.strictEqual(none.code, 2);
+  assert.match(none.stderr, /needs exactly one flavor \(--ssh \| --ssm \| --docker \| --helm \| --fargate\)/);
+  const two = await cli(['deploy', 'node', 'x', '--docker', '--helm'], null, io);
+  assert.strictEqual(two.code, 2);
+  assert.match(two.stderr, /--docker and --helm are mutually exclusive/);
+  const valued = await cli(['deploy', 'node', 'x', '--ssh', 'user@box', '--fargate'], null, io);
+  assert.strictEqual(valued.code, 2);
+  assert.match(valued.stderr, /--ssh and --fargate are mutually exclusive/);
+  assert.strictEqual(dialled, false, 'no flavor ran');
+});
+
+test('every T11a-removed deploy spelling prints its pointer, exits 1, and starts no work', async () => {
+  const { RENAMED_SECOND } = require('../src/main');
+  const expected = {
+    ssh: 'deploy node <name> --ssh user@host',
+    ssm: 'deploy node <name> --ssm i-INSTANCE',
+    docker: 'deploy node <name> --docker',
+    helm: 'deploy node <name> --helm',
+    fargate: 'deploy node <name> --fargate',
+  };
+  for (const [old, to] of Object.entries(expected)) {
+    let dialled = false;
+    const { code, stderr } = await cli(['deploy', old, 'x'], null, {
+      spawnFn: () => { dialled = true; throw new Error('spawnFn called'); },
+      execFn: async () => { dialled = true; throw new Error('execFn called'); },
+    });
+    assert.strictEqual(code, 1, `deploy ${old} must exit 1: ${stderr}`);
+    assert.ok(stderr.includes(`clodexctl deploy ${old} was renamed: use clodexctl ${to}`), `deploy ${old}: ${stderr}`);
+    assert.strictEqual(dialled, false, `deploy ${old} must run nothing`);
+    assert.strictEqual(typeof RENAMED_SECOND.deploy[old], 'function', `${old} must be in the table`);
+  }
+});
+
+test('bare `deploy user@host` — any non-node first positional — points at the ssh spelling', async () => {
+  let dialled = false;
+  const { code, stderr } = await cli(['deploy', 'user@box'], null, {
+    spawnFn: () => { dialled = true; throw new Error('spawnFn called'); },
+  });
+  assert.strictEqual(code, 1);
+  assert.ok(stderr.includes('clodexctl deploy user@box was renamed: use clodexctl deploy node <name> --ssh user@box'), stderr);
+  assert.strictEqual(dialled, false);
+});
+
+test('every RENAMED_SECOND second token answers with its own pointer, exit 1', async () => {
+  const { RENAMED_SECOND } = require('../src/main');
+  for (const [verb, table] of Object.entries(RENAMED_SECOND)) {
+    for (const tok of Object.keys(table)) {
+      if (tok === '*') continue;
+      const { code, stderr } = await cli([verb, tok, 'x'], null, {
+        spawnFn: () => { throw new Error('spawnFn called'); },
+        execFn: async () => { throw new Error('execFn called'); },
+      });
+      assert.strictEqual(code, 1, `${verb} ${tok} must exit 1: ${stderr}`);
+      assert.match(stderr, new RegExp(`clodexctl ${verb} ${tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} was renamed: use clodexctl `));
+    }
+  }
+});

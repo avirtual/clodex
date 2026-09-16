@@ -89,13 +89,6 @@ test('buildTokenDropinScript: shell-var assignment (not argv), 0600 drop-in, rel
   assert.doesNotMatch(s, /Environment=CLAUDE_CODE_OAUTH_TOKEN=sk-x/);
 });
 
-test('deriveCtxName: short host, sanitized; user@ and domain stripped', () => {
-  assert.strictEqual(D.deriveCtxName('user@laptop2'), 'laptop2');
-  assert.strictEqual(D.deriveCtxName('deploy@box.example.com'), 'box');
-  assert.strictEqual(D.deriveCtxName('10.0.0.5'), '10');
-  assert.strictEqual(D.deriveCtxName(''), '');
-});
-
 test('sshDeployArgs: posture options, extra ssh-opts, then host + bash -s', () => {
   const a = D.sshDeployArgs('user@box', ['-p', '2222']);
   assert.ok(a.includes('BatchMode=yes'));
@@ -225,7 +218,7 @@ test('deploy happy path: env delivered, script on stdin, hello verified, ctx sav
   const rec = {};
   const probeCalls = [];
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'user@box', '--port', '7900', '--repo', 'https://h/r', '--branch', 'dev'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'box', '--ssh', 'user@box', '--port', '7900', '--repo', 'https://h/r', '--branch', 'dev'], {
     spawnFn: fakeSsh(rec, { lines: HAPPY }),
     probeHello: async (dest, port, opts) => { probeCalls.push({ dest, port }); return { app: 'clodex', host: 'box', version: '9.9.9', caps: ['transcript'] }; },
     contextsFile,
@@ -262,7 +255,7 @@ test('deploy --claude-token-file: token rides ssh stdin (preamble), NEVER argv/s
   const contextsFile = tmpCtxFile();
   const dir = mkTmpRoot('clodexctl-tok-');
   const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-secret-42\n');
-  const { code, stdout } = await cli(['deploy', 'user@box', '--claude-token-file', tf], {
+  const { code, stdout } = await cli(['deploy', 'node', 'box', '--ssh', 'user@box', '--claude-token-file', tf], {
     spawnFn: fakeSsh(rec, { lines: HAPPY }),
     probeHello: async () => ({ app: 'clodex', host: 'box', version: '1', caps: [] }),
     contextsFile,
@@ -277,7 +270,7 @@ test('deploy --claude-token-file: token rides ssh stdin (preamble), NEVER argv/s
 
 test('deploy --no-wirescope: CLODEX_NO_WIRESCOPE=1 rides the stdin preamble; absent without the flag', async () => {
   const rec = {};
-  const { code } = await cli(['deploy', 'user@box', '--no-wirescope', '--no-ctx'], {
+  const { code } = await cli(['deploy', 'node', 'box', '--ssh', 'user@box', '--no-wirescope', '--no-ctx'], {
     spawnFn: fakeSsh(rec, { lines: HAPPY }),
     probeHello: async () => ({ app: 'clodex', host: 'box' }),
   });
@@ -285,7 +278,7 @@ test('deploy --no-wirescope: CLODEX_NO_WIRESCOPE=1 rides the stdin preamble; abs
   // the export rides the PREAMBLE (first line) — the installer bytes follow.
   assert.match(rec.stdin.split('\n')[0], /^export PORT=.*CLODEX_NO_WIRESCOPE='1'$/);
   const rec2 = {};
-  await cli(['deploy', 'user@box', '--no-ctx'], {
+  await cli(['deploy', 'node', 'box', '--ssh', 'user@box', '--no-ctx'], {
     spawnFn: fakeSsh(rec2, { lines: HAPPY }),
     probeHello: async () => ({ app: 'clodex', host: 'box' }),
   });
@@ -295,7 +288,7 @@ test('deploy --no-wirescope: CLODEX_NO_WIRESCOPE=1 rides the stdin preamble; abs
 test('deploy --claude-token-file --dry-run: notes the token by presence only, redacted', async () => {
   const dir = mkTmpRoot('clodexctl-tok-');
   const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-secret-99\n');
-  const { code, stdout } = await cli(['deploy', 'user@box', '--claude-token-file', tf, '--dry-run'], {});
+  const { code, stdout } = await cli(['deploy', 'node', 'box', '--ssh', 'user@box', '--claude-token-file', tf, '--dry-run'], {});
   assert.strictEqual(code, 0);
   assert.match(stdout, /claude  token from --claude-token-file/);
   assert.doesNotMatch(stdout, /sk-secret-99/);
@@ -304,7 +297,7 @@ test('deploy --claude-token-file --dry-run: notes the token by presence only, re
 test('deploy --port non-default: remotePort recorded in the saved context', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code } = await cli(['deploy', 'user@box', '--port', '8100'], {
+  const { code } = await cli(['deploy', 'node', 'box', '--ssh', 'user@box', '--port', '8100'], {
     spawnFn: fakeSsh(rec, { lines: HAPPY }),
     probeHello: async () => ({ app: 'clodex', host: 'box' }),
     contextsFile,
@@ -322,7 +315,7 @@ test('deploy: ::fail transcript, exit 1 → EXIT.SERVER, no verify, no ctx', asy
   const rec = {};
   let probed = false;
   const contextsFile = tmpCtxFile();
-  const { code, stdout, stderr } = await cli(['deploy', 'user@box'], {
+  const { code, stdout, stderr } = await cli(['deploy', 'node', 'box', '--ssh', 'user@box'], {
     spawnFn: fakeSsh(rec, { lines: ['::step clone', '::ok clone', '::step build', '::fail build npm ci exploded'], exitCode: 1 }),
     probeHello: async () => { probed = true; return {}; },
     contextsFile,
@@ -336,7 +329,7 @@ test('deploy: ::fail transcript, exit 1 → EXIT.SERVER, no verify, no ctx', asy
 
 test('deploy: exit 42 surfaces the exact sudo commands + re-run guidance', async () => {
   const rec = {};
-  const { code, stdout, stderr } = await cli(['deploy', 'user@box'], {
+  const { code, stdout, stderr } = await cli(['deploy', 'node', 'box', '--ssh', 'user@box'], {
     spawnFn: fakeSsh(rec, {
       lines: ['::step apt', '::need-sudo apt packages', '::sudo-cmd sudo apt-get update', '::sudo-cmd sudo apt-get install -y nodejs npm'],
       exitCode: 42,
@@ -346,13 +339,13 @@ test('deploy: exit 42 surfaces the exact sudo commands + re-run guidance', async
   assert.strictEqual(code, 1);   // EXIT.SERVER
   assert.match(stdout, /sudo apt-get update/);
   assert.match(stdout, /sudo apt-get install -y nodejs npm/);
-  assert.match(stdout, /Run these on the box, then re-run/);
+  assert.match(stdout, /Run these on the box, then re-run `clodexctl deploy node box --ssh user@box`/);
   assert.match(stderr, /2 sudo command\(s\) must be run/);
 });
 
 test('deploy --dry-run: describes, spawns nothing', async () => {
   let spawned = false;
-  const { code, stdout } = await cli(['deploy', 'user@box', '--dry-run', '--port', '7901'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'box', '--ssh', 'user@box', '--dry-run', '--port', '7901'], {
     spawnFn: () => { spawned = true; throw new Error('should not spawn'); },
     probeHello: async () => { throw new Error('should not probe'); },
   });
@@ -367,7 +360,7 @@ test('deploy --dry-run: describes, spawns nothing', async () => {
 test('deploy --no-ctx: verifies but saves nothing', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'user@box', '--no-ctx'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'box', '--ssh', 'user@box', '--no-ctx'], {
     spawnFn: fakeSsh(rec, { lines: HAPPY }),
     probeHello: async () => ({ app: 'clodex', host: 'box' }),
     contextsFile,
@@ -384,13 +377,13 @@ test('deploy: ctx collision kept unless --force', async () => {
   fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
   fs.writeFileSync(contextsFile, JSON.stringify({ current: null, contexts: { box: { ssh: 'old@box' } } }));
   // no --force → kept
-  const skip = await cli(['deploy', 'user@box'], { spawnFn: fakeSsh(rec, { lines: HAPPY }), probeHello: async () => ({ app: 'clodex' }), contextsFile });
+  const skip = await cli(['deploy', 'node', 'box', '--ssh', 'user@box'], { spawnFn: fakeSsh(rec, { lines: HAPPY }), probeHello: async () => ({ app: 'clodex' }), contextsFile });
   assert.strictEqual(skip.code, 0);
   assert.match(skip.stdout, /already exists — kept it/);
   assert.strictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.box.ssh, 'old@box');
   // --force → overwritten
   const rec2 = {};
-  const force = await cli(['deploy', 'user@box', '--force'], { spawnFn: fakeSsh(rec2, { lines: HAPPY }), probeHello: async () => ({ app: 'clodex' }), contextsFile });
+  const force = await cli(['deploy', 'node', 'box', '--ssh', 'user@box', '--force'], { spawnFn: fakeSsh(rec2, { lines: HAPPY }), probeHello: async () => ({ app: 'clodex' }), contextsFile });
   assert.strictEqual(force.code, 0);
   assert.match(force.stdout, /context "box" updated/);
   assert.strictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.box.ssh, 'user@box');
@@ -399,7 +392,7 @@ test('deploy: ctx collision kept unless --force', async () => {
 test('deploy --json: NDJSON per marker then verify + context objects', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'user@box', '-o', 'json'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'box', '--ssh', 'user@box', '-o', 'json'], {
     spawnFn: fakeSsh(rec, { lines: ['::step clone', '::ok clone', '::done'] }),
     probeHello: async () => ({ app: 'clodex', host: 'box', version: '1.0', caps: [] }),
     contextsFile,
@@ -413,18 +406,56 @@ test('deploy --json: NDJSON per marker then verify + context objects', async () 
   assert.deepStrictEqual(objs[4], { type: 'context', action: 'added', name: 'box', webPort: 7901 });
 });
 
-test('deploy: bad ssh destination is a usage error, no spawn', async () => {
+test('deploy: bad --ssh destination is a usage error, no spawn', async () => {
   let spawned = false;
-  const { code, stderr } = await cli(['deploy', 'host:7900'], { spawnFn: () => { spawned = true; throw new Error('x'); }, probeHello: async () => ({}) });
+  const { code, stderr } = await cli(['deploy', 'node', 'box', '--ssh', 'host:7900'], { spawnFn: () => { spawned = true; throw new Error('x'); }, probeHello: async () => ({}) });
   assert.strictEqual(code, 2);
   assert.match(stderr, /bad ssh destination/);
+  assert.strictEqual(spawned, false);
+});
+
+test('deploy: the positional is the ctx name, independent of the --ssh host', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  const { code, stdout } = await cli(['deploy', 'node', 'edge1', '--ssh', 'deploy@box.example.com'], {
+    spawnFn: fakeSsh(rec, { lines: HAPPY }),
+    probeHello: async () => ({ app: 'clodex', host: 'box' }),
+    contextsFile,
+  });
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /context "edge1" saved/);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.deepStrictEqual(saved.contexts.edge1, {
+    ssh: 'deploy@box.example.com', webPort: 7901,
+    deploy: { flavor: 'ssh', host: 'deploy@box.example.com' },
+  });
+  assert.strictEqual(saved.contexts.box, undefined, 'no name is derived from the host');
+});
+
+test('deploy: a bad node name is a usage error before any spawn', async () => {
+  let spawned = false;
+  const { code, stderr } = await cli(['deploy', 'node', 'bad name!', '--ssh', 'user@box'], {
+    spawnFn: () => { spawned = true; throw new Error('x'); }, probeHello: async () => ({}),
+  });
+  assert.strictEqual(code, 2);
+  assert.match(stderr, /bad node name/);
+  assert.strictEqual(spawned, false);
+});
+
+test('deploy: --ssh without a destination is a usage error, no spawn', async () => {
+  let spawned = false;
+  const { code, stderr } = await cli(['deploy', 'node', 'box', '--ssh'], {
+    spawnFn: () => { spawned = true; throw new Error('x'); }, probeHello: async () => ({}),
+  });
+  assert.strictEqual(code, 2);
+  assert.match(stderr, /--ssh needs a value/);
   assert.strictEqual(spawned, false);
 });
 
 test('deploy: ssh connect failure (exit 255) → EXIT.CONNECT, no verify', async () => {
   const rec = {};
   let probed = false;
-  const { code, stderr } = await cli(['deploy', 'user@box'], {
+  const { code, stderr } = await cli(['deploy', 'node', 'box', '--ssh', 'user@box'], {
     spawnFn: fakeSsh(rec, { lines: [], exitCode: 255, stderr: 'ssh: could not resolve hostname box' }),
     probeHello: async () => { probed = true; return {}; },
   });

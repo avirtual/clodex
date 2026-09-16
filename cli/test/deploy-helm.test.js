@@ -1,5 +1,5 @@
 'use strict';
-// deploy-helm.test.js — the `deploy helm <name>` flavor: one command from the
+// deploy-helm.test.js — the `deploy node <name> --helm` flavor: one command from the
 // packaged chart to a verified k8s node. Pure argv builders (token FILES in
 // argv, values never), release-name validation, the existing-release
 // token-reuse branch, ctx-entry shape, dry-run, and the verify-failure exit —
@@ -85,7 +85,7 @@ test('helmChartPath: resolves to the packaged chart (Chart.yaml exists)', () => 
 });
 
 test('deploy helm --no-wirescope: warned as ignored (chart value is the route), not silent', async () => {
-  const { code, stdout } = await cli(['deploy', 'helm', 'n', '--no-wirescope', '--dry-run'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm', '--no-wirescope', '--dry-run'], {
     execFn: async () => { throw new Error('nothing runs on --dry-run'); },
   });
   assert.strictEqual(code, 0);
@@ -199,7 +199,7 @@ test('deploy helm happy path: preflight→mint→helm→ctx (kubectl kind + toke
   const rec = {};
   const contextsFile = tmpCtxFile();
   let verifiedWith = null;
-  const { code, stdout } = await cli(['deploy', 'helm', 'mynode'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'mynode', '--helm'], {
     execFn: fakeK8s(rec),
     probeHelm: async (entry, token) => { verifiedWith = { entry, token }; return { app: 'clodex', host: 'mynode', version: '9.9.9', caps: [] }; },
     contextsFile,
@@ -246,7 +246,7 @@ test('deploy helm happy path: preflight→mint→helm→ctx (kubectl kind + toke
 test('deploy helm: namespace created when absent; --namespace/--kube-context/--port flow through', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'helm', 'n', '--namespace', 'agents', '--kube-context', 'prod', '--port', '8100'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm', '--namespace', 'agents', '--kube-context', 'prod', '--port', '8100'], {
     execFn: fakeK8s(rec, { nsExists: false }),
     probeHelm: async () => ({ app: 'clodex' }),
     contextsFile,
@@ -268,7 +268,7 @@ test('deploy helm: namespace created when absent; --namespace/--kube-context/--p
 test('deploy helm: --set web.enabled=false → no webPort saved (chart publishes no web port)', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code } = await cli(['deploy', 'helm', 'n', '--set', 'web.enabled=false'], {
+  const { code } = await cli(['deploy', 'node', 'n', '--helm', '--set', 'web.enabled=false'], {
     execFn: fakeK8s(rec),
     probeHelm: async () => ({ app: 'clodex' }),
     contextsFile,
@@ -285,7 +285,7 @@ test('deploy helm: existing release REUSES its Secret token (no rotation under a
   const rec = {};
   const contextsFile = tmpCtxFile();
   const existing = 'e'.repeat(48);
-  const { code, stdout } = await cli(['deploy', 'helm', 'n'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm'], {
     // secret value carries the trailing newline a real token file usually has —
     // the reuse path must trim it (the bearer-corruption trap).
     execFn: fakeK8s(rec, { releaseExists: true, secretB64: Buffer.from(existing + '\n').toString('base64') }),
@@ -305,7 +305,7 @@ test('deploy helm: flagless re-run PRESERVES the release oauth token (Secret wou
   const rec = {};
   const contextsFile = tmpCtxFile();
   const wire = 'e'.repeat(48);
-  const { code, stdout } = await cli(['deploy', 'helm', 'n'], {   // NO --claude-token-file
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm'], {   // NO --claude-token-file
     execFn: fakeK8s(rec, {
       releaseExists: true,
       secretB64: Buffer.from(wire).toString('base64'),
@@ -326,7 +326,7 @@ test('deploy helm: flagless re-run PRESERVES the release oauth token (Secret wou
 
 test('deploy helm: flagless re-run with NO oauth key in the Secret stages no oauth (empty jsonpath, no error)', async () => {
   const rec = {};
-  const { code, stdout } = await cli(['deploy', 'helm', 'n', '--no-ctx'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm', '--no-ctx'], {
     execFn: fakeK8s(rec, { releaseExists: true, secretB64: Buffer.from('e'.repeat(48)).toString('base64'), oauthB64: null }),
     probeHelm: async () => ({ app: 'clodex' }),
   });
@@ -386,7 +386,7 @@ test('parseCarriedValues: helm\'s empty renderings, the secrets drop, and a non-
 test('deploy helm re-run: a prior override SURVIVES (the silent revert, direction 1)', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'helm', 'n'], {   // NO flags: the flagless re-run
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm'], {   // NO flags: the flagless re-run
     execFn: fakeK8s(rec, {
       releaseExists: true,
       secretB64: Buffer.from('e'.repeat(48)).toString('base64'),
@@ -418,7 +418,7 @@ test('deploy helm re-run: a prior override SURVIVES (the silent revert, directio
 
 test('deploy helm re-run: a flag on THIS run BEATS a carried value (precedence, direction 2)', async () => {
   const rec = {};
-  const { code } = await cli(['deploy', 'helm', 'n', '--set', 'image.tag=4.6.0', '--values', '/op/mine.yaml', '--no-ctx'], {
+  const { code } = await cli(['deploy', 'node', 'n', '--helm', '--set', 'image.tag=4.6.0', '--values', '/op/mine.yaml', '--no-ctx'], {
     execFn: fakeK8s(rec, {
       releaseExists: true,
       secretB64: Buffer.from('e'.repeat(48)).toString('base64'),
@@ -449,7 +449,7 @@ test('deploy helm re-run: carried wirePort/web.enabled follow through to the SAV
   // whose transport port-forwards to 7900 — a port the release does not serve.
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code } = await cli(['deploy', 'helm', 'n'], {   // flagless
+  const { code } = await cli(['deploy', 'node', 'n', '--helm'], {   // flagless
     execFn: fakeK8s(rec, {
       releaseExists: true,
       secretB64: Buffer.from('e'.repeat(48)).toString('base64'),
@@ -468,7 +468,7 @@ test('deploy helm re-run: carried wirePort/web.enabled follow through to the SAV
   // Same release, but this run says otherwise: the flags win both.
   const rec2 = {};
   const contextsFile2 = tmpCtxFile();
-  const { code: c2 } = await cli(['deploy', 'helm', 'n', '--port', '8200', '--set', 'web.enabled=true'], {
+  const { code: c2 } = await cli(['deploy', 'node', 'n', '--helm', '--port', '8200', '--set', 'web.enabled=true'], {
     execFn: fakeK8s(rec2, {
       releaseExists: true,
       secretB64: Buffer.from('e'.repeat(48)).toString('base64'),
@@ -486,7 +486,7 @@ test('deploy helm re-run: carried wirePort/web.enabled follow through to the SAV
 test('deploy helm re-run: an UNREADABLE prior-values set is a hard error, never a silent revert', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code, stderr } = await cli(['deploy', 'helm', 'n'], {
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--helm'], {
     execFn: fakeK8s(rec, {
       releaseExists: true,
       secretB64: Buffer.from('e'.repeat(48)).toString('base64'),
@@ -510,7 +510,7 @@ test('deploy helm re-run: an UNREADABLE prior-values set is a hard error, never 
 
 test('deploy helm FRESH install: no read-back at all (there is no release to read)', async () => {
   const rec = {};
-  const { code, stdout } = await cli(['deploy', 'helm', 'n', '--no-ctx'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm', '--no-ctx'], {
     execFn: fakeK8s(rec),   // releaseExists: false
     probeHelm: async () => ({ app: 'clodex' }),
   });
@@ -522,7 +522,7 @@ test('deploy helm FRESH install: no read-back at all (there is no release to rea
 
 test('deploy helm re-run with NO prior overrides: says so, and passes no empty values file', async () => {
   const rec = {};
-  const { code, stdout } = await cli(['deploy', 'helm', 'n', '--no-ctx'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm', '--no-ctx'], {
     execFn: fakeK8s(rec, { releaseExists: true, secretB64: Buffer.from('e'.repeat(48)).toString('base64'), priorValues: null }),
     probeHelm: async () => ({ app: 'clodex' }),
   });
@@ -534,7 +534,7 @@ test('deploy helm re-run with NO prior overrides: says so, and passes no empty v
 test('deploy helm re-run: the release\'s own token is NOT re-applied through values (secrets stay the Secret\'s)', async () => {
   const rec = {};
   const wire = 'e'.repeat(48);
-  const { code, stdout } = await cli(['deploy', 'helm', 'n', '--no-ctx'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm', '--no-ctx'], {
     execFn: fakeK8s(rec, {
       releaseExists: true,
       secretB64: Buffer.from(wire).toString('base64'),
@@ -559,7 +559,7 @@ test('deploy helm: --claude-token-file on re-run WINS over the release oauth (ro
   const rec = {};
   const dir = mkTmpRoot('clodexctl-helm-tok-');
   const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-oauth-new\n');
-  const { code } = await cli(['deploy', 'helm', 'n', '--claude-token-file', tf, '--no-ctx'], {
+  const { code } = await cli(['deploy', 'node', 'n', '--helm', '--claude-token-file', tf, '--no-ctx'], {
     execFn: fakeK8s(rec, {
       releaseExists: true,
       secretB64: Buffer.from('e'.repeat(48)).toString('base64'),
@@ -578,7 +578,7 @@ test('deploy helm: --claude-token-file on re-run WINS over the release oauth (ro
 
 test('deploy helm: helm status failing for a NON-not-found reason → hard error, never a silent fresh mint', async () => {
   const rec = {};
-  const { code, stderr } = await cli(['deploy', 'helm', 'n'], {
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--helm'], {
     execFn: fakeK8s(rec, { statusFail: 'Error: Kubernetes cluster unreachable: Get "https://…": dial tcp: connect: connection refused' }),
     probeHelm: async () => { throw new Error('should not verify'); },
   });
@@ -592,7 +592,7 @@ test('deploy helm: helm status failing for a NON-not-found reason → hard error
 
 test('deploy helm: release exists but its Secret is unreadable → SERVER error naming the operator-managed mode', async () => {
   const rec = {};
-  const { code, stderr } = await cli(['deploy', 'helm', 'n'], {
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--helm'], {
     execFn: fakeK8s(rec, { releaseExists: true, secretB64: null }),
     probeHelm: async () => { throw new Error('should not verify'); },
   });
@@ -610,7 +610,7 @@ test('deploy helm --claude-token-file: extracted value staged 0600 → --set-fil
   const tf = path.join(dir, 'tok');
   // env-file format: the EXTRACTED value must ride, not the raw file bytes.
   fs.writeFileSync(tf, '# auth\nCLAUDE_CODE_OAUTH_TOKEN=sk-oauth-secret\n');
-  const { code, stdout } = await cli(['deploy', 'helm', 'n', '--claude-token-file', tf], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm', '--claude-token-file', tf], {
     execFn: fakeK8s(rec),
     probeHelm: async () => ({ app: 'clodex' }),
     contextsFile,
@@ -627,7 +627,7 @@ test('deploy helm --claude-token-file: extracted value staged 0600 → --set-fil
 test('deploy helm: bad release name (dots/underscore/uppercase) → USAGE, nothing runs', async () => {
   for (const bad of ['My.Node', 'a_b', 'UPPER']) {
     let ran = false;
-    const { code, stderr } = await cli(['deploy', 'helm', bad], {
+    const { code, stderr } = await cli(['deploy', 'node', bad, '--helm'], {
       execFn: async () => { ran = true; return { stdout: '' }; },
       probeHelm: async () => ({}),
     });
@@ -638,10 +638,10 @@ test('deploy helm: bad release name (dots/underscore/uppercase) → USAGE, nothi
   }
 });
 
-test('deploy helm: no name → USAGE', async () => {
-  const { code, stderr } = await cli(['deploy', 'helm'], { execFn: async () => ({ stdout: '' }) });
+test('deploy node --helm: no name → USAGE', async () => {
+  const { code, stderr } = await cli(['deploy', 'node', '--helm'], { execFn: async () => ({ stdout: '' }) });
   assert.strictEqual(code, EXIT.USAGE);
-  assert.match(stderr, /deploy helm needs a release name/);
+  assert.match(stderr, /deploy node needs a name/);
 });
 
 test('deploy helm --dry-run: plan only — cluster/ns/release/chart/ctx entry, claude by presence, nothing runs', async () => {
@@ -649,7 +649,7 @@ test('deploy helm --dry-run: plan only — cluster/ns/release/chart/ctx entry, c
   const contextsFile = tmpCtxFile();
   const dir = mkTmpRoot('clodexctl-helm-tok-');
   const tf = path.join(dir, 'tok'); fs.writeFileSync(tf, 'sk-drysecret\n');
-  const { code, stdout } = await cli(['deploy', 'helm', 'n', '--kube-context', 'prod', '--claude-token-file', tf, '--dry-run'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm', '--kube-context', 'prod', '--claude-token-file', tf, '--dry-run'], {
     execFn: async () => { ran = true; return { stdout: '' }; },
     probeHelm: async () => { throw new Error('should not verify'); },
     contextsFile,
@@ -670,7 +670,7 @@ test('deploy helm: helm failure mid---wait → SERVER + "exists; fix and re-run"
   const rec = {};
   const contextsFile = tmpCtxFile();
   let verified = false;
-  const { code, stderr } = await cli(['deploy', 'helm', 'n'], {
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--helm'], {
     execFn: fakeK8s(rec, { helmFail: 'Error: timed out waiting for the condition' }),
     probeHelm: async () => { verified = true; return {}; },
     contextsFile,
@@ -692,7 +692,7 @@ test('deploy helm: an SSA field conflict REPLACES the re-run hint (t56)', async 
   // The operator's real failure, verbatim — hand-edited image tag, so
   // "kubectl-edit" owns the field helm needs.
   const conflict = 'Error: UPGRADE FAILED: conflict occurred while applying object clodex/clodex apps/v1, Kind=StatefulSet: Apply failed with 1 conflict: conflict with "kubectl-edit" using apps/v1: .spec.template.spec.containers[name="clodex"].image';
-  const { code, stderr } = await cli(['deploy', 'helm', 'n'], {
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--helm'], {
     execFn: fakeK8s(rec, { helmFail: conflict }),
     probeHelm: async () => ({}),
     contextsFile,
@@ -710,7 +710,7 @@ test('deploy helm: an SSA field conflict REPLACES the re-run hint (t56)', async 
 
 test('deploy helm: --force-conflicts reaches helm, and is absent without the flag (t56)', async () => {
   const withFlag = {};
-  const { code } = await cli(['deploy', 'helm', 'n', '--force-conflicts'], {
+  const { code } = await cli(['deploy', 'node', 'n', '--helm', '--force-conflicts'], {
     execFn: fakeK8s(withFlag), probeHelm: async () => ({}), contextsFile: tmpCtxFile(),
   });
   // Checked BEFORE the argv: --force-conflicts is a BARE boolean, and a parser
@@ -723,7 +723,7 @@ test('deploy helm: --force-conflicts reaches helm, and is absent without the fla
     'the flag must reach the real helm argv, not just the dry-run preview');
 
   const without = {};
-  await cli(['deploy', 'helm', 'n'], {
+  await cli(['deploy', 'node', 'n', '--helm'], {
     execFn: fakeK8s(without), probeHelm: async () => ({}), contextsFile: tmpCtxFile(),
   });
   assert.ok(!without.helmArgs.includes('--force-conflicts'),
@@ -733,7 +733,7 @@ test('deploy helm: --force-conflicts reaches helm, and is absent without the fla
 test('deploy helm: verify failure → nonzero exit; ctx already saved, message points at ctx test', async () => {
   const { CliError } = require('../src/errors');
   const contextsFile = tmpCtxFile();
-  const { code, stdout, stderr } = await cli(['deploy', 'helm', 'n'], {
+  const { code, stdout, stderr } = await cli(['deploy', 'node', 'n', '--helm'], {
     execFn: fakeK8s({}),
     probeHelm: async () => { throw new CliError(EXIT.CONNECT, 'tunnel did not open a local port within 10s'); },
     contextsFile,
@@ -752,7 +752,7 @@ test('deploy helm: verify failure with a SKIPPED ctx (collision, no --force) say
   const contextsFile = tmpCtxFile();
   fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
   fs.writeFileSync(contextsFile, JSON.stringify({ current: null, contexts: { n: { url: 'http://old' } } }));
-  const { code, stderr } = await cli(['deploy', 'helm', 'n'], {
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--helm'], {
     execFn: fakeK8s({}),
     probeHelm: async () => { throw new CliError(EXIT.CONNECT, 'tunnel did not open a local port within 10s'); },
     contextsFile,
@@ -769,7 +769,7 @@ test('deploy helm: verify failure with a SKIPPED ctx (collision, no --force) say
 
 test('deploy helm --no-ctx: verifies but saves nothing', async () => {
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'helm', 'n', '--no-ctx'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm', '--no-ctx'], {
     execFn: fakeK8s({}), probeHelm: async () => ({ app: 'clodex' }), contextsFile,
   });
   assert.strictEqual(code, 0);
@@ -783,12 +783,12 @@ test('deploy helm: ctx collision kept unless --force (verify still runs on the f
   fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
   fs.writeFileSync(contextsFile, JSON.stringify({ current: null, contexts: { n: { url: 'http://old' } } }));
   let probed = 0;
-  const skip = await cli(['deploy', 'helm', 'n'], { execFn: fakeK8s({}), probeHelm: async () => { probed++; return { app: 'clodex' }; }, contextsFile });
+  const skip = await cli(['deploy', 'node', 'n', '--helm'], { execFn: fakeK8s({}), probeHelm: async () => { probed++; return { app: 'clodex' }; }, contextsFile });
   assert.strictEqual(skip.code, 0);
   assert.match(skip.stdout, /already exists — kept it/);
   assert.strictEqual(probed, 1);   // verify ran against the fresh entry regardless
   assert.strictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.n.url, 'http://old');
-  const force = await cli(['deploy', 'helm', 'n', '--force'], { execFn: fakeK8s({}), probeHelm: async () => ({ app: 'clodex' }), contextsFile });
+  const force = await cli(['deploy', 'node', 'n', '--helm', '--force'], { execFn: fakeK8s({}), probeHelm: async () => ({ app: 'clodex' }), contextsFile });
   assert.strictEqual(force.code, 0);
   assert.match(force.stdout, /context "n" updated/);
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.n;
@@ -798,7 +798,7 @@ test('deploy helm: ctx collision kept unless --force (verify still runs on the f
 
 test('deploy helm --json: NDJSON step/ok/log + context + verify, no token leak', async () => {
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'helm', 'n', '-o', 'json'], {
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm', '-o', 'json'], {
     execFn: fakeK8s({}), probeHelm: async () => ({ app: 'clodex', host: 'n', version: '1.0', caps: [] }), contextsFile,
   });
   assert.strictEqual(code, 0);
@@ -814,7 +814,7 @@ test('deploy helm --json: NDJSON step/ok/log + context + verify, no token leak',
 
 test('deploy helm --set repeatable + --values repeatable ride through to helm', async () => {
   const rec = {};
-  const { code } = await cli(['deploy', 'helm', 'n', '--set', 'persistence.enabled=false', '--set', 'image.tag=v9', '--values', '/v/f.yaml', '--values', '/v/g.yaml', '--no-ctx'], {
+  const { code } = await cli(['deploy', 'node', 'n', '--helm', '--set', 'persistence.enabled=false', '--set', 'image.tag=v9', '--values', '/v/f.yaml', '--values', '/v/g.yaml', '--no-ctx'], {
     execFn: fakeK8s(rec), probeHelm: async () => ({ app: 'clodex' }),
   });
   assert.strictEqual(code, 0);
@@ -827,7 +827,7 @@ test('deploy helm --set repeatable + --values repeatable ride through to helm', 
 test('deploy helm --set secrets.* is rejected (argv secret + minted-token override footgun)', async () => {
   for (const bad of ['secrets.wireToken=abc', 'secrets.oauthToken=xyz', 'secrets.existingSecret=mine']) {
     let ran = false;
-    const { code, stderr } = await cli(['deploy', 'helm', 'n', '--set', bad], {
+    const { code, stderr } = await cli(['deploy', 'node', 'n', '--helm', '--set', bad], {
       execFn: async () => { ran = true; return { stdout: '' }; },
       probeHelm: async () => ({}),
     });
@@ -842,7 +842,7 @@ test('deploy helm --set secrets.* is rejected (argv secret + minted-token overri
 
 test('deploy helm: a lost namespace-create race (AlreadyExists) is tolerated', async () => {
   const rec = {};
-  const { code } = await cli(['deploy', 'helm', 'n', '--no-ctx'], {
+  const { code } = await cli(['deploy', 'node', 'n', '--helm', '--no-ctx'], {
     execFn: fakeK8s(rec, { nsExists: false, nsCreateFail: 'Error from server (AlreadyExists): namespaces "clodex" already exists' }),
     probeHelm: async () => ({ app: 'clodex' }),
   });
@@ -851,7 +851,7 @@ test('deploy helm: a lost namespace-create race (AlreadyExists) is tolerated', a
 });
 
 test('deploy helm: missing helm binary (ENOENT) → CONNECT with the vendor-CLI hint', async () => {
-  const { code, stderr } = await cli(['deploy', 'helm', 'n'], {
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--helm'], {
     execFn: async (cmd) => { const e = new Error(`spawn ${cmd} ENOENT`); e.code = 'ENOENT'; throw e; },
     probeHelm: async () => ({}),
   });
@@ -859,19 +859,18 @@ test('deploy helm: missing helm binary (ENOENT) → CONNECT with the vendor-CLI 
   assert.match(stderr, /helm: command not found — is helm installed and on PATH\?/);
 });
 
-// ── dispatch: `deploy helm` routes; `deploy ssh helm` stays the ssh flavor ────
+// ── dispatch: --helm routes to the helm flavor ───────────────────────────────
 
-test('deploy helm routes to the helm flavor', async () => {
-  // "My.Node" IS a valid ssh dest (DEST_RE allows uppercase + dots) but an
-  // invalid helm release name — so the "bad release name" USAGE error proves
-  // the helm validator ran, i.e. dispatch routed to the helm flavor.
-  const { code, stderr } = await cli(['deploy', 'helm', 'My.Node'], { execFn: async () => ({ stdout: '' }) });
+test('deploy node --helm routes to the helm flavor', async () => {
+  // "My.Node" passes the generic node-name shape but is an invalid helm release
+  // name — so the "bad release name" USAGE error proves the helm validator ran.
+  const { code, stderr } = await cli(['deploy', 'node', 'My.Node', '--helm'], { execFn: async () => ({ stdout: '' }) });
   assert.strictEqual(code, EXIT.USAGE);
   assert.match(stderr, /bad release name/);
 });
 
-test('deploy ssh helm still routes to the ssh flavor (host literally named helm)', async () => {
-  const { code } = await cli(['deploy', 'ssh', 'helm'], {
+test('a node literally NAMED helm still routes on the flag, not the name', async () => {
+  const { code } = await cli(['deploy', 'node', 'helm', '--ssh', 'user@box'], {
     spawnFn: () => { const e = new Error('spawn ssh ENOENT'); e.code = 'ENOENT'; throw e; },
   });
   assert.strictEqual(code, EXIT.CONNECT);   // ssh flavor's "could not start ssh"
