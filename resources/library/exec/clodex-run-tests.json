@@ -5,7 +5,7 @@
     "${CLODEX_BIN}/clodex-run-tests.js"
   ],
   "cwd": "${TEAM_ROOT}",
-  "description": "Suite digest, one line: runs ${TEAM_ROOT}/scripts/run-tests.js, the merge gate's runner. Measures the TEAM ROOT unless `tree` names a worktree of this repo — pass it or you measure master. `scope`: own = the branch's own tests plus the repo-wide shape checks, no suite lock (what to run while working); full = the merge gate's run, the whole suite under the lock.",
+  "description": "Suite digest, one line. Measures the TEAM ROOT unless `tree` names a worktree. scope: own = the branch's own tests plus the repo-wide shape checks, no lock; full (default) = the merge gate's run.",
   "timeoutMs": 420000,
   "maxBytes": 1024,
   "replyStderr": true,
