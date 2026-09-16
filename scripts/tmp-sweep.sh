@@ -168,6 +168,7 @@ clodex-plugin-source-tree-
 clodex-plugin-source-work-
 clodex-plugin-test-
 clodex-plugins-
+clodex-poll-
 clodex-pr-
 clodex-preflight-
 clodex-proj-
