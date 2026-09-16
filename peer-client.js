@@ -150,7 +150,7 @@ class PeerConnection {
     this._reqAgent = new Agent({ keepAlive: true, maxSockets: 8 });
     this._sseAgent = new Agent({ keepAlive: false, maxSockets: Infinity });
     this.online = false;
-    this.needsUpgrade = false;        // far side is online but too old to serve the sessions subresource wire
+    this.needsUpgrade = false;
     this.hello = null;                // { host, version, caps, platform, srcDir }
     this.sessions = [];               // last fetched session list
     this._helloTimer = null;
@@ -288,10 +288,6 @@ class PeerConnection {
     });
   }
 
-// One fetch per hello identity, not per tick: identityChanged already re-runs
-// on a version or caps change, which is every way the far side's dialect can
-// move under a live connection. A node whose hello carries no `resources` cap
-// is older than the document itself and needs no round trip to classify.
   _probeDialect(hello) {
     if (!(hello.caps || []).includes('resources')) return this._setNeedsUpgrade(true);
     this._request('GET', '/api/resources', null, (err, body) => {
@@ -398,8 +394,6 @@ class PeerConnection {
     // opening guards the window between request start and onOpen — the
     // hello-loop wake path and the backoff timer can both land here.
     if (att.req || att.opening || !att.wanted || this._stopped) return;
-    // A node too old for the sessions subresource wire 404s every attach, and
-    // the backoff would hammer it forever. Report the upgrade once instead.
     if (this.needsUpgrade) {
       att.error = `${this.label} runs an older Clodex that does not serve sessions/attach — update it`;
       return;

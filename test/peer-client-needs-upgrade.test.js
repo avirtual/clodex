@@ -1,21 +1,4 @@
 'use strict';
-// peer-client-needs-upgrade.test.js — t938: the dialect flag, and what it stops.
-//
-// A node older than the sessions subresource wire is ONLINE and answers hello
-// normally; it just 404s every attach. Without a flag the attach backoff
-// hammers that 404 forever and the operator sees a peer that looks healthy and
-// never streams. `needsUpgrade` is how the consumer tells the two apart, and
-// `_openAttach` refusing while it is true is what stops the hammering.
-//
-// WHAT IS PINNED:
-//   1. needsUpgrade is FALSE against a node whose document carries
-//      sessions.subresources.attach.
-//   2. It is TRUE against a node whose document lacks it, and TRUE against a
-//      node whose hello carries no `resources` cap at all (pre-5.70) — the
-//      second WITHOUT a document fetch, since there is no document to fetch.
-//   3. _openAttach opens no stream while it is true: the server sees zero
-//      attach requests no matter how long the want stands.
-//   4. The document is fetched once per hello IDENTITY, not once per tick.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -36,7 +19,6 @@ function box(dialect) {
     }
     if (/^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(p)) {
       state.attaches++;
-      // What an OLD node actually answers on this path: the route is not there.
       if (dialect !== 'current') return res.writeHead(404).end();
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       res.flushHeaders();
@@ -124,8 +106,6 @@ test('_openAttach opens NO stream while needsUpgrade is true — the 404 is neve
   try {
     await waitFor('needsUpgrade to go true', () => conn.needsUpgrade === true);
     conn.attach('alpha');
-    // Long enough that the reconnect floor (1s) would have fired several times
-    // if a stream had opened and 404'd its way into the backoff loop.
     await new Promise((r) => setTimeout(r, 300));
     conn._openAttach('alpha', conn._attachments.get('alpha'));
     assert.strictEqual(state.attaches, 0, 'an attach request reached an old node');
@@ -138,7 +118,7 @@ test('_openAttach opens NO stream while needsUpgrade is true — the 404 is neve
 test('the document is fetched once per hello identity, not once per hello tick', async () => {
   const { server, state } = box('current');
   const port = await listen(server);
-  const conn = connect(port, 30);   // fast ticks: many hellos, one identity
+  const conn = connect(port, 30);
   conn.start();
   try {
     await waitFor('several hello ticks against one unchanging identity', () => state.helloTicks >= 6);

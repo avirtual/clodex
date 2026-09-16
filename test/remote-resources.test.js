@@ -136,15 +136,10 @@ function captureOptions(deps) {
 function req(port, pathname, opts = {}) {
   return new Promise((resolve, reject) => {
     const r = http.request({ host: '127.0.0.1', port, path: pathname, method: opts.method || 'GET', headers: opts.headers || {} }, (res) => {
-      // An SSE route never ends its body, so `stream` settles on the first
-      // frame and hangs up — waiting for 'end' there would wedge the walk.
       if (opts.stream) {
         let body = '';
         res.on('data', (d) => {
           body += d;
-          // `until` rides the preamble: _sse writes its retry line before any
-          // event frame, so a reader that stops at the first chunk sees no
-          // event at all.
           if (opts.until && !body.includes(opts.until)) return;
           r.destroy();
           resolve({ status: res.statusCode, body });
@@ -204,9 +199,6 @@ function subresourceFixture() {
   };
 }
 
-// `body` may be a function of the walk's state bag: input and resize are
-// token-gated, and the token only exists once the control step has run. Object
-// key order puts control ahead of both, which is what makes that thread work.
 const SUB_WALK = {
   transcript: { method: 'GET' },
   query: { method: 'POST', body: () => JSON.stringify({ kind: 'report', args: {} }) },
@@ -408,9 +400,6 @@ test('subresource gating: a node with the attach/control callbacks nulled omits 
     );
     assert.strictEqual((await req(port, '/api/sessions/alice/attach')).status, 501);
 
-    // The same walk the shipped-document test runs, but against the SERVED
-    // document rather than the RESOURCES constant: a gate that drops a row from
-    // one and not the other is exactly the mismatch this pin exists to catch.
     for (const [sub] of Object.entries(sessions.subresources)) {
       const walk = SUB_WALK[sub];
       const body = walk.body ? walk.body({ token: null }) : undefined;

@@ -1,9 +1,5 @@
 'use strict';
 
-// The two hello/resources shapes a PeerConnection can meet on the wire.
-// CURRENT serves the sessions subresource wire; OLD is any node before it —
-// either one whose document lacks the attach row, or one with no `resources`
-// cap at all, which is a node too old to carry the document.
 const CURRENT_SUBRESOURCES = {
   transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'],
 };
@@ -24,8 +20,6 @@ function resourcesBody(subresources) {
   };
 }
 
-// Answers hello + /api/resources for `dialect`; returns false for anything
-// else so a caller keeps its own routes. 'none' omits the resources cap.
 function serveDialect(p, res, dialect = 'current') {
   const json = (body) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });

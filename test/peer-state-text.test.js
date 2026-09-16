@@ -1,11 +1,4 @@
 'use strict';
-// peer-state-text.test.js — t938: the peer header's state word.
-//
-// A pure function rather than a render test: peers-ui runs under
-// contextIsolation:false and there is no jsdom in this repo, so the builder is
-// extracted and pinned directly. What matters is the PRECEDENCE — offline and
-// tunnel-down outrank the dialect flag, because a peer that cannot be reached
-// at all is not a peer that needs updating.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -38,9 +31,6 @@ test('offline and tunnel-down outrank the dialect flag — unreachable is not "n
   assert.strictEqual(down.needsUpgrade, false, 'an unreachable peer must not light the upgrade cue');
 });
 
-// The renderer is contextIsolation:false: a peer-supplied string reaching an
-// HTML position is arbitrary code in the main world. The state word goes
-// through esc() like every other, and this pin is here because the word is new.
 test('peers-ui renders the state word through esc(), never into an attribute', () => {
   assert.ok(
     PEERS_UI_SRC.includes('${esc(stateText)}'),

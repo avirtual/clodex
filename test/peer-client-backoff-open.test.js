@@ -118,9 +118,8 @@ function box({ mode = 'die', limit = null } = {}) {
   };
   const server = http.createServer((req, res) => {
     const p = req.url.split('?')[0];
-    if (serveDialect(p, res)) {
-      // no-op: hello + /api/resources answered
-    } else if (p === '/api/sessions') {
+    if (serveDialect(p, res)) return;
+    if (p === '/api/sessions') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, sessions: [] }));
     } else if (p === '/api/events') {
