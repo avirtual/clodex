@@ -269,7 +269,7 @@ async function spawn({ client, printer, flags, args, io = {} }) {
   if (alive === false) {
     printer.line(`spawned ${res.name || name} (${type || '?'})${res.pid ? ` pid=${res.pid}` : ''} — but it exited immediately (gone from the engine).`);
     if (type && type !== 'bash') {
-      printer.line(`  likely the \`${type}\` CLI isn't installed on the node — a native OS-flavor deploy provisions the engine only. Check with \`clodexctl sessions\`; re-run \`clodexctl deploy …\` to (re)install the agent CLIs.`);
+      printer.line(`  likely the \`${type}\` CLI isn't installed on the node — a native OS-flavor deploy provisions the engine only. Check with \`clodexctl get sessions\`; re-run \`clodexctl deploy …\` to (re)install the agent CLIs.`);
     }
     return;
   }

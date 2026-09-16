@@ -233,7 +233,7 @@ in-process fetch — never in argv (ps-visible), never in a URL, never logged.
 > The tables below are the narrative tour; for the exact current flag set of any
 > verb, ask `help`.
 
-Read (all support `-o json` — stable raw wire payload):
+Read (all but `describe` support `-o json` — stable raw wire payload):
 
 | Verb | Route |
 |---|---|

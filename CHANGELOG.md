@@ -18,6 +18,7 @@ blocks a release.
   to. A library template you edited yourself keeps your model; an untouched one
   picks the pin up on the next launch.
 - The node API now describes itself: `GET /api/resources` lists every resource and verb a node serves (advertised as the `resources` capability in hello). Sessions gained `GET /api/sessions/<name>` and a `?workspace=` filter, and `GET /api/workspaces` lists the node's workspaces. Groundwork for the kubectl-style `clodexctl get` family.
+- `clodexctl` gains kubectl-shaped reads: `get sessions|session <name>|workspaces|catalogs`, `describe session|workspace|catalogs`, `api-resources` and `version`, with `-o json|wide|name` and `-n <workspace>`. The bare `sessions` verb and the `--json` flag are removed; each prints its replacement and runs nothing.
 
 ## 5.69.0 — 2026-09-16
 
