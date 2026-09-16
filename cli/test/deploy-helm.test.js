@@ -798,7 +798,7 @@ test('deploy helm: ctx collision kept unless --force (verify still runs on the f
 
 test('deploy helm --json: NDJSON step/ok/log + context + verify, no token leak', async () => {
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'helm', 'n', '--json'], {
+  const { code, stdout } = await cli(['deploy', 'helm', 'n', '-o', 'json'], {
     execFn: fakeK8s({}), probeHelm: async () => ({ app: 'clodex', host: 'n', version: '1.0', caps: [] }), contextsFile,
   });
   assert.strictEqual(code, 0);

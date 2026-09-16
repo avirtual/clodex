@@ -399,7 +399,7 @@ test('deploy: ctx collision kept unless --force', async () => {
 test('deploy --json: NDJSON per marker then verify + context objects', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'user@box', '--json'], {
+  const { code, stdout } = await cli(['deploy', 'user@box', '-o', 'json'], {
     spawnFn: fakeSsh(rec, { lines: ['::step clone', '::ok clone', '::done'] }),
     probeHello: async () => ({ app: 'clodex', host: 'box', version: '1.0', caps: [] }),
     contextsFile,

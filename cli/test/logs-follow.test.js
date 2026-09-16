@@ -96,7 +96,7 @@ test('logs -f --json: NDJSON, one object per entry (tail + delta), never a growi
     transcript: (i) => (i <= 1 ? [{ role: 'user', text: 'q1' }] : [{ role: 'user', text: 'q1' }, { role: 'assistant', text: 'a2' }]),
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['logs', 'bob', '-f', '--json'], port, { tty: sig.tty });
+  const { code, stdout } = await cli(['logs', 'bob', '-f', '-o', 'json'], port, { tty: sig.tty });
   assert.strictEqual(code, 0);
   const lines = stdout.trim().split('\n').filter(Boolean);
   // Each line parses as its own object (NDJSON), not a single array.

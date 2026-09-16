@@ -75,7 +75,6 @@ async function getCatalogs({ client, printer, flags }) {
 async function describe({ client, ctx, printer, flags, args }) {
   const target = R.parseTarget(args, 'describe');
   const label = R.ctxLabel(ctx, flags);
-  if (flags.json) throw new CliError(EXIT.USAGE, 'describe has no -o json (it is a composed human view; use get)');
   if (target.resource === 'catalogs') {
     await R.requireResource(client, 'catalogs', 'get', label);
     const body = await client.get('/api/catalogs', 'describe catalogs');

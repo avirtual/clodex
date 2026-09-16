@@ -67,6 +67,9 @@ function applyOutput(flags, verb) {
   if (!OUTPUT_FORMATS.includes(fmt)) {
     throw new CliError(EXIT.USAGE, `unknown output format: ${fmt} (${OUTPUT_FORMATS.join('|')})`);
   }
+  if (verb === 'describe') {
+    throw new CliError(EXIT.USAGE, 'describe has no -o json (it is a composed human view; use get)');
+  }
   if (GET_ONLY_FORMATS.includes(fmt) && verb !== 'get') {
     throw new CliError(EXIT.USAGE, `-o ${fmt} is only valid on get`);
   }
@@ -247,4 +250,4 @@ function safeLoad(io) {
 // the same lines this dispatcher does. A second copy of the flag table there
 // would drift silently, and the failure mode is invisible: a flag the terminal
 // CLI honours parsed as a positional in the REPL.
-module.exports = { run, TOP_VERBS, SPECIAL_VERBS, PARSE_OPTS, RENAMED_VERBS, renamedLine, OUTPUT_FORMATS };
+module.exports = { run, TOP_VERBS, SPECIAL_VERBS, PARSE_OPTS, RENAMED_VERBS, renamedLine, findDeletedJsonFlag, applyOutput, OUTPUT_FORMATS };

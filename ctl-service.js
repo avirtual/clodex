@@ -382,6 +382,10 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     catch (e) { return done(`clodexctl: ${e.message}\n`, EXIT.USAGE, currentName()); }
     if (argv.length === 0) return done('', EXIT.OK, currentName());
 
+    if (main.findDeletedJsonFlag(argv)) {
+      return done('clodexctl: --json was replaced by -o json\n', EXIT.USAGE, currentName());
+    }
+
     let flags;
     try { flags = A.parse(argv, main.PARSE_OPTS); }
     catch (e) {
@@ -392,7 +396,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     // gate because `exec --help` must EXPLAIN the verb this tab refuses to
     // run; refusing the explanation too leaves no way to learn why. Ahead of
     // the flags-only refusal because bare `--help` is the index, not an empty
-    // line. Without it the flag is ignored entirely and `sessions --help`
+    // line. Without it the flag is ignored entirely and `get --help`
     // opens a WireClient and returns live session data.
     // A bare ctx subcommand becomes `ctx <sub>` here, AHEAD of help routing and
     // the gate. Ahead of help specifically: `list --help` short-circuits below,
@@ -408,11 +412,14 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
       return done(`${text}\n`, code, currentName());
     }
 
-    // The gate reads PARSED POSITIONALS, never the raw argv. `--json sessions`
-    // and `sessions` are the same command and only the parsed form says so; a
-    // raw-argv gate refuses the first as a verb named "--json". A flag that
-    // consumes a token (`--url exec`) likewise moves the real verb, and the
-    // positionals are what track it.
+    const renamed = flags._[0];
+    if (renamed && Object.prototype.hasOwnProperty.call(main.RENAMED_VERBS, renamed)) {
+      return done(`clodexctl: ${main.renamedLine(renamed)}\n`, EXIT.USAGE, currentName());
+    }
+
+    // The gate reads PARSED POSITIONALS, never the raw argv. A flag that
+    // consumes a token (`--url exec`) moves the real verb, and the positionals
+    // are what track it.
     const denied = refuse(flags._);
     if (denied) return done(`clodexctl: ${denied}\n`, EXIT.USAGE, currentName());
     // `logs` is allowed; `logs --follow` is not, and the flag is the whole
@@ -434,6 +441,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     const rest = flags._.slice(1);
     let token = null;
     try {
+      main.applyOutput(flags, verb);
       if (verb === 'ctx') {
         const out = await runCtx(rest, { flags, printer, io, V, errors });
         return done(buf, out, currentName());
@@ -453,7 +461,9 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
       const handler = verb === 'args'
         ? (argsSubs[rest[0]] && (({ client, ...b }) => argsSubs[rest[0]]({ client, ...b, args: rest.slice(1) })))
         : {
-          info: V.info, sessions: V.sessions, query: V.query, logs: V.logs,
+          info: V.info, get: V.get, describe: V.describe,
+          'api-resources': V.apiResources, version: V.version,
+          query: V.query, logs: V.logs,
           skills: V.skills, send: V.send, input: V.input, exec: V.exec,
           run: V.run, spawn: V.spawn, restart: V.restart,
         }[verb];

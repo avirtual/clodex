@@ -39,19 +39,19 @@ test('ctx add/use/list/show/rm round-trip through the file', async () => {
 
   r = await cli(['ctx', 'use', 'work'], f);
   assert.strictEqual(r.code, 0);
-  r = await cli(['ctx', 'list', '--json'], f);
+  r = await cli(['ctx', 'list', '-o', 'json'], f);
   assert.strictEqual(JSON.parse(r.stdout).current, 'work');
 
   // show redacts the token
   r = await cli(['ctx', 'show', 'home'], f);
   assert.match(r.stdout, /token\s+\(set\)/);
   assert.doesNotMatch(r.stdout, /sek/);
-  r = await cli(['ctx', 'show', 'home', '--json'], f);
+  r = await cli(['ctx', 'show', 'home', '-o', 'json'], f);
   assert.strictEqual(JSON.parse(r.stdout).token, '***');
 
   r = await cli(['ctx', 'rm', 'home'], f);
   assert.strictEqual(r.code, 0);
-  r = await cli(['ctx', 'list', '--json'], f);
+  r = await cli(['ctx', 'list', '-o', 'json'], f);
   assert.strictEqual(JSON.parse(r.stdout).contexts.home, undefined);
 });
 
@@ -59,7 +59,7 @@ test('ctx add tunnel: greedy argv, {port} required', async () => {
   const f = tmpCtx();
   let r = await cli(['ctx', 'add', 'k8s', '--token', 't', '--tunnel', 'kubectl', 'port-forward', 'pod/x', '{port}:7900'], f);
   assert.strictEqual(r.code, 0);
-  r = await cli(['ctx', 'show', 'k8s', '--json'], f);
+  r = await cli(['ctx', 'show', 'k8s', '-o', 'json'], f);
   assert.deepStrictEqual(JSON.parse(r.stdout).tunnel, ['kubectl', 'port-forward', 'pod/x', '{port}:7900']);
 
   // missing {port} → usage error

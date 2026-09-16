@@ -79,9 +79,11 @@ async function requireResource(client, resource, verb, ctxName) {
 }
 
 function ctxLabel(ctx, flags) {
-  if (ctx && ctx.name) return ctx.name;
-  if (flags && flags.url) return flags.url;
-  return '<ctx>';
+  const name = ctx && ctx.name;
+  if (name && name !== '(flags)' && name !== '(env)') return name;
+  const url = (flags && flags.url) || (ctx && ctx.url);
+  if (url) return String(url);
+  return name || '<ctx>';
 }
 
 module.exports = { TABLE, resolveResource, knownSpellings, parseTarget, fetchResources, failUpgrade, requireResource, ctxLabel };
