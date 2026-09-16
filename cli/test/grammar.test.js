@@ -576,13 +576,15 @@ test('every RENAMED_SECOND second token answers with its own pointer, exit 1', a
   const { RENAMED_SECOND } = require('../src/main');
   for (const [verb, table] of Object.entries(RENAMED_SECOND)) {
     for (const tok of Object.keys(table)) {
-      if (tok === '*') continue;
-      const { code, stderr } = await cli([verb, tok, 'x'], null, {
+      // '*' is the per-verb fallback: it is keyed by no literal token, so the
+      // walk exercises it through a token no resource name can collide with.
+      const typed = tok === '*' ? 'zzz-not-a-resource' : tok;
+      const { code, stderr } = await cli([verb, typed, 'x'], null, {
         spawnFn: () => { throw new Error('spawnFn called'); },
         execFn: async () => { throw new Error('execFn called'); },
       });
-      assert.strictEqual(code, 1, `${verb} ${tok} must exit 1: ${stderr}`);
-      assert.match(stderr, new RegExp(`clodexctl ${verb} ${tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} was renamed: use clodexctl `));
+      assert.strictEqual(code, 1, `${verb} ${typed} must exit 1: ${stderr}`);
+      assert.match(stderr, new RegExp(`clodexctl ${verb} ${typed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} was renamed: use clodexctl `));
     }
   }
 });

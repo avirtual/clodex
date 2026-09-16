@@ -5,13 +5,13 @@ manifest only names it, feeds it secrets, and gives it storage. No ingress,
 no service exposure — reachability is `kubectl port-forward` through
 clodexctl's tunnel transport, so the customer's RBAC is the access control.
 
-## 0. The one-command path: `clodexctl deploy helm`
+## 0. The one-command path: `clodexctl deploy node <name> --helm`
 
 The whole recipe below is one command when the packaged chart
 (`cli/deploy/helm/clodex`) fits your posture:
 
 ```sh
-clodexctl deploy helm mynode \
+clodexctl deploy node mynode --helm \
   [--namespace clodex] [--kube-context ENGAGEMENT] \
   [--claude-token-file ./token] [--set k=v …] [--values f.yaml]
 ```

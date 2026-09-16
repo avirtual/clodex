@@ -22,7 +22,7 @@ Every step is copy-paste; replace the ALL-CAPS placeholders.
 > and outputs the exact `ctx add`, `run-task`, and `put-secret-value` commands.
 > The manual walkthrough below is the same shape, spelled out.
 
-## 0. One command (`clodexctl deploy fargate`)
+## 0. One command (`clodexctl deploy node <stack> --fargate`)
 
 `clodexctl` drives the whole template for you — `aws cloudformation deploy` of
 `cli/deploy/clodex-fargate.yaml`, populate the model credential, read the
@@ -30,10 +30,10 @@ stack's self-minted wire token, save a ready-to-use context, and verify the
 node over the SSM tunnel:
 
 ```sh
-clodexctl deploy fargate clodex-node \
+clodexctl deploy node clodex-node --fargate \
   --token-file ./claude-token          # from `claude setup-token`; omit for Bedrock (--use-bedrock)
 # then:
-clodexctl --ctx clodex-node sessions   # the saved context is ready
+clodexctl --ctx clodex-node get sessions   # the saved context is ready
 ```
 
 No `--subnets` / `--security-group`? They're **auto-detected from the account's

@@ -12,7 +12,7 @@ headless engine as a systemd --user service on 127.0.0.1:7900), verifies the
 wire answers, and registers a context:
 
 ```sh
-clodexctl deploy ubuntu@ec2-host          # re-running IS the update path
+clodexctl deploy node ec2-host --ssh ubuntu@ec2-host   # re-running IS the update path
 clodexctl --ctx ec2-host create session worker --type claude --cwd /srv/work
 clodexctl --ctx ec2-host exec worker "…"
 ```
@@ -36,17 +36,17 @@ tunnel is the auth boundary (same posture as the GUI's peers).
 ## Flavor B: no ssh allowed — SSM-managed instance
 
 Many customer environments close port 22 entirely and mandate Session
-Manager. `clodexctl deploy ssm` automates the whole thing over SSM RunCommand —
+Manager. `clodexctl deploy node <name> --ssm` automates the whole thing over SSM RunCommand —
 no ssh, nothing open inbound, and the node is the **same OS-flavor install** the
 ssh flavor produces (a dedicated `clodex` host user + systemd --user service, not
 a container):
 
 ```sh
-clodexctl deploy ssm ec2ssm --target i-INSTANCE --region us-west-2 --profile prod
+clodexctl deploy node ec2ssm --ssm i-INSTANCE --region us-west-2 --profile prod
 #   [--branch B] [--repo URL] [--port N] [--claude-token-file F]
 #   [--no-wirescope] [--no-ctx] [--force] [--dry-run] [--json]
 
-clodexctl --ctx ec2ssm sessions      # ready — the deploy saved the context
+clodexctl --ctx ec2ssm get sessions  # ready — the deploy saved the context
 ```
 
 It mints a wire token, preflights the instance (registered + `Online`), sends
@@ -62,7 +62,7 @@ the update path (every step is idempotent).
 > parameters → visible in the account's SSM command history / CloudTrail to
 > anyone with `ssm:GetCommandInvocation`. Acceptable **because the port never
 > leaves the instance's loopback** (reaching the wire needs `ssm:StartSession`
-> on the same account); **re-run `deploy ssm` to rotate** the token. Model
+> on the same account); **re-run the `--ssm` deploy to rotate** the token. Model
 > credentials never ride `send-command`: `--claude-token-file` delivers the
 > Claude token *after* verify, over the authenticated wire, into a 0600
 > service drop-in — or use the instance role (Bedrock, Fargate recipe §4).
@@ -72,7 +72,7 @@ the update path (every step is idempotent).
 | Channel | What it is | Limits |
 |---|---|---|
 | **Runtime tunnel** (`--ssm` transport: `get sessions`, `dm`, `exec`, `logs -f`, `attach`) | `aws ssm start-session` port-forward to the box's loopback | **None** — full wire parity, verified live; a normal Clodex peer over the tunnel |
-| **Deploy channel** (`deploy ssm` → RunCommand) | one async `AWS-RunShellScript`, polled | no live stdin/stdout → marker trail **pseudo-streamed per poll tick** (+ full log at `/home/clodex/clodex-deploy.log`); **24 KB** output cap; **async poll** (10 min budget); wire token **visible in SSM history** → loopback-only + re-run to rotate |
+| **Deploy channel** (`deploy node --ssm` → RunCommand) | one async `AWS-RunShellScript`, polled | no live stdin/stdout → marker trail **pseudo-streamed per poll tick** (+ full log at `/home/clodex/clodex-deploy.log`); **24 KB** output cap; **async poll** (10 min budget); wire token **visible in SSM history** → loopback-only + re-run to rotate |
 
 So the *limits are the deploy step's*, not the running node's — once deployed,
 the `--ssm` context behaves exactly like an `--ssh` one.
@@ -89,7 +89,7 @@ $ docker run -d --name clodex-ec2ssm --restart unless-stopped \
     -e CLODEX_REMOTE_TOKEN=<minted> ghcr.io/avirtual/clodex:VERSION
 ```
 
-Then reach it with the typed `--ssm` transport (the same context `deploy ssm`
+Then reach it with the typed `--ssm` transport (the same context the `--ssm` deploy
 saves):
 
 ```sh
@@ -103,13 +103,13 @@ is **data** (safe to `ctx import`/share); the raw `--tunnel aws ssm
 start-session …` form still works if you need to customize the argv.
 </details>
 
-**ssh-flavor over SSM (the ProxyCommand bridge).** `deploy ssm` already gives you
+**ssh-flavor over SSM (the ProxyCommand bridge).** `deploy node --ssm` already gives you
 the git-clone installer, so you rarely need this — but if you want plain `deploy
 <user@host>` to reach an SSM-only box directly (e.g. an ssh key already exists on
 it), bridge ssh through SSM: add to `~/.ssh/config` a
 `ProxyCommand sh -c "aws ssm start-session --target %h --document-name
 AWS-StartSSHSession --parameters portNumber=%p"` for the instance id as the
-host, then run `clodexctl deploy i-INSTANCE`. (SSM must permit
+host, then run `clodexctl deploy node <name> --ssh i-INSTANCE`. (SSM must permit
 `AWS-StartSSHSession` and the box must run sshd on loopback.)
 
 The instance role needs the standard `AmazonSSMManagedInstanceCore` policy;
@@ -120,7 +120,7 @@ session logs, under your existing retention and access controls.
 
 | Customer says | Use |
 |---|---|
-| "here's ssh access" | Flavor A — one `clodexctl deploy` |
+| "here's ssh access" | Flavor A — one `clodexctl deploy node … --ssh` |
 | "SSM only, port 22 closed" | Flavor B |
 | "we don't give VMs, only tasks" | the Fargate recipe |
 | "we run everything in EKS/k8s" | the k8s recipe |
