@@ -162,24 +162,34 @@ function forcedFlavor(flags) {
 function storedDeploy(name, io) {
   const store = safeLoadContexts(io);
   const entry = store.contexts[name];
-  if (!entry) return { known: false, dep: null };
+  if (!entry) return { known: false, dep: null, entry: null, inferred: null };
   const dep = entry.deploy;
-  return { known: true, dep: (dep && typeof dep === 'object' && dep.flavor) ? dep : null };
+  if (dep && typeof dep === 'object' && dep.flavor) return { known: true, dep, entry, inferred: null };
+  const inferred = D.inferDeployFromTransport(name, entry);
+  return { known: true, dep: inferred, entry, inferred };
 }
 
 async function undeployVerb({ printer, flags, args, io = {} }) {
   const name = args[0];
   if (!name) throw new CliError(EXIT.USAGE, 'undeploy node needs a name (e.g. undeploy node mybox)');
   const forced = forcedFlavor(flags);
-  const { known, dep } = storedDeploy(name, io);
+  const { known, dep: stored, entry, inferred } = storedDeploy(name, io);
+  // A forced flag keeps reading the STORED record only: it must be able to say
+  // it is overriding what the context records, and an inference is not that.
+  const dep = stored || (forced ? null : inferred);
   const flavor = forced || (dep ? String(dep.flavor) : null);
   if (!flavor) {
     if (!known) {
       throw new CliError(EXIT.USAGE,
         `no such context: ${name} — undeploy reads the teardown to run from the context record. If the node has no context (deployed with --no-ctx, or on another machine), name the flavor and the target yourself (${UNDEPLOY_FLAVOR_USAGE}).`);
     }
+    const kind = D.transportKind(entry);
     throw new CliError(EXIT.USAGE,
-      `context "${name}" does not record how it was deployed, so undeploy cannot tell which teardown to run — it was created before clodexctl stored that (or by hand). Name the flavor yourself (${UNDEPLOY_FLAVOR_USAGE}); guessing it from the transport is exactly the ambiguity the record exists to remove (an ssh deploy and a remote docker deploy save identical transports).`);
+      `context "${name}" does not record how it was deployed, so undeploy cannot tell which teardown to run — it was created before clodexctl stored that (or by hand). Name the flavor yourself (${UNDEPLOY_FLAVOR_USAGE}); its ${kind || 'transport'} transport cannot answer it either, which is exactly the ambiguity the record exists to remove (an ssh deploy and a remote docker deploy save identical transports).`);
+  }
+  if (!stored && inferred && !forced) {
+    if (flags.json) printer.json({ type: 'inferred-flavor', ctx: name, flavor: inferred.flavor, from: 'kubectl', release: inferred.release, namespace: inferred.namespace, kubeContext: inferred.kubeContext });
+    else printer.line(D.inferredFlavorLine(name, inferred));
   }
   if (UNDEPLOY_UNSUPPORTED.includes(flavor)) {
     throw new CliError(EXIT.USAGE, `undeploy of an ${flavor} node needs an uninstall mode in the installer script — not yet supported; remove by hand on the node: systemctl --user disable --now clodex.service`);
