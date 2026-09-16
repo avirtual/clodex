@@ -294,15 +294,17 @@ async function query({ client, ctx, printer, flags, args }) {
   printer.json(body);
 }
 
-async function argsGet({ client, printer, flags, args }) {
+async function argsGet({ client, ctx, printer, flags, args }) {
   const name = requireName(args[0], 'args get');
-  const body = await client.get(`/api/session-args/${encodeURIComponent(name)}`, 'args get');
+  await R.requireResource(client, 'sessions', 'get', R.ctxLabel(ctx, flags), 'args');
+  const body = await client.get(`/api/sessions/${encodeURIComponent(name)}/args`, 'args get');
   printer.json(body);
 }
 
-async function skills({ client, printer, args }) {
+async function skills({ client, ctx, printer, flags, args }) {
   const name = requireName(args[0], 'skills');
-  const body = await client.get(`/api/skill-catalog/${encodeURIComponent(name)}`, 'skills');
+  await R.requireResource(client, 'sessions', 'get', R.ctxLabel(ctx, flags), 'skills');
+  const body = await client.get(`/api/sessions/${encodeURIComponent(name)}/skills`, 'skills');
   printer.json(body);
 }
 
@@ -384,7 +386,8 @@ async function send({ client, ctx, printer, flags, args, io = {} }) {
   const text = args.slice(1).join(' ').trim();
   if (!text) throw new CliError(EXIT.USAGE, 'send needs message text');
   if (flags.wait) return sendWait({ client, ctx, printer, flags, args, name, text, io });
-  const res = await client.post('/api/send', 'send', { name, text });
+  await R.requireResource(client, 'sessions', 'post', R.ctxLabel(ctx, flags), 'dm');
+  const res = await client.post(`/api/sessions/${encodeURIComponent(name)}/dm`, 'send', { text });
   if (flags.json) printer.json(res);
   else printer.line(`sent to ${name} (fire-and-forget)`);
 }
@@ -415,7 +418,7 @@ async function run({ client, ctx, printer, flags, args, stderr, io = {} }) {
 }
 
 async function sendWait({ client, ctx, printer, flags, name, text, mode = null, io = {} }) {
-  await R.requireResource(client, 'sessions', 'get', R.ctxLabel(ctx, flags), 'transcript');
+  await R.requireResource(client, 'sessions', 'post', R.ctxLabel(ctx, flags), 'dm');
   const timeoutMs = (flags.timeout != null ? parseIntOr(flags.timeout, 'timeout') : 300) * 1000;
       // --timeout is a hard ceiling on the WHOLE verb (wait phase, then refetch at +grace):
       // a wedged fetch holds its socket open and keeps sendWait from returning, which blocks
@@ -439,7 +442,7 @@ async function sendWait({ client, ctx, printer, flags, name, text, mode = null, 
         try {
           const before = await client.get(`${transcriptPath(name)}?limit=500`, 'send --wait (snapshot)', { signal: waitAc.signal });
           snapshot = (before.messages || []).length;
-          await client.post('/api/send', 'send', { name, text }, { signal: waitAc.signal });
+          await client.post(`/api/sessions/${encodeURIComponent(name)}/dm`, 'send', { text }, { signal: waitAc.signal });
         } catch (e) { finish(reject, e); } // a ceiling abort lands here too — finish is then a no-op (already settled)
       },
       onEvent: (event, data) => {
@@ -592,26 +595,30 @@ async function exec({ client, ctx, printer, flags, args, mode = null, knownType 
   }
 }
 
-async function kill({ client, printer, flags, args, prompt = defaultPrompt }) {
+async function kill({ client, ctx, printer, flags, args, prompt = defaultPrompt }) {
   const name = requireName(args[0], 'kill');
+  if (!flags.force && flags.json) {
+    throw new CliError(EXIT.USAGE, 'kill needs --force in -o json/non-interactive mode (wire kill is a hard delete, no resume)');
+  }
+  await R.requireResource(client, 'sessions', 'delete', R.ctxLabel(ctx, flags));
   if (!flags.force) {
-    if (flags.json) throw new CliError(EXIT.USAGE, 'kill needs --force in -o json/non-interactive mode (wire kill is a hard delete, no resume)');
     const ok = await prompt(`kill "${name}"? This is a HARD DELETE on the engine — no resume. Type the name to confirm: `);
     if (String(ok).trim() !== name) throw new CliError(EXIT.USAGE, 'aborted — confirmation did not match');
   }
-  const res = await client.post(`/api/kill/${encodeURIComponent(name)}`, 'kill', {});
+  const res = await client.del(`/api/sessions/${encodeURIComponent(name)}`, 'kill');
   if (flags.json) printer.json(res);
   else printer.line(`killed ${res.name || name} (hard delete — not resumable)`);
 }
 
-async function restart({ client, printer, flags, args }) {
+async function restart({ client, ctx, printer, flags, args }) {
   const name = requireName(args[0], 'restart');
-  const res = await client.post(`/api/restart-session/${encodeURIComponent(name)}`, 'restart', { fresh: !!flags.fresh });
+  await R.requireResource(client, 'sessions', 'post', R.ctxLabel(ctx, flags), 'restart');
+  const res = await client.post(`/api/sessions/${encodeURIComponent(name)}/restart`, 'restart', { fresh: !!flags.fresh });
   if (flags.json) printer.json(res);
   else printer.line(`restarted ${name}${flags.fresh ? ' (fresh)' : ' (resume)'}`);
 }
 
-async function argsSet({ client, printer, flags, args }) {
+async function argsSet({ client, ctx, printer, flags, args }) {
   const name = requireName(args[0], 'args set');
   const patch = {};
   if (Array.isArray(flags.arg)) patch.extraArgs = flags.arg;
@@ -619,7 +626,8 @@ async function argsSet({ client, printer, flags, args }) {
   if (flags.proxy != null) patch.proxy = String(flags.proxy);
   if (flags.restart) patch.restart = true;
   if (Object.keys(patch).length === 0) throw new CliError(EXIT.USAGE, 'args set needs at least one of --arg / --proxy / --restart');
-  const res = await client.post(`/api/session-args/${encodeURIComponent(name)}`, 'args set', patch);
+  await R.requireResource(client, 'sessions', 'patch', R.ctxLabel(ctx, flags), 'args');
+  const res = await client.patch(`/api/sessions/${encodeURIComponent(name)}/args`, 'args set', patch);
   if (flags.json) printer.json(res);
   else printer.line(`args applied to ${name}${res.restarted ? ' (respawned)' : ''}`);
 }

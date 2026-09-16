@@ -209,10 +209,10 @@
     if (!text || !open) return;
     sendBtn.disabled = true;
     try {
-      const r = await fetch('api/send', {
+      const r = await fetch(`api/sessions/${encodeURIComponent(open)}/dm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: open, text }),
+        body: JSON.stringify({ text }),
       });
       const j = await r.json();
       if (j.ok) {

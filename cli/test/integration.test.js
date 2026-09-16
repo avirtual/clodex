@@ -11,7 +11,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const { run } = require('../src/main');
-const { RESOURCES_DOC, docWithout } = require('./fixtures/resources-doc');
+const { RESOURCES_DOC, docWithout, docWithoutVerb } = require('./fixtures/resources-doc');
 
 const TOKEN = 'sekret';
 
@@ -307,13 +307,67 @@ test('spawn --env: a shapeless token (no "=") is a usage error before any reques
   server.close();
 });
 
-test('send: fire-and-forget POST /api/send', async () => {
+test('send: fire-and-forget POST /api/sessions/:name/dm — the name rides the path, not the body', async () => {
   const { server, seen } = stub((req, res) => { res.writeHead(200); res.end(JSON.stringify({ ok: true })); });
   const port = await listen(server);
   const { code } = await cli(['send', 'b', 'fix', 'the', 'tests'], port);
   assert.strictEqual(code, 0);
-  assert.strictEqual(seen[0].url, '/api/send');
-  assert.deepStrictEqual(seen[0].body, { name: 'b', text: 'fix the tests' });
+  assert.deepStrictEqual(seen.map((x) => `${x.method} ${x.url}`), ['GET /api/resources', 'POST /api/sessions/b/dm']);
+  assert.deepStrictEqual(seen[1].body, { text: 'fix the tests' });
+  server.close();
+});
+
+test('send: a node whose sessions row carries no dm subresource is the D.5 line, exit 1', async () => {
+  const { server, seen } = stub((req, res, rec) => {
+    if (rec.url === '/api/peer/hello') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['send'] })); }
+    res.writeHead(200); res.end('{}');
+  }, { doc: docWithout('dm') });
+  const port = await listen(server);
+  const { code, stderr } = await cli(['send', 'b', 'hi'], port);
+  assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
+  assert.strictEqual(stderr.trim(), 'clodexctl: node oldbox (5.69.0) does not serve sessions/dm post; run: clodexctl upgrade node http://127.0.0.1:' + port);
+  assert.ok(!seen.some((s) => s.method === 'POST'), 'the check ran BEFORE the send');
+  server.close();
+});
+
+test('restart: a node whose sessions row carries no restart subresource is the D.5 line, exit 1', async () => {
+  const { server, seen } = stub((req, res, rec) => {
+    if (rec.url === '/api/peer/hello') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['create'] })); }
+    res.writeHead(200); res.end('{}');
+  }, { doc: docWithout('restart') });
+  const port = await listen(server);
+  const { code, stderr } = await cli(['restart', 'b'], port);
+  assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
+  assert.strictEqual(stderr.trim(), 'clodexctl: node oldbox (5.69.0) does not serve sessions/restart post; run: clodexctl upgrade node http://127.0.0.1:' + port);
+  assert.ok(!seen.some((s) => s.method === 'POST'), 'the check ran BEFORE the restart');
+  server.close();
+});
+
+test('args set: a node whose args subresource carries no patch verb is the D.5 line, exit 1', async () => {
+  const doc = docWithout('args');
+  doc.resources[0].subresources.args = ['get'];
+  const { server, seen } = stub((req, res, rec) => {
+    if (rec.url === '/api/peer/hello') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['args'] })); }
+    res.writeHead(200); res.end('{}');
+  }, { doc });
+  const port = await listen(server);
+  const { code, stderr } = await cli(['args', 'set', 'b', '--arg', '--x'], port);
+  assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
+  assert.strictEqual(stderr.trim(), 'clodexctl: node oldbox (5.69.0) does not serve sessions/args patch; run: clodexctl upgrade node http://127.0.0.1:' + port);
+  assert.ok(!seen.some((s) => s.method === 'PATCH'), 'the check ran BEFORE the write');
+  server.close();
+});
+
+test('kill: a node whose sessions row carries no delete verb is the D.5 line, exit 1', async () => {
+  const { server, seen } = stub((req, res, rec) => {
+    if (rec.url === '/api/peer/hello') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['create'] })); }
+    res.writeHead(200); res.end('{}');
+  }, { doc: docWithoutVerb('delete') });
+  const port = await listen(server);
+  const { code, stderr } = await cli(['kill', 'doomed', '--force'], port);
+  assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
+  assert.strictEqual(stderr.trim(), 'clodexctl: node oldbox (5.69.0) does not serve sessions delete; run: clodexctl upgrade node http://127.0.0.1:' + port);
+  assert.ok(!seen.some((s) => s.method === 'DELETE'), 'the check ran BEFORE the delete');
   server.close();
 });
 
@@ -378,13 +432,12 @@ test('kill: confirm prompt gate — matching name proceeds; mismatch aborts', as
   // matching answer → proceeds
   const ok = await cli(['kill', 'doomed'], port, { prompt: async () => 'doomed' });
   assert.strictEqual(ok.code, 0);
-  assert.strictEqual(seen[0].url, '/api/kill/doomed');
-  // mismatched answer → aborts with usage error, no further request
-  const before = seen.length;
+  assert.deepStrictEqual(seen.map((x) => `${x.method} ${x.url}`), ['GET /api/resources', 'DELETE /api/sessions/doomed']);
+  // mismatched answer → aborts with usage error; only the capability check rode the wire
   const bad = await cli(['kill', 'doomed'], port, { prompt: async () => 'nope' });
   assert.strictEqual(bad.code, 2);
   assert.match(bad.stderr, /confirmation did not match/);
-  assert.strictEqual(seen.length, before);
+  assert.deepStrictEqual(seen.slice(2).map((x) => `${x.method} ${x.url}`), ['GET /api/resources'], 'the abort sent no delete');
   server.close();
 });
 
@@ -393,7 +446,7 @@ test('kill --force: no prompt, hard-delete message', async () => {
   const port = await listen(server);
   const { code, stdout } = await cli(['kill', 'doomed', '--force'], port);
   assert.strictEqual(code, 0);
-  assert.strictEqual(seen[0].url, '/api/kill/doomed');
+  assert.deepStrictEqual(seen.map((x) => `${x.method} ${x.url}`), ['GET /api/resources', 'DELETE /api/sessions/doomed']);
   assert.match(stdout, /hard delete/);
   server.close();
 });

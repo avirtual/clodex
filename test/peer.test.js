@@ -602,7 +602,7 @@ test('kill: existing session acks ok; missing session is a distinguishable error
   assert.match(gone.error, /no such session/);
 });
 
-test('restart-session: plain and fresh flags reach the owner callback', async () => {
+test('sessions/:name/restart: plain and fresh flags reach the owner callback', async () => {
   const plain = await new Promise((r) => conn.restartSession('alpha', { fresh: false }, r));
   assert.ok(plain.ok, 'plain restart acked ok');
   assert.ok(plain.restarted, 'restarted flag echoed');
@@ -613,7 +613,7 @@ test('restart-session: plain and fresh flags reach the owner callback', async ()
   assert.deepStrictEqual(restartedSessions.at(-1), { name: 'alpha', fresh: true });
 });
 
-test('restart-session: missing session is a distinguishable error', async () => {
+test('sessions/:name/restart: missing session is a distinguishable error', async () => {
   const gone = await new Promise((r) => conn.restartSession('nope', { fresh: false }, r));
   assert.equal(gone.ok, false);
   assert.match(gone.error, /not found in persistence/i);
@@ -621,7 +621,7 @@ test('restart-session: missing session is a distinguishable error', async () => 
 
 // ---- Edit Session over the wire (the 'args' cap) ----
 
-test('session-args: GET returns the box args + catalogs for the dialog', async () => {
+test('sessions/:name/args: GET returns the box args + catalogs for the dialog', async () => {
   const got = await new Promise((r) => conn.sessionArgs('alpha', r));
   assert.ok(got.ok);
   assert.equal(got.type, 'claude');
@@ -632,12 +632,12 @@ test('session-args: GET returns the box args + catalogs for the dialog', async (
   assert.deepStrictEqual(got.catalogs.claudeTools, ['Bash']);
 });
 
-test('session-args: GET on a missing session is a distinguishable error', async () => {
+test('sessions/:name/args: GET on a missing session is a distinguishable error', async () => {
   const gone = await new Promise((r) => conn.sessionArgs('nope', r));
   assert.equal(gone.ok, false);
 });
 
-test('session-args: POST forwards the patch; restart flag drives restarted', async () => {
+test('sessions/:name/args: PATCH forwards the patch; restart flag drives restarted', async () => {
   const patch = { extraArgs: ['--y'], restart: false, agents: ['a1'] };
   const res = await new Promise((r) => conn.setSessionArgs('alpha', patch, r));
   assert.ok(res.ok);
@@ -651,7 +651,7 @@ test('session-args: POST forwards the patch; restart flag drives restarted', asy
 
 // ---- Edit Skills over the wire (same 'args' cap, Phase 2) ----
 
-test('skill-catalog: GET returns the box skill catalog for the popover', async () => {
+test('sessions/:name/skills: GET returns the box skill catalog for the popover', async () => {
   const got = await new Promise((r) => conn.skillCatalog('alpha', r));
   assert.ok(got.ok);
   // Names + disabled set come from the BOX (roster parsed box-side, box's library).
@@ -660,12 +660,12 @@ test('skill-catalog: GET returns the box skill catalog for the popover', async (
   assert.equal(got.canReenable, true);
 });
 
-test('skill-catalog: GET on a missing session is a distinguishable error', async () => {
+test('sessions/:name/skills: GET on a missing session is a distinguishable error', async () => {
   const gone = await new Promise((r) => conn.skillCatalog('nope', r));
   assert.equal(gone.ok, false);
 });
 
-test('session-skills: POST forwards the disabled + inject sets to the owner', async () => {
+test('sessions/:name/skills: PATCH forwards the disabled + inject sets to the owner', async () => {
   const res = await new Promise((r) => conn.setSessionSkills('alpha', ['xlsx'], ['my-skill'], r));
   assert.ok(res.ok);
   assert.deepStrictEqual(setSkillsCalls.at(-1).disabledSkills, ['xlsx'], 'disabled set reached the owner');
@@ -725,10 +725,10 @@ test('create/kill/restart: 501 when the owner exposes no lifecycle callbacks', a
     send: () => ({ ok: true }), hostLabel: 'bare', version: '0.0.0-test',
   });
   await bare.start();
-  const hit = (path, body) => new Promise((resolve, reject) => {
+  const hit = (path, body, method = 'POST') => new Promise((resolve, reject) => {
     const b = JSON.stringify(body || {});
     const req = http.request({
-      hostname: '127.0.0.1', port: bare.port, path, method: 'POST',
+      hostname: '127.0.0.1', port: bare.port, path, method,
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(b) },
     }, (res) => {
       let buf = '';
@@ -742,18 +742,18 @@ test('create/kill/restart: 501 when the owner exposes no lifecycle callbacks', a
     const c = await hit('/api/sessions', { name: 'x', type: 'claude', cwd: '/tmp/x' });
     assert.equal(c.status, 501);
     assert.equal(c.body.ok, false);
-    const k = await hit('/api/kill/x', {});
+    const k = await hit('/api/sessions/x', {}, 'DELETE');
     assert.equal(k.status, 501);
     assert.equal(k.body.ok, false);
-    const rs = await hit('/api/restart-session/x', {});
+    const rs = await hit('/api/sessions/x/restart', {});
     assert.equal(rs.status, 501);
     assert.equal(rs.body.ok, false);
     // The session-config-editing endpoints ('args' cap) 501 on their own absent
     // callbacks too — each independently.
-    const sk = await hit('/api/session-skills/x', {});
+    const sk = await hit('/api/sessions/x/skills', {}, 'PATCH');
     assert.equal(sk.status, 501);
     assert.equal(sk.body.ok, false);
-    const sa = await hit('/api/session-args/x', {});
+    const sa = await hit('/api/sessions/x/args', {}, 'PATCH');
     assert.equal(sa.status, 501);
     assert.equal(sa.body.ok, false);
     // And the bare server must not advertise the capability.

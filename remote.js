@@ -59,7 +59,7 @@ function resolveRemoteBasePathSetting(settings, env = process.env, warn) {
 }
 
 const RESOURCES = [
-  { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'], subresources: { transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'] } },
+  { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get', 'delete'], subresources: { transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'], dm: ['post'], restart: ['post'], args: ['get', 'patch'], skills: ['get', 'patch'] } },
   { name: 'workspaces', singular: 'workspace', scope: 'node', verbs: ['list'] },
   { name: 'peers', singular: 'peer', scope: 'node', verbs: ['list', 'get'] },
   { name: 'teams', singular: 'team', scope: 'node', verbs: ['list', 'get'] },
@@ -87,7 +87,15 @@ const SUBRESOURCE_CALLBACK = {
     control: '_sendInput',
     input: '_sendInput',
     resize: '_resizePty',
+    dm: '_send',
+    restart: '_restartSession',
+    args: { get: '_getSessionArgs', patch: '_setSessionArgs' },
+    skills: { get: '_getSkillCatalog', patch: '_setSessionSkills' },
   },
+};
+
+const VERB_CALLBACK = {
+  sessions: { delete: '_killSession' },
 };
 
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
@@ -518,14 +526,19 @@ class RemoteServer {
       const cb = RESOURCE_CALLBACK[r.name];
       return !cb || !!this[cb];
     }).map((r) => {
-      if (!r.subresources) return r;
+      const verbGates = VERB_CALLBACK[r.name] || {};
+      const verbs = r.verbs.filter((v) => !verbGates[v] || !!this[verbGates[v]]);
+      if (!r.subresources) return verbs.length === r.verbs.length ? r : { ...r, verbs };
       const gates = SUBRESOURCE_CALLBACK[r.name] || {};
       const subresources = {};
-      for (const [sub, verbs] of Object.entries(r.subresources)) {
+      for (const [sub, subVerbs] of Object.entries(r.subresources)) {
         const cb = gates[sub];
-        if (!cb || this[cb]) subresources[sub] = verbs;
+        if (!cb) { subresources[sub] = subVerbs; continue; }
+        if (typeof cb === 'string') { if (this[cb]) subresources[sub] = subVerbs; continue; }
+        const kept = subVerbs.filter((v) => !cb[v] || !!this[cb[v]]);
+        if (kept.length) subresources[sub] = kept;
       }
-      return { ...r, subresources };
+      return { ...r, verbs, subresources };
     });
   }
 
@@ -704,6 +717,79 @@ class RemoteServer {
     });
   }
 
+  _handleDm(name, req, res) {
+    return this._readBody(req, res, (body) => {
+      let msg;
+      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      const text = String(msg.text || '').trim();
+      if (!text) return this._json(res, 400, { ok: false, error: 'empty message' });
+      const out = this._send(name, text);
+      return this._json(res, out.ok ? 200 : 404, out);
+    });
+  }
+
+  _handleSessionDelete(name, res) {
+    if (!this._killSession) return this._json(res, 501, { ok: false, error: 'delete not available' });
+    return Promise.resolve()
+      .then(() => this._killSession(name))
+      .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'kill failed' }))
+      .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+  }
+
+  _handleRestartSession(name, req, res) {
+    if (!this._restartSession) return this._json(res, 501, { ok: false, error: 'restart not available' });
+    return this._readBody(req, res, (body) => {
+      let msg = {};
+      if (body) { try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); } }
+      Promise.resolve()
+        .then(() => this._restartSession(name, { fresh: !!msg.fresh }))
+        .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'restart failed' }))
+        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+    });
+  }
+
+  _handleArgsGet(name, res) {
+    if (!this._getSessionArgs) return this._json(res, 501, { ok: false, error: 'args not available' });
+    return Promise.resolve()
+      .then(() => this._getSessionArgs(name))
+      .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'not found' }))
+      .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+  }
+
+  _handleArgsPatch(name, req, res) {
+    if (!this._setSessionArgs) return this._json(res, 501, { ok: false, error: 'args not available' });
+    return this._readBody(req, res, (body) => {
+      let msg;
+      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      Promise.resolve()
+        .then(() => this._setSessionArgs(name, msg))
+        .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'setArgs failed' }))
+        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+    });
+  }
+
+  // Resolved box-side: inject-skills materialize at spawn on the box, so the roster
+  // and skill library must be the box's, not the viewer's.
+  _handleSkillsGet(name, res) {
+    if (!this._getSkillCatalog) return this._json(res, 501, { ok: false, error: 'skills not available' });
+    return Promise.resolve()
+      .then(() => this._getSkillCatalog(name))
+      .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'not found' }))
+      .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+  }
+
+  _handleSkillsPatch(name, req, res) {
+    if (!this._setSessionSkills) return this._json(res, 501, { ok: false, error: 'skills not available' });
+    return this._readBody(req, res, (body) => {
+      let msg;
+      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      Promise.resolve()
+        .then(() => this._setSessionSkills(name, msg.disabledSkills, msg.injectSkills))
+        .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'setSkills failed' }))
+        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+    });
+  }
+
   _route(req, res) {
     if (!this._authGate(req, res)) return;
     const url = new URL(req.url, 'http://localhost');
@@ -748,6 +834,13 @@ class RemoteServer {
       if (req.method === 'POST' && sub === 'control') return this._handleControl(name, req, res);
       if (req.method === 'POST' && sub === 'input') return this._handleInput(name, req, res);
       if (req.method === 'POST' && sub === 'resize') return this._handleResize(name, req, res);
+      if (req.method === 'POST' && sub === 'dm') return this._handleDm(name, req, res);
+      if (req.method === 'DELETE' && sub === undefined) return this._handleSessionDelete(name, res);
+      if (req.method === 'POST' && sub === 'restart') return this._handleRestartSession(name, req, res);
+      if (req.method === 'GET' && sub === 'args') return this._handleArgsGet(name, res);
+      if (req.method === 'PATCH' && sub === 'args') return this._handleArgsPatch(name, req, res);
+      if (req.method === 'GET' && sub === 'skills') return this._handleSkillsGet(name, res);
+      if (req.method === 'PATCH' && sub === 'skills') return this._handleSkillsPatch(name, req, res);
       return this._json(res, 404, { ok: false, error: 'not found' });
     }
     if (req.method === 'GET' && p === '/api/workspaces') {
@@ -915,18 +1008,6 @@ class RemoteServer {
       try { out = this._wtermClose(seat); } catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
       return this._json(res, 200, out || { ok: true });
     }
-    if (req.method === 'POST' && p === '/api/send') {
-      return this._readBody(req, res, (body) => {
-        let msg;
-        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
-        const name = String(msg.name || '');
-        const text = String(msg.text || '').trim();
-        if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
-        if (!text) return this._json(res, 400, { ok: false, error: 'empty message' });
-        const out = this._send(name, text);
-        return this._json(res, out.ok ? 200 : 404, out);
-      });
-    }
     // Full app relaunch (sessions resume per the normal quit/restore
     // lifecycle). The response is written BEFORE the restart fires — the
     // server dies with the app, so a late reply would never arrive. POST
@@ -956,74 +1037,6 @@ class RemoteServer {
         .then(() => this._getCatalogs())
         .then((cat) => this._json(res, 200, { ok: true, catalogs: cat || {} }))
         .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
-    }
-    if (req.method === 'POST' && p.startsWith('/api/kill/')) {
-      if (!this._killSession) return this._json(res, 501, { ok: false, error: 'kill not available' });
-      const name = decodeURIComponent(p.slice('/api/kill/'.length));
-      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
-      return Promise.resolve()
-        .then(() => this._killSession(name))
-        .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'kill failed' }))
-        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
-    }
-    if (req.method === 'POST' && p.startsWith('/api/restart-session/')) {
-      if (!this._restartSession) return this._json(res, 501, { ok: false, error: 'restart not available' });
-      const name = decodeURIComponent(p.slice('/api/restart-session/'.length));
-      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
-      return this._readBody(req, res, (body) => {
-        let msg = {};
-        if (body) { try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); } }
-        Promise.resolve()
-          .then(() => this._restartSession(name, { fresh: !!msg.fresh }))
-          .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'restart failed' }))
-          .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
-      });
-    }
-    if (req.method === 'GET' && p.startsWith('/api/session-args/')) {
-      if (!this._getSessionArgs) return this._json(res, 501, { ok: false, error: 'args not available' });
-      const name = decodeURIComponent(p.slice('/api/session-args/'.length));
-      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
-      return Promise.resolve()
-        .then(() => this._getSessionArgs(name))
-        .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'not found' }))
-        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
-    }
-    if (req.method === 'POST' && p.startsWith('/api/session-args/')) {
-      if (!this._setSessionArgs) return this._json(res, 501, { ok: false, error: 'args not available' });
-      const name = decodeURIComponent(p.slice('/api/session-args/'.length));
-      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
-      return this._readBody(req, res, (body) => {
-        let msg;
-        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
-        Promise.resolve()
-          .then(() => this._setSessionArgs(name, msg))
-          .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'setArgs failed' }))
-          .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
-      });
-    }
-    // Resolved box-side: inject-skills materialize at spawn on the box, so the roster
-    // and skill library must be the box's, not the viewer's.
-    if (req.method === 'GET' && p.startsWith('/api/skill-catalog/')) {
-      if (!this._getSkillCatalog) return this._json(res, 501, { ok: false, error: 'skills not available' });
-      const name = decodeURIComponent(p.slice('/api/skill-catalog/'.length));
-      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
-      return Promise.resolve()
-        .then(() => this._getSkillCatalog(name))
-        .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'not found' }))
-        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
-    }
-    if (req.method === 'POST' && p.startsWith('/api/session-skills/')) {
-      if (!this._setSessionSkills) return this._json(res, 501, { ok: false, error: 'skills not available' });
-      const name = decodeURIComponent(p.slice('/api/session-skills/'.length));
-      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
-      return this._readBody(req, res, (body) => {
-        let msg;
-        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
-        Promise.resolve()
-          .then(() => this._setSessionSkills(name, msg.disabledSkills, msg.injectSkills))
-          .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'setSkills failed' }))
-          .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
-      });
     }
     if (req.method === 'POST' && p === '/api/dm') {
       if (!this._deliverDm) return this._json(res, 501, { ok: false, error: 'dm not available' });

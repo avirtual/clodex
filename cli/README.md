@@ -281,8 +281,8 @@ Read (all but `describe` support `-o json` — stable raw wire payload):
 | `version` | `GET /api/peer/hello` — client version plus the node's |
 | `logs <name> [--tail N] [-f\|--follow]` | `GET /api/resources` (capability check) → `GET /api/sessions/:name/transcript?limit=N` (+ `GET /api/events` when `-f`) |
 | `query <name> <kind>` | `GET /api/resources` → `POST /api/sessions/:name/query` — kind ∈ `ctx report bust files filePeek fileDiff` (`--path`, `--detail`) |
-| `args get <name>` | `GET /api/session-args/:name` |
-| `skills <name>` | `GET /api/skill-catalog/:name` |
+| `args get <name>` | `GET /api/resources` → `GET /api/sessions/:name/args` |
+| `skills <name>` | `GET /api/resources` → `GET /api/sessions/:name/skills` |
 
 **`run` — the one verb.** For "make this session do something and show me the
 result", reach for `run` — it looks up the session's type and picks the right
@@ -359,9 +359,9 @@ Write:
 | Verb | Route | Notes |
 |---|---|---|
 | `spawn <name> --cwd DIR --type T [--model M] [--arg X …] [--env KEY=VALUE …] [--fork]` | `POST /api/sessions` | `--model`/`--arg` ride `extraArgs`; each `--env KEY=VALUE` (repeatable) rides `body.env` and sets a per-session env var on the spawned PTY (merged over the box's machine + global/workspace scopes — the session value wins). Applied **only at create** (`run`/`send`/`args set` can't change env). The box re-validates every key server-side and drops invalid/deny-listed ones (`CLODEX_REMOTE_TOKEN` is reserved); the ack echoes the applied keys and `clodexctl` warns loudly if any were dropped — or if the node is too old to support env at all |
-| `kill <name> [--force]` | `POST /api/kill/:name` | **HARD DELETE — no resume.** Confirms unless `--force` (required with `-o json`) |
-| `restart <name> [--fresh]` | `POST /api/restart-session/:name` | |
-| `args set <name> [--arg X…] [--proxy URL] [--restart]` | `POST /api/session-args/:name` | |
+| `kill <name> [--force]` | `DELETE /api/sessions/:name` | **HARD DELETE — no resume.** Confirms unless `--force` (required with `-o json`) |
+| `restart <name> [--fresh]` | `POST /api/sessions/:name/restart` | |
+| `args set <name> [--arg X…] [--proxy URL] [--restart]` | `PATCH /api/sessions/:name/args` | |
 | `restart-app [--force]` | `POST /api/restart` | relaunches the whole engine |
 
 Plumbing (**prefer `run`** — these are the raw paths it routes over, kept for
@@ -369,7 +369,7 @@ scripting and explicit control):
 
 | Verb | Route | Notes |
 |---|---|---|
-| `send <name> <text…> [--wait [--timeout N]]` | `POST /api/send` | **fire-and-forget** by default (scripting). `--wait` blocks until the agent's turn ends and prints the new entries (default 300s) — `run` on an agent **is** this path |
+| `send <name> <text…> [--wait [--timeout N]]` | `POST /api/sessions/:name/dm` | **fire-and-forget** by default (scripting). `--wait` blocks until the agent's turn ends and prints the new entries (default 300s) — `run` on an agent **is** this path |
 | `input <name> <text…> [--no-enter]` | `POST /api/sessions/:name/input` | raw keystrokes, **no wait**; acquires + releases control; sends Enter by default (`--no-enter` posts raw). The deliberate low-level channel — **no agent guardrail** |
 | `exec <name> <cmd…> [--quiet-ms N] [--timeout N] [--raw] [--pty]` | `GET /api/sessions/:name/attach` + control + `POST /api/sessions/:name/input` | run one command in the PTY and print what the terminal produced; waits for quiet (default 750ms) or `--timeout` caps (default 30s); ANSI stripped unless `--raw`. On an **agent** it refuses without `--pty` — `run` on bash **is** this path |
 

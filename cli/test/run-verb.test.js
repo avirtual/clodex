@@ -62,7 +62,7 @@ function stub(opts = {}) {
       if (/^\/api\/sessions\/[^/]+\/transcript$/.test(p)) {
         res.writeHead(200); return res.end(JSON.stringify({ ok: true, messages: (opts.transcript && opts.transcript(seen)) || [] }));
       }
-      if (p === '/api/send') { res.writeHead(200); return res.end(JSON.stringify({ ok: true })); }
+      if (/^\/api\/sessions\/[^/]+\/dm$/.test(p)) { res.writeHead(200); return res.end(JSON.stringify({ ok: true })); }
       res.writeHead(404); res.end(JSON.stringify({ ok: false, error: 'no route' }));
     });
   });
@@ -89,14 +89,14 @@ function pushOutput(res, s) { res.write(`event: output\ndata: ${JSON.stringify({
 function endTurnWhenSent(name) {
   return (state, seen) => {
     const iv = setInterval(() => {
-      if (seen.some((s) => s.url === '/api/send')) { clearInterval(iv); state.events.write(`event: activity\ndata: ${JSON.stringify({ name, state: 'idle', turnEnd: true })}\n\n`); }
+      if (seen.some((s) => /^\/api\/sessions\/[^/]+\/dm$/.test(s.url))) { clearInterval(iv); state.events.write(`event: activity\ndata: ${JSON.stringify({ name, state: 'idle', turnEnd: true })}\n\n`); }
     }, 20);
   };
 }
 
 // ── run → agent (send-wait path) ─────────────────────────────────────────────
 
-test('run on a claude agent routes to send-wait: /api/send hit, NOT sessions/input', async () => {
+test('run on a claude agent routes to send-wait: /api/sessions/:name/dm hit, NOT sessions/input', async () => {
   let calls = 0;
   const { server, seen } = stub({
     sessions: [{ name: 'worker2', type: 'claude' }],
@@ -110,7 +110,7 @@ test('run on a claude agent routes to send-wait: /api/send hit, NOT sessions/inp
   assert.doesNotMatch(stdout, /\[user\] 2\*3/);
   const urls = seen.map((s) => `${s.method} ${s.url.split('?')[0]}`);
   assert.ok(urls.includes('GET /api/sessions'), 'looked up the type');
-  assert.ok(urls.includes('POST /api/send'), 'used the send path');
+  assert.ok(urls.some((u) => /^POST \/api\/sessions\/[^/]+\/dm$/.test(u)), 'used the send path');
   assert.ok(urls.includes('GET /api/events'), 'awaited turn end');
   assert.ok(!urls.some((u) => /^POST \/api\/sessions\/[^/]+\/input$/.test(u)), 'never typed into the TUI');
   server.close();
@@ -150,7 +150,7 @@ test('run --json on an agent carries mode:"agent"', async () => {
 
 // ── run → bash (exec path) ───────────────────────────────────────────────────
 
-test('run on a bash session routes to exec: attach + input hit, NOT /api/send', async () => {
+test('run on a bash session routes to exec: attach + input hit, NOT the dm path', async () => {
   const { server, seen } = stub({
     sessions: [{ name: 'shell', type: 'bash' }],
     onInput: (state) => pushOutput(state.attach, '/work\r\n'),
@@ -163,7 +163,7 @@ test('run on a bash session routes to exec: attach + input hit, NOT /api/send', 
   assert.ok(urls.includes('GET /api/sessions'), 'looked up the type');
   assert.ok(urls.includes('GET /api/sessions/shell/attach'), 'used the PTY attach path');
   assert.ok(urls.some((u) => u === 'POST /api/sessions/shell/input'), 'typed the command');
-  assert.ok(!urls.includes('POST /api/send'), 'never used the DM path');
+  assert.ok(!urls.some((u) => /^POST \/api\/sessions\/[^/]+\/dm$/.test(u)), 'never used the DM path');
   const inputRec = seen.find((s) => s.url === '/api/sessions/shell/input');
   assert.strictEqual(inputRec.body.data, 'pwd\r');
   server.close();
