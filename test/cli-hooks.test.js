@@ -618,7 +618,11 @@ test('the console hook is registered under BOTH tool-result events, for Bash onl
     hooks: [{ type: 'command', command: scriptPath }],
   }], 'a failing Bash call fires ONLY this event — no registration here means no failures shown');
 
-  const bashEntries = settings.hooks.PostToolUse.filter((e) => e.matcher === 'Bash');
+  // Resolved by SCRIPT, not by matcher alone: the poll guard (t935) registers a
+  // second `matcher: 'Bash'` PostToolUse entry, and a filter on the matcher
+  // would make this assertion about both.
+  const bashEntries = settings.hooks.PostToolUse.filter(
+    (e) => e.matcher === 'Bash' && e.hooks.some((h) => h.command === scriptPath));
   assert.deepStrictEqual(bashEntries, [{
     matcher: 'Bash',
     hooks: [{ type: 'command', command: scriptPath }],
@@ -912,13 +916,23 @@ test('the live observer is registered for Bash only, ahead of the tool call', ()
   // The ORDER is the assertion, not merely the membership: the observer records
   // what a seat TRIED, so a guard that denied first would drop the denied call
   // out of the live console and leave the deny unexplainable from the preview.
-  assert.deepStrictEqual(settings.hooks.PreToolUse, [{
+  const bashEntries = settings.hooks.PreToolUse.filter((e) => e.matcher === 'Bash');
+  assert.deepStrictEqual(bashEntries, [{
     matcher: 'Bash',
     hooks: [
       { type: 'command', command: scriptPath },
       { type: 'command', command: guardPath },
     ],
   }], 'a matcher-less entry here would run this before EVERY tool call, not just Bash');
+
+  // The poll guard (t935) is the one PreToolUse hook that MUST see every tool:
+  // a non-Bash call between two Bash ones is what resets its count. It lives in
+  // its own matcher-less entry, and nothing else may join it there.
+  const anyTool = settings.hooks.PreToolUse.filter((e) => e.matcher === '');
+  assert.deepStrictEqual(anyTool, [{
+    matcher: '',
+    hooks: [{ type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'pollGuardScript') }],
+  }], 'the matcher-less entry carries the poll guard alone');
 });
 
 // ─── The ticket-seat whole-tree `git add` guard ───────────────────────────

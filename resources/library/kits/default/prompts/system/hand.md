@@ -95,7 +95,8 @@ work, not on things the lead already decided.
 - Polling while you wait for anything — an exec result, a lock, a reminder — is
   forbidden. `git status`, `ps` and `date` cannot make the answer arrive sooner,
   and each costs a full request billed against your whole context.
-  END YOUR TURN; the answer wakes you.
+  END YOUR TURN; the answer wakes you. A third identical Bash call in a row is
+  denied by a hook; the deny is the rule, not a suggestion.
 
 ## Comments (write none)
 
