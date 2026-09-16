@@ -196,17 +196,20 @@ const VERB_REGISTRY = [
     summary: 'create a resource on the node, or a local node record',
     usage: [
       'create session <name> --cwd DIR --type claude|codex|bash [--model M] [--arg X …] [--env KEY=VALUE …] [--fork] [-o json|yaml]',
-      'create node <name> --url URL [--token T]',
-      'create node <name> --ssh HOST [--remote-port N] [--token T]',
-      'create node <name> --ssm TARGET [--region R] [--profile P]',
-      'create node <name> --ssm-ecs CLUSTER/FAMILY [--region R] [--profile P]',
-      'create node <name> --kubectl POD_OR_SVC [--namespace NS] [--kube-context C]',
-      'create node <name> --gcloud-iap INSTANCE [--zone Z] [--project P]',
-      'create node <name> --az-bastion NAME --az-resource-group G --az-target ID',
-      'create node <name> --token T --tunnel CMD… {port}…',
+      'create node <name> (one transport flag — see SUBCOMMANDS)',
       'create node --import [--data-dir DIR] [--dry-run] [--force]',
     ],
     args: [['resource', 'session | node (singular or plural spelling)'], ['name', 'new session/node name ([a-zA-Z0-9._-], 1-64)']],
+    subcommands: [
+      ['create node <name> --url URL [--token T]', 'a direct node (speak http straight at it)'],
+      ['create node <name> --ssh HOST [--remote-port N] [--token T]', 'ssh -L tunnel (remotePort default 7900)'],
+      ['create node <name> --ssm TARGET [--region R] [--profile P]', 'AWS SSM port-forward tunnel'],
+      ['create node <name> --ssm-ecs CLUSTER/FAMILY [--region R] [--profile P]', 'Fargate — task id resolved at connect'],
+      ['create node <name> --kubectl POD_OR_SVC [--namespace NS] [--kube-context C]', 'kubectl port-forward tunnel'],
+      ['create node <name> --gcloud-iap INSTANCE [--zone Z] [--project P]', 'GCP IAP tunnel'],
+      ['create node <name> --az-bastion NAME --az-resource-group G --az-target ID', 'Azure Bastion tunnel'],
+      ['create node <name> --token T --tunnel CMD… {port}…', 'generalized tunnel argv ({port} substituted; must be LAST)'],
+    ],
     flags: [
       ['--cwd DIR', 'working directory for the session'],
       ['--type T', 'claude | codex | bash'],
@@ -503,8 +506,8 @@ function renderIndex() {
   }
   lines.push('');
   lines.push('GLOBAL FLAGS (any verb)');
-  lines.push('  --ctx NAME               use a named context (overrides current)');
-  lines.push('  --url URL --token T      one-shot direct context (no file needed)');
+  lines.push('  --ctx NAME               talk to a named node (overrides the current one)');
+  lines.push('  --url URL --token T      one-shot direct node (no file needed)');
   lines.push('  -o json|yaml             machine-stable output on read verbs');
   lines.push('  -h, --help   -V, --version');
   lines.push('');

@@ -106,15 +106,56 @@ const DEFERRED_HINT = 'not available here: attach, delete, restart node, deploy,
 // Verbs that run against the local contexts file and need NO wire client.
 const CTX_SUBS = ['add', 'use', 'current', 'list', 'ls', 'rm', 'remove', 'show', 'import', 'test'];
 
+// The terminal CLI deleted `ctx` in favour of a `node` resource (t949). This
+// tab still speaks the ctx family — it calls cli/src/verbs.js's ctx* functions
+// directly, not main.js's dispatcher — so it also owns the help entry, which
+// help.js's registry no longer carries. Local, because a registry entry for a
+// verb main.js does not dispatch is exactly what help.test.js forbids.
+const CTX_ENTRY = {
+  name: 'ctx', group: 'contexts',
+  summary: 'manage connection contexts (this tab\'s spelling of the node resource)',
+  usage: 'ctx <add|use|current|list|show|rm|import|test> [args]',
+  subcommands: [
+    ['ctx add <name> --url URL [--token T]', 'a direct context (speak http straight at it)'],
+    ['ctx add <name> --ssh HOST [--remote-port N] [--token T]', 'ssh -L tunnel (remotePort default 7900)'],
+    ['ctx add <name> --ssm TARGET [--region R] [--profile P]', 'AWS SSM port-forward tunnel'],
+    ['ctx add <name> --ssm-ecs CLUSTER/FAMILY [--region R] [--profile P]', 'Fargate — task id resolved at connect'],
+    ['ctx add <name> --kubectl POD_OR_SVC [--namespace NS] [--kube-context C]', 'kubectl port-forward tunnel'],
+    ['ctx add <name> --gcloud-iap INSTANCE [--zone Z] [--project P]', 'GCP IAP tunnel'],
+    ['ctx add <name> --az-bastion NAME --az-resource-group G --az-target ID', 'Azure Bastion tunnel'],
+    ['ctx add <name> --token T --tunnel CMD… {port}…', 'generalized tunnel argv ({port} substituted; must be LAST)'],
+    ['ctx use <name>', 'set the current context'],
+    ['ctx current', 'print the current context NAME (exit 5 when none is set)'],
+    ['ctx list  (ctx ls)', 'list contexts (* = current)'],
+    ['ctx show [name]', 'show a context (token redacted)'],
+    ['ctx rm <name>  (ctx remove)', 'remove a context'],
+    ['ctx import [--data-dir DIR] [--dry-run] [--force]', 'seed contexts from the LOCAL GUI\'s stores (read-only)'],
+    ['ctx test [--verbose]', 'open the transport + GET hello; relays child stderr verbatim'],
+  ],
+  examples: [
+    'ctx add home --url http://127.0.0.1:7900 --token T',
+    'ctx add cust --ssm-ecs my-cluster/clodex --token T',
+    'ctx test --verbose',
+  ],
+  notes: [
+    'Stored at ~/.clodex/cli/contexts.json (0600 — it holds tokens; a loose mode warns on read).',
+    'The terminal `clodexctl` spells the same records as a resource: `get nodes`, `describe node`, `create node`, `delete node`, `use node`. The file is the same file either way.',
+    'The typed cloud kinds (ssm/ssm-ecs/kubectl/gcloud-iap/az) are DATA — safe to ctx import or commit to a shared team file; a raw --tunnel argv is code and is never shared by import. --ssm and --ssm-ecs are mutually exclusive; --tunnel is greedy (must be last).',
+    'import: collisions skip unless --force; --dry-run writes nothing; `current` is never touched. Tokens flow file→file, never printed.',
+  ],
+};
+
 // `list` for `ctx list`. The pane already shows the current context in its
 // status line, so a bare ctx subcommand reads as naturally here as `sessions`
 // does, and having to prefix one family and not the other is the odd part.
 //
 // Gated on `isVerb` rather than on CTX_SUBS alone, and that is the whole point
-// of the function: today no ctx sub collides with any registry verb, so a bare
-// alias table would work and would keep working right up until someone adds a
-// top-level `list` — at which point the alias SHADOWS it, and the new verb
-// appears to run while doing something else entirely. Deferring to a real verb
+// of the function: a bare alias table works right up until a top-level verb is
+// added by that name — at which point the alias SHADOWS it, and the new verb
+// appears to run while doing something else entirely. That case is now live:
+// t949 made `use` a top-level verb, so bare `use prod` no longer becomes
+// `ctx use prod`, drops out of helpIndex's advertised aliases, and reads as the
+// verb this tab refuses. `ctx use prod` is unaffected. Deferring to a real verb
 // also keeps a refusal message accurate (`deploy` must say it is deferred, not
 // become `ctx deploy` and report an unknown subcommand).
 //
@@ -417,6 +458,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
       // `help list` needs the same rewrite and does not get it above, where the
       // slot-0 token is `help`.
       const tokens = flags._[0] === 'help' ? aliasCtx(flags._.slice(1), isVerb) : flags._;
+      if (tokens[0] === 'ctx') return done(`${H.renderVerb(CTX_ENTRY)}\n`, EXIT.OK, currentName());
       const { text, code } = H.help(tokens);
       return done(`${text}\n`, code, currentName());
     }
@@ -570,7 +612,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     // and no context, so it needs no scrub.
     helpIndex() {
       const { help: H } = loadCli();
-      const byName = new Map(H.VERB_REGISTRY.map((e) => [e.name, e]));
+      const byName = new Map([...H.VERB_REGISTRY, CTX_ENTRY].map((e) => [e.name, e]));
       const rows = [];
       for (const [verb, rule] of Object.entries(ALLOWED)) {
         const entry = byName.get(verb);

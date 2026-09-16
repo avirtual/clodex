@@ -78,7 +78,6 @@ const RENAMED_SECOND = {
     '*': (tok) => `upgrade node ${tok}`,
   },
   ctx: {
-    '': () => 'get nodes',
     add: () => 'create node <name> --url URL (or --ssh/--ssm/--ssm-ecs/--kubectl/--gcloud-iap/--az-bastion/--tunnel)',
     use: () => 'use node <name>',
     current: () => 'get nodes --current',
@@ -99,17 +98,18 @@ function renamedLine(old) {
   return `clodexctl ${old} was renamed: use clodexctl ${RENAMED_VERBS[old]}`;
 }
 
-// The DELETED verb families point per-sub. `ctx` is deleted whole, so every
-// sub — and the bare word — points; the others are alive under a `node`
-// resource word, so `<verb> node …` and a real resource spelling are left to
-// run.
+// Families deleted WHOLE, as opposed to renamed under a `node` resource word:
+// every sub points, and so does the bare verb, because nothing is left for it
+// to mean. deploy/undeploy/upgrade are not here — they still run.
+const DELETED_FAMILIES = new Set(['ctx']);
+
 function renamedSecondLine(verb, tok, flags = {}) {
   const table = RENAMED_SECOND[verb];
   if (!table) return null;
-  if (verb === 'ctx') {
+  if (DELETED_FAMILIES.has(verb)) {
     const sub = tok || '';
     const to = table[sub] || table['*'];
-    return `clodexctl ctx${sub ? ` ${sub}` : ''} was renamed: use clodexctl ${to(sub, flags)}`;
+    return `clodexctl ${verb}${sub ? ` ${sub}` : ''} was renamed: use clodexctl ${to(sub, flags)}`;
   }
   if (!tok || tok === 'node') return null;
   const to = table[tok] || (R.resolveResource(tok) ? null : table['*']);

@@ -2,7 +2,7 @@
 // cloud-transports.test.js — the four typed cloud transport kinds (ssm, kubectl,
 // gcloud, az): pure argv builders (exact snapshots), the ECS derive-at-open
 // resolver (fake execFn), openTransport routing (fake spawnFn), validateEntry
-// per-kind rules, and ctx add flag→stored-shape round-trips. No real vendor CLI
+// per-kind rules, and create node flag→stored-shape round-trips. No real vendor CLI
 // is ever invoked — every spawn/exec is injected.
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -287,7 +287,7 @@ test('validateEntry: unknown sibling fields inside a kind are ignored (forward c
   C.validateEntry({ ssm: { target: 'i', somethingNew: 1 } });
 });
 
-// ── ctx add flag → stored shape ──────────────────────────────────────────────
+// ── create node flag → stored shape ──────────────────────────────────────────────
 
 function tmpCtxFile() {
   const dir = mkTmpRoot('clodexctl-cloud-');
@@ -299,73 +299,73 @@ async function cli(argv, contextsFile) {
   return { code, stdout, stderr };
 }
 
-test('ctx add --ssm: stored shape round-trip', async () => {
+test('create node --ssm: stored shape round-trip', async () => {
   const f = tmpCtxFile();
-  const { code } = await cli(['ctx', 'add', 'ec2ssm', '--ssm', 'i-0abc', '--region', 'us-east-1', '--profile', 'eng', '--token', 'sek'], f);
+  const { code } = await cli(['create', 'node', 'ec2ssm', '--ssm', 'i-0abc', '--region', 'us-east-1', '--profile', 'eng', '--token', 'sek'], f);
   assert.strictEqual(code, 0);
   const saved = JSON.parse(fs.readFileSync(f, 'utf8'));
   assert.deepStrictEqual(saved.contexts.ec2ssm, { ssm: { target: 'i-0abc', region: 'us-east-1', profile: 'eng' }, token: 'sek' });
 });
 
-test('ctx add --ssm-ecs: stored shape, ecs spec kept for connect-time resolve', async () => {
+test('create node --ssm-ecs: stored shape, ecs spec kept for connect-time resolve', async () => {
   const f = tmpCtxFile();
-  const { code } = await cli(['ctx', 'add', 'fargate', '--ssm-ecs', 'CLUSTER/clodex-node', '--region', 'us-west-2'], f);
+  const { code } = await cli(['create', 'node', 'fargate', '--ssm-ecs', 'CLUSTER/clodex-node', '--region', 'us-west-2'], f);
   assert.strictEqual(code, 0);
   const saved = JSON.parse(fs.readFileSync(f, 'utf8'));
   assert.deepStrictEqual(saved.contexts.fargate, { ssm: { ecs: 'CLUSTER/clodex-node', region: 'us-west-2' } });
 });
 
-test('ctx add --ssm + --ssm-ecs: mutually exclusive', async () => {
+test('create node --ssm + --ssm-ecs: mutually exclusive', async () => {
   const f = tmpCtxFile();
-  const { code, stderr } = await cli(['ctx', 'add', 'x', '--ssm', 'i', '--ssm-ecs', 'C/F'], f);
+  const { code, stderr } = await cli(['create', 'node', 'x', '--ssm', 'i', '--ssm-ecs', 'C/F'], f);
   assert.strictEqual(code, 2);
   assert.match(stderr, /mutually exclusive/);
 });
 
-test('ctx add --kubectl: stored shape with namespace + kube-context', async () => {
+test('create node --kubectl: stored shape with namespace + kube-context', async () => {
   const f = tmpCtxFile();
-  await cli(['ctx', 'add', 'k8s', '--kubectl', 'pod/clodex-node-0', '--namespace', 'cust', '--kube-context', 'engagement'], f);
+  await cli(['create', 'node', 'k8s', '--kubectl', 'pod/clodex-node-0', '--namespace', 'cust', '--kube-context', 'engagement'], f);
   const saved = JSON.parse(fs.readFileSync(f, 'utf8'));
   assert.deepStrictEqual(saved.contexts.k8s, { kubectl: { target: 'pod/clodex-node-0', namespace: 'cust', context: 'engagement' } });
 });
 
-test('ctx add --gcloud-iap: stored shape', async () => {
+test('create node --gcloud-iap: stored shape', async () => {
   const f = tmpCtxFile();
-  await cli(['ctx', 'add', 'gcp', '--gcloud-iap', 'clodex-node', '--zone', 'us-central1-a', '--project', 'cust-eng'], f);
+  await cli(['create', 'node', 'gcp', '--gcloud-iap', 'clodex-node', '--zone', 'us-central1-a', '--project', 'cust-eng'], f);
   const saved = JSON.parse(fs.readFileSync(f, 'utf8'));
   assert.deepStrictEqual(saved.contexts.gcp, { gcloud: { instance: 'clodex-node', zone: 'us-central1-a', project: 'cust-eng' } });
 });
 
-test('ctx add --az-bastion: stored shape, all three fields', async () => {
+test('create node --az-bastion: stored shape, all three fields', async () => {
   const f = tmpCtxFile();
-  await cli(['ctx', 'add', 'azvm', '--az-bastion', 'cust-bastion', '--az-resource-group', 'cust-rg', '--az-target', '/subscriptions/s/vm1'], f);
+  await cli(['create', 'node', 'azvm', '--az-bastion', 'cust-bastion', '--az-resource-group', 'cust-rg', '--az-target', '/subscriptions/s/vm1'], f);
   const saved = JSON.parse(fs.readFileSync(f, 'utf8'));
   assert.deepStrictEqual(saved.contexts.azvm, { az: { bastion: 'cust-bastion', resourceGroup: 'cust-rg', target: '/subscriptions/s/vm1' } });
 });
 
-test('ctx add --az-bastion missing a field: usage error names it', async () => {
+test('create node --az-bastion missing a field: usage error names it', async () => {
   const f = tmpCtxFile();
-  const { code, stderr } = await cli(['ctx', 'add', 'azvm', '--az-bastion', 'b', '--az-target', 't'], f);
+  const { code, stderr } = await cli(['create', 'node', 'azvm', '--az-bastion', 'b', '--az-target', 't'], f);
   assert.strictEqual(code, 2);
   assert.match(stderr, /--az-resource-group/);
 });
 
-// ── ctx list / show honest rendering ─────────────────────────────────────────
+// ── get nodes / describe node honest rendering ─────────────────────────────────────────
 
-test('ctx list / show: honest per-kind target rendering', async () => {
+test('get nodes / describe node: honest per-kind target rendering', async () => {
   const f = tmpCtxFile();
-  await cli(['ctx', 'add', 'ec2ssm', '--ssm', 'i-0abc123', '--region', 'us-east-1'], f);
-  await cli(['ctx', 'add', 'fargate', '--ssm-ecs', 'CLUSTER/clodex-node'], f);
-  await cli(['ctx', 'add', 'k8s', '--kubectl', 'pod/clodex-node-0', '--namespace', 'cust'], f);
-  await cli(['ctx', 'add', 'gcp', '--gcloud-iap', 'clodex-node', '--zone', 'us-central1-a'], f);
-  await cli(['ctx', 'add', 'azvm', '--az-bastion', 'cust-bastion', '--az-resource-group', 'g', '--az-target', '/subscriptions/s/virtualMachines/vm1'], f);
-  const list = await cli(['ctx', 'list'], f);
+  await cli(['create', 'node', 'ec2ssm', '--ssm', 'i-0abc123', '--region', 'us-east-1'], f);
+  await cli(['create', 'node', 'fargate', '--ssm-ecs', 'CLUSTER/clodex-node'], f);
+  await cli(['create', 'node', 'k8s', '--kubectl', 'pod/clodex-node-0', '--namespace', 'cust'], f);
+  await cli(['create', 'node', 'gcp', '--gcloud-iap', 'clodex-node', '--zone', 'us-central1-a'], f);
+  await cli(['create', 'node', 'azvm', '--az-bastion', 'cust-bastion', '--az-resource-group', 'g', '--az-target', '/subscriptions/s/virtualMachines/vm1'], f);
+  const list = await cli(['get', 'nodes'], f);
   assert.match(list.stdout, /ec2ssm\s+ssm\s+i-0abc123 \(us-east-1\)/);
-  assert.match(list.stdout, /fargate\s+ssm\s+ecs CLUSTER\/clodex-node \(resolved at connect\)/);
+  assert.match(list.stdout, /fargate\s+ssm-ecs\s+ecs CLUSTER\/clodex-node \(resolved at connect\)/);
   assert.match(list.stdout, /k8s\s+kubectl\s+pod\/clodex-node-0 -n cust/);
-  assert.match(list.stdout, /gcp\s+gcloud\s+clodex-node \(us-central1-a\)/);
-  assert.match(list.stdout, /azvm\s+az\s+cust-bastion → vm1/);
-  const show = await cli(['ctx', 'show', 'fargate'], f);
-  assert.match(show.stdout, /kind        ssm/);
-  assert.match(show.stdout, /target      ecs CLUSTER\/clodex-node \(resolved at connect\)/);
+  assert.match(list.stdout, /gcp\s+gcloud-iap\s+clodex-node \(us-central1-a\)/);
+  assert.match(list.stdout, /azvm\s+az-bastion\s+cust-bastion → vm1/);
+  const show = await cli(['describe', 'node', 'fargate'], f);
+  assert.match(show.stdout, /kind        ssm-ecs/);
+  assert.match(show.stdout, /locator     ecs CLUSTER\/clodex-node \(resolved at connect\)/);
 });
