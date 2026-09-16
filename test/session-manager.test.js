@@ -16048,7 +16048,7 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
   m._sendToSession = () => {};
   const seat = (name, cwd = repo) => {
     m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd, pty: { pid: 1 }, activityState: 'idle' });
-    persistence.upsert({ name, createdAt: CREATE_STAMPS_CREATED_AT });
+    fieldsByName.set(name, { ...(fieldsByName.get(name) || {}), createdAt: CREATE_STAMPS_CREATED_AT });
     return m.sessions.get(name);
   };
   // The two teardowns a ticket seat actually gets, kept apart because the
