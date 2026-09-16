@@ -316,7 +316,7 @@ test('deploy docker: no name → usage error', async () => {
 test('deploy docker --json: run + verify + context objects, no secrets', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'docker', 'n', '--json'], {
+  const { code, stdout } = await cli(['deploy', 'docker', 'n', '-o', 'json'], {
     spawnFn: fakeDocker(rec),
     pollHello: async () => ({ ok: true, hello: { app: 'clodex', host: 'n', version: '1.0', caps: [] } }),
     contextsFile,
@@ -329,7 +329,7 @@ test('deploy docker --json: run + verify + context objects, no secrets', async (
 
 test('deploy docker --json 401: verify tokenGated + context tokenGated', async () => {
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'docker', 'n', '--json'], {
+  const { code, stdout } = await cli(['deploy', 'docker', 'n', '-o', 'json'], {
     spawnFn: fakeDocker({}),
     pollHello: async () => ({ ok: true, tokenGated: true }),
     contextsFile,

@@ -11,7 +11,7 @@
 // IPC registration (pinned by drawer-services-seam.test.js), which keeps the
 // whole `ctl:*` family off the web surface.
 //
-// The wire verbs (info/sessions/query/args get) are deliberately NOT exercised
+// The wire verbs (info/get/query/args get) are deliberately NOT exercised
 // against a live node — that is cli/test's job and it needs a server. Every
 // test here runs on paths that stop before the transport opens, which is also
 // where every containment decision is made.
@@ -58,7 +58,8 @@ test('refuse: the allowlist admits the block-shaped verbs and no others', () => 
   // ENTER: the allowed verbs really are allowed — without this row every
   // refusal assertion below would also hold for a service that refuses
   // everything, which is a containment that ships a useless tab.
-  for (const argv of [['info'], ['sessions'], ['query', '--kind', 'x'], ['ctx', 'use', 'p'], ['ctx', 'list'],
+  for (const argv of [['info'], ['get', 'sessions'], ['describe', 'session', 'a'], ['api-resources'], ['version'],
+    ['query', '--kind', 'x'], ['ctx', 'use', 'p'], ['ctx', 'list'],
     ['args', 'get', 'n'], ['args', 'set', 'n'], ['run', 'a', 'ls'], ['exec', 'a', 'ls'], ['send', 'a', 'hi'],
     ['input', 'a', 'x'], ['spawn', 'a'], ['restart', 'a'], ['logs', 'a'], ['skills', 'a']]) {
     assert.strictEqual(refuse(argv), null, `${argv.join(' ')} must be allowed`);
@@ -75,7 +76,8 @@ test('refuse: the allowlist admits the block-shaped verbs and no others', () => 
   // The table is the contract; a verb silently gaining `true` here widens the
   // runner. Assert the WHOLE object, not a spot check.
   assert.deepStrictEqual({ ...ALLOWED }, {
-    info: true, sessions: true, query: true, logs: true, skills: true,
+    info: true, get: true, describe: true, 'api-resources': true, version: true,
+    query: true, logs: true, skills: true,
     send: true, input: true, exec: true, run: true, spawn: true, restart: true,
     ctx: '*', args: ['get', 'set'],
   });
@@ -118,15 +120,15 @@ test('run: a refused verb is a block, and never opens a transport', async () => 
 test('a leading flag moves the verb, and the gate follows it', async () => {
   const { svc } = mkService();
   // Both halves matter and they pull in opposite directions, which is why this
-  // is one test. A gate reading the RAW argv sees `--json` in slot 0 for both
-  // lines: it would refuse the legitimate one as a verb named "--json", and
+  // is one test. A gate reading the RAW argv sees `-o` in slot 0 for both
+  // lines: it would refuse the legitimate one as a verb named "-o", and
   // judge the refusable one on a token that is not its verb.
-  const bad = await svc.run('--json kill somebox --force');
+  const bad = await svc.run('-o json kill somebox --force');
   assert.match(bad.output, /refused: "kill"/, 'the PARSED verb is what the gate judges');
   assert.strictEqual(bad.exitCode, 2);
 
-  const ok = await svc.run('--json ctx list');
-  assert.doesNotMatch(ok.output, /refused/, '`--json ctx list` is just `ctx list` with a flag');
+  const ok = await svc.run('-o json ctx list');
+  assert.doesNotMatch(ok.output, /refused/, '`-o json ctx list` is just `ctx list` with a flag');
   assert.strictEqual(ok.exitCode, 0);
   svc.dispose();
 });
@@ -168,9 +170,23 @@ test('run: an unparseable line reports itself instead of throwing', async () => 
   svc.dispose();
 });
 
+test('run: a renamed verb answers with the pointer in BOTH spellings, ahead of help routing', async () => {
+  const { svc } = mkService();
+  const bare = await svc.run('sessions');
+  assert.strictEqual(bare.output, 'clodexctl: clodexctl sessions was renamed: use clodexctl get sessions\n');
+  assert.strictEqual(bare.exitCode, 2);
+  const helped = await svc.run('help sessions');
+  assert.strictEqual(helped.output, 'clodexctl sessions was renamed: use clodexctl get sessions\n');
+  assert.strictEqual(helped.exitCode, 1);
+  const flagged = await svc.run('sessions --help');
+  assert.strictEqual(flagged.output, 'clodexctl sessions was renamed: use clodexctl get sessions\n');
+  assert.strictEqual(flagged.exitCode, 1);
+  svc.dispose();
+});
+
 test('run: no context selected is a usage block, not a crash', async () => {
   const { svc } = mkService();
-  const b = await svc.run('sessions');
+  const b = await svc.run('get sessions');
   assert.match(b.output, /no context selected/);
   assert.strictEqual(b.exitCode, 2);
   svc.dispose();
@@ -228,11 +244,11 @@ function fakeTransport({ fail = null } = {}) {
   return fn;
 }
 
-test('MF2: --json ctx list must not print the tokens it lists', async () => {
+test('MF2: -o json ctx list must not print the tokens it lists', async () => {
   const { svc } = mkService();
   await svc.run('ctx add prod --url http://prod.example --token SUPERSECRET');
   await svc.run('ctx add other --url http://other.example --token SECOND_TOKEN');
-  const b = await svc.run('--json ctx list');
+  const b = await svc.run('-o json ctx list');
 
   // ENTER: the listing really rendered. Without this the absences below are
   // equally true of a refusal, an empty store, or a crash.
@@ -259,7 +275,7 @@ test('MF2: the listing is redacted at the store, not by scrubbing the output', a
   // and the renderer.
   const { svc } = mkService();
   await svc.run('ctx add prod --url http://prod.example --token abc');
-  const b = await svc.run('--json ctx list');
+  const b = await svc.run('-o json ctx list');
 
   assert.strictEqual(b.exitCode, 0, `ENTER: the listing succeeded (${b.output})`);
   const parsed = JSON.parse(b.output);
@@ -276,7 +292,7 @@ test('MF1: a token in an ERROR message is scrubbed from the block', async () => 
     openTransport: fakeTransport({ fail: (ctx) => `ssh: connect failed running: ssh -o Token=${ctx.token} host` }),
   });
   await svc.run('ctx add prod --url http://prod.example --token SUPERSECRET');
-  const b = await svc.run('sessions');
+  const b = await svc.run('get sessions');
 
   assert.notStrictEqual(b.exitCode, 0, `ENTER: the dial really failed (${b.output})`);
   assert.match(b.output, /connect failed/, 'ENTER: the child message reached the block');
@@ -298,7 +314,7 @@ test('MF1: the scrub covers tokens the failing line never resolved', async () =>
   });
   await svc.run('ctx add other --url http://other.example --token OTHER_CTX_TOKEN');
   await svc.run('ctx add prod --url http://prod.example --token PROD_TOKEN');
-  const b = await svc.run('sessions --ctx prod');
+  const b = await svc.run('get sessions --ctx prod');
 
   assert.match(b.output, /dial failed/, 'ENTER: the error really surfaced');
   assert.doesNotMatch(b.output, /OTHER_CTX_TOKEN/, 'every stored token is scrubbed, not just the resolved one');
@@ -314,7 +330,7 @@ test('MF1 guard: a short or empty stored token does not redact everything', asyn
     openTransport: fakeTransport({ fail: () => 'dial failed: e' }),
   });
   await svc.run('ctx add tiny --url http://tiny.example --token e');
-  const b = await svc.run('sessions');
+  const b = await svc.run('get sessions');
   assert.match(b.output, /dial failed: e/, 'a short token is NOT folded into the scrub');
   svc.dispose();
 });
@@ -342,12 +358,12 @@ test('MF3: a different token re-dials instead of reusing the warm client', async
   const svc = createCtlService({ contextsFile: tmpCtxFile(), env: {}, openTransport: transport });
   try {
     await svc.run('ctx add prod --url http://prod.example --token TOKEN_ONE_LONG');
-    const first = await svc.run('sessions');
+    const first = await svc.run('get sessions');
     assert.strictEqual(first.exitCode, 0, `ENTER: the command really succeeded (${first.output})`);
 
     // Same URL, different bearer. Keying the token as 'set'/'none' made these
     // two keys identical, so the second reused a client bearing TOKEN_ONE.
-    await svc.run('sessions --token TOKEN_TWO_LONG');
+    await svc.run('get sessions --token TOKEN_TWO_LONG');
     assert.strictEqual(opened.length, 2, 'a token change must force a re-dial');
     assert.strictEqual(opened[0].token, 'TOKEN_ONE_LONG', 'ENTER: the first dial used the stored token');
     assert.strictEqual(opened[1].token, 'TOKEN_TWO_LONG', 'the second dial carries the NEW token');
@@ -356,7 +372,7 @@ test('MF3: a different token re-dials instead of reusing the warm client', async
 
     // The same token must still REUSE — a service that re-dials every command
     // is not a REPL, and would satisfy every assertion above.
-    await svc.run('sessions --token TOKEN_TWO_LONG');
+    await svc.run('get sessions --token TOKEN_TWO_LONG');
     assert.strictEqual(opened.length, 2, 'an unchanged token reuses the warm transport');
     assert.strictEqual(seenAuth.length, 3, 'ENTER: the third command really went out');
   } finally {
@@ -370,7 +386,7 @@ test('an empty verb is refused, not passed to a handler lookup', async () => {
   // an empty line and lets it through to a map lookup that finds nothing,
   // surfacing as "handler is not a function" from three frames down.
   const { svc } = mkService();
-  const b = await svc.run('"" sessions');
+  const b = await svc.run('"" get sessions');
   assert.match(b.output, /refused/);
   assert.doesNotMatch(b.output, /is not a function/, 'it must not reach the handler map');
   assert.strictEqual(b.exitCode, 2);
@@ -383,7 +399,7 @@ test('dispose latches — a late run cannot spawn a child during shutdown', asyn
   await svc.run('ctx add prod --url http://prod.example --token STORED_TOKEN');
   svc.dispose();
 
-  const b = await svc.run('sessions');
+  const b = await svc.run('get sessions');
   assert.match(b.output, /shutting down/);
   // The claim that matters is not the message: it is that no dial happened. A
   // run() slipping past dispose re-dials and leaves an orphaned ssh/tunnel
@@ -471,7 +487,7 @@ test('an absent contextsFile falls back to the CLI default path, not null', asyn
 // Help is LOCAL rendering off help.js's registry — no context, no dial. It
 // short-circuits ahead of the allowlist gate for the same reason main.js puts
 // it ahead of context resolution, and the bug this pins is that the flag was
-// simply not read: `sessions --help` ran the verb and returned live session
+// simply not read: `get --help` ran the verb and returned live session
 // data from whatever context was current.
 test('--help short-circuits before the wire, for every help spelling', async () => {
   // openTransport THROWS: any path that reaches a dial fails this test loudly
@@ -484,7 +500,7 @@ test('--help short-circuits before the wire, for every help spelling', async () 
     openTransport: (ctx) => { dialed.push(ctx); throw new Error('DIALED — help must not open a transport'); },
   });
 
-  for (const line of ['help', '--help', '-h', 'sessions --help', 'help ctx']) {
+  for (const line of ['help', '--help', '-h', 'get --help', 'help ctx']) {
     const b = await svc.run(line);
     assert.strictEqual(b.exitCode, 0, `${line} -> exit ${b.exitCode}: ${b.output}`);
     // ENTER: rendered help, not an empty block. An absence assertion below
@@ -754,8 +770,8 @@ test('helpIndex names the subcommands of a PARTIALLY allowed family', () => {
   // narrowed again, the pane must show the surviving subs rather than the
   // registry's full usage line.
   assert.deepStrictEqual(args.subs, ['get', 'set']);
-  const sessions = svc.helpIndex().verbs.find((v) => v.verb === 'sessions');
-  assert.strictEqual(sessions.subs, null, 'a fully-allowed verb carries no subs restriction');
+  const get = svc.helpIndex().verbs.find((v) => v.verb === 'get');
+  assert.strictEqual(get.subs, null, 'a fully-allowed verb carries no subs restriction');
   svc.dispose();
 });
 
@@ -780,13 +796,13 @@ test('helpIndex carries summaries and no credential material', () => {
 // someone adds a top-level verb by that name and it silently stops running.
 
 test('aliasCtx rewrites a bare ctx sub, and a real verb always wins', () => {
-  const isVerb = (t) => ['sessions', 'info', 'ctx'].includes(t);
+  const isVerb = (t) => ['get', 'info', 'ctx'].includes(t);
   assert.deepStrictEqual(aliasCtx(['list'], isVerb), ['ctx', 'list']);
   assert.deepStrictEqual(aliasCtx(['use', 'prod'], isVerb), ['ctx', 'use', 'prod']);
   assert.deepStrictEqual(aliasCtx(['show'], isVerb), ['ctx', 'show']);
   // Not a ctx sub: untouched, or every unknown verb would become `ctx <junk>`
   // and report an unknown SUBCOMMAND instead of an unknown verb.
-  assert.deepStrictEqual(aliasCtx(['sessions'], isVerb), ['sessions']);
+  assert.deepStrictEqual(aliasCtx(['get'], isVerb), ['get']);
   assert.deepStrictEqual(aliasCtx(['deploy', 'host'], isVerb), ['deploy', 'host']);
   assert.deepStrictEqual(aliasCtx([], isVerb), []);
   // Already prefixed: `ctx` is itself a verb, so the guard stops a second pass
@@ -845,8 +861,8 @@ test('help routing sees the alias — `list --help` explains ctx', async () => {
 test('a leading flag still finds the aliased verb', async () => {
   const { svc } = mkService();
   // The alias reads PARSED positionals for the same reason the gate does:
-  // `--json list` has the verb in slot 0 of `_` and nowhere near slot 0 of argv.
-  const b = await svc.run('--json list');
+  // `-o json list` has the verb in slot 0 of `_` and nowhere near slot 0 of argv.
+  const b = await svc.run('-o json list');
   assert.strictEqual(b.exitCode, 0, `ENTER: it ran rather than refusing (${b.output})`);
   svc.dispose();
 });

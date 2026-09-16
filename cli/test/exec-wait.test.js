@@ -139,7 +139,7 @@ test('exec --raw: keeps the ANSI bytes verbatim', async () => {
 test('exec --json: {ok,name,output,truncated} shape', async () => {
   const { server } = sseStub({ onInput: (state) => pushOutput(state.attach, 'hi\r\n') });
   const port = await listen(server);
-  const { code, stdout } = await cli(['exec', 'bash', 'echo hi', '--json', '--quiet-ms', '80'], port);
+  const { code, stdout } = await cli(['exec', 'bash', 'echo hi', '-o', 'json', '--quiet-ms', '80'], port);
   assert.strictEqual(code, 0);
   const j = JSON.parse(stdout);
   assert.strictEqual(j.ok, true);
@@ -287,7 +287,7 @@ test('send --wait --json: {ok,name,entries,timedOut} shape', async () => {
     transcript: () => { calls++; return calls === 1 ? [] : [{ role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }]; },
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['send', 'bob', 'q', '--wait', '--json', '--timeout', '10'], port);
+  const { code, stdout } = await cli(['send', 'bob', 'q', '--wait', '-o', 'json', '--timeout', '10'], port);
   assert.strictEqual(code, 0);
   const j = JSON.parse(stdout);
   assert.strictEqual(j.ok, true);

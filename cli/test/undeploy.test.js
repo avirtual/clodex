@@ -225,7 +225,7 @@ test('undeploy fargate: confirm mismatch → abort USAGE, nothing destructive fi
 
 test('undeploy fargate: --json without --force in non-TTY → USAGE (never destroy in a pipe)', async () => {
   const rec = {};
-  const r = await cli(['undeploy', 'fargate', 'clodex-node', '--json'], { execFn: fakeAws(rec) });
+  const r = await cli(['undeploy', 'fargate', 'clodex-node', '-o', 'json'], { execFn: fakeAws(rec) });
   assert.strictEqual(r.code, EXIT.USAGE);
   assert.ok(!rec.calls.some((c) => c.join(' ').includes('delete-stack')));
 });

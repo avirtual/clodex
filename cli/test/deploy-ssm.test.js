@@ -620,7 +620,7 @@ test('deploy ssm --dry-run: composes argv + wrapper, runs nothing, token is a pl
 
 test('deploy ssm --json: NDJSON preflight/command/marker/verify/context, no token leak', async () => {
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '--json'], {
+  const { code, stdout } = await cli(['deploy', 'ssm', 'n', '--target', 'i-1', '-o', 'json'], {
     execFn: fakeAws({}), probeSsm: async () => ({ app: 'clodex', host: 'n', version: '1.0', caps: [] }), contextsFile,
   });
   assert.strictEqual(code, 0);

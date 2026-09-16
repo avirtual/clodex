@@ -135,7 +135,7 @@ test('run --json on an agent carries mode:"agent"', async () => {
     transcript: () => { calls++; return calls === 1 ? [] : [{ role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }]; },
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['run', 'bob', 'q', '--json', '--timeout', '10'], port);
+  const { code, stdout } = await cli(['run', 'bob', 'q', '-o', 'json', '--timeout', '10'], port);
   assert.strictEqual(code, 0);
   const j = JSON.parse(stdout);
   assert.strictEqual(j.mode, 'agent');
@@ -171,7 +171,7 @@ test('run --json on a bash session carries mode:"pty"', async () => {
     onInput: (state) => pushOutput(state.attach, 'hi\r\n'),
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['run', 'shell', 'echo hi', '--json', '--quiet-ms', '80'], port);
+  const { code, stdout } = await cli(['run', 'shell', 'echo hi', '-o', 'json', '--quiet-ms', '80'], port);
   assert.strictEqual(code, 0);
   const j = JSON.parse(stdout);
   assert.strictEqual(j.mode, 'pty');
@@ -246,7 +246,7 @@ test('exec on a bash session is unaffected by the guardrail (no --pty needed)', 
 test('exec --json on an agent without --pty still refuses (exit 2, warning on stderr)', async () => {
   const { server } = stub({ sessions: [{ name: 'a', type: 'codex' }] });
   const port = await listen(server);
-  const { code, stdout, stderr } = await cli(['exec', 'a', 'x', '--json', '--quiet-ms', '80'], port);
+  const { code, stdout, stderr } = await cli(['exec', 'a', 'x', '-o', 'json', '--quiet-ms', '80'], port);
   assert.strictEqual(code, 2);
   assert.match(stderr, /is a codex agent/);
   assert.strictEqual(stdout, '');   // nothing printed to stdout

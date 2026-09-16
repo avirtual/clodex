@@ -233,12 +233,18 @@ in-process fetch — never in argv (ps-visible), never in a URL, never logged.
 > The tables below are the narrative tour; for the exact current flag set of any
 > verb, ask `help`.
 
-Read (all support `--json` — stable raw wire payload):
+Read (all support `-o json` — stable raw wire payload):
 
 | Verb | Route |
 |---|---|
 | `info` | `GET /api/peer/hello` (also a connectivity test) |
-| `sessions` | `GET /api/sessions` |
+| `get sessions [-n W] [-A] [-o wide\|name]` | `GET /api/sessions` (the `-n` filter is client-side) |
+| `get session <name>` | `GET /api/resources` (capability check) → `GET /api/sessions/:name` |
+| `get workspaces` | `GET /api/resources` → `GET /api/workspaces` |
+| `get catalogs` | `GET /api/catalogs` |
+| `describe session\|workspace <name>` / `describe catalogs` | the same routes, rendered as a labeled block (no `-o json`) |
+| `api-resources` | `GET /api/resources` — what this node serves |
+| `version` | `GET /api/peer/hello` — client version plus the node's |
 | `logs <name> [--tail N] [-f\|--follow]` | `GET /api/transcript/:name?limit=N` (+ `GET /api/events` when `-f`) |
 | `query <name> <kind>` | `POST /api/query/:name` — kind ∈ `ctx report bust files filePeek fileDiff` (`--path`, `--detail`) |
 | `args get <name>` | `GET /api/session-args/:name` |
@@ -250,7 +256,7 @@ path for you:
 
 | Verb | Route | Notes |
 |---|---|---|
-| `run <name> <text…> [--timeout N] [--quiet-ms N] [--raw] [--json]` | `GET /api/sessions` (type lookup) → send-wait **or** exec | **agent** (claude/codex) → send the text as a prompt, wait for the turn to end, print the reply; **bash** → run the command, print the terminal output. `--json` carries `mode:"agent"\|"pty"`. Always executes (no `--no-enter`) |
+| `run <name> <text…> [--timeout N] [--quiet-ms N] [--raw] [-o json]` | `GET /api/sessions` (type lookup) → send-wait **or** exec | **agent** (claude/codex) → send the text as a prompt, wait for the turn to end, print the reply; **bash** → run the command, print the terminal output. `-o json` carries `mode:"agent"\|"pty"`. Always executes (no `--no-enter`) |
 
 `run` adds one `GET /api/sessions` round-trip to learn the type — the engine's
 session list is **authoritative**, so a bash session named like an agent (or the
@@ -308,8 +314,8 @@ rather than reaped after one request.
 
 **`logs -f` — follow.** Print the tail, then stream new transcript entries as
 each turn lands (subscribes to `/api/events`, refetches the delta on an activity
-for your session). `--json` emits **NDJSON** (one object per new entry), so
-`clodexctl logs bob -f --json | jq` is the point. Ctrl-C exits `0` — it's a
+for your session). `-o json` emits **NDJSON** (one object per new entry), so
+`clodexctl logs bob -f -o json | jq` is the point. Ctrl-C exits `0` — it's a
 pager, not a failure — and a non-TTY stdout is fine (pipe it into `grep`). Same
 60s staleness watchdog + bounded reconnect as `attach`; a reconnect re-snapshots
 silently (no duplicate lines).
@@ -319,7 +325,7 @@ Write:
 | Verb | Route | Notes |
 |---|---|---|
 | `spawn <name> --cwd DIR --type T [--model M] [--arg X …] [--env KEY=VALUE …] [--fork]` | `POST /api/sessions` | `--model`/`--arg` ride `extraArgs`; each `--env KEY=VALUE` (repeatable) rides `body.env` and sets a per-session env var on the spawned PTY (merged over the box's machine + global/workspace scopes — the session value wins). Applied **only at create** (`run`/`send`/`args set` can't change env). The box re-validates every key server-side and drops invalid/deny-listed ones (`CLODEX_REMOTE_TOKEN` is reserved); the ack echoes the applied keys and `clodexctl` warns loudly if any were dropped — or if the node is too old to support env at all |
-| `kill <name> [--force]` | `POST /api/kill/:name` | **HARD DELETE — no resume.** Confirms unless `--force` (required with `--json`) |
+| `kill <name> [--force]` | `POST /api/kill/:name` | **HARD DELETE — no resume.** Confirms unless `--force` (required with `-o json`) |
 | `restart <name> [--fresh]` | `POST /api/restart-session/:name` | |
 | `args set <name> [--arg X…] [--proxy URL] [--restart]` | `POST /api/session-args/:name` | |
 | `restart-app [--force]` | `POST /api/restart` | relaunches the whole engine |
@@ -358,7 +364,7 @@ contract (task ids, completion events) is T38.
 
 | Verb | Transport | Notes |
 |---|---|---|
-| `deploy <user@host> [--port N] [--repo URL] [--branch B] [--src DIR] [--name N] [--no-ctx] [--no-wirescope] [--force] [--ssh-opt X …] [--claude-token-file FILE] [--dry-run]` | system `ssh` → `bash -s` | drives `peering/clodex-deploy.sh` on the box (installs the claude/codex CLIs too), streams `::step`/`::ok` progress (`--json` = NDJSON), verifies the wire through an ssh tunnel, then saves a `{ssh, remotePort}` context. `--claude-token-file` rides the ssh stdin into a `0600` unit drop-in |
+| `deploy <user@host> [--port N] [--repo URL] [--branch B] [--src DIR] [--name N] [--no-ctx] [--no-wirescope] [--force] [--ssh-opt X …] [--claude-token-file FILE] [--dry-run]` | system `ssh` → `bash -s` | drives `peering/clodex-deploy.sh` on the box (installs the claude/codex CLIs too), streams `::step`/`::ok` progress (`-o json` = NDJSON), verifies the wire through an ssh tunnel, then saves a `{ssh, remotePort}` context. `--claude-token-file` rides the ssh stdin into a `0600` unit drop-in |
 | `deploy docker <name> [--port N] [--image I] [--tag T] [--env-file F] [--host ssh://u@box] [--volume V …] [--no-ctx] [--no-wirescope] [--force] [--dry-run]` | system `docker run` | births a container node from the published image, verifies hello, saves a context (`{url}` local / `{ssh, remotePort}` remote) |
 | `deploy ssm <name> --target i-INSTANCE [--region R] [--profile P] [--branch B] [--repo URL] [--port N] [--no-ctx] [--no-wirescope] [--force] [--claude-token-file FILE] [--dry-run]` | system `aws` → SSM RunCommand | installs an **OS-flavor** node (dedicated `clodex` host user + systemd --user service) on an SSM-managed instance with **no ssh and no open ports**: one root `AWS-RunShellScript` running the pinned installer, polled to completion, then verified through the real SSM port-forward. Saves a typed `{ssm, token}` context. `--claude-token-file` is delivered over the encrypted wire post-verify (**never** via SSM params) |
 | `deploy helm <name> [--namespace NS] [--kube-context C] [--chart PATH] [--port N] [--set k=v …] [--values F] [--no-ctx] [--force] [--force-conflicts] [--claude-token-file FILE] [--dry-run]` | system `helm` + `kubectl` | a **KUBERNETES** node from the packaged chart (`cli/deploy/helm/clodex`): mints a wire token, `helm upgrade --install … --set-file secrets.wireToken=<0600 tempfile> --wait`, saves a typed `{kubectl: svc/<name>, token}` context, then verifies hello **through the real `kubectl port-forward`** with the token. Re-run = `helm upgrade` in place, **reusing** the release's existing token |
@@ -386,7 +392,7 @@ branch `master`, default port `7900`.
   `CLAUDE_CODE_OAUTH_TOKEN=…` env-file line) and rides the **ssh stdin** (already
   the auth boundary, not logged) into a `0600` systemd drop-in
   (`clodex.service.d/claude-token.conf`). The token never appears in argv, `ps`,
-  `--json`, or the deploy trail. Without it, `claude` installs but is
+  `-o json`, or the deploy trail. Without it, `claude` installs but is
   unauthenticated (it prompts/fails at first use — honest).
 - **`--no-wirescope`** disables the wirescope traffic-optimization proxy on the
   node: the installer writes a `CLODEX_WIRESCOPE=off` systemd drop-in
@@ -515,7 +521,7 @@ clodexctl deploy ssm mybox --target i-… --branch dev --dry-run   # print the a
   process argv), written `0600` to `clodex.service.d/claude-token.conf`, and the
   service restarted. The restart drops the wire (the delivery session dies with
   it); the engine comes back with `claude` authenticated. The token appears in
-  **no** SSM parameter, argv, `--json`, or trail. Same file format as the ssh
+  **no** SSM parameter, argv, `-o json`, or trail. Same file format as the ssh
   flavor (raw token or a `CLAUDE_CODE_OAUTH_TOKEN=…` line).
 - **The claude/codex CLIs are installed** by the pinned installer (best-effort,
   `~/.local/bin`, on the unit `PATH`) — same as the ssh flavor.

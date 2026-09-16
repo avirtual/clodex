@@ -24,18 +24,67 @@ const { parse } = require('./args');
 
 // Parser option spec shared by all verbs (a verb ignores flags it doesn't use).
 const PARSE_OPTS = {
-  booleans: ['json', 'force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'keep-ctx', 'keep-data', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'force-conflicts', 'help', 'version'],
+  booleans: ['force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'keep-ctx', 'keep-data', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'force-conflicts', 'all-workspaces', 'help', 'version'],
   multi: ['arg', 'ssh-opt', 'volume', 'env', 'set', 'values', 'param'],
   greedy: ['tunnel'],
-  aliases: { h: 'help', V: 'version', f: 'follow', 'remote-port': 'remotePort' },
+  aliases: { h: 'help', V: 'version', f: 'follow', o: 'output', n: 'workspace', A: 'all-workspaces', 'remote-port': 'remotePort' },
 };
 
 // Wire verbs and their handler. ctx/args are dispatched specially (subverbs).
 const WIRE_VERBS = {
-  info: V.info, sessions: V.sessions, logs: V.logs, query: V.query,
+  info: V.info, get: V.get, describe: V.describe, 'api-resources': V.apiResources,
+  version: V.version, logs: V.logs, query: V.query,
   skills: V.skills, spawn: V.spawn, send: V.send, input: V.input,
   exec: V.exec, run: V.run, attach: attach, kill: V.kill, restart: V.restart, 'restart-app': V.restartApp,
 };
+
+const RENAMED_VERBS = { sessions: 'get sessions' };
+
+const RENAMED_HELP_EXIT = 1;
+
+function renamedLine(old) {
+  return `clodexctl ${old} was renamed: use clodexctl ${RENAMED_VERBS[old]}`;
+}
+
+function renamedPointer(flags) {
+  const askedHelp = !!flags.help || flags._[0] === 'help';
+  const pointed = flags._[0] === 'help' ? flags._[1] : flags._[0];
+  if (!pointed || !Object.prototype.hasOwnProperty.call(RENAMED_VERBS, pointed)) return null;
+  return { line: renamedLine(pointed), askedHelp, code: askedHelp ? RENAMED_HELP_EXIT : EXIT.USAGE };
+}
+
+const PASSTHROUGH_FLAGS = new Set(PARSE_OPTS.multi.map((n) => `--${n}`));
+
+function findDeletedJsonFlag(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const tok = argv[i];
+    if (tok === '--') return false;
+    if (typeof tok !== 'string') continue;
+    if (tok === '--tunnel') return false;
+    if (PASSTHROUGH_FLAGS.has(tok)) { i++; continue; }
+    if (tok === '--json' || tok.startsWith('--json=')) return true;
+  }
+  return false;
+}
+
+const OUTPUT_FORMATS = ['json', 'wide', 'name'];
+const GET_ONLY_FORMATS = ['wide', 'name'];
+
+function applyOutput(flags, verb) {
+  if (flags.output == null) return;
+  const fmt = String(flags.output);
+  if (fmt === 'yaml') throw new CliError(EXIT.USAGE, '-o yaml is not supported yet');
+  if (!OUTPUT_FORMATS.includes(fmt)) {
+    throw new CliError(EXIT.USAGE, `unknown output format: ${fmt} (${OUTPUT_FORMATS.join('|')})`);
+  }
+  if (GET_ONLY_FORMATS.includes(fmt) && verb !== 'get') {
+    throw new CliError(EXIT.USAGE, `-o ${fmt} is only valid on get`);
+  }
+  if (verb === 'describe') {
+    throw new CliError(EXIT.USAGE, `describe has no -o ${fmt} (it is a composed human view; use get)`);
+  }
+  if (fmt === 'json') flags.json = true;
+}
 
 // Verbs handled OUTSIDE WIRE_VERBS (their own dispatch above). Together with
 // WIRE_VERBS' keys this is the canonical set of top-level verbs users type —
@@ -47,12 +96,23 @@ const TOP_VERBS = [...Object.keys(WIRE_VERBS), ...SPECIAL_VERBS];
 async function run(argv, io = {}) {
   const printer = makePrinter(io.stdout || ((s) => process.stdout.write(s)));
   const writeErr = io.stderr || ((s) => process.stderr.write(s));
+  if (findDeletedJsonFlag(argv)) {
+    writeErr('clodexctl: --json was replaced by -o json\n');
+    return EXIT.USAGE;
+  }
   let flags;
   try {
     flags = parse(argv, PARSE_OPTS);
   } catch (e) {
     writeErr(`clodexctl: ${e.message}\n`);
     return e instanceof CliError ? e.exitCode : EXIT.USAGE;
+  }
+
+  const pointer = renamedPointer(flags);
+  if (pointer) {
+    if (pointer.askedHelp) { printer.line(pointer.line); return pointer.code; }
+    writeErr(`clodexctl: ${pointer.line}\n`);
+    return pointer.code;
   }
 
   // Help routing — CONTEXTUAL (T43). All three of these short-circuit BEFORE any
@@ -74,6 +134,7 @@ async function run(argv, io = {}) {
   const rest = flags._.slice(1); // positionals after the top verb
 
   try {
+    applyOutput(flags, verb);
     if (verb === 'ctx') return await dispatchCtx(rest, flags, printer, io);
     if (verb === 'args') return await dispatchArgs(rest, flags, printer, io);
     if (verb === 'deploy') return await dispatchDeploy(rest, flags, printer, io);
@@ -198,4 +259,4 @@ function safeLoad(io) {
 // the same lines this dispatcher does. A second copy of the flag table there
 // would drift silently, and the failure mode is invisible: a flag the terminal
 // CLI honours parsed as a positional in the REPL.
-module.exports = { run, TOP_VERBS, SPECIAL_VERBS, PARSE_OPTS };
+module.exports = { run, TOP_VERBS, SPECIAL_VERBS, PARSE_OPTS, RENAMED_VERBS, renamedLine, renamedPointer, findDeletedJsonFlag, applyOutput, OUTPUT_FORMATS };

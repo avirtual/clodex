@@ -215,7 +215,7 @@ test('ctx import --dry-run writes nothing', async () => {
 test('ctx import --json: stable array shape, no token values', async () => {
   const dir = fixture({ ui: { peers: [{ id: 'a', label: 'work', url: 'http://h', token: 'sek' }] }, remoteToken: 'x' });
   const cf = tmpCtxFile();
-  const r = await cli(['ctx', 'import', '--data-dir', dir, '--json'], cf);
+  const r = await cli(['ctx', 'import', '--data-dir', dir, '-o', 'json'], cf);
   const out = JSON.parse(r.stdout);
   assert.ok(Array.isArray(out.results));
   const work = out.results.find((x) => x.name === 'work');

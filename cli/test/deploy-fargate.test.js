@@ -439,7 +439,7 @@ test('deploy fargate: ctx collision kept unless --force (verify still runs on th
 
 test('deploy fargate --json: NDJSON step/ok + context + verify, no token leak', async () => {
   const contextsFile = tmpCtxFile();
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--json'], {
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '-o', 'json'], {
     execFn: fakeAws({}), probeFargate: async () => ({ app: 'clodex', host: 's', version: '1.0', caps: [] }), contextsFile,
   });
   assert.strictEqual(code, 0);
@@ -661,7 +661,7 @@ test('deploy fargate --dry-run: detection RUNS (read-only) and the plan carries 
 });
 
 test('deploy fargate --json --dry-run: the dry-run event carries network{vpcId,subnets,securityGroup,assignPublicIp,autoDetected}', async () => {
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--dry-run', '--json'], {
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--dry-run', '-o', 'json'], {
     execFn: fakeAws({}), probeFargate: async () => { throw new Error('no verify'); },
   });
   assert.strictEqual(code, 0);
@@ -783,7 +783,7 @@ test('deploy fargate --dry-run: prints the resolved region line (read-only resol
 });
 
 test('deploy fargate --json --dry-run: the dry-run event carries the resolved region', async () => {
-  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--dry-run', '--json'], {
+  const { code, stdout } = await cli(['deploy', 'fargate', 's', '--use-bedrock', '--dry-run', '-o', 'json'], {
     execFn: fakeAws({}, { configRegion: 'us-west-2' }), probeFargate: async () => { throw new Error('no verify'); },
   });
   assert.strictEqual(code, 0);

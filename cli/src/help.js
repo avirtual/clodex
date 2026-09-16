@@ -24,7 +24,7 @@ const VERSION = `clodexctl ${pkg.version}`;
 //   args        [placeholder, desc] positional arguments
 //   subcommands [usage, desc] for multi-word families
 //   flags       [flag, desc] — PER-VERB only; global flags (--ctx/--url/--token/
-//               --json/-h/-V) are documented once, in the index footer
+//               -o json/-h/-V) are documented once, in the index footer
 //   examples    real, copy-pasteable
 //   notes       gotchas the accuracy pass surfaced
 const VERB_REGISTRY = [
@@ -32,7 +32,7 @@ const VERB_REGISTRY = [
   {
     name: 'run', group: 'daily',
     summary: 'make a session do something and show the result',
-    usage: 'run <name> <text…> [--timeout N] [--quiet-ms N] [--raw] [--json]',
+    usage: 'run <name> <text…> [--timeout N] [--quiet-ms N] [--raw] [-o json]',
     args: [['name', 'target session'], ['text…', 'a prompt (agent) or a command (bash)']],
     flags: [
       ['--timeout N', 'seconds — hard ceiling on the whole verb (agent: 300, bash-exec: 30)'],
@@ -45,29 +45,74 @@ const VERB_REGISTRY = [
     ],
     notes: [
       'ROUTES by the session\'s authoritative type (one GET /api/sessions): an agent (claude/codex/anything not bash) gets a prompt + waits for the turn to end, then prints the reply; a bash session runs the command and prints the terminal output.',
-      '--json carries mode:"agent"|"pty" so a script can tell which path ran.',
+      '-o json carries mode:"agent"|"pty" so a script can tell which path ran.',
       'run ALWAYS executes — there is no --no-enter (use `input` for raw partial keystrokes).',
     ],
   },
   {
-    name: 'sessions', group: 'daily',
-    summary: 'list running sessions',
-    usage: 'sessions [--json]',
-    examples: ['clodexctl sessions', 'clodexctl --ctx work sessions --json'],
+    name: 'get', group: 'daily',
+    summary: 'list or fetch a resource',
+    usage: [
+      'get sessions [-n WORKSPACE] [-A] [-o json|wide|name]',
+      'get session <name> [-o json|wide|name]',
+      'get workspaces [-o json|name]',
+      'get catalogs [-o json]',
+    ],
+    args: [['resource', 'sessions|session|workspaces|workspace|catalogs'], ['name', 'one object (also accepted as session/<name>)']],
+    flags: [
+      ['-n, --workspace W', 'filter sessions to one workspace (client-side; default is every workspace)'],
+      ['-A, --all-workspaces', 'accepted for muscle memory — already the default'],
+      ['-o FORMAT', 'json (raw wire payload) | wide (+WORKSPACE) | name (session/<name> per line)'],
+    ],
+    examples: [
+      'clodexctl get sessions',
+      'clodexctl get sessions -n main -o wide',
+      'clodexctl get session bob -o json',
+      'clodexctl get sessions -o name | xargs -n1 clodexctl logs',
+    ],
+    notes: [
+      'get sessions and get catalogs run against a node of ANY version. get session <name> and get workspaces need the resources API — an older node answers with the upgrade line and exit 1.',
+      '-n filters on each row\'s own workspace field, so it needs nothing from the node.',
+    ],
+  },
+  {
+    name: 'describe', group: 'daily',
+    summary: 'every field of one object, as labeled lines',
+    usage: ['describe session <name>', 'describe workspace <name>', 'describe catalogs'],
+    args: [['resource', 'session|workspace|catalogs'], ['name', 'the object (also accepted as session/<name>)']],
+    examples: ['clodexctl describe session bob', 'clodexctl describe workspace main'],
+    notes: [
+      'A composed human view — there is no -o json here (kubectl\'s describe has none either). For machine output use `get <resource> <name> -o json`.',
+      'Needs the resources API; an older node answers with the upgrade line and exit 1.',
+    ],
+  },
+  {
+    name: 'api-resources', group: 'daily',
+    summary: 'what this node can serve — NAME SINGULAR SCOPE VERBS',
+    usage: 'api-resources [-o json]',
+    examples: ['clodexctl api-resources'],
+    notes: ['The discovery document (GET /api/resources). A node too old to serve it answers with the upgrade line and exit 1.'],
+  },
+  {
+    name: 'version', group: 'daily',
+    summary: 'this client\'s version and the node\'s',
+    usage: 'version [-o json]',
+    examples: ['clodexctl version', 'clodexctl version -o json'],
+    notes: ['-V/--version prints the client line alone and opens no wire; `version` asks the node too.'],
   },
   {
     name: 'logs', group: 'daily',
     summary: 'print a transcript slice, or follow it live',
-    usage: 'logs <name> [--tail N] [-f|--follow] [--json]',
+    usage: 'logs <name> [--tail N] [-f|--follow] [-o json]',
     args: [['name', 'session whose transcript to read']],
     flags: [
       ['--tail N', 'last N entries (default: the server\'s slice)'],
       ['-f, --follow', 'kubectl -f: print the tail, then stream new entries as each turn lands'],
     ],
-    examples: ['clodexctl logs bob --tail 20', 'clodexctl logs bob -f --json | jq'],
+    examples: ['clodexctl logs bob --tail 20', 'clodexctl logs bob -f -o json | jq'],
     notes: [
       'follow subscribes to /api/events and refetches the delta on an activity for NAME. Ctrl-C exits 0 (it\'s a pager); non-TTY stdout is fine (pipe into grep).',
-      '--json = messages array one-shot; --json with --follow = NDJSON (one object per entry).',
+      '-o json = messages array one-shot; -o json with --follow = NDJSON (one object per entry).',
       'Survives a dropped stream (60s staleness watchdog + bounded reconnect); a reconnect re-snapshots silently (no duplicate lines).',
     ],
   },
@@ -103,7 +148,7 @@ const VERB_REGISTRY = [
   {
     name: 'info', group: 'daily',
     summary: 'identity + caps + version (also a connectivity test)',
-    usage: 'info [--json]',
+    usage: 'info [-o json]',
     examples: ['clodexctl info', 'clodexctl --url http://127.0.0.1:7900 --token T info'],
     notes: ['GET /api/peer/hello — the cheapest reachability check for a context.'],
   },
@@ -112,7 +157,7 @@ const VERB_REGISTRY = [
   {
     name: 'spawn', group: 'sessions',
     summary: 'create a new session on the node',
-    usage: 'spawn <name> --cwd DIR --type claude|codex|bash [--model M] [--arg X …] [--env KEY=VALUE …] [--fork] [--json]',
+    usage: 'spawn <name> --cwd DIR --type claude|codex|bash [--model M] [--arg X …] [--env KEY=VALUE …] [--fork] [-o json]',
     args: [['name', 'new session name ([a-zA-Z0-9._-], 1-64)']],
     flags: [
       ['--cwd DIR', 'working directory for the session'],
@@ -135,18 +180,18 @@ const VERB_REGISTRY = [
   {
     name: 'kill', group: 'sessions',
     summary: 'HARD DELETE a session on the engine (no resume)',
-    usage: 'kill <name> [--force] [--json]',
+    usage: 'kill <name> [--force] [-o json]',
     args: [['name', 'session to delete']],
-    flags: [['--force', 'skip the type-the-name confirm (REQUIRED with --json)']],
-    examples: ['clodexctl kill doomed', 'clodexctl kill doomed --force --json'],
+    flags: [['--force', 'skip the type-the-name confirm (REQUIRED with -o json)']],
+    examples: ['clodexctl kill doomed', 'clodexctl kill doomed --force -o json'],
     notes: [
-      'This is a hard delete on the engine — no resume. Confirms by typing the name back unless --force. In --json/non-interactive mode --force is required (there is no prompt to answer).',
+      'This is a hard delete on the engine — no resume. Confirms by typing the name back unless --force. In -o json/non-interactive mode --force is required (there is no prompt to answer).',
     ],
   },
   {
     name: 'restart', group: 'sessions',
     summary: 'restart a session (resume, or a fresh conversation)',
-    usage: 'restart <name> [--fresh] [--json]',
+    usage: 'restart <name> [--fresh] [-o json]',
     args: [['name', 'session to restart']],
     flags: [['--fresh', 'start a NEW conversation (default resumes the existing one)']],
     examples: ['clodexctl restart bob', 'clodexctl restart bob --fresh'],
@@ -154,8 +199,8 @@ const VERB_REGISTRY = [
   {
     name: 'restart-app', group: 'sessions',
     summary: 'relaunch the WHOLE engine',
-    usage: 'restart-app [--force] [--json]',
-    flags: [['--force', 'skip the confirm (REQUIRED with --json)']],
+    usage: 'restart-app [--force] [-o json]',
+    flags: [['--force', 'skip the confirm (REQUIRED with -o json)']],
     examples: ['clodexctl restart-app --force'],
     notes: ['Relaunches the whole engine — every session respawns and the wire drops out from under every client. Confirms unless --force.'],
   },
@@ -282,7 +327,7 @@ const VERB_REGISTRY = [
       'The flavor is sniffed on the LITERAL first token: `docker` / `ssm` / `helm` / `fargate` / `ssh`; anything else is the ssh flavor (a host literally named `ssm`/`docker`/`helm`/`fargate` → `deploy ssh ssm`).',
       'Re-running deploy on the same host is the UPDATE path — the installer is idempotent; `deploy helm` re-run is `helm upgrade` in place and REUSES the release\'s wire token (no rotation).',
       'ssh saves a tokenless context (the tunnel is the auth boundary); ssm/helm store the wire token they minted. --claude-token-file rides the ssh stdin (ssh), the encrypted wire post-verify (ssm — NEVER via SSM params/CloudTrail), or a 0600 tempfile into helm --set-file (helm — only PATHS in argv). fargate takes --token-file (file:// into the stack\'s oauth-token secret, never argv; --use-bedrock skips it).',
-      'helm verifies laptop-side through the real `kubectl port-forward` transport and saves a typed {kubectl: svc/<name>} context. --json emits NDJSON (one object per ::marker/step).',
+      'helm verifies laptop-side through the real `kubectl port-forward` transport and saves a typed {kubectl: svc/<name>} context. -o json emits NDJSON (one object per ::marker/step).',
       'helm re-runs CARRY FORWARD your prior --set/--values/--port: they are read back off the release (`helm get values`, user-supplied only) and re-applied, so an explicit pin survives. Precedence is chart defaults < carried-forward < this run\'s flags; the carried keys are named in the output. Not `--reuse-values` — that would also freeze the chart\'s own defaults, including the image tag.',
       'fargate runs `aws cloudformation deploy` of the packaged cli/deploy/clodex-fargate.yaml (create OR idempotent update), then reads the stack\'s self-minted wire token into a typed {ssm-ecs CLUSTER/<stack>-node} context. ClusterName defaults to the stack name. No secret value ever rides argv: the wire token is the STACK\'s (read into memory, never rotated on re-run) and --token-file rides file:// into put-secret-value (--use-bedrock skips the oauth secret entirely). A persistent stack (default) adds an ECS Service and is verified over the SSM tunnel; --persistent false is infra-only (prints the run-task command, skips verify).',
       '[helm] "Apply failed with N conflicts" means someone changed a field OUT OF BAND (`kubectl edit`/`patch`), which permanently claimed it — and a release that applies server-side may not change a field it does not own. Re-running cannot help; the error names the owning manager and field. Either revert the out-of-band change, or re-run with --force-conflicts to take the field. Check first that the owner is not a controller entitled to it (an HPA on replicas, a sidecar injector) — forcing takes the field from that too, which is why it is opt-in. Whether a release applies server-side is per-RELEASE, inherited from the helm that installed it: `helm get metadata <release> -n <ns>`.',
@@ -301,7 +346,7 @@ const VERB_REGISTRY = [
       ['undeploy docker <name> [flags]', 'docker rm -f + delete the named data volume (--keep-data keeps it)'],
     ],
     flags: [
-      ['--force', 'skip the type-the-name confirmation (required in --json/non-TTY)'],
+      ['--force', 'skip the type-the-name confirmation (required in -o json/non-TTY)'],
       ['--keep-ctx', 'do not remove the saved context'],
       ['--dry-run', 'print every command that would run; execute nothing destructive'],
       ['--region R --profile P', 'AWS selectors (default: the ctx\'s pinned region/profile, else aws default) [fargate]'],
@@ -317,7 +362,7 @@ const VERB_REGISTRY = [
     ],
     notes: [
       'The flavor is sniffed on the LITERAL first token exactly like `deploy`. ssh/ssm undeploy is not supported (it needs an uninstall mode in the byte-pinned installer catalog — a separate task); remove those by hand: `systemctl --user disable --now clodex.service` on the node.',
-      'Teardown is DESTRUCTIVE and confirm-by-default: it previews what dies, then prompts for the exact name; --force skips the prompt (scripts). --dry-run and --json without --force in a non-TTY refuse rather than silently destroy.',
+      'Teardown is DESTRUCTIVE and confirm-by-default: it previews what dies, then prompts for the exact name; --force skips the prompt (scripts). --dry-run and -o json without --force in a non-TTY refuse rather than silently destroy.',
       'DATA doctrine: a full teardown removes the persistent store too — helm\'s StatefulSet PVC (survives `helm uninstall` by k8s design) and docker\'s named data volume (survives `docker rm -f`). --keep-data opts out and names what was kept. fargate is stateless (nothing to keep).',
       'fargate resolves the region flag > the ctx\'s pinned region (deploy pins it) > aws default, stops any stray (non-service) tasks that would block cluster teardown, then `delete-stack`. Secrets enter Secrets Manager\'s recovery window (gone in 7–30 days). A pre-existing --cluster the stack did not create is never deleted.',
     ],
@@ -326,7 +371,7 @@ const VERB_REGISTRY = [
   {
     name: 'upgrade', group: 'deploy',
     summary: 'move an EXISTING node to a new version (routes on how it was deployed)',
-    usage: 'upgrade [ctx] [--tag T | --image URI] [--dry-run] [--force] [--json]',
+    usage: 'upgrade [ctx] [--tag T | --image URI] [--dry-run] [--force] [-o json]',
     args: [['ctx', 'context to upgrade (else the current/--ctx context)']],
     flags: [
       ['--tag T', 'target version [helm/fargate] — beats the packaged pin AND a carried image.tag'],
@@ -356,7 +401,7 @@ const VERB_REGISTRY = [
   {
     name: 'send', group: 'plumbing',
     summary: 'DM an agent (fire-and-forget, or wait for the turn)',
-    usage: 'send <name> <text…> [--wait [--timeout N]] [--json]',
+    usage: 'send <name> <text…> [--wait [--timeout N]] [-o json]',
     args: [['name', 'target agent'], ['text…', 'the message']],
     flags: [
       ['--wait', 'block until the agent\'s turn ends, then print the new entries'],
@@ -371,7 +416,7 @@ const VERB_REGISTRY = [
   {
     name: 'input', group: 'plumbing',
     summary: 'raw keystrokes into a session (no wait, no guardrail)',
-    usage: 'input <name> <text…> [--no-enter] [--json]',
+    usage: 'input <name> <text…> [--no-enter] [-o json]',
     args: [['name', 'target session'], ['text…', 'keystrokes to send']],
     flags: [['--no-enter', 'post the text verbatim (default appends Enter/\\r)']],
     examples: ['clodexctl input bob "yes"', 'clodexctl input bob $\'\\x1b[A\' --no-enter'],
@@ -382,7 +427,7 @@ const VERB_REGISTRY = [
   {
     name: 'exec', group: 'plumbing',
     summary: 'run one command in a session\'s PTY, print the output',
-    usage: 'exec <name> <cmd…> [--quiet-ms N] [--timeout N] [--raw] [--pty] [--json]',
+    usage: 'exec <name> <cmd…> [--quiet-ms N] [--timeout N] [--raw] [--pty] [-o json]',
     args: [['name', 'target session'], ['cmd…', 'the command (use -- before dashes)']],
     flags: [
       ['--quiet-ms N', 'idle window that ends collection (default 750)'],
@@ -450,7 +495,7 @@ function renderIndex() {
   lines.push('GLOBAL FLAGS (any verb)');
   lines.push('  --ctx NAME               use a named context (overrides current)');
   lines.push('  --url URL --token T      one-shot direct context (no file needed)');
-  lines.push('  --json                   machine-stable output on read verbs');
+  lines.push('  -o json                  machine-stable output on read verbs');
   lines.push('  -h, --help   -V, --version');
   lines.push('');
   lines.push('ENV (between file and flags; flags win)   CLODEX_URL   CLODEX_TOKEN');
@@ -493,7 +538,7 @@ function renderVerb(e) {
     for (const n of e.notes) lines.push(`  - ${n}`);
   }
   lines.push('');
-  lines.push('Global flags (--ctx/--url/--token/--json) and exit codes: clodexctl --help');
+  lines.push('Global flags (--ctx/--url/--token/-o json) and exit codes: clodexctl --help');
   return lines.join('\n');
 }
 

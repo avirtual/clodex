@@ -1,7 +1,7 @@
 'use strict';
 // integration.test.js — the HTTP verbs end-to-end through main.run against a
 // stub node:http server that plays remote.js's routes. Asserts method/path/
-// headers(Bearer)/body, the read/write reshaping, --json passthrough, the
+// headers(Bearer)/body, the read/write reshaping, -o json passthrough, the
 // kill-confirm gate, the input control acquire/release dance, and the auth
 // (401) / not-found (404) exit codes.
 const { test } = require('node:test');
@@ -69,11 +69,11 @@ test('info: GET /api/peer/hello, Bearer header, human render', async () => {
   server.close();
 });
 
-test('sessions --json: raw payload passthrough', async () => {
+test('get sessions -o json: raw payload passthrough', async () => {
   const payload = { ok: true, sessions: [{ name: 'a', type: 'claude', cwd: '/w', activity: 'idle' }] };
   const { server } = stub((req, res) => { res.writeHead(200); res.end(JSON.stringify(payload)); });
   const port = await listen(server);
-  const { code, stdout } = await cli(['sessions', '--json'], port);
+  const { code, stdout } = await cli(['get', 'sessions', '-o', 'json'], port);
   assert.strictEqual(code, 0);
   assert.deepStrictEqual(JSON.parse(stdout), payload);
   server.close();
@@ -165,7 +165,7 @@ test('spawn --json: carries alive:false when the child is dead on arrival', asyn
     res.end(JSON.stringify({ ok: true, name: 'w2', type: 'claude', pid: 4242 }));
   });
   const port = await listen(server);
-  const { code, stdout } = await cli(['spawn', 'w2', '--type', 'claude', '--json'], port, NOSLEEP);
+  const { code, stdout } = await cli(['spawn', 'w2', '--type', 'claude', '-o', 'json'], port, NOSLEEP);
   assert.strictEqual(code, 0);
   const obj = JSON.parse(stdout);
   assert.strictEqual(obj.alive, false);
@@ -269,7 +269,7 @@ test('spawn --env --json: the mismatch warning is SUPPRESSED (raw-payload stdout
   });
   const port = await listen(server);
   const { code, stdout } = await cli(
-    ['spawn', 'w', '--cwd', '/w', '--type', 'claude', '--json', '--env', 'OK=1', '--env', 'CLODEX_REMOTE_TOKEN=leak'],
+    ['spawn', 'w', '--cwd', '/w', '--type', 'claude', '-o', 'json', '--env', 'OK=1', '--env', 'CLODEX_REMOTE_TOKEN=leak'],
     port, NOSLEEP);
   assert.strictEqual(code, 0);
   assert.doesNotMatch(stdout, /WARNING/, 'no human warning line under --json');
@@ -367,7 +367,7 @@ test('kill --force: no prompt, hard-delete message', async () => {
 test('kill --json without --force is a usage error (no request)', async () => {
   const { server, seen } = stub((req, res) => { res.writeHead(200); res.end('{}'); });
   const port = await listen(server);
-  const { code, stderr } = await cli(['kill', 'doomed', '--json'], port);
+  const { code, stderr } = await cli(['kill', 'doomed', '-o', 'json'], port);
   assert.strictEqual(code, 2);
   assert.match(stderr, /--force/);
   assert.strictEqual(seen.length, 0);
