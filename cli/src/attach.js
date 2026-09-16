@@ -1,6 +1,6 @@
 // attach.js — `clodexctl attach NAME` — ssh-for-agents: a live terminal on any
 // session, on any node, through any transport. Reads the attach SSE (scrollback
-// replay + raw output frames), forwards local keystrokes to /api/input, and
+// replay + raw output frames), forwards local keystrokes to the input subresource, and
 // mirrors the terminal geometry. Ctrl-\ (0x1c) detaches and is NEVER forwarded.
 //
 // The one rule that makes this safe: EVERY terminal-state mutation (raw mode,
@@ -14,6 +14,7 @@
 const os = require('os');
 const { CliError, EXIT } = require('./errors');
 const { openGuarded } = require('./sse-guard');
+const R = require('./resources');
 
 const DETACH = 0x1c; // Ctrl-\ — SIGQUIT byte; nobody types it on purpose, so we
                      // claim it as the detach escape (documented: unavailable
@@ -24,7 +25,7 @@ const DETACH = 0x1c; // Ctrl-\ — SIGQUIT byte; nobody types it on purpose, so 
 const RESET = '\x1b[H\x1b[2J\x1b[3J';
 const SGR_RESET = '\x1b[0m';
 
-// Wire resize bounds (remote.js /api/resize): 20≤cols≤500, 5≤rows≤300.
+// Wire resize bounds (remote.js sessions/resize): 20≤cols≤500, 5≤rows≤300.
 function clampDims(cols, rows) {
   const c = Math.max(20, Math.min(500, cols | 0));
   const r = Math.max(5, Math.min(300, rows | 0));
@@ -101,6 +102,7 @@ async function attach({ client, ctx, flags, args, io = {} }) {
   if (!term.isInTTY || !term.isOutTTY) {
     throw new CliError(EXIT.USAGE, 'attach needs a terminal — use `run` or `logs` for scripting');
   }
+  await R.requireResource(client, 'sessions', 'get', R.ctxLabel(ctx, flags), 'attach');
 
   let rawOn = false;
   let token = null;         // control token while we hold it
@@ -115,17 +117,17 @@ async function attach({ client, ctx, flags, args, io = {} }) {
   // to openGuarded's onOpen catch → treated as a retryable drop.
   const acquireAndResize = async () => {
     if (readOnly) return;
-    const acq = await client.post(`/api/control/${encodeURIComponent(name)}`, 'attach (acquire control)', { action: 'acquire', client: clientLabel });
+    const acq = await client.post(`/api/sessions/${encodeURIComponent(name)}/control`, 'attach (acquire control)', { action: 'acquire', client: clientLabel });
     token = acq.token;
     const { cols, rows } = clampDims(term.size().cols, term.size().rows);
-    await client.post(`/api/resize/${encodeURIComponent(name)}`, 'attach (resize)', { token, cols, rows });
+    await client.post(`/api/sessions/${encodeURIComponent(name)}/resize`, 'attach (resize)', { token, cols, rows });
     if (resizer) resizer.forget(); // force the next SIGWINCH to re-send
   };
 
   const releaseControl = async () => {
     if (!token) return;
     const t = token; token = null;
-    try { await client.post(`/api/control/${encodeURIComponent(name)}`, 'attach (release control)', { action: 'release', token: t }); } catch {}
+    try { await client.post(`/api/sessions/${encodeURIComponent(name)}/control`, 'attach (release control)', { action: 'release', token: t }); } catch {}
   };
 
   // The single teardown. Idempotent; restores EVERY terminal mutation first,
@@ -165,7 +167,7 @@ async function attach({ client, ctx, flags, args, io = {} }) {
   const onStdin = (chunk) => {
     const { before, hit } = scanEscape(chunk);
     if (before.length && !readOnly && token) {
-      client.post(`/api/input/${encodeURIComponent(name)}`, 'attach (input)', { token, data: before.toString('utf8') })
+      client.post(`/api/sessions/${encodeURIComponent(name)}/input`, 'attach (input)', { token, data: before.toString('utf8') })
         .catch(() => {});
     }
     if (hit) teardown(null);
@@ -178,7 +180,7 @@ async function attach({ client, ctx, flags, args, io = {} }) {
     resizer = makeResizeSender({
       send: (cols, rows) => {
         if (!token) return;
-        client.post(`/api/resize/${encodeURIComponent(name)}`, 'attach (resize)', { token, cols, rows }).catch(() => {});
+        client.post(`/api/sessions/${encodeURIComponent(name)}/resize`, 'attach (resize)', { token, cols, rows }).catch(() => {});
       },
     });
     term.setRawMode(true); rawOn = true;
@@ -188,7 +190,7 @@ async function attach({ client, ctx, flags, args, io = {} }) {
     offSignal = term.onSignal(() => teardown(null));
   };
 
-  guard = openGuarded(client, `/api/attach/${encodeURIComponent(name)}`, 'attach', {
+  guard = openGuarded(client, `/api/sessions/${encodeURIComponent(name)}/attach`, 'attach', {
     onEvent: (event, data) => {
       if (event === 'replay') {
         // 3. Banner (once, before raw mode). 4. Reset + scrollback on every replay.
