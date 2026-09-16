@@ -477,9 +477,6 @@ test('undeploy fargate ctx cleanup: same-named cluster in ANOTHER region keeps i
   assert.ok(!saved.contexts.sameRegion, 'matching region cluster-half → removed');
 });
 
-// NIT pin (T11b r2): the by-name ctx match is the CONTEXT KEY torn down, never
-// the record's stack — a SECOND context literally named after that stack is a
-// different deployment and must survive.
 test('undeploy fargate ctx cleanup: a second context named after the stack is NOT collateral', async () => {
   const contextsFile = tmpCtxFile({ current: 'prod', contexts: {
     prod: { ssm: { ecs: 'prod-cluster/prod-node', region: 'us-west-2' }, token: 'A',
@@ -494,8 +491,6 @@ test('undeploy fargate ctx cleanup: a second context named after the stack is NO
   assert.match(r.stdout, /^removed context "prod" \(was current — cleared\)$/m, 'only the one context is reported removed');
 });
 
-// The forced path has no context key routing it, so the stack name IS the key
-// to clean up — the fallback must still fire.
 test('undeploy fargate --fargate (no record): the typed stack name is still the ctx cleaned up', async () => {
   const contextsFile = tmpCtxFile({ current: 'clodex-node', contexts: {
     'clodex-node': { url: 'http://127.0.0.1:7900', token: 'A' },

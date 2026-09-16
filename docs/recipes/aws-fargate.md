@@ -84,7 +84,7 @@ What it does, and the discipline it keeps:
   the disposable, infra-only shape: it prints the `run-task` command and skips
   verify (nothing is running yet).
 - **`--dry-run`** prints every `aws` argv (with a `file://` placeholder for the
-  token) and runs nothing; **`--json`** emits one NDJSON object per step.
+  token) and runs nothing; **`-o json`** emits one NDJSON object per step.
 
 The manual walkthrough below is the same stack spelled out by hand — the
 review-posture alternative, and the reference for what the one command

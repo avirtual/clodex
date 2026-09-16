@@ -34,8 +34,9 @@ disk is the source of truth — SSE signals "changed", clients refetch.
 
 Endpoints: phone page (`/`), `GET /api/sessions|events`
 (global SSE), `GET /api/resources` (the node's resource/verb document —
-`{ok, version, resources}`, filtered to what this node's injected callbacks
-actually serve; advertised as the `resources` cap, which is unconditional),
+`{ok, version, resources}`, now `version: 2`, filtered to what this node's
+injected callbacks actually serve; advertised as the `resources` cap, which is
+unconditional),
 `GET /api/sessions/:name` (one session, `{ok, session}`; 404 unknown or dead),
 `GET /api/sessions/:name/transcript?limit&since` (the message list),
 and `GET /api/sessions?workspace=<name or id>` (the list narrowed to one
@@ -61,7 +62,9 @@ worktrees of the repo containing an ABSOLUTE `repo` path — 200
 prunable}]}`; a missing or relative `repo` is a 400
 `{error:'repo must be an absolute path'}`, a path in no git repo a 404, and a
 node wiring no worktree callback 501s with the resource absent from
-`/api/resources`),
+`/api/resources`; the returned `repo` is git's TOPLEVEL for the path asked
+about, not the path itself, so a request naming a subdirectory answers with the
+anchor its worktree paths share),
 `GET /api/peer/hello` (identity + caps + `dmOrigins` +
 `srcDir` + `webHost` + `wirescope`), `GET /api/sessions/:name/attach` (per-session SSE: b64 scrollback replay
 + telemetry seed), `POST /api/sessions/:name/control|input|resize` (input+resize
@@ -86,6 +89,23 @@ OTHER relay-enabled peers; see messaging.md §4a) and the operator inbox —
 (idempotent, 404 unknown), `POST /api/inbox/read-all` (`marked`),
 `POST /api/inbox/remove/:id` (404 unknown) — all five under the `inbox` cap,
 which is present only when the notifications store is injected.
+
+**The node itself** is the one target in the document that is not a resource
+row. `POST /api/restart` relaunches the ENGINE — the whole Clodex app on that
+box, not a session — and is what `clodexctl restart node` spells; the response
+is written before the restart fires, so a caller gets its 200 and then the
+socket dies, which is success, not a transport fault. It is destructive to
+every live seat on the box, so the CLI gates it behind `--force` in
+`-o json|yaml`/non-interactive mode. The per-session cousin,
+`POST /api/sessions/:name/restart`, restarts one seat and rides the `create`
+cap instead.
+
+`version` in the resources document is a DOCUMENT revision, bumped when routes
+move under existing rows — it went to `2` for the T5–T7 route moves that
+shipped under `1`. It is deliberately NOT a compatibility gate: clodexctl asks
+whether the resource and verb it wants are present in `resources`, never what
+the number says, so an older node's `version: 1` document is accepted as long
+as it carries the row.
 
 Inbox changes push an `inbox` SSE event on `/api/events`:
 `{kind:'added'|'read'|'read-all'|'removed', id?, unread, note?}` (`added`

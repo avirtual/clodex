@@ -83,7 +83,7 @@
 
       <article class="card">
         <h3>clodexctl: the fleet from a terminal</h3>
-        <p>A standalone CLI client for the same wire the GUI peers speak — kubectl-for-Clodex. No Electron, no app running locally. A context names a node and how to reach it: direct URL, ssh, AWS SSM, kubectl port-forward, GCP IAP, Azure Bastion, or a custom tunnel argv. <code>clodexctl attach</code> is a live terminal on a session, <code>logs -f</code> follows the transcript, <code>run</code> asks an agent and waits, and <code>deploy</code> turns a bare box into a Clodex node in one idempotent command.</p>
+        <p>A standalone CLI client for the same wire the GUI peers speak — kubectl-for-Clodex. No Electron, no app running locally. A context names a node and how to reach it: direct URL, ssh, AWS SSM, kubectl port-forward, GCP IAP, Azure Bastion, or a custom tunnel argv. The grammar is kubectl's: <code>get sessions</code> lists, <code>describe session X</code> is the full object, <code>logs X -f</code> follows the transcript, <code>exec X "…"</code> asks an agent and waits, <code>attach X</code> is a live terminal on it, and <code>deploy node</code> turns a bare box into a Clodex node in one idempotent command. Read verbs take <code>-o json|yaml|wide|name</code>.</p>
       </article>
 
       <article class="card">
@@ -123,9 +123,11 @@
     <p class="step"><code>clodexctl</code> drives the same fleet from a terminal — no Electron, no app required (Node 20+):</p>
 <pre><code>git clone https://github.com/avirtual/clodex &amp;&amp; npm i -g ./clodex/cli</code></pre>
     <p class="step">Already running the desktop app? Adopt everything it knows in one step:</p>
-<pre><code>clodexctl ctx import      # adopts every node the GUI already knows
-clodexctl ctx use local   # or any name ctx import printed
-clodexctl get sessions</code></pre>
+<pre><code>clodexctl ctx import          # adopts every node the GUI already knows
+clodexctl ctx use local       # or any name ctx import printed
+clodexctl get sessions        # kubectl's grammar: &lt;verb&gt; &lt;resource&gt; [name]
+clodexctl describe session bob
+clodexctl logs bob -f</code></pre>
     <p class="step">No app on this box? Point it at a node directly instead:</p>
 <pre><code>clodexctl ctx add prod --url https://box:8787 --token &lt;T&gt; &amp;&amp; clodexctl get sessions</code></pre>
   </div>
