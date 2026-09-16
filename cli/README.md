@@ -173,7 +173,7 @@ Every `clodexctl deploy` stamps a `deploy` sibling onto the context it saves:
 `flavor` is one of `ssh` / `docker` / `ssm` / `helm` / `fargate`, plus the
 identifying **names** that flavor needs (helm release + namespace, CF stack,
 container name, SSM target). It exists because the **transport cannot answer
-the question**: the ssh flavor and a remote `deploy docker` both save
+the question**: the ssh flavor and a remote `deploy node --docker` both save
 `{ssh: user@host}`, byte for byte.
 
 Same **data, not code** rule as the cloud kinds above, and it is enforced
@@ -204,7 +204,7 @@ running task → a clear connect error; `aws`'s own stderr is relayed verbatim.
 happily starts sessions to sick instances, so a bare timeout says nothing. On
 any failed open of an `--ssm` context, clodexctl asks SSM about the instance
 and appends a verdict: **no registration** ("terminated, stopped, or never had
-the agent — if you recreated the box, `deploy ssm <name> --target i-NEW…`"),
+the agent — if you recreated the box, `deploy node <name> --ssm i-NEW…`"),
 **agent not pinging** ("last ping 43m ago — reboot it, or redeploy if it was
 replaced"), or **Online yet unreachable** ("suspect the box itself: service
 down, wrong port, or a wedged agent"). Best-effort — if the describe call
@@ -331,7 +331,7 @@ published ports on the box — prints the URL, and pops your browser:
 |---|---|---|
 | `web [ctx] [--port N] [--no-open]` | reuses the ctx's tunnel to the node's web-GUI port (saved ctx `webPort`, else wire-port+1) | prints `http://127.0.0.1:PORT` prominently and **pops your browser** (`open`/`xdg-open`, best-effort — skipped under `--no-open` or a non-TTY stdout; the URL is always printed), then **holds in the foreground**; Ctrl-C exits `0`. `LOCAL` defaults to `8080` (first free of `8080..8090`); `--port` pins it. A **keep-alive probe** rides the tunnel (a cloud tunnel's data channel can die while the local child lives on): if the node stops answering, the hold ends with exit `3` and an honest message instead of serving a zombie tab. Same tunnel machinery as `port-forward` — a `url` (direct) context has no tunnel → exit `2` |
 
-The browser-through-SSM recipe: `clodexctl deploy ssm mybox --target i-…`, then
+The browser-through-SSM recipe: `clodexctl deploy node mybox --ssm i-…`, then
 `clodexctl web mybox` — the GUI for a node with **no ssh and no published ports**
 opens in your browser, the tunnel riding the same SSM session the wire uses. The
 node's web host binds `127.0.0.1` only (`CLODEX_WEB_HOST=127.0.0.1` in the unit
@@ -406,11 +406,11 @@ contract (task ids, completion events) is T38.
 
 | Verb | Transport | Notes |
 |---|---|---|
-| `deploy <user@host> [--port N] [--repo URL] [--branch B] [--src DIR] [--name N] [--no-ctx] [--no-wirescope] [--force] [--ssh-opt X …] [--claude-token-file FILE] [--dry-run]` | system `ssh` → `bash -s` | drives `peering/clodex-deploy.sh` on the box (installs the claude/codex CLIs too), streams `::step`/`::ok` progress (`-o json` = NDJSON), verifies the wire through an ssh tunnel, then saves a `{ssh, remotePort}` context. `--claude-token-file` rides the ssh stdin into a `0600` unit drop-in |
-| `deploy docker <name> [--port N] [--image I] [--tag T] [--env-file F] [--host ssh://u@box] [--volume V …] [--no-ctx] [--no-wirescope] [--force] [--dry-run]` | system `docker run` | births a container node from the published image, verifies hello, saves a context (`{url}` local / `{ssh, remotePort}` remote) |
-| `deploy ssm <name> --target i-INSTANCE [--region R] [--profile P] [--branch B] [--repo URL] [--port N] [--no-ctx] [--no-wirescope] [--force] [--claude-token-file FILE] [--dry-run]` | system `aws` → SSM RunCommand | installs an **OS-flavor** node (dedicated `clodex` host user + systemd --user service) on an SSM-managed instance with **no ssh and no open ports**: one root `AWS-RunShellScript` running the pinned installer, polled to completion, then verified through the real SSM port-forward. Saves a typed `{ssm, token}` context. `--claude-token-file` is delivered over the encrypted wire post-verify (**never** via SSM params) |
-| `deploy helm <name> [--namespace NS] [--kube-context C] [--chart PATH] [--port N] [--set k=v …] [--values F] [--no-ctx] [--force] [--force-conflicts] [--claude-token-file FILE] [--dry-run]` | system `helm` + `kubectl` | a **KUBERNETES** node from the packaged chart (`cli/deploy/helm/clodex`): mints a wire token, `helm upgrade --install … --set-file secrets.wireToken=<0600 tempfile> --wait`, saves a typed `{kubectl: svc/<name>, token}` context, then verifies hello **through the real `kubectl port-forward`** with the token. Re-run = `helm upgrade` in place, **reusing** the release's existing token |
-| `deploy fargate <stack> [--cluster NAME] [--region R] [--profile P] [--image URI] [--use-bedrock] [--assign-public-ip E\|D] [--subnets IDs] [--security-group ID] [--persistent true\|false] [--param K=V …] [--token-file FILE] [--ctx NAME] [--no-ctx] [--force] [--dry-run]` | system `aws` → CloudFormation | an **AWS FARGATE** node from the packaged template (`cli/deploy/clodex-fargate.yaml`): `aws cloudformation deploy` (create OR idempotent update), populates the oauth-token secret from `--token-file` (`file://`, never argv; skipped on `--use-bedrock`), reads the stack's **self-minted** wire token into a typed `{ssm-ecs CLUSTER/<stack>-node, token}` context, then (when `--persistent`, the default) verifies hello **through the real SSM tunnel**. `ClusterName` defaults to the stack name; the wire token is never rotated on re-run |
+| `deploy node <name> --ssh user@host [--port N] [--repo URL] [--branch B] [--src DIR] [--no-ctx] [--no-wirescope] [--force] [--ssh-opt X …] [--claude-token-file FILE] [--dry-run]` | system `ssh` → `bash -s` | drives `peering/clodex-deploy.sh` on the box (installs the claude/codex CLIs too), streams `::step`/`::ok` progress (`-o json` = NDJSON), verifies the wire through an ssh tunnel, then saves a `{ssh, remotePort}` context. `--claude-token-file` rides the ssh stdin into a `0600` unit drop-in |
+| `deploy node <name> --docker [--port N] [--image I] [--tag T] [--env-file F] [--host ssh://u@box] [--volume V …] [--no-ctx] [--no-wirescope] [--force] [--dry-run]` | system `docker run` | births a container node from the published image, verifies hello, saves a context (`{url}` local / `{ssh, remotePort}` remote) |
+| `deploy node <name> --ssm i-INSTANCE [--region R] [--profile P] [--branch B] [--repo URL] [--port N] [--no-ctx] [--no-wirescope] [--force] [--claude-token-file FILE] [--dry-run]` | system `aws` → SSM RunCommand | installs an **OS-flavor** node (dedicated `clodex` host user + systemd --user service) on an SSM-managed instance with **no ssh and no open ports**: one root `AWS-RunShellScript` running the pinned installer, polled to completion, then verified through the real SSM port-forward. Saves a typed `{ssm, token}` context. `--claude-token-file` is delivered over the encrypted wire post-verify (**never** via SSM params) |
+| `deploy node <name> --helm [--namespace NS] [--kube-context C] [--chart PATH] [--port N] [--set k=v …] [--values F] [--no-ctx] [--force] [--force-conflicts] [--claude-token-file FILE] [--dry-run]` | system `helm` + `kubectl` | a **KUBERNETES** node from the packaged chart (`cli/deploy/helm/clodex`): mints a wire token, `helm upgrade --install … --set-file secrets.wireToken=<0600 tempfile> --wait`, saves a typed `{kubectl: svc/<name>, token}` context, then verifies hello **through the real `kubectl port-forward`** with the token. Re-run = `helm upgrade` in place, **reusing** the release's existing token |
+| `deploy node <stack> --fargate [--cluster NAME] [--region R] [--profile P] [--image URI] [--use-bedrock] [--assign-public-ip E\|D] [--subnets IDs] [--security-group ID] [--persistent true\|false] [--param K=V …] [--token-file FILE] [--ctx NAME] [--no-ctx] [--force] [--dry-run]` | system `aws` → CloudFormation | an **AWS FARGATE** node from the packaged template (`cli/deploy/clodex-fargate.yaml`): `aws cloudformation deploy` (create OR idempotent update), populates the oauth-token secret from `--token-file` (`file://`, never argv; skipped on `--use-bedrock`), reads the stack's **self-minted** wire token into a typed `{ssm-ecs CLUSTER/<stack>-node, token}` context, then (when `--persistent`, the default) verifies hello **through the real SSM tunnel**. `ClusterName` defaults to the stack name; the wire token is never rotated on re-run |
 
 `deploy` is the CLI twin of the GUI's add-peer wizard. It runs the **same
 idempotent installer** the GUI uses, so **re-running `deploy` on the same host is
@@ -419,9 +419,9 @@ the update path**. Deploy params ride the remote environment (`PORT`, `REPO_URL`
 branch `master`, default port `7900`.
 
 - **ssh-reachable boxes only** (this flavor). Fargate nodes have no box to
-  script — use `deploy fargate` below (the manual walkthrough in
+  script — use `--fargate` below (the manual walkthrough in
   `docs/recipes/aws-fargate.md` remains the reviewable alternative); k8s nodes
-  get `deploy helm` below (the manual chart install in
+  get `--helm` below (the manual chart install in
   `docs/recipes/kubernetes.md` remains the reviewable alternative).
 - **No token is stored.** The node binds loopback and is reached over an ssh
   tunnel; the tunnel is the auth boundary (same posture as the GUI's peers).
@@ -443,12 +443,13 @@ branch `master`, default port `7900`.
   system packages. Symmetric: re-running deploy **without** the flag removes the
   drop-in. Use it for nodes on Bedrock/Vertex (their traffic bypasses the proxy
   — though a node-level `CLAUDE_CODE_USE_BEDROCK`/`VERTEX` env auto-disables
-  wirescope in the engine anyway). Same flag on `deploy ssm` (same drop-in) and
-  `deploy docker` (`-e CLODEX_WIRESCOPE=off`); helm uses the chart value
+  wirescope in the engine anyway). Same flag on `--ssm` (same drop-in) and
+  `--docker` (`-e CLODEX_WIRESCOPE=off`); helm uses the chart value
   `--set wirescope.enabled=false`; Fargate the `DisableWirescope` stack parameter.
-- On success a context is saved (name defaults to the host's short name, or
-  `--name N`); a name collision is **kept** unless `--force`. `--no-ctx` opts out.
-  Deploy ends with `clodexctl --ctx <name> sessions`, not just an installed service.
+- On success a context is saved under the positional `<name>` (on `--fargate`,
+  `--ctx NAME` overrides it); a name collision is **kept** unless `--force`.
+  `--no-ctx` opts out. Deploy ends with `clodexctl --ctx <name> get sessions`,
+  not just an installed service.
 - **Exit 42 from the script = needs root.** The script prints the exact `sudo`
   commands it couldn't run non-interactively; run them on the box, then re-run
   `deploy`. `--dry-run` prints what would run and does nothing.
@@ -457,17 +458,17 @@ The `cli/deploy/clodex-deploy.sh` shipped in the package is a **byte-for-byte
 copy** of `peering/clodex-deploy.sh` (the source of truth); a test pins them
 equal so drift fails the suite.
 
-### `deploy docker <name>` — a container node
+### `deploy node <name> --docker` — a container node
 
-`deploy docker` births a node with **one `docker run`** of the published,
+`deploy node --docker` births a node with **one `docker run`** of the published,
 self-configuring image (`docker/web/Dockerfile` bakes `CLODEX_REMOTE_ENABLE=1`,
 `CLODEX_REMOTE_HOST=0.0.0.0` and the headless `CMD`, so the wire comes up on
 `7900` in-container with no toggle to reach). One `docker run` = one node.
 
 ```
-clodexctl deploy docker mybox                 # local docker, image :latest
-clodexctl deploy docker edge --host user@box  # docker on a remote box over ssh
-clodexctl deploy docker ci --tag v3.5.2 --env-file ./auth.env
+clodexctl deploy node mybox --docker                 # local docker, image :latest
+clodexctl deploy node edge --docker --host user@box  # docker on a remote box over ssh
+clodexctl deploy node ci --docker --tag v3.5.2 --env-file ./auth.env
 ```
 
 - **Not a GUI sandbox.** A CLI container is the *minimal* box — a plain peer
@@ -502,7 +503,7 @@ clodexctl deploy docker ci --tag v3.5.2 --env-file ./auth.env
   `clodexctl-<name>-data` volume survives `rm` and carries the node's sessions.
   (`clodexctl` adds no container lifecycle verbs.)
 
-### `deploy ssm <name> --target i-INSTANCE` — a node with no ssh, no open ports
+### `deploy node <name> --ssm i-INSTANCE` — a node with no ssh, no open ports
 
 The **OS flavor over AWS SSM RunCommand** — the *same* node the ssh flavor
 installs (a dedicated `clodex` host user running the systemd --user service), not
@@ -513,8 +514,8 @@ inverts: one root wrapper installs the prereqs itself, mints the user, then runs
 the pinned installer as that user and relays its `::` marker trail.
 
 ```
-clodexctl deploy ssm mybox --target i-0123456789abcdef0 --region us-west-2 --profile prod
-clodexctl deploy ssm mybox --target i-… --branch dev --dry-run   # print the argv + wrapper, run nothing
+clodexctl deploy node mybox --ssm i-0123456789abcdef0 --region us-west-2 --profile prod
+clodexctl deploy node mybox --ssm i-… --branch dev --dry-run   # print the argv + wrapper, run nothing
 ```
 
 - **The sequence.** Mint a wire token locally → `describe-instance-information`
@@ -553,7 +554,7 @@ clodexctl deploy ssm mybox --target i-… --branch dev --dry-run   # print the a
   history / CloudTrail** to anyone with `ssm:GetCommandInvocation`. This is an
   acceptable posture **only because the port never leaves loopback** — reaching
   the wire at all requires `ssm:StartSession` on the same account. To rotate the
-  token, **re-run `deploy ssm`** (it mints a new one, rewrites the drop-in and
+  token, **re-run the `--ssm` deploy** (it mints a new one, rewrites the drop-in and
   restarts the service, then updates the context).
 - **`--claude-token-file FILE` never rides SSM.** The Claude OAuth token is
   **not ours to rotate** (unlike the wire token), so it must **not** land in
@@ -569,11 +570,10 @@ clodexctl deploy ssm mybox --target i-… --branch dev --dry-run   # print the a
   `~/.local/bin`, on the unit `PATH`) — same as the ssh flavor.
 - **Model credentials** belong on the **instance role** (Bedrock) or seeded
   manually on the box — the same guidance as the ssh flavor.
-- **ssh-reachable boxes** should prefer plain `deploy <user@host>`; **`deploy ssm`
-  is for instances you reach only through SSM**. A host literally named `ssm`
-  still works via `deploy ssh ssm`.
+- **ssh-reachable boxes** should prefer plain `deploy node <name> --ssh user@host`; **`--ssm`
+  is for instances you reach only through SSM**.
 
-### `deploy helm <name>` — a Kubernetes node in one command
+### `deploy node <name> --helm` — a Kubernetes node in one command
 
 Installs the **packaged chart** (`cli/deploy/helm/clodex` — a StatefulSet +
 headless Service, no Ingress; the chart itself is the reviewable surface) as
@@ -583,10 +583,10 @@ must be DNS-1123 (lowercase letters/digits/hyphens, max 53 — no dots or
 underscores; validated early with a clear message).
 
 ```
-clodexctl deploy helm mynode                                   # current kubectl context, ns "clodex"
-clodexctl deploy helm mynode --kube-context prod --namespace agents
-clodexctl deploy helm mynode --claude-token-file ./token       # authenticate claude in the pod
-clodexctl deploy helm mynode --set persistence.enabled=false --dry-run
+clodexctl deploy node mynode --helm                                   # current kubectl context, ns "clodex"
+clodexctl deploy node mynode --helm --kube-context prod --namespace agents
+clodexctl deploy node mynode --helm --claude-token-file ./token       # authenticate claude in the pod
+clodexctl deploy node mynode --helm --set persistence.enabled=false --dry-run
 ```
 
 - **The sequence.** Preflight (`helm`/`kubectl` resolve; the kube context is

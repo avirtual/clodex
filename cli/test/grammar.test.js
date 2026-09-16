@@ -576,13 +576,66 @@ test('every RENAMED_SECOND second token answers with its own pointer, exit 1', a
   const { RENAMED_SECOND } = require('../src/main');
   for (const [verb, table] of Object.entries(RENAMED_SECOND)) {
     for (const tok of Object.keys(table)) {
-      if (tok === '*') continue;
-      const { code, stderr } = await cli([verb, tok, 'x'], null, {
+      const typed = tok === '*' ? 'zzz-not-a-resource' : tok;
+      const { code, stderr } = await cli([verb, typed, 'x'], null, {
         spawnFn: () => { throw new Error('spawnFn called'); },
         execFn: async () => { throw new Error('execFn called'); },
       });
-      assert.strictEqual(code, 1, `${verb} ${tok} must exit 1: ${stderr}`);
-      assert.match(stderr, new RegExp(`clodexctl ${verb} ${tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} was renamed: use clodexctl `));
+      assert.strictEqual(code, 1, `${verb} ${typed} must exit 1: ${stderr}`);
+      assert.match(stderr, new RegExp(`clodexctl ${verb} ${typed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} was renamed: use clodexctl `));
     }
+  }
+});
+
+test('every T11b-removed undeploy spelling prints its pointer, exits 1, and starts no work', async () => {
+  const { RENAMED_SECOND } = require('../src/main');
+  for (const old of ['fargate', 'helm', 'docker', 'ssh', 'ssm']) {
+    let dialled = false;
+    const { code, stderr } = await cli(['undeploy', old, 'x', '--force'], null, {
+      spawnFn: () => { dialled = true; throw new Error('spawnFn called'); },
+      execFn: async () => { dialled = true; throw new Error('execFn called'); },
+      runDocker: async () => { dialled = true; throw new Error('runDocker called'); },
+    });
+    assert.strictEqual(code, 1, `undeploy ${old} must exit 1: ${stderr}`);
+    assert.ok(stderr.includes(`clodexctl undeploy ${old} was renamed: use clodexctl undeploy node <name>`), `undeploy ${old}: ${stderr}`);
+    assert.strictEqual(dialled, false, `undeploy ${old} must run nothing`);
+    assert.strictEqual(typeof RENAMED_SECOND.undeploy[old], 'function', `${old} must be in the table`);
+  }
+});
+
+test('`upgrade <ctx>` — any non-node first positional — points at the node spelling, exit 1', async () => {
+  let dialled = false;
+  const { code, stderr } = await cli(['upgrade', 'mynode'], null, {
+    spawnFn: () => { dialled = true; throw new Error('spawnFn called'); },
+    execFn: async () => { dialled = true; throw new Error('execFn called'); },
+  });
+  assert.strictEqual(code, 1, stderr);
+  assert.ok(stderr.includes('clodexctl upgrade mynode was renamed: use clodexctl upgrade node mynode'), stderr);
+  assert.strictEqual(dialled, false, 'the pointer runs nothing');
+  const bare = await cli(['upgrade'], null);
+  assert.strictEqual(bare.code, 2, 'bare upgrade has no second token to point at — it is the resource-word usage error');
+  assert.match(bare.stderr, /upgrade needs a resource \(node\)/);
+  const noCtx = await cli(['upgrade', 'node'], null);
+  assert.strictEqual(noCtx.code, 2);
+  assert.match(noCtx.stderr, /upgrade needs a context — `clodexctl upgrade node <ctx>`/);
+});
+
+test('the deploy `*` pointer names the FLAVOR FLAG on the argv, not always --ssh', async () => {
+  const cases = [
+    [['deploy', 'mybox', '--docker'], 'clodexctl deploy node mybox --docker'],
+    [['deploy', 'mynode', '--helm'], 'clodexctl deploy node mynode --helm'],
+    [['deploy', 'stack', '--fargate'], 'clodexctl deploy node stack --fargate'],
+    [['deploy', 'mybox', '--ssm', 'i-0123'], 'clodexctl deploy node mybox --ssm i-0123'],
+    [['deploy', 'user@box'], 'clodexctl deploy node <name> --ssh user@box'],
+  ];
+  for (const [argv, expected] of cases) {
+    let dialled = false;
+    const { code, stderr } = await cli(argv, null, {
+      spawnFn: () => { dialled = true; throw new Error('spawnFn called'); },
+      execFn: async () => { dialled = true; throw new Error('execFn called'); },
+    });
+    assert.strictEqual(code, 1, `${argv.join(' ')}: ${stderr}`);
+    assert.ok(stderr.includes(`was renamed: use ${expected}`), `${argv.join(' ')}: ${stderr}`);
+    assert.strictEqual(dialled, false, `${argv.join(' ')} must run nothing`);
   }
 });

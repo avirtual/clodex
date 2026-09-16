@@ -97,7 +97,7 @@ async function upgradeVerb({ printer, flags, args, io = {} }) {
   const store = contexts.load(io.contextsFile, { warn: () => {} });
   const ctxName = args[0] ? String(args[0]) : (flags.ctx ? String(flags.ctx) : store.current);
   if (!ctxName) {
-    throw new CliError(EXIT.USAGE, 'upgrade needs a context — `clodexctl upgrade <ctx>` (or set one with `clodexctl ctx use …`)');
+    throw new CliError(EXIT.USAGE, 'upgrade needs a context — `clodexctl upgrade node <ctx>` (or set one with `clodexctl ctx use …`)');
   }
   const entry = store.contexts[ctxName];
   if (!entry) throw new CliError(EXIT.USAGE, `no such context: ${ctxName}`);
@@ -156,8 +156,8 @@ function refusalFor(flavor, ctxName, dep) {
     `A container cannot be upgraded in place: it is remove-and-recreate. The recreate needs the run arguments you gave the original deploy — --env-file, extra --volume mounts, --port, --no-wirescope — and NONE of them are stored, because a context records identifying names, not a command line to replay.`,
     `They are not recoverable either: the env-file exists precisely so secrets never cross argv (docker reads it, clodexctl never opens it), and reconstructing the run from \`docker inspect\` would mean spelling every resolved secret into a -e KEY=VALUE. That is the one line this subsystem does not cross.`,
     `So do it in two steps, with the flags only you have:`,
-    `  clodexctl undeploy docker ${ctxName}${host} --keep-data`,
-    `  clodexctl deploy docker ${ctxName}${host} --tag <version> [--env-file … --volume … ]`,
+    `  clodexctl undeploy node ${ctxName}${host} --keep-data`,
+    `  clodexctl deploy node ${ctxName} --docker${host} --tag <version> [--env-file … --volume … ]`,
     `(--keep-data keeps the ${container}-data volume, so the node's state survives the recreate.)`,
   ].join('\n');
 }
@@ -179,7 +179,7 @@ async function planHelm({ ctxName, entry, dep, flags, io, printer, execFn, log }
     await D.runVendor(execFn, D.helmStatusArgs({ name: release, namespace, kubeContext }), 'status', EXIT.USAGE);
   } catch (e) {
     if (/not found/i.test(e.message || '')) {
-      throw new CliError(EXIT.USAGE, `release "${release}" is not installed in namespace "${namespace}" — upgrade moves an existing deployment, it does not create one. Install it with: clodexctl deploy helm ${release} --namespace ${namespace}${kubeContext ? ` --kube-context ${kubeContext}` : ''}`);
+      throw new CliError(EXIT.USAGE, `release "${release}" is not installed in namespace "${namespace}" — upgrade moves an existing deployment, it does not create one. Install it with: clodexctl deploy node ${release} --helm --namespace ${namespace}${kubeContext ? ` --kube-context ${kubeContext}` : ''}`);
     }
     throw new CliError(EXIT.CONNECT, `could not determine whether release "${release}" exists (helm status failed for a reason other than not-found) — check cluster access and re-run: ${e.message}`);
   }
@@ -254,7 +254,7 @@ async function planFargate({ ctxName, entry, dep, flags, io, printer, execFn, lo
     raw = await D.runAws(execFn, stackDescribeArgs({ stackName, region, profile }), 'cloudformation describe-stacks', EXIT.SERVER);
   } catch (e) {
     if (e instanceof CliError && /does not exist|ValidationError/i.test(e.message)) {
-      throw new CliError(EXIT.USAGE, `stack "${stackName}" does not exist in ${region || 'the default region'} — upgrade moves an existing deployment, it does not create one. Create it with: clodexctl deploy fargate ${stackName}${region ? ` --region ${region}` : ''}`);
+      throw new CliError(EXIT.USAGE, `stack "${stackName}" does not exist in ${region || 'the default region'} — upgrade moves an existing deployment, it does not create one. Create it with: clodexctl deploy node ${stackName} --fargate${region ? ` --region ${region}` : ''}`);
     }
     throw e;
   }
@@ -316,14 +316,14 @@ async function planInstaller({ flavor, ctxName, entry, dep, flags, io, printer, 
   const warnings = [];
   const from = await probeFrom({ entry, io, log, warnings });
   if (!from.version && !flags.force) {
-    throw new CliError(EXIT.CONNECT, `context "${ctxName}" did not answer, so this build cannot confirm a node is there to upgrade (${from.error || 'no response'}) — and upgrade refuses to silently INSTALL one. If the node is merely down and you want the installer to repair it, re-run with --force; if it was never deployed, use: clodexctl deploy ${flavor === 'ssm' ? `ssm ${ctxName} --target <i-…>` : String(dep.host || entry.ssh || ctxName)}`);
+    throw new CliError(EXIT.CONNECT, `context "${ctxName}" did not answer, so this build cannot confirm a node is there to upgrade (${from.error || 'no response'}) — and upgrade refuses to silently INSTALL one. If the node is merely down and you want the installer to repair it, re-run with --force; if it was never deployed, use: clodexctl deploy node ${ctxName} ${flavor === 'ssm' ? '--ssm <i-…>' : `--ssh ${String(dep.host || entry.ssh || ctxName)}`}`);
   }
 
   const reverts = [
     `flags that are not stored in a context REVERT on a re-run — --no-wirescope, --repo, --branch${flavor === 'ssh' ? ', --src, --ssh-opt' : ''} and --claude-token-file. If you set any of them at deploy time, pass them again here; otherwise the node returns to the defaults.`,
   ];
   if (flavor === 'ssm') {
-    warnings.push('`deploy ssm` MINTS A FRESH WIRE TOKEN on every run, so this upgrade will ROTATE it. This context is rewritten with the new token, but any OTHER holder of the old one — a second machine\'s context, a GUI peer row, a script — stops being able to reach the node until you re-share it.');
+    warnings.push('the `--ssm` deploy MINTS A FRESH WIRE TOKEN on every run, so this upgrade will ROTATE it. This context is rewritten with the new token, but any OTHER holder of the old one — a second machine\'s context, a GUI peer row, a script — stops being able to reach the node until you re-share it.');
   }
 
   const targetLine = `whatever ${flags.branch ? `branch "${String(flags.branch)}"` : `branch "${D.DEFAULT_BRANCH}"`} currently builds — the ${flavor} installer tracks a branch and deploys no pinned artifact, so there is no version to compare and this never no-ops`;
@@ -345,7 +345,7 @@ async function planInstaller({ flavor, ctxName, entry, dep, flags, io, printer, 
   }
 
   const host = dep.host ? String(dep.host) : (entry.ssh ? String(entry.ssh) : null);
-  if (!host) throw new CliError(EXIT.USAGE, `context "${ctxName}" records an ssh deploy but no host to reach — re-run \`clodexctl deploy <user@host>\` to restamp it`);
+  if (!host) throw new CliError(EXIT.USAGE, `context "${ctxName}" records an ssh deploy but no host to reach — re-run \`clodexctl deploy node ${ctxName} --ssh <user@host>\` to restamp it`);
   return {
     from: from.version, toVersion: null, toRef: null, targetLine, warnings, reverts,
     run: () => D.deployVerb({

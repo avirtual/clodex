@@ -1,4 +1,4 @@
-// undeploy.js — `clodexctl undeploy <fargate <stack>|helm <name>|docker <name>>`:
+// undeploy.js — `clodexctl undeploy node <name>`:
 // the destructive inverse of `deploy`. Teardown is one command with the same
 // reviewable-argv discipline deploy upholds — --dry-run prints every command and
 // runs nothing destructive (read-only lookups are fine), and the real run gates
@@ -147,21 +147,56 @@ function parseTasks(json) {
 function isServiceTask(task) { return typeof task.group === 'string' && task.group.startsWith('service:'); }
 
 // ── dispatcher ───────────────────────────────────────────────────────────────
-async function undeployVerb({ printer, flags, args, io = {} }) {
-  const flavor = args[0];
-  if (flavor === 'fargate') return undeployFargate({ printer, flags, args: args.slice(1), io });
-  if (flavor === 'helm') return undeployHelm({ printer, flags, args: args.slice(1), io });
-  if (flavor === 'docker') return undeployDocker({ printer, flags, args: args.slice(1), io });
-  if (flavor === 'ssh' || flavor === 'ssm') {
-    throw new CliError(EXIT.USAGE, `undeploy ${flavor} needs an uninstall mode in the installer script — not yet supported; remove by hand on the node: systemctl --user disable --now clodex.service`);
+const UNDEPLOYABLE = ['fargate', 'helm', 'docker'];
+const UNDEPLOY_UNSUPPORTED = ['ssh', 'ssm'];
+const UNDEPLOY_FLAVOR_USAGE = UNDEPLOYABLE.map((f) => `--${f}`).join(' | ');
+
+function forcedFlavor(flags) {
+  const on = UNDEPLOYABLE.filter((f) => flags[f]);
+  if (on.length > 1) {
+    throw new CliError(EXIT.USAGE, `undeploy node: ${on.map((f) => `--${f}`).join(' and ')} are mutually exclusive — pass exactly one (${UNDEPLOY_FLAVOR_USAGE})`);
   }
-  throw new CliError(EXIT.USAGE, `undeploy needs a flavor: fargate <stack> | helm <name> | docker <name> (got "${flavor || '(none)'}")`);
+  return on[0] || null;
+}
+
+function storedDeploy(name, io) {
+  const store = safeLoadContexts(io);
+  const entry = store.contexts[name];
+  if (!entry) return { known: false, dep: null };
+  const dep = entry.deploy;
+  return { known: true, dep: (dep && typeof dep === 'object' && dep.flavor) ? dep : null };
+}
+
+async function undeployVerb({ printer, flags, args, io = {} }) {
+  const name = args[0];
+  if (!name) throw new CliError(EXIT.USAGE, 'undeploy node needs a name (e.g. undeploy node mybox)');
+  const forced = forcedFlavor(flags);
+  const { known, dep } = storedDeploy(name, io);
+  const flavor = forced || (dep ? String(dep.flavor) : null);
+  if (!flavor) {
+    if (!known) {
+      throw new CliError(EXIT.USAGE,
+        `no such context: ${name} — undeploy reads the teardown to run from the context record. If the node has no context (deployed with --no-ctx, or on another machine), name the flavor and the target yourself (${UNDEPLOY_FLAVOR_USAGE}).`);
+    }
+    throw new CliError(EXIT.USAGE,
+      `context "${name}" does not record how it was deployed, so undeploy cannot tell which teardown to run — it was created before clodexctl stored that (or by hand). Name the flavor yourself (${UNDEPLOY_FLAVOR_USAGE}); guessing it from the transport is exactly the ambiguity the record exists to remove (an ssh deploy and a remote docker deploy save identical transports).`);
+  }
+  if (UNDEPLOY_UNSUPPORTED.includes(flavor)) {
+    throw new CliError(EXIT.USAGE, `undeploy of an ${flavor} node needs an uninstall mode in the installer script — not yet supported; remove by hand on the node: systemctl --user disable --now clodex.service`);
+  }
+  const target = (!forced && dep) ? String(dep.stack || dep.release || name) : name;
+  const routed = dep && String(dep.flavor) === flavor ? dep : null;
+  const bundle = { printer, flags, args: [target], io, ctxName: name, dep: routed };
+  if (flavor === 'fargate') return undeployFargate(bundle);
+  if (flavor === 'helm') return undeployHelm(bundle);
+  if (flavor === 'docker') return undeployDocker(bundle);
+  throw new CliError(EXIT.USAGE, `context "${name}" records deploy flavor "${flavor}", which this clodexctl cannot tear down — a newer clodexctl probably wrote it. Upgrade clodexctl, or name a flavor this build knows (${UNDEPLOY_FLAVOR_USAGE}).`);
 }
 
 // ── fargate ──────────────────────────────────────────────────────────────────
-async function undeployFargate({ printer, flags, args, io }) {
+async function undeployFargate({ printer, flags, args, io, ctxName = null, dep = null }) {
   const stackName = args[0];
-  if (!stackName) throw new CliError(EXIT.USAGE, 'undeploy fargate needs a stack name (e.g. undeploy fargate clodex-node)');
+  if (!stackName) throw new CliError(EXIT.USAGE, 'undeploy node needs a stack name (e.g. undeploy node clodex-node)');
   if (!D.FARGATE_STACK_RE.test(stackName)) throw new CliError(EXIT.USAGE, `bad stack name "${stackName}" — ${D.FARGATE_STACK_RE.source}`);
 
   const json = !!flags.json;
@@ -169,18 +204,19 @@ async function undeployFargate({ printer, flags, args, io }) {
   const log = (s) => { if (!json) printer.line(s); };
   const execFn = io.execFn || execFileP;
 
-  // Region/profile: flag > the stack's own ctx entry (T55 pins ssm.region/profile
-  // into fargate ctxs) > aws default. Say which source won.
+  const ctxKey = ctxName || stackName;
   const ctxStore = safeLoadContexts(io);
-  const ctxEntry = ctxStore.contexts[stackName];
+  const ctxEntry = ctxStore.contexts[ctxKey];
   const ctxSsm = ctxEntry && ctxEntry.ssm && typeof ctxEntry.ssm === 'object' ? ctxEntry.ssm : null;
   let region = flags.region ? String(flags.region) : null;
   let regionSource = region ? '--region flag' : null;
-  if (!region && ctxSsm && ctxSsm.region) { region = String(ctxSsm.region); regionSource = `ctx "${stackName}"`; }
+  if (!region && dep && dep.region) { region = String(dep.region); regionSource = `ctx "${ctxKey}"`; }
+  if (!region && ctxSsm && ctxSsm.region) { region = String(ctxSsm.region); regionSource = `ctx "${ctxKey}"`; }
   if (!region) regionSource = 'aws default';
   let profile = flags.profile ? String(flags.profile) : null;
   let profileSource = profile ? '--profile flag' : null;
-  if (!profile && ctxSsm && ctxSsm.profile) { profile = String(ctxSsm.profile); profileSource = `ctx "${stackName}"`; }
+  if (!profile && dep && dep.profile) { profile = String(dep.profile); profileSource = `ctx "${ctxKey}"`; }
+  if (!profile && ctxSsm && ctxSsm.profile) { profile = String(ctxSsm.profile); profileSource = `ctx "${ctxKey}"`; }
   if (!profile) profileSource = 'aws default';
 
   // 1. Stack lookup (read-only — runs on dry-run too). SERVER as the base code:
@@ -273,12 +309,11 @@ async function undeployFargate({ printer, flags, args, io }) {
     log(`deletion started — check: aws cloudformation describe-stacks --stack-name ${stackName}${region ? ` --region ${region}` : ''}`);
   }
 
-  // 7. ctx cleanup: name match OR ssm.ecs cluster-half === this cluster. The
-  //    cluster-half match also requires the entry's pinned region to agree (or
-  //    be absent) — a same-named cluster in ANOTHER region is a different
-  //    deployment; don't drop its ctx.
+  // 7. ctx cleanup: the cluster-half match requires the entry's pinned region to
+  //    agree (or be absent) — a same-named cluster in ANOTHER region is a
+  //    different deployment; don't drop its ctx.
   ctxCleanup({ flags, printer, io, matchFn: (name, entry) => {
-    if (name === stackName) return true;
+    if (name === stackName || name === ctxKey) return true;
     const ecs = entry && entry.ssm && entry.ssm.ecs;
     if (!(typeof ecs === 'string' && ecs.includes('/') && ecs.split('/')[0] === cluster)) return false;
     const entryRegion = entry.ssm.region;
@@ -315,13 +350,13 @@ async function waitForStackDeletion({ stackName, region, profile, execFn, io }) 
 }
 
 // ── helm ─────────────────────────────────────────────────────────────────────
-async function undeployHelm({ printer, flags, args, io }) {
+async function undeployHelm({ printer, flags, args, io, ctxName = null, dep = null }) {
   const name = args[0];
-  if (!name) throw new CliError(EXIT.USAGE, 'undeploy helm needs a release name (e.g. undeploy helm mynode)');
+  if (!name) throw new CliError(EXIT.USAGE, 'undeploy node needs a release name (e.g. undeploy node mynode)');
   if (!D.HELM_RELEASE_RE.test(name)) throw new CliError(EXIT.USAGE, `bad release name "${name}" — ${D.HELM_RELEASE_RE.source}`);
-  const namespace = flags.namespace ? String(flags.namespace) : D.DEFAULT_HELM_NAMESPACE;
+  const namespace = flags.namespace ? String(flags.namespace) : (dep && dep.namespace ? String(dep.namespace) : D.DEFAULT_HELM_NAMESPACE);
   if (!D.K8S_NS_RE.test(namespace)) throw new CliError(EXIT.USAGE, `bad --namespace "${namespace}" — a DNS-1123 label`);
-  const kubeContext = flags['kube-context'] ? String(flags['kube-context']) : null;
+  const kubeContext = flags['kube-context'] ? String(flags['kube-context']) : (dep && dep.kubeContext ? String(dep.kubeContext) : null);
 
   const json = !!flags.json;
   const emit = (o) => printer.json(o);
@@ -375,8 +410,7 @@ async function undeployHelm({ printer, flags, args, io }) {
     else log(`deleted PVC(s) matching ${HELM_PVC_SELECTOR(name)}`);
   }
 
-  // 6. ctx cleanup (kubectl-kind ctx — name match).
-  ctxCleanup({ flags, printer, io, matchFn: (n) => n === name });
+  ctxCleanup({ flags, printer, io, matchFn: (n) => n === name || n === ctxName });
   return EXIT.OK;
 }
 
@@ -395,12 +429,12 @@ function parseManifestKinds(manifest) {
 }
 
 // ── docker ───────────────────────────────────────────────────────────────────
-async function undeployDocker({ printer, flags, args, io }) {
+async function undeployDocker({ printer, flags, args, io, ctxName = null, dep = null }) {
   const name = args[0];
-  if (!name) throw new CliError(EXIT.USAGE, 'undeploy docker needs a node name (e.g. undeploy docker mybox)');
+  if (!name) throw new CliError(EXIT.USAGE, 'undeploy node needs a node name (e.g. undeploy node mybox)');
   if (!D.NAME_RE.test(name)) throw new CliError(EXIT.USAGE, `bad node name "${name}" — ${D.NAME_RE.source}`);
   const container = D.CONTAINER_PREFIX + name;
-  const dockerHost = flags.host ? D.normalizeDockerHost(flags.host) : '';
+  const dockerHost = flags.host ? D.normalizeDockerHost(flags.host) : (dep && dep.dockerHost ? D.normalizeDockerHost(dep.dockerHost) : '');
   const childEnv = dockerHost ? { ...(io.env || process.env), DOCKER_HOST: dockerHost } : null;
 
   const json = !!flags.json;
@@ -460,8 +494,7 @@ async function undeployDocker({ printer, flags, args, io }) {
     }
   }
 
-  // 6. ctx cleanup (name match).
-  ctxCleanup({ flags, printer, io, matchFn: (n) => n === name });
+  ctxCleanup({ flags, printer, io, matchFn: (n) => n === name || n === ctxName });
   return EXIT.OK;
 }
 

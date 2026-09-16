@@ -1,5 +1,5 @@
 'use strict';
-// undeploy.test.js — `clodexctl undeploy <fargate|helm|docker>`: the destructive
+// undeploy.test.js — `clodexctl undeploy node <name>`: the destructive
 // inverse of deploy. Pure argv builders (no secret ever crosses argv — the flow
 // reads none), the shared confirm gate + ctx-cleanup helper, and each flavor's
 // full flow through main.run against scripted exec seams (aws/helm/kubectl via
@@ -132,21 +132,130 @@ test('ctxCleanup: removes matched contexts, clears current, --keep-ctx skips', (
   assert.match(lines2.join('\n'), /context kept/);
 });
 
-// ── dispatcher: ssh/ssm honest USAGE, unknown flavor ─────────────────────────
+// ── dispatcher: flavor from the RECORD, ssh/ssm honest USAGE ─────────────────
 
-test('undeploy ssh/ssm → honest USAGE (installer surgery is a separate task)', async () => {
+test('undeploy node: an ssh/ssm RECORD → honest USAGE (installer surgery is a separate task)', async () => {
   for (const flavor of ['ssh', 'ssm']) {
-    const r = await cli(['undeploy', flavor, 'whatever']);
+    const contextsFile = tmpCtxFile({ current: 'whatever', contexts: { whatever: { ssh: 'user@box', deploy: { flavor } } } });
+    const r = await cli(['undeploy', 'node', 'whatever'], { contextsFile });
     assert.strictEqual(r.code, EXIT.USAGE, flavor);
     assert.match(r.stderr, /not yet supported/);
     assert.match(r.stderr, /systemctl --user disable --now clodex\.service/);
   }
 });
 
-test('undeploy with no/unknown flavor → USAGE', async () => {
-  const r = await cli(['undeploy', 'bogus']);
+test('undeploy node: a record with NO flavor → USAGE naming the forcing flags, nothing runs', async () => {
+  let dialled = false;
+  const contextsFile = tmpCtxFile({ current: 'plain', contexts: { plain: { url: 'http://127.0.0.1:7900' } } });
+  const r = await cli(['undeploy', 'node', 'plain'], {
+    contextsFile,
+    execFn: async () => { dialled = true; throw new Error('execFn called'); },
+    runDocker: async () => { dialled = true; throw new Error('runDocker called'); },
+  });
   assert.strictEqual(r.code, EXIT.USAGE);
-  assert.match(r.stderr, /needs a flavor/);
+  assert.match(r.stderr, /does not record how it was deployed/);
+  assert.match(r.stderr, /--fargate \| --helm \| --docker/);
+  assert.strictEqual(dialled, false, 'nothing ran');
+});
+
+test('undeploy node: a flavor this build cannot tear down → USAGE by name', async () => {
+  const contextsFile = tmpCtxFile({ current: 'future', contexts: { future: { url: 'http://x', deploy: { flavor: 'nomad' } } } });
+  const r = await cli(['undeploy', 'node', 'future'], { contextsFile });
+  assert.strictEqual(r.code, EXIT.USAGE);
+  assert.match(r.stderr, /records deploy flavor "nomad", which this clodexctl cannot tear down/);
+});
+
+test('undeploy node: two flavor flags are mutually exclusive; no name is a usage error', async () => {
+  const two = await cli(['undeploy', 'node', 'x', '--helm', '--docker']);
+  assert.strictEqual(two.code, EXIT.USAGE);
+  assert.match(two.stderr, /--helm and --docker are mutually exclusive/);
+  const bare = await cli(['undeploy', 'node']);
+  assert.strictEqual(bare.code, EXIT.USAGE);
+  assert.match(bare.stderr, /undeploy node needs a name/);
+  const noResource = await cli(['undeploy']);
+  assert.strictEqual(noResource.code, EXIT.USAGE);
+  assert.match(noResource.stderr, /undeploy needs a resource \(node\)/);
+});
+
+test('undeploy node <name>: the flavor is READ FROM THE CONTEXT RECORD, no flag passed', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'mybox', contexts: { mybox: { url: 'http://127.0.0.1:7900', deploy: { flavor: 'docker' } } } });
+  const r = await cli(['undeploy', 'node', 'mybox', '--force'], { runDocker: fakeRunDocker(rec), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.ok(rec.calls.some((c) => c.args.join(' ') === 'rm -f clodexctl-mybox'), 'the docker teardown ran off the record alone');
+  const recH = {};
+  const cfH = tmpCtxFile({ current: 'mynode', contexts: { mynode: { kubectl: { target: 'svc/mynode', namespace: 'clodex', context: null }, deploy: { flavor: 'helm' } } } });
+  const rH = await cli(['undeploy', 'node', 'mynode', '--force'], { execFn: fakeHelm(recH), contextsFile: cfH });
+  assert.strictEqual(rH.code, 0, rH.stderr);
+  assert.ok(recH.calls.some((c) => c.join(' ').includes('helm uninstall mynode')), 'the helm teardown ran off the record alone');
+});
+
+test('undeploy node <ctx>: the fargate TARGET is the record\'s stack, not the context name', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'prod', contexts: { prod: {
+    ssm: { ecs: 'clodex-node/clodex-node-node', region: 'us-west-2' }, token: 'W',
+    deploy: { flavor: 'fargate', stack: 'clodex-node', region: 'us-west-2' },
+  } } });
+  const r = await cli(['undeploy', 'node', 'prod', '--force'], { execFn: fakeAws(rec, { clusterParam: 'clodex-node' }), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const described = rec.calls.filter((c) => c.join(' ').includes('describe-stacks'));
+  assert.ok(described.length, 'the stack was described');
+  assert.ok(described.every((c) => c.includes('clodex-node')), `deploy.stack is the target, not the ctx name: ${described[0].join(' ')}`);
+  assert.ok(!described.some((c) => c.includes('prod')), 'the CONTEXT name must never reach --stack-name');
+  assert.ok(rec.calls.some((c) => c.join(' ').includes('delete-stack --stack-name clodex-node')));
+  assert.match(r.stdout, /region: us-west-2 \[ctx "prod"\]/,
+    "the record's pinned region rode along even though the ctx is named differently");
+  const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.deepStrictEqual(after.contexts, {}, 'the differently-named context is the one cleaned up');
+});
+
+test('undeploy node <ctx>: helm namespace/kube-context come from the record, not kubectl\'s current cluster', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'mynode', contexts: { mynode: {
+    kubectl: { target: 'svc/mynode', namespace: 'agents', context: 'prod' }, token: 'W',
+    deploy: { flavor: 'helm', release: 'mynode', namespace: 'agents', kubeContext: 'prod' },
+  } } });
+  const r = await cli(['undeploy', 'node', 'mynode', '--force'], { execFn: fakeHelm(rec), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const uninstall = rec.calls.find((c) => c.join(' ').includes('helm uninstall'));
+  assert.ok(uninstall.join(' ').includes('--namespace agents'), uninstall.join(' '));
+  assert.ok(uninstall.join(' ').includes('--kube-context prod'), uninstall.join(' '));
+  assert.ok(!rec.calls.some((c) => c.join(' ').includes('--namespace clodex')), 'the default namespace must not be used when the record names one');
+  const rec2 = {};
+  const cf2 = tmpCtxFile({ current: 'mynode', contexts: { mynode: {
+    kubectl: { target: 'svc/mynode', namespace: 'agents', context: 'prod' }, token: 'W',
+    deploy: { flavor: 'helm', release: 'mynode', namespace: 'agents', kubeContext: 'prod' },
+  } } });
+  const r2 = await cli(['undeploy', 'node', 'mynode', '--force', '--namespace', 'other', '--keep-ctx'], { execFn: fakeHelm(rec2), contextsFile: cf2 });
+  assert.strictEqual(r2.code, 0, r2.stderr);
+  assert.ok(rec2.calls.find((c) => c.join(' ').includes('helm uninstall')).join(' ').includes('--namespace other'));
+});
+
+test('undeploy node <ctx>: the docker DOCKER_HOST comes from the record', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'edge', contexts: { edge: {
+    ssh: 'user@box', deploy: { flavor: 'docker', container: 'clodexctl-edge', dockerHost: 'ssh://user@box' },
+  } } });
+  const r = await cli(['undeploy', 'node', 'edge', '--force'], { runDocker: fakeRunDocker(rec, { volumes: ['clodexctl-edge-data'] }), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.ok(rec.calls.every((c) => c.env && c.env.DOCKER_HOST === 'ssh://user@box'), 'DOCKER_HOST set on every call from the record alone');
+});
+
+test('undeploy node: a context that does NOT EXIST is told so, not that its record is old', async () => {
+  const contextsFile = tmpCtxFile({ current: null, contexts: {} });
+  const r = await cli(['undeploy', 'node', 'typo'], { contextsFile });
+  assert.strictEqual(r.code, EXIT.USAGE);
+  assert.match(r.stderr, /no such context: typo/);
+  assert.doesNotMatch(r.stderr, /does not record how it was deployed/);
+  assert.match(r.stderr, /--fargate \| --helm \| --docker/);
+});
+
+test('undeploy node: a flavor FLAG forces the teardown when the record has none', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'mybox', contexts: { mybox: { url: 'http://127.0.0.1:7900' } } });
+  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force'], { runDocker: fakeRunDocker(rec), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.ok(rec.calls.some((c) => c.args.join(' ') === 'rm -f clodexctl-mybox'));
 });
 
 // ── fargate flow ─────────────────────────────────────────────────────────────
@@ -188,7 +297,7 @@ function fakeAws(rec, {
 
 test('undeploy fargate: not found → USAGE with region hint', async () => {
   const rec = {};
-  const r = await cli(['undeploy', 'fargate', 'clodex-node', '--region', 'us-west-2', '--force'], { execFn: fakeAws(rec, { notFound: true }) });
+  const r = await cli(['undeploy', 'node', 'clodex-node', '--fargate', '--region', 'us-west-2', '--force'], { execFn: fakeAws(rec, { notFound: true }) });
   assert.strictEqual(r.code, EXIT.USAGE);
   assert.match(r.stderr, /stack "clodex-node" not found in us-west-2/);
   assert.match(r.stderr, /region/);
@@ -198,7 +307,7 @@ test('undeploy fargate --dry-run: previews + prints every argv, nothing destruct
   const rec = {};
   const taskArns = ['arn/svc-1', 'arn/stray-1'];
   const tasks = [{ taskArn: 'arn/svc-1', group: 'service:clodex-node-node' }, { taskArn: 'arn/stray-1', group: 'family:x' }];
-  const r = await cli(['undeploy', 'fargate', 'clodex-node', '--region', 'us-west-2', '--dry-run'], { execFn: fakeAws(rec, { taskArns, tasks }) });
+  const r = await cli(['undeploy', 'node', 'clodex-node', '--fargate', '--region', 'us-west-2', '--dry-run'], { execFn: fakeAws(rec, { taskArns, tasks }) });
   assert.strictEqual(r.code, 0);
   // preview lists resources + tasks, marks stray vs service.
   assert.match(r.stdout, /teardown preview for stack "clodex-node"/);
@@ -215,7 +324,7 @@ test('undeploy fargate --dry-run: previews + prints every argv, nothing destruct
 
 test('undeploy fargate: confirm mismatch → abort USAGE, nothing destructive fired', async () => {
   const rec = {};
-  const r = await cli(['undeploy', 'fargate', 'clodex-node', '--region', 'us-west-2'], {
+  const r = await cli(['undeploy', 'node', 'clodex-node', '--fargate', '--region', 'us-west-2'], {
     execFn: fakeAws(rec), prompt: answering('wrong-name'), isTTY: true,
   });
   assert.strictEqual(r.code, EXIT.USAGE);
@@ -225,7 +334,7 @@ test('undeploy fargate: confirm mismatch → abort USAGE, nothing destructive fi
 
 test('undeploy fargate: --json without --force in non-TTY → USAGE (never destroy in a pipe)', async () => {
   const rec = {};
-  const r = await cli(['undeploy', 'fargate', 'clodex-node', '-o', 'json'], { execFn: fakeAws(rec) });
+  const r = await cli(['undeploy', 'node', 'clodex-node', '--fargate', '-o', 'json'], { execFn: fakeAws(rec) });
   assert.strictEqual(r.code, EXIT.USAGE);
   assert.ok(!rec.calls.some((c) => c.join(' ').includes('delete-stack')));
 });
@@ -236,7 +345,7 @@ test('undeploy fargate --force: stops strays (NOT service tasks), delete-stack, 
     'clodex-node': { ssm: { ecs: 'clodex-node/clodex-node-node', region: 'us-west-2' }, webPort: 8080, token: 'W' },
   } });
   const tasks = [{ taskArn: 'arn/svc-1', group: 'service:clodex-node-node' }, { taskArn: 'arn/stray-1', group: 'family:x' }];
-  const r = await cli(['undeploy', 'fargate', 'clodex-node', '--force'], {
+  const r = await cli(['undeploy', 'node', 'clodex-node', '--fargate', '--force'], {
     execFn: fakeAws(rec, { taskArns: ['arn/svc-1', 'arn/stray-1'], tasks }), contextsFile,
   });
   assert.strictEqual(r.code, 0);
@@ -261,7 +370,7 @@ test('undeploy fargate --force: stops strays (NOT service tasks), delete-stack, 
 test('undeploy fargate --keep-ctx: ctx survives', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile({ current: 'clodex-node', contexts: { 'clodex-node': { ssm: { ecs: 'clodex-node/clodex-node-node' }, token: 'W' } } });
-  const r = await cli(['undeploy', 'fargate', 'clodex-node', '--force', '--keep-ctx', '--region', 'r'], { execFn: fakeAws(rec), contextsFile });
+  const r = await cli(['undeploy', 'node', 'clodex-node', '--fargate', '--force', '--keep-ctx', '--region', 'r'], { execFn: fakeAws(rec), contextsFile });
   assert.strictEqual(r.code, 0);
   const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
   assert.ok(after.contexts['clodex-node'], 'ctx kept');
@@ -270,7 +379,7 @@ test('undeploy fargate --keep-ctx: ctx survives', async () => {
 
 test('undeploy fargate --wait: polls to DELETE_COMPLETE', async () => {
   const rec = {};
-  const r = await cli(['undeploy', 'fargate', 's', '--force', '--region', 'r', '--wait'], {
+  const r = await cli(['undeploy', 'node', 's', '--fargate', '--force', '--region', 'r', '--wait'], {
     execFn: fakeAws(rec, { clusterParam: 's', waitStatuses: ['DELETE_IN_PROGRESS', 'DELETE_COMPLETE'] }),
     sleepFn: async () => {},
   });
@@ -280,7 +389,7 @@ test('undeploy fargate --wait: polls to DELETE_COMPLETE', async () => {
 
 test('undeploy fargate --wait: gone (describe throws) counts as success', async () => {
   const rec = {};
-  const r = await cli(['undeploy', 'fargate', 's', '--force', '--region', 'r', '--wait'], {
+  const r = await cli(['undeploy', 'node', 's', '--fargate', '--force', '--region', 'r', '--wait'], {
     execFn: fakeAws(rec, { clusterParam: 's', waitStatuses: ['GONE'] }), sleepFn: async () => {},
   });
   assert.strictEqual(r.code, 0);
@@ -289,7 +398,7 @@ test('undeploy fargate --wait: gone (describe throws) counts as success', async 
 
 test('undeploy fargate --wait: DELETE_FAILED → EXIT.SERVER with the reason', async () => {
   const rec = {};
-  const r = await cli(['undeploy', 'fargate', 's', '--force', '--region', 'r', '--wait'], {
+  const r = await cli(['undeploy', 'node', 's', '--fargate', '--force', '--region', 'r', '--wait'], {
     execFn: fakeAws(rec, { clusterParam: 's', waitStatuses: ['DELETE_FAILED'] }), sleepFn: async () => {},
   });
   assert.strictEqual(r.code, EXIT.SERVER);
@@ -298,7 +407,7 @@ test('undeploy fargate --wait: DELETE_FAILED → EXIT.SERVER with the reason', a
 
 test('undeploy fargate: pre-existing cluster (no ECS::Cluster resource) → not-deleted note', async () => {
   const rec = {};
-  const r = await cli(['undeploy', 'fargate', 's', '--force', '--region', 'r', '--keep-ctx'], {
+  const r = await cli(['undeploy', 'node', 's', '--fargate', '--force', '--region', 'r', '--keep-ctx'], {
     execFn: fakeAws(rec, { clusterParam: 'shared', resources: [{ LogicalResourceId: 'Service', ResourceType: 'AWS::ECS::Service' }] }),
   });
   assert.strictEqual(r.code, 0);
@@ -311,7 +420,7 @@ test('undeploy fargate: pre-existing cluster (no ECS::Cluster resource) → not-
 test('undeploy fargate: unowned cluster → co-tenant tasks NOT stopped (no collateral)', async () => {
   const rec = {};
   const tasks = [{ taskArn: 'arn/tenant-1', group: 'family:someone-elses' }, { taskArn: 'arn/svc-1', group: 'service:s-node' }];
-  const r = await cli(['undeploy', 'fargate', 's', '--force', '--region', 'r', '--keep-ctx'], {
+  const r = await cli(['undeploy', 'node', 's', '--fargate', '--force', '--region', 'r', '--keep-ctx'], {
     execFn: fakeAws(rec, {
       clusterParam: 'shared', taskArns: ['arn/tenant-1', 'arn/svc-1'], tasks,
       resources: [{ LogicalResourceId: 'Service', ResourceType: 'AWS::ECS::Service' }],
@@ -328,7 +437,7 @@ test('undeploy fargate: unowned cluster → co-tenant tasks NOT stopped (no coll
 test('undeploy fargate --dry-run on unowned cluster: no stop-task argv in the plan', async () => {
   const rec = {};
   const tasks = [{ taskArn: 'arn/tenant-1', group: 'family:x' }];
-  const r = await cli(['undeploy', 'fargate', 's', '--dry-run', '--region', 'r'], {
+  const r = await cli(['undeploy', 'node', 's', '--fargate', '--dry-run', '--region', 'r'], {
     execFn: fakeAws(rec, {
       clusterParam: 'shared', taskArns: ['arn/tenant-1'], tasks,
       resources: [{ LogicalResourceId: 'Service', ResourceType: 'AWS::ECS::Service' }],
@@ -347,7 +456,7 @@ test('undeploy fargate ctx cleanup: same-named cluster in ANOTHER region keeps i
     other: { ssm: { ecs: 'clodex-node/clodex-node-node', region: 'eu-west-1' }, token: 'T' },
     sameRegion: { ssm: { ecs: 'clodex-node/other-family', region: 'us-west-2' }, token: 'T' },
   } }));
-  const r = await cli(['undeploy', 'fargate', 'clodex-node', '--force', '--region', 'us-west-2'], {
+  const r = await cli(['undeploy', 'node', 'clodex-node', '--fargate', '--force', '--region', 'us-west-2'], {
     execFn: fakeAws({}), contextsFile,
   });
   assert.strictEqual(r.code, 0);
@@ -360,7 +469,7 @@ test('undeploy fargate ctx cleanup: same-named cluster in ANOTHER region keeps i
 // creds) must surface as SERVER, not masquerade as an operator USAGE mistake.
 test('undeploy fargate: non-not-found describe-stacks failure → SERVER, not USAGE', async () => {
   const execFn = async () => { const e = new Error('throttled'); e.stderr = 'ThrottlingException: Rate exceeded'; throw e; };
-  const r = await cli(['undeploy', 'fargate', 's', '--force', '--region', 'r'], { execFn });
+  const r = await cli(['undeploy', 'node', 's', '--fargate', '--force', '--region', 'r'], { execFn });
   assert.strictEqual(r.code, EXIT.SERVER);
   assert.doesNotMatch(r.stderr, /not found/);
 });
@@ -387,14 +496,14 @@ function fakeHelm(rec, { installed = true, manifest = null } = {}) {
 
 test('undeploy helm: not found → USAGE with namespace hint', async () => {
   const rec = {};
-  const r = await cli(['undeploy', 'helm', 'mynode', '--force'], { execFn: fakeHelm(rec, { installed: false }) });
+  const r = await cli(['undeploy', 'node', 'mynode', '--helm', '--force'], { execFn: fakeHelm(rec, { installed: false }) });
   assert.strictEqual(r.code, EXIT.USAGE);
   assert.match(r.stderr, /release "mynode" not found in namespace "clodex"/);
 });
 
 test('undeploy helm --dry-run: previews Kind/name + PVC question, prints argv, nothing destructive', async () => {
   const rec = {};
-  const r = await cli(['undeploy', 'helm', 'mynode', '--dry-run'], { execFn: fakeHelm(rec) });
+  const r = await cli(['undeploy', 'node', 'mynode', '--helm', '--dry-run'], { execFn: fakeHelm(rec) });
   assert.strictEqual(r.code, 0);
   assert.match(r.stdout, /Service\/mynode/);
   assert.match(r.stdout, /StatefulSet\/mynode/);
@@ -407,7 +516,7 @@ test('undeploy helm --dry-run: previews Kind/name + PVC question, prints argv, n
 test('undeploy helm --force: uninstall + delete PVC with the verified selector, ctx removed', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile({ current: 'mynode', contexts: { mynode: { kubectl: { target: 'svc/mynode', namespace: 'clodex', context: null }, token: 'W' } } });
-  const r = await cli(['undeploy', 'helm', 'mynode', '--force'], { execFn: fakeHelm(rec), contextsFile });
+  const r = await cli(['undeploy', 'node', 'mynode', '--helm', '--force'], { execFn: fakeHelm(rec), contextsFile });
   assert.strictEqual(r.code, 0);
   assert.ok(rec.calls.some((c) => c.join(' ').includes('helm uninstall mynode --namespace clodex')));
   const pvcCall = rec.calls.find((c) => c.join(' ').includes('delete pvc'));
@@ -419,7 +528,7 @@ test('undeploy helm --force: uninstall + delete PVC with the verified selector, 
 
 test('undeploy helm --keep-data: skips the PVC delete, names the kept PVC', async () => {
   const rec = {};
-  const r = await cli(['undeploy', 'helm', 'mynode', '--force', '--keep-data', '--keep-ctx'], { execFn: fakeHelm(rec) });
+  const r = await cli(['undeploy', 'node', 'mynode', '--helm', '--force', '--keep-data', '--keep-ctx'], { execFn: fakeHelm(rec) });
   assert.strictEqual(r.code, 0);
   assert.ok(!rec.calls.some((c) => c.join(' ').includes('delete pvc')), 'PVC delete skipped');
   assert.match(r.stdout, /kept PVC "state-mynode-0"/);
@@ -446,14 +555,14 @@ function fakeRunDocker(rec, { exists = true, volumes = ['clodexctl-mybox-data'],
 
 test('undeploy docker: not found → USAGE', async () => {
   const rec = {};
-  const r = await cli(['undeploy', 'docker', 'mybox', '--force'], { runDocker: fakeRunDocker(rec, { exists: false }) });
+  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force'], { runDocker: fakeRunDocker(rec, { exists: false }) });
   assert.strictEqual(r.code, EXIT.USAGE);
   assert.match(r.stderr, /container "clodexctl-mybox" not found/);
 });
 
 test('undeploy docker --dry-run: previews volumes, prints rm + volume rm argv, nothing destructive', async () => {
   const rec = {};
-  const r = await cli(['undeploy', 'docker', 'mybox', '--dry-run'], { runDocker: fakeRunDocker(rec) });
+  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--dry-run'], { runDocker: fakeRunDocker(rec) });
   assert.strictEqual(r.code, 0);
   assert.match(r.stdout, /named volumes: clodexctl-mybox-data.*will be DELETED/);
   assert.match(r.stdout, /docker rm -f clodexctl-mybox/);
@@ -464,7 +573,7 @@ test('undeploy docker --dry-run: previews volumes, prints rm + volume rm argv, n
 test('undeploy docker --force: rm -f + delete named volume, --host sets DOCKER_HOST, ctx removed', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile({ current: 'mybox', contexts: { mybox: { url: 'http://127.0.0.1:7900' } } });
-  const r = await cli(['undeploy', 'docker', 'mybox', '--force', '--host', 'ssh://user@box'], { runDocker: fakeRunDocker(rec), contextsFile });
+  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force', '--host', 'ssh://user@box'], { runDocker: fakeRunDocker(rec), contextsFile });
   assert.strictEqual(r.code, 0);
   assert.ok(rec.calls.some((c) => c.args.join(' ') === 'rm -f clodexctl-mybox'));
   assert.ok(rec.calls.some((c) => c.args.join(' ') === 'volume rm clodexctl-mybox-data'));
@@ -476,7 +585,7 @@ test('undeploy docker --force: rm -f + delete named volume, --host sets DOCKER_H
 
 test('undeploy docker --keep-data: keeps the named volume', async () => {
   const rec = {};
-  const r = await cli(['undeploy', 'docker', 'mybox', '--force', '--keep-data', '--keep-ctx'], { runDocker: fakeRunDocker(rec) });
+  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force', '--keep-data', '--keep-ctx'], { runDocker: fakeRunDocker(rec) });
   assert.strictEqual(r.code, 0);
   assert.ok(!rec.calls.some((c) => c.args.join(' ').startsWith('volume rm')), 'volume kept');
   assert.match(r.stdout, /kept named volume\(s\): clodexctl-mybox-data/);
@@ -489,14 +598,14 @@ test('TOKEN DISCIPLINE: a ctx token never surfaces in argv or output during tear
   // fargate: the ctx entry carries a token; teardown must never read/print it.
   const recA = {};
   const cfA = tmpCtxFile({ current: 'clodex-node', contexts: { 'clodex-node': { ssm: { ecs: 'clodex-node/clodex-node-node', region: 'us-west-2' }, token: SECRET } } });
-  const rA = await cli(['undeploy', 'fargate', 'clodex-node', '--force'], { execFn: fakeAws(recA), contextsFile: cfA });
+  const rA = await cli(['undeploy', 'node', 'clodex-node', '--fargate', '--force'], { execFn: fakeAws(recA), contextsFile: cfA });
   assert.strictEqual(rA.code, 0);
   assert.ok(!rA.stdout.includes(SECRET) && !rA.stderr.includes(SECRET), 'token not in fargate output');
   assert.ok(!recA.calls.some((c) => c.some((a) => String(a).includes(SECRET))), 'token not in any aws argv');
   // helm: same guarantee.
   const recH = {};
   const cfH = tmpCtxFile({ current: 'mynode', contexts: { mynode: { kubectl: { target: 'svc/mynode', namespace: 'clodex', context: null }, token: SECRET } } });
-  const rH = await cli(['undeploy', 'helm', 'mynode', '--force'], { execFn: fakeHelm(recH), contextsFile: cfH });
+  const rH = await cli(['undeploy', 'node', 'mynode', '--helm', '--force'], { execFn: fakeHelm(recH), contextsFile: cfH });
   assert.strictEqual(rH.code, 0);
   assert.ok(!rH.stdout.includes(SECRET) && !rH.stderr.includes(SECRET), 'token not in helm output');
   assert.ok(!recH.calls.some((c) => c.some((a) => String(a).includes(SECRET))), 'token not in any helm/kubectl argv');
@@ -504,7 +613,7 @@ test('TOKEN DISCIPLINE: a ctx token never surfaces in argv or output during tear
 
 test('undeploy docker: no named volumes → rm only, no volume rm', async () => {
   const rec = {};
-  const r = await cli(['undeploy', 'docker', 'mybox', '--force', '--keep-ctx'], { runDocker: fakeRunDocker(rec, { volumes: [] }) });
+  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force', '--keep-ctx'], { runDocker: fakeRunDocker(rec, { volumes: [] }) });
   assert.strictEqual(r.code, 0);
   assert.ok(rec.calls.some((c) => c.args.join(' ') === 'rm -f clodexctl-mybox'));
   assert.ok(!rec.calls.some((c) => c.args.join(' ').startsWith('volume rm')));

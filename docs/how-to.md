@@ -7,15 +7,17 @@ here is one the source actually runs.
 
 ## Run the desktop app
 
-**From a release DMG.** The builds are unsigned, so Gatekeeper refuses a
-double-click the first time. Right-click the app in `/Applications` and choose
-**Open**, or clear the quarantine attribute:
+**From a release DMG.** The builds are ad-hoc signed and NOT notarized, so
+Gatekeeper refuses a double-click the first time. Right-click the app in
+`/Applications` and choose **Open**, or clear the quarantine attribute:
 
 ```sh
 xattr -cr /Applications/Clodex.app
 ```
 
-**From source.** Apple Silicon or Intel Mac, Node 20+. `electron-rebuild` is
+**From source.** The desktop app is macOS (Apple Silicon or Intel); the
+headless engine and `clodexctl` also run on Linux. Node 20+ throughout — it is
+`clodexctl`'s declared floor (`cli/package.json` engines). `electron-rebuild` is
 not optional: node-pty is native and must match Electron's ABI.
 
 ```sh
@@ -62,9 +64,10 @@ node headless-main.js
 ```
 
 **Not from your Electron dev checkout.** That tree's node-pty is built against
-Electron's ABI, so `node headless-main.js` there fails to load it. Use a
-separate clone with a plain `npm install` (which builds node-pty against
-Node's ABI) — never `npx electron-rebuild` on the headless clone.
+Electron's ABI, so `node headless-main.js` there fails to load it. Use a separate clone
+with the installer's own recipe — `npm ci --omit=dev` for the runtime deps, then
+`npm rebuild node-pty` to build it against Node's ABI — and never
+`npx electron-rebuild` on the headless clone.
 
 The full environment table, including `CLODEX_WEB_TOKEN`,
 `CLODEX_WORKSPACES`, `CLODEX_REMOTE_HOST` and `CLODEX_WIRESCOPE_PORT`, is in
@@ -141,7 +144,10 @@ clodexctl deploy node clodex-node --fargate \
 Depth: [`docs/recipes/aws-fargate.md`](recipes/aws-fargate.md).
 
 **Tear down and upgrade.** Teardown is destructive and confirms by default;
-`upgrade node` routes on how the context was deployed.
+both verbs route on how the context was deployed (the `deploy.flavor` the deploy
+stamped). A docker node is deliberately NOT upgradable — the recreate needs run
+arguments a context does not store — so it refuses and points at the two-step
+`undeploy node <name> --keep-data` then redeploy path.
 
 ```sh
 clodexctl undeploy node mynode [--keep-data] [--keep-ctx] [--force]

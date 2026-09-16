@@ -17,18 +17,18 @@ SDK, never a shell. What you review here is exactly what runs.
 
 | Asset | Deploys | Consumed by | Review posture |
 |---|---|---|---|
-| `clodex-fargate.yaml` | An AWS Fargate node — an ECS cluster, task IAM roles, the wire-token secret (stack-minted), a log group, the task definition, and an optional self-healing ECS Service — plus a minimal operator IAM policy. | `clodexctl deploy fargate <stack>` (`aws cloudformation deploy`) | A single CloudFormation template. The security posture and the exact outbound egress the task needs are documented in the comment blocks at the top of the file; every resource is `Delete`/`UpdateReplace` so a teardown leaves no footprint. The wire token is defense-in-depth — **IAM is the real access boundary** (see `OperatorPolicy`, which deliberately excludes `ecs:ExecuteCommand`). |
-| `helm/clodex/` | A Kubernetes node — a StatefulSet with a persistent volume, a Service, a ServiceAccount, a NetworkPolicy, and the chart-managed Secret — reachable only via `kubectl port-forward`. | `clodexctl deploy helm <name>` (`helm upgrade --install`) | A standard Helm chart. No Ingress, no LoadBalancer: the reviewable surface is the chart, the access path is the operator's own kubectl credentials. Defaults in `values.yaml`; the wirescope proxy is opt-out via `wirescope.enabled`. |
-| `clodex-deploy.sh` | A headless Clodex on any ssh-reachable Linux box — a dedicated `clodex` user running a `systemd --user` service on loopback. Idempotent: a re-run **is** the update path. | `clodexctl deploy <user@host>` and `clodexctl deploy ssm <name>` (over ssh / AWS SSM RunCommand) | A single, auditable bash installer. Every step checks before it acts; progress is machine-readable `::step`/`::ok`/`::fail` markers on stdout. This is a **byte-for-byte copy** of `peering/clodex-deploy.sh` (the source of truth in the repo); a drift test pins the two equal. |
+| `clodex-fargate.yaml` | An AWS Fargate node — an ECS cluster, task IAM roles, the wire-token secret (stack-minted), a log group, the task definition, and an optional self-healing ECS Service — plus a minimal operator IAM policy. | `clodexctl deploy node <stack> --fargate` (`aws cloudformation deploy`) | A single CloudFormation template. The security posture and the exact outbound egress the task needs are documented in the comment blocks at the top of the file; every resource is `Delete`/`UpdateReplace` so a teardown leaves no footprint. The wire token is defense-in-depth — **IAM is the real access boundary** (see `OperatorPolicy`, which deliberately excludes `ecs:ExecuteCommand`). |
+| `helm/clodex/` | A Kubernetes node — a StatefulSet with a persistent volume, a Service, a ServiceAccount, a NetworkPolicy, and the chart-managed Secret — reachable only via `kubectl port-forward`. | `clodexctl deploy node <name> --helm` (`helm upgrade --install`) | A standard Helm chart. No Ingress, no LoadBalancer: the reviewable surface is the chart, the access path is the operator's own kubectl credentials. Defaults in `values.yaml`; the wirescope proxy is opt-out via `wirescope.enabled`. |
+| `clodex-deploy.sh` | A headless Clodex on any ssh-reachable Linux box — a dedicated `clodex` user running a `systemd --user` service on loopback. Idempotent: a re-run **is** the update path. | `clodexctl deploy node <name> --ssh user@host` and `clodexctl deploy node <name> --ssm i-INSTANCE` (over ssh / AWS SSM RunCommand) | A single, auditable bash installer. Every step checks before it acts; progress is machine-readable `::step`/`::ok`/`::fail` markers on stdout. This is a **byte-for-byte copy** of `peering/clodex-deploy.sh` (the source of truth in the repo); a drift test pins the two equal. |
 
 ## What lives elsewhere (and why)
 
 - **Container image build — `docker/web/Dockerfile`** (+ `docker/web/compose.yaml`).
   This is the *build tooling* for the published image
   (`ghcr.io/avirtual/clodex:<version>`), not a deploy asset: it produces the
-  image the Fargate template, the Helm chart, and `deploy docker` all *run*. It
+  image the Fargate template, the Helm chart, and `deploy node --docker` all *run*. It
   stays with the other Docker build files under `docker/`.
-- **The `deploy docker` flavor** ships no file here — it's one `docker run` of
+- **The `--docker` flavor** ships no file here — it's one `docker run` of
   that published image, assembled as argv by the CLI.
 - **The recipe walkthrough — `docs/recipes/aws-fargate.md`** is the prose
   companion to `clodex-fargate.yaml`: the one-command path at the top, then the
