@@ -33,11 +33,11 @@ test('its name matches its filename stem — a role naming it must resolve', () 
 });
 
 test('the stock lead pins a 1M-context model, every skill off', () => {
-  assert.match(
-    (tpl.extraArgs || []).join(' '),
-    /--model \S+\[1m\]/,
-    'the ruling is 1M everywhere: without a --model the seat follows the CLI default, which is the 200k window',
-  );
+  const args = tpl.extraArgs || [];
+  assert.strictEqual(args[0], '--model',
+    'the FIRST --model is the one honoured (reviewerModelArgs, deriveModelTemplate), so the pin must lead the array');
+  assert.match(args[1], /\[1m\]$/,
+    'the ruling is 1M everywhere: a bare alias resolves to the 200k window');
   assert.deepStrictEqual(tpl.disabledSkills, ['*']);
 });
 

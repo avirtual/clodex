@@ -13,10 +13,10 @@ blocks a release.
 
 ## Unreleased
 
-- The shipped team templates now pin `claude-opus-5[1m]`, so a new install's
-  leads, hands and reviewers get the 1M context window instead of whatever the
-  CLI defaults to. Existing installs are untouched — your own templates keep
-  the model you set.
+- The shipped team templates now pin `claude-opus-5[1m]`, so your leads, hands
+  and reviewers get the 1M context window instead of whatever the CLI defaults
+  to. A library template you edited yourself keeps your model; an untouched one
+  picks the pin up on the next launch.
 
 ## 5.69.0 — 2026-09-16
 

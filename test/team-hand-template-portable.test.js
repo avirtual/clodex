@@ -101,11 +101,11 @@ test('it names the team-project append stem — the file the operator must write
 test('the stock hand pins a 1M-context model, and every skill off', () => {
   // The skills sentinel is the only portable "none", because a template cannot
   // name skills that differ per box.
-  assert.match(
-    (tpl.extraArgs || []).join(' '),
-    /--model \S+\[1m\]/,
-    'the ruling is 1M everywhere: without a --model the seat follows the CLI default, which is the 200k window',
-  );
+  const args = tpl.extraArgs || [];
+  assert.strictEqual(args[0], '--model',
+    'the FIRST --model is the one honoured (reviewerModelArgs, deriveModelTemplate), so the pin must lead the array');
+  assert.match(args[1], /\[1m\]$/,
+    'the ruling is 1M everywhere: a bare alias resolves to the 200k window');
   assert.deepStrictEqual(tpl.disabledSkills, ['*']);
 });
 

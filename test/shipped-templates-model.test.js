@@ -65,11 +65,6 @@ test('every shipped claude-type library template pins a 1M-context model', () =>
       `ENTER: the walk must reach ${rel} — it is a shipped claude-type seat template, and a walk that misses it makes every assertion below vacuous`,
     );
   }
-  assert.ok(
-    found.length >= KNOWN.length,
-    `ENTER: expected at least ${KNOWN.length} claude-type shipped templates, walked ${found.length}`,
-  );
-
   for (const { rel, abs } of claudeOnes) {
     const tpl = JSON.parse(fs.readFileSync(abs, 'utf-8'));
     const model = modelToken(tpl.extraArgs);
