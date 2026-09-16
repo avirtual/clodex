@@ -16,6 +16,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { run } = require('../src/main');
 const { RESOURCES_DOC } = require('./fixtures/resources-doc');
+const { serverTranscriptPage } = require('./fixtures/transcript-page');
 
 const TOKEN = 'sekret';
 
@@ -54,7 +55,7 @@ function stub(opts = {}) {
       if (/^\/api\/sessions\/[^/]+\/transcript$/.test(p)) {
         const verdict = opts.transcript ? opts.transcript(seen) : [];
         if (verdict === 'hang') { held.push(res); return; }   // wedge: never respond
-        res.writeHead(200); return res.end(JSON.stringify({ ok: true, messages: verdict || [] }));
+        res.writeHead(200); return res.end(JSON.stringify(serverTranscriptPage(verdict || [], req.url)));
       }
       if (/^\/api\/sessions\/[^/]+\/dm$/.test(p)) {
         if (opts.sendHangs) { held.push(res); return; }

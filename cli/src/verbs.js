@@ -318,6 +318,12 @@ function deltaFrom(msgs, snapshot) {
   return (msgs || []).slice(snapshot);
 }
 
+function lastSeqOf(msgs) {
+  const list = msgs || [];
+  const last = list.length ? list[list.length - 1] : null;
+  return last && Number.isFinite(last.seq) ? last.seq : -1;
+}
+
 const QUERY_KINDS = new Set(['ctx', 'report', 'bust', 'files', 'filePeek', 'fileDiff']);
 async function query({ client, ctx, printer, flags, args }) {
   const name = requireName(args[0], 'query');
@@ -489,7 +495,7 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
   let stream = null;
   let settled = false;
   let hardTimer = null;
-  let snapshot = 0;
+  let sinceSeq = 0;
   const waitAc = new AbortController();
   const waitResult = await new Promise((resolve, reject) => {
     const finish = (fn, v) => { if (settled) return; settled = true; if (hardTimer) clearTimeout(hardTimer); fn(v); };
@@ -502,7 +508,7 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
       onOpen: async () => {
         try {
           const before = await client.get(`${transcriptPath(name)}?limit=500`, 'exec (snapshot)', { signal: waitAc.signal });
-          snapshot = (before.messages || []).length;
+          sinceSeq = lastSeqOf(before.messages) + 1;
           await client.post(`/api/sessions/${encodeURIComponent(name)}/dm`, 'exec (dm)', { text }, { signal: waitAc.signal });
         } catch (e) { finish(reject, e); } // a ceiling abort lands here too — finish is then a no-op (already settled)
       },
@@ -523,7 +529,7 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
       // flush can lag the turnEnd frame, so an assistant-less delta is retried with backoff;
       // the whole loop is bounded by grace because a wedged refetch would never return.
   const freshFrom = (msgs) => {
-    const delta = deltaFrom(msgs, snapshot);
+    const delta = msgs || [];
     const i = delta.findIndex((m) => m.role === 'assistant');
     return i === -1 ? [] : delta.slice(i);
   };
@@ -535,7 +541,7 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
     for (let attempt = 0; attempt < 6; attempt++) {
       let after;
       try {
-        after = await client.get(`${transcriptPath(name)}?limit=500`, 'exec (refetch)', { signal: refetchAc.signal });
+        after = await client.get(`${transcriptPath(name)}?since=${sinceSeq}&limit=500`, 'exec (refetch)', { signal: refetchAc.signal });
       } catch (e) {
         // Swallow ONLY our own ceiling abort (client rethrows AbortError
         // unwrapped) — a real transport error that merely RACED the deadline

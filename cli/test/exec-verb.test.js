@@ -10,6 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { run } = require('../src/main');
 const { RESOURCES_DOC } = require('./fixtures/resources-doc');
+const { serverTranscriptPage } = require('./fixtures/transcript-page');
 
 const TOKEN = 'sekret';
 const b64 = (s) => Buffer.from(s).toString('base64');
@@ -59,7 +60,7 @@ function stub(opts = {}) {
         res.writeHead(200); return res.end(JSON.stringify({ ok: true }));
       }
       if (/^\/api\/sessions\/[^/]+\/transcript$/.test(p)) {
-        res.writeHead(200); return res.end(JSON.stringify({ ok: true, messages: (opts.transcript && opts.transcript(seen)) || [] }));
+        res.writeHead(200); return res.end(JSON.stringify(serverTranscriptPage((opts.transcript && opts.transcript(seen)) || [], req.url)));
       }
       if (/^\/api\/sessions\/[^/]+\/dm$/.test(p)) { res.writeHead(200); return res.end(JSON.stringify({ ok: true })); }
       res.writeHead(404); res.end(JSON.stringify({ ok: false, error: 'no route' }));
@@ -143,7 +144,7 @@ test('exec --json on an agent carries mode:"agent"', async () => {
   const j = JSON.parse(stdout);
   assert.strictEqual(j.mode, 'agent');
   assert.strictEqual(j.ok, true);
-  assert.deepStrictEqual(j.entries, [{ role: 'assistant', text: 'a' }]);
+  assert.deepStrictEqual(j.entries, [{ role: 'assistant', text: 'a', seq: 1 }]);
   server.close();
 });
 
