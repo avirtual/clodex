@@ -396,7 +396,7 @@ test('tmp-sweep.sh lists each prefix in full rather than collapsing it to a fami
   assert.ok(alternation.test(probe),
     `a root minted as ${longer}<six> must match: listing ${stem} alone does NOT cover it, because the `
     + 'six-character anchor sits directly after the prefix. Collapsing the list by string-prefix dropped '
-    + '241,305 of 300,478 matching roots when measured.');
+    + 'about four in five matching roots when measured.');
 });
 
 test('tmp-sweep.sh refuses a TMPDIR that is not a per-user temp dir, and refuses an age of zero', () => {

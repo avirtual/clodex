@@ -25,11 +25,9 @@ blocks a release.
   walkthrough is kept at `/how-it-works.html` and linked from the footer.
 - Added: `scripts/tmp-sweep.sh`, a janitor for the scratch directories the test
   suite abandons in your temp folder. The suite cleans up after itself, but a run
-  that is killed part way through — a crashed seat, a force-quit, a SIGKILL —
-  never gets the chance, and those leftovers are never reaped: 300,478 of them
-  had piled up on one machine, which is enough to keep `fseventsd` pinned at 100%
-  CPU and the whole filesystem under pressure, with a reboot the only way out.
-  Running it bare prints what it would delete and the space it would reclaim, and
+  that is killed part way through never gets the chance, and macOS does not reap
+  those leftovers on any useful timescale, so they accumulate until the sheer
+  number of entries puts the filesystem under pressure. Running it bare prints what it would delete and the space it would reclaim, and
   deletes nothing; add `--yes` to actually remove. It only ever touches direct
   children of your temp folder whose names match the suite's own prefixes and are
   at least 24 hours old (`--older-than <hours>` to change that), so a suite

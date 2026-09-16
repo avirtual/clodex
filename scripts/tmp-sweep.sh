@@ -5,9 +5,8 @@
 # The suite mints scratch roots with mkdtemp in $TMPDIR. test/lib/tmp-roots.js
 # sweeps the ones it registered, but roots still escape: a run killed mid-flight
 # (SIGKILL, a crashed seat, a force-exit before the top-level `after`) never gets
-# to sweep at all. They accumulate — 300,478 abandoned roots on the box this was
-# written for, out of 332,600 entries in $TMPDIR — and macOS reaps them on no
-# timescale that matters. That volume pegs fseventsd at 100% CPU indefinitely.
+# to sweep at all. They accumulate into the hundreds of thousands, and macOS
+# reaps them on no timescale that matters.
 #
 #   scripts/tmp-sweep.sh                   # dry-run: what it WOULD remove, plus totals
 #   scripts/tmp-sweep.sh --list            # dry-run, printing every path
@@ -42,9 +41,9 @@ set -uo pipefail
 # cosmetic. Keeping only `clodex-` because it is a string-prefix of
 # `clodex-pend-` would drop every `clodex-pend-*` root on the floor: the suffix
 # rule below anchors six random characters directly after the prefix, so
-# `clodex-` matches `clodex-TB03fh` and NOT `clodex-pend-TB03fh`. Measured on the
-# box: the collapsed list matched 59,173 roots where the full list matches
-# 300,478. If you shorten this list, you are deleting coverage, not duplication.
+# `clodex-` matches `clodex-TB03fh` and NOT `clodex-pend-TB03fh`. Measured: the
+# collapsed list matched about one root in five of what the full list matches.
+# If you shorten this list, you are deleting coverage, not duplication.
 #
 # The generic-looking tail (proj-, reg-, ctx-, outer-, plain-) is safe ONLY
 # because of the suffix shape below: `ctx-0J62Vc` is ours, `ctx-cache` is
@@ -713,7 +712,8 @@ trap 'rm -f "$LISTFILE"' EXIT
 
 # ONE enumeration pass over $TMPDIR, because that directory is huge: a single
 # readdir of it costs ~170ms, and the full filtered walk measured 24s against
-# 332,600 entries. Per-prefix passes would multiply that by the prefix count.
+# several hundred thousand entries. Per-prefix passes would multiply that by the
+# prefix count.
 #
 # -P never follows a symlink, so a symlinked entry cannot take the sweep out of
 # $TMPDIR; -mindepth/-maxdepth 1 keep it to direct children; -type d means a
