@@ -17,9 +17,8 @@ const { EXIT } = require('./errors');
 const VERSION = `clodexctl ${pkg.version}`;
 
 // ── the registry ─────────────────────────────────────────────────────────────
-// One entry per top-level verb users TYPE (multi-word families — ctx, deploy,
-// and the resource-word verbs — are one entry at the granularity `help <verb>`
-// is invoked). Fields:
+// One entry per top-level verb users TYPE (multi-word families — ctx, deploy, the
+// resource-word verbs — are one entry at the granularity `help <verb>` is invoked). Fields:
 //   name, group, summary (one line, for the index)
 //   usage       one or more invocation lines
 //   args        [placeholder, desc] positional arguments

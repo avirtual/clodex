@@ -46,9 +46,8 @@ function sseStub(opts = {}) {
       if (req.method === 'GET' && p === '/api/peer/hello') {
         res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['attach'] }));
       }
-      // exec's mode routing reads the authoritative type here. `bash` takes the
-      // PTY path; the named agents take the dm-and-wait path. opts.sessions
-      // overrides the whole list for a specific case.
+      // exec's mode routing reads the authoritative type here: `bash` takes the PTY
+      // path, the named agents the dm-and-wait one. opts.sessions overrides the list.
       if (req.method === 'GET' && p === '/api/sessions') {
         res.writeHead(200); return res.end(JSON.stringify({ ok: true, sessions: opts.sessions || DEFAULT_SESSIONS }));
       }
@@ -123,9 +122,8 @@ test('exec (pty mode): replay discarded, control before input, output printed AN
   assert.doesNotMatch(stdout, /OLD SCROLLBACK/);
   assert.doesNotMatch(stdout, /\x1b\[/);
   const order = seen.map((s) => `${s.method} ${s.url}`);
-  // the type lookup PICKS the mode, so it runs first; the PTY mode's own
-  // capability check follows, then attach opens, control acquired before
-  // input, released after
+  // the type lookup PICKS the mode so it runs first, then the PTY mode's own
+  // capability check, then attach opens, control acquired before input, released after
   assert.deepStrictEqual(order.slice(0, 2), ['GET /api/sessions', 'GET /api/resources']);
   const attachIdx = seen.findIndex((s) => /^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(s.url));
   assert.ok(attachIdx >= 0 && order[attachIdx] === 'GET /api/sessions/bash/attach');

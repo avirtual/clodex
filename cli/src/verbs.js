@@ -361,9 +361,6 @@ function takeResourceWord(args, verb, supported) {
 
 const RESOURCE_VERBS = { create: CREATABLE, delete: DELETABLE, patch: PATCHABLE, restart: RESTARTABLE };
 
-    // The resource word is checked BEFORE the dial, from main.js: `restart bob` is a
-    // usage error about the missing word, not a context-resolution failure the operator
-    // has to decode. The verb bodies re-check because ctl-service.js calls them directly.
 function checkResourceWord(verb, args) {
   const supported = RESOURCE_VERBS[verb];
   if (supported) takeResourceWord(args, verb, supported);
@@ -440,10 +437,8 @@ async function sessionType(client, name) {
   return found.type || '';
 }
 
-    // Two modes on one verb. --pty is the explicit TUI-typing mode; without it exec
-    // ROUTES on the session's authoritative type — `bash` (PTY) vs everything else
-    // (dm-and-wait). Binary, not a claude/codex whitelist: an unknown future agent
-    // type must land on the waiting path.
+    // --pty picks the PTY mode outright; else ROUTES on the authoritative type, `bash`
+    // (PTY) vs everything else (dm-and-wait). Binary, not a claude/codex whitelist.
 async function exec({ client, ctx, printer, flags, args, io = {} }) {
   const name = requireName(args[0], 'exec');
   const text = args.slice(1).join(' ').trim();

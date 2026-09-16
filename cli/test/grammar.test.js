@@ -393,10 +393,6 @@ test('every RENAMED_VERBS key answers, and none of them is a live verb', async (
   }
 });
 
-// The T8 rename set, named LITERALLY. The loop above is derived from the table
-// and so holds for a table that lost an entry; this is the list the ruling
-// fixed, and it must not shrink. Each old spelling is dead argv: exit 2 with
-// the pointer, and nothing dialled.
 test('every T8-removed spelling is gone and points at its replacement', async () => {
   const removed = {
     run: 'exec',
@@ -421,10 +417,6 @@ test('every T8-removed spelling is gone and points at its replacement', async ()
   }
 });
 
-// The bare `restart <name>` form is the one removal that is NOT a renamed key:
-// `restart` survives as a verb, so the pointer table cannot catch it. The
-// resource word is mandatory and its absence must name the word, ahead of any
-// context resolution.
 test('bare `restart <name>` is a usage error naming the resource word', async () => {
   let dialled = false;
   const { code, stderr } = await cli(['restart', 'bob'], null, {

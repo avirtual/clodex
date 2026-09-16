@@ -11,7 +11,7 @@
 // IPC registration (pinned by drawer-services-seam.test.js), which keeps the
 // whole `ctl:*` family off the web surface.
 //
-// The wire verbs (info/get/query/get --subresource) are deliberately NOT exercised
+// The wire verbs (info/get/query/subresource reads) are deliberately NOT exercised
 // against a live node — that is cli/test's job and it needs a server. Every
 // test here runs on paths that stop before the transport opens, which is also
 // where every containment decision is made.
@@ -97,10 +97,8 @@ test('refuse: the allowlist admits the block-shaped verbs and no others', () => 
 // mutate and are allowed. It is that neither can be confirmed here: the injected
 // `prompt` rejects, so the only spelling that would reach the wire is the
 // --force one, which turns a hard delete (no resume) and a whole-engine relaunch
-// into a single unguarded Enter in a 12-line strip.
-//
-// `restart` is the sharp case after T8: the SAME verb carries both, so the
-// refusal keys on the resource WORD, not on the verb.
+// into a single unguarded Enter in a 12-line strip. `restart` is the sharp case:
+// the SAME verb carries both, so the refusal keys on the resource WORD.
 test('delete session and restart node stay refused even with --force', () => {
   for (const argv of [['delete', 'session', 'a'], ['delete', 'session', 'a', '--force'],
     ['restart', 'node'], ['restart', 'node', '--force']]) {
@@ -131,10 +129,8 @@ test('run: a refused verb is a block, and never opens a transport', async () => 
   svc.dispose();
 });
 
-// The removed spellings reach this pane too, and the pointer must win AHEAD of
-// the gate: `kill` is not in ALLOWED, so a service that gated first would answer
-// "not available in the ctl tab" — true, but it hides that the verb is gone
-// everywhere, and the operator would go type it in a terminal instead.
+// Removed spellings reach this pane too and the pointer must win AHEAD of the gate,
+// which would say "not available in the ctl tab" and hide that the verb is gone.
 test('a removed spelling answers with the rename pointer, not the gate refusal', async () => {
   const svc = createCtlService({
     contextsFile: tmpCtxFile(), env: {},
@@ -723,11 +719,10 @@ test('the cap never leaks token material, wherever the token sits', async () => 
 });
 
 // Reading and writing a session's args are now two different VERBS (`get …
-// --subresource args` and `patch session`), so nothing routes on a subcommand
-// any more. The risk is unchanged and so is this test: a dispatcher that
-// collapsed the two would turn a write into a read, with a plausible success
-// block on screen. Driven against a real socket because the claim is about the
-// REQUEST that leaves: a GET where a PATCH was typed.
+// --subresource args` and `patch session`), so nothing routes on a subcommand any
+// more. The risk is unchanged: a dispatcher that collapsed the two would turn a
+// write into a read, with a plausible success block on screen. Driven against a
+// real socket because the claim is about the REQUEST that leaves.
 test('patch session and get --subresource args reach different handlers — the method proves it', async () => {
   const http = require('node:http');
   const seen = [];
@@ -818,10 +813,8 @@ test('helpIndex advertises exactly the verbs the service will run', () => {
 test('helpIndex names the surviving words of a PARTIALLY allowed family', () => {
   const { svc } = mkService();
   const restart = svc.helpIndex().verbs.find((v) => v.verb === 'restart');
-  // `restart` is the ONE family the allowlist spells as a word array, so it is
-  // the only verb whose entry can carry `subs` at all — and it is genuinely
-  // narrowed: the registry's usage line advertises `restart node`, which this
-  // tab refuses, so the pane must show what actually runs.
+  // `restart` is the ONE family the allowlist spells as a word array, so the only entry
+  // that can carry `subs` — and genuinely narrowed: its usage advertises `restart node`.
   assert.deepStrictEqual(restart.subs, ['session', 'sessions']);
   const get = svc.helpIndex().verbs.find((v) => v.verb === 'get');
   assert.strictEqual(get.subs, null, 'a fully-allowed verb carries no subs restriction');

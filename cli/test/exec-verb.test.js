@@ -1,9 +1,8 @@
 'use strict';
-// exec-verb.test.js — the type-aware `exec` verb and its --pty mode. A streaming
-// stub node:http server plays remote.js's routes: GET /api/sessions (the
-// authoritative type lookup exec keys off), the attach/control/input PTY dance
-// (bash path), and the events/transcript/dm trio (agent path). `sessions` is
-// configurable per test so we can name a session bash or claude.
+// exec-verb.test.js — the type-aware `exec` verb and its --pty mode. A streaming stub
+// node:http plays remote.js's routes: GET /api/sessions (the authoritative type lookup
+// exec keys off), the attach/control/input PTY dance (bash), and the
+// events/transcript/dm trio (agent). `sessions` names a session bash or claude.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
@@ -221,9 +220,6 @@ test('exec --pty on an agent types into the TUI instead of routing by type', asy
   server.close();
 });
 
-// --pty must SKIP the type lookup, not merely tolerate it: the lookup is a GET
-// that costs a round trip and can 404 a session the attach path would still
-// reach. A mode picked by flag asks the node nothing about the type.
 test('exec --pty does not look the type up at all', async () => {
   const { server, seen } = stub({
     sessions: [],   // the lookup, if it ran, would be a NOTFOUND exit 5
@@ -251,9 +247,6 @@ test('exec on a bash session takes the PTY path with no --pty needed', async () 
 
 // ── dm: fire-and-forget only ─────────────────────────────────────────────────
 
-// `send --wait` became `exec`; `dm` is the remainder. The flag must be REFUSED
-// rather than ignored, because a script carrying the old spelling would
-// otherwise return instantly and report a turn that was never awaited.
 test('dm --wait is a usage error naming exec, and sends nothing', async () => {
   const { server, seen } = stub({ sessions: [{ name: 'bob', type: 'claude' }] });
   const port = await listen(server);
