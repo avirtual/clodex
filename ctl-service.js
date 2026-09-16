@@ -94,7 +94,7 @@ const ALLOWED = Object.freeze({
   restart: ['session', 'sessions'],
   ctx: '*',            // every subcommand (`use` is the stateful payoff)
 });
-const DEFERRED_HINT = 'not available here: attach, delete session, restart node, deploy, undeploy, upgrade, port-forward, web';
+const DEFERRED_HINT = 'not available here: attach, delete, restart node, deploy, undeploy, upgrade, port-forward, web';
 
 // `help` is deliberately ABSENT from that table and is not an omission. Help
 // short-circuits in execute() ahead of the gate, so it never reaches refuse()

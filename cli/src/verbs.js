@@ -348,6 +348,8 @@ const DELETABLE = ['session'];
 const PATCHABLE = ['session'];
 const RESTARTABLE = ['session', 'node'];
 
+const NAMELESS_RESOURCES = new Set(['restart node']);
+
 function takeResourceWord(args, verb, supported) {
   const word = args[0];
   if (!word) throw new CliError(EXIT.USAGE, `${verb} needs a resource (${supported.join('|')})`);
@@ -356,7 +358,12 @@ function takeResourceWord(args, verb, supported) {
   if (!supported.includes(singular)) {
     throw new CliError(EXIT.USAGE, `${verb} ${word} is not supported (${supported.join('|')})`);
   }
-  return { word: singular, rest: args.slice(1) };
+  const rest = args.slice(1);
+  const takes = NAMELESS_RESOURCES.has(`${verb} ${singular}`) ? 0 : 1;
+  if (rest.length > takes) {
+    throw new CliError(EXIT.USAGE, `${verb} ${singular}: unexpected argument "${rest[takes]}"`);
+  }
+  return { word: singular, rest };
 }
 
 const RESOURCE_VERBS = { create: CREATABLE, delete: DELETABLE, patch: PATCHABLE, restart: RESTARTABLE };

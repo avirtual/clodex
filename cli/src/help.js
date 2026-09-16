@@ -68,7 +68,7 @@ const VERB_REGISTRY = [
       'Default columns: sessions NAME TYPE ACTIVITY CWD; workspaces ID NAME; peers ID LABEL ONLINE HOST VERSION; teams NAME; tickets ID TEAM STATE TITLE; sandboxes ID LABEL; agents NAME MODEL DESCRIPTION.',
       '-o wide adds: sessions WORKSPACE; peers URL PLATFORM; tickets ASSIGNEE BRANCH; agents TOOLS. workspaces, teams and sandboxes have no wide columns.',
       'get tickets without --state shows the OPEN board; -o json sends no state and returns every state, the server\'s own default. A ticket id (t42) and a --state value are both checked here, before any request.',
-      '--subresource skills|args print the raw JSON payload; --subresource transcript is a one-shot read of the same transcript `logs` reads (use `logs -f` to follow).',
+      '--subresource skills|args print the raw JSON payload; --subresource transcript is a one-shot read of the same transcript `logs` reads (use `logs -f` to follow; -f here is forced off, not honoured). -o wide|name are accepted by the parser and ignored on all three: skills and args are always JSON, transcript renders exactly as `logs` does.',
     ],
   },
   {
@@ -121,8 +121,8 @@ const VERB_REGISTRY = [
     examples: ['clodexctl attach worker', 'clodexctl attach worker --read-only'],
     notes: [
       'Streams the screen (best-effort scrollback replay, then raw output) and forwards your keystrokes. Ctrl-\\ detaches and is never sent to the remote.',
-      'Needs a REAL TTY on stdin and stdout (exit 2 otherwise — use run/logs for scripting).',
-      'run = ask and wait; attach = be there. Survives a dropped stream (auto reconnect + full re-replay). Replay is recent scrollback, NOT exact terminal state.',
+      'Needs a REAL TTY on stdin and stdout (exit 2 otherwise — use exec/logs for scripting).',
+      'exec = ask and wait; attach = be there. Survives a dropped stream (auto reconnect + full re-replay). Replay is recent scrollback, NOT exact terminal state.',
     ],
   },
   {

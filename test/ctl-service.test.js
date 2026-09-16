@@ -761,6 +761,50 @@ test('patch session and get --subresource args reach different handlers — the 
   }
 });
 
+test('get session --subresource transcript -f is a one-shot read that opens no event stream', async () => {
+  const http = require('node:http');
+  const seen = [];
+  const live = new Set();
+  const server = http.createServer((req, res) => {
+    const path = req.url.split('?')[0];
+    seen.push(`${req.method} ${path}`);
+    if (servesResources(req, res)) return;
+    if (path === '/api/events') {
+      live.add(res);
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(': open\n\n');
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, messages: [{ role: 'assistant', text: 'ONESHOT_LINE' }] }));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const svc = createCtlService({
+    contextsFile: tmpCtxFile(), env: {},
+    openTransport: async () => ({ baseUrl: base, close() {} }),
+  });
+  try {
+    await svc.run('ctx add prod --url http://prod.example --token STORED_TOKEN_L');
+    let timer = null;
+    const b = await Promise.race([
+      svc.run('get session bob --subresource transcript -f'),
+      new Promise((r) => { timer = setTimeout(() => r(null), 5000); }),
+    ]);
+    clearTimeout(timer);
+    assert.ok(b, 'the block never resolved — the subresource followed the stream, and the ctl chain (one at a time) is wedged with no cancel');
+    assert.strictEqual(b.exitCode, 0, `ENTER: the read succeeded (${String(b.output).slice(0, 200)})`);
+    assert.match(b.output, /ONESHOT_LINE/, 'ENTER: the transcript really came back, so the block is not empty-by-error');
+    assert.ok(seen.includes('GET /api/sessions/bob/transcript'), `ENTER: the transcript endpoint was read — saw ${seen.join(', ')}`);
+    assert.ok(!seen.some((r) => r.includes('/api/events')),
+      `-f on the transcript subresource opened an event stream (${seen.join(', ')}) — the gate at ctl-service only refuses \`logs --follow\`, so this walks past it`);
+  } finally {
+    svc.dispose();
+    for (const res of live) { try { res.destroy(); } catch {} }
+    await new Promise((r) => server.close(r));
+  }
+});
+
 test('an unknown verb has no help, and says so', async () => {
   const { svc } = mkService();
   const b = await svc.run('help nosuchverb');

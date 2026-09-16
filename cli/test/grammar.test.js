@@ -430,6 +430,25 @@ test('bare `restart <name>` is a usage error naming the resource word', async ()
   assert.match(bare.stderr, /restart needs a resource \(session\|node\)/);
 });
 
+test('a resource-word verb rejects a trailing positional instead of ignoring it', async () => {
+  const cases = [
+    [['delete', 'session', 'a', 'b'], /delete session: unexpected argument "b"/],
+    [['create', 'session', 'a', 'b'], /create session: unexpected argument "b"/],
+    [['patch', 'session', 'a', 'b'], /patch session: unexpected argument "b"/],
+    [['restart', 'session', 'a', 'b'], /restart session: unexpected argument "b"/],
+    [['restart', 'node', 'bob', '--force'], /restart node: unexpected argument "bob"/],
+  ];
+  for (const [argv, re] of cases) {
+    let dialled = false;
+    const { code, stderr } = await cli(argv, null, {
+      spawnFn: () => { dialled = true; throw new Error('spawnFn called'); },
+    });
+    assert.strictEqual(code, 2, `${argv.join(' ')}: ${stderr}`);
+    assert.match(stderr, re);
+    assert.strictEqual(dialled, false, `${argv.join(' ')} must run nothing`);
+  }
+});
+
 test('--json prints its replacement, exits 2, and runs nothing', async () => {
   await withNode({}, async (port, seen) => {
     const { code, stdout, stderr } = await cli(['info', '--json'], port);
