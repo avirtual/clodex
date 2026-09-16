@@ -204,8 +204,6 @@ async function undeployFargate({ printer, flags, args, io, ctxName = null, dep =
   const log = (s) => { if (!json) printer.line(s); };
   const execFn = io.execFn || execFileP;
 
-  // Region/profile: flag > the stack's own ctx entry (T55 pins ssm.region/profile
-  // into fargate ctxs) > aws default. Say which source won.
   const ctxKey = ctxName || stackName;
   const ctxStore = safeLoadContexts(io);
   const ctxEntry = ctxStore.contexts[ctxKey];
@@ -311,10 +309,9 @@ async function undeployFargate({ printer, flags, args, io, ctxName = null, dep =
     log(`deletion started — check: aws cloudformation describe-stacks --stack-name ${stackName}${region ? ` --region ${region}` : ''}`);
   }
 
-  // 7. ctx cleanup: name match OR ssm.ecs cluster-half === this cluster. The
-  //    cluster-half match also requires the entry's pinned region to agree (or
-  //    be absent) — a same-named cluster in ANOTHER region is a different
-  //    deployment; don't drop its ctx.
+  // 7. ctx cleanup: the cluster-half match requires the entry's pinned region to
+  //    agree (or be absent) — a same-named cluster in ANOTHER region is a
+  //    different deployment; don't drop its ctx.
   ctxCleanup({ flags, printer, io, matchFn: (name, entry) => {
     if (name === stackName || name === ctxKey) return true;
     const ecs = entry && entry.ssm && entry.ssm.ecs;
@@ -413,7 +410,6 @@ async function undeployHelm({ printer, flags, args, io, ctxName = null, dep = nu
     else log(`deleted PVC(s) matching ${HELM_PVC_SELECTOR(name)}`);
   }
 
-  // 6. ctx cleanup (kubectl-kind ctx — name match).
   ctxCleanup({ flags, printer, io, matchFn: (n) => n === name || n === ctxName });
   return EXIT.OK;
 }
@@ -498,7 +494,6 @@ async function undeployDocker({ printer, flags, args, io, ctxName = null, dep = 
     }
   }
 
-  // 6. ctx cleanup (name match).
   ctxCleanup({ flags, printer, io, matchFn: (n) => n === name || n === ctxName });
   return EXIT.OK;
 }
