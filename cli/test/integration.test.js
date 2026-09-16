@@ -319,7 +319,7 @@ test('send: fire-and-forget POST /api/send', async () => {
 
 test('input: acquire → input → release, in order, token threaded, Enter appended', async () => {
   const { server, seen } = stub((req, res) => {
-    if (req.url.startsWith('/api/control/')) {
+    if (/^\/api\/sessions\/[^/]+\/control(\?|$)/.test(req.url)) {
       const body = seen[seen.length - 1].body;
       if (body.action === 'acquire') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, token: 'ctl-1' })); }
       res.writeHead(200); return res.end(JSON.stringify({ ok: true }));
@@ -330,7 +330,7 @@ test('input: acquire → input → release, in order, token threaded, Enter appe
   const { code } = await cli(['input', 'b', 'hello'], port);
   assert.strictEqual(code, 0);
   assert.deepStrictEqual(seen.map((s) => `${s.method} ${s.url}`), [
-    'POST /api/control/b', 'POST /api/input/b', 'POST /api/control/b',
+    'POST /api/sessions/b/control', 'POST /api/sessions/b/input', 'POST /api/sessions/b/control',
   ]);
   assert.strictEqual(seen[0].body.action, 'acquire');
   assert.strictEqual(seen[1].body.token, 'ctl-1');
@@ -342,7 +342,7 @@ test('input: acquire → input → release, in order, token threaded, Enter appe
 
 test('input --no-enter: posts the text verbatim, no trailing CR', async () => {
   const { server, seen } = stub((req, res) => {
-    if (req.url.startsWith('/api/control/')) {
+    if (/^\/api\/sessions\/[^/]+\/control(\?|$)/.test(req.url)) {
       const body = seen[seen.length - 1].body;
       if (body.action === 'acquire') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, token: 'ctl-1' })); }
       res.writeHead(200); return res.end(JSON.stringify({ ok: true }));

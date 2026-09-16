@@ -95,12 +95,12 @@ function silentServer() {
       // precisely the condition the watchdog exists for.
       res.flushHeaders();
       state.streams.push(res);
-    } else if (p.startsWith('/api/attach/')) {
+    } else if (/^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(p)) {
       state.attaches++;
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       res.flushHeaders();     // live 200, zero body bytes — same half-open shape
       state.streams.push(res);
-    } else if (p.startsWith('/api/control/')) {
+    } else if (/^\/api\/sessions\/[^/]+\/control(\?|$)/.test(p)) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, token: 't' }));
     } else {

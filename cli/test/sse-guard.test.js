@@ -125,7 +125,7 @@ test('openGuarded: definitive non-CONNECT error (404) → give up, no reconnect'
   const client = fakeClient();
   const clk = fakeTimers();
   let gaveUp = null;
-  G.openGuarded(client, '/api/attach/x', 'x', {
+  G.openGuarded(client, '/api/sessions/x/attach', 'x', {
     onGiveUp: (e) => { gaveUp = e; },
     timers: clk.timers,
     wait: instantWait([]),

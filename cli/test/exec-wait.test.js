@@ -1,7 +1,7 @@
 'use strict';
 // exec-wait.test.js — the SSE-driven verbs (exec, send --wait) end-to-end
 // through main.run against a stub node:http server that plays remote.js's
-// streaming routes: GET /api/attach/:name (replay + output frames), the
+// streaming routes: GET /api/sessions/:name/attach (replay + output frames), the
 // control/input dance, GET /api/events (activity frames), and the
 // transcript/send pair send --wait needs. Every request carries a Bearer
 // token; the stub enforces it exactly like remote.js's gate.
@@ -43,7 +43,7 @@ function sseStub(opts = {}) {
         res.writeHead(200); return res.end(JSON.stringify({ ok: true, sessions: opts.sessions || [{ name: 'bash', type: 'bash' }] }));
       }
       // SSE routes
-      if (req.method === 'GET' && p.startsWith('/api/attach/')) {
+      if (req.method === 'GET' && /^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(p)) {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
         res.write(': connected\n\n');
         res.write(`event: replay\ndata: ${JSON.stringify({ b64: b64('OLD SCROLLBACK\n'), cols: 80, rows: 24, holder: null })}\n\n`);
@@ -59,11 +59,11 @@ function sseStub(opts = {}) {
       }
       // JSON routes — delegate to opts.handle, else a sensible default.
       if (opts.handle && opts.handle(req, res, rec, state, seen)) return;
-      if (p.startsWith('/api/control/')) {
+      if (/^\/api\/sessions\/[^/]+\/control(\?|$)/.test(p)) {
         if (rec.body && rec.body.action === 'acquire') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, token: 'ctl-1' })); }
         res.writeHead(200); return res.end(JSON.stringify({ ok: true }));
       }
-      if (p.startsWith('/api/input/')) {
+      if (/^\/api\/sessions\/[^/]+\/input(\?|$)/.test(p)) {
         if (opts.onInput) opts.onInput(state, rec, seen);
         res.writeHead(200); return res.end(JSON.stringify({ ok: true }));
       }
@@ -116,11 +116,11 @@ test('exec: replay discarded, control before input, output printed ANSI-stripped
   // type lookup (guardrail) first, then attach opens, control acquired before
   // input, released after
   assert.strictEqual(order[0], 'GET /api/sessions');
-  const attachIdx = seen.findIndex((s) => s.url.startsWith('/api/attach/'));
-  assert.ok(attachIdx >= 0 && order[attachIdx] === 'GET /api/attach/bash');
-  const acquireIdx = seen.findIndex((s) => s.url.startsWith('/api/control/') && s.body && s.body.action === 'acquire');
-  const inputIdx = seen.findIndex((s) => s.url.startsWith('/api/input/'));
-  const releaseIdx = seen.findIndex((s) => s.url.startsWith('/api/control/') && s.body && s.body.action === 'release');
+  const attachIdx = seen.findIndex((s) => /^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(s.url));
+  assert.ok(attachIdx >= 0 && order[attachIdx] === 'GET /api/sessions/bash/attach');
+  const acquireIdx = seen.findIndex((s) => /^\/api\/sessions\/[^/]+\/control(\?|$)/.test(s.url) && s.body && s.body.action === 'acquire');
+  const inputIdx = seen.findIndex((s) => /^\/api\/sessions\/[^/]+\/input(\?|$)/.test(s.url));
+  const releaseIdx = seen.findIndex((s) => /^\/api\/sessions\/[^/]+\/control(\?|$)/.test(s.url) && s.body && s.body.action === 'release');
   assert.ok(acquireIdx >= 0 && inputIdx >= 0 && releaseIdx >= 0);
   assert.ok(acquireIdx < inputIdx, 'control acquired before input');
   assert.ok(inputIdx < releaseIdx, 'control released after input');
@@ -187,7 +187,7 @@ test('exec timeout: never-quiet stream → partial output + exit 1', async () =>
 test('exec: input 403 mid-flight → control release attempted, no hang, coded error', async () => {
   const { server, seen } = sseStub({
     handle: (req, res, rec, state) => {
-      if (req.url.startsWith('/api/input/')) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'not the control holder' })); return true; }
+      if (/^\/api\/sessions\/[^/]+\/input(\?|$)/.test(req.url)) { res.writeHead(403, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'not the control holder' })); return true; }
       return false;
     },
   });
@@ -196,7 +196,7 @@ test('exec: input 403 mid-flight → control release attempted, no hang, coded e
   assert.strictEqual(code, 4); // 403 → AUTH
   assert.match(stderr, /not the control holder/);
   // release still attempted after the failure
-  assert.ok(seen.some((s) => s.url.startsWith('/api/control/') && s.body && s.body.action === 'release'));
+  assert.ok(seen.some((s) => /^\/api\/sessions\/[^/]+\/control(\?|$)/.test(s.url) && s.body && s.body.action === 'release'));
   server.close();
 });
 

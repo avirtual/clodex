@@ -125,9 +125,9 @@ function box({ mode = 'die', limit = null } = {}) {
       res.end(JSON.stringify({ ok: true, sessions: [] }));
     } else if (p === '/api/events') {
       serve(res, 'events');
-    } else if (p.startsWith('/api/attach/')) {
+    } else if (/^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(p)) {
       serve(res, 'attach');
-    } else if (p.startsWith('/api/control/')) {
+    } else if (/^\/api\/sessions\/[^/]+\/control(\?|$)/.test(p)) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, token: 't' }));
     } else {

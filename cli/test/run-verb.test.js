@@ -38,7 +38,7 @@ function stub(opts = {}) {
       if (req.method === 'GET' && p === '/api/sessions') {
         res.writeHead(200); return res.end(JSON.stringify({ ok: true, sessions }));
       }
-      if (req.method === 'GET' && p.startsWith('/api/attach/')) {
+      if (req.method === 'GET' && /^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(p)) {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
         res.write(': connected\n\n');
         state.attach = res;
@@ -51,11 +51,11 @@ function stub(opts = {}) {
         if (opts.onEventsOpen) opts.onEventsOpen(state, seen);
         return;
       }
-      if (p.startsWith('/api/control/')) {
+      if (/^\/api\/sessions\/[^/]+\/control(\?|$)/.test(p)) {
         if (rec.body && rec.body.action === 'acquire') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, token: 'ctl-1' })); }
         res.writeHead(200); return res.end(JSON.stringify({ ok: true }));
       }
-      if (p.startsWith('/api/input/')) {
+      if (/^\/api\/sessions\/[^/]+\/input(\?|$)/.test(p)) {
         if (opts.onInput) opts.onInput(state, rec, seen);
         res.writeHead(200); return res.end(JSON.stringify({ ok: true }));
       }
@@ -96,7 +96,7 @@ function endTurnWhenSent(name) {
 
 // ── run → agent (send-wait path) ─────────────────────────────────────────────
 
-test('run on a claude agent routes to send-wait: /api/send hit, NOT /api/input', async () => {
+test('run on a claude agent routes to send-wait: /api/send hit, NOT sessions/input', async () => {
   let calls = 0;
   const { server, seen } = stub({
     sessions: [{ name: 'worker2', type: 'claude' }],
@@ -112,7 +112,7 @@ test('run on a claude agent routes to send-wait: /api/send hit, NOT /api/input',
   assert.ok(urls.includes('GET /api/sessions'), 'looked up the type');
   assert.ok(urls.includes('POST /api/send'), 'used the send path');
   assert.ok(urls.includes('GET /api/events'), 'awaited turn end');
-  assert.ok(!urls.some((u) => u.startsWith('POST /api/input/')), 'never typed into the TUI');
+  assert.ok(!urls.some((u) => /^POST \/api\/sessions\/[^/]+\/input$/.test(u)), 'never typed into the TUI');
   server.close();
 });
 
@@ -127,7 +127,7 @@ test('run on a codex agent also routes to send-wait', async () => {
   const { code, stdout } = await cli(['run', 'cx', 'hi', '--timeout', '10'], port);
   assert.strictEqual(code, 0);
   assert.match(stdout, /\[assistant\] yo/);
-  assert.ok(!seen.some((s) => s.url.startsWith('/api/input/')));
+  assert.ok(!seen.some((s) => /^\/api\/sessions\/[^/]+\/input(\?|$)/.test(s.url)));
   server.close();
 });
 
@@ -161,10 +161,10 @@ test('run on a bash session routes to exec: attach + input hit, NOT /api/send', 
   assert.match(stdout, /\/work/);
   const urls = seen.map((s) => `${s.method} ${s.url.split('?')[0]}`);
   assert.ok(urls.includes('GET /api/sessions'), 'looked up the type');
-  assert.ok(urls.includes('GET /api/attach/shell'), 'used the PTY attach path');
-  assert.ok(urls.some((u) => u === 'POST /api/input/shell'), 'typed the command');
+  assert.ok(urls.includes('GET /api/sessions/shell/attach'), 'used the PTY attach path');
+  assert.ok(urls.some((u) => u === 'POST /api/sessions/shell/input'), 'typed the command');
   assert.ok(!urls.includes('POST /api/send'), 'never used the DM path');
-  const inputRec = seen.find((s) => s.url === '/api/input/shell');
+  const inputRec = seen.find((s) => s.url === '/api/sessions/shell/input');
   assert.strictEqual(inputRec.body.data, 'pwd\r');
   server.close();
 });
@@ -216,8 +216,8 @@ test('exec on an agent refuses without --pty: warns on stderr, exit 2, no typing
   assert.match(stderr, /Pass --pty/);
   // it looked up the type but never attached/typed
   assert.ok(seen.some((s) => s.url === '/api/sessions'));
-  assert.ok(!seen.some((s) => s.url.startsWith('/api/attach/')), 'did not attach');
-  assert.ok(!seen.some((s) => s.url.startsWith('/api/input/')), 'did not type');
+  assert.ok(!seen.some((s) => /^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(s.url)), 'did not attach');
+  assert.ok(!seen.some((s) => /^\/api\/sessions\/[^/]+\/input(\?|$)/.test(s.url)), 'did not type');
   server.close();
 });
 
@@ -229,8 +229,8 @@ test('exec --pty on an agent proceeds (chosen TUI typing)', async () => {
   const port = await listen(server);
   const { code } = await cli(['exec', 'worker2', 'y', '--pty', '--quiet-ms', '80'], port);
   assert.strictEqual(code, 0);
-  assert.ok(seen.some((s) => s.url === '/api/attach/worker2'), 'attached with --pty');
-  assert.ok(seen.some((s) => s.url === '/api/input/worker2'), 'typed with --pty');
+  assert.ok(seen.some((s) => s.url === '/api/sessions/worker2/attach'), 'attached with --pty');
+  assert.ok(seen.some((s) => s.url === '/api/sessions/worker2/input'), 'typed with --pty');
   server.close();
 });
 
@@ -243,7 +243,7 @@ test('exec on a bash session is unaffected by the guardrail (no --pty needed)', 
   const { code, stdout } = await cli(['exec', 'shell', 'true', '--quiet-ms', '80'], port);
   assert.strictEqual(code, 0);
   assert.match(stdout, /ok/);
-  assert.ok(seen.some((s) => s.url === '/api/attach/shell'));
+  assert.ok(seen.some((s) => s.url === '/api/sessions/shell/attach'));
   server.close();
 });
 
@@ -267,6 +267,6 @@ test('input on an agent is unchanged — no type lookup, no guardrail, just type
   assert.match(stdout, /input sent to worker2/);
   // input does NOT consult /api/sessions — it's the raw plumbing channel
   assert.ok(!seen.some((s) => s.url === '/api/sessions'), 'input never looks up the type');
-  assert.ok(seen.some((s) => s.url === '/api/input/worker2'), 'typed raw');
+  assert.ok(seen.some((s) => s.url === '/api/sessions/worker2/input'), 'typed raw');
   server.close();
 });

@@ -136,11 +136,26 @@ function captureOptions(deps) {
 function req(port, pathname, opts = {}) {
   return new Promise((resolve, reject) => {
     const r = http.request({ host: '127.0.0.1', port, path: pathname, method: opts.method || 'GET', headers: opts.headers || {} }, (res) => {
+      // An SSE route never ends its body, so `stream` settles on the first
+      // frame and hangs up — waiting for 'end' there would wedge the walk.
+      if (opts.stream) {
+        let body = '';
+        res.on('data', (d) => {
+          body += d;
+          // `until` rides the preamble: _sse writes its retry line before any
+          // event frame, so a reader that stops at the first chunk sees no
+          // event at all.
+          if (opts.until && !body.includes(opts.until)) return;
+          r.destroy();
+          resolve({ status: res.statusCode, body });
+        });
+        return;
+      }
       let body = '';
       res.on('data', (d) => { body += d; });
       res.on('end', () => resolve({ status: res.statusCode, body }));
     });
-    r.on('error', reject);
+    r.on('error', (e) => { if (!opts.stream) reject(e); });
     if (opts.body) r.write(opts.body);
     r.end();
   });
@@ -169,6 +184,18 @@ function subresourceFixture() {
         calls.push({ route: 'transcript', name, limit, since });
         return name === 'ghost' ? { ok: false, error: 'Session not found' } : TRANSCRIPT_OUT;
       },
+      getAttachInfo: (name) => {
+        calls.push({ route: 'attach', name });
+        return name === 'ghost' ? { ok: false } : { ok: true, scrollback: Buffer.from('hi'), cols: 100, rows: 30 };
+      },
+      sendInput: (name, data) => {
+        calls.push({ route: 'input', name, data });
+        return name === 'ghost' ? { ok: false } : { ok: true };
+      },
+      resizePty: (name, cols, rows) => {
+        calls.push({ route: 'resize', name, cols, rows });
+        return name === 'ghost' ? { ok: false } : { ok: true };
+      },
       query: (name, kind, args) => {
         calls.push({ route: 'query', name, kind, args });
         return name === 'ghost' ? { ok: false, error: 'no such session' } : QUERY_OUT;
@@ -177,10 +204,21 @@ function subresourceFixture() {
   };
 }
 
-const SUB_WALK = { transcript: { method: 'GET' }, query: { method: 'POST', body: JSON.stringify({ kind: 'report', args: {} }) } };
+// `body` may be a function of the walk's state bag: input and resize are
+// token-gated, and the token only exists once the control step has run. Object
+// key order puts control ahead of both, which is what makes that thread work.
+const SUB_WALK = {
+  transcript: { method: 'GET' },
+  query: { method: 'POST', body: () => JSON.stringify({ kind: 'report', args: {} }) },
+  attach: { method: 'GET', stream: true },
+  control: { method: 'POST', body: () => JSON.stringify({ action: 'acquire', client: 'walk' }), capture: (st, res) => { st.token = JSON.parse(res.body).token; } },
+  input: { method: 'POST', body: (st) => JSON.stringify({ token: st.token, data: 'x' }) },
+  resize: { method: 'POST', body: (st) => JSON.stringify({ token: st.token, cols: 90, rows: 25 }) },
+};
 
 test('RESOURCES: every (resource, verb) answers on a fully-injected node, and every name is a literal path in remote.js', async () => {
   const seen = [];
+  const walkState = { token: null };
   const fixture = subresourceFixture();
   await withNode(fixture.opts, async (port) => {
     for (const r of RESOURCES) {
@@ -208,19 +246,22 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
         for (const verb of verbs) {
           assert.strictEqual(walk.method.toLowerCase(), verb, `${r.name}/${sub} advertises ${verb}, the walk sends ${walk.method}`);
           const p = `/api/${r.name}/${WALK_ID[r.name]}/${sub}`;
-          const res = await req(port, p, { method: walk.method, body: walk.body, headers: walk.body ? { 'content-type': 'application/json' } : {} });
+          const body = walk.body ? walk.body(walkState) : undefined;
+          const res = await req(port, p, { method: walk.method, body, stream: walk.stream, headers: body ? { 'content-type': 'application/json' } : {} });
           assert.strictEqual(res.status, 200, `${r.name}/${sub}.${verb} → ${walk.method} ${p} answered ${res.status}: ${res.body}`);
+          if (walk.capture) walk.capture(walkState, res);
           seen.push(`${r.name}/${sub}.${verb}`);
         }
       }
     }
   });
   assert.deepStrictEqual(seen, [
-    'sessions.list', 'sessions.get', 'sessions/transcript.get', 'sessions/query.post', 'workspaces.list',
+    'sessions.list', 'sessions.get', 'sessions/transcript.get', 'sessions/query.post',
+    'sessions/attach.get', 'sessions/control.post', 'sessions/input.post', 'sessions/resize.post', 'workspaces.list',
     'peers.list', 'peers.get', 'teams.list', 'teams.get', 'tickets.list', 'tickets.get',
     'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get', 'catalogs.get',
   ], 'the walk must visit every shipped row — an empty or shortened walk passes vacuously');
-  assert.strictEqual(seen.length, 16, 'the walk entered 14 resource verbs plus the 2 session subresources');
+  assert.strictEqual(seen.length, 20, 'the walk entered 14 resource verbs plus the 6 session subresources');
   assert.strictEqual(RESOURCES.length, 8, 'the walk covered fewer than the 8 shipped resources');
 });
 
@@ -270,6 +311,116 @@ test('the OLD transcript and query paths are gone — 404, no alias, no legacy s
   });
   assert.ok(!REMOTE_SRC.includes("'/api/transcript/'"), "remote.js still spells the old '/api/transcript/' prefix");
   assert.ok(!REMOTE_SRC.includes("'/api/query/'"), "remote.js still spells the old '/api/query/' prefix");
+});
+
+test('the OLD attach/control/input/resize paths are gone — 404, no alias, no legacy shim', async () => {
+  const fixture = subresourceFixture();
+  const post = (port, p, body) => req(port, p, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
+  await withNode(fixture.opts, async (port) => {
+    assert.strictEqual((await req(port, '/api/attach/alice')).status, 404, 'GET /api/attach/:name still answers');
+    assert.strictEqual((await post(port, '/api/control/alice', JSON.stringify({ action: 'acquire' }))).status, 404, 'POST /api/control/:name still answers');
+    assert.strictEqual((await post(port, '/api/input/alice', JSON.stringify({ data: 'x' }))).status, 404, 'POST /api/input/:name still answers');
+    assert.strictEqual((await post(port, '/api/resize/alice', JSON.stringify({ cols: 90, rows: 25 }))).status, 404, 'POST /api/resize/:name still answers');
+    assert.strictEqual(fixture.calls.length, 0, 'no old-path request reached a callback');
+  });
+  for (const old of ["'/api/attach/'", "'/api/control/'", "'/api/input/'", "'/api/resize/'"]) {
+    assert.ok(!REMOTE_SRC.includes(old), `remote.js still spells the old ${old} prefix`);
+  }
+});
+
+test('GET /api/sessions/:name/attach: the SSE the deleted /api/attach/ served, 501 without the callback', async () => {
+  const fixture = subresourceFixture();
+  await withNode(fixture.opts, async (port) => {
+    const r = await req(port, '/api/sessions/alice/attach', { stream: true, until: 'event: replay' });
+    assert.strictEqual(r.status, 200);
+    assert.match(r.body, /event: replay\ndata: /, 'the stream carries the replay frame the old route sent');
+    const replay = JSON.parse(r.body.split('event: replay\ndata: ')[1].split('\n')[0]);
+    assert.deepStrictEqual(
+      { b64: replay.b64, cols: replay.cols, rows: replay.rows, holder: replay.holder },
+      { b64: Buffer.from('hi').toString('base64'), cols: 100, rows: 30, holder: null },
+    );
+    const miss = await req(port, '/api/sessions/ghost/attach');
+    assert.strictEqual(miss.status, 404, 'a not-ok callback result is still a 404');
+    assert.deepStrictEqual(JSON.parse(miss.body), { ok: false, error: 'no such session' });
+  });
+  await withNode({ ...fixture.opts, getAttachInfo: null }, async (port) => {
+    const r = await req(port, '/api/sessions/alice/attach');
+    assert.strictEqual(r.status, 501);
+    assert.deepStrictEqual(JSON.parse(r.body), { ok: false, error: 'attach not available' });
+  });
+});
+
+test('sessions/control|input|resize: control-token semantics and resize bounds, byte for byte as the deleted routes served', async () => {
+  const fixture = subresourceFixture();
+  const post = (port, p, body) => req(port, p, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
+  await withNode(fixture.opts, async (port) => {
+    const acq = await post(port, '/api/sessions/alice/control', JSON.stringify({ action: 'acquire', client: 'walker' }));
+    assert.strictEqual(acq.status, 200);
+    const token = JSON.parse(acq.body).token;
+    assert.match(token, /^[0-9a-f]{32}$/, 'acquire mints a 16-byte hex token');
+
+    const wrong = await post(port, '/api/sessions/alice/input', JSON.stringify({ token: 'bogus', data: 'evil' }));
+    assert.strictEqual(wrong.status, 403);
+    assert.deepStrictEqual(JSON.parse(wrong.body), { ok: false, error: 'not the control holder' });
+
+    assert.strictEqual((await post(port, '/api/sessions/alice/input', JSON.stringify({ token, data: 'ls\r' }))).status, 200);
+    assert.deepStrictEqual(fixture.calls.at(-1), { route: 'input', name: 'alice', data: 'ls\r' });
+
+    for (const dims of [{ cols: 19, rows: 25 }, { cols: 501, rows: 25 }, { cols: 90, rows: 4 }, { cols: 90, rows: 301 }]) {
+      const bad = await post(port, '/api/sessions/alice/resize', JSON.stringify({ token, ...dims }));
+      assert.strictEqual(bad.status, 400, `resize ${JSON.stringify(dims)} was accepted`);
+      assert.deepStrictEqual(JSON.parse(bad.body), { ok: false, error: 'bad dimensions' });
+    }
+    assert.strictEqual((await post(port, '/api/sessions/alice/resize', JSON.stringify({ token, cols: 20, rows: 300 }))).status, 200, 'the bounds are inclusive');
+
+    assert.strictEqual((await post(port, '/api/sessions/alice/control', 'not json')).status, 400, 'bad JSON is a 400');
+    assert.deepStrictEqual(
+      JSON.parse((await post(port, '/api/sessions/alice/control', JSON.stringify({ action: 'nope' }))).body),
+      { ok: false, error: 'bad action' },
+    );
+    assert.strictEqual((await post(port, '/api/sessions/ghost/control', JSON.stringify({ action: 'acquire' }))).status, 404);
+    assert.strictEqual((await post(port, '/api/sessions/alice/control', JSON.stringify({ action: 'release', token }))).status, 200);
+    assert.strictEqual(
+      (await post(port, '/api/sessions/alice/control', JSON.stringify({ action: 'release', token }))).status, 403,
+      'the token died with the release',
+    );
+  });
+  await withNode({ ...fixture.opts, sendInput: null }, async (port) => {
+    assert.deepStrictEqual(JSON.parse((await post(port, '/api/sessions/alice/control', '{}')).body), { ok: false, error: 'control not available' });
+    assert.deepStrictEqual(JSON.parse((await post(port, '/api/sessions/alice/input', '{}')).body), { ok: false, error: 'input not available' });
+  });
+  await withNode({ ...fixture.opts, resizePty: null }, async (port) => {
+    const r = await post(port, '/api/sessions/alice/resize', '{}');
+    assert.strictEqual(r.status, 501);
+    assert.deepStrictEqual(JSON.parse(r.body), { ok: false, error: 'resize not available' });
+  });
+});
+
+test('subresource gating: a node with the attach/control callbacks nulled omits them from the document AND 501s the routes', async () => {
+  const fixture = subresourceFixture();
+  const nulled = { ...fixture.opts, getAttachInfo: null, sendInput: null, resizePty: null };
+  await withNode(nulled, async (port) => {
+    const doc = JSON.parse((await req(port, '/api/resources')).body);
+    const sessions = doc.resources.find((r) => r.name === 'sessions');
+    assert.deepStrictEqual(
+      Object.keys(sessions.subresources), ['transcript', 'query'],
+      'the document advertises a subresource this node cannot serve',
+    );
+    assert.strictEqual((await req(port, '/api/sessions/alice/attach')).status, 501);
+
+    // The same walk the shipped-document test runs, but against the SERVED
+    // document rather than the RESOURCES constant: a gate that drops a row from
+    // one and not the other is exactly the mismatch this pin exists to catch.
+    for (const [sub] of Object.entries(sessions.subresources)) {
+      const walk = SUB_WALK[sub];
+      const body = walk.body ? walk.body({ token: null }) : undefined;
+      const res = await req(port, `/api/sessions/alice/${sub}`, {
+        method: walk.method, body, stream: walk.stream,
+        headers: body ? { 'content-type': 'application/json' } : {},
+      });
+      assert.strictEqual(res.status, 200, `served ${sub} answered ${res.status}: ${res.body}`);
+    }
+  });
 });
 
 test('/api/sessions/:name/<anything else>: 404, and a deeper path is not read as a subresource', async () => {
