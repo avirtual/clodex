@@ -1,5 +1,14 @@
 # remote.js
 
+## RESOURCES
+
+A literal, not a table generated from the router: a generated table cannot fail,
+so it would describe a router that had drifted just as confidently as one that
+had not. test/remote-resources.test.js walks the constant against the live
+router in both directions — every advertised `(resource, verb)` must answer
+something other than 404 on a fully-injected node, and every `name` must appear
+as a literal `/api/<name>` path in this file.
+
 ## notifyInbox
 
 The `/api/inbox` handlers deliberately broadcast NOTHING. The `inbox` SSE frame
