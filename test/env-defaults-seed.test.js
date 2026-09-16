@@ -70,7 +70,7 @@ const entry = (value) => ({ value, secret: false });
 
 // --- the shipped file itself -------------------------------------------------
 
-test('the shipped defaults file carries exactly the five keys Clodex promises, with a note each', () => {
+test('the shipped defaults file carries exactly the six keys Clodex promises, with a note each', () => {
   // The DEFAULT source, deliberately: this is the one case that pins the real
   // resources/env-defaults.json rather than a fixture. Every other case below
   // would stay green if the file were emptied.
@@ -78,6 +78,7 @@ test('the shipped defaults file carries exactly the five keys Clodex promises, w
   assert.deepStrictEqual(Object.keys(defaults).sort(), [
     'CLAUDE_CODE_BASH_OUTPUT_AUDIENCE_NOTE',
     'CLAUDE_CODE_COZY_TEAPOT',
+    'CLAUDE_CODE_DISABLE_BUNDLED_SKILLS',
     'CLAUDE_CODE_TOTAL_TOKENS_REMINDER',
     'CLAUDE_CODE_TURN_UPDATES',
     'CLAUDE_STREAM_IDLE_TIMEOUT_MS',
@@ -88,6 +89,7 @@ test('the shipped defaults file carries exactly the five keys Clodex promises, w
   assert.strictEqual(defaults.CLAUDE_CODE_BASH_OUTPUT_AUDIENCE_NOTE.value, 'off');
   assert.strictEqual(defaults.CLAUDE_CODE_TURN_UPDATES.value, 'false');
   assert.strictEqual(defaults.CLAUDE_CODE_COZY_TEAPOT.value, 'relaxed');
+  assert.strictEqual(defaults.CLAUDE_CODE_DISABLE_BUNDLED_SKILLS.value, '1');
   for (const [key, rec] of Object.entries(defaults)) {
     // The note is the GUI's whole explanation of the key — an empty one ships a
     // var the operator is asked to trust with no account of what it does.

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **The CLI's bundled skills stay out of every seat.** Clodex now ships `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1` in its default env, so the document, spreadsheet, presentation and other skills the Claude Code binary carries no longer land in each agent's prompt. Plugin skills and a project's own `.claude/skills/` are unaffected; the seed adds the key to the global scope once, and an operator who wants them back edits it there.
+
 ## 5.71.0 — 2026-09-17 — clodexctl speaks kubectl
 
 - **One resource grammar for the node API and `clodexctl`.** Every command is now `<verb> <resource> [name]` over the nouns a Clodex node has: `sessions`, `workspaces`, `peers`, `teams`, `tickets`, `sandboxes`, `agents`, `worktrees` and `catalogs`. Someone who knows the nouns can guess the command; `clodexctl api-resources` lists what the node in front of you serves.
