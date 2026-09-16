@@ -135,7 +135,7 @@ test('validateDeploy: an UNKNOWN flavor is carried, not rejected (t55) — but a
   // t55 reversed t54's enum check, on blast radius. validateEntry gates EVERY
   // verb, so rejecting a flavor string this build doesn't know would make a
   // context written by a NEWER clodexctl unusable for `sessions`, `web`,
-  // `ctx test` — against a node that is up and whose TRANSPORT this build
+  // `describe node --test` — against a node that is up and whose TRANSPORT this build
   // understands perfectly. A working context killed by an advisory field only
   // one verb reads. The refusal belongs at `upgrade` (which does dispatch on
   // it), and cli/test/upgrade.test.js pins that it happens there.

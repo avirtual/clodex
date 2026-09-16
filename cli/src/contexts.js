@@ -73,7 +73,7 @@ const TRANSPORT_KINDS = ['url', 'ssh', 'tunnel', 'ssm', 'kubectl', 'gcloud', 'az
 // SHAPE is strict; ENUM MEMBERSHIP is not, and the split is deliberate (t55).
 // validateEntry gates EVERY verb, so rejecting a flavor string this build does
 // not recognize would make a context written by a NEWER clodexctl unusable for
-// `sessions`, `web`, `ctx test` — against a node that is up, reachable, and
+// `sessions`, `web`, `describe node --test` — against a node that is up, reachable, and
 // whose TRANSPORT this build understands perfectly. That is a working context
 // killed by an advisory field only one verb reads. So an unrecognized flavor is
 // stored and carried without complaint, and `upgrade` — the verb that actually
@@ -187,7 +187,7 @@ function resolve(store, { ctxName = null, env = process.env, flags = {} } = {}) 
 
   if (!entry) {
     throw new CliError(EXIT.USAGE,
-      'no context selected — set one with `clodexctl ctx add … && clodexctl ctx use …`, or pass --url/--token (or CLODEX_URL/CLODEX_TOKEN)');
+      'no context selected — set one with `clodexctl create node … && clodexctl use node …`, or pass --url/--token (or CLODEX_URL/CLODEX_TOKEN)');
   }
   validateEntry(entry);
   return { ...entry, name: label };

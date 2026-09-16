@@ -170,9 +170,9 @@ makes it current if there was none. Contexts are the kubeconfig: which node,
 and how to reach it.
 
 ```sh
-clodexctl ctx current        # the current context NAME (exit 5 when none)
-clodexctl ctx use mynode
-clodexctl ctx test --verbose # open the transport, GET hello
+clodexctl get nodes --current   # the current node NAME (exit 5 when none)
+clodexctl use node mynode
+clodexctl describe node --test --verbose  # open the transport, GET hello
 ```
 
 **The fleet.**

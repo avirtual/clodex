@@ -26,7 +26,9 @@ thing a pod is in this analogy.
 | `kubectl exec X -- cmd` | `clodexctl exec X cmd` |
 | `kubectl attach X` | `clodexctl attach X` |
 | `kubectl delete pod X` | `clodexctl delete session X` |
-| `kubectl config use-context X` | `clodexctl ctx use X` |
+| `kubectl config use-context X` | `clodexctl use node X` |
+| `kubectl config get-contexts` | `clodexctl get nodes` |
+| `kubectl config current-context` | `clodexctl get nodes --current` |
 | `kubectl api-resources` | `clodexctl api-resources` |
 | `kubectl port-forward L:R` | `clodexctl port-forward L:R` |
 | `-o json\|yaml\|wide\|name` | `-o json\|yaml\|wide\|name` |
@@ -42,7 +44,7 @@ Three commands take you from "a task is running somewhere in a customer's VPC"
 to a real keyboard on the agent inside it — no ssh, no inbound ports, no VPN:
 
 ```sh
-clodexctl ctx add cust --ssm-ecs my-cluster/clodex --token <wire-token>
+clodexctl create node cust --ssm-ecs my-cluster/clodex --token <wire-token>
 clodexctl --ctx cust create session worker --type claude --cwd /home/clodex/work
 clodexctl --ctx cust attach worker
 ```
@@ -122,21 +124,22 @@ tunnel spawned argv-direct — whether it's `ssh`, a typed cloud kind, or a raw
 `--tunnel`:
 
 ```
-clodexctl ctx add home --url http://127.0.0.1:7900 --token <T>
-clodexctl ctx add work --ssh user@box --token <T>              # remotePort default 7900
-clodexctl ctx add k8s  --token <T> --tunnel kubectl port-forward pod/clodex-0 {port}:7900
-clodexctl ctx use home
-clodexctl ctx list        # * marks the current
-clodexctl ctx show home   # token redacted
-clodexctl ctx import      # seed contexts from THIS machine's Clodex GUI stores
-clodexctl ctx test        # open the transport + GET hello; relays child stderr verbatim
+clodexctl create node home --url http://127.0.0.1:7900 --token <T>
+clodexctl create node work --ssh user@box --token <T>          # remotePort default 7900
+clodexctl create node k8s  --token <T> --tunnel kubectl port-forward pod/clodex-0 {port}:7900
+clodexctl use node home
+clodexctl get nodes             # * marks the current
+clodexctl get nodes --current   # the current node NAME alone (exit 5 when none)
+clodexctl describe node home    # token redacted
+clodexctl create node --import  # seed nodes from THIS machine's Clodex GUI stores
+clodexctl describe node --test  # open the transport + GET hello; relays child stderr verbatim
 ```
 
-### `ctx import` — seed from the local GUI
+### `create node --import` — seed from the local GUI
 
 "I shouldn't have to add my own laptop from my laptop." The desktop app already
-knows every connection; `ctx import` reads its userData **read-only** and offers
-context entries:
+knows every connection; `create node --import` reads its userData **read-only**
+and offers node entries:
 
 - the local engine itself → `local` (`http://127.0.0.1:<remotePort>` + the
   `remote.env` token; warns if the wire is off in Preferences),
@@ -146,7 +149,7 @@ context entries:
   `auth.env` token (a box with no wire token is skipped with a reason).
 
 ```
-clodexctl ctx import [--data-dir DIR] [--dry-run] [--force]
+clodexctl create node --import [--data-dir DIR] [--dry-run] [--force]
 ```
 
 `--data-dir` overrides userData discovery (else `CLODEX_DATA_DIR`, else the
@@ -171,9 +174,9 @@ entries only ever carry `url`/`ssh` + token, never a tunnel argv.
 
 #### Cloud transports — templates over the tunnel mechanism
 
-A raw `--tunnel` argv is **code**, which is why `ctx import` never shares it. The
-four typed cloud kinds are **data** — safe to `ctx import`, to commit to a shared
-team contexts file, to paste in Slack — each a built-in `{port}`-tunnel template
+A raw `--tunnel` argv is **code**, which is why `--import` never shares it. The
+four typed cloud kinds are **data** — safe to import, to commit to a shared
+team nodes file, to paste in Slack — each a built-in `{port}`-tunnel template
 around the operator's own vendor CLI (no AWS/GCP/Azure SDKs, ever; we spawn
 `aws`/`kubectl`/`gcloud`/`az` argv-direct and relay their stderr):
 
@@ -221,7 +224,7 @@ running task → a clear connect error; `aws`'s own stderr is relayed verbatim.
 
 > **Honesty caveat.** The `gcloud`/`az` templates follow the vendors' documented
 > CLI syntax but have **not** been exercised against live GCP/Azure —
-> `ctx test --verbose` relays the vendor CLI's own stderr, which is the diagnosis
+> `describe node --test --verbose` relays the vendor CLI's own stderr, which is the diagnosis
 > surface. The `ssm`/`kubectl` shapes are the same tunnel mechanism `--ssh` uses
 > and are verifiable in shape the same way. Missing a vendor binary surfaces as
 > the usual tunnel-failed error with an "is `<cli>` installed?" hint.
@@ -242,7 +245,7 @@ No file needed: `clodexctl --url … --token … sessions`. Env sits between fil
 and flags (flags win): `CLODEX_URL` / `CLODEX_TOKEN`. `--ctx NAME` overrides
 the current context. `--url` and `--ssh` are mutually exclusive per call.
 (`--ssh` also works as a one-shot flag; `--tunnel` and the typed cloud kinds
-are `ctx add`-only — they're not in the one-shot flag layer by design: a
+are `create node`-only — they're not in the one-shot flag layer by design: a
 persistent context is the product for a cloud node, and the one-shot layer
 already has `--url` for the rare ad-hoc case.)
 
@@ -304,7 +307,11 @@ Read (all but `describe` support `-o json` — stable raw wire payload — and `
 | `get worktrees --repo DIR` | `GET /api/resources` → `GET /api/worktrees?repo=` (DIR is resolved to an absolute path client-side) |
 | `get catalogs` | `GET /api/catalogs` |
 | `describe <singular> <name>` / `describe catalogs` | the same routes, `/:name` for a single object, rendered as a labeled block (no `-o json`) |
-| `ctx current` | none — prints the current context name from the local file (exit `5` when none) |
+| `get nodes [--current]` | none — the local nodes file; `--current` prints the current node name alone (exit `5` when none) |
+| `describe node [name]` | none — the local nodes file, token redacted |
+| `describe node [name] --test` | opens the transport → `GET /api/peer/hello`; the one node verb that dials |
+| `create node <name> <transport flag>` / `create node --import` | none — writes the local nodes file |
+| `delete node <name>` / `use node <name>` | none — writes the local nodes file |
 | `api-resources` | `GET /api/resources` — what this node serves |
 | `version` | `GET /api/peer/hello` — client version plus the node's |
 | `logs <name> [--tail N] [-f\|--follow]` | `GET /api/resources` (capability check) → `GET /api/sessions/:name/transcript?limit=N` (+ `GET /api/events` when `-f`) |
@@ -521,7 +528,7 @@ clodexctl deploy node ci --docker --tag v3.5.2 --env-file ./auth.env
   the pull already happened inside `run`). A saved `CLODEX_REMOTE_TOKEN` means
   the probe gets a **401 — that counts as success**: the node is up and
   token-gated, so the context is saved (transport only) and you add your token
-  with `clodexctl ctx add`/edit. No token is ever stored (we never saw it).
+  with `clodexctl create node`/edit. No token is ever stored (we never saw it).
   Local → `{url}`; remote → `{ssh, remotePort}`. Collision kept unless `--force`;
   `--no-ctx` opts out. A **version-pinned `--tag`** is the reproducible choice.
 - **Lifecycle is the operator's docker.** Stop/remove with
@@ -641,7 +648,7 @@ clodexctl deploy node mynode --helm --set persistence.enabled=false --dry-run
   installed** in a partial state — the error says so and tells you to fix the
   cause and re-run (**the same command upgrades in place**; no auto-rollback).
   A verify failure after a green helm still keeps the saved context and points
-  you at `clodexctl --ctx <name> ctx test --verbose`.
+  you at `clodexctl describe node <name> --test --verbose`.
 - **Field conflicts (`Apply failed with N conflicts`) get their own error**,
   because for them "re-run" is the one hint that cannot work. It means someone
   changed a field **out of band** (`kubectl edit`/`patch`) and thereby

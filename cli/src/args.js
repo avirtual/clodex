@@ -9,7 +9,7 @@
 //   repeatable     → flags declared in `multi` accumulate into an array
 //
 // Deliberately NOT a full getopt: verbs know their own shapes and pull what
-// they need. `stopAtPositional` lets a verb (ctx add --tunnel …) grab a greedy
+// they need. `stopAtPositional` lets a verb (create node --tunnel …) grab a greedy
 // rest without the parser stealing later tokens (see options).
 'use strict';
 

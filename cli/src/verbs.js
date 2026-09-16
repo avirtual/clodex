@@ -799,14 +799,14 @@ function ctxUse({ store, saveStore, printer, args }) {
 }
 
 function ctxCurrent({ store, printer }) {
-  if (!store.current) throw new CliError(EXIT.NOTFOUND, 'no current context (clodexctl ctx use <name>)');
+  if (!store.current) throw new CliError(EXIT.NOTFOUND, 'no current context (ctx use <name>)');
   printer.line(store.current);
 }
 
 function ctxList({ store, printer, flags }) {
   const names = Object.keys(store.contexts);
   if (flags.json) { printer.json({ current: store.current, contexts: store.contexts }); return; }
-  if (names.length === 0) { printer.line('(no contexts — add one with `clodexctl ctx add`)'); return; }
+  if (names.length === 0) { printer.line('(no contexts — add one with `ctx add`)'); return; }
   const rows = names.map((n) => {
     const e = store.contexts[n];
     return [n === store.current ? '*' : '', n, entryKind(e), entryTarget(e)];

@@ -90,10 +90,10 @@ Publishing it via an Ingress on the open internet is not a documented mode
 ```sh
 kubectl apply -f clodex-node.yaml
 
-clodexctl ctx add k8s --kubectl pod/clodex-node-0 --token <wire-token>
+clodexctl create node k8s --kubectl pod/clodex-node-0 --token <wire-token>
 #   [--namespace CUSTOMER] [--kube-context ENGAGEMENT]
 
-clodexctl --ctx k8s ctx test
+clodexctl describe node k8s --test
 clodexctl --ctx k8s create session worker --type claude --cwd /home/clodex/work
 clodexctl --ctx k8s exec worker "…"
 ```
@@ -102,9 +102,9 @@ clodexctl --ctx k8s exec worker "…"
 expands to `kubectl [--context C] [-n NS] port-forward POD_OR_SVC {port}:7900`.
 Namespace/context are `--namespace` / `--kube-context` flags (the latter avoids
 colliding with clodexctl's own `--ctx`). The typed kind is **data** (safe to
-`ctx import`/share); the raw `--tunnel kubectl port-forward …` form still works
+import/share); the raw `--tunnel kubectl port-forward …` form still works
 if you need a custom argv. clodexctl relays kubectl's stderr on failure
-(`ctx test --verbose`).
+(`describe node --test --verbose`).
 
 ## 4. Teardown
 

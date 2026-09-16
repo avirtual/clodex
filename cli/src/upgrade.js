@@ -97,7 +97,7 @@ async function upgradeVerb({ printer, flags, args, io = {} }) {
   const store = contexts.load(io.contextsFile, { warn: () => {} });
   const ctxName = args[0] ? String(args[0]) : (flags.ctx ? String(flags.ctx) : store.current);
   if (!ctxName) {
-    throw new CliError(EXIT.USAGE, 'upgrade needs a context — `clodexctl upgrade node <ctx>` (or set one with `clodexctl ctx use …`)');
+    throw new CliError(EXIT.USAGE, 'upgrade needs a context — `clodexctl upgrade node <ctx>` (or set one with `clodexctl use node …`)');
   }
   const entry = store.contexts[ctxName];
   if (!entry) throw new CliError(EXIT.USAGE, `no such context: ${ctxName}`);

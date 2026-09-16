@@ -1,5 +1,5 @@
 'use strict';
-// import.test.js — `ctx import` from a FIXTURE userData dir (never the real
+// import.test.js — `create node --import` from a FIXTURE userData dir (never the real
 // one). Covers: env-file parse, userData resolution (flag/env/both-exist mtime),
 // peer-row → entry mapping (ssh/url/disabled/tokenless), sandbox registry sweep,
 // collision skip vs --force, dry-run writes nothing, and the never-tunnel

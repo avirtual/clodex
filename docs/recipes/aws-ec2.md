@@ -93,13 +93,13 @@ Then reach it with the typed `--ssm` transport (the same context the `--ssm` dep
 saves):
 
 ```sh
-clodexctl ctx add ec2ssm --ssm i-INSTANCE --token <wire-token>   # [--region R] [--profile P]
-clodexctl --ctx ec2ssm ctx test
+clodexctl create node ec2ssm --ssm i-INSTANCE --token <wire-token>   # [--region R] [--profile P]
+clodexctl describe node ec2ssm --test
 ```
 
 `--ssm i-INSTANCE` expands to `aws ssm start-session --target i-INSTANCE
 --document-name AWS-StartPortForwardingSession --parameters {…}`. The typed kind
-is **data** (safe to `ctx import`/share); the raw `--tunnel aws ssm
+is **data** (safe to import/share); the raw `--tunnel aws ssm
 start-session …` form still works if you need to customize the argv.
 </details>
 

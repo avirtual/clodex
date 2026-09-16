@@ -730,7 +730,7 @@ test('deploy helm: --force-conflicts reaches helm, and is absent without the fla
     'and a plain deploy must never force — this is the pin against the flag leaking into the default path');
 });
 
-test('deploy helm: verify failure → nonzero exit; ctx already saved, message points at ctx test', async () => {
+test('deploy helm: verify failure → nonzero exit; ctx already saved, message points at describe node --test', async () => {
   const { CliError } = require('../src/errors');
   const contextsFile = tmpCtxFile();
   const { code, stdout, stderr } = await cli(['deploy', 'node', 'n', '--helm'], {
@@ -740,7 +740,7 @@ test('deploy helm: verify failure → nonzero exit; ctx already saved, message p
   });
   assert.strictEqual(code, EXIT.CONNECT);
   assert.match(stdout, /helm --wait passed.*did not answer through kubectl port-forward/);
-  assert.match(stderr, /context was saved.*ctx test --verbose/);
+  assert.match(stderr, /context was saved.*describe node .*--test --verbose/);
   assert.doesNotMatch(stderr, /[0-9a-f]{48}/);   // token never rides the error
   // ctx upsert happened BEFORE verify — the release is live, keep the handle.
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
