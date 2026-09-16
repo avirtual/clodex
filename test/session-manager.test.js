@@ -2539,7 +2539,7 @@ test('t770: a spawner on NO team spawning a team\'s lead by name boots it on clo
   await tick();
   assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
   const a = f.created[0];
-  assert.deepStrictEqual(a[3], [], 'no template pin: box default model');
+  assert.deepStrictEqual(a[3], ['--model', 'claude-opus-5[1m]'], 'the template\'s 1M model pin rides through to argv');
   assert.deepStrictEqual(a[12], ['*'], 'every skill off');
   assert.deepStrictEqual(a[16], ['clodex-team', 'clodex-monitor', 'clodex-run-tests'],
     'the grants without which the lead cannot run its own roster or suite');
@@ -2558,7 +2558,7 @@ test('t770: a team created WITH the seeded lead.template boots the same lead as 
   f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot });
   await tick();
   assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
-  assert.deepStrictEqual(f.created[0][3], [], 'no template pin: box default model');
+  assert.deepStrictEqual(f.created[0][3], ['--model', 'claude-opus-5[1m]'], 'the template\'s 1M model pin rides through to argv');
   assert.match(f.replies.at(-1), /via template "clodex-team-lead" \(lead of team acme\)/);
 });
 
@@ -2574,7 +2574,7 @@ test('t770: a lead spawned into a SUBDIRECTORY of the team root still resolves i
   f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: deep });
   await tick();
   assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
-  assert.deepStrictEqual(f.created[0][3], [], 'no template pin: box default model');
+  assert.deepStrictEqual(f.created[0][3], ['--model', 'claude-opus-5[1m]'], 'the template\'s 1M model pin rides through to argv');
   assert.deepStrictEqual(f.created[0][12], ['*'], 'the lead template still applied');
   assert.strictEqual(f.created[0][2], pathReal.resolve(deep), 'and the spawn\'s cwd is what the seat gets');
 });
@@ -11077,7 +11077,7 @@ test('t782 create: a caller with NO spawn grant still gets the lead spawned, on 
   assert.strictEqual(f.created.length, 1, 'ENTER: create() was reached — every assertion below reads its argv');
   assert.strictEqual(f.created[0][0], 'shop-lead', 'the team\'s lead seat');
   assert.strictEqual(f.created[0][2], pathReal.resolve(f.projectRoot), 'in the team root');
-  assert.deepStrictEqual(f.created[0][3], [], 'no template pin: box default model');
+  assert.deepStrictEqual(f.created[0][3], ['--model', 'claude-opus-5[1m]'], 'the template\'s 1M model pin rides through to argv');
   assert.deepStrictEqual(f.created[0][12], ['*'],
     'every skill off, as the lead template says — the resolution really ran');
 });

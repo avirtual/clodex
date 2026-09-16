@@ -32,8 +32,12 @@ test('its name matches its filename stem — a role naming it must resolve', () 
   assert.strictEqual(path.basename(LEAD_PATH, '.json'), tpl.name);
 });
 
-test('the stock lead is lean by default: no model pin, every skill off', () => {
-  assert.strictEqual(tpl.extraArgs, undefined, 'no model pin: seats follow the box default');
+test('the stock lead pins a 1M-context model, every skill off', () => {
+  const args = tpl.extraArgs || [];
+  assert.strictEqual(args[0], '--model',
+    'the FIRST --model is the one honoured (reviewerModelArgs, deriveModelTemplate), so the pin must lead the array');
+  assert.match(args[1], /\[1m\]$/,
+    'the ruling is 1M everywhere: a bare alias resolves to the 200k window');
   assert.deepStrictEqual(tpl.disabledSkills, ['*']);
 });
 
