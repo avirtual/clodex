@@ -168,10 +168,8 @@ test('both verdicts are sent as ticket-loop, so the footer cannot name a seat ab
 });
 
 test('a dm from ticket-loop carries neither a reply address nor a no-reply marker', () => {
-  // The footer path itself, through the REAL `_buildDeliveryText`. Checking the
-  // sender string alone would go green on a name that was never added to
-  // SYSTEM_SENDERS — the sender would be right and the delivery would still be
-  // decorated, which is the entire defect.
+  // The footer path itself, through the REAL `_buildDeliveryText`: checking the
+  // sender string alone goes green on a name never added to SYSTEM_SENDERS.
   const mkOne = (receiverIntents) => mk({
     getPeerManager: () => ({ statuses: () => [] }),
     getPersistence: () => ({ list: () => [], get: (n) => (n === 'lead' ? { intents: receiverIntents } : null) }),
@@ -185,9 +183,6 @@ test('a dm from ticket-loop carries neither a reply address nor a no-reply marke
     '[agent:from ticket-loop] ACCEPT on ticket t1',
     'nothing is on the other end of ticket-loop: a lead that replies to it is talking to a label');
 
-  // With the lead's dm intent GATED OFF, an ordinary sender is marked and
-  // ticket-loop still is not — so the silence above is the SYSTEM_SENDERS guard
-  // rather than the common path staying quiet for everybody.
   const gated = mkOne([]);
   gated.sessions.set('ticket-loop', { name: 'ticket-loop', agentType: 'claude' });
   gated.sessions.set('clodex-hand-1', { name: 'clodex-hand-1', agentType: 'claude' });

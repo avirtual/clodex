@@ -717,18 +717,14 @@ test('P3: a registered verb with NO promptLines adds nothing (the resend precede
 });
 
 test('t936: the REPLIES line teaches the no-reply marker, not a reply-format trailer', () => {
-  // The marker's whole cost model: the delivery path says nothing on the common
-  // case, so the ONE place a seat can learn what `(no reply path)` means is this
-  // line — which is in the prompt once, not on every dm.
-  const line = IPC_PROMPT.split('\n').find((l) => l.startsWith('Replies arrive later'));
-  assert.ok(line, 'ENTER: the REPLIES line is in the prompt');
-  assert.ok(line.includes('(no reply path)'), 'it names the marker verbatim, or the marker is unexplained');
-  assert.ok(line.includes('[agent:dm SENDER]'), 'and the reply verb, which no delivery advertises any more');
-  assert.ok(!line.includes('reply: start a line'),
+  const lines = IPC_PROMPT.split('\n').filter((l) => l.startsWith('Replies arrive later'));
+  assert.strictEqual(lines.length, 1,
+    'ENTER: exactly one REPLIES line — deliveries teach nothing now, so this is the only place '
+    + 'a seat learns what the marker means, and a second line would move the plugin-append boundary');
+  assert.ok(lines[0].includes('(no reply path)'), 'it names the marker verbatim, or the marker is unexplained');
+  assert.ok(lines[0].includes('[agent:dm SENDER]'), 'and the reply verb, which no delivery advertises any more');
+  assert.ok(!lines[0].includes('reply: start a line'),
     'the old per-dm trailer wording must not survive here: it describes bytes nothing emits');
-  // One line, still: a multi-line REPLIES block would move the plugin-append
-  // boundary the P3 ordering pins measure.
-  assert.strictEqual(IPC_PROMPT.split('\n').filter((l) => l.startsWith('Replies arrive later')).length, 1);
   assert.strictEqual(buildIpcPrompt(['dm']).split('\n').filter((l) => l.startsWith('Replies arrive later')).length, 1,
     'a gated seat forks its own blob and must carry the same single line');
 });

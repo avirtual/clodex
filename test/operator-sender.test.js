@@ -16,8 +16,6 @@ function wireDoors({ seatIntents = undefined } = {}) {
     shouldHoldDm: require('../proxy-util').shouldHoldDm,
     MSG_SPILL_THRESHOLD: 500,
     spillToFile: (sender, body, recipient) => `/tmp/spill-${recipient}-${sender}-${body.length}.txt`,
-    // undefined = every intent enabled, which is what the default fixture entry
-    // (`get: () => null`) already means; [] gates the receiving seat's dm off.
     getPersistence: () => ({ list: () => [], get: (n) => (n === 'seat' ? { intents: seatIntents } : null) }),
   });
   let srv = null;
@@ -122,14 +120,12 @@ test('t886/t936: the peer-agent door (/api/dm) delivers a reachable peer bare �
 });
 
 test('t886/t936: a GATED receiver on the agent path IS marked — the operator-path silence is measured', () => {
-  // The ENTER the old byte-pin provided: without a case where the agent door DOES
-  // emit the marker, `user` producing none above is indistinguishable from a
-  // marker the suite stopped producing anywhere. Same door, same sender shape —
-  // only the receiver's dm gate differs.
   const { injected, deliverDm } = wireDoors({ seatIntents: [] });
   deliverDm({ to: 'seat', from: 'bob', origin: 'peerbox', body: 'hi' });
   assert.strictEqual(injected.at(-1), '[agent:from bob@peerbox] hi ' + NO_REPLY,
-    'the seat cannot dm, so its reply would drop and the delivery says so');
+    'the seat cannot dm, so its reply would drop and the delivery says so. Same door and same sender '
+    + 'as the operator case above — only the receiver gate differs, which is the ENTER the old byte-pin '
+    + 'gave: without it, `user` drawing no marker cannot be told from a marker nothing emits anywhere');
 });
 
 test('t886: an operator delivery over the spill threshold keeps the shape and the silence', () => {

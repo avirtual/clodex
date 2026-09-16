@@ -13089,9 +13089,9 @@ test('_deliverReminder: live session → injected via the DM path, returns "deli
   const status = m._deliverReminder('t1', '[ab12 every 30m] check build');
   assert.strictEqual(status, 'delivered');
   assert.match(injected.at(-1), /\[agent:from reminder\] \[ab12 every 30m\] check build/);
-  // `reminder` is a SYSTEM_SENDER: no reply address, and no `(no reply path)`
-  // either — the agent's own loop is not a correspondent that failed to answer.
-  assert.strictEqual(injected.at(-1).includes('(no reply path)'), false);
+  assert.strictEqual(injected.at(-1).includes('(no reply path)'), false,
+    '`reminder` is a SYSTEM_SENDER: no reply address and no marker either — the agent\'s own loop '
+    + 'is not a correspondent that failed to answer');
   assert.strictEqual(hasPending(PENDING_DIR, 't1'), false); // live → not parked
 });
 
@@ -13357,44 +13357,37 @@ test('t844 _deliverClaimedDms: no status for the peer → the tag falls back to 
 test('t936 _buildDeliveryText: the answerable path carries NOTHING, the dropped path is marked', () => {
   const target = { name: 'rcv', agentType: 'claude' };
 
-  // Reachable live sender + receiver dm-enabled (intents absent = all enabled):
-  // the common path is the bare prefix and body, byte for byte. Asserted whole,
-  // not by absence-of-regex — a trailer in some OTHER wording must red this too.
   const m1 = mkReach();
   m1.sessions.set('a', { name: 'a', agentType: 'claude' });
-  assert.strictEqual(m1._buildDeliveryText(target, 'a', 'hi', 'dm'), '[agent:from a] hi');
+  assert.strictEqual(m1._buildDeliveryText(target, 'a', 'hi', 'dm'), '[agent:from a] hi',
+    'reachable sender + dm-enabled receiver (intents absent = all enabled): the common path is '
+    + 'prefix and body and nothing else. Asserted WHOLE, so a trailer in any other wording reds too');
 
-  // Receiver has dm GATED OFF ([] = everything gated) → the reply would drop
-  // even though the sender is perfectly reachable, so the marker is due.
   const m2 = mkReach({ receiverIntents: [] });
   m2.sessions.set('a', { name: 'a', agentType: 'claude' });
   assert.strictEqual(m2._buildDeliveryText(target, 'a', 'hi', 'dm'),
-    '[agent:from a] hi (no reply path)');
+    '[agent:from a] hi (no reply path)',
+    'receiver dm GATED OFF ([] = everything gated): the reply would drop though the sender is reachable');
 
-  // Unreachable external sender (e.g. a `nc -U` wake script's from:"t1-wake") →
-  // marked: nothing answers [agent:dm t1-wake]. Trader's case.
   const m3 = mkReach();
   assert.strictEqual(m3._buildDeliveryText(target, 't1-wake', 'wake up', 'dm'),
-    '[agent:from t1-wake] wake up (no reply path)');
+    '[agent:from t1-wake] wake up (no reply path)',
+    'unreachable external sender (a `nc -U` wake script\'s from:"t1-wake"): nothing answers [agent:dm t1-wake]');
 
-  // Non-dm mtype (memory/system injection) is not a conversation, so neither
-  // polarity applies: no marker, however unreachable the sender.
   const m4 = mkReach({ receiverIntents: [] });
   assert.strictEqual(m4._buildDeliveryText(target, 'a', 'unit body', 'memory'),
-    '[agent:from a] unit body');
+    '[agent:from a] unit body',
+    'a non-dm mtype is not a conversation, so neither polarity applies however unreachable the sender');
 });
 
 test('t936 _buildDeliveryText: a system sender is unmarked even when a REAL session owns that name', () => {
   const target = { name: 'rcv', agentType: 'claude' };
 
-  // The live-observed bug the SYSTEM_SENDERS guard was added for: team roster
-  // notices ride senderName 'team', and session names are one global namespace,
-  // so an unrelated agent named `team` in ANOTHER workspace made the sender look
-  // answerable and collected every seat's replies as nonsense. Under the inverted
-  // polarity the guard earns its keep the other way round: nobody answers a
-  // roster notice, so marking one `(no reply path)` would report a fault on a
-  // delivery that has none. Reachability is true here on purpose — this pins the
-  // guard, not the absence of a session.
+  // Live-observed: roster notices ride senderName 'team', session names are one
+  // global namespace, so an unrelated agent named `team` elsewhere made the sender
+  // look answerable and collected every seat's replies. Under the inverted polarity
+  // the guard earns its keep the other way round — nobody answers a roster notice,
+  // so marking one reports a fault the delivery does not have.
   for (const sender of ['team', 'clodex-team', 'reminder', 'memory', 'reboot', 'clodex']) {
     const m = mkReach();
     m.sessions.set(sender, { name: sender, agentType: 'claude' });
@@ -13405,39 +13398,38 @@ test('t936 _buildDeliveryText: a system sender is unmarked even when a REAL sess
       `system sender "${sender}" must carry neither a reply address nor a no-reply marker`);
   }
 
-  // Same set, with the receiver's dm gated OFF: a system sender stays unmarked on
-  // the branch that DOES mark an ordinary sender, so the guard is read before the
-  // gate rather than being invisible behind an always-passing one.
   for (const sender of ['team', 'user']) {
     const m = mkReach({ receiverIntents: [] });
     m.sessions.set(sender, { name: sender, agentType: 'claude' });
     assert.strictEqual(m._buildDeliveryText(target, sender, 'roster', 'dm'),
-      `[agent:from ${sender}] roster`);
+      `[agent:from ${sender}] roster`,
+      `"${sender}" stays unmarked on the gated branch that DOES mark an ordinary sender, so the guard `
+      + 'is read before the gate rather than hiding behind an always-passing one');
   }
 
-  // The guard is a fixed set, not a blanket exemption: an ordinary sender whose
-  // name merely CONTAINS a system label is marked when its reply would drop.
   const m2 = mkReach({ receiverIntents: [] });
   m2.sessions.set('team-lead', { name: 'team-lead', agentType: 'claude' });
   assert.strictEqual(m2._buildDeliveryText(target, 'team-lead', 'hi', 'dm'),
-    '[agent:from team-lead] hi (no reply path)');
+    '[agent:from team-lead] hi (no reply path)',
+    'the guard is a fixed set, not a blanket exemption: a name that merely CONTAINS a system label '
+    + 'is still marked when its reply would drop');
 });
 
 test('t936 _buildDeliveryText: the marker survives all three placements, never at column 1', () => {
-  // The marker is only safe because IntentScanner fires on a cleaned line that
-  // STARTS with `[agent:`. It carries no bracket itself, but it must also never
-  // begin a line — a `\n` before it on any of the three branches would put an
-  // untrusted position one keystroke from the scanner's rule.
-  const big = 'x'.repeat(600); // > MSG_SPILL_THRESHOLD, forces the pointer branches
-  // The spill seams are wired for real here: mk leaves MSG_SPILL_THRESHOLD
-  // undefined, and `600 > undefined` is false — an unwired fixture would run all
+  // The marker is safe only because IntentScanner fires on a cleaned line STARTING
+  // with `[agent:`. It carries no bracket, but it must also never begin a line —
+  // a `\n` before it would put an untrusted position one keystroke from that rule.
+  // The spill seams are wired for real below: mk leaves MSG_SPILL_THRESHOLD
+  // undefined and `600 > undefined` is false, so an unwired fixture would send all
   // three cases down the INLINE branch and pin one placement three times.
+  const big = 'x'.repeat(600);
   const spilling = () => mk({
     getPeerManager: () => ({ statuses: () => [] }),
     getPersistence: () => ({ list: () => [], get: () => null }),
     MSG_SPILL_THRESHOLD: 500,
     spillToFile: (sender, body, rcv) => `/tmp/spill-${rcv}-${sender}-${body.length}.txt`,
   });
+
   const cases = [
     [{ name: 'rcv', agentType: 'claude' }, 'hi', /^\[agent:from t1-wake\] hi \(no reply path\)$/],
     [{ name: 'rcv', agentType: 'claude' }, big, /^\[agent:from t1-wake\] Message \(600 bytes\) attached: @\S+ \(no reply path\)$/],
