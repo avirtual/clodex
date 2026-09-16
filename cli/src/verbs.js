@@ -81,13 +81,15 @@ async function describe({ client, ctx, printer, flags, args }) {
     printer.line(out.renderDescribe(body.catalogs || {}));
     return;
   }
-  const name = requireName(target.name, `describe ${target.plural}`);
   if (target.resource === 'sessions') {
+    const name = requireName(target.name, 'describe session');
     await R.requireResource(client, 'sessions', 'get', label);
     const body = await client.get(`/api/sessions/${encodeURIComponent(name)}`, 'describe session');
     printer.line(out.renderDescribe(body.session || {}));
     return;
   }
+  const name = target.name;
+  if (!name) throw new CliError(EXIT.USAGE, 'describe workspace needs a name');
   await R.requireResource(client, 'workspaces', 'list', label);
   const body = await client.get('/api/workspaces', 'describe workspace');
   const ws = (body.workspaces || []).find((w) => w.name === name || w.id === name);
@@ -498,7 +500,7 @@ async function exec({ client, printer, flags, args, mode = null, knownType = nul
 async function kill({ client, printer, flags, args, prompt = defaultPrompt }) {
   const name = requireName(args[0], 'kill');
   if (!flags.force) {
-    if (flags.json) throw new CliError(EXIT.USAGE, 'kill needs --force in --json/non-interactive mode (wire kill is a hard delete, no resume)');
+    if (flags.json) throw new CliError(EXIT.USAGE, 'kill needs --force in -o json/non-interactive mode (wire kill is a hard delete, no resume)');
     const ok = await prompt(`kill "${name}"? This is a HARD DELETE on the engine — no resume. Type the name to confirm: `);
     if (String(ok).trim() !== name) throw new CliError(EXIT.USAGE, 'aborted — confirmation did not match');
   }
@@ -529,7 +531,7 @@ async function argsSet({ client, printer, flags, args }) {
 
 async function restartApp({ client, printer, flags, prompt = defaultPrompt }) {
   if (!flags.force) {
-    if (flags.json) throw new CliError(EXIT.USAGE, 'restart-app needs --force in --json/non-interactive mode');
+    if (flags.json) throw new CliError(EXIT.USAGE, 'restart-app needs --force in -o json/non-interactive mode');
     const ok = await prompt('restart the WHOLE engine? All sessions relaunch. [y/N]: ');
     if (!/^y(es)?$/i.test(String(ok).trim())) throw new CliError(EXIT.USAGE, 'aborted');
   }

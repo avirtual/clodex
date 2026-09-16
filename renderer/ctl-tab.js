@@ -248,7 +248,7 @@ function createCtlTab({ host }) {
       </div>
       <div id="ctl-input-row">
         <span id="ctl-prompt">(no context) ❯</span>
-        <input id="ctl-input" type="text" spellcheck="false" autocomplete="off" placeholder="sessions" />
+        <input id="ctl-input" type="text" spellcheck="false" autocomplete="off" placeholder="get sessions" />
       </div>`;
     bodyEl = pane.querySelector('#ctl-body');
     emptyEl = pane.querySelector('#ctl-empty');

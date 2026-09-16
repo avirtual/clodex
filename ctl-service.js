@@ -404,17 +404,19 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     // what the shorthand IS reporting an unknown verb.
     const isVerb = (t) => !!H.resolveEntry(t);
     flags._ = aliasCtx(flags._, isVerb);
+
+    const pointer = main.renamedPointer(flags);
+    if (pointer) {
+      const text = pointer.askedHelp ? `${pointer.line}\n` : `clodexctl: ${pointer.line}\n`;
+      return done(text, pointer.code, currentName());
+    }
+
     if (flags.help || flags._[0] === 'help') {
       // `help list` needs the same rewrite and does not get it above, where the
       // slot-0 token is `help`.
       const tokens = flags._[0] === 'help' ? aliasCtx(flags._.slice(1), isVerb) : flags._;
       const { text, code } = H.help(tokens);
       return done(`${text}\n`, code, currentName());
-    }
-
-    const renamed = flags._[0];
-    if (renamed && Object.prototype.hasOwnProperty.call(main.RENAMED_VERBS, renamed)) {
-      return done(`clodexctl: ${main.renamedLine(renamed)}\n`, EXIT.USAGE, currentName());
     }
 
     // The gate reads PARSED POSITIONALS, never the raw argv. A flag that

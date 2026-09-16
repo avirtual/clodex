@@ -46,12 +46,22 @@ function renamedLine(old) {
   return `clodexctl ${old} was renamed: use clodexctl ${RENAMED_VERBS[old]}`;
 }
 
+function renamedPointer(flags) {
+  const askedHelp = !!flags.help || flags._[0] === 'help';
+  const pointed = flags._[0] === 'help' ? flags._[1] : flags._[0];
+  if (!pointed || !Object.prototype.hasOwnProperty.call(RENAMED_VERBS, pointed)) return null;
+  return { line: renamedLine(pointed), askedHelp, code: askedHelp ? RENAMED_HELP_EXIT : EXIT.USAGE };
+}
+
+const PASSTHROUGH_FLAGS = new Set(PARSE_OPTS.multi.map((n) => `--${n}`));
+
 function findDeletedJsonFlag(argv) {
   for (let i = 0; i < argv.length; i++) {
     const tok = argv[i];
     if (tok === '--') return false;
     if (typeof tok !== 'string') continue;
     if (tok === '--tunnel') return false;
+    if (PASSTHROUGH_FLAGS.has(tok)) { i++; continue; }
     if (tok === '--json' || tok.startsWith('--json=')) return true;
   }
   return false;
@@ -67,11 +77,11 @@ function applyOutput(flags, verb) {
   if (!OUTPUT_FORMATS.includes(fmt)) {
     throw new CliError(EXIT.USAGE, `unknown output format: ${fmt} (${OUTPUT_FORMATS.join('|')})`);
   }
-  if (verb === 'describe') {
-    throw new CliError(EXIT.USAGE, 'describe has no -o json (it is a composed human view; use get)');
-  }
   if (GET_ONLY_FORMATS.includes(fmt) && verb !== 'get') {
     throw new CliError(EXIT.USAGE, `-o ${fmt} is only valid on get`);
+  }
+  if (verb === 'describe') {
+    throw new CliError(EXIT.USAGE, `describe has no -o ${fmt} (it is a composed human view; use get)`);
   }
   if (fmt === 'json') flags.json = true;
 }
@@ -98,12 +108,11 @@ async function run(argv, io = {}) {
     return e instanceof CliError ? e.exitCode : EXIT.USAGE;
   }
 
-  const askedHelp = flags.help || flags._[0] === 'help';
-  const pointed = askedHelp ? (flags._[0] === 'help' ? flags._[1] : flags._[0]) : flags._[0];
-  if (pointed && Object.prototype.hasOwnProperty.call(RENAMED_VERBS, pointed)) {
-    if (askedHelp) { printer.line(renamedLine(pointed)); return RENAMED_HELP_EXIT; }
-    writeErr(`clodexctl: ${renamedLine(pointed)}\n`);
-    return EXIT.USAGE;
+  const pointer = renamedPointer(flags);
+  if (pointer) {
+    if (pointer.askedHelp) { printer.line(pointer.line); return pointer.code; }
+    writeErr(`clodexctl: ${pointer.line}\n`);
+    return pointer.code;
   }
 
   // Help routing — CONTEXTUAL (T43). All three of these short-circuit BEFORE any
@@ -250,4 +259,4 @@ function safeLoad(io) {
 // the same lines this dispatcher does. A second copy of the flag table there
 // would drift silently, and the failure mode is invisible: a flag the terminal
 // CLI honours parsed as a positional in the REPL.
-module.exports = { run, TOP_VERBS, SPECIAL_VERBS, PARSE_OPTS, RENAMED_VERBS, renamedLine, findDeletedJsonFlag, applyOutput, OUTPUT_FORMATS };
+module.exports = { run, TOP_VERBS, SPECIAL_VERBS, PARSE_OPTS, RENAMED_VERBS, renamedLine, renamedPointer, findDeletedJsonFlag, applyOutput, OUTPUT_FORMATS };

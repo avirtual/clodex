@@ -23,6 +23,7 @@ const HELLO_OLD = { ok: true, app: 'clodex', host: 'oldbox', version: '5.69.0', 
 const WORKSPACES = [
   { id: 'w1', name: 'main', open: true, lastFocusedAt: 1 },
   { id: 'w2', name: 'side', open: false, lastFocusedAt: 2 },
+  { id: 'w3', name: 'Client A', open: false, lastFocusedAt: 3 },
 ];
 
 function node({ old = false } = {}) {
@@ -276,14 +277,33 @@ test('describe has no -o json, and refuses BEFORE any wire (kubectl has none eit
     assert.strictEqual(code, 2);
     assert.match(stderr, /describe has no -o json/);
     assert.deepStrictEqual(seen, [], 'a usage error must not cost a round trip');
+    const wide = await cli(['describe', 'session', 'bob', '-o', 'wide'], port);
+    assert.strictEqual(wide.code, 2);
+    assert.match(wide.stderr, /-o wide is only valid on get/,
+      'the message must name the format the user actually passed');
+    assert.doesNotMatch(wide.stderr, /no -o json/);
   });
 });
 
-test('describe needs a name for a named resource', async () => {
+test('describe needs a name, and each resource says its own noun', async () => {
   await withNode({}, async (port) => {
-    const { code, stderr } = await cli(['describe', 'session'], port);
-    assert.strictEqual(code, 2);
-    assert.match(stderr, /describe sessions needs a session name/);
+    const s = await cli(['describe', 'session'], port);
+    assert.strictEqual(s.code, 2);
+    assert.match(s.stderr, /describe session needs a session name/);
+    const w = await cli(['describe', 'workspace'], port);
+    assert.strictEqual(w.code, 2);
+    assert.match(w.stderr, /describe workspace needs a name/);
+  });
+});
+
+test('a workspace name outside the session charset is still reachable by the name get workspaces prints', async () => {
+  await withNode({}, async (port) => {
+    const listed = await cli(['get', 'workspaces'], port);
+    assert.match(listed.stdout, /^w3\s+Client A$/m);
+    const { code, stdout, stderr } = await cli(['describe', 'workspace', 'Client A'], port);
+    assert.strictEqual(code, 0, stderr);
+    assert.match(stdout, /^id:\s+w3$/m);
+    assert.doesNotMatch(stderr, /bad session name/, 'workspace names are free-form, not the session grammar');
   });
 });
 
@@ -396,4 +416,12 @@ test('a literal --json in a verbatim tail or a tunnel argv is still just text', 
   assert.doesNotMatch(passthrough.stderr, /--json was replaced/, 'a payload after -- is not a flag');
   const tunnel = await cli(['ctx', 'add', 'k', '--url', 'http://h', '--tunnel', 'sh', '-c', '--json'], null);
   assert.doesNotMatch(tunnel.stderr, /--json was replaced/);
+  for (const argv of [['spawn', 'x', '--type', 'codex', '--arg', '--json'], ['args', 'set', 'x', '--arg', '--json']]) {
+    const passed = await cli(argv, null);
+    assert.doesNotMatch(passed.stderr, /--json was replaced/,
+      `${argv.join(' ')} rides extraArgs verbatim; --json there is the agent's flag, not ours`);
+  }
+  const afterArg = await cli(['spawn', 'x', '--arg', '-v', '--json'], null);
+  assert.match(afterArg.stderr, /--json was replaced by -o json/,
+    'only the token --arg consumes is skipped, not the rest of the line');
 });

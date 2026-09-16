@@ -170,6 +170,20 @@ test('run: an unparseable line reports itself instead of throwing', async () => 
   svc.dispose();
 });
 
+test('run: a renamed verb answers with the pointer in BOTH spellings, ahead of help routing', async () => {
+  const { svc } = mkService();
+  const bare = await svc.run('sessions');
+  assert.strictEqual(bare.output, 'clodexctl: clodexctl sessions was renamed: use clodexctl get sessions\n');
+  assert.strictEqual(bare.exitCode, 2);
+  const helped = await svc.run('help sessions');
+  assert.strictEqual(helped.output, 'clodexctl sessions was renamed: use clodexctl get sessions\n');
+  assert.strictEqual(helped.exitCode, 1);
+  const flagged = await svc.run('sessions --help');
+  assert.strictEqual(flagged.output, 'clodexctl sessions was renamed: use clodexctl get sessions\n');
+  assert.strictEqual(flagged.exitCode, 1);
+  svc.dispose();
+});
+
 test('run: no context selected is a usage block, not a crash', async () => {
   const { svc } = mkService();
   const b = await svc.run('get sessions');

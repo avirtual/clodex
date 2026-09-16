@@ -29,13 +29,9 @@ const HELM_PVC_SELECTOR = (name) => `app.kubernetes.io/instance=${name},app.kube
 const HELM_PVC_NAME = (name) => `state-${name}-0`;
 
 // ── shared: confirm gate ─────────────────────────────────────────────────────
-// The destructive gate. --force skips it (scripts); --json is scripted use → it
-// too requires --force (never destroy silently in a pipe, the `kill` rule); a
-// non-TTY without --force is refused for the same reason. Otherwise prompt on
-// stdin and require an exact name echo. Throws CliError(USAGE) on any refusal.
 async function confirmTeardown({ name, noun, flags, io }) {
   if (flags.force) return;
-  if (flags.json) throw new CliError(EXIT.USAGE, `undeploy needs --force in --json/non-interactive mode (teardown is a destructive, unrecoverable delete)`);
+  if (flags.json) throw new CliError(EXIT.USAGE, `undeploy needs --force in -o json/non-interactive mode (teardown is a destructive, unrecoverable delete)`);
   const isTTY = io.isTTY != null ? io.isTTY : !!(process.stdin && process.stdin.isTTY);
   if (!isTTY) throw new CliError(EXIT.USAGE, `undeploy needs --force in non-interactive mode (no TTY to confirm this destructive delete)`);
   const prompt = io.prompt || defaultPrompt;
