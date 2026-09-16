@@ -30,15 +30,24 @@ const PARSE_OPTS = {
   aliases: { h: 'help', V: 'version', f: 'follow', o: 'output', n: 'workspace', A: 'all-workspaces', 'remote-port': 'remotePort' },
 };
 
-// Wire verbs and their handler. ctx/args are dispatched specially (subverbs).
+// Wire verbs and their handler. ctx is dispatched specially (subverbs).
 const WIRE_VERBS = {
   info: V.info, get: V.get, describe: V.describe, 'api-resources': V.apiResources,
   version: V.version, logs: V.logs, query: V.query,
-  skills: V.skills, spawn: V.spawn, send: V.send, input: V.input,
-  exec: V.exec, run: V.run, attach: attach, kill: V.kill, restart: V.restart, 'restart-app': V.restartApp,
+  create: V.create, delete: V.delete, patch: V.patch, dm: V.dm, input: V.input,
+  exec: V.exec, attach: attach, restart: V.restart,
 };
 
-const RENAMED_VERBS = { sessions: 'get sessions' };
+const RENAMED_VERBS = {
+  sessions: 'get sessions',
+  run: 'exec',
+  spawn: 'create session',
+  kill: 'delete session',
+  'restart-app': 'restart node',
+  skills: 'get session <name> --subresource skills',
+  args: 'get session … --subresource args / patch session',
+  send: 'dm',
+};
 
 const RENAMED_HELP_EXIT = 1;
 
@@ -90,7 +99,7 @@ function applyOutput(flags, verb) {
 // WIRE_VERBS' keys this is the canonical set of top-level verbs users type —
 // help.js's registry is pinned complete against it (help.test.js), so a new
 // verb can't ship without a help entry.
-const SPECIAL_VERBS = ['ctx', 'args', 'deploy', 'undeploy', 'upgrade', 'port-forward', 'web'];
+const SPECIAL_VERBS = ['ctx', 'deploy', 'undeploy', 'upgrade', 'port-forward', 'web'];
 const TOP_VERBS = [...Object.keys(WIRE_VERBS), ...SPECIAL_VERBS];
 
 async function run(argv, io = {}) {
@@ -136,7 +145,6 @@ async function run(argv, io = {}) {
   try {
     applyOutput(flags, verb);
     if (verb === 'ctx') return await dispatchCtx(rest, flags, printer, io);
-    if (verb === 'args') return await dispatchArgs(rest, flags, printer, io);
     if (verb === 'deploy') return await dispatchDeploy(rest, flags, printer, io);
     if (verb === 'undeploy') return await U.undeployVerb({ printer, flags, args: rest, io });
     // upgrade routes on the context's STORED deploy flavor and delegates to
@@ -153,6 +161,7 @@ async function run(argv, io = {}) {
     if (verb === 'web') { await web({ flags, args: rest, printer, io }); return EXIT.OK; }
     const handler = WIRE_VERBS[verb];
     if (!handler) throw new CliError(EXIT.USAGE, `unknown verb: ${verb} (try --help)`);
+    V.checkResourceWord(verb, rest);
     // io.prompt is an injectable confirm seam (tests pass a canned answerer);
     // absent → the verb falls back to its readline-over-stderr default. attach
     // needs the resolved ctx (for its banner) + io (its TTY seam), so withWire
@@ -200,14 +209,6 @@ async function dispatchDeploy(rest, flags, printer, io) {
   if (rest[0] === 'ssh') { await D.deployVerb({ printer, flags, args: rest.slice(1), io }); return EXIT.OK; }
   await D.deployVerb({ printer, flags, args: rest, io });
   return EXIT.OK;
-}
-
-async function dispatchArgs(rest, flags, printer, io) {
-  const sub = rest[0];
-  const args = rest.slice(1);
-  if (sub === 'get') return withWire(flags, io, (client, ctx) => V.argsGet({ client, ctx, printer, flags, args }));
-  if (sub === 'set') return withWire(flags, io, (client, ctx) => V.argsSet({ client, ctx, printer, flags, args }));
-  throw new CliError(EXIT.USAGE, `unknown args subcommand: ${sub || '(none)'} (get/set)`);
 }
 
 // ctx test — the tunnel-diagnosis surface. Open the transport, GET hello, and

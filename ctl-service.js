@@ -43,8 +43,8 @@ function loadCli() {
 // list would be a UI affordance, and the pane is not the boundary.
 //
 // THIS TABLE IS NOT A SECURITY BOUNDARY, and reasoning about it as one leads
-// straight to a wrong edit. `exec` is admitted, so `exec box "clodexctl kill x
-// --force"` is typeable: nothing here contains what the operator can reach. The
+// straight to a wrong edit. `exec` is admitted, so `exec box "clodexctl delete
+// session x --force"` is typeable: nothing here contains what the operator can reach. The
 // boundary is enableDrawerServices at IPC registration (ipc-handlers.js), which
 // keeps this whole family off the web surface. What this table is, is a guard
 // against a SLIP at a live prompt with ↑-history.
@@ -68,12 +68,16 @@ function loadCli() {
 // 2. UNRECOVERABLE *and* unconfirmable here. The injected `prompt` rejects, so
 //    admitting these would admit the --force spelling ONLY — the CLI's
 //    deliberate scripted path, offered at a prompt where ↑+Enter re-runs it.
-//      kill            — hard delete on the engine, no resume
-//      restart-app     — relaunches the engine and every session on it
+//      delete session  — hard delete on the engine, no resume
+//      restart node    — relaunches the engine and every session on it
 //    The line is session-survives-and-transcript-survives, not
-//    "mutates": `restart --fresh` IS admitted and unconfirmed, and it does lose
-//    conversation continuity — but the session and its transcript are still
-//    there afterwards, and `spawn`/`send`/`input` are likewise recoverable.
+//    "mutates": `restart session --fresh` IS admitted and unconfirmed, and it does
+//    lose conversation continuity — but the session and its transcript are still
+//    there afterwards, and `create`/`dm`/`input` are likewise recoverable.
+//
+//    `delete` is absent from the table whole (there is no other deletable
+//    resource to admit), while `restart` is present with a RESOURCE-WORD rule:
+//    `restart session` runs here, `restart node` does not.
 const ALLOWED = Object.freeze({
   info: true,
   get: true,
@@ -82,17 +86,15 @@ const ALLOWED = Object.freeze({
   version: true,
   query: true,
   logs: true,          // `--follow` refused separately — the flag is the problem
-  skills: true,
-  send: true,
+  dm: true,
   input: true,
-  exec: true,
-  run: true,
-  spawn: true,
-  restart: true,
+  exec: true,          // both modes — the PTY one is `--pty`, a flag, not a verb
+  create: true,
+  patch: true,
+  restart: ['session', 'sessions'],
   ctx: '*',            // every subcommand (`use` is the stateful payoff)
-  args: ['get', 'set'],
 });
-const DEFERRED_HINT = 'not available here: attach, kill, restart-app, deploy, undeploy, upgrade, port-forward, web';
+const DEFERRED_HINT = 'not available here: attach, delete session, restart node, deploy, undeploy, upgrade, port-forward, web';
 
 // `help` is deliberately ABSENT from that table and is not an omission. Help
 // short-circuits in execute() ahead of the gate, so it never reaches refuse()
@@ -450,25 +452,13 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
       }
       const w = await wireFor(flags);
       token = w.ctx.token || null;
-      // `args` is the one family whose SUBCOMMAND picks the handler, and the
-      // sub is dropped from args before the verb sees it (the CLI's dispatcher
-      // does the same) — argsGet/argsSet both read args[0] as the session name.
-      //
-      // A LOOKUP rather than a `set ? … : argsGet` ternary, deliberately: the
-      // ternary's default arm turns a sub added to ALLOWED.args into a silent
-      // READ, which is the failure that shows a plausible success block for a
-      // write that never happened. An unmapped sub lands on the
-      // `typeof handler !== 'function'` guard below and says so.
-      const argsSubs = { get: V.argsGet, set: V.argsSet };
-      const handler = verb === 'args'
-        ? (argsSubs[rest[0]] && (({ client, ...b }) => argsSubs[rest[0]]({ client, ...b, args: rest.slice(1) })))
-        : {
-          info: V.info, get: V.get, describe: V.describe,
-          'api-resources': V.apiResources, version: V.version,
-          query: V.query, logs: V.logs,
-          skills: V.skills, send: V.send, input: V.input, exec: V.exec,
-          run: V.run, spawn: V.spawn, restart: V.restart,
-        }[verb];
+      const handler = {
+        info: V.info, get: V.get, describe: V.describe,
+        'api-resources': V.apiResources, version: V.version,
+        query: V.query, logs: V.logs,
+        dm: V.dm, input: V.input, exec: V.exec,
+        create: V.create, patch: V.patch, restart: V.restart,
+      }[verb];
       // A verb name that survived the allowlist but has no handler is a
       // programming error, not operator input — say so instead of dying with
       // "handler is not a function" three frames down.
@@ -584,10 +574,10 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
       for (const [verb, rule] of Object.entries(ALLOWED)) {
         const entry = byName.get(verb);
         // `subs` is what the pane shows for a family the allowlist spells as a
-        // subcommand array — today `args`, with both subs admitted. The
-        // mechanism stays wired while nothing is narrowed so that a future
-        // narrowing shows the surviving subs rather than the registry's full
-        // usage line, which would advertise a sub that no longer runs.
+        // word array — today `restart`, narrowed to the session spellings
+        // because `restart node` is refused. Showing the surviving words rather
+        // than the registry's full usage line is the point: that usage line
+        // advertises both forms.
         const subs = Array.isArray(rule) ? rule.slice() : null;
         rows.push({
           verb,
