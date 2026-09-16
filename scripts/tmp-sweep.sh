@@ -549,6 +549,7 @@ remind-gone-reg-
 remind-gone-ud-
 remind-race-reg-
 remind-race-ud-
+remote-resources-
 remotetok-
 remsched-reg-
 remsched-ud-
