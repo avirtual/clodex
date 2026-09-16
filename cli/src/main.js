@@ -1,8 +1,6 @@
 // main.js — argv → verb dispatch. Owns the orchestration every wire verb
 // shares: resolve the context, open its transport, build a WireClient, run the
-// verb, and ALWAYS close the transport (reap the tunnel child). The `node`
-// resource is a CLIENT-SIDE record (the contexts file) and skips all of that —
-// only `describe node --test` opens a transport, and it owns that itself.
+// verb, and ALWAYS close the transport (reap the tunnel child).
 //
 // run(argv, io) returns an exit code (never calls process.exit itself) so it is
 // fully testable; bin/clodexctl.js is the thin process shim around it.
@@ -32,8 +30,7 @@ const PARSE_OPTS = {
   aliases: { h: 'help', V: 'version', f: 'follow', o: 'output', n: 'workspace', A: 'all-workspaces', 'remote-port': 'remotePort' },
 };
 
-// Wire verbs and their handler. A `node` target on get/describe/create/delete
-// is intercepted before any of these run — it is a local record.
+// Wire verbs and their handler.
 const WIRE_VERBS = {
   info: V.info, get: V.get, describe: V.describe, 'api-resources': V.apiResources,
   version: V.version, logs: V.logs, query: V.query,
@@ -98,9 +95,6 @@ function renamedLine(old) {
   return `clodexctl ${old} was renamed: use clodexctl ${RENAMED_VERBS[old]}`;
 }
 
-// Families deleted WHOLE, as opposed to renamed under a `node` resource word:
-// every sub points, and so does the bare verb, because nothing is left for it
-// to mean. deploy/undeploy/upgrade are not here — they still run.
 const DELETED_FAMILIES = new Set(['ctx']);
 
 function renamedSecondLine(verb, tok, flags = {}) {
@@ -247,9 +241,6 @@ async function run(argv, io = {}) {
   }
 }
 
-// The verbs a `node` target reaches. `use` is node-only, so it never consults
-// this table — it takes its resource word through checkResourceWord and lands
-// here directly.
 const NODE_VERBS = {
   get: V.nodeList,
   describe: V.nodeDescribe,
@@ -258,10 +249,6 @@ const NODE_VERBS = {
   use: V.nodeUse,
 };
 
-// Does this argv name the node resource? The FIRST positional decides, in the
-// spelling parseTarget accepts (plural, singular, or the slash form) — so
-// `get sessions` and `delete session x` are untouched and still route to the
-// wire. `create node --import` carries no name and is the same shape.
 function isNodeTarget(verb, rest) {
   const first = rest[0];
   if (typeof first !== 'string') return false;
@@ -270,8 +257,6 @@ function isNodeTarget(verb, rest) {
   return !!entry && entry.singular === 'node';
 }
 
-// The node resource: a local record in the contexts file. No transport opens
-// here — `describe node --test` is the one exception and dials from nodeTest.
 async function dispatchNode(verb, args, flags, printer, io) {
   const store = contexts.load(io.contextsFile, { warn: (m) => (io.stderr || ((s) => process.stderr.write(s)))(`clodexctl: warning: ${m}\n`) });
   const saveStore = (s) => contexts.save(s, io.contextsFile);
@@ -306,9 +291,6 @@ async function dispatchDeploy(rest, flags, printer, io) {
   return EXIT.OK;
 }
 
-// describe node --test — the tunnel-diagnosis surface, and the ONLY node verb
-// that opens a transport. GET hello, then report identity or the failure with
-// the child's stderr relayed VERBATIM.
 async function nodeTest(store, args, flags, printer, io) {
   const target = R.parseTarget(args, 'describe');
   const ctx = contexts.resolve(store, { ctxName: target.name || flags.ctx || null, env: io.env || process.env, flags });

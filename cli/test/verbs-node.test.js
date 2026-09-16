@@ -1,8 +1,4 @@
 'use strict';
-// verbs-node.test.js — the `node` resource through main.run: create/use/get/
-// describe/delete against the local contexts file, the token never printed in
-// any format, the ctx family's pointers, and `describe node --test` opening a
-// fake transport + hitting hello. No wire for anything but --test.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
@@ -34,7 +30,7 @@ test('create/use/get/describe/delete node round-trip through the file', async ()
   assert.strictEqual(r.code, 0);
 
   r = await cli(['get', 'nodes'], f);
-  assert.match(r.stdout, /\*\s+home/); // home is current (first created)
+  assert.match(r.stdout, /\*\s+home/, 'home is current — the first node created');
   assert.match(r.stdout, /work\s+ssh\s+user@box/);
 
   r = await cli(['use', 'node', 'work'], f);
@@ -42,7 +38,6 @@ test('create/use/get/describe/delete node round-trip through the file', async ()
   r = await cli(['get', 'nodes', '-o', 'json'], f);
   assert.strictEqual(JSON.parse(r.stdout).current, 'work');
 
-  // describe redacts: the token is reported as a boolean, never echoed
   r = await cli(['describe', 'node', 'home'], f);
   assert.match(r.stdout, /token\s+\(set\)/);
   assert.doesNotMatch(r.stdout, /sek/);
@@ -58,7 +53,6 @@ test('the singular/plural spellings behave like every other resource', async () 
   await cli(['create', 'nodes', 'home', '--url', 'http://127.0.0.1:7900'], f);
   assert.match((await cli(['get', 'node'], f)).stdout, /home/, 'get node is get nodes');
   assert.match((await cli(['describe', 'nodes'], f)).stdout, /name\s+home/, 'describe nodes is describe node');
-  // `node` resolves through the shared table, so unknown-resource errors list it
   assert.strictEqual(R.resolveResource('nodes').singular, 'node');
   assert.strictEqual(R.resolveResource('node').plural, 'nodes');
   const bad = await cli(['get', 'pods'], f);
@@ -92,12 +86,6 @@ test('get nodes --current with no current node exits 5 and names the fix', async
   assert.strictEqual(r.code, 5, 'deleting the current node clears it');
 });
 
-// ── the token is never printed, in ANY format ────────────────────────────────
-// A recursive walk rather than a regex on the secret's own value: the shape
-// that leaks is a FIELD named token surviving into the payload, and the value
-// in a real store is whatever the operator pasted. Both are asserted — the
-// walk catches a re-added field carrying any value, the literal catches a
-// value that arrives under some other key.
 const SECRET_KEYS = ['token', 'auth', 'secret', 'password'];
 
 function findSecretKey(value, trail = '$') {
@@ -145,16 +133,10 @@ test('no node output carries a token — json, yaml, wide, name, or describe', a
     assert.doesNotMatch(r.stdout, /SECOND_TOKEN/, `${argv.join(' ')} printed another node's token`);
   }
 
-  // The walker really finds a key nested under an array — otherwise every
-  // assertion above passes vacuously.
   assert.strictEqual(findSecretKey({ nodes: [{ e: { token: 'x' } }] }), '$.nodes[0].e.token');
 });
 
 test('`nodes` never reaches the wire resource gate — a node is a CLIENT record', async () => {
-  // R.requireResource is the ONLY path to GET /api/resources, and it takes the
-  // plural word it is checking. A node verb that started asking the node for
-  // permission would have to pass 'nodes' through here; a client that blows up
-  // on any call proves none of them does.
   const f = tmpCtx();
   await cli(['create', 'node', 'home', '--url', 'http://127.0.0.1:7900', '--token', 't'], f);
   const asked = [];
@@ -164,8 +146,6 @@ test('`nodes` never reaches the wire resource gate — a node is a CLIENT record
     'ENTER: requireResource really is the gate, and it really dials');
   assert.deepStrictEqual(asked, ['/api/resources'], 'ENTER: the gate asks /api/resources');
 
-  // Now the real proof: every node verb, with a spawnFn that throws — no
-  // transport may open — and no client at all to answer a resources probe.
   const spawnFn = () => { throw new Error('spawnFn called — a node verb opened a transport'); };
   for (const argv of [
     ['get', 'nodes'], ['get', 'nodes', '--current'], ['get', 'nodes', '-o', 'json'],
@@ -179,7 +159,6 @@ test('`nodes` never reaches the wire resource gate — a node is a CLIENT record
   }
 });
 
-// ── use: a NEW top-level verb, node-only ─────────────────────────────────────
 test('`use` bare names the resource it needs; `use session` is a USAGE error', async () => {
   const f = tmpCtx();
   let r = await cli(['use'], f);
@@ -195,7 +174,6 @@ test('`use` bare names the resource it needs; `use session` is a USAGE error', a
   assert.match(r.stderr, /no such node: ghost/);
 });
 
-// ── the ctx family is DELETED — every spelling points, exit 1 ────────────────
 const POINTERS = [
   [['ctx'], 'get nodes'],
   [['ctx', 'add', 'home'], 'create node <name> --url URL'],
@@ -220,17 +198,12 @@ for (const [argv, expected] of POINTERS) {
     assert.ok(r.stderr.includes(`was renamed: use clodexctl ${expected}`), `${argv.join(' ')}: ${r.stderr}`);
     assert.strictEqual(dialled, false, `${argv.join(' ')} must run nothing`);
     assert.strictEqual(r.stdout, '', 'the pointer goes to stderr — stdout stays scriptable');
-    // The OWN row, not the `*` fallback. Several subs point at `get nodes` and
-    // so does `*`, so deleting one of their rows leaves the assertion above
-    // green on the fallback's answer — the row is what this test names.
     const sub = argv[1];
     if (sub) assert.strictEqual(typeof RENAMED_SECOND.ctx[sub], 'function', `ctx.${sub} must have its own row`);
   });
 }
 
 test('an UNKNOWN ctx sub still points rather than reporting a subcommand', async () => {
-  // `ctx nope` used to be "unknown ctx subcommand". There is no ctx family to
-  // have subcommands now, so the honest answer is the family pointer.
   const r = await cli(['ctx', 'nope'], tmpCtx());
   assert.strictEqual(r.code, 1);
   assert.match(r.stderr, /clodexctl ctx nope was renamed: use clodexctl get nodes/);
@@ -238,8 +211,6 @@ test('an UNKNOWN ctx sub still points rather than reporting a subcommand', async
 });
 
 test('every deleted sub has its own pointer row — not a default that flattens them', async () => {
-  // The rows carry DIFFERENT destinations; a '*'-only table would answer
-  // `get nodes` for all of them and pass a laxer per-row assertion.
   const subs = ['add', 'use', 'current', 'list', 'ls', 'show', 'rm', 'remove', 'import', 'test'];
   for (const s of subs) {
     assert.strictEqual(typeof RENAMED_SECOND.ctx[s], 'function', `${s} must be in the table`);
@@ -248,7 +219,6 @@ test('every deleted sub has its own pointer row — not a default that flattens 
   assert.ok(destinations.size >= 6, `the rows must not collapse to one destination (got ${destinations.size})`);
 });
 
-// ── create node: the transport flags, unchanged from ctx add ─────────────────
 test('create node tunnel: greedy argv, {port} required', async () => {
   const f = tmpCtx();
   let r = await cli(['create', 'node', 'k8s', '--token', 't', '--tunnel', 'kubectl', 'port-forward', 'pod/x', '{port}:7900'], f);
@@ -256,7 +226,6 @@ test('create node tunnel: greedy argv, {port} required', async () => {
   const saved = JSON.parse(fs.readFileSync(f, 'utf8'));
   assert.deepStrictEqual(saved.contexts.k8s.tunnel, ['kubectl', 'port-forward', 'pod/x', '{port}:7900']);
 
-  // missing {port} → usage error
   r = await cli(['create', 'node', 'bad', '--token', 't', '--tunnel', 'kubectl', 'port-forward'], f);
   assert.strictEqual(r.code, 2);
   assert.match(r.stderr, /\{port\} placeholder/);
@@ -270,8 +239,6 @@ test('create node: conflicting transports rejected', async () => {
 });
 
 test('get nodes KIND names the flag that created the record, not the shared family', async () => {
-  // --ssm and --ssm-ecs both store an `ssm` object and dial differently; a
-  // listing that spelled both `ssm` would hide which one is in front of you.
   const f = tmpCtx();
   await cli(['create', 'node', 'ec2', '--ssm', 'i-0abc'], f);
   await cli(['create', 'node', 'far', '--ssm-ecs', 'CLUSTER/clodex'], f);
@@ -302,11 +269,6 @@ test('delete node confirms by name unless --force, and --force is required for -
   assert.strictEqual(JSON.parse(fs.readFileSync(f, 'utf8')).contexts.doomed, undefined);
 });
 
-// fake spawn that opens a listener on the substituted {port}, like the
-// transport test, so `describe node --test` can open a tunnel and speak to a
-// stub server bound on that same port... but the stub must own the port.
-// Simpler: use a DIRECT node for the happy path and a fake tunnel for the
-// stderr-relay path.
 test('describe node --test (direct): reports identity', async () => {
   const server = http.createServer((req, res) => {
     res.writeHead(200); res.end(JSON.stringify({ ok: true, app: 'clodex', host: 'box', version: '3.4.0', caps: ['send'] }));
@@ -334,8 +296,6 @@ test('describe node <name> --test selects that node, not the current one', async
 });
 
 test('describe node --test (tunnel): relays child stderr verbatim on failure', async () => {
-  // fake spawn: a child that immediately "exits" without listening, carrying a
-  // stderr line — openTransport must fail and surface it.
   const spawnFn = () => {
     const child = new EventEmitter();
     child.pid = null;
@@ -350,6 +310,6 @@ test('describe node --test (tunnel): relays child stderr verbatim on failure', a
   const f = tmpCtx();
   await cli(['create', 'node', 'k8s', '--token', 't', '--tunnel', 'kubectl', 'port-forward', 'x', '{port}:7900'], f);
   const r = await cli(['describe', 'node', 'k8s', '--test'], f, { spawnFn });
-  assert.strictEqual(r.code, 3); // EXIT.CONNECT
+  assert.strictEqual(r.code, 3, 'EXIT.CONNECT');
   assert.match(r.stderr, /pods "x" not found/);
 });

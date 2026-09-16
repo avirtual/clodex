@@ -298,7 +298,6 @@ const VERB_REGISTRY = [
     notes: ['Output is always JSON — these are structured telemetry payloads with no compact human form.'],
   },
 
-  // ── nodes ──────────────────────────────────────────────────────────────
   {
     name: 'use', group: 'nodes',
     summary: 'switch the current node (kubectl use-context)',
@@ -480,9 +479,7 @@ const GROUPS = [
 
 const BY_NAME = new Map(VERB_REGISTRY.map((e) => [e.name, e]));
 
-// Resolve a token users type to a registry entry, on the top-level verb name
-// only — a resource word (`nodes`, `session`) is the verb's argument and has
-// no entry of its own.
+// Resolve a token users type to a registry entry, on the top-level name only.
 function resolveEntry(token) {
   return BY_NAME.get(token) || null;
 }

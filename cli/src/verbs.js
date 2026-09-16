@@ -842,11 +842,6 @@ function ctxShow({ store, printer, flags, args }) {
   }
 }
 
-// The node KIND vocabulary is the flag that created the record, not the
-// transport family it shares: --ssm-ecs and --ssm both store an `ssm` object,
-// and the two dial differently enough that a listing collapsing them to `ssm`
-// hides which one an operator is looking at. entryKind stays coarse for the
-// GUI console's own ctx rendering, which pins the family spelling.
 function nodeKind(e) {
   const family = entryKind(e);
   if (family === 'ssm') return e.ssm && e.ssm.ecs ? 'ssm-ecs' : 'ssm';

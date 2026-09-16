@@ -106,11 +106,6 @@ const DEFERRED_HINT = 'not available here: attach, delete, restart node, deploy,
 // Verbs that run against the local contexts file and need NO wire client.
 const CTX_SUBS = ['add', 'use', 'current', 'list', 'ls', 'rm', 'remove', 'show', 'import', 'test'];
 
-// The terminal CLI deleted `ctx` in favour of a `node` resource (t949). This
-// tab still speaks the ctx family — it calls cli/src/verbs.js's ctx* functions
-// directly, not main.js's dispatcher — so it also owns the help entry, which
-// help.js's registry no longer carries. Local, because a registry entry for a
-// verb main.js does not dispatch is exactly what help.test.js forbids.
 const CTX_ENTRY = {
   name: 'ctx', group: 'contexts',
   summary: 'manage connection contexts (this tab\'s spelling of the node resource)',
@@ -149,14 +144,9 @@ const CTX_ENTRY = {
 // status line, so a bare ctx subcommand reads as naturally here as `sessions`
 // does, and having to prefix one family and not the other is the odd part.
 //
-// Gated on `isVerb` rather than on CTX_SUBS alone, and that is the whole point
-// of the function: a bare alias table works right up until a top-level verb is
-// added by that name — at which point the alias SHADOWS it, and the new verb
-// appears to run while doing something else entirely. That case is now live:
-// t949 made `use` a top-level verb, so bare `use prod` no longer becomes
-// `ctx use prod`, drops out of helpIndex's advertised aliases, and reads as the
-// verb this tab refuses. `ctx use prod` is unaffected. Deferring to a real verb
-// also keeps a refusal message accurate (`deploy` must say it is deferred, not
+// Gated on `isVerb` rather than on CTX_SUBS alone: a real verb of that name
+// always wins, so the alias cannot shadow one. Deferring to a real verb also
+// keeps a refusal message accurate (`deploy` must say it is deferred, not
 // become `ctx deploy` and report an unknown subcommand).
 //
 // Rewrites positionals only, so it must run on the PARSED form for the reason
