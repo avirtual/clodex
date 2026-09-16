@@ -16,7 +16,7 @@ function numericLooking(s) {
 }
 
 function quoteText(s) {
-  return JSON.stringify(s).replace(//g, '\\u007f');
+  return JSON.stringify(s).replace(/\u007F/g, '\\u007f');
 }
 
 function needsQuote(s) {
