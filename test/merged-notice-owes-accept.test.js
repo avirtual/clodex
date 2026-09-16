@@ -167,26 +167,31 @@ test('both verdicts are sent as ticket-loop, so the footer cannot name a seat ab
   }
 });
 
-test('a dm from ticket-loop carries no reply address, however reachable that name is', () => {
-  // The footer path itself, through the REAL `_buildDeliveryText`. Checking the
-  // sender string alone would go green on a name that was never added to
-  // SYSTEM_SENDERS — the sender would be right and the trailer would still be
-  // attached, which is the entire defect.
-  const RE = /\(reply: start a line with \[agent:dm .+?\]/;
-  const m = mk({
+test('a dm from ticket-loop carries neither a reply address nor a no-reply marker', () => {
+  // The footer path itself, through the REAL `_buildDeliveryText`: checking the
+  // sender string alone goes green on a name never added to SYSTEM_SENDERS.
+  const mkOne = (receiverIntents) => mk({
     getPeerManager: () => ({ statuses: () => [] }),
-    getPersistence: () => ({ list: () => [], get: () => null }),
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'lead' ? { intents: receiverIntents } : null) }),
   });
   const target = { name: 'lead', agentType: 'claude' };
+  const m = mkOne(undefined);
   m.sessions.set('ticket-loop', { name: 'ticket-loop', agentType: 'claude' });
   assert.strictEqual(m._isDmReachable('ticket-loop'), true,
     'ENTER: the name is reachable, or the guard is never reached and this subject proves nothing');
-  assert.doesNotMatch(m._buildDeliveryText(target, 'ticket-loop', 'ACCEPT on ticket t1', 'dm'), RE,
+  assert.strictEqual(m._buildDeliveryText(target, 'ticket-loop', 'ACCEPT on ticket t1', 'dm'),
+    '[agent:from ticket-loop] ACCEPT on ticket t1',
     'nothing is on the other end of ticket-loop: a lead that replies to it is talking to a label');
-  // Not a blanket mute: an ordinary sender still advertises its address.
-  m.sessions.set('clodex-hand-1', { name: 'clodex-hand-1', agentType: 'claude' });
-  assert.match(m._buildDeliveryText(target, 'clodex-hand-1', 'done', 'dm'), RE,
-    'a live seat is still answerable, or the guard was widened into a mute');
+
+  const gated = mkOne([]);
+  gated.sessions.set('ticket-loop', { name: 'ticket-loop', agentType: 'claude' });
+  gated.sessions.set('clodex-hand-1', { name: 'clodex-hand-1', agentType: 'claude' });
+  assert.strictEqual(gated._buildDeliveryText(target, 'clodex-hand-1', 'done', 'dm'),
+    '[agent:from clodex-hand-1] done (no reply path)',
+    'ENTER: this receiver DOES draw the marker, or the ticket-loop absence below proves nothing');
+  assert.strictEqual(gated._buildDeliveryText(target, 'ticket-loop', 'ACCEPT on ticket t1', 'dm'),
+    '[agent:from ticket-loop] ACCEPT on ticket t1',
+    'a loop notice is not a correspondent that failed to answer: marking it reports a fault that is not there');
 });
 
 // ── 2. the MERGED notice ────────────────────────────────────────────────────

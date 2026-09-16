@@ -64,7 +64,7 @@ A warm-up no-op tool call first (e.g. Bash(true)) does nothing but bill a full r
   [agent:team prompt-rm system|append <stem>]  Delete that prompt. A system stem a role still names is refused the same way; an append stem is named by no role, so it is not.
   [agent:team sandbox [up|rebuild|down|status] [ref:<ref>]]  Build or rebuild your OWN team's docker box \`team-<name>\` from that git ref (default action up; ref defaults to master only when the box tracks none yet, and status/down never change it) and write its URLs and peer-wire token to ~/.clodex/teams/<name>/sandbox.json (mode 0600) — that FILE is where your seats read the token; the reply never carries it. down stops the box and deletes the file; status reports state without writing. Lead-only, like every team verb.
 
-Replies arrive later as separate \`[agent:from SENDER]\` messages in your input.
+Replies arrive later as separate \`[agent:from SENDER]\` messages in your input; answer one with [agent:dm SENDER]. A dm line ending in (no reply path) has no route back — the sender is not reachable or your dm intent is off — so do not dm it.
 
 MEMORY:
 Your saved memories reach every NEW conversation of yours automatically — the most recent SHORT ones in full, everything else as an index line you can recall by id. Only your operator pins (a hard-capped few, always delivered in full); \`pinned=true\` on a save is a mild recency boost, not a guarantee, so don't reach for it by default.
@@ -183,7 +183,7 @@ const GRAMMAR_LINES = [
   [agent:team sandbox [up|rebuild|down|status] [ref:<ref>]]  Build or rebuild your OWN team's docker box \`team-<name>\` from that git ref (default action up; ref defaults to master only when the box tracks none yet, and status/down never change it) and write its URLs and peer-wire token to ~/.clodex/teams/<name>/sandbox.json (mode 0600) — that FILE is where your seats read the token; the reply never carries it. down stops the box and deletes the file; status reports state without writing. Lead-only, like every team verb.` },
 ];
 
-const REPLIES_LINE = `Replies arrive later as separate \`[agent:from SENDER]\` messages in your input.`;
+const REPLIES_LINE = `Replies arrive later as separate \`[agent:from SENDER]\` messages in your input; answer one with [agent:dm SENDER]. A dm line ending in (no reply path) has no route back — the sender is not reachable or your dm intent is off — so do not dm it.`;
 
 // EXEC section — synthesized per-seat from the granted command allowlist, NOT a
 // static piece of IPC_PROMPT. exec has no grammar line and no `intentEnabled`

@@ -8,14 +8,15 @@ const os = require('node:os');
 const { createRemoteWiring } = require('../remote-wiring');
 const { mkPark } = require('./lib/session-fixtures');
 
-const DM_TRAILER_RE = /\(reply: start a line with \[agent:dm .+?\]/;
+const NO_REPLY = '(no reply path)';
 
-function wireDoors() {
+function wireDoors({ seatIntents = undefined } = {}) {
   const { m, injected } = mkPark({
     getPeerManager: () => null,
     shouldHoldDm: require('../proxy-util').shouldHoldDm,
     MSG_SPILL_THRESHOLD: 500,
     spillToFile: (sender, body, recipient) => `/tmp/spill-${recipient}-${sender}-${body.length}.txt`,
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'seat' ? { intents: seatIntents } : null) }),
   });
   let srv = null;
   const deps = {
@@ -106,21 +107,25 @@ test('t886: an operator delivery contains no [agent:dm substring anywhere', () =
   send('seat', 'ship it');
   assert.strictEqual(injected.at(-1).includes('[agent:dm'), false,
     'a human has no dm address: an advertised one is a hole that silently discards the reply');
-  assert.doesNotMatch(injected.at(-1), DM_TRAILER_RE, 'and no reply trailer in any wording');
+  assert.strictEqual(injected.at(-1).includes(NO_REPLY), false,
+    'and no no-reply marker either: `user` is a system sender, not a correspondent that failed');
 });
 
-test('t886: the peer-agent door (/api/dm) is unchanged — same shape, same reply trailer', () => {
+test('t886/t936: the peer-agent door (/api/dm) delivers a reachable peer bare — no trailer, no marker', () => {
   const { injected, deliverDm } = wireDoors();
   const out = deliverDm({ to: 'seat', from: 'bob', origin: 'peerbox', body: 'hi' });
   assert.deepStrictEqual(out, { ok: true, delivered: true });
-  assert.strictEqual(
-    injected.at(-1),
-    '[agent:from bob@peerbox] hi\n(reply: start a line with [agent:dm bob@peerbox], close the body with a bare [agent:end] line)',
-    'an agent on the far end still gets its reply address, byte for byte as before',
-  );
-  assert.match(injected.at(-1), DM_TRAILER_RE,
-    'ENTER: the agent path really does carry the trailer, so the operator-path absence above is a '
-    + 'difference this change made and not a trailer the suite stopped producing everywhere');
+  assert.strictEqual(injected.at(-1), '[agent:from bob@peerbox] hi',
+    'an answerable peer dm costs zero bytes beyond the prefix');
+});
+
+test('t886/t936: a GATED receiver on the agent path IS marked — the operator-path silence is measured', () => {
+  const { injected, deliverDm } = wireDoors({ seatIntents: [] });
+  deliverDm({ to: 'seat', from: 'bob', origin: 'peerbox', body: 'hi' });
+  assert.strictEqual(injected.at(-1), '[agent:from bob@peerbox] hi ' + NO_REPLY,
+    'the seat cannot dm, so its reply would drop and the delivery says so. Same door and same sender '
+    + 'as the operator case above — only the receiver gate differs, which is the ENTER the old byte-pin '
+    + 'gave: without it, `user` drawing no marker cannot be told from a marker nothing emits anywhere');
 });
 
 test('t886: an operator delivery over the spill threshold keeps the shape and the silence', () => {
