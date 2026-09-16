@@ -729,37 +729,37 @@ class PeerConnection {
   }
 
   killSession(name, cb) {
-    this._request('POST', `/api/kill/${encodeURIComponent(name)}`, {}, (err, body) => {
+    this._request('DELETE', `/api/sessions/${encodeURIComponent(name)}`, null, (err, body) => {
       cb(err ? { ok: false, error: err.message } : body || { ok: false });
     });
   }
 
   restartSession(name, opts, cb) {
-    this._request('POST', `/api/restart-session/${encodeURIComponent(name)}`, { fresh: !!(opts && opts.fresh) }, (err, body) => {
+    this._request('POST', `/api/sessions/${encodeURIComponent(name)}/restart`, { fresh: !!(opts && opts.fresh) }, (err, body) => {
       cb(err ? { ok: false, error: err.message } : body || { ok: false });
     });
   }
 
   sessionArgs(name, cb) {
-    this._request('GET', `/api/session-args/${encodeURIComponent(name)}`, null, (err, body) => {
+    this._request('GET', `/api/sessions/${encodeURIComponent(name)}/args`, null, (err, body) => {
       cb(err ? { ok: false, error: err.message } : body || { ok: false, error: 'no response' });
     });
   }
 
   setSessionArgs(name, patch, cb) {
-    this._request('POST', `/api/session-args/${encodeURIComponent(name)}`, patch || {}, (err, body) => {
+    this._request('PATCH', `/api/sessions/${encodeURIComponent(name)}/args`, patch || {}, (err, body) => {
       cb(err ? { ok: false, error: err.message } : body || { ok: false, error: 'no response' });
     });
   }
 
   skillCatalog(name, cb) {
-    this._request('GET', `/api/skill-catalog/${encodeURIComponent(name)}`, null, (err, body) => {
+    this._request('GET', `/api/sessions/${encodeURIComponent(name)}/skills`, null, (err, body) => {
       cb(err ? { ok: false, error: err.message } : body || { ok: false, error: 'no response' });
     });
   }
 
   setSessionSkills(name, disabledSkills, injectSkills, cb) {
-    this._request('POST', `/api/session-skills/${encodeURIComponent(name)}`, { disabledSkills, injectSkills }, (err, body) => {
+    this._request('PATCH', `/api/sessions/${encodeURIComponent(name)}/skills`, { disabledSkills, injectSkills }, (err, body) => {
       cb(err ? { ok: false, error: err.message } : body || { ok: false, error: 'no response' });
     });
   }

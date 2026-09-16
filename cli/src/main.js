@@ -205,8 +205,8 @@ async function dispatchDeploy(rest, flags, printer, io) {
 async function dispatchArgs(rest, flags, printer, io) {
   const sub = rest[0];
   const args = rest.slice(1);
-  if (sub === 'get') return withWire(flags, io, (client) => V.argsGet({ client, printer, flags, args }));
-  if (sub === 'set') return withWire(flags, io, (client) => V.argsSet({ client, printer, flags, args }));
+  if (sub === 'get') return withWire(flags, io, (client, ctx) => V.argsGet({ client, ctx, printer, flags, args }));
+  if (sub === 'set') return withWire(flags, io, (client, ctx) => V.argsSet({ client, ctx, printer, flags, args }));
   throw new CliError(EXIT.USAGE, `unknown args subcommand: ${sub || '(none)'} (get/set)`);
 }
 

@@ -83,6 +83,8 @@ class WireClient {
 
   get(pathAndQuery, verb, opts) { return this._call('GET', pathAndQuery, verb || 'request', undefined, opts); }
   post(pathAndQuery, verb, jsonBody, opts) { return this._call('POST', pathAndQuery, verb || 'request', jsonBody == null ? {} : jsonBody, opts); }
+  del(pathAndQuery, verb, opts) { return this._call('DELETE', pathAndQuery, verb || 'request', undefined, opts); }
+  patch(pathAndQuery, verb, jsonBody, opts) { return this._call('PATCH', pathAndQuery, verb || 'request', jsonBody == null ? {} : jsonBody, opts); }
 
   // Open a text/event-stream over the wire. The FRAMING is sse-frame.js's (one
   // decoder, shared with the GUI's peer-client since t47); what stays here is
