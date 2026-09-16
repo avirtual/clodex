@@ -6,7 +6,7 @@ local stores, so it works identically against localhost, a LAN peer, a Fargate
 task, or a k8s pod. Plain Node ≥20, zero runtime dependencies (built-in
 `fetch` + `node:*`).
 
-Contexts, transports, the read/write verbs, `run` (command→result), `attach`
+Contexts, transports, the read/write verbs, `exec` (command→result), `attach`
 (a live terminal on any session), and `logs -f` (follow) are all here — the
 whole client.
 
@@ -17,14 +17,14 @@ to a real keyboard on the agent inside it — no ssh, no inbound ports, no VPN:
 
 ```sh
 clodexctl ctx add cust --ssm-ecs my-cluster/clodex --token <wire-token>
-clodexctl --ctx cust spawn worker --type claude --cwd /home/clodex/work
+clodexctl --ctx cust create session worker --type claude --cwd /home/clodex/work
 clodexctl --ctx cust attach worker
 ```
 
 `attach` is ssh-for-agents: it streams the session's screen (best-effort
 scrollback replay, then live output) and forwards your keystrokes, over
 whatever transport the context uses (SSM, kubectl, IAP, Bastion, ssh, or a
-direct URL). **Ctrl-\\** detaches. Type `run` to ask and wait; type `attach`
+direct URL). **Ctrl-\\** detaches. Type `exec` to ask and wait; type `attach`
 to *be there* — watch a build scroll, answer a permission dialog, drive a bash
 shell. It reconnects itself if the tunnel hiccups (full re-replay on
 reconnect). Caveats: the replay is best-effort recent scrollback, **not** exact
@@ -281,23 +281,25 @@ Read (all but `describe` support `-o json` — stable raw wire payload):
 | `version` | `GET /api/peer/hello` — client version plus the node's |
 | `logs <name> [--tail N] [-f\|--follow]` | `GET /api/resources` (capability check) → `GET /api/sessions/:name/transcript?limit=N` (+ `GET /api/events` when `-f`) |
 | `query <name> <kind>` | `GET /api/resources` → `POST /api/sessions/:name/query` — kind ∈ `ctx report bust files filePeek fileDiff` (`--path`, `--detail`) |
-| `args get <name>` | `GET /api/resources` → `GET /api/sessions/:name/args` |
-| `skills <name>` | `GET /api/resources` → `GET /api/sessions/:name/skills` |
+| `get session <name> --subresource args` | `GET /api/resources` → `GET /api/sessions/:name/args` |
+| `get session <name> --subresource skills` | `GET /api/resources` → `GET /api/sessions/:name/skills` |
+| `get session <name> --subresource transcript` | the one-shot read `logs` makes |
 
-**`run` — the one verb.** For "make this session do something and show me the
-result", reach for `run` — it looks up the session's type and picks the right
+**`exec` — the one verb.** For "make this session do something and show me the
+result", reach for `exec` — it looks up the session's type and picks the right
 path for you:
 
 | Verb | Route | Notes |
 |---|---|---|
-| `run <name> <text…> [--timeout N] [--quiet-ms N] [--raw] [-o json]` | `GET /api/sessions` (type lookup) → send-wait **or** exec | **agent** (claude/codex) → send the text as a prompt, wait for the turn to end, print the reply; **bash** → run the command, print the terminal output. `-o json` carries `mode:"agent"\|"pty"`. Always executes (no `--no-enter`) |
+| `exec <name> <text…> [--timeout N] [--quiet-ms N] [--raw] [--pty] [-o json]` | `GET /api/sessions` (type lookup) → dm-and-wait **or** the PTY | **agent** (claude/codex) → send the text as a prompt, wait for the turn to end, print the reply; **bash** → run the command, print the terminal output. `--pty` forces the PTY path whatever the type. `-o json` carries `mode:"agent"\|"pty"`. Always executes (no `--no-enter`) |
 
-`run` adds one `GET /api/sessions` round-trip to learn the type — the engine's
-session list is **authoritative**, so a bash session named like an agent (or the
-reverse) can't misroute. An unknown name is the usual not-found (exit `5`), and
-lists the running session names to help.
+Without `--pty`, `exec` adds one `GET /api/sessions` round-trip to learn the type
+— the engine's session list is **authoritative**, so a bash session named like an
+agent (or the reverse) can't misroute. An unknown name is the usual not-found
+(exit `5`), and lists the running session names to help. `--pty` skips that
+lookup entirely: the mode is already chosen.
 
-**`attach` — be there.** Where `run` asks and waits, `attach` opens a live
+**`attach` — be there.** Where `exec` asks and waits, `attach` opens a live
 terminal:
 
 | Verb | Route | Notes |
@@ -305,9 +307,9 @@ terminal:
 | `attach <name> [--read-only]` | `GET /api/sessions/:name/attach` + control + `POST /api/sessions/:name/input`/`resize` | streams scrollback replay then live output; forwards keystrokes (acquires control, pushes your terminal geometry); **Ctrl-\\** detaches and is never forwarded. Needs a TTY. `--read-only` mirrors without control. Auto-reconnects with full re-replay + re-acquire |
 
 `attach` is type-agnostic on purpose — a human at a keyboard is the right
-consumer of a raw TTY for bash *and* agent sessions (no `run`-style guardrail).
+consumer of a raw TTY for bash *and* agent sessions (no `exec`-style routing).
 It requires a real terminal on both stdin and stdout (exit `2` otherwise — use
-`run`/`logs` for scripting). Replay is best-effort scrollback, **not** exact
+`exec`/`logs` for scripting). Replay is best-effort scrollback, **not** exact
 terminal state (the client resets its screen and re-applies on every connect);
 `Ctrl-\` is unavailable to the remote; and the geometry you attach with becomes
 the session's (controller wins, matching the GUI's take-control). If the stream
@@ -358,36 +360,40 @@ Write:
 
 | Verb | Route | Notes |
 |---|---|---|
-| `spawn <name> --cwd DIR --type T [--model M] [--arg X …] [--env KEY=VALUE …] [--fork]` | `POST /api/sessions` | `--model`/`--arg` ride `extraArgs`; each `--env KEY=VALUE` (repeatable) rides `body.env` and sets a per-session env var on the spawned PTY (merged over the box's machine + global/workspace scopes — the session value wins). Applied **only at create** (`run`/`send`/`args set` can't change env). The box re-validates every key server-side and drops invalid/deny-listed ones (`CLODEX_REMOTE_TOKEN` is reserved); the ack echoes the applied keys and `clodexctl` warns loudly if any were dropped — or if the node is too old to support env at all |
-| `kill <name> [--force]` | `DELETE /api/sessions/:name` | **HARD DELETE — no resume.** Confirms unless `--force` (required with `-o json`) |
-| `restart <name> [--fresh]` | `POST /api/sessions/:name/restart` | |
-| `args set <name> [--arg X…] [--proxy URL] [--restart]` | `PATCH /api/sessions/:name/args` | |
-| `restart-app [--force]` | `POST /api/restart` | relaunches the whole engine |
+| `create session <name> --cwd DIR --type T [--model M] [--arg X …] [--env KEY=VALUE …] [--fork]` | `POST /api/sessions` | `--model`/`--arg` ride `extraArgs`; each `--env KEY=VALUE` (repeatable) rides `body.env` and sets a per-session env var on the spawned PTY (merged over the box's machine + global/workspace scopes — the session value wins). Applied **only at create** (`exec`/`dm`/`patch session` can't change env). The box re-validates every key server-side and drops invalid/deny-listed ones (`CLODEX_REMOTE_TOKEN` is reserved); the ack echoes the applied keys and `clodexctl` warns loudly if any were dropped — or if the node is too old to support env at all |
+| `delete session <name> [--force]` | `DELETE /api/sessions/:name` | **HARD DELETE — no resume.** Confirms unless `--force` (required with `-o json`) |
+| `restart session <name> [--fresh]` | `POST /api/sessions/:name/restart` | |
+| `patch session <name> [--arg X…] [--proxy URL] [--restart]` | `PATCH /api/sessions/:name/args` | |
+| `restart node [--force]` | `POST /api/restart` | relaunches the whole engine |
 
-Plumbing (**prefer `run`** — these are the raw paths it routes over, kept for
+The resource word is **mandatory** on all five: `restart` alone carries both a
+session restart and a whole-engine relaunch, so a bare `restart <name>` is a
+usage error naming the word rather than a guess between them.
+
+Plumbing (**prefer `exec`** — these are the raw paths it routes over, kept for
 scripting and explicit control):
 
 | Verb | Route | Notes |
 |---|---|---|
-| `send <name> <text…> [--wait [--timeout N]]` | `POST /api/sessions/:name/dm` | **fire-and-forget** by default (scripting). `--wait` blocks until the agent's turn ends and prints the new entries (default 300s) — `run` on an agent **is** this path |
+| `dm <name> <text…>` | `POST /api/sessions/:name/dm` | **fire-and-forget** (scripting). To send and wait for the reply, use `exec` — on an agent, `exec` **is** this POST plus the turn-end wait |
 | `input <name> <text…> [--no-enter]` | `POST /api/sessions/:name/input` | raw keystrokes, **no wait**; acquires + releases control; sends Enter by default (`--no-enter` posts raw). The deliberate low-level channel — **no agent guardrail** |
-| `exec <name> <cmd…> [--quiet-ms N] [--timeout N] [--raw] [--pty]` | `GET /api/sessions/:name/attach` + control + `POST /api/sessions/:name/input` | run one command in the PTY and print what the terminal produced; waits for quiet (default 750ms) or `--timeout` caps (default 30s); ANSI stripped unless `--raw`. On an **agent** it refuses without `--pty` — `run` on bash **is** this path |
 
-**`exec` — exit status is about DELIVERY, not the remote command.** Screen bytes
-carry no exit code, so `exec` exits `0` when the command was typed and the output
-went quiet — it says nothing about whether the command itself succeeded. The
-echoed command and re-printed prompt are part of the printed output (honest
-terminal truth, not stripped). A timeout prints the partial output and exits `1`.
-Pass `--` before a command containing dashes so they aren't parsed as flags.
+**`exec --pty` — exit status is about DELIVERY, not the remote command.** Screen
+bytes carry no exit code, so the PTY mode exits `0` when the command was typed
+and the output went quiet — it says nothing about whether the command itself
+succeeded. The echoed command and re-printed prompt are part of the printed
+output (honest terminal truth, not stripped). A timeout prints the partial output
+and exits `1`. Pass `--` before a command containing dashes so they aren't parsed
+as flags.
 
-**`exec` on an agent needs `--pty`.** Typing into a claude/codex session paints
-its raw TUI screen (scary, and rarely what you want) — so `exec` on an agent
-**warns and refuses** unless you pass `--pty`. Typing into an agent's TUI is
-legitimate (answering a permission dialog, say), but it must be chosen, not
-stumbled into. For "make the agent do something", use `run`. (`input` is the
-explicit raw-keystroke channel and carries no such guardrail — that's its job.)
+**Typing into an agent's TUI needs `--pty`.** Typing into a claude/codex session
+paints its raw TUI screen (scary, and rarely what you want), so `exec` on an
+agent sends a prompt and waits instead. `--pty` is how you choose the other
+thing — legitimate (answering a permission dialog, say), but chosen rather than
+stumbled into. (`input` is the explicit raw-keystroke channel and carries no
+guardrail at all — that's its job.)
 
-**`send --wait` — "idle", not "done".** `--wait` returns when the agent's *turn
+**`exec` on an agent — "idle", not "done".** It returns when the agent's *turn
 ends* (it went idle after your message), which is not the same as the agent
 declaring the work finished — a long task that parks mid-work still ends its
 turn. The printed entries are the transcript rows newer than a pre-send snapshot,

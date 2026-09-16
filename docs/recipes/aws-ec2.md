@@ -13,8 +13,8 @@ wire answers, and registers a context:
 
 ```sh
 clodexctl deploy ubuntu@ec2-host          # re-running IS the update path
-clodexctl --ctx ec2-host spawn worker --type claude --cwd /srv/work
-clodexctl --ctx ec2-host run worker "…"
+clodexctl --ctx ec2-host create session worker --type claude --cwd /srv/work
+clodexctl --ctx ec2-host exec worker "…"
 ```
 
 Jump hosts, ProxyCommand, non-standard ports: all of it comes free because

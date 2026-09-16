@@ -127,7 +127,7 @@ clodexctl ctx import                           # adopt every node the GUI alread
 clodexctl ctx add prod --ssh user@box          # or: --ssm i-…, --ssm-ecs cluster/family,
                                                #     --kubectl pod, --gcloud-iap …, --az-bastion …
 clodexctl get sessions                         # what's running
-clodexctl run worker "fix the failing test"    # ask an agent, wait, print the reply
+clodexctl exec worker "fix the failing test"   # ask an agent, wait, print the reply
 clodexctl attach worker                        # a LIVE terminal on the session — ssh-for-agents
 clodexctl logs worker -f                       # follow the transcript, kubectl-style
 clodexctl web prod                             # the node's full GUI in your local browser

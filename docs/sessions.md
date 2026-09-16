@@ -98,7 +98,7 @@ sessions.json entry so `--resume` respawns identically. A box operator's
 With no scope vars set anywhere the merge reduces to exactly `{ ...process.env,
 TERM }` — byte-identical to the historical spawn (pinned). GUI: Preferences ▸
 Environment variables (global/workspace editor) + a per-session section in the
-New Session dialog; over the wire, `clodexctl spawn --env KEY=VALUE`. The
+New Session dialog; over the wire, `clodexctl create session --env KEY=VALUE`. The
 per-session env is also EDITABLE after create via the Edit Session dialog's
 Environment variables section (T46b): the textarea prefills from the entry's
 persisted env, an empty box clears it, and the change rides the existing
