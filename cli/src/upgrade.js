@@ -323,7 +323,7 @@ async function planInstaller({ flavor, ctxName, entry, dep, flags, io, printer, 
     `flags that are not stored in a context REVERT on a re-run — --no-wirescope, --repo, --branch${flavor === 'ssh' ? ', --src, --ssh-opt' : ''} and --claude-token-file. If you set any of them at deploy time, pass them again here; otherwise the node returns to the defaults.`,
   ];
   if (flavor === 'ssm') {
-    warnings.push('`deploy ssm` MINTS A FRESH WIRE TOKEN on every run, so this upgrade will ROTATE it. This context is rewritten with the new token, but any OTHER holder of the old one — a second machine\'s context, a GUI peer row, a script — stops being able to reach the node until you re-share it.');
+    warnings.push('the `--ssm` deploy MINTS A FRESH WIRE TOKEN on every run, so this upgrade will ROTATE it. This context is rewritten with the new token, but any OTHER holder of the old one — a second machine\'s context, a GUI peer row, a script — stops being able to reach the node until you re-share it.');
   }
 
   const targetLine = `whatever ${flags.branch ? `branch "${String(flags.branch)}"` : `branch "${D.DEFAULT_BRANCH}"`} currently builds — the ${flavor} installer tracks a branch and deploys no pinned artifact, so there is no version to compare and this never no-ops`;

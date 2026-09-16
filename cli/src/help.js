@@ -366,11 +366,6 @@ const VERB_REGISTRY = [
     summary: 'tear down a node deployed with `deploy` (fargate, helm, or docker)',
     usage: 'undeploy node <name> [--keep-data] [flags]',
     args: [['name', 'the saved context name (its record says which teardown to run)']],
-    subcommands: [
-      ['[fargate record]', 'delete the CloudFormation stack (stops stray tasks first)'],
-      ['[helm record]', 'helm uninstall + delete the StatefulSet PVC (--keep-data keeps it)'],
-      ['[docker record]', 'docker rm -f + delete the named data volume (--keep-data keeps it)'],
-    ],
     flags: [
       ['--fargate | --helm | --docker', 'force the flavor when the context does not record one'],
       ['--force', 'skip the type-the-name confirmation (required in -o json/non-TTY)'],
@@ -388,10 +383,10 @@ const VERB_REGISTRY = [
       'clodexctl undeploy node mybox --host ssh://user@box',
     ],
     notes: [
-      'The flavor is READ FROM THE CONTEXT record (`deploy.flavor`, stamped by deploy), exactly as `upgrade` routes; a context that records none is refused by name and takes --fargate|--helm|--docker to force it. An ssh/ssm record is not supported (teardown needs an uninstall mode in the byte-pinned installer catalog — a separate task); remove those by hand: `systemctl --user disable --now clodex.service` on the node.',
+      'The whole teardown is READ FROM THE CONTEXT record (`deploy.flavor` and friends, stamped by deploy), exactly as `upgrade` reads it: fargate deletes the CloudFormation stack (stray tasks stopped first), helm is `helm uninstall` + the StatefulSet PVC, docker is `docker rm -f` + the named data volume. The record also names the TARGET and where it lives — the fargate `stack` (which differs from the context name whenever deploy was given --ctx), the helm `release`/`namespace`/`kubeContext`, the docker `dockerHost` — so a flag is needed only to override one. A context that records no flavor is refused by name and takes --fargate|--helm|--docker to force it; a FORCED flavor tears down the name you typed, with no record to read. An ssh/ssm record is not supported (teardown needs an uninstall mode in the byte-pinned installer catalog — a separate task); remove those by hand: `systemctl --user disable --now clodex.service` on the node.',
       'Teardown is DESTRUCTIVE and confirm-by-default: it previews what dies, then prompts for the exact name; --force skips the prompt (scripts). --dry-run and -o json without --force in a non-TTY refuse rather than silently destroy.',
       'DATA doctrine: a full teardown removes the persistent store too — helm\'s StatefulSet PVC (survives `helm uninstall` by k8s design) and docker\'s named data volume (survives `docker rm -f`). --keep-data opts out and names what was kept. fargate is stateless (nothing to keep).',
-      'fargate resolves the region flag > the ctx\'s pinned region (deploy pins it) > aws default, stops any stray (non-service) tasks that would block cluster teardown, then `delete-stack`. Secrets enter Secrets Manager\'s recovery window (gone in 7–30 days). A pre-existing --cluster the stack did not create is never deleted.',
+      'fargate resolves the region flag > the record\'s pinned region (deploy pins it) > the ctx\'s ssm half > aws default, stops any stray (non-service) tasks that would block cluster teardown, then `delete-stack`. Secrets enter Secrets Manager\'s recovery window (gone in 7–30 days). A pre-existing --cluster the stack did not create is never deleted.',
     ],
   },
 

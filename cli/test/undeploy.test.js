@@ -190,6 +190,66 @@ test('undeploy node <name>: the flavor is READ FROM THE CONTEXT RECORD, no flag 
   assert.ok(recH.calls.some((c) => c.join(' ').includes('helm uninstall mynode')), 'the helm teardown ran off the record alone');
 });
 
+test('undeploy node <ctx>: the fargate TARGET is the record\'s stack, not the context name', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'prod', contexts: { prod: {
+    ssm: { ecs: 'clodex-node/clodex-node-node', region: 'us-west-2' }, token: 'W',
+    deploy: { flavor: 'fargate', stack: 'clodex-node', region: 'us-west-2' },
+  } } });
+  const r = await cli(['undeploy', 'node', 'prod', '--force'], { execFn: fakeAws(rec, { clusterParam: 'clodex-node' }), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const described = rec.calls.filter((c) => c.join(' ').includes('describe-stacks'));
+  assert.ok(described.length, 'the stack was described');
+  assert.ok(described.every((c) => c.includes('clodex-node')), `deploy.stack is the target, not the ctx name: ${described[0].join(' ')}`);
+  assert.ok(!described.some((c) => c.includes('prod')), 'the CONTEXT name must never reach --stack-name');
+  assert.ok(rec.calls.some((c) => c.join(' ').includes('delete-stack --stack-name clodex-node')));
+  assert.match(r.stdout, /region: us-west-2 \[ctx "prod"\]/,
+    "the record's pinned region rode along even though the ctx is named differently");
+  const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.deepStrictEqual(after.contexts, {}, 'the differently-named context is the one cleaned up');
+});
+
+test('undeploy node <ctx>: helm namespace/kube-context come from the record, not kubectl\'s current cluster', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'mynode', contexts: { mynode: {
+    kubectl: { target: 'svc/mynode', namespace: 'agents', context: 'prod' }, token: 'W',
+    deploy: { flavor: 'helm', release: 'mynode', namespace: 'agents', kubeContext: 'prod' },
+  } } });
+  const r = await cli(['undeploy', 'node', 'mynode', '--force'], { execFn: fakeHelm(rec), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const uninstall = rec.calls.find((c) => c.join(' ').includes('helm uninstall'));
+  assert.ok(uninstall.join(' ').includes('--namespace agents'), uninstall.join(' '));
+  assert.ok(uninstall.join(' ').includes('--kube-context prod'), uninstall.join(' '));
+  assert.ok(!rec.calls.some((c) => c.join(' ').includes('--namespace clodex')), 'the default namespace must not be used when the record names one');
+  const rec2 = {};
+  const cf2 = tmpCtxFile({ current: 'mynode', contexts: { mynode: {
+    kubectl: { target: 'svc/mynode', namespace: 'agents', context: 'prod' }, token: 'W',
+    deploy: { flavor: 'helm', release: 'mynode', namespace: 'agents', kubeContext: 'prod' },
+  } } });
+  const r2 = await cli(['undeploy', 'node', 'mynode', '--force', '--namespace', 'other', '--keep-ctx'], { execFn: fakeHelm(rec2), contextsFile: cf2 });
+  assert.strictEqual(r2.code, 0, r2.stderr);
+  assert.ok(rec2.calls.find((c) => c.join(' ').includes('helm uninstall')).join(' ').includes('--namespace other'));
+});
+
+test('undeploy node <ctx>: the docker DOCKER_HOST comes from the record', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'edge', contexts: { edge: {
+    ssh: 'user@box', deploy: { flavor: 'docker', container: 'clodexctl-edge', dockerHost: 'ssh://user@box' },
+  } } });
+  const r = await cli(['undeploy', 'node', 'edge', '--force'], { runDocker: fakeRunDocker(rec, { volumes: ['clodexctl-edge-data'] }), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.ok(rec.calls.every((c) => c.env && c.env.DOCKER_HOST === 'ssh://user@box'), 'DOCKER_HOST set on every call from the record alone');
+});
+
+test('undeploy node: a context that does NOT EXIST is told so, not that its record is old', async () => {
+  const contextsFile = tmpCtxFile({ current: null, contexts: {} });
+  const r = await cli(['undeploy', 'node', 'typo'], { contextsFile });
+  assert.strictEqual(r.code, EXIT.USAGE);
+  assert.match(r.stderr, /no such context: typo/);
+  assert.doesNotMatch(r.stderr, /does not record how it was deployed/);
+  assert.match(r.stderr, /--fargate \| --helm \| --docker/);
+});
+
 test('undeploy node: a flavor FLAG forces the teardown when the record has none', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile({ current: 'mybox', contexts: { mybox: { url: 'http://127.0.0.1:7900' } } });
