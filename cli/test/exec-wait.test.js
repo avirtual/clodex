@@ -12,6 +12,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { run } = require('../src/main');
 const { RESOURCES_DOC, docWithout } = require('./fixtures/resources-doc');
+const { serverTranscriptPage } = require('./fixtures/transcript-page');
 
 const TOKEN = 'sekret';
 const b64 = (s) => Buffer.from(s).toString('base64');
@@ -77,7 +78,7 @@ function sseStub(opts = {}) {
         res.writeHead(200); return res.end(JSON.stringify({ ok: true }));
       }
       if (/^\/api\/sessions\/[^/]+\/transcript$/.test(p)) {
-        res.writeHead(200); return res.end(JSON.stringify({ ok: true, messages: (opts.transcript && opts.transcript(seen)) || [] }));
+        res.writeHead(200); return res.end(JSON.stringify(serverTranscriptPage((opts.transcript && opts.transcript(seen)) || [], req.url)));
       }
       if (/^\/api\/sessions\/[^/]+\/dm$/.test(p)) { res.writeHead(200); return res.end(JSON.stringify({ ok: true })); }
       res.writeHead(404); res.end(JSON.stringify({ ok: false, error: 'no route' }));
@@ -316,7 +317,86 @@ test('exec (agent mode) --json: {ok,name,entries,timedOut} shape', async () => {
   assert.strictEqual(j.ok, true);
   assert.strictEqual(j.name, 'bob');
   assert.strictEqual(j.timedOut, false);
-  assert.deepStrictEqual(j.entries, [{ role: 'assistant', text: 'a' }]);
+  assert.deepStrictEqual(j.entries, [{ role: 'assistant', text: 'a', seq: 1 }]);
+  server.close();
+});
+
+const endTurnOnDm = (name) => (state, seen) => {
+  const iv = setInterval(() => {
+    if (seen.some((s) => /^\/api\/sessions\/[^/]+\/dm$/.test(s.url))) { clearInterval(iv); state.events.write(`event: activity\ndata: ${JSON.stringify({ name, state: 'idle', turnEnd: true })}\n\n`); }
+  }, 20);
+};
+const oldEntries = (n) => Array.from({ length: n }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', text: `old${i}` }));
+const refetchQueries = (seen) => seen.filter((s) => /\/transcript\?/.test(s.url) && /since=/.test(s.url)).map((s) => s.url.split('?')[1]);
+
+test('exec (agent mode): a 600-entry transcript still prints the new reply — the cursor is seq, not a count', async () => {
+  let calls = 0;
+  const OLD = oldEntries(600);
+  const { server } = sseStub({
+    onEventsOpen: endTurnOnDm('bob'),
+    transcript: () => {
+      calls++;
+      if (calls === 1) return OLD;
+      return [...OLD, { role: 'user', text: 'do the thing' }, { role: 'assistant', text: 'done it' }];
+    },
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['exec', 'bob', 'do', 'the', 'thing', '--timeout', '10'], port);
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /\[assistant\] done it/);
+  assert.doesNotMatch(stdout, /old599|do the thing/);
+  server.close();
+});
+
+test('exec (agent mode) --json on a 600-entry transcript: entries is exactly the new reply', async () => {
+  let calls = 0;
+  const OLD = oldEntries(600);
+  const { server } = sseStub({
+    onEventsOpen: endTurnOnDm('bob'),
+    transcript: () => {
+      calls++;
+      if (calls === 1) return OLD;
+      return [...OLD, { role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }];
+    },
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['exec', 'bob', 'q', '-o', 'json', '--timeout', '10'], port);
+  assert.strictEqual(code, 0);
+  assert.deepStrictEqual(JSON.parse(stdout).entries, [{ role: 'assistant', text: 'a', seq: 601 }]);
+  server.close();
+});
+
+test('exec (agent mode): the refetch asks for since=<lastSeq+1> of the pre-send page', async () => {
+  let calls = 0;
+  const OLD = oldEntries(600);
+  const { server, seen } = sseStub({
+    onEventsOpen: endTurnOnDm('bob'),
+    transcript: () => {
+      calls++;
+      if (calls === 1) return OLD;
+      return [...OLD, { role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }];
+    },
+  });
+  const port = await listen(server);
+  const { code } = await cli(['exec', 'bob', 'q', '--timeout', '10'], port);
+  assert.strictEqual(code, 0);
+  const qs = refetchQueries(seen);
+  assert.ok(qs.length >= 1, 'a refetch carried a since cursor');
+  for (const q of qs) assert.strictEqual(q, 'since=600&limit=500', 'the pre-send page ended at seq 599');
+  server.close();
+});
+
+test('exec (agent mode): an empty pre-send transcript asks since=0 and still prints the reply', async () => {
+  let calls = 0;
+  const { server, seen } = sseStub({
+    onEventsOpen: endTurnOnDm('bob'),
+    transcript: () => { calls++; return calls === 1 ? [] : [{ role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }]; },
+  });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['exec', 'bob', 'q', '--timeout', '10'], port);
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /\[assistant\] a/);
+  for (const q of refetchQueries(seen)) assert.strictEqual(q, 'since=0&limit=500');
   server.close();
 });
 
