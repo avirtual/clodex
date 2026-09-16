@@ -144,9 +144,9 @@ test('undeploy node: an ssh/ssm RECORD → honest USAGE (installer surgery is a 
   }
 });
 
-test('undeploy node: a record with NO flavor → USAGE naming the forcing flags, nothing runs', async () => {
+test('undeploy node: a record with NO flavor on an AMBIGUOUS transport → USAGE naming the forcing flags, nothing runs', async () => {
   let dialled = false;
-  const contextsFile = tmpCtxFile({ current: 'plain', contexts: { plain: { url: 'http://127.0.0.1:7900' } } });
+  const contextsFile = tmpCtxFile({ current: 'plain', contexts: { plain: { ssh: 'user@box' } } });
   const r = await cli(['undeploy', 'node', 'plain'], {
     contextsFile,
     execFn: async () => { dialled = true; throw new Error('execFn called'); },
@@ -154,8 +154,53 @@ test('undeploy node: a record with NO flavor → USAGE naming the forcing flags,
   });
   assert.strictEqual(r.code, EXIT.USAGE);
   assert.match(r.stderr, /does not record how it was deployed/);
+  assert.match(r.stderr, /its ssh transport cannot answer it either/,
+    'the refusal must scope its claim to THIS transport — a kubectl transport CAN answer it, and a blanket claim would be a lie');
+  assert.match(r.stderr, /an ssh deploy and a remote docker deploy save identical transports/);
   assert.match(r.stderr, /--fargate \| --helm \| --docker/);
   assert.strictEqual(dialled, false, 'nothing ran');
+});
+
+test('undeploy node: a recordless KUBECTL node tears down as helm, against the transport\'s namespace and context', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'mynode', contexts: { mynode: {
+    kubectl: { target: 'svc/mynode', namespace: 'agents', context: 'prod' }, webPort: 8080, token: 'W',
+  } } });
+  const r = await cli(['undeploy', 'node', 'mynode', '--force'], { execFn: fakeHelm(rec), contextsFile });
+  // The teardown itself is the consequence: the refusal used to stop it.
+  const uninstall = rec.calls.find((c) => c.join(' ').includes('helm uninstall'));
+  assert.ok(uninstall, 'the helm teardown must run — the kubectl transport has one writer, so the flavor is not a guess');
+  assert.ok(uninstall.join(' ').includes('--namespace agents'), uninstall.join(' '));
+  assert.ok(uninstall.join(' ').includes('--kube-context prod'), uninstall.join(' '));
+  assert.notStrictEqual(r.code, EXIT.USAGE, 'and it must not refuse by usage any more');
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /inferred helm from its kubectl transport/,
+    'the inference must be SAID — this verb DELETES things, so the operator must see which flavor was chosen for them and why');
+});
+
+test('undeploy node: a recordless kubectl node with NO namespace uses the packaged default', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'mynode', contexts: { mynode: {
+    kubectl: { target: 'svc/mynode' }, token: 'W',
+  } } });
+  const r = await cli(['undeploy', 'node', 'mynode', '--force'], { execFn: fakeHelm(rec), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const uninstall = rec.calls.find((c) => c.join(' ').includes('helm uninstall'));
+  assert.ok(uninstall.join(' ').includes('--namespace clodex'), uninstall.join(' '));
+  assert.ok(!uninstall.includes('--kube-context'), 'no kube context is invented — helm resolving its own current one is the honest fallback');
+});
+
+test('undeploy node: a STORED flavor beats the transport — a kubectl node recorded "nomad" refuses by name', async () => {
+  const contextsFile = tmpCtxFile({ current: 'future', contexts: { future: {
+    kubectl: { target: 'svc/future', namespace: 'clodex', context: 'prod' }, deploy: { flavor: 'nomad' },
+  } } });
+  const r = await cli(['undeploy', 'node', 'future', '--force'], {
+    contextsFile,
+    execFn: async () => { throw new Error('execFn called'); },
+  });
+  assert.strictEqual(r.code, EXIT.USAGE);
+  assert.match(r.stderr, /records deploy flavor "nomad", which this clodexctl cannot tear down/,
+    'the inference is a fallback for a MISSING record, never an override of one — otherwise a newer clodexctl\'s node gets torn down by the wrong path');
 });
 
 test('undeploy node: a flavor this build cannot tear down → USAGE by name', async () => {

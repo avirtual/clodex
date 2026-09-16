@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- **`upgrade node` and `undeploy node` recognise a helm node by its transport.** A kubectl node saved before clodexctl recorded deploy flavors no longer needs a re-deploy first: both verbs infer helm from the transport, and a successful upgrade stamps the record for next time.
 - **The CLI's bundled skills stay out of every seat.** Clodex now ships `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1` in its default env, so the workflow skills the Claude Code binary carries (init, review, simplify, security-review and the rest) no longer land in each agent's prompt. Plugin skills, account-synced skills and a project's own `.claude/skills/` are unaffected; the seed adds the key to the global scope once, and an operator who wants them back edits it there.
 
 ## 5.71.0 — 2026-09-17 — clodexctl speaks kubectl

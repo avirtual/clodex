@@ -162,18 +162,17 @@ function forcedFlavor(flags) {
 function storedDeploy(name, io) {
   const store = safeLoadContexts(io);
   const entry = store.contexts[name];
-  if (!entry) return { known: false, dep: null, entry: null, inferred: null };
+  if (!entry) return { known: false, stored: null, entry: null, inferred: null };
   const dep = entry.deploy;
-  if (dep && typeof dep === 'object' && dep.flavor) return { known: true, dep, entry, inferred: null };
-  const inferred = D.inferDeployFromTransport(name, entry);
-  return { known: true, dep: inferred, entry, inferred };
+  if (dep && typeof dep === 'object' && dep.flavor) return { known: true, stored: dep, entry, inferred: null };
+  return { known: true, stored: null, entry, inferred: D.inferDeployFromTransport(name, entry) };
 }
 
 async function undeployVerb({ printer, flags, args, io = {} }) {
   const name = args[0];
   if (!name) throw new CliError(EXIT.USAGE, 'undeploy node needs a name (e.g. undeploy node mybox)');
   const forced = forcedFlavor(flags);
-  const { known, dep: stored, entry, inferred } = storedDeploy(name, io);
+  const { known, stored, entry, inferred } = storedDeploy(name, io);
   // A forced flag keeps reading the STORED record only: it must be able to say
   // it is overriding what the context records, and an inference is not that.
   const dep = stored || (forced ? null : inferred);

@@ -74,15 +74,19 @@ test('refVersion / withTag: a DIGEST names no version, so nothing is compared', 
   assert.strictEqual(U.withTag('registry:5000/x/clodex:1', '2'), 'registry:5000/x/clodex:2', 'the registry port survives a re-tag');
 });
 
-// ── routing: the flavor field is the ONLY router ─────────────────────────────
+// ── routing: the stored flavor, else a transport only one flavor writes ──────
 
-test('a context with NO deploy record (pre-t54) is refused, and never guessed from the transport', async () => {
+test('a context with NO deploy record on an AMBIGUOUS transport is refused, naming that transport', async () => {
   const contextsFile = tmpCtxFile({ old: { ssh: 'user@box', webPort: 7901 } });
   const { code, stderr } = await cli(['upgrade', 'node', 'old'], { contextsFile, probeVersion: reports('4.5.0') });
   // The MESSAGE is asserted before the exit code, deliberately: a bare
   // `2 !== 0` tells the next reader that something changed, not what broke.
   assert.match(stderr, /does not record how it was deployed/,
     'a pre-t54 context must be refused by NAME — an ssh deploy and a remote docker deploy save identical transports, so guessing here is how an upgrade re-runs the wrong path');
+  assert.match(stderr, /Its ssh transport cannot answer it either/,
+    'the refusal must scope its claim to THIS transport: a kubectl transport CAN answer it, and a blanket "cannot be determined" would be a lie the operator acts on');
+  assert.match(stderr, /an ssh deploy and a remote docker deploy save identical transports/,
+    'and must keep the example that makes the ambiguity concrete');
   assert.match(stderr, /Re-run the flavor's deploy/,
     'the refusal must name what to do instead — re-running deploy is safe now, and it stamps the record so this works next time');
   assert.strictEqual(code, EXIT.USAGE, 'and it must exit USAGE, so a script can branch on it');
@@ -271,6 +275,87 @@ test('helm: --force-conflicts reaches the delegate, and is absent by default (t5
   });
   assert.ok(!without.helmArgs.includes('--force-conflicts'),
     'a plain upgrade must NEVER force — taking ownership of whatever disagrees is not something an operator should get without asking');
+});
+
+// ── the kubectl transport is unambiguous: only the helm flavor writes it ──────
+
+const RECORDLESS_KUBECTL_CTX = (kubectl) => ({
+  mynode: { kubectl, webPort: 8080, token: 'tok' },
+});
+
+test('helm: a recordless KUBECTL node upgrades — the helm plan runs against the transport\'s namespace and context', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile(RECORDLESS_KUBECTL_CTX({ target: 'svc/mynode', namespace: 'agents', context: 'prod' }));
+  const { code, stdout } = await cli(['upgrade', 'node', 'mynode'], {
+    contextsFile, execFn: fakeK8s(rec), probeVersion: reports('1.0.0'),
+    probeHelm: async () => ({ app: 'clodex', version: U.helmPinnedTag() }),
+  });
+  // The CONSEQUENCE first: the cluster call is what proves the plan ran, and it
+  // is what the refusal used to prevent.
+  const status = rec.calls.find((c) => c[0] === 'helm' && c[1] === 'status');
+  assert.ok(status, 'the helm plan must actually run — a recordless kubectl node is unambiguously helm, and refusing it is what this fixes');
+  assert.ok(status.join(' ').includes('--namespace agents'), status.join(' '));
+  assert.ok(status.join(' ').includes('--kube-context prod'), status.join(' '));
+  assert.notStrictEqual(code, EXIT.USAGE, 'and it must NOT refuse by usage any more');
+  assert.strictEqual(code, EXIT.OK, stdout);
+  assert.match(stdout, /inferred helm from its kubectl transport/,
+    'the inference must be SAID out loud — an operator who never deployed helm here needs to know why a helm upgrade is running');
+  assert.ok(rec.helmArgs, 'and the upgrade itself reached helm');
+});
+
+test('helm: a recordless kubectl node with NO namespace falls back to the packaged default', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile(RECORDLESS_KUBECTL_CTX({ target: 'svc/mynode' }));
+  const { code } = await cli(['upgrade', 'node', 'mynode'], {
+    contextsFile, execFn: fakeK8s(rec), probeVersion: reports('1.0.0'),
+    probeHelm: async () => ({ app: 'clodex', version: U.helmPinnedTag() }),
+  });
+  assert.strictEqual(code, EXIT.OK);
+  const status = rec.calls.find((c) => c[0] === 'helm' && c[1] === 'status');
+  assert.ok(status.join(' ').includes(`--namespace ${D.DEFAULT_HELM_NAMESPACE}`), status.join(' '));
+  assert.ok(!status.includes('--kube-context'),
+    'and no --kube-context is invented from nothing: helm/kubectl resolving their own current context is the honest fallback');
+});
+
+test('helm: a successful upgrade STAMPS the inferred record, so the next run reads instead of infers', async () => {
+  const contextsFile = tmpCtxFile(RECORDLESS_KUBECTL_CTX({ target: 'svc/mynode', namespace: 'agents', context: 'prod' }));
+  const { code } = await cli(['upgrade', 'node', 'mynode'], {
+    contextsFile, execFn: fakeK8s({}), probeVersion: reports('1.0.0'),
+    probeHelm: async () => ({ app: 'clodex', version: U.helmPinnedTag() }),
+  });
+  assert.strictEqual(code, EXIT.OK);
+  const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.deepStrictEqual(after.contexts.mynode.deploy, { flavor: 'helm', release: 'mynode', namespace: 'agents', kubeContext: 'prod' },
+    'the record must be stamped in the same shape deployHelmVerb writes — an inference repeated forever is one transport change away from being wrong silently');
+  // And the second run needs no inference at all.
+  const rec2 = {};
+  const { code: c2, stdout: s2 } = await cli(['upgrade', 'node', 'mynode', '--force'], {
+    contextsFile, execFn: fakeK8s(rec2), probeVersion: reports('1.0.0'),
+    probeHelm: async () => ({ app: 'clodex', version: U.helmPinnedTag() }),
+  });
+  assert.strictEqual(c2, EXIT.OK);
+  assert.doesNotMatch(s2, /inferred helm/, 'the stamped record is read, not re-inferred');
+});
+
+test('helm: a --dry-run on a recordless kubectl node stamps NOTHING', async () => {
+  const contextsFile = tmpCtxFile(RECORDLESS_KUBECTL_CTX({ target: 'svc/mynode', namespace: 'agents', context: 'prod' }));
+  const { code } = await cli(['upgrade', 'node', 'mynode', '--dry-run'], {
+    contextsFile, execFn: fakeK8s({}), probeVersion: reports('1.0.0'),
+  });
+  assert.strictEqual(code, EXIT.OK);
+  const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.strictEqual(after.contexts.mynode.deploy, undefined,
+    'a dry-run must not write the record — it is the mode that promises to change nothing');
+});
+
+test('a STORED flavor always beats the transport: a kubectl node recorded as "nomad" still refuses by name', async () => {
+  const contextsFile = tmpCtxFile({
+    future: { kubectl: { target: 'svc/future', namespace: 'clodex', context: 'prod' }, deploy: { flavor: 'nomad', job: 'clodex' } },
+  });
+  const { code, stderr } = await cli(['upgrade', 'node', 'future'], { contextsFile, probeVersion: reports('4.5.0') });
+  assert.match(stderr, /records deploy flavor "nomad", which this clodexctl cannot upgrade/,
+    'the inference is a FALLBACK for a missing record, never an override of one — a node a newer clodexctl recorded differently must keep failing loudly');
+  assert.strictEqual(code, EXIT.USAGE);
 });
 
 // ── fargate: the silent-success defect ───────────────────────────────────────
