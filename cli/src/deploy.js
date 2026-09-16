@@ -449,7 +449,7 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
 
   if (probe.tokenGated) {
     if (json) emit({ type: 'verify', ok: true, tokenGated: true });
-    else printer.line('node is up and token-gated (401) — add the context with your token: clodexctl ctx add …');
+    else printer.line('node is up and token-gated (401) — add the node with your token: clodexctl create node …');
   } else {
     const hello = probe.hello || {};
     if (json) emit({ type: 'verify', ok: true, host: hello.host || null, version: hello.version || null, caps: hello.caps || [] });
@@ -474,7 +474,7 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
   store.contexts[name] = entry;
   if (!store.current) store.current = name;
   contexts.save(store, io.contextsFile);
-  const hint = probe.tokenGated ? ' (token-gated — add your token: clodexctl ctx add …)' : '';
+  const hint = probe.tokenGated ? ' (token-gated — add your token: clodexctl create node …)' : '';
   if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name, tokenGated: !!probe.tokenGated });
   else printer.line(`context "${name}" ${exists ? 'updated' : 'saved'}${hint} — you can now: clodexctl --ctx ${name} get sessions`);
 }
@@ -1390,7 +1390,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     if (json) emit({ type: 'error', reason: 'verify-failed', message: e.message });
     else printer.line(`release "${name}" is live (helm --wait passed), but the wire did not answer through kubectl port-forward: ${e.message}`);
     const hint = flags['no-ctx'] ? ''
-      : ctxSaved ? ` — the context was saved; debug with: clodexctl --ctx ${name} ctx test --verbose`
+      : ctxSaved ? ` — the context was saved; debug with: clodexctl describe node ${name} --test --verbose`
         : ` — the context was NOT saved (name "${name}" exists; re-run with --force to overwrite it)`;
     throw e instanceof CliError ? new CliError(e.exitCode, `${e.message}${hint}`) : new CliError(EXIT.SERVER, `deploy helm verify failed: ${e.message}${hint}`);
   }
@@ -1773,7 +1773,7 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
     if (json) emit({ type: 'error', reason: 'verify-failed', message: e.message });
     else printer.line(`stack "${stackName}" deployed, but the node did not answer over the SSM tunnel within ${Math.round(FARGATE_VERIFY_TIMEOUT_MS / 60000)}min: ${e.message}`);
     const hint = flags['no-ctx'] ? ''
-      : ctxSaved ? ` — the context was saved; debug with: clodexctl --ctx ${ctxName} ctx test --verbose`
+      : ctxSaved ? ` — the context was saved; debug with: clodexctl describe node ${ctxName} --test --verbose`
         : ` — the context was NOT saved (name "${ctxName}" exists; re-run with --force to overwrite it)`;
     throw e instanceof CliError ? new CliError(e.exitCode, `${e.message}${hint}`) : new CliError(EXIT.SERVER, `deploy fargate verify failed: ${e.message}${hint}`);
   }

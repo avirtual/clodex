@@ -43,15 +43,17 @@ const VERB_REGISTRY = [
       'get agents [-o json|yaml|wide|name]',
       'get worktrees --repo DIR [-o json|yaml|wide|name]',
       'get catalogs [-o json|yaml]',
+      'get nodes [--current] [-o json|yaml|wide|name]',
       'get session <name> --subresource skills|args|transcript',
     ],
-    args: [['resource', 'sessions|workspaces|peers|teams|tickets|sandboxes|agents|worktrees|catalogs (singular accepted too)'], ['name', 'one object (also accepted as session/<name>)']],
+    args: [['resource', 'sessions|workspaces|peers|teams|tickets|sandboxes|agents|worktrees|catalogs|nodes (singular accepted too)'], ['name', 'one object (also accepted as session/<name>)']],
     flags: [
       ['-n, --workspace W', 'filter sessions to one workspace (client-side; default is every workspace)'],
       ['-A, --all-workspaces', 'accepted for muscle memory — already the default'],
       ['--team T', 'tickets only — one team\'s board'],
       ['--state S', 'tickets only — open|done|cancelled|all (human default: open)'],
       ['--repo DIR', 'worktrees only — the repo to list (required; resolved to an absolute path here)'],
+      ['--current', 'nodes only — print the current node NAME alone (exit 5 when none is set)'],
       ['-o FORMAT', 'json (raw wire payload) | yaml (the same payload as YAML) | wide (extra columns) | name (<singular>/<id> per line)'],
       ['--subresource S', 'sessions only — read one subresource of a named session: skills|args|transcript'],
     ],
@@ -63,8 +65,11 @@ const VERB_REGISTRY = [
       'clodexctl get sessions -o name | xargs -n1 clodexctl logs',
       'clodexctl get session bob --subresource skills',
       'clodexctl get session bob --subresource args',
+      'clodexctl get nodes',
+      'clodexctl get nodes --current',
     ],
     notes: [
+      'get nodes reads the LOCAL contexts file and opens no transport — it works with every node unreachable. The token is never printed, in any -o format.',
       'get sessions and get catalogs run against a node of ANY version. Every other resource needs the resources API — an older node, or one that does not serve that resource (a headless node has no sandboxes), answers with the upgrade line and exit 1.',
       '-n filters on each row\'s own workspace field, so it needs nothing from the node. It is ignored on the node-scoped resources (peers, teams, tickets, sandboxes, agents, worktrees).',
       'Default columns: sessions NAME TYPE ACTIVITY CWD; workspaces ID NAME; peers ID LABEL ONLINE HOST VERSION; teams NAME; tickets ID TEAM STATE TITLE; sandboxes ID LABEL; agents NAME MODEL DESCRIPTION; worktrees PATH BRANCH HEAD.',
@@ -134,11 +139,14 @@ const VERB_REGISTRY = [
       'describe session <name>', 'describe workspace <name>', 'describe peer <id>',
       'describe team <name>', 'describe ticket <id> [--team T]', 'describe sandbox <id>',
       'describe agent <name>', 'describe catalogs',
+      'describe node [name]', 'describe node [name] --test [--verbose]',
     ],
-    args: [['resource', 'session|workspace|peer|team|ticket|sandbox|agent|catalogs'], ['name', 'the object (also accepted as session/<name>)']],
-    examples: ['clodexctl describe session bob', 'clodexctl describe workspace main', 'clodexctl describe ticket t42 --team clodex'],
+    args: [['resource', 'session|workspace|peer|team|ticket|sandbox|agent|catalogs|node'], ['name', 'the object (also accepted as session/<name>)']],
+    flags: [['--test', 'node only — open the transport + GET hello, then report identity or the failure'], ['--verbose', 'with --test: also print the transport line and the resolved base URL']],
+    examples: ['clodexctl describe session bob', 'clodexctl describe workspace main', 'clodexctl describe ticket t42 --team clodex', 'clodexctl describe node cust --test --verbose'],
     notes: [
       'A composed human view — there is no -o json here (kubectl\'s describe has none either). For machine output use `get <resource> <name> -o json`.',
+      'describe node reads the LOCAL contexts file (token redacted, never printed) and a bare `describe node` shows the current one. --test is the ONE node verb that dials: it relays the tunnel child\'s stderr verbatim on failure, which is the diagnosis surface.',
       'Needs the resources API; an older node answers with the upgrade line and exit 1.',
       'A ticket id is unique per TEAM, not per node: an id on more than one board asks you to add --team and exits 2.',
       'describe peer lists the peer\'s sessions, describe team its roles and activity, describe sandbox its ports, and describe agent prints the definition file verbatim after the key block.',
@@ -185,9 +193,23 @@ const VERB_REGISTRY = [
   // ── sessions ───────────────────────────────────────────────────────────
   {
     name: 'create', group: 'sessions',
-    summary: 'create a resource on the node',
-    usage: 'create session <name> --cwd DIR --type claude|codex|bash [--model M] [--arg X …] [--env KEY=VALUE …] [--fork] [-o json|yaml]',
-    args: [['resource', 'session (singular or plural spelling)'], ['name', 'new session name ([a-zA-Z0-9._-], 1-64)']],
+    summary: 'create a resource on the node, or a local node record',
+    usage: [
+      'create session <name> --cwd DIR --type claude|codex|bash [--model M] [--arg X …] [--env KEY=VALUE …] [--fork] [-o json|yaml]',
+      'create node <name> (one transport flag — see SUBCOMMANDS)',
+      'create node --import [--data-dir DIR] [--dry-run] [--force]',
+    ],
+    args: [['resource', 'session | node (singular or plural spelling)'], ['name', 'new session/node name ([a-zA-Z0-9._-], 1-64)']],
+    subcommands: [
+      ['create node <name> --url URL [--token T]', 'a direct node (speak http straight at it)'],
+      ['create node <name> --ssh HOST [--remote-port N] [--token T]', 'ssh -L tunnel (remotePort default 7900)'],
+      ['create node <name> --ssm TARGET [--region R] [--profile P]', 'AWS SSM port-forward tunnel'],
+      ['create node <name> --ssm-ecs CLUSTER/FAMILY [--region R] [--profile P]', 'Fargate — task id resolved at connect'],
+      ['create node <name> --kubectl POD_OR_SVC [--namespace NS] [--kube-context C]', 'kubectl port-forward tunnel'],
+      ['create node <name> --gcloud-iap INSTANCE [--zone Z] [--project P]', 'GCP IAP tunnel'],
+      ['create node <name> --az-bastion NAME --az-resource-group G --az-target ID', 'Azure Bastion tunnel'],
+      ['create node <name> --token T --tunnel CMD… {port}…', 'generalized tunnel argv ({port} substituted; must be LAST)'],
+    ],
     flags: [
       ['--cwd DIR', 'working directory for the session'],
       ['--type T', 'claude | codex | bash'],
@@ -195,27 +217,38 @@ const VERB_REGISTRY = [
       ['--arg X', 'raw passthrough CLI arg — repeatable (rides extraArgs)'],
       ['--env KEY=VALUE', 'session env var — repeatable. Merged over the node\'s global/workspace scopes. The node re-validates + deny-lists; the ack echoes the keys actually applied and create warns loudly if any were dropped.'],
       ['--fork', 'fork mode (agents)'],
+      ['--import', 'node only, no name — seed nodes from the LOCAL GUI\'s stores (read-only)'],
+      ['--data-dir DIR --dry-run --force', 'with --import: where to read, write nothing, overwrite collisions'],
     ],
     examples: [
       'clodexctl create session worker --cwd /home/clodex/work --type claude',
       'clodexctl create session b --cwd /w --type claude --model opus --arg --foo',
       'clodexctl create session w --cwd /w --type claude --env AWS_PROFILE=acct --env AWS_ROLE_SESSION_NAME=w',
+      'clodexctl create node home --url http://127.0.0.1:7900 --token T',
+      'clodexctl create node cust --ssm-ecs my-cluster/clodex --token T',
+      'clodexctl create node --import',
     ],
     notes: [
       'Post-create liveness check: a child that dies on exec (e.g. the agent CLI isn\'t on the node\'s PATH) STILL returns a pid, so create waits a beat and re-checks the live list — gone → it says WHY instead of reporting a dead pid.',
       '--env is applied ONLY at create; `exec`/`dm` target an existing session and cannot change its env. A node predating env support drops the keys silently on its side — create detects the missing ack echo and warns.',
-      'Only `session` is creatable today; any other resource word is a usage error naming what is supported.',
+      'create node writes the LOCAL contexts file and opens nothing. Exactly one transport flag; --ssm and --ssm-ecs are mutually exclusive; --tunnel is greedy (must be LAST, and needs a {port} placeholder). The first node created becomes the current one.',
+      'The typed cloud kinds (ssm/ssm-ecs/kubectl/gcloud-iap/az-bastion) are DATA — safe to --import or to commit to a shared team file; a raw --tunnel argv is code and is never shared by import. --import skips collisions unless --force, writes nothing under --dry-run, and never touches which node is current; tokens flow file→file and are never printed.',
+      'session and node are the creatable resources; any other resource word is a usage error naming what is supported.',
     ],
   },
   {
     name: 'delete', group: 'sessions',
-    summary: 'HARD DELETE a resource on the engine (no resume)',
-    usage: 'delete session <name> [--force] [-o json|yaml]',
-    args: [['resource', 'session (singular or plural spelling)'], ['name', 'session to delete']],
+    summary: 'HARD DELETE a resource on the engine, or forget a node',
+    usage: [
+      'delete session <name> [--force] [-o json|yaml]',
+      'delete node <name> [--force] [-o json|yaml]',
+    ],
+    args: [['resource', 'session | node (singular or plural spelling)'], ['name', 'the object to delete']],
     flags: [['--force', 'skip the type-the-name confirm (REQUIRED with -o json|yaml)']],
-    examples: ['clodexctl delete session doomed', 'clodexctl delete session doomed --force -o json'],
+    examples: ['clodexctl delete session doomed', 'clodexctl delete session doomed --force -o json', 'clodexctl delete node oldbox'],
     notes: [
       'This is a hard delete on the engine — no resume. Confirms by typing the name back unless --force. In -o json|yaml/non-interactive mode --force is required (there is no prompt to answer).',
+      'delete node only forgets the LOCAL record (and clears `current` if it named that node) — the engine it pointed at is untouched and keeps running. Same confirm rules.',
     ],
   },
   {
@@ -265,38 +298,16 @@ const VERB_REGISTRY = [
     notes: ['Output is always JSON — these are structured telemetry payloads with no compact human form.'],
   },
 
-  // ── contexts ───────────────────────────────────────────────────────────
   {
-    name: 'ctx', group: 'contexts',
-    summary: 'manage connection contexts (the kubeconfig)',
-    usage: 'ctx <add|use|current|list|show|rm|import|test> [args]',
-    subcommands: [
-      ['ctx add <name> --url URL [--token T]', 'a direct context (speak http straight at it)'],
-      ['ctx add <name> --ssh HOST [--remote-port N] [--token T]', 'ssh -L tunnel (remotePort default 7900)'],
-      ['ctx add <name> --ssm TARGET [--region R] [--profile P]', 'AWS SSM port-forward tunnel'],
-      ['ctx add <name> --ssm-ecs CLUSTER/FAMILY [--region R] [--profile P]', 'Fargate — task id resolved at connect'],
-      ['ctx add <name> --kubectl POD_OR_SVC [--namespace NS] [--kube-context C]', 'kubectl port-forward tunnel'],
-      ['ctx add <name> --gcloud-iap INSTANCE [--zone Z] [--project P]', 'GCP IAP tunnel'],
-      ['ctx add <name> --az-bastion NAME --az-resource-group G --az-target ID', 'Azure Bastion tunnel'],
-      ['ctx add <name> --token T --tunnel CMD… {port}…', 'generalized tunnel argv ({port} substituted; must be LAST)'],
-      ['ctx use <name>', 'set the current context'],
-      ['ctx current', 'print the current context NAME (exit 5 when none is set)'],
-      ['ctx list  (ctx ls)', 'list contexts (* = current)'],
-      ['ctx show [name]', 'show a context (token redacted)'],
-      ['ctx rm <name>  (ctx remove)', 'remove a context'],
-      ['ctx import [--data-dir DIR] [--dry-run] [--force]', 'seed contexts from the LOCAL GUI\'s stores (read-only)'],
-      ['ctx test [--verbose]', 'open the transport + GET hello; relays child stderr verbatim'],
-    ],
-    examples: [
-      'clodexctl ctx add home --url http://127.0.0.1:7900 --token T',
-      'clodexctl ctx add cust --ssm-ecs my-cluster/clodex --token T',
-      'clodexctl --ctx cust ctx test --verbose',
-    ],
+    name: 'use', group: 'nodes',
+    summary: 'switch the current node (kubectl use-context)',
+    usage: 'use node <name>',
+    args: [['resource', 'node — the only usable resource'], ['name', 'a node the contexts file already knows']],
+    examples: ['clodexctl use node home', 'clodexctl get nodes --current'],
     notes: [
-      'Stored at ~/.clodex/cli/contexts.json (0600 — it holds tokens; a loose mode warns on read).',
-      'The typed cloud kinds (ssm/ssm-ecs/kubectl/gcloud-iap/az) are DATA — safe to ctx import or commit to a shared team file; a raw --tunnel argv is code and is never shared by import. --ssm and --ssm-ecs are mutually exclusive; --tunnel is greedy (must be last).',
-      'import: collisions skip unless --force; --dry-run writes nothing; `current` is never touched. Tokens flow file→file, never printed.',
-      'ctx current prints the name alone, kubectl\'s `config current-context`. With no current context it exits 5 and names the fix.',
+      'The nodes themselves are managed with the ordinary resource verbs: get nodes, describe node, create node, delete node.',
+      'A node is a LOCAL record in ~/.clodex/cli/contexts.json (0600 — it holds tokens; a loose mode warns on read). Nothing about it is served by a node over the wire, so no node verb needs a reachable engine.',
+      'The current node is what every other verb talks to unless --ctx/--url/--token (or CLODEX_URL/CLODEX_TOKEN) overrides it.',
     ],
   },
 
@@ -461,15 +472,14 @@ const VERB_REGISTRY = [
 const GROUPS = [
   ['daily', 'DAILY'],
   ['sessions', 'SESSIONS'],
-  ['contexts', 'CONTEXTS'],
+  ['nodes', 'NODES'],
   ['deploy', 'DEPLOY'],
   ['plumbing', 'PLUMBING (prefer `exec` — these are the raw paths it routes over)'],
 ];
 
 const BY_NAME = new Map(VERB_REGISTRY.map((e) => [e.name, e]));
 
-// Resolve a token users type to a registry entry. `ls`/`remove` land on `ctx`
-// only via ctx's own subcommands, so we resolve on the top-level name only.
+// Resolve a token users type to a registry entry, on the top-level name only.
 function resolveEntry(token) {
   return BY_NAME.get(token) || null;
 }
@@ -493,8 +503,8 @@ function renderIndex() {
   }
   lines.push('');
   lines.push('GLOBAL FLAGS (any verb)');
-  lines.push('  --ctx NAME               use a named context (overrides current)');
-  lines.push('  --url URL --token T      one-shot direct context (no file needed)');
+  lines.push('  --ctx NAME               talk to a named node (overrides the current one)');
+  lines.push('  --url URL --token T      one-shot direct node (no file needed)');
   lines.push('  -o json|yaml             machine-stable output on read verbs');
   lines.push('  -h, --help   -V, --version');
   lines.push('');

@@ -123,13 +123,13 @@
     <p class="step"><code>clodexctl</code> drives the same fleet from a terminal — no Electron, no app required (Node 20+):</p>
 <pre><code>git clone https://github.com/avirtual/clodex &amp;&amp; npm i -g ./clodex/cli</code></pre>
     <p class="step">Already running the desktop app? Adopt everything it knows in one step:</p>
-<pre><code>clodexctl ctx import          # adopts every node the GUI already knows
-clodexctl ctx use local       # or any name ctx import printed
+<pre><code>clodexctl create node --import   # adopts every node the GUI already knows
+clodexctl use node local         # or any name --import printed
 clodexctl get sessions        # kubectl's grammar: &lt;verb&gt; &lt;resource&gt; [name]
 clodexctl describe session bob
 clodexctl logs bob -f</code></pre>
     <p class="step">No app on this box? Point it at a node directly instead:</p>
-<pre><code>clodexctl ctx add prod --url https://box:8787 --token &lt;T&gt; &amp;&amp; clodexctl get sessions</code></pre>
+<pre><code>clodexctl create node prod --url https://box:8787 --token &lt;T&gt; &amp;&amp; clodexctl get sessions</code></pre>
   </div>
 </section>
 

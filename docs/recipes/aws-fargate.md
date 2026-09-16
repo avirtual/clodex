@@ -19,7 +19,7 @@ Every step is copy-paste; replace the ALL-CAPS placeholders.
 > Bedrock nodes auto-disable it anyway), `Cpu`/`Memory` (validated Fargate
 > pairings), `Persistent` (§3),
 > `SubnetIds`, `SecurityGroupId`, `ClusterName`. It mints the wire token itself
-> and outputs the exact `ctx add`, `run-task`, and `put-secret-value` commands.
+> and outputs the exact `create node`, `run-task`, and `put-secret-value` commands.
 > The manual walkthrough below is the same shape, spelled out.
 
 ## 0. One command (`clodexctl deploy node <stack> --fargate`)
@@ -192,10 +192,10 @@ and `secretsmanager.<region>` — allowlist exactly these on a locked-down egres
 Register a context once with the typed `--ssm-ecs` kind — no task-id copy-paste:
 
 ```sh
-clodexctl ctx add fargate --ssm-ecs CLUSTER/clodex-node --token <wire-token from §1>
+clodexctl create node fargate --ssm-ecs CLUSTER/clodex-node --token <wire-token from §1>
 #   [--region R] [--profile P] if not your default aws config
 
-clodexctl --ctx fargate ctx test    # opens the SSM tunnel, verifies hello
+clodexctl describe node fargate --test   # opens the SSM tunnel, verifies hello
 ```
 
 `--ssm-ecs CLUSTER/FAMILY` **resolves the running task at connect time** — the
@@ -203,7 +203,7 @@ context stores the cluster/family (stable), and each open does the
 `aws ecs list-tasks` → `describe-tasks` lookup to find the current task's SSM
 target. That's the whole reason for derive-at-open: a Fargate task id is
 ephemeral, so a stored `ecs:CLUSTER_<taskId>_<runtimeId>` target goes stale on
-every redeploy. The typed kind is also **data** — safe to `ctx import` or commit
+every redeploy. The typed kind is also **data** — safe to import or commit
 to a shared team file, unlike a raw `--tunnel` argv.
 
 <details><summary>What <code>--ssm-ecs</code> expands to (the raw form)</summary>
@@ -215,7 +215,7 @@ TASK_ID=$(aws ecs list-tasks --cluster CLUSTER --family clodex-node --query 'tas
 RUNTIME_ID=$(aws ecs describe-tasks --cluster CLUSTER --tasks $TASK_ID \
   --query 'tasks[0].containers[0].runtimeId' --output text)
 
-clodexctl ctx add fargate --token <wire-token> --tunnel \
+clodexctl create node fargate --token <wire-token> --tunnel \
   aws ssm start-session --target ecs:CLUSTER_${TASK_ID}_${RUNTIME_ID} \
   --document-name AWS-StartPortForwardingSession \
   --parameters '{"portNumber":["7900"],"localPortNumber":["{port}"]}'
@@ -224,7 +224,7 @@ clodexctl ctx add fargate --token <wire-token> --tunnel \
 
 From here it's the normal surface: `create session`, `exec`, `logs`, `get sessions`.
 Support boundary: clodexctl substitutes `{port}`, waits for the port, relays
-`aws`'s own stderr verbatim on failure — `ctx test --verbose` is the diagnosis
+`aws`'s own stderr verbatim on failure — `describe node --test --verbose` is the diagnosis
 surface; the SSM plugin's errors are AWS's, not ours.
 
 ## 4. Bedrock variant (no Anthropic secret on the node)

@@ -10,6 +10,7 @@ const { openGuarded } = require('./sse-guard');
 const R = require('./resources');
 const { VERSION } = require('./help');
 
+const NODE_IS_LOCAL = 'node is a LOCAL record (the contexts file), not a wire resource — node verbs run in clodexctl, not over the wire';
 
 async function info({ client, printer, flags }) {
   const hello = await client.get('/api/peer/hello', 'info');
@@ -19,6 +20,7 @@ async function info({ client, printer, flags }) {
 
 async function get({ client, ctx, printer, flags, args, io = {} }) {
   const target = R.parseTarget(args, 'get');
+  if (target.resource === 'nodes') throw new CliError(EXIT.USAGE, NODE_IS_LOCAL);
   const label = R.ctxLabel(ctx, flags);
   if (flags.subresource != null) {
     return getSubresource({ client, ctx, printer, flags, label, target, io });
@@ -169,6 +171,7 @@ async function getCatalogs({ client, printer, flags }) {
 
 async function describe({ client, ctx, printer, flags, args }) {
   const target = R.parseTarget(args, 'describe');
+  if (target.resource === 'nodes') throw new CliError(EXIT.USAGE, NODE_IS_LOCAL);
   const label = R.ctxLabel(ctx, flags);
   if (target.resource === 'catalogs') {
     await R.requireResource(client, 'catalogs', 'get', label);
@@ -390,11 +393,12 @@ function warnEnvMismatch(printer, sentKeys, applied) {
   }
 }
 
-const CREATABLE = ['session'];
-const DELETABLE = ['session'];
+const CREATABLE = ['session', 'node'];
+const DELETABLE = ['session', 'node'];
 const PATCHABLE = ['session'];
 const RESTARTABLE = ['session', 'node'];
 const DEPLOYABLE = ['node'];
+const USABLE = ['node'];
 
 const NAMELESS_RESOURCES = new Set(['restart node']);
 
@@ -414,7 +418,7 @@ function takeResourceWord(args, verb, supported) {
   return { word: singular, rest };
 }
 
-const RESOURCE_VERBS = { create: CREATABLE, delete: DELETABLE, patch: PATCHABLE, restart: RESTARTABLE, deploy: DEPLOYABLE, undeploy: DEPLOYABLE, upgrade: DEPLOYABLE };
+const RESOURCE_VERBS = { create: CREATABLE, delete: DELETABLE, patch: PATCHABLE, restart: RESTARTABLE, deploy: DEPLOYABLE, undeploy: DEPLOYABLE, upgrade: DEPLOYABLE, use: USABLE };
 
 function checkResourceWord(verb, args) {
   const supported = RESOURCE_VERBS[verb];
@@ -424,6 +428,7 @@ function checkResourceWord(verb, args) {
 async function create(bundle) {
   const { word, rest } = takeResourceWord(bundle.args, 'create', CREATABLE);
   if (word === 'session') return createSession({ ...bundle, args: rest });
+  throw new CliError(EXIT.USAGE, NODE_IS_LOCAL);
 }
 
 async function createSession({ client, printer, flags, args, io = {} }) {
@@ -678,6 +683,7 @@ async function execPty({ client, ctx, printer, flags, args, mode = null }) {
 async function del(bundle) {
   const { word, rest } = takeResourceWord(bundle.args, 'delete', DELETABLE);
   if (word === 'session') return deleteSession({ ...bundle, args: rest });
+  throw new CliError(EXIT.USAGE, NODE_IS_LOCAL);
 }
 
 async function deleteSession({ client, ctx, printer, flags, args, prompt = defaultPrompt }) {
@@ -740,8 +746,7 @@ async function restartNode({ client, printer, flags, prompt = defaultPrompt }) {
 }
 
 
-function ctxAdd({ store, saveStore, printer, flags, args }) {
-  const name = requireName(args[0], 'ctx add');
+function entryFromFlags(flags) {
   const entry = {};
   if (flags.url) entry.url = String(flags.url);
   if (flags.ssh) entry.ssh = String(flags.ssh);
@@ -778,6 +783,12 @@ function ctxAdd({ store, saveStore, printer, flags, args }) {
   if (flags.remotePort) entry.remotePort = parseIntOr(flags.remotePort, 'remote-port');
   if (flags.token) entry.token = String(flags.token);
   validateEntry(entry);
+  return entry;
+}
+
+function ctxAdd({ store, saveStore, printer, flags, args }) {
+  const name = requireName(args[0], 'ctx add');
+  const entry = entryFromFlags(flags);
   store.contexts[name] = entry;
   if (!store.current) store.current = name;
   saveStore(store);
@@ -793,14 +804,14 @@ function ctxUse({ store, saveStore, printer, args }) {
 }
 
 function ctxCurrent({ store, printer }) {
-  if (!store.current) throw new CliError(EXIT.NOTFOUND, 'no current context (clodexctl ctx use <name>)');
+  if (!store.current) throw new CliError(EXIT.NOTFOUND, 'no current context (ctx use <name>)');
   printer.line(store.current);
 }
 
 function ctxList({ store, printer, flags }) {
   const names = Object.keys(store.contexts);
   if (flags.json) { printer.json({ current: store.current, contexts: store.contexts }); return; }
-  if (names.length === 0) { printer.line('(no contexts — add one with `clodexctl ctx add`)'); return; }
+  if (names.length === 0) { printer.line('(no contexts — add one with `ctx add`)'); return; }
   const rows = names.map((n) => {
     const e = store.contexts[n];
     return [n === store.current ? '*' : '', n, entryKind(e), entryTarget(e)];
@@ -834,6 +845,122 @@ function ctxShow({ store, printer, flags, args }) {
       `token       ${e.token ? '(set)' : '(none)'}`,
     ].filter(Boolean).join('\n'));
   }
+}
+
+function nodeKind(e) {
+  const family = entryKind(e);
+  if (family === 'ssm') return e.ssm && e.ssm.ecs ? 'ssm-ecs' : 'ssm';
+  if (family === 'gcloud') return 'gcloud-iap';
+  if (family === 'az') return 'az-bastion';
+  return family;
+}
+
+function nodeRow(name, entry, current) {
+  const e = entry || {};
+  const { token, ...transport } = e;
+  return {
+    name,
+    current: name === current,
+    kind: nodeKind(e),
+    locator: entryTarget(e),
+    remotePort: e.remotePort || null,
+    tokenSet: !!token,
+    transport,
+  };
+}
+
+function nodeRows(store) {
+  return Object.keys(store.contexts).map((n) => nodeRow(n, store.contexts[n], store.current));
+}
+
+const NODE_EMPTY = '(no nodes — add one with `clodexctl create node <name> --url …`)';
+
+function nodeList({ store, printer, flags, args }) {
+  if (flags.current) return nodeCurrent({ store, printer });
+  const target = R.parseTarget(args, 'get');
+  if (target.name) {
+    throw new CliError(EXIT.USAGE, `get nodes takes no name (try: describe node ${target.name})`);
+  }
+  const rows = nodeRows(store);
+  if (flags.json) { printer.json({ current: store.current, nodes: rows }); return; }
+  if (flags.output === 'name') { printer.line(out.renderNames('node', rows)); return; }
+  if (rows.length === 0) { printer.line(NODE_EMPTY); return; }
+  if (flags.output === 'wide') {
+    printer.line(out.table(['', 'NAME', 'KIND', 'LOCATOR', 'REMOTE-PORT', 'TOKEN'],
+      rows.map((r) => [r.current ? '*' : '', r.name, r.kind, r.locator, r.remotePort || '', r.tokenSet ? '(set)' : '(none)'])));
+    return;
+  }
+  printer.line(out.table(['', 'NAME', 'KIND', 'LOCATOR'],
+    rows.map((r) => [r.current ? '*' : '', r.name, r.kind, r.locator])));
+}
+
+function nodeCurrent({ store, printer }) {
+  if (!store.current) throw new CliError(EXIT.NOTFOUND, 'no current node (clodexctl use node <name>)');
+  printer.line(store.current);
+}
+
+function nodeName(store, args, verb) {
+  const target = R.parseTarget(args, verb);
+  const name = target.name || store.current;
+  if (!name) throw new CliError(EXIT.USAGE, `${verb} node needs a name (or set a current node)`);
+  return name;
+}
+
+function nodeDescribe({ store, printer, args }) {
+  const name = nodeName(store, args, 'describe');
+  const e = store.contexts[name];
+  if (!e) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
+  const r = nodeRow(name, e, store.current);
+  printer.line([
+    `name        ${name}${r.current ? ' (current)' : ''}`,
+    `kind        ${r.kind}`,
+    `locator     ${r.locator}`,
+    r.remotePort ? `remotePort  ${r.remotePort}` : null,
+    `token       ${r.tokenSet ? '(set)' : '(none)'}`,
+  ].filter(Boolean).join('\n'));
+}
+
+function nodeCreate(bundle) {
+  const { store, saveStore, printer, flags } = bundle;
+  const { rest: args } = takeResourceWord(bundle.args, 'create', CREATABLE);
+  if (flags.import) {
+    if (args.length) throw new CliError(EXIT.USAGE, `create node --import takes no name ("${args[0]}" is extra)`);
+    return ctxImport(bundle);
+  }
+  const name = requireName(args[0], 'create node', 'node');
+  store.contexts[name] = entryFromFlags(flags);
+  if (!store.current) store.current = name;
+  saveStore(store);
+  if (flags.json) { printer.json({ name, created: true, current: store.current }); return; }
+  printer.line(`node "${name}" created${store.current === name ? ' (current)' : ''}`);
+}
+
+async function nodeDelete({ store, saveStore, printer, flags, args: raw, prompt = defaultPrompt }) {
+  const { rest: args } = takeResourceWord(raw, 'delete', DELETABLE);
+  const name = requireName(args[0], 'delete node', 'node');
+  if (!store.contexts[name]) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
+  if (!flags.force && flags.json) {
+    throw new CliError(EXIT.USAGE, 'delete node needs --force in -o json|yaml/non-interactive mode (there is no prompt to answer)');
+  }
+  if (!flags.force) {
+    const ok = await prompt(`delete node "${name}"? Type the name to confirm: `);
+    if (String(ok).trim() !== name) throw new CliError(EXIT.USAGE, 'aborted — confirmation did not match');
+  }
+  delete store.contexts[name];
+  if (store.current === name) store.current = null;
+  saveStore(store);
+  if (flags.json) printer.json({ name, deleted: true, current: store.current });
+  else printer.line(`node "${name}" deleted`);
+}
+
+function nodeUse({ store, saveStore, printer, flags = {}, args: raw }) {
+  const { rest: args } = takeResourceWord(raw, 'use', USABLE);
+  const name = requireName(args[0], 'use node', 'node');
+  if (!store.contexts[name]) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
+  store.current = name;
+  saveStore(store);
+  if (flags.json) { printer.json({ current: name }); return; }
+  printer.line(`current node: ${name}`);
 }
 
 function ctxImport({ store, saveStore, printer, flags, env }) {
@@ -888,9 +1015,9 @@ function transcriptPath(name) {
 }
 
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
-function requireName(v, verb) {
-  if (v == null || v === '') throw new CliError(EXIT.USAGE, `${verb} needs a session name`);
-  if (!NAME_RE.test(v)) throw new CliError(EXIT.USAGE, `bad session name "${v}" — allowed [a-zA-Z0-9._-], 1-64 chars`);
+function requireName(v, verb, noun = 'session') {
+  if (v == null || v === '') throw new CliError(EXIT.USAGE, `${verb} needs a ${noun} name`);
+  if (!NAME_RE.test(v)) throw new CliError(EXIT.USAGE, `bad ${noun} name "${v}" — allowed [a-zA-Z0-9._-], 1-64 chars`);
   return v;
 }
 
@@ -913,6 +1040,7 @@ module.exports = {
   create, createSession, dm, input, exec, execPty, sessionType,
   delete: del, deleteSession, restart, restartSession, restartNode, patch, patchSession,
   ctxAdd, ctxUse, ctxCurrent, ctxList, ctxRm, ctxShow, ctxImport,
+  nodeList, nodeCurrent, nodeDescribe, nodeCreate, nodeDelete, nodeUse, nodeRows,
   entryKind, entryTarget,
-  requireName, parseIntOr, QUERY_KINDS, SESSION_SUBRESOURCES, takeResourceWord, checkResourceWord, RESOURCE_VERBS, DEPLOYABLE,
+  requireName, parseIntOr, QUERY_KINDS, SESSION_SUBRESOURCES, takeResourceWord, checkResourceWord, RESOURCE_VERBS, DEPLOYABLE, USABLE,
 };

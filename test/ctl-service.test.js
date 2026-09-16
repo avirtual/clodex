@@ -911,11 +911,24 @@ test('helpIndex carries summaries and no credential material', () => {
   svc.dispose();
 });
 
+test('a node word in this tab is a refusal, never an empty exit 0', async () => {
+  const { svc } = mkService();
+  const ok = await svc.run('ctx add prod --url http://127.0.0.1:1 --token T');
+  assert.strictEqual(ok.exitCode, 0, `ENTER: the tab runs its own node writes (${ok.output})`);
+  for (const line of ['create node x --url http://h', 'create node --import', 'get nodes', 'describe node prod']) {
+    const r = await svc.run(line);
+    assert.strictEqual(r.exitCode, 2, `${line} -> ${r.exitCode}: ${JSON.stringify(r.output)}`);
+    assert.match(r.output, /LOCAL record/, line);
+  }
+  const still = await svc.run('ctx list');
+  assert.match(still.output, /prod/, 'the refusals wrote nothing and removed nothing');
+  svc.dispose();
+});
+
 // ── bare ctx subcommands ─────────────────────────────────────────────────────
 // `list` means `ctx list`. The property that needs pinning is not the rewrite —
-// it is the GUARD: no ctx sub collides with a registry verb today, so a plain
-// alias table passes every test below except the shadowing one, right up until
-// someone adds a top-level verb by that name and it silently stops running.
+// it is the GUARD: a sub that collides with a registry verb must lose, or the
+// alias shadows the verb and it silently stops running.
 
 test('aliasCtx rewrites a bare ctx sub, and a real verb always wins', () => {
   const isVerb = (t) => ['get', 'info', 'ctx'].includes(t);
@@ -927,11 +940,8 @@ test('aliasCtx rewrites a bare ctx sub, and a real verb always wins', () => {
   assert.deepStrictEqual(aliasCtx(['get'], isVerb), ['get']);
   assert.deepStrictEqual(aliasCtx(['deploy', 'host'], isVerb), ['deploy', 'host']);
   assert.deepStrictEqual(aliasCtx([], isVerb), []);
-  // Already prefixed: `ctx` is itself a verb, so the guard stops a second pass
-  // producing `ctx ctx list`.
   assert.deepStrictEqual(aliasCtx(['ctx', 'list'], isVerb), ['ctx', 'list']);
-  // THE GUARD. A future top-level `list` must keep its own dispatch. Nothing
-  // else in this file fails if the isVerb check is dropped.
+  // THE GUARD. A future top-level `list` must keep its own dispatch.
   const withList = (t) => isVerb(t) || t === 'list';
   assert.deepStrictEqual(aliasCtx(['list'], withList), ['list'],
     'a real verb is never shadowed by the alias');
@@ -994,6 +1004,7 @@ test('helpIndex advertises the aliases it actually computes', () => {
   const idx = svc.helpIndex();
   assert.ok(Array.isArray(idx.ctxAliases) && idx.ctxAliases.length, 'ENTER: aliases are reported');
   assert.ok(idx.ctxAliases.includes('list'), 'list is advertised');
+  assert.ok(!idx.ctxAliases.includes('use'), 'use is a top-level verb now, so the bare alias must lose to it');
   // Derived through aliasCtx, so a sub shadowed by a future top-level verb
   // leaves the cheat sheet in the same release it stops working.
   for (const s of idx.ctxAliases) {

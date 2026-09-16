@@ -371,7 +371,7 @@ test('deploy fargate: the wire token value never rides the dry-run (no fetch hap
   assert.doesNotMatch(stdout, /[A-Z]{48}/);   // the placeholder WIRE shape never appears
 });
 
-test('deploy fargate: verify failure → nonzero exit; ctx already saved, message points at ctx test', async () => {
+test('deploy fargate: verify failure → nonzero exit; ctx already saved, message points at describe node --test', async () => {
   const { CliError } = require('../src/errors');
   const contextsFile = tmpCtxFile();
   const { code, stdout, stderr } = await cli(['deploy', 'node', 's', '--fargate', '--use-bedrock'], {
@@ -381,7 +381,7 @@ test('deploy fargate: verify failure → nonzero exit; ctx already saved, messag
   });
   assert.strictEqual(code, EXIT.CONNECT);
   assert.match(stdout, /did not answer over the SSM tunnel/);
-  assert.match(stderr, /context was saved.*ctx test --verbose/);
+  assert.match(stderr, /context was saved.*describe node .*--test --verbose/);
   assert.doesNotMatch(stderr, /[A-Z]{48}/);   // token never rides the error
   // ctx upsert happened BEFORE verify — the stack is live, keep the handle.
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));

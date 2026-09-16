@@ -1,5 +1,5 @@
 'use strict';
-// import.test.js — `ctx import` from a FIXTURE userData dir (never the real
+// import.test.js — `create node --import` from a FIXTURE userData dir (never the real
 // one). Covers: env-file parse, userData resolution (flag/env/both-exist mtime),
 // peer-row → entry mapping (ssh/url/disabled/tokenless), sandbox registry sweep,
 // collision skip vs --force, dry-run writes nothing, and the never-tunnel
@@ -186,13 +186,13 @@ async function cli(argv, ctxFile, env = {}) {
   return { code, stdout, stderr };
 }
 
-test('ctx import (e2e): writes contexts, human report, no token values leak', async () => {
+test('create node --import (e2e): writes contexts, human report, no token values leak', async () => {
   const dir = fixture({
     ui: { remotePort: 7900, remoteEnabled: true, peers: [{ id: 'a', label: 'work', sshHost: 'user@box', token: 'peerSecret' }] },
     remoteToken: 'localSecret',
   });
   const cf = tmpCtxFile();
-  const r = await cli(['ctx', 'import', '--data-dir', dir], cf);
+  const r = await cli(['create', 'node', '--import', '--data-dir', dir], cf);
   assert.strictEqual(r.code, 0);
   assert.match(r.stdout, /added\s+local\s+\(token set\)/);
   assert.match(r.stdout, /added\s+work\s+\(token set\)/);
@@ -203,19 +203,19 @@ test('ctx import (e2e): writes contexts, human report, no token values leak', as
   assert.strictEqual((fs.statSync(cf).mode & 0o777), 0o600);
 });
 
-test('ctx import --dry-run writes nothing', async () => {
+test('create node --import --dry-run writes nothing', async () => {
   const dir = fixture({ ui: { remotePort: 7900 }, remoteToken: 't' });
   const cf = tmpCtxFile();
-  const r = await cli(['ctx', 'import', '--data-dir', dir, '--dry-run'], cf);
+  const r = await cli(['create', 'node', '--import', '--data-dir', dir, '--dry-run'], cf);
   assert.strictEqual(r.code, 0);
   assert.match(r.stdout, /dry-run/);
   assert.strictEqual(fs.existsSync(cf), false); // never created
 });
 
-test('ctx import --json: stable array shape, no token values', async () => {
+test('create node --import --json: stable array shape, no token values', async () => {
   const dir = fixture({ ui: { peers: [{ id: 'a', label: 'work', url: 'http://h', token: 'sek' }] }, remoteToken: 'x' });
   const cf = tmpCtxFile();
-  const r = await cli(['ctx', 'import', '--data-dir', dir, '-o', 'json'], cf);
+  const r = await cli(['create', 'node', '--import', '--data-dir', dir, '-o', 'json'], cf);
   const out = JSON.parse(r.stdout);
   assert.ok(Array.isArray(out.results));
   const work = out.results.find((x) => x.name === 'work');
@@ -224,24 +224,24 @@ test('ctx import --json: stable array shape, no token values', async () => {
   assert.doesNotMatch(r.stdout, /sek/);
 });
 
-test('ctx import: collision skipped, --force overwrites (e2e)', async () => {
+test('create node --import: collision skipped, --force overwrites (e2e)', async () => {
   const dir = fixture({ ui: { remotePort: 7900 }, remoteToken: 't1' });
   const cf = tmpCtxFile();
-  await cli(['ctx', 'import', '--data-dir', dir], cf);
+  await cli(['create', 'node', '--import', '--data-dir', dir], cf);
   // second import of the same local → skipped
-  let r = await cli(['ctx', 'import', '--data-dir', dir], cf);
+  let r = await cli(['create', 'node', '--import', '--data-dir', dir], cf);
   assert.match(r.stdout, /skipped\s+local.*--force to overwrite/);
   // with a changed token and --force → overwritten
   const dir2 = fixture({ ui: { remotePort: 7901 }, remoteToken: 't2' });
-  r = await cli(['ctx', 'import', '--data-dir', dir2, '--force'], cf);
+  r = await cli(['create', 'node', '--import', '--data-dir', dir2, '--force'], cf);
   assert.match(r.stdout, /overwritten\s+local/);
   const saved = JSON.parse(fs.readFileSync(cf, 'utf8'));
   assert.strictEqual(saved.contexts.local.url, 'http://127.0.0.1:7901');
   assert.strictEqual(saved.contexts.local.token, 't2');
 });
 
-test('ctx import: no userData found → exit 5', async () => {
-  const r = await cli(['ctx', 'import', '--data-dir', '/definitely/not/here'], tmpCtxFile());
+test('create node --import: no userData found → exit 5', async () => {
+  const r = await cli(['create', 'node', '--import', '--data-dir', '/definitely/not/here'], tmpCtxFile());
   assert.strictEqual(r.code, 5);
   assert.match(r.stderr, /not found/);
 });

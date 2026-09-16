@@ -152,7 +152,9 @@ test('help for a wildly-wrong token → usage exit, no wild hint', async () => {
 test('help([]) is the index; help([verb]) is the entry; help([bad]) is usage', () => {
   assert.strictEqual(help([]).code, 0);
   assert.match(help([]).text, /USAGE/);
-  assert.strictEqual(help(['ctx']).code, 0);
-  assert.match(help(['ctx']).text, /^ctx —/);
+  assert.strictEqual(help(['use']).code, 0);
+  assert.match(help(['use']).text, /^use —/);
   assert.strictEqual(help(['nope']).code, 2);
+  assert.strictEqual(help(['ctx']).code, 2);
+  assert.match(help(['ctx']).text, /no help for "ctx"/);
 });
