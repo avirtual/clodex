@@ -9,6 +9,26 @@ router in both directions — every advertised `(resource, verb)` must answer
 something other than 404 on a fully-injected node, and every `name` must appear
 as a literal `/api/<name>` path in this file.
 
+A resource's LIST callback is the single gate for both its 501 and its absence
+from the document: `RESOURCE_CALLBACK` and every route branch read the same
+one, so a node cannot advertise a resource whose routes refuse. The single-get
+callback is never the gate — a node with a list and no get would otherwise
+advertise nothing while serving the list.
+
+## TICKET_ID_RE
+
+A ticket id is unique per team ROOT, not per node, so `GET /api/tickets/:id`
+with no `?team=` has a real ambiguity to resolve rather than a lookup to
+perform. Two boards carrying the same id answer 400 with `candidates` naming
+every team that has it, because picking one would silently return a different
+team's ticket to a caller who cannot tell. The single get filters the SAME rows
+the list builds, so the two can never disagree about which board a ticket is on.
+
+`state` is the four STORED values (`open`, `done`, `cancelled`, `all`), which is
+what `resources/library/exec/clodex-team.json` filters on. A ticket in review is
+stored `open` — review is a loop step, not a state — so `?state=review` is a 400
+rather than an empty list that would read as "no tickets are in review".
+
 ## notifyInbox
 
 The `/api/inbox` handlers deliberately broadcast NOTHING. The `inbox` SSE frame

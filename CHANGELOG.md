@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The node API now serves its peers, teams, tickets, sandboxes and agent library read-only: `GET /api/<resource>` and `GET /api/<resource>/<id>` for each, listed in `GET /api/resources`. Tickets take `?team=` and `?state=`; a ticket id that exists in more than one team asks you to name the team.
+
 ## 5.70.0 — 2026-09-16
 
 - The shipped team templates now pin `claude-opus-5[1m]`, so your leads, hands
