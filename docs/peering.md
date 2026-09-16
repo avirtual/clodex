@@ -90,8 +90,17 @@ OTHER relay-enabled peers; see messaging.md §4a) and the operator inbox —
 `POST /api/inbox/remove/:id` (404 unknown) — all five under the `inbox` cap,
 which is present only when the notifications store is injected.
 
-**The node itself** is the one target in the document that is not a resource
-row. `POST /api/restart` relaunches the ENGINE — the whole Clodex app on that
+Inbox changes push an `inbox` SSE event on `/api/events`:
+`{kind:'added'|'read'|'read-all'|'removed', id?, unread, note?}` (`added`
+carries the full note). It is emitted from the STORE's `onChange`, not from the
+routes, so a desktop-side mark-read moves the phone's badge and vice versa.
+A peer entry marked `inbox: 'claim'` (set by the sandbox on its OWN box, and on
+nothing else — a laptop peer's inbox belongs to its own operator) has its notes
+claimed onto the local inbox as `<seat>@<origin>` on that `added` event and on
+every hello, then removed from the box.
+
+**The node itself** is a target with no resource row to advertise it.
+`POST /api/restart` relaunches the ENGINE — the whole Clodex app on that
 box, not a session — and is what `clodexctl restart node` spells; the response
 is written before the restart fires, so a caller gets its 200 and then the
 socket dies, which is success, not a transport fault. It is destructive to
@@ -106,15 +115,6 @@ shipped under `1`. It is deliberately NOT a compatibility gate: clodexctl asks
 whether the resource and verb it wants are present in `resources`, never what
 the number says, so an older node's `version: 1` document is accepted as long
 as it carries the row.
-
-Inbox changes push an `inbox` SSE event on `/api/events`:
-`{kind:'added'|'read'|'read-all'|'removed', id?, unread, note?}` (`added`
-carries the full note). It is emitted from the STORE's `onChange`, not from the
-routes, so a desktop-side mark-read moves the phone's badge and vice versa.
-A peer entry marked `inbox: 'claim'` (set by the sandbox on its OWN box, and on
-nothing else — a laptop peer's inbox belongs to its own operator) has its notes
-claimed onto the local inbox as `<seat>@<origin>` on that `added` event and on
-every hello, then removed from the box.
 
 Fan-out from the session manager (cheap no-ops when unattached):
 `pushOutput` (4MB backpressure → destroy the stream — a half-open tunnel
