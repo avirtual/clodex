@@ -236,7 +236,6 @@ test('exec (agent mode): busy→turnEnd → new entries printed, snapshot respec
       }, 20);
     },
     transcript: () => {
-      // First fetch (snapshot) = 2 old entries; refetch = old + our echo + reply
       calls++;
       if (calls === 1) return [{ role: 'user', text: 'old1' }, { role: 'assistant', text: 'old2' }];
       return [
