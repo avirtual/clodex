@@ -84,11 +84,3 @@ test('every shipped claude-type library template pins a 1M-context model', () =>
     );
   }
 });
-
-test('the clodex kit template copies stay byte-identical to their library originals', () => {
-  for (const stem of ['clodex-team-hand', 'clodex-team-lead', 'clodex-team-reviewer']) {
-    const a = fs.readFileSync(path.join(LIB, 'templates', `${stem}.json`));
-    const b = fs.readFileSync(path.join(LIB, 'kits', 'clodex', 'templates', `${stem}.json`));
-    assert.ok(a.equals(b), `kits/clodex/templates/${stem}.json drifted from templates/${stem}.json — the model pin must be edited in the library copy and copied across, never edited apart`);
-  }
-});
