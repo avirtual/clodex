@@ -76,7 +76,10 @@ function loadCli() {
 //    there afterwards, and `spawn`/`send`/`input` are likewise recoverable.
 const ALLOWED = Object.freeze({
   info: true,
-  sessions: true,
+  get: true,
+  describe: true,
+  'api-resources': true,
+  version: true,
   query: true,
   logs: true,          // `--follow` refused separately — the flag is the problem
   skills: true,

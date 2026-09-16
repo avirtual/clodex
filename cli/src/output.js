@@ -1,7 +1,4 @@
-// output.js — human vs --json rendering. Every read verb has a stable JSON
-// mode (kubectl's -o json lesson): `--json` prints the raw wire payload (or a
-// documented reshape) so the CLI is simultaneously the human tool and the
-// machine binding. Human output is compact, no color, no emoji.
+// output.js — Human output is compact, no color, no emoji.
 //
 // Pure string builders + a thin print seam (injectable for tests).
 'use strict';
@@ -38,6 +35,51 @@ function renderSessions(sessions) {
   return table(['NAME', 'TYPE', 'ACTIVITY', 'CWD'], rows);
 }
 
+function renderSessionsWide(sessions) {
+  const rows = (sessions || []).map((s) => [
+    s.name || '',
+    s.type || '',
+    s.activity || '',
+    s.cwd || '',
+    s.workspace || '',
+  ]);
+  return table(['NAME', 'TYPE', 'ACTIVITY', 'CWD', 'WORKSPACE'], rows);
+}
+
+function renderNames(type, items) {
+  return (items || []).map((it) => `${type}/${it.name || it.id || ''}`).join('\n');
+}
+
+function renderWorkspaces(workspaces) {
+  const rows = (workspaces || []).map((w) => [w.id || '', w.name || '']);
+  return table(['ID', 'NAME'], rows);
+}
+
+function renderResources(resources) {
+  const rows = (resources || []).map((r) => [
+    r.name || '',
+    r.singular || '',
+    r.scope || '',
+    (r.verbs || []).join(','),
+  ]);
+  return table(['NAME', 'SINGULAR', 'SCOPE', 'VERBS'], rows);
+}
+
+function renderDescribe(obj) {
+  const entries = Object.entries(obj || {});
+  if (!entries.length) return '';
+  const w = Math.max(...entries.map(([k]) => k.length));
+  return entries
+    .map(([k, v]) => `${(k + ':').padEnd(w + 1)} ${describeValue(v)}`)
+    .join('\n');
+}
+
+function describeValue(v) {
+  if (v == null) return '';
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
+  return JSON.stringify(v);
+}
+
 // transcript messages → role-prefixed lines, blank line between turns.
 function renderTranscript(messages) {
   return (messages || [])
@@ -72,4 +114,4 @@ function makePrinter(write = (s) => process.stdout.write(s)) {
   };
 }
 
-module.exports = { jsonLine, stripAnsi, ANSI_RE, renderSessions, renderTranscript, renderInfo, table, makePrinter };
+module.exports = { jsonLine, stripAnsi, ANSI_RE, renderSessions, renderSessionsWide, renderNames, renderWorkspaces, renderResources, renderDescribe, renderTranscript, renderInfo, table, makePrinter };

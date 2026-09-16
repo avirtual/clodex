@@ -6,6 +6,8 @@ const out = require('./output');
 const imp = require('./import');
 const { validateEntry } = require('./contexts');
 const { openGuarded } = require('./sse-guard');
+const R = require('./resources');
+const { VERSION } = require('./help');
 
 
 async function info({ client, printer, flags }) {
@@ -14,10 +16,101 @@ async function info({ client, printer, flags }) {
   else printer.line(out.renderInfo(hello));
 }
 
-async function sessions({ client, printer, flags }) {
-  const body = await client.get('/api/sessions', 'sessions');
-  if (flags.json) printer.json(body);
-  else printer.line(out.renderSessions(body.sessions || []));
+async function get({ client, ctx, printer, flags, args }) {
+  const target = R.parseTarget(args, 'get');
+  const label = R.ctxLabel(ctx, flags);
+  if (target.resource === 'sessions') {
+    if (target.name) return getSession({ client, printer, flags, name: target.name, label });
+    return getSessions({ client, printer, flags });
+  }
+  if (target.resource === 'workspaces') {
+    if (target.name) throw new CliError(EXIT.USAGE, 'get workspaces takes no name (try: describe workspace <name>)');
+    return getWorkspaces({ client, printer, flags, label });
+  }
+  if (target.name) throw new CliError(EXIT.USAGE, 'get catalogs takes no name');
+  return getCatalogs({ client, printer, flags });
+}
+
+async function getSessions({ client, printer, flags }) {
+  const body = await client.get('/api/sessions', 'get sessions');
+  const all = body.sessions || [];
+  const rows = filterWorkspace(all, flags);
+  if (flags.json) { printer.json(rows === all ? body : { ...body, sessions: rows }); return; }
+  if (flags.output === 'name') { printer.line(out.renderNames('session', rows)); return; }
+  if (flags.output === 'wide') { printer.line(out.renderSessionsWide(rows)); return; }
+  printer.line(out.renderSessions(rows));
+}
+
+function filterWorkspace(sessions, flags) {
+  if (flags.workspace == null) return sessions;
+  const want = String(flags.workspace);
+  return sessions.filter((s) => s.workspace === want);
+}
+
+async function getSession({ client, printer, flags, name, label }) {
+  await R.requireResource(client, 'sessions', 'get', label);
+  const body = await client.get(`/api/sessions/${encodeURIComponent(name)}`, 'get session');
+  const session = body.session || {};
+  if (flags.json) { printer.json(body); return; }
+  if (flags.output === 'name') { printer.line(out.renderNames('session', [session])); return; }
+  if (flags.output === 'wide') { printer.line(out.renderSessionsWide([session])); return; }
+  printer.line(out.renderSessions([session]));
+}
+
+async function getWorkspaces({ client, printer, flags, label }) {
+  await R.requireResource(client, 'workspaces', 'list', label);
+  const body = await client.get('/api/workspaces', 'get workspaces');
+  const workspaces = body.workspaces || [];
+  if (flags.json) { printer.json(body); return; }
+  if (flags.output === 'name') { printer.line(out.renderNames('workspace', workspaces)); return; }
+  printer.line(out.renderWorkspaces(workspaces));
+}
+
+async function getCatalogs({ client, printer, flags }) {
+  const body = await client.get('/api/catalogs', 'get catalogs');
+  if (flags.json) { printer.json(body); return; }
+  printer.line(out.renderDescribe(body.catalogs || {}));
+}
+
+async function describe({ client, ctx, printer, flags, args }) {
+  const target = R.parseTarget(args, 'describe');
+  const label = R.ctxLabel(ctx, flags);
+  if (flags.json) throw new CliError(EXIT.USAGE, 'describe has no -o json (it is a composed human view; use get)');
+  if (target.resource === 'catalogs') {
+    await R.requireResource(client, 'catalogs', 'get', label);
+    const body = await client.get('/api/catalogs', 'describe catalogs');
+    printer.line(out.renderDescribe(body.catalogs || {}));
+    return;
+  }
+  const name = requireName(target.name, `describe ${target.plural}`);
+  if (target.resource === 'sessions') {
+    await R.requireResource(client, 'sessions', 'get', label);
+    const body = await client.get(`/api/sessions/${encodeURIComponent(name)}`, 'describe session');
+    printer.line(out.renderDescribe(body.session || {}));
+    return;
+  }
+  await R.requireResource(client, 'workspaces', 'list', label);
+  const body = await client.get('/api/workspaces', 'describe workspace');
+  const ws = (body.workspaces || []).find((w) => w.name === name || w.id === name);
+  if (!ws) throw new CliError(EXIT.NOTFOUND, `describe workspace failed: no workspace ${name}`);
+  printer.line(out.renderDescribe(ws));
+}
+
+async function apiResources({ client, ctx, printer, flags }) {
+  const label = R.ctxLabel(ctx, flags);
+  const doc = await R.fetchResources(client);
+  if (!doc) await R.failUpgrade(client, 'resources', 'get', label);
+  if (flags.json) { printer.json(doc); return; }
+  printer.line(out.renderResources(doc.resources || []));
+}
+
+async function version({ client, printer, flags }) {
+  const hello = await client.get('/api/peer/hello', 'version');
+  const host = hello.host || '?';
+  const ver = hello.version || '?';
+  if (flags.json) { printer.json({ client: VERSION, server: { host, version: ver } }); return; }
+  printer.line(VERSION);
+  printer.line(`Server: ${host} ${ver}`);
 }
 
 async function logs({ client, printer, flags, args, io = {} }) {
@@ -606,7 +699,8 @@ function defaultPrompt(question) {
 }
 
 module.exports = {
-  info, sessions, logs, deltaFrom, query, argsGet, skills,
+  info, get, describe, apiResources, version, filterWorkspace,
+  logs, deltaFrom, query, argsGet, skills,
   spawn, send, input, exec, run, sessionType, kill, restart, argsSet, restartApp,
   ctxAdd, ctxUse, ctxList, ctxRm, ctxShow, ctxImport,
   entryKind, entryTarget,
