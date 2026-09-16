@@ -163,7 +163,10 @@ test('diagnoseSsmInstance: unregistered instance → gone verdict with redeploy 
   };
   const v = await T.diagnoseSsmInstance({ target: 'i-0dead', execFn });
   assert.match(v, /terminated, stopped, or never had the agent/);
-  assert.match(v, /--target i-NEW/);
+  // the redeploy hint is a command the operator can PASTE — it must be the
+  // grammar this build actually accepts, not the pre-T11 spelling.
+  assert.match(v, /clodexctl deploy node <name> --ssm i-NEW/);
+  assert.doesNotMatch(v, /--target/);
 });
 
 test('diagnoseSsmInstance: Online yet tunnel failed → suspect-the-box verdict', async () => {

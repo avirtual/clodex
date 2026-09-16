@@ -387,7 +387,7 @@ async function pollHello(ctx, { spawnFn, timeoutMs = DOCKER_VERIFY_TIMEOUT_MS, p
 
 async function deployDockerVerb({ printer, flags, args, io = {} }) {
   const name = args[0];
-  if (!name) throw new CliError(EXIT.USAGE, 'deploy docker needs a node name (e.g. deploy docker mybox)');
+  if (!name) throw new CliError(EXIT.USAGE, 'deploy node --docker needs a node name (e.g. deploy node mybox --docker)');
   if (!NAME_RE.test(name)) throw new CliError(EXIT.USAGE, `bad node name "${name}" — use ${NAME_RE.source}`);
 
   const port = flags.port != null ? parsePortOr(flags.port) : DEFAULT_PORT;
@@ -1152,7 +1152,7 @@ async function helmVerifyHello(entry, token, { spawnFn, execFn } = {}) {
 
 async function deployHelmVerb({ printer, flags, args, io = {} }) {
   const name = args[0];
-  if (!name) throw new CliError(EXIT.USAGE, 'deploy helm needs a release name (e.g. deploy helm mynode)');
+  if (!name) throw new CliError(EXIT.USAGE, 'deploy node --helm needs a release name (e.g. deploy node mynode --helm)');
   if (!HELM_RELEASE_RE.test(name)) {
     throw new CliError(EXIT.USAGE, `bad release name "${name}" — helm release names are DNS-1123: lowercase letters/digits/hyphens, start+end alphanumeric, max 53 chars (no dots or underscores; it doubles as the ctx name)`);
   }
@@ -1574,7 +1574,7 @@ async function fargatePollHello(entry, token, { spawnFn, execFn, timeoutMs = FAR
 
 async function deployFargateVerb({ printer, flags, args, io = {} }) {
   const stackName = args[0];
-  if (!stackName) throw new CliError(EXIT.USAGE, 'deploy fargate needs a stack name (e.g. deploy fargate clodex-node)');
+  if (!stackName) throw new CliError(EXIT.USAGE, 'deploy node --fargate needs a stack name (e.g. deploy node clodex-node --fargate)');
   if (!FARGATE_STACK_RE.test(stackName)) {
     throw new CliError(EXIT.USAGE, `bad stack name "${stackName}" — a CloudFormation stack name: start with a letter, then letters/digits/hyphens, max 128 (it doubles as the ctx name, the default cluster, and the secret prefix)`);
   }

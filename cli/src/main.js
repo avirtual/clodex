@@ -57,7 +57,23 @@ const RENAMED_SECOND = {
     docker: () => 'deploy node <name> --docker',
     helm: () => 'deploy node <name> --helm',
     fargate: () => 'deploy node <name> --fargate',
-    '*': (tok) => `deploy node <name> --ssh ${tok}`,
+    '*': (tok, flags) => {
+      const flavor = DEPLOY_FLAVOR_NAMES.find((f) => flags && flags[f]);
+      if (!flavor) return `deploy node <name> --ssh ${tok}`;
+      const value = flags[flavor];
+      return `deploy node ${tok} --${flavor}${typeof value === 'string' ? ` ${value}` : ''}`;
+    },
+  },
+  undeploy: {
+    fargate: () => 'undeploy node <name>',
+    helm: () => 'undeploy node <name>',
+    docker: () => 'undeploy node <name>',
+    ssh: () => 'undeploy node <name>',
+    ssm: () => 'undeploy node <name>',
+    '*': (tok) => `undeploy node ${tok}`,
+  },
+  upgrade: {
+    '*': (tok) => `upgrade node ${tok}`,
   },
 };
 
@@ -67,13 +83,13 @@ function renamedLine(old) {
   return `clodexctl ${old} was renamed: use clodexctl ${RENAMED_VERBS[old]}`;
 }
 
-function renamedSecondLine(verb, tok) {
+function renamedSecondLine(verb, tok, flags = {}) {
   const table = RENAMED_SECOND[verb];
   if (!table) return null;
   if (!tok || tok === 'node') return null;
   const to = table[tok] || (R.resolveResource(tok) ? null : table['*']);
   if (!to) return null;
-  return `clodexctl ${verb} ${tok} was renamed: use clodexctl ${to(tok)}`;
+  return `clodexctl ${verb} ${tok} was renamed: use clodexctl ${to(tok, flags)}`;
 }
 
 function renamedPointer(flags) {
@@ -165,15 +181,21 @@ async function run(argv, io = {}) {
   try {
     applyOutput(flags, verb);
     printer.format = flags.output === 'yaml' ? 'yaml' : 'json';
-    const secondLine = renamedSecondLine(verb, rest[0]);
+    const secondLine = renamedSecondLine(verb, rest[0], flags);
     if (secondLine) throw new CliError(RENAMED_HELP_EXIT, secondLine);
     if (verb === 'ctx') return await dispatchCtx(rest, flags, printer, io);
     if (verb === 'deploy') return await dispatchDeploy(rest, flags, printer, io);
-    if (verb === 'undeploy') return await U.undeployVerb({ printer, flags, args: rest, io });
+    if (verb === 'undeploy') {
+      const { rest: after } = V.takeResourceWord(rest, 'undeploy', V.DEPLOYABLE);
+      return await U.undeployVerb({ printer, flags, args: after, io });
+    }
     // upgrade routes on the context's STORED deploy flavor and delegates to
     // that flavor's deploy verb, so like deploy it owns no WireClient (its own
     // version probe opens and closes a transport itself).
-    if (verb === 'upgrade') return await UP.upgradeVerb({ printer, flags, args: rest, io });
+    if (verb === 'upgrade') {
+      const { rest: after } = V.takeResourceWord(rest, 'upgrade', V.DEPLOYABLE);
+      return await UP.upgradeVerb({ printer, flags, args: after, io });
+    }
     // port-forward holds a tunnel in the FOREGROUND and owns no WireClient, so it
     // resolves the ctx + opens the transport itself rather than routing through
     // withWire (which would open a wire-port tunnel and reap it immediately).
@@ -226,6 +248,7 @@ const DEPLOY_FLAVORS = [
 ];
 
 const DEPLOY_FLAVOR_USAGE = DEPLOY_FLAVORS.map((f) => `--${f.flag}`).join(' | ');
+const DEPLOY_FLAVOR_NAMES = DEPLOY_FLAVORS.map((f) => f.flag);
 
 async function dispatchDeploy(rest, flags, printer, io) {
   V.takeResourceWord(rest, 'deploy', V.DEPLOYABLE);

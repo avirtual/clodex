@@ -1,4 +1,4 @@
-// undeploy.js — `clodexctl undeploy <fargate <stack>|helm <name>|docker <name>>`:
+// undeploy.js — `clodexctl undeploy node <name>`:
 // the destructive inverse of `deploy`. Teardown is one command with the same
 // reviewable-argv discipline deploy upholds — --dry-run prints every command and
 // runs nothing destructive (read-only lookups are fine), and the real run gates
@@ -147,21 +147,47 @@ function parseTasks(json) {
 function isServiceTask(task) { return typeof task.group === 'string' && task.group.startsWith('service:'); }
 
 // ── dispatcher ───────────────────────────────────────────────────────────────
-async function undeployVerb({ printer, flags, args, io = {} }) {
-  const flavor = args[0];
-  if (flavor === 'fargate') return undeployFargate({ printer, flags, args: args.slice(1), io });
-  if (flavor === 'helm') return undeployHelm({ printer, flags, args: args.slice(1), io });
-  if (flavor === 'docker') return undeployDocker({ printer, flags, args: args.slice(1), io });
-  if (flavor === 'ssh' || flavor === 'ssm') {
-    throw new CliError(EXIT.USAGE, `undeploy ${flavor} needs an uninstall mode in the installer script — not yet supported; remove by hand on the node: systemctl --user disable --now clodex.service`);
+const UNDEPLOYABLE = ['fargate', 'helm', 'docker'];
+const UNDEPLOY_UNSUPPORTED = ['ssh', 'ssm'];
+const UNDEPLOY_FLAVOR_USAGE = UNDEPLOYABLE.map((f) => `--${f}`).join(' | ');
+
+function forcedFlavor(flags) {
+  const on = UNDEPLOYABLE.filter((f) => flags[f]);
+  if (on.length > 1) {
+    throw new CliError(EXIT.USAGE, `undeploy node: ${on.map((f) => `--${f}`).join(' and ')} are mutually exclusive — pass exactly one (${UNDEPLOY_FLAVOR_USAGE})`);
   }
-  throw new CliError(EXIT.USAGE, `undeploy needs a flavor: fargate <stack> | helm <name> | docker <name> (got "${flavor || '(none)'}")`);
+  return on[0] || null;
+}
+
+function storedFlavor(name, io) {
+  const store = safeLoadContexts(io);
+  const entry = store.contexts[name];
+  const dep = entry && entry.deploy;
+  return (dep && typeof dep === 'object' && dep.flavor) ? String(dep.flavor) : null;
+}
+
+async function undeployVerb({ printer, flags, args, io = {} }) {
+  const name = args[0];
+  if (!name) throw new CliError(EXIT.USAGE, 'undeploy node needs a name (e.g. undeploy node mybox)');
+  const forced = forcedFlavor(flags);
+  const flavor = forced || storedFlavor(name, io);
+  if (!flavor) {
+    throw new CliError(EXIT.USAGE,
+      `context "${name}" does not record how it was deployed, so undeploy cannot tell which teardown to run — it was created before clodexctl stored that (or by hand). Name the flavor yourself (${UNDEPLOY_FLAVOR_USAGE}); guessing it from the transport is exactly the ambiguity the record exists to remove (an ssh deploy and a remote docker deploy save identical transports).`);
+  }
+  if (UNDEPLOY_UNSUPPORTED.includes(flavor)) {
+    throw new CliError(EXIT.USAGE, `undeploy of an ${flavor} node needs an uninstall mode in the installer script — not yet supported; remove by hand on the node: systemctl --user disable --now clodex.service`);
+  }
+  if (flavor === 'fargate') return undeployFargate({ printer, flags, args: [name], io });
+  if (flavor === 'helm') return undeployHelm({ printer, flags, args: [name], io });
+  if (flavor === 'docker') return undeployDocker({ printer, flags, args: [name], io });
+  throw new CliError(EXIT.USAGE, `context "${name}" records deploy flavor "${flavor}", which this clodexctl cannot tear down — a newer clodexctl probably wrote it. Upgrade clodexctl, or name a flavor this build knows (${UNDEPLOY_FLAVOR_USAGE}).`);
 }
 
 // ── fargate ──────────────────────────────────────────────────────────────────
 async function undeployFargate({ printer, flags, args, io }) {
   const stackName = args[0];
-  if (!stackName) throw new CliError(EXIT.USAGE, 'undeploy fargate needs a stack name (e.g. undeploy fargate clodex-node)');
+  if (!stackName) throw new CliError(EXIT.USAGE, 'undeploy node needs a stack name (e.g. undeploy node clodex-node)');
   if (!D.FARGATE_STACK_RE.test(stackName)) throw new CliError(EXIT.USAGE, `bad stack name "${stackName}" — ${D.FARGATE_STACK_RE.source}`);
 
   const json = !!flags.json;
@@ -317,7 +343,7 @@ async function waitForStackDeletion({ stackName, region, profile, execFn, io }) 
 // ── helm ─────────────────────────────────────────────────────────────────────
 async function undeployHelm({ printer, flags, args, io }) {
   const name = args[0];
-  if (!name) throw new CliError(EXIT.USAGE, 'undeploy helm needs a release name (e.g. undeploy helm mynode)');
+  if (!name) throw new CliError(EXIT.USAGE, 'undeploy node needs a release name (e.g. undeploy node mynode)');
   if (!D.HELM_RELEASE_RE.test(name)) throw new CliError(EXIT.USAGE, `bad release name "${name}" — ${D.HELM_RELEASE_RE.source}`);
   const namespace = flags.namespace ? String(flags.namespace) : D.DEFAULT_HELM_NAMESPACE;
   if (!D.K8S_NS_RE.test(namespace)) throw new CliError(EXIT.USAGE, `bad --namespace "${namespace}" — a DNS-1123 label`);
@@ -397,7 +423,7 @@ function parseManifestKinds(manifest) {
 // ── docker ───────────────────────────────────────────────────────────────────
 async function undeployDocker({ printer, flags, args, io }) {
   const name = args[0];
-  if (!name) throw new CliError(EXIT.USAGE, 'undeploy docker needs a node name (e.g. undeploy docker mybox)');
+  if (!name) throw new CliError(EXIT.USAGE, 'undeploy node needs a node name (e.g. undeploy node mybox)');
   if (!D.NAME_RE.test(name)) throw new CliError(EXIT.USAGE, `bad node name "${name}" — ${D.NAME_RE.source}`);
   const container = D.CONTAINER_PREFIX + name;
   const dockerHost = flags.host ? D.normalizeDockerHost(flags.host) : '';

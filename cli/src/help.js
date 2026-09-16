@@ -349,8 +349,8 @@ const VERB_REGISTRY = [
       'clodexctl deploy node clodex-node --fargate --subnets subnet-a,subnet-b --security-group sg-x --token-file ./token',
     ],
     notes: [
-      'Exactly one flavor flag is required: --ssh / --ssm / --docker / --helm / --fargate. The positional <name> is the saved context name for every flavor (the helm release, the fargate stack), so it is never derived from the host.',
-      'Re-running deploy on the same host is the UPDATE path — the installer is idempotent; `deploy helm` re-run is `helm upgrade` in place and REUSES the release\'s wire token (no rotation).',
+      'Exactly one flavor flag is required: --ssh / --ssm / --docker / --helm / --fargate. The positional <name> is the saved context name (the helm release, the fargate stack), so it is never derived from the host — on --fargate it names the STACK and --ctx NAME overrides the context name it saves under.',
+      'Re-running deploy on the same host is the UPDATE path — the installer is idempotent; a `deploy node <name> --helm` re-run is `helm upgrade` in place and REUSES the release\'s wire token (no rotation).',
       'ssh saves a tokenless context (the tunnel is the auth boundary); ssm/helm store the wire token they minted. --claude-token-file rides the ssh stdin (ssh), the encrypted wire post-verify (ssm — NEVER via SSM params/CloudTrail), or a 0600 tempfile into helm --set-file (helm — only PATHS in argv). fargate takes --token-file (file:// into the stack\'s oauth-token secret, never argv; --use-bedrock skips it).',
       'helm verifies laptop-side through the real `kubectl port-forward` transport and saves a typed {kubectl: svc/<name>} context. -o json emits NDJSON (one object per ::marker/step).',
       'helm re-runs CARRY FORWARD your prior --set/--values/--port: they are read back off the release (`helm get values`, user-supplied only) and re-applied, so an explicit pin survives. Precedence is chart defaults < carried-forward < this run\'s flags; the carried keys are named in the output. Not `--reuse-values` — that would also freeze the chart\'s own defaults, including the image tag.',
@@ -364,13 +364,15 @@ const VERB_REGISTRY = [
   {
     name: 'undeploy', group: 'deploy',
     summary: 'tear down a node deployed with `deploy` (fargate, helm, or docker)',
-    usage: 'undeploy <fargate <stack>|helm <name>|docker <name>> [flags]',
+    usage: 'undeploy node <name> [--keep-data] [flags]',
+    args: [['name', 'the saved context name (its record says which teardown to run)']],
     subcommands: [
-      ['undeploy fargate <stack> [flags]', 'delete the CloudFormation stack (stops stray tasks first)'],
-      ['undeploy helm <name> [flags]', 'helm uninstall + delete the StatefulSet PVC (--keep-data keeps it)'],
-      ['undeploy docker <name> [flags]', 'docker rm -f + delete the named data volume (--keep-data keeps it)'],
+      ['[fargate record]', 'delete the CloudFormation stack (stops stray tasks first)'],
+      ['[helm record]', 'helm uninstall + delete the StatefulSet PVC (--keep-data keeps it)'],
+      ['[docker record]', 'docker rm -f + delete the named data volume (--keep-data keeps it)'],
     ],
     flags: [
+      ['--fargate | --helm | --docker', 'force the flavor when the context does not record one'],
       ['--force', 'skip the type-the-name confirmation (required in -o json/non-TTY)'],
       ['--keep-ctx', 'do not remove the saved context'],
       ['--dry-run', 'print every command that would run; execute nothing destructive'],
@@ -381,12 +383,12 @@ const VERB_REGISTRY = [
       ['--keep-data', 'keep the persistent volume/PVC (default: delete it for a full teardown) [helm/docker]'],
     ],
     examples: [
-      'clodexctl undeploy fargate clodex-node --wait',
-      'clodexctl undeploy helm mynode --keep-data',
-      'clodexctl undeploy docker mybox --host ssh://user@box',
+      'clodexctl undeploy node clodex-node --wait',
+      'clodexctl undeploy node mynode --keep-data',
+      'clodexctl undeploy node mybox --host ssh://user@box',
     ],
     notes: [
-      'The flavor is sniffed on the LITERAL first token exactly like `deploy`. ssh/ssm undeploy is not supported (it needs an uninstall mode in the byte-pinned installer catalog — a separate task); remove those by hand: `systemctl --user disable --now clodex.service` on the node.',
+      'The flavor is READ FROM THE CONTEXT record (`deploy.flavor`, stamped by deploy), exactly as `upgrade` routes; a context that records none is refused by name and takes --fargate|--helm|--docker to force it. An ssh/ssm record is not supported (teardown needs an uninstall mode in the byte-pinned installer catalog — a separate task); remove those by hand: `systemctl --user disable --now clodex.service` on the node.',
       'Teardown is DESTRUCTIVE and confirm-by-default: it previews what dies, then prompts for the exact name; --force skips the prompt (scripts). --dry-run and -o json without --force in a non-TTY refuse rather than silently destroy.',
       'DATA doctrine: a full teardown removes the persistent store too — helm\'s StatefulSet PVC (survives `helm uninstall` by k8s design) and docker\'s named data volume (survives `docker rm -f`). --keep-data opts out and names what was kept. fargate is stateless (nothing to keep).',
       'fargate resolves the region flag > the ctx\'s pinned region (deploy pins it) > aws default, stops any stray (non-service) tasks that would block cluster teardown, then `delete-stack`. Secrets enter Secrets Manager\'s recovery window (gone in 7–30 days). A pre-existing --cluster the stack did not create is never deleted.',
@@ -396,7 +398,7 @@ const VERB_REGISTRY = [
   {
     name: 'upgrade', group: 'deploy',
     summary: 'move an EXISTING node to a new version (routes on how it was deployed)',
-    usage: 'upgrade [ctx] [--tag T | --image URI] [--dry-run] [--force] [-o json|yaml]',
+    usage: 'upgrade node [ctx] [--tag T | --image URI] [--dry-run] [--force] [-o json|yaml]',
     args: [['ctx', 'context to upgrade (else the current/--ctx context)']],
     flags: [
       ['--tag T', 'target version [helm/fargate] — beats the packaged pin AND a carried image.tag'],
@@ -407,9 +409,9 @@ const VERB_REGISTRY = [
       ['--force-conflicts', 'take ownership of fields another manager owns [helm] — see the conflict note below'],
     ],
     examples: [
-      'clodexctl upgrade mynode',
-      'clodexctl upgrade mynode --tag 4.6.0 --dry-run',
-      'clodexctl upgrade clodex-node --image ghcr.io/you/clodex@sha256:abc…',
+      'clodexctl upgrade node mynode',
+      'clodexctl upgrade node mynode --tag 4.6.0 --dry-run',
+      'clodexctl upgrade node clodex-node --image ghcr.io/you/clodex@sha256:abc…',
     ],
     notes: [
       'Routes on the context\'s STORED deploy flavor, never on its transport — an ssh deploy and a remote `deploy docker` save byte-identical entries, so sniffing would be a guess. A context written before clodexctl recorded that (or by a NEWER clodexctl, with a flavor this build cannot route) is refused by name, saying to re-run the flavor\'s own deploy; every other verb keeps working with it.',
@@ -417,7 +419,7 @@ const VERB_REGISTRY = [
       'Reports what it is moving FROM (the node\'s live `hello.version` — never a stored guess) and TO (the version this clodexctl SHIPS, read from the packaged chart/template, unless --tag/--image overrides), and no-ops when they are equal (--force re-runs).',
       'It delegates to the flavor\'s own deploy verb rather than reimplementing it — so a helm upgrade keeps the release\'s wire token, preserves its claude auth, and carries every prior --set/--values forward (an explicit --tag on this run still beats a carried image.tag). fargate always passes ImageUri explicitly: omitting it makes CloudFormation reuse the prior value and report SUCCESS — a silent no-op that looks like it worked.',
       'The source-installed flavors (ssh/ssm) track a BRANCH and deploy no pinned artifact, so they have no target version and never no-op. Flags a context does not store REVERT on a re-run (--no-wirescope, --repo, --branch, --src, --ssh-opt, --claude-token-file) — they are named before anything runs, so pass them again if you set them. `deploy ssm` also MINTS A FRESH WIRE TOKEN each run: an ssm upgrade ROTATES the token, and any other holder of the old one stops being able to reach the node.',
-      'docker is deliberately NOT upgradable: a container is remove-and-recreate, and the recreate needs run arguments a context does not store (--env-file, --volume) and must not recover — reading them back from `docker inspect` would spell resolved secrets into argv. It refuses with the two-step undeploy --keep-data / deploy path instead.',
+      'docker is deliberately NOT upgradable: a container is remove-and-recreate, and the recreate needs run arguments a context does not store (--env-file, --volume) and must not recover — reading them back from `docker inspect` would spell resolved secrets into argv. It refuses with the two-step `undeploy node <name> --keep-data` / `deploy node <name> --docker` path instead.',
       '[helm] "Apply failed with N conflicts" means someone changed a field OUT OF BAND (`kubectl edit`/`patch`), which permanently claimed it — and a release that applies server-side may not change a field it does not own. Re-running cannot help; the error names the owning manager and field. Either revert the out-of-band change, or re-run with --force-conflicts to take the field. Check first that the owner is not a controller entitled to it (an HPA on replicas, a sidecar injector) — forcing takes the field from that too, which is why it is opt-in. Whether a release applies server-side is per-RELEASE, inherited from the helm that installed it: `helm get metadata <release> -n <ns>`.',
     ],
   },

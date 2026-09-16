@@ -386,7 +386,7 @@ function takeResourceWord(args, verb, supported) {
   return { word: singular, rest };
 }
 
-const RESOURCE_VERBS = { create: CREATABLE, delete: DELETABLE, patch: PATCHABLE, restart: RESTARTABLE, deploy: DEPLOYABLE };
+const RESOURCE_VERBS = { create: CREATABLE, delete: DELETABLE, patch: PATCHABLE, restart: RESTARTABLE, deploy: DEPLOYABLE, undeploy: DEPLOYABLE, upgrade: DEPLOYABLE };
 
 function checkResourceWord(verb, args) {
   const supported = RESOURCE_VERBS[verb];

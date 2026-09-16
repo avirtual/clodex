@@ -1,5 +1,5 @@
 'use strict';
-// upgrade.test.js — `clodexctl upgrade <ctx>`: move an EXISTING deployment to a
+// upgrade.test.js — `clodexctl upgrade node <ctx>`: move an EXISTING deployment to a
 // new version. The four things the verb does that `deploy` cannot — route on
 // the stored flavor, refuse to create, report FROM→TO (and no-op when equal),
 // and force the image pin EXPLICIT — plus the two flavor decisions (docker
@@ -78,7 +78,7 @@ test('refVersion / withTag: a DIGEST names no version, so nothing is compared', 
 
 test('a context with NO deploy record (pre-t54) is refused, and never guessed from the transport', async () => {
   const contextsFile = tmpCtxFile({ old: { ssh: 'user@box', webPort: 7901 } });
-  const { code, stderr } = await cli(['upgrade', 'old'], { contextsFile, probeVersion: reports('4.5.0') });
+  const { code, stderr } = await cli(['upgrade', 'node', 'old'], { contextsFile, probeVersion: reports('4.5.0') });
   // The MESSAGE is asserted before the exit code, deliberately: a bare
   // `2 !== 0` tells the next reader that something changed, not what broke.
   assert.match(stderr, /does not record how it was deployed/,
@@ -94,7 +94,7 @@ test('an UNRECOGNIZED flavor is refused BY NAME at upgrade — not at every othe
   // test` keep working against a perfectly reachable node. THIS is where the
   // refusal belongs, because this is the verb that must dispatch on the value.
   const contextsFile = tmpCtxFile({ future: { ssh: 'user@box', deploy: { flavor: 'nomad', job: 'clodex' } } });
-  const { code, stderr } = await cli(['upgrade', 'future'], { contextsFile, probeVersion: reports('4.5.0') });
+  const { code, stderr } = await cli(['upgrade', 'node', 'future'], { contextsFile, probeVersion: reports('4.5.0') });
   assert.match(stderr, /records deploy flavor "nomad", which this clodexctl cannot upgrade/,
     'the refusal must NAME the flavor it cannot route — "unsupported" alone leaves the operator guessing which of their nodes is the problem');
   assert.match(stderr, /newer clodexctl probably wrote it/,
@@ -108,15 +108,15 @@ test('docker is refused with its REASON, and the two-step path that keeps the da
   const contextsFile = tmpCtxFile({
     edge: { ssh: 'user@box', deploy: { flavor: 'docker', container: 'clodexctl-edge', dockerHost: 'ssh://user@box' } },
   });
-  const { code, stderr } = await cli(['upgrade', 'edge'], { contextsFile, probeVersion: reports('4.5.0') });
+  const { code, stderr } = await cli(['upgrade', 'node', 'edge'], { contextsFile, probeVersion: reports('4.5.0') });
   assert.strictEqual(code, EXIT.USAGE);
   assert.match(stderr, /--env-file/,
     'the refusal must name the run arguments that are not stored — that is the honest reason, and it tells the operator what they will need to supply');
   assert.match(stderr, /docker inspect/,
     'and must say why they cannot simply be recovered: inspect returns RESOLVED env values, so replaying the run would spell secrets into argv');
-  assert.match(stderr, /undeploy docker edge --host ssh:\/\/user@box --keep-data/,
+  assert.match(stderr, /undeploy node edge --host ssh:\/\/user@box --keep-data/,
     'the two-step path must carry --keep-data, or following our own instructions destroys the node\'s state');
-  assert.match(stderr, /deploy docker edge --host ssh:\/\/user@box --tag/,
+  assert.match(stderr, /deploy node edge --docker --host ssh:\/\/user@box --tag/,
     'and must name the recreate command with the stored host, so the operator is not re-deriving it');
 });
 
@@ -162,12 +162,12 @@ const HELM_CTX = () => ({
 test('helm: refuses to CREATE — a release that is not installed is an error, not a silent install', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile(HELM_CTX());
-  const { code, stderr } = await cli(['upgrade', 'mynode'], {
+  const { code, stderr } = await cli(['upgrade', 'node', 'mynode'], {
     contextsFile, execFn: fakeK8s(rec, { releaseExists: false }), probeVersion: reports('4.5.0'),
   });
   assert.match(stderr, /is not installed in namespace "clodex" — upgrade moves an existing deployment, it does not create one/,
     'an upgrade against a release that is not there must FAIL — installing silently would turn a typo\'d ctx name into a surprise deployment');
-  assert.match(stderr, /clodexctl deploy helm mynode --namespace clodex/,
+  assert.match(stderr, /clodexctl deploy node mynode --helm --namespace clodex/,
     'and must name the command that WOULD create it');
   assert.ok(!rec.helmArgs, 'helm upgrade must never have run — the refusal happens BEFORE the delegate, which is what keeps the delegate off its install path');
   assert.strictEqual(code, EXIT.USAGE, 'and it must exit USAGE — a missing release is the operator addressing the wrong thing');
@@ -177,7 +177,7 @@ test('helm: FROM===TO no-ops without touching the cluster, and --force overrides
   const pinned = U.helmPinnedTag();
   const rec = {};
   const contextsFile = tmpCtxFile(HELM_CTX());
-  const { code, stdout } = await cli(['upgrade', 'mynode'], {
+  const { code, stdout } = await cli(['upgrade', 'node', 'mynode'], {
     contextsFile, execFn: fakeK8s(rec), probeVersion: reports(pinned),
   });
   // The consequence first, then the message, then the code — reverting the
@@ -191,7 +191,7 @@ test('helm: FROM===TO no-ops without touching the cluster, and --force overrides
 
   // --force is the way through.
   const rec2 = {};
-  const { code: c2, stdout: s2 } = await cli(['upgrade', 'mynode', '--force'], {
+  const { code: c2, stdout: s2 } = await cli(['upgrade', 'node', 'mynode', '--force'], {
     contextsFile: tmpCtxFile(HELM_CTX()), execFn: fakeK8s(rec2), probeVersion: reports(pinned),
     probeHelm: async () => ({ app: 'clodex', version: pinned }),
   });
@@ -206,7 +206,7 @@ test('helm: the image pin is EXPLICIT, and an explicit --tag BEATS a carried ima
   // file regardless of argv position.
   const rec = {};
   const contextsFile = tmpCtxFile(HELM_CTX());
-  const { code, stdout } = await cli(['upgrade', 'mynode', '--tag', '4.9.9'], {
+  const { code, stdout } = await cli(['upgrade', 'node', 'mynode', '--tag', '4.9.9'], {
     contextsFile, execFn: fakeK8s(rec, { priorValues: { image: { tag: '4.5.0' } } }),
     probeVersion: reports('4.5.0'),
     probeHelm: async () => ({ app: 'clodex', version: '4.9.9' }),
@@ -231,7 +231,7 @@ test('helm: the image pin is EXPLICIT, and an explicit --tag BEATS a carried ima
 test('helm: with no --tag the target is the version this clodexctl SHIPS', async () => {
   const pinned = U.helmPinnedTag();
   const rec = {};
-  const { code, stdout } = await cli(['upgrade', 'mynode'], {
+  const { code, stdout } = await cli(['upgrade', 'node', 'mynode'], {
     contextsFile: tmpCtxFile(HELM_CTX()), execFn: fakeK8s(rec), probeVersion: reports('1.0.0'),
     probeHelm: async () => ({ app: 'clodex', version: pinned }),
   });
@@ -249,7 +249,7 @@ test('helm: --force-conflicts reaches the delegate, and is absent by default (t5
   // be a dead end — the operator would run exactly what the tool told them to
   // and get the identical failure.
   const withFlag = {};
-  const { code } = await cli(['upgrade', 'mynode', '--force-conflicts'], {
+  const { code } = await cli(['upgrade', 'node', 'mynode', '--force-conflicts'], {
     contextsFile: tmpCtxFile(HELM_CTX()), execFn: fakeK8s(withFlag), probeVersion: reports('1.0.0'),
     probeHelm: async () => ({ app: 'clodex', version: U.helmPinnedTag() }),
   });
@@ -265,7 +265,7 @@ test('helm: --force-conflicts reaches the delegate, and is absent by default (t5
   // operator's flags into deployHelmVerb, so this also pins that the spread
   // cannot manufacture a truthy value from an absent flag.
   const without = {};
-  await cli(['upgrade', 'mynode'], {
+  await cli(['upgrade', 'node', 'mynode'], {
     contextsFile: tmpCtxFile(HELM_CTX()), execFn: fakeK8s(without), probeVersion: reports('1.0.0'),
     probeHelm: async () => ({ app: 'clodex', version: U.helmPinnedTag() }),
   });
@@ -315,7 +315,7 @@ test('fargate: ImageUri is ALWAYS in the parameter overrides — the silent-succ
   const rec = {};
   // FROM must differ from the packaged pin, or this test would ride the no-op
   // path and assert nothing about the argv (it did, the first time I ran it).
-  const { code } = await cli(['upgrade', 'clodex-node'], {
+  const { code } = await cli(['upgrade', 'node', 'clodex-node'], {
     contextsFile: tmpCtxFile(FARGATE_CTX()), execFn: fakeAws(rec, { params: PRIOR_PARAMS }),
     probeVersion: reports('1.0.0'), probeFargate: async () => ({ app: 'clodex', version: '9.9.9' }), sleepFn: async () => {},
   });
@@ -335,7 +335,7 @@ test('fargate: ImageUri is passed even when the target EQUALS the prior paramete
   // CFN's reuse and our intent disagree.
   const pinned = U.fargatePinnedImage();
   const rec = {};
-  const { code } = await cli(['upgrade', 'clodex-node', '--force'], {
+  const { code } = await cli(['upgrade', 'node', 'clodex-node', '--force'], {
     contextsFile: tmpCtxFile(FARGATE_CTX()),
     execFn: fakeAws(rec, { params: { ...PRIOR_PARAMS, ImageUri: pinned } }),
     probeVersion: reports(U.refVersion(pinned)),
@@ -349,14 +349,14 @@ test('fargate: ImageUri is passed even when the target EQUALS the prior paramete
 
 test('fargate: refuses to CREATE a stack that does not exist', async () => {
   const rec = {};
-  const { code, stderr } = await cli(['upgrade', 'clodex-node'], {
+  const { code, stderr } = await cli(['upgrade', 'node', 'clodex-node'], {
     contextsFile: tmpCtxFile(FARGATE_CTX()), execFn: fakeAws(rec, { exists: false }),
     probeVersion: reports('4.5.0'), sleepFn: async () => {},
   });
   assert.strictEqual(code, EXIT.USAGE);
   assert.match(stderr, /does not exist in us-west-2 — upgrade moves an existing deployment, it does not create one/,
     'an upgrade against a missing stack must fail, naming the region it looked in — a wrong --region looks exactly like a missing stack');
-  assert.match(stderr, /clodexctl deploy fargate clodex-node --region us-west-2/);
+  assert.match(stderr, /clodexctl deploy node clodex-node --fargate --region us-west-2/);
   assert.ok(!rec.deployArgs, 'cloudformation deploy must never have run');
 });
 
@@ -367,7 +367,7 @@ test('fargate: the live stack\'s networking is carried forward, not silently re-
   // otherwise have kept — worst case moving a custom-VPC task onto default-VPC
   // subnets. This is the fargate shape of t54's derived-values lesson.
   const rec = {};
-  const { code } = await cli(['upgrade', 'clodex-node'], {
+  const { code } = await cli(['upgrade', 'node', 'clodex-node'], {
     contextsFile: tmpCtxFile(FARGATE_CTX()),
     execFn: fakeAws(rec, { params: { ...PRIOR_PARAMS, SubnetIds: 'subnet-private-1', SecurityGroupId: 'sg-locked' } }),
     probeVersion: reports('1.0.0'), probeFargate: async () => ({ app: 'clodex', version: '9.9.9' }), sleepFn: async () => {},
@@ -386,7 +386,7 @@ test('fargate: the live stack\'s networking is carried forward, not silently re-
 const SSH_CTX = () => ({ box: { ssh: 'user@box', webPort: 7901, deploy: { flavor: 'ssh', host: 'user@box' } } });
 
 test('ssh: a node that does not answer is NOT silently installed (--force is the way through)', async () => {
-  const { code, stderr } = await cli(['upgrade', 'box'], {
+  const { code, stderr } = await cli(['upgrade', 'node', 'box'], {
     contextsFile: tmpCtxFile(SSH_CTX()), probeVersion: silent,
     spawnFn: () => { throw new Error('ssh must not be spawned'); },
   });
@@ -402,7 +402,7 @@ test('ssh: never no-ops, and SAYS which flags will revert', async () => {
   // artifact, so there is no target version and nothing to compare. Saying that
   // is honest; inventing a target from package.json would not be.
   let ranWith = null;
-  const { code, stdout } = await cli(['upgrade', 'box', '--dry-run'], {
+  const { code, stdout } = await cli(['upgrade', 'node', 'box', '--dry-run'], {
     contextsFile: tmpCtxFile(SSH_CTX()), probeVersion: reports('4.5.0'),
     spawnFn: () => { ranWith = true; throw new Error('nothing spawns on --dry-run'); },
   });
@@ -420,7 +420,7 @@ test('ssm: the token ROTATION is warned about BEFORE anything runs', async () =>
   // upgrade rotates it, and any other holder of the old token breaks. That is a
   // real consequence of running this verb and it must be stated up front.
   const ctx = { box: { ssm: { target: 'i-123', region: 'us-west-2' }, webPort: 7901, token: 'tok', deploy: { flavor: 'ssm', target: 'i-123', region: 'us-west-2' } } };
-  const { code, stdout } = await cli(['upgrade', 'box', '--dry-run'], {
+  const { code, stdout } = await cli(['upgrade', 'node', 'box', '--dry-run'], {
     contextsFile: tmpCtxFile(ctx), probeVersion: reports('4.5.0'),
     execFn: async () => { throw new Error('nothing runs on --dry-run'); },
   });
@@ -437,7 +437,7 @@ test('ssm: the token ROTATION is warned about BEFORE anything runs', async () =>
 
 test('ssm: --tag is refused rather than silently ignored', async () => {
   const ctx = { box: { ssm: { target: 'i-123' }, token: 'tok', deploy: { flavor: 'ssm', target: 'i-123' } } };
-  const { code, stderr } = await cli(['upgrade', 'box', '--tag', '4.9.9'], {
+  const { code, stderr } = await cli(['upgrade', 'node', 'box', '--tag', '4.9.9'], {
     contextsFile: tmpCtxFile(ctx), probeVersion: reports('4.5.0'),
   });
   assert.strictEqual(code, EXIT.USAGE);

@@ -197,7 +197,7 @@ async function diagnoseSsmInstance({ target, region, profile, execFn = execFileP
     const { stdout } = await execFn('aws', args);
     const list = JSON.parse(String(stdout)).InstanceInformationList || [];
     if (!list.length) {
-      return `SSM has no registration for ${target} — the instance is terminated, stopped, or never had the agent. If you recreated the box, update the context: clodexctl deploy ssm <name> --target i-NEW…`;
+      return `SSM has no registration for ${target} — the instance is terminated, stopped, or never had the agent. If you recreated the box, update the context: clodexctl deploy node <name> --ssm i-NEW…`;
     }
     const info = list[0];
     if (info.PingStatus === 'Online') {
