@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — clodexctl speaks kubectl
+## Unreleased
+
+## 5.71.0 — 2026-09-17 — clodexctl speaks kubectl
 
 - **One resource grammar for the node API and `clodexctl`.** Every command is now `<verb> <resource> [name]` over the nouns a Clodex node has: `sessions`, `workspaces`, `peers`, `teams`, `tickets`, `sandboxes`, `agents`, `worktrees` and `catalogs`. Someone who knows the nouns can guess the command; `clodexctl api-resources` lists what the node in front of you serves.
 - **Reads.** `get <resource>` and `describe <resource> <name>` cover all nine resources, with `--team`/`--state` on tickets and `--repo DIR` on worktrees (a new read-only `GET /api/worktrees?repo=` route lists a repo's git worktrees). `get` takes `-o json`, `-o yaml`, `-o wide` or `-o name`, the other read verbs `-o json` or `-o yaml`; streaming output under `-o yaml` is a `---`-separated multi-document stream. `ctx current` prints the active context name.
