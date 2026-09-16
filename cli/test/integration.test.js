@@ -319,7 +319,7 @@ test('send: fire-and-forget POST /api/send', async () => {
 
 test('input: acquire → input → release, in order, token threaded, Enter appended', async () => {
   const { server, seen } = stub((req, res) => {
-    if (req.url.startsWith('/api/control/')) {
+    if (/^\/api\/sessions\/[^/]+\/control(\?|$)/.test(req.url)) {
       const body = seen[seen.length - 1].body;
       if (body.action === 'acquire') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, token: 'ctl-1' })); }
       res.writeHead(200); return res.end(JSON.stringify({ ok: true }));
@@ -330,19 +330,20 @@ test('input: acquire → input → release, in order, token threaded, Enter appe
   const { code } = await cli(['input', 'b', 'hello'], port);
   assert.strictEqual(code, 0);
   assert.deepStrictEqual(seen.map((s) => `${s.method} ${s.url}`), [
-    'POST /api/control/b', 'POST /api/input/b', 'POST /api/control/b',
-  ]);
-  assert.strictEqual(seen[0].body.action, 'acquire');
-  assert.strictEqual(seen[1].body.token, 'ctl-1');
+    'GET /api/resources',
+    'POST /api/sessions/b/control', 'POST /api/sessions/b/input', 'POST /api/sessions/b/control',
+  ], 'one capability check, then the acquire/input/release thread');
+  assert.strictEqual(seen[1].body.action, 'acquire');
+  assert.strictEqual(seen[2].body.token, 'ctl-1');
   // default: Enter appended so the command actually runs
-  assert.strictEqual(seen[1].body.data, 'hello\r');
-  assert.strictEqual(seen[2].body.action, 'release');
+  assert.strictEqual(seen[2].body.data, 'hello\r');
+  assert.strictEqual(seen[3].body.action, 'release');
   server.close();
 });
 
 test('input --no-enter: posts the text verbatim, no trailing CR', async () => {
   const { server, seen } = stub((req, res) => {
-    if (req.url.startsWith('/api/control/')) {
+    if (/^\/api\/sessions\/[^/]+\/control(\?|$)/.test(req.url)) {
       const body = seen[seen.length - 1].body;
       if (body.action === 'acquire') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, token: 'ctl-1' })); }
       res.writeHead(200); return res.end(JSON.stringify({ ok: true }));
@@ -352,8 +353,22 @@ test('input --no-enter: posts the text verbatim, no trailing CR', async () => {
   const port = await listen(server);
   const { code } = await cli(['input', 'b', 'partial', '--no-enter'], port);
   assert.strictEqual(code, 0);
-  assert.strictEqual(seen[1].body.data, 'partial');
-  assert.ok(!seen[1].body.data.endsWith('\r'));
+  const sent = seen.find((x) => /\/input$/.test(x.url));
+  assert.strictEqual(sent.body.data, 'partial');
+  assert.ok(!sent.body.data.endsWith('\r'));
+  server.close();
+});
+
+test('input: a node whose sessions row carries no control subresource is the D.5 line, exit 1', async () => {
+  const { server, seen } = stub((req, res, rec) => {
+    if (rec.url === '/api/peer/hello') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['control'] })); }
+    res.writeHead(200); res.end('{}');
+  }, { doc: docWithout('control') });
+  const port = await listen(server);
+  const { code, stderr } = await cli(['input', 'b', 'hello'], port);
+  assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
+  assert.strictEqual(stderr.trim(), 'clodexctl: node oldbox (5.69.0) does not serve sessions/control post; run: clodexctl upgrade node http://127.0.0.1:' + port);
+  assert.ok(!seen.some((s) => s.method === 'POST'), 'the check ran BEFORE the acquire');
   server.close();
 });
 

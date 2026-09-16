@@ -66,10 +66,10 @@ test('a scheme-only URL takes its scheme default port, not always 80', () => {
 });
 
 test('dialOptions carries the path and query through unchanged', () => {
-  const d = dialOptions('https://box.example.com:8443', '/api/attach/x?since=7');
+  const d = dialOptions('https://box.example.com:8443', '/api/sessions/x/attach?since=7');
   assert.deepEqual(d, {
     secure: true, hostname: 'box.example.com', port: 8443,
-    path: '/api/attach/x?since=7',
+    path: '/api/sessions/x/attach?since=7',
   });
 });
 

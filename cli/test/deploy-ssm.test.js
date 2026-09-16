@@ -14,6 +14,7 @@ const path = require('node:path');
 const D = require('../src/deploy');
 const { EXIT } = require('../src/errors');
 const { run } = require('../src/main');
+const { RESOURCES_DOC } = require('./fixtures/resources-doc');
 const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 const noSleep = async () => {};
@@ -446,7 +447,8 @@ test('deliverClaudeToken: wire dance — bash session, control acquire, drop-in 
     req.on('end', () => {
       seen.push({ method: req.method, url: req.url, body: body ? JSON.parse(body) : null, auth: req.headers['authorization'] });
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      if (req.method === 'POST' && /\/api\/control\//.test(req.url)) return res.end(JSON.stringify({ ok: true, token: 'ctrl-1' }));
+      if (req.url === '/api/resources') return res.end(JSON.stringify(RESOURCES_DOC));
+      if (req.method === 'POST' && /^\/api\/sessions\/[^/]+\/control$/.test(req.url)) return res.end(JSON.stringify({ ok: true, token: 'ctrl-1' }));
       if (req.url === '/api/peer/hello') return res.end(JSON.stringify({ ok: true, app: 'clodex' }));
       res.end(JSON.stringify({ ok: true }));
     });
@@ -462,12 +464,37 @@ test('deliverClaudeToken: wire dance — bash session, control acquire, drop-in 
   assert.strictEqual(create.body.type, 'bash');
   assert.match(create.body.name, /^clodex-token-/);
   assert.strictEqual(create.auth, 'Bearer wire-tok');
-  const input = seen.find((s) => s.method === 'POST' && /\/api\/input\//.test(s.url));
+  const input = seen.find((s) => s.method === 'POST' && /^\/api\/sessions\/[^/]+\/input$/.test(s.url));
   assert.strictEqual(input.body.token, 'ctrl-1');
   assert.match(input.body.data, /systemctl --user restart clodex\.service/);
   // The OAuth token rides a shell-var assignment in the typed script (not argv).
   assert.match(input.body.data, /CLODEX_CLAUDE_TOKEN='sk-oauth-9'/);
   assert.ok(seen.some((s) => s.url === '/api/peer/hello'), 'engine polled back after restart');
+});
+
+test('deliverClaudeToken: an old node fails with the D.5 upgrade line before any session is created', async () => {
+  const http = require('node:http');
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = ''; req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      seen.push({ method: req.method, url: req.url });
+      if (req.url === '/api/resources') { res.writeHead(404); return res.end(JSON.stringify({ ok: false })); }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (req.url === '/api/peer/hello') return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0' }));
+      res.end(JSON.stringify({ ok: true }));
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  await assert.rejects(
+    () => D.deliverClaudeToken({ url: `http://127.0.0.1:${port}` }, 'wire-tok', 'sk-oauth-9', { pollMs: 1, sleepFn: async () => {}, ctxName: 'prod' }),
+    (e) => e.exitCode === 1 && /node oldbox \(5\.69\.0\) does not serve sessions\/control post; run: clodexctl upgrade node prod/.test(e.message),
+  );
+  server.close();
+  assert.ok(!seen.some((s) => /\/control$/.test(s.url)), 'the acquire went out anyway — the gate is not ahead of it');
+  assert.ok(!seen.some((s) => s.method === 'POST' && s.url === '/api/sessions'),
+    'a throwaway clodex-token- session was created on the box and then abandoned by the D.5 throw');
 });
 
 test('deploy ssm --port non-default: remotePort saved on the ssm entry + wrapper', async () => {

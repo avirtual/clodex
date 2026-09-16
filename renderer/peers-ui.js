@@ -8,6 +8,7 @@ const { wireBulkToggles } = require('./lib/checklists');
 const { nextVisibleWithName } = require('./lib/peer-visibility');
 const { openUrl: sandboxOpenUrl } = require('./lib/sandbox-view');
 const { webViewAffordance } = require('./lib/peer-web-view');
+const { peerStateText, NEEDS_UPGRADE_TIP } = require('./lib/peer-state-text');
 const { isPeerExpanded, togglePeerExpanded } = require('./lib/peer-collapse');
 const { servedBannerView } = require('./lib/served-banner');
 const { placeAboveAnchor } = require('./lib/popover-place');
@@ -181,15 +182,14 @@ function initPeersUi({
       header.className = 'peer-header' + (expanded ? '' : ' collapsed');
       header.dataset.peerUi = '1';
       const tun = peerTunnels.get(id);
-      let stateText = st.online ? '' : 'offline';
-      if (!st.online && tun && tun.state === 'down') {
-        stateText = 'tunnel down';
-        if (tun.error) header.dataset.tip = tun.error;
-      }
+      const state = peerStateText({ status: st, tunnel: tun });
+      const stateText = state.text;
+      if (!st.online && state.tip) header.dataset.tip = state.tip;
       let sev = 'unknown';
       if (st.online && st.version) {
         const capList = (st.caps || []).join(', ') || 'none';
-        header.dataset.tip = `Clodex v${st.version} · caps: ${capList}${st.platform ? ` · ${st.platform}` : ''}`;
+        const upgradeTip = state.needsUpgrade ? ` · ${state.tip}` : '';
+        header.dataset.tip = `Clodex v${st.version} · caps: ${capList}${st.platform ? ` · ${st.platform}` : ''}${upgradeTip}`;
         if (getOurAppVersion()) sev = versionSeverity(getOurAppVersion(), st.version);
       }
       const nameSev = (sev === 'patch' || sev === 'minor' || sev === 'major') ? ` peer-sev-${sev}` : '';
@@ -205,7 +205,7 @@ function initPeersUi({
         (isBox ? `<span class="peer-box-chip" data-tip="Managed sandbox" aria-label="Managed sandbox">&#9635;</span>` : '') +
         `<span class="peer-label${nameSev}">${esc(hostLabel)}</span>` +
         ((!expanded && rows.length) ? `<span class="peer-count">${rows.length}</span>` : '') +
-        `<span class="peer-state">${esc(stateText)}</span>` +
+        `<span class="peer-state${state.needsUpgrade ? ' peer-state-upgrade' : ''}">${esc(stateText)}</span>` +
         `<span class="peer-actions">` +
           (canCreate ? `<button class="peer-select peer-new" data-tip="New session on ${esc(hostLabel)}" aria-label="New session on ${esc(hostLabel)}" ${off}>&#65291;</button>` : '') +
           (isBox ? `<button class="peer-select peer-web" data-tip="Open ${esc(hostLabel)}’s web UI" aria-label="Open ${esc(hostLabel)} web UI" ${off}>&#8599;</button>` : '') +
@@ -1252,6 +1252,7 @@ function initPeersUi({
     if (st.platform) rows.push(`<div class="peer-info-line"><span class="peer-info-key">Platform</span> ${esc(st.platform)}</div>`);
     rows.push(`<div class="peer-info-line"><span class="peer-info-key">Caps</span> ${esc(capList)}</div>`);
     if (SEV_LINE[sev]) rows.push(`<div class="peer-info-line peer-sev-${sev}">${esc(SEV_LINE[sev])}</div>`);
+    if (st.needsUpgrade) rows.push(`<div class="peer-info-line peer-sev-major">${esc(NEEDS_UPGRADE_TIP)}</div>`);
     const age = releaseAgeInfo(st.version, releasesCache);
     if (age) {
       const bits = [];
@@ -1290,7 +1291,7 @@ function initPeersUi({
       // per peer it would read as a per-peer permission, which is the one thing
       // about this feature an operator can reasonably get wrong.
     }).catch(() => {});
-    if (!boxIds.has(id) && st.online && updateApplies(sev)) {
+    if (!boxIds.has(id) && st.online && (updateApplies(sev) || st.needsUpgrade)) {
       window.api.peerDeployConfig(id).then((cfg) => {
         if (!cfg || !cfg.sshHost) return;
         if (peerInfoPopover.classList.contains('hidden') || peerInfoPopover.dataset.peerId !== String(id)) return;

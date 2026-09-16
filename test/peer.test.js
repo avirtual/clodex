@@ -352,7 +352,7 @@ test('telemetry: attach seeds the status bar, live pushes fan out', async () => 
 });
 
 test('input without control is refused (read-only by default)', async () => {
-  const r = await post('/api/input/alpha', { token: 'bogus', data: 'evil' });
+  const r = await post('/api/sessions/alpha/input', { token: 'bogus', data: 'evil' });
   assert.equal(r.status, 403);
   assert.equal(inputs.length, 0);
 });

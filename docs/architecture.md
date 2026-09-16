@@ -1330,6 +1330,10 @@ and are not, which is why the judgement worth testing is pushed down here.
 - **peer-web-view.js** — the pure decision behind the peer web-view (↗)
   affordance: given a peer's live hello state and its web-tunnel state, does the
   button render, what does it say, is a click a "close".
+- **peer-state-text.js** — the pure decision behind the word in a peer header's
+  state slot: offline, tunnel down, `needs upgrade` (online but too old to serve
+  the sessions subresource wire), or nothing. Unreachable outranks the dialect
+  flag — a peer that cannot be reached is not a peer that needs updating.
 - **served-banner.js** — the pure decision behind the sidebar notice that a peer
   has a shell open on this machine: given the seats being watched, is the notice
   shown and what does it say.

@@ -12,6 +12,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const A = require('../src/attach');
 const { run } = require('../src/main');
+const { RESOURCES_DOC, docWithout } = require('./fixtures/resources-doc');
 
 // ── leaf: scanEscape ─────────────────────────────────────────────────────────
 
@@ -160,7 +161,13 @@ function attachStub(opts = {}) {
       const rec = { method: req.method, url: req.url, body: body ? JSON.parse(body) : null };
       seen.push(rec);
       const p = req.url.split('?')[0];
-      if (req.method === 'GET' && p.startsWith('/api/attach/')) {
+      if (req.method === 'GET' && p === '/api/resources') {
+        res.writeHead(200); return res.end(JSON.stringify(opts.doc || RESOURCES_DOC));
+      }
+      if (req.method === 'GET' && p === '/api/peer/hello') {
+        res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['attach'] }));
+      }
+      if (req.method === 'GET' && /^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(p)) {
         if (opts.attach404) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: false, error: 'no such session' })); }
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
         res.write(': connected\n\n');
@@ -171,11 +178,11 @@ function attachStub(opts = {}) {
         if (opts.onAttach) opts.onAttach(state, seen, res);
         return;
       }
-      if (p.startsWith('/api/control/')) {
+      if (/^\/api\/sessions\/[^/]+\/control(\?|$)/.test(p)) {
         if (rec.body && rec.body.action === 'acquire') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, token: 'ctl-1' })); }
         res.writeHead(200); return res.end(JSON.stringify({ ok: true }));
       }
-      if (p.startsWith('/api/input/')) {
+      if (/^\/api\/sessions\/[^/]+\/input(\?|$)/.test(p)) {
         // Model remote.js's holder check: input needs the current control token.
         // opts.input403 forces a stale-token 403; opts.autoRelease 403s whenever
         // no attach stream is live (the reconnect-gap case).
@@ -184,7 +191,7 @@ function attachStub(opts = {}) {
         if (!ok) { res.writeHead(403); return res.end(JSON.stringify({ ok: false, error: 'not holder' })); }
         res.writeHead(200); return res.end(JSON.stringify({ ok: true }));
       }
-      if (p.startsWith('/api/resize/')) { res.writeHead(200); return res.end(JSON.stringify({ ok: true })); }
+      if (/^\/api\/sessions\/[^/]+\/resize(\?|$)/.test(p)) { res.writeHead(200); return res.end(JSON.stringify({ ok: true })); }
       res.writeHead(404); res.end(JSON.stringify({ ok: false, error: 'no route' }));
     });
   });
@@ -250,7 +257,7 @@ async function attachCli(name, extraArgs, port, tty, spawnFn) {
 // arming happens on the SSE replay while the control token is still one
 // unresolved POST away — and onStdin drops input when `token` is unset, so a
 // keystroke delivered in that window is silently NOT forwarded and the test
-// sees no /api/input at all. Reproduced 8/12 with 12 copies of this file in
+// sees no sessions/input at all. Reproduced 8/12 with 12 copies of this file in
 // parallel; a larger constant only moves the window.
 // Resolves false on timeout rather than rejecting: a broken gate then degrades
 // into the caller's own named assertion failure instead of the hang this file
@@ -271,14 +278,14 @@ const until = (pred, ms = 10000) => new Promise((resolve) => {
 });
 const whenSeen = (seen, pred, ms) => until(() => seen.some(pred), ms);
 const sawAcquire = (seen) => whenSeen(seen, (s) =>
-  s.url.startsWith('/api/control/') && s.body && s.body.action === 'acquire');
+  /^\/api\/sessions\/[^/]+\/control(\?|$)/.test(s.url) && s.body && s.body.action === 'acquire');
 // The resize carries the control token, so seeing it proves the acquire
 // RESPONSE was processed — not merely that the request was sent. Arming happens
 // on the replay frame, which the server writes before the acquire POST exists,
 // so `token` is null at arm time in EVERY run; anything token-dependent must
 // wait for this, not for a wall clock.
 const sawTokenedResize = (seen) => whenSeen(seen, (s) =>
-  s.url.startsWith('/api/resize/') && s.body && s.body.token);
+  /^\/api\/sessions\/[^/]+\/resize(\?|$)/.test(s.url) && s.body && s.body.token);
 
 // Wait for text the attach has actually written to the local terminal.
 const whenOut = (tty, re, ms) => until(() => re.test(tty.out()), ms);
@@ -302,7 +309,7 @@ test('attach: replay resets + writes scrollback, output streams, acquire+resize 
   Promise.all([
     whenOut(tty, /live line/),
     sawAcquire(seen),
-    whenSeen(seen, (s) => s.url.startsWith('/api/resize/')),
+    whenSeen(seen, (s) => /^\/api\/sessions\/[^/]+\/resize(\?|$)/.test(s.url)),
   ]).then(() => tty.push(Buffer.from([0x1c])));
   const { code } = await attachCli('bash', [], port, tty.tty);
   assert.strictEqual(code, 0);
@@ -316,9 +323,9 @@ test('attach: replay resets + writes scrollback, output streams, acquire+resize 
   assert.match(tty.err(), /detached from bash/);
   assert.deepStrictEqual(tty.rawLog, [true, false]);
   // Server saw acquire + resize on entry, release on detach.
-  const acq = seen.find((s) => s.url.startsWith('/api/control/') && s.body && s.body.action === 'acquire');
-  const rz = seen.find((s) => s.url.startsWith('/api/resize/'));
-  const rel = seen.find((s) => s.url.startsWith('/api/control/') && s.body && s.body.action === 'release');
+  const acq = seen.find((s) => /^\/api\/sessions\/[^/]+\/control(\?|$)/.test(s.url) && s.body && s.body.action === 'acquire');
+  const rz = seen.find((s) => /^\/api\/sessions\/[^/]+\/resize(\?|$)/.test(s.url));
+  const rel = seen.find((s) => /^\/api\/sessions\/[^/]+\/control(\?|$)/.test(s.url) && s.body && s.body.action === 'release');
   assert.ok(acq, 'acquire sent'); assert.ok(rz, 'resize sent'); assert.ok(rel, 'release sent');
   assert.strictEqual(rz.body.token, 'ctl-1');
   assert.ok(rz.body.cols >= 20 && rz.body.rows >= 5);
@@ -330,16 +337,16 @@ test('attach: keystrokes before the escape are forwarded with the token; escape 
   // Gate on the RESIZE, not the acquire: the client sets `token` only when the
   // acquire RESPONSE resolves, and resize is sent after that with the token on
   // it. Seeing the acquire request still leaves a window where onStdin's token
-  // guard silently drops the keystroke and no /api/input is ever sent.
-  whenSeen(seen, (s) => s.url.startsWith('/api/resize/') && s.body && s.body.token)
+  // guard silently drops the keystroke and no sessions/input is ever sent.
+  whenSeen(seen, (s) => /^\/api\/sessions\/[^/]+\/resize(\?|$)/.test(s.url) && s.body && s.body.token)
     .then(() => tty.push(Buffer.from([0x6c, 0x73, 0x0d, 0x1c]))); // "ls\r" then Ctrl-\
   const { code } = await attachCli('bash', [], port, tty.tty);
   assert.strictEqual(code, 0);
   // The input POST is deliberately fire-and-forget (attach.js swallows its
   // failures), so teardown resolves the run without waiting for it to land.
   // Asserting straight off `seen` therefore races the wire.
-  await whenSeen(seen, (s) => s.url.startsWith('/api/input/'));
-  const input = seen.find((s) => s.url.startsWith('/api/input/'));
+  await whenSeen(seen, (s) => /^\/api\/sessions\/[^/]+\/input(\?|$)/.test(s.url));
+  const input = seen.find((s) => /^\/api\/sessions\/[^/]+\/input(\?|$)/.test(s.url));
   assert.ok(input, 'input forwarded');
   assert.strictEqual(input.body.data, 'ls\r');       // escape byte dropped
   assert.strictEqual(input.body.token, 'ctl-1');
@@ -352,8 +359,8 @@ test('attach --read-only: never acquires control or forwards input; still detach
   setTimeout(() => tty.push(Buffer.from([0x1c])), 60);
   const { code } = await attachCli('bash', ['--read-only'], port, tty.tty);
   assert.strictEqual(code, 0);
-  assert.ok(!seen.some((s) => s.url.startsWith('/api/control/')), 'no control in read-only');
-  assert.ok(!seen.some((s) => s.url.startsWith('/api/input/')), 'no input in read-only');
+  assert.ok(!seen.some((s) => /^\/api\/sessions\/[^/]+\/control(\?|$)/.test(s.url)), 'no control in read-only');
+  assert.ok(!seen.some((s) => /^\/api\/sessions\/[^/]+\/input(\?|$)/.test(s.url)), 'no input in read-only');
   assert.match(tty.err(), /\(read-only\)/);
   assert.deepStrictEqual(tty.rawLog, [true, false]);        // raw mode still restored
 });
@@ -374,12 +381,12 @@ test('attach: SIGINT/SIGTERM is treated as a detach (exit 0, terminal restored)'
   // acquire RESPONSE was processed. releaseControl() returns early when `token`
   // is unset, so a signal landing between the acquire request and its response
   // tears down with no release to find and this test fails on timing alone.
-  whenSeen(seen, (s) => s.url.startsWith('/api/resize/') && s.body && s.body.token)
+  whenSeen(seen, (s) => /^\/api\/sessions\/[^/]+\/resize(\?|$)/.test(s.url) && s.body && s.body.token)
     .then(() => tty.signal());
   const { code } = await attachCli('bash', [], port, tty.tty);
   assert.strictEqual(code, 0);
   assert.deepStrictEqual(tty.rawLog, [true, false]);
-  assert.ok(seen.some((s) => s.url.startsWith('/api/control/') && s.body && s.body.action === 'release'));
+  assert.ok(seen.some((s) => /^\/api\/sessions\/[^/]+\/control(\?|$)/.test(s.url) && s.body && s.body.action === 'release'));
 });
 
 test('attach: reconnect on a dropped stream does reset + re-replay + re-acquire', T, async (t) => {
@@ -394,9 +401,9 @@ test('attach: reconnect on a dropped stream does reset + re-replay + re-acquire'
   setTimeout(() => tty.push(Buffer.from([0x1c])), 2500); // detach after the reconnect
   const { code } = await attachCli('bash', [], port, tty.tty);
   assert.strictEqual(code, 0);
-  const attachCount = seen.filter((s) => s.url.startsWith('/api/attach/')).length;
+  const attachCount = seen.filter((s) => /^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(s.url)).length;
   assert.ok(attachCount >= 2, `re-opened the attach stream (saw ${attachCount})`);
-  const acquires = seen.filter((s) => s.url.startsWith('/api/control/') && s.body && s.body.action === 'acquire').length;
+  const acquires = seen.filter((s) => /^\/api\/sessions\/[^/]+\/control(\?|$)/.test(s.url) && s.body && s.body.action === 'acquire').length;
   assert.ok(acquires >= 2, `re-acquired control on reconnect (saw ${acquires})`);
   assert.match(tty.err(), /reconnecting \(attempt 1\)/);
 });
@@ -415,7 +422,7 @@ test('attach: a keystroke during the reconnect gap is not fatal — attach recon
   });
   const tty = fakeTty();
   const tokenedResizes = () => seen.filter((s) =>
-    s.url.startsWith('/api/resize/') && s.body && s.body.token).length;
+    /^\/api\/sessions\/[^/]+\/resize(\?|$)/.test(s.url) && s.body && s.body.token).length;
   // THE GAP IS: control token already held (first acquire done, so the POST is
   // actually sent) AND no attach stream live (the stub auto-releases while
   // dead, which is what makes it 403). Both halves are load-bearing — waiting
@@ -434,24 +441,24 @@ test('attach: a keystroke during the reconnect gap is not fatal — attach recon
     .then(() => tty.push(Buffer.from([0x1c])));
   const { code } = await attachCli('bash', [], port, tty.tty);
   assert.strictEqual(code, 0, 'survived the gap keystroke (no exit 4)');
-  const attachCount = seen.filter((s) => s.url.startsWith('/api/attach/')).length;
+  const attachCount = seen.filter((s) => /^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(s.url)).length;
   assert.ok(attachCount >= 2, `reconnected (saw ${attachCount})`);
   assert.ok(state.inputStatuses.includes(403), 'gap keystroke 403d');
   assert.ok(state.inputStatuses.includes(200), 'post-reconnect keystroke flowed');
 });
 
 test('attach: a stale-token 403 on input is swallowed (not fatal)', T, async (t) => {
-  // MF1: every /api/input 403s (holder changed underneath us). A viewer typing
+  // MF1: every sessions/input 403s (holder changed underneath us). A viewer typing
   // into a stolen session sees silent no-ops, matching the GUI — never exit 4.
   const { seen, state, port } = await startStub(t, { input403: true });
   const tty = fakeTty();
   // Token-dependent exactly like the two tests above: on a bare timer the
   // keystroke can land before the acquire response, where onStdin's `token`
-  // guard drops it, no /api/input is sent and inputStatuses stays empty.
+  // guard drops it, no sessions/input is sent and inputStatuses stays empty.
   sawTokenedResize(seen).then(() => {
     tty.push(Buffer.from('ls\r'));                       // 403, swallowed
     // Queue the detach behind the input REQUEST so teardown cannot outrun it.
-    whenSeen(seen, (s) => s.url.startsWith('/api/input/'))
+    whenSeen(seen, (s) => /^\/api\/sessions\/[^/]+\/input(\?|$)/.test(s.url))
       .then(() => tty.push(Buffer.from([0x1c])));        // then detach cleanly
   });
   const { code } = await attachCli('bash', [], port, tty.tty);
@@ -468,6 +475,15 @@ test('attach: a 404 on the session → give up, terminal restored, exit 5', T, a
   const { code } = await attachCli('ghost', [], port, tty.tty);
   assert.strictEqual(code, 5); // NOTFOUND — no endless reconnect on a definitive 404
   // Raw mode is never entered (no replay ever arrived), so nothing to restore.
+});
+
+test('attach: a node whose sessions row carries no attach subresource is the D.5 line, exit 1', T, async (t) => {
+  const { port, seen } = await startStub(t, { doc: docWithout('attach') });
+  const tty = fakeTty();
+  const { code, stderr } = await attachCli('bash', [], port, tty.tty);
+  assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
+  assert.strictEqual(stderr.trim(), 'clodexctl: node oldbox (5.69.0) does not serve sessions/attach get; run: clodexctl upgrade node http://127.0.0.1:' + port);
+  assert.ok(!seen.some((x) => /\/attach$/.test(x.url.split('?')[0])), 'the SSE was opened anyway — the gate is not ahead of it');
 });
 
 test('attach: non-TTY stdin/stdout → USAGE with a scripting hint', T, async (t) => {

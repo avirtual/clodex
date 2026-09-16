@@ -57,8 +57,8 @@ resource is absent from `/api/resources`), `GET /api/agents` +
 `/api/agents/:name` (the subagent library — the list is the per-agent metadata,
 the single get is `{name, content}`),
 `GET /api/peer/hello` (identity + caps + `dmOrigins` +
-`srcDir` + `webHost` + `wirescope`), `GET /api/attach/:name` (per-session SSE: b64 scrollback replay
-+ telemetry seed), `POST /api/control|input|resize/:name` (input+resize
+`srcDir` + `webHost` + `wirescope`), `GET /api/sessions/:name/attach` (per-session SSE: b64 scrollback replay
++ telemetry seed), `POST /api/sessions/:name/control|input|resize` (input+resize
 token-gated; resize clamped), `POST /api/sessions/:name/query` (pull-on-demand
 popover data; kind whitelist lives in the injected callback),
 `POST /api/send` (operator message), `POST /api/restart` (app relaunch —
@@ -124,6 +124,18 @@ refresh sessions, open the events feed, re-establish wanted attachments.
 the box faster than the 15s cadence can observe, and the renderer would
 otherwise keep a stale version forever. DM claims ride every hello tick
 plus the `dm-mail` doorbell.
+
+`needsUpgrade` is the dialect flag on `status()`: true when the far side is
+online but too old to serve the sessions subresource wire. It is computed by
+one `GET /api/resources` per hello IDENTITY, not per tick — `identityChanged`
+already re-fires on every version or caps move, which is every way the far
+side's dialect can change under a live connection. A hello with no `resources`
+cap is classified true without the round trip. While it is true `_openAttach`
+refuses to open the SSE at all: every attach on such a node 404s, and the
+backoff would hammer it forever — so clearing the flag is what re-opens every
+wanted attachment, since the probe is async and the hello's own re-open loop
+runs while the flag is still true. The renderer shows `needs upgrade` in the
+peer header and offers the existing Update Clodex button.
 
 **Split HTTP agent pools are load-bearing** (SETTLED, fixed a live bug):
 short requests use a keepAlive pool (8 sockets); SSE streams use an

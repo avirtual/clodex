@@ -302,7 +302,7 @@ terminal:
 
 | Verb | Route | Notes |
 |---|---|---|
-| `attach <name> [--read-only]` | `GET /api/attach/:name` + control + `POST /api/input`/`resize` | streams scrollback replay then live output; forwards keystrokes (acquires control, pushes your terminal geometry); **Ctrl-\\** detaches and is never forwarded. Needs a TTY. `--read-only` mirrors without control. Auto-reconnects with full re-replay + re-acquire |
+| `attach <name> [--read-only]` | `GET /api/sessions/:name/attach` + control + `POST /api/sessions/:name/input`/`resize` | streams scrollback replay then live output; forwards keystrokes (acquires control, pushes your terminal geometry); **Ctrl-\\** detaches and is never forwarded. Needs a TTY. `--read-only` mirrors without control. Auto-reconnects with full re-replay + re-acquire |
 
 `attach` is type-agnostic on purpose — a human at a keyboard is the right
 consumer of a raw TTY for bash *and* agent sessions (no `run`-style guardrail).
@@ -370,8 +370,8 @@ scripting and explicit control):
 | Verb | Route | Notes |
 |---|---|---|
 | `send <name> <text…> [--wait [--timeout N]]` | `POST /api/send` | **fire-and-forget** by default (scripting). `--wait` blocks until the agent's turn ends and prints the new entries (default 300s) — `run` on an agent **is** this path |
-| `input <name> <text…> [--no-enter]` | `POST /api/input/:name` | raw keystrokes, **no wait**; acquires + releases control; sends Enter by default (`--no-enter` posts raw). The deliberate low-level channel — **no agent guardrail** |
-| `exec <name> <cmd…> [--quiet-ms N] [--timeout N] [--raw] [--pty]` | `GET /api/attach/:name` + control + `POST /api/input/:name` | run one command in the PTY and print what the terminal produced; waits for quiet (default 750ms) or `--timeout` caps (default 30s); ANSI stripped unless `--raw`. On an **agent** it refuses without `--pty` — `run` on bash **is** this path |
+| `input <name> <text…> [--no-enter]` | `POST /api/sessions/:name/input` | raw keystrokes, **no wait**; acquires + releases control; sends Enter by default (`--no-enter` posts raw). The deliberate low-level channel — **no agent guardrail** |
+| `exec <name> <cmd…> [--quiet-ms N] [--timeout N] [--raw] [--pty]` | `GET /api/sessions/:name/attach` + control + `POST /api/sessions/:name/input` | run one command in the PTY and print what the terminal produced; waits for quiet (default 750ms) or `--timeout` caps (default 30s); ANSI stripped unless `--raw`. On an **agent** it refuses without `--pty` — `run` on bash **is** this path |
 
 **`exec` — exit status is about DELIVERY, not the remote command.** Screen bytes
 carry no exit code, so `exec` exits `0` when the command was typed and the output

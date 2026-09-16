@@ -30,6 +30,7 @@ const assert = require('node:assert');
 const http = require('node:http');
 const { PeerConnection } = require('../peer-client');
 const { STALE_MS } = require('../cli/src/sse-guard');
+const { serveDialect } = require('./lib/peer-dialect');
 
 // Timers a single live SSE stream arms on the injected clock: the staleness
 // watchdog, and (since t50) the stability timer whose fire resets the reconnect
@@ -78,10 +79,8 @@ function silentServer() {
   const state = { streams: [], connects: 0, attaches: 0 };
   const server = http.createServer((req, res) => {
     const p = req.url.split('?')[0];
-    if (p === '/api/peer/hello') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, app: 'clodex', host: 'h', caps: [], version: '1' }));
-    } else if (p === '/api/sessions') {
+    if (serveDialect(p, res)) return;
+    if (p === '/api/sessions') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, sessions: [] }));
     } else if (p === '/api/events') {
@@ -95,12 +94,12 @@ function silentServer() {
       // precisely the condition the watchdog exists for.
       res.flushHeaders();
       state.streams.push(res);
-    } else if (p.startsWith('/api/attach/')) {
+    } else if (/^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(p)) {
       state.attaches++;
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       res.flushHeaders();     // live 200, zero body bytes — same half-open shape
       state.streams.push(res);
-    } else if (p.startsWith('/api/control/')) {
+    } else if (/^\/api\/sessions\/[^/]+\/control(\?|$)/.test(p)) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, token: 't' }));
     } else {

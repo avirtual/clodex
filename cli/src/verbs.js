@@ -409,7 +409,7 @@ async function run({ client, ctx, printer, flags, args, stderr, io = {} }) {
   if (!text) throw new CliError(EXIT.USAGE, 'run needs text — a prompt for an agent, or a command for a bash session');
   const type = await sessionType(client, name);
   if (type === 'bash') {
-    return exec({ client, printer, flags, args, mode: 'pty', knownType: 'bash', stderr });
+    return exec({ client, ctx, printer, flags, args, mode: 'pty', knownType: 'bash', stderr });
   }
   return sendWait({ client, ctx, printer, flags, name, text, mode: 'agent', io });
 }
@@ -496,29 +496,31 @@ async function sendWait({ client, ctx, printer, flags, name, text, mode = null, 
   }
 }
 
-    // /api/input is a raw keystroke channel — nothing appends Enter server-side, hence the default '\r'.
-async function input({ client, printer, flags, args }) {
+    // The input subresource is a raw keystroke channel — nothing appends Enter server-side, hence the default '\r'.
+async function input({ client, ctx, printer, flags, args }) {
   const name = requireName(args[0], 'input');
   const text = args.slice(1).join(' ');
   if (!text) throw new CliError(EXIT.USAGE, 'input needs text to send');
   const data = flags['no-enter'] ? text : text + '\r';
-  const acq = await client.post(`/api/control/${encodeURIComponent(name)}`, 'input (acquire control)', { action: 'acquire', client: 'clodexctl' });
+  await R.requireResource(client, 'sessions', 'post', R.ctxLabel(ctx, flags), 'control');
+  const acq = await client.post(`/api/sessions/${encodeURIComponent(name)}/control`, 'input (acquire control)', { action: 'acquire', client: 'clodexctl' });
   const token = acq.token;
   try {
-    const res = await client.post(`/api/input/${encodeURIComponent(name)}`, 'input', { token, data });
+    const res = await client.post(`/api/sessions/${encodeURIComponent(name)}/input`, 'input', { token, data });
     if (flags.json) printer.json(res);
     else printer.line(`input sent to ${name}`);
   } finally {
-    try { await client.post(`/api/control/${encodeURIComponent(name)}`, 'input (release control)', { action: 'release', token }); } catch {}
+    try { await client.post(`/api/sessions/${encodeURIComponent(name)}/control`, 'input (release control)', { action: 'release', token }); } catch {}
   }
 }
 
     // Open the attach SSE BEFORE acquiring control: the stream registers us as an attacher and
     // holds the control token alive — the last stream closing auto-releases control.
-async function exec({ client, printer, flags, args, mode = null, knownType = null, stderr = null }) {
+async function exec({ client, ctx, printer, flags, args, mode = null, knownType = null, stderr = null }) {
   const name = requireName(args[0], 'exec');
   const cmd = args.slice(1).join(' ');
   if (!cmd) throw new CliError(EXIT.USAGE, 'exec needs a command to run');
+  await R.requireResource(client, 'sessions', 'get', R.ctxLabel(ctx, flags), 'attach');
 
   if (knownType !== 'bash' && !flags.pty) {
     const type = knownType != null ? knownType : await sessionType(client, name);
@@ -550,13 +552,13 @@ async function exec({ client, printer, flags, args, mode = null, knownType = nul
       quietTimer = setTimeout(() => finish({ ok: true }), quietMs);
     };
 
-    stream = client.openEventStream(`/api/attach/${encodeURIComponent(name)}`, 'exec (attach)', {
+    stream = client.openEventStream(`/api/sessions/${encodeURIComponent(name)}/attach`, 'exec (attach)', {
       onOpen: async () => {
         hardTimer = setTimeout(() => finish({ ok: false, timedOut: true }), timeoutMs);
         try {
-          const acq = await client.post(`/api/control/${encodeURIComponent(name)}`, 'exec (acquire control)', { action: 'acquire', client: 'clodexctl' });
+          const acq = await client.post(`/api/sessions/${encodeURIComponent(name)}/control`, 'exec (acquire control)', { action: 'acquire', client: 'clodexctl' });
           token = acq.token;
-          await client.post(`/api/input/${encodeURIComponent(name)}`, 'exec (input)', { token, data: cmd + '\r' });
+          await client.post(`/api/sessions/${encodeURIComponent(name)}/input`, 'exec (input)', { token, data: cmd + '\r' });
           inputSent = true;
           armQuiet(); // in case output already arrived before the input resolved
         } catch (e) { finish({ ok: false, error: e }); }
@@ -571,7 +573,7 @@ async function exec({ client, printer, flags, args, mode = null, knownType = nul
     });
   });
 
-  try { if (token) await client.post(`/api/control/${encodeURIComponent(name)}`, 'exec (release control)', { action: 'release', token }); } catch {}
+  try { if (token) await client.post(`/api/sessions/${encodeURIComponent(name)}/control`, 'exec (release control)', { action: 'release', token }); } catch {}
   try { if (stream) stream.close(); } catch {}
 
   const raw = Buffer.concat(chunks).toString('utf8');

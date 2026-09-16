@@ -2,7 +2,7 @@
 
 const SESSIONS_ROW = {
   name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'],
-  subresources: { transcript: ['get'], query: ['post'] },
+  subresources: { transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'] },
 };
 
 const RESOURCES_DOC = {

@@ -14,6 +14,7 @@ const { CliError, EXIT } = require('./errors');
 const { openTransport } = require('./transport');
 const { WireClient } = require('./client');
 const contexts = require('./contexts');
+const R = require('./resources');
 
 const execFileP = promisify(execFile);
 
@@ -816,20 +817,21 @@ async function ssmVerifyHello(entry, token, { spawnFn, execFn } = {}) {
 // that the drop-in was written; the first `spawn --type claude` is the real
 // proof. The secret rides the encrypted wire, never SSM params/CloudTrail.
 const TOKEN_SESSION_PREFIX = 'clodex-token-';
-async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execFn, timeoutMs = 60000, pollMs = 1000, sleepFn = defaultSleep } = {}) {
+async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execFn, timeoutMs = 60000, pollMs = 1000, sleepFn = defaultSleep, ctxName = '<ctx>' } = {}) {
   const sessName = TOKEN_SESSION_PREFIX + crypto.randomBytes(4).toString('hex');
   const t = await openTransport(entry, { spawnFn, execFn });
   try {
     const client = new WireClient(t.baseUrl, wireToken);
+    await R.requireResource(client, 'sessions', 'post', ctxName, 'control');
     // 1. throwaway bash session (as the clodex user the engine runs as). The
     //    engine REJECTS a create without cwd; /tmp exists on any box we deploy.
     await client.post('/api/sessions', 'deploy ssm (token session)', { name: sessName, type: 'bash', cwd: '/tmp' });
-    const acq = await client.post(`/api/control/${encodeURIComponent(sessName)}`, 'deploy ssm (token control)', { action: 'acquire', client: 'clodexctl' });
+    const acq = await client.post(`/api/sessions/${encodeURIComponent(sessName)}/control`, 'deploy ssm (token control)', { action: 'acquire', client: 'clodexctl' });
     const ctrlToken = acq && acq.token;
     if (!ctrlToken) throw new CliError(EXIT.SERVER, 'token delivery: could not acquire session control');
     const dropin = buildTokenDropinScript(oauthToken) + '\n';
     try {
-      await client.post(`/api/input/${encodeURIComponent(sessName)}`, 'deploy ssm (token write)', { token: ctrlToken, data: dropin });
+      await client.post(`/api/sessions/${encodeURIComponent(sessName)}/input`, 'deploy ssm (token write)', { token: ctrlToken, data: dropin });
     } catch (e) {
       if (!(e instanceof CliError && e.exitCode === EXIT.CONNECT)) throw e;
     }
@@ -962,7 +964,7 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   if (claudeToken) {
     try {
       const deliver = io.deliverToken || deliverClaudeToken;
-      await deliver(entry, token, claudeToken, { spawnFn: io.spawnFn, execFn, sleepFn });
+      await deliver(entry, token, claudeToken, { spawnFn: io.spawnFn, execFn, sleepFn, ctxName: name });
     } catch (e) {
       if (json) emit({ type: 'error', reason: 'token-delivery-failed', message: e.message });
       else printer.line(`installed and verified, but delivering the Claude token failed: ${e.message} (re-run with --claude-token-file to retry)`);
