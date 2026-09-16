@@ -33,3 +33,24 @@ Deliberately NOT filtered against a skill catalog, unlike `getDefaultDeny` and
 only under its own tree — so a name absent from the global catalog is still a
 real default, and filtering would silently drop it the first time Preferences
 was opened anywhere else.
+
+A stored NON-EMPTY explicit list (no `*`) is upgraded to
+`deferredSkillDeny(known − stored)` and written back once, using the
+`knownSkillNames` dep `initStores` takes (the store never reaches into the
+engine). Such a list was written before t918 and is a snapshot of what was known
+that day, so every skill the CLI syncs afterwards arrived enabled. A stored
+deferred list is returned byte-identical with no write; an explicit `[]` stays
+`[]`, because it is the only shape the UI has for "deny nothing" and expanding
+it would deny every later-synced skill. Without the dep — a store built by a
+test or a host that has no catalog — the stored list is returned unchanged.
+
+The upgrade is on READ, but because `defaults:setSkillDeny` returns
+`getDefaultSkillDeny()` after writing, a caller storing an explicit non-empty
+list gets it converted on the spot: two writes, and explicit-non-empty is an
+unstorable state rather than merely an unmigrated one. That is intended —
+nothing should be able to re-create the shape the upgrade exists to remove.
+
+Blast radius on peers: `skillDenyForPeer` sends `[]` for any directive-bearing
+list, so an operator whose explicit list is upgraded here stops sending that
+denial verbatim to a remote peer and sends nothing. The tradeoff is t918's (an
+old peer reads `!x` as a skill name); t950 is what moves this operator into it.

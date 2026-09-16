@@ -51,9 +51,18 @@ list passes through rather than being replaced by the empty collect of an
 unpainted container — `resetNewSessionSkillCollector` is what both draw sites
 call so the three globals can never describe an earlier render.
 
-Nothing off at all collapses to `[]`: after a Check All the ticks say "deny
-nothing", and re-emitting `['*', …every drawn name]` would still deny whatever
-the CLI announces later. The keeps are filtered through the TOGGLEABLE rows, as
+Nothing off at all collapses to `[]` only when a TICK put it there: after a
+Check All the ticks say "deny nothing", and re-emitting `['*', …every drawn
+name]` would still deny whatever the CLI announces later. Two renders reach an
+empty collect without the operator touching anything, and both return the asked
+list instead — no toggleable row at all (every row read-only), and every
+toggleable row already a keep of the asked list, which is exactly what a
+t950-upgraded default that keeps everything known draws. Collapsing that second
+one would hand the seat an explicit `[]`, which `expandSkillsOff`
+short-circuits, so every skill synced afterwards would arrive on in that seat
+forever.
+
+The keeps are filtered through the TOGGLEABLE rows, as
 `collectPrefsSkillDefaults` does — a read-only row is owned by a lower layer or
 policy, and turning it into a `!name` exemption would carry this box's local
 `skillOverrides` onto every other box the template travels to, inverted.
@@ -69,15 +78,24 @@ no denial at all.
 
 ## collectPrefsSkillDefaults
 
-The same two rules as `newSessionSkillDenyList` — the toggleable filter and the
-empty-off collapse — and both collectors also carry `keptUndrawn`: a `!name`
-exemption for a skill this cwd does not currently render has no row to read, and
-dropping it would silently deny that skill the next time the dialog was opened
-anywhere. It is the skills mirror of the `carried` list the undeferred branch
-keeps for the same reason.
+The toggleable filter, as in `newSessionSkillDenyList`, and both collectors also
+carry `keptUndrawn`: a `!name` exemption for a skill this cwd does not currently
+render has no row to read, and dropping it would silently deny that skill the
+next time the dialog was opened anywhere. It is the skills mirror of the
+`carried` list the undeferred branch keeps for the same reason.
 
-The collapse asks whether anything COULD be ticked, not whether the operator
-ticked it: `collectSkillChecklist` skips disabled rows, so an all-read-only
-render and a catalog fetch that threw both collect `[]`. Saving `[]` there would
-be unrecoverable — `stores.js` reads an explicit `[]` as "deny nothing" forever —
-so an empty `toggleable` returns the stored list instead.
+The only bail out of the deferred arm asks whether anything COULD be ticked, not
+whether the operator ticked it: `collectSkillChecklist` skips disabled rows, so
+an all-read-only render and a catalog fetch that threw both collect `[]`. Saving
+`[]` there would be unrecoverable — `stores.js` reads an explicit `[]` as "deny
+nothing" forever — so an empty `toggleable` returns the stored list instead.
+
+Unlike `newSessionSkillDenyList`, an ALL-ticked prefs render saves a deferred
+list keeping every drawn row rather than `[]` (t950). The two differ because
+their subjects do: a session's list is a one-time choice for a seat that already
+exists, while the prefs default is re-applied to every seat created afterwards,
+and an explicit `[]` there means the CLI's account-synced skills arrive enabled
+forever. The consequence, deliberate: once the stored default is deferred, this
+collector never returns `[]` again, so an explicit "deny nothing" default is no
+longer reachable from Preferences. The nearest expression is every row ticked,
+which keeps every skill known today and denies only the ones synced later.

@@ -2161,7 +2161,7 @@ function drawerPtyCwd(workspaceId, seat) {
 const { createToolCache } = require('./tool-doctor');
 const toolCache = createToolCache({ whichBin });
 
-  const stores = initStores(userDataPath, { log, registryDir: REGISTRY_DIR });
+  const stores = initStores(userDataPath, { log, registryDir: REGISTRY_DIR, knownSkillNames });
   const { persistence, templates, workspaces, promptLibrary,
     agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings, envScopes, skillsSeen, renameWorkspaceScope } = stores;
 

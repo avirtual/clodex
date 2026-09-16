@@ -24,6 +24,7 @@ const {
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS,
   CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR, DEFAULT_SKILL_DENY_FLOOR, DEFAULT_BUILTIN_DENY_FLOOR,
 } = require('./catalogs');
+const { deferredSkillDeny, isSkillDenyDirective } = require('./skills-off');
 
 const PROMPT_KINDS = ['system', 'append'];
 const PROMPT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/; // mirrors session/agent name rule
@@ -403,7 +404,9 @@ function sanitizeSpeakRate(raw) {
   return Number.isInteger(raw) && raw >= 80 && raw <= 400 ? raw : DEFAULT_UI_SETTINGS.speakRate;
 }
 
-function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResourcesDir, envDefaultsFile } = {}) {
+function initStores(userDataPath, {
+  log, registryDir, resourcesDir, skillsResourcesDir, envDefaultsFile, knownSkillNames,
+} = {}) {
   // Path locals — derived here so nothing needs app.getPath before whenReady.
   const PERSIST_FILE = path.join(userDataPath, 'sessions.json');
   const TEMPLATES_FILE = path.join(userDataPath, 'templates.json'); // legacy — migration only
@@ -1022,8 +1025,17 @@ function initStores(userDataPath, { log, registryDir, resourcesDir, skillsResour
     },
     getDefaultSkillDeny() {
       const e = this._load()['*'];
-      if (e && Array.isArray(e.denySkills)) return [...new Set(e.denySkills.filter((s) => typeof s === 'string' && s))];
-      return DEFAULT_SKILL_DENY_FLOOR.slice();
+      if (!e || !Array.isArray(e.denySkills)) return DEFAULT_SKILL_DENY_FLOOR.slice();
+      const stored = [...new Set(e.denySkills.filter((s) => typeof s === 'string' && s))];
+      if (!stored.length || stored.some(isSkillDenyDirective)) return stored;
+      if (typeof knownSkillNames !== 'function') return stored;
+      let known;
+      try { known = knownSkillNames(); } catch { return stored; }
+      if (!Array.isArray(known) || !known.length) return stored;
+      const denied = new Set(stored);
+      const upgraded = deferredSkillDeny(known.filter((n) => typeof n === 'string' && n && !denied.has(n)));
+      this.setDefaultSkillDeny(upgraded);
+      return upgraded;
     },
     setDefaultSkillDeny(list) {
       const map = this._load();

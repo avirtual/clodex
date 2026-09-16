@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- **Clodex optimized keeps newly synced skills off.** A skill that appears after you chose your defaults (the CLI's account-synced skills, a plugin you install later) starts unchecked; an older explicit skill default is upgraded to that rule on first load, keeping exactly the skills it had enabled.
 - **The CLI's bundled skills stay out of every seat.** Clodex now ships `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1` in its default env, so the workflow skills the Claude Code binary carries (init, review, simplify, security-review and the rest) no longer land in each agent's prompt. Plugin skills, account-synced skills and a project's own `.claude/skills/` are unaffected; the seed adds the key to the global scope once, and an operator who wants them back edits it there.
 
 ## 5.71.0 — 2026-09-17 — clodexctl speaks kubectl
