@@ -17,6 +17,7 @@ blocks a release.
   and reviewers get the 1M context window instead of whatever the CLI defaults
   to. A library template you edited yourself keeps your model; an untouched one
   picks the pin up on the next launch.
+- The node API now describes itself: `GET /api/resources` lists every resource and verb a node serves (advertised as the `resources` capability in hello). Sessions gained `GET /api/sessions/<name>` and a `?workspace=` filter, and `GET /api/workspaces` lists the node's workspaces. Groundwork for the kubectl-style `clodexctl get` family.
 
 ## 5.69.0 — 2026-09-16
 

@@ -57,6 +57,16 @@ function resolveRemoteBasePathSetting(settings, env = process.env, warn) {
   return resolveRemoteBasePath(env ? env[REMOTE_BASE_PATH_ENV] : null, warn, settled);
 }
 
+const RESOURCES = [
+  { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'], subresources: {} },
+  { name: 'workspaces', singular: 'workspace', scope: 'node', verbs: ['list'] },
+  { name: 'catalogs', singular: 'catalogs', scope: 'node', verbs: ['get'] },
+];
+
+const RESOURCES_VERSION = 1;
+
+const RESOURCE_CALLBACK = { workspaces: '_listWorkspaces', catalogs: '_getCatalogs' };
+
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const MAX_BODY = 64 * 1024;          // matches the IPC message cap
 const SSE_HEARTBEAT_MS = 25000;
@@ -64,7 +74,7 @@ const ATTACH_MAX_BUFFERED = 4 * 1024 * 1024;
 const RESIZE_DEBOUNCE_MS = 80;
 
 class RemoteServer {
-  constructor({ port, host, basePath, warn, pagePath, getSessions, getTranscript, send, restartApp,
+  constructor({ port, host, basePath, warn, pagePath, getSessions, getSession, listWorkspaces, getTranscript, send, restartApp,
                 hostLabel, version, srcDir, getWebInfo, getWirescopeInfo, getAttachInfo, sendInput, resizePty, onControlChange,
                 query, createSession, killSession, restartSession, getCatalogs,
                 getSessionArgs, setSessionArgs,
@@ -77,6 +87,8 @@ class RemoteServer {
     this._basePath = resolveRemoteBasePath(basePath, warn);
     this._pagePath = pagePath;
     this._getSessions = getSessions;
+    this._getSession = getSession || ((name) => (this._getSessions() || []).find(s => s && s.name === name) || null);
+    this._listWorkspaces = listWorkspaces || null;
     this._getTranscript = getTranscript;
     this._send = send;
     this._restartApp = restartApp || null;
@@ -465,6 +477,13 @@ class RemoteServer {
 
   activityFor(name) { return this._activity.get(name) || 'idle'; }
 
+  _resources() {
+    return RESOURCES.filter((r) => {
+      const cb = RESOURCE_CALLBACK[r.name];
+      return !cb || !!this[cb];
+    });
+  }
+
   _broadcast(event, data) {
     if (!this._server || this._clients.size === 0) return;
     const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -551,11 +570,29 @@ class RemoteServer {
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
       return this._page(res);
     }
+    if (req.method === 'GET' && p === '/api/resources') {
+      return this._json(res, 200, { ok: true, version: RESOURCES_VERSION, resources: this._resources() });
+    }
     if (req.method === 'GET' && p === '/api/sessions') {
-      const sessions = (this._getSessions() || []).map(s => ({
-        ...s, activity: this.activityFor(s.name),
-      }));
+      const want = url.searchParams.get('workspace');
+      let rows = (this._getSessions() || []);
+      if (want) rows = rows.filter(s => s && (s.workspace === want || s.workspaceId === want));
+      const sessions = rows.map(s => ({ ...s, activity: this.activityFor(s.name) }));
       return this._json(res, 200, { ok: true, sessions });
+    }
+    if (req.method === 'GET' && p.startsWith('/api/sessions/')) {
+      const name = decodeURIComponent(p.slice('/api/sessions/'.length));
+      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
+      const row = this._getSession(name);
+      if (!row) return this._json(res, 404, { ok: false, error: 'Session not found' });
+      return this._json(res, 200, { ok: true, session: { ...row, activity: this.activityFor(name) } });
+    }
+    if (req.method === 'GET' && p === '/api/workspaces') {
+      if (!this._listWorkspaces) return this._json(res, 501, { ok: false, error: 'workspaces not available' });
+      const workspaces = (this._listWorkspaces() || []).map(w => ({
+        id: w.id, name: w.name, open: !!w.open, lastFocusedAt: w.lastFocusedAt != null ? w.lastFocusedAt : null,
+      }));
+      return this._json(res, 200, { ok: true, workspaces });
     }
     if (req.method === 'GET' && p.startsWith('/api/transcript/')) {
       const name = decodeURIComponent(p.slice('/api/transcript/'.length));
@@ -589,6 +626,7 @@ class RemoteServer {
       if (this._receiveRoster) caps.push('relay'); // accepts a hub-pushed relay roster (hub-relay federation)
       if (this._wtermOpen) caps.push('shell'); // peer terminal — present only while a peer holds the grant
       if (this._notifications) caps.push('inbox');
+      caps.push('resources');
       return this._json(res, 200, {
         ok: true, app: 'clodex', host: this._hostLabel,
         version: this._version, caps,
@@ -1092,6 +1130,6 @@ class RemoteServer {
 }
 
 module.exports = {
-  RemoteServer, resolveRemoteBasePath, coerceRemoteBasePath, resolveRemoteBasePathSetting,
+  RemoteServer, RESOURCES, resolveRemoteBasePath, coerceRemoteBasePath, resolveRemoteBasePathSetting,
   REMOTE_BASE_PATH_ENV, DEFAULT_REMOTE_BASE_PATH,
 };

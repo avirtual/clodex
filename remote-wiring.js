@@ -64,6 +64,32 @@ function createRemoteWiring(deps) {
     });
   }
 
+  // An unrouted bash session leaves every stat below null — the viewer tolerates it.
+  function sessionRow(sess) {
+    const p = proxyPoller.snapshot(sess.name);
+    let ctx = null;
+    try {
+      ctx = parseCtxFile(fs.readFileSync(pathFor(REGISTRY_DIR, sess.name, 'ctx'), 'utf-8'));
+    } catch {}
+    const wireTok = p && p.context && typeof p.context.inputTokens === 'number'
+      ? p.context.inputTokens : null;
+    return {
+      name: sess.name,
+      type: sess.type,
+      cwd: sess.cwd,
+      workspace: (getWorkspaces().get(sess.workspaceId) || {}).name || '',
+      workspaceId: sess.workspaceId || null,
+      stats: {
+        model: (p && p.model) || null,
+        cost: p && p.cost && p.cost.usd != null ? p.cost.usd : null,
+        requests: p && p.cost && p.cost.requests != null ? p.cost.requests : null,
+        ctxTok: wireTok != null ? wireTok : (ctx && ctx.tok) || null,
+        ctxSize: (ctx && ctx.size) || null,
+        ctxPct: (ctx && ctx.pct != null) ? ctx.pct : null,
+      },
+    };
+  }
+
   function spawnTeamLead(name, teamName) {
     let team;
     try { team = loadManifest(teamName); }
@@ -128,37 +154,19 @@ function createRemoteWiring(deps) {
         insecure: remoteInsecure,
         pagePath: path.join(__dirname, 'renderer', 'remote.html'),
         notifications: (getNotifications && getNotifications()) || null,
+        // Agents AND bash: bash sessions are IPC-private (no registry/socket/who)
+        // but ARE exposed on the peer surface for visibility/attach/control. The
+        // wire payload carries sess.type so the viewer buckets bash like a local
+        // bash row.
         getSessions: () =>
-          // Agents AND bash: bash sessions are IPC-private (no registry/socket/who)
-          // but ARE exposed on the peer surface for visibility/attach/control. The
-          // wire payload carries sess.type so the viewer buckets bash like a local
-          // bash row (no ctx badge/telemetry — the stats below come back null for
-          // an unrouted bash session, which the viewer already tolerates).
           Array.from(manager.sessions.values())
             .filter(sess => !sess._dead)
-            .map(sess => {
-              const p = proxyPoller.snapshot(sess.name);
-              let ctx = null;
-              try {
-                ctx = parseCtxFile(fs.readFileSync(pathFor(REGISTRY_DIR, sess.name, 'ctx'), 'utf-8'));
-              } catch {}
-              const wireTok = p && p.context && typeof p.context.inputTokens === 'number'
-                ? p.context.inputTokens : null;
-              return {
-                name: sess.name,
-                type: sess.type,
-                cwd: sess.cwd,
-                workspace: (getWorkspaces().get(sess.workspaceId) || {}).name || '',
-                stats: {
-                  model: (p && p.model) || null,
-                  cost: p && p.cost && p.cost.usd != null ? p.cost.usd : null,
-                  requests: p && p.cost && p.cost.requests != null ? p.cost.requests : null,
-                  ctxTok: wireTok != null ? wireTok : (ctx && ctx.tok) || null,
-                  ctxSize: (ctx && ctx.size) || null,
-                  ctxPct: (ctx && ctx.pct != null) ? ctx.pct : null,
-                },
-              };
-            }),
+            .map(sessionRow),
+        getSession: (name) => {
+          const sess = manager.sessions.get(name);
+          return sess && !sess._dead ? sessionRow(sess) : null;
+        },
+        listWorkspaces: () => getWorkspaces().list(),
         getTranscript: (name, limit, since) => {
           const sess = manager.sessions.get(name);
           if (!sess || !sess.agentType) return { ok: false, error: 'Session not found' };
