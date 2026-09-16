@@ -396,7 +396,9 @@ test('exec (agent mode): an empty pre-send transcript asks since=0 and still pri
   const { code, stdout } = await cli(['exec', 'bob', 'q', '--timeout', '10'], port);
   assert.strictEqual(code, 0);
   assert.match(stdout, /\[assistant\] a/);
-  for (const q of refetchQueries(seen)) assert.strictEqual(q, 'since=0&limit=500');
+  const qs = refetchQueries(seen);
+  assert.ok(qs.length >= 1, 'a refetch carried a since cursor');
+  for (const q of qs) assert.strictEqual(q, 'since=0&limit=500');
   server.close();
 });
 
