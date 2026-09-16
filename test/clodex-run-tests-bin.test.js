@@ -560,6 +560,8 @@ test('scope own: the argv is exactly changed ∪ by-subject ∪ scanners, and no
         'test/deleted.test.js': EMPTY_TEST,
         'test/unrelated.test.js': EMPTY_TEST,
         'test/widget-require.test.js': `${EMPTY_TEST}require('../lib/widget');\n`,
+        'cli/test/nested.test.js': `${EMPTY_TEST}require('../src/nested');\n`,
+        'cli/src/nested.js': 'module.exports = 5;\n',
         'test/shape.test.js': `${EMPTY_TEST}const SUBJECT = 'renderer/renderer.js';\n`,
         'test/fixtures/decoy.test.js': `${EMPTY_TEST}require('../../lib/widget');\n`,
         'lib/widget.js': 'module.exports = 1;\n',
@@ -568,6 +570,7 @@ test('scope own: the argv is exactly changed ∪ by-subject ∪ scanners, and no
       onBranch: ({ put: p, git: g }) => {
         p('test/alpha.test.js', `${EMPTY_TEST}// edited on the branch\n`);
         p('lib/widget.js', 'module.exports = 3;\n');
+        p('cli/src/nested.js', 'module.exports = 6;\n');
         p('renderer/renderer.js', 'module.exports = 4;\n');
         g('rm', '-q', 'test/deleted.test.js');
         g('add', '-A');
@@ -582,10 +585,14 @@ test('scope own: the argv is exactly changed ∪ by-subject ∪ scanners, and no
       'ENTER: the by-subject row is empty, so this asserts nothing about subject selection');
     assert.ok(rec.argv.includes('test/shape.test.js'),
       'ENTER: the literal-path row is empty, so the source-shape tests would go unrun');
+    assert.ok(rec.argv.includes('cli/test/nested.test.js'),
+      'a require target resolves against the TEST\'s own directory: every cli test reaches its '
+      + 'subject as `../src/x`, so a repo-relative stem match selects none of them');
     assert.deepStrictEqual(rec.argv, [
       '--reporter=dot',
       'test/alpha.test.js',
       'test/untracked.test.js',
+      'cli/test/nested.test.js',
       'test/shape.test.js',
       'test/widget-require.test.js',
       ...OWN_SCANNERS,
@@ -595,8 +602,8 @@ test('scope own: the argv is exactly changed ∪ by-subject ∪ scanners, and no
     assert.ok(!rec.argv.includes('test/fixtures/decoy.test.js'),
       'a hit inside a fixture directory is a fixture, not a test file');
     assertDigest(r.digest,
-      `[${path.basename(root)}] own: 1/1 green (${WALL}) — ${OWN_SCANNERS.length + 4} files: `
-      + '2 changed, 2 by subject, ' + `${OWN_SCANNERS.length} scanners`);
+      `[${path.basename(root)}] own: 1/1 green (${WALL}) — ${OWN_SCANNERS.length + 5} files: `
+      + '2 changed, 3 by subject, ' + `${OWN_SCANNERS.length} scanners`);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

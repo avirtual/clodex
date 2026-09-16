@@ -227,14 +227,16 @@ function testPool(measure) {
 }
 
 function subjectMatchers(sources) {
-  return sources.map((rel) => {
-    const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const stem = rel.replace(/\.js$/, '');
-    return {
-      require: new RegExp(`require\\(\\s*['"](?:\\.{1,2}\\/)+${esc(stem)}(?:\\.js)?['"]`),
-      literal: rel,
-    };
-  });
+  return sources.map((rel) => ({ rel, stem: rel.replace(/\.js$/, '') }));
+}
+
+function requireTargets(testRel, text) {
+  const dir = path.posix.dirname(testRel);
+  const out = new Set();
+  for (const m of text.matchAll(/require\(\s*['"](\.\.?\/[^'"]+)['"]\s*\)/g)) {
+    out.add(path.posix.normalize(path.posix.join(dir, m[1])));
+  }
+  return out;
 }
 
 function selectSet(measure) {
@@ -273,7 +275,11 @@ function selectSet(measure) {
       } catch {
         continue;
       }
-      if (!matchers.some((m) => m.require.test(text) || text.includes(m.literal))) continue;
+      const targets = requireTargets(t, text);
+      const hit = matchers.some(
+        (m) => targets.has(m.stem) || targets.has(m.rel) || text.includes(m.rel),
+      );
+      if (!hit) continue;
       bySubject.push(t);
       seen.add(t);
     }

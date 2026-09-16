@@ -96,10 +96,21 @@ behind the box-wide lock — which is the cost this scope was added to avoid.
 
 ## subjectMatchers
 
-A test is selected for a changed source by a `require('…/<rel>')` target or by
+A test is selected for a changed source by a relative `require()` target or by
 the changed file's repo-relative path appearing literally (how the source-shape
-tests name `renderer/renderer.js`). A test that reaches its subject by
-`path.join(__dirname, '..', 'scripts', 'x.js')` matches NEITHER and is not
-selected — `test/clodex-run-tests-bin.test.js` is exactly that shape. This is
-why `OWN_SCANNERS` runs unconditionally: the repo-wide checks are the floor
-under a selection rule that is deliberately textual and therefore incomplete.
+tests name `renderer/renderer.js`).
+
+The require target is resolved against the TEST's own directory, never matched
+as a repo-relative stem. Anchoring the stem after `(\.\.?/)+` looks equivalent
+and is not: it holds only for a test one level below the root, and every one of
+the 36 files in `cli/test/` reaches its subject as `require('../src/x')`, which
+resolves to `cli/src/x` but contains no `cli/` at all. Under the stem rule a
+branch touching any of the 23 modules in `cli/src` selected ZERO cli tests —
+including `cli/test/attach.test.js`, the file `LOCK_BOUND` exists for — and
+reported `0 by subject` as though nothing needed running.
+
+Both rules are textual, so a subject reached only through a path the reader
+assembles — `path.join(__dirname, '..', 'scripts', 'x.js')`, a name built from a
+variable — is matched by neither, and no amount of pattern work closes that
+without executing the test. This is why `OWN_SCANNERS` runs unconditionally: the
+repo-wide checks are the floor under a selection rule that cannot be complete.
