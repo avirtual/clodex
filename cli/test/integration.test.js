@@ -11,13 +11,14 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const { run } = require('../src/main');
+const { RESOURCES_DOC, docWithout } = require('./fixtures/resources-doc');
 
 const TOKEN = 'sekret';
 
 // Build a stub server. `routes` maps "METHOD /path" (path may end in a name
 // segment matched loosely) to a handler(req,res,body,recorded). Records every
 // request for assertions.
-function stub(handler) {
+function stub(handler, resourcesOverride = {}) {
   const seen = [];
   const server = http.createServer((req, res) => {
     let body = '';
@@ -31,6 +32,9 @@ function stub(handler) {
       }
       const rec = { method: req.method, url: req.url, auth, body: body ? JSON.parse(body) : null };
       seen.push(rec);
+      if (req.method === 'GET' && req.url.split('?')[0] === '/api/resources' && !resourcesOverride.skip) {
+        res.writeHead(200); return res.end(JSON.stringify(resourcesOverride.doc || RESOURCES_DOC));
+      }
       handler(req, res, rec);
     });
   });
@@ -86,20 +90,35 @@ test('logs --tail maps to ?limit and renders role-prefixed lines', async () => {
   const port = await listen(server);
   const { code, stdout } = await cli(['logs', 'builder', '--tail', '5'], port);
   assert.strictEqual(code, 0);
-  assert.match(seen[0].url, /\/api\/transcript\/builder\?limit=5/);
+  assert.strictEqual(seen[0].url, '/api/resources', 'the capability check precedes the first request');
+  assert.match(seen[1].url, /^\/api\/sessions\/builder\/transcript\?limit=5$/);
   assert.match(stdout, /\[user\] hi/);
   assert.match(stdout, /\[assistant\] yo/);
   server.close();
 });
 
-test('query: POST /api/query/:name with kind+args, JSON out', async () => {
+test('query: POST /api/sessions/:name/query with kind+args, JSON out', async () => {
   const { server, seen } = stub((req, res) => { res.writeHead(200); res.end(JSON.stringify({ ok: true, report: { usd: 1 } })); });
   const port = await listen(server);
   const { code } = await cli(['query', 'builder', 'report', '--detail'], port);
   assert.strictEqual(code, 0);
-  assert.strictEqual(seen[0].method, 'POST');
-  assert.strictEqual(seen[0].url, '/api/query/builder');
-  assert.deepStrictEqual(seen[0].body, { kind: 'report', args: { detail: true } });
+  assert.strictEqual(seen[0].url, '/api/resources', 'the capability check precedes the first request');
+  assert.strictEqual(seen[1].method, 'POST');
+  assert.strictEqual(seen[1].url, '/api/sessions/builder/query');
+  assert.deepStrictEqual(seen[1].body, { kind: 'report', args: { detail: true } });
+  server.close();
+});
+
+test('query: a node whose sessions row carries no query subresource is the D.5 line, exit 1', async () => {
+  const { server, seen } = stub((req, res, rec) => {
+    if (rec.url === '/api/peer/hello') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['query'] })); }
+    res.writeHead(200); res.end('{}');
+  }, { doc: docWithout('query') });
+  const port = await listen(server);
+  const { code, stderr } = await cli(['query', 'builder', 'report'], port);
+  assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
+  assert.strictEqual(stderr.trim(), 'clodexctl: node oldbox (5.69.0) does not serve sessions/query post; run: clodexctl upgrade node http://127.0.0.1:' + port);
+  assert.ok(!seen.some((s) => s.method === 'POST'), 'the check ran BEFORE the first request');
   server.close();
 });
 

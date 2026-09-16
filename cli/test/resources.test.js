@@ -22,7 +22,7 @@ const NEW_NODE_DOC = {
   ok: true,
   version: 1,
   resources: [
-    { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'], subresources: {} },
+    { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'], subresources: { transcript: ['get'], query: ['post'] } },
     { name: 'workspaces', singular: 'workspace', scope: 'node', verbs: ['list'] },
     { name: 'catalogs', singular: 'catalogs', scope: 'node', verbs: ['get'] },
   ],
@@ -99,6 +99,37 @@ test('a non-404 failure on /api/resources propagates untouched (not read as "too
   await assert.rejects(
     () => R.requireResource(c, 'sessions', 'get', 'prod'),
     (e) => e.exitCode === EXIT.AUTH, 'a 401 must not be reported as an out-of-date node');
+});
+
+test('requireResource: a served SUBRESOURCE verb passes on the same one round trip', async () => {
+  const c = newNode();
+  await R.requireResource(c, 'sessions', 'get', 'prod', 'transcript');
+  await R.requireResource(c, 'sessions', 'post', 'prod', 'query');
+  assert.deepStrictEqual(c.seen, ['/api/resources', '/api/resources'], 'one check, one round trip, no hello');
+});
+
+test('requireResource: a sessions row WITHOUT the subresource names <resource>/<sub> in the D.5 line', async () => {
+  const doc = { ok: true, version: 1, resources: [{ name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'], subresources: {} }] };
+  const c = client({ '/api/resources': doc, '/api/peer/hello': { ok: true, host: 'halfbox', version: '5.70.0' } });
+  await assert.rejects(
+    () => R.requireResource(c, 'sessions', 'get', 'half', 'transcript'),
+    (e) => e.exitCode === EXIT.SERVER
+      && e.message === 'node halfbox (5.70.0) does not serve sessions/transcript get; run: clodexctl upgrade node half');
+});
+
+test('requireResource: a subresource present with the WRONG verb still fails', async () => {
+  const doc = { ok: true, version: 1, resources: [{ name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'], subresources: { query: ['get'] } }] };
+  const c = client({ '/api/resources': doc, '/api/peer/hello': { ok: true, host: 'halfbox', version: '5.70.0' } });
+  await assert.rejects(
+    () => R.requireResource(c, 'sessions', 'post', 'half', 'query'),
+    (e) => /does not serve sessions\/query post/.test(e.message));
+});
+
+test('requireResource: an OLD node (no /api/resources at all) fails the subresource check too', async () => {
+  const c = oldNode();
+  await assert.rejects(
+    () => R.requireResource(c, 'sessions', 'get', 'prod', 'transcript'),
+    (e) => e.exitCode === EXIT.SERVER && /does not serve sessions\/transcript get/.test(e.message));
 });
 
 test('ctxLabel names the node the upgrade line tells you to upgrade', () => {

@@ -32,11 +32,12 @@ Plain Node http+SSE, zero deps. Clodex behavior is injected as callbacks
 endpoint and drops the matching capability from hello. The transcript on
 disk is the source of truth — SSE signals "changed", clients refetch.
 
-Endpoints: phone page (`/`), `GET /api/sessions|transcript/:name|events`
+Endpoints: phone page (`/`), `GET /api/sessions|events`
 (global SSE), `GET /api/resources` (the node's resource/verb document —
 `{ok, version, resources}`, filtered to what this node's injected callbacks
 actually serve; advertised as the `resources` cap, which is unconditional),
-`GET /api/sessions/:name` (one session, `{ok, session}`; 404 unknown or dead)
+`GET /api/sessions/:name` (one session, `{ok, session}`; 404 unknown or dead),
+`GET /api/sessions/:name/transcript?limit&since` (the message list),
 and `GET /api/sessions?workspace=<name or id>` (the list narrowed to one
 workspace; an unknown value is an empty list), `GET /api/workspaces` (this
 node's workspaces — `{id, name, open, lastFocusedAt}`, no window geometry),
@@ -58,7 +59,7 @@ the single get is `{name, content}`),
 `GET /api/peer/hello` (identity + caps + `dmOrigins` +
 `srcDir` + `webHost` + `wirescope`), `GET /api/attach/:name` (per-session SSE: b64 scrollback replay
 + telemetry seed), `POST /api/control|input|resize/:name` (input+resize
-token-gated; resize clamped), `POST /api/query/:name` (pull-on-demand
+token-gated; resize clamped), `POST /api/sessions/:name/query` (pull-on-demand
 popover data; kind whitelist lives in the injected callback),
 `POST /api/send` (operator message), `POST /api/restart` (app relaunch —
 response written before the restart fires), `POST /api/sessions`,

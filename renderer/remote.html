@@ -173,7 +173,7 @@
     if (!open || fetching) return;
     fetching = true;
     try {
-      const r = await fetch('api/transcript/' + encodeURIComponent(open) + (cursor == null ? '' : '?since=' + cursor));
+      const r = await fetch('api/sessions/' + encodeURIComponent(open) + '/transcript' + (cursor == null ? '' : '?since=' + cursor));
       const j = await r.json();
       if (j.ok && open) {
         if (j.messages.length) {

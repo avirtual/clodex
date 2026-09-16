@@ -114,10 +114,11 @@ async function version({ client, printer, flags }) {
   printer.line(`Server: ${host} ${ver}`);
 }
 
-async function logs({ client, printer, flags, args, io = {} }) {
+async function logs({ client, ctx, printer, flags, args, io = {} }) {
   const name = requireName(args[0], 'logs');
+  await R.requireResource(client, 'sessions', 'get', R.ctxLabel(ctx, flags), 'transcript');
   const q = flags.tail ? `?limit=${encodeURIComponent(parseIntOr(flags.tail, 'tail'))}` : '';
-  const body = await client.get(`/api/transcript/${encodeURIComponent(name)}${q}`, 'logs');
+  const body = await client.get(`${transcriptPath(name)}${q}`, 'logs');
   const messages = body.messages || [];
   if (flags.follow) return logsFollow({ client, printer, flags, name, initial: body, messages, io });
   if (flags.json) printer.json(body);
@@ -142,7 +143,7 @@ async function logsFollow({ client, printer, flags, name, initial, messages, io 
     if (refetching) { pending = true; return; }
     refetching = true;
     try {
-      const after = await client.get(`/api/transcript/${encodeURIComponent(name)}?limit=500`, 'logs -f (refetch)');
+      const after = await client.get(`${transcriptPath(name)}?limit=500`, 'logs -f (refetch)');
       const all = after.messages || [];
       const fresh = deltaFrom(all, snapshot);
       snapshot = all.length;
@@ -172,7 +173,7 @@ async function logsFollow({ client, printer, flags, name, initial, messages, io 
       // On (re)connect, silently re-snapshot to the current length so a
       // reconnect never re-prints old lines (no gap markers in v1).
       onOpen: async () => {
-        const snap = await client.get(`/api/transcript/${encodeURIComponent(name)}?limit=500`, 'logs -f (resnapshot)');
+        const snap = await client.get(`${transcriptPath(name)}?limit=500`, 'logs -f (resnapshot)');
         snapshot = (snap.messages || []).length;
       },
       onEvent: (event, data) => {
@@ -189,7 +190,7 @@ function deltaFrom(msgs, snapshot) {
 }
 
 const QUERY_KINDS = new Set(['ctx', 'report', 'bust', 'files', 'filePeek', 'fileDiff']);
-async function query({ client, printer, flags, args }) {
+async function query({ client, ctx, printer, flags, args }) {
   const name = requireName(args[0], 'query');
   const kind = args[1];
   if (!QUERY_KINDS.has(kind)) {
@@ -198,7 +199,8 @@ async function query({ client, printer, flags, args }) {
   const qargs = {};
   if (flags.path) qargs.path = String(flags.path);
   if (flags.detail) qargs.detail = true;
-  const body = await client.post(`/api/query/${encodeURIComponent(name)}`, 'query', { kind, args: qargs });
+  await R.requireResource(client, 'sessions', 'post', R.ctxLabel(ctx, flags), 'query');
+  const body = await client.post(`/api/sessions/${encodeURIComponent(name)}/query`, 'query', { kind, args: qargs });
   printer.json(body);
 }
 
@@ -287,11 +289,11 @@ async function spawnAlive(client, name, sleepFn) {
   } catch { return null; }
 }
 
-async function send({ client, printer, flags, args, io = {} }) {
+async function send({ client, ctx, printer, flags, args, io = {} }) {
   const name = requireName(args[0], 'send');
   const text = args.slice(1).join(' ').trim();
   if (!text) throw new CliError(EXIT.USAGE, 'send needs message text');
-  if (flags.wait) return sendWait({ client, printer, flags, args, name, text, io });
+  if (flags.wait) return sendWait({ client, ctx, printer, flags, args, name, text, io });
   const res = await client.post('/api/send', 'send', { name, text });
   if (flags.json) printer.json(res);
   else printer.line(`sent to ${name} (fire-and-forget)`);
@@ -311,7 +313,7 @@ async function sessionType(client, name) {
 
     // Routes on `type === 'bash'` (PTY exec) vs everything else (send --wait). Binary, not a
     // claude/codex whitelist — an unknown future agent type must land on the send path.
-async function run({ client, printer, flags, args, stderr, io = {} }) {
+async function run({ client, ctx, printer, flags, args, stderr, io = {} }) {
   const name = requireName(args[0], 'run');
   const text = args.slice(1).join(' ').trim();
   if (!text) throw new CliError(EXIT.USAGE, 'run needs text — a prompt for an agent, or a command for a bash session');
@@ -319,10 +321,11 @@ async function run({ client, printer, flags, args, stderr, io = {} }) {
   if (type === 'bash') {
     return exec({ client, printer, flags, args, mode: 'pty', knownType: 'bash', stderr });
   }
-  return sendWait({ client, printer, flags, name, text, mode: 'agent', io });
+  return sendWait({ client, ctx, printer, flags, name, text, mode: 'agent', io });
 }
 
-async function sendWait({ client, printer, flags, name, text, mode = null, io = {} }) {
+async function sendWait({ client, ctx, printer, flags, name, text, mode = null, io = {} }) {
+  await R.requireResource(client, 'sessions', 'get', R.ctxLabel(ctx, flags), 'transcript');
   const timeoutMs = (flags.timeout != null ? parseIntOr(flags.timeout, 'timeout') : 300) * 1000;
       // --timeout is a hard ceiling on the WHOLE verb (wait phase, then refetch at +grace):
       // a wedged fetch holds its socket open and keeps sendWait from returning, which blocks
@@ -344,7 +347,7 @@ async function sendWait({ client, printer, flags, name, text, mode = null, io = 
     stream = client.openEventStream('/api/events', 'send --wait (events)', {
       onOpen: async () => {
         try {
-          const before = await client.get(`/api/transcript/${encodeURIComponent(name)}?limit=500`, 'send --wait (snapshot)', { signal: waitAc.signal });
+          const before = await client.get(`${transcriptPath(name)}?limit=500`, 'send --wait (snapshot)', { signal: waitAc.signal });
           snapshot = (before.messages || []).length;
           await client.post('/api/send', 'send', { name, text }, { signal: waitAc.signal });
         } catch (e) { finish(reject, e); } // a ceiling abort lands here too — finish is then a no-op (already settled)
@@ -378,7 +381,7 @@ async function sendWait({ client, printer, flags, name, text, mode = null, io = 
     for (let attempt = 0; attempt < 6; attempt++) {
       let after;
       try {
-        after = await client.get(`/api/transcript/${encodeURIComponent(name)}?limit=500`, 'send --wait (refetch)', { signal: refetchAc.signal });
+        after = await client.get(`${transcriptPath(name)}?limit=500`, 'send --wait (refetch)', { signal: refetchAc.signal });
       } catch (e) {
         // Swallow ONLY our own ceiling abort (client rethrows AbortError
         // unwrapped) — a real transport error that merely RACED the deadline
@@ -677,6 +680,10 @@ function entryTarget(e) {
     return `${e.az.bastion} → ${vm}`;
   }
   return '';
+}
+
+function transcriptPath(name) {
+  return `/api/sessions/${encodeURIComponent(name)}/transcript`;
 }
 
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;

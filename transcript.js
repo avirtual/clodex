@@ -1,6 +1,6 @@
 // Transcript rendering off the CLI's on-disk JSONL. Two renderers: a full
 // markdown export (jsonlToMarkdown, tool traffic included) and the chat-message
-// list served over /api/transcript to both the phone page and the `clodex` CLI
+// list served to both the phone page and the `clodex` CLI
 // (jsonlToMessages, user/assistant text only). Both read the JSONL the CLI
 // writes regardless of which observation path is live, so the remote view
 // never depends on the intent machinery. extractText pulls the
@@ -126,7 +126,7 @@ function extractClaudeBlocks(content) {
   return out.join('\n');
 }
 
-// Transcript → chat messages for every /api/transcript reader: user/assistant
+// Transcript → chat messages for every transcript reader: user/assistant
 // text only, no tool traffic. Reads the on-disk JSONL, which is written by the CLI
 // regardless of which observation path (wire vs JsonlWatcher) is live — so the
 // remote view never depends on the intent machinery.
