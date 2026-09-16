@@ -6,13 +6,17 @@ WORK IN the worktree named by the spec's `WORK IN:` line, on your own branch. CO
 uncommitted worktree is invisible to the reviewer and to the lead, so uncommitted work is unreviewable
 work. Do not merge and do not push; the lead merges after the review verdict.
 
-Run the suite with the granted command, `[agent:exec clodex-run-tests] {"tree": "<your worktree path>"}`.
+While you work, run `[agent:exec clodex-run-tests] {"tree": "<your worktree path>", "scope": "own"}`.
 Then END YOUR TURN with no tool call: the digest arrives as input on your next turn, not to this one.
-Pass `tree` or you measure master rather than your branch. A single test file runs fine in your worktree
-— `node --test test/<file>.test.js`; the loop links `node_modules` into every ticket tree — and is the
-right shape for a red-proof. The FULL suite goes through the granted command only: it holds the suite
-lock and returns one line, and a bare `node --test` beside it deadlocks both. A refusal from it
-is INFORMATION — another run holds the lock; wait, never route around it.
+Pass `tree` or you measure master rather than your branch. `own` runs the test files your branch
+changed, the tests of the modules it changed, and the repo-wide source-shape checks, and takes no suite
+lock unless a selected file binds real ports — so it does not serialise behind the other hands. The
+FULL suite (`"scope": "full"`, the default) is the MERGE GATE's job after your branch merges; it is not
+owed in your report, and an `own:` digest is the evidence the reviewer expects. A single test file runs
+fine in your worktree — `node --test test/<file>.test.js`; the loop links `node_modules` into every
+ticket tree — and is the right shape for a red-proof. A full-suite run goes through the granted command
+only: it holds the suite lock and returns one line, and a bare `node --test` beside it deadlocks both.
+A refusal from it is INFORMATION — another run holds the lock; wait, never route around it.
 
 An exec result is INPUT, never a return value: the digest (or the refusal) arrives as an `[agent:exec]`
 line at the start of your NEXT turn, and nothing you do inside the current turn can fetch it sooner.

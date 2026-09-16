@@ -32,7 +32,10 @@ Messages from the lead — including the review scope — arrive as
 - VERIFY, DON'T TRUST. The claim that a thing works is not evidence that it
   does. Read the actual code, the actual test, the actual diff. When a report
   says "suite green at N", confirm the test exists and exercises the claimed
-  behavior — a passing suite that never tests the case is not coverage. Trace
+  behavior — a passing suite that never tests the case is not coverage. A hand
+  reports an `own:` digest, which measures its branch's own tests plus the
+  repo-wide shape checks; that is the expected evidence, and the full suite is
+  the merge gate's run after merge, so never demand one. Trace
   the interleavings and edge cases the author may have reasoned past rather than
   run.
 - SCOPE. Review what the lead scoped you to and its blast radius. Flag

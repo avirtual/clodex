@@ -70,3 +70,36 @@ dump older than the verdict just printed — but the ticket loop re-measures a r
 on the SAME commit seconds later, so unlinking there destroys the only account
 of why the re-measure happened. Neither name reaches the green digest line: both
 describe a run that is not the one being reported.
+
+## OWN_SCANNERS
+
+Every entry was opened and confirmed to enumerate the REAL working tree — `git
+ls-files`, a `readdirSync` rooted at the repo, or a hardcoded list of live repo
+modules it then reads — so any one of them can go red because of a change
+ANYWHERE, including in a file the selection rules below would never reach. A
+test that only globs inside a `mkdtemp` fixture belongs nowhere near this list:
+it cannot be broken by another file, so running it on every scoped run buys
+nothing. `test/preserve-across-restart.test.js` and `test/ssh-keepalive.test.js`
+read as ordinary behaviour tests from their names and are on the list anyway,
+because each also sweeps `git ls-files '*.js'` for a repo-wide shape.
+
+## LOCK_BOUND
+
+The FIXED-port binders only. `cli/test/attach.test.js` is the file the lock
+rationale in `scripts/run-tests.js` names; `cli/test/transport.test.js` re-binds
+a port it picked moments earlier, which collides with a concurrent run that
+picked the same one; `test/wirescope-env-gate.test.js` walks a hardcoded 47800+
+range. The many suite files that bind port 0 are deliberately NOT here: the
+kernel hands each run a different port, so they are not the collision the mutex
+exists to prevent, and listing them would put nearly every scoped run back
+behind the box-wide lock — which is the cost this scope was added to avoid.
+
+## subjectMatchers
+
+A test is selected for a changed source by a `require('…/<rel>')` target or by
+the changed file's repo-relative path appearing literally (how the source-shape
+tests name `renderer/renderer.js`). A test that reaches its subject by
+`path.join(__dirname, '..', 'scripts', 'x.js')` matches NEITHER and is not
+selected — `test/clodex-run-tests-bin.test.js` is exactly that shape. This is
+why `OWN_SCANNERS` runs unconditionally: the repo-wide checks are the floor
+under a selection rule that is deliberately textual and therefore incomplete.
