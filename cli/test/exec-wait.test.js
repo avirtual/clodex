@@ -11,7 +11,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { run } = require('../src/main');
-const { RESOURCES_DOC } = require('./fixtures/resources-doc');
+const { RESOURCES_DOC, docWithout } = require('./fixtures/resources-doc');
 
 const TOKEN = 'sekret';
 const b64 = (s) => Buffer.from(s).toString('base64');
@@ -34,7 +34,10 @@ function sseStub(opts = {}) {
       seen.push(rec);
       const p = req.url.split('?')[0];
       if (req.method === 'GET' && p === '/api/resources') {
-        res.writeHead(200); return res.end(JSON.stringify(RESOURCES_DOC));
+        res.writeHead(200); return res.end(JSON.stringify(opts.doc || RESOURCES_DOC));
+      }
+      if (req.method === 'GET' && p === '/api/peer/hello') {
+        res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['attach'] }));
       }
       // Type lookup for exec's agent guardrail (T36f). These fixtures all exec
       // against BASH sessions, so the guardrail must see type bash and proceed;
@@ -113,9 +116,9 @@ test('exec: replay discarded, control before input, output printed ANSI-stripped
   assert.doesNotMatch(stdout, /OLD SCROLLBACK/);
   assert.doesNotMatch(stdout, /\x1b\[/);
   const order = seen.map((s) => `${s.method} ${s.url}`);
-  // type lookup (guardrail) first, then attach opens, control acquired before
-  // input, released after
-  assert.strictEqual(order[0], 'GET /api/sessions');
+  // capability check, then the type lookup (guardrail), then attach opens,
+  // control acquired before input, released after
+  assert.deepStrictEqual(order.slice(0, 2), ['GET /api/resources', 'GET /api/sessions']);
   const attachIdx = seen.findIndex((s) => /^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(s.url));
   assert.ok(attachIdx >= 0 && order[attachIdx] === 'GET /api/sessions/bash/attach');
   const acquireIdx = seen.findIndex((s) => /^\/api\/sessions\/[^/]+\/control(\?|$)/.test(s.url) && s.body && s.body.action === 'acquire');
@@ -201,6 +204,16 @@ test('exec: input 403 mid-flight → control release attempted, no hang, coded e
 });
 
 // ── send --wait ──────────────────────────────────────────────────────────────
+
+test('exec: a node whose sessions row carries no attach subresource is the D.5 line, exit 1', async () => {
+  const { server, seen } = sseStub({ doc: docWithout('attach') });
+  const port = await listen(server);
+  const { code, stderr } = await cli(['exec', 'bash', 'pwd'], port);
+  assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
+  assert.strictEqual(stderr.trim(), 'clodexctl: node oldbox (5.69.0) does not serve sessions/attach get; run: clodexctl upgrade node http://127.0.0.1:' + port);
+  assert.ok(!seen.some((s) => /\/attach$/.test(s.url.split('?')[0])), 'the SSE was opened anyway — the gate is not ahead of it');
+  server.close();
+});
 
 test('send --wait: busy→turnEnd → new entries printed, snapshot respected', async () => {
   let calls = 0;

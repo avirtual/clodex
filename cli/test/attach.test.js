@@ -12,6 +12,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const A = require('../src/attach');
 const { run } = require('../src/main');
+const { RESOURCES_DOC, docWithout } = require('./fixtures/resources-doc');
 
 // ── leaf: scanEscape ─────────────────────────────────────────────────────────
 
@@ -160,6 +161,12 @@ function attachStub(opts = {}) {
       const rec = { method: req.method, url: req.url, body: body ? JSON.parse(body) : null };
       seen.push(rec);
       const p = req.url.split('?')[0];
+      if (req.method === 'GET' && p === '/api/resources') {
+        res.writeHead(200); return res.end(JSON.stringify(opts.doc || RESOURCES_DOC));
+      }
+      if (req.method === 'GET' && p === '/api/peer/hello') {
+        res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['attach'] }));
+      }
       if (req.method === 'GET' && /^\/api\/sessions\/[^/]+\/attach(\?|$)/.test(p)) {
         if (opts.attach404) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: false, error: 'no such session' })); }
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' });
@@ -468,6 +475,15 @@ test('attach: a 404 on the session → give up, terminal restored, exit 5', T, a
   const { code } = await attachCli('ghost', [], port, tty.tty);
   assert.strictEqual(code, 5); // NOTFOUND — no endless reconnect on a definitive 404
   // Raw mode is never entered (no replay ever arrived), so nothing to restore.
+});
+
+test('attach: a node whose sessions row carries no attach subresource is the D.5 line, exit 1', T, async (t) => {
+  const { port, seen } = await startStub(t, { doc: docWithout('attach') });
+  const tty = fakeTty();
+  const { code, stderr } = await attachCli('bash', [], port, tty.tty);
+  assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
+  assert.strictEqual(stderr.trim(), 'clodexctl: node oldbox (5.69.0) does not serve sessions/attach get; run: clodexctl upgrade node http://127.0.0.1:' + port);
+  assert.ok(!seen.some((x) => /\/attach$/.test(x.url.split('?')[0])), 'the SSE was opened anyway — the gate is not ahead of it');
 });
 
 test('attach: non-TTY stdin/stdout → USAGE with a scripting hint', T, async (t) => {
