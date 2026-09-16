@@ -33,16 +33,16 @@ const VERB_REGISTRY = [
     name: 'get', group: 'daily',
     summary: 'list or fetch a resource',
     usage: [
-      'get sessions [-n WORKSPACE] [-A] [-o json|wide|name]',
-      'get session <name> [-o json|wide|name]',
-      'get workspaces [-o json|name]',
-      'get peers [-o json|wide|name]',
-      'get teams [-o json|wide|name]',
-      'get tickets [--team T] [--state open|done|cancelled|all] [-o json|wide|name]',
-      'get sandboxes [-o json|wide|name]',
-      'get agents [-o json|wide|name]',
-      'get worktrees --repo DIR [-o json|wide|name]',
-      'get catalogs [-o json]',
+      'get sessions [-n WORKSPACE] [-A] [-o json|yaml|wide|name]',
+      'get session <name> [-o json|yaml|wide|name]',
+      'get workspaces [-o json|yaml|name]',
+      'get peers [-o json|yaml|wide|name]',
+      'get teams [-o json|yaml|wide|name]',
+      'get tickets [--team T] [--state open|done|cancelled|all] [-o json|yaml|wide|name]',
+      'get sandboxes [-o json|yaml|wide|name]',
+      'get agents [-o json|yaml|wide|name]',
+      'get worktrees --repo DIR [-o json|yaml|wide|name]',
+      'get catalogs [-o json|yaml]',
       'get session <name> --subresource skills|args|transcript',
     ],
     args: [['resource', 'sessions|workspaces|peers|teams|tickets|sandboxes|agents|worktrees|catalogs (singular accepted too)'], ['name', 'one object (also accepted as session/<name>)']],
@@ -52,7 +52,7 @@ const VERB_REGISTRY = [
       ['--team T', 'tickets only — one team\'s board'],
       ['--state S', 'tickets only — open|done|cancelled|all (human default: open)'],
       ['--repo DIR', 'worktrees only — the repo to list (required; resolved to an absolute path here)'],
-      ['-o FORMAT', 'json (raw wire payload) | wide (extra columns) | name (<singular>/<id> per line)'],
+      ['-o FORMAT', 'json (raw wire payload) | yaml (the same payload as YAML) | wide (extra columns) | name (<singular>/<id> per line)'],
       ['--subresource S', 'sessions only — read one subresource of a named session: skills|args|transcript'],
     ],
     examples: [
@@ -76,7 +76,7 @@ const VERB_REGISTRY = [
   {
     name: 'exec', group: 'daily',
     summary: 'make a session do something and show the result',
-    usage: 'exec <name> <text…> [--timeout N] [--quiet-ms N] [--raw] [--pty] [-o json]',
+    usage: 'exec <name> <text…> [--timeout N] [--quiet-ms N] [--raw] [--pty] [-o json|yaml]',
     args: [['name', 'target session'], ['text…', 'a prompt (agent) or a command (bash)']],
     flags: [
       ['--timeout N', 'seconds — hard ceiling on the whole verb (agent: 300, bash/pty: 30)'],
@@ -101,7 +101,7 @@ const VERB_REGISTRY = [
   {
     name: 'logs', group: 'daily',
     summary: 'print a transcript slice, or follow it live',
-    usage: 'logs <name> [--tail N] [-f|--follow] [-o json]',
+    usage: 'logs <name> [--tail N] [-f|--follow] [-o json|yaml]',
     args: [['name', 'session whose transcript to read']],
     flags: [
       ['--tail N', 'last N entries (default: the server\'s slice)'],
@@ -147,14 +147,14 @@ const VERB_REGISTRY = [
   {
     name: 'api-resources', group: 'daily',
     summary: 'what this node can serve — NAME SINGULAR SCOPE VERBS',
-    usage: 'api-resources [-o json]',
+    usage: 'api-resources [-o json|yaml]',
     examples: ['clodexctl api-resources'],
     notes: ['The discovery document (GET /api/resources). A node too old to serve it answers with the upgrade line and exit 1.'],
   },
   {
     name: 'version', group: 'daily',
     summary: 'this client\'s version and the node\'s',
-    usage: 'version [-o json]',
+    usage: 'version [-o json|yaml]',
     examples: ['clodexctl version', 'clodexctl version -o json'],
     notes: ['-V/--version prints the client line alone and opens no wire; `version` asks the node too.'],
   },
@@ -177,7 +177,7 @@ const VERB_REGISTRY = [
   {
     name: 'info', group: 'daily',
     summary: 'identity + caps + version (also a connectivity test)',
-    usage: 'info [-o json]',
+    usage: 'info [-o json|yaml]',
     examples: ['clodexctl info', 'clodexctl --url http://127.0.0.1:7900 --token T info'],
     notes: ['GET /api/peer/hello — the cheapest reachability check for a context.'],
   },
@@ -186,7 +186,7 @@ const VERB_REGISTRY = [
   {
     name: 'create', group: 'sessions',
     summary: 'create a resource on the node',
-    usage: 'create session <name> --cwd DIR --type claude|codex|bash [--model M] [--arg X …] [--env KEY=VALUE …] [--fork] [-o json]',
+    usage: 'create session <name> --cwd DIR --type claude|codex|bash [--model M] [--arg X …] [--env KEY=VALUE …] [--fork] [-o json|yaml]',
     args: [['resource', 'session (singular or plural spelling)'], ['name', 'new session name ([a-zA-Z0-9._-], 1-64)']],
     flags: [
       ['--cwd DIR', 'working directory for the session'],
@@ -210,7 +210,7 @@ const VERB_REGISTRY = [
   {
     name: 'delete', group: 'sessions',
     summary: 'HARD DELETE a resource on the engine (no resume)',
-    usage: 'delete session <name> [--force] [-o json]',
+    usage: 'delete session <name> [--force] [-o json|yaml]',
     args: [['resource', 'session (singular or plural spelling)'], ['name', 'session to delete']],
     flags: [['--force', 'skip the type-the-name confirm (REQUIRED with -o json)']],
     examples: ['clodexctl delete session doomed', 'clodexctl delete session doomed --force -o json'],
@@ -222,8 +222,8 @@ const VERB_REGISTRY = [
     name: 'restart', group: 'sessions',
     summary: 'restart a session, or the whole node',
     usage: [
-      'restart session <name> [--fresh] [-o json]',
-      'restart node [--force] [-o json]',
+      'restart session <name> [--fresh] [-o json|yaml]',
+      'restart node [--force] [-o json|yaml]',
     ],
     args: [['resource', 'session | node — REQUIRED (a bare `restart <name>` is a usage error)'], ['name', 'session to restart (session form only)']],
     flags: [
@@ -239,7 +239,7 @@ const VERB_REGISTRY = [
   {
     name: 'patch', group: 'sessions',
     summary: 'patch a resource — only the keys you pass change',
-    usage: 'patch session <name> [--arg X…] [--proxy URL] [--restart] [-o json]',
+    usage: 'patch session <name> [--arg X…] [--proxy URL] [--restart] [-o json|yaml]',
     args: [['resource', 'session (singular or plural spelling)'], ['name', 'session to patch']],
     flags: [
       ['--arg X', 'set extraArgs — repeatable (replaces the whole list)'],
@@ -398,7 +398,7 @@ const VERB_REGISTRY = [
   {
     name: 'upgrade', group: 'deploy',
     summary: 'move an EXISTING node to a new version (routes on how it was deployed)',
-    usage: 'upgrade [ctx] [--tag T | --image URI] [--dry-run] [--force] [-o json]',
+    usage: 'upgrade [ctx] [--tag T | --image URI] [--dry-run] [--force] [-o json|yaml]',
     args: [['ctx', 'context to upgrade (else the current/--ctx context)']],
     flags: [
       ['--tag T', 'target version [helm/fargate] — beats the packaged pin AND a carried image.tag'],
@@ -428,7 +428,7 @@ const VERB_REGISTRY = [
   {
     name: 'dm', group: 'plumbing',
     summary: 'DM an agent, fire-and-forget',
-    usage: 'dm <name> <text…> [-o json]',
+    usage: 'dm <name> <text…> [-o json|yaml]',
     args: [['name', 'target agent'], ['text…', 'the message']],
     examples: ['clodexctl dm bob "status?"'],
     notes: [
@@ -439,7 +439,7 @@ const VERB_REGISTRY = [
   {
     name: 'input', group: 'plumbing',
     summary: 'raw keystrokes into a session (no wait, no guardrail)',
-    usage: 'input <name> <text…> [--no-enter] [-o json]',
+    usage: 'input <name> <text…> [--no-enter] [-o json|yaml]',
     args: [['name', 'target session'], ['text…', 'keystrokes to send']],
     flags: [['--no-enter', 'post the text verbatim (default appends Enter/\\r)']],
     examples: ['clodexctl input bob "yes"', 'clodexctl input bob $\'\\x1b[A\' --no-enter'],
