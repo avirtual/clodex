@@ -252,6 +252,9 @@ test('mount builds #clx-menubar under #main and tags it .has-web-menubar', () =>
     mount({ emit() {}, invoke() { return Promise.resolve(); } });
 
     assert.ok(main.classList.contains('has-web-menubar'), '#main is tagged for the top-offset');
+    assert.ok(body.classList.contains('web-frontend'),
+      '<body> is tagged .web-frontend — the sidebar is a sibling of #main, so only a body class '
+      + 'can reach #sidebar-header to drop the traffic-light clearance');
     const bar = main.children.find((c) => c.id === 'clx-menubar');
     assert.ok(bar, 'the menu bar mounts inside #main');
     const tops = bar.children.filter((c) => c.className === 'clx-top');
@@ -605,4 +608,44 @@ test('t885: mount places an overflowing submenu beside its parent, not at the wi
     assert.equal(third.style.left, '503px',
       'flipped to the parent\'s left side (700 - 200 + 3), not clamped to 1000 - 200 - 4 = 796');
   } finally { m.restore(); }
+});
+
+test('styles.css: one body.web-frontend #sidebar-header rule trims the top padding, Electron keeps 40px', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { parseRules, winningDeclaration } = require('./lib/css-cascade');
+  const cssSrc = fs.readFileSync(path.join(__dirname, '..', 'renderer/styles.css'), 'utf-8');
+
+  const webRules = parseRules(cssSrc).flatMap((rule) => rule.selector.split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.startsWith('body.web-frontend #sidebar-header'))
+    .map((s) => ({ selector: s, body: rule.body })));
+  assert.equal(webRules.length, 1,
+    `expected exactly one \`body.web-frontend #sidebar-header\` rule, found ${webRules.length}: `
+    + `${webRules.map((r) => r.selector).join(' | ') || '(none)'}`);
+  const declared = webRules[0].body.match(/(?:^|;)\s*padding-top\s*:\s*([^;]+)/);
+  assert.ok(declared, `\`${webRules[0].selector}\` sets no padding-top`);
+  assert.match(declared[1].trim(), /^var\(--sp-\d+\)$/,
+    `\`${webRules[0].selector}\` sets padding-top: ${declared[1].trim()} — it must ride a --sp-* token`);
+
+  const resolveTop = (chain) => {
+    const short = winningDeclaration(cssSrc, chain, 'padding');
+    const long = winningDeclaration(cssSrc, chain, 'padding-top');
+    const top = short && { ...short, value: short.value.split(/\s+/)[0] };
+    if (!top) return long;
+    if (!long) return top;
+    return (long.score > top.score || (long.score === top.score && long.at > top.at)) ? long : top;
+  };
+  const sidebar = { tag: 'div', id: 'sidebar', classes: [], attrs: {} };
+  const header = { tag: 'div', id: 'sidebar-header', classes: [], attrs: {} };
+  const electron = resolveTop([{ tag: 'body', id: null, classes: [], attrs: {} }, sidebar, header]);
+  assert.ok(electron, 'ENTER: no padding rule resolves onto the Electron #sidebar-header');
+  assert.equal(electron.value, '40px',
+    `\`${electron.selector}\` wins padding-top on the Electron #sidebar-header with \`${electron.value}\` — `
+    + 'the macOS traffic lights need the full 40px clearance under titleBarStyle hiddenInset');
+
+  const web = resolveTop([{ tag: 'body', id: null, classes: ['web-frontend'], attrs: {} }, sidebar, header]);
+  assert.ok(web, 'ENTER: no padding rule resolves onto the web #sidebar-header');
+  assert.equal(web.selector, webRules[0].selector,
+    `\`${web.selector}\` wins padding-top on the web #sidebar-header, not the web-frontend rule`);
 });

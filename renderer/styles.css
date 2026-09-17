@@ -5061,6 +5061,9 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   padding: 40px var(--sp-3) var(--sp-2);
   gap: var(--sp-2);
 }
+body.web-frontend #sidebar-header {
+  padding-top: var(--sp-4);
+}
 .app-brand {
   font-size: 10px;
   font-weight: 600;

@@ -492,6 +492,7 @@ function mount(shim) {
 
   const main = document.getElementById('main');
   if (main && main.classList) main.classList.add('has-web-menubar');
+  if (document.body && document.body.classList) document.body.classList.add('web-frontend');
 
   const bar = document.createElement('div');
   bar.id = 'clx-menubar';
