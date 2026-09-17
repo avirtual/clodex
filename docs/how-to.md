@@ -191,6 +191,9 @@ clodexctl exec worker "summarize docs/architecture.md"
 clodexctl dm worker "status?"                 # fire-and-forget; exec waits for the reply
 clodexctl logs worker --tail 20
 clodexctl logs worker -f                      # follow, kubectl-style
+clodexctl logs worker --since 30m             # only turns newer than a duration (or an ISO instant)
+clodexctl logs worker --timestamps            # prefix each turn with its wall-clock time
+clodexctl logs node --tail 200                # the NODE's own engine log — no shell on the box needed
 clodexctl attach worker                       # a LIVE terminal (needs a real TTY)
 clodexctl delete session worker --force
 ```
