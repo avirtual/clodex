@@ -1369,6 +1369,25 @@ function createTicketMethods(deps, shared) {
       ticket.reviewRound = (Number(ticket.reviewRound) || 0) + 1;
       ticket.reviewedAt = Date.now();
       ticket.lastActivityAt = ticket.reviewedAt;
+      if (!Array.isArray(ticket.rounds)) ticket.rounds = [];
+      let entry = ticket.rounds.find((r) => r && Number(r.round) === ticket.reviewRound);
+      if (!entry) {
+        entry = {
+          round: ticket.reviewRound,
+          report: null,
+          reportedBy: null,
+          reportedAt: null,
+          verdict: null,
+          mustFix: null,
+          reviewedAt: null,
+          verdictFile: null,
+          diffFile: null,
+        };
+        ticket.rounds.push(entry);
+      }
+      entry.verdict = ticket.verdict;
+      entry.mustFix = ticket.mustFix;
+      entry.reviewedAt = ticket.reviewedAt;
       // The loop's hand-off point: the verdict is the step the loop was waiting
       // on, so it no longer holds the ticket and the watchdog must stop treating
       // it as in-flight. Cleared here rather than in the caller because this is
@@ -1410,6 +1429,7 @@ function createTicketMethods(deps, shared) {
       } catch (e) {
         return { ok: false, path: null, error: e.message };
       }
+      this._stampRoundFile(team, ticketId, round, 'verdictFile', path.basename(file));
       return { ok: true, path: file, error: null };
     },
 
@@ -2148,6 +2168,7 @@ function createTicketMethods(deps, shared) {
           if (dest.ok) ensureDir(dir);
           msgFile = path.join(dir, `merge-${ticketId}.msg`);
           fs.writeFileSync(msgFile, msg);
+          if (dest.ok) this._stampMergeMsgFile(team, ticketId, path.basename(msgFile));
         } catch (e) {
           fail('merge', `the merge message could not be written: ${e.message}`,
             'nothing was merged — the message file is written before the merge so a failure here costs nothing');
@@ -6082,6 +6103,27 @@ function createTicketMethods(deps, shared) {
       // cold reviewer cannot reconstruct.
       ticket.report = report;
       ticket.reportedBy = session.name;
+      const reportedAt = reentry ? Date.now() : ticket.closedAt;
+      const roundNo = (Number(ticket.reviewRound) || 0) + 1;
+      if (!Array.isArray(ticket.rounds)) ticket.rounds = [];
+      const lastRound = ticket.rounds[ticket.rounds.length - 1];
+      if (lastRound && Number(lastRound.round) === roundNo && lastRound.verdict === null) {
+        lastRound.report = report;
+        lastRound.reportedBy = session.name;
+        lastRound.reportedAt = reportedAt;
+      } else {
+        ticket.rounds.push({
+          round: roundNo,
+          report,
+          reportedBy: session.name,
+          reportedAt,
+          verdict: null,
+          mustFix: null,
+          reviewedAt: null,
+          verdictFile: null,
+          diffFile: null,
+        });
+      }
       // NOT `closedAt` on a re-entry, which is the FIRST close and may be hours
       // old: a held ticket waits for a human, and a `spec` or `infra` hold
       // routinely waits longer than `TICKET_STALL_MS`. Re-timing here is the same
@@ -7315,6 +7357,32 @@ function createTicketMethods(deps, shared) {
       }
     },
 
+    _stampRoundFile(team, ticketId, round, field, basename) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec || !Array.isArray(rec.rounds)) return;
+        const entry = rec.rounds.find((r) => r && Number(r.round) === Number(round));
+        if (!entry) return;
+        entry[field] = basename;
+        ticketsStore.save(team.root, tickets);
+      } catch (e) {
+        log.error('ticket', `${field} stamp for ${ticketId} r${round} failed: ${e.message}`);
+      }
+    },
+
+    _stampMergeMsgFile(team, ticketId, basename) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec) return;
+        rec.mergeMsgFile = basename;
+        ticketsStore.save(team.root, tickets);
+      } catch (e) {
+        log.error('ticket', `mergeMsgFile stamp for ${ticketId} failed: ${e.message}`);
+      }
+    },
+
     _setLoopStep(team, ticketId, step) {
       try {
         const tickets = ticketsStore.load(team.root);
@@ -7582,6 +7650,7 @@ function createTicketMethods(deps, shared) {
       } catch (e) {
         return { ok: false, path: file, error: e.message };
       }
+      this._stampRoundFile(team, ticket.id, round, 'diffFile', path.basename(file));
       return { ok: true, path: file, error: null };
     },
 
