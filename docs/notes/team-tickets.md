@@ -51,3 +51,25 @@ A quit or crash between the synchronous stub and `create()`'s `createdAt` write
 leaves a stub that suppresses the degrade for good, where the ticket used to be
 inherited. Bounded: `task start` on such a ticket refuses and names Delete
 Session…, which drops the record and restores the degrade.
+
+## _stampRoundFile
+
+Stores the BASENAME only. The directory is the record's own `taskDir`, resolved
+through `_ticketDiffDest` at read time, so an absolute path here goes stale when
+the artifact root moves and names a file the confinement no longer reaches.
+
+Runs after the write succeeded, so a failed write leaves the field null rather
+than claiming an artifact that is not on disk. Silent when the round has no
+entry: that is a stamp for a write no close filed.
+
+## _landVerdictOnTicket
+
+The `rounds` entry is found by its `round` value, never by index — a second
+verdict on one close bumps `reviewRound` past anything `task done` filed, and
+there would be no entry at that index. A missing entry is appended with null
+report fields instead.
+
+Measured 2026-09-17: the board holds 869 closed tickets predating `rounds`, 229
+of them with 2+ review rounds. No pass rewrites them — `tickets.json` is 7.6MB
+and every write rewrites the whole board. Only a ticket a verdict or a close
+actually touches gains the field; the rest are derived from the task dir on read.

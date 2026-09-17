@@ -5061,3 +5061,105 @@ test('t465 nit2: a HELD ticket still gets its recovery, not the not-yet-reported
     'a HELD ticket has reported — the loop stopped and someone owes it an action');
   assert.match(said, /close the ticket again/, 'so it carries the recovery, which is what the stamp is for');
 });
+
+function mkRounds() {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  f.m._runTicketLoop = async () => {};
+  return { repo, f };
+}
+
+const done = (f, body) => f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body });
+
+test('t975: two review rounds leave two entries, and round 1 keeps the report round 2 overwrites', () => {
+  const { repo, f } = mkRounds();
+  const R1 = 'round 1: did the thing; suite green at 4999';
+  const R2 = 'round 2: fixed the bound the reviewer named';
+
+  done(f, R1);
+  f.m._landVerdictOnTicket(f.seat('rev', repo.dir), 't1', '- **VERDICT**: REWORK\n- **MUST-FIX**: 1. the bound is off by one');
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'open' }]);
+  done(f, R2);
+  f.m._landVerdictOnTicket(f.seat('rev', repo.dir), 't1', '- **VERDICT**: ACCEPT\n- **MUST-FIX**: none');
+
+  const t = f.one();
+  assert.strictEqual(t.reviewRound, 2, 'ENTER: two verdicts really landed');
+  assert.strictEqual(t.rounds.length, 2, 'one entry per round, appended rather than overwritten');
+  assert.strictEqual(t.rounds[0].round, 1);
+  assert.strictEqual(t.rounds[0].report, R1,
+    'round 1 keeps its own report — the flat field no longer carries it');
+  assert.strictEqual(t.rounds[0].verdict, 'REWORK', 'and its own verdict, not the latest one');
+  assert.strictEqual(t.rounds[0].reportedBy, 'team-hand');
+  assert.ok(t.rounds[0].reportedAt > 0 && t.rounds[0].reviewedAt > 0,
+    'both stamps, so a reader can order the round against the next');
+  assert.strictEqual(t.rounds[1].round, 2);
+  assert.strictEqual(t.rounds[1].report, R2);
+  assert.strictEqual(t.rounds[1].verdict, 'ACCEPT');
+  assert.strictEqual(t.report, R2,
+    'compat: every existing reader takes the latest word off the flat report, unchanged');
+  assert.strictEqual(t.verdict, 'ACCEPT', 'and off the flat verdict, also unchanged');
+});
+
+test('t975: a re-entered close before any review overwrites its round, it does not add one', () => {
+  const { f } = mkRounds();
+
+  done(f, 'first attempt; the branch had no commits');
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'verify',
+    verifyHold: { step: 'verify: commits-on-branch', evidence: 'none', recovery: 'hand' },
+  }]);
+  done(f, 'second attempt; committed the work');
+
+  const t = f.one();
+  assert.strictEqual(t.rounds.length, 1,
+    'one round: no verdict separated the two closes, so this is one round re-verified');
+  assert.strictEqual(t.rounds[0].round, 1);
+  assert.strictEqual(t.rounds[0].report, 'second attempt; committed the work',
+    'and it carries the LATEST report');
+  assert.strictEqual(t.rounds[0].verdict, null, 'still unreviewed');
+});
+
+test('t975: the verdict file and the diff are recorded as BASENAMES, never as paths', () => {
+  const { repo, f } = mkRounds();
+
+  done(f, 'r1');
+  const wroteDiff = f.m._writeTicketDiff(f.team, f.one(), 'diff --git a/x b/x\n');
+  assert.ok(wroteDiff.ok, `ENTER: the diff was written (${wroteDiff.error})`);
+  const landed = f.m._landVerdictOnTicket(f.seat('rev', repo.dir), 't1', '- **VERDICT**: ACCEPT\n- **MUST-FIX**: none');
+  assert.ok(landed, 'ENTER: the verdict landed');
+  const wroteVerdict = f.m._writeVerdictBody(f.seat('rev', repo.dir), 't1', landed, 'VERDICT: ACCEPT');
+  assert.ok(wroteVerdict.ok, `ENTER: the verdict body was written (${wroteVerdict.error})`);
+
+  const r = f.one().rounds[0];
+  assert.strictEqual(r.diffFile, 'review-t1-r1.diff');
+  assert.strictEqual(r.verdictFile, 'review-t1-r1.verdict.md');
+  for (const [field, v] of [['diffFile', r.diffFile], ['verdictFile', r.verdictFile]]) {
+    assert.match(v, /^review-t\d+-r\d+\.(verdict\.md|diff)$/, `${field} is the deterministic artifact name`);
+    assert.ok(!v.includes(pathReal.sep) && !v.includes('/'),
+      `${field} carries no path separator: the directory is the record's taskDir, resolved at read time`);
+  }
+  assert.strictEqual(pathReal.basename(wroteDiff.path), r.diffFile,
+    'the stamp names the file the write actually produced');
+  assert.ok(fsReal.existsSync(wroteDiff.path) && fsReal.existsSync(wroteVerdict.path),
+    'and both are on disk, so following a stamp is not an ENOENT');
+});
+
+test('t975: a verdict on a ticket with no rounds appends one rather than throwing', () => {
+  const { repo, f } = mkRounds();
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'review', report: 'r', reportedBy: 'team-hand' }]);
+  assert.ok(!('rounds' in f.one()),
+    'ENTER: the shape of every ticket closed before this field existed');
+
+  const landed = f.m._landVerdictOnTicket(f.seat('rev', repo.dir), 't1', '- **VERDICT**: REWORK\n- **MUST-FIX**: 1. redo it');
+
+  assert.ok(landed, 'the verdict still lands');
+  const t = f.one();
+  assert.strictEqual(t.rounds.length, 1);
+  assert.strictEqual(t.rounds[0].round, 1, 'filed under the round that just landed');
+  assert.strictEqual(t.rounds[0].verdict, 'REWORK');
+  assert.strictEqual(t.rounds[0].report, null,
+    'null, not the flat report: that report was never filed under a round, and copying it would invent a provenance');
+  assert.strictEqual(t.rounds[0].reportedBy, null);
+  assert.strictEqual(t.rounds[0].reportedAt, null);
+});

@@ -3380,3 +3380,29 @@ test('t373: a GREEN post-merge suite preserves nothing', async () => {
   assert.strictEqual(f.landed().length, 1, 'ENTER: the merge really landed green');
   assert.deepStrictEqual(keptFiles(f.home), [], 'a green run leaves no failure artifact');
 });
+
+test('t975: the merge message file is stamped on the record as a basename', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc(), [], 'ENTER: the merge ran clean, so a message was written');
+  const t = f.one();
+  assert.strictEqual(t.mergeMsgFile, 'merge-t1.msg');
+  assert.ok(!t.mergeMsgFile.includes(pathReal.sep) && !t.mergeMsgFile.includes('/'),
+    'a basename like every other artifact pointer: the directory is the taskDir, resolved at read time');
+  const hits = [];
+  const walk = (d) => {
+    let ents = [];
+    try { ents = fsReal.readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      const full = pathReal.join(d, e.name);
+      if (e.isDirectory()) walk(full); else if (e.name === t.mergeMsgFile) hits.push(full);
+    }
+  };
+  walk(pathReal.join(f.home, 'projects'));
+  assert.strictEqual(hits.length, 1,
+    'and it resolves to exactly one file under the task dir, so a reader is not sent into an ENOENT');
+});
