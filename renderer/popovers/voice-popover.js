@@ -73,11 +73,10 @@ const DEFAULT_SPEAK_RATE = 210;
 // makes a tick this fast affordable at all.
 const RECORDER_TICK_MS = COMPOSITION_POLL_MS;
 
-// What CLODEX believes, in the words of the predicate that produced it. THREE
-// states rendered distinctly and not two — 'unreadable' is the one this whole
-// surface exists for: it silently blocks every re-arm and is indistinguishable
-// from 'off' on screen today, which is how a U+00A0-vs-U+0020 scrape mismatch
-// once left the feature dead with a green suite.
+// What CLODEX believes, in the words of the predicate that produced it.
+// 'unreadable' is the one this whole surface exists for: it silently blocks
+// every re-arm and is indistinguishable from 'off' on screen today, which is
+// how a U+00A0-vs-U+0020 scrape mismatch once left it dead with a green suite.
 //
 // 'out' is not a recorder state and paints nothing: the scan does not run on a
 // seat that is not the active Claude one, so there is no reading to report and
@@ -100,10 +99,6 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
   const body = document.getElementById('voice-popover-body');
   if (!pop || !body) return { actionHtml: () => '', closeVoicePopover() {}, openVoicePopover() {} };
 
-  // Read through the injected getter, never scraped here. This surface reports
-  // the gates' own reading and must never be able to disagree with it — a
-  // second detector that said "off" while the gate said "blocked" would make
-  // the operator trust the wrong one at exactly the moment the scrape is broken.
   function capable() {
     try { return core.snapshot().capable !== false; } catch { return true; }
   }
@@ -112,14 +107,19 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
     try { return core.snapshot().cause || null; } catch { return null; }
   }
 
+  // Capability FIRST: the scrape reports whatever the CLI painted, so on a box
+  // that cannot record a stale 'lit' would claim a recorder nothing can run.
+  // Below it, the gates' own reading through the injected getter and never
+  // scraped here — a second detector saying "off" while the gate said "blocked"
+  // would make the operator trust the wrong one exactly when the scrape breaks.
   function reading() {
     if (!capable()) return 'unavailable';
     try { return getRecorderReading(); } catch { return 'out'; }
   }
 
-  // Read through the injected getter for the same reason, and it is the same
-  // read: the watcher samples the cause beside the reading on one poll, so this
-  // cannot report a cause from a tick the state above did not come from.
+  // Answered off the SAME predicate as the state above on both branches — the
+  // watcher samples its cause beside its reading on one poll, the capability
+  // cause rides the one snapshot — so it cannot describe a different reading.
   function cause() {
     if (!capable()) return unavailableCause();
     try { return (getRecorderCause && getRecorderCause()) || null; } catch { return null; }

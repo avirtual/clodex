@@ -1095,9 +1095,9 @@ function registerIpcHandlers(deps) {
   // every Claude session on this box shares it. Reading it MAIN-side is what lets
   // the browser frontend have this control at all — a renderer-side fs read would
   // ship a button that is dead over web-host.
-  // The trigger key rides this same channel rather than a second one: both are
-  // read-only facts about the CLI's own config, and the re-arm needs the mode
-  // and the key together to decide anything.
+  // The trigger key and the machine's capability ride this same channel rather
+  // than two more: all three are read-only facts about what the CLI on this box
+  // can do, and every caller needs them together to decide anything.
   handle('settings:voiceMode', () => {
     const cap = readVoiceCapability ? readVoiceCapability() : { capable: true, cause: null };
     return { ok: true, ...readVoiceMode(), trigger: readVoiceTrigger(), capable: cap.capable !== false, cause: cap.cause || null };
