@@ -110,7 +110,7 @@ const SSE_HEARTBEAT_MS = 25000;
 const ATTACH_MAX_BUFFERED = 4 * 1024 * 1024;
 const RESIZE_DEBOUNCE_MS = 80;
 
-const LOG_SECRET_RE = /\b(token|secret|password|authorization|bearer)\b[=: ]+\S+/gi;
+const LOG_SECRET_RE = /\b(token|secret|password|authorization|bearer)\b[=: ]+(?:(?:bearer|basic)\b[=: ]+)?\S+/gi;
 const NODE_LOG_TAIL_BYTES = 1024 * 1024;
 const NODE_LOG_MAX_LINES = 500;
 
