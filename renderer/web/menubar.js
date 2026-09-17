@@ -2,7 +2,7 @@
 // menubar.js — the browser frontend's top menu bar (web-frontend Phase 5). It
 // replaces the earlier floating "☰" corner button with a real horizontal menu
 // bar that mirrors the Electron application menu (app-menus.js): File / Library /
-// View / Teams / Window. The Edit/View native roles the browser already
+// View / Teams / Window / Help. The Edit/View native roles the browser already
 // supplies (undo/copy/reload/full-screen/…) are deliberately omitted.
 //
 // Layout: the bar lives in its own strip at the top of #main. mount() adds
@@ -23,6 +23,9 @@
 const BAR_H = 30; // px — kept in sync with the .has-web-menubar offset in styles.css
 
 const FOLD_AT = 16;
+
+const CLODEX_REPO_URL = 'https://github.com/avirtual/clodex';
+const CLODEX_PLUGINS_REPO_URL = 'https://github.com/avirtual/clodex-plugins';
 
 // The physical key is Alt everywhere; only the GLYPH is platform-cosmetic.
 // Browsers reach this page from any OS, so show ⌥ on Macs and "Alt+" elsewhere.
@@ -63,6 +66,10 @@ const STYLE = `
 // A colon can't appear in a library name, so ':new' is a safe sentinel telling
 // the renderer to open a blank editor (mirrors app-menus.js's New Agent/Skill).
 const trunc = (s) => (s && s.length > 60 ? s.slice(0, 57) + '…' : s);
+
+function openExternal(url) {
+  if (typeof window !== 'undefined' && typeof window.open === 'function') window.open(url, '_blank', 'noopener');
+}
 
 function confirmRestart(invoke) {
   const ok = (typeof window !== 'undefined' && typeof window.confirm === 'function')
@@ -173,6 +180,30 @@ function buildMenus(ctx) {
           for (const b of boxList) rows.push(peerRow(b));
         }
         rows.push({ label: 'Manage Clodex Sandboxes…', run: () => emit('request-open-sandbox-dialog') });
+        return rows;
+      },
+    },
+    {
+      label: 'Help',
+      items: async () => {
+        const rows = [
+          { label: 'Clodex Help', accel: `${ACCEL_ALT}⇧/`, run: () => emit('request-open-help') },
+          { sep: true },
+        ];
+        const res = await Promise.resolve(api.helpIndex ? api.helpIndex() : null).catch(() => null);
+        const sections = (res && res.ok && Array.isArray(res.sections)) ? res.sections : [];
+        for (const section of sections) {
+          const pages = section.pages || [];
+          rows.push({
+            label: section.title,
+            submenu: () => pages.map((p) => ({ label: p.title, run: () => emit('request-open-help', p.name) })),
+          });
+        }
+        if (sections.length) rows.push({ sep: true });
+        rows.push(
+          { label: 'Clodex on GitHub', run: () => openExternal(CLODEX_REPO_URL) },
+          { label: 'Plugin library (clodex-plugins)', run: () => openExternal(CLODEX_PLUGINS_REPO_URL) },
+        );
         return rows;
       },
     },

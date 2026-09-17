@@ -29,10 +29,10 @@ async function walkRows(rows) {
   }
 }
 
-test('menu tree mirrors the Electron app menu: File / Library / View / Teams / Window', () => {
+test('menu tree mirrors the Electron app menu: File / Library / View / Teams / Window / Help', () => {
   const { ctx } = recordingCtx();
   const menus = buildMenus(ctx);
-  assert.deepEqual(menus.map((m) => m.label), ['File', 'Library', 'View', 'Teams', 'Window']);
+  assert.deepEqual(menus.map((m) => m.label), ['File', 'Library', 'View', 'Teams', 'Window', 'Help']);
 });
 
 test('every menu action targets a real channel (request-*/set-theme are on-channels)', async () => {
@@ -225,6 +225,77 @@ test('Restart: a refusal from app:restart reaches the operator through window.al
   }
 });
 
+const HELP_SECTIONS = [
+  { title: 'Guides', pages: [{ name: 'how-to', title: 'How to' }, { name: 'teams', title: 'Teams' }] },
+  { title: 'Reference', pages: [{ name: 'peering', title: 'Peering' }, { name: 'wire', title: 'Wire' }] },
+];
+
+async function helpRows(helpIndex) {
+  const { ctx, rec } = recordingCtx();
+  const withHelp = { ...ctx, api: { ...ctx.api, ...(helpIndex ? { helpIndex } : {}) } };
+  const help = buildMenus(withHelp).find((m) => m.label === 'Help');
+  assert.ok(help, 'ENTER: the Help menu exists, or every assertion below is vacuous');
+  return { rows: await Promise.resolve(help.items()), rec };
+}
+
+test('t989: Help ▸ Clodex Help carries the Alt+Shift+/ hint and opens the default page', async () => {
+  const { rows, rec } = await helpRows(async () => ({ ok: true, sections: HELP_SECTIONS }));
+  const first = rows[0];
+  assert.strictEqual(first.label, 'Clodex Help', 'the chord row leads the menu');
+  assert.match(first.accel, /^(⌥|Alt\+)⇧\/$/, 'the web chord is Alt+Shift+/, glyphed per platform');
+  first.run();
+  assert.deepStrictEqual(rec.emits, [['request-open-help']],
+    'no page name: the renderer\'s openHelp() defaults to how-to');
+});
+
+test('t989: Help carries one submenu per corpus section, one row per page, in index order', async () => {
+  const { rows, rec } = await helpRows(async () => ({ ok: true, sections: HELP_SECTIONS }));
+  const sections = rows.filter((r) => r.submenu);
+  assert.deepStrictEqual(sections.map((s) => s.label), ['Guides', 'Reference']);
+  const guides = await Promise.resolve(sections[0].submenu());
+  assert.deepStrictEqual(guides.map((r) => r.label), ['How to', 'Teams']);
+  const reference = await Promise.resolve(sections[1].submenu());
+  assert.deepStrictEqual(reference.map((r) => r.label), ['Peering', 'Wire']);
+  guides[1].run();
+  reference[0].run();
+  assert.deepStrictEqual(rec.emits, [['request-open-help', 'teams'], ['request-open-help', 'peering']],
+    'a page row names its page, so the panel opens on it');
+});
+
+test('t989: a failed help index degrades to the chord row plus the two links, with no stray separator', async () => {
+  for (const [name, stub] of [
+    ['rejecting', async () => { throw new Error('no corpus'); }],
+    ['ok:false', async () => ({ ok: false })],
+    ['absent', null],
+  ]) {
+    const { rows } = await helpRows(stub);
+    assert.deepStrictEqual(rows.filter((r) => r.submenu), [], `${name}: no section rows`);
+    assert.deepStrictEqual(
+      rows.map((r) => (r.sep ? '—' : r.label)),
+      ['Clodex Help', '—', 'Clodex on GitHub', 'Plugin library (clodex-plugins)'],
+      `${name}: one separator only, between the chord row and the links`,
+    );
+  }
+});
+
+test('t989: the Help links open the two literal repo URLs in a new tab', async () => {
+  const opened = [];
+  const prevWindow = global.window;
+  global.window = { open: (...a) => opened.push(a) };
+  try {
+    const { rows } = await helpRows(async () => ({ ok: true, sections: HELP_SECTIONS }));
+    const links = rows.filter((r) => /GitHub|Plugin library/.test(r.label || ''));
+    assert.strictEqual(links.length, 2, 'ENTER: both link rows are present');
+    for (const r of links) r.run();
+    assert.deepStrictEqual(opened, [
+      ['https://github.com/avirtual/clodex', '_blank', 'noopener'],
+      ['https://github.com/avirtual/clodex-plugins', '_blank', 'noopener'],
+    ]);
+  } finally {
+    if (prevWindow === undefined) delete global.window; else global.window = prevWindow;
+  }
+});
+
 // ── DOM mount smoke: a minimal fake DOM, enough for mount() to build the bar.
 function fakeClassList() {
   const set = new Set();
@@ -283,7 +354,7 @@ test('mount builds #clx-menubar under #main and tags it .has-web-menubar', () =>
     const bar = main.children.find((c) => c.id === 'clx-menubar');
     assert.ok(bar, 'the menu bar mounts inside #main');
     const tops = bar.children.filter((c) => c.className === 'clx-top');
-    assert.deepEqual(tops.map((t) => t.textContent), ['File', 'Library', 'View', 'Teams', 'Window'],
+    assert.deepEqual(tops.map((t) => t.textContent), ['File', 'Library', 'View', 'Teams', 'Window', 'Help'],
       'five themed top-level menu titles, in order');
     // A <style> is injected for the bar's look.
     assert.ok(head.children.some((c) => c.tag === 'style'), 'bar styles are injected');
@@ -404,9 +475,9 @@ function mountWithPlugins(status) {
 test('mount inserts Plugins between View and Window when there is something to show', async () => {
   const m = mountWithPlugins(STATUS_ONE);
   try {
-    assert.deepEqual(m.labels(), ['File', 'Library', 'View', 'Teams', 'Window'], 'not there synchronously');
+    assert.deepEqual(m.labels(), ['File', 'Library', 'View', 'Teams', 'Window', 'Help'], 'not there synchronously');
     await m.settle();
-    assert.deepEqual(m.labels(), ['File', 'Library', 'View', 'Plugins', 'Teams', 'Window'],
+    assert.deepEqual(m.labels(), ['File', 'Library', 'View', 'Plugins', 'Teams', 'Window', 'Help'],
       'inserted at the desktop position (app-menus.js:609), not appended at the end');
   } finally { m.restore(); }
 });
@@ -415,7 +486,7 @@ test('mount inserts NO Plugins element when there is nothing to show', async () 
   const m = mountWithPlugins({ ok: true, plugins: [], problems: [] });
   try {
     await m.settle();
-    assert.deepEqual(m.labels(), ['File', 'Library', 'View', 'Teams', 'Window'],
+    assert.deepEqual(m.labels(), ['File', 'Library', 'View', 'Teams', 'Window', 'Help'],
       'absent, not empty — an empty menu reads as a broken feature');
   } finally { m.restore(); }
 });
@@ -433,7 +504,7 @@ test('mount REMOVES the Plugins element when the last plugin goes', async () => 
     assert.equal(m.listeners.length, 1, 'mount subscribes to the plugin-state broadcast');
     m.listeners[0]('_host', 'plugin-state', { id: 'demo', enabled: false });
     await m.settle();
-    assert.deepEqual(m.labels(), ['File', 'Library', 'View', 'Teams', 'Window'], 'gone again');
+    assert.deepEqual(m.labels(), ['File', 'Library', 'View', 'Teams', 'Window', 'Help'], 'gone again');
   } finally { m.restore(); }
 });
 

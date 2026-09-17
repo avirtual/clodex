@@ -105,7 +105,7 @@ function normalizeWeb(rows) {
 // ── Desktop harness. app-menus.js requires('electron') at module load AND uses
 // it while buildAppMenu runs, so the stub must be live for both; follows
 // test/app-menus-plugins.test.js's buildTemplateWith. ────────────────────────
-function desktopTemplate({ peers = [], boxes = [], pluginHost = null } = {}) {
+function desktopTemplate({ peers = [], boxes = [], pluginHost = null, helpCorpus = null } = {}) {
   let captured = null;
   const win = { webContents: { send: () => {} } };
   const stub = {
@@ -140,6 +140,7 @@ function desktopTemplate({ peers = [], boxes = [], pluginHost = null } = {}) {
       getAgentLibrary: nothing, getSkillLibrary: nothing, getEnvScopes: () => null,
       getPromptLibrary: nothing, getTemplates: nothing, getExecLibrary: nothing,
       getPluginHost: () => pluginHost,
+      ...(helpCorpus ? { getHelpCorpus: () => helpCorpus } : {}),
     });
     menus.buildAppMenu();
     return captured || [];
@@ -319,4 +320,33 @@ test('t905: desktop offers no File > Plugins… route in either state (the fresh
     'zero plugins: the top-level menu is absent by its null rule');
   assert.deepStrictEqual(labelsOf(desktopMenu(withNone, 'File')).filter((l) => /Plugins/.test(l)), [],
     'and File still offers nothing, so the desktop has NO route at zero plugins — unlike the web');
+});
+
+const CORPUS_INDEX = {
+  sections: [
+    { title: 'Guides', pages: [{ name: 'how-to', title: 'How to', headings: [] }, { name: 'teams', title: 'Teams', headings: [] }] },
+    { title: 'Reference', pages: [{ name: 'peering', title: 'Peering', headings: [] }] },
+  ],
+};
+
+const HELP_TREE = [['Guides', ['How to', 'Teams']], ['Reference', ['Peering']]];
+
+test('t989: desktop and web Help menus carry the same section → page tree', async () => {
+  const desktop = (desktopMenu(desktopTemplate({ helpCorpus: { index: () => CORPUS_INDEX } }), 'Help').submenu || [])
+    .filter((r) => Array.isArray(r.submenu))
+    .map((r) => [r.label, r.submenu.map((p) => p.label)]);
+  assert.ok(desktop.length > 0, 'ENTER: desktop — the Help menu has section submenus (an equality is vacuous without them)');
+  assert.deepStrictEqual(desktop, HELP_TREE);
+
+  const { ctx } = recordingCtx();
+  const help = buildMenus({ ...ctx, api: { ...ctx.api, helpIndex: async () => ({ ok: true, ...CORPUS_INDEX }) } })
+    .find((m) => m.label === 'Help');
+  assert.ok(help, 'ENTER: web — the Help menu exists');
+  const rows = await Promise.resolve(help.items());
+  const web = [];
+  for (const r of rows.filter((x) => x.submenu)) {
+    web.push([r.label, (await Promise.resolve(r.submenu())).map((p) => p.label)]);
+  }
+  assert.ok(web.length > 0, 'ENTER: web — the Help menu has section submenus');
+  assert.deepStrictEqual(web, HELP_TREE);
 });

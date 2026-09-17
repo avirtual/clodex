@@ -4521,6 +4521,8 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
+  if (action.type === 'help') { openHelp(); return; }
+
   if (overlaysOpen) return;
 
   if (action.type === 'switch') {
