@@ -500,6 +500,18 @@ test('sliceSince: `after` keeps rows at or newer than the instant, and every nul
     'an instant past every stamp leaves only the row that carries none');
 });
 
+test('sliceSince: the time filter runs BEFORE the limit — a back-dated row cannot displace a survivor', () => {
+  const skewed = [
+    { seq: 0, ts: '2026-09-17T03:00:00.000Z' },
+    { seq: 1, ts: '2026-09-17T04:00:00.000Z' },
+    { seq: 2, ts: '2026-09-17T00:30:00.000Z' },
+    { seq: 3, ts: '2026-09-17T05:00:00.000Z' },
+  ];
+  assert.deepStrictEqual(
+    sliceSince(skewed, null, 2, '2026-09-17T02:00:00.000Z').messages.map(m => m.seq), [1, 3],
+    'the page is the last 2 rows that PASS; slicing first would hand the filter [2,3] and return just [3], losing a row the window should show');
+});
+
 test('sliceSince: the limit counts SURVIVORS — a narrow window returns fewer rows than the limit, never a topped-up tail', () => {
   assert.deepStrictEqual(
     sliceSince(AFTER_ROWS, null, 3, '2026-09-17T09:00:00.000Z').messages.map(m => m.seq), [2],

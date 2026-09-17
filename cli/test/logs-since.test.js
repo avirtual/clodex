@@ -69,11 +69,12 @@ function afterOf(seen) {
 test('logs --since <duration>: resolves against the INJECTED clock and sends an absolute after=', async () => {
   const { server, seen } = stub();
   const port = await listen(server);
-  const { code } = await cli(['logs', 'bob', '--since', '30m'], port);
-  assert.strictEqual(code, 0);
-  assert.strictEqual(afterOf(seen), '2026-09-17T11:30:00.000Z',
-    'the wire carries an absolute instant — 30m before the injected now, never the literal "30m"');
-  server.close();
+  try {
+    const { code } = await cli(['logs', 'bob', '--since', '30m'], port);
+    assert.strictEqual(code, 0);
+    assert.strictEqual(afterOf(seen), '2026-09-17T11:30:00.000Z',
+      'the wire carries an absolute instant — 30m before the injected now, never the literal "30m"');
+  } finally { server.close(); }
 });
 
 test('logs --since: each duration unit, and an ISO instant passed through verbatim', async () => {
@@ -86,10 +87,11 @@ test('logs --since: each duration unit, and an ISO instant passed through verbat
   ]) {
     const { server, seen } = stub();
     const port = await listen(server);
-    const { code } = await cli(['logs', 'bob', '--since', form], port);
-    assert.strictEqual(code, 0, `--since ${form} must be accepted`);
-    assert.strictEqual(afterOf(seen), want, `--since ${form}`);
-    server.close();
+    try {
+      const { code } = await cli(['logs', 'bob', '--since', form], port);
+      assert.strictEqual(code, 0, `--since ${form} must be accepted`);
+      assert.strictEqual(afterOf(seen), want, `--since ${form}`);
+    } finally { server.close(); }
   }
 });
 
@@ -97,133 +99,145 @@ test('logs --since <garbage>: exit 2 naming the accepted forms, and NOTHING is f
   for (const bad of ['bogus', '30x', '30', 'm', '-5m', '1h30m']) {
     const { server, seen } = stub();
     const port = await listen(server);
-    const { code, stderr } = await cli(['logs', 'bob', '--since', bad], port);
-    assert.strictEqual(code, 2, `--since ${bad} must be a USAGE error`);
-    assert.match(stderr, /--since takes a duration \(30s\|10m\|2h\|7d\) or an ISO-8601 instant/);
-    assert.ok(!seen.some((u) => u.includes('/transcript')),
-      `--since ${bad} was refused BEFORE any request — a bad flag must not reach the node`);
-    server.close();
+    try {
+      const { code, stderr } = await cli(['logs', 'bob', '--since', bad], port);
+      assert.strictEqual(code, 2, `--since ${bad} must be a USAGE error`);
+      assert.match(stderr, /--since takes a duration \(30s\|10m\|2h\|7d\) or an ISO-8601 instant/);
+      assert.ok(!seen.some((u) => u.includes('/transcript')),
+        `--since ${bad} was refused BEFORE any request — a bad flag must not reach the node`);
+    } finally { server.close(); }
   }
 });
 
 test('logs --since: the CLI re-filters the page, so an old node that ignores `after` still yields nothing older', async () => {
   const { server } = stub({ page: (rows) => ({ ok: true, messages: rows.map((m, i) => ({ ...m, seq: i })), cursor: 0, complete: true }) });
   const port = await listen(server);
-  const { code, stdout } = await cli(['logs', 'bob', '--since', '30m'], port);
-  assert.strictEqual(code, 0);
-  assert.ok(!stdout.includes('old-q'), 'a row older than the instant is dropped client-side');
-  assert.ok(!stdout.includes('old-a'), 'both older rows, not just the first');
-  assert.ok(stdout.includes('new-q'), 'the newer row survives');
-  assert.ok(stdout.includes('no-stamp'), 'a row with no ts is KEPT — a time filter must not swallow a merged bubble');
-  server.close();
+  try {
+    const { code, stdout } = await cli(['logs', 'bob', '--since', '30m'], port);
+    assert.strictEqual(code, 0);
+    assert.ok(!stdout.includes('old-q'), 'a row older than the instant is dropped client-side');
+    assert.ok(!stdout.includes('old-a'), 'both older rows, not just the first');
+    assert.ok(stdout.includes('new-q'), 'the newer row survives');
+    assert.ok(stdout.includes('no-stamp'), 'a row with no ts is KEPT — a time filter must not swallow a merged bubble');
+  } finally { server.close(); }
 });
 
 test('logs --since -o json: the re-filtered page is what json prints, not the raw body', async () => {
   const { server } = stub({ page: (rows) => ({ ok: true, messages: rows.map((m, i) => ({ ...m, seq: i })), cursor: 0, complete: true }) });
   const port = await listen(server);
-  const { code, stdout } = await cli(['logs', 'bob', '--since', '30m', '-o', 'json'], port);
-  assert.strictEqual(code, 0);
-  const body = JSON.parse(stdout);
-  assert.deepStrictEqual(body.messages.map((m) => m.text), ['no-stamp', 'new-q'],
-    'json and the plain render agree about the window');
-  assert.strictEqual(body.complete, true, 'the rest of the page envelope is passed through');
-  server.close();
+  try {
+    const { code, stdout } = await cli(['logs', 'bob', '--since', '30m', '-o', 'json'], port);
+    assert.strictEqual(code, 0);
+    const body = JSON.parse(stdout);
+    assert.deepStrictEqual(body.messages.map((m) => m.text), ['no-stamp', 'new-q'],
+      'json and the plain render agree about the window');
+    assert.strictEqual(body.complete, true, 'the rest of the page envelope is passed through');
+  } finally { server.close(); }
 });
 
 test('logs --timestamps: each row carries its verbatim ts, a null ts prints `-`', async () => {
   const { server } = stub();
   const port = await listen(server);
-  const { code, stdout } = await cli(['logs', 'bob', '--timestamps'], port);
-  assert.strictEqual(code, 0);
-  assert.deepStrictEqual(stdout.trimEnd().split('\n\n'), [
-    '2026-09-17T09:00:00.000Z [user] old-q',
-    '2026-09-17T10:00:00.000Z [assistant] old-a',
-    '- [assistant] no-stamp',
-    '2026-09-17T11:50:00.000Z [user] new-q',
-  ]);
-  server.close();
+  try {
+    const { code, stdout } = await cli(['logs', 'bob', '--timestamps'], port);
+    assert.strictEqual(code, 0);
+    assert.deepStrictEqual(stdout.trimEnd().split('\n\n'), [
+      '2026-09-17T09:00:00.000Z [user] old-q',
+      '2026-09-17T10:00:00.000Z [assistant] old-a',
+      '- [assistant] no-stamp',
+      '2026-09-17T11:50:00.000Z [user] new-q',
+    ]);
+  } finally { server.close(); }
 });
 
 test('logs without --timestamps: byte-identical to the pre-t958 render', async () => {
   const { server } = stub();
   const port = await listen(server);
-  const { code, stdout } = await cli(['logs', 'bob'], port);
-  assert.strictEqual(code, 0);
-  assert.strictEqual(stdout,
-    '[user] old-q\n\n[assistant] old-a\n\n[assistant] no-stamp\n\n[user] new-q\n');
-  server.close();
+  try {
+    const { code, stdout } = await cli(['logs', 'bob'], port);
+    assert.strictEqual(code, 0);
+    assert.strictEqual(stdout,
+      '[user] old-q\n\n[assistant] old-a\n\n[assistant] no-stamp\n\n[user] new-q\n');
+  } finally { server.close(); }
 });
 
 test('logs node: tails the node log, --tail rides the limit, lines print RAW', async () => {
   const { server, seen } = stub();
   const port = await listen(server);
-  const { code, stdout } = await cli(['logs', 'node', '--tail', '2'], port);
-  assert.strictEqual(code, 0);
-  assert.strictEqual(stdout, `${NODE_LINES.join('\n')}\n`, 'the served lines print verbatim, one per line');
-  assert.ok(seen.includes('/api/node/logs?limit=2'), 'the tail count reaches the node as limit');
-  assert.ok(!seen.some((u) => u.includes('/transcript')), '`node` is a resource word, never a session name');
-  server.close();
+  try {
+    const { code, stdout } = await cli(['logs', 'node', '--tail', '2'], port);
+    assert.strictEqual(code, 0);
+    assert.strictEqual(stdout, `${NODE_LINES.join('\n')}\n`, 'the served lines print verbatim, one per line');
+    assert.ok(seen.includes('/api/node/logs?limit=2'), 'the tail count reaches the node as limit');
+    assert.ok(!seen.some((u) => u.includes('/transcript')), '`node` is a resource word, never a session name');
+  } finally { server.close(); }
 });
 
 test('logs node: default limit 100, clamped at 500', async () => {
   for (const [argv, want] of [[[], 100], [['--tail', '9999'], 500]]) {
     const { server, seen } = stub();
     const port = await listen(server);
-    const { code } = await cli(['logs', 'node', ...argv], port);
-    assert.strictEqual(code, 0);
-    assert.ok(seen.includes(`/api/node/logs?limit=${want}`), `expected limit=${want}, saw ${seen.join(' ')}`);
-    server.close();
+    try {
+      const { code } = await cli(['logs', 'node', ...argv], port);
+      assert.strictEqual(code, 0);
+      assert.ok(seen.includes(`/api/node/logs?limit=${want}`), `expected limit=${want}, saw ${seen.join(' ')}`);
+    } finally { server.close(); }
   }
 });
 
 test('logs node --since: filters by the line\'s LEADING instant, keeping a line that has none', async () => {
   const { server } = stub();
   const port = await listen(server);
-  const { code, stdout } = await cli(['logs', 'node', '--since', '30m'], port);
-  assert.strictEqual(code, 0);
-  assert.strictEqual(stdout, '2026-09-17T11:55:00.000Z  WARN  [peer] retried\na continuation line carrying no instant\n',
-    'the 09:00 line is older than 11:30 and goes; the stampless continuation line stays');
-  server.close();
+  try {
+    const { code, stdout } = await cli(['logs', 'node', '--since', '30m'], port);
+    assert.strictEqual(code, 0);
+    assert.strictEqual(stdout, '2026-09-17T11:55:00.000Z  WARN  [peer] retried\na continuation line carrying no instant\n',
+      'the 09:00 line is older than 11:30 and goes; the stampless continuation line stays');
+  } finally { server.close(); }
 });
 
 test('logs node -o json wraps the lines; --timestamps is inert (the lines already carry one)', async () => {
   const { server } = stub();
   const port = await listen(server);
-  const j = await cli(['logs', 'node', '-o', 'json'], port);
-  assert.strictEqual(j.code, 0);
-  assert.deepStrictEqual(JSON.parse(j.stdout), { lines: NODE_LINES });
-  const t = await cli(['logs', 'node', '--timestamps'], port);
-  assert.strictEqual(t.stdout, `${NODE_LINES.join('\n')}\n`, '--timestamps changes nothing on node lines');
-  server.close();
+  try {
+    const j = await cli(['logs', 'node', '-o', 'json'], port);
+    assert.strictEqual(j.code, 0);
+    assert.deepStrictEqual(JSON.parse(j.stdout), { lines: NODE_LINES });
+    const t = await cli(['logs', 'node', '--timestamps'], port);
+    assert.strictEqual(t.stdout, `${NODE_LINES.join('\n')}\n`, '--timestamps changes nothing on node lines');
+  } finally { server.close(); }
 });
 
 test('logs node -f: exit 2 — there is nothing to follow', async () => {
   const { server, seen } = stub();
   const port = await listen(server);
-  const { code, stderr } = await cli(['logs', 'node', '-f'], port);
-  assert.strictEqual(code, 2);
-  assert.match(stderr, /logs node does not follow/);
-  assert.ok(!seen.includes('/api/node/logs'), 'refused before the request');
-  server.close();
+  try {
+    const { code, stderr } = await cli(['logs', 'node', '-f'], port);
+    assert.strictEqual(code, 2);
+    assert.match(stderr, /logs node does not follow/);
+    assert.ok(!seen.includes('/api/node/logs'), 'refused before the request');
+  } finally { server.close(); }
 });
 
 test('logs node on an OLDER node: the upgrade line and exit 1, not a 404 crash', async () => {
   const { server, seen } = stub({ resources: docWithoutResource('node/logs') });
   const port = await listen(server);
-  const { code, stderr } = await cli(['logs', 'node'], port);
-  assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
-  assert.match(stderr, /does not serve node\/logs get; run: clodexctl upgrade node/);
-  assert.ok(!seen.includes('/api/node/logs'), 'the capability check ran BEFORE the first log request');
-  server.close();
+  try {
+    const { code, stderr } = await cli(['logs', 'node'], port);
+    assert.strictEqual(code, 1, 'D.5 says exit 1 (EXIT.SERVER)');
+    assert.match(stderr, /does not serve node\/logs get; run: clodexctl upgrade node/);
+    assert.ok(!seen.includes('/api/node/logs'), 'the capability check ran BEFORE the first log request');
+  } finally { server.close(); }
 });
 
 test('logs node takes no name', async () => {
   const { server } = stub();
   const port = await listen(server);
-  const { code, stderr } = await cli(['logs', 'node', 'bob'], port);
-  assert.strictEqual(code, 2);
-  assert.match(stderr, /logs node: unexpected argument "bob"/);
-  server.close();
+  try {
+    const { code, stderr } = await cli(['logs', 'node', 'bob'], port);
+    assert.strictEqual(code, 2);
+    assert.match(stderr, /logs node: unexpected argument "bob"/);
+  } finally { server.close(); }
 });
 
 test('grammar: only a LEADING `node` selects the node log; `logs bob` is untouched by the new branch', async () => {
