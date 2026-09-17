@@ -77,6 +77,28 @@ test('text, tool call, more text, end_turn: exactly one turnEnd edge and it is l
   assert.deepStrictEqual(edges, [['thinking', false], ['idle', false], ['thinking', false], ['idle', true]]);
 });
 
+// THE DEDUPE RULE ITSELF, driven at the seam rather than through the line
+// handler — deliberately, and this is the one pin here that no entry sequence
+// can produce. Today every idle edge is preceded by a thinking edge (idle is
+// emitted only from a flush that had pending text, and the branch that sets
+// pending text emits thinking), so a state-only dedupe would never swallow a
+// turn end. That invariant lives in _readLines, not in _setActivity, and the
+// wait `clodexctl exec` performs is unrecoverable if it is ever broken: a
+// swallowed true edge is a hang, not a late event. So the seam carries its own
+// rule and this states it.
+test('_setActivity: a true turn end is delivered even when the state did not change', () => {
+  const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR: mkTmpRoot('clodex-watcher-') });
+  const edges = [];
+  const w = new JsonlWatcher('seat', () => {}, () => {}, (s, t) => edges.push([s, t]));
+
+  w._setActivity('idle', false);
+  w._setActivity('idle', false);
+  w._setActivity('idle', true);
+  w._setActivity('idle', true);
+  assert.deepStrictEqual(edges, [['idle', true]],
+    'no duplicate idle/false edges, one idle/true edge even without a state change, and no repeat of it');
+});
+
 // SOURCE SHAPE, because the callback session-manager hands the watcher cannot
 // be reached without spawning a PTY. The end-to-end below drives the same
 // expression; this is what says the shipped line IS that expression.
