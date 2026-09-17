@@ -42,6 +42,17 @@ const { createTeamManifest } = require('../team-manifest');
 const { createRemindScheduler } = require('../remind-scheduler');
 const { initStores } = require('../stores');
 
+// A THROWAWAY registryDir, deliberately not `home`: initStores SEEDS the shipped
+// prompt library into whatever dir it is handed, which would install
+// clodex-team-reviewer.md into the fixture home and silently defeat every
+// `noReviewerPrompt` subject. Seeded ONCE per file — no subject reads it;
+// reminders live under the per-test `userData`, so they isolate.
+let SEED_DIR = null;
+function seedDir() {
+  if (!SEED_DIR) SEED_DIR = mkTmpRoot('clodex-loop-seed-');
+  return SEED_DIR;
+}
+
 const SHIPPED_REVIEWER_TEMPLATE = {
   name: 'clodex-team-reviewer',
   systemPromptFile: 'clodex-team-reviewer',
@@ -298,16 +309,12 @@ function mkLoop({
     renameRole: manifest.renameRole,
     setTeamWatchdog: manifest.setTeamWatchdog,
   };
+  const reminders = initStores(userData, { log: console, registryDir: seedDir() }).reminders;
   const scheduler = createRemindScheduler({
     now: () => Date.now(),
     setTimer: () => null,
     clearTimer: () => {},
-    // registryDir is a THROWAWAY, deliberately not `home`: initStores SEEDS the
-    // shipped prompt library into whatever dir it is given, which would install
-    // clodex-team-reviewer.md into the fixture home and silently defeat every
-    // `noReviewerPrompt` subject — they assert the escalation taken when that
-    // exact file is missing.
-    store: initStores(userData, { log: console, registryDir: mkTmpRoot('clodex-loop-seed-') }).reminders,
+    store: reminders,
     deliver: () => {},
   });
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
@@ -477,6 +484,7 @@ function mkLoop({
 
   return {
     m, team, home, tstore, persistence, injected, gated, tags, broadcasts, created, seat, logs, deps,
+    reminders,
     one: (id = 't1') => tstore.load(team.root).find((t) => t.id === id),
     esc: () => gated.filter((g) => /ESCALATED/.test(g.body)),
     diffFile: () => {
@@ -529,6 +537,16 @@ test('mkLoop injects every dep team-tickets.js reads', () => {
       'createTeam', 'kitCatalog', 'resolveKit', 'setLead', 'teamsDir', 'listTeams', 'loadManifest', 'refreshAppMenu',
         'getSandboxManager', 'getPeerManager', 'fetch'],
   });
+});
+
+test('t955: the once-per-file seed dir does not leak reminders between fixtures', () => {
+  const a = mkLoop({ repo: mkRepo() });
+  assert.deepEqual(a.reminders.list(), []);
+  a.reminders.add({ agent: 'team-hand', kind: 'in', spec: 'in 5m', body: 'from A' });
+  assert.equal(a.reminders.list().length, 1);
+  const b = mkLoop({ repo: mkRepo() });
+  assert.deepEqual(b.reminders.list(), []);
+  assert.equal(a.reminders.list().length, 1);
 });
 
 // ── the green path ─────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ blocks a release.
 - **`upgrade node` and `undeploy node` recognise a helm node by its transport.** A kubectl node saved before clodexctl recorded deploy flavors no longer needs a re-deploy first: both verbs infer helm from the transport, and a successful upgrade stamps the record for next time.
 - **Ticket hands run only their own tests.** `clodex-run-tests` takes `scope: "own"`: it runs the test files the branch changed, the tests of the modules and resource files it changed and the repo-wide source-shape checks, and skips the suite lock unless a selected file binds real ports. The full suite stays the merge gate's job. A branch that changes the test wrapper itself is measured by its own copy.
 - **The CLI's bundled skills stay out of every seat.** Clodex now ships `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1` in its default env, so the workflow skills the Claude Code binary carries (init, review, simplify, security-review and the rest) no longer land in each agent's prompt. Plugin skills, account-synced skills and a project's own `.claude/skills/` are unaffected; the seed adds the key to the global scope once, and an operator who wants them back edits it there.
+- **The test suite refuses slow tests.** A test that runs past six seconds fails the run unless it is listed in `test/slow-tests.json` with the mechanism it waits on, and the two heaviest fixtures now seed the shipped library once per file instead of once per test.
 
 ## 5.71.0 — 2026-09-17 — clodexctl speaks kubectl
 

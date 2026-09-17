@@ -373,6 +373,55 @@ try {
 console.log(`\nTOTALS: ${pass} pass, ${fail} fail, ${tests} tests`);
 console.log(formatEscapes(escapes));
 
+const SLOW_MS = 6000;
+const slowLimit = Number(process.env.CLODEX_TEST_SLOW_MS) > 0
+  ? Number(process.env.CLODEX_TEST_SLOW_MS)
+  : SLOW_MS;
+
+const ALLOW_FILE = path.join(ROOT, 'test', 'slow-tests.json');
+let allow = {};
+try {
+  const raw = JSON.parse(fs.readFileSync(ALLOW_FILE, 'utf8'));
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) allow = raw;
+} catch (e) {
+  if (e.code !== 'ENOENT') die(`test/slow-tests.json is not valid JSON: ${e.message}`);
+  allow = {};
+}
+
+const points = [];
+let pending = null;
+for (const line of tap.split('\n')) {
+  const point = /^ *(?:not )?ok \d+ - (.*)$/.exec(line);
+  if (point) {
+    pending = point[1].replace(/ +# +(SKIP|TODO)\b.*$/i, '').trim();
+    continue;
+  }
+  const dur = /^ *duration_ms: *([\d.]+) *$/.exec(line);
+  if (dur && pending !== null) {
+    points.push({ name: pending, ms: Number(dur[1]) });
+    pending = null;
+  }
+}
+
+const bodies = points.filter((p) => !fs.existsSync(path.resolve(ROOT, p.name)));
+const seen = new Set(bodies.map((p) => p.name));
+const offenders = bodies.filter((p) => p.ms > slowLimit && !Object.hasOwn(allow, p.name));
+const stale = sweeping && !filters.length
+  ? Object.keys(allow).filter((n) => !seen.has(n))
+  : [];
+
+if (offenders.length || stale.length) {
+  const lines = [];
+  for (const o of offenders) lines.push(`SLOW: ${Math.round(o.ms)}ms ${o.name}`);
+  for (const n of stale) lines.push(`SLOW: stale allowlist entry ${n}`);
+  lines.push('SLOW: inject the clock or constant through a seam, or list the test in '
+    + 'test/slow-tests.json with the mechanism it waits on');
+  console.log(lines.join('\n'));
+  for (const o of offenders) console.error(` ✖ ${o.name} (${Math.round(o.ms)}ms)`);
+  for (const n of stale) console.error(` ✖ stale allowlist entry ${n} (0ms)`);
+  process.exit(run.status || 1);
+}
+
 // Node already exits non-zero on an escape it could attribute to a file; it
 // does NOT when the file had a real failure to report instead. Either way the
 // escape is a failure, so it decides the exit code here too.
