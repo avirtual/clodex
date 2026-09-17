@@ -329,9 +329,11 @@ test('a manifest path that does not exist throws with the path in the message', 
   ]);
   try {
     const corpus = loadHelpCorpus(root);
-    assert.throws(() => corpus.list(), /docs\/gone\.md/);
-    assert.throws(() => corpus.get('gone'), /docs\/gone\.md/);
+    assert.throws(() => corpus.list(), /^Error: help corpus page not found: docs\/gone\.md$/);
+    assert.throws(() => corpus.get('gone'), /^Error: help corpus page not found: docs\/gone\.md$/);
     assert.strictEqual(corpus.get('one').title, 'One');
+    assert.deepStrictEqual(corpus.search(''), [], 'an empty query must not read a page');
+    assert.throws(() => corpus.search('body'), /^Error: help corpus page not found: docs\/gone\.md$/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -340,7 +342,10 @@ test('a manifest path that does not exist throws with the path in the message', 
 test('a missing manifest throws naming docs/help.json', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'help-corpus-'));
   try {
-    assert.throws(() => loadHelpCorpus(root).list(), /docs\/help\.json/);
+    assert.throws(
+      () => loadHelpCorpus(root).list(),
+      /^Error: help corpus manifest not found: docs\/help\.json$/,
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
