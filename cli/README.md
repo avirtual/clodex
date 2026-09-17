@@ -276,7 +276,10 @@ adds the bracketed columns; `-o name` prints `<singular>/<id>` per line.
 served as raw markdown. `get docs -q "park resend"` searches it; `--section
 <slug>` prints one section of a page instead of the whole thing, which is the
 token lever that matters to an agent (a page is 10-25k tokens, a section is
-usually under 2k).
+usually under 2k). `docs` is the one resource whose singular `get` composes a
+page rather than pointing at `describe`: the list carries no content, so `get
+doc <name>` renders the same block `describe doc <name>` does, and `get doc
+<name> -o json` gives you the raw wire payload to pipe.
 
 `get tickets` shows the **open** board unless you pass `--state`; `-o json`
 sends no state and returns every one, the server's own default. A ticket id is
