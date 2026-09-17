@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { execFileSync } = require('node:child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { parseDoc } = require('../doc-parse.js');
 const { loadHelpCorpus } = require('../help-corpus.js');
@@ -98,15 +99,9 @@ function collectLinks() {
   return out;
 }
 
-function markdownUnder(dir, out) {
-  for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
-    const rel = `${dir}/${entry.name}`;
-    if (entry.isDirectory()) {
-      if (rel === 'docs/notes') continue;
-      markdownUnder(rel, out);
-    } else if (entry.name.endsWith('.md')) out.push(rel);
-  }
-  return out;
+function markdownUnder(dir) {
+  const listed = execFileSync('git', ['ls-files', '-z', '--', `${dir}/*.md`, `${dir}/**/*.md`], { cwd: ROOT, encoding: 'utf8' });
+  return listed.split('\0').filter((rel) => rel && !rel.startsWith('docs/notes/'));
 }
 
 function writeFixture(pages, sections) {
@@ -148,7 +143,7 @@ test('manifest: every page path exists, names are unique and legal, each page ha
 });
 
 test('every docs markdown file is listed or excluded, and docs/notes is never listed', () => {
-  const found = markdownUnder('docs', []).sort();
+  const found = markdownUnder('docs').sort();
   assert.ok(found.length >= 10, `docs scan returned ${found.length} markdown files`);
   assert.ok(found.includes('docs/how-to.md'), 'ENTER: docs/how-to.md did not survive the docs scan');
 
