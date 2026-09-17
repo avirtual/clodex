@@ -59,6 +59,28 @@ function elementExtent(src, open) {
   return null;
 }
 
+// The open `<div>` ancestors of `at`, outermost first, as css-cascade elements.
+// Built by replaying every div tag before it and keeping the ones still open.
+function ancestorChain(at) {
+  const stack = [];
+  const re = /<(\/?)div\b([^>]*?)(\/?)>/g;
+  let m;
+  while ((m = re.exec(htmlSrc)) && m.index < at) {
+    if (m[3] === '/') continue;
+    if (m[1]) { stack.pop(); continue; }
+    const id = m[2].match(/\bid="([^"]+)"/);
+    const cls = m[2].match(/\bclass="([^"]+)"/);
+    stack.push({
+      tag: 'div',
+      id: id ? id[1] : null,
+      classes: cls ? cls[1].split(/\s+/).filter(Boolean) : [],
+      attrs: {},
+    });
+  }
+  assert.ok(stack.length, `ENTER: nothing is open at offset ${at} — the tag replay lost the tree`);
+  return stack;
+}
+
 function dialogHeads() {
   const heads = [];
   const re = /<div class="dialog-head">/g;
@@ -86,10 +108,27 @@ function runListener(closeNames, { target }) {
   return closed;
 }
 
+// The listener's own suffix selector, honoured rather than hard-coded: the
+// editors are `-editor` ids and not `-overlay` ones, so a stub answering only
+// the literal `[id$="-overlay"]` would report every editor ✕ as closing nothing
+// while the real one works. Read the suffixes OUT of the extracted block, so a
+// row added to the table for an id the selector cannot reach reds here.
+function selectorSuffixes() {
+  const block = extractClickListener();
+  const sel = block.match(/closest\('([^']*\[id\$=[^']*)'\)/);
+  assert.ok(sel, 'ENTER: the ✕ listener resolves no ancestor by an [id$="…"] selector');
+  const suffixes = [...sel[1].matchAll(/\[id\$="([^"]+)"\]/g)].map((m) => m[1]);
+  assert.ok(suffixes.length, `ENTER: no id suffix parsed out of \`${sel[1]}\``);
+  return suffixes;
+}
+
 function fakeTarget({ btnOverlayId, isButton = true }) {
-  const overlay = btnOverlayId === null ? null : { id: btnOverlayId };
+  const suffixes = selectorSuffixes();
+  const overlay = btnOverlayId === null || !suffixes.some((s) => btnOverlayId.endsWith(s))
+    ? null
+    : { id: btnOverlayId };
   const btn = isButton
-    ? { closest: (sel) => (sel === '[id$="-overlay"]' ? overlay : null) }
+    ? { closest: (sel) => (sel.includes('[id$=') ? overlay : null) }
     : null;
   return { closest: (sel) => (sel === '.dialog-close' ? btn : null) };
 }
@@ -168,18 +207,20 @@ test('the .dialog-head h3 rule WINS the margin cascade in every dialog', () => {
   // `.dialog-head h3 { margin: 0 }` at (0,1,1), so the title kept its bottom
   // margin inside the flex head and the ✕ sat visibly high against it. Present,
   // correct, outranked — which a substring pin on the rule cannot see.
-  for (const [overlayId] of tableRows()) {
-    const dialogId = overlayId.replace(/-overlay$/, '-dialog').replace(/^dialog-dialog$/, 'dialog');
-    if (!htmlSrc.includes(`id="${dialogId}"`)) continue;
-    const chain = [
-      { tag: 'div', id: dialogId, classes: [], attrs: {} },
-      { tag: 'div', id: null, classes: ['dialog-head'], attrs: {} },
-      { tag: 'h3', id: null, classes: [], attrs: {} },
-    ];
+  const heads = dialogHeads();
+  assert.ok(heads.length >= 7, `ENTER: parsed only ${heads.length} .dialog-head rows`);
+  for (const head of heads) {
+    // The chain is read out of the MARKUP, not guessed from the overlay id: the
+    // four editors sit under `.prompt-editor-box`, not under a `#…-dialog`, so a
+    // derived id would test a chain the app never renders.
+    const chain = [...ancestorChain(head.start), {
+      tag: 'div', id: null, classes: ['dialog-head'], attrs: {},
+    }, { tag: 'h3', id: null, classes: [], attrs: {} }];
+    const where = chain.map((e) => e.id ? `#${e.id}` : (e.classes[0] ? `.${e.classes[0]}` : e.tag)).join(' ');
     const win = winningDeclaration(cssSrc, chain, 'margin');
-    assert.ok(win, `ENTER: no margin rule resolves onto #${dialogId} .dialog-head h3`);
+    assert.ok(win, `ENTER: no margin rule resolves onto \`${where}\``);
     assert.strictEqual(win.value, '0',
-      `\`${win.selector}\` wins margin on #${dialogId}'s head title with \`${win.value}\` — `
+      `\`${win.selector}\` wins margin on \`${where}\` with \`${win.value}\` — `
       + 'the h3 keeps a bottom margin inside the flex row and the ✕ rides high against it');
     // The shorthand only reaches margin-bottom if it also outranks every
     // LONGHAND that matches: #args-dialog h3 sets margin-bottom directly, and
@@ -187,8 +228,8 @@ test('the .dialog-head h3 rule WINS the margin cascade in every dialog', () => {
     const bottom = winningDeclaration(cssSrc, chain, 'margin-bottom');
     if (bottom) {
       assert.ok(bottom.score < win.score || (bottom.score === win.score && bottom.at < win.at),
-        `\`${bottom.selector}\` sets margin-bottom: ${bottom.value} on #${dialogId}'s head `
-        + `title and outranks the \`${win.selector}\` shorthand — the title keeps the gap`);
+        `\`${bottom.selector}\` sets margin-bottom: ${bottom.value} on \`${where}\` `
+        + `and outranks the \`${win.selector}\` shorthand — the title keeps the gap`);
     }
   }
 });

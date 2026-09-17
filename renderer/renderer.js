@@ -325,6 +325,10 @@ let editingTemplateTeam = null;
 let editingTemplateAppendPrev = [];
 let templatesDrawerRefresh = null;
 let templatesDrawerOpenTeam = null;
+let closePromptEditor = () => {};
+let closeAgentEditor = () => {};
+let closeSkillEditor = () => {};
+let closeExecEditor = () => {};
 
 function promptText(title, initial = '') {
   return new Promise((resolve) => {
@@ -4300,7 +4304,7 @@ voiceCore.start();
 
 const {
   typeToTakeControl, renderPeerBar, forgetControlMirror,
-  openPeerSession, peerDisplayHost, peerHideFromList,
+  openPeerSession, closePeerSessionDialog, peerDisplayHost, peerHideFromList,
   ensurePeerSessionVisible, openPeerArgs,
 } = initPeersUi({
   sessions, sessionList, getActiveSession: () => activeSession,
@@ -4356,6 +4360,11 @@ const ESCAPE_CLOSES = [
   ['sandbox-overlay', () => closeSandboxDialog()],
   ['prefs-overlay', () => closePrefs()],
   ['args-overlay', () => closeArgsDialog()],
+  ['peer-session-overlay', () => closePeerSessionDialog()],
+  ['prompt-editor', () => closePromptEditor()],
+  ['agent-editor', () => closeAgentEditor()],
+  ['skill-editor', () => closeSkillEditor()],
+  ['exec-editor', () => closeExecEditor()],
 ];
 
 document.addEventListener('keydown', (e) => {
@@ -4369,7 +4378,7 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('click', (e) => {
   const btn = e.target.closest && e.target.closest('.dialog-close');
   if (!btn) return;
-  const overlay = btn.closest('[id$="-overlay"]');
+  const overlay = btn.closest('[id$="-overlay"], [id$="-editor"]');
   if (!overlay) return;
   const row = ESCAPE_CLOSES.find(([id]) => id === overlay.id);
   if (row) row[1]();
@@ -7595,7 +7604,10 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
 });
 
 
-({ refreshTemplatesList: templatesDrawerRefresh, openTeamTemplate: templatesDrawerOpenTeam } = initLibraryDrawers({
+({
+  refreshTemplatesList: templatesDrawerRefresh, openTeamTemplate: templatesDrawerOpenTeam,
+  closePromptEditor, closeAgentEditor, closeSkillEditor, closeExecEditor,
+} = initLibraryDrawers({
   getActiveSession: () => activeSession,
   setAgentLibCache, setSkillLibCache,
   openTemplateEditor,
