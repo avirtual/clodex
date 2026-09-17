@@ -92,6 +92,7 @@ const RECORDER_STATES = {
   // live seat: it cost hours.
   unreadable: { cls: 'rec-unreadable', text: 'Cannot read the screen', hint: 'Clodex cannot see the indicator, so it will not write — a re-arm is blocked while this shows. If the CLI is in fullscreen mode (/tui fullscreen), /tui switches back' },
   off: { cls: 'rec-off', text: 'Not recording', hint: 'Clodex sees no recorder running' },
+  unavailable: { cls: 'rec-unavailable', text: 'No microphone on this machine', hint: 'This node\u2019s Claude CLI cannot record, so voice input cannot work here whatever the mode says' },
 };
 
 function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorderCause, tapOffRecorder }) {
@@ -103,7 +104,16 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
   // the gates' own reading and must never be able to disagree with it — a
   // second detector that said "off" while the gate said "blocked" would make
   // the operator trust the wrong one at exactly the moment the scrape is broken.
+  function capable() {
+    try { return core.snapshot().capable !== false; } catch { return true; }
+  }
+
+  function unavailableCause() {
+    try { return core.snapshot().cause || null; } catch { return null; }
+  }
+
   function reading() {
+    if (!capable()) return 'unavailable';
     try { return getRecorderReading(); } catch { return 'out'; }
   }
 
@@ -111,6 +121,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
   // read: the watcher samples the cause beside the reading on one poll, so this
   // cannot report a cause from a tick the state above did not come from.
   function cause() {
+    if (!capable()) return unavailableCause();
     try { return (getRecorderCause && getRecorderCause()) || null; } catch { return null; }
   }
 
@@ -167,6 +178,10 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
     const known = core.isMode(mode);
     const label = known ? mode : 'voice';
     const dim = known && mode === 'off' ? ' px-voice-off' : '';
+    if (snap.capable === false) {
+      const why = `Voice input is unavailable on this machine: ${snap.cause || 'this node\u2019s Claude CLI cannot record'}`;
+      return `<button class="px-action${dim}" data-act="voice" disabled data-tip="${esc(why)}">🎤 ${esc(label)}</button>`;
+    }
     const tip = snap.pending
       ? `Voice input: switching to ${snap.pending}`
       : 'Voice input mode for every Claude session on this machine — click to change';
@@ -176,17 +191,20 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
   function renderRows() {
     const snap = core.snapshot();
     const mode = snap.pending || snap.mode;
+    const dead = snap.capable === false ? ' voice-row-dead' : '';
     const rows = VOICE_ITEMS.map((i) => {
       const on = i.mode === mode ? ' voice-row-on' : '';
       const mark = i.mode === mode ? '●' : '○';
-      return `<div class="voice-row${on}" data-mode="${i.mode}">`
+      return `<div class="voice-row${on}${dead}"${dead ? '' : ` data-mode="${i.mode}"`}>`
         + `<span class="voice-row-mark">${mark}</span>`
         + `<span class="voice-row-main"><span class="voice-row-name">${esc(i.name)}</span>`
         + `<span class="voice-row-desc">${esc(i.desc)}</span></span></div>`;
     }).join('');
-    const note = snap.pending
-      ? `Switching to ${esc(snap.pending)}…`
-      : 'One setting for every Claude session on this machine.';
+    const note = snap.capable === false
+      ? `Voice input is unavailable on this machine: ${esc(snap.cause || 'this node\u2019s Claude CLI cannot record')}`
+      : (snap.pending
+        ? `Switching to ${esc(snap.pending)}…`
+        : 'One setting for every Claude session on this machine.');
     // The reading rides in its own host node so the tick can replace it without
     // touching the picker rows around it.
     body.innerHTML = `<div class="voice-rows">${rows}</div>`
@@ -330,7 +348,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
   // arrived at from the other side.
   let failedOnce = false;
   core.subscribe((snap) => {
-    const key = `${snap.pending || ''}|${snap.mode || ''}`;
+    const key = `${snap.pending || ''}|${snap.mode || ''}|${snap.capable === false ? 'no' : ''}`;
     if (key === lastKey) return;
     try {
       // Equally a no-op rebuild of a live picker: the rows are detached under the

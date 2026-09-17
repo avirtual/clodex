@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Voice controls know when a machine cannot hear.** On a node whose Claude CLI cannot record, the voice button and popover disable themselves and say why, instead of switching on a voice mode that can never listen.
+
 ## 5.73.0 — 2026-09-17
 
 - **Closed tickets keep their history.** Every review round's report, verdict and must-fixes stay on the ticket, and the tickets viewer opens any past ticket to read what was asked, what was reviewed and what changed after a rework, with search across every ticket, past and present.

@@ -2662,6 +2662,13 @@ body {
 .voice-row:hover {
   background: var(--active-bg);
 }
+.voice-row-dead {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.voice-row-dead:hover {
+  background: transparent;
+}
 .voice-row-mark {
   flex: none;
   color: var(--text-dim);
@@ -2733,6 +2740,13 @@ body {
   color: var(--warn);
 }
 .rec-unreadable .rec-dot {
+  background: none;
+  border: 1px solid currentColor;
+}
+.rec-unavailable {
+  color: var(--warn);
+}
+.rec-unavailable .rec-dot {
   background: none;
   border: 1px solid currentColor;
 }
@@ -26881,11 +26895,19 @@ ${m[2].replace(/^\r?\n/, "")}`;
         function isMode(m) {
           return VOICE_ITEMS.some((i) => i.mode === m);
         }
+        function capable() {
+          return !(state && state.capable === false);
+        }
+        function cause() {
+          return state && state.capable === false && state.cause || null;
+        }
         function snapshot() {
           return {
             state,
             pending,
             mode: pending || state && state.effective,
+            capable: capable(),
+            cause: cause(),
             force: false
           };
         }
@@ -26894,6 +26916,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
             state,
             pending,
             mode: pending || state && state.effective,
+            capable: capable(),
+            cause: cause(),
             force
           };
           for (const fn of [...listeners]) {
@@ -32455,7 +32479,8 @@ Opening it here and saving would overwrite the file with what this editor could 
         // can change and every reason to think the feature is broken. Measured on a
         // live seat: it cost hours.
         unreadable: { cls: "rec-unreadable", text: "Cannot read the screen", hint: "Clodex cannot see the indicator, so it will not write \u2014 a re-arm is blocked while this shows. If the CLI is in fullscreen mode (/tui fullscreen), /tui switches back" },
-        off: { cls: "rec-off", text: "Not recording", hint: "Clodex sees no recorder running" }
+        off: { cls: "rec-off", text: "Not recording", hint: "Clodex sees no recorder running" },
+        unavailable: { cls: "rec-unavailable", text: "No microphone on this machine", hint: "This node\u2019s Claude CLI cannot record, so voice input cannot work here whatever the mode says" }
       };
       function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorderCause, tapOffRecorder }) {
         const pop = document.getElementById("voice-popover");
@@ -32463,7 +32488,22 @@ Opening it here and saving would overwrite the file with what this editor could 
         if (!pop || !body) return { actionHtml: () => "", closeVoicePopover() {
         }, openVoicePopover() {
         } };
+        function capable() {
+          try {
+            return core.snapshot().capable !== false;
+          } catch {
+            return true;
+          }
+        }
+        function unavailableCause() {
+          try {
+            return core.snapshot().cause || null;
+          } catch {
+            return null;
+          }
+        }
         function reading() {
+          if (!capable()) return "unavailable";
           try {
             return getRecorderReading();
           } catch {
@@ -32471,6 +32511,7 @@ Opening it here and saving would overwrite the file with what this editor could 
           }
         }
         function cause() {
+          if (!capable()) return unavailableCause();
           try {
             return getRecorderCause && getRecorderCause() || null;
           } catch {
@@ -32513,18 +32554,23 @@ Opening it here and saving would overwrite the file with what this editor could 
           const known = core.isMode(mode);
           const label = known ? mode : "voice";
           const dim = known && mode === "off" ? " px-voice-off" : "";
+          if (snap.capable === false) {
+            const why = `Voice input is unavailable on this machine: ${snap.cause || "this node\u2019s Claude CLI cannot record"}`;
+            return `<button class="px-action${dim}" data-act="voice" disabled data-tip="${esc(why)}">\u{1F3A4} ${esc(label)}</button>`;
+          }
           const tip = snap.pending ? `Voice input: switching to ${snap.pending}` : "Voice input mode for every Claude session on this machine \u2014 click to change";
           return `<button class="px-action${dim}" data-act="voice" data-tip="${esc(tip)}">\u{1F3A4} ${esc(label)}</button>`;
         }
         function renderRows() {
           const snap = core.snapshot();
           const mode = snap.pending || snap.mode;
+          const dead = snap.capable === false ? " voice-row-dead" : "";
           const rows = VOICE_ITEMS.map((i) => {
             const on = i.mode === mode ? " voice-row-on" : "";
             const mark = i.mode === mode ? "\u25CF" : "\u25CB";
-            return `<div class="voice-row${on}" data-mode="${i.mode}"><span class="voice-row-mark">${mark}</span><span class="voice-row-main"><span class="voice-row-name">${esc(i.name)}</span><span class="voice-row-desc">${esc(i.desc)}</span></span></div>`;
+            return `<div class="voice-row${on}${dead}"${dead ? "" : ` data-mode="${i.mode}"`}><span class="voice-row-mark">${mark}</span><span class="voice-row-main"><span class="voice-row-name">${esc(i.name)}</span><span class="voice-row-desc">${esc(i.desc)}</span></span></div>`;
           }).join("");
-          const note = snap.pending ? `Switching to ${esc(snap.pending)}\u2026` : "One setting for every Claude session on this machine.";
+          const note = snap.capable === false ? `Voice input is unavailable on this machine: ${esc(snap.cause || "this node\u2019s Claude CLI cannot record")}` : snap.pending ? `Switching to ${esc(snap.pending)}\u2026` : "One setting for every Claude session on this machine.";
           body.innerHTML = `<div class="voice-rows">${rows}</div><div class="rec-host">${recorderHtml()}</div><div class="cost-note">${note}</div><div class="speak-host">${speakHtml()}</div>`;
           lastReading = readingKey();
           refreshSpeakSection();
@@ -32594,7 +32640,7 @@ Opening it here and saving would overwrite the file with what this editor could 
         let lastKey = null;
         let failedOnce = false;
         core.subscribe((snap) => {
-          const key = `${snap.pending || ""}|${snap.mode || ""}`;
+          const key = `${snap.pending || ""}|${snap.mode || ""}|${snap.capable === false ? "no" : ""}`;
           if (key === lastKey) return;
           try {
             if (!pop.classList.contains("hidden")) renderRows();

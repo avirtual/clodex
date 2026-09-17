@@ -1936,6 +1936,8 @@ html, body {
   padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 11px;
 }
 .voice-row:hover { background: var(--active-bg); }
+.voice-row-dead { opacity: 0.45; cursor: not-allowed; }
+.voice-row-dead:hover { background: transparent; }
 .voice-row-mark { flex: none; color: var(--text-dim); font-size: 10px; }
 .voice-row-on .voice-row-mark { color: var(--accent); }
 .voice-row-main { display: flex; flex-direction: column; gap: 1px; overflow: hidden; }
@@ -1984,6 +1986,8 @@ html, body {
    in any colour reads as a measurement. */
 .rec-unreadable { color: var(--warn); }
 .rec-unreadable .rec-dot { background: none; border: 1px solid currentColor; }
+.rec-unavailable { color: var(--warn); }
+.rec-unavailable .rec-dot { background: none; border: 1px solid currentColor; }
 .rec-off { color: var(--text-dim); }
 .rec-off .rec-dot { background: none; border: 1px solid currentColor; }
 

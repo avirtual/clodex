@@ -68,7 +68,7 @@ function registerIpcHandlers(deps) {
     jsonlToMarkdown, log, manager,
     openWirescopeWindow, os,
     path, persistence, probePeer, proxyPoller,
-    pty, readEffectiveToolState, readVoiceMode, readVoiceTrigger, writeVoiceMode, readSessionMeta,
+    pty, readEffectiveToolState, readVoiceMode, readVoiceTrigger, readVoiceCapability, writeVoiceMode, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog, setLead, gatherTeam, teamsDir,
@@ -1098,7 +1098,10 @@ function registerIpcHandlers(deps) {
   // The trigger key rides this same channel rather than a second one: both are
   // read-only facts about the CLI's own config, and the re-arm needs the mode
   // and the key together to decide anything.
-  handle('settings:voiceMode', () => ({ ok: true, ...readVoiceMode(), trigger: readVoiceTrigger() }));
+  handle('settings:voiceMode', () => {
+    const cap = readVoiceCapability ? readVoiceCapability() : { capable: true, cause: null };
+    return { ok: true, ...readVoiceMode(), trigger: readVoiceTrigger(), capable: cap.capable !== false, cause: cap.cause || null };
+  });
   // Box-wide for the same reason as the read, and takes no session name for a
   // second one: the write goes to the file, not into a seat, so it is the one
   // path that still works with zero Claude sessions open.

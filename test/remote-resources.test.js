@@ -1243,3 +1243,22 @@ test('route order: /api/peer/hello and /api/peer/roster still match ahead of the
     'the roster branch must be spelled before the peers branch',
   );
 });
+
+test('hello: caps carries voice only when the node was constructed capable', async () => {
+  await withNode({ voiceCapable: true }, async (port) => {
+    const caps = JSON.parse((await req(port, '/api/peer/hello')).body).caps;
+    assert.ok(caps.includes('voice'), 'a capable node offers the voice cap');
+  });
+  await withNode({ voiceCapable: false }, async (port) => {
+    const caps = JSON.parse((await req(port, '/api/peer/hello')).body).caps;
+    assert.ok(!caps.includes('voice'), 'a node that cannot record must not offer it');
+    assert.ok(caps.includes('resources'), 'and the rest of the caps list is unaffected');
+  });
+});
+
+test('remote-wiring passes voiceCapable as a boolean read off the machine', () => {
+  const { deps } = makeDeps();
+  const opts = captureOptions(deps);
+  assert.strictEqual(typeof opts.voiceCapable, 'boolean',
+    'remote-wiring must pass a boolean, not the capability object, which is truthy whatever it says');
+});
