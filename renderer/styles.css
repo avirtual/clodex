@@ -10,71 +10,152 @@
    rules that want a different dim still win. */
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 
-/* Default theme = Midnight (the original navy). Alternate themes override
-   these custom properties via [data-theme]; the renderer also swaps each
-   xterm's ANSI palette (THEMES in renderer.js) so the terminal matches.
-   --warn/--error/--ok are the semantic accents (status bar + report) so a
-   light theme can darken them for contrast without touching every rule. */
 :root {
+  color-scheme: dark;
   --sidebar-width: 220px;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 18px;
+  --lh-tight: 1.2;
+  --lh-body: 1.4;
+  --tracking-caps: 0.06em;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --control-h: 28px;
+  --control-h-sm: 22px;
+  --row-h: 44px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-pill: 999px;
+
+  --dur: 120ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --surface-hover: rgba(255, 255, 255, 0.05);
+  --surface-selected: rgba(255, 255, 255, 0.09);
+  --scrim: rgba(0, 0, 0, 0.5);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(0, 0, 0, 0.25);
+
   --bg: #1a1a2e;
-  --sidebar-bg: #16213e;
-  --sidebar-hover: #1a2744;
-  --active-bg: #0f3460;
+  --surface-base: var(--bg);
+  --surface-raised: #1d1d33;
+  --surface-overlay: #24243c;
+  --surface-input: #15152a;
+
+  --text-primary: #ececf1;
+  --text-secondary: #a9b0c2;
+  --text-tertiary: #858da0;
+
   --accent: #e94560;
-  --text: #eee;
-  --text-dim: #949eb1; /* 5.9:1 on --sidebar-bg — small dim text stays legible */
-  --border: #253253;
+  --accent-fg: #ffffff;
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+
+  --ok: #98c379;
   --warn: #e5c07b;
   --error: #e06c75;
-  --ok: #98c379;
+  --info: #7cc7ff;
+  --ok-soft:    color-mix(in srgb, var(--ok) 14%, transparent);
+  --warn-soft:  color-mix(in srgb, var(--warn) 14%, transparent);
+  --error-soft: color-mix(in srgb, var(--error) 14%, transparent);
+  --info-soft:  color-mix(in srgb, var(--info) 14%, transparent);
+
+  --sev-patch: var(--warn);
+  --sev-minor: color-mix(in srgb, var(--warn) 40%, var(--error));
+  --sev-major: var(--error);
+
+  --sidebar-bg: var(--surface-raised);
+  --sidebar-hover: var(--surface-hover);
+  --active-bg: var(--surface-selected);
+  --input-bg: var(--surface-input);
+  --text: var(--text-primary);
+  --text-dim: var(--text-secondary);
+  --danger: var(--error);
+  --accent-dim: var(--accent-soft);
+  --panel: var(--surface-raised);
+  --bg-elev: var(--surface-overlay);
+  --mono: var(--font-mono);
 }
 
-/* Claude — warm dark, Anthropic coral accent */
 [data-theme="claude"] {
   --bg: #262624;
-  --sidebar-bg: #1f1e1d;
-  --sidebar-hover: #302e2b;
-  --active-bg: #3a3733;
+  --surface-raised: #1f1e1d;
+  --surface-overlay: #302e2b;
+  --surface-input: #1a1918;
+  --text-primary: #f5f4ef;
+  --text-secondary: #aaa49b;
+  --text-tertiary: #8a857d;
   --accent: #d97757;
-  --text: #f5f4ef;
-  --text-dim: #a29d96; /* 6.2:1 on --sidebar-bg — small dim text stays legible */
-  --border: #3a3733;
+  --accent-fg: #ffffff;
+  --ok: #a3b18a;
   --warn: #d9a55b;
   --error: #e0816b;
-  --ok: #a3b18a;
+  --info: #7da3c4;
 }
 
-/* Paper — dim light: warm sepia ground, ink (not black) text. Sits between
-   the dark themes and Light for tired eyes; --text-dim is deliberately dark
-   (≥7:1 on the ground) so small text stays readable on the dimmer paper. */
 [data-theme="paper"] {
+  color-scheme: light;
+  --border: rgba(40, 30, 10, 0.12);
+  --border-strong: rgba(40, 30, 10, 0.2);
+  --surface-hover: rgba(40, 30, 10, 0.05);
+  --surface-selected: rgba(40, 30, 10, 0.09);
+  --scrim: rgba(30, 24, 12, 0.35);
+  --shadow-raised: 0 1px 2px rgba(40, 30, 10, 0.12);
+  --shadow-overlay: 0 8px 24px rgba(40, 30, 10, 0.18), 0 0 0 1px rgba(40, 30, 10, 0.08);
+
   --bg: #ece8dc;
-  --sidebar-bg: #e3ddcd;
-  --sidebar-hover: #dbd4c1;
-  --active-bg: #d2c9b2;
+  --surface-raised: #e4dfd0;
+  --surface-overlay: #f5f2e9;
+  --surface-input: #f2eee3;
+  --text-primary: #33302a;
+  --text-secondary: #4f4a42;
+  --text-tertiary: #625d54;
   --accent: #c15f3c;
-  --text: #33302a;
-  --text-dim: #4c4842;
-  --border: #d0c9b6;
+  --accent-fg: #ffffff;
+  --ok: #46702f;
   --warn: #855a14;
   --error: #b03a26;
-  --ok: #46702f;
+  --info: #28629c;
 }
 
-/* Light — Claude Code light: off-white, darkened accents for contrast */
 [data-theme="light"] {
+  color-scheme: light;
+  --border: rgba(0, 0, 0, 0.09);
+  --border-strong: rgba(0, 0, 0, 0.16);
+  --surface-hover: rgba(0, 0, 0, 0.04);
+  --surface-selected: rgba(0, 0, 0, 0.07);
+  --scrim: rgba(20, 18, 14, 0.35);
+  --shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.14), 0 0 0 1px rgba(0, 0, 0, 0.06);
+
   --bg: #faf9f5;
-  --sidebar-bg: #f0eee6;
-  --sidebar-hover: #e8e5da;
-  --active-bg: #e0dcce;
+  --surface-raised: #f3f1ea;
+  --surface-overlay: #ffffff;
+  --surface-input: #ffffff;
+  --text-primary: #1f1e1d;
+  --text-secondary: #5c5851;
+  --text-tertiary: #6f6a61;
   --accent: #c15f3c;
-  --text: #1f1e1d;
-  --text-dim: #6b6862;
-  --border: #d6d2c4;
+  --accent-fg: #ffffff;
+  --ok: #4f7a3a;
   --warn: #9a6b1e;
   --error: #c1442e;
-  --ok: #4f7a3a;
+  --info: #2b6cb0;
 }
 
 html, body {
