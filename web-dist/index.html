@@ -10648,6 +10648,8 @@ body.web-frontend #sidebar-header {
       "use strict";
       var BAR_H = 30;
       var FOLD_AT = 16;
+      var CLODEX_REPO_URL = "https://github.com/avirtual/clodex";
+      var CLODEX_PLUGINS_REPO_URL = "https://github.com/avirtual/clodex-plugins";
       var ACCEL_ALT = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || "") ? "\u2325" : "Alt+";
       var THEMES = [
         { key: "midnight", label: "Midnight" },
@@ -10679,6 +10681,9 @@ body.web-frontend #sidebar-header {
 .clx-mb-head{padding:6px 14px 3px;font-size:10px;opacity:.5;text-transform:uppercase;letter-spacing:.05em}
 `;
       var trunc = (s) => s && s.length > 60 ? s.slice(0, 57) + "\u2026" : s;
+      function openExternal(url) {
+        if (typeof window !== "undefined" && typeof window.open === "function") window.open(url, "_blank", "noopener");
+      }
       function confirmRestart(invoke) {
         const ok = typeof window !== "undefined" && typeof window.confirm === "function" ? window.confirm("Restart Clodex?\n\nRunning sessions will be interrupted and resumed after the restart.") : true;
         if (ok) {
@@ -10777,6 +10782,30 @@ body.web-frontend #sidebar-header {
                 for (const b of boxList) rows.push(peerRow(b));
               }
               rows.push({ label: "Manage Clodex Sandboxes\u2026", run: () => emit("request-open-sandbox-dialog") });
+              return rows;
+            }
+          },
+          {
+            label: "Help",
+            items: async () => {
+              const rows = [
+                { label: "Clodex Help", accel: `${ACCEL_ALT}\u21E7/`, run: () => emit("request-open-help") },
+                { sep: true }
+              ];
+              const res = await Promise.resolve(api.helpIndex ? api.helpIndex() : null).catch(() => null);
+              const sections = res && res.ok && Array.isArray(res.sections) ? res.sections : [];
+              for (const section of sections) {
+                const pages = section.pages || [];
+                rows.push({
+                  label: section.title,
+                  submenu: () => pages.map((p) => ({ label: p.title, run: () => emit("request-open-help", p.name) }))
+                });
+              }
+              if (sections.length) rows.push({ sep: true });
+              rows.push(
+                { label: "Clodex on GitHub", run: () => openExternal(CLODEX_REPO_URL) },
+                { label: "Plugin library (clodex-plugins)", run: () => openExternal(CLODEX_PLUGINS_REPO_URL) }
+              );
               return rows;
             }
           }
@@ -24348,6 +24377,7 @@ ${i3.join("\n")}
         if (e.shiftKey) {
           if (code === "BracketRight") return { type: "cycle", dir: "next" };
           if (code === "BracketLeft") return { type: "cycle", dir: "prev" };
+          if (code === "Slash") return { type: "help" };
           return null;
         }
         if (code === "KeyT") return { type: "new" };
@@ -43548,6 +43578,10 @@ Click for live activity`;
         }
         if (action.type === "close") {
           runCloseChord();
+          return;
+        }
+        if (action.type === "help") {
+          openHelp();
           return;
         }
         if (overlaysOpen) return;
