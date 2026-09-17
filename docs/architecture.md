@@ -1210,6 +1210,8 @@ optional restart only to refresh the seat's prompt),
 `⚙ session ▾` launcher menu — local action menus), and
 `team-roles-popover.js` (the team manifest is a file, not session state, so
 it goes direct rather than through the local-vs-peer seam).
+`help-panel.js` (the Help overlay: index and pages over
+`window.api.helpIndex/helpPage`, rendered by `render-doc`).
 `selection-popover.js` also lives here but is the drawer's 📋 inspector on
 `window.api.drawerInspectSelection`, a different subsystem, not a seam bypass.
 `voice-popover.js` is likewise off the seam by design: it is the session bar's

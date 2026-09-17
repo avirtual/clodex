@@ -3183,6 +3183,206 @@ body {
 #report-modal .popover-title {
   margin-bottom: 12px;
 }
+#help-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+#help-overlay.hidden {
+  display: none;
+}
+#help-modal {
+  width: 92vw;
+  max-width: 1200px;
+  height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  box-shadow: var(--shadow-overlay);
+}
+#help-modal .popover-title {
+  margin-bottom: 12px;
+  flex: 0 0 auto;
+}
+#help-search {
+  width: 220px;
+  padding: 4px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+  font-family: inherit;
+}
+#help-search:focus {
+  border-color: var(--accent);
+}
+#help-columns {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 0;
+}
+#help-nav {
+  flex: 0 0 220px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  padding-right: 8px;
+}
+#help-body {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+.help-sec-head {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  margin: 12px 0 8px;
+}
+.help-nav-page {
+  font-size: 12px;
+  color: var(--text);
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.help-nav-page:hover {
+  background: var(--active-bg);
+}
+.help-nav-page.current {
+  color: var(--accent);
+}
+.help-nav-h2 {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 2px 6px 2px 18px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.help-nav-h2:hover {
+  color: var(--text);
+  background: var(--active-bg);
+}
+.help-hit {
+  font-size: 11px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.help-hit:hover {
+  background: var(--active-bg);
+}
+.help-hit-title {
+  color: var(--text);
+  display: block;
+}
+.help-hit-snippet {
+  color: var(--text-dim);
+  display: block;
+  margin-top: 2px;
+}
+.help-doc {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.55;
+}
+.help-doc h1 {
+  font-size: 20px;
+  margin: 0 0 12px;
+}
+.help-doc h2 {
+  font-size: 16px;
+  margin: 20px 0 8px;
+}
+.help-doc h3 {
+  font-size: 14px;
+  margin: 16px 0 6px;
+}
+.help-doc h4 {
+  font-size: 13px;
+  margin: 14px 0 4px;
+  color: var(--text-dim);
+}
+.help-doc p {
+  margin: 0 0 10px;
+}
+.help-doc ul,
+.help-doc ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+.help-doc ul ul,
+.help-doc ol ol,
+.help-doc ul ol,
+.help-doc ol ul {
+  margin-bottom: 0;
+}
+.help-doc li {
+  margin: 2px 0;
+}
+.help-doc code {
+  background: var(--active-bg);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+}
+.help-doc pre {
+  background: var(--active-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  overflow-x: auto;
+  margin: 0 0 10px;
+}
+.help-doc pre code {
+  background: none;
+  padding: 0;
+}
+.help-doc table {
+  border-collapse: collapse;
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+.help-doc th,
+.help-doc td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.help-doc blockquote {
+  border-left: 3px solid var(--border-strong);
+  margin: 0 0 10px;
+  padding-left: 10px;
+  color: var(--text-dim);
+}
+.help-doc hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 16px 0;
+}
+.help-doc a {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: none;
+}
+.help-doc a:hover {
+  text-decoration: underline;
+}
 .rep-note {
   font-size: 12px;
   color: var(--text-dim);
@@ -9419,6 +9619,12 @@ body.web-frontend #sidebar-header {
     <div id="report-modal">
       <div class="popover-title"><span>Session Report — <span id="report-name"></span></span><button type="button" class="popover-close" id="report-close" title="Close" aria-label="Close">&times;</button></div>
       <div id="report-body"></div>
+    </div>
+  </div>
+  <div id="help-overlay" class="hidden">
+    <div id="help-modal" role="dialog" aria-label="Clodex Help">
+      <div class="popover-title"><span id="help-title">Clodex Help</span><span class="popover-title-actions"><button type="button" class="file-peek-tab" id="help-back" title="Back" aria-label="Back">&larr;</button><button type="button" class="file-peek-tab" id="help-fwd" title="Forward" aria-label="Forward">&rarr;</button><input type="search" id="help-search" placeholder="Search help" autocomplete="off" spellcheck="false"><button type="button" class="popover-close" id="help-close" title="Close" aria-label="Close">&times;</button></span></div>
+      <div id="help-columns"><nav id="help-nav"></nav><div id="help-body" class="help-doc"></div></div>
     </div>
   </div>
 
@@ -25005,6 +25211,7 @@ ${i3.join("\n")}
         "setup-overlay",
         "file-peek-overlay",
         "report-overlay",
+        "help-overlay",
         "prompt-editor",
         "agent-editor",
         "skill-editor",
@@ -31716,6 +31923,1030 @@ Opening it here and saving would overwrite the file with what this editor could 
     }
   });
 
+  // renderer/lib/render-doc.js
+  var require_render_doc = __commonJS({
+    "renderer/lib/render-doc.js"(exports, module) {
+      "use strict";
+      var HEADING_TAGS = { 1: "h1", 2: "h2", 3: "h3", 4: "h4", 5: "h5", 6: "h6" };
+      var EXTERNAL_REL = "noreferrer noopener";
+      function makeText(doc, value) {
+        return doc.createTextNode(String(value == null ? "" : value));
+      }
+      function makeEl(doc, tag) {
+        return doc.createElement(tag);
+      }
+      function renderInline(nodes, parent, ctx) {
+        for (const node of nodes || []) {
+          if (!node || typeof node !== "object") continue;
+          if (node.type === "text") {
+            parent.appendChild(makeText(ctx.doc, node.text));
+          } else if (node.type === "code") {
+            const el = makeEl(ctx.doc, "code");
+            el.textContent = String(node.text == null ? "" : node.text);
+            parent.appendChild(el);
+          } else if (node.type === "strong" || node.type === "em") {
+            const el = makeEl(ctx.doc, node.type === "strong" ? "strong" : "em");
+            renderInline(node.children, el, ctx);
+            parent.appendChild(el);
+          } else if (node.type === "link") {
+            renderLink(node, parent, ctx);
+          }
+        }
+      }
+      function renderLink(node, parent, ctx) {
+        const target = ctx.resolveHref ? ctx.resolveHref(node.href) : null;
+        if (!target || typeof target !== "object") {
+          renderInline(node.children, parent, ctx);
+          return;
+        }
+        const a = makeEl(ctx.doc, "a");
+        if (target.kind === "external") {
+          a.setAttribute("href", String(target.url == null ? "" : target.url));
+          a.setAttribute("target", "_blank");
+          a.setAttribute("rel", EXTERNAL_REL);
+        } else if (target.kind === "page" || target.kind === "anchor") {
+          a.setAttribute("href", "#");
+          if (target.name != null) a.setAttribute("data-page", String(target.name));
+          if (target.slug != null) a.setAttribute("data-slug", String(target.slug));
+        } else {
+          renderInline(node.children, parent, ctx);
+          return;
+        }
+        renderInline(node.children, a, ctx);
+        parent.appendChild(a);
+      }
+      function renderCells(cells, row, tag, ctx) {
+        for (const cell of cells || []) {
+          const el = makeEl(ctx.doc, tag);
+          renderInline(cell, el, ctx);
+          row.appendChild(el);
+        }
+      }
+      function renderTable(block, parent, ctx) {
+        const table = makeEl(ctx.doc, "table");
+        const thead = makeEl(ctx.doc, "thead");
+        const headRow = makeEl(ctx.doc, "tr");
+        renderCells(block.header, headRow, "th", ctx);
+        thead.appendChild(headRow);
+        table.appendChild(thead);
+        const tbody = makeEl(ctx.doc, "tbody");
+        for (const row of block.rows || []) {
+          const tr = makeEl(ctx.doc, "tr");
+          renderCells(row, tr, "td", ctx);
+          tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        parent.appendChild(table);
+      }
+      function renderBlocks(blocks, parent, ctx) {
+        for (const block of blocks || []) {
+          if (!block || typeof block !== "object") continue;
+          if (block.type === "heading") {
+            const tag = HEADING_TAGS[block.level] || "h6";
+            const el = makeEl(ctx.doc, tag);
+            if (block.slug) el.setAttribute("id", String(block.slug));
+            renderInline(block.text, el, ctx);
+            parent.appendChild(el);
+          } else if (block.type === "paragraph") {
+            const el = makeEl(ctx.doc, "p");
+            renderInline(block.children, el, ctx);
+            parent.appendChild(el);
+          } else if (block.type === "code") {
+            const pre = makeEl(ctx.doc, "pre");
+            const code = makeEl(ctx.doc, "code");
+            if (block.lang) code.setAttribute("data-lang", String(block.lang));
+            code.textContent = String(block.text == null ? "" : block.text);
+            pre.appendChild(code);
+            parent.appendChild(pre);
+          } else if (block.type === "list") {
+            const list = makeEl(ctx.doc, block.ordered ? "ol" : "ul");
+            if (block.ordered && Number(block.start) > 1) list.setAttribute("start", String(block.start));
+            for (const item of block.items || []) {
+              const li = makeEl(ctx.doc, "li");
+              renderBlocks(item.children, li, ctx);
+              list.appendChild(li);
+            }
+            parent.appendChild(list);
+          } else if (block.type === "blockquote") {
+            const el = makeEl(ctx.doc, "blockquote");
+            renderBlocks(block.children, el, ctx);
+            parent.appendChild(el);
+          } else if (block.type === "table") {
+            renderTable(block, parent, ctx);
+          } else if (block.type === "hr") {
+            parent.appendChild(makeEl(ctx.doc, "hr"));
+          } else if (block.type === "anchor") {
+            const el = makeEl(ctx.doc, "span");
+            el.setAttribute("id", String(block.id == null ? "" : block.id));
+            parent.appendChild(el);
+          }
+        }
+      }
+      function renderDoc(parsed, options) {
+        const opts = options || {};
+        const doc = opts.document || globalThis.document;
+        const ctx = { doc, resolveHref: typeof opts.resolveHref === "function" ? opts.resolveHref : null };
+        const frag = doc.createDocumentFragment();
+        const blocks = parsed && Array.isArray(parsed.blocks) ? parsed.blocks : Array.isArray(parsed) ? parsed : [];
+        renderBlocks(blocks, frag, ctx);
+        return frag;
+      }
+      module.exports = { renderDoc };
+    }
+  });
+
+  // doc-parse.js
+  var require_doc_parse = __commonJS({
+    "doc-parse.js"(exports, module) {
+      "use strict";
+      var NAMED_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+      var ESCAPABLE = new Set("\\`*_{}[]()#+-.!|<>&~\"'$%^:;,/?@=".split(""));
+      var ATX = /^ {0,3}(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$/;
+      var FENCE_OPEN = /^(\s*)(`{3,}|~{3,})[ \t]*([^`~\s]*)[ \t]*$/;
+      var HR = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+      var QUOTE = /^ {0,3}>[ \t]?(.*)$/;
+      var MARKER = /^([ \t]*)(?:([-*+])|(\d{1,9})[.)])([ \t]+)(.*)$/;
+      var TABLE_RULE = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
+      var ANCHOR_TAG = /^<a[ \t]+name=["']([^"']+)["'][ \t]*>[ \t]*(?:<\/a>)?$/i;
+      var ANY_TAG = /<\/?([a-zA-Z][a-zA-Z0-9]*)(?:[ \t][^>]*?)?\/?>/g;
+      var STRUCTURAL_TAGS = /* @__PURE__ */ new Set(["details", "summary"]);
+      var ENTITY = /&(amp|lt|gt|quot|apos);|&#(\d{1,7});/g;
+      var WORD = /[A-Za-z0-9]/;
+      var SNIPPET_MAX = 120;
+      var SNIPPET_LEAD = 40;
+      var LIMIT_MIN = 1;
+      var LIMIT_MAX = 100;
+      var LIMIT_DEFAULT = 20;
+      var TITLE_WEIGHT = 1e6;
+      var HEADING_WEIGHT = 1e3;
+      var BODY_CAP = 999;
+      function normalize(text) {
+        return String(text == null ? "" : text).replace(/\r\n?/g, "\n").replace(/\u0000/g, "");
+      }
+      function toLines(src) {
+        return src.split("\n").map((s, i) => ({ n: i + 1, s }));
+      }
+      function leadIndent(s) {
+        let n = 0;
+        for (let i = 0; i < s.length; i++) {
+          if (s[i] === " ") n += 1;
+          else if (s[i] === "	") n += 4;
+          else break;
+        }
+        return n;
+      }
+      function dedent(line, k) {
+        let i = 0;
+        let taken = 0;
+        while (i < line.s.length && taken < k && (line.s[i] === " " || line.s[i] === "	")) {
+          taken += line.s[i] === "	" ? 4 : 1;
+          i += 1;
+        }
+        return { n: line.n, s: line.s.slice(i) };
+      }
+      function decodeEntities(s) {
+        return s.replace(ENTITY, (whole, name, dec) => {
+          if (name) return NAMED_ENTITIES[name];
+          const code = Number(dec);
+          if (!Number.isFinite(code) || code < 1 || code > 1114111) return whole;
+          try {
+            return String.fromCodePoint(code);
+          } catch (err) {
+            return whole;
+          }
+        });
+      }
+      function readCode(src, at) {
+        let n = 0;
+        while (src[at + n] === "`") n += 1;
+        let i = at + n;
+        while (i < src.length) {
+          if (src[i] !== "`") {
+            i += 1;
+            continue;
+          }
+          let run = 0;
+          while (src[i + run] === "`") run += 1;
+          if (run === n) {
+            let body = src.slice(at + n, i).replace(/\n/g, " ");
+            if (body.length > 2 && body[0] === " " && body[body.length - 1] === " " && body.trim() !== "") {
+              body = body.slice(1, -1);
+            }
+            return { text: body, end: i + n };
+          }
+          i += run;
+        }
+        return null;
+      }
+      function readLink(src, at) {
+        let i = at + 1;
+        let depth = 1;
+        while (i < src.length) {
+          const c = src[i];
+          if (c === "\\") {
+            i += 2;
+            continue;
+          }
+          if (c === "`") {
+            const sp = readCode(src, i);
+            if (sp) {
+              i = sp.end;
+              continue;
+            }
+          }
+          if (c === "[") depth += 1;
+          if (c === "]") {
+            depth -= 1;
+            if (depth === 0) break;
+          }
+          i += 1;
+        }
+        if (depth !== 0 || src[i + 1] !== "(") return null;
+        const label = src.slice(at + 1, i);
+        let j = i + 2;
+        let paren = 1;
+        while (j < src.length) {
+          const c = src[j];
+          if (c === "\\") {
+            j += 2;
+            continue;
+          }
+          if (c === "(") paren += 1;
+          if (c === ")") {
+            paren -= 1;
+            if (paren === 0) break;
+          }
+          j += 1;
+        }
+        if (paren !== 0) return null;
+        return { label, href: src.slice(i + 2, j).trim(), end: j + 1 };
+      }
+      function readEmphasis(src, at) {
+        const ch = src[at];
+        const n = src[at + 1] === ch ? 2 : 1;
+        const after = src[at + n];
+        if (after === void 0 || /\s/.test(after) || after === ch) return null;
+        if (ch === "_" && at > 0 && WORD.test(src[at - 1])) return null;
+        let i = at + n;
+        while (i < src.length) {
+          const c = src[i];
+          if (c === "\\") {
+            i += 2;
+            continue;
+          }
+          if (c === "`") {
+            const sp = readCode(src, i);
+            if (sp) {
+              i = sp.end;
+              continue;
+            }
+          }
+          if (c !== ch) {
+            i += 1;
+            continue;
+          }
+          let run = 0;
+          while (src[i + run] === ch) run += 1;
+          const prev = src[i - 1];
+          const next = src[i + n];
+          const closes = run >= n && prev !== void 0 && !/\s/.test(prev) && !(ch === "_" && next !== void 0 && WORD.test(next));
+          if (closes) {
+            return { strong: n === 2, inner: src.slice(at + n, i), end: i + n };
+          }
+          i += run;
+        }
+        return null;
+      }
+      function parseInline(src) {
+        const text = String(src == null ? "" : src);
+        const nodes = [];
+        let buf = [];
+        function flush() {
+          if (!buf.length) return;
+          let out = "";
+          let run = "";
+          for (const part of buf) {
+            if (part.raw) {
+              out += decodeEntities(run) + part.s;
+              run = "";
+              continue;
+            }
+            run += part.s;
+          }
+          out += decodeEntities(run);
+          buf = [];
+          if (out !== "") nodes.push({ type: "text", text: out });
+        }
+        let i = 0;
+        while (i < text.length) {
+          const c = text[i];
+          if (c === "\\" && ESCAPABLE.has(text[i + 1])) {
+            buf.push({ raw: true, s: text[i + 1] });
+            i += 2;
+            continue;
+          }
+          if (c === "`") {
+            const span = readCode(text, i);
+            if (span) {
+              flush();
+              nodes.push({ type: "code", text: span.text });
+              i = span.end;
+              continue;
+            }
+          }
+          if (c === "[") {
+            const link = readLink(text, i);
+            if (link) {
+              flush();
+              nodes.push({ type: "link", href: link.href, children: parseInline(link.label) });
+              i = link.end;
+              continue;
+            }
+          }
+          if (c === "*" || c === "_") {
+            const em = readEmphasis(text, i);
+            if (em) {
+              flush();
+              nodes.push({ type: em.strong ? "strong" : "em", children: parseInline(em.inner) });
+              i = em.end;
+              continue;
+            }
+          }
+          buf.push({ raw: false, s: c });
+          i += 1;
+        }
+        flush();
+        return nodes;
+      }
+      function plainInline(nodes) {
+        let out = "";
+        for (const node of nodes || []) {
+          if (node.type === "text" || node.type === "code") out += node.text;
+          else if (node.children) out += plainInline(node.children);
+        }
+        return out;
+      }
+      function htmlLine(s) {
+        const t = s.trim();
+        if (t[0] !== "<") return null;
+        const anchor = ANCHOR_TAG.exec(t);
+        if (anchor) return { anchor: anchor[1] };
+        const names = [];
+        ANY_TAG.lastIndex = 0;
+        const rest = t.replace(ANY_TAG, (whole, name) => {
+          names.push(name.toLowerCase());
+          return "";
+        });
+        if (!names.length) return null;
+        if (names.every((name) => STRUCTURAL_TAGS.has(name))) return { drop: true };
+        return rest.trim() === "" ? { drop: true } : null;
+      }
+      function splitRow(line) {
+        let t = line.trim();
+        if (t[0] === "|") t = t.slice(1);
+        if (t.endsWith("|") && !t.endsWith("\\|")) t = t.slice(0, -1);
+        const out = [];
+        let cur = "";
+        let i = 0;
+        while (i < t.length) {
+          const c = t[i];
+          if (c === "\\" && i + 1 < t.length) {
+            cur += c + t[i + 1];
+            i += 2;
+            continue;
+          }
+          if (c === "`") {
+            const sp = readCode(t, i);
+            if (sp) {
+              cur += t.slice(i, sp.end);
+              i = sp.end;
+              continue;
+            }
+          }
+          if (c === "|") {
+            out.push(cur.trim());
+            cur = "";
+            i += 1;
+            continue;
+          }
+          cur += c;
+          i += 1;
+        }
+        out.push(cur.trim());
+        return out;
+      }
+      function isTableStart(lines, i) {
+        if (i + 1 >= lines.length) return false;
+        return lines[i].s.includes("|") && lines[i + 1].s.includes("|") && TABLE_RULE.test(lines[i + 1].s);
+      }
+      function parseTable(lines, i) {
+        const header = splitRow(lines[i].s);
+        const rule = splitRow(lines[i + 1].s);
+        if (!header.length || rule.length !== header.length) return null;
+        const rows = [];
+        let j = i + 2;
+        while (j < lines.length && lines[j].s.trim() && lines[j].s.includes("|")) {
+          rows.push(splitRow(lines[j].s).map((cell) => parseInline(cell)));
+          j += 1;
+        }
+        return {
+          block: { type: "table", header: header.map((cell) => parseInline(cell)), rows },
+          next: j
+        };
+      }
+      function breaksParagraph(lines, j) {
+        const t = lines[j].s;
+        return ATX.test(t) || HR.test(t) || FENCE_OPEN.test(t) || QUOTE.test(t) || MARKER.test(t) || !!htmlLine(t) || isTableStart(lines, j);
+      }
+      function parseList(lines, start) {
+        const first = MARKER.exec(lines[start].s);
+        const indent = leadIndent(lines[start].s);
+        const ordered = !!first[3];
+        const listStart = ordered ? parseInt(first[3], 10) : 1;
+        const items = [];
+        let j = start;
+        while (j < lines.length) {
+          const m = MARKER.exec(lines[j].s);
+          if (!m) break;
+          const ind = leadIndent(lines[j].s);
+          if (ind < indent || ind > indent + 1 || !!m[3] !== ordered) break;
+          const markerWidth = m[2] ? m[2].length : m[3].length + 1;
+          const contentIndent = ind + markerWidth + m[4].length;
+          const body = [{ n: lines[j].n, s: m[5] }];
+          let k = j + 1;
+          while (k < lines.length) {
+            const t = lines[k].s;
+            if (t.trim()) {
+              if (leadIndent(t) >= indent + 2) {
+                body.push(dedent(lines[k], contentIndent));
+                k += 1;
+                continue;
+              }
+              break;
+            }
+            let look2 = k;
+            while (look2 < lines.length && !lines[look2].s.trim()) look2 += 1;
+            if (look2 < lines.length && leadIndent(lines[look2].s) >= indent + 2) {
+              while (k < look2) {
+                body.push({ n: lines[k].n, s: "" });
+                k += 1;
+              }
+              continue;
+            }
+            break;
+          }
+          items.push({ children: parseBlocks(body) });
+          let look = k;
+          while (look < lines.length && !lines[look].s.trim()) look += 1;
+          if (look > k) {
+            const nm = look < lines.length ? MARKER.exec(lines[look].s) : null;
+            const nind = look < lines.length ? leadIndent(lines[look].s) : -1;
+            if (nm && nind >= indent && nind <= indent + 1 && !!nm[3] === ordered) {
+              j = look;
+              continue;
+            }
+            j = k;
+            break;
+          }
+          j = k;
+        }
+        return { block: { type: "list", ordered, start: listStart, items }, next: j };
+      }
+      function parseBlocks(lines) {
+        const blocks = [];
+        let i = 0;
+        while (i < lines.length) {
+          const line = lines[i];
+          const s = line.s;
+          if (!s.trim()) {
+            i += 1;
+            continue;
+          }
+          const fence = FENCE_OPEN.exec(s);
+          if (fence) {
+            const pad = fence[1].length;
+            const mark = fence[2];
+            const closer = new RegExp(`^[ \\t]*\\${mark[0]}{${mark.length},}[ \\t]*$`);
+            const body = [];
+            let j2 = i + 1;
+            while (j2 < lines.length && !closer.test(lines[j2].s)) {
+              body.push(dedent(lines[j2], pad).s);
+              j2 += 1;
+            }
+            blocks.push({ type: "code", lang: fence[3] || "", text: body.join("\n") });
+            i = j2 < lines.length ? j2 + 1 : j2;
+            continue;
+          }
+          const heading = ATX.exec(s);
+          if (heading) {
+            blocks.push({
+              type: "heading",
+              level: heading[1].length,
+              text: parseInline(heading[2]),
+              slug: "",
+              line: line.n
+            });
+            i += 1;
+            continue;
+          }
+          if (HR.test(s)) {
+            blocks.push({ type: "hr" });
+            i += 1;
+            continue;
+          }
+          const html = htmlLine(s);
+          if (html) {
+            if (html.anchor) blocks.push({ type: "anchor", id: html.anchor });
+            i += 1;
+            continue;
+          }
+          if (QUOTE.test(s)) {
+            const body = [];
+            let j2 = i;
+            while (j2 < lines.length && QUOTE.test(lines[j2].s)) {
+              body.push({ n: lines[j2].n, s: QUOTE.exec(lines[j2].s)[1] });
+              j2 += 1;
+            }
+            blocks.push({ type: "blockquote", children: parseBlocks(body) });
+            i = j2;
+            continue;
+          }
+          if (MARKER.test(s)) {
+            const list = parseList(lines, i);
+            blocks.push(list.block);
+            i = list.next;
+            continue;
+          }
+          if (isTableStart(lines, i)) {
+            const table = parseTable(lines, i);
+            if (table) {
+              blocks.push(table.block);
+              i = table.next;
+              continue;
+            }
+          }
+          const para = [];
+          let j = i;
+          while (j < lines.length && lines[j].s.trim()) {
+            if (j > i && breaksParagraph(lines, j)) break;
+            para.push(lines[j].s.trim());
+            j += 1;
+          }
+          blocks.push({ type: "paragraph", children: parseInline(para.join("\n")) });
+          i = j;
+        }
+        return blocks;
+      }
+      function slugify(text) {
+        return String(text == null ? "" : text).trim().toLowerCase().replace(/[^a-z0-9 -]/g, "").replace(/ /g, "-");
+      }
+      function uniqueSlug(base, seen) {
+        const used = seen.get(base) || 0;
+        seen.set(base, used + 1);
+        return used === 0 ? base : `${base}-${used}`;
+      }
+      function collectHeadings(blocks, out, seen) {
+        for (const block of blocks) {
+          if (block.type === "heading") {
+            const text = plainInline(block.text);
+            block.slug = uniqueSlug(slugify(text), seen);
+            out.push({ level: block.level, text, slug: block.slug, line: block.line });
+          } else if (block.type === "list") {
+            for (const item of block.items) collectHeadings(item.children, out, seen);
+          } else if (block.type === "blockquote") {
+            collectHeadings(block.children, out, seen);
+          }
+        }
+      }
+      function parseDoc(text) {
+        const src = normalize(text);
+        const blocks = parseBlocks(toLines(src));
+        const headings = [];
+        collectHeadings(blocks, headings, /* @__PURE__ */ new Map());
+        const h1 = headings.find((h) => h.level === 1);
+        return { blocks, headings, title: h1 ? h1.text : headings.length ? headings[0].text : "" };
+      }
+      function plainText(blocks) {
+        const parts = [];
+        emitPlain(blocks || [], parts);
+        return parts.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+      }
+      function emitPlain(blocks, parts) {
+        for (const block of blocks) {
+          if (block.type === "heading") parts.push(plainInline(block.text), "");
+          else if (block.type === "paragraph") parts.push(plainInline(block.children), "");
+          else if (block.type === "code") parts.push(block.text, "");
+          else if (block.type === "blockquote") {
+            emitPlain(block.children, parts);
+            parts.push("");
+          } else if (block.type === "list") {
+            for (const item of block.items) emitPlain(item.children, parts);
+          } else if (block.type === "table") {
+            parts.push(block.header.map((cell) => plainInline(cell)).join(" "));
+            for (const row of block.rows) parts.push(row.map((cell) => plainInline(cell)).join(" "));
+            parts.push("");
+          }
+        }
+      }
+      function sectionBounds(headings, at, lineCount) {
+        for (let k = at + 1; k < headings.length; k++) {
+          if (headings[k].level <= headings[at].level) return headings[k].line - 1;
+        }
+        return lineCount;
+      }
+      function sectionSlice(text, slug) {
+        const src = normalize(text);
+        const lines = src.split("\n");
+        const { headings } = parseDoc(src);
+        const at = headings.findIndex((h) => h.slug === slug);
+        if (at < 0) return null;
+        const end = sectionBounds(headings, at, lines.length);
+        return lines.slice(headings[at].line - 1, end).join("\n").replace(/\s+$/, "");
+      }
+      function buildSearchIndex(pages) {
+        const out = [];
+        for (const page of pages || []) {
+          const src = normalize(page && page.text);
+          const lines = src.split("\n");
+          const parsed = parseDoc(src);
+          for (let i = 0; i < parsed.headings.length; i++) {
+            const h = parsed.headings[i];
+            const end = sectionBounds(parsed.headings, i, lines.length);
+            const slice = lines.slice(h.line - 1, end).join("\n");
+            out.push({
+              name: page && page.name,
+              title: parsed.title,
+              slug: h.slug,
+              heading: h.text,
+              text: plainText(parseDoc(slice).blocks)
+            });
+          }
+        }
+        return out;
+      }
+      function countOccurrences(hay, needle) {
+        if (!needle) return 0;
+        let n = 0;
+        let at = hay.indexOf(needle);
+        while (at >= 0) {
+          n += 1;
+          at = hay.indexOf(needle, at + needle.length);
+        }
+        return n;
+      }
+      function makeSnippet(text, terms) {
+        const s = String(text == null ? "" : text).replace(/\s+/g, " ").trim();
+        if (!s) return "";
+        const low = s.toLowerCase();
+        let at = -1;
+        for (const term of terms) {
+          const k = low.indexOf(term);
+          if (k >= 0 && (at < 0 || k < at)) at = k;
+        }
+        if (at < 0) return s.slice(0, SNIPPET_MAX);
+        const from = Math.max(0, at - SNIPPET_LEAD);
+        let out = s.slice(from, from + SNIPPET_MAX);
+        if (from > 0) out = `\u2026${out.slice(1)}`;
+        if (from + SNIPPET_MAX < s.length) out = `${out.slice(0, -1)}\u2026`;
+        return out;
+      }
+      function clampLimit(value) {
+        if (value === void 0 || value === null) return LIMIT_DEFAULT;
+        const n = Math.floor(Number(value));
+        if (!Number.isFinite(n)) return LIMIT_DEFAULT;
+        return Math.max(LIMIT_MIN, Math.min(LIMIT_MAX, n));
+      }
+      function compareHits(a, b) {
+        if (b.score !== a.score) return b.score - a.score;
+        if (a.name !== b.name) return a.name < b.name ? -1 : 1;
+        if (a.slug !== b.slug) return a.slug < b.slug ? -1 : 1;
+        return 0;
+      }
+      function search(index, q, options) {
+        const limit = clampLimit(options && options.limit);
+        const terms = String(q == null ? "" : q).toLowerCase().split(/\s+/).filter(Boolean);
+        if (!terms.length) return [];
+        const hits = [];
+        for (const entry of index || []) {
+          const title = String(entry.title == null ? "" : entry.title).toLowerCase();
+          const heading = String(entry.heading == null ? "" : entry.heading).toLowerCase();
+          const body = String(entry.text == null ? "" : entry.text).toLowerCase();
+          let matched = true;
+          let inTitle = 0;
+          let inHeading = 0;
+          let inBody = 0;
+          for (const term of terms) {
+            const hitsTitle = title.includes(term);
+            const hitsHeading = heading.includes(term);
+            const bodyCount = countOccurrences(body, term);
+            if (!hitsTitle && !hitsHeading && !bodyCount) {
+              matched = false;
+              break;
+            }
+            if (hitsTitle) inTitle += 1;
+            if (hitsHeading) inHeading += 1;
+            inBody += bodyCount;
+          }
+          if (!matched) continue;
+          hits.push({
+            name: entry.name,
+            title: entry.title,
+            heading: entry.heading,
+            slug: entry.slug,
+            snippet: makeSnippet(entry.text, terms),
+            score: inTitle * TITLE_WEIGHT + inHeading * HEADING_WEIGHT + Math.min(inBody, BODY_CAP)
+          });
+        }
+        hits.sort(compareHits);
+        return hits.slice(0, limit);
+      }
+      module.exports = {
+        parseDoc,
+        parseInline,
+        plainInline,
+        plainText,
+        slugify,
+        sectionSlice,
+        buildSearchIndex,
+        search
+      };
+    }
+  });
+
+  // renderer/popovers/help-panel.js
+  var require_help_panel = __commonJS({
+    "renderer/popovers/help-panel.js"(exports, module) {
+      "use strict";
+      var { renderDoc } = require_render_doc();
+      var { parseDoc, buildSearchIndex, search } = require_doc_parse();
+      var { isExternallyOpenable } = require_external_link();
+      var DEFAULT_PAGE = "how-to";
+      var SEARCH_MIN = 2;
+      var SEARCH_LIMIT = 30;
+      var REPO_BLOB = "https://github.com/avirtual/clodex/blob/master/";
+      var RECIPE_PREFIX = "recipe-";
+      var PAGE_DIRS = {
+        cli: "cli",
+        "plugin-api": "plugins",
+        "plugin-sources": "plugins",
+        "what-plugins-can-do": "plugins"
+      };
+      var SAFE_SLUG = /^[A-Za-z0-9_-]+$/;
+      var ABSOLUTE_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+      function dirOfPage(name) {
+        const key = String(name == null ? "" : name);
+        if (key.startsWith(RECIPE_PREFIX)) return "docs/recipes";
+        return PAGE_DIRS[key] || "docs";
+      }
+      function joinRepoPath(base, relative) {
+        const parts = String(base).split("/").filter(Boolean);
+        for (const seg of String(relative).split("/")) {
+          if (!seg || seg === ".") continue;
+          if (seg === "..") {
+            parts.pop();
+            continue;
+          }
+          parts.push(seg);
+        }
+        const joined = parts.join("/");
+        return String(relative).endsWith("/") && joined ? `${joined}/` : joined;
+      }
+      function pageOfRepoPath(repoPath) {
+        const p = String(repoPath);
+        if (p === "cli/README.md") return "cli";
+        const recipe = /^docs\/recipes\/(.+)\.md$/.exec(p);
+        if (recipe) return `${RECIPE_PREFIX}${recipe[1]}`;
+        const doc = /^docs\/([^/]+)\.md$/.exec(p);
+        if (doc) return doc[1];
+        const plugin = /^plugins\/([^/]+)\.md$/.exec(p);
+        if (plugin) return plugin[1];
+        return null;
+      }
+      function initHelpPanel({ api }) {
+        const overlay = document.getElementById("help-overlay");
+        const titleEl = document.getElementById("help-title");
+        const navEl = document.getElementById("help-nav");
+        const bodyEl = document.getElementById("help-body");
+        const searchEl = document.getElementById("help-search");
+        const backBtn = document.getElementById("help-back");
+        const fwdBtn = document.getElementById("help-fwd");
+        const pageCache = /* @__PURE__ */ new Map();
+        const pageNames = /* @__PURE__ */ new Set();
+        const trail = [];
+        let indexData = null;
+        let searchIndex = null;
+        let currentName = null;
+        let currentHeadings = [];
+        let at = -1;
+        async function getIndex() {
+          if (indexData) return indexData;
+          const res = await api.helpIndex();
+          indexData = res && res.ok && Array.isArray(res.sections) ? res : { sections: [] };
+          for (const section of indexData.sections) {
+            for (const page of section && section.pages || []) pageNames.add(page.name);
+          }
+          return indexData;
+        }
+        async function getPage(name) {
+          if (pageCache.has(name)) return pageCache.get(name);
+          const res = await api.helpPage(name);
+          pageCache.set(name, res);
+          return res;
+        }
+        function clearNode(el) {
+          el.textContent = "";
+        }
+        function resolveHref(href) {
+          const raw = String(href == null ? "" : href);
+          if (!raw) return null;
+          if (ABSOLUTE_SCHEME.test(raw)) {
+            return isExternallyOpenable(raw) ? { kind: "external", url: raw } : null;
+          }
+          if (raw.startsWith("#")) return { kind: "anchor", slug: raw.slice(1) };
+          const hash = raw.indexOf("#");
+          const target = hash < 0 ? raw : raw.slice(0, hash);
+          const frag = hash < 0 ? "" : raw.slice(hash + 1);
+          if (!target) return null;
+          const repoPath = joinRepoPath(dirOfPage(currentName), target);
+          if (!repoPath) return null;
+          const name = pageOfRepoPath(repoPath);
+          if (name && pageNames.has(name)) return { kind: "page", name, slug: frag || null };
+          return { kind: "external", url: `${REPO_BLOB}${repoPath}` };
+        }
+        function row(tag, cls, text) {
+          const el = document.createElement(tag);
+          el.className = cls;
+          if (text != null) el.textContent = String(text);
+          return el;
+        }
+        function renderNav() {
+          clearNode(navEl);
+          for (const section of indexData && indexData.sections || []) {
+            navEl.appendChild(row("div", "help-sec-head", section.title));
+            for (const page of section.pages || []) {
+              const isCurrent = page.name === currentName;
+              const pageRow = row("div", isCurrent ? "help-nav-page current" : "help-nav-page", page.title || page.name);
+              pageRow.setAttribute("data-page", String(page.name));
+              pageRow.addEventListener("click", () => {
+                openHelpPanel(page.name, null);
+              });
+              navEl.appendChild(pageRow);
+              if (!isCurrent) continue;
+              for (const heading of currentHeadings) {
+                if (heading.level !== 2) continue;
+                const subRow = row("div", "help-nav-h2", heading.text);
+                subRow.setAttribute("data-slug", String(heading.slug));
+                subRow.addEventListener("click", () => {
+                  scrollToSlug(heading.slug);
+                });
+                navEl.appendChild(subRow);
+              }
+            }
+          }
+        }
+        function renderHits(hits) {
+          clearNode(navEl);
+          for (const hit of hits) {
+            const hitRow = row("div", "help-hit", null);
+            hitRow.setAttribute("data-page", String(hit.name));
+            hitRow.setAttribute("data-slug", String(hit.slug));
+            hitRow.appendChild(row("span", "help-hit-title", `${hit.title} \u203A ${hit.heading}`));
+            hitRow.appendChild(row("span", "help-hit-snippet", hit.snippet));
+            hitRow.addEventListener("click", () => {
+              openHelpPanel(hit.name, hit.slug);
+            });
+            navEl.appendChild(hitRow);
+          }
+        }
+        function scrollToSlug(slug) {
+          if (!slug || !SAFE_SLUG.test(String(slug))) return;
+          const target = bodyEl.querySelector(`[id="${slug}"]`);
+          if (target && target.scrollIntoView) target.scrollIntoView();
+        }
+        function renderMissing(name) {
+          clearNode(bodyEl);
+          const p = document.createElement("p");
+          p.textContent = `No such help page: ${name}`;
+          bodyEl.appendChild(p);
+          currentHeadings = [];
+        }
+        function updateHistoryButtons() {
+          backBtn.disabled = at <= 0;
+          fwdBtn.disabled = at >= trail.length - 1;
+        }
+        async function show(name, slug) {
+          await getIndex();
+          const res = await getPage(name);
+          currentName = name;
+          if (!res || !res.ok) {
+            renderMissing(name);
+            titleEl.textContent = "Clodex Help";
+          } else {
+            const parsed = parseDoc(res.content);
+            currentHeadings = parsed.headings || [];
+            clearNode(bodyEl);
+            bodyEl.appendChild(renderDoc(parsed, { resolveHref }));
+            titleEl.textContent = res.title ? `Clodex Help \u2014 ${res.title}` : "Clodex Help";
+          }
+          renderNav();
+          if (slug) scrollToSlug(slug);
+          else bodyEl.scrollTop = 0;
+          updateHistoryButtons();
+        }
+        async function openHelpPanel(name = DEFAULT_PAGE, slug = null) {
+          const page = name || DEFAULT_PAGE;
+          trail.splice(at + 1, trail.length);
+          trail.push({ name: page, slug: slug || null });
+          at = trail.length - 1;
+          overlay.classList.remove("hidden");
+          if (searchEl.focus) searchEl.focus();
+          await show(page, slug || null);
+        }
+        function closeHelpPanel() {
+          overlay.classList.add("hidden");
+        }
+        async function step(delta) {
+          const next = at + delta;
+          if (next < 0 || next >= trail.length) return;
+          at = next;
+          await show(trail[at].name, trail[at].slug);
+        }
+        async function ensureSearchIndex() {
+          if (searchIndex) return searchIndex;
+          const idx = await getIndex();
+          const pages = [];
+          for (const section of idx.sections || []) {
+            for (const page of section.pages || []) {
+              const res = await getPage(page.name);
+              if (res && res.ok) pages.push({ name: page.name, text: res.content });
+            }
+          }
+          searchIndex = buildSearchIndex(pages);
+          return searchIndex;
+        }
+        async function runSearch() {
+          const q = String(searchEl.value == null ? "" : searchEl.value).trim();
+          if (q.length < SEARCH_MIN) {
+            renderNav();
+            return;
+          }
+          const idx = await ensureSearchIndex();
+          if (String(searchEl.value == null ? "" : searchEl.value).trim() !== q) return;
+          renderHits(search(idx, q, { limit: SEARCH_LIMIT }));
+        }
+        backBtn.addEventListener("click", () => {
+          step(-1);
+        });
+        fwdBtn.addEventListener("click", () => {
+          step(1);
+        });
+        document.getElementById("help-close").addEventListener("click", closeHelpPanel);
+        overlay.addEventListener("mousedown", (e) => {
+          if (e.target === overlay) closeHelpPanel();
+        });
+        searchEl.addEventListener("input", () => {
+          runSearch();
+        });
+        searchEl.addEventListener("keydown", (e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            searchEl.value = "";
+            renderNav();
+            if (searchEl.focus) searchEl.focus();
+            return;
+          }
+          if (e.key !== "Enter") return;
+          const first = navEl.querySelector(".help-hit");
+          if (!first) return;
+          openHelpPanel(first.getAttribute("data-page"), first.getAttribute("data-slug"));
+        });
+        bodyEl.addEventListener("click", (e) => {
+          const link = e.target.closest && e.target.closest("a");
+          if (!link) return;
+          const page = link.getAttribute("data-page");
+          const slug = link.getAttribute("data-slug");
+          if (page) {
+            e.preventDefault();
+            openHelpPanel(page, slug);
+            return;
+          }
+          if (slug) {
+            e.preventDefault();
+            scrollToSlug(slug);
+            return;
+          }
+          const href = link.getAttribute("href");
+          if (isExternallyOpenable(href)) {
+            e.preventDefault();
+            api.openExternal(href);
+          }
+        });
+        return { openHelpPanel, closeHelpPanel };
+      }
+      module.exports = { initHelpPanel };
+    }
+  });
+
   // renderer/lib/popover-group.js
   var require_popover_group = __commonJS({
     "renderer/lib/popover-group.js"(exports, module) {
@@ -38311,6 +39542,7 @@ ${detail}` });
       var { initSessionHovercard } = require_session_hovercard();
       var { initTooltips } = require_tooltip();
       var { initReportPanel } = require_report_panel();
+      var { initHelpPanel } = require_help_panel();
       var { createPopoverGroup } = require_popover_group();
       var { initCostPopover } = require_cost_popover();
       var { initBustPopover } = require_bust_popover();
@@ -41996,6 +43228,7 @@ Click for live activity`;
         getActiveSession: () => activeSession
       });
       var { openReportPanel } = initReportPanel({ popoverApi, ctxCatLabel });
+      var { openHelpPanel, closeHelpPanel } = initHelpPanel({ api: window.api });
       var { openContextPopover } = initContextPopover({
         popoverApi,
         ctxCatLabel,
@@ -42206,7 +43439,8 @@ Click for live activity`;
         ["prompt-editor", () => closePromptEditor()],
         ["agent-editor", () => closeAgentEditor()],
         ["skill-editor", () => closeSkillEditor()],
-        ["exec-editor", () => closeExecEditor()]
+        ["exec-editor", () => closeExecEditor()],
+        ["help-overlay", () => closeHelpPanel()]
       ];
       document.addEventListener("keydown", (e) => {
         if (e.key !== "Escape") return;
@@ -45122,7 +46356,8 @@ ${res.stderr}` : "");
       });
       prefsRemoteTokenClear.addEventListener("click", () => saveRemoteToken(""));
       window.api.onRequestOpenPreferences(() => openPrefs());
-      function openHelp() {
+      function openHelp(name, slug) {
+        openHelpPanel(name || "how-to", slug || null);
       }
       window.api.onRequestOpenHelp((name, slug) => openHelp(name, slug));
       var argsOverlay = document.getElementById("args-overlay");

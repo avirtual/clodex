@@ -12,6 +12,7 @@ const MODAL_OVERLAY_IDS = [
   'setup-overlay',
   'file-peek-overlay',
   'report-overlay',
+  'help-overlay',
   'prompt-editor',
   'agent-editor',
   'skill-editor',

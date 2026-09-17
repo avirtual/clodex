@@ -78,6 +78,7 @@ const { classifySubagent } = require('./lib/subagent-policy');
 const { initSessionHovercard } = require('./session-hovercard');
 const { initTooltips } = require('./tooltip');
 const { initReportPanel } = require('./popovers/report-panel');
+const { initHelpPanel } = require('./popovers/help-panel');
 const { createPopoverGroup } = require('./lib/popover-group');
 const { initCostPopover } = require('./popovers/cost-popover');
 const { initBustPopover } = require('./popovers/bust-popover');
@@ -4110,6 +4111,8 @@ const { openFilesPopover, openFilePeek, isFilesPopoverForKey } = initFilesPopove
 
 const { openReportPanel } = initReportPanel({ popoverApi, ctxCatLabel });
 
+const { openHelpPanel, closeHelpPanel } = initHelpPanel({ api: window.api });
+
 const { openContextPopover } = initContextPopover({
   popoverApi, ctxCatLabel, openReportPanel, openToolsPopover, openSkillsPopover,
   proxyState, sessionTypeOf, barPopovers,
@@ -4403,6 +4406,7 @@ const ESCAPE_CLOSES = [
   ['agent-editor', () => closeAgentEditor()],
   ['skill-editor', () => closeSkillEditor()],
   ['exec-editor', () => closeExecEditor()],
+  ['help-overlay', () => closeHelpPanel()],
 ];
 
 document.addEventListener('keydown', (e) => {
@@ -7347,7 +7351,7 @@ prefsRemoteTokenClear.addEventListener('click', () => saveRemoteToken(''));
 
 window.api.onRequestOpenPreferences(() => openPrefs());
 
-function openHelp() {}
+function openHelp(name, slug) { openHelpPanel(name || 'how-to', slug || null); }
 window.api.onRequestOpenHelp((name, slug) => openHelp(name, slug));
 
 
