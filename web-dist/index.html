@@ -44931,11 +44931,11 @@ ${res.stderr}` : "");
       });
       ({
         refreshTemplatesList: templatesDrawerRefresh,
-        openTeamTemplate: templatesDrawerOpenTeam,
         closePromptEditor,
         closeAgentEditor,
         closeSkillEditor,
-        closeExecEditor
+        closeExecEditor,
+        openTeamTemplate: templatesDrawerOpenTeam
       } = initLibraryDrawers({
         getActiveSession: () => activeSession,
         setAgentLibCache,
