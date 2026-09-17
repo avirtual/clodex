@@ -973,8 +973,6 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
 
   window.api.onRequestOpenTemplatesDrawer((arg) => openTemplatesDrawer(arg));
 
-  // Hand the core the drawer's list refresh so a dialog-side template save (from
-  // the reused New Session dialog) can repaint an open drawer.
   return {
     refreshTemplatesList, openTeamTemplate,
     closePromptEditor, closeAgentEditor, closeSkillEditor, closeExecEditor,
