@@ -198,6 +198,7 @@ const API_CONTRACT = [
   { name: 'onRequestOpenDiscovery', kind: 'on', channel: 'request-open-discovery' },
   { name: 'onRequestRenameWorkspace', kind: 'on', channel: 'request-rename-workspace' },
   { name: 'onRequestOpenPreferences', kind: 'on', channel: 'request-open-preferences' },
+  { name: 'onRequestOpenHelp', kind: 'on', channel: 'request-open-help' },
   { name: 'onRequestOpenPeersDialog', kind: 'on', channel: 'request-open-peers-dialog' },
   // T5: the Plugins menu's "Manage Plugins…". A core menu→renderer open request,
   // exactly like the peers row above — NOT a plugin transport row (the plugin
@@ -488,6 +489,8 @@ const API_CONTRACT = [
   // silently clear the other.
   { name: 'getSessionPluginGrants', kind: 'invoke', channel: 'session:pluginGrants' },
   { name: 'setSessionPluginGrants', kind: 'invoke', channel: 'session:setPluginGrants' },
+  { name: 'helpIndex', kind: 'invoke', channel: 'help:index' },
+  { name: 'helpPage', kind: 'invoke', channel: 'help:page' },
 ];
 
 module.exports = { API_CONTRACT };

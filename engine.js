@@ -27,6 +27,7 @@ const { createSpeaker, createVoiceCatalog } = require('./speaker');
 const { runTicketsMigration } = require('./tickets-migrate');
 const { validOrigin } = require('./peer-outbox');
 const { materializeExecScripts } = require('./bin-materialize');
+const { loadHelpCorpus } = require('./help-corpus');
 // Module-level, unlike the rest of pending-store's surface (required inside
 // createEngine): sweepSpilledMessages below is module-level so its exemption is
 // testable without building an engine, and a closure require would not be in
@@ -1127,6 +1128,12 @@ const { createPluginUpdateWatch } = require('./plugin-update-watch');
 let pluginHost = null;
 let pluginLoader = null;
 let pluginUpdateWatch = null;
+
+let helpCorpus = null;
+function getHelpCorpus() {
+  if (!helpCorpus) helpCorpus = loadHelpCorpus(__dirname);
+  return helpCorpus;
+}
 
 
 
@@ -2377,6 +2384,7 @@ const toolCache = createToolCache({ whichBin });
     getBashLive: () => bashLive,
     getDrawerPtys: () => drawerPtys,
     getPluginHost: () => pluginHost,
+    getHelpCorpus,
     getPluginLoader: () => pluginLoader,
     getPluginUpdates: () => (pluginUpdateWatch ? pluginUpdateWatch.list() : []),
     refreshPluginUpdates: () => (pluginUpdateWatch ? pluginUpdateWatch.run() : Promise.resolve([])),

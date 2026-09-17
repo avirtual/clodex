@@ -90,6 +90,7 @@ function registerIpcHandlers(deps) {
     accounts, moveAccountByModel,
     syncTerminalReports,
     getPluginHost, getPluginLoader, listAllTemplates, listAllPrompts, surfaceOfSender,
+    getHelpCorpus,
   } = deps;
 
   async function spawnFromParams(e, p) {
@@ -1353,6 +1354,17 @@ function registerIpcHandlers(deps) {
     const host = getPluginHost && getPluginHost();
     if (!host) return pluginRefusal();
     return host.setEnabled(String(pluginId), enabled !== false);
+  });
+  handle('help:index', () => {
+    const corpus = getHelpCorpus && getHelpCorpus();
+    if (!corpus) return { ok: false };
+    return { ok: true, ...corpus.index() };
+  });
+  handle('help:page', (_e, name) => {
+    const corpus = getHelpCorpus && getHelpCorpus();
+    if (!corpus) return { ok: false };
+    const doc = corpus.get(String(name || ''));
+    return doc ? { ok: true, name: doc.name, title: doc.title, content: doc.content } : { ok: false };
   });
   // Served, not statically required: a plugin can register a verb, and in a web
   // bundle a require freezes at build time. Straight off intent-registry, NOT off

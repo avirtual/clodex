@@ -36,6 +36,7 @@ npm start              # dev mode
 |---|---|
 | `⌘T` | New session |
 | `⌘⇧N` | New workspace window |
+| `⌘⇧/` | Clodex Help |
 | `⌘,` | Preferences |
 | `⌘W` | Archive active session / close dialog / hide peer tab |
 | `⌘1` … `⌘9` | Switch session by index |
