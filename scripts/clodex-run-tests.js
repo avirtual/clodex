@@ -182,6 +182,7 @@ const OWN_SCANNERS = [
   'test/sigkill-pid-census.test.js',
   'test/source-control-bytes.test.js',
   'test/ssh-keepalive.test.js',
+  'test/tmp-roots-pin.test.js',
   'test/tmp-sweep-prefix-coverage.test.js',
   'test/web-dist-fresh.test.js',
 ];
