@@ -50,6 +50,7 @@ const SCANNED_MODULES = [
   'remote-wiring.js',
   'peer-wiring.js',
   'jsonl-watcher.js',
+  'doc-parse.js',
   'wirescope-proxy.js',
   'wirescope-supervisor.js',
   'cli-hooks.js',
@@ -316,6 +317,7 @@ const RENDERER_SCANNED_MODULES = [
   // The markdown-to-DOM leaf frozen into rhost.lib: a reach for a renderer.js
   // name here would be a published plugin surface quietly acquiring core state.
   'renderer/lib/render-markdown.js',
+  'renderer/lib/render-doc.js',
   'renderer/lib/checklists.js',
   'renderer/lib/team-roles.js',
   'renderer/lib/popover-drag.js',
