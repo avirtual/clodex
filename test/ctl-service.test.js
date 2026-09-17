@@ -7,9 +7,7 @@
 // The allowlist is a SLIP GUARD, not a containment boundary, and the tests
 // below should not be read as security pins. `exec` is admitted, so
 // `exec box "clodexctl delete session x --force"` is typeable — nothing in this table
-// contains what the operator can reach. The boundary is enableDrawerServices at
-// IPC registration (pinned by drawer-services-seam.test.js), which keeps the
-// whole `ctl:*` family off the web surface.
+// contains what the operator can reach.
 //
 // The wire verbs (info/get/query/subresource reads) are deliberately NOT exercised
 // against a live node — that is cli/test's job and it needs a server. Every

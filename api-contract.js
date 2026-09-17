@@ -239,9 +239,7 @@ const API_CONTRACT = [
   { name: 'wirescopePruneInfo', kind: 'invoke', channel: 'wirescope:pruneInfo' },
   { name: 'wirescopePrune', kind: 'invoke', channel: 'wirescope:prune' },
   // The drawer's clodexctl REPL (t214). Present in the contract on BOTH
-  // surfaces because the contract is a binding table, not a permission list —
-  // the web build's `ctl:run` binding simply has no handler to reach, since
-  // registration is gated on enableDrawerServices (ipc-handlers.js).
+  // surfaces because the contract is a binding table, not a permission list.
   { name: 'ctlRun', kind: 'invoke', channel: 'ctl:run' },
   { name: 'ctlContext', kind: 'invoke', channel: 'ctl:context' },
   { name: 'ctlHelp', kind: 'invoke', channel: 'ctl:help' },

@@ -285,10 +285,6 @@ function createCtlTab({ host }) {
   notify = host.register({
     id: 'ctl',
     label: 'clodexctl',
-    // A UI nicety only: on the web surface the `ctl:*` handlers are ABSENT from
-    // the host's map (engine's enableDrawerServices gate), so the tab would be
-    // inert rather than dangerous. The boundary is registration, not this.
-    available: () => !window.__CLODEX_WEB__,
     mount,
     onShow,
     selection: selectionInPane,

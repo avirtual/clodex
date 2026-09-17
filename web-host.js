@@ -226,7 +226,7 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     // below cannot be the gate-by-absence the drawer services use. This is what
     // lets the plugin host refuse a desktop-only method per CALL.
     surfaceOfSender: () => 'web',
-    // The drawer's service-backed tenants (`ctl:*` verb runner, `drawer:*`
+    // The drawer's service-backed tenants (`drawer:*`
     // selection reads, `peer:wterm*` shell on a third machine) must never have
     // handlers in THIS map: onFrame dispatches any registered channel by name,
     // so registration IS the capability. Set here rather than inherited from the
@@ -241,6 +241,7 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     // than left to the engine default so this host's answer is readable here,
     // beside the refusal it deliberately does not share.
     enableLocalTerminal: true,
+    enableCtl: true,
     enableConsole: true,
     enableAccounts: false,
   };
