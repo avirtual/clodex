@@ -225,3 +225,71 @@ test('each close button is a type=button with an accessible label', () => {
     assert.match(b, /aria-label="Close"/, `a .dialog-close with no accessible name: ${b}`);
   }
 });
+
+function idBlocks(pred) {
+  const lines = cssSrc.split('\n');
+  const found = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^(#[A-Za-z0-9_-]+)\s*\{\s*$/);
+    if (!m) continue;
+    let body = '';
+    for (let j = i + 1; j < lines.length && !/^\}/.test(lines[j]); j++) body += lines[j] + '\n';
+    if (pred(body, m[1])) found.push(m[1]);
+  }
+  return found;
+}
+
+function headChain(dialogId) {
+  return [
+    { tag: 'div', id: dialogId.slice(1), classes: [], attrs: {} },
+    { tag: 'div', id: null, classes: ['dialog-head'], attrs: {} },
+  ];
+}
+
+test('in every grid dialog the .dialog-head spans both columns', () => {
+  const grids = idBlocks((body, id) => /dialog$/.test(id) && /grid-template-columns\s*:/.test(body));
+  assert.deepStrictEqual(grids.sort(), ['#args-dialog', '#dialog'],
+    `ENTER: the two-column dialogs are ${grids.join(', ') || '(none)'} — `
+    + 'the grid set moved, so this pin is measuring the wrong dialogs');
+  for (const id of grids) {
+    const win = winningDeclaration(cssSrc, headChain(id), 'grid-column');
+    assert.ok(win, `no grid-column reaches \`${id} .dialog-head\` — `
+      + 'the head lands in the left column and the ✕ sits mid-row');
+    assert.strictEqual(win.value, '1 / -1',
+      `\`${win.selector}\` wins grid-column on \`${id} .dialog-head\` with \`${win.value}\``);
+  }
+});
+
+test('#args-model-row and its Extra CLI args sibling are NOT .dialog-wide', () => {
+  const at = htmlSrc.indexOf('<label id="args-model-row"');
+  assert.ok(at > 0, 'ENTER: no <label id="args-model-row"> in index.html');
+  const model = htmlSrc.slice(at, htmlSrc.indexOf('\n', at));
+  const nextAt = htmlSrc.indexOf('<label', at + 1);
+  assert.ok(nextAt > 0, 'ENTER: no <label follows args-model-row');
+  const sibling = htmlSrc.slice(nextAt, htmlSrc.indexOf('\n', nextAt));
+  assert.match(sibling, /Extra CLI args|id="args-input"/,
+    `ENTER: the label after args-model-row is not the Extra CLI args row: ${sibling}`);
+  for (const tag of [model, sibling]) {
+    assert.doesNotMatch(tag, /\bdialog-wide\b/,
+      `${tag} spans both columns — Model and Extra CLI args must pair side by side`);
+  }
+});
+
+test('the dialog head is sticky in every dialog that scrolls itself', () => {
+  const scrollers = idBlocks((body, id) => /dialog$/.test(id) && /overflow(-y)?:\s*auto/.test(body));
+  assert.deepStrictEqual(scrollers.sort(), [
+    '#args-dialog', '#dialog', '#peer-session-dialog',
+    '#peers-dialog', '#prefs-dialog', '#sandbox-dialog',
+  ], `ENTER: the self-scrolling dialogs are ${scrollers.join(', ')} — a dialog joined or left the `
+    + 'set; add it to this literal list deliberately, after checking its head is a direct child');
+  for (const id of scrollers) {
+    const pos = winningDeclaration(cssSrc, headChain(id), 'position');
+    assert.ok(pos, `no position reaches \`${id} .dialog-head\` — its title and ✕ scroll away`);
+    assert.strictEqual(pos.value, 'sticky',
+      `\`${pos.selector}\` wins position on \`${id} .dialog-head\` with \`${pos.value}\``);
+    const top = winningDeclaration(cssSrc, headChain(id), 'top');
+    assert.ok(top, `\`${id} .dialog-head\` is sticky with no top — sticky never engages`);
+    assert.notStrictEqual(top.value, 'auto',
+      `\`${top.selector}\` wins top on \`${id} .dialog-head\` with \`auto\` — sticky never engages`);
+  }
+});

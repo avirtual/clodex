@@ -2421,14 +2421,12 @@ html, body {
   gap: 0 20px;
   align-content: start;
 }
-#args-dialog h3,
 #args-dialog #args-target,
 #args-dialog .dialog-actions,
 #args-dialog .dialog-section,
 #args-dialog .dialog-wide {
   grid-column: 1 / -1;
 }
-#args-dialog h3 { margin-bottom: 8px; font-size: 16px; }
 #args-dialog #args-target { margin-bottom: 4px; }
 #args-dialog > label { display: block; margin: 12px 0; }
 #args-dialog label span { font-size: 13px; }
@@ -5510,12 +5508,25 @@ body.web-frontend #sidebar-header {
   margin: 0 0 var(--sp-4);
 }
 
-.dialog-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-bottom: var(--sp-4); }
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+  position: sticky;
+  top: calc(-1 * var(--sp-5));
+  z-index: 1;
+  background: inherit;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--sp-2);
+}
 #dialog .dialog-head h3, #prefs-dialog .dialog-head h3, #peers-dialog .dialog-head h3,
 #plugins-dialog .dialog-head h3, #sandbox-dialog .dialog-head h3, #discovery-dialog .dialog-head h3,
 #args-dialog .dialog-head h3, #peer-session-dialog .dialog-head h3,
 .dialog-head h3 { margin: 0; }
-#dialog .dialog-head { grid-column: 1 / -1; }
+#args-dialog .dialog-head h3 { font-size: 16px; }
+#dialog .dialog-head, #args-dialog .dialog-head { grid-column: 1 / -1; }
 .dialog-close {
   width: 24px;
   height: 24px;
