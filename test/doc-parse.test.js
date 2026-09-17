@@ -125,8 +125,9 @@ test('code spans win over strong, em and links (inline precedence)', () => {
   ]);
 });
 
-test('`_` inside a word never opens em (docs/architecture.md:864)', () => {
-  const line = read('docs/architecture.md').split('\n')[863];
+test('`_` inside a word never opens em (the catalogs.js entry in docs/architecture.md)', () => {
+  const line = read('docs/architecture.md').split('\n').find((l) => l.includes('AGENT_NAME_RE, DEFAULT_WORKSPACE_ID'));
+  assert.ok(line, 'fixture line moved: docs/architecture.md no longer names AGENT_NAME_RE, DEFAULT_WORKSPACE_ID');
   assert.strictEqual(line, '  AGENT_NAME_RE, DEFAULT_WORKSPACE_ID, …).');
   const nodes = parseInline('AGENT_NAME_RE, DEFAULT_WORKSPACE_ID');
   assert.deepStrictEqual(nodes, [{ type: 'text', text: 'AGENT_NAME_RE, DEFAULT_WORKSPACE_ID' }]);
@@ -143,8 +144,8 @@ test('a backslash escapes the punctuation after it', () => {
 });
 
 test('named entities decode in text runs and stay literal inside code spans', () => {
-  const line = read('docs/teams.md').split('\n')[116];
-  assert.ok(line.includes('**Team &lt;name&gt;**'), `moved: ${line}`);
+  const line = read('docs/teams.md').split('\n').find((l) => l.includes('**Team &lt;name&gt;**'));
+  assert.ok(line, 'fixture line moved: docs/teams.md no longer carries **Team &lt;name&gt;**');
 
   assert.deepStrictEqual(parseInline('&lt;name&gt;'), [{ type: 'text', text: '<name>' }]);
   assert.deepStrictEqual(parseInline('`&lt;name&gt;`'), [{ type: 'code', text: '&lt;name&gt;' }]);
