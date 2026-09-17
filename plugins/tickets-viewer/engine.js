@@ -947,6 +947,63 @@ function search(payload) {
   return { ok: true, hits: scored.slice(0, SEARCH_HIT_CAP).map((s) => s.hit) };
 }
 
+const CLOSED_STATES = ['done', 'cancelled'];
+const CLOSED_PAGE_DEFAULT = 50;
+const CLOSED_PAGE_MAX = 100;
+
+function closedPageSize(v) {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return CLOSED_PAGE_DEFAULT;
+  return Math.min(CLOSED_PAGE_MAX, Math.max(1, Math.floor(v)));
+}
+
+function closedOffset(v) {
+  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return 0;
+  return Math.floor(v);
+}
+
+function closed(payload) {
+  const projectKey = str(payload && payload.project);
+  const stateArg = str(payload && payload.state) || 'all';
+  if (stateArg !== 'all' && !CLOSED_STATES.includes(stateArg)) {
+    return { ok: false, error: `state must be one of done, cancelled, all (got "${stateArg}")` };
+  }
+  const loc = resolveProject(projectKey);
+  if (!loc.ok) return loc;
+  const read = readTicketsAt(loc.dir);
+  if (!read.ok) return read;
+
+  const offset = closedOffset(payload && payload.offset);
+  const limit = closedPageSize(payload && payload.limit);
+
+  const scored = [];
+  for (const t of read.tickets) {
+    const state = str(t.state);
+    if (!CLOSED_STATES.includes(state)) continue;
+    if (stateArg !== 'all' && state !== stateArg) continue;
+    const closedAt = num(t.closedAt);
+    scored.push({
+      order: closedAt ?? num(t.openedAt) ?? 0,
+      row: {
+        id: str(t.id),
+        title: str(t.title),
+        state,
+        assignee: str(t.assignee),
+        closedAt,
+        verdict: str(t.verdict) || null,
+        rounds: Array.isArray(t.rounds) ? t.rounds.length : 0,
+      },
+    });
+  }
+  scored.sort((a, b) => b.order - a.order);
+  return {
+    ok: true,
+    rows: scored.slice(offset, offset + limit).map((s) => s.row),
+    total: scored.length,
+    offset,
+    limit,
+  };
+}
+
 function teamCost(projectKey) {
   const known = teamIndex().get(projectKey);
   if (!known || !known.team) return { ok: true, team: '', usd: null, counts: null, since: null };
@@ -1203,6 +1260,7 @@ module.exports.activate = (h) => {
   host.ipc.handle('sessions', () => sessions());
   host.ipc.handle('ticket', (p) => ticketDetail(p));
   host.ipc.handle('search', (p) => search(p));
+  host.ipc.handle('closed', (p) => closed(p));
 
   // Deliberately absent from manifest.json's `surfaces`, which is what keeps these
   // desktop-only: a board reachable from a browser is one a browser can close
@@ -1229,8 +1287,9 @@ module.exports._internals = {
   confineOrThrow, confineUnder, stripFileTail, resolveTaskDir,
   taskDirRuleClause, ticketTaskDirLine, ticketTaskDirLineFor,
   add, editSpec, assign, closeTicket, sessions,
-  ticketDetail, search, diffStat, parseVerdict, ticketRounds, deriveRounds,
+  ticketDetail, search, closed, diffStat, parseVerdict, ticketRounds, deriveRounds,
   VERDICT_RE, TEXT_CAP, TEXT_CAP_MARKER, SEARCH_HIT_CAP, SNIPPET_CHARS,
+  CLOSED_PAGE_DEFAULT, CLOSED_PAGE_MAX,
   VIEWER_ACTOR, closeLine,
   DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, RECENT_DONE_MS, RECENT_DONE_CAP,
   // Overrides the HOME rather than teams/ or projects/, which must move together:

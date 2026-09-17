@@ -2,7 +2,7 @@
   "id": "tickets-viewer",
   "name": "Tickets",
   "hostApi": "1",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "entry": {
     "engine": "engine.js",
     "renderer": "renderer.js"
@@ -17,6 +17,7 @@
     "sessions": "any",
     "teamCost": "any",
     "ticket": "any",
-    "search": "any"
+    "search": "any",
+    "closed": "any"
   }
 }
