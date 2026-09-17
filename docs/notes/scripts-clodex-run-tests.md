@@ -96,29 +96,20 @@ behind the box-wide lock — which is the cost this scope was added to avoid.
 
 ## subjectMatchers
 
-A test is selected for a changed source by a quoted relative path it contains —
-`./` or `../` prefixed, resolved against the test's own directory — matching the
-changed file's `rel` or its `.js`-stripped stem, or by that `rel` appearing
-literally anywhere in the text (how the source-shape tests name
-`renderer/renderer.js`, and how `test/stores.test.js` names a prompt under
-`resources/library/prompts/system/`). The relative-path rule is deliberately not
-anchored to `require(`: a subject can be reached without requiring it at all —
-`spawnSync(process.execPath, ['../scripts/foo.js'])` names its subject in a
-string no `require` regex sees.
+A test is selected for a changed source by any quoted relative `./`/`../` path
+it contains — not just a `require()` target, since `spawnSync(node,
+['../scripts/foo.js'])` names its subject too — or by the changed file's
+repo-relative path appearing literally (how the source-shape tests name
+`renderer/renderer.js`). Subjects are every live non-test path, not only `.js`;
+a non-`.js` one carries no stem and is matched by that literal `rel` alone.
 
-The subject set is every live non-test path the branch touched, not only `.js`:
-a branch that changes an exec definition or a prompt has a subject, and only the
-literal-path rule can reach it, so a non-`.js` entry carries no stem and is
-matched on `rel` alone.
-
-The relative target is resolved against the TEST's own directory, never matched
-as a repo-relative stem. Anchoring the stem after `(\.\.?/)+` looks equivalent
-and is not: it holds only for a test one level below the root, and every one of
-the 36 files in `cli/test/` reaches its subject as `require('../src/x')`, which
-resolves to `cli/src/x` but contains no `cli/` at all. Under the stem rule a
-branch touching any module in `cli/src` selected ZERO cli tests —
-including `cli/test/attach.test.js`, the file `LOCK_BOUND` exists for — and
-reported `0 by subject` as though nothing needed running.
+That path is resolved against the TEST's own directory, which is not the same as
+anchoring the stem after `(\.\.?/)+`: that holds only for a test one level below
+the root, and every one of the 36 files in `cli/test/` reaches its subject as
+`require('../src/x')`, which resolves to `cli/src/x` but contains no `cli/` at
+all. Under the stem rule a branch touching any module in `cli/src` selected ZERO
+cli tests — including `cli/test/attach.test.js`, the file `LOCK_BOUND` exists
+for — reporting `0 by subject` as though nothing needed running.
 
 Both rules are textual, so a subject reached only through a path the reader
 assembles — `path.join(__dirname, '..', 'scripts', 'x.js')`, a name built from a
