@@ -6621,6 +6621,9 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   padding: 40px var(--sp-3) var(--sp-2);
   gap: var(--sp-2);
 }
+body.web-frontend #sidebar-header {
+  padding-top: var(--sp-4);
+}
 .app-brand {
   font-size: 10px;
   font-weight: 600;
@@ -10805,6 +10808,7 @@ textarea:not(.xterm-helper-textarea):focus-visible,
         const menus = buildMenus(ctx);
         const main = document.getElementById("main");
         if (main && main.classList) main.classList.add("has-web-menubar");
+        if (document.body && document.body.classList) document.body.classList.add("web-frontend");
         const bar = document.createElement("div");
         bar.id = "clx-menubar";
         let state = null;
