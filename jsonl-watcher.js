@@ -64,6 +64,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
       this._pendingTime = 0;
       this._readBuf = '';
       this._activityState = 'idle';
+      this._activityTurnEnd = false;
       this._pendingInterrupted = false;
       // Whether the pending text's turn is over. Carried to the flush rather
       // than re-derived there: by flush time the entry is gone, and the
@@ -80,11 +81,12 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
       this._pendingTouches = [];
     }
 
-    _setActivity(state) {
-      if (this._activityState !== state) {
-        this._activityState = state;
-        try { this._onActivity(state); } catch {}
-      }
+    _setActivity(state, turnEnd = false) {
+      const end = !!turnEnd;
+      if (this._activityState === state && !(end && !this._activityTurnEnd)) return;
+      this._activityState = state;
+      this._activityTurnEnd = end;
+      try { this._onActivity(state, end); } catch {}
     }
 
     start() {
@@ -239,7 +241,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
             turnEnd: this._pendingTurnEnd, interrupted: this._pendingInterrupted,
           });
         } catch {}
-        this._setActivity('idle');
+        this._setActivity('idle', this._pendingTurnEnd);
       }
       this._pendingRid = null;
       this._pendingText = null;

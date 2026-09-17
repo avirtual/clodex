@@ -2165,7 +2165,7 @@ function createSessionManager(deps) {
           name,
           (text, touches, meta) => this._scanJsonlText(text, name, touches, meta),
           onSessionId,
-          (state) => this._emitActivity(name, state, state === 'idle'),
+          (state, turnEnd) => this._emitActivity(name, state, state === 'idle' && !!turnEnd),
           () => this._fireCompactContinuation(session),
           (touches) => this._noteFileTouches(session, touches),
         );
@@ -4574,10 +4574,7 @@ function createSessionManager(deps) {
     //
     // TURN-END IS THE WHOLE FEATURE. The caller supplies it from a source that
     // knows: the wire's `stop.is_turn`, or the transcript entry's own
-    // `stop_reason` via isTurnEndEntry. Deliberately NOT the renderer activity
-    // seam, whose `turnEnd` is `state === 'idle'` for jsonl sessions and so is
-    // true on every inter-tool flush — reading it here would narrate after every
-    // tool call, which is precisely what the operator asked not to happen.
+    // `stop_reason` via isTurnEndEntry.
     //
     // Off by default and read fresh per turn: the setting is a live toggle, so a
     // cached answer would keep talking after it was switched off.

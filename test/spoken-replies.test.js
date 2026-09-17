@@ -74,19 +74,13 @@ test('isInterruptEntry recognises the CLI interrupt entry and nothing else', () 
   }
 });
 
-// The renderer activity seam is NOT the discriminator, and this pins why rather
-// than trusting the doc — which claimed the opposite and was wrong. The value
-// session-manager passes for a jsonl session is `state === 'idle'`, so every
-// flush that ends 'thinking' reports a turn end.
-test('the renderer activity seam cannot answer the turn-end question', () => {
+// _maybeSpeak reads the wire's own stop.is_turn, never an activity state: the
+// two paths are disjoint by construction and a spoken reply must not depend on
+// which one happens to be running.
+test('the spoken junction reads stop.is_turn, not an activity state', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf-8');
-  assert.ok(
-    src.includes("(state) => this._emitActivity(name, state, state === 'idle')"),
-    'the jsonl watcher still passes a bare idle as turnEnd — if this line changed, '
-    + 're-derive whether _maybeSpeak may read that seam',
-  );
   assert.ok(
     src.includes('this._maybeSpeak(t.agent, t.text, !!(t.stop && t.stop.is_turn))'),
     'the wire junction must speak off stop.is_turn, not off an activity state',
