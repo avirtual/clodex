@@ -16,7 +16,18 @@ const RESOURCE_DOC = {
     { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'], subresources: {} },
     { name: 'workspaces', singular: 'workspace', scope: 'node', verbs: ['list'] },
     { name: 'catalogs', singular: 'catalogs', scope: 'node', verbs: ['get'] },
+    { name: 'docs', singular: 'doc', scope: 'node', verbs: ['list', 'get'] },
   ],
+};
+
+const DOCS = [
+  { name: 'how-to', title: 'How to', section: 'Using Clodex' },
+  { name: 'messaging', title: 'Messaging', section: 'Using Clodex' },
+];
+const DOC_HITS = [{ name: 'messaging', title: 'Messaging', heading: 'Park', slug: 'park', snippet: 'resend the parked dm' }];
+const DOC_SECTION = {
+  name: 'messaging', title: 'Messaging', section: 'Using Clodex', slug: 'anchors',
+  content: '## Anchors\n\nan anchor is a heading slug\n',
 };
 const HELLO_NEW = { ok: true, app: 'clodex', host: 'newbox', version: '5.80.0', caps: ['transcript', 'resources'] };
 const HELLO_OLD = { ok: true, app: 'clodex', host: 'oldbox', version: '5.69.0', caps: ['transcript'] };
@@ -47,6 +58,10 @@ function node({ old = false } = {}) {
       if (p === '/api/catalogs') return send(200, { ok: true, catalogs: { agents: [{ name: 'a' }], skills: [], proxyEnabled: false } });
       if (!old && p === '/api/resources') return send(200, RESOURCE_DOC);
       if (!old && p === '/api/workspaces') return send(200, { ok: true, workspaces: WORKSPACES });
+      if (!old && p === '/api/docs') {
+        return send(200, req.url.includes('q=') ? { ok: true, hits: DOC_HITS } : { ok: true, docs: DOCS });
+      }
+      if (!old && p === '/api/docs/messaging') return send(200, { ok: true, doc: DOC_SECTION });
       if (!old && p.startsWith('/api/sessions/')) {
         const name = decodeURIComponent(p.slice('/api/sessions/'.length));
         const s = SESSIONS.find((x) => x.name === name);
@@ -106,6 +121,50 @@ test('get catalogs likewise never probes /api/resources', async () => {
     const { code } = await cli(['get', 'catalogs'], port);
     assert.strictEqual(code, 0);
     assert.deepStrictEqual(seen, ['/api/catalogs']);
+  });
+});
+
+test('get docs lists the corpus off /api/docs, with NO query string', async () => {
+  await withNode({}, async (port, seen) => {
+    const { code, stdout } = await cli(['get', 'docs'], port);
+    assert.strictEqual(code, 0, stdout);
+    assert.deepStrictEqual(seen, ['/api/resources', '/api/docs'], 'ENTER: the list really reached the route');
+    assert.strictEqual(stdout,
+      'NAME       SECTION       TITLE\n'
+      + 'how-to     Using Clodex  How to\n'
+      + 'messaging  Using Clodex  Messaging\n');
+  });
+});
+
+test('get docs -q "park resend" --limit 5 hits /api/docs?q=park%20resend&limit=5 and prints hits', async () => {
+  await withNode({}, async (port, seen) => {
+    const { code, stdout } = await cli(['get', 'docs', '-q', 'park resend', '--limit', '5'], port);
+    assert.strictEqual(code, 0, stdout);
+    assert.deepStrictEqual(seen, ['/api/resources', '/api/docs?q=park%20resend&limit=5'],
+      'ENTER: the search terms and the limit both reach the wire, encoded');
+    assert.strictEqual(stdout,
+      'NAME       HEADING  SNIPPET\n'
+      + 'messaging  Park     resend the parked dm\n',
+      'a search prints NAME HEADING SNIPPET, not the list columns');
+  });
+});
+
+test('get doc <name> --section <slug> hits /api/docs/<name>?section=<slug> and prints the slice', async () => {
+  await withNode({}, async (port, seen) => {
+    const { code, stdout } = await cli(['get', 'doc', 'messaging', '--section', 'anchors'], port);
+    assert.strictEqual(code, 0, stdout);
+    assert.deepStrictEqual(seen, ['/api/resources', '/api/docs/messaging?section=anchors'],
+      'ENTER: the singular get routes to the describer path, slug and all');
+    assert.strictEqual(stdout,
+      'name:    messaging\n'
+      + 'title:   Messaging\n'
+      + 'section: Using Clodex\n'
+      + 'slug:    anchors\n'
+      + '\n'
+      + '## Anchors\n'
+      + '\n'
+      + 'an anchor is a heading slug\n'
+      + '\n');
   });
 });
 

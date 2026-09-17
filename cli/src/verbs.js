@@ -34,6 +34,11 @@ async function get({ client, ctx, printer, flags, args, io = {} }) {
     if (target.name) throw new CliError(EXIT.USAGE, 'get workspaces takes no name (try: describe workspace <name>)');
     return getWorkspaces({ client, printer, flags, label });
   }
+  if (target.resource === 'docs' && target.name) {
+    return describeNodeResource({
+      client, printer, label, plural: 'docs', singular: 'doc', name: target.name, flags,
+    });
+  }
   if (NODE_LISTS[target.resource]) {
     if (target.name) {
       throw new CliError(EXIT.USAGE,
@@ -54,6 +59,7 @@ const NODE_LISTS = {
   tickets: { key: 'tickets', plain: 'renderTickets', wide: 'renderTicketsWide' },
   sandboxes: { key: 'sandboxes', plain: 'renderSandboxes', wide: 'renderSandboxes' },
   agents: { key: 'agents', plain: 'renderAgents', wide: 'renderAgentsWide' },
+  docs: { key: 'docs', plain: 'renderDocs', wide: 'renderDocs' },
   worktrees: { key: 'worktrees', plain: 'renderWorktrees', wide: 'renderWorktreesWide', nameKey: 'path' },
 };
 
@@ -75,6 +81,13 @@ function ticketState(flags) {
     throw new CliError(EXIT.USAGE, `unknown ticket state: ${want} (${TICKET_STATES.join('|')})`);
   }
   return want;
+}
+
+function docsQuery(flags) {
+  if (flags.query == null || String(flags.query).trim() === '') return '';
+  const parts = [`q=${encodeURIComponent(String(flags.query))}`];
+  if (flags.limit != null) parts.push(`limit=${parseIntOr(flags.limit, 'limit')}`);
+  return `?${parts.join('&')}`;
 }
 
 function worktreeQuery(flags) {
@@ -100,15 +113,18 @@ async function getNodeResource({ client, printer, flags, label, plural, singular
   let query = '';
   if (plural === 'tickets') query = ticketQuery(flags);
   if (plural === 'worktrees') query = worktreeQuery(flags);
+  if (plural === 'docs') query = docsQuery(flags);
+  const searching = plural === 'docs' && query !== '';
   await R.requireResource(client, plural, 'list', label);
   const body = await client.get(`/api/${plural}${query}`, `get ${plural}`);
-  const rows = body[spec.key] || [];
+  const rows = body[searching ? 'hits' : spec.key] || [];
   if (flags.json) { printer.json(body); return; }
   if (flags.output === 'name') {
     const named = spec.nameKey ? rows.map((r) => ({ name: r && r[spec.nameKey] })) : rows;
     printer.line(out.renderNames(singular, named));
     return;
   }
+  if (searching) { printer.line(out.renderDocHits(rows)); return; }
   printer.line(out[flags.output === 'wide' ? spec.wide : spec.plain](rows));
 }
 
@@ -209,6 +225,7 @@ const NODE_DESCRIBERS = {
   tickets: { key: 'ticket', render: 'renderDescribe' },
   sandboxes: { key: 'sandbox', render: 'describeSandbox' },
   agents: { key: 'agent', render: 'describeAgent' },
+  docs: { key: 'doc', render: 'describeDoc' },
 };
 
 async function describeNodeResource({ client, printer, label, plural, singular, name, flags }) {
@@ -220,6 +237,9 @@ async function describeNodeResource({ client, printer, label, plural, singular, 
     requireTicketId(want);
     query = flags.team != null ? `?team=${encodeURIComponent(String(flags.team))}` : '';
   }
+  if (plural === 'docs' && flags.section != null && String(flags.section) !== '') {
+    query = `?section=${encodeURIComponent(String(flags.section))}`;
+  }
   await R.requireResource(client, plural, 'get', label);
   let body;
   try {
@@ -227,6 +247,7 @@ async function describeNodeResource({ client, printer, label, plural, singular, 
   } catch (e) {
     throw plural === 'tickets' ? ambiguousTicket(e, want) : e;
   }
+  if (flags.json) { printer.json(body); return; }
   printer.line(out[spec.render](body[spec.key] || {}));
 }
 

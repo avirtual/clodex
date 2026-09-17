@@ -118,6 +118,15 @@ test('`help <verb>` renders the same per-verb view', async () => {
   assert.match(stdout, /NOTES/);
 });
 
+test('`help get` documents both docs forms and the docs default columns', async () => {
+  const { code, stdout } = await cli(['help', 'get']);
+  assert.strictEqual(code, 0);
+  assert.ok(stdout.includes('clodexctl get docs [-q <terms>] [--limit N] [-o json|yaml|name]'), stdout);
+  assert.ok(stdout.includes('clodexctl get doc <name> [--section <slug>] [-o json|yaml]'), stdout);
+  assert.ok(stdout.includes('docs NAME SECTION TITLE'), 'the default-columns note must name the docs columns');
+  assert.ok(/sandboxes\|agents\|docs\|worktrees/.test(stdout), 'the resource arg list must accept docs');
+});
+
 test('`help restart` shows BOTH resource forms', async () => {
   const { code, stdout } = await cli(['help', 'restart']);
   assert.strictEqual(code, 0);
