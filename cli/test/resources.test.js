@@ -36,6 +36,28 @@ function oldNode(extra = {}) {
   return client({ '/api/peer/hello': { ok: true, host: 'oldbox', version: '5.69.0', caps: ['transcript'] }, ...extra });
 }
 
+const TABLE_LITERAL = [
+  { plural: 'sessions', singular: 'session' },
+  { plural: 'nodes', singular: 'node' },
+  { plural: 'workspaces', singular: 'workspace' },
+  { plural: 'peers', singular: 'peer' },
+  { plural: 'teams', singular: 'team' },
+  { plural: 'tickets', singular: 'ticket' },
+  { plural: 'sandboxes', singular: 'sandbox' },
+  { plural: 'agents', singular: 'agent' },
+  { plural: 'docs', singular: 'doc' },
+  { plural: 'worktrees', singular: 'worktree' },
+  { plural: 'catalogs', singular: 'catalogs' },
+];
+
+test('TABLE is exactly the shipped resource spellings, docs included', () => {
+  assert.deepStrictEqual(R.TABLE, TABLE_LITERAL);
+  assert.strictEqual(R.resolveResource('doc').plural, 'docs');
+  assert.strictEqual(R.resolveResource('docs').singular, 'doc');
+  assert.ok(R.knownSpellings().includes('docs'), 'the usage lines offer docs');
+  assert.ok(R.singulars().includes('doc'), 'the did-you-mean line offers doc');
+});
+
 test('parseTarget: plural, singular, and the TYPE/NAME slash form', () => {
   assert.deepStrictEqual(R.parseTarget(['sessions'], 'get').resource, 'sessions');
   assert.strictEqual(R.parseTarget(['sessions'], 'get').name, null);

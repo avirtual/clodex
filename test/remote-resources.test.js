@@ -40,6 +40,44 @@ const TICKETS_BETA = [
 
 const AGENT_MD = '---\ndescription: a library agent\nmodel: opus\n---\nbody text\n';
 
+const DOC_PAGES = {
+  'how-to': {
+    name: 'how-to', title: 'How to', section: 'Using Clodex',
+    content: '# How to\n\n## Anchors\n\nthe anchors body\n',
+    sections: { anchors: '## Anchors\n\nthe anchors body\n' },
+  },
+  messaging: {
+    name: 'messaging', title: 'Messaging', section: 'Using Clodex',
+    content: '# Messaging\n\n## Park\n\nresend the parked dm\n',
+    sections: { park: '## Park\n\nresend the parked dm\n' },
+  },
+};
+
+const DOC_HIT = {
+  name: 'messaging', title: 'Messaging', heading: 'Park', slug: 'park',
+  snippet: 'resend the parked dm',
+};
+
+function fakeCorpus(overrides = {}) {
+  return {
+    list: () => Object.values(DOC_PAGES).map((p) => ({ name: p.name, title: p.title, section: p.section })),
+    get: (name) => {
+      const page = DOC_PAGES[name];
+      return page ? { name: page.name, title: page.title, section: page.section, content: page.content } : null;
+    },
+    section: (name, slug) => {
+      const page = DOC_PAGES[name];
+      if (!page) return null;
+      const body = page.sections[slug];
+      if (body == null) return null;
+      return { name: page.name, title: page.title, section: page.section, slug, content: body };
+    },
+    search: (q, limit) => (String(q).includes('park') ? [DOC_HIT].slice(0, limit) : []),
+    index: () => ({ sections: [] }),
+    ...overrides,
+  };
+}
+
 const NODE_LOG_SEED = [
   '2026-09-17T00:00:00.000Z  INFO  [app] booted',
   '2026-09-17T01:00:00.000Z  INFO  [remote] listening on 127.0.0.1:7777',
@@ -129,6 +167,7 @@ function makeDeps() {
       }],
       raw: (n) => (n === 'scout' ? AGENT_MD : null),
     }),
+    getHelpCorpus: () => fakeCorpus(),
     getSkillLibrary: () => ({ list: () => [] }),
     getPersistence: () => ({ get: () => undefined, setStripLevel: () => {} }),
     getUiSettings: () => uiSettings,
@@ -189,6 +228,7 @@ async function withNode(extra, fn) {
 
 const WALK_ID = {
   sessions: 'alice', peers: 'boxy', teams: 'alpha', tickets: 't7', sandboxes: 'boxy', agents: 'scout',
+  docs: 'how-to',
 };
 
 const WALK_QUERY = { worktrees: `?repo=${encodeURIComponent(FAKE_REPO)}` };
@@ -319,11 +359,12 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
     'sessions/restart.post', 'sessions/args.get', 'sessions/args.patch', 'sessions/skills.get',
     'sessions/skills.patch', 'sessions/attach.get', 'workspaces.list',
     'peers.list', 'peers.get', 'teams.list', 'teams.get', 'tickets.list', 'tickets.get',
-    'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get', 'worktrees.list', 'catalogs.get',
+    'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get',
+    'docs.list', 'docs.get', 'worktrees.list', 'catalogs.get',
     'node/logs.get',
   ], 'the walk must visit every shipped row — an empty or shortened walk passes vacuously');
-  assert.strictEqual(seen.length, 29, 'the walk entered 16 resource verbs, the sessions delete, and the 12 session subresource verbs');
-  assert.strictEqual(RESOURCES.length, 10, 'the walk covered fewer than the 10 shipped resources');
+  assert.strictEqual(seen.length, 31, 'the walk entered 18 resource verbs, the sessions delete, and the 12 session subresource verbs');
+  assert.strictEqual(RESOURCES.length, 11, 'the walk covered fewer than the 11 shipped resources');
 });
 
 test('GET /api/sessions/:name/transcript: the status and body the deleted /api/transcript/ served, limit and since threaded', async () => {
@@ -767,14 +808,14 @@ test('workspaces: 501 and absent from /api/resources when listWorkspaces is not 
   await withNode({ listWorkspaces: null }, async (port) => {
     assert.strictEqual((await req(port, '/api/workspaces')).status, 501);
     const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
-    assert.deepStrictEqual(names, ['sessions', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'worktrees', 'catalogs', 'node/logs']);
+    assert.deepStrictEqual(names, ['sessions', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'docs', 'worktrees', 'catalogs', 'node/logs']);
   });
 });
 
 test('catalogs: absent from /api/resources when getCatalogs is not injected', async () => {
   await withNode({ getCatalogs: null }, async (port) => {
     const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
-    assert.deepStrictEqual(names, ['sessions', 'workspaces', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'worktrees', 'node/logs']);
+    assert.deepStrictEqual(names, ['sessions', 'workspaces', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'docs', 'worktrees', 'node/logs']);
   });
 });
 
@@ -1081,6 +1122,150 @@ test('agents: 501 and absent from /api/resources when listAgents is not injected
   });
 });
 
+test('GET /api/docs: the list is name/title/section and nothing else', async () => {
+  await withNode({}, async (port) => {
+    const r = await req(port, '/api/docs');
+    assert.strictEqual(r.status, 200, r.body);
+    const body = JSON.parse(r.body);
+    assert.strictEqual(body.ok, true);
+    assert.deepStrictEqual(body.docs, [
+      { name: 'how-to', title: 'How to', section: 'Using Clodex' },
+      { name: 'messaging', title: 'Messaging', section: 'Using Clodex' },
+    ]);
+    assert.deepStrictEqual(Object.keys(body.docs[0]), ['name', 'title', 'section'],
+      'the row is an explicit projection — a spread would carry content through');
+  });
+});
+
+test('GET /api/docs?q=: hits carry the five fields and nothing else, limit clamped to 1..50', async () => {
+  const calls = [];
+  const corpus = fakeCorpus({
+    search: (q, limit) => { calls.push({ q, limit }); return [DOC_HIT, { ...DOC_HIT, extra: 'leak' }]; },
+  });
+  await withNode({ searchDocs: (q, limit) => corpus.search(q, limit) }, async (port) => {
+    const r = await req(port, '/api/docs?q=park%20resend');
+    assert.strictEqual(r.status, 200, r.body);
+    const body = JSON.parse(r.body);
+    assert.strictEqual(body.docs, undefined, 'a search answers hits, never the list');
+    assert.deepStrictEqual(body.hits[0], {
+      name: 'messaging', title: 'Messaging', heading: 'Park', slug: 'park', snippet: 'resend the parked dm',
+    });
+    assert.deepStrictEqual(Object.keys(body.hits[1]), ['name', 'title', 'heading', 'slug', 'snippet'],
+      'a stray field on the corpus hit does not reach the wire');
+    assert.deepStrictEqual(calls[0], { q: 'park resend', limit: 20 }, 'the default limit is 20');
+
+    await req(port, '/api/docs?q=park&limit=0');
+    assert.strictEqual(calls[1].limit, 1, '0 clamps up to 1');
+    await req(port, '/api/docs?q=park&limit=9999');
+    assert.strictEqual(calls[2].limit, 50, '9999 clamps down to 50');
+    await req(port, '/api/docs?q=park&limit=abc');
+    assert.strictEqual(calls[3].limit, 20, 'an unparseable limit falls back to the default');
+
+    const blank = await req(port, '/api/docs?q=%20%20');
+    assert.strictEqual(JSON.parse(blank.body).docs.length, 2, 'a whitespace-only q is not a search');
+    assert.strictEqual(calls.length, 4, 'and it never reached the search callback');
+  });
+});
+
+test('GET /api/docs/:name: the whole page, and ?section= the slice plus slug', async () => {
+  await withNode({}, async (port) => {
+    const whole = await req(port, '/api/docs/how-to');
+    assert.strictEqual(whole.status, 200, whole.body);
+    assert.deepStrictEqual(JSON.parse(whole.body), {
+      ok: true,
+      doc: {
+        name: 'how-to', title: 'How to', section: 'Using Clodex',
+        content: '# How to\n\n## Anchors\n\nthe anchors body\n',
+      },
+    });
+    const slice = await req(port, '/api/docs/how-to?section=anchors');
+    assert.strictEqual(slice.status, 200, slice.body);
+    assert.deepStrictEqual(JSON.parse(slice.body), {
+      ok: true,
+      doc: {
+        name: 'how-to', title: 'How to', section: 'Using Clodex', slug: 'anchors',
+        content: '## Anchors\n\nthe anchors body\n',
+      },
+    });
+  });
+});
+
+test('GET /api/docs/:name: 404 unknown doc, 404 unknown section, 400 bad name', async () => {
+  await withNode({}, async (port) => {
+    const noDoc = await req(port, '/api/docs/nope');
+    assert.strictEqual(noDoc.status, 404);
+    assert.deepStrictEqual(JSON.parse(noDoc.body), { ok: false, error: 'no such doc' });
+
+    const noSlug = await req(port, '/api/docs/how-to?section=nope');
+    assert.strictEqual(noSlug.status, 404);
+    assert.deepStrictEqual(JSON.parse(noSlug.body), { ok: false, error: 'no such section' });
+
+    const noDocWithSlug = await req(port, '/api/docs/nope?section=anchors');
+    assert.strictEqual(noDocWithSlug.status, 404);
+    assert.deepStrictEqual(JSON.parse(noDocWithSlug.body), { ok: false, error: 'no such doc' },
+      'an unknown NAME says so even when a section was asked for');
+
+    for (const bad of ['bad%20name', 'a%2Fb', encodeURIComponent('x'.repeat(65))]) {
+      const r = await req(port, `/api/docs/${bad}`);
+      assert.strictEqual(r.status, 400, `${bad} answered ${r.status}: ${r.body}`);
+      assert.deepStrictEqual(JSON.parse(r.body), { ok: false, error: 'bad doc name' });
+    }
+  });
+});
+
+test('docs: 501 and absent from /api/resources when listDocs is not injected', async () => {
+  await withNode({ listDocs: null }, async (port) => {
+    for (const p of ['/api/docs', '/api/docs?q=park', '/api/docs/how-to', '/api/docs/how-to?section=anchors']) {
+      const r = await req(port, p);
+      assert.strictEqual(r.status, 501, `${p} answered ${r.status}: ${r.body}`);
+      assert.deepStrictEqual(JSON.parse(r.body), { ok: false, error: 'docs not available' });
+    }
+    const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r2 => r2.name);
+    assert.ok(!names.includes('docs'), `docs is still advertised: ${names.join(',')}`);
+  });
+  await withNode({}, async (port) => {
+    const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r2 => r2.name);
+    assert.ok(names.includes('docs'), 'a wired node DOES advertise docs — the absence above is the injection');
+  });
+});
+
+test('docs: a callback that THROWS is a 500, and the node keeps serving', async () => {
+  const boom = () => { throw new Error('ENOENT: no docs dir'); };
+  await withNode({ listDocs: boom, getDoc: boom, getDocSection: boom, searchDocs: boom }, async (port) => {
+    for (const p of ['/api/docs', '/api/docs?q=park', '/api/docs/how-to', '/api/docs/how-to?section=anchors']) {
+      const r = await req(port, p);
+      assert.strictEqual(r.status, 500, `${p} answered ${r.status}: ${r.body}`);
+      assert.deepStrictEqual(JSON.parse(r.body), { ok: false, error: 'docs unavailable' },
+        'the thrown message never reaches the wire');
+    }
+    const alive = await req(port, '/api/peer/hello');
+    assert.strictEqual(alive.status, 200, 'the process survived every throw');
+  });
+});
+
+test('wiring: the four docs callbacks exist when getHelpCorpus is a function, and are absent when it is not', () => {
+  const { deps } = makeDeps();
+  const wired = captureOptions(deps);
+  for (const cb of ['listDocs', 'getDoc', 'getDocSection', 'searchDocs']) {
+    assert.strictEqual(typeof wired[cb], 'function', `${cb} must be wired from getHelpCorpus`);
+  }
+  assert.deepStrictEqual(wired.listDocs(), [
+    { name: 'how-to', title: 'How to', section: 'Using Clodex' },
+    { name: 'messaging', title: 'Messaging', section: 'Using Clodex' },
+  ], 'ENTER: the wired lister really reaches the corpus');
+  assert.strictEqual(wired.getDoc('how-to').title, 'How to');
+  assert.strictEqual(wired.getDocSection('how-to', 'anchors').slug, 'anchors');
+  assert.deepStrictEqual(wired.searchDocs('park', 5), [DOC_HIT]);
+
+  const { deps: bare } = makeDeps();
+  delete bare.getHelpCorpus;
+  const unwired = captureOptions(bare);
+  for (const cb of ['listDocs', 'getDoc', 'getDocSection', 'searchDocs']) {
+    assert.strictEqual(unwired[cb], undefined, `${cb} must be absent with no getHelpCorpus`);
+  }
+  assert.strictEqual(typeof unwired.listAgents, 'function', 'the other callbacks are unaffected');
+});
+
 function gitAvailable() {
   try { execFileSync('git', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
 }
@@ -1207,6 +1392,7 @@ test('no read-only resource response carries a token/auth/secret/password key at
     '/api/tickets', '/api/tickets?team=alpha', '/api/tickets/t7',
     '/api/sandboxes', '/api/sandboxes/boxy',
     '/api/agents', '/api/agents/scout',
+    '/api/docs', '/api/docs?q=park', '/api/docs/how-to', '/api/docs/how-to?section=anchors',
     `/api/worktrees?repo=${encodeURIComponent(FAKE_REPO)}`,
     '/api/sessions', '/api/sessions/alice', '/api/workspaces',
     '/api/node/logs',

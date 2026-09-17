@@ -9,10 +9,19 @@ router in both directions — every advertised `(resource, verb)` must answer
 something other than 404 on a fully-injected node, and every `name` must appear
 as a literal `/api/<name>` path in this file.
 
+`docs` is served read-only from the help corpus and is the one resource whose
+route can fail on a healthy node: the corpus reads files off disk on first
+touch, so a packaged install missing `docs/` throws out of the callback rather
+than returning null. Every docs callback call is therefore wrapped, and the
+answer is a 500 `docs unavailable` that names nothing about the filesystem. Its
+gate is `_listDocs` like every other list resource, but the section and search
+routes check their own callback too, because a partially-injected node (a peer
+built by hand, a test) would otherwise 500 where it means 501.
+
 `RESOURCE_CALLBACK` names ONE callback per resource, and that callback is the
 single gate for both the 501 and the absence from the document: every route
 branch of that resource reads the same one, so a node cannot advertise a
-resource whose routes refuse. For the six that list it is the LIST callback,
+resource whose routes refuse. For the ones that list it is the LIST callback,
 never the single-get — a node with a list and no get would otherwise advertise
 nothing while serving the list; `catalogs` has no list, so its gate is its get
 callback. `sessions` names no callback at all and is therefore never absent.

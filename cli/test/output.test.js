@@ -18,6 +18,43 @@ test('renderSessions builds a NAME/TYPE/ACTIVITY/CWD table', () => {
   assert.match(s, /b\s+claude\s+idle\s+\/w/);
 });
 
+test('renderDocs builds a NAME/SECTION/TITLE table', () => {
+  const s = O.renderDocs([
+    { name: 'how-to', title: 'How to', section: 'Using Clodex' },
+    { name: 'architecture', title: 'Architecture', section: 'Reference' },
+  ]);
+  assert.strictEqual(s,
+    'NAME          SECTION       TITLE\n'
+    + 'how-to        Using Clodex  How to\n'
+    + 'architecture  Reference     Architecture');
+});
+
+test('renderDocHits builds a NAME/HEADING/SNIPPET table — the search columns, not the list ones', () => {
+  const s = O.renderDocHits([
+    { name: 'messaging', title: 'Messaging', heading: 'Park', slug: 'park', snippet: 'resend the parked dm' },
+  ]);
+  assert.strictEqual(s,
+    'NAME       HEADING  SNIPPET\n'
+    + 'messaging  Park     resend the parked dm');
+});
+
+test('describeDoc prints the metadata block, a BLANK line, then the content verbatim', () => {
+  const s = O.describeDoc({
+    name: 'how-to', title: 'How to', section: 'Using Clodex',
+    content: '# How to\n\nbody\n',
+  });
+  assert.strictEqual(s,
+    'name:    how-to\n'
+    + 'title:   How to\n'
+    + 'section: Using Clodex\n'
+    + '\n'
+    + '# How to\n'
+    + '\n'
+    + 'body\n');
+  assert.strictEqual(O.describeDoc({ name: 'x' }), 'name: x\n\n',
+    'a page with no content still ends with the blank separator, not "undefined"');
+});
+
 test('renderTranscript role-prefixes with blank lines between turns', () => {
   const s = O.renderTranscript([{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'yo' }]);
   assert.strictEqual(s, '[user] hi\n\n[assistant] yo');

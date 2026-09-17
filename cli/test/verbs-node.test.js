@@ -258,6 +258,76 @@ test('KIND_FIELDS covers every kind field transport.js reads off a kind object',
   }
 });
 
+const DOCS_RESOURCE_DOC = {
+  ok: true,
+  version: 1,
+  resources: [{ name: 'docs', singular: 'doc', scope: 'node', verbs: ['list', 'get'] }],
+};
+
+const HOW_TO = {
+  name: 'how-to', title: 'How to', section: 'Using Clodex',
+  content: '# How to\n\nthe first paragraph\n',
+};
+
+async function docsNode() {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    seen.push(req.url);
+    const p = req.url.split('?')[0];
+    const send = (status, obj) => {
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(obj));
+    };
+    if (p === '/api/resources') return send(200, DOCS_RESOURCE_DOC);
+    if (p === '/api/docs/how-to') return send(200, { ok: true, doc: HOW_TO });
+    return send(404, { ok: false, error: 'no such doc' });
+  });
+  const port = await new Promise((r) => server.listen(0, '127.0.0.1', () => r(server.address().port)));
+  return { server, port, seen };
+}
+
+test('describe doc <name> prints the H1 line of the page after the metadata block', async () => {
+  const { server, port, seen } = await docsNode();
+  try {
+    const r = await cli(['describe', 'doc', 'how-to', '--url', `http://127.0.0.1:${port}`], tmpCtx());
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.deepStrictEqual(seen, ['/api/resources', '/api/docs/how-to'], 'ENTER: the describer dialed the doc route');
+    assert.strictEqual(r.stdout,
+      'name:    how-to\n'
+      + 'title:   How to\n'
+      + 'section: Using Clodex\n'
+      + '\n'
+      + '# How to\n'
+      + '\n'
+      + 'the first paragraph\n'
+      + '\n');
+  } finally { server.close(); }
+});
+
+test('get doc nope exits NOTFOUND — a 404 from the doc route is not a silent empty page', async () => {
+  const { server, port, seen } = await docsNode();
+  try {
+    const r = await cli(['get', 'doc', 'nope', '--url', `http://127.0.0.1:${port}`], tmpCtx());
+    assert.strictEqual(r.code, 5, r.stderr);
+    assert.deepStrictEqual(seen, ['/api/resources', '/api/docs/nope'], 'ENTER: it really asked for the page');
+    assert.strictEqual(r.stdout, '', 'nothing is printed for a page that does not exist');
+  } finally { server.close(); }
+});
+
+test('docs is wired into BOTH node tables, and both render names really exist on output.js', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'verbs.js'), 'utf8');
+  const o = require('../src/output');
+  assert.match(src, /docs: \{ key: 'docs', plain: 'renderDocs', wide: 'renderDocs' \}/,
+    'ENTER: NODE_LISTS names the docs row (the table is module-private, so read it from source)');
+  assert.match(src, /docs: \{ key: 'doc', render: 'describeDoc' \}/,
+    'ENTER: NODE_DESCRIBERS names the docs row');
+  for (const fn of ['renderDocs', 'renderDocHits', 'describeDoc']) {
+    assert.strictEqual(typeof o[fn], 'function', `${fn} is named by a table but not exported by output.js`);
+  }
+  assert.strictEqual(R.resolveResource('doc').plural, 'docs');
+  assert.strictEqual(R.resolveResource('docs').singular, 'doc');
+});
+
 test('`nodes` never reaches the wire resource gate — a node is a CLIENT record', async () => {
   const f = tmpCtx();
   await cli(['create', 'node', 'home', '--url', 'http://127.0.0.1:1', '--token', 't'], f);
