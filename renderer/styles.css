@@ -1936,6 +1936,8 @@ html, body {
   padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 11px;
 }
 .voice-row:hover { background: var(--active-bg); }
+.voice-row-dead { opacity: 0.45; cursor: not-allowed; }
+.voice-row-dead:hover { background: transparent; }
 .voice-row-mark { flex: none; color: var(--text-dim); font-size: 10px; }
 .voice-row-on .voice-row-mark { color: var(--accent); }
 .voice-row-main { display: flex; flex-direction: column; gap: 1px; overflow: hidden; }
@@ -1945,16 +1947,19 @@ html, body {
 /* Off is the same glyph dimmed — there is no muted-microphone codepoint in
    Unicode, so the word carries the precise state and this carries the glance. */
 #proxy-actions .px-action.px-voice-off { opacity: 0.45; }
+/* Dimmed exactly like the off state and NOT via :disabled: the button stays
+   clickable so the popover can say why, and a disabled control would receive
+   neither the click nor the tooltip's mouseover. */
+#proxy-actions .px-action.px-voice-dead { opacity: 0.45; cursor: not-allowed; }
 
 /* What CLODEX believes the recorder is doing — the same predicates the voice
    gates read, never a second detector.
 
-   FOUR rules for three states plus a no-reading case, and they must stay
-   visually distinct: 'unreadable' is a blocked re-arm and it is the state this
-   surface was built to expose, so painting it like 'off' would return the
-   operator to the blindness the display ends. Colour is not the only carrier —
-   each row also spells its state in words, since the two dim states differ by
-   hue alone and a colour-blind reader gets nothing from that.
+   The states must stay visually distinct: 'unreadable' is a blocked re-arm and
+   it is the state this surface was built to expose, so painting it like 'off'
+   would return the operator to the blindness the display ends. Colour is not
+   the only carrier — each row also spells its state in words, since the dim
+   states differ by hue alone and a colour-blind reader gets nothing from that.
 
    Semantic vars rather than literals so every theme darkens them for contrast
    at the same place the status bar does. */
@@ -1984,6 +1989,8 @@ html, body {
    in any colour reads as a measurement. */
 .rec-unreadable { color: var(--warn); }
 .rec-unreadable .rec-dot { background: none; border: 1px solid currentColor; }
+.rec-unavailable { color: var(--warn); }
+.rec-unavailable .rec-dot { background: none; border: 1px solid currentColor; }
 .rec-off { color: var(--text-dim); }
 .rec-off .rec-dot { background: none; border: 1px solid currentColor; }
 
