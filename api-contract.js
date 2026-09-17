@@ -477,8 +477,6 @@ const API_CONTRACT = [
   // this one table, the browser frontend inherits the plugin transport free.
   { name: 'pluginInvoke', kind: 'invoke', channel: 'plugin:invoke' },
   { name: 'pluginCatalog', kind: 'invoke', channel: 'plugin:catalog' },
-  { name: 'helpIndex', kind: 'invoke', channel: 'help:index' },
-  { name: 'helpPage', kind: 'invoke', channel: 'help:page' },
   { name: 'pluginSetEnabled', kind: 'invoke', channel: 'plugin:setEnabled' },
   { name: 'onPluginEvent', kind: 'on', channel: 'plugin-event' },
   // The intent catalog served over IPC rather than statically required by the
@@ -491,6 +489,8 @@ const API_CONTRACT = [
   // silently clear the other.
   { name: 'getSessionPluginGrants', kind: 'invoke', channel: 'session:pluginGrants' },
   { name: 'setSessionPluginGrants', kind: 'invoke', channel: 'session:setPluginGrants' },
+  { name: 'helpIndex', kind: 'invoke', channel: 'help:index' },
+  { name: 'helpPage', kind: 'invoke', channel: 'help:page' },
 ];
 
 module.exports = { API_CONTRACT };
