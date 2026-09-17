@@ -19,7 +19,6 @@ const { sanitizeFlat } = require('./env-scopes');
 // The peer-terminal grant (t219). A pure leaf shared with peer-client and the
 // renderer so the three cannot disagree about what the operator granted.
 const { shellCapGranted } = require('./peer-shell');
-const { readVoiceCapabilityCached } = require('./voice-capability');
 
 const WIRE_PROMPT_MAX_BYTES = 4096;
 
@@ -466,7 +465,6 @@ function createRemoteWiring(deps) {
         hostLabel: SELF_LABEL,
         version: appVersion,
         srcDir: isPackaged() ? null : homeRelativize(__dirname, os.homedir()),
-        voiceCapable: readVoiceCapabilityCached().capable,
         getWebInfo: typeof getWebInfo === 'function' ? getWebInfo : () => null,
         getWirescopeInfo: typeof getWirescopeInfo === 'function' ? getWirescopeInfo : () => null,
         getAttachInfo: (name) => {

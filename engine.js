@@ -22,7 +22,6 @@ const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
 const { resolveDisplayedPath } = require('./file-resolve');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
 const { readVoiceMode, writeVoiceMode, readVoiceTrigger } = require('./voice-settings');
-const { readVoiceCapabilityCached } = require('./voice-capability');
 const { createSpeaker, createVoiceCatalog } = require('./speaker');
 const { runTicketsMigration } = require('./tickets-migrate');
 const { validOrigin } = require('./peer-outbox');
@@ -1311,7 +1310,6 @@ const SessionManager = createSessionManager({
     writeClaudeDigestFile,
     readVoiceMode,
     writeVoiceMode,
-    readVoiceCapability: readVoiceCapabilityCached,
     deliverSkills,
     skillDeliveryProviders,
     writeAgentPlugin,
@@ -2399,7 +2397,6 @@ const toolCache = createToolCache({ whichBin });
     readSessionArgs, applySessionArgs, readSkillCatalog, applySessionSkills,
     accounts, moveAccountByModel,
     sessionScopeCtx, readEffectiveSkillState, readEffectiveToolState, readVoiceMode, readVoiceTrigger, writeVoiceMode,
-    readVoiceCapability: readVoiceCapabilityCached,
     readSessionMeta, sessionMeta, sessionInfo, claudeProjectDir, rebuildAllStatusScripts,
     stripLevelOf, updateApplies, jsonlToMarkdown, sshRun,
     probePeer, fixSessionName, buildDeployFixBriefing, classifyDeployFolder, resolveDeployFolder,

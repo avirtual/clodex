@@ -50,14 +50,13 @@ function withHome(fn) {
 // The real handler registration, with only the two readers this channel calls
 // pointed at the temp HOME. Everything else the module destructures is absent,
 // exactly as in env-scopes-ipc.test.js.
-function voiceModeHandler(home, capability = { capable: true, cause: null }) {
+function voiceModeHandler(home) {
   const handlers = new Map();
   registerIpcHandlers({
     handle: (ch, fn) => handlers.set(ch, fn),
     on: (ch, fn) => handlers.set(ch, fn),
     readVoiceMode: () => readVoiceMode({ homeDir: home }),
     readVoiceTrigger: () => readVoiceTrigger({ homeDir: home }),
-    readVoiceCapability: () => capability,
     log: { info() {}, error() {} },
   });
   const fn = handlers.get('settings:voiceMode');
@@ -83,47 +82,7 @@ test('settings:voiceMode carries the push-to-talk chord at trigger.binding — t
         binding: PARSED,
         custom: true,
       },
-      capable: true,
-      cause: null,
     });
-  });
-});
-
-test('settings:voiceMode carries the machine\u2019s capability — the whole payload, as the handler builds it', () => {
-  withHome((home) => {
-    const payload = voiceModeHandler(home, { capable: false, cause: 'SoX is not installed on this machine' })();
-    assert.deepStrictEqual(payload, {
-      ok: true,
-      file: path.join(home, '.claude', 'settings.json'),
-      source: 'voice',
-      mode: 'tap',
-      enabled: true,
-      legacy: null,
-      effective: 'tap',
-      trigger: {
-        file: path.join(home, '.claude', 'keybindings.json'),
-        binding: PARSED,
-        custom: true,
-      },
-      capable: false,
-      cause: 'SoX is not installed on this machine',
-    });
-  });
-});
-
-test('settings:voiceMode with no capability read wired answers capable, not disabled', () => {
-  withHome((home) => {
-    const handlers = new Map();
-    registerIpcHandlers({
-      handle: (ch, fn) => handlers.set(ch, fn),
-      on: (ch, fn) => handlers.set(ch, fn),
-      readVoiceMode: () => readVoiceMode({ homeDir: home }),
-      readVoiceTrigger: () => readVoiceTrigger({ homeDir: home }),
-      log: { info() {}, error() {} },
-    });
-    const payload = handlers.get('settings:voiceMode')();
-    assert.strictEqual(payload.capable, true);
-    assert.strictEqual(payload.cause, null);
   });
 });
 

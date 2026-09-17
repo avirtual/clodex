@@ -258,13 +258,6 @@ bundle), whose packaged form is the Docker image under
   does pick up an external write — it reads the mode through a live selector and
   watches the settings directory. The legacy `voiceEnabled` sibling is reported
   and never merged.
-- **voice-capability.js** — whether the Claude CLI on THIS machine could capture
-  audio at all, behind the disabled state of both voice surfaces and the `voice`
-  cap on peer hello. `darwin` records through the system; everywhere else SoX
-  must be on `PATH`, and `linux` additionally needs an entry under `/dev/snd`, so
-  a headless node says why the controls are dead instead of offering a mode
-  nothing can listen through. Pure `fs` lookups with no spawn, memoized per
-  process because the renderer polls it every five seconds.
 - **accounts.js** — the registered-subscription registry (`~/.clodex/accounts.json`,
   0600) plus the mint recipe for `~/.clodex/accounts/<label>/`, the isolated
   `CLAUDE_CONFIG_DIR` a seat on that account spawns with. The `default` account is

@@ -135,7 +135,7 @@ function readLogTail(fs, file, limit) {
 
 class RemoteServer {
   constructor({ port, host, basePath, warn, pagePath, getSessions, getSession, listWorkspaces, getTranscript, send, restartApp, restartUnavailable,
-                hostLabel, version, srcDir, voiceCapable, getWebInfo, getWirescopeInfo, getAttachInfo, sendInput, resizePty, onControlChange,
+                hostLabel, version, srcDir, getWebInfo, getWirescopeInfo, getAttachInfo, sendInput, resizePty, onControlChange,
                 query, createSession, killSession, restartSession, getCatalogs, nodeLogFile,
                 listPeers, getPeer, listTeams, getTeam, listTickets,
                 listSandboxes, getSandbox, listAgents, getAgent, listWorktrees,
@@ -158,7 +158,6 @@ class RemoteServer {
     this._hostLabel = hostLabel || 'clodex';
     this._version = version || '';
     this._srcDir = srcDir || null;
-    this._voiceCapable = voiceCapable === true;
     // The browser frontend's host, read per hello (t30). A getter, not a value:
     // web-host.js starts after this server is constructed, and is absent
     // entirely under Electron.
@@ -912,7 +911,6 @@ class RemoteServer {
       if (this._receiveRoster) caps.push('relay'); // accepts a hub-pushed relay roster (hub-relay federation)
       if (this._wtermOpen) caps.push('shell'); // peer terminal — present only while a peer holds the grant
       if (this._notifications) caps.push('inbox');
-      if (this._voiceCapable) caps.push('voice');
       caps.push('resources');
       return this._json(res, 200, {
         ok: true, app: 'clodex', host: this._hostLabel,

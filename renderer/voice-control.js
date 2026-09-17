@@ -66,17 +66,12 @@ function createVoiceCore({ showToast }) {
 
   function isMode(m) { return VOICE_ITEMS.some((i) => i.mode === m); }
 
-  function capable() { return !(state && state.capable === false); }
-
-  function cause() { return (state && state.capable === false && state.cause) || null; }
-
   // A PURE read, for a surface that must paint synchronously (the bar button is
   // built inside renderSessionActions).
   function snapshot() {
     return {
       state, pending,
       mode: pending || (state && state.effective),
-      capable: capable(), cause: cause(),
       force: false,
     };
   }
@@ -85,7 +80,6 @@ function createVoiceCore({ showToast }) {
     const snap = {
       state, pending,
       mode: pending || (state && state.effective),
-      capable: capable(), cause: cause(),
       force,
     };
     // Per-listener guard: the surfaces are notified in subscription order, so an

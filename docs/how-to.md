@@ -49,8 +49,6 @@ npm start              # dev mode
 
 **Requires the CLI's default renderer.** Clodex reads the recording indicator off the terminal screen, so `/tui fullscreen` (or `CLAUDE_CODE_NO_FLICKER=1`) breaks it: that renderer moves the whole Claude TUI onto the alternate screen buffer, which Clodex will not scrape — a full-screen program's cursor row is not a composer. The setting is sticky across restarts, so the effect is permanent until you change it back with `/tui`, and it is quiet: the tap script writes nothing and reports nothing, while the voice actions that never read the screen (seat select, tap/hold, speech on/off) keep working normally. The popover is the place to check — it reads **Cannot read the screen**, and its tooltip names the cause.
 
-The controls disable themselves on a node whose CLI cannot record (no SoX, or no audio device), and the popover names the reason.
-
 ## Build the DMG
 
 When you want an installable artifact from your own tree — an Intel build, a

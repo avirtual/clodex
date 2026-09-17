@@ -73,10 +73,11 @@ const DEFAULT_SPEAK_RATE = 210;
 // makes a tick this fast affordable at all.
 const RECORDER_TICK_MS = COMPOSITION_POLL_MS;
 
-// What CLODEX believes, in the words of the predicate that produced it.
-// 'unreadable' is the one this whole surface exists for: it silently blocks
-// every re-arm and is indistinguishable from 'off' on screen today, which is
-// how a U+00A0-vs-U+0020 scrape mismatch once left it dead with a green suite.
+// What CLODEX believes, in the words of the predicate that produced it. THREE
+// states rendered distinctly and not two — 'unreadable' is the one this whole
+// surface exists for: it silently blocks every re-arm and is indistinguishable
+// from 'off' on screen today, which is how a U+00A0-vs-U+0020 scrape mismatch
+// once left the feature dead with a green suite.
 //
 // 'out' is not a recorder state and paints nothing: the scan does not run on a
 // seat that is not the active Claude one, so there is no reading to report and
@@ -91,7 +92,6 @@ const RECORDER_STATES = {
   // live seat: it cost hours.
   unreadable: { cls: 'rec-unreadable', text: 'Cannot read the screen', hint: 'Clodex cannot see the indicator, so it will not write — a re-arm is blocked while this shows. If the CLI is in fullscreen mode (/tui fullscreen), /tui switches back' },
   off: { cls: 'rec-off', text: 'Not recording', hint: 'Clodex sees no recorder running' },
-  unavailable: { cls: 'rec-unavailable', text: 'No microphone on this machine', hint: 'This node\u2019s Claude CLI cannot record, so voice input cannot work here whatever the mode says' },
 };
 
 function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorderCause, tapOffRecorder }) {
@@ -99,29 +99,18 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
   const body = document.getElementById('voice-popover-body');
   if (!pop || !body) return { actionHtml: () => '', closeVoicePopover() {}, openVoicePopover() {} };
 
-  function capable() {
-    try { return core.snapshot().capable !== false; } catch { return true; }
-  }
-
-  function unavailableCause() {
-    try { return core.snapshot().cause || null; } catch { return null; }
-  }
-
-  // Capability FIRST: the scrape reports whatever the CLI painted, so on a box
-  // that cannot record a stale 'lit' would claim a recorder nothing can run.
-  // Below it, the gates' own reading through the injected getter and never
-  // scraped here — a second detector saying "off" while the gate said "blocked"
-  // would make the operator trust the wrong one exactly when the scrape breaks.
+  // Read through the injected getter, never scraped here. This surface reports
+  // the gates' own reading and must never be able to disagree with it — a
+  // second detector that said "off" while the gate said "blocked" would make
+  // the operator trust the wrong one at exactly the moment the scrape is broken.
   function reading() {
-    if (!capable()) return 'unavailable';
     try { return getRecorderReading(); } catch { return 'out'; }
   }
 
-  // Answered off the SAME predicate as the state above on both branches — the
-  // watcher samples its cause beside its reading on one poll, the capability
-  // cause rides the one snapshot — so it cannot describe a different reading.
+  // Read through the injected getter for the same reason, and it is the same
+  // read: the watcher samples the cause beside the reading on one poll, so this
+  // cannot report a cause from a tick the state above did not come from.
   function cause() {
-    if (!capable()) return unavailableCause();
     try { return (getRecorderCause && getRecorderCause()) || null; } catch { return null; }
   }
 
@@ -137,8 +126,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
     if (!st) return '';
     const c = cause();
     const hint = c ? `${st.hint}. Cause: ${c}` : st.hint;
-    const act = capable() ? ' data-rec' : '';
-    return `<div class="rec-state ${st.cls}"${act} title="${esc(hint)}">`
+    return `<div class="rec-state ${st.cls}" data-rec title="${esc(hint)}">`
       + '<span class="rec-dot"></span>'
       + `<span class="rec-text">${esc(st.text)}</span></div>`;
   }
@@ -179,10 +167,6 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
     const known = core.isMode(mode);
     const label = known ? mode : 'voice';
     const dim = known && mode === 'off' ? ' px-voice-off' : '';
-    if (snap.capable === false) {
-      const why = `Voice input is unavailable on this machine: ${snap.cause || 'this node\u2019s Claude CLI cannot record'}`;
-      return `<button class="px-action${dim} px-voice-dead" data-act="voice" aria-disabled="true" data-tip="${esc(why)}">🎤 ${esc(label)}</button>`;
-    }
     const tip = snap.pending
       ? `Voice input: switching to ${snap.pending}`
       : 'Voice input mode for every Claude session on this machine — click to change';
@@ -192,20 +176,17 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
   function renderRows() {
     const snap = core.snapshot();
     const mode = snap.pending || snap.mode;
-    const dead = snap.capable === false ? ' voice-row-dead' : '';
     const rows = VOICE_ITEMS.map((i) => {
       const on = i.mode === mode ? ' voice-row-on' : '';
       const mark = i.mode === mode ? '●' : '○';
-      return `<div class="voice-row${on}${dead}"${dead ? '' : ` data-mode="${i.mode}"`}>`
+      return `<div class="voice-row${on}" data-mode="${i.mode}">`
         + `<span class="voice-row-mark">${mark}</span>`
         + `<span class="voice-row-main"><span class="voice-row-name">${esc(i.name)}</span>`
         + `<span class="voice-row-desc">${esc(i.desc)}</span></span></div>`;
     }).join('');
-    const note = snap.capable === false
-      ? `Voice input is unavailable on this machine: ${esc(snap.cause || 'this node\u2019s Claude CLI cannot record')}`
-      : (snap.pending
-        ? `Switching to ${esc(snap.pending)}…`
-        : 'One setting for every Claude session on this machine.');
+    const note = snap.pending
+      ? `Switching to ${esc(snap.pending)}…`
+      : 'One setting for every Claude session on this machine.';
     // The reading rides in its own host node so the tick can replace it without
     // touching the picker rows around it.
     body.innerHTML = `<div class="voice-rows">${rows}</div>`
@@ -349,7 +330,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
   // arrived at from the other side.
   let failedOnce = false;
   core.subscribe((snap) => {
-    const key = `${snap.pending || ''}|${snap.mode || ''}|${snap.capable === false ? 'no' : ''}`;
+    const key = `${snap.pending || ''}|${snap.mode || ''}`;
     if (key === lastKey) return;
     try {
       // Equally a no-op rebuild of a live picker: the rows are detached under the

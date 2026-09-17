@@ -69,14 +69,16 @@ function harness({ voice = null, write } = {}) {
 const flush = () => new Promise((r) => setImmediate(r));
 
 // ---------------------------------------------------------------------------
-// The reachable states. Each asserts the WHOLE snapshot.
+// The reachable states. Each asserts the WHOLE snapshot: the four fields are
+// the entire contract between the core and both surfaces, and a partial match
+// is how an unwired dep arrives as `undefined` unnoticed.
 // ---------------------------------------------------------------------------
 
 test('fresh: constructed but never refreshed — no file read yet, so no mode is claimed', () => {
   const h = harness({});
   try {
     assert.deepStrictEqual(h.core.snapshot(), {
-      state: null, pending: null, mode: null, capable: true, cause: null, force: false,
+      state: null, pending: null, mode: null, force: false,
     });
   } finally { h.restore(); }
 });
@@ -86,7 +88,7 @@ test('steady: a read of the file with nothing pending publishes the file\'s mode
   try {
     await h.core.refresh();
     assert.deepStrictEqual(h.last(), {
-      state: fileSays('tap'), pending: null, mode: 'tap', capable: true, cause: null, force: false,
+      state: fileSays('tap'), pending: null, mode: 'tap', force: false,
     });
   } finally { h.restore(); }
 });
@@ -100,7 +102,7 @@ test('steady with an unreadable file: state survives the failed read and an emit
     await h.core.refresh();
     assert.strictEqual(h.emits.length, before + 1, 'a failed read must still repaint the surfaces');
     assert.deepStrictEqual(h.last(), {
-      state: fileSays('tap'), pending: null, mode: 'tap', capable: true, cause: null, force: false,
+      state: fileSays('tap'), pending: null, mode: 'tap', force: false,
     });
   } finally { h.restore(); }
 });
@@ -112,7 +114,7 @@ test('pending: the pick is published as pending and overrides the file\'s mode',
     await h.core.refresh();
     assert.strictEqual(h.core.choose('hold'), true);
     assert.deepStrictEqual(h.last(), {
-      state: fileSays('tap'), pending: 'hold', mode: 'hold', capable: true, cause: null, force: false,
+      state: fileSays('tap'), pending: 'hold', mode: 'hold', force: false,
     });
     // Nothing is written yet — the debounce owns that.
     assert.deepStrictEqual(h.calls.setVoiceMode, []);
@@ -146,7 +148,7 @@ test('operator picks "Not set": nothing is written, but the repaint is FORCED', 
     // Without it the row keeps showing "Not set" beneath a line saying the value
     // came from the file — the r2 defect, in the shape reachable from the picker.
     assert.deepStrictEqual(h.last(), {
-      state: fileSays('tap'), pending: null, mode: 'tap', capable: true, cause: null, force: true,
+      state: fileSays('tap'), pending: null, mode: 'tap', force: true,
     });
   } finally { h.restore(); }
 });
@@ -185,7 +187,7 @@ test('write failed: the pick is dropped, the operator is told, and the repaint i
     t.mock.timers.tick(CHOICE_DEBOUNCE_MS);
     await flush();
     assert.deepStrictEqual(h.last(), {
-      state: fileSays('tap'), pending: null, mode: 'tap', capable: true, cause: null, force: true,
+      state: fileSays('tap'), pending: null, mode: 'tap', force: true,
     }, 'the row must fall back to the file, forced past a focused picker');
     assert.deepStrictEqual(h.toasts, ['Setting voice to hold failed: settings.json has a syntax error']);
 
@@ -245,13 +247,13 @@ test('the pending affordance stands until a read AGREES — a differing read is 
     h.core.choose('hold');
     await h.core.refresh();             // a read that raced the write
     assert.deepStrictEqual(h.last(), {
-      state: fileSays('tap'), pending: 'hold', mode: 'hold', capable: true, cause: null, force: false,
+      state: fileSays('tap'), pending: 'hold', mode: 'hold', force: false,
     }, 'the write has not landed yet, which is not a refusal');
 
     h.state.voice = fileSays('hold');   // the file caught up
     await h.core.refresh();
     assert.deepStrictEqual(h.last(), {
-      state: fileSays('hold'), pending: null, mode: 'hold', capable: true, cause: null, force: false,
+      state: fileSays('hold'), pending: null, mode: 'hold', force: false,
     }, 'an equal read retires the affordance');
   } finally { h.restore(); }
 });
@@ -417,48 +419,4 @@ test('triggerBinding is null before any read, and when the file binds no chord',
     await legacy.core.refresh();
     assert.strictEqual(legacy.core.triggerBinding(), null);
   } finally { legacy.restore(); }
-});
-
-test('capable is TRUE before any poll — the controls may not flash disabled in the window before the first read', () => {
-  const h = harness({});
-  try {
-    const snap = h.core.snapshot();
-    assert.strictEqual(snap.capable, true);
-    assert.strictEqual(snap.cause, null);
-  } finally { h.restore(); }
-});
-
-test('a poll that says the machine cannot record publishes capable:false with the cause', async () => {
-  const h = harness({ voice: fileSays('tap', { capable: false, cause: 'SoX is not installed on this machine' }) });
-  try {
-    await h.core.refresh();
-    assert.deepStrictEqual(h.last(), {
-      state: fileSays('tap', { capable: false, cause: 'SoX is not installed on this machine' }),
-      pending: null,
-      mode: 'tap',
-      capable: false,
-      cause: 'SoX is not installed on this machine',
-      force: false,
-    });
-    assert.strictEqual(h.core.snapshot().capable, false);
-    assert.strictEqual(h.core.snapshot().cause, 'SoX is not installed on this machine');
-  } finally { h.restore(); }
-});
-
-test('a poll that says capable carries no cause, whatever the payload holds', async () => {
-  const h = harness({ voice: fileSays('tap', { capable: true, cause: null }) });
-  try {
-    await h.core.refresh();
-    assert.strictEqual(h.last().capable, true);
-    assert.strictEqual(h.last().cause, null);
-  } finally { h.restore(); }
-});
-
-test('a payload with no capability keys reads as capable, not as disabled', async () => {
-  const h = harness({ voice: fileSays('hold') });
-  try {
-    await h.core.refresh();
-    assert.strictEqual(h.last().capable, true);
-    assert.strictEqual(h.last().cause, null);
-  } finally { h.restore(); }
 });
