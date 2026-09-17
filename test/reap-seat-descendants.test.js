@@ -89,9 +89,7 @@ function seat(m, name, pid) {
 //
 // Only pids THIS FILE spawned are allowed through to the OS. Everything else is
 // recorded. That is what makes the header's claim — a test for a guard against
-// killing the machine must not kill the machine — true of the file as written,
-// and it covers the real-tree subjects' trailing backstop too: that one signals
-// an already-dead `sh.pid`, which is a pid-recycle window of its own.
+// killing the machine must not kill the machine — true of the file as written.
 const realKill = process.kill.bind(process);
 const spawnedByUs = new Set();
 let signalled = [];

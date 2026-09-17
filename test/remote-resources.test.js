@@ -468,6 +468,20 @@ test('the OLD transcript and query paths are gone — 404, no alias, no legacy s
   assert.ok(!REMOTE_SRC.includes("'/api/query/'"), "remote.js still spells the old '/api/query/' prefix");
 });
 
+test('a trailing slash on a session path is a 404, not the resource it looks like', async () => {
+  const fixture = subresourceFixture();
+  await withNode(fixture.opts, async (port) => {
+    const ok = await req(port, '/api/sessions/alice');
+    assert.strictEqual(ok.status, 200, 'ENTER: the same request WITHOUT the slash is the shipped resource');
+
+    const slashed = await req(port, '/api/sessions/alice/');
+    assert.strictEqual(slashed.status, 404,
+      "a trailing slash splits to an empty sub, which matches no route. It answered 400 ('bad session name') "
+      + 'before the resource wire and nothing pinned the change, so the status has drifted once already.');
+    assert.strictEqual(fixture.calls.length, 0, 'and the slashed spelling reached no callback');
+  });
+});
+
 test('the OLD attach/control/input/resize paths are gone — 404, no alias, no legacy shim', async () => {
   const fixture = subresourceFixture();
   const post = (port, p, body) => req(port, p, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
