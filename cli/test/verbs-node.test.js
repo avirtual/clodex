@@ -167,6 +167,33 @@ test('a FOREIGN credential-shaped key on a stored entry never reaches -o json', 
   }
 });
 
+test('a credential-shaped key NESTED inside a kind object never reaches -o json', async () => {
+  const f = tmpCtx();
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  fs.writeFileSync(f, JSON.stringify({
+    current: 'k8s',
+    contexts: {
+      k8s: { kubectl: { target: 'svc/x', namespace: 'n', password: 'NESTED_PASSWORD', authToken: 'NESTED_AUTHTOKEN' } },
+      box: { ssm: { target: 't', region: 'eu-west-1', secret: 'NESTED_SECRET' } },
+    },
+  }), { mode: 0o600 });
+
+  const r = await cli(['get', 'nodes', '-o', 'json'], f);
+  assert.strictEqual(r.code, 0, `ENTER: the listing rendered (${r.stderr})`);
+  const parsed = JSON.parse(r.stdout);
+  const byName = Object.fromEntries(parsed.nodes.map((n) => [n.name, n]));
+  assert.deepStrictEqual(Object.keys(byName).sort(), ['box', 'k8s'], 'ENTER: both entries are really in the payload');
+
+  assert.deepStrictEqual(byName.k8s.transport, { kubectl: { target: 'svc/x', namespace: 'n' } },
+    'the legitimate kubectl fields survive and the foreign siblings do not');
+  assert.deepStrictEqual(byName.box.transport, { ssm: { target: 't', region: 'eu-west-1' } });
+
+  assert.strictEqual(findSecretKey(parsed), null, `a secret-shaped key survived at ${findSecretKey(parsed)}`);
+  for (const leaked of ['NESTED_PASSWORD', 'NESTED_AUTHTOKEN', 'NESTED_SECRET']) {
+    assert.doesNotMatch(r.stdout, new RegExp(leaked), `${leaked} reached -o json from inside a kind object`);
+  }
+});
+
 test('get node <name> --current is USAGE, not a silently ignored name', async () => {
   const f = tmpCtx();
   await cli(['create', 'node', 'home', '--url', 'http://127.0.0.1:7900'], f);
@@ -184,8 +211,8 @@ test('get node <name> --current is USAGE, not a silently ignored name', async ()
 
 test('verbs.js exports the node family and no ctx spelling', () => {
   assert.deepStrictEqual(Object.keys(V).sort(), [
-    'DEPLOYABLE', 'QUERY_KINDS', 'RESOURCE_VERBS', 'SESSION_SUBRESOURCES',
-    'apiResources', 'checkResourceWord', 'create', 'createSession',
+    'DEPLOYABLE', 'KIND_FIELDS', 'QUERY_KINDS', 'RESOURCE_VERBS', 'SESSION_SUBRESOURCES',
+    'TRANSPORT_FIELDS', 'apiResources', 'checkResourceWord', 'create', 'createSession',
     'delete', 'deleteSession', 'describe', 'dm', 'entryKind', 'entryTarget',
     'exec', 'execPty', 'filterWorkspace', 'get', 'info', 'input', 'logs',
     'nodeCreate', 'nodeCurrent', 'nodeDelete', 'nodeDescribe', 'nodeList', 'nodeUse',
@@ -193,6 +220,42 @@ test('verbs.js exports the node family and no ctx spelling', () => {
     'restart', 'restartNode', 'restartSession', 'sessionType',
     'takeResourceWord', 'version',
   ]);
+});
+
+test('main.js exports only what another module consumes', () => {
+  const M = require('../src/main');
+  assert.deepStrictEqual(Object.keys(M).sort(), [
+    'DELETED_FAMILIES', 'OUTPUT_FORMATS', 'PARSE_OPTS', 'RENAMED_SECOND', 'RENAMED_VERBS',
+    'SPECIAL_VERBS', 'TOP_VERBS', 'applyOutput', 'dispatchNode', 'findDeletedJsonFlag',
+    'preflightResourceWord', 'renamedLine', 'renamedPointer', 'renamedSecondLine', 'run',
+  ]);
+});
+
+test('KIND_FIELDS covers every kind field transport.js reads off a kind object', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'transport.js'), 'utf-8');
+  const kinds = Object.keys(V.KIND_FIELDS).filter((k) => k !== 'deploy');
+  assert.deepStrictEqual(kinds.sort(), ['az', 'gcloud', 'kubectl', 'ssm'],
+    'ENTER: the object-valued transport kinds are the ones this scanner covers');
+
+  const found = new Map(kinds.map((k) => [k, new Set()]));
+  for (const m of src.matchAll(/\b(?:ctx|entry|e)\.(ssm|kubectl|gcloud|az)\.([A-Za-z_][A-Za-z0-9_]*)/g)) {
+    found.get(m[1]).add(m[2]);
+  }
+  for (const m of src.matchAll(/function (ssm|kubectl|gcloud|az)Argv\(\{([^}]*)\}/g)) {
+    for (const part of m[2].split(',')) {
+      const name = part.split(/[:=]/)[0].trim();
+      if (name) found.get(m[1]).add(name);
+    }
+  }
+  const total = kinds.reduce((n, k) => n + found.get(k).size, 0);
+  assert.ok(total >= 12, `ENTER: the scanner really found reads in transport.js (got ${total})`);
+
+  for (const kind of kinds) {
+    for (const field of found.get(kind)) {
+      assert.ok(V.KIND_FIELDS[kind].includes(field),
+        `transport.js reads ${kind}.${field}, but KIND_FIELDS.${kind} does not copy it — get nodes -o json would drop it`);
+    }
+  }
 });
 
 test('`nodes` never reaches the wire resource gate — a node is a CLIENT record', async () => {
