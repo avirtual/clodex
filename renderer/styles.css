@@ -2175,8 +2175,71 @@ html, body {
   box-shadow: var(--shadow-overlay);
 }
 #report-modal .popover-title { margin-bottom: 12px; }
+.rep-note { font-size: 12px; color: var(--text-dim); }
+.rep-sec { margin: 16px 0 0; }
+.rep-sec-head {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-dim); margin-bottom: 8px;
+}
 
-/* ── Help panel (docs/help.json corpus) ────────────────────────────── */
+/* Verdict banner */
+.rep-verdict { display: flex; gap: 12px; align-items: center; }
+.rep-score {
+  flex: 0 0 auto; width: 52px; height: 52px; border-radius: 8px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  font-weight: 700; line-height: 1; color: #11151f;
+}
+.rep-score .n { font-size: 20px; }
+.rep-score .l { font-size: 8px; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 3px; }
+.rep-rating-optimal { background: #98c379; }
+.rep-rating-suboptimal { background: #e5c07b; }
+.rep-rating-wasteful { background: #e06c75; }
+.rep-verdict-text { min-width: 0; }
+.rep-headline { font-size: 13px; color: var(--text); font-weight: 600; }
+.rep-reclaim { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
+.rep-reclaim b { color: var(--accent); font-weight: 600; }
+.rep-scope { font-size: 11px; color: var(--text-dim); margin-top: 8px; }
+
+/* Stacked bars (cost + token decomposition) */
+.rep-stack { display: flex; height: 14px; border-radius: 4px; overflow: hidden; margin-bottom: 8px; }
+.rep-stack > i { display: block; height: 100%; }
+.rep-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; }
+.rep-leg-row { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.rep-leg-sw { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 2px; }
+.rep-leg-name { color: var(--text); }
+.rep-leg-nums { margin-left: auto; color: var(--text-dim); }
+.rep-sub { font-size: 11px; color: var(--text-dim); margin: 6px 0 0 15px; }
+.rep-sub b { color: var(--warn); font-weight: 600; }
+
+/* Findings */
+.rep-find {
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; margin-bottom: 8px;
+}
+.rep-find.low { opacity: 0.72; }
+.rep-find-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.rep-find-title { font-size: 12px; color: var(--text); font-weight: 600; }
+.rep-find-usd { font-size: 12px; color: var(--accent); font-weight: 600; white-space: nowrap; }
+.rep-find-detail { font-size: 11px; color: var(--text-dim); margin: 4px 0 0; }
+.rep-find-meta { font-size: 10px; color: var(--text-dim); margin-top: 5px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.rep-conf { text-transform: uppercase; letter-spacing: 0.04em; }
+.rep-conf-high { color: var(--ok); }
+.rep-conf-medium { color: var(--warn); }
+.rep-conf-low { color: var(--text-dim); }
+.rep-lever {
+  display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px; color: var(--text); background: var(--active-bg);
+  border-radius: 3px; padding: 1px 5px; margin-top: 5px; word-break: break-all;
+}
+.rep-group-head {
+  font-size: 11px; color: var(--text-dim); margin: 10px 0 6px; cursor: pointer;
+  user-select: none;
+}
+.rep-group-head:hover { color: var(--text); }
+.rep-group.collapsed .rep-find { display: none; }
+.rep-inv { font-size: 10px; color: var(--text-dim); font-style: italic; margin-top: 14px; }
+.rep-inv.bad { color: var(--error); font-style: normal; }
+
 #help-overlay {
   position: fixed; inset: 0; z-index: 60;
   display: flex; align-items: center; justify-content: center;
@@ -2256,70 +2319,6 @@ html, body {
 .help-doc a { color: var(--accent); cursor: pointer; text-decoration: none; }
 .help-doc a:hover { text-decoration: underline; }
 
-.rep-note { font-size: 12px; color: var(--text-dim); }
-.rep-sec { margin: 16px 0 0; }
-.rep-sec-head {
-  font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
-  color: var(--text-dim); margin-bottom: 8px;
-}
-
-/* Verdict banner */
-.rep-verdict { display: flex; gap: 12px; align-items: center; }
-.rep-score {
-  flex: 0 0 auto; width: 52px; height: 52px; border-radius: 8px;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  font-weight: 700; line-height: 1; color: #11151f;
-}
-.rep-score .n { font-size: 20px; }
-.rep-score .l { font-size: 8px; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 3px; }
-.rep-rating-optimal { background: #98c379; }
-.rep-rating-suboptimal { background: #e5c07b; }
-.rep-rating-wasteful { background: #e06c75; }
-.rep-verdict-text { min-width: 0; }
-.rep-headline { font-size: 13px; color: var(--text); font-weight: 600; }
-.rep-reclaim { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
-.rep-reclaim b { color: var(--accent); font-weight: 600; }
-.rep-scope { font-size: 11px; color: var(--text-dim); margin-top: 8px; }
-
-/* Stacked bars (cost + token decomposition) */
-.rep-stack { display: flex; height: 14px; border-radius: 4px; overflow: hidden; margin-bottom: 8px; }
-.rep-stack > i { display: block; height: 100%; }
-.rep-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 16px; }
-.rep-leg-row { display: flex; align-items: center; gap: 6px; font-size: 11px; }
-.rep-leg-sw { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 2px; }
-.rep-leg-name { color: var(--text); }
-.rep-leg-nums { margin-left: auto; color: var(--text-dim); }
-.rep-sub { font-size: 11px; color: var(--text-dim); margin: 6px 0 0 15px; }
-.rep-sub b { color: var(--warn); font-weight: 600; }
-
-/* Findings */
-.rep-find {
-  border: 1px solid var(--border); border-radius: 6px;
-  padding: 8px 10px; margin-bottom: 8px;
-}
-.rep-find.low { opacity: 0.72; }
-.rep-find-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.rep-find-title { font-size: 12px; color: var(--text); font-weight: 600; }
-.rep-find-usd { font-size: 12px; color: var(--accent); font-weight: 600; white-space: nowrap; }
-.rep-find-detail { font-size: 11px; color: var(--text-dim); margin: 4px 0 0; }
-.rep-find-meta { font-size: 10px; color: var(--text-dim); margin-top: 5px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-.rep-conf { text-transform: uppercase; letter-spacing: 0.04em; }
-.rep-conf-high { color: var(--ok); }
-.rep-conf-medium { color: var(--warn); }
-.rep-conf-low { color: var(--text-dim); }
-.rep-lever {
-  display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px; color: var(--text); background: var(--active-bg);
-  border-radius: 3px; padding: 1px 5px; margin-top: 5px; word-break: break-all;
-}
-.rep-group-head {
-  font-size: 11px; color: var(--text-dim); margin: 10px 0 6px; cursor: pointer;
-  user-select: none;
-}
-.rep-group-head:hover { color: var(--text); }
-.rep-group.collapsed .rep-find { display: none; }
-.rep-inv { font-size: 10px; color: var(--text-dim); font-style: italic; margin-top: 14px; }
-.rep-inv.bad { color: var(--error); font-style: normal; }
 
 .terminal-wrapper {
   position: absolute;

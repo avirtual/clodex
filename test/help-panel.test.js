@@ -1,17 +1,5 @@
 'use strict';
 
-// The Help overlay's own properties, over the shipped island. initHelpPanel
-// reads `document` at CALL time, not at load, so the module is required
-// normally and RUN against a fake document — the idiom
-// test/plugin-readme-popover.test.js established, with the real render-doc and
-// doc-parse leaves underneath: a stubbed renderer would pin the stub, and the
-// point here is that the panel feeds the shipped builder and appends what it
-// returns.
-//
-// The page NAMES come from the real docs/help.json corpus, so the link table
-// below is measured against the manifest the panel will actually see; the page
-// BODIES are fixtures, so every expected value is a literal.
-
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -110,8 +98,6 @@ function fakeDocument() {
   return { doc, byId };
 }
 
-// The api half: the index is the REAL manifest (so a page name that does not
-// exist in the corpus cannot resolve), the bodies are these literals.
 const PAGES = {
   'how-to': [
     '# How to use Clodex',
@@ -129,7 +115,12 @@ const PAGES = {
   ].join('\n'),
   messaging: '# Messaging\n\n## Anchors\n\nMessaging prose.\n',
   architecture: '# Architecture\n\nThe [web box](../docker/web/) lives outside the corpus.\n',
-  'recipe-aws-ec2': '# EC2 recipe\n\nRecipe prose.\n',
+  'recipe-aws-ec2': [
+    '# EC2 recipe',
+    '',
+    'Back to [messaging](../messaging.md) and the [plugin API](../../plugins/plugin-api.md).',
+  ].join('\n'),
+  cli: '# clodexctl\n\nThe [readme](./README.md) is this page.\n',
 };
 
 function makeApi() {
@@ -170,8 +161,6 @@ function links(bodyEl) {
   return bodyEl.querySelectorAll('a');
 }
 
-// ── (a) the island's shape ─────────────────────────────────────────────────
-
 test('the island never names innerHTML and feeds the shipped leaves', () => {
   assert.ok(!islandSrc.includes('innerHTML'),
     'help-panel.js must never reach for innerHTML: the corpus is rendered in a contextIsolation:false page');
@@ -180,8 +169,6 @@ test('the island never names innerHTML and feeds the shipped leaves', () => {
   assert.match(islandSrc, /require\('\.\.\/\.\.\/doc-parse'\)/,
     'the panel must parse the corpus with the doc-parse leaf');
 });
-
-// ── (b) resolveHref, through the rendered anchors ──────────────────────────
 
 test('link resolution: anchors stay in-page, corpus links become pages, the rest go to GitHub', async () => {
   const ctx = mount();
@@ -204,10 +191,24 @@ test('link resolution: anchors stay in-page, corpus links become pages, the rest
     href: 'https://github.com/avirtual/clodex/blob/master/docker/web/',
     target: '_blank',
     rel: 'noreferrer noopener',
-  }], 'a repo path outside the corpus opens on GitHub, resolved against the PAGE\'s own directory');
+  }], 'a repo path outside the corpus opens on GitHub');
 });
 
-// ── (c) opening a page ─────────────────────────────────────────────────────
+test('a link is resolved against the PAGE\'s own directory, not against docs/', async () => {
+  const ctx = mount();
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('recipe-aws-ec2', null));
+  const fromRecipe = new Map(links(ctx.byId.get('help-body')).map((n) => [n.textContent, n.attrs]));
+  assert.strictEqual(fromRecipe.size, 2, 'ENTER: the recipe fixture must render both of its links');
+  assert.deepStrictEqual(fromRecipe.get('messaging'), { href: '#', 'data-page': 'messaging' },
+    '../messaging.md from docs/recipes/ is docs/messaging.md — from docs/ it would be messaging.md, which is no page');
+  assert.deepStrictEqual(fromRecipe.get('plugin API'), { href: '#', 'data-page': 'plugin-api' },
+    '../../plugins/plugin-api.md must climb out of docs/recipes/, not out of docs/');
+
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('cli', null));
+  const fromCli = links(ctx.byId.get('help-body'));
+  assert.deepStrictEqual(fromCli.map((n) => n.attrs), [{ href: '#', 'data-page': 'cli' }],
+    './README.md on the CLI page is cli/README.md — the one page whose directory is not docs/');
+});
 
 test('opening a page appends render-doc\'s nodes and marks its nav row current', async () => {
   const ctx = mount();
@@ -258,8 +259,6 @@ test('an external link in the corpus is handed to openExternal, never followed',
   assert.deepStrictEqual(ctx.calls.external, ['https://example.com']);
 });
 
-// ── (d) the in-panel history ───────────────────────────────────────────────
-
 test('back and forward walk the in-panel history', async () => {
   const ctx = mount();
   await withDocument(ctx, () => ctx.panel.openHelpPanel('how-to', null));
@@ -276,8 +275,6 @@ test('back and forward walk the in-panel history', async () => {
   assert.strictEqual(title.textContent, 'Clodex Help — messaging title', 'forward must return to the later page');
   assert.strictEqual(ctx.byId.get('help-body').querySelector('h1').textContent, 'Messaging');
 });
-
-// ── (e) search ─────────────────────────────────────────────────────────────
 
 test('search swaps the nav only at two characters, and Escape clears without closing', async () => {
   const ctx = mount();
@@ -337,8 +334,6 @@ test('closing keeps the caches: a second open refetches nothing', async () => {
     'the index is fetched once per renderer lifetime and each page once');
 });
 
-// ── (f) renderer.js wiring ─────────────────────────────────────────────────
-
 test('renderer.js wires the panel into Escape, the opener and the subscription', () => {
   const table = rendererSrc.match(/^const ESCAPE_CLOSES = \[\n[\s\S]*?^\];$/m);
   assert.ok(table, 'ENTER: no ESCAPE_CLOSES table found in renderer.js');
@@ -353,8 +348,6 @@ test('renderer.js wires the panel into Escape, the opener and the subscription',
   assert.match(rendererSrc, /window\.api\.onRequestOpenHelp\(\(name, slug\) => openHelp\(name, slug\)\);/,
     'the S3 menu subscription must survive');
 });
-
-// ── (g) the shipped markup ─────────────────────────────────────────────────
 
 test('index.html ships the overlay empty, after #report-overlay and before the script', () => {
   const report = htmlSrc.indexOf('<div id="report-overlay"');
