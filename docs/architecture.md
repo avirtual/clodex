@@ -868,6 +868,13 @@ accept teardown removes.
   and `search`. Pure — no DOM, no fs, no requires. It covers exactly the markdown
   subset the shipped docs were measured to use and treats everything else as
   literal text, which is what lets Help ship with no markdown dependency.
+- **help-corpus.js** — the Help window's corpus reader: `loadHelpCorpus(root)` →
+  `{ list, get, section, search, index }` over the 17 pages named in
+  `docs/help.json`, titles taken from each page's single H1 through `doc-parse`.
+  fs + path + `doc-parse.js` only, no Electron; pages are read and parsed once
+  per `root` and cached in the returned object, so two roots are two corpora. A
+  name outside the manifest returns null and reads no file. In the leak-scanner
+  root list beside `doc-parse.js`, the other half of the Help pair.
 - **scope-util.js** — skill/agent visibility: `visibleTo` / `autoEnabledFor` /
   `unionEnabled` / `reconcilePartialSelection` — the `workspace:`/`sessions:`
   frontmatter scope predicate + spawn-union + scoped-checklist save semantics.
