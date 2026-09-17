@@ -11,7 +11,7 @@ one: anything the 17 pages do not contain is out of scope by construction.
 
 Precedence is fixed and load-bearing: code spans, then links, then strong, then
 em, recursing into strong/em/link text. Parsing em before code italicizes
-`AGENT_NAME_RE, DEFAULT_WORKSPACE_ID` (docs/architecture.md) and prints
+`AGENT_NAME_RE, DEFAULT_WORKSPACE_ID` (docs/architecture.md:864) and prints
 literal backticks inside ``[`x`](y)`` — both are live hazards in the corpus and
 both are the reason render-markdown.js could not be reused.
 
@@ -31,12 +31,12 @@ escape splits the run, so `\&lt;` never reaches the decoder.
 ## htmlLine
 
 The corpus has exactly two raw-HTML shapes. `<a name="x">` becomes an `anchor`
-block. Two DROP rules run, not one: a line whose tags leave nothing behind is
-dropped whatever the tag names are, AND a line made only of `<details>`/
-`<summary>` tags is dropped by tag NAME even when it carries text, so
-`<details><summary>x</summary>` vanishes. Every other tag line stays literal
-text — `<b>hi</b>` and `<script>…</script>` are shown, never executed, which is
-the safe direction for an unknown tag.
+block (30 same-doc links depend on those two ids resolving). A line made only of
+`<details>`/`<summary>` tags is DROPPED, by tag NAME, not by "a line that is only
+tags": `<details><summary>x</summary>` carries visible text and must still
+vanish, while `<b>hi</b>` and `<script>…</script>` must stay literal text. An
+allowlist is the only reading that gives both, and it fails in the safe
+direction — an unknown tag is shown, never executed.
 
 ## parseList
 

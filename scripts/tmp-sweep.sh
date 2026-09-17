@@ -521,7 +521,6 @@ envdef-ud-
 envfile-
 execbin-
 fs-util-
-help-corpus-
 hint-recall-
 hold-restart-
 ipc-act-home-
