@@ -29,7 +29,7 @@
   width: 100%; max-width: 1180px; height: 88vh; max-height: 92vh;
   min-width: 560px; min-height: 360px; resize: both;
   display: flex; flex-direction: column; overflow: hidden;
-  background: var(--sidebar-bg); border: 1px solid var(--accent);
+  background: var(--surface-overlay); border: 1px solid var(--border-strong);
   border-radius: 8px; box-shadow: var(--shadow-overlay);
 }
 .workbench-topbar {

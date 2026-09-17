@@ -293,3 +293,68 @@ test('the dialog head is sticky in every dialog that scrolls itself', () => {
       `\`${top.selector}\` wins top on \`${id} .dialog-head\` with \`auto\` — sticky never engages`);
   }
 });
+
+const workbenchCss = fs.readFileSync(
+  path.join(ROOT, 'plugins', 'workbench', 'style.css'), 'utf8');
+const { parseRules } = require('./lib/css-cascade');
+
+function ruleBody(css, selector) {
+  const hit = parseRules(css).filter((r) => r.selector
+    .split(',').map((s) => s.trim()).includes(selector));
+  assert.strictEqual(hit.length, 1,
+    `ENTER: ${hit.length} rules carry the literal selector \`${selector}\``);
+  return hit[0].body;
+}
+
+function chainFor(selector) {
+  return [selector.startsWith('#')
+    ? { tag: 'div', id: selector.slice(1), classes: [], attrs: {} }
+    : { tag: 'div', id: null, classes: [selector.slice(1)], attrs: {} }];
+}
+
+test('the file peek, report and tool overlay panels wear the shared neutral chrome', () => {
+  const surfaces = ['#file-peek-modal', '#report-modal', '.tool-overlay-panel'];
+  const selectors = new Set(parseRules(cssSrc)
+    .flatMap((r) => r.selector.split(',').map((s) => s.trim())));
+  for (const sel of surfaces) {
+    assert.ok(selectors.has(sel), `ENTER: no \`${sel}\` rule in renderer/styles.css`);
+  }
+  for (const sel of surfaces) {
+    const border = winningDeclaration(cssSrc, chainFor(sel), 'border');
+    assert.ok(border, `ENTER: no border rule resolves onto \`${sel}\``);
+    assert.strictEqual(border.value, '1px solid var(--border-strong)',
+      `\`${border.selector}\` wins border on \`${sel}\` with \`${border.value}\` — `
+      + 'the modal keeps the pre-chrome accent edge beside the neutral popovers');
+    const bg = winningDeclaration(cssSrc, chainFor(sel), 'background');
+    assert.ok(bg, `ENTER: no background rule resolves onto \`${sel}\``);
+    assert.strictEqual(bg.value, 'var(--surface-overlay)',
+      `\`${bg.selector}\` wins background on \`${sel}\` with \`${bg.value}\``);
+  }
+});
+
+test('#workbench-modal wears the neutral border while its active tab keeps the accent', () => {
+  const modal = ruleBody(workbenchCss, '#workbench-modal');
+  assert.match(modal, /var\(--border-strong\)/,
+    '#workbench-modal does not reach for --border-strong — it renders the old red edge');
+  assert.doesNotMatch(modal, /var\(--accent\)/,
+    '#workbench-modal still carries --accent chrome');
+  const tab = ruleBody(workbenchCss, '.workbench-tab.active');
+  assert.match(tab, /border-color:\s*var\(--accent\)/,
+    "the active workbench tab lost its accent edge — that border is a signal, not chrome");
+});
+
+test('a resting 1px accent border survives only on the text inputs', () => {
+  const offenders = [];
+  for (const rule of parseRules(cssSrc)) {
+    if (!/(?:^|;)\s*border\s*:\s*1px solid var\(--accent\)\s*(?:;|$)/.test(rule.body)) continue;
+    for (const sel of rule.selector.split(',').map((s) => s.trim())) {
+      if (/:focus|\.active|\.selected/.test(sel)) continue;
+      offenders.push(sel);
+    }
+  }
+  assert.ok(offenders.length,
+    'ENTER: no `border: 1px solid var(--accent)` declaration parsed out of the sheet at all');
+  assert.deepStrictEqual([...new Set(offenders)].sort(), ['.rename-input', '.workspace-name-input'],
+    'a non-input surface takes `border: 1px solid var(--accent)` as its resting border — '
+    + 'chrome edges are neutral, the accent is reserved for focus and selection');
+});
