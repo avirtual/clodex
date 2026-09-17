@@ -8,6 +8,8 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
 const htmlSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
+const cssSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'styles.css'), 'utf8');
+const { winningDeclaration } = require('./lib/css-cascade');
 
 function tableRows() {
   const m = rendererSrc.match(/^const ESCAPE_CLOSES = \[\n([\s\S]*?)^\];$/m);
@@ -41,6 +43,51 @@ function closeButtonOwners() {
   return owners;
 }
 
+function elementExtent(src, open) {
+  const re = /<(\/?)div\b[^>]*?(\/?)>/g;
+  re.lastIndex = open;
+  let depth = 0;
+  let m;
+  while ((m = re.exec(src))) {
+    if (m[2] === '/') continue;
+    depth += m[1] ? -1 : 1;
+    if (depth === 0) return { start: open, end: m.index + m[0].length };
+  }
+  return null;
+}
+
+function ancestorChain(at) {
+  const stack = [];
+  const re = /<(\/?)div\b([^>]*?)(\/?)>/g;
+  let m;
+  while ((m = re.exec(htmlSrc)) && m.index < at) {
+    if (m[3] === '/') continue;
+    if (m[1]) { stack.pop(); continue; }
+    const id = m[2].match(/\bid="([^"]+)"/);
+    const cls = m[2].match(/\bclass="([^"]+)"/);
+    stack.push({
+      tag: 'div',
+      id: id ? id[1] : null,
+      classes: cls ? cls[1].split(/\s+/).filter(Boolean) : [],
+      attrs: {},
+    });
+  }
+  assert.ok(stack.length, `ENTER: nothing is open at offset ${at} — the tag replay lost the tree`);
+  return stack;
+}
+
+function dialogHeads() {
+  const heads = [];
+  const re = /<div class="dialog-head">/g;
+  let m;
+  while ((m = re.exec(htmlSrc))) {
+    const extent = elementExtent(htmlSrc, m.index);
+    assert.ok(extent, `a .dialog-head at offset ${m.index} is never closed`);
+    heads.push({ ...extent, html: htmlSrc.slice(extent.start, extent.end) });
+  }
+  return heads;
+}
+
 function runListener(closeNames, { target }) {
   const docListeners = [];
   const closed = [];
@@ -56,10 +103,22 @@ function runListener(closeNames, { target }) {
   return closed;
 }
 
+function selectorSuffixes() {
+  const block = extractClickListener();
+  const sel = block.match(/closest\('([^']*\[id\$=[^']*)'\)/);
+  assert.ok(sel, 'ENTER: the ✕ listener resolves no ancestor by an [id$="…"] selector');
+  const suffixes = [...sel[1].matchAll(/\[id\$="([^"]+)"\]/g)].map((m) => m[1]);
+  assert.ok(suffixes.length, `ENTER: no id suffix parsed out of \`${sel[1]}\``);
+  return suffixes;
+}
+
 function fakeTarget({ btnOverlayId, isButton = true }) {
-  const overlay = btnOverlayId === null ? null : { id: btnOverlayId };
+  const suffixes = selectorSuffixes();
+  const overlay = btnOverlayId === null || !suffixes.some((s) => btnOverlayId.endsWith(s))
+    ? null
+    : { id: btnOverlayId };
   const btn = isButton
-    ? { closest: (sel) => (sel === '[id$="-overlay"]' ? overlay : null) }
+    ? { closest: (sel) => (sel.includes('[id$=') ? overlay : null) }
     : null;
   return { closest: (sel) => (sel === '.dialog-close' ? btn : null) };
 }
@@ -104,6 +163,50 @@ test('every ✕ shipped in index.html sits in an overlay the table can close', (
   for (const owner of owners) {
     assert.ok(ids.has(owner),
       `#${owner} ships a .dialog-close but is not a row of ESCAPE_CLOSES — its ✕ is dead`);
+  }
+});
+
+test('every ✕ sits inside a .dialog-head, beside the title it belongs to', () => {
+  const heads = dialogHeads();
+  const buttons = [...htmlSrc.matchAll(/class="dialog-close"/g)];
+  assert.ok(buttons.length >= 7,
+    `ENTER: found only ${buttons.length} .dialog-close buttons in index.html`);
+  assert.ok(heads.length >= buttons.length,
+    `ENTER: ${buttons.length} close buttons but only ${heads.length} .dialog-head rows parsed`);
+  for (const b of buttons) {
+    const head = heads.find((h) => b.index > h.start && b.index < h.end);
+    assert.ok(head,
+      `the .dialog-close at offset ${b.index} sits outside every .dialog-head — `
+      + 'it floats in the dialog body instead of the title row');
+    assert.match(head.html, /<h3[ >]/,
+      `the .dialog-head holding the ✕ at offset ${b.index} carries no h3 — `
+      + `a close button with no title beside it:\n${head.html.slice(0, 200)}`);
+  }
+  for (const h of heads) {
+    assert.match(h.html, /class="dialog-close"/,
+      `a .dialog-head ships no ✕ — the row exists but the button is missing:\n${h.html.slice(0, 200)}`);
+  }
+});
+
+test('the .dialog-head h3 rule WINS the margin cascade in every dialog', () => {
+  const heads = dialogHeads();
+  assert.ok(heads.length >= 7, `ENTER: parsed only ${heads.length} .dialog-head rows`);
+  for (const head of heads) {
+    const chain = [...ancestorChain(head.start), {
+      tag: 'div', id: null, classes: ['dialog-head'], attrs: {},
+    }, { tag: 'h3', id: null, classes: [], attrs: {} }];
+    const where = chain.map((e) => e.id ? `#${e.id}` : (e.classes[0] ? `.${e.classes[0]}` : e.tag)).join(' ');
+    const win = winningDeclaration(cssSrc, chain, 'margin');
+    assert.ok(win, `ENTER: no margin rule resolves onto \`${where}\``);
+    assert.strictEqual(win.value, '0',
+      `\`${win.selector}\` wins margin on \`${where}\` with \`${win.value}\` — `
+      + 'the h3 keeps a bottom margin inside the flex row and the ✕ rides high against it');
+    const bottom = winningDeclaration(cssSrc, chain, 'margin-bottom');
+    if (bottom) {
+      assert.ok(bottom.score < win.score || (bottom.score === win.score && bottom.at < win.at),
+        `\`${bottom.selector}\` sets margin-bottom: ${bottom.value} on \`${where}\` `
+        + `and outranks the \`${win.selector}\` shorthand — the title keeps the gap`);
+    }
   }
 });
 

@@ -691,7 +691,6 @@ function initPeersUi({
   });
   document.getElementById('peer-session-dialog').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); submitPeerSessionDialog(); }
-    else if (e.key === 'Escape') { e.preventDefault(); closePeerSessionDialog(); }
   });
 
   async function peerHideFromList(id, name) {
@@ -1319,7 +1318,7 @@ function initPeersUi({
 
   return {
     typeToTakeControl, renderPeerBar, forgetControlMirror,
-    openPeerSession, peerDisplayHost, peerHideFromList,
+    openPeerSession, closePeerSessionDialog, peerDisplayHost, peerHideFromList,
     ensurePeerSessionVisible, openPeerArgs,
   };
 }

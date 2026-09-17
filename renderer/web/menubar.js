@@ -56,7 +56,7 @@ const STYLE = `
 .clx-mb-item .clx-accel{opacity:.55;font-size:11px}
 .clx-mb-item:hover .clx-accel{opacity:.85;color:#fff}
 .clx-mb-item .clx-sub-arrow{opacity:.55}
-.clx-mb-sep{height:1px;margin:4px 0;background:var(--border)}
+.clx-mb-sep{height:1px;margin:4px 0;background:var(--border-strong)}
 .clx-mb-head{padding:6px 14px 3px;font-size:10px;opacity:.5;text-transform:uppercase;letter-spacing:.05em}
 `;
 

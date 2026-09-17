@@ -128,7 +128,10 @@
   <!-- Prompt editor modal -->
   <div id="prompt-editor" class="hidden">
     <div class="prompt-editor-box">
-      <h3 id="prompt-editor-title">New Prompt</h3>
+      <div class="dialog-head">
+        <h3 id="prompt-editor-title">New Prompt</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <label>Kind
         <select id="prompt-kind">
           <option value="append">append — composable, appended (non-system)</option>
@@ -165,7 +168,10 @@
   <!-- Agent editor modal -->
   <div id="agent-editor" class="hidden">
     <div class="prompt-editor-box">
-      <h3 id="agent-editor-title">New Agent</h3>
+      <div class="dialog-head">
+        <h3 id="agent-editor-title">New Agent</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <label>Name
         <input type="text" id="agent-name" placeholder="e.g. lean-explore" spellcheck="false">
       </label>
@@ -198,7 +204,10 @@
   <!-- Skill editor modal -->
   <div id="skill-editor" class="hidden">
     <div class="prompt-editor-box">
-      <h3 id="skill-editor-title">New Skill</h3>
+      <div class="dialog-head">
+        <h3 id="skill-editor-title">New Skill</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <label>Name
         <input type="text" id="skill-name" placeholder="e.g. deploy-runbook" spellcheck="false">
       </label>
@@ -231,7 +240,10 @@
   <!-- Exec-command editor modal (raw-JSON def) -->
   <div id="exec-editor" class="hidden">
     <div class="prompt-editor-box">
-      <h3 id="exec-editor-title">New Exec Command</h3>
+      <div class="dialog-head">
+        <h3 id="exec-editor-title">New Exec Command</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <label>Name
         <input type="text" id="exec-name" placeholder="e.g. bridge-reply" spellcheck="false">
       </label>
@@ -751,7 +763,10 @@
        The owner routes to its live create(); errors surface inline here. -->
   <div id="peer-session-overlay" class="hidden">
     <div id="peer-session-dialog">
-      <h3 id="peer-session-title">New Session on peer</h3>
+      <div class="dialog-head">
+        <h3 id="peer-session-title">New Session on peer</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <label>Name
         <input type="text" id="peer-input-name" placeholder="e.g. worker" spellcheck="false">
       </label>

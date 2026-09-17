@@ -5961,7 +5961,7 @@ input.env-locked {
   width: 6px;
 }
 #wterm-host .xterm-viewport::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--border-strong);
   border-radius: 3px;
 }
 ::-webkit-scrollbar {
@@ -5971,7 +5971,7 @@ input.env-locked {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--border-strong);
   border-radius: 3px;
 }
 #tools-popover,
@@ -6651,18 +6651,21 @@ textarea:not(.xterm-helper-textarea):focus-visible,
 #btn-new,
 #btn-new-sandbox,
 #btn-add-peer,
-#btn-discover {
+#btn-discover,
+#sidebar-header #btn-prompts {
   width: 26px;
   height: 26px;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
+  background: transparent;
   color: var(--text-secondary);
   font-size: 14px;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 #btn-new-sandbox:hover,
 #btn-add-peer:hover,
-#btn-discover:hover {
+#btn-discover:hover,
+#sidebar-header #btn-prompts:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
   border-color: transparent;
@@ -7457,6 +7460,14 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   gap: var(--sp-2);
   margin-bottom: var(--sp-4);
 }
+#dialog .dialog-head h3,
+#prefs-dialog .dialog-head h3,
+#peers-dialog .dialog-head h3,
+#plugins-dialog .dialog-head h3,
+#sandbox-dialog .dialog-head h3,
+#discovery-dialog .dialog-head h3,
+#args-dialog .dialog-head h3,
+#peer-session-dialog .dialog-head h3,
 .dialog-head h3 {
   margin: 0;
 }
@@ -7499,6 +7510,14 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+#dialog input[type=checkbox],
+#dialog input[type=radio] {
+  width: auto;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
 }
 #dialog input:focus,
 #dialog select:focus,
@@ -7783,6 +7802,28 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   border-radius: var(--radius-sm);
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
+.prompt-item-actions button {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease);
+}
+.prompt-item-actions button:hover {
+  background: var(--surface-selected);
+  opacity: 1;
+}
+.prompt-item-actions button.primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: transparent;
+}
+.prompt-item-actions button.primary:hover {
+  background: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
+}
 #agents-list,
 #skills-list,
 #templates-list,
@@ -8021,7 +8062,10 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   <!-- Prompt editor modal -->
   <div id="prompt-editor" class="hidden">
     <div class="prompt-editor-box">
-      <h3 id="prompt-editor-title">New Prompt</h3>
+      <div class="dialog-head">
+        <h3 id="prompt-editor-title">New Prompt</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <label>Kind
         <select id="prompt-kind">
           <option value="append">append — composable, appended (non-system)</option>
@@ -8058,7 +8102,10 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   <!-- Agent editor modal -->
   <div id="agent-editor" class="hidden">
     <div class="prompt-editor-box">
-      <h3 id="agent-editor-title">New Agent</h3>
+      <div class="dialog-head">
+        <h3 id="agent-editor-title">New Agent</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <label>Name
         <input type="text" id="agent-name" placeholder="e.g. lean-explore" spellcheck="false">
       </label>
@@ -8091,7 +8138,10 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   <!-- Skill editor modal -->
   <div id="skill-editor" class="hidden">
     <div class="prompt-editor-box">
-      <h3 id="skill-editor-title">New Skill</h3>
+      <div class="dialog-head">
+        <h3 id="skill-editor-title">New Skill</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <label>Name
         <input type="text" id="skill-name" placeholder="e.g. deploy-runbook" spellcheck="false">
       </label>
@@ -8124,7 +8174,10 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   <!-- Exec-command editor modal (raw-JSON def) -->
   <div id="exec-editor" class="hidden">
     <div class="prompt-editor-box">
-      <h3 id="exec-editor-title">New Exec Command</h3>
+      <div class="dialog-head">
+        <h3 id="exec-editor-title">New Exec Command</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <label>Name
         <input type="text" id="exec-name" placeholder="e.g. bridge-reply" spellcheck="false">
       </label>
@@ -8644,7 +8697,10 @@ textarea:not(.xterm-helper-textarea):focus-visible,
        The owner routes to its live create(); errors surface inline here. -->
   <div id="peer-session-overlay" class="hidden">
     <div id="peer-session-dialog">
-      <h3 id="peer-session-title">New Session on peer</h3>
+      <div class="dialog-head">
+        <h3 id="peer-session-title">New Session on peer</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <label>Name
         <input type="text" id="peer-input-name" placeholder="e.g. worker" spellcheck="false">
       </label>
@@ -10067,7 +10123,7 @@ textarea:not(.xterm-helper-textarea):focus-visible,
 .clx-menu-item:hover{background:var(--accent);color:#fff}
 .clx-menu-item .clx-mark{position:absolute;left:7px}
 .clx-menu-item .clx-arrow{position:absolute;right:9px;opacity:.7}
-.clx-menu-sep{height:1px;margin:4px 0;background:var(--border)}
+.clx-menu-sep{height:1px;margin:4px 0;background:var(--border-strong)}
 .clx-modal-bg{position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center}
 .clx-modal{background:var(--sidebar-bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:18px 20px;min-width:320px;max-width:480px;
   box-shadow:0 8px 32px rgba(0,0,0,.55);font:400 13px/1.5 -apple-system,system-ui,sans-serif}
@@ -10077,8 +10133,8 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   border:1px solid var(--border);border-radius:5px;color:var(--text);font:inherit}
 .clx-modal input:focus{outline:none;border-color:var(--accent)}
 .clx-modal-btns{display:flex;justify-content:flex-end;gap:8px}
-.clx-modal-btns button{padding:6px 14px;border:1px solid var(--border);border-radius:5px;background:var(--border);color:var(--text);font:inherit;cursor:pointer}
-.clx-modal-btns button.clx-default{background:var(--accent);border-color:var(--accent);color:#fff}
+.clx-modal-btns button{padding:6px 14px;border:1px solid var(--border-strong);border-radius:5px;background:var(--surface-hover);color:var(--text-primary);font:inherit;cursor:pointer}
+.clx-modal-btns button.clx-default{background:var(--accent);border-color:transparent;color:var(--accent-fg)}
 `;
       function injectStyle() {
         const el = document.createElement("style");
@@ -10350,7 +10406,7 @@ textarea:not(.xterm-helper-textarea):focus-visible,
 .clx-mb-item .clx-accel{opacity:.55;font-size:11px}
 .clx-mb-item:hover .clx-accel{opacity:.85;color:#fff}
 .clx-mb-item .clx-sub-arrow{opacity:.55}
-.clx-mb-sep{height:1px;margin:4px 0;background:var(--border)}
+.clx-mb-sep{height:1px;margin:4px 0;background:var(--border-strong)}
 .clx-mb-head{padding:6px 14px 3px;font-size:10px;opacity:.5;text-transform:uppercase;letter-spacing:.05em}
 `;
       var trunc = (s) => s && s.length > 60 ? s.slice(0, 57) + "\u2026" : s;
@@ -29487,7 +29543,14 @@ Opening it here and saving would overwrite the file with what this editor could 
           openTemplateEditor(null);
         });
         window.api.onRequestOpenTemplatesDrawer((arg) => openTemplatesDrawer(arg));
-        return { refreshTemplatesList, openTeamTemplate };
+        return {
+          refreshTemplatesList,
+          openTeamTemplate,
+          closePromptEditor,
+          closeAgentEditor,
+          closeSkillEditor,
+          closeExecEditor
+        };
       }
       module.exports = { initLibraryDrawers };
     }
@@ -36392,9 +36455,6 @@ ${detail}` });
           if (e.key === "Enter" && e.target.tagName !== "BUTTON") {
             e.preventDefault();
             submitPeerSessionDialog();
-          } else if (e.key === "Escape") {
-            e.preventDefault();
-            closePeerSessionDialog();
           }
         });
         async function peerHideFromList(id, name) {
@@ -36933,6 +36993,7 @@ ${detail}` });
           renderPeerBar,
           forgetControlMirror,
           openPeerSession,
+          closePeerSessionDialog,
           peerDisplayHost,
           peerHideFromList,
           ensurePeerSessionVisible,
@@ -38051,6 +38112,14 @@ ${detail}` });
       var editingTemplateAppendPrev = [];
       var templatesDrawerRefresh = null;
       var templatesDrawerOpenTeam = null;
+      var closePromptEditor = () => {
+      };
+      var closeAgentEditor = () => {
+      };
+      var closeSkillEditor = () => {
+      };
+      var closeExecEditor = () => {
+      };
       function promptText(title, initial = "") {
         return new Promise((resolve) => {
           const overlay = document.createElement("div");
@@ -41582,6 +41651,7 @@ Click for live activity`;
         renderPeerBar,
         forgetControlMirror,
         openPeerSession,
+        closePeerSessionDialog,
         peerDisplayHost,
         peerHideFromList,
         ensurePeerSessionVisible,
@@ -41646,7 +41716,12 @@ Click for live activity`;
         ["plugins-overlay", () => closePluginsDialog()],
         ["sandbox-overlay", () => closeSandboxDialog()],
         ["prefs-overlay", () => closePrefs()],
-        ["args-overlay", () => closeArgsDialog()]
+        ["args-overlay", () => closeArgsDialog()],
+        ["peer-session-overlay", () => closePeerSessionDialog()],
+        ["prompt-editor", () => closePromptEditor()],
+        ["agent-editor", () => closeAgentEditor()],
+        ["skill-editor", () => closeSkillEditor()],
+        ["exec-editor", () => closeExecEditor()]
       ];
       document.addEventListener("keydown", (e) => {
         if (e.key !== "Escape") return;
@@ -41658,7 +41733,7 @@ Click for live activity`;
       document.addEventListener("click", (e) => {
         const btn = e.target.closest && e.target.closest(".dialog-close");
         if (!btn) return;
-        const overlay = btn.closest('[id$="-overlay"]');
+        const overlay = btn.closest('[id$="-overlay"], [id$="-editor"]');
         if (!overlay) return;
         const row = ESCAPE_CLOSES.find(([id]) => id === overlay.id);
         if (row) row[1]();
@@ -44854,7 +44929,14 @@ ${res.stderr}` : "");
           }
         }
       });
-      ({ refreshTemplatesList: templatesDrawerRefresh, openTeamTemplate: templatesDrawerOpenTeam } = initLibraryDrawers({
+      ({
+        refreshTemplatesList: templatesDrawerRefresh,
+        closePromptEditor,
+        closeAgentEditor,
+        closeSkillEditor,
+        closeExecEditor,
+        openTeamTemplate: templatesDrawerOpenTeam
+      } = initLibraryDrawers({
         getActiveSession: () => activeSession,
         setAgentLibCache,
         setSkillLibCache,

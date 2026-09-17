@@ -14,6 +14,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { winningDeclaration } = require('./lib/css-cascade');
 
 const css = fs.readFileSync(
   path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
@@ -47,6 +48,27 @@ test('#dialog label.agent-check input un-stretches the checkbox, after #dialog i
   assert.ok(override > generic,
     'the `#dialog label.agent-check input` rule must appear AFTER `#dialog input,` — '
     + `(override at ${override}, generic at ${generic})`);
+});
+
+const CHECKBOX_CHAIN = [
+  { tag: 'div', id: 'dialog', classes: [], attrs: {} },
+  { tag: 'label', id: null, classes: ['agent-check'], attrs: {} },
+  { tag: 'input', id: null, classes: [], attrs: { type: 'checkbox' } },
+];
+
+test('the height rule that WINS on a checklist checkbox leaves it unstretched', () => {
+  const win = winningDeclaration(css, CHECKBOX_CHAIN, 'height');
+  assert.ok(win,
+    'ENTER: no rule in styles.css sets a height that reaches '
+    + '#dialog label.agent-check input — the matcher stopped resolving anything');
+  assert.strictEqual(win.value, 'auto',
+    `\`${win.selector}\` wins the height cascade on a checklist checkbox with `
+    + `\`${win.value}\` — the dialog's control treatment draws each box as a `
+    + 'full-width control instead of a checkbox');
+  assert.strictEqual(win.selector, '#dialog label.agent-check input',
+    `the layer's \`#dialog label.agent-check input { height: auto }\` must be the rule `
+    + `that decides it; \`${win.selector}\` is winning instead, so that rule is dead `
+    + 'and the checkbox height is riding on something weaker');
 });
 
 test('#dialog label.agent-check carries the full text colour', () => {

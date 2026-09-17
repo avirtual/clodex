@@ -4578,7 +4578,7 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
    would each hold half the history. */
 #wterm-host .xterm-viewport::-webkit-scrollbar { width: 6px; }
 #wterm-host .xterm-viewport::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--border-strong);
   border-radius: 3px;
 }
 
@@ -4591,7 +4591,7 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--border-strong);
   border-radius: 3px;
 }
 
@@ -5084,16 +5084,18 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 #sidebar-toolbar { gap: var(--sp-1); }
-#btn-new, #btn-new-sandbox, #btn-add-peer, #btn-discover {
+#btn-new, #btn-new-sandbox, #btn-add-peer, #btn-discover, #sidebar-header #btn-prompts {
   width: 26px;
   height: 26px;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
+  background: transparent;
   color: var(--text-secondary);
   font-size: 14px;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-#btn-new-sandbox:hover, #btn-add-peer:hover, #btn-discover:hover {
+#btn-new-sandbox:hover, #btn-add-peer:hover, #btn-discover:hover,
+#sidebar-header #btn-prompts:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
   border-color: transparent;
@@ -5506,6 +5508,9 @@ textarea:not(.xterm-helper-textarea):focus-visible,
 }
 
 .dialog-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); margin-bottom: var(--sp-4); }
+#dialog .dialog-head h3, #prefs-dialog .dialog-head h3, #peers-dialog .dialog-head h3,
+#plugins-dialog .dialog-head h3, #sandbox-dialog .dialog-head h3, #discovery-dialog .dialog-head h3,
+#args-dialog .dialog-head h3, #peer-session-dialog .dialog-head h3,
 .dialog-head h3 { margin: 0; }
 #dialog .dialog-head { grid-column: 1 / -1; }
 .dialog-close {
@@ -5535,6 +5540,13 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+#dialog input[type="checkbox"], #dialog input[type="radio"] {
+  width: auto;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
 }
 #dialog input:focus, #dialog select:focus, #prefs-dialog input[type="text"]:focus, #prefs-dialog select:focus {
   border-color: var(--accent);
@@ -5688,6 +5700,20 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   border-radius: var(--radius-sm);
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
 }
+.prompt-item-actions button {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.prompt-item-actions button:hover { background: var(--surface-selected); opacity: 1; }
+.prompt-item-actions button.primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: transparent;
+}
+.prompt-item-actions button.primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--text-primary)); }
 #agents-list, #skills-list, #templates-list, #exec-list, #inbox-list { padding: var(--sp-2); }
 #agents-empty, #skills-empty, #templates-empty, #exec-empty, #inbox-empty { color: var(--text-tertiary); font-size: var(--fs-sm); padding: var(--sp-5); }
 .inbox-item {

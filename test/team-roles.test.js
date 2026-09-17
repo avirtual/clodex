@@ -1566,7 +1566,7 @@ test('t792 wiring: the Open routes a team row to the drawer\'s own team opener',
   assert.match(wire[0], /openTemplateEditor\(row\)/, 'a library row goes straight to the editor');
 
   const drawers = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'library-drawers.js'), 'utf-8');
-  assert.match(drawers, /return \{ refreshTemplatesList, openTeamTemplate \};/,
+  assert.match(drawers, /\n  return \{[^}]*\bopenTeamTemplate\b[^}]*\};/,
     'and the drawer EXPORTS it — a second copy of the team-owner argument would drift from this one');
   assert.match(drawers, /openTemplateEditor\(tpl, null, \{ team: tpl\.team \}\)/,
     'ENTER: that opener is the one carrying the team owner, which is why it is shared rather than re-written');
