@@ -7,6 +7,7 @@ const fs = require('fs');
 const { execSync } = require('child_process');
 const { ensureDir } = require('./fs-util');
 const { defaultClodexHome } = require('./clodex-paths');
+const { maskSecrets } = require('./log-mask');
 const { isExternallyOpenable } = require('./external-link');
 const { DEFAULT_WORKSPACE_ID, THEME_KEYS } = require('./catalogs');
 const { createEngine } = require('./engine');
@@ -92,11 +93,12 @@ function initLog() {
 }
 
 function writeLog(level, tag, message) {
+  const safe = maskSecrets(message);
   try {
-    const line = `${new Date().toISOString()}  ${level}  [${tag}]  ${message}\n`;
+    const line = `${new Date().toISOString()}  ${level}  [${tag}]  ${safe}\n`;
     fs.appendFileSync(LOG_FILE, line);
   } catch {
-    try { ensureDir(REGISTRY_DIR); fs.appendFileSync(LOG_FILE, `${new Date().toISOString()}  ${level}  [${tag}]  ${message}\n`); } catch {}
+    try { ensureDir(REGISTRY_DIR); fs.appendFileSync(LOG_FILE, `${new Date().toISOString()}  ${level}  [${tag}]  ${safe}\n`); } catch {}
   }
 }
 

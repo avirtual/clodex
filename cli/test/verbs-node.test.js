@@ -212,7 +212,7 @@ test('get node <name> --current is USAGE, not a silently ignored name', async ()
 test('verbs.js exports the node family and no ctx spelling', () => {
   assert.deepStrictEqual(Object.keys(V).sort(), [
     'DEPLOYABLE', 'KIND_FIELDS', 'QUERY_KINDS', 'RESOURCE_VERBS', 'SESSION_SUBRESOURCES',
-    'TRANSPORT_FIELDS', 'apiResources', 'checkResourceWord', 'create', 'createSession',
+    'apiResources', 'checkResourceWord', 'create', 'createSession',
     'delete', 'deleteSession', 'describe', 'dm', 'entryKind', 'entryTarget',
     'exec', 'execPty', 'filterWorkspace', 'get', 'info', 'input', 'logs',
     'nodeCreate', 'nodeCurrent', 'nodeDelete', 'nodeDescribe', 'nodeList', 'nodeUse',

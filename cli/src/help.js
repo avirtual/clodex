@@ -106,7 +106,10 @@ const VERB_REGISTRY = [
   {
     name: 'logs', group: 'daily',
     summary: 'print a transcript slice, or follow it live',
-    usage: 'logs <name> [--tail N] [--since D] [--timestamps] [-f|--follow] [-o json|yaml]\n       logs node [--tail N] [--since D] [-o json]',
+    usage: [
+      'logs <name> [--tail N] [--since D] [--timestamps] [-f|--follow] [-o json|yaml]',
+      'logs node [--tail N] [--since D] [-o json]',
+    ],
     args: [['name', 'session whose transcript to read (or the literal `node` for the engine\'s own log)']],
     flags: [
       ['--tail N', 'last N entries (default: the server\'s slice)'],

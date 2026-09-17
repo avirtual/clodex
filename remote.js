@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const { relayVersionOk, isQualifiedSender } = require('./relay-protocol');
 const { makeTokenGate } = require('./auth-token');
 const { BOX_ID_RE } = require('./sandbox');
+const { maskSecrets } = require('./log-mask');
 
 // A bind host counts as loopback when nothing off-box can reach it — the case
 // where "trust is the tunnel" still holds and no token is required. 0.0.0.0 / ::
@@ -46,7 +47,7 @@ function resolveRemoteBasePath(value, warn, fallback = DEFAULT_REMOTE_BASE_PATH)
   if (typeof warn === 'function' && !basePathWarned.has(mark)) {
     basePathWarned.add(mark);
     try {
-      warn(`${REMOTE_BASE_PATH_ENV}="${raw}" is not a mount path like /c or /i/phone — keeping ${fallback || 'no prefix'}`);
+      warn(`${REMOTE_BASE_PATH_ENV} is not a mount path like /c or /i/phone — keeping ${fallback || 'no prefix'}`);
     } catch {}
   }
   return fallback;
@@ -110,13 +111,8 @@ const SSE_HEARTBEAT_MS = 25000;
 const ATTACH_MAX_BUFFERED = 4 * 1024 * 1024;
 const RESIZE_DEBOUNCE_MS = 80;
 
-const LOG_SECRET_RE = /\b(token|secret|password|authorization|bearer)\b[=: ]+(?:(?:bearer|basic)\b[=: ]+)?\S+/gi;
 const NODE_LOG_TAIL_BYTES = 1024 * 1024;
 const NODE_LOG_MAX_LINES = 500;
-
-function maskLogLine(line) {
-  return String(line).replace(LOG_SECRET_RE, '$1=[redacted]');
-}
 
 function readLogTail(fs, file, limit) {
   let fd = null;
@@ -125,11 +121,11 @@ function readLogTail(fs, file, limit) {
     const start = Math.max(0, size - NODE_LOG_TAIL_BYTES);
     const buf = Buffer.alloc(size - start);
     fd = fs.openSync(file, 'r');
-    fs.readSync(fd, buf, 0, buf.length, start);
-    let text = buf.toString('utf-8');
+    const bytesRead = fs.readSync(fd, buf, 0, buf.length, start);
+    let text = buf.toString('utf-8', 0, bytesRead);
     if (start > 0) text = text.slice(text.indexOf('\n') + 1);
     const lines = text.split('\n').filter((l) => l !== '');
-    return lines.slice(-limit).map(maskLogLine);
+    return lines.slice(-limit).map(maskSecrets);
   } catch {
     return [];
   } finally {
@@ -1074,7 +1070,8 @@ class RemoteServer {
     }
     if (req.method === 'GET' && p === '/api/node/logs') {
       if (!this._nodeLogFile) return this._json(res, 501, { ok: false, error: 'node logs not available' });
-      const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 100, NODE_LOG_MAX_LINES);
+      const asked = parseInt(url.searchParams.get('limit'), 10) || 100;
+      const limit = Math.min(Math.max(asked, 1), NODE_LOG_MAX_LINES);
       let file = null;
       try { file = this._nodeLogFile(); } catch { file = null; }
       const lines = file ? readLogTail(fs, file, limit) : [];

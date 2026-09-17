@@ -896,6 +896,16 @@ accept teardown removes.
   browser", shared by BOTH hosts (main's window-open/will-navigate guards and
   the renderer's WebLinksAddon). True ONLY for http/https — the sole schemes
   handed to `shell.openExternal`.
+- **log-mask.js** — `maskSecrets(text)`, the credential mask both hosts' `writeLog`
+  applies to every ops-log message before it reaches `clodex.log`, and the one
+  `remote.js` re-applies per line on the `/api/node/logs` read. Three rules, in
+  order: a `token|secret|password|authorization|bearer` key/value shape
+  (bare, quoted or JSON, with a `Bearer`/`Basic` scheme word consumed WITH the
+  value), URL userinfo `://user:pw@`, and a `token=`/`key=`/`sig=` query
+  parameter inside a URL. Masking at the WRITE boundary is what makes every
+  writer safe at once — the read-side pass stays because a log file predating
+  this, or written by another generation of the app, is still on disk. Pure leaf
+  (no I/O, like clodex-paths.js); NOT in the leak-scanner lists.
 - **library-menu-shape.js** — `categoryMenu(categories, { empty, foldAt })`:
   the layout every Library submenu uses. Takes `[{ label, rows }]` in source
   order (Library, then one per team, then one per plugin bundle) and returns
