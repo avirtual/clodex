@@ -93,6 +93,35 @@ test('engine: a host with no deferred seam falls back to the immediate one', () 
     'both paths collapse onto the supervisor exit when no deferred seam exists');
 });
 
+test('engine: the return object exposes restartClodex and restartUnavailable', () => {
+  const calls = [];
+  const tmp = mkTmpRoot('clx-t969-');
+  let eng;
+  try {
+    eng = require('../engine').createEngine({
+      userDataPath: tmp,
+      log: { info() {}, warn() {}, error() {} },
+      seams: {
+        registryDir: path.join(tmp, 'clodex-home'),
+        restartHost: () => calls.push('immediate'),
+        restartHostWhenIdle: () => calls.push('deferred'),
+        restartUnavailable: () => 'no supervisor',
+      },
+    });
+    assert.strictEqual(typeof eng.restartClodex, 'function',
+      'web-host.js reads engine.restartClodex — absent, app:restart is a no-op that answers ok:true');
+    assert.strictEqual(typeof eng.restartUnavailable, 'function',
+      'and engine.restartUnavailable, or the web view cannot refuse an unsupervised restart');
+    assert.strictEqual(eng.restartUnavailable(), 'no supervisor',
+      'it is the injected seam, not a default that always allows');
+    eng.restartClodex();
+    assert.deepStrictEqual(calls, ['immediate'],
+      'the exposed restart is the human/immediate seam, never the agent\'s deferred one');
+  } finally {
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+  }
+});
+
 // ── main.js: the Electron wiring, pinned as source ──────────────────────────
 
 // Slice a seam's arrow-function body by BALANCING braces from its opening one.
