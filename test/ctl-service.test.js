@@ -1088,7 +1088,7 @@ test('a name where a resource word belongs suggests the command the operator mea
     ['create murmurfi', 'create murmurfi: "murmurfi" is not a resource — did you mean: create <session|node> murmurfi'],
     ['delete murmurfi', 'delete murmurfi: "murmurfi" is not a resource — did you mean: delete <session|node> murmurfi'],
     ['restart murmurfi', 'restart murmurfi: "murmurfi" is not a resource — did you mean: restart <session|node> murmurfi'],
-    ['describe murmurfi', 'describe murmurfi: "murmurfi" is not a resource — did you mean: describe <session|node|workspace|peer|team|ticket|sandbox|agent|worktree|catalogs> murmurfi'],
+    ['describe murmurfi', 'describe murmurfi: "murmurfi" is not a resource — did you mean: describe <session|node|workspace|peer|team|ticket|sandbox|agent|doc|worktree|catalogs> murmurfi'],
   ]) {
     const b = await svc.run(line);
     assert.strictEqual(b.exitCode, 2, `${line} -> ${b.exitCode}: ${b.output}`);
