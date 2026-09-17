@@ -629,6 +629,11 @@ t838-blocked-
 t891-proj-
 t891-team-
 t912-live-
+t959-eng-
+t959-hostlog-
+t959-hostlog-clean-
+t959-nodelog-
+t959-term-
 team-home-
 teams-menu-
 tl-home-
