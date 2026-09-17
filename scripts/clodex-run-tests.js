@@ -227,7 +227,11 @@ function testPool(measure) {
 }
 
 function subjectMatchers(sources) {
-  return sources.map((rel) => ({ rel, stem: rel.endsWith('.js') ? rel.slice(0, -3) : null }));
+  return sources.map((rel) => ({
+    rel,
+    stem: rel.endsWith('.js') ? rel.slice(0, -3) : null,
+    literal: rel.endsWith('.js') || rel.includes('/'),
+  }));
 }
 
 function relPathTargets(testRel, text) {
@@ -277,7 +281,9 @@ function selectSet(measure) {
       }
       const targets = relPathTargets(t, text);
       const hit = matchers.some(
-        (m) => (m.stem !== null && targets.has(m.stem)) || targets.has(m.rel) || text.includes(m.rel),
+        (m) => (m.stem !== null && targets.has(m.stem))
+          || targets.has(m.rel)
+          || (m.literal && text.includes(m.rel)),
       );
       if (!hit) continue;
       bySubject.push(t);

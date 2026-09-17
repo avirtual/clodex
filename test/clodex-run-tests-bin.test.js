@@ -696,6 +696,55 @@ for (const c of NON_JS_CASES) {
   });
 }
 
+test('scope own: a root-level policy file is no subject — every branch edits CHANGELOG.md', () => {
+  const root = mkRoot();
+  try {
+    mkBranchRepo(root, {
+      extraOnMaster: {
+        'CHANGELOG.md': '## Unreleased\n',
+        'test/mentions-changelog.test.js':
+          `${EMPTY_TEST}const F = 'CHANGELOG.md';\n`,
+        'docs/guide.md': '# guide\n',
+        'test/mentions-guide.test.js': `${EMPTY_TEST}const G = 'docs/guide.md';\n`,
+      },
+      onBranch: ({ put: p, git: g }) => {
+        p('CHANGELOG.md', '## Unreleased\n- a bullet\n');
+        g('commit', '-aqm', 'branch work');
+      },
+    });
+    const r = run(root, '{"scope":"own"}');
+    const rec = stubRecord(root);
+    assert.ok(rec, 'ENTER: the runner never ran, so there is no selection to judge');
+    assert.ok(!rec.argv.includes('test/mentions-changelog.test.js'),
+      'this repo\'s ticket flow REQUIRES a CHANGELOG.md edit, so a bare root-level name matched '
+      + 'literally puts every test that mentions it — two of them heavy real-git suites — into '
+      + 'every scoped run, which is the cost the scope exists to avoid');
+    assertDigest(r.digest,
+      `[${path.basename(root)}] own: 1/1 green (${WALL}) — ${OWN_SCANNERS.length} files: `
+      + `0 changed, 0 by subject, ${OWN_SCANNERS.length} scanners`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+
+  const nested = mkRoot();
+  try {
+    mkBranchRepo(nested, {
+      extraOnMaster: {
+        'docs/guide.md': '# guide\n',
+        'test/mentions-guide.test.js': `${EMPTY_TEST}const G = 'docs/guide.md';\n`,
+      },
+      onBranch: ({ put: p, git: g }) => {
+        p('docs/guide.md', '# guide\n\nmore\n');
+        g('commit', '-aqm', 'branch work');
+      },
+    });
+    run(nested, '{"scope":"own"}');
+    const rec = stubRecord(nested);
+    assert.ok(rec, 'ENTER: the runner never ran');
+    assert.ok(rec.argv.includes('test/mentions-guide.test.js'),
+      'a non-.js subject inside a directory is still selected by its literal path: the exclusion '
+      + 'is root-level bare names, not every non-.js file');
+  } finally { fs.rmSync(nested, { recursive: true, force: true }); }
+});
+
 test('scope own: a subject reached only through a quoted relative path outside require()', () => {
   const root = mkRoot();
   try {
