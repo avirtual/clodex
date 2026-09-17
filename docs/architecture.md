@@ -835,7 +835,10 @@ accept teardown removes.
 - **comment-census.js** — `countCommentLines(src)`, a tokenizer over strings,
   template literals (nested `${}` frames) and regex literals; a line counts if any
   part of a `//` or `/* */` token lands on it, and `eslint`/`@ts`/`prettier`
-  directive lines are exempt. Naive `//` counting is wrong for this repo —
+  directive lines are exempt. `codeOnly(src)` is the same pass returning the
+  source with every comment, string, template and regex body blanked to spaces,
+  line numbers preserved — what a source-shape scanner needs to grep for a call
+  without matching prose that names it. Naive `//` counting is wrong for this repo —
   `cli-hooks.js` reads 175 naively and 104 tokenized, the gap being shell text
   inside the template literals that generate the hook scripts. Drives
   `test/comment-ratchet.test.js`, which fails a tracked non-test `.js` that gains

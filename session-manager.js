@@ -3881,7 +3881,7 @@ function createSessionManager(deps) {
       const rows = psSnapshotSync(childProcess);
       for (const [name] of this.sessions) {
         const s = this.sessions.get(name);
-        reapFromSnapshot({ rows, ptyPid: s.pty.pid, name, log });
+        if (s.pty && Number.isInteger(s.pty.pid)) reapFromSnapshot({ rows, ptyPid: s.pty.pid, name, log });
         try { s.pty.kill(); } catch {}
       }
     }

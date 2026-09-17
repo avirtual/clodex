@@ -484,6 +484,8 @@ clx-t918-
 clx-t952-
 clx-t952-env-
 clx-t955-
+clx-t962-staged-
+clx-t962-verify-
 clx-teamroot-
 clx-totals-
 clx-tpl-deny-

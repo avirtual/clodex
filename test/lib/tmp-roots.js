@@ -34,13 +34,14 @@ function mkTmpRoot(prefix) {
 }
 
 function mkTmpDirIn(parent, prefix) {
-  if (!ROOTS.some((r) => parent === r || parent.startsWith(r + path.sep))) {
+  const resolved = path.resolve(parent);
+  if (!ROOTS.some((r) => resolved === r || resolved.startsWith(r + path.sep))) {
     throw new Error(
       `mkTmpDirIn('${parent}', '${prefix}'): the parent must be a root this process ALREADY tracks, `
       + 'or a directory inside one. Anything else is an untracked root that nothing will sweep — '
       + 'call mkTmpRoot(prefix) for a root in $TMPDIR.');
   }
-  return fs.mkdtempSync(path.join(parent, prefix));
+  return fs.mkdtempSync(path.join(resolved, prefix));
 }
 
 // TOP-LEVEL `after`, and that is the whole safety argument. node:test runs

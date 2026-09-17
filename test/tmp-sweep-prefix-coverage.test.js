@@ -290,8 +290,10 @@ test('the scan seeds itself from every $TMPDIR-minting export of test/lib/tmp-ro
   const decl = code.indexOf('function mkTmpDirIn');
   assert.ok(decl >= 0, 'ENTER: mkTmpDirIn must be declared as a function for its body to be readable');
   const body = bodyAt(code, code.indexOf('{', decl));
-  assert.match(body, new RegExp(`${MINT}\\(path\\.join\\(parent,`),
-    'ENTER: mkTmpDirIn must still mint under its `parent` argument rather than under os.tmpdir(). If it '
+  assert.match(body, /const resolved = path\.resolve\(parent\);/,
+    'ENTER: the path mkTmpDirIn mints under must be derived from its `parent` argument');
+  assert.match(body, new RegExp(`${MINT}\\(path\\.join\\(resolved,`),
+    'ENTER: mkTmpDirIn must still mint under that resolved parent rather than under os.tmpdir(). If it '
     + 'ever mints a direct child of $TMPDIR it belongs in SEEDS, and excluding it would leak every root it makes.');
 });
 
