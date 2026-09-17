@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Restarting a headless node that nothing would bring back is refused instead of fatal.** The peer Restart button and the web view's Restart Clodex… decline on a headless node with no supervisor (`CLODEX_SUPERVISED` unset) and say what to set; on a supervised node the web view's Restart Clodex… now restarts it.
+
 - **The clodexctl tab is in the web view too.** The drawer's clodexctl console now shows in the browser frontend, with the same verbs as the desktop; it runs in the Clodex process, so the browser never sees a node token.
 
 - **The console tab speaks node.** The drawer's `ctl` tab runs the same `get nodes`, `describe node`, `create node`, `delete node` and `use node` as the terminal clodexctl, and a resource verb handed a name where it expects a resource word now suggests the command you meant (`use murmurfi` → `did you mean: use node murmurfi`).

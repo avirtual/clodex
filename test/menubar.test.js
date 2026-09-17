@@ -200,6 +200,31 @@ test('Restart rides the browser-only app:restart invoke; navigation rides ?works
   assert.ok(!rec.navs.includes('w1'), 'the current workspace offers Rename, not Open (no self-navigate)');
 });
 
+test('Restart: a refusal from app:restart reaches the operator through window.alert', async () => {
+  const alerts = [];
+  const prevWindow = global.window;
+  global.window = { confirm: () => true, alert: (m) => alerts.push(m) };
+  try {
+    const { ctx } = recordingCtx();
+    const results = [{ ok: false, error: 'why' }, { ok: true }];
+    let i = 0;
+    ctx.invoke = () => Promise.resolve(results[i++]);
+    const restartRow = (await Promise.resolve(buildMenus(ctx).find((m) => m.label === 'File').items()))
+      .find((r) => r.label && /Restart/.test(r.label));
+    assert.ok(restartRow, 'ENTER: the File menu carries a Restart row');
+
+    await restartRow.run();
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(alerts, ['why'], 'the refusal reason is shown verbatim');
+
+    await restartRow.run();
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(alerts, ['why'], 'a successful restart alerts nothing');
+  } finally {
+    if (prevWindow === undefined) delete global.window; else global.window = prevWindow;
+  }
+});
+
 // ── DOM mount smoke: a minimal fake DOM, enough for mount() to build the bar.
 function fakeClassList() {
   const set = new Set();

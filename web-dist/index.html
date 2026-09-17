@@ -10418,8 +10418,12 @@ body.web-frontend #sidebar-header {
       var trunc = (s) => s && s.length > 60 ? s.slice(0, 57) + "\u2026" : s;
       function confirmRestart(invoke) {
         const ok = typeof window !== "undefined" && typeof window.confirm === "function" ? window.confirm("Restart Clodex?\n\nRunning sessions will be interrupted and resumed after the restart.") : true;
-        if (ok) Promise.resolve(invoke("app:restart", [])).catch(() => {
-        });
+        if (ok) {
+          Promise.resolve(invoke("app:restart", [])).then((res) => {
+            if (res && res.ok === false && res.error && typeof window !== "undefined" && typeof window.alert === "function") window.alert(res.error);
+          }).catch(() => {
+          });
+        }
       }
       function buildMenus(ctx) {
         const { emit, invoke, nav, newWorkspace, api, getTheme } = ctx;

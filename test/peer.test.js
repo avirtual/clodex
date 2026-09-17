@@ -86,6 +86,7 @@ before(async () => {
     resizePty: (name, cols, rows) => { resizes.push([name, cols, rows]); return { ok: true }; },
     onControlChange: (name, holder) => controlChanges.push([name, holder]),
     restartApp: () => { restarts.push(Date.now()); },
+    restartUnavailable: () => null,
     // Fake owner-side create/kill, mirroring main.js's distinguishable-error
     // contract: bad name/type, name taken, spawn ack {ok,name,type,pid}.
     createSession: (spec) => {
@@ -484,6 +485,49 @@ test('restart: peer restart acks and triggers the owner relaunch', async () => {
   assert.ok(res.ok, 'restart acked ok');
   // Owner acks BEFORE quitting, so the relaunch callback fires; wait for it.
   await waitFor(() => restarts.length > before, 'owner restart callback fired');
+});
+
+test('restart: POST /api/restart refuses with the unavailable reason and never calls restartApp', async () => {
+  const fired = [];
+  const gated = new RemoteServer({
+    port: 0, pagePath: '/nonexistent',
+    getSessions: () => [], getTranscript: () => ({ ok: true, messages: [] }),
+    send: () => ({ ok: true }), hostLabel: 'gated', version: '0.0.0-test',
+    restartApp: () => { fired.push(Date.now()); },
+    restartUnavailable: () => 'why',
+  });
+  await gated.start();
+  const gatedConn = new PeerConnection({
+    id: 'p-gate', label: 'gate', url: `http://127.0.0.1:${gated.port}`, selfLabel: 'mylaptop',
+    emit: () => {},
+  });
+  try {
+    const out = await new Promise((resolve, reject) => {
+      const body = '{}';
+      const req = http.request({
+        hostname: '127.0.0.1', port: gated.port, path: '/api/restart', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      }, (res) => {
+        let buf = '';
+        res.on('data', (c) => (buf += c));
+        res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(buf) }));
+      });
+      req.on('error', reject);
+      req.write(body); req.end();
+    });
+    assert.equal(out.status, 409, 'a refusal is not a 200 and not the 501 capability answer');
+    assert.deepStrictEqual(out.body, { ok: false, error: 'why' },
+      'the body carries the reason and nothing else — read-only responses ship no token/auth keys');
+    assert.deepStrictEqual(fired, [], 'the owner relaunch was never reached');
+
+    const seen = await new Promise((r) => gatedConn.restart(r));
+    assert.deepStrictEqual(seen, { ok: false, error: 'why' },
+      'the reason survives the peer client intact — this is what the sidebar toasts');
+    assert.deepStrictEqual(fired, [], 'still never reached');
+  } finally {
+    gatedConn.stop();
+    gated.stop();
+  }
 });
 
 test('restart: 501 when the owner exposes no restart callback', async () => {

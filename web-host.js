@@ -249,7 +249,12 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
 
 // Deliberately absent from api-contract: reached by a raw invoke, so the
 // desktop surface stays untouched.
-  handlers.set('app:restart', () => { if (typeof engine.restartClodex === 'function') engine.restartClodex(); return { ok: true }; });
+  handlers.set('app:restart', () => {
+    const why = engine.restartUnavailable ? engine.restartUnavailable() : null;
+    if (why) return { ok: false, error: why };
+    engine.restartClodex();
+    return { ok: true };
+  });
 
   function onFrame(conn, frame) {
     if (!conn.authed) {

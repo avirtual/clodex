@@ -36,7 +36,7 @@ function createRemoteWiring(deps) {
     claimOutbox, listOutboxOrigins,
     manager, proxyPoller, loadManifest, listTeams, gitWorktree,
     getPeerManager, getTunnelManager, getWebTunnelManager, getSandboxManager,
-    restartClodex, restartSession, peerProxyView,
+    restartClodex, restartUnavailable, restartSession, peerProxyView,
     readSessionArgs, applySessionArgs,
     readSkillCatalog, applySessionSkills,
     fetchProxyContext, fetchProxyReport, fetchProxyBust,
@@ -265,7 +265,17 @@ function createRemoteWiring(deps) {
           manager._deliverMessage(name, 'user', text, 'dm');
           return { ok: true };
         },
-        restartApp: () => { log.info('app', 'restart requested remotely'); restartClodex(); },
+        restartApp: () => {
+          const why = restartUnavailable ? restartUnavailable() : null;
+          if (why) {
+            log.info('app', `restart requested remotely — refused: ${why}`);
+            return { ok: false, error: why };
+          }
+          log.info('app', 'restart requested remotely');
+          restartClodex();
+          return { ok: true };
+        },
+        restartUnavailable: restartUnavailable || null,
         createSession: async (body = {}) => {
           // Exec grants NEVER cross the wire (Decision 2) — strip any the client
           // sent before mapping (mirror of the setSessionArgs backstop), and force
