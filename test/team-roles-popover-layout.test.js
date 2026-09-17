@@ -133,3 +133,80 @@ test('t894: the selected dispatch segment uses the selection treatment, not the 
   assert.match(body, /var\(--accent\)/,
     'with an --accent edge, as .drawer-tab.active uses');
 });
+
+// t964: the ticket id is an IDENTIFIER, not prose — it renders in its own span so
+// the mono/tertiary treatment can reach it. The line the operator reads must not
+// change by a byte for it, which is the whole risk of splitting a built string:
+// re-deriving the id from the ticket object instead of splitting ticketLine's own
+// output is how the two drift, and ticketLine is the authority on what an id
+// looks like (`?` for a missing one included). So the subject is equality against
+// ticketLine, plus the span, plus the id being INSIDE the span.
+
+const { ticketLine } = require('../renderer/lib/team-roles');
+
+function fakeDom() {
+  const text = (v) => ({ tag: '#text', children: [], get textContent() { return String(v); } });
+  const make = (tag) => ({
+    tag, className: '', children: [], _text: '',
+    set textContent(v) { this._text = String(v); this.children.length = 0; },
+    get textContent() {
+      return this.children.length ? this.children.map((c) => c.textContent).join('') : this._text;
+    },
+    appendChild(c) { this.children.push(c); return c; },
+  });
+  return {
+    createElement: make,
+    createTextNode: text,
+    createDocumentFragment: () => make('#fragment'),
+  };
+}
+
+// buildTicketsSection is a closure inside initTeamRolesPopover, so it is run out
+// of the source against the minimum DOM it touches rather than reached through a
+// mount — jsdom is not a dependency in this suite (see the sibling DOM tests).
+function runTicketsSection(act) {
+  const m = /^  function buildTicketsSection\(act\) \{\n[\s\S]*?^  \}$/m.exec(popover);
+  assert.ok(m, 'ENTER: found buildTicketsSection in the popover source');
+  assert.match(m[0], /ticketLine\(t, now\)/, 'ENTER: the captured function is the one building the lines');
+  const build = new Function('document', 'ticketLine',
+    `${m[0]}\nreturn buildTicketsSection;`)(fakeDom(), ticketLine);
+  const frag = build(act);
+  return frag.children.filter((n) => n.className === 'team-role-note');
+}
+
+test('t964: a ticket line reads exactly as ticketLine wrote it, with the id in its own span', () => {
+  // Time-independent tickets: activityTime of a null stamp is '', so the expected
+  // string does not depend on the clock buildTicketsSection reads for itself.
+  const open = { id: 't786', title: 'the roles popover', assignee: 'hand-786', step: 'working', since: null };
+  const landed = { id: 't785', title: 'team:activity', at: null, outcome: 'accepted', rounds: 2 };
+  const notes = runTicketsSection({ tickets: { open: [open], landed: [landed] } });
+  assert.strictEqual(notes.length, 2, 'ENTER: one .team-role-note per ticket, open then landed');
+
+  for (const [i, t] of [open, landed].entries()) {
+    const line = notes[i];
+    assert.strictEqual(line.textContent, ticketLine(t, Date.now()),
+      `${t.id}: the rendered line must equal ticketLine byte for byte`);
+    assert.strictEqual(line.children[0].className, 'team-ticket-id',
+      `${t.id}: the first child must be the id span`);
+    assert.strictEqual(line.children[0].textContent, t.id,
+      `${t.id}: ENTER — the id text must be INSIDE the span, not beside it`);
+    assert.ok(line.children.length > 1,
+      `${t.id}: the rest of the line must survive as a sibling of the span`);
+  }
+});
+
+test('t964: the empty-state note is a plain line, with no id span to wear', () => {
+  // The degenerate direction: a span minted unconditionally would put mono
+  // tertiary type on "No open tickets." and on the first word of it.
+  const notes = runTicketsSection({ tickets: { open: [], landed: [] } });
+  assert.deepStrictEqual(notes.map((n) => n.textContent),
+    ['No open tickets.', 'Nothing landed yet.']);
+  for (const n of notes) assert.strictEqual(n.children.length, 0, 'an empty-state note has no element children');
+});
+
+test('t964: the id span has a treatment of its own, keyed on the class the popover mints', () => {
+  const rule = rules(/^\.team-ticket-id$/);
+  assert.strictEqual(rule.length, 1, 'ENTER: exactly one .team-ticket-id rule in styles.css');
+  assert.match(rule[0].body, /font-family:\s*var\(--font-mono\)/, 'an identifier renders monospace');
+  assert.match(rule[0].body, /color:\s*var\(--text-tertiary\)/, 'and quieter than the prose beside it');
+});
