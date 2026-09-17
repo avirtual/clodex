@@ -223,6 +223,38 @@ test('undeploy node: a forced --helm on a recordless kubectl node claims NO reco
     'a forced flag tears down the name TYPED, not the svc/ release an inference would have preferred');
 });
 
+test('undeploy node: a forced --helm on a kubectl node routes to the TRANSPORT\'s namespace and context', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'x', contexts: { x: {
+    kubectl: { target: 'svc/x', namespace: 'ns1', context: 'ctx1' }, token: 'W',
+  } } });
+  const r = await cli(['undeploy', 'node', 'x', '--helm', '--force'], { execFn: fakeHelm(rec), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const uninstall = rec.calls.find((c) => c.join(' ').includes('helm uninstall'));
+  assert.ok(uninstall, 'ENTER: no helm uninstall ran, so the routing assertions below prove nothing');
+  assert.ok(uninstall.join(' ').includes('--namespace ns1'),
+    'naming the flavor the transport would have inferred anyway says nothing about WHERE — dropping '
+    + `the route uninstalls from the default namespace of whatever kube context is current: ${uninstall.join(' ')}`);
+  assert.ok(uninstall.join(' ').includes('--kube-context ctx1'), uninstall.join(' '));
+});
+
+test('undeploy node: a forced flavor that CONTRADICTS the kubectl transport routes nowhere', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'x', contexts: { x: {
+    kubectl: { target: 'svc/x', namespace: 'ns1', context: 'ctx1' }, token: 'W',
+  } } });
+  const r = await cli(['undeploy', 'node', 'x', '--docker', '--force'], {
+    contextsFile,
+    execFn: fakeHelm(rec),
+    runDocker: async (args) => { rec.docker = args; return { code: 0, stdout: '', stderr: '' }; },
+  });
+  assert.ok(!rec.calls || !rec.calls.some((c) => c.join(' ').includes('helm uninstall')),
+    'a --docker teardown must not reach helm at all');
+  assert.notStrictEqual(r.code, EXIT.USAGE,
+    'a forced flavor the transport disagrees with is still the operator\'s call to make — the kubectl '
+    + 'route is taken only when the forced flavor is the one inference would have chosen anyway');
+});
+
 test('undeploy node: a flavor this build cannot tear down → USAGE by name', async () => {
   const contextsFile = tmpCtxFile({ current: 'future', contexts: { future: { url: 'http://x', deploy: { flavor: 'nomad' } } } });
   const r = await cli(['undeploy', 'node', 'future'], { contextsFile });

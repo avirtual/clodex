@@ -173,7 +173,8 @@ async function undeployVerb({ printer, flags, args, io = {} }) {
   if (!name) throw new CliError(EXIT.USAGE, 'undeploy node needs a name (e.g. undeploy node mybox)');
   const forced = forcedFlavor(flags);
   const { known, stored, entry, inferred } = storedDeploy(name, io);
-  const dep = stored || (forced ? null : inferred);
+  const forcedMatchesTransport = forced && inferred && String(inferred.flavor) === forced;
+  const dep = stored || (forced && !forcedMatchesTransport ? null : inferred);
   const flavor = forced || (dep ? String(dep.flavor) : null);
   if (!flavor) {
     if (!known) {
@@ -193,7 +194,7 @@ async function undeployVerb({ printer, flags, args, io = {} }) {
   }
   const target = (!forced && dep) ? String(dep.stack || dep.release || name) : name;
   const routed = dep && String(dep.flavor) === flavor ? dep : null;
-  const recorded = (forced && dep) ? String(dep.stack || dep.release || '') : '';
+  const recorded = (forced && stored) ? String(stored.stack || stored.release || '') : '';
   if (recorded && recorded !== target) {
     if (flags.json) printer.json({ type: 'forced-target', flavor, target, recordedFlavor: String(dep.flavor), recordedTarget: recorded });
     else printer.line(`--${flavor} forces the target: tearing down "${target}" (the name you typed), NOT the ${dep.flavor} "${recorded}" that context "${name}" records`);

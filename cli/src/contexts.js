@@ -55,9 +55,9 @@ function save(store, file = contextsPath()) {
 const TRANSPORT_KINDS = ['url', 'ssh', 'tunnel', 'ssm', 'kubectl', 'gcloud', 'az'];
 
 // `deploy` (t54) — WHICH flavor created this node, so a later `upgrade <ctx>`
-// can route without archaeology. The transport alone cannot answer it: the ssh
-// flavor and a REMOTE-DOCKER deploy both save `{ssh: user@host}`, identical
-// bytes, different upgrade path. Ambiguous by construction, hence a field.
+// can route without archaeology. A kubectl transport does answer it (t951: helm
+// alone writes one), but ssh cannot: the ssh flavor and a REMOTE-DOCKER deploy
+// both save `{ssh: user@host}`. Ambiguous there by construction, hence a field.
 //
 // Optional and unvalidated-when-absent: contexts written before this field
 // simply lack it, so there is no migration. A consumer that needs the flavor

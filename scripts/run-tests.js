@@ -382,7 +382,11 @@ const ALLOW_FILE = path.join(ROOT, 'test', 'slow-tests.json');
 let allow = {};
 try {
   const raw = JSON.parse(fs.readFileSync(ALLOW_FILE, 'utf8'));
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) allow = raw;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    const got = raw === null ? 'null' : (Array.isArray(raw) ? 'an array' : `a ${typeof raw}`);
+    die(`test/slow-tests.json is not a JSON object: got ${got}`);
+  }
+  allow = raw;
 } catch (e) {
   if (e.code !== 'ENOENT') die(`test/slow-tests.json is not valid JSON: ${e.message}`);
   allow = {};

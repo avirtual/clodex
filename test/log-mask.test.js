@@ -47,6 +47,29 @@ test('the flag branch: a space IS the separator after a `-`/`--` flag', () => {
   assert.strictEqual(maskSecrets(`run --password "${V}" now`), 'run --password=[redacted] now');
 });
 
+test('the flag branch: a scheme word after the flag is consumed WITH the value', () => {
+  assert.strictEqual(maskSecrets(`--authorization bearer ${V}`), '--authorization=[redacted]',
+    'stopping at `bearer` masks the scheme and leaves the credential in the log');
+  assert.strictEqual(maskSecrets(`--token ${V}`), '--token=[redacted]',
+    'ENTER: the no-scheme shape still masks, so the optional group did not become required');
+  assert.strictEqual(maskSecrets(`--token 'abc 123'`), '--token=[redacted]',
+    'ENTER: the quoted shape still masks');
+});
+
+test('the flag branch: the flag must START the string or follow whitespace', () => {
+  assert.strictEqual(maskSecrets('oauth-token secret [fargate]'), 'oauth-token secret [fargate]');
+  assert.strictEqual(maskSecrets('stale-token 403'), 'stale-token 403');
+  assert.strictEqual(maskSecrets('setup-token for boxy'), 'setup-token for boxy',
+    'an unanchored `--?` lets the hyphen INSIDE a word open a flag match, so every hyphenated word '
+    + 'ending in a key word eats the word after it — these three are real ops-log lines');
+});
+
+test('the flag branch: a valueless flag does not eat the next flag', () => {
+  assert.strictEqual(maskSecrets('--token --verbose'), '--token --verbose',
+    'a `-`-leading value is another flag, not a credential; masking it hides which flags ran and '
+    + 'redacts nothing that was ever secret');
+});
+
 test('rule (b): URL userinfo keeps the user and loses the password', () => {
   assert.strictEqual(maskSecrets(`connect postgres://u:${V}@h:5432/db now`),
     'connect postgres://u:[redacted]@h:5432/db now');

@@ -525,6 +525,10 @@ test('t918 pin 8: Check All means deny nothing, not "deny whatever arrives later
     },
   });
   assert.ok(all.rows.length, 'ENTER: rows drew, so there was something to tick');
+  const optimized = require('../catalogs').OPTIMIZED_SKILLS;
+  assert.ok(all.rows.some((r) => !optimized.includes(r.name)),
+    'ENTER: a row outside the kept floor drew — with every drawn row a keep, the collector returns '
+    + 'the asked list by the t950 clause and this pin would pass without exercising the [] branch');
   assert.deepStrictEqual(all.persisted, [],
     'the ticks say "deny nothing"; re-emitting `*` would still deny whatever the CLI announces later');
 });

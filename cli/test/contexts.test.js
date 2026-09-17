@@ -111,9 +111,9 @@ test('resolve: --url and --ssh together is rejected, not silently ordered', () =
 
 // ── t54: the deploy-flavor record ────────────────────────────────────────────
 //
-// `upgrade <ctx>` cannot route without knowing which flavor built the node, and
-// the transport cannot answer it: the ssh flavor and a REMOTE-DOCKER deploy
-// both save `{ssh: user@host}`. Ambiguous by construction — hence a field.
+// `upgrade <ctx>` cannot route without knowing which flavor built the node. A
+// kubectl transport answers it (t951), but ssh cannot: the ssh flavor and a
+// REMOTE-DOCKER deploy both save `{ssh: user@host}` — hence a field.
 
 test('validateEntry: a deploy record is accepted, and is OPTIONAL (old ctxs need no migration)', () => {
   // The no-migration property, stated as a test: every context written before
