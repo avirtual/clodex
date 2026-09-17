@@ -364,10 +364,10 @@ test('cachedMessages: an unchanged file is not re-parsed; a grown file is', () =
   } finally { fs.unlinkSync(p); }
 });
 
-test('hello advertises transcript-since and the endpoint threads since through', () => {
+test('hello advertises transcript-since and transcript-after, and the endpoint threads both through', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf-8');
-  assert.match(src, /caps = \['transcript', 'transcript-since', 'send'\]/);
-  assert.match(src, /this\._getTranscript\(name, limit, since\)/);
+  assert.match(src, /caps = \['transcript', 'transcript-since', 'transcript-after', 'send'\]/);
+  assert.match(src, /this\._getTranscript\(name, limit, since, after\)/);
 
   const remote = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'remote.html'), 'utf-8');
   assert.match(remote, /if \(j\.messages\.length\) \{/);
@@ -479,4 +479,56 @@ test('jsonlToMessages: the Codex response_item shape becomes one user + one assi
       ['assistant', '[agent:dm clodex] the audit\n[agent:end]', true],
     ]);
   } finally { fs.unlinkSync(p); }
+});
+
+const AFTER_ROWS = [
+  { seq: 0, role: 'user', ts: '2026-09-17T00:00:00.000Z' },
+  { seq: 1, role: 'assistant', ts: '2026-09-17T01:00:00.000Z' },
+  { seq: 2, role: 'assistant', ts: null },
+  { seq: 3, role: 'user', ts: '2026-09-17T02:00:00.000Z' },
+  { seq: 4, role: 'assistant', ts: '2026-09-17T03:00:00.000Z' },
+];
+
+test('sliceSince: `after` keeps rows at or newer than the instant, and every null-ts row', () => {
+  const page = sliceSince(AFTER_ROWS, null, 100, '2026-09-17T02:00:00.000Z');
+  assert.deepStrictEqual(page.messages.map(m => m.seq), [2, 3, 4],
+    'the boundary row (seq 3, ts === after) survives, and the null-ts row is never dropped by a time filter');
+  assert.strictEqual(page.cursor, 3, 'the cursor still names the last turn start of the FULL history');
+
+  assert.deepStrictEqual(
+    sliceSince(AFTER_ROWS, null, 100, '2026-09-17T09:00:00.000Z').messages.map(m => m.seq), [2],
+    'an instant past every stamp leaves only the row that carries none');
+});
+
+test('sliceSince: the time filter runs BEFORE the limit — a back-dated row cannot displace a survivor', () => {
+  const skewed = [
+    { seq: 0, ts: '2026-09-17T03:00:00.000Z' },
+    { seq: 1, ts: '2026-09-17T04:00:00.000Z' },
+    { seq: 2, ts: '2026-09-17T00:30:00.000Z' },
+    { seq: 3, ts: '2026-09-17T05:00:00.000Z' },
+  ];
+  assert.deepStrictEqual(
+    sliceSince(skewed, null, 2, '2026-09-17T02:00:00.000Z').messages.map(m => m.seq), [1, 3],
+    'the page is the last 2 rows that PASS; slicing first would hand the filter [2,3] and return just [3], losing a row the window should show');
+});
+
+test('sliceSince: the limit counts SURVIVORS — a narrow window returns fewer rows than the limit, never a topped-up tail', () => {
+  assert.deepStrictEqual(
+    sliceSince(AFTER_ROWS, null, 3, '2026-09-17T09:00:00.000Z').messages.map(m => m.seq), [2],
+    'one row passes the window, so one row comes back — filtering AFTER the slice would have returned the last 3 rows regardless');
+  assert.deepStrictEqual(
+    sliceSince(AFTER_ROWS, null, 2, '2026-09-17T01:00:00.000Z').messages.map(m => m.seq), [3, 4],
+    'and with more survivors than the limit it is still the NEWEST survivors');
+});
+
+test('sliceSince: `after` composes with the seq cursor, and an unparseable instant filters nothing', () => {
+  assert.deepStrictEqual(
+    sliceSince(AFTER_ROWS, 1, 100, '2026-09-17T02:30:00.000Z').messages.map(m => m.seq), [2, 4],
+    'both cursors apply: seq >= 1 drops row 0, the time floor drops rows 1 and 3, and the null-ts row survives between them');
+  assert.deepStrictEqual(
+    sliceSince(AFTER_ROWS, null, 100, 'not-a-time').messages.map(m => m.seq), [0, 1, 2, 3, 4],
+    'a garbage instant is inert here — the ROUTE refuses it with a 400, this layer never silently empties the page');
+  assert.deepStrictEqual(
+    sliceSince(AFTER_ROWS, null, 100).messages.map(m => m.seq), [0, 1, 2, 3, 4],
+    'the default (no `after`) is the pre-t958 behaviour');
 });

@@ -106,14 +106,23 @@ const VERB_REGISTRY = [
   {
     name: 'logs', group: 'daily',
     summary: 'print a transcript slice, or follow it live',
-    usage: 'logs <name> [--tail N] [-f|--follow] [-o json|yaml]',
-    args: [['name', 'session whose transcript to read']],
+    usage: 'logs <name> [--tail N] [--since D] [--timestamps] [-f|--follow] [-o json|yaml]\n       logs node [--tail N] [--since D] [-o json]',
+    args: [['name', 'session whose transcript to read (or the literal `node` for the engine\'s own log)']],
     flags: [
       ['--tail N', 'last N entries (default: the server\'s slice)'],
+      ['--since D', 'only entries newer than a duration (30s|10m|2h|7d) or an ISO-8601 instant'],
+      ['--timestamps', 'prefix each entry with its wall-clock time (a `-` where the entry carries none)'],
       ['-f, --follow', 'kubectl -f: print the tail, then stream new entries as each turn lands'],
     ],
-    examples: ['clodexctl logs bob --tail 20', 'clodexctl logs bob -f -o json | jq'],
+    examples: [
+      'clodexctl logs bob --tail 20',
+      'clodexctl logs bob -f -o json | jq',
+      'clodexctl logs bob --since 30m --timestamps',
+      'clodexctl logs node --tail 200',
+    ],
     notes: [
+      '`logs node` prints the NODE\'s own engine log (not a session transcript), so a headless box can be checked without a shell on it. It takes no name, does not follow, and secret-shaped values are masked by the node before they reach the wire.',
+      '--since bounds the INITIAL page only under -f; the stream that follows is unfiltered. It is also re-applied client-side, so an older node that ignores it still yields nothing older than the instant.',
       'follow subscribes to /api/events and refetches the delta on an activity for NAME. Ctrl-C exits 0 (it\'s a pager); non-TTY stdout is fine (pipe into grep).',
       '-o json = messages array one-shot; -o json with --follow = NDJSON (one object per entry).',
       'Survives a dropped stream (60s staleness watchdog + bounded reconnect); a reconnect re-snapshots silently (no duplicate lines).',

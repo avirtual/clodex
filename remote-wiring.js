@@ -51,6 +51,7 @@ function createRemoteWiring(deps) {
     getWebInfo,
     // This box's wirescope, or null when it has none to forward to (t443).
     getWirescopeInfo,
+    getNodeLogFile,
   } = deps;
 
   let inboxWatched = false;
@@ -248,14 +249,14 @@ function createRemoteWiring(deps) {
         },
         listWorkspaces: () => getWorkspaces().list(),
         ...resourceCallbacks(),
-        getTranscript: (name, limit, since) => {
+        getTranscript: (name, limit, since, after = null) => {
           const sess = manager.sessions.get(name);
           if (!sess || !sess.agentType) return { ok: false, error: 'Session not found' };
           const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
           let jsonlPath;
           try { jsonlPath = fs.realpathSync(linkPath); }
           catch { return { ok: true, messages: [] }; } // no transcript yet
-          try { return { ok: true, ...sliceSince(cachedMessages(jsonlPath), since, limit) }; }
+          try { return { ok: true, ...sliceSince(cachedMessages(jsonlPath), since, limit, after) }; }
           catch (e) { return { ok: false, error: e.message }; }
         },
         send: (name, text) => {
@@ -342,6 +343,7 @@ function createRemoteWiring(deps) {
             return { ok: false, error: `spawn failed: ${e.message}` };
           }
         },
+        nodeLogFile: getNodeLogFile ? () => getNodeLogFile() : null,
         getCatalogs: () => ({
           agents: getAgentLibrary().list(),
           prompts: getPromptLibrary().list(),

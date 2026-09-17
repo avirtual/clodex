@@ -15,8 +15,13 @@ const RESOURCES_DOC = {
     SESSIONS_ROW,
     { name: 'workspaces', singular: 'workspace', scope: 'node', verbs: ['list'] },
     { name: 'catalogs', singular: 'catalogs', scope: 'node', verbs: ['get'] },
+    { name: 'node/logs', singular: 'node/logs', scope: 'node', verbs: ['get'] },
   ],
 };
+
+function docWithoutResource(name) {
+  return { ...RESOURCES_DOC, resources: RESOURCES_DOC.resources.filter((r) => r.name !== name) };
+}
 
 function docWithout(sub) {
   const subresources = { ...SESSIONS_ROW.subresources };
@@ -29,4 +34,4 @@ function docWithoutVerb(verb) {
   return { ...RESOURCES_DOC, resources: [{ ...SESSIONS_ROW, verbs }, ...RESOURCES_DOC.resources.slice(1)] };
 }
 
-module.exports = { SESSIONS_ROW, RESOURCES_DOC, docWithout, docWithoutVerb };
+module.exports = { SESSIONS_ROW, RESOURCES_DOC, docWithout, docWithoutVerb, docWithoutResource };

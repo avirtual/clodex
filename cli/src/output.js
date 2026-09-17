@@ -184,9 +184,12 @@ function describeValue(v) {
 }
 
 // transcript messages → role-prefixed lines, blank line between turns.
-function renderTranscript(messages) {
+function renderTranscript(messages, opts = {}) {
+  const stamp = opts && opts.timestamps
+    ? (m) => `${m.ts == null ? '-' : m.ts} `
+    : () => '';
   return (messages || [])
-    .map((m) => `[${m.role}] ${m.text}`)
+    .map((m) => `${stamp(m)}[${m.role}] ${m.text}`)
     .join('\n\n');
 }
 

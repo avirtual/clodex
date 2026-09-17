@@ -24,7 +24,7 @@ const { parse } = require('./args');
 
 // Parser option spec shared by all verbs (a verb ignores flags it doesn't use).
 const PARSE_OPTS = {
-  booleans: ['force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'keep-ctx', 'keep-data', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'force-conflicts', 'all-workspaces', 'docker', 'helm', 'fargate', 'current', 'import', 'test', 'help', 'version'],
+  booleans: ['force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'keep-ctx', 'keep-data', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'force-conflicts', 'all-workspaces', 'docker', 'helm', 'fargate', 'current', 'import', 'test', 'help', 'version', 'timestamps'],
   multi: ['arg', 'ssh-opt', 'volume', 'env', 'set', 'values', 'param'],
   greedy: ['tunnel'],
   aliases: { h: 'help', V: 'version', f: 'follow', o: 'output', n: 'workspace', A: 'all-workspaces', 'remote-port': 'remotePort' },

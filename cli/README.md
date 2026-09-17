@@ -383,6 +383,16 @@ to open the wire port: same `{port}`-substituted, process-group-reaped child,
 but forwarding a port you name and held open in the foreground kubectl-style
 rather than reaped after one request.
 
+**`logs --since`, `--timestamps`, `logs node`.** `--since` takes a duration
+(`30s`/`10m`/`2h`/`7d`) or an ISO-8601 instant and keeps only newer turns —
+resolved to an absolute instant client-side and re-applied to the returned page,
+so an older node that ignores the query still yields nothing older. `--timestamps`
+prefixes each turn with its verbatim wire timestamp (a `-` where the entry carries
+none); `-o json|yaml` already carry `ts`, so the flag is ignored there. `logs node`
+takes no name and prints the node's OWN engine log (`GET /api/node/logs`, the
+current file only, secret-shaped values masked before they reach the wire) so a
+headless box can be checked without a shell on it — it does not follow.
+
 **`logs -f` — follow.** Print the tail, then stream new transcript entries as
 each turn lands (subscribes to `/api/events`, refetches the delta on an activity
 for your session). `-o json` emits **NDJSON** (one object per new entry), so

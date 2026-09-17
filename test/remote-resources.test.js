@@ -40,6 +40,12 @@ const TICKETS_BETA = [
 
 const AGENT_MD = '---\ndescription: a library agent\nmodel: opus\n---\nbody text\n';
 
+const NODE_LOG_SEED = [
+  '2026-09-17T00:00:00.000Z  INFO  [app] booted',
+  '2026-09-17T01:00:00.000Z  INFO  [remote] listening on 127.0.0.1:7777',
+  '2026-09-17T02:00:00.000Z  WARN  [peer] handshake retried',
+].join('\n') + '\n';
+
 const FAKE_REPO = path.join(os.tmpdir(), 'clodex-walk-repo');
 const FAKE_WORKTREES = [
   { path: FAKE_REPO, branch: 'master', head: 'abcdef12', isMain: true, detached: false, locked: false, prunable: false },
@@ -54,6 +60,10 @@ function makeDeps() {
     alpha: { ...TEAM_ALPHA, name: 'alpha', root: alphaRoot },
     beta: { ...TEAM_BETA, name: 'beta', root: betaRoot },
   };
+  const nodeLog = path.join(root, 'clodex.log');
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(nodeLog, NODE_LOG_SEED);
+
   const seedStore = createTicketsStore({ fs, path, clodexHome: registry });
   seedStore.save(alphaRoot, TICKETS_ALPHA);
   seedStore.save(betaRoot, TICKETS_BETA);
@@ -127,8 +137,9 @@ function makeDeps() {
     getRemoteServer: () => srv, setRemoteServer: (v) => { srv = v; }, setRemoteError: () => {},
     readRemoteEnvToken: () => null, resolveRemoteToken: (a, b) => a || b || null,
     appVersion: '9.9.9', isPackaged: () => false,
+    getNodeLogFile: () => nodeLog,
   };
-  return { deps, createCalls };
+  return { deps, createCalls, nodeLog };
 }
 
 function captureOptions(deps) {
@@ -170,10 +181,10 @@ function req(port, pathname, opts = {}) {
 }
 
 async function withNode(extra, fn) {
-  const { deps, createCalls } = makeDeps();
+  const { deps, createCalls, nodeLog } = makeDeps();
   const s = new RemoteServer({ ...captureOptions(deps), ...extra });
   await s.start();
-  try { return await fn(s.port, { createCalls }); } finally { s.stop(); }
+  try { return await fn(s.port, { createCalls, nodeLog }); } finally { s.stop(); }
 }
 
 const WALK_ID = {
@@ -192,8 +203,8 @@ function subresourceFixture() {
   return {
     calls,
     opts: {
-      getTranscript: (name, limit, since) => {
-        calls.push({ route: 'transcript', name, limit, since });
+      getTranscript: (name, limit, since, after = null) => {
+        calls.push({ route: 'transcript', name, limit, since, after });
         return name === 'ghost' ? { ok: false, error: 'Session not found' } : TRANSCRIPT_OUT;
       },
       getAttachInfo: (name) => {
@@ -309,9 +320,10 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
     'sessions/skills.patch', 'sessions/attach.get', 'workspaces.list',
     'peers.list', 'peers.get', 'teams.list', 'teams.get', 'tickets.list', 'tickets.get',
     'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get', 'worktrees.list', 'catalogs.get',
+    'node/logs.get',
   ], 'the walk must visit every shipped row — an empty or shortened walk passes vacuously');
-  assert.strictEqual(seen.length, 28, 'the walk entered 15 resource verbs, the sessions delete, and the 12 session subresource verbs');
-  assert.strictEqual(RESOURCES.length, 9, 'the walk covered fewer than the 9 shipped resources');
+  assert.strictEqual(seen.length, 29, 'the walk entered 16 resource verbs, the sessions delete, and the 12 session subresource verbs');
+  assert.strictEqual(RESOURCES.length, 10, 'the walk covered fewer than the 10 shipped resources');
 });
 
 test('GET /api/sessions/:name/transcript: the status and body the deleted /api/transcript/ served, limit and since threaded', async () => {
@@ -320,12 +332,106 @@ test('GET /api/sessions/:name/transcript: the status and body the deleted /api/t
     const r = await req(port, '/api/sessions/alice/transcript');
     assert.strictEqual(r.status, 200);
     assert.deepStrictEqual(JSON.parse(r.body), TRANSCRIPT_OUT);
-    assert.deepStrictEqual(fixture.calls[0], { route: 'transcript', name: 'alice', limit: 100, since: null }, 'the no-query defaults');
+    assert.deepStrictEqual(fixture.calls[0], { route: 'transcript', name: 'alice', limit: 100, since: null, after: null }, 'the no-query defaults');
     await req(port, '/api/sessions/alice/transcript?limit=9999&since=4');
-    assert.deepStrictEqual(fixture.calls[1], { route: 'transcript', name: 'alice', limit: 500, since: 4 }, 'limit clamped at 500, since parsed');
+    assert.deepStrictEqual(fixture.calls[1], { route: 'transcript', name: 'alice', limit: 500, since: 4, after: null }, 'limit clamped at 500, since parsed');
     const miss = await req(port, '/api/sessions/ghost/transcript');
     assert.strictEqual(miss.status, 404, 'a not-ok callback result is still a 404, as the deleted route answered');
     assert.deepStrictEqual(JSON.parse(miss.body), { ok: false, error: 'Session not found' });
+  });
+});
+
+test('GET .../transcript?after=: an ISO instant reaches the callback, `since` keeps its seq meaning', async () => {
+  const fixture = subresourceFixture();
+  await withNode(fixture.opts, async (port) => {
+    const r = await req(port, '/api/sessions/alice/transcript?after=2026-09-17T02:00:00.000Z');
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(fixture.calls[0],
+      { route: 'transcript', name: 'alice', limit: 100, since: null, after: '2026-09-17T02:00:00.000Z' },
+      'after arrives VERBATIM — the route does not re-serialize the operator\'s instant');
+
+    await req(port, '/api/sessions/alice/transcript?since=4&after=2026-09-17T02:00:00.000Z');
+    assert.deepStrictEqual(fixture.calls[1],
+      { route: 'transcript', name: 'alice', limit: 100, since: 4, after: '2026-09-17T02:00:00.000Z' },
+      'the two cursors are independent: since stays an integer seq, after an instant');
+
+    await req(port, '/api/sessions/alice/transcript');
+    assert.strictEqual(fixture.calls[2].after, null, 'no after query ⇒ null, not the empty string');
+  });
+});
+
+test('GET .../transcript?after=: an unparseable instant is a 400 and never reaches the callback', async () => {
+  const fixture = subresourceFixture();
+  await withNode(fixture.opts, async (port) => {
+    for (const bad of ['bogus', '', '30m', 'yesterday']) {
+      const r = await req(port, `/api/sessions/alice/transcript?after=${encodeURIComponent(bad)}`);
+      assert.strictEqual(r.status, 400, `after="${bad}" must be refused, not silently ignored`);
+      assert.deepStrictEqual(JSON.parse(r.body), { ok: false, error: 'bad after (expected an ISO-8601 instant)' });
+    }
+    assert.strictEqual(fixture.calls.length, 0, 'a refused instant reached no transcript read');
+  });
+});
+
+test('GET /api/node/logs: the current log file tailed, limit honoured and clamped, missing file is empty', async () => {
+  await withNode({}, async (port, { nodeLog }) => {
+    const all = JSON.parse((await req(port, '/api/node/logs')).body);
+    assert.strictEqual(all.ok, true);
+    assert.deepStrictEqual(all.lines, NODE_LOG_SEED.split('\n').filter(Boolean),
+      'every seeded line, in file order, with no trailing empty');
+
+    const one = JSON.parse((await req(port, '/api/node/logs?limit=1')).body);
+    assert.deepStrictEqual(one.lines, ['2026-09-17T02:00:00.000Z  WARN  [peer] handshake retried'],
+      'limit takes the NEWEST lines (a tail), not the oldest');
+
+    const clamped = JSON.parse((await req(port, '/api/node/logs?limit=9999')).body);
+    assert.strictEqual(clamped.lines.length, 3, 'an oversized limit clamps rather than erroring');
+
+    fs.writeFileSync(nodeLog, `${NODE_LOG_SEED}2026-09-17T04:00:00.000Z  INFO  [app] appended\n`);
+    const grown = JSON.parse((await req(port, '/api/node/logs')).body);
+    assert.strictEqual(grown.lines.length, 4, 'the route re-reads the file — it holds no snapshot');
+
+    fs.unlinkSync(nodeLog);
+    const gone = JSON.parse((await req(port, '/api/node/logs')).body);
+    assert.deepStrictEqual(gone, { ok: true, lines: [] }, 'a missing log is an empty page, never a 500');
+  });
+});
+
+test('GET /api/node/logs: never reads the ROTATED file, and 501s with no host log path', async () => {
+  await withNode({}, async (port, { nodeLog }) => {
+    fs.writeFileSync(`${nodeLog}.1`, '2026-09-16T00:00:00.000Z  INFO  [app] previous generation\n');
+    const body = JSON.parse((await req(port, '/api/node/logs')).body);
+    assert.ok(!body.lines.some((l) => l.includes('previous generation')),
+      'the rotated .log.1 is a different file and stays off the wire');
+  });
+  await withNode({ nodeLogFile: null }, async (port) => {
+    const r = await req(port, '/api/node/logs');
+    assert.strictEqual(r.status, 501, 'a host that supplies no log path refuses rather than guessing ~/.clodex');
+    assert.deepStrictEqual(JSON.parse(r.body), { ok: false, error: 'node logs not available' });
+    const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r2 => r2.name);
+    assert.ok(!names.includes('node/logs'), 'and it drops out of the catalog, so the CLI says upgrade');
+  });
+});
+
+test('GET /api/node/logs: a credential-shaped log line is masked before it reaches the wire', async () => {
+  const marker = 'Zq7-NOT-A-REAL-VALUE-Zq7';
+  await withNode({}, async (port, { nodeLog }) => {
+    fs.writeFileSync(nodeLog, [
+      `2026-09-17T00:00:00.000Z  INFO  [remote] token=${marker}`,
+      `2026-09-17T00:00:01.000Z  INFO  [peer] Authorization: Bearer ${marker}`,
+      `2026-09-17T00:00:02.000Z  WARN  [auth] password: ${marker} rejected`,
+      `2026-09-17T00:00:03.000Z  INFO  [box] secret=${marker}`,
+      '2026-09-17T00:00:04.000Z  INFO  [app] a plain line survives verbatim',
+    ].join('\n') + '\n');
+    const raw = (await req(port, '/api/node/logs')).body;
+    assert.ok(!raw.includes(marker), 'the value appears NOWHERE in the response body, at any depth');
+    const { lines } = JSON.parse(raw);
+    assert.strictEqual(lines[0], '2026-09-17T00:00:00.000Z  INFO  [remote] token=[redacted]');
+    assert.strictEqual(lines[1], '2026-09-17T00:00:01.000Z  INFO  [peer] Authorization=[redacted]',
+      'the `Bearer` scheme word is consumed WITH the value — masking only up to it would leave the credential on the wire');
+    assert.strictEqual(lines[2], '2026-09-17T00:00:02.000Z  WARN  [auth] password=[redacted] rejected');
+    assert.strictEqual(lines[3], '2026-09-17T00:00:03.000Z  INFO  [box] secret=[redacted]');
+    assert.strictEqual(lines[4], '2026-09-17T00:00:04.000Z  INFO  [app] a plain line survives verbatim',
+      'a line with no credential shape is passed through byte for byte');
   });
 });
 
@@ -647,14 +753,14 @@ test('workspaces: 501 and absent from /api/resources when listWorkspaces is not 
   await withNode({ listWorkspaces: null }, async (port) => {
     assert.strictEqual((await req(port, '/api/workspaces')).status, 501);
     const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
-    assert.deepStrictEqual(names, ['sessions', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'worktrees', 'catalogs']);
+    assert.deepStrictEqual(names, ['sessions', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'worktrees', 'catalogs', 'node/logs']);
   });
 });
 
 test('catalogs: absent from /api/resources when getCatalogs is not injected', async () => {
   await withNode({ getCatalogs: null }, async (port) => {
     const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
-    assert.deepStrictEqual(names, ['sessions', 'workspaces', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'worktrees']);
+    assert.deepStrictEqual(names, ['sessions', 'workspaces', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'worktrees', 'node/logs']);
   });
 });
 
@@ -1089,6 +1195,7 @@ test('no read-only resource response carries a token/auth/secret/password key at
     '/api/agents', '/api/agents/scout',
     `/api/worktrees?repo=${encodeURIComponent(FAKE_REPO)}`,
     '/api/sessions', '/api/sessions/alice', '/api/workspaces',
+    '/api/node/logs',
   ];
   await withNode({}, async (port) => {
     for (const p of paths) {

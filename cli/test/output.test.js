@@ -69,3 +69,21 @@ test('stripAnsi strips ST-terminated OSC hyperlinks, leaves plain text intact', 
   assert.strictEqual(O.stripAnsi(s), 'pre link post');
   assert.strictEqual(O.stripAnsi('no escapes at all'), 'no escapes at all');
 });
+
+test('renderTranscript --timestamps: the verbatim ISO, one space, then the role prefix', () => {
+  const s = O.renderTranscript(
+    [{ role: 'user', text: 'hi', ts: '2026-09-17T02:20:16.743Z' }, { role: 'assistant', text: 'yo', ts: null }],
+    { timestamps: true },
+  );
+  assert.strictEqual(s, '2026-09-17T02:20:16.743Z [user] hi\n\n- [assistant] yo',
+    'the stamp is passed through unparsed, and a null ts holds the column with a dash');
+});
+
+test('renderTranscript: the default render ignores ts entirely — byte-identical with and without one', () => {
+  const withTs = O.renderTranscript([{ role: 'user', text: 'hi', ts: '2026-09-17T02:20:16.743Z' }]);
+  assert.strictEqual(withTs, '[user] hi', 'a ts on the row does not leak into the default render');
+  assert.strictEqual(O.renderTranscript([{ role: 'user', text: 'hi' }]), withTs);
+  assert.strictEqual(
+    O.renderTranscript([{ role: 'user', text: 'hi', ts: 'x' }], { timestamps: false }),
+    '[user] hi', 'an explicit false is the default, not a third mode');
+});

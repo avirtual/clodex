@@ -7,6 +7,7 @@ const out = require('./output');
 const imp = require('./import');
 const { validateEntry } = require('./contexts');
 const { openGuarded } = require('./sse-guard');
+const { parseDuration } = require('./args');
 const R = require('./resources');
 const { VERSION } = require('./help');
 
@@ -148,7 +149,7 @@ async function getSubresource({ client, ctx, printer, flags, label, target, io }
     throw new CliError(EXIT.USAGE, `unknown subresource: ${sub} (${SESSION_SUBRESOURCES.join('|')})`);
   }
   const name = requireName(target.name, `get session --subresource ${sub}`);
-  if (sub === 'transcript') return logs({ client, ctx, printer, flags: { ...flags, follow: false }, args: [name], io });
+  if (sub === 'transcript') return logsSession({ client, ctx, printer, flags: { ...flags, follow: false }, args: [name], io });
   await R.requireResource(client, 'sessions', 'get', label, sub);
   const body = await client.get(`/api/sessions/${encodeURIComponent(name)}/${sub}`, `get session --subresource ${sub}`);
   printer.json(body);
@@ -246,22 +247,79 @@ async function version({ client, printer, flags }) {
   printer.line(`Server: ${host} ${ver}`);
 }
 
-async function logs({ client, ctx, printer, flags, args, io = {} }) {
+const SINCE_FORMS = '--since takes a duration (30s|10m|2h|7d) or an ISO-8601 instant';
+
+function resolveSince(value, now) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) throw new CliError(EXIT.USAGE, SINCE_FORMS);
+  const ms = parseDuration(raw);
+  if (ms != null) return new Date(now() - ms).toISOString();
+  if (Number.isFinite(Date.parse(raw))) return raw;
+  throw new CliError(EXIT.USAGE, `bad --since "${raw}" — ${SINCE_FORMS}`);
+}
+
+function filterAfter(messages, after) {
+  if (!after) return messages;
+  const floor = Date.parse(after);
+  if (!Number.isFinite(floor)) return messages;
+  return messages.filter((m) => {
+    if (m.ts == null) return true;
+    const t = Date.parse(m.ts);
+    return !Number.isFinite(t) || t >= floor;
+  });
+}
+
+async function logs(bundle) {
+  if (bundle.args[0] === 'node') return logsNode({ ...bundle, args: bundle.args.slice(1) });
+  return logsSession(bundle);
+}
+
+async function logsSession({ client, ctx, printer, flags, args, io = {} }) {
   const name = requireName(args[0], 'logs');
+  const after = flags.since == null ? null : resolveSince(flags.since, io.now || Date.now);
   await R.requireResource(client, 'sessions', 'get', R.ctxLabel(ctx, flags), 'transcript');
-  const q = flags.tail ? `?limit=${encodeURIComponent(parseIntOr(flags.tail, 'tail'))}` : '';
-  const body = await client.get(`${transcriptPath(name)}${q}`, 'logs');
-  const messages = body.messages || [];
+  const q = new URLSearchParams();
+  if (flags.tail) q.set('limit', String(parseIntOr(flags.tail, 'tail')));
+  if (after) q.set('after', after);
+  const qs = q.toString();
+  const body = await client.get(`${transcriptPath(name)}${qs ? `?${qs}` : ''}`, 'logs');
+  const messages = filterAfter(body.messages || [], after);
   if (flags.follow) return logsFollow({ client, printer, flags, name, initial: body, messages, io });
-  if (flags.json) printer.json(body);
-  else printer.line(out.renderTranscript(messages));
+  if (flags.json) printer.json({ ...body, messages });
+  else printer.line(out.renderTranscript(messages, { timestamps: !!flags.timestamps }));
+}
+
+const NODE_LOG_LINE_TS = /^(\S+)\s/;
+
+function nodeLineAfter(line, floor) {
+  const m = NODE_LOG_LINE_TS.exec(line);
+  if (!m) return true;
+  const t = Date.parse(m[1]);
+  return !Number.isFinite(t) || t >= floor;
+}
+
+async function logsNode({ client, ctx, printer, flags, args, io = {} }) {
+  if (args.length) throw new CliError(EXIT.USAGE, `logs node: unexpected argument "${args[0]}"`);
+  if (flags.follow) throw new CliError(EXIT.USAGE, 'logs node does not follow');
+  const after = flags.since == null ? null : resolveSince(flags.since, io.now || Date.now);
+  await R.requireResource(client, 'node/logs', 'get', R.ctxLabel(ctx, flags));
+  const limit = flags.tail ? parseIntOr(flags.tail, 'tail') : 100;
+  const body = await client.get(`/api/node/logs?limit=${encodeURIComponent(Math.min(limit, 500))}`, 'logs node');
+  let lines = body.lines || [];
+  if (after) {
+    const floor = Date.parse(after);
+    if (Number.isFinite(floor)) lines = lines.filter((l) => nodeLineAfter(l, floor));
+  }
+  if (flags.json) { printer.json({ lines }); return; }
+  for (const l of lines) printer.line(l);
 }
 
 const REANCHOR_AFTER_EMPTY_PAGES = 2;
 
 async function logsFollow({ client, printer, flags, name, initial, messages, io }) {
+  const stamps = { timestamps: !!flags.timestamps };
   if (flags.json) { for (const m of messages) printer.json(m); }
-  else if (messages.length) printer.line(out.renderTranscript(messages));
+  else if (messages.length) printer.line(out.renderTranscript(messages, stamps));
 
   let lastSeq = lastSeqOf(messages);
   let legacyCount = lastSeq < 0 ? messages.length : 0;
@@ -272,7 +330,7 @@ async function logsFollow({ client, printer, flags, name, initial, messages, io 
   const emit = (fresh) => {
     if (!fresh.length) return;
     if (flags.json) { for (const m of fresh) printer.json(m); }
-    else printer.line(out.renderTranscript(fresh));
+    else printer.line(out.renderTranscript(fresh, stamps));
   };
 
   const reanchor = async () => {
@@ -400,7 +458,7 @@ const RESTARTABLE = ['session', 'node'];
 const DEPLOYABLE = ['node'];
 const USABLE = ['node'];
 
-const NAMELESS_RESOURCES = new Set(['restart node']);
+const NAMELESS_RESOURCES = new Set(['restart node', 'logs node']);
 
 function takeResourceWord(args, verb, supported) {
   const word = args[0];

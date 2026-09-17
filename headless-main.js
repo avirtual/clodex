@@ -178,6 +178,7 @@ const engine = createEngine({
     openPath: (p) => log.info('seam', `openPath (headless no-op): ${p}`),
     notifyOS: (opts) => log.info('notify', `${(opts && opts.title) || ''}${opts && opts.body ? ` — ${opts.body}` : ''}`),
     setAppQuitting: (v) => { appQuitting = v; },
+    logFile: LOG_FILE,
     pathMergeFailed,   // login-shell PATH merge outcome → diagnostics banner (Task 12)
     // Not "am I headless" but "am I inside a box": in-box has no docker (t903).
     enableSandbox: !runningInSandboxBox(process.env),

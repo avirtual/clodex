@@ -68,11 +68,13 @@ const RESOURCES = [
   { name: 'agents', singular: 'agent', scope: 'node', verbs: ['list', 'get'] },
   { name: 'worktrees', singular: 'worktree', scope: 'node', verbs: ['list'] },
   { name: 'catalogs', singular: 'catalogs', scope: 'node', verbs: ['get'] },
+  { name: 'node/logs', singular: 'node/logs', scope: 'node', verbs: ['get'] },
 ];
 
 const RESOURCES_VERSION = 2;
 
 const RESOURCE_CALLBACK = {
+  'node/logs': '_nodeLogFile',
   workspaces: '_listWorkspaces',
   peers: '_listPeers',
   teams: '_listTeams',
@@ -108,10 +110,37 @@ const SSE_HEARTBEAT_MS = 25000;
 const ATTACH_MAX_BUFFERED = 4 * 1024 * 1024;
 const RESIZE_DEBOUNCE_MS = 80;
 
+const LOG_SECRET_RE = /\b(token|secret|password|authorization|bearer)\b[=: ]+(?:(?:bearer|basic)\b[=: ]+)?\S+/gi;
+const NODE_LOG_TAIL_BYTES = 1024 * 1024;
+const NODE_LOG_MAX_LINES = 500;
+
+function maskLogLine(line) {
+  return String(line).replace(LOG_SECRET_RE, '$1=[redacted]');
+}
+
+function readLogTail(fs, file, limit) {
+  let fd = null;
+  try {
+    const size = fs.statSync(file).size;
+    const start = Math.max(0, size - NODE_LOG_TAIL_BYTES);
+    const buf = Buffer.alloc(size - start);
+    fd = fs.openSync(file, 'r');
+    fs.readSync(fd, buf, 0, buf.length, start);
+    let text = buf.toString('utf-8');
+    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+    const lines = text.split('\n').filter((l) => l !== '');
+    return lines.slice(-limit).map(maskLogLine);
+  } catch {
+    return [];
+  } finally {
+    if (fd != null) { try { fs.closeSync(fd); } catch {} }
+  }
+}
+
 class RemoteServer {
   constructor({ port, host, basePath, warn, pagePath, getSessions, getSession, listWorkspaces, getTranscript, send, restartApp,
                 hostLabel, version, srcDir, getWebInfo, getWirescopeInfo, getAttachInfo, sendInput, resizePty, onControlChange,
-                query, createSession, killSession, restartSession, getCatalogs,
+                query, createSession, killSession, restartSession, getCatalogs, nodeLogFile,
                 listPeers, getPeer, listTeams, getTeam, listTickets,
                 listSandboxes, getSandbox, listAgents, getAgent, listWorktrees,
                 getSessionArgs, setSessionArgs,
@@ -149,6 +178,7 @@ class RemoteServer {
     this._killSession = killSession || null;
     this._restartSession = restartSession || null;
     this._getCatalogs = getCatalogs || null;
+    this._nodeLogFile = typeof nodeLogFile === 'function' ? nodeLogFile : null;
     this._listPeers = listPeers || null;
     this._getPeer = getPeer || null;
     this._listTeams = listTeams || null;
@@ -621,7 +651,15 @@ class RemoteServer {
     const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 100, 500);
     const sinceRaw = url.searchParams.get('since');
     const since = sinceRaw == null ? null : Math.max(parseInt(sinceRaw, 10) || 0, 0);
-    const out = this._getTranscript(name, limit, since);
+    const afterRaw = url.searchParams.get('after');
+    let after = null;
+    if (afterRaw != null) {
+      if (!Number.isFinite(Date.parse(afterRaw))) {
+        return this._json(res, 400, { ok: false, error: 'bad after (expected an ISO-8601 instant)' });
+      }
+      after = afterRaw;
+    }
+    const out = this._getTranscript(name, limit, since, after);
     return this._json(res, out.ok ? 200 : 404, out);
   }
 
@@ -860,7 +898,7 @@ class RemoteServer {
     // Identity comes from response content, never from the port — SSH
     // tunnels make every peer look like localhost.
     if (req.method === 'GET' && p === '/api/peer/hello') {
-      const caps = ['transcript', 'transcript-since', 'send'];
+      const caps = ['transcript', 'transcript-since', 'transcript-after', 'send'];
       if (this._getAttachInfo) caps.push('attach');
       if (this._sendInput) caps.push('control');
       if (this._query) caps.push('query');
@@ -1033,6 +1071,14 @@ class RemoteServer {
           .then((out) => this._json(res, out && out.ok ? 200 : 400, out || { ok: false, error: 'create failed' }))
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
+    }
+    if (req.method === 'GET' && p === '/api/node/logs') {
+      if (!this._nodeLogFile) return this._json(res, 501, { ok: false, error: 'node logs not available' });
+      const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 100, NODE_LOG_MAX_LINES);
+      let file = null;
+      try { file = this._nodeLogFile(); } catch { file = null; }
+      const lines = file ? readLogTail(fs, file, limit) : [];
+      return this._json(res, 200, { ok: true, lines });
     }
     if (req.method === 'GET' && p === '/api/catalogs') {
       if (!this._getCatalogs) return this._json(res, 501, { ok: false, error: 'catalogs not available' });
