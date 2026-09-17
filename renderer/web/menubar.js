@@ -68,7 +68,12 @@ function confirmRestart(invoke) {
   const ok = (typeof window !== 'undefined' && typeof window.confirm === 'function')
     ? window.confirm('Restart Clodex?\n\nRunning sessions will be interrupted and resumed after the restart.')
     : true;
-  if (ok) Promise.resolve(invoke('app:restart', [])).catch(() => { /* socket drops on relaunch */ });
+  if (ok) {
+    Promise.resolve(invoke('app:restart', [])).then((res) => {
+      if (res && res.ok === false && res.error
+        && typeof window !== 'undefined' && typeof window.alert === 'function') window.alert(res.error);
+    }).catch(() => { /* socket drops on relaunch */ });
+  }
 }
 
 // Build the declarative menu tree from an injected side-effect context so the

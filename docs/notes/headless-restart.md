@@ -56,7 +56,9 @@ refusal by leaving something out. It returns a reason string (or null), and
 written at queue time, before any restart seam is reached, so a gate placed after
 it leaves a five-minute cooldown behind a request that did nothing.
 
-The gate is on the AGENT path only. `restartHost` — the phone/web restart button
-— is a human pressing a control while looking at the box, and has always exited
-immediately; routing it through the refusal would make that tap silently do
-nothing on every unsupervised host.
+BOTH restart paths consult it (t969): the agent's `[agent:reboot]`, and the human
+one — the peer Restart button's `POST /api/restart` (409 with the reason, and
+`restartApp` is never reached) and the web view's `app:restart`. The human path
+is a REFUSAL with a visible reason, not a silent no-op: the sidebar toasts the
+409 body's `error` and the web menubar alerts it, which is why routing it through
+the gate costs the operator nothing.

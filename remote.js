@@ -134,7 +134,7 @@ function readLogTail(fs, file, limit) {
 }
 
 class RemoteServer {
-  constructor({ port, host, basePath, warn, pagePath, getSessions, getSession, listWorkspaces, getTranscript, send, restartApp,
+  constructor({ port, host, basePath, warn, pagePath, getSessions, getSession, listWorkspaces, getTranscript, send, restartApp, restartUnavailable,
                 hostLabel, version, srcDir, getWebInfo, getWirescopeInfo, getAttachInfo, sendInput, resizePty, onControlChange,
                 query, createSession, killSession, restartSession, getCatalogs, nodeLogFile,
                 listPeers, getPeer, listTeams, getTeam, listTickets,
@@ -154,6 +154,7 @@ class RemoteServer {
     this._getTranscript = getTranscript;
     this._send = send;
     this._restartApp = restartApp || null;
+    this._restartUnavailable = typeof restartUnavailable === 'function' ? restartUnavailable : null;
     this._hostLabel = hostLabel || 'clodex';
     this._version = version || '';
     this._srcDir = srcDir || null;
@@ -1051,6 +1052,8 @@ class RemoteServer {
     // only; the page fronts it with a confirm.
     if (req.method === 'POST' && p === '/api/restart') {
       if (!this._restartApp) return this._json(res, 501, { ok: false, error: 'restart not available' });
+      const why = this._restartUnavailable ? this._restartUnavailable() : null;
+      if (why) return this._json(res, 409, { ok: false, error: why });
       this._json(res, 200, { ok: true });
       this._restartApp();
       return;
