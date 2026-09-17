@@ -89,25 +89,33 @@ test('slow gate: a test named after an Object.prototype key is not silently exem
   assert.match(r.out, /^SLOW: \d+ms toString$/m, 'and the offender is named like any other');
 });
 
-test('slow gate: a stale allowlist entry fails a SWEEPING run and is skipped on a named-file run', () => {
-  const files = { 'test/fast.test.js': FAST };
-  const allow = { 'a test that no longer exists': 'it was deleted and nobody pruned this file' };
+const STALE_FILES = { 'test/fast.test.js': FAST };
+const STALE_ALLOW = { 'a test that no longer exists': 'it was deleted and nobody pruned this file' };
 
-  const sweep = runRunner({ files, allow, slowMs: 150 });
+test('slow gate: a stale allowlist entry fails a SWEEPING run', () => {
+  const sweep = runRunner({ files: STALE_FILES, allow: STALE_ALLOW, slowMs: 150 });
   assert.match(sweep.out, /TOTALS: 2 pass, 0 fail/, 'ENTER: the sweeping run produced no totals');
   assert.notStrictEqual(sweep.code, 0, 'a stale entry fails the sweep');
   assert.match(sweep.out, /^SLOW: stale allowlist entry a test that no longer exists$/m);
   assert.match(sweep.stderr, / ✖ stale allowlist entry a test that no longer exists/,
     'the stale entry rides the digest too');
+});
 
-  const named = runRunner({ files, allow, args: ['test/fast.test.js'], slowMs: 150 });
+test('slow gate: a stale allowlist entry is skipped on a NAMED-FILE run', () => {
+  const named = runRunner({
+    files: STALE_FILES, allow: STALE_ALLOW, args: ['test/fast.test.js'], slowMs: 150,
+  });
   assert.match(named.out, /TOTALS: 1 pass, 0 fail/, 'ENTER: the named run produced no totals');
   assert.strictEqual(named.code, 0,
     'a named-file run cannot see every test, so every unlisted entry would look stale — the check '
     + 'must not apply there');
   assert.ok(!/stale allowlist entry/.test(named.out), 'and says nothing about it');
+});
 
-  const filtered = runRunner({ files, allow, args: ['--test-name-pattern=fast'], slowMs: 150 });
+test('slow gate: a stale allowlist entry is skipped on a name-FILTERED run', () => {
+  const filtered = runRunner({
+    files: STALE_FILES, allow: STALE_ALLOW, args: ['--test-name-pattern=fast'], slowMs: 150,
+  });
   assert.match(filtered.out, /TOTALS: \d+ pass, 0 fail/, 'ENTER: the filtered run produced no totals');
   assert.strictEqual(filtered.code, 0,
     'a FILTERED run names no file, so `sweeping` is true, yet it sees only the tests the pattern '
@@ -129,6 +137,26 @@ test('slow gate: a MALFORMED allowlist names itself instead of surfacing as bogu
   assert.ok(!/SLOW:/.test(r.out),
     'a swallowed parse error leaves the allowlist empty and every real entry comes back as an '
     + 'unrelated SLOW: offender — sending the reader to the tests instead of to the file they broke');
+});
+
+function assertNonObjectAllowlist(raw, got) {
+  const r = runRunner({
+    files: { 'test/slow.test.js': sleeper('the slow subject', 400) },
+    allowRaw: `${raw}\n`,
+    slowMs: 150,
+  });
+  assert.notStrictEqual(r.code, 0, `a ${got} allowlist must not yield a green run`);
+  assert.match(r.out, new RegExp(`test/slow-tests\\.json is not a JSON object: got ${got}`),
+    'a non-object parses fine, so the malformed-JSON catch never fires — without its own refusal '
+    + 'the exemption set is silently empty and every real entry comes back as a bogus SLOW: offender');
+}
+
+test('slow gate: an ARRAY allowlist names itself instead of parsing to an empty exemption set', () => {
+  assertNonObjectAllowlist('[]', 'an array');
+});
+
+test('slow gate: a STRING allowlist names itself instead of parsing to an empty exemption set', () => {
+  assertNonObjectAllowlist('"x"', 'a string');
 });
 
 test('slow gate: the FILE-level tap point is never reported as slow', () => {
