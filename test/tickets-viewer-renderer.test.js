@@ -137,6 +137,10 @@ function fakeDom() {
         if (v !== undefined) this.value = v;
         for (const fn of this.listeners.change || []) fn();
       },
+      input(v) {
+        if (v !== undefined) this.value = v;
+        for (const fn of this.listeners.input || []) fn();
+      },
     };
     return node;
   };
@@ -700,34 +704,266 @@ function headOf(root, id) {
   return found;
 }
 
-test('a ticket\'s spec is COLLAPSED by default and expands on click', async () => {
+function detail(id, over = {}) {
+  return {
+    ...shaped(id),
+    spec: `spec of ${id}`,
+    respecs: [],
+    report: 'the flat report',
+    rounds: [],
+    mergeMsg: null,
+    taskDirPath: `/home/u/.clodex/projects/proj/tasks/${id}-work`,
+    ...over,
+  };
+}
+
+function round(over = {}) {
+  return {
+    round: 1, report: 'round one report', reportedBy: 'hand', reportedAt: null,
+    verdict: 'ACCEPT', mustFix: null, reviewedAt: null,
+    verdictFile: 'review-t1-r1.verdict.md', diffFile: 'review-t1-r1.diff',
+    verdictText: null, diffStat: null, ...over,
+  };
+}
+
+test('clicking a ticket opens its HISTORY: spec, the round\'s report, verdict, must-fix, diff stat and merge', async () => {
   await withDom({
     projects: projectsRes([projectRow({ open: 1 })]),
     board: boardRes({
-      open: [shaped('t1', { spec: 'line one\n\n- a bullet\n- another' })],
+      open: [shaped('t1')],
       counts: { ...boardRes().counts, open: 1 },
     }),
-  }, ({ root }) => {
-    // Scan-density is the board's strength: twenty-one rows each opening with a
-    // couple of KB of spec is a different, worse surface.
-    assert.doesNotMatch(textOf(root).join('\n'), /a bullet/, 'collapsed by default');
-
+    ticket: { ok: true, ticket: detail('t1', {
+      spec: 'the original ask',
+      rounds: [round({
+        report: 'what the hand did',
+        verdict: 'REWORK',
+        mustFix: 'the cache is never invalidated',
+        diffStat: { files: 3, added: 40, removed: 12 },
+      })],
+      mergeMsg: 'Merge t1: the thing landed',
+    }) },
+  }, async ({ root, rhost, settle }) => {
     headOf(root, 't1').click();
+    await settle();
+
+    const asked = rhost._calls.filter((c) => c.method === 'ticket');
+    assert.equal(asked.length, 1, 'the pane is painted from the engine, not from the board row');
+    assert.deepEqual(asked[0].arg, { project: 'proj-1234abcd', id: 't1' });
+
+    assert.equal(allByClass(root, 'tv-round').length, 1, 'ENTER: one round really rendered');
 
     const text = textOf(root).join('\n');
-    assert.match(text, /line one/);
-    assert.match(text, /a bullet/, 'the whole body, not a first line');
-    // classesOf SPLITS className into tokens, so the no-spec branch contributes
-    // both `tv-spec` and `tv-no-spec` and an anchored /tv-spec/ still matches
-    // it. The absence is what tells the two branches apart.
-    const specClasses = classesOf(root).join(' ');
-    assert.match(specClasses, /(^|\s)tv-spec(\s|$)/);
-    assert.doesNotMatch(specClasses, /tv-no-spec/, 'the body branch, not the placeholder one');
+    assert.match(text, /the original ask/);
+    assert.match(text, /what the hand did/);
+    assert.match(text, /REWORK/);
+    assert.match(text, /the cache is never invalidated/);
+    assert.match(text, /3 files, \+40 −12/);
+    assert.match(text, /Merge t1: the thing landed/);
+    assert.match(classesOf(root).join(' '), /tv-mustfix/);
+  });
+});
 
-    // And back: a toggle that only opens turns the board into the wall of text
-    // the collapse exists to prevent.
+test('a RECENTLY-CLOSED row opens its history too — closed tickets are the point', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({
+      open: [shaped('t1')],
+      recent: [shaped('t9', { state: 'done', closedAt: Date.now() - HOUR, closedBy: 'lead' })],
+      counts: { ...boardRes().counts, open: 1, done: 1 },
+    }),
+    ticket: (arg) => ({ ok: true, ticket: detail(arg.id, {
+      state: 'done',
+      spec: 'what t9 was asked to do',
+      rounds: [round({ verdict: 'ACCEPT' })],
+    }) }),
+  }, async ({ root, rhost, settle }) => {
+    headOf(root, 't9').click();
+    await settle();
+
+    const asked = rhost._calls.filter((c) => c.method === 'ticket');
+    assert.equal(asked.length, 1, 'a closed row is not inert');
+    assert.equal(asked[0].arg.id, 't9');
+    assert.match(textOf(root).join('\n'), /what t9 was asked to do/);
+  });
+});
+
+test('a ticket with NO spec says so rather than opening a blank', async () => {
+  // Whitespace belongs here and not in a case of its own: "\n  \n" is truthy,
+  // so a presence test passes it through to an empty <pre> — the same blank box
+  // an absent spec would give, which is exactly what this branch exists to
+  // prevent.
+  for (const spec of ['', '\n  \n']) {
+    await withDom({
+      projects: projectsRes([projectRow({ open: 1 })]),
+      board: boardRes({ open: [shaped('t1')], counts: { ...boardRes().counts, open: 1 } }),
+      ticket: { ok: true, ticket: detail('t1', { spec }) },
+    }, async ({ root, settle }) => {
+      headOf(root, 't1').click();
+      await settle();
+      // Same rule the artifact path follows: an empty body reads as a rendering
+      // gap, and "there is nothing recorded" is the actionable half of the answer.
+      assert.match(textOf(root).join('\n'), /no spec recorded/, `spec ${JSON.stringify(spec)}`);
+      assert.match(classesOf(root).join(' '), /tv-no-spec/, `spec ${JSON.stringify(spec)}`);
+    });
+  }
+});
+
+test('a REFUSED ticket read names the reason and renders no round', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({ open: [shaped('t1')], counts: { ...boardRes().counts, open: 1 } }),
+    ticket: { ok: false, error: 'its task dir does not resolve under the projects root' },
+  }, async ({ root, settle }) => {
     headOf(root, 't1').click();
-    assert.doesNotMatch(textOf(root).join('\n'), /a bullet/, 'clicking again collapses it');
+    await settle();
+
+    const text = textOf(root).join('\n');
+    assert.match(text, /does not resolve under the projects root/, 'the engine\'s reason reaches the screen');
+    assert.match(classesOf(root).join(' '), /tv-error/);
+    assert.equal(allByClass(root, 'tv-round').length, 0, 'a refusal carries no rounds to render');
+    assert.doesNotMatch(text, /Loading…/, 'and the pane is never left on its placeholder');
+  });
+});
+
+test('an unreviewed ticket says so, and a null verdict is AWAITING rather than blank', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 2 })]),
+    board: boardRes({ open: [shaped('t1'), shaped('t2')], counts: { ...boardRes().counts, open: 2 } }),
+    ticket: (arg) => ({ ok: true, ticket: arg.id === 't1'
+      ? detail('t1', { rounds: [], mergeMsg: null })
+      : detail('t2', { rounds: [round({ verdict: null })], mergeMsg: null }) }),
+  }, async ({ root, settle }) => {
+    headOf(root, 't1').click();
+    await settle();
+    let text = textOf(root).join('\n');
+    assert.match(text, /Review rounds \(0\)/);
+    assert.match(text, /no review rounds recorded/);
+    assert.doesNotMatch(text, /Merge/, 'a ticket that was never merged must not grow a Merge heading over nothing');
+
+    buttonLabelled(root, '← Back').click();
+    await settle();
+    headOf(root, 't2').click();
+    await settle();
+    text = textOf(root).join('\n');
+    assert.equal(allByClass(root, 'tv-round').length, 1, 'ENTER: the round really rendered');
+    assert.match(text, /awaiting verdict/, 'a round the reviewer has not ruled on says so');
+  });
+});
+
+test('the verdict text is COLLAPSED behind a toggle that also closes again', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({ open: [shaped('t1')], counts: { ...boardRes().counts, open: 1 } }),
+    ticket: { ok: true, ticket: detail('t1', {
+      rounds: [round({ verdictText: 'VERDICT: REWORK\nthe long reasoning nobody asked for yet' })],
+    }) },
+  }, async ({ root, settle }) => {
+    headOf(root, 't1').click();
+    await settle();
+
+    assert.doesNotMatch(textOf(root).join('\n'), /long reasoning/, 'collapsed by default');
+    assert.equal(allByClass(root, 'tv-verdict').length, 0);
+
+    buttonLabelled(root, 'Show verdict').click();
+    assert.match(textOf(root).join('\n'), /long reasoning/);
+    assert.equal(allByClass(root, 'tv-verdict').length, 1);
+
+    buttonLabelled(root, 'Hide verdict').click();
+    assert.equal(allByClass(root, 'tv-verdict').length, 0, 'a toggle that only opens is a disclosure, not a toggle');
+    assert.doesNotMatch(textOf(root).join('\n'), /long reasoning/);
+  });
+});
+
+test('Back leaves the detail pane and re-reads the board', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({ open: [shaped('t1', { title: 'the open one' })], counts: { ...boardRes().counts, open: 1 } }),
+    ticket: { ok: true, ticket: detail('t1', { spec: 'deep in the history' }) },
+  }, async ({ root, rhost, settle }) => {
+    headOf(root, 't1').click();
+    await settle();
+    assert.match(textOf(root).join('\n'), /deep in the history/);
+    const boardsBefore = rhost._calls.filter((c) => c.method === 'board').length;
+
+    buttonLabelled(root, '← Back').click();
+    await settle();
+
+    assert.ok(rhost._calls.filter((c) => c.method === 'board').length > boardsBefore,
+      'the board is RE-READ, not restored from a stale render');
+    assert.match(textOf(root).join('\n'), /the open one/);
+    assert.doesNotMatch(textOf(root).join('\n'), /deep in the history/);
+  });
+});
+
+test('typing in the search box asks the engine, lists the hits, and a hit opens its history', async (t) => {
+  // Only setTimeout is faked: withDom settles on setImmediate, and faking that
+  // too would deadlock every await in this file.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({ open: [shaped('t1')], counts: { ...boardRes().counts, open: 1 } }),
+    search: { ok: true, hits: [
+      { id: 't40', title: 'the cache ticket', state: 'done', closedAt: Date.now() - HOUR, snippet: '…invalidated the CACHE on write…' },
+    ] },
+    ticket: (arg) => ({ ok: true, ticket: detail(arg.id, { spec: 'what t40 asked for' }) }),
+  }, async ({ root, rhost, settle }) => {
+    const box = allByClass(root, 'tv-search')[0];
+    assert.ok(box, 'ENTER: the search box is on the board pane');
+
+    box.input('cache');
+    assert.equal(rhost._calls.filter((c) => c.method === 'search').length, 0,
+      'debounced: a keystroke is not a disk read of every ticket record');
+    t.mock.timers.tick(300);
+    await settle();
+
+    const asked = rhost._calls.filter((c) => c.method === 'search');
+    assert.equal(asked.length, 1);
+    assert.deepEqual(asked[0].arg, { project: 'proj-1234abcd', q: 'cache' });
+
+    const text = textOf(root).join('\n');
+    assert.match(text, /t40/);
+    assert.match(text, /the cache ticket/);
+    assert.match(text, /invalidated the CACHE on write/);
+    assert.equal(allByClass(root, 'tv-search')[0].value, 'cache',
+      'the box keeps what was typed — a search that loses its query on its own result runs once');
+
+    headOf(root, 't40').click();
+    await settle();
+    const opened = rhost._calls.filter((c) => c.method === 'ticket');
+    assert.equal(opened.length, 1);
+    assert.equal(opened[0].arg.id, 't40');
+    assert.match(textOf(root).join('\n'), /what t40 asked for/);
+  });
+});
+
+test('a search with no hits and a search that FAILED do not paint the same', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({ open: [shaped('t1')], counts: { ...boardRes().counts, open: 1 } }),
+    search: { ok: true, hits: [] },
+  }, async ({ root, settle }) => {
+    allByClass(root, 'tv-search')[0].input('nothing matches this');
+    t.mock.timers.tick(300);
+    await settle();
+    assert.match(textOf(root).join('\n'), /no closed tickets match/);
+    assert.doesNotMatch(classesOf(root).join(' '), /tv-error/, 'an empty result is not a broken one');
+  });
+
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({ open: [shaped('t1')], counts: { ...boardRes().counts, open: 1 } }),
+    search: { ok: false, error: 'tickets.json is not valid JSON' },
+  }, async ({ root, settle }) => {
+    allByClass(root, 'tv-search')[0].input('anything');
+    t.mock.timers.tick(300);
+    await settle();
+    const text = textOf(root).join('\n');
+    assert.match(text, /Could not search/);
+    assert.match(text, /not valid JSON/);
+    assert.match(classesOf(root).join(' '), /tv-error/);
+    assert.doesNotMatch(text, /no closed tickets match/, 'a failure must not read as an empty result');
   });
 });
 
@@ -749,41 +985,33 @@ test('a long title stays recoverable on hover after the head took a click hint',
   });
 });
 
-test('a spec containing markup renders as TEXT, never as elements', async () => {
-  // Spec bodies are agent-authored and are the strongest untrusted-input case on
-  // this surface. The text assertion alone is satisfied by an innerHTML
-  // implementation too — the querySelector half is the one that can fail.
+test('a spec, a report and a verdict containing markup render as TEXT, never as elements', async () => {
+  // Every string on this pane is agent-authored, and the pane now shows three
+  // more of them than the board did. The text assertion alone is satisfied by an
+  // innerHTML implementation too — the querySelector half is the one that can
+  // fail.
   await withDom({
     projects: projectsRes([projectRow({ open: 1 })]),
-    board: boardRes({
-      open: [shaped('t1', { spec: 'before <img src=x onerror="boom()"> after' })],
-      counts: { ...boardRes().counts, open: 1 },
-    }),
-  }, ({ root }) => {
+    board: boardRes({ open: [shaped('t1')], counts: { ...boardRes().counts, open: 1 } }),
+    ticket: { ok: true, ticket: detail('t1', {
+      spec: 'spec <b>bold</b> <img src=x onerror="boom()">',
+      rounds: [round({
+        report: 'report <b>bold</b>',
+        verdictText: 'verdict <b>bold</b>',
+      })],
+    }) },
+  }, async ({ root, settle }) => {
     headOf(root, 't1').click();
-    assert.match(textOf(root).join('\n'), /<img src=x onerror="boom\(\)">/,
-      'the markup is shown to the reader, as the characters it is');
-    assert.equal(root.querySelector('img'), null, 'and never became an element');
-  });
-});
+    await settle();
+    buttonLabelled(root, 'Show verdict').click();
 
-test('a ticket with NO spec says so rather than expanding to a blank', async () => {
-  // Whitespace belongs here and not in a case of its own: "\n  \n" is truthy,
-  // so a presence test passes it through to an empty <pre> — the same blank box
-  // an absent spec would give, which is exactly what this branch exists to
-  // prevent.
-  for (const spec of ['', '\n  \n']) {
-    await withDom({
-      projects: projectsRes([projectRow({ open: 1 })]),
-      board: boardRes({ open: [shaped('t1', { spec })], counts: { ...boardRes().counts, open: 1 } }),
-    }, ({ root }) => {
-      headOf(root, 't1').click();
-      // Same rule the artifact path follows: an empty body reads as a rendering
-      // gap, and "there is nothing recorded" is the actionable half of the answer.
-      assert.match(textOf(root).join('\n'), /no spec recorded/, `spec ${JSON.stringify(spec)}`);
-      assert.match(classesOf(root).join(' '), /tv-no-spec/, `spec ${JSON.stringify(spec)}`);
-    });
-  }
+    const text = textOf(root).join('\n');
+    assert.match(text, /spec <b>bold<\/b>/, 'the markup is shown to the reader, as the characters it is');
+    assert.match(text, /report <b>bold<\/b>/);
+    assert.match(text, /verdict <b>bold<\/b>/);
+    assert.equal(root.querySelector('b'), null, 'and never became an element');
+    assert.equal(root.querySelector('img'), null);
+  });
 });
 
 test('recently-closed renders below the open list and is capped-marked', async () => {

@@ -11554,6 +11554,7 @@ body.web-frontend #sidebar-header {
   var require_renderer3 = __commonJS({
     "plugins/tickets-viewer/renderer.js"(exports, module) {
       "use strict";
+      var SEARCH_DEBOUNCE_MS = 250;
       function humanizeAge(ms) {
         const s = Math.max(0, Math.round(ms / 1e3));
         if (s < 60) return `${s}s`;
@@ -11613,6 +11614,7 @@ body.web-frontend #sidebar-header {
         if (!assignee) return "";
         return delivered ? "" : `${assignee} is not running \u2014 the ticket is assigned but the spec was not delivered.`;
       }
+      module.exports.SEARCH_DEBOUNCE_MS = SEARCH_DEBOUNCE_MS;
       module.exports.humanizeAge = humanizeAge;
       module.exports.ageLine = ageLine;
       module.exports.summaryText = summaryText;
@@ -11681,6 +11683,12 @@ body.web-frontend #sidebar-header {
           let selected = null;
           let selectSeq = 0;
           let reloadSeq = 0;
+          let searchSeq = 0;
+          let searchTimer = null;
+          const searchEl = el("input", "tv-search");
+          searchEl.type = "search";
+          searchEl.placeholder = "Search closed tickets\u2026";
+          const sectionsEl = el("div", "tv-sections");
           let liveSessions = [];
           function reselect() {
             if (!selected) return Promise.resolve();
@@ -11702,7 +11710,7 @@ body.web-frontend #sidebar-header {
           }
           let editorEl = null;
           function closeEditor() {
-            if (editorEl && editorEl.parentNode === boardPane) boardPane.removeChild(editorEl);
+            if (editorEl && editorEl.parentNode === sectionsEl) sectionsEl.removeChild(editorEl);
             editorEl = null;
           }
           function openEditor(opts) {
@@ -11741,8 +11749,8 @@ body.web-frontend #sidebar-header {
             }));
             actions.appendChild(button("tv-btn", "Cancel", "", () => closeEditor()));
             panel.appendChild(actions);
-            if (boardPane.firstChild) boardPane.insertBefore(panel, boardPane.firstChild);
-            else boardPane.appendChild(panel);
+            if (sectionsEl.firstChild) sectionsEl.insertBefore(panel, sectionsEl.firstChild);
+            else sectionsEl.appendChild(panel);
             editorEl = panel;
             if (area.focus) area.focus();
           }
@@ -11812,6 +11820,108 @@ Cancelled tickets are not counted as done.`)) return;
             }));
             return bar;
           }
+          function specBlock(text, missing) {
+            return text && text.trim() ? el("pre", "tv-spec", text) : el("div", "tv-spec tv-no-spec", missing);
+          }
+          function stamp(at, verb) {
+            if (at === null || at === void 0) return `${verb} at an unknown time`;
+            return `${verb} ${humanizeAge(Date.now() - at)} ago`;
+          }
+          function roundBlock(r) {
+            const box = el("div", "tv-round");
+            const head = el("div", "tv-round-head", `Round ${r.round} \u2014 ${r.verdict || "awaiting verdict"}`);
+            if (r.reviewedAt !== null && r.reviewedAt !== void 0) {
+              head.appendChild(el("span", "tv-round-age", stamp(r.reviewedAt, "reviewed")));
+            }
+            box.appendChild(head);
+            if (r.report === null || r.report === void 0) box.appendChild(el("div", "tv-empty", "no report recorded"));
+            else box.appendChild(el("pre", "tv-spec", r.report));
+            if (r.mustFix !== null && r.mustFix !== void 0) {
+              const box2 = el("div", "tv-mustfix");
+              box2.appendChild(el("div", "tv-mustfix-label", "Must fix"));
+              box2.appendChild(el("pre", "tv-spec", r.mustFix));
+              box.appendChild(box2);
+            }
+            if (r.diffStat) {
+              box.appendChild(el("div", "tv-diffstat", `${r.diffStat.files} files, +${r.diffStat.added} \u2212${r.diffStat.removed}`));
+            }
+            if (r.verdictText !== null && r.verdictText !== void 0) {
+              let shown = null;
+              const toggle = button("tv-btn", "Show verdict", "The reviewer's full verdict file", () => {
+                if (shown) {
+                  box.removeChild(shown);
+                  shown = null;
+                  toggle.textContent = "Show verdict";
+                  return;
+                }
+                shown = el("pre", "tv-verdict", r.verdictText);
+                box.appendChild(shown);
+                toggle.textContent = "Hide verdict";
+              });
+              box.appendChild(toggle);
+            }
+            return box;
+          }
+          function renderTicket(t) {
+            const wrap = el("div", "tv-detail");
+            wrap.appendChild(button("tv-back", "\u2190 Back", "Back to the board", () => {
+              selectProject(selected).catch((e) => rhost.log.error("select failed", e));
+            }));
+            const head = el("div", "tv-detail-head");
+            head.appendChild(el("span", "tv-id", t.id));
+            head.appendChild(el("span", "tv-detail-title", t.title));
+            head.appendChild(el("span", "tv-detail-state", t.state));
+            head.appendChild(el("span", "tv-assignee", t.shownFor || t.assignee || "unassigned"));
+            head.appendChild(el("span", "tv-age", stamp(t.openedAt, "opened")));
+            if (t.closedAt !== null && t.closedAt !== void 0) head.appendChild(el("span", "tv-age", stamp(t.closedAt, "closed")));
+            wrap.appendChild(head);
+            wrap.appendChild(el("div", "tv-section-head", "Spec"));
+            wrap.appendChild(specBlock(t.spec, "no spec recorded for this ticket"));
+            const respecs = Array.isArray(t.respecs) ? t.respecs : [];
+            if (respecs.length) {
+              wrap.appendChild(el("div", "tv-section-head", `Respecs (${respecs.length})`));
+              for (const r of respecs) {
+                wrap.appendChild(el("div", "tv-respec-at", stamp(r.at, "respec'd")));
+                wrap.appendChild(specBlock(r.spec, "no spec recorded for this respec"));
+              }
+            }
+            const rounds = Array.isArray(t.rounds) ? t.rounds : [];
+            wrap.appendChild(el("div", "tv-section-head", `Review rounds (${rounds.length})`));
+            if (!rounds.length) wrap.appendChild(el("div", "tv-empty", "no review rounds recorded"));
+            else for (const r of rounds) wrap.appendChild(roundBlock(r));
+            if (t.mergeMsg !== null && t.mergeMsg !== void 0) {
+              wrap.appendChild(el("div", "tv-section-head", "Merge"));
+              wrap.appendChild(el("pre", "tv-spec", t.mergeMsg));
+            }
+            const art = el(
+              "div",
+              t.taskDirPath ? "tv-artifact" : "tv-artifact tv-no-artifact",
+              t.taskDirPath || "no task directory in the spec"
+            );
+            if (t.taskDirPath) art.title = t.taskDirPath;
+            wrap.appendChild(art);
+            return wrap;
+          }
+          async function renderDetail(project, id) {
+            const my = ++selectSeq;
+            const myReload = reloadSeq;
+            boardPane.innerHTML = "";
+            editorEl = null;
+            const pane = el("div", "tv-detail");
+            pane.appendChild(el("div", "tv-empty", "Loading\u2026"));
+            boardPane.appendChild(pane);
+            const res = await ask("ticket", { project, id });
+            if (!alive() || my !== selectSeq || myReload !== reloadSeq) return;
+            boardPane.innerHTML = "";
+            if (!res.ok || !res.ticket) {
+              boardPane.appendChild(button("tv-back", "\u2190 Back", "Back to the board", () => {
+                selectProject(selected).catch((e) => rhost.log.error("select failed", e));
+              }));
+              boardPane.appendChild(el("div", "tv-error", `Could not read ${id}: ${res.error || "unknown error"}`));
+              return;
+            }
+            boardPane.appendChild(renderTicket(res.ticket));
+          }
           function ticketRow(t, opts) {
             const row = el("div", t.mergeError ? "tv-ticket tv-merge-failed" : t.stalled ? "tv-ticket tv-stalled" : "tv-ticket");
             const head = el("div", "tv-ticket-head");
@@ -11820,16 +11930,9 @@ Cancelled tickets are not counted as done.`)) return;
             titleSpan.title = t.title;
             head.appendChild(titleSpan);
             row.appendChild(head);
-            let specEl = null;
-            head.title = "Click to show the ticket spec";
+            head.title = "Click to open this ticket's history";
             head.addEventListener("click", () => {
-              if (specEl) {
-                row.removeChild(specEl);
-                specEl = null;
-                return;
-              }
-              specEl = t.spec && t.spec.trim() ? el("pre", "tv-spec", t.spec) : el("div", "tv-spec tv-no-spec", "no spec recorded for this ticket");
-              row.appendChild(specEl);
+              renderDetail(selected, t.id).catch((e) => rhost.log.error("detail failed", e));
             });
             const meta = el("div", "tv-meta");
             const who = el(
@@ -11883,12 +11986,15 @@ Cancelled tickets are not counted as done.`)) return;
           function renderBoard(res, cost) {
             boardPane.innerHTML = "";
             editorEl = null;
+            sectionsEl.innerHTML = "";
+            boardPane.appendChild(searchEl);
+            boardPane.appendChild(sectionsEl);
             if (!res.ok) {
-              boardPane.appendChild(el("div", "tv-error", `Could not read this project's tickets: ${res.error || "unknown error"}`));
+              sectionsEl.appendChild(el("div", "tv-error", `Could not read this project's tickets: ${res.error || "unknown error"}`));
               return;
             }
             if (res.warning) {
-              boardPane.appendChild(el("div", "tv-warning", `This project's team manifest is unusable: ${res.warning}`));
+              sectionsEl.appendChild(el("div", "tv-warning", `This project's team manifest is unusable: ${res.warning}`));
             }
             const openHead = el("div", "tv-section-head", `Open (${res.open.length})`);
             const teamTotal = teamCostText(cost);
@@ -11903,9 +12009,9 @@ Cancelled tickets are not counted as done.`)) return;
               "Open a ticket on this board",
               () => openAdd()
             ));
-            boardPane.appendChild(openHead);
+            sectionsEl.appendChild(openHead);
             if (!res.open.length) {
-              boardPane.appendChild(el("div", "tv-empty", "No open tickets."));
+              sectionsEl.appendChild(el("div", "tv-empty", "No open tickets."));
             } else {
               const stalledCount = res.open.filter((t) => t.stalled).length;
               if (stalledCount) {
@@ -11923,10 +12029,10 @@ Cancelled tickets are not counted as done.`)) return;
               if (parkedCount) {
                 openHead.appendChild(el("span", "tv-backlog-count", `${parkedCount} parked`));
               }
-              for (const t of res.open) boardPane.appendChild(ticketRow({ ...t, now: res.now }));
+              for (const t of res.open) sectionsEl.appendChild(ticketRow({ ...t, now: res.now }));
             }
             const summary = summaryText(res.counts);
-            if (summary) boardPane.appendChild(el("div", "tv-summary", summary));
+            if (summary) sectionsEl.appendChild(el("div", "tv-summary", summary));
             if (res.recent.length) {
               const head = el(
                 "div",
@@ -11936,12 +12042,68 @@ Cancelled tickets are not counted as done.`)) return;
               if (res.counts.recentOver > 0) {
                 head.appendChild(el("span", "tv-stall-count", `+${res.counts.recentOver} more`));
               }
-              boardPane.appendChild(head);
+              sectionsEl.appendChild(head);
               for (const t of res.recent) {
-                boardPane.appendChild(ticketRow({ ...t, now: res.now }, { closed: true }));
+                sectionsEl.appendChild(ticketRow({ ...t, now: res.now }, { closed: true }));
               }
             }
           }
+          function hitRow(h) {
+            const row = el("div", "tv-ticket tv-hit");
+            const head = el("div", "tv-ticket-head");
+            head.appendChild(el("span", "tv-id", h.id));
+            const titleSpan = el("span", "tv-ticket-title", h.title);
+            titleSpan.title = h.title;
+            head.appendChild(titleSpan);
+            head.title = "Click to open this ticket's history";
+            head.addEventListener("click", () => {
+              renderDetail(selected, h.id).catch((e) => rhost.log.error("detail failed", e));
+            });
+            row.appendChild(head);
+            const meta = el("div", "tv-meta");
+            meta.appendChild(el("span", "tv-hit-state", h.state));
+            meta.appendChild(el("span", "tv-age", h.closedAt === null || h.closedAt === void 0 ? "closed at an unknown time" : `closed ${humanizeAge(Date.now() - h.closedAt)} ago`));
+            row.appendChild(meta);
+            row.appendChild(el("div", "tv-snippet", h.snippet));
+            return row;
+          }
+          function renderHits(res) {
+            sectionsEl.innerHTML = "";
+            editorEl = null;
+            if (!res.ok) {
+              sectionsEl.appendChild(el("div", "tv-error", `Could not search this project: ${res.error || "unknown error"}`));
+              return;
+            }
+            const hits = Array.isArray(res.hits) ? res.hits : [];
+            if (!hits.length) {
+              sectionsEl.appendChild(el("div", "tv-empty", "no closed tickets match"));
+              return;
+            }
+            const list = el("div", "tv-hits");
+            for (const h of hits) list.appendChild(hitRow(h));
+            sectionsEl.appendChild(list);
+          }
+          async function runSearch(q) {
+            const my = ++searchSeq;
+            const mySelect = selectSeq;
+            const myReload = reloadSeq;
+            const res = await ask("search", { project: selected, q });
+            if (!alive() || my !== searchSeq || mySelect !== selectSeq || myReload !== reloadSeq) return;
+            renderHits(res);
+          }
+          searchEl.addEventListener("input", () => {
+            if (searchTimer !== null) clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => {
+              searchTimer = null;
+              const q = String(searchEl.value || "").trim();
+              if (!q) {
+                searchSeq += 1;
+                if (selected) selectProject(selected).catch((e) => rhost.log.error("select failed", e));
+                return;
+              }
+              runSearch(q).catch((e) => rhost.log.error("search failed", e));
+            }, SEARCH_DEBOUNCE_MS);
+          });
           async function selectProject(key) {
             const my = ++selectSeq;
             const myReload = reloadSeq;

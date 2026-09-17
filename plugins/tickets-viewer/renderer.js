@@ -14,6 +14,8 @@
  * a write.
  */
 
+const SEARCH_DEBOUNCE_MS = 250;
+
 // Core's humanizeAge, deliberately reproduced: the board sits beside
 // `[agent:task list]` output and two different roundings of the same age read
 // as two different ages.
@@ -114,6 +116,7 @@ function deliveryNote(assignee, delivered) {
   return delivered ? '' : `${assignee} is not running — the ticket is assigned but the spec was not delivered.`;
 }
 
+module.exports.SEARCH_DEBOUNCE_MS = SEARCH_DEBOUNCE_MS;
 module.exports.humanizeAge = humanizeAge;
 module.exports.ageLine = ageLine;
 module.exports.summaryText = summaryText;
@@ -201,6 +204,13 @@ module.exports.activate = (rhost) => {
     let selected = null;
     let selectSeq = 0;
     let reloadSeq = 0;
+    let searchSeq = 0;
+    let searchTimer = null;
+
+    const searchEl = el('input', 'tv-search');
+    searchEl.type = 'search';
+    searchEl.placeholder = 'Search closed tickets…';
+    const sectionsEl = el('div', 'tv-sections');
     // Live session names for the assign picker. Refreshed with the board rather
     // than held from activation: a session list captured once would offer seats
     // that died since the overlay was last opened.
@@ -245,7 +255,7 @@ module.exports.activate = (rhost) => {
     let editorEl = null;
 
     function closeEditor() {
-      if (editorEl && editorEl.parentNode === boardPane) boardPane.removeChild(editorEl);
+      if (editorEl && editorEl.parentNode === sectionsEl) sectionsEl.removeChild(editorEl);
       editorEl = null;
     }
 
@@ -293,8 +303,8 @@ module.exports.activate = (rhost) => {
 
       // Prepended: the panel is the thing just asked for, and a board with
       // forty rows would otherwise open it below the fold.
-      if (boardPane.firstChild) boardPane.insertBefore(panel, boardPane.firstChild);
-      else boardPane.appendChild(panel);
+      if (sectionsEl.firstChild) sectionsEl.insertBefore(panel, sectionsEl.firstChild);
+      else sectionsEl.appendChild(panel);
       editorEl = panel;
       if (area.focus) area.focus();
     }
@@ -377,6 +387,116 @@ module.exports.activate = (rhost) => {
       return bar;
     }
 
+    function specBlock(text, missing) {
+      return text && text.trim()
+        ? el('pre', 'tv-spec', text)
+        : el('div', 'tv-spec tv-no-spec', missing);
+    }
+
+    function stamp(at, verb) {
+      if (at === null || at === undefined) return `${verb} at an unknown time`;
+      return `${verb} ${humanizeAge(Date.now() - at)} ago`;
+    }
+
+    function roundBlock(r) {
+      const box = el('div', 'tv-round');
+      const head = el('div', 'tv-round-head', `Round ${r.round} — ${r.verdict || 'awaiting verdict'}`);
+      if (r.reviewedAt !== null && r.reviewedAt !== undefined) {
+        head.appendChild(el('span', 'tv-round-age', stamp(r.reviewedAt, 'reviewed')));
+      }
+      box.appendChild(head);
+
+      if (r.report === null || r.report === undefined) box.appendChild(el('div', 'tv-empty', 'no report recorded'));
+      else box.appendChild(el('pre', 'tv-spec', r.report));
+
+      if (r.mustFix !== null && r.mustFix !== undefined) {
+        const box2 = el('div', 'tv-mustfix');
+        box2.appendChild(el('div', 'tv-mustfix-label', 'Must fix'));
+        box2.appendChild(el('pre', 'tv-spec', r.mustFix));
+        box.appendChild(box2);
+      }
+      if (r.diffStat) {
+        box.appendChild(el('div', 'tv-diffstat', `${r.diffStat.files} files, +${r.diffStat.added} −${r.diffStat.removed}`));
+      }
+      if (r.verdictText !== null && r.verdictText !== undefined) {
+        let shown = null;
+        const toggle = button('tv-btn', 'Show verdict', 'The reviewer\'s full verdict file', () => {
+          if (shown) { box.removeChild(shown); shown = null; toggle.textContent = 'Show verdict'; return; }
+          shown = el('pre', 'tv-verdict', r.verdictText);
+          box.appendChild(shown);
+          toggle.textContent = 'Hide verdict';
+        });
+        box.appendChild(toggle);
+      }
+      return box;
+    }
+
+    function renderTicket(t) {
+      const wrap = el('div', 'tv-detail');
+      wrap.appendChild(button('tv-back', '← Back', 'Back to the board', () => {
+        selectProject(selected).catch((e) => rhost.log.error('select failed', e));
+      }));
+
+      const head = el('div', 'tv-detail-head');
+      head.appendChild(el('span', 'tv-id', t.id));
+      head.appendChild(el('span', 'tv-detail-title', t.title));
+      head.appendChild(el('span', 'tv-detail-state', t.state));
+      head.appendChild(el('span', 'tv-assignee', t.shownFor || t.assignee || 'unassigned'));
+      head.appendChild(el('span', 'tv-age', stamp(t.openedAt, 'opened')));
+      if (t.closedAt !== null && t.closedAt !== undefined) head.appendChild(el('span', 'tv-age', stamp(t.closedAt, 'closed')));
+      wrap.appendChild(head);
+
+      wrap.appendChild(el('div', 'tv-section-head', 'Spec'));
+      wrap.appendChild(specBlock(t.spec, 'no spec recorded for this ticket'));
+
+      const respecs = Array.isArray(t.respecs) ? t.respecs : [];
+      if (respecs.length) {
+        wrap.appendChild(el('div', 'tv-section-head', `Respecs (${respecs.length})`));
+        for (const r of respecs) {
+          wrap.appendChild(el('div', 'tv-respec-at', stamp(r.at, 'respec\'d')));
+          wrap.appendChild(specBlock(r.spec, 'no spec recorded for this respec'));
+        }
+      }
+
+      const rounds = Array.isArray(t.rounds) ? t.rounds : [];
+      wrap.appendChild(el('div', 'tv-section-head', `Review rounds (${rounds.length})`));
+      if (!rounds.length) wrap.appendChild(el('div', 'tv-empty', 'no review rounds recorded'));
+      else for (const r of rounds) wrap.appendChild(roundBlock(r));
+
+      if (t.mergeMsg !== null && t.mergeMsg !== undefined) {
+        wrap.appendChild(el('div', 'tv-section-head', 'Merge'));
+        wrap.appendChild(el('pre', 'tv-spec', t.mergeMsg));
+      }
+
+      const art = el('div', t.taskDirPath ? 'tv-artifact' : 'tv-artifact tv-no-artifact',
+        t.taskDirPath || 'no task directory in the spec');
+      if (t.taskDirPath) art.title = t.taskDirPath;
+      wrap.appendChild(art);
+      return wrap;
+    }
+
+    async function renderDetail(project, id) {
+      const my = ++selectSeq;
+      const myReload = reloadSeq;
+      boardPane.innerHTML = '';
+      editorEl = null;
+      const pane = el('div', 'tv-detail');
+      pane.appendChild(el('div', 'tv-empty', 'Loading…'));
+      boardPane.appendChild(pane);
+
+      const res = await ask('ticket', { project, id });
+      if (!alive() || my !== selectSeq || myReload !== reloadSeq) return;
+      boardPane.innerHTML = '';
+      if (!res.ok || !res.ticket) {
+        boardPane.appendChild(button('tv-back', '← Back', 'Back to the board', () => {
+          selectProject(selected).catch((e) => rhost.log.error('select failed', e));
+        }));
+        boardPane.appendChild(el('div', 'tv-error', `Could not read ${id}: ${res.error || 'unknown error'}`));
+        return;
+      }
+      boardPane.appendChild(renderTicket(res.ticket));
+    }
+
     function ticketRow(t, opts) {
       // The failed merge takes the row-level mark AHEAD of the stall, and the
       // precedence is load-bearing rather than arbitrary: `stalled` is not
@@ -403,21 +523,9 @@ module.exports.activate = (rhost) => {
       head.appendChild(titleSpan);
       row.appendChild(head);
 
-      // Collapsed by default and built lazily: the board's strength is that
-      // twenty-one rows fit on one screen, and a spec runs to a couple of KB.
-      // Expanding is the reader asking for one of them, not the default view.
-      let specEl = null;
-      head.title = 'Click to show the ticket spec';
+      head.title = 'Click to open this ticket\'s history';
       head.addEventListener('click', () => {
-        if (specEl) { row.removeChild(specEl); specEl = null; return; }
-        // Tested TRIMMED, rendered WHOLE: a spec of "\n\n" is truthy and would
-        // open a blank box, which is the rendering gap the no-spec branch
-        // exists to prevent. The height cap lives in CSS, not in a substring
-        // here, so nothing is silently dropped.
-        specEl = t.spec && t.spec.trim()
-          ? el('pre', 'tv-spec', t.spec)
-          : el('div', 'tv-spec tv-no-spec', 'no spec recorded for this ticket');
-        row.appendChild(specEl);
+        renderDetail(selected, t.id).catch((e) => rhost.log.error('detail failed', e));
       });
 
       const meta = el('div', 'tv-meta');
@@ -508,10 +616,13 @@ module.exports.activate = (rhost) => {
     function renderBoard(res, cost) {
       boardPane.innerHTML = '';
       editorEl = null;
+      sectionsEl.innerHTML = '';
+      boardPane.appendChild(searchEl);
+      boardPane.appendChild(sectionsEl);
       if (!res.ok) {
         // Not the same as an empty board, and the difference is the whole
         // point: one says "nothing open", the other says "do not believe me".
-        boardPane.appendChild(el('div', 'tv-error', `Could not read this project's tickets: ${res.error || 'unknown error'}`));
+        sectionsEl.appendChild(el('div', 'tv-error', `Could not read this project's tickets: ${res.error || 'unknown error'}`));
         return;
       }
 
@@ -520,7 +631,7 @@ module.exports.activate = (rhost) => {
       // rows are real — but shown, because a team the app cannot resolve must
       // not look entirely healthy here.
       if (res.warning) {
-        boardPane.appendChild(el('div', 'tv-warning', `This project's team manifest is unusable: ${res.warning}`));
+        sectionsEl.appendChild(el('div', 'tv-warning', `This project's team manifest is unusable: ${res.warning}`));
       }
 
       const openHead = el('div', 'tv-section-head', `Open (${res.open.length})`);
@@ -534,10 +645,10 @@ module.exports.activate = (rhost) => {
       // section head rather than in the rows.
       openHead.appendChild(button('tv-btn tv-btn-primary tv-add', '+ New ticket',
         'Open a ticket on this board', () => openAdd()));
-      boardPane.appendChild(openHead);
+      sectionsEl.appendChild(openHead);
 
       if (!res.open.length) {
-        boardPane.appendChild(el('div', 'tv-empty', 'No open tickets.'));
+        sectionsEl.appendChild(el('div', 'tv-empty', 'No open tickets.'));
       } else {
         const stalledCount = res.open.filter((t) => t.stalled).length;
         if (stalledCount) {
@@ -556,11 +667,11 @@ module.exports.activate = (rhost) => {
         if (parkedCount) {
           openHead.appendChild(el('span', 'tv-backlog-count', `${parkedCount} parked`));
         }
-        for (const t of res.open) boardPane.appendChild(ticketRow({ ...t, now: res.now }));
+        for (const t of res.open) sectionsEl.appendChild(ticketRow({ ...t, now: res.now }));
       }
 
       const summary = summaryText(res.counts);
-      if (summary) boardPane.appendChild(el('div', 'tv-summary', summary));
+      if (summary) sectionsEl.appendChild(el('div', 'tv-summary', summary));
 
       // Below the open list and visually quieter — present when wanted, never
       // competing with open work for the top of the pane.
@@ -570,12 +681,76 @@ module.exports.activate = (rhost) => {
         if (res.counts.recentOver > 0) {
           head.appendChild(el('span', 'tv-stall-count', `+${res.counts.recentOver} more`));
         }
-        boardPane.appendChild(head);
+        sectionsEl.appendChild(head);
         for (const t of res.recent) {
-          boardPane.appendChild(ticketRow({ ...t, now: res.now }, { closed: true }));
+          sectionsEl.appendChild(ticketRow({ ...t, now: res.now }, { closed: true }));
         }
       }
     }
+
+    function hitRow(h) {
+      const row = el('div', 'tv-ticket tv-hit');
+      const head = el('div', 'tv-ticket-head');
+      head.appendChild(el('span', 'tv-id', h.id));
+      const titleSpan = el('span', 'tv-ticket-title', h.title);
+      titleSpan.title = h.title;
+      head.appendChild(titleSpan);
+      head.title = 'Click to open this ticket\'s history';
+      head.addEventListener('click', () => {
+        renderDetail(selected, h.id).catch((e) => rhost.log.error('detail failed', e));
+      });
+      row.appendChild(head);
+
+      const meta = el('div', 'tv-meta');
+      meta.appendChild(el('span', 'tv-hit-state', h.state));
+      meta.appendChild(el('span', 'tv-age', h.closedAt === null || h.closedAt === undefined
+        ? 'closed at an unknown time'
+        : `closed ${humanizeAge(Date.now() - h.closedAt)} ago`));
+      row.appendChild(meta);
+
+      row.appendChild(el('div', 'tv-snippet', h.snippet));
+      return row;
+    }
+
+    function renderHits(res) {
+      sectionsEl.innerHTML = '';
+      editorEl = null;
+      if (!res.ok) {
+        sectionsEl.appendChild(el('div', 'tv-error', `Could not search this project: ${res.error || 'unknown error'}`));
+        return;
+      }
+      const hits = Array.isArray(res.hits) ? res.hits : [];
+      if (!hits.length) {
+        sectionsEl.appendChild(el('div', 'tv-empty', 'no closed tickets match'));
+        return;
+      }
+      const list = el('div', 'tv-hits');
+      for (const h of hits) list.appendChild(hitRow(h));
+      sectionsEl.appendChild(list);
+    }
+
+    async function runSearch(q) {
+      const my = ++searchSeq;
+      const mySelect = selectSeq;
+      const myReload = reloadSeq;
+      const res = await ask('search', { project: selected, q });
+      if (!alive() || my !== searchSeq || mySelect !== selectSeq || myReload !== reloadSeq) return;
+      renderHits(res);
+    }
+
+    searchEl.addEventListener('input', () => {
+      if (searchTimer !== null) clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        searchTimer = null;
+        const q = String(searchEl.value || '').trim();
+        if (!q) {
+          searchSeq += 1;
+          if (selected) selectProject(selected).catch((e) => rhost.log.error('select failed', e));
+          return;
+        }
+        runSearch(q).catch((e) => rhost.log.error('search failed', e));
+      }, SEARCH_DEBOUNCE_MS);
+    });
 
     async function selectProject(key) {
       // A monotonic token, not `selected !== key`: identity cannot tell two

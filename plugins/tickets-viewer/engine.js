@@ -847,7 +847,7 @@ function deriveRounds(dir, id) {
 }
 
 function ticketRounds(rec, dir, id) {
-  if (Array.isArray(rec.rounds)) {
+  if (Array.isArray(rec.rounds) && rec.rounds.length) {
     return rec.rounds
       .filter((e) => e && typeof e === 'object' && !Array.isArray(e))
       .map((e, i) => serveRound(e, dir, i + 1));
@@ -940,7 +940,7 @@ function search(payload) {
     const closedAt = num(t.closedAt);
     scored.push({
       order: closedAt ?? num(t.openedAt) ?? 0,
-      hit: { id: str(t.id), title: str(t.title), state: str(t.state), closedAt, snippet },
+      hit: { id: str(t.id), title: str(t.title), state: str(t.state) || '(no state)', closedAt, snippet },
     });
   }
   scored.sort((a, b) => b.order - a.order);
