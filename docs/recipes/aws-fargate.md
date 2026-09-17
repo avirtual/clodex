@@ -206,7 +206,7 @@ ephemeral, so a stored `ecs:CLUSTER_<taskId>_<runtimeId>` target goes stale on
 every redeploy. The typed kind is also **data** — safe to import or commit
 to a shared team file, unlike a raw `--tunnel` argv.
 
-<details><summary>What <code>--ssm-ecs</code> expands to (the raw form)</summary>
+<details><summary>What `--ssm-ecs` expands to (the raw form)</summary>
 
 ```sh
 # The equivalent explicit tunnel, if you ever need to hand-build it — you must
