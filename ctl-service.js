@@ -170,7 +170,6 @@ function refuse(argv, resolveResource = null) {
   if (verb === '') return `refused: "" is not a verb (${DEFERRED_HINT})`;
   const rule = Object.prototype.hasOwnProperty.call(ALLOWED, verb) ? ALLOWED[verb] : undefined;
   if (rule === undefined) return `refused: "${verb}" is not available in the ctl tab (${DEFERRED_HINT})`;
-  if (rule === '*') return null;
   if (rule === true) return null;
   const sub = argv[1];
   if (!Array.isArray(rule)) return null;
@@ -186,7 +185,7 @@ function refuse(argv, resolveResource = null) {
 
 // The identity of a resolved context for warm-connection purposes. Two commands
 // share a transport only when every field that shapes the dial matches AND the
-// bearer is the same token — a `ctx use`, a `--ctx`, or a bare `--token` between
+// bearer is the same token — a `use node`, a `--ctx`, or a bare `--token` between
 // them changes this string and forces a re-dial.
 //
 // The token is HASHED, not compared raw and not reduced to "set": reduced to a
@@ -261,8 +260,9 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
   // Every token this LINE could have put on screen, not merely the one it
   // resolved. Two paths made a resolved-token-only scrub dead by construction:
   // the dial can throw BEFORE a token is in hand (relaying a child's stderr,
-  // which may quote the argv it failed on), and the ctx path never resolves one
-  // at all while printing the store. So the fold covers the store as well.
+  // which may quote the argv it failed on), and the local node path never
+  // resolves one at all while printing the store. So the fold covers the store
+  // as well.
   function scrubbableTokens(resolved) {
     const seen = new Set();
     const add = (t) => {
@@ -286,7 +286,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
   // A short-lived cache over scrubbableTokens, which reads contexts.json
   // synchronously on the main process. Per COMMAND that read is noise; per
   // armed SELECTION it is on the operator's drag path. The window is small
-  // enough that a `ctx add` is covered within a second — and the tokens a
+  // enough that a `create node` is covered within a second — and the tokens a
   // selection can contain are the ones already ON SCREEN, which the block that
   // printed them was scrubbed against at the time.
   let tokenCache = null;
@@ -544,7 +544,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     // first: the operator can select a block this console printed and hand it to
     // an agent, which is the same string on the same trip out — so it redacts
     // against the SAME store rather than a second token list that would drift.
-    // Read per call for the reason scrubbableTokens exists: a `ctx add` between
+    // Read per call for the reason scrubbableTokens exists: a `create node` between
     // two selections must not leave the new token unredacted. (Behind a 1s
     // cache — this rides the operator's drag, not a command.)
     scrubber() {
