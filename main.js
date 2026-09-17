@@ -93,12 +93,12 @@ function initLog() {
 }
 
 function writeLog(level, tag, message) {
-  const safe = maskSecrets(message);
   try {
+    const safe = maskSecrets(message);
     const line = `${new Date().toISOString()}  ${level}  [${tag}]  ${safe}\n`;
     fs.appendFileSync(LOG_FILE, line);
   } catch {
-    try { ensureDir(REGISTRY_DIR); fs.appendFileSync(LOG_FILE, `${new Date().toISOString()}  ${level}  [${tag}]  ${safe}\n`); } catch {}
+    try { ensureDir(REGISTRY_DIR); fs.appendFileSync(LOG_FILE, `${new Date().toISOString()}  ${level}  [${tag}]  ${maskSecrets(message)}\n`); } catch {}
   }
 }
 

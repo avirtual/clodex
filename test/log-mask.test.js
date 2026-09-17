@@ -12,10 +12,39 @@ test('rule (a): the key/value shapes, bare, spaced, quoted and JSON', () => {
   assert.strictEqual(maskSecrets(`Authorization: Bearer ${V}`), 'Authorization=[redacted]',
     'the scheme word is consumed WITH the value — stopping at `Bearer` leaves the credential in the log');
   assert.strictEqual(maskSecrets(`Authorization=Basic ${V}`), 'Authorization=[redacted]');
-  assert.strictEqual(maskSecrets(`bearer ${V}`), 'bearer=[redacted]');
   assert.strictEqual(maskSecrets(`{"token":"${V}","n":1}`), '{"token=[redacted],"n":1}',
     'the JSON shape is masked too — the quoting is not a hiding place');
-  assert.strictEqual(maskSecrets(`--token '${V}'`), "--token=[redacted]");
+  assert.strictEqual(maskSecrets(`GITHUB_TOKEN=${V}`), 'GITHUB_TOKEN=[redacted]',
+    'an underscore-prefixed key word is the shape an agent-written term command carries');
+  assert.strictEqual(maskSecrets(`access_token=${V}`), 'access_token=[redacted]');
+});
+
+test('rule (a): an `=` or `:` is REQUIRED — a bare space is not a separator', () => {
+  assert.strictEqual(maskSecrets(`bearer ${V}`), `bearer ${V}`,
+    'a space-separated key word is prose far more often than a credential; the flag branch below '
+    + 'recovers the case that matters');
+  assert.strictEqual(maskSecrets('tokenizer=x'), 'tokenizer=x',
+    'the key word must end the identifier — `\\b` after the alternation');
+});
+
+test('these real ops-log lines carry a key word in PROSE and survive byte-identical', () => {
+  for (const line of [
+    'web host listening on 127.0.0.1:8080 (token required)',
+    'web host listening on 127.0.0.1:8080 (localhost-trust)',
+    'CLODEX_REMOTE_INSECURE=1 — the remote wire will serve with NO operator token on a non-loopback '
+      + 'bind. This is insecure; set CLODEX_REMOTE_TOKEN and remove the flag.',
+    'web view up for a1 → https://h:7777/ (token required — not opened)',
+    'web view for a1 is at https://h:7777/ (token required — not opened)',
+  ]) {
+    assert.strictEqual(maskSecrets(line), line,
+      `a security-diagnostic line was corrupted by the mask: ${JSON.stringify(line)}`);
+  }
+});
+
+test('the flag branch: a space IS the separator after a `-`/`--` flag', () => {
+  assert.strictEqual(maskSecrets(`--token '${V}'`), '--token=[redacted]');
+  assert.strictEqual(maskSecrets(`curl -H --secret ${V} done`), 'curl -H --secret=[redacted] done');
+  assert.strictEqual(maskSecrets(`run --password "${V}" now`), 'run --password=[redacted] now');
 });
 
 test('rule (b): URL userinfo keeps the user and loses the password', () => {

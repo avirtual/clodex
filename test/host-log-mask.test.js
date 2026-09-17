@@ -103,7 +103,10 @@ test('both hosts call maskSecrets before appendFileSync, and require the leaf', 
     assert.match(src, /require\('\.\/log-mask'\)/,
       `${host}: does not require the mask leaf at all`);
     const start = src.indexOf('function writeLog(');
-    const chunk = src.slice(start, src.indexOf('\nconst log = {', start));
+    assert.notStrictEqual(start, -1, `${host}: no writeLog to inspect`);
+    const end = src.indexOf('\nconst log = {', start);
+    assert.notStrictEqual(end, -1, `${host}: the anchor after writeLog moved — this pin is scanning the whole file`);
+    const chunk = src.slice(start, end);
     const maskAt = chunk.indexOf('maskSecrets(');
     const appendAt = chunk.indexOf('appendFileSync');
     assert.ok(maskAt !== -1, `${host}: writeLog does not call maskSecrets`);
@@ -137,6 +140,12 @@ test('t959 the default openExternal seam logs no query string', () => {
   assert.ok(!lines[0].includes('?'), 'the whole query goes — the mask enumerates names, this cannot');
   assert.ok(lines[0].includes('https://files.example.com/report.pdf'),
     'the origin and path survive — an operator must still see WHICH link the host could not open');
+
+  lines.length = 0;
+  seam('https://h/callback#access_token=abc123');
+  assert.ok(!lines[0].includes('abc123'),
+    'an implicit-grant credential arrives in the FRAGMENT, not the query — dropping only `?` misses it');
+  assert.ok(lines[0].endsWith('https://h/callback'), 'and the origin and path still survive');
 
   lines.length = 0;
   seam('https://example.com/docs');
