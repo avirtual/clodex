@@ -168,150 +168,9 @@ function resolveMeasure(payload) {
   return wantAbs;
 }
 
-const OWN_SCANNERS = [
-  'test/architecture-map-complete.test.js',
-  'test/comment-ratchet.test.js',
-  'test/create-mint-census.test.js',
-  'test/electron-boundary.test.js',
-  'test/free-identifier-leaks.test.js',
-  'test/no-live-registry-in-tests.test.js',
-  'test/packaging-allowlist.test.js',
-  'test/plugin-web-parity.test.js',
-  'test/preserve-across-restart.test.js',
-  'test/sigkill-pid-census.test.js',
-  'test/source-control-bytes.test.js',
-  'test/ssh-keepalive.test.js',
-  'test/tmp-sweep-prefix-coverage.test.js',
-  'test/web-dist-fresh.test.js',
-];
-
-const LOCK_BOUND = [
-  'cli/test/attach.test.js',
-  'cli/test/transport.test.js',
-  'test/wirescope-env-gate.test.js',
-];
-
-const TEST_ROOTS = ['test', 'cli/test'];
-
-function gitLines(measure, args) {
-  const out = gitRead(measure, args);
-  return out ? out.split('\n').map((l) => l.trim()).filter(Boolean) : [];
-}
-
-function existsIn(measure, rel) {
-  try {
-    return fs.statSync(path.join(measure, rel)).isFile();
-  } catch {
-    return false;
-  }
-}
-
-function testPool(measure) {
-  const found = [];
-  const walk = (rel) => {
-    let ents;
-    try {
-      ents = fs.readdirSync(path.join(measure, rel), { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of ents) {
-      const child = `${rel}/${e.name}`;
-      if (e.isDirectory()) {
-        if (!/fixture/i.test(e.name)) walk(child);
-      } else if (e.name.endsWith('.test.js')) found.push(child);
-    }
-  };
-  for (const r of TEST_ROOTS) walk(r);
-  return found.sort();
-}
-
-function subjectMatchers(sources) {
-  return sources.map((rel) => ({ rel, stem: rel.replace(/\.js$/, '') }));
-}
-
-function requireTargets(testRel, text) {
-  const dir = path.posix.dirname(testRel);
-  const out = new Set();
-  for (const m of text.matchAll(/require\(\s*['"](\.\.?\/[^'"]+)['"]\s*\)/g)) {
-    out.add(path.posix.normalize(path.posix.join(dir, m[1])));
-  }
-  return out;
-}
-
-function selectSet(measure) {
-  const master = gitRead(measure, ['rev-parse', '--verify', '--quiet', 'master']);
-  if (!master) {
-    emit(`[${LEAF}] own: nothing measured — \`master\` does not resolve in ${measure}`, 1, 200);
-  }
-  const base = gitRead(measure, ['merge-base', 'master', 'HEAD']);
-  if (!base) {
-    emit(`[${LEAF}] own: nothing measured — no merge base between \`master\` and HEAD`, 1, 200);
-  }
-  const touched = [...new Set([
-    ...gitLines(measure, ['diff', '--name-only', `${base}..HEAD`]),
-    ...gitLines(measure, ['diff', '--name-only', 'HEAD']),
-    ...gitLines(measure, ['ls-files', '--others', '--exclude-standard']),
-  ])];
-  if (!touched.length) {
-    emit(
-      `[${LEAF}] own: nothing to compare — branch equals master and the tree is clean`,
-      1,
-      200,
-    );
-  }
-  const live = touched.filter((p) => existsIn(measure, p));
-  const changed = live.filter((p) => p.endsWith('.test.js')).sort();
-  const sources = live.filter((p) => p.endsWith('.js') && !p.endsWith('.test.js'));
-  const seen = new Set(changed);
-  const matchers = subjectMatchers(sources);
-  const bySubject = [];
-  if (matchers.length) {
-    for (const t of testPool(measure)) {
-      if (seen.has(t)) continue;
-      let text = '';
-      try {
-        text = fs.readFileSync(path.join(measure, t), 'utf8');
-      } catch {
-        continue;
-      }
-      const targets = requireTargets(t, text);
-      const hit = matchers.some(
-        (m) => targets.has(m.stem) || targets.has(m.rel) || text.includes(m.rel),
-      );
-      if (!hit) continue;
-      bySubject.push(t);
-      seen.add(t);
-    }
-  }
-  const scanners = [];
-  for (const s of OWN_SCANNERS) {
-    if (seen.has(s) || !existsIn(measure, s)) continue;
-    scanners.push(s);
-    seen.add(s);
-  }
-  const files = [...changed, ...bySubject, ...scanners];
-  return {
-    files,
-    counts: `${files.length} files: ${changed.length} changed, `
-      + `${bySubject.length} by subject, ${scanners.length} scanners`,
-    locked: files.some((f) => LOCK_BOUND.includes(f)),
-  };
-}
-
 const payload = parsePayload(readStdin());
 const measure = resolveMeasure(payload);
 const runner = path.join(measure, 'scripts', 'run-tests.js');
-
-const scope = Object.prototype.hasOwnProperty.call(payload, 'scope') ? payload.scope : 'full';
-if (scope !== 'full' && scope !== 'own') {
-  emit(
-    `[${LEAF}] refused, nothing measured: scope must be "full" or "own" — ${JSON.stringify(scope)}`,
-    1,
-    180,
-  );
-}
-const TAG = scope === 'own' ? 'own: ' : '';
 
 if (!fs.existsSync(runner)) {
   emit(
@@ -320,21 +179,16 @@ if (!fs.existsSync(runner)) {
   );
 }
 
-const selected = scope === 'own' ? selectSet(measure) : null;
-
 const headLine = `${gitRead(measure, ['rev-parse', '--abbrev-ref', 'HEAD'])} ${gitRead(measure, ['log', '-1', '--format=%h %s'])}`.trim();
 const startedIso = nowIso();
 const startedAt = Date.now();
-const childEnv = {
-  ...process.env,
-  CLODEX_TEST_LOCK_DIR: path.join(ROOT, '.test-digest.lock'),
-  CLODEX_TEST_LOCK_WAIT_MS: '30000',
-};
-if (selected && selected.locked) childEnv.CLODEX_TEST_LOCK = '1';
-else delete childEnv.CLODEX_TEST_LOCK;
-const res = spawnSync(process.execPath, [runner, '--reporter=dot', ...(selected ? selected.files : [])], {
+const res = spawnSync(process.execPath, [runner, '--reporter=dot'], {
   cwd: measure,
-  env: childEnv,
+  env: {
+    ...process.env,
+    CLODEX_TEST_LOCK_DIR: path.join(ROOT, '.test-digest.lock'),
+    CLODEX_TEST_LOCK_WAIT_MS: '30000',
+  },
   maxBuffer: 64 * 1024 * 1024,
   encoding: 'utf8',
 });
@@ -381,7 +235,7 @@ if (!totals) {
   const last = lines.length ? lines[lines.length - 1].slice(0, 160) : '';
   const at = keptFor(`no summary (exit ${code})`, false, combined);
   emit(
-    `[${LEAF}] ${TAG}no "TOTALS: <n> pass, <n> fail, <n> tests" line (exit ${code})${at}; last: ${last}`,
+    `[${LEAF}] no "TOTALS: <n> pass, <n> fail, <n> tests" line (exit ${code})${at}; last: ${last}`,
     exitCode,
   );
 }
@@ -392,13 +246,12 @@ const tests = Number(totals[3]);
 
 if (tests === 0) {
   const at = keptFor(`0/0, exit ${code}`, false);
-  emit(`[${LEAF}] ${TAG}runner executed ZERO tests (exit ${code})${at}`, 1);
+  emit(`[${LEAF}] runner executed ZERO tests (exit ${code})${at}`, 1);
 }
 
 if (code === 0 && fail === 0) {
   retireKeep();
-  const breakdown = selected ? ` — ${selected.counts}` : '';
-  emit(`[${LEAF}] ${TAG}${pass}/${tests} green (${wallShow(wallMs)})${breakdown}`, 0);
+  emit(`[${LEAF}] ${pass}/${tests} green (${wallShow(wallMs)})`, 0);
 }
 
 const names = [];
@@ -407,7 +260,7 @@ for (let m = NAME_RE.exec(hay); m; m = NAME_RE.exec(hay)) names.push(m[1]);
 
 const at = keptFor(`${pass}/${tests} green, ${fail} failing (exit ${code})`, true);
 emit(
-  `[${LEAF}] ${TAG}${pass}/${tests} green, ${fail} failing (${wallShow(wallMs)})${at}: ${names.join('; ')}`,
+  `[${LEAF}] ${pass}/${tests} green, ${fail} failing (${wallShow(wallMs)})${at}: ${names.join('; ')}`,
   exitCode,
   180,
 );
