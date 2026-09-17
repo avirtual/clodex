@@ -68,6 +68,16 @@ test('mkTmpDirIn refuses a parent that is not already tracked', () => {
   assert.throws(() => mkTmpDirIn(path.join(tracked, '..'), 'tmp-roots-pin-dotdot-'), /ALREADY tracks/,
     'and a `..` back out of a tracked root reaches the same untracked parent');
 
+  assert.throws(() => mkTmpDirIn(`${tracked}/../tmp-roots-pin-untracked-sibling`, 'tmp-roots-pin-escape-'), /ALREADY tracks/,
+    'an UN-NORMALIZED `<root>/../<sibling>` is a string that starts with the tracked root and resolves outside '
+    + 'the directory the caller named, so a raw startsWith waves it through and mints where the sweep will not look');
+
+  fs.mkdirSync(path.join(tracked, 'b'));
+  const normalized = mkTmpDirIn(`${tracked}/a/../b`, 'tmp-roots-pin-norm-');
+  assert.strictEqual(path.dirname(normalized), path.join(tracked, 'b'),
+    'and a `..` that resolves back INSIDE the tracked root is accepted and mints at the resolved path — '
+    + 'the check and the mint must agree on which directory the caller meant');
+
   const escaped = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('tmp-roots-pin-escape-') || n.startsWith('tmp-roots-pin-dotdot-'));
   assert.deepStrictEqual(escaped, [],
     'the refusal happens BEFORE the mint — a throw that left a directory behind leaks exactly what it refused. '
