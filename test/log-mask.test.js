@@ -1,15 +1,4 @@
 'use strict';
-// log-mask.test.js — t959: maskSecrets is the credential mask both hosts'
-// writeLog applies before a line reaches clodex.log, so its rules are the whole
-// of what the ops log is allowed to contain. Every fixture value below is the
-// literal `abc123` — nothing token-shaped from a real file ever enters this
-// file.
-//
-// ENTER: the two directions a mask gets wrong. A mask that eats the whole line
-// destroys the diagnostic the log exists for, so each case asserts the key name
-// AND the surrounding text survive; a mask that fires on ordinary prose would
-// corrupt every line, so a clean line must come back byte-identical.
-
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { maskSecrets } = require('../log-mask');

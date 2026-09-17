@@ -1,15 +1,4 @@
 'use strict';
-// host-log-mask.test.js — t959: the credential mask lives at the WRITE boundary,
-// so every writer into clodex.log is covered by one call and no future log site
-// has to remember. This pins that boundary in BOTH hosts.
-//
-// HOW THESE REACH writeLog. Neither host is requireable: main.js pulls in
-// electron at line 1 and headless-main.js stands a whole engine up on require.
-// So the body is extracted from source and evaluated with its free names
-// injected — the same technique host-log-parity.test.js uses on the `log`
-// literal next door, and for the same reason. What runs is the SHIPPED body: a
-// writeLog that stopped calling maskSecrets would write the raw value into the
-// temp file here exactly as it would into the operator's log.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -84,11 +73,6 @@ for (const host of HOSTS) {
   });
 }
 
-// The reason the mask sits at the boundary rather than at each call site: this
-// log line interpolates a shell command an AGENT wrote, and session-manager.js
-// does nothing about it. Drive the real intent handler into a real host
-// writeLog and read the file — the whole chain, with no mask anywhere in
-// between.
 test('t959 an agent-written term command reaches the log file masked, with no mask in session-manager', () => {
   const { mk } = require('./lib/session-fixtures');
   const dir = mkTmpRoot('t959-term-');
@@ -128,12 +112,6 @@ test('both hosts call maskSecrets before appendFileSync, and require the leaf', 
   }
 });
 
-// The third verbatim site from t958's audit, and the one the boundary mask
-// cannot reach: engine.js's default `openExternal` seam logs the URL a host
-// with no browser was asked to open. A signed URL carries its credential in
-// the query under names the mask does not enumerate (`sig` it does, `t`,
-// `Signature`, `X-Amz-Credential` it does not), so the query goes entirely —
-// the origin and path are the whole diagnostic anyway.
 test('t959 the default openExternal seam logs no query string', () => {
   const src = fs.readFileSync(path.join(ROOT, 'engine.js'), 'utf8');
   const head = 'const openExternalSeam = seams.openExternal || ';

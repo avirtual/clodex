@@ -234,12 +234,6 @@ test('the renderer does not re-validate the prefix', () => {
   }
 });
 
-// t959 P3. The reject path interpolated the operator's raw env value into a
-// warning that goes to `log.warn`, i.e. straight into clodex.log. An operator
-// who mistypes their remote URL into CLODEX_REMOTE_BASE_PATH — the shape that
-// carries a token — had that value written to disk verbatim, and the mask at
-// the write boundary cannot help here because it fires on credential SHAPES and
-// an arbitrary rejected string has none.
 test('t959 the rejected-prefix warning names the variable, never its value', () => {
   const { resolveRemoteBasePath, REMOTE_BASE_PATH_ENV } = require('../remote');
   const secret = `https://boxy.example/c?token=t959-${Date.now()}`;

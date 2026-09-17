@@ -257,12 +257,6 @@ test('grammar: only a LEADING `node` selects the node log; `logs bob` is untouch
   } finally { server.close(); }
 });
 
-// t959 (f). `'logs node'` was in verbs.js's NAMELESS_RESOURCES, which is read
-// only by takeResourceWord — and `logs` never routes through it: it is a
-// SPECIAL_VERB whose own branch handles `node`, and the throw pinned by the
-// test above is what enforces the no-name rule. An inert entry in a set that
-// looks like the rule is worse than no entry: it is where the next reader goes
-// to change the behaviour, and nothing there does anything.
 test('t959 the no-name rule for `logs node` lives in logsNode, not in NAMELESS_RESOURCES', async () => {
   const V = require('../src/verbs');
   assert.ok(!('NAMELESS_RESOURCES' in V), 'ENTER: the set is module-private, so read it from source');
@@ -274,7 +268,6 @@ test('t959 the no-name rule for `logs node` lives in logsNode, not in NAMELESS_R
   assert.ok(m[1].includes("'restart node'"),
     "ENTER: `restart node` DOES route through takeResourceWord and must stay");
 
-  // And the rule it looked like it carried is still enforced, by the throw.
   const { server } = stub();
   const port = await listen(server);
   try {

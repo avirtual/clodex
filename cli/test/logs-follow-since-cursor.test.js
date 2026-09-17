@@ -1,14 +1,4 @@
 'use strict';
-// logs-follow-since-cursor.test.js — t959 P6: `logs -f --since <D>` derives its
-// follow cursor from the UNFILTERED page.
-//
-// `--since` is a DISPLAY filter — it decides which of the tail's turns are
-// printed. The follow cursor is a different question: where the stream resumes.
-// Deriving the cursor from the filtered survivors conflates the two, and when
-// the filter eats everything, `lastSeqOf([])` is -1, so the first refetch asks
-// `since=0` and re-fetches the ENTIRE transcript — every turn `--since` was
-// asked to hide, printed at once. A quiet seat plus `--since 5m` is the common
-// case, not an edge one.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -21,9 +11,6 @@ const { serverTranscriptPage } = require('./fixtures/transcript-page');
 
 const TOKEN = 'sekret';
 
-// Every row is stamped OLD, so any `--since` in this file filters all of them
-// out. The stamps are fixed instants, never `Date.now()` — a clock-relative
-// fixture drifts into and out of its own window.
 const OLD_TS = '2020-01-01T00:00:00.000Z';
 const FUTURE = '2030-01-01T00:00:00.000Z';
 const rows = (n, ts) => Array.from({ length: n }, (_, i) => ({
@@ -52,13 +39,6 @@ function followStub(opts = {}) {
       }
       if (req.method === 'GET' && /^\/api\/sessions\/[^/]+\/transcript$/.test(p)) {
         const msgs = opts.transcript(tIdx++, seen);
-        // `after` is DROPPED before the page is built. That is the whole subject:
-        // client-side `filterAfter` exists because a node need not honour the
-        // parameter — an older box, or a transcript callback that ignores it —
-        // and it is exactly against such a node that the cursor derivation must
-        // still hold. A stub that filters server-side hands back an already-empty
-        // page, where the filtered and unfiltered sets are equal and the bug
-        // cannot appear.
         const url = req.url.replace(/[?&]after=[^&]*/g, (m) => (m[0] === '?' ? '?' : ''));
         res.writeHead(200); return res.end(JSON.stringify(serverTranscriptPage(msgs, url)));
       }

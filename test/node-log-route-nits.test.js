@@ -1,22 +1,4 @@
 'use strict';
-// node-log-route-nits.test.js — t959: three ways the `/api/node/logs` route can
-// hand back something it never meant to.
-//
-//   P4a  a non-positive `?limit` bypassed the clamp entirely: Math.min(-1, 500)
-//        is -1, and `slice(-(-1))` is `slice(1)` — the whole tail window minus
-//        one line, from a query that asked for less than nothing.
-//   P4b  readSync's RETURN value was dropped and the whole Buffer.alloc'd
-//        buffer stringified. The buffer is sized from an earlier statSync, so a
-//        rotation between the two calls leaves the tail NUL-filled and the NULs
-//        reach the wire as a junk line.
-//   P5   an engine built with no `seams.logFile` must not advertise the route
-//        at all. The honest answer is 501 plus absence from /api/resources, so
-//        the CLI prints its upgrade line instead of an empty page that reads
-//        like a quiet node.
-//
-// readLogTail takes its `fs` as a parameter, so P4b needs no real race: a
-// two-call fs double whose statSync reports the pre-rotation size and whose
-// readSync fills only the survivors IS the race, deterministically.
 
 const { test, after } = require('node:test');
 const assert = require('node:assert');
@@ -29,9 +11,6 @@ const { createRemoteWiring } = require('../remote-wiring');
 const { RemoteServer, readLogTail, NODE_LOG_MAX_LINES } = require('../remote');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-// Built from its code point, never typed: a raw NUL in a source file is
-// invisible, does not survive a reformat, and its loss turns the assertion
-// below into one about a different string that still passes.
 const NUL = String.fromCharCode(0);
 
 function req(port, pathname) {
@@ -78,9 +57,6 @@ test('P4a ?limit=-1 and ?limit=0 return at most the cap, never the whole window'
 });
 
 test('P4b a read shorter than the stat size yields no NUL bytes in any line', () => {
-  // statSync answers with the PRE-rotation size; readSync fills only what the
-  // truncated file still holds. That is exactly the window the old code wrote
-  // NUL fill into.
   const survivors = Buffer.from('2026-09-17T00:00:02.000Z  INFO  [app] after rotation\n', 'utf8');
   const claimedSize = survivors.length + 4096;
   const io = {
@@ -109,8 +85,6 @@ test('P4b ENTER: the same double with a FULL read still returns the line', () =>
     ['2026-09-17T00:00:02.000Z  INFO  [app] intact'],
     'the slice must not truncate an honest read');
 });
-
-// ── P5: no seams.logFile ⇒ no route, no catalog entry ────────────────────────
 
 function wiringDeps(getNodeLogFile) {
   let srv = null;
@@ -167,13 +141,6 @@ function mkEngine(seams) {
   });
 }
 
-// `getNodeLogFile` is not on the engine's public API — it is a dep engine.js
-// hands createRemoteWiring. So drive the REAL path: stand an engine up, patch
-// RemoteServer to capture its construction options, and read what the wire was
-// actually given. Patching means no socket is ever bound.
-// CLODEX_REMOTE_ENABLE=1 is the documented headless-container switch that brings
-// the wire up with no settings write, the same door engine-web-info-seam.test.js
-// uses next door.
 function engineRemoteOptions(seams) {
   const remoteMod = require('../remote');
   const orig = remoteMod.RemoteServer;
@@ -226,6 +193,4 @@ test('P5 the route answers 501 and node/logs is absent from /api/resources', asy
   });
 });
 
-// createEngine's background timers keep the loop alive (engine-web-info-seam.js
-// pays the same price for the same reason); exit once results flush.
 after(() => { setImmediate(() => process.exit(0)); });

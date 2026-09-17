@@ -159,16 +159,9 @@ test('help([]) is the index; help([verb]) is the entry; help([bad]) is usage', (
   assert.match(help(['ctx']).text, /no help for "ctx"/);
 });
 
-// t959 P7. `usage` was a single string with an embedded newline and hand-aligned
-// padding, so renderVerb's `  clodexctl ${u}` prefixed the FIRST form only and
-// the second arrived as a bare, unprefixed, wrongly-indented line — a form a
-// reader cannot paste. renderVerb already concats arrays, so the two forms are
-// two entries.
 test('P7 `logs --help` prints BOTH forms, each prefixed with clodexctl', async () => {
   const { code, stdout } = await cli(['logs', '--help']);
   assert.strictEqual(code, 0);
-  // Scoped to the USAGE block: EXAMPLES lines carry the same prefix, and
-  // counting those too would pass against a usage that printed one form.
   const all = stdout.split('\n');
   const from = all.indexOf('USAGE') + 1;
   assert.ok(from > 0, 'ENTER: the entry has a USAGE section');
@@ -181,8 +174,6 @@ test('P7 `logs --help` prints BOTH forms, each prefixed with clodexctl', async (
     'no hand-aligned continuation line survives — that is the shape that lost its prefix');
 });
 
-// The whole usage surface, not just logs: a second multi-form entry written as
-// one newline-joined string would reintroduce the bug somewhere nothing looks.
 test('P7 no usage entry hides a second form inside a newline-joined string', () => {
   for (const e of VERB_REGISTRY) {
     for (const u of [].concat(e.usage)) {
