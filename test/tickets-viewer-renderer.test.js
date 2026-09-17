@@ -598,12 +598,12 @@ test('both merge classes are styled, and not styled alike (t534)', () => {
   };
   // The failure takes the error red the board already uses for .tv-error; the
   // deferral must NOT, or the two badges are one mark wearing two names.
-  assert.match(blockOf('.tv-merge-error'), /rgb\(230, 110, 110\)/,
+  assert.match(blockOf('.tv-merge-error'), /var\(--error\)/,
     'the failure badge is the error red');
-  assert.doesNotMatch(blockOf('.tv-merge-waiting'), /rgb\(230, 110, 110\)/,
+  assert.doesNotMatch(blockOf('.tv-merge-waiting'), /var\(--error\)/,
     'the waiting badge must not wear the failure colour');
   // The row edge is the same red as the badge — one state, one colour.
-  assert.match(blockOf('.tv-ticket.tv-merge-failed'), /rgb\(230, 110, 110\)|rgba\(230, 110, 110/,
+  assert.match(blockOf('.tv-ticket.tv-merge-failed'), /var\(--error\)/,
     'the row edge matches the badge it belongs to');
 });
 

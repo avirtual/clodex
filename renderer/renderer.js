@@ -7604,10 +7604,9 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
 });
 
 
-({
-  refreshTemplatesList: templatesDrawerRefresh, openTeamTemplate: templatesDrawerOpenTeam,
+({ refreshTemplatesList: templatesDrawerRefresh,
   closePromptEditor, closeAgentEditor, closeSkillEditor, closeExecEditor,
-} = initLibraryDrawers({
+  openTeamTemplate: templatesDrawerOpenTeam } = initLibraryDrawers({
   getActiveSession: () => activeSession,
   setAgentLibCache, setSkillLibCache,
   openTemplateEditor,
