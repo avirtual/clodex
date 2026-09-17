@@ -134,13 +134,6 @@ test('t894: the selected dispatch segment uses the selection treatment, not the 
     'with an --accent edge, as .drawer-tab.active uses');
 });
 
-// t964: the ticket id is an IDENTIFIER, not prose — it renders in its own span so
-// the mono/tertiary treatment can reach it. The line the operator reads must not
-// change by a byte for it, which is the whole risk of splitting a built string:
-// re-deriving the id from the ticket object instead of splitting ticketLine's own
-// output is how the two drift, and ticketLine is the authority on what an id
-// looks like (`?` for a missing one included). So the subject is equality against
-// ticketLine, plus the span, plus the id being INSIDE the span.
 
 const { ticketLine } = require('../renderer/lib/team-roles');
 
@@ -161,9 +154,6 @@ function fakeDom() {
   };
 }
 
-// buildTicketsSection is a closure inside initTeamRolesPopover, so it is run out
-// of the source against the minimum DOM it touches rather than reached through a
-// mount — jsdom is not a dependency in this suite (see the sibling DOM tests).
 function runTicketsSection(act) {
   const m = /^  function buildTicketsSection\(act\) \{\n[\s\S]*?^  \}$/m.exec(popover);
   assert.ok(m, 'ENTER: found buildTicketsSection in the popover source');
@@ -175,8 +165,6 @@ function runTicketsSection(act) {
 }
 
 test('t964: a ticket line reads exactly as ticketLine wrote it, with the id in its own span', () => {
-  // Time-independent tickets: activityTime of a null stamp is '', so the expected
-  // string does not depend on the clock buildTicketsSection reads for itself.
   const open = { id: 't786', title: 'the roles popover', assignee: 'hand-786', step: 'working', since: null };
   const landed = { id: 't785', title: 'team:activity', at: null, outcome: 'accepted', rounds: 2 };
   const notes = runTicketsSection({ tickets: { open: [open], landed: [landed] } });
@@ -195,11 +183,6 @@ test('t964: a ticket line reads exactly as ticketLine wrote it, with the id in i
   }
 });
 
-// The anti-degenerate half, and the only subject that separates SPLITTING
-// ticketLine's output from RE-DERIVING the id off the ticket. For every ticket
-// carrying an id the two agree byte for byte, so the case above passes either
-// way; ticketLine writes '?' for an absent id and `String(t.id)` writes
-// 'undefined', which is what the operator would read in the popover.
 test('t964: a ticket with no id renders the id ticketLine writes, not the raw field', () => {
   const t = { title: 'filed by hand', assignee: null, step: 'backlog', since: null };
   const expected = ticketLine(t, Date.now());
@@ -211,8 +194,6 @@ test('t964: a ticket with no id renders the id ticketLine writes, not the raw fi
 });
 
 test('t964: the empty-state note is a plain line, with no id span to wear', () => {
-  // The degenerate direction: a span minted unconditionally would put mono
-  // tertiary type on "No open tickets." and on the first word of it.
   const notes = runTicketsSection({ tickets: { open: [], landed: [] } });
   assert.deepStrictEqual(notes.map((n) => n.textContent),
     ['No open tickets.', 'Nothing landed yet.']);
