@@ -231,7 +231,8 @@ test('an overlay excused from the .dialog-close rule still ships a wired ✕', (
     assert.ok(ids.has(id), `#${id} is excused from a table it is not in — a stale entry`);
     assert.ok(!closeButtonOwners().includes(id),
       `#${id} ships a .dialog-close after all: ${why} no longer describes it, so it needs no excuse`);
-    const overlay = htmlSrc.slice(...Object.values(elementExtent(htmlSrc, htmlSrc.indexOf(`<div id="${id}"`))));
+    const { start, end } = elementExtent(htmlSrc, htmlSrc.indexOf(`<div id="${id}"`));
+    const overlay = htmlSrc.slice(start, end);
     const btn = overlay.match(/<button[^>]*class="popover-close"[^>]*>/);
     assert.ok(btn, `#${id} is excused from the .dialog-close rule and ships no .popover-close either — it has no ✕ at all`);
     assert.match(btn[0], /type="button"/, `#${id}'s ✕ without type=button submits its form: ${btn[0]}`);

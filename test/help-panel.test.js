@@ -123,17 +123,35 @@ const PAGES = {
   cli: '# clodexctl\n\nThe [readme](./README.md) is this page.\n',
 };
 
+function pageReply(name) {
+  if (PAGES[name]) return { ok: true, name, title: `${name} title`, content: PAGES[name] };
+  const doc = corpus.get(name);
+  return doc ? { ok: true, name: doc.name, title: doc.title, content: doc.content } : { ok: false };
+}
+
 function makeApi() {
   const calls = { index: 0, page: [], external: [] };
+  const gates = [];
+  const fail = { index: 0, page: 0 };
+  const settle = async () => { for (let i = 0; i < 80; i++) await Promise.resolve(); };
   return {
     calls,
+    fail,
+    settle,
+    release: async () => { const held = gates.splice(0, gates.length); for (const g of held) g(); await settle(); },
+    hold: (on) => { calls.holding = on; },
     api: {
-      helpIndex: async () => { calls.index += 1; return { ok: true, ...corpus.index() }; },
+      helpIndex: async () => {
+        calls.index += 1;
+        if (calls.holding) await new Promise((r) => gates.push(r));
+        if (fail.index > 0) { fail.index -= 1; return { ok: false }; }
+        return { ok: true, ...corpus.index() };
+      },
       helpPage: async (name) => {
         calls.page.push(name);
-        if (PAGES[name]) return { ok: true, name, title: `${name} title`, content: PAGES[name] };
-        const doc = corpus.get(name);
-        return doc ? { ok: true, name: doc.name, title: doc.title, content: doc.content } : { ok: false };
+        if (calls.holding) await new Promise((r) => gates.push(r));
+        if (fail.page > 0) { fail.page -= 1; return { ok: false }; }
+        return pageReply(name);
       },
       openExternal: (url) => { calls.external.push(url); },
     },
@@ -145,10 +163,11 @@ function mount() {
   const prev = global.document;
   global.document = doc;
   const { initHelpPanel } = require('../renderer/popovers/help-panel');
-  const { api, calls } = makeApi();
+  const harness = makeApi();
+  const { api, calls } = harness;
   const panel = initHelpPanel({ api });
   global.document = prev;
-  return { panel, byId, calls, doc };
+  return { panel, byId, calls, doc, harness };
 }
 
 async function withDocument(ctx, fn) {
@@ -289,7 +308,7 @@ test('search swaps the nav only at two characters, and Escape clears without clo
   assert.deepStrictEqual(nav.querySelectorAll('.help-hit'), [], 'one character must leave the nav alone');
   assert.ok(nav.querySelectorAll('.help-nav-page').length >= 17, 'the page list must survive a one-char query');
 
-  input.value = 'zzqqx';
+  input.value = 'zz';
   await withDocument(ctx, () => input.fire('input', {}));
   const hits = nav.querySelectorAll('.help-hit');
   assert.deepStrictEqual(hits.map((h) => [h.attrs['data-page'], h.attrs['data-slug']]),
@@ -308,6 +327,112 @@ test('search swaps the nav only at two characters, and Escape clears without clo
   assert.strictEqual(ctx.byId.get('help-overlay').classList.contains('hidden'), false,
     'the overlay stays open');
   assert.ok(nav.querySelectorAll('.help-nav-page').length >= 17, 'clearing restores the page list');
+});
+
+test('Escape on an EMPTY search box is left to renderer.js, which is what closes the panel', async () => {
+  const ctx = mount();
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('how-to', null));
+  const input = ctx.byId.get('help-search');
+  assert.ok(input.focused >= 1,
+    'ENTER: opening focuses the search box, so this is the state every Escape starts in');
+
+  let stopped = 0;
+  assert.strictEqual(input.value, '', 'ENTER: the box must be empty for this subject');
+  await withDocument(ctx, () => input.fire('keydown', { key: 'Escape', stopPropagation: () => { stopped += 1; } }));
+  assert.strictEqual(stopped, 0,
+    'the input swallowed an Escape with nothing to clear — renderer.js\'s document listener is bubble-phase, '
+    + 'so stopping it there makes the ESCAPE_CLOSES row unreachable and Help cannot be closed with the keyboard at all');
+});
+
+test('a press on the backdrop closes the panel, a press inside it does not', async () => {
+  const ctx = mount();
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('how-to', null));
+  const overlay = ctx.byId.get('help-overlay');
+
+  await withDocument(ctx, () => overlay.fire('mousedown', { target: ctx.byId.get('help-body') }));
+  assert.strictEqual(overlay.classList.contains('hidden'), false,
+    'a press on the panel body must not dismiss it — every click on a link or the search box would close Help');
+
+  await withDocument(ctx, () => overlay.fire('mousedown', { target: overlay }));
+  assert.strictEqual(overlay.classList.contains('hidden'), true, 'a press on the backdrop closes it');
+});
+
+test('typing while the search index builds issues ONE corpus read, not one per keystroke', async () => {
+  const ctx = mount();
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('how-to', null));
+  const input = ctx.byId.get('help-search');
+  const before = ctx.calls.page.length;
+
+  ctx.harness.hold(true);
+  await withDocument(ctx, async () => {
+    for (const q of ['zz', 'zzq', 'zzqq', 'zzqqx']) {
+      input.value = q;
+      input.fire('input', {});
+      await ctx.harness.settle();
+    }
+  });
+  ctx.harness.hold(false);
+  await withDocument(ctx, () => ctx.harness.release());
+  await withDocument(ctx, () => ctx.harness.release());
+
+  const fetched = ctx.calls.page.slice(before);
+  const dupes = fetched.filter((name, i) => fetched.indexOf(name) !== i);
+  assert.deepStrictEqual(dupes, [],
+    'a page was fetched twice while the index was building — the cache memoizes results, not the in-flight promise, '
+    + 'so each keystroke starts its own walk of the corpus');
+  assert.ok(ctx.calls.index <= 1, `the index was fetched ${ctx.calls.index} times, not once`);
+  assert.deepStrictEqual(ctx.byId.get('help-nav').querySelectorAll('.help-hit').map((h) => h.attrs['data-page']),
+    ['how-to', 'how-to'], 'and the hits still land for the query that is actually in the box');
+});
+
+test('a failed fetch is retried, not cached as an empty corpus for the renderer\'s lifetime', async () => {
+  const ctx = mount();
+  ctx.harness.fail.index = 1;
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('how-to', null));
+  assert.deepStrictEqual(ctx.byId.get('help-nav').querySelectorAll('.help-nav-page'), [],
+    'ENTER: with the index call failed the nav must be empty, or this subject proves nothing');
+
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('how-to', null));
+  assert.ok(ctx.byId.get('help-nav').querySelectorAll('.help-nav-page').length >= 17,
+    'a transient index failure was memoized — the nav stays empty forever and every cross-link silently '
+    + 'degrades to a GitHub URL, because pageNames never fills');
+
+  const ctx2 = mount();
+  ctx2.harness.fail.page = 1;
+  await withDocument(ctx2, () => ctx2.panel.openHelpPanel('messaging', null));
+  assert.strictEqual(ctx2.byId.get('help-body').textContent, 'No such help page: messaging',
+    'ENTER: the failed page must render the miss');
+  await withDocument(ctx2, () => ctx2.panel.openHelpPanel('messaging', null));
+  assert.strictEqual(ctx2.byId.get('help-body').querySelector('h1').textContent, 'Messaging',
+    'a transient page failure was memoized as a permanent miss');
+});
+
+test('reopening the page already on screen does not push a dead history entry', async () => {
+  const ctx = mount();
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('how-to', null));
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('messaging', null));
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('messaging', null));
+  await withDocument(ctx, () => ctx.byId.get('help-back').fire('click', {}));
+  assert.strictEqual(ctx.byId.get('help-title').textContent, 'Clodex Help — how-to title',
+    'one Back press after reopening the same page must reach the previous page, not repeat the current one');
+});
+
+test('PAGE_DIRS covers every manifest page that does not live in docs/', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'docs/help.json'), 'utf8'));
+  const map = islandSrc.match(/^const PAGE_DIRS = \{$([\s\S]*?)^\};$/m);
+  assert.ok(map, 'ENTER: no PAGE_DIRS literal found in the island');
+  const keys = [...map[1].matchAll(/^\s*'?([a-z0-9-]+)'?:/gm)].map((m) => m[1]);
+  assert.ok(keys.length >= 4, `ENTER: parsed only ${keys.length} PAGE_DIRS keys`);
+
+  const pages = manifest.sections.flatMap((sec) => sec.pages);
+  assert.ok(pages.length >= 17, `ENTER: the manifest scan collected ${pages.length} pages`);
+  const uncovered = pages
+    .filter((page) => page.path.slice(0, page.path.lastIndexOf('/')) !== 'docs')
+    .filter((page) => !page.name.startsWith('recipe-') && !keys.includes(page.name))
+    .map((page) => `${page.name} (${page.path})`);
+  assert.deepStrictEqual(uncovered, [],
+    'a manifest page outside docs/ that PAGE_DIRS does not name falls back to the docs/ base, '
+    + 'so every relative link on it resolves against the wrong directory');
 });
 
 test('Enter in the search input opens the first hit at its anchor', async () => {

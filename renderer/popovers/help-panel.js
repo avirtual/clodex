@@ -60,26 +60,40 @@ function initHelpPanel({ api }) {
   const pageNames = new Set();
   const trail = [];
   let indexData = null;
-  let searchIndex = null;
+  let indexPromise = null;
+  let searchIndexPromise = null;
   let currentName = null;
   let currentHeadings = [];
   let at = -1;
+  let showSeq = 0;
 
-  async function getIndex() {
-    if (indexData) return indexData;
+  async function loadIndex() {
     const res = await api.helpIndex();
-    indexData = (res && res.ok && Array.isArray(res.sections)) ? res : { sections: [] };
+    if (!res || !res.ok || !Array.isArray(res.sections)) {
+      indexPromise = null;
+      return indexData || { sections: [] };
+    }
+    indexData = res;
     for (const section of indexData.sections) {
       for (const page of (section && section.pages) || []) pageNames.add(page.name);
     }
     return indexData;
   }
 
-  async function getPage(name) {
-    if (pageCache.has(name)) return pageCache.get(name);
+  function getIndex() {
+    if (!indexPromise) indexPromise = loadIndex();
+    return indexPromise;
+  }
+
+  async function loadPage(name) {
     const res = await api.helpPage(name);
-    pageCache.set(name, res);
+    if (!res || !res.ok) pageCache.delete(name);
     return res;
+  }
+
+  function getPage(name) {
+    if (!pageCache.has(name)) pageCache.set(name, loadPage(name));
+    return pageCache.get(name);
   }
 
   function clearNode(el) {
@@ -166,8 +180,11 @@ function initHelpPanel({ api }) {
   }
 
   async function show(name, slug) {
+    const mine = ++showSeq;
     await getIndex();
+    if (mine !== showSeq) return;
     const res = await getPage(name);
+    if (mine !== showSeq) return;
     currentName = name;
     if (!res || !res.ok) {
       renderMissing(name);
@@ -187,9 +204,12 @@ function initHelpPanel({ api }) {
 
   async function openHelpPanel(name = DEFAULT_PAGE, slug = null) {
     const page = name || DEFAULT_PAGE;
-    trail.splice(at + 1, trail.length);
-    trail.push({ name: page, slug: slug || null });
-    at = trail.length - 1;
+    const here = trail[at];
+    if (!here || here.name !== page || here.slug !== (slug || null)) {
+      trail.splice(at + 1, trail.length);
+      trail.push({ name: page, slug: slug || null });
+      at = trail.length - 1;
+    }
     overlay.classList.remove('hidden');
     if (searchEl.focus) searchEl.focus();
     await show(page, slug || null);
@@ -206,18 +226,24 @@ function initHelpPanel({ api }) {
     await show(trail[at].name, trail[at].slug);
   }
 
-  async function ensureSearchIndex() {
-    if (searchIndex) return searchIndex;
+  async function buildIndex() {
     const idx = await getIndex();
     const pages = [];
+    let missing = 0;
     for (const section of idx.sections || []) {
       for (const page of section.pages || []) {
         const res = await getPage(page.name);
         if (res && res.ok) pages.push({ name: page.name, text: res.content });
+        else missing += 1;
       }
     }
-    searchIndex = buildSearchIndex(pages);
-    return searchIndex;
+    if (missing || !pages.length) searchIndexPromise = null;
+    return buildSearchIndex(pages);
+  }
+
+  function ensureSearchIndex() {
+    if (!searchIndexPromise) searchIndexPromise = buildIndex();
+    return searchIndexPromise;
   }
 
   async function runSearch() {
@@ -235,6 +261,7 @@ function initHelpPanel({ api }) {
   searchEl.addEventListener('input', () => runSearch());
   searchEl.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      if (!searchEl.value) return;
       e.stopPropagation();
       searchEl.value = '';
       renderNav();

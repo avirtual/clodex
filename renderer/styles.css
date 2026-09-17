@@ -2257,7 +2257,7 @@ html, body {
 #help-search {
   width: 220px; padding: 4px 8px;
   background: var(--bg); border: 1px solid var(--border);
-  border-radius: 4px; color: var(--text);
+  border-radius: var(--radius-sm); color: var(--text);
   font-size: 12px; outline: none; font-family: inherit;
 }
 #help-search:focus { border-color: var(--accent); }
@@ -2273,17 +2273,17 @@ html, body {
 }
 .help-nav-page {
   font-size: 12px; color: var(--text); padding: 3px 6px;
-  border-radius: 4px; cursor: pointer;
+  border-radius: var(--radius-sm); cursor: pointer;
 }
 .help-nav-page:hover { background: var(--active-bg); }
 .help-nav-page.current { color: var(--accent); }
 .help-nav-h2 {
   font-size: 11px; color: var(--text-dim); padding: 2px 6px 2px 18px;
-  border-radius: 4px; cursor: pointer;
+  border-radius: var(--radius-sm); cursor: pointer;
 }
 .help-nav-h2:hover { color: var(--text); background: var(--active-bg); }
 .help-hit {
-  font-size: 11px; padding: 5px 6px; border-radius: 4px; cursor: pointer;
+  font-size: 11px; padding: 5px 6px; border-radius: var(--radius-sm); cursor: pointer;
   border-bottom: 1px solid var(--border);
 }
 .help-hit:hover { background: var(--active-bg); }
@@ -2299,8 +2299,8 @@ html, body {
 .help-doc ul ul, .help-doc ol ol, .help-doc ul ol, .help-doc ol ul { margin-bottom: 0; }
 .help-doc li { margin: 2px 0; }
 .help-doc code {
-  background: var(--active-bg); border-radius: 3px;
-  padding: 1px 4px; font-family: var(--font-mono, monospace); font-size: 12px;
+  background: var(--active-bg); border-radius: var(--radius-sm);
+  padding: 1px 4px; font-family: var(--font-mono); font-size: 12px;
 }
 .help-doc pre {
   background: var(--active-bg); border: 1px solid var(--border);
@@ -2318,7 +2318,6 @@ html, body {
 .help-doc hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 .help-doc a { color: var(--accent); cursor: pointer; text-decoration: none; }
 .help-doc a:hover { text-decoration: underline; }
-
 
 .terminal-wrapper {
   position: absolute;
