@@ -914,7 +914,7 @@ html, body {
   background: var(--text-dim); flex-shrink: 0;
 }
 .session-child[data-state="active"] .child-dot {
-  background: #4ade80;
+  background: var(--ok);
   animation: pulse 1.2s ease-in-out infinite;
 }
 .session-child[data-state="done"] { opacity: 0.7; }
@@ -1245,14 +1245,14 @@ html, body {
 #proxy-bar .px-action:hover { border-color: var(--accent); }
 /* Strip-thinking toggle: muted when off, lit when actively stripping. */
 #proxy-bar .px-strip.is-on {
-  color: #4caa6e;
-  border-color: #4caa6e;
-  background: rgba(76, 170, 110, 0.12);
+  color: var(--ok);
+  border-color: var(--ok);
+  background: var(--ok-soft);
 }
 #proxy-bar .px-seg { color: var(--text); }
 #proxy-bar .px-sep { margin: 0 8px; color: var(--text-dim); }
-#proxy-bar .px-warm { color: #e0a030; }
-#proxy-bar .px-cost { color: #4caa6e; }
+#proxy-bar .px-warm { color: var(--warn); }
+#proxy-bar .px-cost { color: var(--ok); }
 #proxy-bar .px-refusal { color: var(--accent); }
 /* Cache-bust chip: dim by default (busts happen, most are expected); goes
    amber-warn only when a real injected-prefix change (fault:content) is present. */
@@ -1261,7 +1261,7 @@ html, body {
 #proxy-bar .px-link { color: var(--text-dim); cursor: pointer; text-decoration: none; }
 #proxy-bar .px-link:hover { color: var(--text); text-decoration: underline; }
 /* Cost-as-timeline-link: keep the green, just make it clickable. */
-#proxy-bar .px-cost.px-link { color: #4caa6e; }
+#proxy-bar .px-cost.px-link { color: var(--ok); }
 #proxy-bar .px-cost.px-link:hover { color: #6fd99a; text-decoration: underline; }
 #proxy-bar .px-ctx-warn { color: var(--warn); }
 #proxy-bar .px-ctx-heavy { color: var(--error); font-weight: 600; }
@@ -1728,7 +1728,7 @@ html, body {
 .strip-menu { min-width: 240px; max-width: 300px; }
 .strip-menu .strip-item { display: flex; flex-direction: column; gap: 1px; }
 .strip-menu .strip-name { font-size: 12px; }
-.strip-menu .strip-item.strip-cur .strip-name { color: #4caa6e; }
+.strip-menu .strip-item.strip-cur .strip-name { color: var(--ok); }
 .strip-menu .strip-desc { font-size: 10px; color: var(--text-dim); }
 .strip-menu .strip-soon { font-size: 10px; color: var(--warn); font-style: italic; }
 
@@ -1893,7 +1893,7 @@ html, body {
 .bust-badge.bust-fault-content { color: var(--warn); border-color: var(--warn); }
 .bust-badge.bust-fault-env { color: var(--text-dim); border-color: var(--text-dim); }
 .bust-badge.bust-fault-self { color: #61afef; border-color: #61afef; }
-.bust-badge.bust-badge-heal { color: #4caa6e; border-color: #4caa6e; }
+.bust-badge.bust-badge-heal { color: var(--ok); border-color: var(--ok); }
 .bust-turn-static { color: var(--text-dim); }
 #bust-popover .px-link-ext { font-size: 10px; color: var(--accent); cursor: pointer; text-decoration: none; }
 #bust-popover .px-link-ext:hover { text-decoration: underline; }
@@ -2094,7 +2094,7 @@ html, body {
 .peek-line-hit { background: rgba(97, 175, 239, 0.16); }
 .diff-file { color: var(--text-dim); font-weight: 600; }
 .diff-hunk { color: #61afef; }
-.diff-add { color: #4caa6e; background: rgba(76, 170, 110, 0.08); }
+.diff-add { color: var(--ok); background: rgba(76, 170, 110, 0.08); }
 .diff-del { color: #d16969; background: rgba(209, 105, 105, 0.08); }
 .ctx-line-head {
   display: flex; justify-content: space-between; align-items: baseline;
@@ -2121,8 +2121,8 @@ html, body {
 }
 .ctx-strip-head { color: var(--text); margin-bottom: 2px; }
 .ctx-strip-verdict { color: var(--text-dim); }
-.ctx-strip-on { border-left-color: #4caa6e; }
-.ctx-strip-on .ctx-strip-verdict { color: #4caa6e; }
+.ctx-strip-on { border-left-color: var(--ok); }
+.ctx-strip-on .ctx-strip-verdict { color: var(--ok); }
 .ctx-strip-skip { border-left-color: var(--warn); }
 .ctx-strip-off { border-left-color: var(--border); }
 .ctx-tools-link { display: block; margin-top: 8px; font-size: 11px; color: var(--text-dim); cursor: pointer; }
@@ -3424,7 +3424,7 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
 .inbox-item:hover { background: var(--sidebar-hover); }
 
 .inbox-item.unread {
-  background: rgba(233, 69, 96, 0.08);
+  background: var(--accent-soft);
   border-left-color: var(--accent);
 }
 
@@ -3613,8 +3613,8 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
 #update-banner {
   margin: 6px 12px 10px;
   padding: 8px 10px;
-  background: rgba(233, 69, 96, 0.12);
-  border: 1px solid rgba(233, 69, 96, 0.35);
+  background: var(--info-soft);
+  border: 1px solid color-mix(in srgb, var(--info) 30%, transparent);
   border-radius: 6px;
   font-size: 11px;
   color: var(--text);
@@ -3630,7 +3630,7 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
 }
 
 #update-banner:hover {
-  background: rgba(233, 69, 96, 0.22);
+  background: color-mix(in srgb, var(--info) 22%, transparent);
 }
 
 .update-dot {
@@ -3644,8 +3644,8 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
 #diag-banner {
   margin: 6px 12px 10px;
   padding: 8px 10px;
-  background: rgba(240, 173, 78, 0.14);
-  border: 1px solid rgba(240, 173, 78, 0.45);
+  background: var(--warn-soft);
+  border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
   border-radius: 6px;
   font-size: 11px;
   line-height: 1.4;
@@ -3662,14 +3662,14 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
 }
 
 #diag-banner:hover {
-  background: rgba(240, 173, 78, 0.24);
+  background: color-mix(in srgb, var(--warn) 22%, transparent);
 }
 
 #auth-banner {
   margin: 6px 12px 10px;
   padding: 8px 10px;
-  background: rgba(240, 173, 78, 0.14);
-  border: 1px solid rgba(240, 173, 78, 0.45);
+  background: var(--warn-soft);
+  border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
   border-radius: 6px;
   font-size: 11px;
   line-height: 1.4;
@@ -4183,7 +4183,7 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
 }
 
 .ipc-to {
-  color: #4ade80;
+  color: var(--ok);
 }
 
 .ipc-session {
@@ -4268,7 +4268,7 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
   background: var(--text-dim);
 }
 
-.activity-chip[data-state="active"] .activity-chip-dot { background: #4ade80; }
+.activity-chip[data-state="active"] .activity-chip-dot { background: var(--ok); }
 .activity-chip[data-state="done"] { opacity: 0.7; }
 .activity-chip[data-state="ended"] { opacity: 0.5; }
 
@@ -4764,8 +4764,8 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
 #served-terminal-banner {
   margin: 6px 12px 10px;
   padding: 8px 10px;
-  background: rgba(240, 173, 78, 0.14);
-  border: 1px solid rgba(240, 173, 78, 0.45);
+  background: var(--warn-soft);
+  border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
   border-radius: 6px;
   font-size: 11px;
   line-height: 1.4;
