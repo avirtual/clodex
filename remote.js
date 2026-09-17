@@ -1337,5 +1337,5 @@ class RemoteServer {
 
 module.exports = {
   RemoteServer, RESOURCES, resolveRemoteBasePath, coerceRemoteBasePath, resolveRemoteBasePathSetting,
-  REMOTE_BASE_PATH_ENV, DEFAULT_REMOTE_BASE_PATH,
+  REMOTE_BASE_PATH_ENV, DEFAULT_REMOTE_BASE_PATH, readLogTail, NODE_LOG_MAX_LINES,
 };
