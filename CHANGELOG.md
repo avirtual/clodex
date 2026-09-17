@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.74.0 — 2026-09-17
+
 - **Every closed ticket is one click away.** The board's done and cancelled counts open a paged list of every closed ticket, newest first, filterable by outcome, and each row opens that ticket's full history.
 - **Voice controls know when a machine cannot hear.** On a node whose Claude CLI cannot record, the voice button and popover disable themselves and say why, instead of switching on a voice mode that can never listen.
 
