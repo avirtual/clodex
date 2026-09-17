@@ -1683,10 +1683,13 @@ test('the pager disables the edge it is at and walks the other way', async () =>
 
 test('picking a state filter re-asks from the FIRST page, not from wherever the reader was', async () => {
   await withDom(closedBoard({
-    closed: closedRes({ rows: [closedRow('t40')], total: 120, offset: 100 }),
+    closed: (arg) => closedRes({ rows: [closedRow(`t${arg.offset}`)], total: 120, offset: arg.offset }),
   }), async ({ root, rhost, settle }) => {
     summaryNode(root).click();
     await settle();
+    buttonLabelled(root, 'Older').click();
+    await settle();
+    assert.match(textOf(root).join('\n'), /51–51 of 120/, 'ENTER: the reader really walked off page one');
 
     buttonLabelled(root, 'Done').click();
     await settle();
