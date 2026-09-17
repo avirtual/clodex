@@ -21,6 +21,8 @@ Clodex runs Claude Code and Codex sessions as terminals and adds three layers ar
 
 *Left: sessions grouped by project with context fill and cache warmth, a peered box (`TEST`) contributing its sessions. Centre: the session's terminal, with wire telemetry (model, context, turn, spend, cache state) underneath. Bottom: the IPC bus, where a lead dispatches a review to a reviewer it spawned and reads the verdict back.*
 
+Watch it run: [Clodex adding a feature to itself](https://github.com/avirtual/clodex/releases/download/v5.75.0/clodex-builds-itself-2x-cut3.mp4), six minutes at 2x, from ticket to merge.
+
 ## Install
 
 Download `Clodex-x.y.z-arm64.dmg` from [Releases](https://github.com/avirtual/clodex/releases/latest) and drag **Clodex** to Applications. First launch: right-click `Clodex.app` → **Open**, or `xattr -cr /Applications/Clodex.app`; the app is ad-hoc signed, not notarized. Then open Clodex, choose File ▸ New Session… (⌘T), and pick a CLI and a project directory.

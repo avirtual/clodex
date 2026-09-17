@@ -88,6 +88,18 @@ test('no script tag, and no external stylesheet, font or image', () => {
   assert.deepStrictEqual(hosted, [], `${STATIC_RULE}\nhosted subresources: ${hosted.join(', ')}`);
 });
 
+test('every <video> is preload="none" with a poster under docs/, so the page makes no request until play is clicked', () => {
+  const html = readIndex();
+  const videos = [...html.matchAll(/<video\b[^>]*>/gi)].map((m) => m[0]);
+  assert.ok(videos.length >= 1, 'ENTER: the page carries at least one <video> — the checks below are vacuous without it');
+  for (const tag of videos) {
+    assert.ok(/\bpreload\s*=\s*["']none["']/i.test(tag), `${STATIC_RULE}\n<video> without preload="none" fetches its source on page load: ${tag}`);
+    const poster = /\bposter\s*=\s*["']([^"']+)["']/i.exec(tag);
+    assert.ok(poster, `<video> without a poster shows a black box until play: ${tag}`);
+    assert.ok(fs.existsSync(path.join(DOCS, poster[1])), `poster ${poster[1]} is not a file under docs/`);
+  }
+});
+
 test('docs/CNAME is exactly clodex.sh', () => {
   assert.strictEqual(fs.readFileSync(path.join(DOCS, 'CNAME'), 'utf8').trim(), 'clodex.sh');
 });
