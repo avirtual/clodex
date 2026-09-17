@@ -613,20 +613,25 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
   // alive (bin sets exitCode, never exit()). Idempotent, harmless when spent.
   waitAc.abort();
 
-      // Print from the first assistant entry on (drops our echoed user message). The transcript
-      // flush can lag the turnEnd frame, so an assistant-less delta is retried with backoff;
-      // the whole loop is bounded by grace because a wedged refetch would never return.
+      // Print from the first assistant entry on (drops our echoed user message). The whole
+      // loop is bounded by grace because a wedged refetch would never return.
   const freshFrom = (msgs) => {
     const delta = msgs || [];
     const i = delta.findIndex((m) => m.role === 'assistant');
     return i === -1 ? [] : delta.slice(i);
+  };
+  const lastAssistantIsFinal = (delta) => {
+    for (let i = delta.length - 1; i >= 0; i--) {
+      if (delta[i].role === 'assistant') return !delta[i].interim;
+    }
+    return false;
   };
   const refetchAc = new AbortController();
   let graceExpired = false;
   const refetchDeadline = setTimeout(() => { graceExpired = true; try { refetchAc.abort(); } catch {} }, graceMs);
   let fresh = [];
   try {
-    for (let attempt = 0; attempt < 6; attempt++) {
+    while (!graceExpired) {
       let after;
       try {
         after = await client.get(`${transcriptPath(name)}?since=${sinceSeq}&limit=500`, 'exec (refetch)', { signal: refetchAc.signal });
@@ -637,8 +642,9 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
         if (graceExpired && e && e.name === 'AbortError') break;
         throw e;
       }
-      fresh = freshFrom(after.messages);
-      if (fresh.length || waitResult.timedOut) break;
+      const delta = freshFrom(after.messages);
+      if (delta.length) fresh = delta;
+      if (lastAssistantIsFinal(delta) || waitResult.timedOut) break;
       await new Promise((r) => setTimeout(r, 250));
     }
   } finally { clearTimeout(refetchDeadline); }

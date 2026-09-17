@@ -401,6 +401,58 @@ test('exec (agent mode): an empty pre-send transcript asks since=0 and still pri
   server.close();
 });
 
+const interimThenFinal = () => {
+  let calls = 0;
+  return () => {
+    calls++;
+    if (calls === 1) return [];
+    const started = [{ role: 'user', text: 'go' }, { role: 'assistant', text: 'starting', interim: true }];
+    if (calls <= 3) return started;
+    return [...started, { role: 'assistant', text: 'finished', interim: false }];
+  };
+};
+
+test('exec (agent mode): an interim delta is not the reply — refetches until the last assistant entry is final', async () => {
+  const { server, seen } = sseStub({ onEventsOpen: endTurnOnDm('murmur'), transcript: interimThenFinal() });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['exec', 'murmur', 'go', '--timeout', '10'], port);
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /\[assistant\] finished/);
+  assert.ok(stdout.indexOf('starting') < stdout.indexOf('finished'), 'the final reply prints after the interim text, not instead of it');
+  assert.ok(refetchQueries(seen).length >= 3, `kept refetching past the interim deltas (got ${refetchQueries(seen).length})`);
+  server.close();
+});
+
+test('exec (agent mode) --json: entries carry both the interim entry and the final reply', async () => {
+  const { server } = sseStub({ onEventsOpen: endTurnOnDm('murmur'), transcript: interimThenFinal() });
+  const port = await listen(server);
+  const { code, stdout } = await cli(['exec', 'murmur', 'go', '-o', 'json', '--timeout', '10'], port);
+  assert.strictEqual(code, 0);
+  const j = JSON.parse(stdout);
+  assert.strictEqual(j.ok, true);
+  assert.strictEqual(j.timedOut, false);
+  assert.deepStrictEqual(j.entries.map((e) => e.text), ['starting', 'finished']);
+  server.close();
+});
+
+test('exec (agent mode): grace expiry with nothing but interim text prints it, exits 0, and polls past the old six-attempt bound', async () => {
+  let calls = 0;
+  const { server, seen } = sseStub({
+    onEventsOpen: endTurnOnDm('murmur'),
+    transcript: () => {
+      calls++;
+      return calls === 1 ? [] : [{ role: 'user', text: 'go' }, { role: 'assistant', text: 'starting', interim: true }];
+    },
+  });
+  const port = await listen(server);
+  const { code, stdout, stderr } = await cli(['exec', 'murmur', 'go', '--timeout', '10'], port, { refetchGraceMs: 2600 });
+  assert.strictEqual(code, 0, stderr);
+  assert.match(stdout, /\[assistant\] starting/);
+  const n = refetchQueries(seen).length;
+  assert.ok(n > 6, `grace, not a fixed attempt count, is the bound (got ${n} refetches)`);
+  server.close();
+});
+
 test('dm: unchanged fire-and-forget', async () => {
   const { server, seen } = sseStub({});
   const port = await listen(server);
