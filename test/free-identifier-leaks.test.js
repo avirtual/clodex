@@ -50,9 +50,6 @@ const SCANNED_MODULES = [
   'remote-wiring.js',
   'peer-wiring.js',
   'jsonl-watcher.js',
-  // The Help window's markdown reader (t981). It declares no dependency at all —
-  // no DOM, no fs, no require — so a reach for a main.js name would be the one
-  // thing that makes it impure, and nothing else in the file would show it.
   'doc-parse.js',
   'wirescope-proxy.js',
   'wirescope-supervisor.js',
@@ -320,9 +317,6 @@ const RENDERER_SCANNED_MODULES = [
   // The markdown-to-DOM leaf frozen into rhost.lib: a reach for a renderer.js
   // name here would be a published plugin surface quietly acquiring core state.
   'renderer/lib/render-markdown.js',
-  // The Help window's DOM emitter (t981). It takes its `document` as an option
-  // so a test can drive it with a serializing stub; a reach for renderer.js's
-  // own `document` would silently take that seam away.
   'renderer/lib/render-doc.js',
   'renderer/lib/checklists.js',
   'renderer/lib/team-roles.js',
