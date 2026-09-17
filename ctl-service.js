@@ -35,6 +35,7 @@ function loadCli() {
     // a second flag table would drift silently, and the failure mode is a flag
     // the terminal CLI honours being parsed as a positional in the REPL.
     main: require('./cli/src/main'),
+    R: require('./cli/src/resources'),
   };
   return cli;
 }
@@ -75,9 +76,9 @@ function loadCli() {
 //    lose conversation continuity — but the session and its transcript are still
 //    there afterwards, and `create`/`dm`/`input` are likewise recoverable.
 //
-//    `delete` is absent from the table whole (there is no other deletable
-//    resource to admit), while `restart` is present with a RESOURCE-WORD rule:
-//    `restart session` runs here, `restart node` does not.
+//    `delete` and `restart` are both present with a RESOURCE-WORD rule:
+//    `restart session` runs here and `restart node` does not, `delete node`
+//    runs here (it forgets a local record) and `delete session` does not.
 const ALLOWED = Object.freeze({
   info: true,
   get: true,
@@ -92,9 +93,28 @@ const ALLOWED = Object.freeze({
   create: true,
   patch: true,
   restart: ['session', 'sessions'],
-  ctx: '*',            // every subcommand (`use` is the stateful payoff)
+  delete: ['node', 'nodes'],
+  use: true,           // `use node` is the stateful payoff, and it runs locally
 });
-const DEFERRED_HINT = 'not available here: attach, delete, restart node, deploy, undeploy, upgrade, port-forward, web';
+const DEFERRED_HINT = 'not available here: attach, delete session, restart node, deploy, undeploy, upgrade, port-forward, web';
+
+// The verbs whose NODE spelling runs locally off the contexts file. `use` has
+// no other resource, so it is unconditional; the rest route on the resource word.
+const NODE_LOCAL_VERBS = Object.freeze(['get', 'describe', 'create', 'delete', 'use']);
+
+// Does this line address the local node record? The resource word decides for
+// every verb but `use`, which serves nothing else. Reads the same
+// resolveResource table the CLI dispatches on rather than a word list here, so
+// a spelling the CLI gains cannot route two ways.
+function isNodeLine(verb, rest, R) {
+  if (!NODE_LOCAL_VERBS.includes(verb)) return false;
+  if (verb === 'use') return true;
+  const first = rest[0];
+  if (typeof first !== 'string') return false;
+  const token = first.indexOf('/') > 0 ? first.slice(0, first.indexOf('/')) : first;
+  const entry = R.resolveResource(token);
+  return !!entry && entry.singular === 'node';
+}
 
 // `help` is deliberately ABSENT from that table and is not an omission. Help
 // short-circuits in execute() ahead of the gate, so it never reaches refuse()
@@ -102,62 +122,6 @@ const DEFERRED_HINT = 'not available here: attach, delete, restart node, deploy,
 // runner had been widened by a verb. It is pure local rendering off help.js's
 // registry: no context resolution, no dial, nothing to contain. Adding it back
 // changes no behaviour and makes the allowlist overstate what runs.
-
-// Verbs that run against the local contexts file and need NO wire client.
-const CTX_SUBS = ['add', 'use', 'current', 'list', 'ls', 'rm', 'remove', 'show', 'import', 'test'];
-
-const CTX_ENTRY = {
-  name: 'ctx', group: 'contexts',
-  summary: 'manage connection contexts (this tab\'s spelling of the node resource)',
-  usage: 'ctx <add|use|current|list|show|rm|import|test> [args]',
-  subcommands: [
-    ['ctx add <name> --url URL [--token T]', 'a direct context (speak http straight at it)'],
-    ['ctx add <name> --ssh HOST [--remote-port N] [--token T]', 'ssh -L tunnel (remotePort default 7900)'],
-    ['ctx add <name> --ssm TARGET [--region R] [--profile P]', 'AWS SSM port-forward tunnel'],
-    ['ctx add <name> --ssm-ecs CLUSTER/FAMILY [--region R] [--profile P]', 'Fargate — task id resolved at connect'],
-    ['ctx add <name> --kubectl POD_OR_SVC [--namespace NS] [--kube-context C]', 'kubectl port-forward tunnel'],
-    ['ctx add <name> --gcloud-iap INSTANCE [--zone Z] [--project P]', 'GCP IAP tunnel'],
-    ['ctx add <name> --az-bastion NAME --az-resource-group G --az-target ID', 'Azure Bastion tunnel'],
-    ['ctx add <name> --token T --tunnel CMD… {port}…', 'generalized tunnel argv ({port} substituted; must be LAST)'],
-    ['ctx use <name>', 'set the current context'],
-    ['ctx current', 'print the current context NAME (exit 5 when none is set)'],
-    ['ctx list  (ctx ls)', 'list contexts (* = current)'],
-    ['ctx show [name]', 'show a context (token redacted)'],
-    ['ctx rm <name>  (ctx remove)', 'remove a context'],
-    ['ctx import [--data-dir DIR] [--dry-run] [--force]', 'seed contexts from the LOCAL GUI\'s stores (read-only)'],
-    ['ctx test [--verbose]', 'open the transport + GET hello; relays child stderr verbatim'],
-  ],
-  examples: [
-    'ctx add home --url http://127.0.0.1:7900 --token T',
-    'ctx add cust --ssm-ecs my-cluster/clodex --token T',
-    'ctx test --verbose',
-  ],
-  notes: [
-    'Stored at ~/.clodex/cli/contexts.json (0600 — it holds tokens; a loose mode warns on read).',
-    'The terminal `clodexctl` spells the same records as a resource: `get nodes`, `describe node`, `create node`, `delete node`, `use node`. The file is the same file either way.',
-    'The typed cloud kinds (ssm/ssm-ecs/kubectl/gcloud-iap/az) are DATA — safe to ctx import or commit to a shared team file; a raw --tunnel argv is code and is never shared by import. --ssm and --ssm-ecs are mutually exclusive; --tunnel is greedy (must be last).',
-    'import: collisions skip unless --force; --dry-run writes nothing; `current` is never touched. Tokens flow file→file, never printed.',
-  ],
-};
-
-// `list` for `ctx list`. The pane already shows the current context in its
-// status line, so a bare ctx subcommand reads as naturally here as `sessions`
-// does, and having to prefix one family and not the other is the odd part.
-//
-// Gated on `isVerb` rather than on CTX_SUBS alone: a real verb of that name
-// always wins, so the alias cannot shadow one. Deferring to a real verb also
-// keeps a refusal message accurate (`deploy` must say it is deferred, not
-// become `ctx deploy` and report an unknown subcommand).
-//
-// Rewrites positionals only, so it must run on the PARSED form for the reason
-// the gate does: `--json list` puts the verb in slot 0 of `_` and nowhere near
-// slot 0 of argv.
-function aliasCtx(positionals, isVerb) {
-  const first = positionals[0];
-  if (!first || !CTX_SUBS.includes(first)) return positionals;
-  if (isVerb(first)) return positionals;
-  return ['ctx', ...positionals];
-}
 
 // Split a typed line into argv. Honours single/double quotes and backslash
 // escapes so `query --kind foo "two words"` arrives as the CLI would see it.
@@ -191,7 +155,12 @@ function tokenize(line) {
 }
 
 // Is this argv allowed? Returns null when fine, else the refusal message.
-function refuse(argv) {
+//
+// `resolveResource` is threaded in rather than required, so refuse() stays
+// callable (and testable) without loading the CLI tree. Absent, a word-array
+// rule judges the raw token — which is what it did before the node family
+// moved here, and it reads a typo as a deferred resource.
+function refuse(argv, resolveResource = null) {
   const verb = argv[0];
   // An EMPTY verb is not an empty line: `"" sessions` tokenizes to ['', …], and
   // a `!verb` test treats it as "nothing typed" and lets it through to a
@@ -206,8 +175,13 @@ function refuse(argv) {
   const sub = argv[1];
   if (!Array.isArray(rule)) return null;
   if (!sub) return `refused: "${verb}" needs a subcommand (${rule.join('/')} here)`;
-  if (!rule.includes(sub)) return `refused: "${verb} ${sub}" is not available in the ctl tab (${DEFERRED_HINT})`;
-  return null;
+  if (rule.includes(sub)) return null;
+  // A token that is no resource word at all is a TYPO, not a deferred resource.
+  // Refusing it here would answer `delete murmurfi` with "not available in the
+  // ctl tab", which is false — `delete node murmurfi` runs here. Let it reach
+  // the verb, which names the spelling the operator meant.
+  if (resolveResource && !resolveResource(sub)) return null;
+  return `refused: "${verb} ${sub}" is not available in the ctl tab (${DEFERRED_HINT})`;
 }
 
 // The identity of a resolved context for warm-connection purposes. Two commands
@@ -239,18 +213,6 @@ const MIN_SCRUBBABLE_TOKEN = 8;
 // magnitude over, which is the largest output worth reading in a drawer strip.
 const MAX_BLOCK_CHARS = 256 * 1024;
 const TRUNCATION_NOTE = '\n… output truncated at 256KB — run it from the Terminal tab for the whole stream\n';
-
-// A copy of the store with every token replaced by the same marker `ctx show`
-// uses. A COPY: mutating the loaded store in place would hand a redacted entry
-// to a later `ctx add`, which persists the store — writing `'***'` over a real
-// token in ~/.clodex/cli/contexts.json.
-function redactStore(store) {
-  const contexts = {};
-  for (const [name, entry] of Object.entries((store && store.contexts) || {})) {
-    contexts[name] = entry && entry.token ? { ...entry, token: '***' } : entry;
-  }
-  return { current: store ? store.current : null, contexts };
-}
 
 // `openTransport` is a seam so the warm-connection invariants are testable
 // without an ssh child or a live node — the dial is the one thing a unit test
@@ -395,7 +357,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
   }
 
   async function execute(line) {
-    const { V, errors, output, args: A, main, help: H } = loadCli();
+    const { V, errors, output, args: A, main, help: H, R } = loadCli();
     const { CliError, EXIT } = errors;
     let buf = '';
     const write = (s) => { buf += s; };
@@ -431,13 +393,6 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     // the flags-only refusal because bare `--help` is the index, not an empty
     // line. Without it the flag is ignored entirely and `get --help`
     // opens a WireClient and returns live session data.
-    // A bare ctx subcommand becomes `ctx <sub>` here, AHEAD of help routing and
-    // the gate. Ahead of help specifically: `list --help` short-circuits below,
-    // so aliasing after it would leave the one command someone types to find out
-    // what the shorthand IS reporting an unknown verb.
-    const isVerb = (t) => !!H.resolveEntry(t);
-    flags._ = aliasCtx(flags._, isVerb);
-
     const pointer = main.renamedPointer(flags);
     if (pointer) {
       const text = pointer.askedHelp ? `${pointer.line}\n` : `clodexctl: ${pointer.line}\n`;
@@ -445,10 +400,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     }
 
     if (flags.help || flags._[0] === 'help') {
-      // `help list` needs the same rewrite and does not get it above, where the
-      // slot-0 token is `help`.
-      const tokens = flags._[0] === 'help' ? aliasCtx(flags._.slice(1), isVerb) : flags._;
-      if (tokens[0] === 'ctx') return done(`${H.renderVerb(CTX_ENTRY)}\n`, EXIT.OK, currentName());
+      const tokens = flags._[0] === 'help' ? flags._.slice(1) : flags._;
       const { text, code } = H.help(tokens);
       return done(`${text}\n`, code, currentName());
     }
@@ -456,7 +408,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     // The gate reads PARSED POSITIONALS, never the raw argv. A flag that
     // consumes a token (`--url exec`) moves the real verb, and the positionals
     // are what track it.
-    const denied = refuse(flags._);
+    const denied = refuse(flags._, R.resolveResource);
     if (denied) return done(`clodexctl: ${denied}\n`, EXIT.USAGE, currentName());
     // `logs` is allowed; `logs --follow` is not, and the flag is the whole
     // reason. A block resolves ONCE — follow streams until interrupted, so it
@@ -479,10 +431,24 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     try {
       main.applyOutput(flags, verb);
       printer.format = flags.output === 'yaml' ? 'yaml' : 'json';
-      if (verb === 'ctx') {
-        const out = await runCtx(rest, { flags, printer, io, V, errors });
-        return done(buf, out, currentName());
+      // Node words run LOCALLY and BEFORE wireFor. Ahead of the dial because the
+      // contexts file is the whole subject: routing them through wireFor first
+      // spawns and reaps a tunnel child to reach a record that was on disk all
+      // along, and a `create node` for a box that is down could not run at all.
+      if (isNodeLine(verb, rest, R)) {
+        const code = await main.dispatchNode(verb, rest, flags, printer, { ...io, openTransport });
+        // A node write can change what `current` resolves to, so the warm
+        // connection is no longer known-good. wireFor re-dials only if the key
+        // really changed.
+        if (verb !== 'get' && verb !== 'describe') closeWarm();
+        return done(buf, code, currentName());
       }
+      // Both resource-word checks run BEFORE the dial, the order main.js uses:
+      // a line whose second token is not a resource word at all is an argument
+      // error, and answering it with a tunnel child is the same waste the node
+      // routing above exists to avoid.
+      V.checkResourceWord(verb, rest);
+      main.preflightResourceWord(verb, rest);
       const w = await wireFor(flags);
       token = w.ctx.token || null;
       const handler = {
@@ -507,65 +473,6 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
       closeWarm();
       buf += `clodexctl: ${e.message}\n`;
       return done(buf, e instanceof CliError ? e.exitCode : EXIT.SERVER, currentName(), token);
-    }
-  }
-
-  // ctx subverbs are local-file only — no client, no transport. `test` is the
-  // one that dials, and it owns that itself.
-  async function runCtx(rest, { flags, printer, io, V, errors }) {
-    const { CliError, EXIT } = errors;
-    const { contexts } = loadCli();
-    const sub = rest[0];
-    const args = rest.slice(1);
-    if (!CTX_SUBS.includes(sub || '')) {
-      throw new CliError(EXIT.USAGE, `unknown ctx subcommand: ${sub || '(none)'} (${CTX_SUBS.join('/')})`);
-    }
-    const store = loadStore();
-    const saveStore = (s) => contexts.save(s, ctxFile);
-    const bundle = { store, saveStore, printer, flags, args, env };
-    switch (sub) {
-      case 'add': V.ctxAdd(bundle); break;
-      case 'use': V.ctxUse(bundle); break;
-      case 'current': V.ctxCurrent(bundle); break;
-      // `ctx list --json` prints entries VERBATIM (cli/src/verbs.js's ctxList),
-      // tokens included, while `ctx show` redacts — an asymmetry that is
-      // harmless writing to your own tty and is not harmless writing into
-      // renderer DOM and the Copy payload. So this arm gets a redacted COPY of
-      // the store. Redacted, not refused: the listing is what the operator
-      // asked for, and `'***'` still answers "is a token set?".
-      //
-      // Here rather than in cli/src/verbs.js on purpose: the terminal CLI
-      // printing your own tokens to your own terminal is a different threat
-      // model, and changing shared CLI output is a wider blast radius than this
-      // tab owns. MF1's fold is a second layer under this, not a substitute.
-      case 'list': case 'ls': V.ctxList({ ...bundle, store: redactStore(store) }); break;
-      case 'rm': case 'remove': V.ctxRm(bundle); break;
-      case 'show': V.ctxShow(bundle); break;
-      case 'import': V.ctxImport(bundle); break;
-      case 'test': return await ctxTest(store, { flags, printer, io });
-    }
-    // Any ctx write can change what `current` resolves to, so the warm
-    // connection is no longer known-good for the next command. Dropping it is
-    // the cheap correct move; wireFor re-dials only if the key really changed.
-    if (sub !== 'list' && sub !== 'ls' && sub !== 'show' && sub !== 'current') closeWarm();
-    return EXIT.OK;
-  }
-
-  async function ctxTest(store, { flags, printer }) {
-    const { contexts, client: C, transport: T, errors, V } = loadCli();
-    const ctx = contexts.resolve(store, { ctxName: flags.ctx || null, env, flags });
-    if (flags.verbose) printer.line(`transport: ${V.entryKind(ctx)} ${V.entryTarget(ctx)}`);
-    let t;
-    try { t = await (openTransport || T.openTransport)(ctx); }
-    catch (e) { printer.line('FAIL — could not open transport'); throw e; }
-    try {
-      if (flags.verbose) printer.line(`base: ${t.baseUrl}`);
-      const client = new C.WireClient(t.baseUrl, ctx.token);
-      const hello = await client.get('/api/peer/hello', 'ctx test');
-      printer.line(`OK — ${hello.app || 'clodex'} host=${hello.host || '?'} version=${hello.version || '?'} caps=[${(hello.caps || []).join(' ')}]`);
-      return errors.EXIT.OK;
-    } finally {
-      try { t.close(); } catch {}
     }
   }
 
@@ -602,7 +509,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     // and no context, so it needs no scrub.
     helpIndex() {
       const { help: H } = loadCli();
-      const byName = new Map([...H.VERB_REGISTRY, CTX_ENTRY].map((e) => [e.name, e]));
+      const byName = new Map(H.VERB_REGISTRY.map((e) => [e.name, e]));
       const rows = [];
       for (const [verb, rule] of Object.entries(ALLOWED)) {
         const entry = byName.get(verb);
@@ -620,12 +527,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
         });
       }
       rows.sort((a, b) => a.verb.localeCompare(b.verb));
-      // Which bare ctx subs actually alias, computed the same way execute()
-      // decides rather than listed — a sub shadowed by a future top-level verb
-      // must drop out of the cheat sheet in the same release it stops working,
-      // and a literal CTX_SUBS here would go on advertising it.
-      const ctxAliases = CTX_SUBS.filter((s) => aliasCtx([s], (t) => byName.has(t))[0] === 'ctx');
-      return { verbs: rows, deferred: DEFERRED_HINT, ctxAliases };
+      return { verbs: rows, deferred: DEFERRED_HINT };
     },
     // The scrub anything leaving this console must pass through, offered to
     // callers that did not produce the text. The drawer's selection path is the
@@ -642,4 +544,4 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
   };
 }
 
-module.exports = { createCtlService, tokenize, refuse, aliasCtx, ALLOWED, CTX_SUBS, MAX_BLOCK_CHARS };
+module.exports = { createCtlService, tokenize, refuse, isNodeLine, ALLOWED, NODE_LOCAL_VERBS, MAX_BLOCK_CHARS };

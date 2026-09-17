@@ -164,7 +164,7 @@ function resolve(store, { ctxName = null, env = process.env, flags = {} } = {}) 
   const wanted = ctxName || store.current;
   if (wanted) {
     entry = store.contexts[wanted];
-    if (ctxName && !entry) throw new CliError(EXIT.USAGE, `no such context: ${ctxName}`);
+    if (ctxName && !entry) throw new CliError(EXIT.USAGE, `no such node: ${ctxName}`);
     if (entry) { entry = { ...entry }; label = wanted; }
   }
 

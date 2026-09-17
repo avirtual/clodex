@@ -229,6 +229,7 @@ async function run(argv, io = {}) {
     const handler = WIRE_VERBS[verb];
     if (!handler) throw new CliError(EXIT.USAGE, `unknown verb: ${verb} (try --help)`);
     V.checkResourceWord(verb, rest);
+    preflightResourceWord(verb, rest);
     // io.prompt is an injectable confirm seam (tests pass a canned answerer);
     // absent → the verb falls back to its readline-over-stderr default. attach
     // needs the resolved ctx (for its banner) + io (its TTY seam), so withWire
@@ -239,6 +240,19 @@ async function run(argv, io = {}) {
     writeErr(`clodexctl: unexpected error: ${e.message}\n`);
     return EXIT.SERVER;
   }
+}
+
+// `get`/`describe` reach R.parseTarget inside the verb, which is PAST the dial —
+// so a line naming no resource at all spawns and reaps a tunnel child before it
+// can say so. Only that case short-circuits here; a real resource word keeps the
+// existing order, where the verb owns its own argument errors.
+function preflightResourceWord(verb, rest) {
+  if (verb !== 'get' && verb !== 'describe') return;
+  const first = rest[0];
+  if (typeof first !== 'string' || first === '') return;
+  const token = first.indexOf('/') > 0 ? first.slice(0, first.indexOf('/')) : first;
+  if (R.resolveResource(token)) return;
+  R.parseTarget(rest, verb);
 }
 
 const NODE_VERBS = {
@@ -299,7 +313,7 @@ async function nodeTest(store, args, flags, printer, io) {
   }
   let t;
   try {
-    t = await openTransport(ctx, { spawnFn: io.spawnFn });
+    t = io.openTransport ? await io.openTransport(ctx) : await openTransport(ctx, { spawnFn: io.spawnFn });
   } catch (e) {
     // openTransport already embeds the child's stderr in the message.
     printer.line(`FAIL — could not open transport`);
@@ -340,4 +354,4 @@ function safeLoad(io) {
 // the same lines this dispatcher does. A second copy of the flag table there
 // would drift silently, and the failure mode is invisible: a flag the terminal
 // CLI honours parsed as a positional in the REPL.
-module.exports = { run, TOP_VERBS, SPECIAL_VERBS, PARSE_OPTS, RENAMED_VERBS, RENAMED_SECOND, renamedLine, renamedSecondLine, renamedPointer, findDeletedJsonFlag, applyOutput, OUTPUT_FORMATS };
+module.exports = { run, TOP_VERBS, SPECIAL_VERBS, PARSE_OPTS, RENAMED_VERBS, RENAMED_SECOND, renamedLine, renamedSecondLine, renamedPointer, findDeletedJsonFlag, applyOutput, OUTPUT_FORMATS, dispatchNode, isNodeTarget, preflightResourceWord, NODE_VERBS };

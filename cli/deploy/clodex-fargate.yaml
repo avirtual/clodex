@@ -23,7 +23,7 @@ Description: >-
   the published container: cluster, IAM roles, the wire-token secret, log
   group, task definition, and (optionally) a self-healing ECS Service.
   clodexctl never creates AWS resources; an account admin reviews and deploys
-  THIS, then operators connect with `clodexctl ctx add <name> --ssm-ecs
+  THIS, then operators connect with `clodexctl create node <name> --ssm-ecs
   CLUSTER/FAMILY`. No inbound network: access rides SSM (ECS Exec channels);
   the wire port never leaves the task. Everything this stack makes is
   Delete/UpdateReplace so a teardown leaves no footprint and a same-name
@@ -154,7 +154,7 @@ Resources:
 
   # Wire token: minted BY Secrets Manager at stack create — no human ever
   # sees or types it. clodexctl reads it via `aws secretsmanager
-  # get-secret-value` (the ctx add command in Outputs). Rotate by updating
+  # get-secret-value` (the create node command in Outputs). Rotate by updating
   # the secret + stopping the task (next task picks it up). Delete/UpdateReplace
   # so teardown and same-name redeploy are clean; Secrets Manager's 7-30 day
   # recovery window is the post-mortem safety net.
@@ -406,7 +406,7 @@ Outputs:
   CtxAddCommand:
     Description: Connect clodexctl to this node (reads the minted wire token; needs secretsmanager:GetSecretValue)
     Value: !Sub >-
-      clodexctl ctx add ${AWS::StackName} --ssm-ecs ${ClusterName}/${AWS::StackName}-node
+      clodexctl create node ${AWS::StackName} --ssm-ecs ${ClusterName}/${AWS::StackName}-node
       --region ${AWS::Region}
       --token "$(aws secretsmanager get-secret-value --secret-id ${WireTokenSecret} --query SecretString --output text)"
   RunTaskCommand:

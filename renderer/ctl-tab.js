@@ -43,7 +43,7 @@ function createCtlTab({ host }) {
 
   function renderPrompt() {
     if (!promptEl) return;
-    promptEl.textContent = ctxName ? `${ctxName} ❯` : '(no context) ❯';
+    promptEl.textContent = ctxName ? `${ctxName} ❯` : '(no node) ❯';
     promptEl.classList.toggle('none', !ctxName);
   }
 
@@ -55,7 +55,7 @@ function createCtlTab({ host }) {
     el.className = 'ctl-block' + (b.exitCode ? ' failed' : '');
     const time = new Date(b.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const head = `<div class="ctl-block-head">`
-      + `<span class="ctl-block-ctx">${esc(b.ctx || '(no context)')}</span>`
+      + `<span class="ctl-block-ctx">${esc(b.ctx || '(no node)')}</span>`
       + `<span class="ctl-block-cmd">${esc(b.command)}</span>`
       + `<span class="ctl-block-time">${time}</span>`
       + (b.exitCode ? `<span class="ctl-block-exit">exit ${b.exitCode}</span>` : '')
@@ -106,7 +106,7 @@ function createCtlTab({ host }) {
     try {
       const block = await window.api.ctlRun(line);
       pushBlock(block);
-      // `ctx use` is the stateful payoff — the prompt follows it without a
+      // `use node` is the stateful payoff — the prompt follows it without a
       // round trip, since the service reports the resolved name per block.
       if (block && block.ctx !== undefined) { ctxName = block.ctx; renderPrompt(); }
       // Badge only a FAILING command: a REPL the operator drove themselves is
@@ -182,13 +182,7 @@ function createCtlTab({ host }) {
     // The refusal list comes from the service (`deferred`), not a literal here,
     // for the same reason the verb rows do — it is the other half of the same
     // table and would drift the same way.
-    // The bare-ctx shorthand, from the service's own computed list rather than a
-    // literal — it drops a sub the day a top-level verb shadows it.
-    const aliases = Array.isArray(data.ctxAliases) && data.ctxAliases.length
-      ? `<div class="ctl-help-note"><code>${data.ctxAliases.map(esc).join('</code> <code>')}</code> `
-        + `also work without the <code>ctx</code> prefix.</div>`
-      : '';
-    el.innerHTML = `<div class="ctl-help-sec">These verbs run here</div>${rows}${aliases}`
+    el.innerHTML = `<div class="ctl-help-sec">These verbs run here</div>${rows}`
       + `<div class="ctl-help-note">${esc(data.deferred || '')}<br>`
       + `A block resolves once, so anything that streams or asks a question belongs in the Terminal tab.<br>`
       + `Type <code>help</code> for the full CLI index, or <code>&lt;verb&gt; --help</code> for one verb `
@@ -244,10 +238,10 @@ function createCtlTab({ host }) {
   function mount(pane, actions) {
     pane.innerHTML = `
       <div id="ctl-body">
-        <div id="ctl-empty">clodexctl against your current context. Press <code>?</code> for what runs here, or type <code>help</code> for the full index.</div>
+        <div id="ctl-empty">clodexctl against your current node. Press <code>?</code> for what runs here, or type <code>help</code> for the full index.</div>
       </div>
       <div id="ctl-input-row">
-        <span id="ctl-prompt">(no context) ❯</span>
+        <span id="ctl-prompt">(no node) ❯</span>
         <input id="ctl-input" type="text" spellcheck="false" autocomplete="off" placeholder="get sessions" />
       </div>`;
     bodyEl = pane.querySelector('#ctl-body');
