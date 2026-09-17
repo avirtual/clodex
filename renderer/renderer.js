@@ -25,6 +25,7 @@ const { capsFor } = require('./lib/provider-caps');
 const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { createMirrorLatch } = require('./lib/mirror-latch');
+const { filterSummary, setFilterFolded } = require('./lib/sidebar-filter-fold');
 const { createMicHandoff } = require('./lib/mic-handoff');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
@@ -932,6 +933,41 @@ const sbGroup = document.getElementById('sidebar-group');
 const sbSort = document.getElementById('sidebar-sort');
 const sbStatus = document.getElementById('sidebar-status');
 const sbActivity = document.getElementById('sidebar-activity');
+const sbFilterBar = document.getElementById('sidebar-filterbar');
+const sbFilterHeader = document.getElementById('sidebar-filter-header');
+const sbFilterSummary = document.getElementById('sidebar-filter-summary');
+let filterFolded = false;
+
+function filterLabels() {
+  const labels = {};
+  for (const [control, el] of [['group', sbGroup], ['sort', sbSort], ['status', sbStatus], ['activity', sbActivity]]) {
+    if (!el) continue;
+    const byValue = {};
+    for (const opt of el.options) byValue[opt.value] = opt.textContent;
+    labels[control] = byValue;
+  }
+  return labels;
+}
+
+function renderFilterSummary() {
+  if (!sbFilterSummary) return;
+  sbFilterSummary.textContent = filterFolded ? filterSummary(sidebarView, filterLabels()) : '';
+}
+
+function applyFilterFolded(folded, persist) {
+  filterFolded = !!folded;
+  setFilterFolded(
+    { bar: sbFilterBar, header: sbFilterHeader, summary: sbFilterSummary },
+    filterFolded,
+    { summary: filterSummary(sidebarView, filterLabels()), persist },
+  );
+}
+
+if (sbFilterHeader) {
+  sbFilterHeader.addEventListener('click', () => {
+    applyFilterFolded(!filterFolded, (patch) => window.api.setSidebarView(patch));
+  });
+}
 
 function projectLabel(cwd) {
   if (!cwd) return '(no directory)';
@@ -1167,6 +1203,7 @@ function onViewControlChange() {
     search: sbSearch.value,
   };
   window.api.setSidebarView(sidebarView);
+  renderFilterSummary();
   refreshSidebarView();
 }
 if (sbGroup) sbGroup.addEventListener('change', onViewControlChange);
@@ -1196,6 +1233,7 @@ async function initSidebarView() {
   if (sbStatus) sbStatus.value = sidebarView.status;
   if (sbActivity) sbActivity.value = sidebarView.activity;
   if (sbSearch) sbSearch.value = sidebarView.search || '';
+  applyFilterFolded(sidebarView.filterFolded === true, null);
   await refreshSidebarMeta();
   setInterval(() => refreshSidebarMeta({ includePr: false }), 30000);
 }

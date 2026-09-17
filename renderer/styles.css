@@ -305,6 +305,13 @@ html, body {
   flex-direction: column;
   gap: 6px;
 }
+#sidebar-filter-header { margin-top: 0; padding-left: 0; padding-right: 0; }
+#sidebar-filter-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+#sidebar-filterbar.collapsed #sidebar-filter-body { display: none; }
 .sidebar-search {
   width: 100%;
   box-sizing: border-box;
@@ -5116,6 +5123,9 @@ body.web-frontend #sidebar-header {
   gap: var(--sp-1);
   border-bottom: 1px solid var(--border);
 }
+#sidebar-filter-body { gap: var(--sp-1); }
+#sidebar-filterbar.collapsed #sidebar-filter-body { display: none; }
+#sidebar-filterbar.collapsed { padding-bottom: var(--sp-1); }
 .sidebar-search {
   height: var(--control-h);
   padding: 0 var(--sp-2);
