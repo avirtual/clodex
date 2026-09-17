@@ -131,18 +131,17 @@ test('a green run: the digest counts, exit 0, and --reporter=dot reached the run
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('a green run whose runner advised a slow test: the digest NAMES it, with no ✖', () => {
+const ADVISORY_BODY = [
+  "console.log('SLOW (advisory, unlocked run): 9123ms alpha waits on a real timer');",
+  "console.log('SLOW (advisory, unlocked run): this run took no suite lock, so a slow test and "
+    + "a busy box look the same here; the locked full run still enforces the six-second bar');",
+  "console.log('TOTALS: 1 pass, 0 fail, 1 tests');",
+].join('\n');
+
+test('a green run whose runner advised a slow test: the digest NAMES it', () => {
   const root = mkRoot();
   try {
-    writeStub(root, {
-      body: [
-        "console.log('SLOW (advisory, unlocked run): 9123ms alpha waits on a real timer');",
-        "console.log('SLOW (advisory, unlocked run): this run took no suite lock, so a slow test and "
-          + "a busy box look the same here; the locked full run still enforces the six-second bar');",
-        "console.log('TOTALS: 1 pass, 0 fail, 1 tests');",
-      ].join('\n'),
-      exit: 0,
-    });
+    writeStub(root, { body: ADVISORY_BODY, exit: 0 });
     const r = run(root, '{}');
     assert.strictEqual(r.code, 0, 'the advisory path is green by construction; a nonzero exit fails the hand');
     assertDigest(
@@ -150,8 +149,18 @@ test('a green run whose runner advised a slow test: the digest NAMES it, with no
       `[${path.basename(root)}] 1/1 green (${WALL}) — SLOW(advisory): alpha waits on a real timer 9123ms`,
       'the hand reads only this line, so an advisory the runner printed and the digest dropped is invisible',
     );
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the advisory a green digest carries is never spelled with a ✖', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, { body: ADVISORY_BODY, exit: 0 });
+    const r = run(root, '{}');
+    assert.match(r.digest, /SLOW\(advisory\)/,
+      'ENTER: no advisory reached the digest at all, so this pin proves nothing about its spelling');
     assert.ok(!r.digest.includes(' ✖ '),
-      'a ✖ here would be read back by the wrapper\'s own NAME_RE and report a green run as failing');
+      'this wrapper\'s own NAME_RE reads ✖ lines back as failing names, so a ✖ here reports a green run as red');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
