@@ -12578,6 +12578,23 @@ test('session-exit: app-quit teardown (killAll) sends expected:true', async () =
   assert.strictEqual(exitLogOf(broadcasts).body, 'code=0 signal=15');
 });
 
+test('killAll: a session with no pty is skipped, and the sessions after it are still killed', async () => {
+  const m = mk({ setAppQuitting: () => {}, childProcess: { execFileSync: () => '' } });
+  const killed = [];
+  const ptyless = { name: 'no-pty', pty: null };
+  const live = { name: 'live', pty: { pid: 4242, kill() { killed.push('live'); } } };
+  m.sessions.set('no-pty', ptyless);
+  m.sessions.set('live', live);
+
+  await m.killAll();
+
+  assert.deepStrictEqual(killed, ['live'],
+    'a session whose restore failed before a pty existed must not throw out of killAll and strand every '
+    + 'session after it in the map with a live CLI beneath it');
+  assert.strictEqual(ptyless._shuttingDown, true, 'the ptyless record still gets its shutdown flag');
+  assert.strictEqual(live._shuttingDown, true);
+});
+
 // --- exec body-capture JSON terminator (_extractIntents) ---
 // exec bodies are JSON DATA: greedy multi-line capture swallowed trailing prose
 // a seat wrote on following lines INTO the payload, corrupting the downstream
