@@ -15,10 +15,14 @@ function lineStartBefore(src, index) {
   return start;
 }
 
-function countCommentLines(src) {
+function scan(src) {
   const commentLines = new Set();
   const frames = [{ template: false, braces: 0 }];
   const n = src.length;
+  const out = src.split('');
+  const blank = (from, to) => {
+    for (let k = from; k < to && k < n; k++) if (out[k] !== '\n') out[k] = ' ';
+  };
   let i = 0;
   let line = 1;
   let last = '';
@@ -34,6 +38,7 @@ function countCommentLines(src) {
     if (frame.template) {
       if (c === '\\') {
         if (src[i + 1] === '\n') line++;
+        blank(i, i + 2);
         i += 2;
       } else if (c === '\n') {
         line++;
@@ -41,12 +46,15 @@ function countCommentLines(src) {
       } else if (c === '`') {
         frames.pop();
         last = 'x';
+        blank(i, i + 1);
         i++;
       } else if (c === '$' && src[i + 1] === '{') {
         frames.push({ template: false, braces: 0 });
         last = '';
+        blank(i, i + 2);
         i += 2;
       } else {
+        blank(i, i + 1);
         i++;
       }
       continue;
@@ -60,10 +68,12 @@ function countCommentLines(src) {
       const from = i;
       while (i < n && src[i] !== '\n') i++;
       if (!EXEMPT_RE.test(src.slice(lineStartBefore(src, from), i))) commentLines.add(line);
+      blank(from, i);
       continue;
     }
 
     if (c === '/' && d === '*') {
+      const from = i;
       commentLines.add(line);
       i += 2;
       while (i < n && !(src[i] === '*' && src[i + 1] === '/')) {
@@ -72,10 +82,12 @@ function countCommentLines(src) {
         i++;
       }
       i += 2;
+      blank(from, i);
       continue;
     }
 
     if (c === '"' || c === "'") {
+      const from = i;
       i++;
       while (i < n) {
         const s = src[i];
@@ -88,12 +100,14 @@ function countCommentLines(src) {
         if (s === '\n') { line++; i++; break; }
         i++;
       }
+      blank(from, i);
       last = 'x';
       continue;
     }
 
     if (c === '`') {
       frames.push({ template: true, braces: 0 });
+      blank(i, i + 1);
       i++;
       continue;
     }
@@ -104,6 +118,7 @@ function countCommentLines(src) {
       if (frame.braces === 0 && frames.length > 1) {
         frames.pop();
         last = 'x';
+        blank(i, i + 1);
       } else {
         frame.braces--;
         last = '}';
@@ -113,6 +128,7 @@ function countCommentLines(src) {
     }
 
     if (c === '/' && regexAllowed()) {
+      const from = i;
       i++;
       let inClass = false;
       while (i < n) {
@@ -125,6 +141,7 @@ function countCommentLines(src) {
         i++;
       }
       while (i < n && /[a-z]/.test(src[i])) i++;
+      blank(from, i);
       last = 'x';
       continue;
     }
@@ -147,7 +164,15 @@ function countCommentLines(src) {
     i++;
   }
 
-  return commentLines.size;
+  return { commentLines, code: out.join('') };
 }
 
-module.exports = { countCommentLines };
+function countCommentLines(src) {
+  return scan(src).commentLines.size;
+}
+
+function codeOnly(src) {
+  return scan(src).code;
+}
+
+module.exports = { countCommentLines, codeOnly };

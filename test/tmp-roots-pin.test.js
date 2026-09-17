@@ -6,6 +6,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
+const { codeOnly } = require('../comment-census.js');
+
 const TEST_DIR = __dirname;
 const HELPER = path.join('lib', 'tmp-roots.js');
 const RAW = `mkdtemp${'Sync'}`;
@@ -15,15 +17,21 @@ function walk(dir, out = []) {
   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
     const abs = path.join(dir, ent.name);
     if (ent.isDirectory()) walk(abs, out);
-    else if (ent.name.endsWith('.js')) out.push(abs);
+    else if (/\.(c|m)?js$/.test(ent.name)) out.push(abs);
   }
   return out;
 }
 
-function codeOnly(src) {
-  const blanked = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
-  return blanked.split('\n').map((l) => l.split('//')[0]).join('\n');
-}
+test('ENTER: the detector reads code, not text — a URL does not hide a call, a comment and a string do not forge one', () => {
+  const behindUrl = `const u = 'http://x'; fs.mkdtemp${'Sync'}(p);`;
+  const lines = (src) => codeOnly(src).split('\n').filter((l) => CALL.test(l)).length;
+
+  assert.strictEqual(lines(behindUrl), 1,
+    'splitting a line on `//` truncates it at the `//` of a URL and drops everything after — including the '
+    + 'raw mint the scan exists to find. Every leaked root the old detector missed looked exactly like this.');
+  assert.strictEqual(lines(`// fs.mkdtemp${'Sync'}(p);`), 0, 'prose naming the call is not a call');
+  assert.strictEqual(lines(`const s = 'fs.mkdtemp${'Sync'}(p)';`), 0, 'nor is a string that spells it');
+});
 
 test(`no test file outside ${HELPER} mints a scratch root with a raw ${RAW}`, () => {
   const files = walk(TEST_DIR);
