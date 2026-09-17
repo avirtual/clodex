@@ -1,0 +1,8 @@
+{
+  "the console hook prunes the OLDEST records past its cap": "writes CONSOLE_MAX_RECORDS + 1 = 2001 record files through fsync'd writes, then one spawnSync of the prune — the cap constant is the subject",
+  "tree: two runs naming DIFFERENT trees still serialize on the root lock": "holds the real root suite lock for a second runner (a stubbed suite sleeping 3s, an 800ms settle); the elapsed wait IS the assertion",
+  "the exit-timeout kept arm names the OLD seat — nothing was renamed yet": "a pty stub that never frees its sessions slot, so _waitForExit runs out session-manager.js's real exit-timeout constant — the arm under test",
+  "notifications: ids are unique across many adds": "200 notifications.add calls, each an O(n) _mintId plus an atomicWriteFileSync doing two fsyncs",
+  "reminders: ids are unique across many adds": "200 reminders.add calls through the same doubly-fsync'd atomic write",
+  "a headless host builds the manager unless it identifies as in-box": "builds FOUR full createEngine instances, each re-seeding the shipped resources/library into a fresh registryDir"
+}
