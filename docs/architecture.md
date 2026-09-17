@@ -862,6 +862,12 @@ accept teardown removes.
 
 - **catalogs.js** — static shared constants (CLAUDE_TOOLS, THEME_KEYS,
   AGENT_NAME_RE, DEFAULT_WORKSPACE_ID, …).
+- **doc-parse.js** — the Help window's markdown reader: `parseDoc(text)` →
+  `{ blocks, headings, title }`, plus `slugify` (GitHub's rule, so the corpus's
+  own `#anchor` links resolve), `plainText`, `sectionSlice`, `buildSearchIndex`
+  and `search`. Pure — no DOM, no fs, no requires. It covers exactly the markdown
+  subset the shipped docs were measured to use and treats everything else as
+  literal text, which is what lets Help ship with no markdown dependency.
 - **scope-util.js** — skill/agent visibility: `visibleTo` / `autoEnabledFor` /
   `unionEnabled` / `reconcilePartialSelection` — the `workspace:`/`sessions:`
   frontmatter scope predicate + spawn-union + scoped-checklist save semantics.
@@ -1222,6 +1228,14 @@ and are not, which is why the judgement worth testing is pushed down here.
   blockquote depth cap so hostile nesting cannot overflow the stack. Frozen into
   `rhost.lib` beside `renderDiffHtml`, which is why widening it is a published
   API change rather than a local edit.
+- **render-doc.js** — the same idea for the Help window's docs, over
+  `doc-parse.js`'s tree instead of raw text: `renderDoc(parsed, { resolveHref })`
+  → a `DocumentFragment`, every leaf through `textContent`/`setAttribute`, the
+  string `innerHTML` absent from the file and pinned absent by a source-shape
+  test. Link policy is entirely the injected `resolveHref`: external links get
+  `target=_blank rel="noreferrer noopener"`, in-corpus ones become
+  `<a href="#" data-page data-slug>` so a destination never reaches `href`, and
+  an unresolved one renders as plain text with no anchor at all.
 - **checklists.js** — render/collect checklist pairs; owns the library caches
   behind setters.
 - **session-actions.js** — the type→entries mapping for the consolidated
