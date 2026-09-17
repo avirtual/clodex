@@ -1,8 +1,7 @@
 'use strict';
 // drawer-services-seam.test.js — the drawer's service-backed tenants (the
-// selection reads over `drawer:*`, a
-// shell on a PEER over `peer:wterm*`) are desktop-only, and the boundary is
-// REGISTRATION, not the renderer.
+// selection reads over `drawer:*`, a shell on a PEER over `peer:wterm*`) are
+// desktop-only, and the boundary is REGISTRATION, not the renderer.
 //
 // Why registration and not `available()`: web-host.js builds its handler map by
 // running the same registerIpcHandlers the desktop runs, and its `invoke` frame
@@ -14,9 +13,8 @@
 // shape as `enableSandbox`.
 //
 // THE `ctl:*` FAMILY LEFT THAT SET (t968), on its own `enableCtl` seam, and this
-// file pins its PRESENCE on the web surface: the same host already grants the
-// local Terminal tab, where `clodexctl` runs against the same contexts file
-// unrestricted, so the gate cost a tab and bought nothing.
+// file pins its PRESENCE too: the same host already grants the local Terminal
+// tab, where `clodexctl` runs unrestricted, so the gate bought nothing.
 //
 // THE LOCAL `wterm:*` FAMILY IS NOT IN THAT SET (t227) and this file now pins
 // its PRESENCE on the web surface rather than its absence. The argument that
@@ -62,9 +60,6 @@ const GATED_PREFIXES = ['drawer:', 'peer:wterm'];
 // two are one decision: these channels MUST reach the web surface, and a future
 // edit that re-gates them has to delete this constant to do it.
 const WEB_REGISTERED = ['wterm:spawn', 'wterm:write', 'wterm:resize'];
-// t968's half of `ctl:`'s removal from the gate list, on the same principle as
-// WEB_REGISTERED: a prefix that leaves the absence list has to gain a presence
-// assertion, or the gate disappears with nothing to notice.
 const WEB_CTL = ['ctl:run', 'ctl:context', 'ctl:help'];
 const silentLog = { info() {}, warn() {}, error() {} };
 
@@ -243,9 +238,6 @@ test('the web-host surface gates drawer:/peer:wterm and REGISTERS wterm:* and ct
   assert.deepStrictEqual(gated, [],
     `drawer-service channels registered on the web surface: ${gated.join(', ')} — gate them on enableDrawerServices`);
 
-  // t968, and asserted as the WHOLE `ctl:` set for the same reason as wterm
-  // below: a fourth channel added later and left under the drawer gate by
-  // accident passes every individual `ok` while being missing from the surface.
   assert.deepStrictEqual(
     [...registered].filter((ch) => ch.startsWith('ctl:')).sort(),
     [...WEB_CTL].sort(),
@@ -341,22 +333,15 @@ test('the term tab has no web-surface available() — and the committed bundle a
     'term-tab must not gate itself off the web surface — the handlers are registered there now');
 
   // No drawer tenant carries this gate any more (t968 took the last one), so
-  // the bundle count is ZERO. A count rather than a presence check: the gate
-  // coming back for any tenant fails here.
+  // the count is ZERO, and the ENTER below is what stops that zero also being
+  // the reading of a bundle esbuild rewrote past this grep.
   const web = fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8');
   const hits = web.split(GATE).length - 1;
   assert.strictEqual(hits, 0,
     `found ${hits} web-surface tab gate(s) in web-dist/index.html — a drawer tab is hiding itself from a surface whose handlers are registered (run \`npm run build:web\` and commit it)`);
-  // ENTER for that zero, which would otherwise also be the reading of a bundle
-  // esbuild rewrote past this grep, or a path that no longer exists: the bundle
-  // really does carry the tab registrations this pin is about.
   assert.ok(web.includes("id: \"term\","), 'ENTER: the committed bundle carries the term tenant\'s registration');
 });
 
-// t968's sibling for the ctl tab, and the same two halves: the source dropped
-// its `available()` when the web host started registering `ctl:*`, and the
-// committed bundle — which the browser frontend actually runs — has to agree,
-// since `npm run build:web` is a manual step.
 test('the ctl tab has no web-surface available() — and the committed bundle agrees', () => {
   const fs = require('node:fs');
   const ROOT = path.join(__dirname, '..');
@@ -366,9 +351,8 @@ test('the ctl tab has no web-surface available() — and the committed bundle ag
   assert.ok(!src.includes('__CLODEX_WEB__'),
     'ctl-tab must not gate itself off the web surface — the handlers are registered there now (enableCtl)');
 
-  // The bundle half, scoped to the ctl registration rather than the whole file:
-  // `__CLODEX_WEB__` appears all over the bundle for unrelated reasons, so a
-  // whole-file absence check could never pass and would prove nothing if it did.
+  // Scoped to the ctl registration: `__CLODEX_WEB__` appears all over the
+  // bundle for unrelated reasons, so a whole-file absence check never passes.
   const web = fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8');
   const at = web.indexOf('label: "clodexctl"');
   assert.ok(at > 0, 'ENTER: the committed bundle carries the ctl tenant\'s registration');
@@ -428,10 +412,8 @@ test('enableConsole:false withholds console:* even with drawer services on', () 
     'the console flag must actually withhold the pair, not merely exist');
 });
 
-// The same claim for t968's seam, and it is what makes the presence assertions
-// above mean anything: without it `enableCtl` could be ignored by the registrar
-// entirely — the family registering unconditionally — and every ctl assertion
-// in this file would stay green while the flag did nothing.
+// The same claim for t968's seam: without it `enableCtl` could be ignored by the
+// registrar entirely and every ctl assertion here would stay green anyway.
 test('enableCtl:false withholds ctl:* even with drawer services on', () => {
   const registered = new Set();
   const capture = {
