@@ -3596,16 +3596,11 @@ body {
   gap: 0 20px;
   align-content: start;
 }
-#args-dialog h3,
 #args-dialog #args-target,
 #args-dialog .dialog-actions,
 #args-dialog .dialog-section,
 #args-dialog .dialog-wide {
   grid-column: 1 / -1;
-}
-#args-dialog h3 {
-  margin-bottom: 8px;
-  font-size: 16px;
 }
 #args-dialog #args-target {
   margin-bottom: 4px;
@@ -7459,6 +7454,12 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   justify-content: space-between;
   gap: var(--sp-2);
   margin-bottom: var(--sp-4);
+  position: sticky;
+  top: calc(-1 * var(--sp-5));
+  z-index: 1;
+  background: inherit;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--sp-2);
 }
 #dialog .dialog-head h3,
 #prefs-dialog .dialog-head h3,
@@ -7471,7 +7472,11 @@ textarea:not(.xterm-helper-textarea):focus-visible,
 .dialog-head h3 {
   margin: 0;
 }
-#dialog .dialog-head {
+#args-dialog .dialog-head h3 {
+  font-size: 16px;
+}
+#dialog .dialog-head,
+#args-dialog .dialog-head {
   grid-column: 1 / -1;
 }
 .dialog-close {
@@ -8764,11 +8769,11 @@ textarea:not(.xterm-helper-textarea):focus-visible,
         </select>
         <input type="text" id="args-proxy-url" placeholder="http://127.0.0.1:7800" spellcheck="false" style="display:none;">
       </label>
-      <label id="args-model-row" class="dialog-wide">Model
+      <label id="args-model-row">Model
         <input type="text" id="args-model" placeholder="(CLI default) — e.g. opus, sonnet" spellcheck="false">
         <span class="hint-text">The model Clodex launches (and relaunches) this session with. An in-CLI <code>/model</code> change is runtime-only and isn't saved here.</span>
       </label>
-      <label class="dialog-wide">Extra CLI args
+      <label>Extra CLI args
         <input type="text" id="args-input" placeholder="(none)">
       </label>
       <details id="args-append-section" class="dialog-section">
