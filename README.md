@@ -4,212 +4,68 @@
 
 # Clodex
 
-**A visual manager for fleets of coding agents.**
+**A session manager for fleets of coding agents.**
 
 [![Release](https://img.shields.io/github/v/release/avirtual/clodex?color=6c5ce7)](https://github.com/avirtual/clodex/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/avirtual/clodex/total?color=00b894)](https://github.com/avirtual/clodex/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20arm64%20%C2%B7%20Linux%20headless-lightgrey)](#install)
 
-[Install](#install) · [Feature tour](#feature-tour) · [clodexctl](#clodexctl-the-fleet-from-a-terminal) · [Plugins](#plugins-install-one-or-write-your-own) · [How it works](#how-it-works)
+[Install](#install) · [What it does](#what-it-does) · [How it works](#how-it-works) · [Docs](#docs)
 
 </div>
 
-Run **Cl**aude Code and C**odex** sessions on your Mac, on any Linux box you can ssh to, and on cloud instances you can't — and actually *see* their work: what each agent is doing right now, what it costs, what's in its context window, which files it's touching, and who spawned whom. Every session is a real terminal. Agents message each other, spawn each other (locally or across machines), and manage their own context; you watch and steer from one sidebar, a browser tab, or a terminal (`clodexctl`).
+Clodex runs Claude Code and Codex sessions as terminals and adds three layers around them: a sidebar that shows the state of every session, a message bus that lets agents coordinate with each other, and a wire that makes sessions on other machines part of the same fleet. The same engine runs as a macOS desktop app and as a headless node on Linux; `clodexctl` drives either from a terminal, and a headless node can serve the GUI in a browser.
 
-<img src="./docs/screenshot-app.png" width="100%" alt="Clodex: sidebar of agent sessions grouped by project with live context and cache-warmth badges, a peered machine contributing remote sessions, a full-height terminal, and the IPC Traffic drawer showing agents messaging each other">
+<img src="./docs/screenshot-app.png" width="100%" alt="Clodex: sidebar of agent sessions grouped by project with context and cache-warmth badges, a peered machine contributing remote sessions, a terminal, and the IPC drawer showing agents messaging each other">
 
-*One operator, several agents, nothing staged. Left: sessions grouped by project with live context percentages and cache warmth, a peered box (`TEST`) contributing its sessions inline, unread inbox. Centre: the session as a real terminal. Bottom: the IPC bus — this lead dispatching a code review to a reviewer it spawned, the verdict coming back, the seat retiring, a test run reporting green, and an agent on an unrelated project filing a morning digest. The bar under the terminal is wire telemetry: model, context, turn, spend, cache state.*
-
-## Why
-
-One agent needs a terminal. Five need a control plane.
-
-Past the first couple of sessions the questions stop being *"what did it say?"* and start being operational: which of these is actually working right now, which is quietly burning tokens, which one is blocked on a permission dialog I never saw, whose context is about to fall over, and which of them spawned this thing I don't recognise. A grid of terminals answers none of that — every one of those answers is buried in scrollback you'd have to be watching at the time.
-
-Clodex keeps them as real terminals and puts the operational layer around them: live context and activity on every tab, a message bus so agents can hand work to each other, and the same sidebar whether the session is on this Mac or on a server three time zones away. Route a session through the [wirescope](#wire-telemetry-wirescope) proxy and it also reports wire-accurate cost, prompt-cache warmth, and the subagent tree underneath it.
-
-**Why not just tmux?** Multiplexing was never the hard part. tmux will happily give you nine panes; what it won't tell you is which pane is idle versus thinking, that pane 4 has been sitting on a permission prompt for twenty minutes, or that pane 7 is a subagent pane 2 spawned. Clodex is not a nicer multiplexer — the terminals are the easy half, and the fleet view is the point.
+*Left: sessions grouped by project with context fill and cache warmth, a peered box (`TEST`) contributing its sessions. Centre: the session's terminal, with wire telemetry (model, context, turn, spend, cache state) underneath. Bottom: the IPC bus, where a lead dispatches a review to a reviewer it spawned and reads the verdict back.*
 
 ## Install
 
-Download `Clodex-x.y.z-arm64.dmg` from [Releases](https://github.com/avirtual/clodex/releases/latest) and drag **Clodex** to Applications.
+Download `Clodex-x.y.z-arm64.dmg` from [Releases](https://github.com/avirtual/clodex/releases/latest) and drag **Clodex** to Applications. First launch: right-click `Clodex.app` → **Open**, or `xattr -cr /Applications/Clodex.app`; the app is ad-hoc signed, not notarized. Then open Clodex, choose File ▸ New Session… (⌘T), and pick a CLI and a project directory.
 
-First launch: right-click `Clodex.app` → **Open**. If macOS says the app is damaged, run `xattr -cr /Applications/Clodex.app` — the app is ad-hoc signed, not notarized.
+Requires an Apple Silicon Mac on macOS 12+, plus the CLIs you want to drive: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` in PATH) and/or [Codex](https://github.com/openai/codex) (`codex` in PATH). Intel Macs build from source; Linux servers run the headless engine.
 
-Everything else you would do from a terminal — build from source, run headless or in Docker, deploy a node, drive the fleet with `clodexctl` — is one page: **[docs/how-to.md](docs/how-to.md)**.
-
-**Requirements** — Apple Silicon Mac, macOS 12+ (Intel and Linux [build from source](#building-from-source); Linux servers run the headless engine). Plus whichever CLIs you want to drive: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` in PATH) and/or [Codex](https://github.com/openai/codex) (`codex` in PATH).
-
-**`clodexctl`** drives the same fleet from a terminal — no Electron, no app required (Node 20+):
+With the desktop app running and its peer wire enabled, install the standalone client (Node 20+):
 
 ```bash
 git clone https://github.com/avirtual/clodex && npm i -g ./clodex/cli
+clodexctl create node --import        # import the desktop app's node connections
+clodexctl use node local
+clodexctl get sessions
 ```
 
-Already running the desktop app? Adopt everything it knows in one step:
+Building from source, headless and Docker nodes, deploying to a server, and the everyday `clodexctl` verbs are one page: [docs/how-to.md](docs/how-to.md).
 
-```bash
-clodexctl create node --import   # adopts every node the GUI already knows
-clodexctl use node local         # or any name --import printed
-clodexctl get sessions        # kubectl's grammar: <verb> <resource> [name]
-clodexctl describe session bob
-clodexctl logs bob -f
-```
+## What it does
 
-No app on this box? Point it at a node directly instead:
+**Sessions you can see.** The sidebar shows, per session, what a terminal buffer hides: activity state, context fill, a permission dialog waiting on a human, an unread message, and the files touched, with a diff viewer. Sessions survive a quit and `--resume` with their history; archiving and deleting are separate, explicit acts. Configure sessions with shared prompts, skills and saved templates, and edit them in place later. A session can also be placed in a sandbox: a Docker container running a headless node, shown in the same sidebar. [wirescope](https://github.com/avirtual/wirescope), the companion proxy vendored into the app, adds per-turn token and cost telemetry, cache-warmth tracking, and Claude subagent costs. Codex seats get the intents, messaging, teams, plugins, skills and prompts; tool gating, wire stripping and custom subagents are Claude-only. Mechanism: [docs/sessions.md](docs/sessions.md), [docs/telemetry.md](docs/telemetry.md).
 
-```bash
-clodexctl create node prod --url https://box:8787 --token <T> && clodexctl get sessions
-```
+**Agents that coordinate.** Every agent session receives a protocol as a system prompt, and text intents in its output are executed by Clodex. `[agent:dm]` messages another agent, `name@peer` for one on another machine; `[agent:who]` lists peers with their reachability; `[agent:spawn]` mints a new session; `[agent:memory]` and `[agent:remind]` persist across restarts; `[agent:context compact|clear]` lets an agent tend its own window; `[agent:file view]` and `[agent:notify-user]` reach the operator. Deliveries queue per session and wait for a pause in typing, and a non-urgent message to a cache-cold Claude peer parks instead of re-billing its context. Teams add role-based tickets, optional per-ticket worktrees and seats, and an automated test-and-review gate; the gate requires a project test-runner adapter, see [team setup](docs/teams.md). Bash sessions are not registered as agents. All traffic is visible in the IPC drawer. Mechanism: [docs/messaging.md](docs/messaging.md), [docs/teams.md](docs/teams.md).
 
-## Feature tour
+**One fleet across machines.** The engine is Electron-free and runs headless on Linux under a systemd user unit as a full node: same sessions, same bus, same wire. Peer a box over ssh and its sessions appear in the sidebar as live tabs; type into one to take control. Agents on peered boxes message each other directly, and two boxes peered to the same hub can be relayed one hop. `clodexctl` is a standalone client on the same wire with kubectl's grammar (`get`, `describe`, `logs`, `exec`, `attach`, `delete`, `use node`); it manages sessions and deploys nodes over SSH and cloud/container transports. Headless nodes can also serve the browser GUI, and the peer server provides a phone chat view; the deployment recipes configure tunnel access, and a node started by hand needs its bind address and authentication set explicitly. Reference: [cli/README.md](cli/README.md), [docs/peering.md](docs/peering.md), [peering/](peering/).
 
-### The local fleet
+**Plugins.** A plugin is a directory with a manifest and an engine half, a renderer half, or both, written against a versioned plugin API. It can add an `[agent:…]` verb, UI extensions, and skills and agents for every seat that has it. Install from [clodex-plugins](https://github.com/avirtual/clodex-plugins) through Plugins ▸ Manage Plugins, or drop a folder into `~/.clodex/plugins/`. An engine half runs with the app's privileges; there is no sandbox. Contract: [plugins/plugin-api.md](plugins/plugin-api.md), sources and trust: [plugins/plugin-sources.md](plugins/plugin-sources.md).
 
-The unit of work is a **session**: a real PTY running `claude`, `codex`, or plain `bash`, embedded as an xterm.js terminal. Press ⌘T, name it, point it at a directory, hit Create. Then make nine more.
-
-> **Codex support is not on par with Claude Code.** Clodex was built around the Claude Code CLI and Codex came later. A Codex seat gets the intent grammar, DMs, teams, plugins, custom skills, system and append prompts, and the statusline; it does not get tool gating, the skill roster, wire stripping, or custom subagent definitions, because Codex has no place to receive them, and the Activity tab does not show a Codex seat's native sub-agents. The dialogs only offer a Codex seat what it honours.
-
-- **Multi-window workspaces** — each window is a workspace with its own session set (⌘⇧N for a new one). Close a window and its sessions keep running; the app lives in the tray. Only the most-recently-focused workspace opens on startup, IDE-style — the rest are one click away.
-- **Persistence** — quit and relaunch, and every session `--resume`s with its history. ✕ or ⌘W *archives* a session (dimmed row, one click to resume it right where it left off); deleting is a separate, confirmed act. The New Session dialog can also resume an arbitrary session ID, or fork it into a new branch.
-- **Per-session configuration at spawn** — pick a system prompt and append prompts from the library, check exactly which tools the agent gets, attach custom subagent types and skills, set the wire-strip level, add raw CLI args. Most of it is editable later (right-click → Edit Session; apply on next spawn or restart in place, keeping the conversation).
-- **Sandbox sessions** — one click births a Docker container running a headless Clodex node, and sessions placed in it run isolated from your machine while showing up in the same sidebar.
-- **Prompts / Agents / Skills libraries** — reusable files under `~/.clodex/library/`, shared across all windows and editable outside the app. Sessions reference library entries by name, so editing one file updates every session that uses it on its next spawn.
-- **Templates** — save a New Session configuration once, pick it from a dropdown forever (agents can spawn from templates too).
-- **Live session badges** — color-coded context usage, activity state, needs-attention pulses (incoming DM, a permission dialog waiting for a human), and a touched-files counter with a click-through diff viewer.
-- **Statusline & themes** — Preferences (⌘,) picks which components appear in Claude and Codex statuslines (or a custom Claude statusline command), plus a UI theme (midnight / claude / light).
-- **Operations log** — `~/.clodex/clodex.log` (plain text, rotated) records session lifecycle, state-mutating intents, peer transitions, and every autocompact decision.
-
-### Agents that talk
-
-Sessions aren't isolated terminals — they're peers on a message bus. The protocol is injected as a system prompt at spawn, so you just talk: *"DM bob and ask him to check the failing test"* becomes `[agent:dm bob] …`, and bob receives it in his input as `[agent:from alice] …`. His sidebar tab pulses amber. Bash sessions are deliberately private: real shells, no IPC.
-
-- `[agent:dm target] body` — direct message; `target` can be `name@peer` for an agent on a peered Clodex. Bodies over 500 bytes spill to a file and arrive as a pointer.
-- **Deliveries never mangle what you're typing.** All injections drain through a per-session atomic queue and wait for a pause in your typing; a DM that arrives while a draft is open is *parked* and attached to your next prompt instead. Parked messages survive app restarts.
-- **Cost-aware delivery** — a DM to a long-idle, cache-cold Claude peer parks rather than re-billing its whole context; the sender gets a verdict plus a one-shot `[agent:resend <id>]` handle to escalate, and can mark a message `urgent` up front.
-- `[agent:who]` — list online peers with reachability (working / idle + cache warmth / blocked on a permission dialog). Peered agents show as `name@peer`.
-- `[agent:context compact]` / `[agent:context clear]` — the agent tends its own context window instead of stalling at the ceiling; compact takes an optional handoff injected as its first turn afterward so it keeps working. Past 175k tokens, Claude sessions get automatic high-context reminders, and both that threshold and the sterner second one are editable in Settings › Traffic optimization; a seat spawned for a single ticket is not reminded at any threshold, since it is retired when the ticket is.
-- `[agent:memory …]` — per-agent persistent memory (`remember` with optional scope and `pinned=true`, `list`, `recall`, `pin`/`unpin`/`forget`). Saved units reach every new conversation automatically: pinned units in full, the rest as a recallable index.
-- `[agent:remind …]` — durable self-reminders (relative, clock-time, cron, or fired on every compact) that survive restarts and context resets.
-- `[agent:spawn name:X cwd:Y]` — mint a new persistent peer session; it joins the spawner's workspace and is immediately DM-able. Agents can grow the fleet themselves.
-- `[agent:file view PATH]` / `[agent:file open PATH]` / `[agent:notify-user]` — show a file (contents + git diff) on the operator's screen, open it with the default app, or raise a note into the operator's persistent inbox.
-
-All traffic is visible in the IPC log drawer (⌘⇧B).
-
-### Teams
-
-A **team** is a durable working group with named roles — a lead seat that plans, delegates, and verifies, plus role templates (implementation hand, cold reviewer, …) it can instantiate on demand. Clodex makes the loop first-class:
-
-- **Roles live in a manifest**, editable in a GUI popover — what each role is for, its prompt, its tool caps. Role prompts ship as library files, so a team's conventions are plain text you can version.
-- **Cold review as an intent** — `[agent:team-review]` spawns an ephemeral, read-only reviewer seat with the diff and spec; its structured verdict comes back to the lead, and `[agent:review-done]` retires the seat. Fresh eyes every time, no context contamination.
-- **Task tickets** ride the same intent grammar, and seat lifecycle (spawn from template, retire, archive) is one intent away — the lead runs the team without leaving its terminal.
-
-### Peering: other machines, same sidebar
-
-Add a peer (Window → Peers → Manage Peered Clodexes…; `user@host` is enough) and Clodex opens and babysits the SSH tunnel itself. The box's sessions appear as remote tabs under their host's header — and a tab is not a viewer, it's a cockpit:
-
-- **Attach live, type to take control.** Remote tabs stream in real time; on a read-only tab, just start typing and control is acquired automatically, your buffered keystrokes flushing in order. Control survives restarts on both ends.
-- **Full remote lifecycle** — create sessions on the box (directory created if absent), restart them (`--resume` or fresh), kill them, restart the box's whole Clodex — all from the header and row menus, no ssh terminal.
-- **Everything mirrors** — telemetry status bar, popovers, file views, resize behavior. What the box's operator sees, you see.
-- **Peer identity at a glance** — each peer header shows version drift severity-tinted (patch behind → yellow, major → red), with an ⓘ popover listing the box's version, platform, and capabilities. One click on **Update Clodex on \<box\>** re-runs the install over ssh and restarts the peer, which resumes its sessions and reconnects.
-- **Test & Set Up wizard** — point it at a bare Linux box and it probes what's there, then installs Clodex from scratch as a live ✓/✗ step list. When it needs root it can't get, it shows the exact commands and waits — it never prompts, never hangs. If a deploy genuinely fails, it offers to open a local Claude session briefed with the log to go fix the box for you.
-- **Tunnel details** — an SSH destination (`user@host`, IP, ssh alias) gets a managed `ssh -L` tunnel; an `http://…` URL covers tailnets and custom setups. Key-based SSH only; the peer's server binds `127.0.0.1` by design, so the tunnel is the trust boundary. An operator token (`CLODEX_REMOTE_TOKEN`) gates the wire on deployed nodes.
-
-### DM federation
-
-Agents on peered Clodexes message each other directly: `[agent:dm name@peer]` crosses the wire, remote agents show up in `[agent:who]`, and a dm whose reply would drop is marked `(no reply path)`, so cross-machine round-trips just work. The tunnel only dials one way, so replies from the box queue in a durable per-origin outbox with a doorbell event for near-instant delivery while connected — nothing is lost across restarts or dropped streams. Wire DMs honor the same cost-gate/park semantics as local ones.
-
-It also works *between* peers: two boxes peered to the same Clodex never dial each other, but with **relay mesh** enabled (a per-peer checkbox, off by default, and both peers must opt in) their agents see each other in `[agent:who]` and DM each other, routed through the hub. Sender identity is never rewritten in transit, and relays are capped at one hop — the hub is a router, not a chain.
-
-### clodexctl: the fleet from a terminal
-
-[`clodexctl`](cli/) is a standalone CLI client for the same wire the GUI peers speak — kubectl-for-Clodex, down to the grammar: `<verb> <resource> [name]`, `get`/`describe`/`logs`/`exec`/`attach`/`delete`, `use node` where kubectl says `config use-context`. No Electron, no app running locally; a **node** is a record naming an engine and how to reach it, and every verb works over every transport:
-
-```bash
-clodexctl create node --import                 # adopt every node the GUI already knows
-clodexctl create node prod --ssh user@box      # or: --ssm i-…, --ssm-ecs cluster/family,
-                                               #     --kubectl pod, --gcloud-iap …, --az-bastion …
-clodexctl get sessions                         # what's running
-clodexctl describe session worker              # every field of one seat
-clodexctl exec worker "fix the failing test"   # ask an agent, wait, print the reply
-clodexctl attach worker                        # a LIVE terminal on the session — ssh-for-agents
-clodexctl logs worker -f                       # follow the transcript, kubectl-style
-clodexctl web prod                             # the node's full GUI in your local browser
-```
-
-- **Transports as data** — direct URL, ssh, AWS SSM (EC2 *and* Fargate — no open ports, no ssh), kubectl port-forward, GCP IAP, Azure Bastion, or a custom tunnel argv. Nodes are shareable JSON: the typed cloud kinds carry no code, so they're safe to commit to a team repo and hand around.
-- **`create node --import`** is the zero-setup on-ramp: it reads the desktop app's own stores (read-only) and adopts everything the GUI already knows — the local engine, every peered machine, every sandbox — tokens included, never printed. If you use the GUI, your whole fleet is addressable from the terminal in one command.
-- **`attach`** streams the session's screen and forwards your keystrokes through any of those tunnels; `Ctrl-\` detaches, `--read-only` shoulder-surfs. **`exec`** routes by session type: agents get a prompt and a wait-for-reply, bash sessions get the command's output.
-- **`deploy`** turns a bare box into a Clodex node in one command — `deploy node <name> --ssh user@host` over ssh, `--ssm i-…` over AWS SSM (zero ingress), `--docker` for a container node. Idempotent (re-run = update), streamed ✓/✗ steps, verified end-to-end through the real tunnel, context saved. `--claude-token-file` delivers your Claude credential over the encrypted wire — never argv, never CloudTrail.
-- **`web`** opens a foreground tunnel to the node's web GUI and pops your browser; `port-forward LOCAL:REMOTE` covers any other port. `get` takes `-o json|yaml|wide|name`, the same four kubectl gives you; the other read verbs take `-o json|yaml`.
-
-### Headless nodes & the web GUI
-
-The Clodex engine runs headless on Linux — plain Node, no display, kept alive by a systemd user unit — as a full peer node: same sessions, same messaging, same wire. That's what `clodexctl deploy` installs, and it's proven on Ubuntu and Amazon Linux. A Mac at the desk, agents grinding on servers overnight.
-
-Every deployed node also serves the **full Clodex GUI in a browser** — sidebar, terminals, popovers — bound to `127.0.0.1` on the box, reachable only through the authenticated tunnel: `clodexctl web <ctx>` and you're looking at a cloud instance's fleet in a local browser tab, with zero ports open to the world. The same server (Preferences → Phone access on the desktop app) serves a chat-style view for your phone via tailnet or ssh tunnel.
-
-### Plugins: install one, or write your own
-
-**[clodex-plugins](https://github.com/avirtual/clodex-plugins)** is the public library, one plugin per folder, and the app installs from it directly: **Plugins ▸ Manage Plugins… ▸ Install from GitHub…**, paste `avirtual/clodex-plugins:<id>` (or the folder's URL as copied from the browser), done. Installed plugins get an update badge when the library moves on, and update in place.
-
-Two of them are about building with Clodex itself: **clodex-plugin-builder**, a skill that scaffolds a plugin, wires the surfaces you ask for and verifies it; and **team-bootstrap**, a skill that stands up a whole team from a sentence about your project (see [docs/teams.md](docs/teams.md)). The library's own README lists the rest, and grows faster than this page does.
-
-Clodex loads plugins in process, and the API is **frozen at `hostApi "1"`** — a directory with a manifest and up to two halves: an engine half (plain Node, filesystem and session access, can contribute an `[agent:…]` verb) and a renderer half (DOM, one per window, seven named UI slots — status-bar actions and segments, a sidebar footer button, a session row badge, a session-menu provider, a settings panel on its Manage Plugins row, a full-window overlay). The shipped plugins are written against the same contract you get: a git-branch badge, the Workbench (Files, Source Control, Worktrees), and read-only viewers for memories and tickets.
-
-- **A plugin can also ship skills and agents** — drop `skills/<name>/SKILL.md` or `agents/<name>.md` into the folder and every seat that has the plugin gets them, namespaced `<plugin-id>:<name>`; a folder carrying only those is a valid plugin, so a content pack needs no code.
-- **Your plugins live outside the app** — drop a directory in `~/.clodex/plugins/` and it is discovered alongside the built-in ones, untouched by updates. Manage Plugins reveals the folder, re-scans without a restart, and is one checkbox per plugin; `CLODEX_PLUGINS=0` skips the system entirely.
-- **Start here** — [`plugins/`](plugins/) is the launchpad: `node plugins/tools/scaffold.js my-plugin` writes a valid one and `node plugins/tools/verify.js plugins/my-plugin` runs it against the real loader, so the first plugin is an implementation task rather than a discovery task. [`plugins/plugin-api.md`](plugins/plugin-api.md) is the contract, and [`plugins/plugin-sources.md`](plugins/plugin-sources.md) covers where plugins come from — precedence, shadowing, and trust. No sandbox: an engine half runs with the app's privileges, so the API is a contract, not containment.
-
-### Wire telemetry (wirescope)
-
-Route a session's API traffic through [wirescope](https://github.com/avirtual/wirescope), the companion proxy built for Clodex — a vendored copy ships inside the app, and Preferences can spawn and babysit it for you, or point at your own — and the app reads the truth off the wire:
-
-- **Status bar under the terminal** — context tokens and percentage, turn count, model, wire-accurate cost estimate, and a link to the session's page on the proxy.
-- **Delegation is visible.** When an agent spawns subagents, they appear as named child rows under the parent in the sidebar, each with its own turn count and cost — you can see who spawned whom and what every level of the tree is doing and spending, live.
-- **Cache warmth** — a live countdown to prompt-cache expiry on every sidebar tab (visible even while a session is unfocused, which no statusline script can do), plus **keep warm**: arm a 1h/4h/8h hold and the proxy keeps your prompt cache hot while you're away.
-- **Cache-bust inspector** — a bar chip counts genuine cache busts; click through for per-turn forensics. A cost-over-time popover breaks down spend.
-- **Wire stripping** — optionally strip prior-turn thinking (level 1) or also edit-acks and failed-call stubs (level 2) from the wire to reclaim cost. Non-destructive: the local transcript is untouched.
-- **Transcript bake on resume** (opt-in) — bake the on-disk transcript down to the same set the wire already strips, so resumed sessions replay a permanently slimmer prefix without busting a warm cache.
-- **Autocompact** — a heavy idle session compacts itself in the last stretch of cache warmth instead of going cold at full size.
-
-Sessions route via `ANTHROPIC_BASE_URL` (Claude) / `openai_base_url` (Codex); set a default in Preferences or override per session. The telemetry bar only appears for routed sessions.
-
-### Voice
-
-Dictate into the focused Claude seat and have Clodex press Enter for you when you end with a send phrase, with the reply optionally spoken back. A voice popover shows what Clodex can see of the CLI's recording indicator, and `scripts/clodex-voice-tap.js` starts recording from outside the app — wire it to a macOS Voice Control phrase and you can arm a seat with Clodex in the background.
-
-**Requires the CLI's default renderer.** Clodex reads the recording indicator off the terminal screen, so `/tui fullscreen` (or `CLAUDE_CODE_NO_FLICKER=1`) breaks it: that renderer moves the whole Claude TUI onto the alternate screen buffer, which Clodex will not scrape — a full-screen program's cursor row is not a composer. The setting is sticky across restarts, so the effect is permanent until you change it back with `/tui`, and it is quiet: the tap script writes nothing and reports nothing, while the voice actions that never read the screen (seat select, tap/hold, speech on/off) keep working normally. The popover is the place to check — it reads **Cannot read the screen**, and its tooltip names the cause.
-
-## Usage
-
-1. Press ⌘T, pick a name, type (claude / codex / bash), and working directory — optionally a system prompt, append prompts, tools, agents, skills.
-2. Hit **Create** — the terminal appears and the agent starts.
-3. Add more sessions and switch with ⌘1…9. Once two or more agents are running, ask one to DM another — the messaging protocol is already in their system prompt.
-
-### Keyboard shortcuts
-
-| Shortcut | Action |
-|---|---|
-| `⌘T` | New session |
-| `⌘⇧N` | New workspace window |
-| `⌘,` | Preferences |
-| `⌘W` | Archive active session / close dialog / hide peer tab |
-| `⌘1` … `⌘9` | Switch session by index |
-| `⌘⇧]` / `⌘⇧[` | Next / previous session |
-| `⌘F` | Find in terminal |
-| `⌘⇧B` | IPC traffic log |
-| `⌘⇧A` | New agent type |
-| `⌘⇧S` | New skill |
+**Voice.** Dictate into a local Claude Code session; a send phrase presses Enter, and the reply can be spoken back. It reads the CLI's recording indicator off the screen, so it needs the CLI's default renderer.
 
 ## How it works
 
-The core is an Electron-free **engine** (sessions, messaging, persistence, the peer wire) with three frontends: the Electron desktop app, a plain-Node headless host for servers, and the browser GUI the headless host serves. Each session is a node-pty subprocess running `claude`, `codex`, or your shell. At spawn, Clodex registers the agent on a Unix socket under `~/.clodex/run/{name}/`, installs a SessionStart hook that symlinks the agent's transcript into that directory, and injects the IPC protocol as a system prompt (`--append-system-prompt-file` for Claude, folded into `model_instructions_file` for Codex — always prepended, so messaging survives a replaced system prompt).
+The core is an Electron-free **engine** (sessions, messaging, persistence, the peer wire) with three frontends: the Electron desktop app, a plain-Node headless host for servers, and the browser GUI the headless host serves. Each session is a node-pty subprocess running `claude`, `codex`, or your shell, registered on a Unix socket under `~/.clodex/run/{name}/` and given the IPC protocol as a system prompt.
 
-A watcher tails the transcript, extracts assistant text, and scans it for `[agent:…]` intents; matches route to the target session's PTY stdin through the atomic inject queue. Peering, phone access, the web GUI, and `clodexctl` all ride the same local HTTP/SSE server, reached over tunnels Clodex manages.
+Clodex reads assistant output from wire events or transcript files, executes recognized intents, and queues messages into the destination terminal. Peering, phone access and `clodexctl` use the peer HTTP/SSE server; the browser GUI connects to the engine through a separate HTTP/WebSocket host.
 
-Persistent state lives in `~/Library/Application Support/Clodex/` (sessions, workspaces, templates, UI settings, peers) and `~/.clodex/library/` (prompts, agents, skills, memory — plain files, editable outside the app).
+On packaged macOS builds, persistent state lives in `~/Library/Application Support/Clodex/` (sessions, workspaces, templates, UI settings, peers) and `~/.clodex/library/` (prompts, agents, skills, memory; plain files, editable outside the app). Headless storage is configurable with `CLODEX_DATA_DIR`.
+
+## Docs
+
+- [docs/how-to.md](docs/how-to.md): run, build, deploy, and drive it from a terminal.
+- [docs/architecture.md](docs/architecture.md): the module map.
+- [docs/teams.md](docs/teams.md): standing up a team and what your project must supply.
+- [cli/README.md](cli/README.md): the full `clodexctl` reference, transports and exit codes.
+- [docs/recipes/](docs/recipes/): EC2, Fargate, Kubernetes, two nodes on one box.
+- [plugins/plugin-api.md](plugins/plugin-api.md): the plugin contract.
 
 ## Building from source
 
@@ -221,10 +77,6 @@ npx electron-rebuild   # rebuild node-pty against Electron's ABI
 npm start              # dev mode
 npm run dist:mac       # arm64 DMG
 ```
-
-For headless Linux nodes, `clodexctl deploy` does everything; the manual playbook is in [`peering/`](peering/).
-
-Running, building and driving it from the command line — DMG, source, headless, Docker, the everyday `clodexctl` verbs — is one page: [docs/how-to.md](docs/how-to.md).
 
 ## License
 

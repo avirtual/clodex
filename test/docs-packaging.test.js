@@ -51,3 +51,35 @@ test('the docs the plugin surfacing points at exist at the paths it names', () =
     assert.ok(fs.existsSync(path.join(ROOT, rel)), `${rel} must exist — the plugin docs link to it by this path`);
   }
 });
+
+test('every relative link and image in README.md resolves to a path in the repo', () => {
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+  const targets = new Set();
+  for (const m of readme.matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)) targets.add(m[1]);
+  for (const m of readme.matchAll(/<img\s[^>]*src="([^"]+)"/g)) targets.add(m[1]);
+  const relative = [...targets].filter((t) => !t.startsWith('#') && !/^https?:\/\//.test(t));
+  assert.ok(relative.length > 0,
+    'the link regex matched nothing — a vacuous pass, not a green README');
+  assert.ok(relative.includes('docs/how-to.md'),
+    'docs/how-to.md must be among the collected relative links — the ENTER guard that proves the regex reads this README');
+  for (const rel of relative) {
+    assert.ok(fs.existsSync(path.join(ROOT, rel.replace(/^\.\//, ''))),
+      `README.md links ${rel}, which does not exist in the repo`);
+  }
+});
+
+test('docs/how-to.md carries the desktop shortcuts and the voice renderer caveat', () => {
+  const howTo = fs.readFileSync(path.join(ROOT, 'docs/how-to.md'), 'utf8');
+  assert.ok(howTo.includes('| `⌘T` | New session |'),
+    'the shortcuts table moved out of README.md must land in docs/how-to.md');
+  assert.ok(howTo.includes("**Requires the CLI's default renderer.**"),
+    'the voice renderer caveat moved out of README.md must land in docs/how-to.md');
+});
+
+test('README.md is a product page, not a feature tour', () => {
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+  assert.ok(!readme.includes('One agent needs a terminal'),
+    'the old marketing opener must be gone from README.md');
+  assert.ok(readme.split('\n').length < 120,
+    `README.md must stay under 120 lines; it is ${readme.split('\n').length}`);
+});
