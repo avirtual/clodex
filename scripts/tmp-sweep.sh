@@ -377,6 +377,7 @@ clx-drawer-seam-
 clx-eb-
 clx-emb-
 clx-eng-env-
+clx-eng-help-
 clx-eng-home-
 clx-eng-prune-
 clx-eng-sbx-
