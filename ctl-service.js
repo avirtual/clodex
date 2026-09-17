@@ -6,9 +6,7 @@
 // MAIN-PROCESS, and that is the security property, not a layering preference:
 // ~/.clodex/cli/contexts.json holds TOKENS. A renderer-side client would pull
 // token material into the renderer to gain nothing — the renderer sends a
-// command string and receives rendered text. The other half of the boundary is
-// at IPC REGISTRATION (ipc-handlers' enableDrawerServices gate), because
-// web-host dispatches any registered channel by name.
+// command string and receives rendered text.
 //
 // Electron-free by construction — no electron import anywhere in this file or
 // the CLI modules it loads, so the service is unit-testable and survives being
@@ -45,9 +43,8 @@ function loadCli() {
 //
 // THIS TABLE IS NOT A SECURITY BOUNDARY, and reasoning about it as one leads
 // straight to a wrong edit. `exec` is admitted, so `exec box "clodexctl delete
-// session x --force"` is typeable: nothing here contains what the operator can reach. The
-// boundary is enableDrawerServices at IPC registration (ipc-handlers.js), which
-// keeps this whole family off the web surface. What this table is, is a guard
+// session x --force"` is typeable: nothing here contains what the operator can reach.
+// What this table is, is a guard
 // against a SLIP at a live prompt with ↑-history.
 //
 // "It mutates" was the earlier criterion and it was wrong on its own terms:
@@ -552,4 +549,4 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
   };
 }
 
-module.exports = { createCtlService, tokenize, refuse, isNodeLine, ALLOWED, NODE_LOCAL_VERBS, MAX_BLOCK_CHARS };
+module.exports = { createCtlService, tokenize, refuse, isNodeLine, ALLOWED, DEFERRED_HINT, NODE_LOCAL_VERBS, MAX_BLOCK_CHARS };

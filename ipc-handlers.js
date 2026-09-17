@@ -86,7 +86,7 @@ function registerIpcHandlers(deps) {
     getUpdateInfo, getReleasesCache,
     getWebTunnelManager, openPeerWeb, closePeerWeb,
     getSandbox, getSandboxManager,
-    enableDrawerServices, enableLocalTerminal, enableConsole, enableAccounts, getCtlService, getBashLive, getDrawerPtys, workspaceOfSenderStrict,
+    enableDrawerServices, enableCtl, enableLocalTerminal, enableConsole, enableAccounts, getCtlService, getBashLive, getDrawerPtys, workspaceOfSenderStrict,
     accounts, moveAccountByModel,
     syncTerminalReports,
     getPluginHost, getPluginLoader, listAllTemplates, listAllPrompts, surfaceOfSender,
@@ -2349,21 +2349,7 @@ function registerIpcHandlers(deps) {
     refreshAppMenu();
     return true;
   });
-  // The drawer's service-backed tenants. GATED AT REGISTRATION, and the `if` is
-  // the whole boundary: web-host.js runs this same registrar and its invoke
-  // frame dispatches any registered channel BY NAME without consulting
-  // api-contract, so a `ctl:run` that exists at all is a token-backed verb
-  // runner for any authenticated web connection. A renderer-side `available()`
-  // is chosen by the client and protects nothing. Do not convert this into a
-  // handler that checks the flag in its body.
-  //
-  // The LOCAL drawer terminal is no longer in this block — it has its own
-  // flag below. The two are separate because their arguments are separate, and
-  // merging them again would re-gate a shell the same host already hands out.
-  //
-  // Pinned by test/drawer-services-seam.test.js (asserts `ctl:` and `drawer:`
-  // are ABSENT from the web-host map — absent, not present-and-guarded).
-  if (enableDrawerServices) {
+  if (enableCtl) {
     handle('ctl:run', async (_e, line) => {
       const svc = getCtlService();
       if (!svc) return { command: String(line || ''), output: 'clodexctl: the ctl service is unavailable on this host\n', exitCode: 2, ctx: null, ts: Date.now() };
@@ -2374,16 +2360,29 @@ function registerIpcHandlers(deps) {
       return svc ? svc.context() : null;
     });
     // The tab's cheat sheet. Read-only, derived from the allowlist and the CLI's
-    // help registry — no context, no wire, no token — but it stays inside this
-    // gate with the rest of the family: a channel the web host does not register
-    // cannot be probed to enumerate what the desktop's runner would accept.
+    // help registry — no context, no wire, no token.
     handle('ctl:help', () => {
       const svc = getCtlService();
       return svc ? svc.helpIndex() : null;
     });
-    // The drawer selection as a tail hint on the named session's route. Inside
-    // this gate for the sharpest reason in this block: the others run something
-    // on the host or read from it, while this one writes caller-supplied text
+  }
+  // The drawer's service-backed tenants. GATED AT REGISTRATION, and the `if` is
+  // the whole boundary: web-host.js runs this same registrar and its invoke
+  // frame dispatches any registered channel BY NAME without consulting
+  // api-contract, so a handler that exists at all is reachable by any
+  // authenticated web connection. A renderer-side `available()`
+  // is chosen by the client and protects nothing. Do not convert this into a
+  // handler that checks the flag in its body.
+  //
+  // The LOCAL drawer terminal is no longer in this block — it has its own
+  // flag below. The two are separate because their arguments are separate, and
+  // merging them again would re-gate a shell the same host already hands out.
+  //
+  // Pinned by test/drawer-services-seam.test.js (asserts `drawer:`
+  // is ABSENT from the web-host map — absent, not present-and-guarded).
+  if (enableDrawerServices) {
+    // The drawer selection as a tail hint on the named session's route.
+    // It writes caller-supplied text
     // into an agent's next request — an ungated registration is a prompt
     // injection channel for any authenticated web connection.
     //
@@ -2440,10 +2439,10 @@ function registerIpcHandlers(deps) {
   // over the ordinary session channels. Gating this one while that door stands
   // open bought no security, only a missing tab.
   //
-  // What that argument does NOT cover, and why the split is two flags rather
-  // than deleting the gate:
-  //   `ctl:*` / `drawer:*` above — a verb runner and a read of the operator's
-  //       own screen text, neither of which `session:create` grants.
+  // What that argument does NOT cover, and why the split is separate flags
+  // rather than deleting the gate:
+  //   `drawer:*` above — a read of the operator's
+  //       own screen text, which `session:create` does not grant.
   //   `peer:wterm*` below — a shell on a THIRD machine, which no local session
   //       channel can reach at all.
   // Both keep `enableDrawerServices`. A host that wants a local terminal is

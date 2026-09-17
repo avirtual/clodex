@@ -173,15 +173,16 @@ function createEngine({ userDataPath, seams = {}, log }) {
   // Granted on a headless host too (t903): by the argument below, that hands
   // `sandbox:*` — docker and container lifecycle on this box — to a web client.
   const enableSandbox = seams.enableSandbox !== false;
-  // The drawer's service-backed tenants (a clodexctl verb runner over `ctl:*`,
-  // the selection reads over `drawer:*`, a shell on a peer over `peer:wterm*`)
+  // The drawer's service-backed tenants (the selection reads over `drawer:*`,
+  // a shell on a peer over `peer:wterm*`)
   // are DESKTOP-ONLY, and the boundary that makes them so is this flag, not the
   // renderer, whose `available()` only hides the tabs. web-host.js registers the
   // same ipc-handlers map the desktop does and dispatches any registered channel
   // BY NAME without consulting api-contract, so a handler that exists is one an
-  // authenticated web connection can invoke — a token-backed verb runner, a read
+  // authenticated web connection can invoke — a read
   // of the operator's own screen, a shell on a third machine.
   const enableDrawerServices = seams.enableDrawerServices !== false;
+  const enableCtl = seams.enableCtl !== false;
   // The LOCAL drawer terminal, split off that flag (t227) because its
   // argument is different: `wterm:*` spawns `$SHELL` on THIS box, and any
   // surface that can reach the ungated `session:create` can already spawn a
@@ -1862,7 +1863,7 @@ const sandboxManager = enableSandbox ? createSandboxManager({
 // a null service is a handler that cannot be registered, rather than a
 // registered handler that decides at call time whether to serve.
 const { createCtlService } = require('./ctl-service');
-const ctlService = enableDrawerServices ? createCtlService({}) : null;
+const ctlService = enableCtl ? createCtlService({}) : null;
 
 // The drawer's workbench terminal, same capability and same shape. `cwdFor`
 // resolves per workspace through the manager rather than being captured, so a
@@ -2365,6 +2366,7 @@ const toolCache = createToolCache({ whichBin });
     getSandbox: (boxId) => (sandboxManager ? sandboxManager.get(boxId) : null),
     getSandboxManager: () => sandboxManager,
     enableDrawerServices,
+    enableCtl,
     enableLocalTerminal,
     enableConsole,
     enableAccounts,
