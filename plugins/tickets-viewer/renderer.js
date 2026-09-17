@@ -65,6 +65,22 @@ function summaryText(counts) {
   return parts.join(' · ');
 }
 
+const CLOSED_PAGE_SIZE = 50;
+
+function verdictChipClass(verdict) {
+  const slug = String(verdict == null ? '' : verdict).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return slug ? `tv-verdict-chip tv-verdict-${slug}` : 'tv-verdict-chip';
+}
+
+function roundsText(n) {
+  const count = Number.isFinite(Number(n)) ? Number(n) : 0;
+  return `${count} round${count === 1 ? '' : 's'}`;
+}
+
+function pagerText(offset, shown, total) {
+  return `${offset + 1}–${offset + shown} of ${total}`;
+}
+
 function money(usd) {
   const n = Number(usd);
   if (!Number.isFinite(n)) return '';
@@ -215,6 +231,8 @@ module.exports.activate = (rhost) => {
     let reloadSeq = 0;
     let searchSeq = 0;
     let searchTimer = null;
+    let closedSeq = 0;
+    let closedView = null;
 
     const searchEl = el('input', 'tv-search');
     searchEl.type = 'search';
@@ -457,6 +475,10 @@ module.exports.activate = (rhost) => {
 
     function goBack() {
       const q = String(searchEl.value || '').trim();
+      if (!q && closedView) {
+        renderClosed(selected, closedView).catch((e) => rhost.log.error('closed failed', e));
+        return;
+      }
       if (q) {
         mountBoardShell();
         sectionsEl.innerHTML = '';
@@ -701,7 +723,21 @@ module.exports.activate = (rhost) => {
       }
 
       const summary = summaryText(res.counts);
-      if (summary) sectionsEl.appendChild(el('div', 'tv-summary', summary));
+      if (summary) {
+        const closedTotal = (res.counts.done || 0) + (res.counts.cancelled || 0);
+        if (closedTotal > 0) {
+          const line = el('div', 'tv-summary tv-summary-link', summary);
+          line.setAttribute('role', 'button');
+          line.tabIndex = 0;
+          line.title = 'Browse closed tickets';
+          line.addEventListener('click', () => {
+            renderClosed(selected, { state: 'all', offset: 0 }).catch((e) => rhost.log.error('closed failed', e));
+          });
+          sectionsEl.appendChild(line);
+        } else {
+          sectionsEl.appendChild(el('div', 'tv-summary', summary));
+        }
+      }
 
       // Below the open list and visually quieter — present when wanted, never
       // competing with open work for the top of the pane.
@@ -760,6 +796,90 @@ module.exports.activate = (rhost) => {
       sectionsEl.appendChild(list);
     }
 
+    function closedRow(r) {
+      const row = el('div', 'tv-ticket tv-closed-row');
+      const head = el('div', 'tv-ticket-head');
+      head.appendChild(el('span', 'tv-id', r.id));
+      const titleSpan = el('span', 'tv-ticket-title', r.title);
+      titleSpan.title = r.title;
+      head.appendChild(titleSpan);
+      head.title = 'Click to open this ticket\'s history';
+      head.addEventListener('click', () => {
+        renderDetail(selected, r.id).catch((e) => rhost.log.error('detail failed', e));
+      });
+      row.appendChild(head);
+
+      const meta = el('div', 'tv-meta');
+      meta.appendChild(el('span', 'tv-hit-state', r.state));
+      meta.appendChild(el('span', 'tv-assignee', r.assignee || 'unassigned'));
+      const age = hitAgeText(r, Date.now());
+      if (age) meta.appendChild(el('span', 'tv-age', age));
+      if (r.verdict !== null && r.verdict !== undefined && r.verdict !== '') {
+        meta.appendChild(el('span', verdictChipClass(r.verdict), r.verdict));
+      }
+      if (r.rounds > 0) meta.appendChild(el('span', 'tv-rounds', roundsText(r.rounds)));
+      row.appendChild(meta);
+      return row;
+    }
+
+    async function renderClosed(project, view) {
+      const state = view && view.state ? view.state : 'all';
+      const offset = view && view.offset ? view.offset : 0;
+      closedView = { state, offset };
+      const my = ++closedSeq;
+      const mySelect = selectSeq;
+      const myReload = reloadSeq;
+      mountBoardShell();
+      editorEl = null;
+      sectionsEl.innerHTML = '';
+      sectionsEl.appendChild(el('div', 'tv-empty', 'Loading…'));
+
+      const res = await ask('closed', { project, state, offset, limit: CLOSED_PAGE_SIZE });
+      if (!alive() || my !== closedSeq || mySelect !== selectSeq || myReload !== reloadSeq) return;
+
+      sectionsEl.innerHTML = '';
+      const head = el('div', 'tv-section-head tv-closed-head', 'Closed tickets');
+      head.appendChild(button('tv-back', '← Back', 'Back to the board', () => {
+        closedView = null;
+        goBack();
+      }));
+      for (const [label, value] of [['All', 'all'], ['Done', 'done'], ['Cancelled', 'cancelled']]) {
+        head.appendChild(button(value === state ? 'tv-filter tv-filter-active' : 'tv-filter', label,
+          `Show ${label.toLowerCase()} tickets`, () => {
+            renderClosed(project, { state: value, offset: 0 }).catch((e) => rhost.log.error('closed failed', e));
+          }));
+      }
+      sectionsEl.appendChild(head);
+
+      if (!res.ok) {
+        sectionsEl.appendChild(el('div', 'tv-error', `Could not list closed tickets: ${res.error || 'unknown error'}`));
+        return;
+      }
+      const rows = Array.isArray(res.rows) ? res.rows : [];
+      if (!rows.length) {
+        sectionsEl.appendChild(el('div', 'tv-empty', 'no closed tickets'));
+        return;
+      }
+      const list = el('div', 'tv-hits');
+      for (const r of rows) list.appendChild(closedRow(r));
+      sectionsEl.appendChild(list);
+
+      const pager = el('div', 'tv-pager', pagerText(res.offset, rows.length, res.total));
+      const newer = button('tv-pager-btn', 'Newer', 'The previous page', () => {
+        renderClosed(project, { state, offset: Math.max(0, res.offset - res.limit) })
+          .catch((e) => rhost.log.error('closed failed', e));
+      });
+      newer.disabled = res.offset <= 0;
+      const older = button('tv-pager-btn', 'Older', 'The next page', () => {
+        renderClosed(project, { state, offset: res.offset + res.limit })
+          .catch((e) => rhost.log.error('closed failed', e));
+      });
+      older.disabled = res.offset + rows.length >= res.total;
+      pager.appendChild(newer);
+      pager.appendChild(older);
+      sectionsEl.appendChild(pager);
+    }
+
     async function runSearch(q) {
       const my = ++searchSeq;
       const mySelect = selectSeq;
@@ -795,6 +915,7 @@ module.exports.activate = (rhost) => {
       const my = ++selectSeq;
       const myReload = reloadSeq;
       selected = key;
+      closedView = null;
       for (const row of projectsPane.querySelectorAll('.tv-team-row')) {
         row.classList.toggle('tv-selected', row.dataset.tvProject === key);
       }

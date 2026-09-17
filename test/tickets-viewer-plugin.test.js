@@ -1920,6 +1920,7 @@ test('tickets-viewer: the engine registers its reads and its writes, and nothing
       'tickets-viewer:board',
       'tickets-viewer:cancel',
       'tickets-viewer:close',
+      'tickets-viewer:closed',
       'tickets-viewer:editSpec',
       'tickets-viewer:projects',
       'tickets-viewer:search',
@@ -2296,16 +2297,105 @@ test('tickets-viewer: the `ticket` response carries no token/auth/secret/passwor
   } finally { cleanup(); }
 });
 
-test('tickets-viewer: `ticket` and `search` serve the WEB surface, unlike the writers beside them', async () => {
+test('tickets-viewer: `ticket`, `search` and `closed` serve the WEB surface, unlike the writers beside them', async () => {
   const { host, home, cleanup } = boot();
   try {
     const key = mkProject(home, '/hist/web');
     writeTicketsAt(home, key, [histTicket('t1', { taskDir: '' })]);
-    for (const [method, payload] of [['ticket', { project: key, id: 't1' }], ['search', { project: key, q: 't1' }]]) {
+    for (const [method, payload] of [['ticket', { project: key, id: 't1' }], ['search', { project: key, q: 't1' }], ['closed', { project: key }]]) {
       assert.equal((await host.dispatch('tickets-viewer', method, [payload], 'web')).ok, true,
         `${method} must serve the web surface`);
       assert.equal((await host.dispatch('tickets-viewer', method, [payload], 'desktop')).ok, true,
         `${method} serves the desktop too`);
     }
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: `closed` lists done AND cancelled newest-first, and `state` narrows it', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/closed/order');
+    writeTicketsAt(home, key, [
+      histTicket('t1', { state: 'done', closedAt: 1000 }),
+      histTicket('t2', { state: 'cancelled', closedAt: 3000 }),
+      histTicket('t3', { state: 'done', closedAt: 2000 }),
+      histTicket('t4', { state: 'open', closedAt: null }),
+    ]);
+
+    const all = await host.dispatch('tickets-viewer', 'closed', [{ project: key }], 'desktop');
+    assert.equal(all.ok, true);
+    assert.equal(all.total, 3, 'ENTER: the open record is not in the population this pages over');
+    assert.deepEqual(all.rows.map((r) => r.id), ['t2', 't3', 't1'], 'newest closing first');
+    assert.deepEqual(all.rows[0], {
+      id: 't2', title: 'title t2', state: 'cancelled', assignee: 'hand',
+      closedAt: 3000, verdict: null, rounds: 0,
+    }, 'exactly the projected fields, and nothing the record carries beside them');
+
+    const done = await host.dispatch('tickets-viewer', 'closed', [{ project: key, state: 'done' }], 'desktop');
+    assert.deepEqual(done.rows.map((r) => r.id), ['t3', 't1']);
+    assert.equal(done.total, 2, 'total counts the FILTERED population, not the board');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: `closed` pages with offset and limit, and total stays the whole population', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/closed/paging');
+    writeTicketsAt(home, key, [
+      histTicket('t1', { closedAt: 1000 }),
+      histTicket('t2', { closedAt: 2000 }),
+      histTicket('t3', { closedAt: 3000 }),
+    ]);
+
+    const first = await host.dispatch('tickets-viewer', 'closed', [{ project: key, limit: 2, offset: 0 }], 'desktop');
+    assert.deepEqual(first.rows.map((r) => r.id), ['t3', 't2']);
+    assert.equal(first.total, 3);
+    assert.equal(first.offset, 0);
+    assert.equal(first.limit, 2);
+
+    const second = await host.dispatch('tickets-viewer', 'closed', [{ project: key, limit: 2, offset: 2 }], 'desktop');
+    assert.deepEqual(second.rows.map((r) => r.id), ['t1'], 'the tail page is short, not wrapped');
+    assert.equal(second.total, 3);
+
+    const past = await host.dispatch('tickets-viewer', 'closed', [{ project: key, limit: 2, offset: 5 }], 'desktop');
+    assert.deepEqual(past.rows, [], 'an offset past the end is empty, not an error');
+    assert.equal(past.total, 3, 'and still reports how much there was');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: `closed` clamps the page size and refuses a state that is not a closed one', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/closed/limits');
+    writeTicketsAt(home, key, [histTicket('t1')]);
+
+    const huge = await host.dispatch('tickets-viewer', 'closed', [{ project: key, limit: 500 }], 'desktop');
+    assert.equal(huge.ok, true);
+    assert.equal(huge.limit, 100);
+
+    const dflt = await host.dispatch('tickets-viewer', 'closed', [{ project: key }], 'desktop');
+    assert.equal(dflt.limit, 50);
+
+    const open = await host.dispatch('tickets-viewer', 'closed', [{ project: key, state: 'open' }], 'desktop');
+    assert.equal(open.ok, false, 'this verb pages CLOSED tickets; an open filter is a caller bug');
+    assert.match(open.error, /done, cancelled, all/);
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: the `closed` response carries no token/auth/secret/password key at any depth', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/closed/secrets');
+    writeTicketsAt(home, key, [histTicket('t8', {
+      token: 'sk-do-not-serve-this',
+      cost: { usd: 1, auth: 'bearer nope' },
+      rounds: [{ round: 1, secret: 'nope' }],
+    })]);
+
+    const res = await host.dispatch('tickets-viewer', 'closed', [{ project: key }], 'desktop');
+    assert.equal(res.ok, true);
+    assert.equal(res.rows.length, 1, 'ENTER: the record carrying those keys really came back as a row');
+    assert.equal(res.rows[0].rounds, 1, 'and its rounds were counted, not copied');
+    assert.equal(findSecretKey(res), null, 'a secret-named key anywhere in the response');
   } finally { cleanup(); }
 });

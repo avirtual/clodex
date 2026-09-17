@@ -1563,3 +1563,225 @@ test('a teamCost read that FAILED leaves the board intact and silent', async () 
     assert.equal(allByClass(root, 'tv-team-cost').length, 0, 'and the failed total renders nothing');
   });
 });
+
+function closedRes(over = {}) {
+  return { ok: true, rows: [], total: 0, offset: 0, limit: 50, ...over };
+}
+
+function closedRow(id, over = {}) {
+  return { id, title: `title ${id}`, state: 'done', assignee: 'hand', closedAt: Date.now() - HOUR, verdict: null, rounds: 0, ...over };
+}
+
+function closedBoard(over = {}) {
+  return {
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({
+      open: [shaped('t1', { title: 'the open one' })],
+      counts: { ...boardRes().counts, open: 1, done: 12, cancelled: 3 },
+    }),
+    ...over,
+  };
+}
+
+function summaryNode(root) {
+  return allByClass(root, 'tv-summary')[0] || null;
+}
+
+test('the done/cancelled trailer is a BUTTON that opens the closed list, and a plain line when there is nothing closed', async () => {
+  await withDom(closedBoard({ closed: closedRes() }), async ({ root, rhost, settle }) => {
+    const line = summaryNode(root);
+    assert.ok(line, 'ENTER: the trailer really rendered');
+    assert.match(String(line.className), /tv-summary-link/);
+    assert.equal(line.title, 'Browse closed tickets');
+    assert.equal(line.tabIndex, 0, 'reachable by keyboard, not mouse-only');
+
+    line.click();
+    await settle();
+    const asked = rhost._calls.filter((c) => c.method === 'closed');
+    assert.equal(asked.length, 1);
+    assert.deepEqual(asked[0].arg, { project: 'proj-1234abcd', state: 'all', offset: 0, limit: 50 });
+  });
+
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({
+      open: [shaped('t1')],
+      counts: { ...boardRes().counts, open: 1, done: 0, cancelled: 0, malformed: 2 },
+    }),
+  }, async ({ root, rhost, settle }) => {
+    const line = summaryNode(root);
+    assert.ok(line, 'ENTER: a trailer with only unreadable records still renders');
+    assert.doesNotMatch(String(line.className), /tv-summary-link/,
+      'nothing closed means nothing to browse, so the line is not a door');
+    line.click();
+    await settle();
+    assert.equal(rhost._calls.filter((c) => c.method === 'closed').length, 0);
+  });
+});
+
+test('a closed row shows its outcome, and clicking it opens that ticket\'s history', async () => {
+  await withDom(closedBoard({
+    closed: closedRes({
+      rows: [
+        closedRow('t40', { title: 'the cache one', verdict: 'ACCEPT', rounds: 2 }),
+        closedRow('t41', { title: 'the abandoned one', state: 'cancelled', assignee: '', verdict: null, rounds: 0 }),
+      ],
+      total: 2,
+    }),
+    ticket: (arg) => ({ ok: true, ticket: detail(arg.id, { spec: `deep in ${arg.id}` }) }),
+  }), async ({ root, rhost, settle }) => {
+    summaryNode(root).click();
+    await settle();
+
+    const text = textOf(root).join('\n');
+    assert.match(text, /t40/);
+    assert.match(text, /the cache one/);
+    assert.match(text, /ACCEPT/);
+    assert.match(text, /2 rounds/);
+    assert.match(text, /closed 1h ago/);
+    assert.match(text, /unassigned/, 'a row nobody held says so rather than showing a blank');
+    assert.match(text, /cancelled/);
+    assert.match(classesOf(root).join(' '), /tv-verdict-accept/);
+
+    headOf(root, 't40').click();
+    await settle();
+    const opened = rhost._calls.filter((c) => c.method === 'ticket');
+    assert.equal(opened.length, 1);
+    assert.equal(opened[0].arg.id, 't40');
+    assert.match(textOf(root).join('\n'), /deep in t40/);
+  });
+});
+
+test('the pager disables the edge it is at and walks the other way', async () => {
+  await withDom(closedBoard({
+    closed: closedRes({ rows: Array.from({ length: 50 }, (_, i) => closedRow(`t${i}`)), total: 120, offset: 0 }),
+  }), async ({ root, rhost, settle }) => {
+    summaryNode(root).click();
+    await settle();
+
+    assert.match(textOf(root).join('\n'), /1–50 of 120/);
+    assert.equal(buttonLabelled(root, 'Newer').disabled, true, 'there is nothing newer than the first page');
+    assert.equal(buttonLabelled(root, 'Older').disabled, false);
+
+    buttonLabelled(root, 'Older').click();
+    await settle();
+    const asked = rhost._calls.filter((c) => c.method === 'closed');
+    assert.equal(asked.length, 2);
+    assert.deepEqual(asked[1].arg, { project: 'proj-1234abcd', state: 'all', offset: 50, limit: 50 });
+  });
+
+  await withDom(closedBoard({
+    closed: closedRes({ rows: Array.from({ length: 20 }, (_, i) => closedRow(`t${i}`)), total: 120, offset: 100 }),
+  }), async ({ root, settle }) => {
+    summaryNode(root).click();
+    await settle();
+    assert.match(textOf(root).join('\n'), /101–120 of 120/);
+    assert.equal(buttonLabelled(root, 'Older').disabled, true, 'the last page has nothing older');
+    assert.equal(buttonLabelled(root, 'Newer').disabled, false);
+  });
+});
+
+test('picking a state filter re-asks from the FIRST page, not from wherever the reader was', async () => {
+  await withDom(closedBoard({
+    closed: (arg) => closedRes({ rows: [closedRow(`t${arg.offset}`)], total: 120, offset: arg.offset }),
+  }), async ({ root, rhost, settle }) => {
+    summaryNode(root).click();
+    await settle();
+    buttonLabelled(root, 'Older').click();
+    await settle();
+    assert.match(textOf(root).join('\n'), /51–51 of 120/, 'ENTER: the reader really walked off page one');
+
+    buttonLabelled(root, 'Done').click();
+    await settle();
+    const asked = rhost._calls.filter((c) => c.method === 'closed');
+    assert.deepEqual(asked[asked.length - 1].arg,
+      { project: 'proj-1234abcd', state: 'done', offset: 0, limit: 50 });
+  });
+});
+
+test('a closed list that FAILED and one that is EMPTY do not paint the same', async () => {
+  await withDom(closedBoard({ closed: { ok: false, error: 'tickets.json is not valid JSON' } }),
+    async ({ root, settle }) => {
+      summaryNode(root).click();
+      await settle();
+      const text = textOf(root).join('\n');
+      assert.match(text, /Could not list closed tickets/);
+      assert.match(text, /not valid JSON/);
+      assert.match(classesOf(root).join(' '), /tv-error/);
+      assert.doesNotMatch(text, /no closed tickets/);
+    });
+
+  await withDom(closedBoard({ closed: closedRes() }), async ({ root, settle }) => {
+    summaryNode(root).click();
+    await settle();
+    assert.match(textOf(root).join('\n'), /no closed tickets/);
+    assert.doesNotMatch(classesOf(root).join(' '), /tv-error/);
+  });
+});
+
+test('a closed row\'s title and verdict render as TEXT, never as elements', async () => {
+  await withDom(closedBoard({
+    closed: closedRes({
+      rows: [closedRow('t40', { title: 'title <b>bold</b> <img src=x onerror="boom()">', verdict: 'ACCEPT <b>bold</b>' })],
+      total: 1,
+    }),
+  }), async ({ root, settle }) => {
+    summaryNode(root).click();
+    await settle();
+    const text = textOf(root).join('\n');
+    assert.match(text, /title <b>bold<\/b>/);
+    assert.match(text, /ACCEPT <b>bold<\/b>/);
+    assert.equal(root.querySelector('b'), null, 'and never became an element');
+    assert.equal(root.querySelector('img'), null);
+  });
+});
+
+test('Back from a closed row returns to the closed list at the same page and filter', async () => {
+  await withDom(closedBoard({
+    closed: (arg) => closedRes({
+      rows: [closedRow(`t${arg.offset}`, { title: `page at ${arg.offset} of ${arg.state}` })],
+      total: 120,
+      offset: arg.offset,
+    }),
+    ticket: (arg) => ({ ok: true, ticket: detail(arg.id, { spec: 'deep in the history' }) }),
+  }), async ({ root, rhost, settle }) => {
+    summaryNode(root).click();
+    await settle();
+    buttonLabelled(root, 'Done').click();
+    await settle();
+    buttonLabelled(root, 'Older').click();
+    await settle();
+    assert.match(textOf(root).join('\n'), /page at 50 of done/, 'ENTER: the reader is on page two of the done filter');
+
+    headOf(root, 't50').click();
+    await settle();
+    assert.match(textOf(root).join('\n'), /deep in the history/, 'ENTER: the row really opened');
+
+    const boardsBefore = rhost._calls.filter((c) => c.method === 'board').length;
+    buttonLabelled(root, '← Back').click();
+    await settle();
+
+    const asked = rhost._calls.filter((c) => c.method === 'closed');
+    assert.deepEqual(asked[asked.length - 1].arg,
+      { project: 'proj-1234abcd', state: 'done', offset: 50, limit: 50 });
+    assert.match(textOf(root).join('\n'), /page at 50 of done/, 'and the same page is on screen');
+    assert.equal(rhost._calls.filter((c) => c.method === 'board').length, boardsBefore,
+      'the board is not re-read: it is not what the reader was looking at');
+  });
+});
+
+test('Back from the closed LIST returns to the board, and selecting a project forgets the list', async () => {
+  await withDom(closedBoard({ closed: closedRes({ rows: [closedRow('t40')], total: 1 }) }),
+    async ({ root, rhost, settle }) => {
+      summaryNode(root).click();
+      await settle();
+      const boardsBefore = rhost._calls.filter((c) => c.method === 'board').length;
+
+      buttonLabelled(root, '← Back').click();
+      await settle();
+
+      assert.match(textOf(root).join('\n'), /the open one/, 'the board is back');
+      assert.ok(rhost._calls.filter((c) => c.method === 'board').length > boardsBefore,
+        'and it was re-read rather than restored from a stale render');
+    });
+});

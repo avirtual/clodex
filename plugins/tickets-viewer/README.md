@@ -19,8 +19,9 @@ The write half is **desktop-only**, and the mechanism is that it is absent from
 `manifest.json`'s `surfaces`: a board reachable from a browser would be a board
 a browser can close tickets on. Adding a write verb there is the mistake this
 omission prevents. The reads are listed there and serve any surface — `projects`,
-`teams`, `board`, `sessions`, `teamCost`, and `ticket` and `search`, which read a
-past ticket's history — because reading a board from a browser closes nothing.
+`teams`, `board`, `sessions`, `teamCost`, and `ticket`, `search` and `closed`,
+which read past tickets' history — because reading a board from a browser closes
+nothing.
 
 A write here is the operator's own edit of the board, **not an impersonation of
 the intent path**, and that is a capability boundary rather than a taste
