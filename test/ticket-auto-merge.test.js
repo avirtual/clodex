@@ -33,6 +33,15 @@ const { createTeamManifest } = require('../team-manifest');
 const { createRemindScheduler } = require('../remind-scheduler');
 const { initStores } = require('../stores');
 
+// A THROWAWAY registryDir: initStores SEEDS the shipped prompt library into the
+// dir it is handed, and pointing it at `home` would plant prompts the
+// reviewer-spawn subjects read. Seeded once per file; reminders isolate anyway.
+let SEED_DIR = null;
+function seedDir() {
+  if (!SEED_DIR) SEED_DIR = mkTmpRoot('clodex-merge-seed-');
+  return SEED_DIR;
+}
+
 const SHIPPED_REVIEWER_TEMPLATE = {
   name: 'clodex-team-reviewer',
   systemPromptFile: 'clodex-team-reviewer',
@@ -147,14 +156,12 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
   const home = mkTmpRoot('clodex-merge-');
   const userData = mkTmpRoot('clodex-merge-userdata-');
   const manifest = createTeamManifest({ fs: fsReal, clodexHome: home });
+  const reminders = initStores(userData, { log: console, registryDir: seedDir() }).reminders;
   const scheduler = createRemindScheduler({
     now: () => Date.now(),
     setTimer: () => null,
     clearTimer: () => {},
-    // registryDir is a THROWAWAY: initStores SEEDS the shipped prompt library
-    // into the dir it is handed, and pointing it at `home` would plant prompts
-    // the reviewer-spawn subjects read.
-    store: initStores(userData, { log: console, registryDir: mkTmpRoot('clodex-merge-seed-') }).reminders,
+    store: reminders,
     deliver: () => {},
   });
   const pdir = pathReal.join(home, 'library', 'prompts', 'system');
@@ -302,6 +309,7 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
 
   return {
     m, team, home, tstore, persistence, injected, gated, tags, broadcasts, created, seat, logs, deps,
+    reminders,
     one: (id = 't1') => tstore.load(team.root).find((t) => t.id === id),
     esc: () => gated.filter((g) => /ESCALATED/.test(g.body)),
     // The notice's HEADER, not the word anywhere in the body: t817 gave the
@@ -322,6 +330,16 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
 
 const ACCEPT = 'VERDICT: ACCEPT\n\nMUST-FIX\n(none)\n\nNITS\n- the comment could be shorter\n';
 const LANDED = { verdict: 'ACCEPT', mustFix: null, reviewRound: 1 };
+
+test('t955: the once-per-file seed dir does not leak reminders between fixtures', () => {
+  const a = mkMerge({ repo: mkRepo() });
+  assert.deepEqual(a.reminders.list(), []);
+  a.reminders.add({ agent: 'team-hand', kind: 'in', spec: 'in 5m', body: 'from A' });
+  assert.equal(a.reminders.list().length, 1);
+  const b = mkMerge({ repo: mkRepo() });
+  assert.deepEqual(b.reminders.list(), []);
+  assert.equal(a.reminders.list().length, 1);
+});
 
 // ── the green path: the branch actually lands ──────────────────────────────
 
