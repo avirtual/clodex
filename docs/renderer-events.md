@@ -54,7 +54,7 @@ reattach — a web host needs the same replay-on-connect for a reloaded tab.
 |---|---|---|
 | `pty-data` | `name, data` (data = raw PTY chunk; base64 over WS) | session-manager (PTY onData) |
 | `session-exit` | `name, exitCode` | session-manager (ptyProc.onExit) |
-| `session-activity` | `name, state, turnEnd` (`working`/`idle`; `turnEnd` false for the gap timer's mid-turn idle; on the JSONL path it is `state === 'idle'`, so an inter-tool flush reports true as well — a consumer needs its own quiet-window evidence) | session-manager `_emitActivity` |
+| `session-activity` | `name, state, turnEnd` (`working`/`idle`; `turnEnd` false for the gap timer's mid-turn idle; on the transcript-watched path it is true only for a flush whose entry is a terminal end-of-turn — Claude `stop_reason: end_turn`, Codex `task_complete` — not for every idle, so an inter-tool flush reports false) | session-manager `_emitActivity` |
 | `session-ctx` | `name, pct, tok, size, cost, modelName` | session-manager (ctx poll) |
 | `session-proxy` | `name, payload` (status-bar telemetry snapshot; wire-overlay shape) | wirescope-proxy poller |
 | `session-files` | `name, files` (fileTouches array) | session-manager |

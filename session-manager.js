@@ -2165,7 +2165,7 @@ function createSessionManager(deps) {
           name,
           (text, touches, meta) => this._scanJsonlText(text, name, touches, meta),
           onSessionId,
-          (state) => this._emitActivity(name, state, state === 'idle'),
+          (state, turnEnd) => this._emitActivity(name, state, state === 'idle' && !!turnEnd),
           () => this._fireCompactContinuation(session),
           (touches) => this._noteFileTouches(session, touches),
         );

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **`clodexctl exec` waits for the whole turn.** The wire's activity event now reports a turn end only when the agent actually stops, so `exec` (and the in-app console) returns with the full reply instead of settling on the first tool call.
+
 ## 5.74.0 — 2026-09-17
 
 - **Every closed ticket is one click away.** The board's done and cancelled counts open a paged list of every closed ticket, newest first, filterable by outcome, and each row opens that ticket's full history.
