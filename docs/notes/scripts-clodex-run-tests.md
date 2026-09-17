@@ -96,13 +96,15 @@ behind the box-wide lock — which is the cost this scope was added to avoid.
 
 ## subjectMatchers
 
-A test is selected for a changed source by a relative `require()` target or by
-the changed file's repo-relative path appearing literally (how the source-shape
-tests name `renderer/renderer.js`, and how `test/stores.test.js` names a prompt
-under `resources/library/prompts/system/`). The third rule widens the first past
-`require(` to ANY quoted `./` or `../` string in the test, because a subject can
-be reached without requiring it at all — `spawnSync(process.execPath, ['../scripts/foo.js'])`
-names its subject in a string no `require` regex sees.
+A test is selected for a changed source by a quoted relative path it contains —
+`./` or `../` prefixed, resolved against the test's own directory — matching the
+changed file's `rel` or its `.js`-stripped stem, or by that `rel` appearing
+literally anywhere in the text (how the source-shape tests name
+`renderer/renderer.js`, and how `test/stores.test.js` names a prompt under
+`resources/library/prompts/system/`). The relative-path rule is deliberately not
+anchored to `require(`: a subject can be reached without requiring it at all —
+`spawnSync(process.execPath, ['../scripts/foo.js'])` names its subject in a
+string no `require` regex sees.
 
 The subject set is every live non-test path the branch touched, not only `.js`:
 a branch that changes an exec definition or a prompt has a subject, and only the
@@ -118,7 +120,7 @@ branch touching any module in `cli/src` selected ZERO cli tests —
 including `cli/test/attach.test.js`, the file `LOCK_BOUND` exists for — and
 reported `0 by subject` as though nothing needed running.
 
-Every rule is textual, so a subject reached only through a path the reader
+Both rules are textual, so a subject reached only through a path the reader
 assembles — `path.join(__dirname, '..', 'scripts', 'x.js')`, a name built from a
 variable — is matched by neither, and no amount of pattern work closes that
 without executing the test. This is why `OWN_SCANNERS` runs unconditionally: the
