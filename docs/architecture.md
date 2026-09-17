@@ -339,6 +339,10 @@ bundle), whose packaged form is the Docker image under
 - **remind-scheduler.js** — the durable-schedule ENGINE that ties that math to
   the `reminders` store and drives delivery. The only piece with timers; clock
   and timer primitives are injected.
+- **verdict-nudge.js** — the pure predicate behind the prose-verdict nudge: a
+  reviewer seat's flushed turn reads as a verdict but carries no
+  `[agent:review-done]`, so the loop tells it once to re-emit through the
+  intent. Dependency-free, so `_scanJsonlText`'s tail stays a one-line call.
 - **wire-intents.js** — intent helpers shared with the wire layer.
 
 ### Teams and tickets

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **A reviewer that writes its verdict as plain text is told to emit it.** When a cold reviewer's turn reads as a verdict but carries no `[agent:review-done]`, Clodex nudges it once to re-emit the verdict through the intent, so a review no longer waits on someone noticing.
+
 - **The sidebar's Find bar folds away.** The search box and its four filters now sit under a Find header that collapses like a session group, and remembers its state per workspace; folded, the header shows the criteria in effect, so a filtered list never looks like a short one.
 
 - **Restarting a headless node that nothing would bring back is refused instead of fatal.** The peer Restart button and the web view's Restart Clodex… decline on a headless node with no supervisor (`CLODEX_SUPERVISED` unset) and say what to set; on a supervised node the web view's Restart Clodex… now restarts it.

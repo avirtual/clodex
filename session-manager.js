@@ -475,6 +475,7 @@ function peerOriginSuffix(p, nameRe = ORIGIN_NAME_RE) {
 }
 
 const { speakable } = require('./speakable');
+const { proseVerdictNeedsNudge, PROSE_VERDICT_NUDGE } = require('./verdict-nudge');
 const { expandSkillsOff } = require('./skills-off');
 
 function dmContentKey(senderTag, body) {
@@ -4522,7 +4523,8 @@ function createSessionManager(deps) {
           files: Array.isArray(touches) ? touches : [],
         });
       }
-      for (const intent of this._extractIntents(text)) {
+      const intents = this._extractIntents(text);
+      for (const intent of intents) {
         if (meta && meta.interrupted && intent.bodyOpen) {
           if (s) this._injectText(s, `[agent:intent] your turn was interrupted while the body of `
             + `[agent:${intent.type}${intent.sub ? ' ' + intent.sub : ''}] was still open — `
@@ -4539,6 +4541,11 @@ function createSessionManager(deps) {
           } catch { /* shadow only */ }
         }
         this._handleIntent(senderName, intent);
+      }
+      if (proseVerdictNeedsNudge({ text, intents, session: s })) {
+        s._verdictNudged = true;
+        log.info('team', `reviewer ${senderName} wrote a verdict with no review-done intent — nudged once`);
+        this._deliverParkedActive(senderName, s.reviewFor, PROSE_VERDICT_NUDGE, 'dm');
       }
     }
 
