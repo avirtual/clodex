@@ -41,6 +41,7 @@ function writeStub(root, { body, exit }) {
     '  lockDir: process.env.CLODEX_TEST_LOCK_DIR || null,',
     '  lockWait: process.env.CLODEX_TEST_LOCK_WAIT_MS || null,',
     '  lock: process.env.CLODEX_TEST_LOCK || null,',
+    '  advisory: process.env.CLODEX_TEST_SLOW_ADVISORY || null,',
     '  reexec: process.env.CLODEX_RUN_TESTS_REEXEC || null,',
     '  cwd: process.cwd(),',
     '}));',
@@ -52,6 +53,7 @@ function writeStub(root, { body, exit }) {
 function run(root, payload, { home = path.join(root, 'home'), env = {} } = {}) {
   const base = { ...process.env, HOME: home, CLODEX_HOME: path.join(home, '.clodex') };
   delete base.CLODEX_RUN_TESTS_REEXEC;
+  delete base.CLODEX_TEST_SLOW_ADVISORY;
   const res = spawnSync(process.execPath, [SCRIPT], {
     cwd: root,
     input: payload,
@@ -877,6 +879,55 @@ test('scope own: CLODEX_TEST_LOCK is set only when the set reaches a port-bindin
     assert.strictEqual(rec.lock, '1',
       `${portBound} binds a real port, so this run must serialize like a full one or both deadlock`);
   } finally { fs.rmSync(bound, { recursive: true, force: true }); }
+});
+
+test('scope own: the slow gate is advisory only for an own run that took no lock', () => {
+  const unlocked = mkRoot();
+  try {
+    mkBranchRepo(unlocked, {
+      extraOnMaster: { 'test/alpha.test.js': EMPTY_TEST },
+      onBranch: ({ put: p, git: g }) => {
+        p('test/alpha.test.js', `${EMPTY_TEST}// edited\n`);
+        g('commit', '-aqm', 'branch work');
+      },
+    });
+    run(unlocked, '{"scope":"own"}');
+    const rec = stubRecord(unlocked);
+    assert.ok(rec, 'ENTER: the runner never ran');
+    assert.strictEqual(rec.advisory, '1',
+      'an own run takes no suite lock, so it overlaps the merge gate and an in-memory test can '
+      + 'balloon past six seconds on load — failing the hand over a green suite');
+  } finally { fs.rmSync(unlocked, { recursive: true, force: true }); }
+
+  const locked = mkRoot();
+  try {
+    const portBound = LOCK_BOUND[0];
+    mkBranchRepo(locked, {
+      extraOnMaster: { [portBound]: EMPTY_TEST },
+      onBranch: ({ put: p, git: g }) => {
+        p(portBound, `${EMPTY_TEST}// edited\n`);
+        g('commit', '-aqm', 'branch work');
+      },
+    });
+    run(locked, '{"scope":"own"}', { env: { CLODEX_TEST_SLOW_ADVISORY: '1' } });
+    const rec = stubRecord(locked);
+    assert.ok(rec, 'ENTER: the runner never ran');
+    assert.strictEqual(rec.lock, '1', 'ENTER: this set must have taken the lock');
+    assert.strictEqual(rec.advisory, null,
+      'a locked own run has the box to itself, so its timings are real and an inherited value must '
+      + 'not soften the bar');
+  } finally { fs.rmSync(locked, { recursive: true, force: true }); }
+
+  const full = mkRoot();
+  try {
+    writeStub(full, { body: "console.log('TOTALS: 1 pass, 0 fail, 1 tests');", exit: 0 });
+    run(full, '{}', { env: { CLODEX_TEST_SLOW_ADVISORY: '1' } });
+    const rec = stubRecord(full);
+    assert.ok(rec, 'ENTER: the runner never ran');
+    assert.strictEqual(rec.advisory, null,
+      'the full run IS the merge gate; an inherited value reaching it disarms the six-second bar '
+      + 'for the only run that enforces it');
+  } finally { fs.rmSync(full, { recursive: true, force: true }); }
 });
 
 const MARKER = 'MEASURED-COPY-RAN';

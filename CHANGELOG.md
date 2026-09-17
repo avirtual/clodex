@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **A hand's own test run no longer fails on a slow test.** An unlocked, own-scope run cannot tell a slow test from a busy machine, so it reports the timing and passes; the merge gate's locked run still enforces the six-second bar.
+
 ## 5.72.0 — 2026-09-17
 
 - **A reviewer that writes its verdict as plain text is told to emit it.** When a cold reviewer's turn reads as a verdict but carries no `[agent:review-done]`, Clodex nudges it once to re-emit the verdict through the intent, so a review no longer waits on someone noticing.
