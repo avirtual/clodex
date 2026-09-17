@@ -1,21 +1,5 @@
 'use strict';
 
-// A cascade resolver for source-shape pins: given a stylesheet and an element
-// chain, answer WHICH rule wins a property. Substring pins ("the file carries
-// this rule") cannot see the class of bug that put this file here — a rule that
-// is present, correct and outranked. Two of them shipped in the chrome layer:
-// `.dialog-head h3 { margin: 0 }` (0,1,1) sitting under `#dialog h3` (1,0,1),
-// and `#dialog label.agent-check input { height: auto }` under a later
-// `#dialog input` (the layer's control treatment). Both read fine in the source
-// and did nothing in the browser.
-//
-// Deliberately partial: descendant combinators, ids, classes, `[attr="v"]` and
-// tag names only. A selector carrying `:`, `>`, `+` or `~` is skipped, which is
-// SAFE for these pins — the skipped rule can only be one that would have won,
-// so a skip costs a false pass, never a false red. Callers assert on the
-// returned selector, so a resolver that stopped seeing the real winner says so
-// by naming a different one.
-
 function parseRules(src) {
   const stripped = src.replace(/\/\*[\s\S]*?\*\//g, ' ');
   const rules = [];
@@ -87,8 +71,6 @@ function specificity(selector) {
   return ids * 10000 + cls * 100 + tags;
 }
 
-// The winner for `prop` on `chain`: higher specificity first, source order as
-// the tiebreak — the two things that decided both bugs above.
 function winningDeclaration(css, chain, prop) {
   let best = null;
   const re = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`);

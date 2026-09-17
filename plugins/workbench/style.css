@@ -30,7 +30,7 @@
   min-width: 560px; min-height: 360px; resize: both;
   display: flex; flex-direction: column; overflow: hidden;
   background: var(--sidebar-bg); border: 1px solid var(--accent);
-  border-radius: 8px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  border-radius: 8px; box-shadow: var(--shadow-overlay);
 }
 .workbench-topbar {
   display: flex; align-items: center; gap: 10px; cursor: move;
@@ -74,8 +74,8 @@
 .workbench-editor { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .wb-editor-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); flex: none; }
 .wb-editor-path { flex: 1; font-size: 11px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
-.wb-dirty { color: var(--warn, #d19a66); font-size: 14px; }
-.wb-editor-bar button { background: var(--accent); border: none; color: #fff; border-radius: 6px; padding: 3px 12px; font-size: 11px; cursor: pointer; }
+.wb-dirty { color: var(--warn); font-size: 14px; }
+.wb-editor-bar button { background: var(--accent); border: none; color: var(--accent-fg); border-radius: 6px; padding: 3px 12px; font-size: 11px; cursor: pointer; }
 .wb-editor-bar button:disabled { opacity: 0.45; cursor: default; }
 .wb-textarea {
   flex: 1; width: 100%; box-sizing: border-box; resize: none;
@@ -110,9 +110,9 @@
 .scm-file:hover { background: var(--sidebar-hover); }
 .scm-file.selected { background: var(--active-bg); }
 .scm-file-status { width: 14px; text-align: center; font-weight: 700; flex: 0 0 auto; }
-.scm-file-status.modified { color: var(--warn, #d19a66); }
-.scm-file-status.added { color: var(--ok, #98c379); }
-.scm-file-status.deleted { color: var(--error, #e06c75); }
+.scm-file-status.modified { color: var(--warn); }
+.scm-file-status.added { color: var(--ok); }
+.scm-file-status.deleted { color: var(--error); }
 .scm-file-status.untracked { color: var(--text-dim); }
 .scm-file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
 .scm-file-actions { display: none; gap: 4px; flex: 0 0 auto; }
@@ -121,7 +121,7 @@
 .scm-file-actions button:hover { color: var(--text); }
 .wb-commit-box { border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; flex: none; }
 .wb-commit-msg { width: 100%; box-sizing: border-box; resize: vertical; background: var(--input-bg, var(--active-bg)); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px; font-family: inherit; }
-.wb-commit-box button { background: var(--accent); border: none; color: #fff; border-radius: 6px; padding: 5px; font-size: 12px; cursor: pointer; }
+.wb-commit-box button { background: var(--accent); border: none; color: var(--accent-fg); border-radius: 6px; padding: 5px; font-size: 12px; cursor: pointer; }
 .wb-commit-box button:disabled { opacity: 0.45; cursor: default; }
 
 /* Active-root indicator — shown ONLY when the root is not the session cwd.
@@ -157,7 +157,7 @@
 .worktree-item button { background: transparent; border: 1px solid var(--border); color: var(--text-dim); border-radius: 6px; padding: 2px 7px; font-size: 11px; cursor: pointer; }
 .worktree-item button:hover { color: var(--text); background: var(--sidebar-hover); }
 .worktrees-add { border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; flex: none; }
-.worktrees-add button { background: var(--accent); border: none; color: #fff; border-radius: 6px; padding: 5px; font-size: 12px; cursor: pointer; }
+.worktrees-add button { background: var(--accent); border: none; color: var(--accent-fg); border-radius: 6px; padding: 5px; font-size: 12px; cursor: pointer; }
 /* Diff coloring inside .wb-diff is shared with the file-peek modal (.diff-* above). */
 
 /* Per-id display:none rules — the css-hidden-invariant test requires each

@@ -10,9 +10,9 @@
   width: min(900px, 92vw);
   height: min(620px, 84vh);
   margin: 6vh auto 0;
-  background: var(--bg, #1e1e1e);
+  background: var(--surface-overlay);
   color: inherit;
-  border: 1px solid rgba(128, 128, 128, 0.35);
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -22,7 +22,7 @@
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+  border-bottom: 1px solid var(--border);
 }
 
 .tv-title {
@@ -58,7 +58,7 @@
   width: 200px;
   flex-shrink: 0;
   overflow-y: auto;
-  border-right: 1px solid rgba(128, 128, 128, 0.25);
+  border-right: 1px solid var(--border);
   padding: 6px 0;
 }
 
@@ -71,11 +71,11 @@
 }
 
 .tv-team-row:hover {
-  background: rgba(128, 128, 128, 0.12);
+  background: var(--surface-hover);
 }
 
 .tv-team-row.tv-selected {
-  background: rgba(128, 128, 128, 0.2);
+  background: var(--surface-selected);
 }
 
 .tv-team-name {
@@ -92,8 +92,8 @@
 }
 
 .tv-team-stalled {
-  background: rgba(230, 160, 90, 0.18);
-  color: rgb(230, 160, 90);
+  background: var(--warn-soft);
+  color: var(--warn);
   border-radius: 8px;
   padding: 0 6px;
   font-size: 0.8em;
@@ -103,14 +103,14 @@
    a count: the failure mode this plugin exists to avoid is a broken team
    looking like a quiet one. */
 .tv-team-error {
-  color: rgb(230, 110, 110);
+  color: var(--error);
   font-weight: 700;
 }
 
 /* A team whose TICKETS read fine but whose manifest core would refuse. Amber,
    not red: the count beside it is real, which is not true of .tv-team-error. */
 .tv-team-warning {
-  color: rgb(230, 190, 90);
+  color: var(--warn);
 }
 
 /* Unassigned open tickets. Neutral, never the stall amber — nothing is wrong
@@ -152,7 +152,7 @@
 }
 
 .tv-ticket {
-  border: 1px solid rgba(128, 128, 128, 0.25);
+  border: 1px solid var(--border);
   border-left-width: 3px;
   border-radius: 6px;
   padding: 8px 12px;
@@ -160,8 +160,8 @@
 }
 
 .tv-ticket.tv-stalled {
-  border-left-color: rgb(230, 160, 90);
-  background: rgba(230, 160, 90, 0.06);
+  border-left-color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
 }
 
 /* Paired with the precedence in ticketRow's row-class expression, which is what
@@ -170,8 +170,8 @@
    would win by source order on exactly the rows a lead most needs to spot. The
    red is the actionable one; the stall is its consequence. */
 .tv-ticket.tv-merge-failed {
-  border-left-color: rgb(230, 110, 110);
-  background: rgba(230, 110, 110, 0.06);
+  border-left-color: var(--error);
+  background: color-mix(in srgb, var(--error) 8%, transparent);
 }
 
 /* Carries the spec toggle, so it gets .tv-team-row's affordance: without a
@@ -185,7 +185,7 @@
 }
 
 .tv-ticket-head:hover {
-  background: rgba(128, 128, 128, 0.12);
+  background: var(--surface-hover);
 }
 
 .tv-id {
@@ -225,7 +225,7 @@
 }
 
 .tv-stall-flag {
-  color: rgb(230, 160, 90);
+  color: var(--warn);
   font-weight: 600;
 }
 
@@ -234,7 +234,7 @@
    coloured against .tv-merge-waiting's dim regular weight — the pair has to be
    separable at a glance, since the words themselves are two similar phrases. */
 .tv-merge-error {
-  color: rgb(230, 110, 110);
+  color: var(--error);
   font-weight: 600;
 }
 
@@ -262,7 +262,7 @@
 /* Amber, between .tv-empty and .tv-error: the rows below it are real, but the
    team they belong to is one core would refuse to load. */
 .tv-warning {
-  color: rgb(230, 190, 90);
+  color: var(--warn);
   padding: 8px 0 4px;
   font-size: 0.9em;
 }
@@ -299,7 +299,7 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.8em;
   line-height: 1.5;
-  background: rgba(128, 128, 128, 0.08);
+  background: var(--surface-hover);
   border-radius: 4px;
   opacity: 0.85;
 }
@@ -324,7 +324,7 @@
 /* Never styled like .tv-empty: an unreadable board and an empty one must not
    look the same, and colour is the fastest way a user tells them apart. */
 .tv-error {
-  color: rgb(230, 110, 110);
+  color: var(--error);
   padding: 12px;
   line-height: 1.45;
 }
@@ -353,26 +353,26 @@
   font-size: 0.78em;
   padding: 3px 9px;
   border-radius: 4px;
-  border: 1px solid rgba(128, 128, 128, 0.35);
-  background: rgba(128, 128, 128, 0.1);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-hover);
   color: inherit;
   cursor: pointer;
 }
 
 .tv-btn:hover {
-  background: rgba(128, 128, 128, 0.22);
+  background: var(--surface-selected);
 }
 
 .tv-btn-primary {
-  border-color: rgba(110, 160, 230, 0.55);
-  background: rgba(110, 160, 230, 0.18);
+  border-color: var(--info);
+  background: var(--info-soft);
 }
 
 /* Cancel is the one action with no counterpart on the board — nothing here
    reopens a ticket — so it is the one that gets a colour. */
 .tv-btn-danger:hover {
-  background: rgba(230, 110, 110, 0.22);
-  border-color: rgba(230, 110, 110, 0.5);
+  background: var(--error-soft);
+  border-color: var(--error);
 }
 
 .tv-assign {
@@ -380,8 +380,8 @@
   font-size: 0.78em;
   padding: 2px 6px;
   border-radius: 4px;
-  border: 1px solid rgba(128, 128, 128, 0.35);
-  background: rgba(128, 128, 128, 0.1);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-hover);
   color: inherit;
   max-width: 190px;
 }
@@ -395,9 +395,9 @@
 .tv-editor {
   margin: 8px 0 14px;
   padding: 12px;
-  border: 1px solid rgba(110, 160, 230, 0.4);
+  border: 1px solid var(--info);
   border-radius: 6px;
-  background: rgba(128, 128, 128, 0.06);
+  background: var(--surface-hover);
 }
 
 .tv-editor-head {
@@ -418,8 +418,8 @@
   line-height: 1.5;
   padding: 8px 10px;
   border-radius: 4px;
-  border: 1px solid rgba(128, 128, 128, 0.35);
-  background: rgba(128, 128, 128, 0.08);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-hover);
   color: inherit;
 }
 
@@ -440,8 +440,8 @@
   font-size: 0.8em;
   padding: 3px 6px;
   border-radius: 4px;
-  border: 1px solid rgba(128, 128, 128, 0.35);
-  background: rgba(128, 128, 128, 0.1);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-hover);
   color: inherit;
 }
 

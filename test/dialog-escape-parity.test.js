@@ -1,8 +1,7 @@
 'use strict';
 
 // dialog-escape-parity.test.js — every full-screen dialog closes on Escape, and
-// the seven with a backdrop binding close on an outside press too, the way every
-// other dismissable surface in the renderer does.
+// those with a backdrop binding close on an outside press too.
 //
 // The reported symptom was "the app is stuck": at the commit this file was first
 // written NO dialog closed on Escape, and the four believed to (peers, plugins,
@@ -72,13 +71,6 @@ const DIALOGS = [
   { label: 'Edit Session', overlay: 'argsOverlay', id: 'args-overlay', close: 'closeArgsDialog' },
 ];
 
-// Five more surfaces joined the table in t965, and they are listed apart because
-// they have NO `<var>.addEventListener('mousedown')` backdrop binding — the two
-// press subjects below would pin a mechanism that does not exist for them. The
-// peer-session overlay dismisses on a `click` whose target is the overlay
-// itself, bound through a getElementById rather than a captured variable; the
-// four library editors have no outside-press route at all. Everything Escape
-// does for them IS the table, so the four keyboard subjects are the whole story.
 const KEYBOARD_ONLY = [
   { label: 'Peer Session', id: 'peer-session-overlay', close: 'closePeerSessionDialog' },
   { label: 'Prompt editor', id: 'prompt-editor', close: 'closePromptEditor' },

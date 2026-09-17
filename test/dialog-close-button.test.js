@@ -43,9 +43,6 @@ function closeButtonOwners() {
   return owners;
 }
 
-// The extent of the element opening at `open`, by tag depth — a non-greedy scan
-// to the first `</div>` would stop at a nested one and report a head that
-// swallowed half the dialog as if it were two lines long.
 function elementExtent(src, open) {
   const re = /<(\/?)div\b[^>]*?(\/?)>/g;
   re.lastIndex = open;
@@ -59,8 +56,6 @@ function elementExtent(src, open) {
   return null;
 }
 
-// The open `<div>` ancestors of `at`, outermost first, as css-cascade elements.
-// Built by replaying every div tag before it and keeping the ones still open.
 function ancestorChain(at) {
   const stack = [];
   const re = /<(\/?)div\b([^>]*?)(\/?)>/g;
@@ -108,11 +103,6 @@ function runListener(closeNames, { target }) {
   return closed;
 }
 
-// The listener's own suffix selector, honoured rather than hard-coded: the
-// editors are `-editor` ids and not `-overlay` ones, so a stub answering only
-// the literal `[id$="-overlay"]` would report every editor ✕ as closing nothing
-// while the real one works. Read the suffixes OUT of the extracted block, so a
-// row added to the table for an id the selector cannot reach reds here.
 function selectorSuffixes() {
   const block = extractClickListener();
   const sel = block.match(/closest\('([^']*\[id\$=[^']*)'\)/);
@@ -177,10 +167,6 @@ test('every ✕ shipped in index.html sits in an overlay the table can close', (
 });
 
 test('every ✕ sits inside a .dialog-head, beside the title it belongs to', () => {
-  // The owners subject above resolves only the TOP-LEVEL div, so a ✕ dropped
-  // anywhere in the dialog body — under the fields, inside an actions row —
-  // still names the right owner and passes. What makes it read as chrome is its
-  // position: in the flex head row, opposite the h3. Nothing else pins that.
   const heads = dialogHeads();
   const buttons = [...htmlSrc.matchAll(/class="dialog-close"/g)];
   assert.ok(buttons.length >= 7,
@@ -203,16 +189,9 @@ test('every ✕ sits inside a .dialog-head, beside the title it belongs to', () 
 });
 
 test('the .dialog-head h3 rule WINS the margin cascade in every dialog', () => {
-  // `#dialog h3, #prefs-dialog h3, …` is (1,0,1) and outranks a bare
-  // `.dialog-head h3 { margin: 0 }` at (0,1,1), so the title kept its bottom
-  // margin inside the flex head and the ✕ sat visibly high against it. Present,
-  // correct, outranked — which a substring pin on the rule cannot see.
   const heads = dialogHeads();
   assert.ok(heads.length >= 7, `ENTER: parsed only ${heads.length} .dialog-head rows`);
   for (const head of heads) {
-    // The chain is read out of the MARKUP, not guessed from the overlay id: the
-    // four editors sit under `.prompt-editor-box`, not under a `#…-dialog`, so a
-    // derived id would test a chain the app never renders.
     const chain = [...ancestorChain(head.start), {
       tag: 'div', id: null, classes: ['dialog-head'], attrs: {},
     }, { tag: 'h3', id: null, classes: [], attrs: {} }];
@@ -222,9 +201,6 @@ test('the .dialog-head h3 rule WINS the margin cascade in every dialog', () => {
     assert.strictEqual(win.value, '0',
       `\`${win.selector}\` wins margin on \`${where}\` with \`${win.value}\` — `
       + 'the h3 keeps a bottom margin inside the flex row and the ✕ rides high against it');
-    // The shorthand only reaches margin-bottom if it also outranks every
-    // LONGHAND that matches: #args-dialog h3 sets margin-bottom directly, and
-    // the cascade is resolved per longhand, not per rule.
     const bottom = winningDeclaration(cssSrc, chain, 'margin-bottom');
     if (bottom) {
       assert.ok(bottom.score < win.score || (bottom.score === win.score && bottom.at < win.at),
