@@ -119,7 +119,7 @@ function initHelpPanel({ api }) {
         const isCurrent = page.name === currentName;
         const pageRow = row('div', isCurrent ? 'help-nav-page current' : 'help-nav-page', page.title || page.name);
         pageRow.setAttribute('data-page', String(page.name));
-        pageRow.addEventListener('click', () => { openHelpPanel(page.name, null); });
+        pageRow.addEventListener('click', () => openHelpPanel(page.name, null));
         navEl.appendChild(pageRow);
         if (!isCurrent) continue;
         for (const heading of currentHeadings) {
@@ -141,7 +141,7 @@ function initHelpPanel({ api }) {
       hitRow.setAttribute('data-slug', String(hit.slug));
       hitRow.appendChild(row('span', 'help-hit-title', `${hit.title} › ${hit.heading}`));
       hitRow.appendChild(row('span', 'help-hit-snippet', hit.snippet));
-      hitRow.addEventListener('click', () => { openHelpPanel(hit.name, hit.slug); });
+      hitRow.addEventListener('click', () => openHelpPanel(hit.name, hit.slug));
       navEl.appendChild(hitRow);
     }
   }
@@ -228,11 +228,11 @@ function initHelpPanel({ api }) {
     renderHits(search(idx, q, { limit: SEARCH_LIMIT }));
   }
 
-  backBtn.addEventListener('click', () => { step(-1); });
-  fwdBtn.addEventListener('click', () => { step(1); });
+  backBtn.addEventListener('click', () => step(-1));
+  fwdBtn.addEventListener('click', () => step(1));
   document.getElementById('help-close').addEventListener('click', closeHelpPanel);
   overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) closeHelpPanel(); });
-  searchEl.addEventListener('input', () => { runSearch(); });
+  searchEl.addEventListener('input', () => runSearch());
   searchEl.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       e.stopPropagation();
@@ -244,7 +244,7 @@ function initHelpPanel({ api }) {
     if (e.key !== 'Enter') return;
     const first = navEl.querySelector('.help-hit');
     if (!first) return;
-    openHelpPanel(first.getAttribute('data-page'), first.getAttribute('data-slug'));
+    return openHelpPanel(first.getAttribute('data-page'), first.getAttribute('data-slug'));
   });
   bodyEl.addEventListener('click', (e) => {
     const link = e.target.closest && e.target.closest('a');
@@ -253,8 +253,7 @@ function initHelpPanel({ api }) {
     const slug = link.getAttribute('data-slug');
     if (page) {
       e.preventDefault();
-      openHelpPanel(page, slug);
-      return;
+      return openHelpPanel(page, slug);
     }
     if (slug) {
       e.preventDefault();
