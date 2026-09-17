@@ -3,9 +3,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 
+const { mkTmpRoot } = require('./lib/tmp-roots');
 const { parseDoc } = require('../doc-parse.js');
 const { loadHelpCorpus } = require('../help-corpus.js');
 
@@ -110,7 +110,7 @@ function markdownUnder(dir, out) {
 }
 
 function writeFixture(pages, sections) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'help-corpus-'));
+  const root = mkTmpRoot('help-corpus-');
   fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
   for (const [rel, text] of Object.entries(pages)) {
     fs.mkdirSync(path.join(root, path.dirname(rel)), { recursive: true });
@@ -340,7 +340,7 @@ test('a manifest path that does not exist throws with the path in the message', 
 });
 
 test('a missing manifest throws naming docs/help.json', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'help-corpus-'));
+  const root = mkTmpRoot('help-corpus-');
   try {
     assert.throws(
       () => loadHelpCorpus(root).list(),
