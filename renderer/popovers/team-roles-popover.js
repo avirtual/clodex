@@ -582,7 +582,13 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       for (const t of rows) {
         const line = document.createElement('div');
         line.className = 'team-role-note';
-        line.textContent = ticketLine(t, now);
+        const text = ticketLine(t, now);
+        const cut = text.indexOf(' · ');
+        const id = document.createElement('span');
+        id.className = 'team-ticket-id';
+        id.textContent = cut < 0 ? text : text.slice(0, cut);
+        line.appendChild(id);
+        if (cut >= 0) line.appendChild(document.createTextNode(text.slice(cut)));
         frag.appendChild(line);
       }
     };

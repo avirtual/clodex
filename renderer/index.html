@@ -515,7 +515,10 @@
   <!-- New session dialog -->
   <div id="dialog-overlay" class="hidden">
     <div id="dialog">
-      <h3 id="dialog-title">New Session</h3>
+      <div class="dialog-head">
+        <h3 id="dialog-title">New Session</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <label id="placement-row" style="display:none;">Run in
         <!-- Options are rebuilt at open from the box registry (M6b P3): "This Mac"
              plus one entry per sandbox box (label shown, box id carried as value). -->
@@ -776,7 +779,10 @@
        clodex (global scan of ~/.claude/projects + live foreign processes). -->
   <div id="discovery-overlay" class="hidden">
     <div id="discovery-dialog">
-      <h3>Discover Sessions</h3>
+      <div class="dialog-head">
+        <h3>Discover Sessions</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <p class="hint-text">Claude/Codex conversations on this machine that Clodex isn't already managing — including ones started in a plain terminal. Adopt one to fill the New Session form with its type, directory, and session ID, so you can pick tools/prompts/proxy before resuming it. Adopting doesn't attach to a running process; it spawns a fresh Clodex-managed instance that resumes the same conversation.</p>
       <div id="discovery-list" class="discovery-list"><div class="discovery-empty">Scanning…</div></div>
       <div class="dialog-actions">
@@ -790,7 +796,10 @@
   <!-- Edit Args dialog -->
   <div id="args-overlay" class="hidden">
     <div id="args-dialog">
-      <h3>Edit Session</h3>
+      <div class="dialog-head">
+        <h3>Edit Session</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <p class="hint-text" id="args-target"></p>
       <label id="args-prompt-row">System prompt
         <select id="args-system-prompt">
@@ -920,7 +929,10 @@
   <!-- Preferences dialog -->
   <div id="prefs-overlay" class="hidden">
     <div id="prefs-dialog">
-      <h3>Preferences</h3>
+      <div class="dialog-head">
+        <h3>Preferences</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <details class="prefs-group" data-group="appearance">
         <summary><h4>Appearance</h4><span class="prefs-group-sub">Theme</span></summary>
         <p class="hint-text">Theme applies immediately and persists across launches. Terminals retint live.</p>
@@ -1226,7 +1238,10 @@
        that could clear it would be the one hiding it. -->
   <div id="plugins-overlay" class="hidden">
     <div id="plugins-dialog">
-      <h3>Plugins</h3>
+      <div class="dialog-head">
+        <h3>Plugins</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately; a plugin with its own settings shows a <strong>Settings</strong> button on its row.</p>
       <div id="plugins-list"></div>
       <div id="plugins-register-note" class="plugin-row-note hidden"></div>
@@ -1272,7 +1287,10 @@
   <!-- Manage Peered Clodexes dialog (opened from Window > Peers) -->
   <div id="peers-overlay" class="hidden">
     <div id="peers-dialog">
-      <h3>Peered Clodexes</h3>
+      <div class="dialog-head">
+        <h3>Peered Clodexes</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <p class="hint-text">Attach to agent sessions running in a Clodex on another machine: view their terminals live and, after an explicit "Take control", type into them. Give each peer an SSH host (<code>laptop2</code> or <code>user@laptop2</code>) and Clodex maintains the tunnel itself — needs key-based SSH (no password prompts) and Phone access enabled on the peer. <strong>Test &amp; Set Up</strong> checks the host over SSH and, if no Clodex is running there yet, offers to install one. The URL field is the manual alternative for tailnets or custom tunnels. Anyone who can reach the peer's endpoint can drive its sessions — treat it like shell access.</p>
       <div id="peers-list"></div>
       <button id="peers-add" class="secondary" type="button" style="margin-top: 6px;">Add Peer</button>
@@ -1290,7 +1308,10 @@
   <!-- Managed Docker sandboxes: N local containers, each run as its own peer -->
   <div id="sandbox-overlay" class="hidden">
     <div id="sandbox-dialog">
-      <h3>Sandboxes</h3>
+      <div class="dialog-head">
+        <h3>Sandboxes</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <p class="hint-text">Run Clodex engines inside local Docker containers and use them as peers: agents placed in a sandbox have their shell, file writes, and network confined to the container, while keeping full Clodex features over the peer wire. Each container publishes to <code>127.0.0.1</code> only.</p>
       <div id="sandbox-docker" class="sandbox-row"></div>
       <!-- M6b P2: one row per registry box (label, status dot, Start/Stop); select

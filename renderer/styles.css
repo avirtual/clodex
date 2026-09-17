@@ -1355,6 +1355,7 @@ html, body {
 .team-role-summary { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .team-role-summary .team-role-key { flex: 0 0 auto; }
 .team-role-note { flex: 1 1 auto; min-width: 0; color: var(--text-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-ticket-id { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-tertiary); margin-right: 6px; }
 .team-role-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); }
 .team-role-dot.ok { background: var(--accent); }
 .team-role-dot.idle { background: var(--text-dim); }

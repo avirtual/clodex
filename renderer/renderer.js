@@ -4366,6 +4366,15 @@ document.addEventListener('keydown', (e) => {
   if (row) row[1]();
 });
 
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest && e.target.closest('.dialog-close');
+  if (!btn) return;
+  const overlay = btn.closest('[id$="-overlay"]');
+  if (!overlay) return;
+  const row = ESCAPE_CLOSES.find(([id]) => id === overlay.id);
+  if (row) row[1]();
+});
+
 function runCloseChord() {
   return performCloseChord({
     ...overlayProbes,
