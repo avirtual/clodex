@@ -2161,6 +2161,23 @@ test('tickets-viewer: a record with NO rounds[] derives them from the task dir, 
   } finally { cleanup(); }
 });
 
+test('tickets-viewer: an EMPTY rounds[] still derives from disk, so a legacy ticket keeps its history', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/hist/emptyrounds');
+    const dir = mkTaskDir(home, key, 'tasks/t7-work');
+    fs.writeFileSync(path.join(dir, 'review-t7-r1.verdict.md'), 'VERDICT: ACCEPT\n');
+    writeTicketsAt(home, key, [histTicket('t7', { taskDir: 'tasks/t7-work', rounds: [], report: 'the report' })]);
+
+    const res = await host.dispatch('tickets-viewer', 'ticket', [{ project: key, id: 't7' }], 'desktop');
+    assert.equal(res.ok, true);
+    assert.equal(res.ticket.rounds.length, 1,
+      'an empty array is the absence of a statement, not a claim of zero rounds — the verdicts are in the task dir');
+    assert.equal(res.ticket.rounds[0].verdict, 'ACCEPT');
+    assert.equal(res.ticket.rounds[0].report, 'the report');
+  } finally { cleanup(); }
+});
+
 test('tickets-viewer: diffStat counts files and +/- lines without the ---/+++ headers', () => {
   assert.deepStrictEqual(viewerEngine._internals.diffStat(FIXTURE_DIFF), { files: 2, added: 5, removed: 3 });
 });
@@ -2198,6 +2215,7 @@ test('tickets-viewer: `search` matches a word only in a closed ticket\'s report,
       spec: 'nothing here either',
       report: `${pad}${pad}the fix was a ZORBLAX in the parser${pad}`,
     })];
+    tickets.push(histTicket('t2', { title: 'a ZORBLAX row with no state at all', state: '', closedAt: 1600000000000 }));
     for (let i = 0; i < 60; i += 1) {
       tickets.push(histTicket(`c${i}`, { title: `common WIDGETY row ${i}`, spec: 'x', report: 'y', closedAt: 1700000000000 + i }));
     }
@@ -2205,8 +2223,10 @@ test('tickets-viewer: `search` matches a word only in a closed ticket\'s report,
 
     const hit = await host.dispatch('tickets-viewer', 'search', [{ project: key, q: 'zorblax' }], 'desktop');
     assert.equal(hit.ok, true);
-    assert.deepEqual(hit.hits.map((h) => h.id), ['t1'], 'the word lives only in the report, and the report is searched');
+    assert.deepEqual(hit.hits.map((h) => h.id), ['t1', 't2'], 'the word lives only in t1\'s report, and the report is searched');
     assert.equal(hit.hits[0].state, 'done');
+    assert.equal(hit.hits[1].state, '(no state)',
+      'a stateless record reads as it does on the board — shape() names the gap, and a blank here would be the same ticket wearing two states');
     assert.equal(hit.hits[0].closedAt, 1700000000000);
     assert.ok(hit.hits[0].snippet.includes('ZORBLAX'), 'the snippet is the window AROUND the match');
     assert.equal(hit.hits[0].snippet.length, 160);
@@ -2276,16 +2296,16 @@ test('tickets-viewer: the `ticket` response carries no token/auth/secret/passwor
   } finally { cleanup(); }
 });
 
-test('tickets-viewer: `ticket` and `search` are desktop-only, like the writers beside them', async () => {
+test('tickets-viewer: `ticket` and `search` serve the WEB surface, unlike the writers beside them', async () => {
   const { host, home, cleanup } = boot();
   try {
     const key = mkProject(home, '/hist/web');
     writeTicketsAt(home, key, [histTicket('t1', { taskDir: '' })]);
     for (const [method, payload] of [['ticket', { project: key, id: 't1' }], ['search', { project: key, q: 't1' }]]) {
-      assert.equal((await host.dispatch('tickets-viewer', method, [payload], 'web')).ok, false,
-        `${method} must not serve the web surface`);
+      assert.equal((await host.dispatch('tickets-viewer', method, [payload], 'web')).ok, true,
+        `${method} must serve the web surface`);
       assert.equal((await host.dispatch('tickets-viewer', method, [payload], 'desktop')).ok, true,
-        `${method} serves the desktop, which is what makes the denial above meaningful`);
+        `${method} serves the desktop too`);
     }
   } finally { cleanup(); }
 });

@@ -470,3 +470,156 @@
   font-size: 0.95em;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── the detail pane and search (t978) ───────────────────────────────────── */
+
+.tv-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.tv-back {
+  font: inherit;
+  font-size: 0.8em;
+  padding: 3px 9px;
+  margin-bottom: 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-hover);
+  color: inherit;
+  cursor: pointer;
+}
+
+.tv-back:hover {
+  background: var(--surface-selected);
+}
+
+.tv-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.tv-detail-title {
+  font-weight: 600;
+}
+
+.tv-detail-state {
+  font-size: 0.8em;
+  opacity: 0.6;
+}
+
+.tv-respec-at {
+  font-size: 0.8em;
+  opacity: 0.55;
+  margin-top: 8px;
+}
+
+/* The left border is the whole device: rounds stack, and without an edge to
+   run down them a three-round history reads as one undifferentiated column of
+   text. */
+.tv-round {
+  width: 100%;
+  box-sizing: border-box;
+  border-left: 2px solid var(--border-strong);
+  padding-left: 12px;
+  margin-bottom: 14px;
+}
+
+.tv-round-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 0.9em;
+}
+
+.tv-round-age,
+.tv-diffstat {
+  font-weight: 400;
+  font-size: 0.8em;
+  opacity: 0.55;
+}
+
+.tv-diffstat {
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --accent is the STATE signal in this app's palette, and a must-fix is exactly
+   that: the one part of a verdict that is still owed. Tinted rather than
+   error-red — a rework is the loop working, not a failure. */
+.tv-mustfix {
+  margin-top: 8px;
+  border-left: 2px solid var(--accent);
+  padding-left: 10px;
+}
+
+.tv-mustfix-label {
+  font-size: 0.75em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+
+/* Taller than .tv-spec: a verdict is the longest thing on this pane, and it is
+   only on screen because the reader asked for it by name. */
+.tv-verdict {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  max-height: 360px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8em;
+  line-height: 1.5;
+  background: var(--surface-hover);
+  border-radius: 4px;
+  opacity: 0.85;
+}
+
+.tv-search {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 0.85em;
+  padding: 6px 10px;
+  margin: 4px 0 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-overlay);
+  color: inherit;
+}
+
+.tv-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.tv-hits {
+  display: flex;
+  flex-direction: column;
+}
+
+.tv-hit-state {
+  font-size: 0.8em;
+  opacity: 0.55;
+}
+
+.tv-snippet {
+  margin-top: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78em;
+  line-height: 1.45;
+  opacity: 0.6;
+  overflow-wrap: anywhere;
+}
