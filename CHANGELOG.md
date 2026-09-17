@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - **`clodexctl exec` waits for the whole turn.** The wire's activity event now reports a turn end only when the agent actually stops, so `exec` (and the in-app console) returns with the full reply instead of settling on the first tool call.
+- **Relaunch returns you to the tab you left.** Each workspace remembers its active session and restores to it, and peer sections no longer paint ahead of your own sessions during startup.
 
 ## 5.74.0 — 2026-09-17
 

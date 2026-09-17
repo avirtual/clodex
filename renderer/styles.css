@@ -4709,6 +4709,8 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
 
 /* --- Peered Clodexes ------------------------------------------------------ */
 
+body:not(.sessions-restored) [data-peer-ui] { display: none; }
+
 /* The peer header is a host GROUPING, not a session tab: a subtle tinted band
    with top/bottom rules and a bolded small-caps label sets it apart from the
    clickable session rows below it. */

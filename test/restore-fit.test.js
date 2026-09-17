@@ -82,3 +82,29 @@ test('the restore loop does not defer its fit into a rAF', () => {
     'the fit must not be deferred by any route: a rAF callback runs after the '
     + 'synchronous write, whether it arrives via the helper or written inline');
 });
+
+test('the restore loop switches to the remembered tab, with firstHealthy only as the fallback', () => {
+  const loop = restoreLoop(SRC);
+  assert.ok(loop, 'ENTER: the restoreSessions IIFE is still the restore path');
+
+  assert.match(loop, /getSidebarView\(\)/,
+    'the restore must fetch the persisted view itself: initSidebarView runs AFTER the switch');
+  assert.match(loop, /view\.activeSession/,
+    'the remembered tab is the workspace view key activeSession');
+  assert.match(loop, /sessions\.has\(/,
+    'the remembered name must be gated on the sessions Map: only healthy entries built a terminal');
+  assert.match(loop, /firstHealthy/,
+    'firstHealthy stays the fallback when nothing was remembered or the name is gone');
+
+  const read = loop.indexOf('view.activeSession');
+  const switchCall = loop.search(/switchSession\(/);
+  assert.ok(switchCall > 0, 'ENTER: the loop still performs the initial switch');
+  assert.ok(read > 0 && read < switchCall,
+    'the remembered tab has to be resolved BEFORE the switch, or the operator lands on the '
+    + 'first entry in sessions.json order and types into the wrong agent');
+
+  const target = loop.match(/const target = [^\n;]*;/);
+  assert.ok(target, 'the switch target is chosen in one place');
+  assert.match(target[0], /firstHealthy/,
+    'and firstHealthy is the else branch of that choice, not the unconditional target');
+});
