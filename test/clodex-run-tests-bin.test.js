@@ -617,11 +617,210 @@ test('scope own: a test file the branch DELETED is not handed to the runner', ()
         g('commit', '-qm', 'drop a test');
       },
     });
-    run(root, '{"scope":"own"}');
+    const r = run(root, '{"scope":"own"}');
     const rec = stubRecord(root);
     assert.ok(rec, 'ENTER: the runner never ran');
     assert.ok(!rec.argv.includes('test/deleted.test.js'),
       'the deletion is in the branch diff, but run-tests.js refuses a whole run over a missing path');
+    assertDigest(r.digest,
+      `[${path.basename(root)}] own: 1/1 green (${WALL}) — ${OWN_SCANNERS.length} files: `
+      + `0 changed, 0 by subject, ${OWN_SCANNERS.length} scanners`,
+      'a branch with changes but an empty computed set still reports the scanner floor it ran');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+const NON_JS_CASES = [
+  {
+    what: 'an exec definition',
+    subject: 'resources/library/exec/x.json',
+    master: '{"type":"shell"}\n',
+    branch: '{"type":"shell","timeout_ms":1}\n',
+    picks: 'test/names-exec.test.js',
+    picksBody: `${EMPTY_TEST}const DEF = 'resources/library/exec/x.json';\n`,
+    decoy: 'test/decoy-exec.test.js',
+    decoyBody: `${EMPTY_TEST}require('../resources/library/exec/x');\n`,
+  },
+  {
+    what: 'a prompt',
+    subject: 'resources/library/prompts/system/x.md',
+    master: '# one\n',
+    branch: '# two\n',
+    picks: 'test/names-prompt.test.js',
+    picksBody: `${EMPTY_TEST}const P = 'resources/library/prompts/system/x.md';\n`,
+    decoy: 'test/decoy-prompt.test.js',
+    decoyBody: `${EMPTY_TEST}require('../resources/library/prompts/system/x');\n`,
+  },
+  {
+    what: 'a JSON reached only by a relative require',
+    subject: 'cli/src/data.json',
+    master: '{"n":1}\n',
+    branch: '{"n":2}\n',
+    picks: 'cli/test/requires-json.test.js',
+    picksBody: `${EMPTY_TEST}require('../src/data.json');\n`,
+    decoy: 'cli/test/decoy-json.test.js',
+    decoyBody: `${EMPTY_TEST}require('../src/data');\n`,
+  },
+];
+
+for (const c of NON_JS_CASES) {
+  test(`scope own: a branch changing only ${c.what} selects the test that names it`, () => {
+    const root = mkRoot();
+    try {
+      mkBranchRepo(root, {
+        extraOnMaster: {
+          [c.subject]: c.master,
+          [c.picks]: c.picksBody,
+          [c.decoy]: c.decoyBody,
+          'test/unrelated.test.js': EMPTY_TEST,
+        },
+        onBranch: ({ put: p, git: g }) => {
+          p(c.subject, c.branch);
+          g('commit', '-aqm', 'branch work');
+        },
+      });
+      const r = run(root, '{"scope":"own"}');
+      const rec = stubRecord(root);
+      assert.ok(rec, 'ENTER: the runner never ran, so there is no selection to judge');
+      assert.ok(rec.argv.includes(c.picks),
+        `${c.subject} is the only thing the branch changed and ${c.picks} names it: a subject set `
+        + 'filtered to .js selects nothing here but scanners');
+      assert.ok(!rec.argv.includes(c.decoy),
+        `${c.decoy} reaches ${c.subject} only with the extension stripped, which is not a path: a `
+        + 'non-.js subject carries no stem, so only its full rel may match');
+      assert.ok(!rec.argv.includes('test/unrelated.test.js'),
+        'a test that names neither the changed resource nor the tree is not the branch\'s to run');
+      assertDigest(r.digest,
+        `[${path.basename(root)}] own: 1/1 green (${WALL}) — ${OWN_SCANNERS.length + 1} files: `
+        + `0 changed, 1 by subject, ${OWN_SCANNERS.length} scanners`);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
+test('scope own: a root-level policy file is no subject — every branch edits CHANGELOG.md', () => {
+  const root = mkRoot();
+  try {
+    mkBranchRepo(root, {
+      extraOnMaster: {
+        'CHANGELOG.md': '## Unreleased\n',
+        'test/mentions-changelog.test.js':
+          `${EMPTY_TEST}const F = 'CHANGELOG.md';\n`,
+        'docs/guide.md': '# guide\n',
+        'test/mentions-guide.test.js': `${EMPTY_TEST}const G = 'docs/guide.md';\n`,
+      },
+      onBranch: ({ put: p, git: g }) => {
+        p('CHANGELOG.md', '## Unreleased\n- a bullet\n');
+        g('commit', '-aqm', 'branch work');
+      },
+    });
+    const r = run(root, '{"scope":"own"}');
+    const rec = stubRecord(root);
+    assert.ok(rec, 'ENTER: the runner never ran, so there is no selection to judge');
+    assert.ok(!rec.argv.includes('test/mentions-changelog.test.js'),
+      'this repo\'s ticket flow REQUIRES a CHANGELOG.md edit, so a bare root-level name matched '
+      + 'literally puts every test that mentions it — two of them heavy real-git suites — into '
+      + 'every scoped run, which is the cost the scope exists to avoid');
+    assertDigest(r.digest,
+      `[${path.basename(root)}] own: 1/1 green (${WALL}) — ${OWN_SCANNERS.length} files: `
+      + `0 changed, 0 by subject, ${OWN_SCANNERS.length} scanners`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+
+  const nested = mkRoot();
+  try {
+    mkBranchRepo(nested, {
+      extraOnMaster: {
+        'docs/guide.md': '# guide\n',
+        'test/mentions-guide.test.js': `${EMPTY_TEST}const G = 'docs/guide.md';\n`,
+      },
+      onBranch: ({ put: p, git: g }) => {
+        p('docs/guide.md', '# guide\n\nmore\n');
+        g('commit', '-aqm', 'branch work');
+      },
+    });
+    run(nested, '{"scope":"own"}');
+    const rec = stubRecord(nested);
+    assert.ok(rec, 'ENTER: the runner never ran');
+    assert.ok(rec.argv.includes('test/mentions-guide.test.js'),
+      'a non-.js subject inside a directory is still selected by its literal path: the exclusion '
+      + 'is root-level bare names, not every non-.js file');
+  } finally { fs.rmSync(nested, { recursive: true, force: true }); }
+});
+
+test('scope own: a subject reached only through a quoted relative path outside require()', () => {
+  const root = mkRoot();
+  try {
+    mkBranchRepo(root, {
+      extraOnMaster: {
+        'cli/src/tool.js': 'module.exports = 1;\n',
+        'cli/test/spawns-tool.test.js':
+          `${EMPTY_TEST}spawnSync(process.execPath, ['../src/tool.js']);\n`,
+        'test/unrelated.test.js': EMPTY_TEST,
+      },
+      onBranch: ({ put: p, git: g }) => {
+        p('cli/src/tool.js', 'module.exports = 2;\n');
+        g('commit', '-aqm', 'branch work');
+      },
+    });
+    const r = run(root, '{"scope":"own"}');
+    const rec = stubRecord(root);
+    assert.ok(rec, 'ENTER: the runner never ran, so there is no selection to judge');
+    assert.ok(rec.argv.includes('cli/test/spawns-tool.test.js'),
+      'the test names its subject in a spawn argv, not a require, and `cli/src/tool.js` never '
+      + 'appears literally in it: anchoring the relative-path rule to `require(` loses this row');
+    assert.ok(!rec.argv.includes('test/unrelated.test.js'),
+      'ENTER: the by-subject row would be non-empty for the wrong reason');
+    assertDigest(r.digest,
+      `[${path.basename(root)}] own: 1/1 green (${WALL}) — ${OWN_SCANNERS.length + 1} files: `
+      + `0 changed, 1 by subject, ${OWN_SCANNERS.length} scanners`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('scope own: no `master` branch refuses by name, runner never spawned', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, { body: "console.log('TOTALS: 1 pass, 0 fail, 1 tests');", exit: 0 });
+    git(root, 'init', '-q', '-b', 'main');
+    put(root, 'lib/widget.js', 'module.exports = 1;\n');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-qm', 'base');
+    const r = run(root, '{"scope":"own"}');
+    assert.strictEqual(r.code, 1, 'nothing was measured, so this is not a green');
+    assert.strictEqual(
+      r.digest,
+      `[${path.basename(root)}] own: nothing measured — \`master\` does not resolve in ${root}`,
+    );
+    assert.strictEqual(stubRecord(root), null,
+      'with no base to diff against, a run would select the scanner floor and report a green');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('scope own: a branch sharing no history with master refuses, runner never spawned', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, { body: "console.log('TOTALS: 1 pass, 0 fail, 1 tests');", exit: 0 });
+    git(root, 'init', '-q', '-b', 'master');
+    put(root, 'lib/widget.js', 'module.exports = 1;\n');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-qm', 'base');
+    git(root, 'checkout', '-q', '--orphan', 'feature');
+    put(root, 'lib/widget.js', 'module.exports = 2;\n');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-qm', 'unrelated root');
+    const shared = (() => {
+      try {
+        return execFileSync('git', ['-C', root, 'merge-base', 'master', 'HEAD'],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+      } catch { return ''; }
+    })();
+    assert.strictEqual(shared, '',
+      'ENTER: the two histories DO share a commit, so this fixture is not the no-merge-base case');
+    const r = run(root, '{"scope":"own"}');
+    assert.strictEqual(r.code, 1, 'nothing was measured, so this is not a green');
+    assert.strictEqual(
+      r.digest,
+      `[${path.basename(root)}] own: nothing measured — no merge base between \`master\` and HEAD`,
+    );
+    assert.strictEqual(stubRecord(root), null,
+      'without a merge base the branch diff is the whole history, which is not this branch\'s work');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
