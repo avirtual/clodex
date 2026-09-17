@@ -254,8 +254,9 @@ process.on('exit', () => {
   } catch { /* a leftover temp dir is not a reason to fail a run */ }
 });
 
-// The lock variables are all scrubbed from the child environment. They are a
-// decision about THIS process's lock, and every nested runner is by contract a
+// The lock variables, and the advisory declaration gated on them, are scrubbed
+// from the child environment: a decision about THIS process's lock, and every
+// nested runner is by contract a
 // DIFFERENT run: two test files (test/test-digest-lock.test.js,
 // test/run-tests-args.test.js) spawn sweeping runners of their own against
 // throwaway roots, and inheriting the override points them at the outer run's
@@ -268,6 +269,7 @@ const childEnv = { ...process.env };
 delete childEnv.CLODEX_TEST_LOCK_DIR;
 delete childEnv.CLODEX_TEST_LOCK_WAIT_MS;
 delete childEnv.CLODEX_TEST_LOCK;
+delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
 
 const runStart = Date.now();
 const run = spawnSync(process.execPath, [
