@@ -327,7 +327,11 @@ function reexecInMeasured(measure, rawStdin) {
     stdio: ['pipe', 'inherit', 'inherit'],
     env: { ...process.env, CLODEX_RUN_TESTS_REEXEC: '1' },
   });
-  process.exit(res.status === null ? 1 : res.status);
+  if (res.error) emit(`[${LEAF}] own: re-exec of ${theirs} failed: ${res.error.message}`, 1, 400);
+  if (res.status === null) {
+    emit(`[${LEAF}] own: re-exec of ${theirs} failed: killed by ${res.signal || 'an unknown signal'}`, 1, 400);
+  }
+  process.exit(res.status);
 }
 
 const rawStdin = readStdin();

@@ -943,6 +943,22 @@ test('re-exec: CLODEX_RUN_TESTS_REEXEC=1 stops the handover, so a child never re
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('re-exec: a SIGNAL-KILLED measured wrapper still produces a digest line', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, { body: "console.log('TOTALS: 1 pass, 0 fail, 1 tests');", exit: 0 });
+    writeMeasuredWrapper(root, "'use strict';\nprocess.kill(process.pid, 'SIGKILL');\n");
+    const r = run(root, '{}');
+    assert.strictEqual(r.code, 1, 'a handover that died is a failed run, not a green one');
+    assert.strictEqual(r.digest,
+      `[${path.basename(root)}] own: re-exec of ${path.join(root, 'scripts', 'clodex-run-tests.js')}`
+      + ' failed: killed by SIGKILL',
+      'the seat reads the LAST stderr line as its whole result, and a killed child wrote none of '
+      + 'its own — exiting on a null status without a line leaves the run reporting nothing at all');
+    assert.strictEqual(stubRecord(root), null, 'and the outer wrapper did not run the runner either');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('re-exec: the stdin payload reaches the measured wrapper intact', () => {
   const root = mkRoot();
   try {
