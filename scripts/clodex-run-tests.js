@@ -227,13 +227,13 @@ function testPool(measure) {
 }
 
 function subjectMatchers(sources) {
-  return sources.map((rel) => ({ rel, stem: rel.replace(/\.js$/, '') }));
+  return sources.map((rel) => ({ rel, stem: rel.endsWith('.js') ? rel.slice(0, -3) : null }));
 }
 
-function requireTargets(testRel, text) {
+function relPathTargets(testRel, text) {
   const dir = path.posix.dirname(testRel);
   const out = new Set();
-  for (const m of text.matchAll(/require\(\s*['"](\.\.?\/[^'"]+)['"]\s*\)/g)) {
+  for (const m of text.matchAll(/['"](\.\.?\/[^'"]+)['"]/g)) {
     out.add(path.posix.normalize(path.posix.join(dir, m[1])));
   }
   return out;
@@ -262,7 +262,7 @@ function selectSet(measure) {
   }
   const live = touched.filter((p) => existsIn(measure, p));
   const changed = live.filter((p) => p.endsWith('.test.js')).sort();
-  const sources = live.filter((p) => p.endsWith('.js') && !p.endsWith('.test.js'));
+  const sources = live.filter((p) => !p.endsWith('.test.js'));
   const seen = new Set(changed);
   const matchers = subjectMatchers(sources);
   const bySubject = [];
@@ -275,9 +275,9 @@ function selectSet(measure) {
       } catch {
         continue;
       }
-      const targets = requireTargets(t, text);
+      const targets = relPathTargets(t, text);
       const hit = matchers.some(
-        (m) => targets.has(m.stem) || targets.has(m.rel) || text.includes(m.rel),
+        (m) => (m.stem !== null && targets.has(m.stem)) || targets.has(m.rel) || text.includes(m.rel),
       );
       if (!hit) continue;
       bySubject.push(t);
