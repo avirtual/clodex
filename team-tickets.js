@@ -6097,10 +6097,7 @@ function createTicketMethods(deps, shared) {
       }
       // The report is persisted AS WELL AS delivered, never instead of: the
       // delivery above is what reaches the lead, and this is what survives both
-      // agents dying. It is also the only place the hand's own flagged guesses
-      // and deviations exist in a form the review scope can quote verbatim —
-      // a message is losable, and paraphrasing them loses exactly the part a
-      // cold reviewer cannot reconstruct.
+      // agents dying.
       ticket.report = report;
       ticket.reportedBy = session.name;
       const reportedAt = reentry ? Date.now() : ticket.closedAt;
