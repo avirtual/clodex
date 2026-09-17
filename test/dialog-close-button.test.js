@@ -8,6 +8,8 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
 const htmlSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
+const cssSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'styles.css'), 'utf8');
+const { winningDeclaration } = require('./lib/css-cascade');
 
 function tableRows() {
   const m = rendererSrc.match(/^const ESCAPE_CLOSES = \[\n([\s\S]*?)^\];$/m);
@@ -39,6 +41,34 @@ function closeButtonOwners() {
     owners.push(opens[opens.length - 1][1]);
   }
   return owners;
+}
+
+// The extent of the element opening at `open`, by tag depth — a non-greedy scan
+// to the first `</div>` would stop at a nested one and report a head that
+// swallowed half the dialog as if it were two lines long.
+function elementExtent(src, open) {
+  const re = /<(\/?)div\b[^>]*?(\/?)>/g;
+  re.lastIndex = open;
+  let depth = 0;
+  let m;
+  while ((m = re.exec(src))) {
+    if (m[2] === '/') continue;
+    depth += m[1] ? -1 : 1;
+    if (depth === 0) return { start: open, end: m.index + m[0].length };
+  }
+  return null;
+}
+
+function dialogHeads() {
+  const heads = [];
+  const re = /<div class="dialog-head">/g;
+  let m;
+  while ((m = re.exec(htmlSrc))) {
+    const extent = elementExtent(htmlSrc, m.index);
+    assert.ok(extent, `a .dialog-head at offset ${m.index} is never closed`);
+    heads.push({ ...extent, html: htmlSrc.slice(extent.start, extent.end) });
+  }
+  return heads;
 }
 
 function runListener(closeNames, { target }) {
@@ -104,6 +134,62 @@ test('every ✕ shipped in index.html sits in an overlay the table can close', (
   for (const owner of owners) {
     assert.ok(ids.has(owner),
       `#${owner} ships a .dialog-close but is not a row of ESCAPE_CLOSES — its ✕ is dead`);
+  }
+});
+
+test('every ✕ sits inside a .dialog-head, beside the title it belongs to', () => {
+  // The owners subject above resolves only the TOP-LEVEL div, so a ✕ dropped
+  // anywhere in the dialog body — under the fields, inside an actions row —
+  // still names the right owner and passes. What makes it read as chrome is its
+  // position: in the flex head row, opposite the h3. Nothing else pins that.
+  const heads = dialogHeads();
+  const buttons = [...htmlSrc.matchAll(/class="dialog-close"/g)];
+  assert.ok(buttons.length >= 7,
+    `ENTER: found only ${buttons.length} .dialog-close buttons in index.html`);
+  assert.ok(heads.length >= buttons.length,
+    `ENTER: ${buttons.length} close buttons but only ${heads.length} .dialog-head rows parsed`);
+  for (const b of buttons) {
+    const head = heads.find((h) => b.index > h.start && b.index < h.end);
+    assert.ok(head,
+      `the .dialog-close at offset ${b.index} sits outside every .dialog-head — `
+      + 'it floats in the dialog body instead of the title row');
+    assert.match(head.html, /<h3[ >]/,
+      `the .dialog-head holding the ✕ at offset ${b.index} carries no h3 — `
+      + `a close button with no title beside it:\n${head.html.slice(0, 200)}`);
+  }
+  for (const h of heads) {
+    assert.match(h.html, /class="dialog-close"/,
+      `a .dialog-head ships no ✕ — the row exists but the button is missing:\n${h.html.slice(0, 200)}`);
+  }
+});
+
+test('the .dialog-head h3 rule WINS the margin cascade in every dialog', () => {
+  // `#dialog h3, #prefs-dialog h3, …` is (1,0,1) and outranks a bare
+  // `.dialog-head h3 { margin: 0 }` at (0,1,1), so the title kept its bottom
+  // margin inside the flex head and the ✕ sat visibly high against it. Present,
+  // correct, outranked — which a substring pin on the rule cannot see.
+  for (const [overlayId] of tableRows()) {
+    const dialogId = overlayId.replace(/-overlay$/, '-dialog').replace(/^dialog-dialog$/, 'dialog');
+    if (!htmlSrc.includes(`id="${dialogId}"`)) continue;
+    const chain = [
+      { tag: 'div', id: dialogId, classes: [], attrs: {} },
+      { tag: 'div', id: null, classes: ['dialog-head'], attrs: {} },
+      { tag: 'h3', id: null, classes: [], attrs: {} },
+    ];
+    const win = winningDeclaration(cssSrc, chain, 'margin');
+    assert.ok(win, `ENTER: no margin rule resolves onto #${dialogId} .dialog-head h3`);
+    assert.strictEqual(win.value, '0',
+      `\`${win.selector}\` wins margin on #${dialogId}'s head title with \`${win.value}\` — `
+      + 'the h3 keeps a bottom margin inside the flex row and the ✕ rides high against it');
+    // The shorthand only reaches margin-bottom if it also outranks every
+    // LONGHAND that matches: #args-dialog h3 sets margin-bottom directly, and
+    // the cascade is resolved per longhand, not per rule.
+    const bottom = winningDeclaration(cssSrc, chain, 'margin-bottom');
+    if (bottom) {
+      assert.ok(bottom.score < win.score || (bottom.score === win.score && bottom.at < win.at),
+        `\`${bottom.selector}\` sets margin-bottom: ${bottom.value} on #${dialogId}'s head `
+        + `title and outranks the \`${win.selector}\` shorthand — the title keeps the gap`);
+    }
   }
 });
 
