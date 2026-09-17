@@ -45,8 +45,8 @@ const { initStores } = require('../stores');
 // A THROWAWAY registryDir, deliberately not `home`: initStores SEEDS the shipped
 // prompt library into whatever dir it is handed, which would install
 // clodex-team-reviewer.md into the fixture home and silently defeat every
-// `noReviewerPrompt` subject. Seeded ONCE per file — the seed costs ~290ms and no
-// subject reads it; reminders live under the per-test `userData`, so they isolate.
+// `noReviewerPrompt` subject. Seeded ONCE per file — no subject reads it;
+// reminders live under the per-test `userData`, so they isolate.
 let SEED_DIR = null;
 function seedDir() {
   if (!SEED_DIR) SEED_DIR = mkTmpRoot('clodex-loop-seed-');

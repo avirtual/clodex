@@ -383,7 +383,10 @@ let allow = {};
 try {
   const raw = JSON.parse(fs.readFileSync(ALLOW_FILE, 'utf8'));
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) allow = raw;
-} catch { allow = {}; }
+} catch (e) {
+  if (e.code !== 'ENOENT') die(`test/slow-tests.json is not valid JSON: ${e.message}`);
+  allow = {};
+}
 
 const points = [];
 let pending = null;
@@ -402,8 +405,10 @@ for (const line of tap.split('\n')) {
 
 const bodies = points.filter((p) => !fs.existsSync(path.resolve(ROOT, p.name)));
 const seen = new Set(bodies.map((p) => p.name));
-const offenders = bodies.filter((p) => p.ms > slowLimit && !(p.name in allow));
-const stale = sweeping ? Object.keys(allow).filter((n) => !seen.has(n)) : [];
+const offenders = bodies.filter((p) => p.ms > slowLimit && !Object.hasOwn(allow, p.name));
+const stale = sweeping && !filters.length
+  ? Object.keys(allow).filter((n) => !seen.has(n))
+  : [];
 
 if (offenders.length || stale.length) {
   const lines = [];

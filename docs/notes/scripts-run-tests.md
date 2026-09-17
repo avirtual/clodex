@@ -52,8 +52,19 @@ inherited the declaration would block on the lock its parent already holds.
 The per-test duration gate. A test point over `SLOW_MS` (6000; `CLODEX_TEST_SLOW_MS`
 overrides it, for the gate's own pins) fails the run unless `test/slow-tests.json`
 names it, and an allowlist entry matching no point in the run is stale and fails
-too — the stale check runs only on a sweeping run, because a named-file run cannot
-see every test.
+too — the stale check runs only on an UNFILTERED sweeping run, because a
+named-file or filtered run cannot see every test, and every unlisted entry would
+then read as stale on a run where nothing failed. `sweeping` alone is not that
+question: it means only that no positional argument was given, which a
+`--test-name-pattern` run satisfies while executing a handful of tests.
+
+The threshold still applies to a narrowed run: a test that is slow is slow
+however the run reached it.
+
+The gate also applies to every NESTED runner the suite spawns. Those throwaway
+roots carry no `slow-tests.json`, so `allow` is empty there and any stub that
+blocks past the threshold fails its own inner run —
+`test/test-digest-lock.test.js`'s stub sleeps 3s today, half of it.
 
 FILE-level TAP points are discounted before the threshold, by the same
 `fs.existsSync(path.resolve(ROOT, name))` rule the filter block uses: node

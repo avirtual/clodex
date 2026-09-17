@@ -16,14 +16,15 @@ const block = (ms) => `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0,
 const sleeper = (name, ms) => `require('node:test').test(${JSON.stringify(name)}, () => {\n`
   + `  ${block(ms)}});\n`;
 
-function runRunner({ files = {}, allow = null, args = [], slowMs = null } = {}) {
+function runRunner({ files = {}, allow = null, allowRaw = null, args = [], slowMs = null } = {}) {
   const root = fs.realpathSync(mkTmpRoot('clx-t955-'));
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const f of ['run-tests.js', 'test-escapes.js']) {
     fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
   }
   fs.mkdirSync(path.join(root, 'test'), { recursive: true });
-  if (allow) fs.writeFileSync(path.join(root, 'test', 'slow-tests.json'), JSON.stringify(allow, null, 2));
+  if (allowRaw !== null) fs.writeFileSync(path.join(root, 'test', 'slow-tests.json'), allowRaw);
+  else if (allow) fs.writeFileSync(path.join(root, 'test', 'slow-tests.json'), JSON.stringify(allow, null, 2));
   for (const [rel, body] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
     fs.writeFileSync(path.join(root, rel), body);
@@ -73,6 +74,21 @@ test('slow gate: the same test listed in test/slow-tests.json passes', () => {
   assert.ok(!/SLOW:/.test(r.out), 'and nothing is reported about it');
 });
 
+test('slow gate: a test named after an Object.prototype key is not silently exempt', () => {
+  const r = runRunner({
+    files: { 'test/slow.test.js': sleeper('toString', 400) },
+    allow: { 'something else entirely': 'unrelated' },
+    args: ['test/slow.test.js'],
+    slowMs: 150,
+  });
+  assert.match(r.out, /TOTALS: 1 pass, 0 fail/, 'ENTER: the run produced no totals');
+  assert.notStrictEqual(r.code, 0,
+    'a membership test that walks the prototype chain exempts toString, constructor, valueOf and '
+    + 'hasOwnProperty forever, through a file that never mentions them — and with no entry to go '
+    + 'stale, nothing would ever report it');
+  assert.match(r.out, /^SLOW: \d+ms toString$/m, 'and the offender is named like any other');
+});
+
 test('slow gate: a stale allowlist entry fails a SWEEPING run and is skipped on a named-file run', () => {
   const files = { 'test/fast.test.js': FAST };
   const allow = { 'a test that no longer exists': 'it was deleted and nobody pruned this file' };
@@ -90,6 +106,29 @@ test('slow gate: a stale allowlist entry fails a SWEEPING run and is skipped on 
     'a named-file run cannot see every test, so every unlisted entry would look stale — the check '
     + 'must not apply there');
   assert.ok(!/stale allowlist entry/.test(named.out), 'and says nothing about it');
+
+  const filtered = runRunner({ files, allow, args: ['--test-name-pattern=fast'], slowMs: 150 });
+  assert.match(filtered.out, /TOTALS: \d+ pass, 0 fail/, 'ENTER: the filtered run produced no totals');
+  assert.strictEqual(filtered.code, 0,
+    'a FILTERED run names no file, so `sweeping` is true, yet it sees only the tests the pattern '
+    + 'matched — without this leg every deliberately narrowed run goes red with one bogus line per '
+    + 'allowlist entry, on a run where nothing failed');
+  assert.ok(!/stale allowlist entry/.test(filtered.out),
+    'a filter cannot see every test either, so the stale check must not apply to it');
+});
+
+test('slow gate: a MALFORMED allowlist names itself instead of surfacing as bogus offenders', () => {
+  const r = runRunner({
+    files: { 'test/slow.test.js': sleeper('the slow subject', 400) },
+    allowRaw: '{ "unclosed": "quote }\n',
+    slowMs: 150,
+  });
+  assert.notStrictEqual(r.code, 0, 'a malformed allowlist must not yield a green run');
+  assert.match(r.out, /test\/slow-tests\.json is not valid JSON/,
+    'the refusal names the file that is broken');
+  assert.ok(!/SLOW:/.test(r.out),
+    'a swallowed parse error leaves the allowlist empty and every real entry comes back as an '
+    + 'unrelated SLOW: offender — sending the reader to the tests instead of to the file they broke');
 });
 
 test('slow gate: the FILE-level tap point is never reported as slow', () => {
