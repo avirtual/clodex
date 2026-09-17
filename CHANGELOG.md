@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- **Closed tickets keep their history.** Every review round's report, verdict and must-fixes stay on the ticket, and the tickets viewer opens any past ticket to read what was asked, what was reviewed and what changed after a rework, with search across closed tickets.
+- **Closed tickets keep their history.** Every review round's report, verdict and must-fixes stay on the ticket, and the tickets viewer opens any past ticket to read what was asked, what was reviewed and what changed after a rework, with search across every ticket, past and present.
 
 - **A hand's own test run no longer fails on a slow test.** An unlocked, own-scope run cannot tell a slow test from a busy machine, so it reports the timing and passes; the merge gate's locked run still enforces the six-second bar.
 

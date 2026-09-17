@@ -11695,7 +11695,7 @@ body.web-frontend #sidebar-header {
           let searchTimer = null;
           const searchEl = el("input", "tv-search");
           searchEl.type = "search";
-          searchEl.placeholder = "Search closed tickets\u2026";
+          searchEl.placeholder = "Search tickets\u2026";
           const sectionsEl = el("div", "tv-sections");
           let shellMounted = false;
           function clearBoardPane() {
@@ -12109,7 +12109,7 @@ Cancelled tickets are not counted as done.`)) return;
             }
             const hits = Array.isArray(res.hits) ? res.hits : [];
             if (!hits.length) {
-              sectionsEl.appendChild(el("div", "tv-empty", "no closed tickets match"));
+              sectionsEl.appendChild(el("div", "tv-empty", "no tickets match"));
               return;
             }
             const list = el("div", "tv-hits");

@@ -218,7 +218,7 @@ module.exports.activate = (rhost) => {
 
     const searchEl = el('input', 'tv-search');
     searchEl.type = 'search';
-    searchEl.placeholder = 'Search closed tickets…';
+    searchEl.placeholder = 'Search tickets…';
     const sectionsEl = el('div', 'tv-sections');
     let shellMounted = false;
 
@@ -752,7 +752,7 @@ module.exports.activate = (rhost) => {
       }
       const hits = Array.isArray(res.hits) ? res.hits : [];
       if (!hits.length) {
-        sectionsEl.appendChild(el('div', 'tv-empty', 'no closed tickets match'));
+        sectionsEl.appendChild(el('div', 'tv-empty', 'no tickets match'));
         return;
       }
       const list = el('div', 'tv-hits');

@@ -949,7 +949,7 @@ test('a search with no hits and a search that FAILED do not paint the same', asy
     allByClass(root, 'tv-search')[0].input('nothing matches this');
     t.mock.timers.tick(viewer.SEARCH_DEBOUNCE_MS + 1);
     await settle();
-    assert.match(textOf(root).join('\n'), /no closed tickets match/);
+    assert.match(textOf(root).join('\n'), /no tickets match/);
     assert.doesNotMatch(classesOf(root).join(' '), /tv-error/, 'an empty result is not a broken one');
   });
 
@@ -965,7 +965,7 @@ test('a search with no hits and a search that FAILED do not paint the same', asy
     assert.match(text, /Could not search/);
     assert.match(text, /not valid JSON/);
     assert.match(classesOf(root).join(' '), /tv-error/);
-    assert.doesNotMatch(text, /no closed tickets match/, 'a failure must not read as an empty result');
+    assert.doesNotMatch(text, /no tickets match/, 'a failure must not read as an empty result');
   });
 });
 
