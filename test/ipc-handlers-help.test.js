@@ -44,8 +44,8 @@ test('help:page of a known name projects exactly ok/name/title/content — no se
   assert.strictEqual(res.name, 'how-to');
   assert.strictEqual(res.title, 'How to');
   assert.strictEqual(res.content, PAGE.content);
-  // The corpus record carries `section`; a spread would leak it onto the wire.
-  assert.ok(!('section' in res), 'section is not projected');
+  assert.ok(!('section' in res),
+    'the corpus record carries `section`; a spread would leak it onto the wire');
 });
 
 test('help:page of an unknown name answers { ok: false } and never throws', () => {
@@ -93,9 +93,8 @@ test('the corpus is read through the getter per call — the handlers hold no ca
 
 test('with NO getHelpCorpus dep both handlers register and answer { ok: false }', () => {
   const handlers = mkHandlers(null);
-  // Registration must not throw on a missing dep — the web/headless hosts that
-  // never build a corpus still load this module.
-  assert.strictEqual(typeof handlers.get('help:index'), 'function', 'help:index registered without the dep');
+  assert.strictEqual(typeof handlers.get('help:index'), 'function',
+    'registration must not throw on a missing dep — a host that never builds a corpus still loads this module');
   assert.strictEqual(typeof handlers.get('help:page'), 'function', 'help:page registered without the dep');
   assert.deepStrictEqual(handlers.get('help:index')(), { ok: false });
   assert.deepStrictEqual(handlers.get('help:page')(null, 'how-to'), { ok: false });

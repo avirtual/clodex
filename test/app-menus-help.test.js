@@ -1,15 +1,4 @@
 'use strict';
-// app-menus-help.test.js — the Help menu (t983 / Help window S3).
-//
-// The menu is the DESKTOP entry point to the help corpus, and the native Help
-// search field indexes item labels, which is why every page is its own item
-// rather than a single "Help" that opens a picker. Both halves are asserted
-// through the real buildAppMenu: the structure (accelerator, a submenu per
-// section, an item per page) and what each click actually SENDS, since a menu
-// whose items carry the wrong channel or a stale name looks identical here.
-//
-// A fixture corpus is used rather than the real docs: this file pins the menu's
-// shape, and the manifest's page list is test/help-corpus.test.js's subject.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -30,9 +19,6 @@ const SECTIONS = [
   },
 ];
 
-// app-menus.js requires('electron') at module scope. Load it with a stub whose
-// focused window records what a click sends, so the click assertions below run
-// the shipped sendToFocused rather than a re-implementation of it.
 function buildHelpMenu({ getHelpCorpus } = {}) {
   const sent = [];
   let captured = null;
