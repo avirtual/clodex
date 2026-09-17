@@ -37,3 +37,12 @@ back only the LAST stderr line sliced to 200 (`session-manager.js`,
 pins that under 200. So the `[agent:remind in <K>m]` fragment must stay before
 that boundary, and the `kill … && rm -rf` remediation — for a human at a
 terminal, not a seat — after it.
+
+## sweeping
+
+`CLODEX_TEST_LOCK=1` forces the same acquisition a sweep takes, for a run that
+NAMES files and still reaches the port-binding tests — the scoped path in
+`scripts/clodex-run-tests.js` sets it when its selected set intersects that
+wrapper's `LOCK_BOUND`. It is scrubbed from `childEnv` beside the other two lock
+variables: a nested runner is by contract a different run, and one that
+inherited the declaration would block on the lock its parent already holds.
