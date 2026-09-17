@@ -41,6 +41,7 @@ function writeStub(root, { body, exit }) {
     '  lockDir: process.env.CLODEX_TEST_LOCK_DIR || null,',
     '  lockWait: process.env.CLODEX_TEST_LOCK_WAIT_MS || null,',
     '  lock: process.env.CLODEX_TEST_LOCK || null,',
+    '  reexec: process.env.CLODEX_RUN_TESTS_REEXEC || null,',
     '  cwd: process.cwd(),',
     '}));',
     body,
@@ -48,13 +49,15 @@ function writeStub(root, { body, exit }) {
   ].join('\n'));
 }
 
-function run(root, payload, { home = path.join(root, 'home') } = {}) {
+function run(root, payload, { home = path.join(root, 'home'), env = {} } = {}) {
+  const base = { ...process.env, HOME: home, CLODEX_HOME: path.join(home, '.clodex') };
+  delete base.CLODEX_RUN_TESTS_REEXEC;
   const res = spawnSync(process.execPath, [SCRIPT], {
     cwd: root,
     input: payload,
     encoding: 'utf8',
     timeout: 60000,
-    env: { ...process.env, HOME: home, CLODEX_HOME: path.join(home, '.clodex') },
+    env: { ...base, ...env },
   });
   const lines = String(res.stderr || '').split('\n').filter((l) => l.trim());
   const dir = path.join(home, '.clodex', 'test-failures');
@@ -62,6 +65,7 @@ function run(root, payload, { home = path.join(root, 'home') } = {}) {
   return {
     code: res.status,
     digest: lines.length ? lines[lines.length - 1] : '',
+    stderr: String(res.stderr || ''),
     stdout: res.stdout,
     keepDir: dir,
     kept: readIf(path.join(dir, 'last.txt')),
@@ -873,6 +877,82 @@ test('scope own: CLODEX_TEST_LOCK is set only when the set reaches a port-bindin
     assert.strictEqual(rec.lock, '1',
       `${portBound} binds a real port, so this run must serialize like a full one or both deadlock`);
   } finally { fs.rmSync(bound, { recursive: true, force: true }); }
+});
+
+const MARKER = 'MEASURED-COPY-RAN';
+
+function writeMeasuredWrapper(root, bytes) {
+  const dir = path.join(root, 'scripts');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'clodex-run-tests.js'), bytes);
+}
+
+const DIFFERING_WRAPPER = [
+  "'use strict';",
+  "const fs = require('fs');",
+  "let raw = '';",
+  'try { raw = fs.readFileSync(0, \'utf8\'); } catch {}',
+  "let scope = '(none)';",
+  'try { scope = JSON.parse(raw).scope; } catch {}',
+  `process.stderr.write('${MARKER} scope=' + scope + '\\n');`,
+  'process.exit(3);',
+  '',
+].join('\n');
+
+test('re-exec: a measured tree whose wrapper differs produces the digest itself', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, { body: "console.log('TOTALS: 1 pass, 0 fail, 1 tests');", exit: 0 });
+    writeMeasuredWrapper(root, DIFFERING_WRAPPER);
+    const r = run(root, '{}');
+    assert.ok(r.stderr.includes(MARKER),
+      'the measured tree\'s own wrapper must be the one that emits the digest, or a branch that '
+      + 'changes the wrapper is measured by the copy it replaced');
+    assert.strictEqual(r.code, 3, 'the child\'s exit status is the run\'s status');
+    assert.strictEqual(stubRecord(root), null,
+      'the outer wrapper must hand the run over, not spawn the runner itself as well');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('re-exec: a byte-identical measured wrapper costs no extra process', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, { body: "console.log('TOTALS: 1 pass, 0 fail, 1 tests');", exit: 0 });
+    writeMeasuredWrapper(root, fs.readFileSync(SCRIPT));
+    const r = run(root, '{}');
+    assertDigest(r.digest, `[${path.basename(root)}] 1/1 green (${WALL})`);
+    assert.strictEqual(r.code, 0);
+    const rec = stubRecord(root);
+    assert.ok(rec, 'ENTER: the runner never ran');
+    assert.strictEqual(rec.reexec, null,
+      'every ticket that does not touch the wrapper hits this path — spawning a second node here '
+      + 'would tax every scoped run for nothing');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('re-exec: CLODEX_RUN_TESTS_REEXEC=1 stops the handover, so a child never recurses', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, { body: "console.log('TOTALS: 1 pass, 0 fail, 1 tests');", exit: 0 });
+    writeMeasuredWrapper(root, DIFFERING_WRAPPER);
+    const r = run(root, '{}', { env: { CLODEX_RUN_TESTS_REEXEC: '1' } });
+    assert.ok(!r.stderr.includes(MARKER),
+      'a child that re-execs again is an unbounded chain of node processes');
+    assertDigest(r.digest, `[${path.basename(root)}] 1/1 green (${WALL})`);
+    assert.strictEqual(r.code, 0);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('re-exec: the stdin payload reaches the measured wrapper intact', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, { body: "console.log('TOTALS: 1 pass, 0 fail, 1 tests');", exit: 0 });
+    writeMeasuredWrapper(root, DIFFERING_WRAPPER);
+    const r = run(root, '{"scope":"own"}');
+    assert.ok(r.stderr.includes(`${MARKER} scope=own`),
+      'stdin is read once and consumed — the child gets no payload at all unless the bytes already '
+      + `read are handed to it, got: ${r.stderr.trim()}`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('OWN_SCANNERS and LOCK_BOUND name files that exist in THIS repo', () => {

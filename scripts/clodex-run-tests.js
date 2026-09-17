@@ -178,6 +178,7 @@ const OWN_SCANNERS = [
   'test/packaging-allowlist.test.js',
   'test/plugin-web-parity.test.js',
   'test/preserve-across-restart.test.js',
+  'test/release-script.test.js',
   'test/sigkill-pid-census.test.js',
   'test/source-control-bytes.test.js',
   'test/ssh-keepalive.test.js',
@@ -305,8 +306,34 @@ function selectSet(measure) {
   };
 }
 
-const payload = parsePayload(readStdin());
+function readIfFile(p) {
+  try {
+    return fs.readFileSync(p);
+  } catch {
+    return null;
+  }
+}
+
+function reexecInMeasured(measure, rawStdin) {
+  if (process.env.CLODEX_RUN_TESTS_REEXEC === '1') return;
+  const theirs = path.join(measure, 'scripts', 'clodex-run-tests.js');
+  const theirBytes = readIfFile(theirs);
+  if (!theirBytes) return;
+  const ourBytes = readIfFile(__filename);
+  if (ourBytes && theirBytes.equals(ourBytes)) return;
+  const res = spawnSync(process.execPath, [theirs], {
+    cwd: ROOT,
+    input: rawStdin,
+    stdio: ['pipe', 'inherit', 'inherit'],
+    env: { ...process.env, CLODEX_RUN_TESTS_REEXEC: '1' },
+  });
+  process.exit(res.status === null ? 1 : res.status);
+}
+
+const rawStdin = readStdin();
+const payload = parsePayload(rawStdin);
 const measure = resolveMeasure(payload);
+reexecInMeasured(measure, rawStdin);
 const runner = path.join(measure, 'scripts', 'run-tests.js');
 
 const scope = Object.prototype.hasOwnProperty.call(payload, 'scope') ? payload.scope : 'full';
