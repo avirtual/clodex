@@ -137,7 +137,8 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
     if (!st) return '';
     const c = cause();
     const hint = c ? `${st.hint}. Cause: ${c}` : st.hint;
-    return `<div class="rec-state ${st.cls}" data-rec title="${esc(hint)}">`
+    const act = capable() ? ' data-rec' : '';
+    return `<div class="rec-state ${st.cls}"${act} title="${esc(hint)}">`
       + '<span class="rec-dot"></span>'
       + `<span class="rec-text">${esc(st.text)}</span></div>`;
   }
@@ -180,7 +181,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
     const dim = known && mode === 'off' ? ' px-voice-off' : '';
     if (snap.capable === false) {
       const why = `Voice input is unavailable on this machine: ${snap.cause || 'this node\u2019s Claude CLI cannot record'}`;
-      return `<button class="px-action${dim}" data-act="voice" disabled data-tip="${esc(why)}">🎤 ${esc(label)}</button>`;
+      return `<button class="px-action${dim} px-voice-dead" data-act="voice" aria-disabled="true" data-tip="${esc(why)}">🎤 ${esc(label)}</button>`;
     }
     const tip = snap.pending
       ? `Voice input: switching to ${snap.pending}`

@@ -2697,6 +2697,10 @@ body {
 #proxy-actions .px-action.px-voice-off {
   opacity: 0.45;
 }
+#proxy-actions .px-action.px-voice-dead {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .rec-state {
   display: flex;
   align-items: center;
@@ -32526,7 +32530,8 @@ Opening it here and saving would overwrite the file with what this editor could 
           if (!st) return "";
           const c = cause();
           const hint = c ? `${st.hint}. Cause: ${c}` : st.hint;
-          return `<div class="rec-state ${st.cls}" data-rec title="${esc(hint)}"><span class="rec-dot"></span><span class="rec-text">${esc(st.text)}</span></div>`;
+          const act = capable() ? " data-rec" : "";
+          return `<div class="rec-state ${st.cls}"${act} title="${esc(hint)}"><span class="rec-dot"></span><span class="rec-text">${esc(st.text)}</span></div>`;
         }
         let recTimer = null;
         let lastReading = null;
@@ -32556,7 +32561,7 @@ Opening it here and saving would overwrite the file with what this editor could 
           const dim = known && mode === "off" ? " px-voice-off" : "";
           if (snap.capable === false) {
             const why = `Voice input is unavailable on this machine: ${snap.cause || "this node\u2019s Claude CLI cannot record"}`;
-            return `<button class="px-action${dim}" data-act="voice" disabled data-tip="${esc(why)}">\u{1F3A4} ${esc(label)}</button>`;
+            return `<button class="px-action${dim} px-voice-dead" data-act="voice" aria-disabled="true" data-tip="${esc(why)}">\u{1F3A4} ${esc(label)}</button>`;
           }
           const tip = snap.pending ? `Voice input: switching to ${snap.pending}` : "Voice input mode for every Claude session on this machine \u2014 click to change";
           return `<button class="px-action${dim}" data-act="voice" data-tip="${esc(tip)}">\u{1F3A4} ${esc(label)}</button>`;

@@ -1097,7 +1097,7 @@ function registerIpcHandlers(deps) {
   // ship a button that is dead over web-host.
   // The trigger key and the machine's capability ride this same channel rather
   // than two more: all three are read-only facts about what the CLI on this box
-  // can do, and every caller needs them together to decide anything.
+  // can do, read on one poll.
   handle('settings:voiceMode', () => {
     const cap = readVoiceCapability ? readVoiceCapability() : { capable: true, cause: null };
     return { ok: true, ...readVoiceMode(), trigger: readVoiceTrigger(), capable: cap.capable !== false, cause: cap.cause || null };

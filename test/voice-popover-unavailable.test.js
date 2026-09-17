@@ -75,23 +75,28 @@ function harness({ capable = true, cause = null, reading = 'off' } = {}) {
   };
 }
 
-test('capable: the bar button carries no disabled attribute and the ordinary tip', () => {
+test('capable: the bar button reads as live — no aria-disabled, no dead class, the ordinary tip', () => {
   const h = harness({ capable: true });
   try {
     const html = h.api.actionHtml();
-    assert.ok(!html.includes('disabled'), 'a machine that can record must not disable its own button');
+    assert.ok(!html.includes('aria-disabled'), 'a machine that can record must not mark its own button dead');
+    assert.ok(!html.includes('px-voice-dead'));
     assert.ok(html.includes('click to change'), 'and keeps the tip that says the button does something');
   } finally { h.restore(); }
 });
 
-test('not capable: the bar button renders disabled and its tip names the cause', () => {
+test('not capable: the bar button reads disabled to a11y and CSS, stays clickable, and its tip names the cause', () => {
   const h = harness({ capable: false, cause: 'no audio capture device on this machine' });
   try {
     const html = h.api.actionHtml();
-    assert.ok(/<button[^>]*\sdisabled/.test(html), 'the button must carry the disabled attribute');
+    assert.ok(!/<button[^>]*\sdisabled[\s=>]/.test(html),
+      'the button must NOT carry the disabled attribute — it would swallow the click that opens the explanation');
+    assert.ok(html.includes('aria-disabled="true"'), 'it must still read as disabled to assistive tech');
+    assert.ok(html.includes('px-voice-dead'), 'and carry the class that dims it');
     assert.ok(html.includes('Voice input is unavailable on this machine'), 'the tip must say the controls are dead');
     assert.ok(html.includes('no audio capture device on this machine'), 'and it must name the cause, not just the fact');
-    assert.ok(!html.includes('click to change'), 'the tip that promises an action must be gone');
+    assert.ok(html.includes('data-act="voice"'), 'the opener must survive: this button is the popover\u2019s only entry point');
+    assert.ok(!html.includes('click to change'), 'the tip that promises a mode change must be gone');
   } finally { h.restore(); }
 });
 
@@ -101,6 +106,23 @@ test('the cause is escaped into the tip attribute', () => {
     const html = h.api.actionHtml();
     assert.ok(!html.includes('"missing"'), 'a raw quote in the cause would close the attribute');
     assert.ok(html.includes('&quot;missing&quot;'), 'the quote must arrive escaped');
+  } finally { h.restore(); }
+});
+
+test('not capable: the indicator is a reading only, with no data-rec for the click handler', () => {
+  const h = harness({ capable: false, cause: 'SoX is not installed on this machine' });
+  try {
+    const html = h.rowsHtml();
+    assert.ok(html.includes('rec-unavailable'));
+    assert.ok(!html.includes('data-rec'), 'the unavailable indicator must not be clickable');
+  } finally { h.restore(); }
+});
+
+test('capable: the indicator keeps data-rec, so the tap-off click still works', () => {
+  const h = harness({ capable: true, reading: 'lit' });
+  try {
+    const html = h.rowsHtml();
+    assert.ok(html.includes('data-rec'), 'nothing changes for a machine that can record');
   } finally { h.restore(); }
 });
 
