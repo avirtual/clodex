@@ -72,10 +72,19 @@ flattens a test file away and reports it as a point of its own only when it
 contributed no executed test, and then it is named by its path. Without that
 discount every file whose tests sum past six seconds reads as one slow test.
 
-Offenders print twice, and both spellings are load-bearing: the `SLOW:` block on
-stdout is what a human reads, and the ` ✖ <name> (<ms>ms)` lines on stderr are
-what `scripts/clodex-run-tests.js` parses with its `NAME_RE` to put the offender
-into its one-line digest — that wrapper reads only `TOTALS:` and `✖` names.
+ENFORCED offenders print twice, and both spellings are load-bearing: the `SLOW:`
+block on stdout is what a human reads, and the ` ✖ <name> (<ms>ms)` lines on
+stderr are what `scripts/clodex-run-tests.js` parses with its `NAME_RE` to put
+the offender into its one-line digest. On the ADVISORY path they print once,
+stdout only: a ✖ there would feed that same failing-name parser and report a
+green run as failing, so the wrapper instead scans stdout for the advisory
+prefix and appends the offender to its GREEN digest line.
+
+`CLODEX_TEST_SLOW_ADVISORY=1` is what softens the bar, and only on a run that
+took no lock; `scripts/clodex-run-tests.js` sets it for its unlocked own-scope
+runs. It is scrubbed from `childEnv` beside the three lock variables, for the
+same reason: it is a decision about THIS run's timings, and a nested runner is
+by contract a different run whose own timings are its own to judge.
 
 Files that spawn sweeping runners of their own against throwaway roots, and so
 must not inherit this process's lock variables: `test/test-digest-lock.test.js`,

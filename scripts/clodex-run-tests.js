@@ -437,7 +437,12 @@ if (tests === 0) {
 if (code === 0 && fail === 0) {
   retireKeep();
   const breakdown = selected ? ` — ${selected.counts}` : '';
-  emit(`[${LEAF}] ${TAG}${pass}/${tests} green (${wallShow(wallMs)})${breakdown}`, 0);
+  const ADVISORY_RE = /^SLOW \(advisory, unlocked run\): (\d+)ms (.+)$/gm;
+  let slow = '';
+  for (let m = ADVISORY_RE.exec(stdout); m; m = ADVISORY_RE.exec(stdout)) {
+    slow += ` — SLOW(advisory): ${m[2]} ${m[1]}ms`;
+  }
+  emit(`[${LEAF}] ${TAG}${pass}/${tests} green (${wallShow(wallMs)})${breakdown}${slow}`, 0);
 }
 
 const names = [];

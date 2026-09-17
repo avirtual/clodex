@@ -254,20 +254,21 @@ process.on('exit', () => {
   } catch { /* a leftover temp dir is not a reason to fail a run */ }
 });
 
-// The lock variables are all scrubbed from the child environment. They are a
-// decision about THIS process's lock, and every nested runner is by contract a
-// DIFFERENT run: two test files (test/test-digest-lock.test.js,
-// test/run-tests-args.test.js) spawn sweeping runners of their own against
-// throwaway roots, and inheriting the override points them at the outer run's
-// lock — held by a live pid — where they block for the whole inherited wait
-// instead of exercising their own fixture. Measured against the unfixed runner:
-// 6 tests red and ~12 minutes of spawnSync timeouts, i.e. the ticket loop
-// rejecting every ticket for a defect in its own harness. Same discipline the
-// tests already apply to NODE_TEST_CONTEXT.
+// The lock variables, and the advisory declaration gated on them, are scrubbed
+// from the child environment: a decision about THIS process's lock, and every
+// nested runner is by contract a DIFFERENT run: two test files
+// (test/test-digest-lock.test.js, test/run-tests-args.test.js) spawn sweeping
+// runners of their own against throwaway roots, and inheriting the override
+// points them at the outer run's lock — held by a live pid — where they block
+// for the whole inherited wait instead of exercising their own fixture.
+// Measured against the unfixed runner: 6 tests red and ~12 minutes of spawnSync
+// timeouts, i.e. the ticket loop rejecting every ticket for a defect in its own
+// harness. Same discipline the tests already apply to NODE_TEST_CONTEXT.
 const childEnv = { ...process.env };
 delete childEnv.CLODEX_TEST_LOCK_DIR;
 delete childEnv.CLODEX_TEST_LOCK_WAIT_MS;
 delete childEnv.CLODEX_TEST_LOCK;
+delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
 
 const runStart = Date.now();
 const run = spawnSync(process.execPath, [
