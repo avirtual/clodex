@@ -449,6 +449,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/session-hovercard.js',
   'renderer/tooltip.js',
   'renderer/popovers/report-panel.js',
+  'renderer/popovers/help-panel.js',
   'renderer/popovers/cost-popover.js',
   'renderer/popovers/bust-popover.js',
   'renderer/popovers/session-info-popover.js',
