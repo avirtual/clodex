@@ -750,6 +750,203 @@ function board(projectKey) {
   };
 }
 
+const VERDICT_RE = /^[ \t]*(?:[-*][ \t]*)?(?:\*\*|__)?[ \t]*\bVERDICT\b\W*\b(ACCEPT|REWORK)\b/im;
+const TEXT_CAP = 64 * 1024;
+const TEXT_CAP_MARKER = '\n…[truncated]';
+const SEARCH_HIT_CAP = 50;
+const SNIPPET_CHARS = 160;
+const VERDICT_TAIL = '.verdict.md';
+const DIFF_TAIL = '.diff';
+
+function parseVerdict(text) {
+  const m = VERDICT_RE.exec(String(text == null ? '' : text));
+  return m ? m[1].toUpperCase() : null;
+}
+
+function capText(text) {
+  const s = String(text == null ? '' : text);
+  return s.length > TEXT_CAP ? s.slice(0, TEXT_CAP) + TEXT_CAP_MARKER : s;
+}
+
+function readInDir(dir, name) {
+  if (!dir || !name) return null;
+  const file = confine(dir, name);
+  if (file === null) return null;
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch (_) {
+    return null;
+  }
+}
+
+function diffStat(text) {
+  if (text == null) return null;
+  let files = 0;
+  let added = 0;
+  let removed = 0;
+  for (const line of String(text).split('\n')) {
+    if (line.startsWith('diff --git ')) { files += 1; continue; }
+    if (line.startsWith('+++') || line.startsWith('---')) continue;
+    if (line.startsWith('+')) added += 1;
+    else if (line.startsWith('-')) removed += 1;
+  }
+  return { files, added, removed };
+}
+
+function roundFileNames(id, n) {
+  return { verdictFile: `review-${id}-r${n}${VERDICT_TAIL}`, diffFile: `review-${id}-r${n}${DIFF_TAIL}` };
+}
+
+function serveRound(entry, dir, roundNo) {
+  const verdictFile = str(entry.verdictFile) || null;
+  const diffFile = str(entry.diffFile) || null;
+  const verdictRaw = verdictFile === null ? null : readInDir(dir, verdictFile);
+  const diffRaw = diffFile === null ? null : readInDir(dir, diffFile);
+  return {
+    round: num(entry.round) ?? roundNo,
+    report: entry.report == null ? null : String(entry.report),
+    reportedBy: entry.reportedBy == null ? null : String(entry.reportedBy),
+    reportedAt: num(entry.reportedAt),
+    verdict: entry.verdict == null ? null : String(entry.verdict),
+    mustFix: entry.mustFix == null ? null : String(entry.mustFix),
+    reviewedAt: num(entry.reviewedAt),
+    verdictFile,
+    diffFile,
+    verdictText: verdictRaw === null ? null : capText(verdictRaw),
+    diffStat: diffStat(diffRaw),
+  };
+}
+
+function deriveRounds(dir, id) {
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch (_) {
+    return [];
+  }
+  const present = new Set(names);
+  const prefix = `review-${id}-r`;
+  const found = new Set();
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue;
+    let tail = null;
+    if (name.endsWith(VERDICT_TAIL)) tail = name.slice(prefix.length, name.length - VERDICT_TAIL.length);
+    else if (name.endsWith(DIFF_TAIL)) tail = name.slice(prefix.length, name.length - DIFF_TAIL.length);
+    else continue;
+    if (!/^\d+$/.test(tail)) continue;
+    found.add(Number(tail));
+  }
+  return [...found].sort((a, b) => a - b).map((n) => {
+    const f = roundFileNames(id, n);
+    return {
+      round: n,
+      verdictFile: present.has(f.verdictFile) ? f.verdictFile : null,
+      diffFile: present.has(f.diffFile) ? f.diffFile : null,
+    };
+  });
+}
+
+function ticketRounds(rec, dir, id) {
+  if (Array.isArray(rec.rounds)) {
+    return rec.rounds
+      .filter((e) => e && typeof e === 'object' && !Array.isArray(e))
+      .map((e, i) => serveRound(e, dir, i + 1));
+  }
+  if (!dir) return [];
+  const derived = deriveRounds(dir, id);
+  return derived.map((d, i) => serveRound({
+    ...d,
+    report: i === derived.length - 1 && rec.report != null ? String(rec.report) : null,
+    verdict: d.verdictFile === null ? null : parseVerdict(readInDir(dir, d.verdictFile)),
+  }, dir, d.round));
+}
+
+function ticketDetail(payload) {
+  const projectKey = str(payload && payload.project);
+  const id = str(payload && payload.id);
+  const loc = resolveProject(projectKey);
+  if (!loc.ok) return loc;
+  if (!id) return { ok: false, error: 'a ticket id is required' };
+
+  const read = readTicketsAt(loc.dir);
+  if (!read.ok) return read;
+  const rec = read.tickets.find((t) => str(t.id) === id);
+  if (!rec) return { ok: false, error: `no ticket "${id}" on ${projectKey}` };
+
+  let dir = null;
+  if (str(rec.taskDir)) {
+    try {
+      dir = resolveTaskDir({
+        taskDir: rec.taskDir,
+        projectDir: loc.dir,
+        projectsRoot: projectsRoot(),
+        homedir: os.homedir(),
+      });
+    } catch (e) {
+      return { ok: false, error: `ticket ${id}: its task dir does not resolve under ${projectsRoot()} (${(e && e.message) || 'refused'})` };
+    }
+  }
+
+  const known = teamIndex().get(projectKey);
+  const base = shape(rec, Date.now(), stallMsFor(known && known.manifest), projectRootFor(projectKey, known));
+  const mergeRaw = dir === null ? null : readInDir(dir, `merge-${id}.msg`);
+
+  return {
+    ok: true,
+    ticket: {
+      ...base,
+      spec: str(rec.spec),
+      respecs: Array.isArray(rec.respecs)
+        ? rec.respecs
+          .filter((r) => r && typeof r === 'object' && !Array.isArray(r))
+          .map((r) => ({ at: num(r.at), spec: str(r.spec) }))
+        : [],
+      report: str(rec.report),
+      rounds: ticketRounds(rec, dir, id),
+      mergeMsg: mergeRaw === null ? null : capText(mergeRaw),
+      taskDirPath: dir || null,
+    },
+  };
+}
+
+function snippetAround(text, at, len) {
+  if (text.length <= SNIPPET_CHARS) return text;
+  const slack = Math.max(0, SNIPPET_CHARS - len);
+  let start = Math.max(0, at - Math.floor(slack / 2));
+  start = Math.min(start, text.length - SNIPPET_CHARS);
+  return text.slice(start, start + SNIPPET_CHARS);
+}
+
+function search(payload) {
+  const projectKey = str(payload && payload.project);
+  const q = str(payload && payload.q);
+  const loc = resolveProject(projectKey);
+  if (!loc.ok) return loc;
+  const read = readTicketsAt(loc.dir);
+  if (!read.ok) return read;
+  if (!q) return { ok: true, hits: [] };
+
+  const needle = q.toLowerCase();
+  const scored = [];
+  for (const t of read.tickets) {
+    let snippet = null;
+    for (const field of [str(t.id), str(t.title), str(t.spec), str(t.report)]) {
+      const at = field.toLowerCase().indexOf(needle);
+      if (at < 0) continue;
+      snippet = snippetAround(field, at, needle.length);
+      break;
+    }
+    if (snippet === null) continue;
+    const closedAt = num(t.closedAt);
+    scored.push({
+      order: closedAt ?? num(t.openedAt) ?? 0,
+      hit: { id: str(t.id), title: str(t.title), state: str(t.state), closedAt, snippet },
+    });
+  }
+  scored.sort((a, b) => b.order - a.order);
+  return { ok: true, hits: scored.slice(0, SEARCH_HIT_CAP).map((s) => s.hit) };
+}
+
 function teamCost(projectKey) {
   const known = teamIndex().get(projectKey);
   if (!known || !known.team) return { ok: true, team: '', usd: null, counts: null, since: null };
@@ -1004,6 +1201,8 @@ module.exports.activate = (h) => {
   host.ipc.handle('board', (key) => board(key));
   host.ipc.handle('teamCost', (key) => teamCost(key));
   host.ipc.handle('sessions', () => sessions());
+  host.ipc.handle('ticket', (p) => ticketDetail(p));
+  host.ipc.handle('search', (p) => search(p));
 
   // Deliberately absent from manifest.json's `surfaces`, which is what keeps these
   // desktop-only: a board reachable from a browser is one a browser can close
@@ -1030,6 +1229,8 @@ module.exports._internals = {
   confineOrThrow, confineUnder, stripFileTail, resolveTaskDir,
   taskDirRuleClause, ticketTaskDirLine, ticketTaskDirLineFor,
   add, editSpec, assign, closeTicket, sessions,
+  ticketDetail, search, diffStat, parseVerdict, ticketRounds, deriveRounds,
+  VERDICT_RE, TEXT_CAP, TEXT_CAP_MARKER, SEARCH_HIT_CAP, SNIPPET_CHARS,
   VIEWER_ACTOR, closeLine,
   DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, RECENT_DONE_MS, RECENT_DONE_CAP,
   // Overrides the HOME rather than teams/ or projects/, which must move together:

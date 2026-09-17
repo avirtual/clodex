@@ -1913,7 +1913,7 @@ test('tickets-viewer: the engine registers its reads and its writes, and nothing
     // A row appearing here that the manifest also opens to the web surface is
     // the thing plugin-surface-gate.test.js cross-checks; a row appearing here
     // at all is a scope decision for the lead, not something to discover in
-    // review. The five writers are deliberately absent from manifest.surfaces.
+    // review.
     assert.deepEqual(keys, [
       'tickets-viewer:add',
       'tickets-viewer:assign',
@@ -1922,11 +1922,11 @@ test('tickets-viewer: the engine registers its reads and its writes, and nothing
       'tickets-viewer:close',
       'tickets-viewer:editSpec',
       'tickets-viewer:projects',
+      'tickets-viewer:search',
       'tickets-viewer:sessions',
-      // A READ, and web-open like the other reads: it answers what the team has
-      // already spent, which the board beside it already shows per row.
       'tickets-viewer:teamCost',
       'tickets-viewer:teams',
+      'tickets-viewer:ticket',
     ]);
   } finally { cleanup(); }
 });
@@ -1994,5 +1994,298 @@ test('tickets-viewer: reading a board writes NOTHING to disk', async () => {
     // the other thing this catches now that the module can write at all.
     assert.deepEqual(fs.readdirSync(boardDir).sort(), beforeEntries, 'no file was created beside it');
     assert.deepEqual(removals, [], 'the library seam is never touched');
+  } finally { cleanup(); }
+});
+
+const SECRET_KEYS = ['token', 'auth', 'secret', 'password'];
+
+function findSecretKey(value, trail = '$') {
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i += 1) {
+      const hit = findSecretKey(value[i], `${trail}[${i}]`);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (!value || typeof value !== 'object') return null;
+  for (const [k, v] of Object.entries(value)) {
+    if (SECRET_KEYS.includes(k.toLowerCase())) return `${trail}.${k}`;
+    const hit = findSecretKey(v, `${trail}.${k}`);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function histTicket(id, over = {}) {
+  return {
+    id,
+    title: `title ${id}`,
+    spec: 'the spec',
+    assignee: 'hand',
+    opener: 'lead',
+    state: 'done',
+    openedAt: null,
+    lastActivityAt: null,
+    closedAt: 1700000000000,
+    nudgedAt: null,
+    taskDir: `tasks/${id}-work`,
+    ...over,
+  };
+}
+
+function mkTaskDir(home, key, rel) {
+  const dir = path.join(home, 'projects', key, rel);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+const FIXTURE_DIFF = [
+  'diff --git a/one.js b/one.js',
+  'index 1111111..2222222 100644',
+  '--- a/one.js',
+  '+++ b/one.js',
+  '@@ -1,3 +1,4 @@',
+  '+added one',
+  '+added two',
+  '-removed one',
+  ' context',
+  'diff --git a/two.js b/two.js',
+  'index 3333333..4444444 100644',
+  '--- a/two.js',
+  '+++ b/two.js',
+  '@@ -1,2 +1,4 @@',
+  '+added three',
+  '+added four',
+  '+added five',
+  '-removed two',
+  '-removed three',
+  '',
+].join('\n');
+
+test('tickets-viewer: `ticket` serves a record\'s own rounds[] plus verdictText and diffStat, whole object', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/hist/records');
+    const dir = mkTaskDir(home, key, 'tasks/t7-work');
+    fs.writeFileSync(path.join(dir, 'review-t7-r1.verdict.md'), 'VERDICT: REWORK\n\nfix the thing\n');
+    fs.writeFileSync(path.join(dir, 'review-t7-r1.diff'), FIXTURE_DIFF);
+    fs.writeFileSync(path.join(dir, 'merge-t7.msg'), 'Merge t7: the work\n');
+    writeTicketsAt(home, key, [histTicket('t7', {
+      taskDir: 'tasks/t7-work',
+      report: 'the latest report',
+      respecs: [{ at: 1699000000000, by: 'lead', title: 'old', spec: 'the old spec' }],
+      rounds: [{
+        round: 1,
+        report: 'round one report',
+        reportedBy: 'clodex-hand-7',
+        reportedAt: 1699500000000,
+        verdict: 'REWORK',
+        mustFix: 'the thing',
+        reviewedAt: 1699600000000,
+        verdictFile: 'review-t7-r1.verdict.md',
+        diffFile: 'review-t7-r1.diff',
+      }],
+    })]);
+
+    const res = await host.dispatch('tickets-viewer', 'ticket', [{ project: key, id: 't7' }], 'desktop');
+    assert.deepStrictEqual(res, {
+      ok: true,
+      ticket: {
+        id: 't7',
+        title: 'title t7',
+        role: '',
+        shownFor: 'hand',
+        spec: 'the spec',
+        state: 'done',
+        assignee: 'hand',
+        taskDir: 'tasks/t7-work',
+        opener: 'lead',
+        closedBy: '',
+        openedAt: null,
+        closedAt: 1700000000000,
+        lastActivityAt: null,
+        ageMs: null,
+        quietMs: null,
+        nudged: false,
+        stalled: false,
+        backlog: false,
+        parked: false,
+        respecCount: 1,
+        mergeWaiting: '',
+        mergeError: '',
+        cost: null,
+        respecs: [{ at: 1699000000000, spec: 'the old spec' }],
+        report: 'the latest report',
+        rounds: [{
+          round: 1,
+          report: 'round one report',
+          reportedBy: 'clodex-hand-7',
+          reportedAt: 1699500000000,
+          verdict: 'REWORK',
+          mustFix: 'the thing',
+          reviewedAt: 1699600000000,
+          verdictFile: 'review-t7-r1.verdict.md',
+          diffFile: 'review-t7-r1.diff',
+          verdictText: 'VERDICT: REWORK\n\nfix the thing\n',
+          diffStat: { files: 2, added: 5, removed: 3 },
+        }],
+        mergeMsg: 'Merge t7: the work\n',
+        taskDirPath: dir,
+      },
+    });
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: a record with NO rounds[] derives them from the task dir, ordered by N', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/hist/derived');
+    const dir = mkTaskDir(home, key, 'tasks/t9-work');
+    fs.writeFileSync(path.join(dir, 'review-t9-r2.verdict.md'), 'VERDICT: ACCEPT\n');
+    fs.writeFileSync(path.join(dir, 'review-t9-r1.verdict.md'), '**VERDICT** — REWORK\n');
+    fs.writeFileSync(path.join(dir, 'review-t9-r1.diff'), FIXTURE_DIFF);
+    writeTicketsAt(home, key, [histTicket('t9', { taskDir: 'tasks/t9-work', report: 'the final report' })]);
+
+    const res = await host.dispatch('tickets-viewer', 'ticket', [{ project: key, id: 't9' }], 'desktop');
+    assert.equal(res.ok, true);
+    assert.equal(res.ticket.rounds.length, 2,
+      'ENTER: two rounds were derived from disk — with none, every assertion below is vacuous');
+    assert.deepEqual(res.ticket.rounds.map((r) => r.round), [1, 2]);
+    assert.deepEqual(res.ticket.rounds.map((r) => r.verdict), ['REWORK', 'ACCEPT']);
+    assert.equal(res.ticket.rounds[0].report, null, 'the flat report is the LAST round\'s, not round one\'s');
+    assert.equal(res.ticket.rounds[1].report, 'the final report');
+    assert.deepEqual(res.ticket.rounds[0].diffStat, { files: 2, added: 5, removed: 3 });
+    assert.equal(res.ticket.rounds[1].diffStat, null, 'round two wrote no diff, and that is not a zero stat');
+    assert.equal(res.ticket.rounds[0].verdictFile, 'review-t9-r1.verdict.md');
+    assert.equal(res.ticket.rounds[1].diffFile, null);
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: diffStat counts files and +/- lines without the ---/+++ headers', () => {
+  assert.deepStrictEqual(viewerEngine._internals.diffStat(FIXTURE_DIFF), { files: 2, added: 5, removed: 3 });
+});
+
+test('tickets-viewer: an oversized verdict is truncated, and the raw diff body is never served', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/hist/caps');
+    const dir = mkTaskDir(home, key, 'tasks/t3-work');
+    const { TEXT_CAP, TEXT_CAP_MARKER } = viewerEngine._internals;
+    const big = `VERDICT: ACCEPT\n${'x'.repeat(TEXT_CAP * 2)}`;
+    fs.writeFileSync(path.join(dir, 'review-t3-r1.verdict.md'), big);
+    const sentinel = '+SENTINEL_DIFF_BODY_LINE';
+    fs.writeFileSync(path.join(dir, 'review-t3-r1.diff'), `${FIXTURE_DIFF}${sentinel}\n`);
+    writeTicketsAt(home, key, [histTicket('t3', { taskDir: 'tasks/t3-work' })]);
+
+    const res = await host.dispatch('tickets-viewer', 'ticket', [{ project: key, id: 't3' }], 'desktop');
+    assert.equal(res.ok, true);
+    const [round] = res.ticket.rounds;
+    assert.equal(round.verdictText.length, TEXT_CAP + TEXT_CAP_MARKER.length);
+    assert.ok(round.verdictText.endsWith(TEXT_CAP_MARKER), 'the truncation is marked, not silent');
+    assert.ok(big.length > TEXT_CAP, 'ENTER: the fixture verdict really is over the cap');
+    assert.equal(JSON.stringify(res).includes(sentinel), false,
+      'the diff BODY never rides the response — only its stat does');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: `search` matches a word only in a closed ticket\'s report, and caps at 50', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/hist/search');
+    const pad = 'filler words that push the match away from both ends of the field so the snippet has to be cut. ';
+    const tickets = [histTicket('t1', {
+      title: 'nothing to see',
+      spec: 'nothing here either',
+      report: `${pad}${pad}the fix was a ZORBLAX in the parser${pad}`,
+    })];
+    for (let i = 0; i < 60; i += 1) {
+      tickets.push(histTicket(`c${i}`, { title: `common WIDGETY row ${i}`, spec: 'x', report: 'y', closedAt: 1700000000000 + i }));
+    }
+    writeTicketsAt(home, key, tickets);
+
+    const hit = await host.dispatch('tickets-viewer', 'search', [{ project: key, q: 'zorblax' }], 'desktop');
+    assert.equal(hit.ok, true);
+    assert.deepEqual(hit.hits.map((h) => h.id), ['t1'], 'the word lives only in the report, and the report is searched');
+    assert.equal(hit.hits[0].state, 'done');
+    assert.equal(hit.hits[0].closedAt, 1700000000000);
+    assert.ok(hit.hits[0].snippet.includes('ZORBLAX'), 'the snippet is the window AROUND the match');
+    assert.equal(hit.hits[0].snippet.length, 160);
+
+    const many = await host.dispatch('tickets-viewer', 'search', [{ project: key, q: 'widgety' }], 'desktop');
+    assert.equal(many.hits.length, 50, '60 tickets match; the wire carries 50');
+    assert.equal(many.hits[0].id, 'c59', 'newest first');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: a taskDir that escapes the projects root is REFUSED and no file outside is opened', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/hist/escape');
+    const outside = mkTmpRoot('clodex-tv-outside-');
+    const sentinelFile = path.join(outside, 'review-t5-r1.verdict.md');
+    fs.writeFileSync(sentinelFile, 'VERDICT: ACCEPT\n');
+    writeTicketsAt(home, key, [histTicket('t5', { taskDir: outside })]);
+
+    const touched = [];
+    const realRead = fs.readFileSync;
+    const realReaddir = fs.readdirSync;
+    fs.readFileSync = function (p, ...rest) {
+      if (String(p).startsWith(outside)) touched.push(String(p));
+      return realRead.call(this, p, ...rest);
+    };
+    fs.readdirSync = function (p, ...rest) {
+      if (String(p).startsWith(outside)) touched.push(String(p));
+      return realReaddir.call(this, p, ...rest);
+    };
+    let res;
+    try {
+      res = await host.dispatch('tickets-viewer', 'ticket', [{ project: key, id: 't5' }], 'desktop');
+    } finally {
+      fs.readFileSync = realRead;
+      fs.readdirSync = realReaddir;
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+
+    assert.equal(res.ok, false, 'the escape is a refusal, never a throw and never a served ticket');
+    assert.equal(typeof res.error, 'string');
+    assert.ok(res.error.length > 0);
+    assert.equal('ticket' in res, false, 'a refusal carries no ticket');
+    assert.deepEqual(touched, [], 'nothing outside the projects root was opened');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: the `ticket` response carries no token/auth/secret/password key at any depth', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/hist/secrets');
+    const dir = mkTaskDir(home, key, 'tasks/t8-work');
+    fs.writeFileSync(path.join(dir, 'review-t8-r1.verdict.md'), 'VERDICT: ACCEPT\n');
+    fs.writeFileSync(path.join(dir, 'review-t8-r1.diff'), FIXTURE_DIFF);
+    fs.writeFileSync(path.join(dir, 'merge-t8.msg'), 'Merge t8\n');
+    writeTicketsAt(home, key, [histTicket('t8', {
+      taskDir: 'tasks/t8-work',
+      report: 'done',
+      token: 'sk-do-not-serve-this',
+      respecs: [{ at: 1, by: 'lead', spec: 's', secret: 'nope' }],
+    })]);
+
+    const res = await host.dispatch('tickets-viewer', 'ticket', [{ project: key, id: 't8' }], 'desktop');
+    assert.equal(res.ok, true);
+    assert.ok(res.ticket.rounds.length > 0, 'ENTER: the response really has a rounds subtree to walk');
+    assert.equal(findSecretKey(res), null, 'a secret-named key anywhere in the response');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: `ticket` and `search` are desktop-only, like the writers beside them', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/hist/web');
+    writeTicketsAt(home, key, [histTicket('t1', { taskDir: '' })]);
+    for (const [method, payload] of [['ticket', { project: key, id: 't1' }], ['search', { project: key, q: 't1' }]]) {
+      assert.equal((await host.dispatch('tickets-viewer', method, [payload], 'web')).ok, false,
+        `${method} must not serve the web surface`);
+      assert.equal((await host.dispatch('tickets-viewer', method, [payload], 'desktop')).ok, true,
+        `${method} serves the desktop, which is what makes the denial above meaningful`);
+    }
   } finally { cleanup(); }
 });
