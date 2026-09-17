@@ -377,7 +377,7 @@ const STYLE = `
 .clx-menu-item:hover{background:var(--accent);color:#fff}
 .clx-menu-item .clx-mark{position:absolute;left:7px}
 .clx-menu-item .clx-arrow{position:absolute;right:9px;opacity:.7}
-.clx-menu-sep{height:1px;margin:4px 0;background:var(--border)}
+.clx-menu-sep{height:1px;margin:4px 0;background:var(--border-strong)}
 .clx-modal-bg{position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center}
 .clx-modal{background:var(--sidebar-bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:18px 20px;min-width:320px;max-width:480px;
   box-shadow:0 8px 32px rgba(0,0,0,.55);font:400 13px/1.5 -apple-system,system-ui,sans-serif}
@@ -387,8 +387,8 @@ const STYLE = `
   border:1px solid var(--border);border-radius:5px;color:var(--text);font:inherit}
 .clx-modal input:focus{outline:none;border-color:var(--accent)}
 .clx-modal-btns{display:flex;justify-content:flex-end;gap:8px}
-.clx-modal-btns button{padding:6px 14px;border:1px solid var(--border);border-radius:5px;background:var(--border);color:var(--text);font:inherit;cursor:pointer}
-.clx-modal-btns button.clx-default{background:var(--accent);border-color:var(--accent);color:#fff}
+.clx-modal-btns button{padding:6px 14px;border:1px solid var(--border-strong);border-radius:5px;background:var(--surface-hover);color:var(--text-primary);font:inherit;cursor:pointer}
+.clx-modal-btns button.clx-default{background:var(--accent);border-color:transparent;color:var(--accent-fg)}
 `;
 function injectStyle() {
   const el = document.createElement('style');
