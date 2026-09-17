@@ -51,6 +51,7 @@ const SCANNED_MODULES = [
   'peer-wiring.js',
   'jsonl-watcher.js',
   'doc-parse.js',
+  'help-corpus.js',
   'wirescope-proxy.js',
   'wirescope-supervisor.js',
   'cli-hooks.js',
