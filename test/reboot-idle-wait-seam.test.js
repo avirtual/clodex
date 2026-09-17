@@ -95,7 +95,7 @@ test('engine: a host with no deferred seam falls back to the immediate one', () 
 
 test('engine: the return object exposes restartClodex and restartUnavailable', () => {
   const calls = [];
-  const tmp = mkTmpRoot('clx-t969-');
+  const tmp = mkTmpRoot('clx-t282-');
   let eng;
   try {
     eng = require('../engine').createEngine({
