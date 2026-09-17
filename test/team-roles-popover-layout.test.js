@@ -195,6 +195,21 @@ test('t964: a ticket line reads exactly as ticketLine wrote it, with the id in i
   }
 });
 
+// The anti-degenerate half, and the only subject that separates SPLITTING
+// ticketLine's output from RE-DERIVING the id off the ticket. For every ticket
+// carrying an id the two agree byte for byte, so the case above passes either
+// way; ticketLine writes '?' for an absent id and `String(t.id)` writes
+// 'undefined', which is what the operator would read in the popover.
+test('t964: a ticket with no id renders the id ticketLine writes, not the raw field', () => {
+  const t = { title: 'filed by hand', assignee: null, step: 'backlog', since: null };
+  const expected = ticketLine(t, Date.now());
+  assert.match(expected, /^\? · /, 'ENTER: ticketLine is the authority that an absent id reads "?"');
+  const [line] = runTicketsSection({ tickets: { open: [t], landed: [] } });
+  assert.strictEqual(line.textContent, expected);
+  assert.strictEqual(line.children[0].textContent, '?',
+    'the span must carry what ticketLine wrote, not String(t.id)');
+});
+
 test('t964: the empty-state note is a plain line, with no id span to wear', () => {
   // The degenerate direction: a span minted unconditionally would put mono
   // tertiary type on "No open tickets." and on the first word of it.
