@@ -2567,6 +2567,27 @@ test('workspaces: setView merges expandedPeers alongside the sidebar view, absen
   } finally { cleanup(); }
 });
 
+test('workspaces: setView keeps a stored activeSession across a later expandedPeers patch', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.workspaces.list();
+    stores.workspaces.setView('default', { activeSession: 'Codex' });
+    assert.strictEqual(stores.workspaces.get('default').view.activeSession, 'Codex');
+
+    stores.workspaces.setView('default', { expandedPeers: ['peer-a'] });
+    assert.deepStrictEqual(stores.workspaces.get('default').view, {
+      activeSession: 'Codex', expandedPeers: ['peer-a'],
+    });
+
+    stores.workspaces.setView('default', { group: 'project', status: 'all' });
+    assert.strictEqual(stores.workspaces.get('default').view.activeSession, 'Codex');
+
+    stores.workspaces.setView('default', { activeSession: 'clodex-hand-987' });
+    assert.strictEqual(stores.workspaces.get('default').view.activeSession, 'clodex-hand-987');
+    assert.deepStrictEqual(stores.workspaces.get('default').view.expandedPeers, ['peer-a']);
+  } finally { cleanup(); }
+});
+
 test('workspaces: setZoomFactor persists non-1 factors, 1.0 clears to an ABSENT key', () => {
   const { stores, cleanup } = freshStores();
   try {

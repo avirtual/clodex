@@ -1529,6 +1529,7 @@ function switchSession(name) {
 
   const wasActive = activeSession;
   activeSession = name;
+  window.api.setSidebarView({ activeSession: name }).catch(() => {});
   reportFocusedSession();
   // An armed drawer selection is registered on ONE session's wirescope route, so
   // leaving that session has to take it back — the drawer cannot see this
@@ -7663,52 +7664,60 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
 
 
 (async function restoreSessions() {
-  const restored = await window.api.restoreSessions();
-  if (!restored || restored.length === 0) { initSidebarView(); return; }
+  try {
+    const restored = await window.api.restoreSessions();
+    if (!restored || restored.length === 0) { initSidebarView(); return; }
 
-  let firstHealthy = null;
-  for (const entry of restored) {
-    if (entry.archived) {
-      addArchivedSessionToSidebar(entry);
-      continue;
-    }
-    if (entry.failed) {
-      addFailedSessionToSidebar(entry);
-      continue;
-    }
-    const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
-    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
-    if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
-    const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
-    if (item) {
-      if (entry.activity) {
-        item.dataset.activity = entry.activity;
-        if (entry.activity === 'thinking') item.dataset.thinkingSince = String(Date.now());
+    let firstHealthy = null;
+    for (const entry of restored) {
+      if (entry.archived) {
+        addArchivedSessionToSidebar(entry);
+        continue;
       }
-      if (entry.attention) {
-        item.dataset.attention = entry.attention.kind;
-        item.dataset.attentionMsg = entry.attention.message || '';
+      if (entry.failed) {
+        addFailedSessionToSidebar(entry);
+        continue;
       }
-      if (entry.ticket) item.dataset.ticket = entry.ticket;
+      const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
+      addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
+      if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
+      const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
+      if (item) {
+        if (entry.activity) {
+          item.dataset.activity = entry.activity;
+          if (entry.activity === 'thinking') item.dataset.thinkingSince = String(Date.now());
+        }
+        if (entry.attention) {
+          item.dataset.attention = entry.attention.kind;
+          item.dataset.attentionMsg = entry.attention.message || '';
+        }
+        if (entry.ticket) item.dataset.ticket = entry.ticket;
+      }
+      try {
+        fitAddon.fit();
+        window.api.resizeSession(entry.name, terminal.cols, terminal.rows);
+      } catch {}
+      if (entry.replay) terminal.write(echoRewrite(entry.replay));
+      if (typeof entry.ctx === 'number') { ctxPct.set(entry.name, entry.ctx); applyCtxBadge(entry.name, entry.ctx); }
+      if (typeof entry.ctxTok === 'number' && typeof entry.ctxSize === 'number' && entry.ctxSize > 0) {
+        ctxTokens.set(entry.name, { used: entry.ctxTok, size: entry.ctxSize, cost: typeof entry.ctxCost === 'number' ? entry.ctxCost : null, model: entry.ctxModel || null });
+      }
+      if (entry.proxy) { proxyState.set(entry.name, { payload: entry.proxy, at: Date.now() }); applyWarmBadge(entry.name); }
+      if (typeof entry.pendingCount === 'number') applyPendingBadge(entry.name, entry.pendingCount);
+      if (!firstHealthy) firstHealthy = entry.name;
     }
+    let view = null;
     try {
-      fitAddon.fit();
-      window.api.resizeSession(entry.name, terminal.cols, terminal.rows);
+      const res = await window.api.getSidebarView();
+      if (res && res.ok && res.view) view = res.view;
     } catch {}
-    if (entry.replay) terminal.write(echoRewrite(entry.replay));
-    if (typeof entry.ctx === 'number') { ctxPct.set(entry.name, entry.ctx); applyCtxBadge(entry.name, entry.ctx); }
-    if (typeof entry.ctxTok === 'number' && typeof entry.ctxSize === 'number' && entry.ctxSize > 0) {
-      ctxTokens.set(entry.name, { used: entry.ctxTok, size: entry.ctxSize, cost: typeof entry.ctxCost === 'number' ? entry.ctxCost : null, model: entry.ctxModel || null });
-    }
-    if (entry.proxy) { proxyState.set(entry.name, { payload: entry.proxy, at: Date.now() }); applyWarmBadge(entry.name); }
-    if (typeof entry.pendingCount === 'number') applyPendingBadge(entry.name, entry.pendingCount);
-    if (!firstHealthy) firstHealthy = entry.name;
+    const remembered = view && view.activeSession;
+    const target = remembered && sessions.has(remembered) ? remembered : firstHealthy;
+    if (target) switchSession(target);
+    initSidebarView();
+  } finally {
+    document.body.classList.add('sessions-restored');
   }
-  // Only a session with a terminal is switchable, and archived/failed entries
-  // never get one — so the target is the first entry that built one, not
-  // restored[0], which is commonly archived.
-  if (firstHealthy) switchSession(firstHealthy);
-  initSidebarView();
 })();
 
 async function maybeFirstRunSetup() {
