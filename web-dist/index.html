@@ -1620,6 +1620,12 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.team-ticket-id {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+  margin-right: 6px;
+}
 .team-role-dot {
   flex: 0 0 auto;
   width: 7px;
@@ -8402,7 +8408,10 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   <!-- New session dialog -->
   <div id="dialog-overlay" class="hidden">
     <div id="dialog">
-      <h3 id="dialog-title">New Session</h3>
+      <div class="dialog-head">
+        <h3 id="dialog-title">New Session</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <label id="placement-row" style="display:none;">Run in
         <!-- Options are rebuilt at open from the box registry (M6b P3): "This Mac"
              plus one entry per sandbox box (label shown, box id carried as value). -->
@@ -8663,7 +8672,10 @@ textarea:not(.xterm-helper-textarea):focus-visible,
        clodex (global scan of ~/.claude/projects + live foreign processes). -->
   <div id="discovery-overlay" class="hidden">
     <div id="discovery-dialog">
-      <h3>Discover Sessions</h3>
+      <div class="dialog-head">
+        <h3>Discover Sessions</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <p class="hint-text">Claude/Codex conversations on this machine that Clodex isn't already managing — including ones started in a plain terminal. Adopt one to fill the New Session form with its type, directory, and session ID, so you can pick tools/prompts/proxy before resuming it. Adopting doesn't attach to a running process; it spawns a fresh Clodex-managed instance that resumes the same conversation.</p>
       <div id="discovery-list" class="discovery-list"><div class="discovery-empty">Scanning…</div></div>
       <div class="dialog-actions">
@@ -8677,7 +8689,10 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   <!-- Edit Args dialog -->
   <div id="args-overlay" class="hidden">
     <div id="args-dialog">
-      <h3>Edit Session</h3>
+      <div class="dialog-head">
+        <h3>Edit Session</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <p class="hint-text" id="args-target"></p>
       <label id="args-prompt-row">System prompt
         <select id="args-system-prompt">
@@ -8807,7 +8822,10 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   <!-- Preferences dialog -->
   <div id="prefs-overlay" class="hidden">
     <div id="prefs-dialog">
-      <h3>Preferences</h3>
+      <div class="dialog-head">
+        <h3>Preferences</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <details class="prefs-group" data-group="appearance">
         <summary><h4>Appearance</h4><span class="prefs-group-sub">Theme</span></summary>
         <p class="hint-text">Theme applies immediately and persists across launches. Terminals retint live.</p>
@@ -9113,7 +9131,10 @@ textarea:not(.xterm-helper-textarea):focus-visible,
        that could clear it would be the one hiding it. -->
   <div id="plugins-overlay" class="hidden">
     <div id="plugins-dialog">
-      <h3>Plugins</h3>
+      <div class="dialog-head">
+        <h3>Plugins</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <p class="hint-text">Plugins extend Clodex in-process. Turning one off removes its buttons, panels and styles from every open window immediately; a plugin with its own settings shows a <strong>Settings</strong> button on its row.</p>
       <div id="plugins-list"></div>
       <div id="plugins-register-note" class="plugin-row-note hidden"></div>
@@ -9159,7 +9180,10 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   <!-- Manage Peered Clodexes dialog (opened from Window > Peers) -->
   <div id="peers-overlay" class="hidden">
     <div id="peers-dialog">
-      <h3>Peered Clodexes</h3>
+      <div class="dialog-head">
+        <h3>Peered Clodexes</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <p class="hint-text">Attach to agent sessions running in a Clodex on another machine: view their terminals live and, after an explicit "Take control", type into them. Give each peer an SSH host (<code>laptop2</code> or <code>user@laptop2</code>) and Clodex maintains the tunnel itself — needs key-based SSH (no password prompts) and Phone access enabled on the peer. <strong>Test &amp; Set Up</strong> checks the host over SSH and, if no Clodex is running there yet, offers to install one. The URL field is the manual alternative for tailnets or custom tunnels. Anyone who can reach the peer's endpoint can drive its sessions — treat it like shell access.</p>
       <div id="peers-list"></div>
       <button id="peers-add" class="secondary" type="button" style="margin-top: 6px;">Add Peer</button>
@@ -9177,7 +9201,10 @@ textarea:not(.xterm-helper-textarea):focus-visible,
   <!-- Managed Docker sandboxes: N local containers, each run as its own peer -->
   <div id="sandbox-overlay" class="hidden">
     <div id="sandbox-dialog">
-      <h3>Sandboxes</h3>
+      <div class="dialog-head">
+        <h3>Sandboxes</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
       <p class="hint-text">Run Clodex engines inside local Docker containers and use them as peers: agents placed in a sandbox have their shell, file writes, and network confined to the container, while keeping full Clodex features over the peer wire. Each container publishes to <code>127.0.0.1</code> only.</p>
       <div id="sandbox-docker" class="sandbox-row"></div>
       <!-- M6b P2: one row per registry box (label, status dot, Start/Stop); select
@@ -33914,7 +33941,13 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             for (const t of rows) {
               const line = document.createElement("div");
               line.className = "team-role-note";
-              line.textContent = ticketLine(t, now);
+              const text = ticketLine(t, now);
+              const cut = text.indexOf(" \xB7 ");
+              const id = document.createElement("span");
+              id.className = "team-ticket-id";
+              id.textContent = cut < 0 ? text : text.slice(0, cut);
+              line.appendChild(id);
+              if (cut >= 0) line.appendChild(document.createTextNode(text.slice(cut)));
               frag.appendChild(line);
             }
           };
@@ -41620,6 +41653,14 @@ Click for live activity`;
         const open = openOverlayIds(overlayProbes);
         if (open.length !== 1) return;
         const row = ESCAPE_CLOSES.find(([id]) => id === open[0]);
+        if (row) row[1]();
+      });
+      document.addEventListener("click", (e) => {
+        const btn = e.target.closest && e.target.closest(".dialog-close");
+        if (!btn) return;
+        const overlay = btn.closest('[id$="-overlay"]');
+        if (!overlay) return;
+        const row = ESCAPE_CLOSES.find(([id]) => id === overlay.id);
         if (row) row[1]();
       });
       function runCloseChord() {
