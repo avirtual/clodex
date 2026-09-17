@@ -28629,14 +28629,14 @@ Opening it here and saving would overwrite the file with what this editor could 
         };
         function renderPrompt() {
           if (!promptEl) return;
-          promptEl.textContent = ctxName ? `${ctxName} \u276F` : "(no context) \u276F";
+          promptEl.textContent = ctxName ? `${ctxName} \u276F` : "(no node) \u276F";
           promptEl.classList.toggle("none", !ctxName);
         }
         function blockNode(b) {
           const el = document.createElement("div");
           el.className = "ctl-block" + (b.exitCode ? " failed" : "");
           const time = new Date(b.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-          const head = `<div class="ctl-block-head"><span class="ctl-block-ctx">${esc(b.ctx || "(no context)")}</span><span class="ctl-block-cmd">${esc(b.command)}</span><span class="ctl-block-time">${time}</span>` + (b.exitCode ? `<span class="ctl-block-exit">exit ${b.exitCode}</span>` : "") + `</div>`;
+          const head = `<div class="ctl-block-head"><span class="ctl-block-ctx">${esc(b.ctx || "(no node)")}</span><span class="ctl-block-cmd">${esc(b.command)}</span><span class="ctl-block-time">${time}</span>` + (b.exitCode ? `<span class="ctl-block-exit">exit ${b.exitCode}</span>` : "") + `</div>`;
           const out = String(b.output || "").replace(/\n+$/, "");
           el.innerHTML = head + (out ? `<pre class="ctl-block-out">${esc(out)}</pre>` : "");
           return el;
@@ -28721,8 +28721,7 @@ Opening it here and saving would overwrite the file with what this editor could 
             const usage = v.subs ? `${v.verb} ${v.subs.join("|")} \u2026` : v.usage || v.verb;
             return `<div class="ctl-help-row"><code class="ctl-help-usage">${esc(usage)}</code><span class="ctl-help-sum">${esc(v.summary || "")}</span></div>`;
           }).join("");
-          const aliases = Array.isArray(data.ctxAliases) && data.ctxAliases.length ? `<div class="ctl-help-note"><code>${data.ctxAliases.map(esc).join("</code> <code>")}</code> also work without the <code>ctx</code> prefix.</div>` : "";
-          el.innerHTML = `<div class="ctl-help-sec">These verbs run here</div>${rows}${aliases}<div class="ctl-help-note">${esc(data.deferred || "")}<br>A block resolves once, so anything that streams or asks a question belongs in the Terminal tab.<br>Type <code>help</code> for the full CLI index, or <code>&lt;verb&gt; --help</code> for one verb (including the ones that will not run here).</div>`;
+          el.innerHTML = `<div class="ctl-help-sec">These verbs run here</div>${rows}<div class="ctl-help-note">${esc(data.deferred || "")}<br>A block resolves once, so anything that streams or asks a question belongs in the Terminal tab.<br>Type <code>help</code> for the full CLI index, or <code>&lt;verb&gt; --help</code> for one verb (including the ones that will not run here).</div>`;
         }
         function wireHelpButton(pane, actions) {
           const btn = document.createElement("button");
@@ -28770,10 +28769,10 @@ Opening it here and saving would overwrite the file with what this editor could 
         function mount(pane, actions) {
           pane.innerHTML = `
       <div id="ctl-body">
-        <div id="ctl-empty">clodexctl against your current context. Press <code>?</code> for what runs here, or type <code>help</code> for the full index.</div>
+        <div id="ctl-empty">clodexctl against your current node. Press <code>?</code> for what runs here, or type <code>help</code> for the full index.</div>
       </div>
       <div id="ctl-input-row">
-        <span id="ctl-prompt">(no context) \u276F</span>
+        <span id="ctl-prompt">(no node) \u276F</span>
         <input id="ctl-input" type="text" spellcheck="false" autocomplete="off" placeholder="get sessions" />
       </div>`;
           bodyEl = pane.querySelector("#ctl-body");
