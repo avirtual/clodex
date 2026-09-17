@@ -210,10 +210,37 @@ test('the .dialog-head h3 rule WINS the margin cascade in every dialog', () => {
   }
 });
 
+const POPOVER_CHROME = {
+  'help-overlay': {
+    why: 'popover chrome on the #report-modal idiom: .popover-title + .popover-close, not .dialog-head + h3 + .dialog-close',
+    island: 'renderer/popovers/help-panel.js',
+  },
+};
+
 test('every dialog the table closes ships a ✕ of its own', () => {
   const owners = new Set(closeButtonOwners());
   for (const [id] of tableRows()) {
+    if (id in POPOVER_CHROME) continue;
     assert.ok(owners.has(id), `#${id} closes on Escape but ships no .dialog-close`);
+  }
+});
+
+test('an overlay excused from the .dialog-close rule still ships a wired ✕', () => {
+  const ids = new Set(tableRows().map(([id]) => id));
+  for (const [id, { why, island: islandPath }] of Object.entries(POPOVER_CHROME)) {
+    assert.ok(ids.has(id), `#${id} is excused from a table it is not in — a stale entry`);
+    assert.ok(!closeButtonOwners().includes(id),
+      `#${id} ships a .dialog-close after all: ${why} no longer describes it, so it needs no excuse`);
+    const overlay = htmlSrc.slice(...Object.values(elementExtent(htmlSrc, htmlSrc.indexOf(`<div id="${id}"`))));
+    const btn = overlay.match(/<button[^>]*class="popover-close"[^>]*>/);
+    assert.ok(btn, `#${id} is excused from the .dialog-close rule and ships no .popover-close either — it has no ✕ at all`);
+    assert.match(btn[0], /type="button"/, `#${id}'s ✕ without type=button submits its form: ${btn[0]}`);
+    assert.match(btn[0], /aria-label="Close"/, `#${id}'s ✕ has no accessible name: ${btn[0]}`);
+    const btnId = btn[0].match(/\bid="([^"]+)"/);
+    assert.ok(btnId, `#${id}'s ✕ carries no id, so nothing can bind it`);
+    const island = fs.readFileSync(path.join(ROOT, islandPath), 'utf8');
+    assert.match(island, new RegExp(`getElementById\\('${btnId[1]}'\\)\\.addEventListener\\('click'`),
+      `#${btnId[1]} is shipped but ${islandPath} never binds it — the ✕ the table excuses is dead`);
   }
 });
 
