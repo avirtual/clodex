@@ -1132,6 +1132,17 @@ Own state + DOM, `init*(deps)`:
   backgrounded app — the value cannot double as the flag. Read by the two
   microphone mirrors in renderer.js, which has no harness: that is why the rule
   lives out here where `test/mirror-latch.test.js` can reach it.
+- **lib/sidebar-filter-fold.js** — the sidebar Find bar's fold: which filter
+  criteria a folded header names, and the class toggle that folds it. The
+  summary lists only what DIFFERS from the defaults, in control order, so a
+  folded bar that says nothing is a bar filtering nothing — the whole point is
+  that a filtered list can never look like a short one. Labels come in from the
+  caller rather than being restated here, since the `<select>` options in
+  index.html are the one place those strings live. The class goes on the bar AND
+  on the header: the bar's is what hides the body, the header's is what rotates
+  the caret through the shared `.session-group-header.collapsed` rule. Lifted
+  out of renderer.js, which has no harness, so `test/sidebar-filter-fold.test.js`
+  can reach both halves.
 - **lib/mic-handoff.js** — what a window does when the microphone moves OFF one
   of its seats: notes the mirror above, then STOPS that seat's recorder through
   the watcher's ensure-off. The broadcast alone only made losers stop re-ARMING,
