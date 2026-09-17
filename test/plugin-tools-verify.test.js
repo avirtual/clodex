@@ -14,6 +14,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
@@ -22,12 +23,15 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const REPO = path.join(__dirname, '..');
 const VERIFY = path.join(REPO, 'plugins', 'tools', 'verify.js');
 
+const VERIFY_TMP = mkTmpRoot('clx-t962-verify-');
+const VERIFY_ENV = { ...process.env, TMPDIR: VERIFY_TMP };
+
 // A non-zero exit is a normal outcome here — a failing checklist exits 1 — so
 // the stdout is taken off the error too rather than letting the throw end the
 // subject before anything is asserted.
 function runVerify(dir) {
   try {
-    const out = execFileSync(process.execPath, [VERIFY, dir], { encoding: 'utf8', cwd: REPO });
+    const out = execFileSync(process.execPath, [VERIFY, dir], { encoding: 'utf8', cwd: REPO, env: VERIFY_ENV });
     return { code: 0, out };
   } catch (e) {
     return { code: e.status, out: String(e.stdout || '') };
@@ -68,6 +72,24 @@ module.exports = {
   deactivate() {},
 };
 `;
+
+const verifyStages = (dir) => fs.readdirSync(dir).filter((n) => n.startsWith('clodex-verify-'));
+
+test('the verify child stages inside a tracked root, not the shared $TMPDIR', () => {
+  const before = verifyStages(os.tmpdir());
+  const dir = mkPlugin('clx-t962-staged-', 'staged-probe', VERB_ONLY_ENGINE);
+
+  const r = runVerify(dir);
+  assert.match(r.out, /PASS {2}activate\(\) succeeds/,
+    `the run must reach staging and activation, or it minted nothing and the counts below are trivially equal\n${r.out}`);
+
+  assert.ok(verifyStages(VERIFY_TMP).length >= 1,
+    'ENTER: the injected TMPDIR is where the stage landed — without this the assertion below passes against a '
+    + `run that staged nowhere at all (${VERIFY_TMP})`);
+  assert.deepStrictEqual(verifyStages(os.tmpdir()), before,
+    'verify.js mints TWO roots per run and nothing in the suite removes them from the shared $TMPDIR. Compared '
+    + "by this prefix's OWN entries rather than by a total: $TMPDIR is shared with every process on the box.");
+});
 
 test('verify.js counts an intent verb as a registered surface', () => {
   const dir = mkPlugin('clx-t711-verb-', 'verb-only', VERB_ONLY_ENGINE);
