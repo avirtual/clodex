@@ -464,6 +464,30 @@ body {
   flex-direction: column;
   gap: 6px;
 }
+#sidebar-filter-header {
+  margin-top: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+#sidebar-filter-header .session-group-title {
+  flex: 0 0 auto;
+}
+#sidebar-filter-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+}
+#sidebar-filter-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+#sidebar-filterbar.collapsed #sidebar-filter-body {
+  display: none;
+}
 .sidebar-search {
   width: 100%;
   box-sizing: border-box;
@@ -6683,6 +6707,15 @@ body.web-frontend #sidebar-header {
   gap: var(--sp-1);
   border-bottom: 1px solid var(--border);
 }
+#sidebar-filter-body {
+  gap: var(--sp-1);
+}
+#sidebar-filterbar.collapsed #sidebar-filter-body {
+  display: none;
+}
+#sidebar-filterbar.collapsed {
+  padding-bottom: var(--sp-1);
+}
 .sidebar-search {
   height: var(--control-h);
   padding: 0 var(--sp-2);
@@ -7987,6 +8020,8 @@ body.web-frontend #sidebar-header {
       </div>
     </div>
     <div id="sidebar-filterbar">
+      <div id="sidebar-filter-header" class="session-group-header"><span class="session-group-caret">▾</span><span class="session-group-title">Find</span><span id="sidebar-filter-summary" class="session-group-count"></span></div>
+      <div id="sidebar-filter-body">
       <input type="text" id="sidebar-search" class="sidebar-search" placeholder="Filter sessions…" spellcheck="false" autocomplete="off">
       <div class="sidebar-filterbar-row">
         <select id="sidebar-group" class="sidebar-select" data-tip="Group sessions by">
@@ -8013,6 +8048,7 @@ body.web-frontend #sidebar-header {
           <option value="7">7 days</option>
           <option value="30">30 days</option>
         </select>
+      </div>
       </div>
     </div>
     <div id="session-list"></div>
@@ -23812,6 +23848,48 @@ ${i3.join("\n")}
     }
   });
 
+  // renderer/lib/sidebar-filter-fold.js
+  var require_sidebar_filter_fold = __commonJS({
+    "renderer/lib/sidebar-filter-fold.js"(exports, module) {
+      "use strict";
+      var SUMMARY_PARTS = [
+        { control: "search", isDefault: (v) => !String(v || "").trim(), text: (v) => `\u201C${String(v).trim()}\u201D` },
+        { control: "group", isDefault: (v) => !v || v === "none", strip: "Group: " },
+        { control: "sort", isDefault: (v) => !v || v === "recency", strip: "Sort: " },
+        { control: "status", isDefault: (v) => !v || v === "all" },
+        { control: "activity", isDefault: (v) => !v || v === "all" }
+      ];
+      function filterSummary(view, labelsByControl) {
+        const v = view || {};
+        const labels = labelsByControl || {};
+        const out = [];
+        for (const part of SUMMARY_PARTS) {
+          const value = v[part.control];
+          if (part.isDefault(value)) continue;
+          if (part.text) {
+            out.push(part.text(value));
+            continue;
+          }
+          const byValue = labels[part.control] || {};
+          const label = byValue[String(value)];
+          if (!label) continue;
+          out.push(part.strip && label.startsWith(part.strip) ? label.slice(part.strip.length) : label);
+        }
+        return out.join(" \xB7 ");
+      }
+      function setFilterFolded(els, folded, { summary = "", persist = null } = {}) {
+        const on = !!folded;
+        const targets = [els && els.bar, els && els.header];
+        for (const el of targets) {
+          if (el && el.classList) el.classList.toggle("collapsed", on);
+        }
+        if (els && els.summary) els.summary.textContent = on ? summary : "";
+        if (persist) persist({ filterFolded: on });
+      }
+      module.exports = { filterSummary, setFilterFolded };
+    }
+  });
+
   // renderer/lib/mic-handoff.js
   var require_mic_handoff = __commonJS({
     "renderer/lib/mic-handoff.js"(exports, module) {
@@ -37802,6 +37880,7 @@ ${detail}` });
       var { expandTeamRoot, usesTeamRoot } = require_team_root_expand();
       var { altChordAction } = require_web_shortcuts();
       var { createMirrorLatch } = require_mirror_latch();
+      var { filterSummary, setFilterFolded } = require_sidebar_filter_fold();
       var { createMicHandoff } = require_mic_handoff();
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
       var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require_sandbox_view();
@@ -38680,6 +38759,37 @@ ${detail}` });
       var sbSort = document.getElementById("sidebar-sort");
       var sbStatus = document.getElementById("sidebar-status");
       var sbActivity = document.getElementById("sidebar-activity");
+      var sbFilterBar = document.getElementById("sidebar-filterbar");
+      var sbFilterHeader = document.getElementById("sidebar-filter-header");
+      var sbFilterSummary = document.getElementById("sidebar-filter-summary");
+      var filterFolded = false;
+      function filterLabels() {
+        const labels = {};
+        for (const [control, el] of [["group", sbGroup], ["sort", sbSort], ["status", sbStatus], ["activity", sbActivity]]) {
+          if (!el) continue;
+          const byValue = {};
+          for (const opt of el.options) byValue[opt.value] = opt.textContent;
+          labels[control] = byValue;
+        }
+        return labels;
+      }
+      function renderFilterSummary() {
+        if (!sbFilterSummary) return;
+        sbFilterSummary.textContent = filterFolded ? filterSummary(sidebarView, filterLabels()) : "";
+      }
+      function applyFilterFolded(folded, persist) {
+        filterFolded = !!folded;
+        setFilterFolded(
+          { bar: sbFilterBar, header: sbFilterHeader, summary: sbFilterSummary },
+          filterFolded,
+          { summary: filterSummary(sidebarView, filterLabels()), persist }
+        );
+      }
+      if (sbFilterHeader) {
+        sbFilterHeader.addEventListener("click", () => {
+          applyFilterFolded(!filterFolded, (patch) => window.api.setSidebarView(patch));
+        });
+      }
       function projectLabel(cwd) {
         if (!cwd) return "(no directory)";
         const parts = cwd.split("/").filter(Boolean);
@@ -38915,6 +39025,7 @@ ${detail}` });
           search: sbSearch.value
         };
         window.api.setSidebarView(sidebarView);
+        renderFilterSummary();
         refreshSidebarView();
       }
       if (sbGroup) sbGroup.addEventListener("change", onViewControlChange);
@@ -38944,6 +39055,7 @@ ${detail}` });
         if (sbStatus) sbStatus.value = sidebarView.status;
         if (sbActivity) sbActivity.value = sidebarView.activity;
         if (sbSearch) sbSearch.value = sidebarView.search || "";
+        applyFilterFolded(sidebarView.filterFolded === true, null);
         await refreshSidebarMeta();
         setInterval(() => refreshSidebarMeta({ includePr: false }), 3e4);
       }

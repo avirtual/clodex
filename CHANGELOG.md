@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **The sidebar's Find bar folds away.** The search box and its four filters now sit under a Find header that collapses like a session group, and remembers its state per workspace; folded, the header shows the criteria in effect, so a filtered list never looks like a short one.
+
 - **Restarting a headless node that nothing would bring back is refused instead of fatal.** The peer Restart button and the web view's Restart Clodex… decline on a headless node with no supervisor (`CLODEX_SUPERVISED` unset) and say what to set; on a supervised node the web view's Restart Clodex… now restarts it.
 
 - **The clodexctl tab is in the web view too.** The drawer's clodexctl console now shows in the browser frontend, with the same verbs as the desktop; it runs in the Clodex process, so the browser never sees a node token.

@@ -462,6 +462,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/popovers/session-menus.js',
   'renderer/plugin-host.js',
   'renderer/peers-ui.js',
+  'renderer/lib/sidebar-filter-fold.js',
 ];
 
 // Justified survivors of imperfect stripping. Format: module -> Set of names.
