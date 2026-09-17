@@ -369,6 +369,8 @@ const childEnv = {
 };
 if (selected && selected.locked) childEnv.CLODEX_TEST_LOCK = '1';
 else delete childEnv.CLODEX_TEST_LOCK;
+if (selected && !selected.locked) childEnv.CLODEX_TEST_SLOW_ADVISORY = '1';
+else delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
 const res = spawnSync(process.execPath, [runner, '--reporter=dot', ...(selected ? selected.files : [])], {
   cwd: measure,
   env: childEnv,

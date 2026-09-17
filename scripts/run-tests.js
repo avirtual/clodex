@@ -414,14 +414,27 @@ const stale = sweeping && !filters.length
   ? Object.keys(allow).filter((n) => !seen.has(n))
   : [];
 
-if (offenders.length || stale.length) {
+const advisory = process.env.CLODEX_TEST_SLOW_ADVISORY === '1' && !lockHeld;
+const enforced = advisory ? [] : offenders;
+
+if (advisory && offenders.length) {
   const lines = [];
-  for (const o of offenders) lines.push(`SLOW: ${Math.round(o.ms)}ms ${o.name}`);
+  for (const o of offenders) {
+    lines.push(`SLOW (advisory, unlocked run): ${Math.round(o.ms)}ms ${o.name}`);
+  }
+  lines.push('SLOW (advisory, unlocked run): this run took no suite lock, so a slow test and a busy '
+    + 'box look the same here; the locked full run still enforces the six-second bar');
+  console.log(lines.join('\n'));
+}
+
+if (enforced.length || stale.length) {
+  const lines = [];
+  for (const o of enforced) lines.push(`SLOW: ${Math.round(o.ms)}ms ${o.name}`);
   for (const n of stale) lines.push(`SLOW: stale allowlist entry ${n}`);
   lines.push('SLOW: inject the clock or constant through a seam, or list the test in '
     + 'test/slow-tests.json with the mechanism it waits on');
   console.log(lines.join('\n'));
-  for (const o of offenders) console.error(` ✖ ${o.name} (${Math.round(o.ms)}ms)`);
+  for (const o of enforced) console.error(` ✖ ${o.name} (${Math.round(o.ms)}ms)`);
   for (const n of stale) console.error(` ✖ stale allowlist entry ${n} (0ms)`);
   process.exit(run.status || 1);
 }

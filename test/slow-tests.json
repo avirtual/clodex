@@ -4,5 +4,6 @@
   "the exit-timeout kept arm names the OLD seat — nothing was renamed yet": "a pty stub that never frees its sessions slot, so _waitForExit runs out session-manager.js's real exit-timeout constant — the arm under test",
   "notifications: ids are unique across many adds": "200 notifications.add calls, each an O(n) _mintId plus an atomicWriteFileSync doing two fsyncs",
   "reminders: ids are unique across many adds": "200 reminders.add calls through the same doubly-fsync'd atomic write",
-  "a headless host builds the manager unless it identifies as in-box": "builds FOUR full createEngine instances, each re-seeding the shipped resources/library into a fresh registryDir"
+  "a headless host builds the manager unless it identifies as in-box": "builds FOUR full createEngine instances, each re-seeding the shipped resources/library into a fresh registryDir",
+  "the engine const reads the env: CLODEX_LABEL reaches the wire as hostLabel": "four full createEngine builds through engineHostLabel, each re-seeding the shipped resources/library into a fresh tmp root with fsync'd writes"
 }

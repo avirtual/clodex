@@ -16,7 +16,9 @@ const block = (ms) => `Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0,
 const sleeper = (name, ms) => `require('node:test').test(${JSON.stringify(name)}, () => {\n`
   + `  ${block(ms)}});\n`;
 
-function runRunner({ files = {}, allow = null, allowRaw = null, args = [], slowMs = null } = {}) {
+function runRunner({
+  files = {}, allow = null, allowRaw = null, args = [], slowMs = null, extraEnv = null,
+} = {}) {
   const root = fs.realpathSync(mkTmpRoot('clx-t955-'));
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const f of ['run-tests.js', 'test-escapes.js']) {
@@ -31,7 +33,9 @@ function runRunner({ files = {}, allow = null, allowRaw = null, args = [], slowM
   }
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
+  delete env.CLODEX_TEST_SLOW_ADVISORY;
   if (slowMs !== null) env.CLODEX_TEST_SLOW_MS = String(slowMs);
+  if (extraEnv) Object.assign(env, extraEnv);
   try {
     const res = spawnSync(
       process.execPath,
@@ -179,4 +183,69 @@ test('slow gate: SLOW_MS is the literal 6000', () => {
     'the shipped threshold is six seconds; the env override exists only for the pins above, so '
     + 'every one of them stays green against a wrong-threshold ship — this assertion is the only '
     + 'thing that reads the value the suite will actually run under');
+});
+
+const ADVISORY = { CLODEX_TEST_SLOW_ADVISORY: '1' };
+
+test('slow gate: advisory + an UNLOCKED named-file run reports the timing and exits 0', () => {
+  const r = runRunner({
+    files: { 'test/slow.test.js': sleeper('the slow subject', 400) },
+    args: ['test/slow.test.js'],
+    slowMs: 150,
+    extraEnv: ADVISORY,
+  });
+  assert.match(r.out, /TOTALS: 1 pass, 0 fail/, 'ENTER: the run itself must be green');
+  assert.strictEqual(r.code, 0,
+    'a run that took no suite lock cannot tell a slow test from a starved box, so the timing is '
+    + 'reported and the exit stays the suite\'s own');
+  assert.match(r.out, /^SLOW \(advisory, unlocked run\): \d+ms the slow subject$/m,
+    'the offender is still named with its duration, under the advisory prefix');
+  assert.match(r.out, /the locked full run still enforces the six-second bar/m,
+    'and the reader is told where the bar is still enforced');
+  assert.ok(!/^SLOW: /m.test(r.out),
+    'the enforcing spelling must not appear: it is what a reader greps for a real refusal');
+  assert.ok(!/✖ the slow subject/.test(r.stderr),
+    'the ✖ spelling is what scripts/clodex-run-tests.js parses into a FAILING digest — an advisory '
+    + 'timing printed there reads as a red run that named a test nothing failed on');
+});
+
+test('slow gate: advisory + a LOCKED (sweeping) run still fails on the slow test', () => {
+  const r = runRunner({
+    files: { 'test/slow.test.js': sleeper('the slow subject', 400) },
+    slowMs: 150,
+    extraEnv: ADVISORY,
+  });
+  assert.match(r.out, /TOTALS: 2 pass, 0 fail/, 'ENTER: the run itself must be green');
+  assert.notStrictEqual(r.code, 0,
+    'a sweeping run holds the suite lock, so nothing else was competing for the box and the timing '
+    + 'is the test\'s own — the advisory env must not disarm the gate there');
+  assert.match(r.out, /^SLOW: \d+ms the slow subject$/m, 'the offender is named for enforcement');
+  assert.ok(!/advisory/.test(r.out), 'and nothing is softened');
+  assert.match(r.stderr, / ✖ the slow subject \(\d+ms\)/, 'the ✖ spelling rides the digest');
+});
+
+test('slow gate: the advisory branch is conditioned on the lock, not on the env alone', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'run-tests.js'), 'utf8');
+  assert.match(src, /CLODEX_TEST_SLOW_ADVISORY === '1' && !lockHeld/,
+    'the env alone would disarm the six-second bar for the merge gate too, whose sweeping run sets '
+    + 'no such variable today but inherits whatever the caller exported');
+});
+
+test('slow gate: advisory does NOT excuse a stale allowlist entry on a sweeping run', () => {
+  const r = runRunner({ files: STALE_FILES, allow: STALE_ALLOW, slowMs: 150, extraEnv: ADVISORY });
+  assert.match(r.out, /TOTALS: 2 pass, 0 fail/, 'ENTER: the sweeping run produced no totals');
+  assert.notStrictEqual(r.code, 0,
+    'a stale entry is a config error, not a timing: no amount of machine load can produce one, so '
+    + 'the advisory path must never reach it');
+  assert.match(r.out, /^SLOW: stale allowlist entry a test that no longer exists$/m);
+});
+
+test('slow gate: test/slow-tests.json carries the instance-label engine entry verbatim', () => {
+  const raw = JSON.parse(fs.readFileSync(path.join(ROOT, 'test', 'slow-tests.json'), 'utf8'));
+  const key = 'the engine const reads the env: CLODEX_LABEL reaches the wire as hostLabel';
+  assert.ok(Object.hasOwn(raw, key),
+    'walking the table cannot catch a row that is missing or misspelled — a wrong key reads as a '
+    + 'stale entry on a sweeping run and the test it was meant to exempt still fails the gate');
+  assert.match(String(raw[key]), /createEngine/,
+    'the value is the mechanism the test genuinely waits on, which is what the next reader judges');
 });
