@@ -549,4 +549,4 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
   };
 }
 
-module.exports = { createCtlService, tokenize, refuse, isNodeLine, ALLOWED, NODE_LOCAL_VERBS, MAX_BLOCK_CHARS };
+module.exports = { createCtlService, tokenize, refuse, isNodeLine, ALLOWED, DEFERRED_HINT, NODE_LOCAL_VERBS, MAX_BLOCK_CHARS };

@@ -20,7 +20,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { createCtlService, tokenize, refuse, isNodeLine, ALLOWED, NODE_LOCAL_VERBS, MAX_BLOCK_CHARS } = require('../ctl-service');
+const { createCtlService, tokenize, refuse, isNodeLine, ALLOWED, DEFERRED_HINT, NODE_LOCAL_VERBS, MAX_BLOCK_CHARS } = require('../ctl-service');
+const { VERB_REGISTRY } = require('../cli/src/help');
 const R = require('../cli/src/resources');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { RESOURCES_DOC } = require('../cli/test/fixtures/resources-doc');
@@ -90,6 +91,23 @@ test('refuse: the allowlist admits the block-shaped verbs and no others', () => 
     delete: ['node', 'nodes'],
     use: true,
   });
+});
+
+test('every verb in help.js\'s registry is either allowed or named as deferred', () => {
+  const registry = VERB_REGISTRY.map((e) => e.name).sort();
+  assert.ok(registry.length >= 20,
+    `ENTER: help.js's registry read back only ${registry.length} verbs — an empty read would make the equality below vacuous`);
+
+  const allowed = Object.keys(ALLOWED);
+  const deferred = DEFERRED_HINT.slice(DEFERRED_HINT.indexOf(':') + 1)
+    .split(', ')
+    .map((s) => s.trim().split(/\s+/)[0])
+    .filter(Boolean);
+  const covered = [...new Set([...allowed, ...deferred])].sort();
+
+  assert.deepStrictEqual(covered, registry,
+    'the ctl tab must account for every CLI verb: each one is either in ALLOWED or named in DEFERRED_HINT. '
+    + 'A verb the CLI gained and this tab never mentions is invisible at the prompt — it neither runs nor explains itself.');
 });
 
 // The two irreversible engine-side verbs, called out on their own because the

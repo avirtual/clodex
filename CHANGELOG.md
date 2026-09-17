@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **The clodexctl tab is in the web view too.** The drawer's clodexctl console now shows in the browser frontend, with the same verbs as the desktop; it runs in the Clodex process, so the browser never sees a node token.
+
 - **The console tab speaks node.** The drawer's `ctl` tab runs the same `get nodes`, `describe node`, `create node`, `delete node` and `use node` as the terminal clodexctl, and a resource verb handed a name where it expects a resource word now suggests the command you meant (`use murmurfi` → `did you mean: use node murmurfi`).
 
 - **Clodex optimized keeps newly synced skills off.** A skill that appears after you chose your defaults (the CLI's account-synced skills, a plugin you install later) starts unchecked; an older explicit skill default is upgraded to that rule on first load, keeping exactly the skills it had enabled.
