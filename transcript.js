@@ -226,9 +226,18 @@ function turnStart(all) {
   return 0;
 }
 
-function sliceSince(all, since, limit) {
+function keepAfter(m, floor) {
+  if (m.ts == null) return true;
+  const t = Date.parse(m.ts);
+  return !Number.isFinite(t) || t >= floor;
+}
+
+function sliceSince(all, since, limit, after = null) {
   const cursor = turnStart(all);
-  const page = since == null ? all.slice(-limit) : all.filter((m) => m.seq >= since).slice(-limit);
+  let rows = since == null ? all : all.filter((m) => m.seq >= since);
+  const floor = after == null ? NaN : Date.parse(after);
+  if (Number.isFinite(floor)) rows = rows.filter((m) => keepAfter(m, floor));
+  const page = rows.slice(-limit);
   return { messages: page, cursor, complete: true };
 }
 

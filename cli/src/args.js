@@ -82,4 +82,13 @@ function parse(argv, opts = {}) {
   return out;
 }
 
-module.exports = { parse };
+const DURATION_RE = /^(\d+)\s*([smhd])$/;
+const UNIT_MS = { s: 1000, m: 60 * 1000, h: 60 * 60 * 1000, d: 24 * 60 * 60 * 1000 };
+
+function parseDuration(str) {
+  const m = String(str == null ? '' : str).trim().match(DURATION_RE);
+  if (!m) return null;
+  return parseInt(m[1], 10) * UNIT_MS[m[2]];
+}
+
+module.exports = { parse, parseDuration };

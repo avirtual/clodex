@@ -523,6 +523,7 @@ app.whenReady().then(() => {
       appVersion: app.getVersion(),
       isPackaged: () => app.isPackaged,
       pathMergeFailed,
+      logFile: LOG_FILE,
       // App-menu refresh hooks SessionManager + peer-wiring fire on change.
       // Late-bound forwarders onto the module consts createAppMenus produced at
       // module scope; nothing fires them synchronously during createEngine (the

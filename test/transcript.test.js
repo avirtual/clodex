@@ -364,10 +364,10 @@ test('cachedMessages: an unchanged file is not re-parsed; a grown file is', () =
   } finally { fs.unlinkSync(p); }
 });
 
-test('hello advertises transcript-since and the endpoint threads since through', () => {
+test('hello advertises transcript-since and transcript-after, and the endpoint threads both through', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf-8');
-  assert.match(src, /caps = \['transcript', 'transcript-since', 'send'\]/);
-  assert.match(src, /this\._getTranscript\(name, limit, since\)/);
+  assert.match(src, /caps = \['transcript', 'transcript-since', 'transcript-after', 'send'\]/);
+  assert.match(src, /this\._getTranscript\(name, limit, since, after\)/);
 
   const remote = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'remote.html'), 'utf-8');
   assert.match(remote, /if \(j\.messages\.length\) \{/);
@@ -479,4 +479,44 @@ test('jsonlToMessages: the Codex response_item shape becomes one user + one assi
       ['assistant', '[agent:dm clodex] the audit\n[agent:end]', true],
     ]);
   } finally { fs.unlinkSync(p); }
+});
+
+const AFTER_ROWS = [
+  { seq: 0, role: 'user', ts: '2026-09-17T00:00:00.000Z' },
+  { seq: 1, role: 'assistant', ts: '2026-09-17T01:00:00.000Z' },
+  { seq: 2, role: 'assistant', ts: null },
+  { seq: 3, role: 'user', ts: '2026-09-17T02:00:00.000Z' },
+  { seq: 4, role: 'assistant', ts: '2026-09-17T03:00:00.000Z' },
+];
+
+test('sliceSince: `after` keeps rows at or newer than the instant, and every null-ts row', () => {
+  const page = sliceSince(AFTER_ROWS, null, 100, '2026-09-17T02:00:00.000Z');
+  assert.deepStrictEqual(page.messages.map(m => m.seq), [2, 3, 4],
+    'the boundary row (seq 3, ts === after) survives, and the null-ts row is never dropped by a time filter');
+  assert.strictEqual(page.cursor, 3, 'the cursor still names the last turn start of the FULL history');
+
+  assert.deepStrictEqual(
+    sliceSince(AFTER_ROWS, null, 100, '2026-09-17T09:00:00.000Z').messages.map(m => m.seq), [2],
+    'an instant past every stamp leaves only the row that carries none');
+});
+
+test('sliceSince: `after` filters BEFORE the limit — the page is the newest rows that pass, not a pre-cut tail', () => {
+  const page = sliceSince(AFTER_ROWS, null, 2, '2026-09-17T00:30:00.000Z');
+  assert.deepStrictEqual(page.messages.map(m => m.seq), [3, 4],
+    'filter-then-slice yields 2 rows; slicing first would hand the filter only [3,4] and still print 2 — so this pins the ORDER via the 4-row survivor set below');
+  assert.deepStrictEqual(
+    sliceSince(AFTER_ROWS, null, 4, '2026-09-17T00:30:00.000Z').messages.map(m => m.seq), [1, 2, 3, 4],
+    'all four survivors — a slice-then-filter would have cut seq 1 away first');
+});
+
+test('sliceSince: `after` composes with the seq cursor, and an unparseable instant filters nothing', () => {
+  assert.deepStrictEqual(
+    sliceSince(AFTER_ROWS, 3, 100, '2026-09-17T00:00:00.000Z').messages.map(m => m.seq), [3, 4],
+    'the seq cursor and the time floor both apply');
+  assert.deepStrictEqual(
+    sliceSince(AFTER_ROWS, null, 100, 'not-a-time').messages.map(m => m.seq), [0, 1, 2, 3, 4],
+    'a garbage instant is inert here — the ROUTE refuses it with a 400, this layer never silently empties the page');
+  assert.deepStrictEqual(
+    sliceSince(AFTER_ROWS, null, 100).messages.map(m => m.seq), [0, 1, 2, 3, 4],
+    'the default (no `after`) is the pre-t958 behaviour');
 });

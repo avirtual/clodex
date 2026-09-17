@@ -203,6 +203,8 @@ function createEngine({ userDataPath, seams = {}, log }) {
   // web host, and a consumer must learn that rather than guess wire-port+1.
   const getWebInfo = seams.webInfo || (() => null);
 
+  const logFile = seams.logFile || null;
+
   // Every path below derives from this, and the suite's twelve createEngine
   // callers pass a temp one: unseamed, they seeded the operator's live library
   // from whatever branch happened to be checked out.
@@ -1819,6 +1821,7 @@ const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
   // Read per hello, so a peer sees the gate change (proxy disabled, port moved,
   // CLODEX_WIRESCOPE=off) without the box restarting.
   getWirescopeInfo: () => wirescope.localReach(),
+  getNodeLogFile: () => logFile,
 });
 
 
