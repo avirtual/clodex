@@ -90,6 +90,7 @@ function registerIpcHandlers(deps) {
     accounts, moveAccountByModel,
     syncTerminalReports,
     getPluginHost, getPluginLoader, listAllTemplates, listAllPrompts, surfaceOfSender,
+    getHelpCorpus,
   } = deps;
 
   async function spawnFromParams(e, p) {
@@ -1348,6 +1349,17 @@ function registerIpcHandlers(deps) {
   handle('plugin:catalog', () => {
     const host = getPluginHost && getPluginHost();
     return host ? host.catalog() : [];
+  });
+  handle('help:index', () => {
+    const corpus = getHelpCorpus && getHelpCorpus();
+    if (!corpus) return { ok: false };
+    return { ok: true, ...corpus.index() };
+  });
+  handle('help:page', (_e, name) => {
+    const corpus = getHelpCorpus && getHelpCorpus();
+    if (!corpus) return { ok: false };
+    const doc = corpus.get(String(name || ''));
+    return doc ? { ok: true, name: doc.name, title: doc.title, content: doc.content } : { ok: false };
   });
   handle('plugin:setEnabled', async (_e, pluginId, enabled) => {
     const host = getPluginHost && getPluginHost();

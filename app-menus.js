@@ -113,6 +113,7 @@ function createAppMenus(deps) {
     // The plugin host (T5) — null under CLODEX_PLUGINS=0 or a failed
     // construction, in which case the Plugins menu is absent rather than empty.
     getPluginHost,
+    getHelpCorpus,
     getTeams,
     listAllTemplates, listAllPrompts,
   } = deps;
@@ -684,6 +685,21 @@ function createAppMenus(deps) {
     wc.send('zoom-nudge');
   }
 
+  function helpSectionMenus() {
+    let sections = [];
+    try {
+      const corpus = getHelpCorpus ? getHelpCorpus() : null;
+      if (corpus) sections = (corpus.index() || {}).sections || [];
+    } catch { sections = []; }
+    return sections.map((section) => ({
+      label: section.title,
+      submenu: (section.pages || []).map((page) => ({
+        label: page.title,
+        click: () => sendToFocused('request-open-help', page.name),
+      })),
+    }));
+  }
+
   function buildAppMenu() {
     const isMac = process.platform === 'darwin';
     // The stock About panel reads the .app bundle's Info.plist, so under `npm start`
@@ -852,6 +868,11 @@ function createAppMenus(deps) {
         label: 'Help',
         role: 'help',
         submenu: [
+          { label: 'Clodex Help', accelerator: 'CmdOrCtrl+Shift+/', click: () => sendToFocused('request-open-help') },
+          { label: 'Clodex Help', accelerator: 'F1', visible: false, click: () => sendToFocused('request-open-help') },
+          { type: 'separator' },
+          ...helpSectionMenus(),
+          { type: 'separator' },
           { label: 'Clodex on GitHub', click: () => shell.openExternal(CLODEX_REPO_URL) },
           { label: 'Plugin library (clodex-plugins)', click: () => shell.openExternal(CLODEX_PLUGINS_REPO_URL) },
         ],

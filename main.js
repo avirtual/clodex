@@ -258,6 +258,7 @@ const {
   getExecLibrary: () => execLibrary,
   getEnvScopes: () => envScopes,
   getPluginHost: () => (engine ? engine.getPluginHost() : null),
+  getHelpCorpus: () => (engine ? engine.getHelpCorpus() : null),
   getPluginUpdates: () => (engine ? engine.getPluginUpdates() : []),
   getTeams: () => (engine ? {
     listTeams: engine.listTeams,

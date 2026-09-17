@@ -198,6 +198,7 @@ const API_CONTRACT = [
   { name: 'onRequestOpenDiscovery', kind: 'on', channel: 'request-open-discovery' },
   { name: 'onRequestRenameWorkspace', kind: 'on', channel: 'request-rename-workspace' },
   { name: 'onRequestOpenPreferences', kind: 'on', channel: 'request-open-preferences' },
+  { name: 'onRequestOpenHelp', kind: 'on', channel: 'request-open-help' },
   { name: 'onRequestOpenPeersDialog', kind: 'on', channel: 'request-open-peers-dialog' },
   // T5: the Plugins menu's "Manage Plugins…". A core menu→renderer open request,
   // exactly like the peers row above — NOT a plugin transport row (the plugin
@@ -476,6 +477,8 @@ const API_CONTRACT = [
   // this one table, the browser frontend inherits the plugin transport free.
   { name: 'pluginInvoke', kind: 'invoke', channel: 'plugin:invoke' },
   { name: 'pluginCatalog', kind: 'invoke', channel: 'plugin:catalog' },
+  { name: 'helpIndex', kind: 'invoke', channel: 'help:index' },
+  { name: 'helpPage', kind: 'invoke', channel: 'help:page' },
   { name: 'pluginSetEnabled', kind: 'invoke', channel: 'plugin:setEnabled' },
   { name: 'onPluginEvent', kind: 'on', channel: 'plugin-event' },
   // The intent catalog served over IPC rather than statically required by the

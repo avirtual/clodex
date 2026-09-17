@@ -7347,6 +7347,9 @@ prefsRemoteTokenClear.addEventListener('click', () => saveRemoteToken(''));
 
 window.api.onRequestOpenPreferences(() => openPrefs());
 
+function openHelp() {}
+window.api.onRequestOpenHelp((name, slug) => openHelp(name, slug));
+
 
 const argsOverlay = document.getElementById('args-overlay');
 const argsInput = document.getElementById('args-input');
