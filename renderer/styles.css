@@ -306,6 +306,15 @@ html, body {
   gap: 6px;
 }
 #sidebar-filter-header { margin-top: 0; padding-left: 0; padding-right: 0; }
+#sidebar-filter-header .session-group-title { flex: 0 0 auto; }
+#sidebar-filter-summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+}
 #sidebar-filter-body {
   display: flex;
   flex-direction: column;
