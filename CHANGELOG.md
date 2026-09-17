@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.72.0 — 2026-09-17
+
 - **A reviewer that writes its verdict as plain text is told to emit it.** When a cold reviewer's turn reads as a verdict but carries no `[agent:review-done]`, Clodex nudges it once to re-emit the verdict through the intent, so a review no longer waits on someone noticing.
 
 - **The sidebar's Find bar folds away.** The search box and its four filters now sit under a Find header that collapses like a session group, and remembers its state per workspace; folded, the header shows the criteria in effect, so a filtered list never looks like a short one.
