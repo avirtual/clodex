@@ -223,3 +223,73 @@ test('args: a directory is passed through, never refused as missing', () => {
   assert.ok(!/does not exist/.test(r.out),
     'a directory exists; refusing it would make the guard stricter than node');
 });
+
+function runNamedWithLock(env) {
+  const root = fs.realpathSync(mkTmpRoot('clx-t952-'));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  for (const f of ['run-tests.js', 'test-escapes.js']) {
+    fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
+  }
+  fs.writeFileSync(path.join(root, 'stub.test.js'), STUB);
+  const lock = path.join(root, 'held.lock');
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, 'pid'), String(process.pid));
+  const childEnv = { ...process.env, CLODEX_TEST_LOCK_DIR: lock, ...env };
+  delete childEnv.NODE_TEST_CONTEXT;
+  try {
+    const res = spawnSync(
+      process.execPath,
+      [path.join(root, 'scripts', 'run-tests.js'), 'stub.test.js'],
+      { encoding: 'utf-8', cwd: root, timeout: 120000, env: childEnv },
+    );
+    return { out: `${res.stdout || ''}${res.stderr || ''}`, code: res.status };
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+
+test('lock: a named-file run takes the suite lock under CLODEX_TEST_LOCK=1', () => {
+  const r = runNamedWithLock({ CLODEX_TEST_LOCK: '1' });
+  assert.match(r.out, /another suite run is already going/,
+    'the declared run walked past a live holder, so a port-binding file can meet a second run');
+  assert.notStrictEqual(r.code, 0, 'a refused run is not a green');
+  assert.ok(!/TOTALS:/.test(r.out), 'and it must not have run the file it was refused for');
+});
+
+test('lock: the same run WITHOUT the variable skips the lock, as every named run does', () => {
+  const r = runNamedWithLock({});
+  assert.match(r.out, /TOTALS: 1 pass/,
+    'ENTER: the control run produced no totals, so the pin above proves nothing about the variable');
+  assert.strictEqual(r.code, 0,
+    'a scoped run that waits on the box-wide mutex serializes every hand — the cost own exists to avoid');
+});
+
+test('lock: CLODEX_TEST_LOCK never reaches the child, so a nested runner is its own run', () => {
+  const root = fs.realpathSync(mkTmpRoot('clx-t952-env-'));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  for (const f of ['run-tests.js', 'test-escapes.js']) {
+    fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
+  }
+  const seen = path.join(root, 'seen.json');
+  fs.writeFileSync(path.join(root, 'probe.test.js'), [
+    "require('node:test').test('probe', () => {",
+    `  require('node:fs').writeFileSync(${JSON.stringify(seen)}, JSON.stringify({`,
+    '    lock: process.env.CLODEX_TEST_LOCK ?? null,',
+    '    dir: process.env.CLODEX_TEST_LOCK_DIR ?? null,',
+    '  }));',
+    '});',
+  ].join('\n'));
+  const env = { ...process.env, CLODEX_TEST_LOCK: '1', CLODEX_TEST_LOCK_DIR: path.join(root, 'own.lock') };
+  delete env.NODE_TEST_CONTEXT;
+  try {
+    const res = spawnSync(
+      process.execPath,
+      [path.join(root, 'scripts', 'run-tests.js'), 'probe.test.js'],
+      { encoding: 'utf-8', cwd: root, timeout: 120000, env },
+    );
+    assert.strictEqual(res.status, 0, `${res.stdout || ''}${res.stderr || ''}`);
+    assert.ok(fs.existsSync(seen), 'ENTER: the probe never ran, so it observed no environment at all');
+    const got = JSON.parse(fs.readFileSync(seen, 'utf-8'));
+    assert.strictEqual(got.lock, null,
+      'a nested runner that inherits the declaration blocks on the lock its parent already holds');
+    assert.strictEqual(got.dir, null, 'the same contract the other two lock variables already have');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

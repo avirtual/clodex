@@ -225,10 +225,9 @@ function releaseLock() {
 // drive it against a stub). Those children run inside a run that already holds
 // the lock, and they name explicit FILES rather than sweeping the repo — so they
 // are not the collision the lock exists to prevent, and taking it would make the
-// suite deadlock against itself. The lock guards a full sweep, which is the only
-// thing that reaches the port-binding tests.
+// suite deadlock against itself.
 const sweeping = !passthrough.some((a) => !a.startsWith('-'));
-if (sweeping) { acquireLock(); lockHeld = true; }
+if (sweeping || process.env.CLODEX_TEST_LOCK === '1') { acquireLock(); lockHeld = true; }
 // Covers the normal exit and the signals a Ctrl-C or a kill delivers; without
 // this an interrupted run leaves a lock whose pid is briefly still alive, and
 // the next run refuses against a ghost.
@@ -255,7 +254,7 @@ process.on('exit', () => {
   } catch { /* a leftover temp dir is not a reason to fail a run */ }
 });
 
-// Both lock variables are scrubbed from the child environment. They are a
+// The lock variables are all scrubbed from the child environment. They are a
 // decision about THIS process's lock, and every nested runner is by contract a
 // DIFFERENT run: two test files (test/test-digest-lock.test.js,
 // test/run-tests-args.test.js) spawn sweeping runners of their own against
@@ -268,6 +267,7 @@ process.on('exit', () => {
 const childEnv = { ...process.env };
 delete childEnv.CLODEX_TEST_LOCK_DIR;
 delete childEnv.CLODEX_TEST_LOCK_WAIT_MS;
+delete childEnv.CLODEX_TEST_LOCK;
 
 const runStart = Date.now();
 const run = spawnSync(process.execPath, [

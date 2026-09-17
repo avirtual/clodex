@@ -15,6 +15,7 @@ blocks a release.
 
 - **Clodex optimized keeps newly synced skills off.** A skill that appears after you chose your defaults (the CLI's account-synced skills, a plugin you install later) starts unchecked; an older explicit skill default is upgraded to that rule on first load, keeping exactly the skills it had enabled.
 - **`upgrade node` and `undeploy node` recognise a helm node by its transport.** A kubectl node saved before clodexctl recorded deploy flavors no longer needs a re-deploy first: both verbs infer helm from the transport, and a successful upgrade stamps the record for next time.
+- **Ticket hands run only their own tests.** `clodex-run-tests` takes `scope: "own"`: it runs the test files the branch changed, the tests of the modules it changed and the repo-wide source-shape checks, and skips the suite lock unless a selected file binds real ports. The full suite stays the merge gate's job.
 - **The CLI's bundled skills stay out of every seat.** Clodex now ships `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1` in its default env, so the workflow skills the Claude Code binary carries (init, review, simplify, security-review and the rest) no longer land in each agent's prompt. Plugin skills, account-synced skills and a project's own `.claude/skills/` are unaffected; the seed adds the key to the global scope once, and an operator who wants them back edits it there.
 
 ## 5.71.0 — 2026-09-17 — clodexctl speaks kubectl

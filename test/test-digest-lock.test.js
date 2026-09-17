@@ -1711,6 +1711,11 @@ test('def: the schema admits `tree` and still admits the empty payload', () => {
   assert.strictEqual(parseAndValidate(def, JSON.stringify({ treee: '/some/worktree' })).ok, false,
     'a misspelled field must be REFUSED, not ignored into a root measurement');
   assert.strictEqual(parseAndValidate(def, JSON.stringify({ tree: 7 })).ok, false);
+  assert.strictEqual(parseAndValidate(def, JSON.stringify({ scope: 'own' })).ok, true,
+    'the scoped run is what a working hand calls; a def that refuses it sends the hand to the full suite');
+  assert.strictEqual(parseAndValidate(def, JSON.stringify({ scope: 'full' })).ok, true);
+  assert.strictEqual(parseAndValidate(def, JSON.stringify({ scope: 'half' })).ok, false,
+    'an unknown scope must bounce at the dispatcher, not reach the bin as a silent full run');
 });
 
 test('def: the description states which tree the grant measures', () => {
