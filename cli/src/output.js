@@ -112,6 +112,16 @@ function renderAgentsWide(agents) {
   return table(['NAME', 'MODEL', 'DESCRIPTION', 'TOOLS'], rows);
 }
 
+function renderDocs(docs) {
+  const rows = (docs || []).map((d) => [d.name || '', d.section || '', d.title || '']);
+  return table(['NAME', 'SECTION', 'TITLE'], rows);
+}
+
+function renderDocHits(hits) {
+  const rows = (hits || []).map((h) => [h.name || '', h.heading || '', h.snippet || '']);
+  return table(['NAME', 'HEADING', 'SNIPPET'], rows);
+}
+
 function renderWorktrees(worktrees) {
   const rows = (worktrees || []).map((w) => [w.path || '', w.branch || '', w.head || '']);
   return table(['PATH', 'BRANCH', 'HEAD'], rows);
@@ -177,6 +187,11 @@ function describeAgent(agent) {
   return `${renderDescribe(rest)}\n\n${content == null ? '' : String(content)}`;
 }
 
+function describeDoc(doc) {
+  const { content, ...rest } = doc || {};
+  return `${renderDescribe(rest)}\n\n${content == null ? '' : String(content)}`;
+}
+
 function describeValue(v) {
   if (v == null) return '';
   if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
@@ -230,7 +245,8 @@ function makePrinter(write = (s) => process.stdout.write(s)) {
 module.exports = {
   jsonLine, stripAnsi, ANSI_RE, renderSessions, renderSessionsWide, renderNames, renderWorkspaces,
   renderPeers, renderPeersWide, renderTeams, renderTickets, renderTicketsWide, renderSandboxes,
-  renderAgents, renderAgentsWide, renderWorktrees, renderWorktreesWide, renderResources, renderDescribe,
-  describePeer, describeTeam, describeSandbox, describeAgent,
+  renderAgents, renderAgentsWide, renderDocs, renderDocHits, renderWorktrees, renderWorktreesWide,
+  renderResources, renderDescribe,
+  describePeer, describeTeam, describeSandbox, describeAgent, describeDoc,
   renderTranscript, renderInfo, table, makePrinter,
 };

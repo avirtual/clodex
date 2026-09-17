@@ -67,6 +67,7 @@ const RESOURCES = [
   { name: 'tickets', singular: 'ticket', scope: 'team', verbs: ['list', 'get'] },
   { name: 'sandboxes', singular: 'sandbox', scope: 'node', verbs: ['list', 'get'] },
   { name: 'agents', singular: 'agent', scope: 'node', verbs: ['list', 'get'] },
+  { name: 'docs', singular: 'doc', scope: 'node', verbs: ['list', 'get'] },
   { name: 'worktrees', singular: 'worktree', scope: 'node', verbs: ['list'] },
   { name: 'catalogs', singular: 'catalogs', scope: 'node', verbs: ['get'] },
   { name: 'node/logs', singular: 'node/logs', scope: 'node', verbs: ['get'] },
@@ -82,6 +83,7 @@ const RESOURCE_CALLBACK = {
   tickets: '_listTickets',
   sandboxes: '_listSandboxes',
   agents: '_listAgents',
+  docs: '_listDocs',
   worktrees: '_listWorktrees',
   catalogs: '_getCatalogs',
 };
@@ -139,6 +141,7 @@ class RemoteServer {
                 query, createSession, killSession, restartSession, getCatalogs, nodeLogFile,
                 listPeers, getPeer, listTeams, getTeam, listTickets,
                 listSandboxes, getSandbox, listAgents, getAgent, listWorktrees,
+                listDocs, getDoc, getDocSection, searchDocs,
                 getSessionArgs, setSessionArgs,
                 getSkillCatalog, setSessionSkills,
                 deliverDm, claimDms, listDmOrigins, receiveRoster, notifications,
@@ -187,6 +190,10 @@ class RemoteServer {
     this._listAgents = listAgents || null;
     this._getAgent = getAgent || null;
     this._listWorktrees = listWorktrees || null;
+    this._listDocs = listDocs || null;
+    this._getDoc = getDoc || null;
+    this._getDocSection = getDocSection || null;
+    this._searchDocs = searchDocs || null;
     this._getSessionArgs = getSessionArgs || null;
     this._setSessionArgs = setSessionArgs || null;
     this._getSkillCatalog = getSkillCatalog || null;
@@ -1235,6 +1242,70 @@ class RemoteServer {
       const content = this._getAgent ? this._getAgent(name) : null;
       if (content == null) return this._json(res, 404, { ok: false, error: 'Agent not found' });
       return this._json(res, 200, { ok: true, agent: { name, content } });
+    }
+    if (req.method === 'GET' && p === '/api/docs') {
+      if (!this._listDocs) return this._json(res, 501, { ok: false, error: 'docs not available' });
+      const rawQ = url.searchParams.get('q');
+      const q = rawQ == null ? '' : String(rawQ);
+      if (q.trim()) {
+        if (!this._searchDocs) return this._json(res, 501, { ok: false, error: 'docs not available' });
+        const rawLimit = parseInt(url.searchParams.get('limit'), 10);
+        const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(50, rawLimit)) : 20;
+        let hits;
+        try { hits = this._searchDocs(q, limit) || []; }
+        catch { return this._json(res, 500, { ok: false, error: 'docs unavailable' }); }
+        return this._json(res, 200, {
+          ok: true,
+          hits: hits.map((h) => ({
+            name: h && h.name, title: h && h.title, heading: h && h.heading,
+            slug: h && h.slug, snippet: h && h.snippet,
+          })),
+        });
+      }
+      let docs;
+      try { docs = this._listDocs() || []; }
+      catch { return this._json(res, 500, { ok: false, error: 'docs unavailable' }); }
+      return this._json(res, 200, {
+        ok: true,
+        docs: docs.map((d) => ({ name: d && d.name, title: d && d.title, section: d && d.section })),
+      });
+    }
+    if (req.method === 'GET' && p.startsWith('/api/docs/')) {
+      if (!this._listDocs) return this._json(res, 501, { ok: false, error: 'docs not available' });
+      const name = String(decodeURIComponent(p.slice('/api/docs/'.length)));
+      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad doc name' });
+      const rawSection = url.searchParams.get('section');
+      if (rawSection != null && String(rawSection).trim()) {
+        const slug = String(rawSection);
+        if (!this._getDocSection) return this._json(res, 501, { ok: false, error: 'docs not available' });
+        let hit;
+        try { hit = this._getDocSection(name, slug); }
+        catch { return this._json(res, 500, { ok: false, error: 'docs unavailable' }); }
+        if (hit == null) {
+          let page;
+          try { page = this._getDoc ? this._getDoc(name) : null; }
+          catch { return this._json(res, 500, { ok: false, error: 'docs unavailable' }); }
+          return this._json(res, 404, {
+            ok: false, error: page == null ? 'no such doc' : 'no such section',
+          });
+        }
+        return this._json(res, 200, {
+          ok: true,
+          doc: {
+            name: hit.name, title: hit.title, section: hit.section,
+            slug: hit.slug, content: hit.content,
+          },
+        });
+      }
+      if (!this._getDoc) return this._json(res, 501, { ok: false, error: 'docs not available' });
+      let doc;
+      try { doc = this._getDoc(name); }
+      catch { return this._json(res, 500, { ok: false, error: 'docs unavailable' }); }
+      if (doc == null) return this._json(res, 404, { ok: false, error: 'no such doc' });
+      return this._json(res, 200, {
+        ok: true,
+        doc: { name: doc.name, title: doc.title, section: doc.section, content: doc.content },
+      });
     }
     if (req.method === 'GET' && p === '/api/worktrees') {
       if (!this._listWorktrees) return this._json(res, 501, { ok: false, error: 'worktrees not available' });

@@ -29,6 +29,7 @@ thing a pod is in this analogy.
 | `kubectl config use-context X` | `clodexctl use node X` |
 | `kubectl config get-contexts` | `clodexctl get nodes` |
 | `kubectl config current-context` | `clodexctl get nodes --current` |
+| `kubectl explain X` | `clodexctl get doc <name> [--section <slug>]` |
 | `kubectl api-resources` | `clodexctl api-resources` |
 | `kubectl port-forward L:R` | `clodexctl port-forward L:R` |
 | `-o json\|yaml\|wide\|name` | `-o json\|yaml\|wide\|name` |
@@ -267,8 +268,15 @@ adds the bracketed columns; `-o name` prints `<singular>/<id>` per line.
 | `tickets` | ID TEAM STATE TITLE [ASSIGNEE, BRANCH] | `describe ticket <id> [--team T]` — the full record |
 | `sandboxes` | ID LABEL | `describe sandbox <id>` — state, ref, sha, ports |
 | `agents` | NAME MODEL DESCRIPTION [TOOLS] | `describe agent <name>` — the definition verbatim |
+| `docs` | NAME SECTION TITLE (`-q TERMS` searches: NAME HEADING SNIPPET) | `describe doc <name> [--section <slug>]` — the page, raw markdown |
 | `worktrees` | PATH BRANCH HEAD [MAIN, DETACHED, LOCKED, PRUNABLE] | none — list only, `--repo DIR` required |
 | `catalogs` | a labeled block (a singleton, no rows) | `describe catalogs` |
+
+`docs` is the **help corpus** — the same pages the desktop Help window shows,
+served as raw markdown. `get docs -q "park resend"` searches it; `--section
+<slug>` prints one section of a page instead of the whole thing, which is the
+token lever that matters to an agent (a page is 10-25k tokens, a section is
+usually under 2k).
 
 `get tickets` shows the **open** board unless you pass `--state`; `-o json`
 sends no state and returns every one, the server's own default. A ticket id is
@@ -304,6 +312,8 @@ Read (all but `describe` support `-o json` — stable raw wire payload — and `
 | `get tickets [--team T] [--state S]` | `GET /api/resources` → `GET /api/tickets?team=&state=` (human default `state=open`) |
 | `get sandboxes` | `GET /api/resources` → `GET /api/sandboxes` |
 | `get agents` | `GET /api/resources` → `GET /api/agents` |
+| `get docs [-q TERMS] [--limit N]` | `GET /api/resources` → `GET /api/docs` (with `-q`: `GET /api/docs?q=&limit=`, default limit 20, clamped 1-50) |
+| `get doc <name> [--section SLUG]` / `describe doc <name>` | `GET /api/resources` → `GET /api/docs/:name[?section=]` |
 | `get worktrees --repo DIR` | `GET /api/resources` → `GET /api/worktrees?repo=` (DIR is resolved to an absolute path client-side) |
 | `get catalogs` | `GET /api/catalogs` |
 | `describe <singular> <name>` / `describe catalogs` | the same routes, `/:name` for a single object, rendered as a labeled block (no `-o json`) |

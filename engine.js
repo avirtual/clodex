@@ -1811,6 +1811,7 @@ const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
   readSkillCatalog, applySessionSkills,
   getPromptLibrary: () => promptLibrary,
   getAgentLibrary: () => agentLibrary,
+  getHelpCorpus,
   getSkillLibrary: () => skillLibrary,
   getPersistence: () => persistence,
   getUiSettings: () => uiSettings,

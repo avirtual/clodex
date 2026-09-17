@@ -42,7 +42,7 @@ function createRemoteWiring(deps) {
     readSkillCatalog, applySessionSkills,
     fetchProxyContext, fetchProxyReport, fetchProxyBust,
     fetchSessionFiles, fetchFilePeek, fetchFileDiff,
-    CLAUDE_TOOLS, getPromptLibrary, getAgentLibrary, getSkillLibrary,
+    CLAUDE_TOOLS, getPromptLibrary, getAgentLibrary, getSkillLibrary, getHelpCorpus,
     getPersistence, getUiSettings, getWorkspaces, getNotifications,
     getRemoteServer, setRemoteServer, setRemoteError, getDrawerPtys,
     readRemoteEnvToken, resolveRemoteToken,
@@ -167,6 +167,12 @@ function createRemoteWiring(deps) {
       cbs.listAgents = () => getAgentLibrary().list()
         .map(({ name, description, model, tools, disallowedTools }) => ({ name, description, model, tools, disallowedTools }));
       cbs.getAgent = (name) => getAgentLibrary().raw(name);
+    }
+    if (typeof getHelpCorpus === 'function') {
+      cbs.listDocs = () => getHelpCorpus().list();
+      cbs.getDoc = (name) => getHelpCorpus().get(name);
+      cbs.getDocSection = (name, slug) => getHelpCorpus().section(name, slug);
+      cbs.searchDocs = (q, limit) => getHelpCorpus().search(q, limit);
     }
     cbs.listWorktrees = (repo) => gitWorktree.listWorktrees(repo);
     return cbs;
