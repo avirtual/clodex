@@ -242,10 +242,6 @@ async function run(argv, io = {}) {
   }
 }
 
-// `get`/`describe` reach R.parseTarget inside the verb, which is PAST the dial —
-// so a line naming no resource at all spawns and reaps a tunnel child before it
-// can say so. Only that case short-circuits here; a real resource word keeps the
-// existing order, where the verb owns its own argument errors.
 function preflightResourceWord(verb, rest) {
   if (verb !== 'get' && verb !== 'describe') return;
   const first = rest[0];
@@ -354,4 +350,4 @@ function safeLoad(io) {
 // the same lines this dispatcher does. A second copy of the flag table there
 // would drift silently, and the failure mode is invisible: a flag the terminal
 // CLI honours parsed as a positional in the REPL.
-module.exports = { run, TOP_VERBS, SPECIAL_VERBS, PARSE_OPTS, RENAMED_VERBS, RENAMED_SECOND, renamedLine, renamedSecondLine, renamedPointer, findDeletedJsonFlag, applyOutput, OUTPUT_FORMATS, dispatchNode, isNodeTarget, preflightResourceWord, NODE_VERBS };
+module.exports = { run, TOP_VERBS, SPECIAL_VERBS, PARSE_OPTS, RENAMED_VERBS, RENAMED_SECOND, renamedLine, renamedSecondLine, renamedPointer, findDeletedJsonFlag, applyOutput, OUTPUT_FORMATS, dispatchNode, isNodeTarget, preflightResourceWord, NODE_VERBS, DELETED_FAMILIES };

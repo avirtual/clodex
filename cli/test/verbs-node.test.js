@@ -57,7 +57,7 @@ test('the singular/plural spellings behave like every other resource', async () 
   assert.strictEqual(R.resolveResource('nodes').singular, 'node');
   assert.strictEqual(R.resolveResource('node').plural, 'nodes');
   const bad = await cli(['get', 'pods'], f);
-  assert.match(bad.stderr, /unknown resource: pods .*nodes\|node/);
+  assert.match(bad.stderr, /get pods: "pods" is not a resource — did you mean: get <session\|node\|.*> pods/);
 });
 
 test('get nodes --current prints the name ALONE, and follows use node', async () => {
@@ -137,6 +137,64 @@ test('no node output carries a token — json, yaml, wide, name, or describe', a
   assert.strictEqual(findSecretKey({ nodes: [{ e: { token: 'x' } }] }), '$.nodes[0].e.token');
 });
 
+test('a FOREIGN credential-shaped key on a stored entry never reaches -o json', async () => {
+  const f = tmpCtx();
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  fs.writeFileSync(f, JSON.stringify({
+    current: 'home',
+    contexts: {
+      home: {
+        url: 'http://127.0.0.1:7900',
+        token: 'REAL_TOKEN',
+        password: 'PASSWORD_LEAKED',
+        secret: 'SECRET_LEAKED',
+        auth: { bearer: 'AUTH_LEAKED' },
+      },
+    },
+  }), { mode: 0o600 });
+
+  const r = await cli(['get', 'nodes', '-o', 'json'], f);
+  assert.strictEqual(r.code, 0, `ENTER: the listing rendered (${r.stderr})`);
+  const parsed = JSON.parse(r.stdout);
+  assert.deepStrictEqual(parsed.nodes.map((n) => n.name), ['home']);
+  assert.deepStrictEqual(parsed.nodes[0].transport, { url: 'http://127.0.0.1:7900' },
+    'the transport is an explicit-field projection, so a foreign key is not in it');
+  assert.strictEqual(parsed.nodes[0].tokenSet, true);
+
+  assert.strictEqual(findSecretKey(parsed), null, `a secret-shaped key survived at ${findSecretKey(parsed)}`);
+  for (const leaked of ['PASSWORD_LEAKED', 'SECRET_LEAKED', 'AUTH_LEAKED', 'REAL_TOKEN']) {
+    assert.doesNotMatch(r.stdout, new RegExp(leaked), `${leaked} reached -o json`);
+  }
+});
+
+test('get node <name> --current is USAGE, not a silently ignored name', async () => {
+  const f = tmpCtx();
+  await cli(['create', 'node', 'home', '--url', 'http://127.0.0.1:7900'], f);
+  await cli(['create', 'node', 'work', '--url', 'http://127.0.0.1:7901'], f);
+
+  const r = await cli(['get', 'node', 'home', '--current'], f);
+  assert.strictEqual(r.code, 2, `expected USAGE, got ${r.code}: ${r.stdout}${r.stderr}`);
+  assert.match(r.stderr, /--current prints the current node and takes no name/);
+  assert.strictEqual(r.stdout, '', 'it must not answer with a node name at all');
+
+  const ok = await cli(['get', 'nodes', '--current'], f);
+  assert.strictEqual(ok.code, 0, `ENTER: --current alone still prints (${ok.stderr})`);
+  assert.strictEqual(ok.stdout, 'home\n');
+});
+
+test('verbs.js exports the node family and no ctx spelling', () => {
+  assert.deepStrictEqual(Object.keys(V).sort(), [
+    'DEPLOYABLE', 'QUERY_KINDS', 'RESOURCE_VERBS', 'SESSION_SUBRESOURCES',
+    'apiResources', 'checkResourceWord', 'create', 'createSession',
+    'delete', 'deleteSession', 'describe', 'dm', 'entryKind', 'entryTarget',
+    'exec', 'execPty', 'filterWorkspace', 'get', 'info', 'input', 'logs',
+    'nodeCreate', 'nodeCurrent', 'nodeDelete', 'nodeDescribe', 'nodeList', 'nodeUse',
+    'parseIntOr', 'patch', 'patchSession', 'query', 'requireName',
+    'restart', 'restartNode', 'restartSession', 'sessionType',
+    'takeResourceWord', 'version',
+  ]);
+});
+
 test('`nodes` never reaches the wire resource gate — a node is a CLIENT record', async () => {
   const f = tmpCtx();
   await cli(['create', 'node', 'home', '--url', 'http://127.0.0.1:1', '--token', 't'], f);
@@ -200,7 +258,7 @@ test('the WIRE verbs refuse a node word outright — no dial, no silent success'
   }
   assert.deepStrictEqual(printed, [], 'nothing was rendered on the way to the refusal');
 
-  await assert.rejects(() => V.get({ ...bundle, args: ['pods'] }), /unknown resource: pods/,
+  await assert.rejects(() => V.get({ ...bundle, args: ['pods'] }), /"pods" is not a resource/,
     'ENTER: an unrelated resource still reaches the normal parse path');
 });
 

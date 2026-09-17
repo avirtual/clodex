@@ -48,7 +48,8 @@ test('parseTarget: plural, singular, and the TYPE/NAME slash form', () => {
 
 test('parseTarget: usage errors name the accepted spellings', () => {
   assert.throws(() => R.parseTarget([], 'get'), (e) => e.exitCode === EXIT.USAGE && /sessions\|session/.test(e.message));
-  assert.throws(() => R.parseTarget(['pods'], 'get'), (e) => e.exitCode === EXIT.USAGE && /unknown resource: pods/.test(e.message));
+  assert.throws(() => R.parseTarget(['pods'], 'get'), (e) => e.exitCode === EXIT.USAGE && /get pods: "pods" is not a resource — did you mean: get <session\|node\|/.test(e.message));
+  assert.throws(() => R.parseTarget(['pods/x'], 'get'), (e) => e.exitCode === EXIT.USAGE && /unknown resource: pods/.test(e.message));
   assert.throws(() => R.parseTarget(['session', 'bob', 'extra'], 'get'), (e) => e.exitCode === EXIT.USAGE && /unexpected argument "extra"/.test(e.message));
   assert.throws(() => R.parseTarget(['session/bob', 'jim'], 'get'), (e) => e.exitCode === EXIT.USAGE && /already carries a name/.test(e.message));
   assert.throws(() => R.parseTarget(['session/'], 'get'), (e) => e.exitCode === EXIT.USAGE && /names no object/.test(e.message));

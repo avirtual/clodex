@@ -405,6 +405,16 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
       return done(`${text}\n`, code, currentName());
     }
 
+    // A DELETED family (`ctx`) points at its replacement, ahead of the gate for
+    // the reason the verb pointer above is: the gate would answer "not available
+    // in the ctl tab", which is false — the family is gone everywhere, and the
+    // spelling that replaced it runs here. Only a deleted family routes here;
+    // a deferred verb's second token (`deploy somehost`) stays a refusal.
+    if (main.DELETED_FAMILIES.has(flags._[0])) {
+      const line2 = main.renamedSecondLine(flags._[0], flags._[1], flags);
+      if (line2) return done(`clodexctl: ${line2}\n`, 1, currentName());
+    }
+
     // The gate reads PARSED POSITIONALS, never the raw argv. A flag that
     // consumes a token (`--url exec`) moves the real verb, and the positionals
     // are what track it.

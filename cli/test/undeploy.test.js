@@ -310,7 +310,7 @@ test('undeploy node: a context that does NOT EXIST is told so, not that its reco
   const contextsFile = tmpCtxFile({ current: null, contexts: {} });
   const r = await cli(['undeploy', 'node', 'typo'], { contextsFile });
   assert.strictEqual(r.code, EXIT.USAGE);
-  assert.match(r.stderr, /no such context: typo/);
+  assert.match(r.stderr, /no such node: typo/);
   assert.doesNotMatch(r.stderr, /does not record how it was deployed/);
   assert.match(r.stderr, /--fargate \| --helm \| --docker/);
 });
