@@ -511,6 +511,18 @@ test('renderer.js wires the panel into Escape, the opener and the subscription',
     'the S3 menu subscription must survive');
 });
 
+test('t989: the browser Alt-chord handler carries a help arm that opens the panel', () => {
+  const handler = rendererSrc.match(/if \(!window\.__CLODEX_WEB__\) return;[\s\S]*?\n\}, true\);/);
+  assert.ok(handler, 'ENTER: no __CLODEX_WEB__ keydown handler found in renderer.js');
+  assert.ok(handler[0].includes("if (action.type === 'help') { openHelp(); return; }"),
+    'Alt+Shift+/ must reach openHelp() with no page name, so the panel opens on how-to');
+  const helpAt = handler[0].indexOf("action.type === 'help'");
+  const gateAt = handler[0].indexOf('if (overlaysOpen) return;');
+  assert.ok(gateAt > 0, 'ENTER: the overlay gate is still in the handler');
+  assert.ok(helpAt < gateAt,
+    'the help arm sits ABOVE the overlay gate: the desktop accelerator opens help over any overlay');
+});
+
 test('index.html ships the overlay empty, after #report-overlay and before the script', () => {
   const report = htmlSrc.indexOf('<div id="report-overlay"');
   const help = htmlSrc.indexOf('<div id="help-overlay"');

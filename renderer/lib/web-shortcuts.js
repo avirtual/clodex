@@ -14,7 +14,7 @@
 //   { type: 'new' }                        Alt+T          — new session (dialog)
 //   { type: 'close' }                      Alt+W          — close active session
 //   { type: 'switch', index }              Alt+1..9       — nth session (0-based)
-//   { type: 'cycle', dir: 'next'|'prev' }  Alt+Shift+] / Alt+Shift+[
+//   { type: 'cycle', dir: 'next'|'prev' }  Alt+Shift+] / Alt+Shift+[ ; { type: 'help' } Alt+Shift+/
 
 function altChordAction(e) {
   if (!e || !e.altKey || e.metaKey || e.ctrlKey) return null;
@@ -22,6 +22,7 @@ function altChordAction(e) {
   if (e.shiftKey) {
     if (code === 'BracketRight') return { type: 'cycle', dir: 'next' };
     if (code === 'BracketLeft') return { type: 'cycle', dir: 'prev' };
+    if (code === 'Slash') return { type: 'help' };
     return null;
   }
   if (code === 'KeyT') return { type: 'new' };

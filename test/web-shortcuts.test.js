@@ -14,11 +14,13 @@ const { altChordAction } = require('../renderer/lib/web-shortcuts');
 const ev = (code, { shift = false, alt = true, meta = false, ctrl = false, key = '†' } = {}) =>
   ({ code, key, shiftKey: shift, altKey: alt, metaKey: meta, ctrlKey: ctrl });
 
-test('the Alt chord set maps to the four actions', () => {
+test('the Alt chord set maps to the five actions', () => {
   assert.deepEqual(altChordAction(ev('KeyT')), { type: 'new' });
   assert.deepEqual(altChordAction(ev('KeyW')), { type: 'close' });
   assert.deepEqual(altChordAction(ev('BracketRight', { shift: true })), { type: 'cycle', dir: 'next' });
   assert.deepEqual(altChordAction(ev('BracketLeft', { shift: true })), { type: 'cycle', dir: 'prev' });
+  assert.deepEqual(altChordAction(ev('Slash', { shift: true })), { type: 'help' });
+  assert.equal(altChordAction(ev('Slash')), null, 'Alt+/ without Shift is not bound');
 });
 
 test('Alt+1..9 switch to a 0-based session index', () => {
