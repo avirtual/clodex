@@ -178,7 +178,7 @@ async function undeployVerb({ printer, flags, args, io = {} }) {
   if (!flavor) {
     if (!known) {
       throw new CliError(EXIT.USAGE,
-        `no such context: ${name} — undeploy reads the teardown to run from the context record. If the node has no context (deployed with --no-ctx, or on another machine), name the flavor and the target yourself (${UNDEPLOY_FLAVOR_USAGE}).`);
+        `no such node: ${name} — undeploy reads the teardown to run from the node record. If the node has no record (deployed with --no-ctx, or on another machine), name the flavor and the target yourself (${UNDEPLOY_FLAVOR_USAGE}).`);
     }
     const kind = D.transportKind(entry);
     throw new CliError(EXIT.USAGE,

@@ -99,7 +99,7 @@ async function upgradeVerb({ printer, flags, args, io = {} }) {
     throw new CliError(EXIT.USAGE, 'upgrade needs a context — `clodexctl upgrade node <ctx>` (or set one with `clodexctl use node …`)');
   }
   const entry = store.contexts[ctxName];
-  if (!entry) throw new CliError(EXIT.USAGE, `no such context: ${ctxName}`);
+  if (!entry) throw new CliError(EXIT.USAGE, `no such node: ${ctxName}`);
 
   // 1. ROUTE — on the stored flavor, else on a transport only one flavor writes.
   let dep = entry.deploy;

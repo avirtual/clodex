@@ -15,13 +15,13 @@ identity instead — e.g. Bedrock via an IRSA-bound service account.)
 Add the node to clodexctl (resolves the pod through YOUR kubectl access —
 no ingress exists):
 
-  clodexctl ctx add {{ .Release.Name }} \
+  clodexctl create node {{ .Release.Name }} \
     --kubectl svc/{{ include "clodex.name" . }} \
     --namespace {{ .Release.Namespace }} \
     --kube-context $(kubectl config current-context) \
     --token "$(kubectl -n {{ .Release.Namespace }} get secret {{ include "clodex.secretName" . }} -o jsonpath='{.data.wire-token}' | base64 -d)"
 
-Then: clodexctl --ctx {{ .Release.Name }} spawn worker --type claude
+Then: clodexctl --ctx {{ .Release.Name }} create session worker --type claude
       clodexctl --ctx {{ .Release.Name }} attach worker
 {{- if .Values.web.enabled }}
       clodexctl --ctx {{ .Release.Name }} web        # browser GUI (port {{ .Values.web.port }})

@@ -29,6 +29,15 @@ function knownSpellings() {
   return [...new Set(TABLE.flatMap((r) => [r.plural, r.singular]))];
 }
 
+function singulars() {
+  return [...new Set(TABLE.map((r) => r.singular))];
+}
+
+function didYouMean(verb, word, supported) {
+  const slot = supported.length === 1 ? supported[0] : `<${supported.join('|')}>`;
+  return `${verb} ${word}: "${word}" is not a resource — did you mean: ${verb} ${slot} ${word}`;
+}
+
 function parseTarget(args, verb) {
   const first = args[0];
   if (!first) {
@@ -46,7 +55,10 @@ function parseTarget(args, verb) {
   }
   const entry = resolveResource(token);
   if (!entry) {
-    throw new CliError(EXIT.USAGE, `unknown resource: ${token} (${knownSpellings().join('|')})`);
+    if (slash > 0) {
+      throw new CliError(EXIT.USAGE, `unknown resource: ${token} (${knownSpellings().join('|')})`);
+    }
+    throw new CliError(EXIT.USAGE, didYouMean(verb, token, singulars()));
   }
   const extra = args.slice(slash > 0 ? 1 : 2);
   if (extra.length) {
@@ -95,4 +107,4 @@ function ctxLabel(ctx, flags) {
   return name || '<ctx>';
 }
 
-module.exports = { TABLE, resolveResource, knownSpellings, parseTarget, fetchResources, failUpgrade, requireResource, ctxLabel };
+module.exports = { TABLE, resolveResource, knownSpellings, singulars, didYouMean, parseTarget, fetchResources, failUpgrade, requireResource, ctxLabel };

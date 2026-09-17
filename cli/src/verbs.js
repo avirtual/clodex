@@ -406,7 +406,8 @@ function takeResourceWord(args, verb, supported) {
   const word = args[0];
   if (!word) throw new CliError(EXIT.USAGE, `${verb} needs a resource (${supported.join('|')})`);
   const entry = R.resolveResource(word);
-  const singular = entry ? entry.singular : word;
+  if (!entry) throw new CliError(EXIT.USAGE, R.didYouMean(verb, word, supported));
+  const singular = entry.singular;
   if (!supported.includes(singular)) {
     throw new CliError(EXIT.USAGE, `${verb} ${word} is not supported (${supported.join('|')})`);
   }
@@ -786,67 +787,6 @@ function entryFromFlags(flags) {
   return entry;
 }
 
-function ctxAdd({ store, saveStore, printer, flags, args }) {
-  const name = requireName(args[0], 'ctx add');
-  const entry = entryFromFlags(flags);
-  store.contexts[name] = entry;
-  if (!store.current) store.current = name;
-  saveStore(store);
-  printer.line(`context "${name}" added${store.current === name ? ' (current)' : ''}`);
-}
-
-function ctxUse({ store, saveStore, printer, args }) {
-  const name = requireName(args[0], 'ctx use');
-  if (!store.contexts[name]) throw new CliError(EXIT.USAGE, `no such context: ${name}`);
-  store.current = name;
-  saveStore(store);
-  printer.line(`current context: ${name}`);
-}
-
-function ctxCurrent({ store, printer }) {
-  if (!store.current) throw new CliError(EXIT.NOTFOUND, 'no current context (ctx use <name>)');
-  printer.line(store.current);
-}
-
-function ctxList({ store, printer, flags }) {
-  const names = Object.keys(store.contexts);
-  if (flags.json) { printer.json({ current: store.current, contexts: store.contexts }); return; }
-  if (names.length === 0) { printer.line('(no contexts — add one with `ctx add`)'); return; }
-  const rows = names.map((n) => {
-    const e = store.contexts[n];
-    return [n === store.current ? '*' : '', n, entryKind(e), entryTarget(e)];
-  });
-  printer.line(out.table(['', 'NAME', 'KIND', 'TARGET'], rows));
-}
-
-function ctxRm({ store, saveStore, printer, args }) {
-  const name = requireName(args[0], 'ctx rm');
-  if (!store.contexts[name]) throw new CliError(EXIT.USAGE, `no such context: ${name}`);
-  delete store.contexts[name];
-  if (store.current === name) store.current = null;
-  saveStore(store);
-  printer.line(`context "${name}" removed`);
-}
-
-function ctxShow({ store, printer, flags, args }) {
-  const name = args[0] || store.current;
-  if (!name) throw new CliError(EXIT.USAGE, 'ctx show needs a name (or set a current context)');
-  const e = store.contexts[name];
-  if (!e) throw new CliError(EXIT.USAGE, `no such context: ${name}`);
-  const redacted = { ...e };
-  if (redacted.token) redacted.token = '***';
-  if (flags.json) printer.json({ name, current: store.current === name, ...redacted });
-  else {
-    printer.line([
-      `name        ${name}${store.current === name ? ' (current)' : ''}`,
-      `kind        ${entryKind(e)}`,
-      `target      ${entryTarget(e)}`,
-      e.remotePort ? `remotePort  ${e.remotePort}` : null,
-      `token       ${e.token ? '(set)' : '(none)'}`,
-    ].filter(Boolean).join('\n'));
-  }
-}
-
 function nodeKind(e) {
   const family = entryKind(e);
   if (family === 'ssm') return e.ssm && e.ssm.ecs ? 'ssm-ecs' : 'ssm';
@@ -855,9 +795,18 @@ function nodeKind(e) {
   return family;
 }
 
+const TRANSPORT_FIELDS = ['url', 'ssh', 'tunnel', 'ssm', 'kubectl', 'gcloud', 'az', 'remotePort', 'deploy'];
+
+function transportOf(e) {
+  const t = {};
+  for (const k of TRANSPORT_FIELDS) if (e[k] != null) t[k] = e[k];
+  return t;
+}
+
 function nodeRow(name, entry, current) {
   const e = entry || {};
-  const { token, ...transport } = e;
+  const token = e.token;
+  const transport = transportOf(e);
   return {
     name,
     current: name === current,
@@ -876,8 +825,11 @@ function nodeRows(store) {
 const NODE_EMPTY = '(no nodes — add one with `clodexctl create node <name> --url …`)';
 
 function nodeList({ store, printer, flags, args }) {
-  if (flags.current) return nodeCurrent({ store, printer });
   const target = R.parseTarget(args, 'get');
+  if (target.name && flags.current) {
+    throw new CliError(EXIT.USAGE, `get node ${target.name} --current: --current prints the current node and takes no name (try: get nodes --current, or describe node ${target.name})`);
+  }
+  if (flags.current) return nodeCurrent({ store, printer });
   if (target.name) {
     throw new CliError(EXIT.USAGE, `get nodes takes no name (try: describe node ${target.name})`);
   }
@@ -925,7 +877,7 @@ function nodeCreate(bundle) {
   const { rest: args } = takeResourceWord(bundle.args, 'create', CREATABLE);
   if (flags.import) {
     if (args.length) throw new CliError(EXIT.USAGE, `create node --import takes no name ("${args[0]}" is extra)`);
-    return ctxImport(bundle);
+    return nodeImport(bundle);
   }
   const name = requireName(args[0], 'create node', 'node');
   store.contexts[name] = entryFromFlags(flags);
@@ -963,7 +915,7 @@ function nodeUse({ store, saveStore, printer, flags = {}, args: raw }) {
   printer.line(`current node: ${name}`);
 }
 
-function ctxImport({ store, saveStore, printer, flags, env }) {
+function nodeImport({ store, saveStore, printer, flags, env }) {
   const meta = imp.resolveDataDir({ dataDirFlag: flags['data-dir'], env });
   const candidates = imp.collectCandidates(meta.dir);
   const { store: nextStore, results } = imp.applyImport(store, candidates, { force: !!flags.force });
@@ -1039,8 +991,7 @@ module.exports = {
   logs, query,
   create, createSession, dm, input, exec, execPty, sessionType,
   delete: del, deleteSession, restart, restartSession, restartNode, patch, patchSession,
-  ctxAdd, ctxUse, ctxCurrent, ctxList, ctxRm, ctxShow, ctxImport,
-  nodeList, nodeCurrent, nodeDescribe, nodeCreate, nodeDelete, nodeUse, nodeRows,
+  nodeList, nodeCurrent, nodeDescribe, nodeCreate, nodeDelete, nodeUse,
   entryKind, entryTarget,
-  requireName, parseIntOr, QUERY_KINDS, SESSION_SUBRESOURCES, takeResourceWord, checkResourceWord, RESOURCE_VERBS, DEPLOYABLE, USABLE,
+  requireName, parseIntOr, QUERY_KINDS, SESSION_SUBRESOURCES, takeResourceWord, checkResourceWord, RESOURCE_VERBS, DEPLOYABLE,
 };

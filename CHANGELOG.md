@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- **The console tab speaks node.** The drawer's `ctl` tab runs the same `get nodes`, `describe node`, `create node`, `delete node` and `use node` as the terminal clodexctl, and a resource verb handed a name where it expects a resource word now suggests the command you meant (`use murmurfi` → `did you mean: use node murmurfi`).
+
 - **Clodex optimized keeps newly synced skills off.** A skill that appears after you chose your defaults (the CLI's account-synced skills, a plugin you install later) starts unchecked; an older explicit skill default is upgraded to that rule on first load, keeping exactly the skills it had enabled.
 - **`upgrade node` and `undeploy node` recognise a helm node by its transport.** A kubectl node saved before clodexctl recorded deploy flavors no longer needs a re-deploy first: both verbs infer helm from the transport, and a successful upgrade stamps the record for next time.
 - **Ticket hands run only their own tests.** `clodex-run-tests` takes `scope: "own"`: it runs the test files the branch changed, the tests of the modules and resource files it changed and the repo-wide source-shape checks, and skips the suite lock unless a selected file binds real ports. The full suite stays the merge gate's job. A branch that changes the test wrapper itself is measured by its own copy.

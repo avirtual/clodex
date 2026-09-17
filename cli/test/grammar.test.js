@@ -442,7 +442,7 @@ test('bare `restart <name>` is a usage error naming the resource word', async ()
     spawnFn: () => { dialled = true; throw new Error('spawnFn called'); },
   });
   assert.strictEqual(code, 2);
-  assert.match(stderr, /restart bob is not supported \(session\|node\)/);
+  assert.match(stderr, /restart bob: "bob" is not a resource — did you mean: restart <session\|node> bob/);
   assert.strictEqual(dialled, false, 'no transport, no context resolution');
   const bare = await cli(['restart'], null);
   assert.strictEqual(bare.code, 2);

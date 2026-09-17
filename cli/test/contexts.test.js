@@ -73,7 +73,7 @@ test('resolve: --ctx overrides current', () => {
 });
 
 test('resolve: unknown --ctx is a usage error', () => {
-  assert.throws(() => C.resolve(STORE, { ctxName: 'nope', env: {} }), /no such context/);
+  assert.throws(() => C.resolve(STORE, { ctxName: 'nope', env: {} }), /no such node/);
 });
 
 test('resolve: env URL switches transport to direct, drops file ssh', () => {
