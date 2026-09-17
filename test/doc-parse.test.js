@@ -102,6 +102,27 @@ test('code spans win over strong, em and links (inline precedence)', () => {
   assert.deepStrictEqual(parseInline('[`x`](y)'), [
     { type: 'link', href: 'y', children: [{ type: 'code', text: 'x' }] },
   ]);
+  assert.deepStrictEqual(parseInline('*a `b*c` d*'), [
+    {
+      type: 'em',
+      children: [
+        { type: 'text', text: 'a ' },
+        { type: 'code', text: 'b*c' },
+        { type: 'text', text: ' d' },
+      ],
+    },
+  ]);
+  assert.deepStrictEqual(parseInline('[a `x]y` z](t)'), [
+    {
+      type: 'link',
+      href: 't',
+      children: [
+        { type: 'text', text: 'a ' },
+        { type: 'code', text: 'x]y' },
+        { type: 'text', text: ' z' },
+      ],
+    },
+  ]);
 });
 
 test('`_` inside a word never opens em (docs/architecture.md:864)', () => {
@@ -110,6 +131,7 @@ test('`_` inside a word never opens em (docs/architecture.md:864)', () => {
   const nodes = parseInline('AGENT_NAME_RE, DEFAULT_WORKSPACE_ID');
   assert.deepStrictEqual(nodes, [{ type: 'text', text: 'AGENT_NAME_RE, DEFAULT_WORKSPACE_ID' }]);
   assert.strictEqual(nodes.filter((n) => n.type === 'em').length, 0);
+  assert.deepStrictEqual(parseInline('foo_bar_'), [{ type: 'text', text: 'foo_bar_' }]);
   assert.deepStrictEqual(parseInline('_word_'), [
     { type: 'em', children: [{ type: 'text', text: 'word' }] },
   ]);
