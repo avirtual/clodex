@@ -385,6 +385,43 @@ test('typing while the search index builds issues ONE corpus read, not one per k
     ['how-to', 'how-to'], 'and the hits still land for the query that is actually in the box');
 });
 
+test('two opens of the same uncached page in flight issue ONE fetch', async () => {
+  const ctx = mount();
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('how-to', null));
+  const before = ctx.calls.page.filter((n) => n === 'messaging').length;
+  assert.strictEqual(before, 0, 'ENTER: messaging must be uncached for this subject');
+
+  ctx.harness.hold(true);
+  await withDocument(ctx, async () => {
+    ctx.panel.openHelpPanel('messaging', null);
+    await ctx.harness.settle();
+    ctx.panel.openHelpPanel('messaging', null);
+    await ctx.harness.settle();
+  });
+  ctx.harness.hold(false);
+  await withDocument(ctx, () => ctx.harness.release());
+  await withDocument(ctx, () => ctx.harness.release());
+
+  assert.strictEqual(ctx.calls.page.filter((n) => n === 'messaging').length, 1,
+    'the page cache stores the RESULT, so a second open while the first is in flight misses the cache '
+    + 'and issues its own fetch — on the web frontend that is a second remote round trip per page');
+  assert.strictEqual(ctx.byId.get('help-body').querySelector('h1').textContent, 'Messaging',
+    'and the page still lands');
+});
+
+test('the search index is memoized by its in-flight promise, not by its result', () => {
+  const body = islandSrc.match(/function ensureSearchIndex\(\)[\s\S]*?\n  \}/);
+  assert.ok(body, 'ENTER: no ensureSearchIndex function found in the island');
+  assert.doesNotMatch(body[0], /await/,
+    'ensureSearchIndex awaits, so it memoizes a RESULT: every search started during the ~17-await build '
+    + 'runs buildSearchIndex again — a synchronous parseDoc pass over the whole corpus on the main thread, '
+    + 'while the user is typing');
+  assert.match(body[0], /searchIndexPromise = buildIndex\(\)/,
+    'the memo must hold the promise buildIndex returns');
+  assert.match(islandSrc, /if \(missing \|\| !pages\.length\) searchIndexPromise = null;/,
+    'a build that lost a page must drop the memo, or a partial index is pinned for the renderer\'s lifetime');
+});
+
 test('a failed fetch is retried, not cached as an empty corpus for the renderer\'s lifetime', async () => {
   const ctx = mount();
   ctx.harness.fail.index = 1;
