@@ -42,6 +42,13 @@ function ageLine(t) {
   return parts.join(' · ');
 }
 
+function hitAgeText(h, now) {
+  const closed = h && (h.state === 'done' || h.state === 'cancelled');
+  if (!closed) return '';
+  if (h.closedAt === null || h.closedAt === undefined) return 'closed at an unknown time';
+  return `closed ${humanizeAge(now - h.closedAt)} ago`;
+}
+
 /**
  * The trailer under the open list. Every count it names is one the board does
  * NOT show as rows, so a number that is zero must be omitted rather than
@@ -119,6 +126,7 @@ function deliveryNote(assignee, delivered) {
 module.exports.SEARCH_DEBOUNCE_MS = SEARCH_DEBOUNCE_MS;
 module.exports.humanizeAge = humanizeAge;
 module.exports.ageLine = ageLine;
+module.exports.hitAgeText = hitAgeText;
 module.exports.summaryText = summaryText;
 module.exports.projectLabel = projectLabel;
 module.exports.deliveryNote = deliveryNote;
@@ -130,6 +138,7 @@ module.exports.teamCostText = teamCostText;
 module.exports.activate = (rhost) => {
   let torn = false;
   const alive = () => !torn;
+  let cancelPending = null;
 
   /**
    * Resolves to `{ ok: true, … }` or `{ ok: false, error }` — never null, and
@@ -211,6 +220,21 @@ module.exports.activate = (rhost) => {
     searchEl.type = 'search';
     searchEl.placeholder = 'Search closed tickets…';
     const sectionsEl = el('div', 'tv-sections');
+    let shellMounted = false;
+
+    function clearBoardPane() {
+      boardPane.innerHTML = '';
+      shellMounted = false;
+      editorEl = null;
+    }
+
+    function mountBoardShell() {
+      if (shellMounted) return;
+      boardPane.innerHTML = '';
+      boardPane.appendChild(searchEl);
+      boardPane.appendChild(sectionsEl);
+      shellMounted = true;
+    }
     // Live session names for the assign picker. Refreshed with the board rather
     // than held from activation: a session list captured once would offer seats
     // that died since the overlay was last opened.
@@ -431,11 +455,22 @@ module.exports.activate = (rhost) => {
       return box;
     }
 
+    function goBack() {
+      const q = String(searchEl.value || '').trim();
+      if (q) {
+        mountBoardShell();
+        sectionsEl.innerHTML = '';
+        editorEl = null;
+        sectionsEl.appendChild(el('div', 'tv-empty', 'Loading…'));
+        runSearch(q).catch((e) => rhost.log.error('search failed', e));
+        return;
+      }
+      selectProject(selected).catch((e) => rhost.log.error('select failed', e));
+    }
+
     function renderTicket(t) {
       const wrap = el('div', 'tv-detail');
-      wrap.appendChild(button('tv-back', '← Back', 'Back to the board', () => {
-        selectProject(selected).catch((e) => rhost.log.error('select failed', e));
-      }));
+      wrap.appendChild(button('tv-back', '← Back', 'Back to the board', () => { goBack(); }));
 
       const head = el('div', 'tv-detail-head');
       head.appendChild(el('span', 'tv-id', t.id));
@@ -478,19 +513,16 @@ module.exports.activate = (rhost) => {
     async function renderDetail(project, id) {
       const my = ++selectSeq;
       const myReload = reloadSeq;
-      boardPane.innerHTML = '';
-      editorEl = null;
+      clearBoardPane();
       const pane = el('div', 'tv-detail');
       pane.appendChild(el('div', 'tv-empty', 'Loading…'));
       boardPane.appendChild(pane);
 
       const res = await ask('ticket', { project, id });
       if (!alive() || my !== selectSeq || myReload !== reloadSeq) return;
-      boardPane.innerHTML = '';
+      clearBoardPane();
       if (!res.ok || !res.ticket) {
-        boardPane.appendChild(button('tv-back', '← Back', 'Back to the board', () => {
-          selectProject(selected).catch((e) => rhost.log.error('select failed', e));
-        }));
+        boardPane.appendChild(button('tv-back', '← Back', 'Back to the board', () => { goBack(); }));
         boardPane.appendChild(el('div', 'tv-error', `Could not read ${id}: ${res.error || 'unknown error'}`));
         return;
       }
@@ -614,11 +646,9 @@ module.exports.activate = (rhost) => {
     }
 
     function renderBoard(res, cost) {
-      boardPane.innerHTML = '';
+      mountBoardShell();
       editorEl = null;
       sectionsEl.innerHTML = '';
-      boardPane.appendChild(searchEl);
-      boardPane.appendChild(sectionsEl);
       if (!res.ok) {
         // Not the same as an empty board, and the difference is the whole
         // point: one says "nothing open", the other says "do not believe me".
@@ -703,9 +733,8 @@ module.exports.activate = (rhost) => {
 
       const meta = el('div', 'tv-meta');
       meta.appendChild(el('span', 'tv-hit-state', h.state));
-      meta.appendChild(el('span', 'tv-age', h.closedAt === null || h.closedAt === undefined
-        ? 'closed at an unknown time'
-        : `closed ${humanizeAge(Date.now() - h.closedAt)} ago`));
+      const age = hitAgeText(h, Date.now());
+      if (age) meta.appendChild(el('span', 'tv-age', age));
       row.appendChild(meta);
 
       row.appendChild(el('div', 'tv-snippet', h.snippet));
@@ -713,8 +742,10 @@ module.exports.activate = (rhost) => {
     }
 
     function renderHits(res) {
+      const keptEditor = editorEl;
       sectionsEl.innerHTML = '';
-      editorEl = null;
+      editorEl = keptEditor;
+      if (keptEditor) sectionsEl.appendChild(keptEditor);
       if (!res.ok) {
         sectionsEl.appendChild(el('div', 'tv-error', `Could not search this project: ${res.error || 'unknown error'}`));
         return;
@@ -767,9 +798,10 @@ module.exports.activate = (rhost) => {
       for (const row of projectsPane.querySelectorAll('.tv-team-row')) {
         row.classList.toggle('tv-selected', row.dataset.tvProject === key);
       }
-      boardPane.innerHTML = '';
+      mountBoardShell();
       editorEl = null;
-      boardPane.appendChild(el('div', 'tv-empty', 'Loading…'));
+      sectionsEl.innerHTML = '';
+      sectionsEl.appendChild(el('div', 'tv-empty', 'Loading…'));
       // Both, together: the assign controls the board paints are only as good
       // as the session list beside them, and fetching them apart would let a
       // board render with a stale picker.
@@ -785,13 +817,13 @@ module.exports.activate = (rhost) => {
       projectsPane.innerHTML = '';
       if (!res.ok) {
         projectsPane.appendChild(el('div', 'tv-error', `Could not read the projects directory: ${res.error || 'unknown error'}`));
-        boardPane.innerHTML = '';
+        clearBoardPane();
         return;
       }
       const list = Array.isArray(res.projects) ? res.projects : [];
       if (!list.length) {
         projectsPane.appendChild(el('div', 'tv-empty', 'No projects yet.'));
-        boardPane.innerHTML = '';
+        clearBoardPane();
         boardPane.appendChild(el('div', 'tv-empty', 'A board appears here once a project has its first ticket.'));
         return;
       }
@@ -856,6 +888,7 @@ module.exports.activate = (rhost) => {
       renderProjects(res);
     }
 
+    cancelPending = () => { if (searchTimer !== null) { clearTimeout(searchTimer); searchTimer = null; } };
     return () => { reload().catch((e) => rhost.log.error('reload failed', e)); };
   }
 
@@ -867,5 +900,5 @@ module.exports.activate = (rhost) => {
     onClick: () => surface.open(),
   });
 
-  return () => { torn = true; };
+  return () => { torn = true; if (cancelPending) cancelPending(); };
 };

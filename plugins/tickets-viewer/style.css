@@ -615,8 +615,6 @@
   opacity: 0.55;
 }
 
-/* The match window, quoted rather than rendered: it is a slice out of the
-   middle of a field, so it has no beginning and no end to respect. */
 .tv-snippet {
   margin-top: 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

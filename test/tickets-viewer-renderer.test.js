@@ -16,7 +16,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const viewer = require('../plugins/tickets-viewer/renderer');
-const { humanizeAge, ageLine, summaryText } = viewer;
+const { humanizeAge, ageLine, hitAgeText, summaryText } = viewer;
 
 const HOUR = 60 * 60 * 1000;
 
@@ -82,12 +82,14 @@ function fakeDom() {
       // Stripping for browser parity would blunt three live assertions to
       // sharpen none.
       set innerHTML(v) {
+        for (const c of this.children) { c._detachCount += 1; c.parentNode = null; }
         this.children.length = 0;
         const s = v == null ? '' : String(v);
         this._text = s;
         if (!s) return;
         for (const m of s.matchAll(/<([a-zA-Z][a-zA-Z0-9]*)/g)) this.children.push(make(m[1].toLowerCase()));
       },
+      _detachCount: 0,
       appendChild(c) { this.children.push(c); c.parentNode = this; return c; },
       removeChild(c) {
         const i = this.children.indexOf(c);
@@ -914,7 +916,7 @@ test('typing in the search box asks the engine, lists the hits, and a hit opens 
     box.input('cache');
     assert.equal(rhost._calls.filter((c) => c.method === 'search').length, 0,
       'debounced: a keystroke is not a disk read of every ticket record');
-    t.mock.timers.tick(300);
+    t.mock.timers.tick(viewer.SEARCH_DEBOUNCE_MS + 1);
     await settle();
 
     const asked = rhost._calls.filter((c) => c.method === 'search');
@@ -945,7 +947,7 @@ test('a search with no hits and a search that FAILED do not paint the same', asy
     search: { ok: true, hits: [] },
   }, async ({ root, settle }) => {
     allByClass(root, 'tv-search')[0].input('nothing matches this');
-    t.mock.timers.tick(300);
+    t.mock.timers.tick(viewer.SEARCH_DEBOUNCE_MS + 1);
     await settle();
     assert.match(textOf(root).join('\n'), /no closed tickets match/);
     assert.doesNotMatch(classesOf(root).join(' '), /tv-error/, 'an empty result is not a broken one');
@@ -957,13 +959,137 @@ test('a search with no hits and a search that FAILED do not paint the same', asy
     search: { ok: false, error: 'tickets.json is not valid JSON' },
   }, async ({ root, settle }) => {
     allByClass(root, 'tv-search')[0].input('anything');
-    t.mock.timers.tick(300);
+    t.mock.timers.tick(viewer.SEARCH_DEBOUNCE_MS + 1);
     await settle();
     const text = textOf(root).join('\n');
     assert.match(text, /Could not search/);
     assert.match(text, /not valid JSON/);
     assert.match(classesOf(root).join(' '), /tv-error/);
     assert.doesNotMatch(text, /no closed tickets match/, 'a failure must not read as an empty result');
+  });
+});
+
+test('an OPEN hit is never dated as closed — `search` matches open records too', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({ open: [shaped('t1')], counts: { ...boardRes().counts, open: 1 } }),
+    search: { ok: true, hits: [
+      { id: 't50', title: 'still running', state: 'open', closedAt: null, snippet: '…the WIDGET half is not built yet…' },
+      { id: 't40', title: 'long finished', state: 'done', closedAt: Date.now() - HOUR, snippet: '…the WIDGET shipped…' },
+      { id: 't41', title: 'closed, unstamped', state: 'done', closedAt: null, snippet: '…the WIDGET again…' },
+    ] },
+  }, async ({ root, settle }) => {
+    allByClass(root, 'tv-search')[0].input('widget');
+    t.mock.timers.tick(viewer.SEARCH_DEBOUNCE_MS + 1);
+    await settle();
+
+    assert.equal(allByClass(root, 'tv-hit').length, 3, 'ENTER: all three hits really rendered');
+    const text = textOf(root).join('\n');
+    assert.match(text, /closed 1h ago/, 'the closed, stamped hit keeps its age');
+    assert.match(text, /closed at an unknown time/, 'a CLOSED hit with no stamp still says so');
+    assert.equal(text.match(/closed at an unknown time/g).length, 1,
+      'the OPEN hit is not dated as closed');
+    assert.doesNotMatch(text, /closed 0s ago/, 'and never dated from a null stamp as "just now"');
+  });
+});
+
+test('hitAgeText decides from the STATE, never from the stamp', () => {
+  const now = 10 * HOUR;
+  assert.equal(hitAgeText({ state: 'open', closedAt: null }, now), '',
+    'an open ticket has no closing to date');
+  assert.equal(hitAgeText({ state: 'open', closedAt: now - HOUR }, now), '',
+    'even a stray stamp does not close an open ticket');
+  assert.equal(hitAgeText({ state: 'done', closedAt: null }, now), 'closed at an unknown time');
+  assert.equal(hitAgeText({ state: 'cancelled', closedAt: null }, now), 'closed at an unknown time',
+    'cancelled is closed too');
+  assert.equal(hitAgeText({ state: 'done', closedAt: now - HOUR }, now), 'closed 1h ago');
+  assert.equal(hitAgeText({ state: '(no state)', closedAt: null }, now), '',
+    'a stateless record is not assumed closed');
+});
+
+test('clearing the query keeps the search box ATTACHED, so the caret survives', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({ open: [shaped('t1', { title: 'the open one' })], counts: { ...boardRes().counts, open: 1 } }),
+    search: { ok: true, hits: [
+      { id: 't40', title: 'a closed one', state: 'done', closedAt: Date.now() - HOUR, snippet: '…match…' },
+    ] },
+  }, async ({ root, rhost, settle }) => {
+    const box = allByClass(root, 'tv-search')[0];
+    const detachedAtStart = box._detachCount;
+
+    box.input('cache');
+    t.mock.timers.tick(viewer.SEARCH_DEBOUNCE_MS + 1);
+    await settle();
+    assert.match(textOf(root).join('\n'), /a closed one/, 'ENTER: the hits really rendered');
+
+    const boardsBefore = rhost._calls.filter((c) => c.method === 'board').length;
+    box.input('');
+    t.mock.timers.tick(viewer.SEARCH_DEBOUNCE_MS + 1);
+    await settle();
+
+    assert.ok(rhost._calls.filter((c) => c.method === 'board').length > boardsBefore,
+      'ENTER: clearing the box really repainted the board');
+    assert.match(textOf(root).join('\n'), /the open one/, 'and the open list is back');
+    assert.equal(box._detachCount, detachedAtStart,
+      'the box was never detached, so a real browser never took its focus away');
+    assert.equal(allByClass(root, 'tv-search').length, 1, 'and there is still exactly one box');
+    assert.equal(allByClass(root, 'tv-search')[0], box, 'the SAME node, not a rebuilt one');
+  });
+});
+
+test('Back from a HIT returns to the hits, not to the board the box no longer describes', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({ open: [shaped('t1', { title: 'the open one' })], counts: { ...boardRes().counts, open: 1 } }),
+    search: { ok: true, hits: [
+      { id: 't40', title: 'the closed one', state: 'done', closedAt: Date.now() - HOUR, snippet: '…the CACHE…' },
+    ] },
+    ticket: (arg) => ({ ok: true, ticket: detail(arg.id, { spec: 'deep in t40' }) }),
+  }, async ({ root, rhost, settle }) => {
+    allByClass(root, 'tv-search')[0].input('cache');
+    t.mock.timers.tick(viewer.SEARCH_DEBOUNCE_MS + 1);
+    await settle();
+    headOf(root, 't40').click();
+    await settle();
+    assert.match(textOf(root).join('\n'), /deep in t40/, 'ENTER: the hit really opened');
+
+    const boardsBefore = rhost._calls.filter((c) => c.method === 'board').length;
+    buttonLabelled(root, '← Back').click();
+    await settle();
+
+    const text = textOf(root).join('\n');
+    assert.match(text, /the closed one/, 'the hits are back');
+    assert.doesNotMatch(text, /the open one/, 'not the board, which the query no longer describes');
+    assert.equal(rhost._calls.filter((c) => c.method === 'board').length, boardsBefore,
+      'and the board was not re-read at all');
+    assert.equal(allByClass(root, 'tv-search')[0].value, 'cache', 'the box still shows the query it matches');
+  });
+});
+
+test('a search does not destroy an open editor, or the spec typed into it', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await withDom({
+    projects: projectsRes([projectRow({ open: 1 })]),
+    board: boardRes({ open: [shaped('t1')], counts: { ...boardRes().counts, open: 1 } }),
+    search: { ok: true, hits: [
+      { id: 't40', title: 'a closed one', state: 'done', closedAt: Date.now() - HOUR, snippet: '…match…' },
+    ] },
+  }, async ({ root, settle }) => {
+    buttonLabelled(root, '+ New ticket').click();
+    allByClass(root, 'tv-editor-spec')[0].value = 'a draft worth minutes';
+
+    allByClass(root, 'tv-search')[0].input('already filed?');
+    t.mock.timers.tick(viewer.SEARCH_DEBOUNCE_MS + 1);
+    await settle();
+
+    assert.match(textOf(root).join('\n'), /a closed one/, 'ENTER: the search really painted');
+    const area = allByClass(root, 'tv-editor-spec')[0];
+    assert.ok(area, 'the editor survives a search');
+    assert.equal(area.value, 'a draft worth minutes', 'and so does the text in it');
   });
 });
 

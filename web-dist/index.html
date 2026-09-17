@@ -11570,6 +11570,12 @@ body.web-frontend #sidebar-header {
         if (t.quietMs !== null) parts.push(`quiet ${humanizeAge(t.quietMs)}`);
         return parts.join(" \xB7 ");
       }
+      function hitAgeText(h, now) {
+        const closed = h && (h.state === "done" || h.state === "cancelled");
+        if (!closed) return "";
+        if (h.closedAt === null || h.closedAt === void 0) return "closed at an unknown time";
+        return `closed ${humanizeAge(now - h.closedAt)} ago`;
+      }
       function summaryText(counts) {
         if (!counts) return "";
         const parts = [];
@@ -11617,6 +11623,7 @@ body.web-frontend #sidebar-header {
       module.exports.SEARCH_DEBOUNCE_MS = SEARCH_DEBOUNCE_MS;
       module.exports.humanizeAge = humanizeAge;
       module.exports.ageLine = ageLine;
+      module.exports.hitAgeText = hitAgeText;
       module.exports.summaryText = summaryText;
       module.exports.projectLabel = projectLabel;
       module.exports.deliveryNote = deliveryNote;
@@ -11627,6 +11634,7 @@ body.web-frontend #sidebar-header {
       module.exports.activate = (rhost) => {
         let torn = false;
         const alive = () => !torn;
+        let cancelPending = null;
         function ask(method, arg) {
           if (!alive()) return Promise.resolve({ ok: false, error: "closed" });
           return Promise.resolve().then(() => rhost.invoke(method, arg)).then((res) => {
@@ -11689,6 +11697,19 @@ body.web-frontend #sidebar-header {
           searchEl.type = "search";
           searchEl.placeholder = "Search closed tickets\u2026";
           const sectionsEl = el("div", "tv-sections");
+          let shellMounted = false;
+          function clearBoardPane() {
+            boardPane.innerHTML = "";
+            shellMounted = false;
+            editorEl = null;
+          }
+          function mountBoardShell() {
+            if (shellMounted) return;
+            boardPane.innerHTML = "";
+            boardPane.appendChild(searchEl);
+            boardPane.appendChild(sectionsEl);
+            shellMounted = true;
+          }
           let liveSessions = [];
           function reselect() {
             if (!selected) return Promise.resolve();
@@ -11862,10 +11883,22 @@ Cancelled tickets are not counted as done.`)) return;
             }
             return box;
           }
+          function goBack() {
+            const q = String(searchEl.value || "").trim();
+            if (q) {
+              mountBoardShell();
+              sectionsEl.innerHTML = "";
+              editorEl = null;
+              sectionsEl.appendChild(el("div", "tv-empty", "Loading\u2026"));
+              runSearch(q).catch((e) => rhost.log.error("search failed", e));
+              return;
+            }
+            selectProject(selected).catch((e) => rhost.log.error("select failed", e));
+          }
           function renderTicket(t) {
             const wrap = el("div", "tv-detail");
             wrap.appendChild(button("tv-back", "\u2190 Back", "Back to the board", () => {
-              selectProject(selected).catch((e) => rhost.log.error("select failed", e));
+              goBack();
             }));
             const head = el("div", "tv-detail-head");
             head.appendChild(el("span", "tv-id", t.id));
@@ -11905,17 +11938,16 @@ Cancelled tickets are not counted as done.`)) return;
           async function renderDetail(project, id) {
             const my = ++selectSeq;
             const myReload = reloadSeq;
-            boardPane.innerHTML = "";
-            editorEl = null;
+            clearBoardPane();
             const pane = el("div", "tv-detail");
             pane.appendChild(el("div", "tv-empty", "Loading\u2026"));
             boardPane.appendChild(pane);
             const res = await ask("ticket", { project, id });
             if (!alive() || my !== selectSeq || myReload !== reloadSeq) return;
-            boardPane.innerHTML = "";
+            clearBoardPane();
             if (!res.ok || !res.ticket) {
               boardPane.appendChild(button("tv-back", "\u2190 Back", "Back to the board", () => {
-                selectProject(selected).catch((e) => rhost.log.error("select failed", e));
+                goBack();
               }));
               boardPane.appendChild(el("div", "tv-error", `Could not read ${id}: ${res.error || "unknown error"}`));
               return;
@@ -11984,11 +12016,9 @@ Cancelled tickets are not counted as done.`)) return;
             return row;
           }
           function renderBoard(res, cost) {
-            boardPane.innerHTML = "";
+            mountBoardShell();
             editorEl = null;
             sectionsEl.innerHTML = "";
-            boardPane.appendChild(searchEl);
-            boardPane.appendChild(sectionsEl);
             if (!res.ok) {
               sectionsEl.appendChild(el("div", "tv-error", `Could not read this project's tickets: ${res.error || "unknown error"}`));
               return;
@@ -12062,14 +12092,17 @@ Cancelled tickets are not counted as done.`)) return;
             row.appendChild(head);
             const meta = el("div", "tv-meta");
             meta.appendChild(el("span", "tv-hit-state", h.state));
-            meta.appendChild(el("span", "tv-age", h.closedAt === null || h.closedAt === void 0 ? "closed at an unknown time" : `closed ${humanizeAge(Date.now() - h.closedAt)} ago`));
+            const age = hitAgeText(h, Date.now());
+            if (age) meta.appendChild(el("span", "tv-age", age));
             row.appendChild(meta);
             row.appendChild(el("div", "tv-snippet", h.snippet));
             return row;
           }
           function renderHits(res) {
+            const keptEditor = editorEl;
             sectionsEl.innerHTML = "";
-            editorEl = null;
+            editorEl = keptEditor;
+            if (keptEditor) sectionsEl.appendChild(keptEditor);
             if (!res.ok) {
               sectionsEl.appendChild(el("div", "tv-error", `Could not search this project: ${res.error || "unknown error"}`));
               return;
@@ -12111,9 +12144,10 @@ Cancelled tickets are not counted as done.`)) return;
             for (const row of projectsPane.querySelectorAll(".tv-team-row")) {
               row.classList.toggle("tv-selected", row.dataset.tvProject === key);
             }
-            boardPane.innerHTML = "";
+            mountBoardShell();
             editorEl = null;
-            boardPane.appendChild(el("div", "tv-empty", "Loading\u2026"));
+            sectionsEl.innerHTML = "";
+            sectionsEl.appendChild(el("div", "tv-empty", "Loading\u2026"));
             const [res, live, cost] = await Promise.all([ask("board", key), ask("sessions"), ask("teamCost", key)]);
             if (!alive() || my !== selectSeq || myReload !== reloadSeq) return;
             liveSessions = live.ok && Array.isArray(live.sessions) ? live.sessions : [];
@@ -12123,13 +12157,13 @@ Cancelled tickets are not counted as done.`)) return;
             projectsPane.innerHTML = "";
             if (!res.ok) {
               projectsPane.appendChild(el("div", "tv-error", `Could not read the projects directory: ${res.error || "unknown error"}`));
-              boardPane.innerHTML = "";
+              clearBoardPane();
               return;
             }
             const list = Array.isArray(res.projects) ? res.projects : [];
             if (!list.length) {
               projectsPane.appendChild(el("div", "tv-empty", "No projects yet."));
-              boardPane.innerHTML = "";
+              clearBoardPane();
               boardPane.appendChild(el("div", "tv-empty", "A board appears here once a project has its first ticket."));
               return;
             }
@@ -12185,6 +12219,12 @@ ${p.root}` : p.key;
             if (!alive() || my !== reloadSeq) return;
             renderProjects(res);
           }
+          cancelPending = () => {
+            if (searchTimer !== null) {
+              clearTimeout(searchTimer);
+              searchTimer = null;
+            }
+          };
           return () => {
             reload().catch((e) => rhost.log.error("reload failed", e));
           };
@@ -12198,6 +12238,7 @@ ${p.root}` : p.key;
         });
         return () => {
           torn = true;
+          if (cancelPending) cancelPending();
         };
       };
     }
