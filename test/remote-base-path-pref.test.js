@@ -233,3 +233,18 @@ test('the renderer does not re-validate the prefix', () => {
       `no renderer-side coercion: ${m[0].trim()}`);
   }
 });
+
+test('t959 the rejected-prefix warning names the variable, never its value', () => {
+  const { resolveRemoteBasePath, REMOTE_BASE_PATH_ENV } = require('../remote');
+  const secret = `https://boxy.example/c?token=t959-${Date.now()}`;
+  const warnings = [];
+  const got = resolveRemoteBasePath(secret, (m) => warnings.push(m), '/c');
+  assert.strictEqual(got, '/c', 'ENTER: the value WAS rejected, so the warn path ran');
+  assert.strictEqual(warnings.length, 1, 'ENTER: it warned exactly once');
+  assert.ok(!warnings[0].includes(secret), 'the raw value must not reach the log line');
+  assert.ok(!warnings[0].includes('t959-'), 'nor any fragment of it');
+  assert.ok(warnings[0].includes(REMOTE_BASE_PATH_ENV),
+    'the variable name stays — that is what makes the warning actionable');
+  assert.ok(warnings[0].includes('/c'),
+    'and so does the fallback actually being served, so the operator knows what they got');
+});

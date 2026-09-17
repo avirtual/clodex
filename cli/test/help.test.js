@@ -158,3 +158,28 @@ test('help([]) is the index; help([verb]) is the entry; help([bad]) is usage', (
   assert.strictEqual(help(['ctx']).code, 2);
   assert.match(help(['ctx']).text, /no help for "ctx"/);
 });
+
+test('P7 `logs --help` prints BOTH forms, each prefixed with clodexctl', async () => {
+  const { code, stdout } = await cli(['logs', '--help']);
+  assert.strictEqual(code, 0);
+  const all = stdout.split('\n');
+  const from = all.indexOf('USAGE') + 1;
+  assert.ok(from > 0, 'ENTER: the entry has a USAGE section');
+  const to = all.indexOf('', from);
+  const forms = all.slice(from, to === -1 ? undefined : to);
+  assert.strictEqual(forms.length, 2, `expected two usage forms, got ${JSON.stringify(forms)}`);
+  assert.match(forms[0], /^ {2}clodexctl logs <name>/, 'the session form comes first');
+  assert.match(forms[1], /^ {2}clodexctl logs node/, 'the node form is a form of its own, not a continuation');
+  assert.ok(!stdout.includes('\n       logs node'),
+    'no hand-aligned continuation line survives — that is the shape that lost its prefix');
+});
+
+test('P7 no usage entry hides a second form inside a newline-joined string', () => {
+  for (const e of VERB_REGISTRY) {
+    for (const u of [].concat(e.usage)) {
+      assert.ok(!u.includes('\n'),
+        `${e.name}: a usage form contains a newline — use an array entry per form, or the `
+        + 'second form prints without its `clodexctl` prefix');
+    }
+  }
+});

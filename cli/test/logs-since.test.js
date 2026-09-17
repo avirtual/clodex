@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
+const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { run } = require('../src/main');
@@ -253,5 +254,25 @@ test('grammar: only a LEADING `node` selects the node log; `logs bob` is untouch
     const ok = await cli(['logs', 'bob'], port);
     assert.strictEqual(ok.code, 0);
     assert.ok(seen.some((u) => u.includes('/api/sessions/bob/transcript')), 'the ordinary session form still reads the transcript');
+  } finally { server.close(); }
+});
+
+test('t959 the no-name rule for `logs node` lives in logsNode, not in NAMELESS_RESOURCES', async () => {
+  const V = require('../src/verbs');
+  assert.ok(!('NAMELESS_RESOURCES' in V), 'ENTER: the set is module-private, so read it from source');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'verbs.js'), 'utf8');
+  const m = src.match(/const NAMELESS_RESOURCES = new Set\(\[([^\]]*)\]\)/);
+  assert.ok(m, 'ENTER: the set is still declared');
+  assert.ok(!m[1].includes("'logs node'"),
+    '`logs node` never reaches takeResourceWord, so an entry here enforces nothing');
+  assert.ok(m[1].includes("'restart node'"),
+    "ENTER: `restart node` DOES route through takeResourceWord and must stay");
+
+  const { server } = stub();
+  const port = await listen(server);
+  try {
+    const { code, stderr } = await cli(['logs', 'node', 'bob'], port);
+    assert.strictEqual(code, 2);
+    assert.match(stderr, /logs node: unexpected argument "bob"/);
   } finally { server.close(); }
 });

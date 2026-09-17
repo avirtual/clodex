@@ -896,6 +896,11 @@ accept teardown removes.
   browser", shared by BOTH hosts (main's window-open/will-navigate guards and
   the renderer's WebLinksAddon). True ONLY for http/https — the sole schemes
   handed to `shell.openExternal`.
+- **log-mask.js** — `maskSecrets(text)`, the credential mask both hosts' `writeLog`
+  applies to every ops-log message before it reaches `clodex.log`, and that
+  `remote.js` re-applies per line on the `/api/node/logs` read. Pure leaf (no
+  I/O, like clodex-paths.js); NOT in the leak-scanner lists.
+  `docs/notes/log-mask.md` carries the rule order and why it is load-bearing.
 - **library-menu-shape.js** — `categoryMenu(categories, { empty, foldAt })`:
   the layout every Library submenu uses. Takes `[{ label, rows }]` in source
   order (Library, then one per team, then one per plugin bundle) and returns

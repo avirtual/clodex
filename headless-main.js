@@ -22,6 +22,7 @@ const fs = require('fs');
 const { execSync } = require('child_process');
 const { ensureDir } = require('./fs-util');
 const { defaultClodexHome } = require('./clodex-paths');
+const { maskSecrets } = require('./log-mask');
 const { createEngine } = require('./engine');
 const { runningInSandboxBox } = require('./sandbox');
 const { DEFAULT_WORKSPACE_ID } = require('./catalogs');
@@ -63,7 +64,7 @@ function initLog() {
   } catch { /* first run / unrotatable — writes create it */ }
 }
 function writeLog(level, tag, message) {
-  const line = `${new Date().toISOString()}  ${level}  [${tag}]  ${message}\n`;
+  const line = `${new Date().toISOString()}  ${level}  [${tag}]  ${maskSecrets(message)}\n`;
   try { fs.appendFileSync(LOG_FILE, line); }
   catch { try { ensureDir(REGISTRY_DIR); fs.appendFileSync(LOG_FILE, line); } catch {} }
   (level === 'ERROR' ? process.stderr : process.stdout).write(line);

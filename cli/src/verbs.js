@@ -283,8 +283,9 @@ async function logsSession({ client, ctx, printer, flags, args, io = {} }) {
   if (after) q.set('after', after);
   const qs = q.toString();
   const body = await client.get(`${transcriptPath(name)}${qs ? `?${qs}` : ''}`, 'logs');
-  const messages = filterAfter(body.messages || [], after);
-  if (flags.follow) return logsFollow({ client, printer, flags, name, initial: body, messages, io });
+  const unfiltered = body.messages || [];
+  const messages = filterAfter(unfiltered, after);
+  if (flags.follow) return logsFollow({ client, printer, flags, name, initial: body, messages, unfiltered, io });
   if (flags.json) printer.json({ ...body, messages });
   else printer.line(out.renderTranscript(messages, { timestamps: !!flags.timestamps }));
 }
@@ -316,13 +317,14 @@ async function logsNode({ client, ctx, printer, flags, args, io = {} }) {
 
 const REANCHOR_AFTER_EMPTY_PAGES = 2;
 
-async function logsFollow({ client, printer, flags, name, initial, messages, io }) {
+async function logsFollow({ client, printer, flags, name, initial, messages, unfiltered, io }) {
   const stamps = { timestamps: !!flags.timestamps };
   if (flags.json) { for (const m of messages) printer.json(m); }
   else if (messages.length) printer.line(out.renderTranscript(messages, stamps));
 
-  let lastSeq = lastSeqOf(messages);
-  let legacyCount = lastSeq < 0 ? messages.length : 0;
+  const anchor = unfiltered || messages;
+  let lastSeq = lastSeqOf(anchor);
+  let legacyCount = lastSeq < 0 ? anchor.length : 0;
   let emptyPages = 0;
   let refetching = false;           // coalesce overlapping activity frames
   let pending = false;
@@ -458,7 +460,7 @@ const RESTARTABLE = ['session', 'node'];
 const DEPLOYABLE = ['node'];
 const USABLE = ['node'];
 
-const NAMELESS_RESOURCES = new Set(['restart node', 'logs node']);
+const NAMELESS_RESOURCES = new Set(['restart node']);
 
 function takeResourceWord(args, verb, supported) {
   const word = args[0];
@@ -1084,5 +1086,5 @@ module.exports = {
   nodeList, nodeCurrent, nodeDescribe, nodeCreate, nodeDelete, nodeUse,
   entryKind, entryTarget,
   requireName, parseIntOr, QUERY_KINDS, SESSION_SUBRESOURCES, takeResourceWord, checkResourceWord, RESOURCE_VERBS, DEPLOYABLE,
-  KIND_FIELDS, TRANSPORT_FIELDS,
+  KIND_FIELDS,
 };

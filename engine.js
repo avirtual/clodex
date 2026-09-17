@@ -154,7 +154,7 @@ function createEngine({ userDataPath, seams = {}, log }) {
   // visible to the leak-scanner's ownDefinitions; the `|| default` keeps every
   // seam optional so a host (headless) can omit the ones it lacks.
   const openPath = seams.openPath || (() => {});
-  const openExternalSeam = seams.openExternal || ((url) => { log.info('seam', `openExternal (no host browser): ${url}`); });
+  const openExternalSeam = seams.openExternal || ((url) => { log.info('seam', `openExternal (no host browser): ${String(url).split(/[?#]/)[0]}`); });
   const notifyOS = seams.notifyOS || (() => {});
   const setAppQuitting = seams.setAppQuitting || (() => {});
   const appVersion = seams.appVersion || require('./package.json').version;
@@ -1821,7 +1821,7 @@ const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
   // Read per hello, so a peer sees the gate change (proxy disabled, port moved,
   // CLODEX_WIRESCOPE=off) without the box restarting.
   getWirescopeInfo: () => wirescope.localReach(),
-  getNodeLogFile: () => logFile,
+  getNodeLogFile: logFile ? () => logFile : undefined,
 });
 
 
