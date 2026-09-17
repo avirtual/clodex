@@ -74,9 +74,8 @@ test('isInterruptEntry recognises the CLI interrupt entry and nothing else', () 
   }
 });
 
-// The renderer activity seam now carries the watcher's per-flush turnEnd
-// (t985), but _maybeSpeak still reads the wire's own stop.is_turn: the two
-// paths are disjoint by construction and a spoken reply must not depend on
+// _maybeSpeak reads the wire's own stop.is_turn, never an activity state: the
+// two paths are disjoint by construction and a spoken reply must not depend on
 // which one happens to be running.
 test('the spoken junction reads stop.is_turn, not an activity state', () => {
   const fs = require('node:fs');

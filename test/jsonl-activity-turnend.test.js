@@ -87,7 +87,7 @@ test('text, tool call, more text, end_turn: exactly one turnEnd edge and it is l
 // swallowed true edge is a hang, not a late event. So the seam carries its own
 // rule and this states it.
 test('_setActivity: a true turn end is delivered even when the state did not change', () => {
-  const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR: mkTmpRoot('clodex-watcher-') });
+  const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR: '/nonexistent-registry-t985' });
   const edges = [];
   const w = new JsonlWatcher('seat', () => {}, () => {}, (s, t) => edges.push([s, t]));
 
