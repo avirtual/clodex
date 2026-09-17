@@ -1004,6 +1004,67 @@ test('get nodes -o json prints no credential-shaped field at any depth', async (
   svc.dispose();
 });
 
+test('get nodes -o json prints no credential-shaped field nested INSIDE a kind object', async () => {
+  const file = tmpCtxFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({
+    current: 'k8s',
+    contexts: {
+      k8s: { kubectl: { target: 'svc/x', namespace: 'n', password: 'NESTED_PASSWORD', authToken: 'NESTED_AUTHTOKEN' } },
+      box: { ssm: { target: 't', secret: 'NESTED_SECRET' } },
+    },
+  }), { mode: 0o600 });
+  const svc = createCtlService({ contextsFile: file, env: {} });
+  const b = await svc.run('get nodes -o json');
+  assert.strictEqual(b.exitCode, 0, `ENTER: the listing ran (${b.output})`);
+  const parsed = JSON.parse(b.output);
+  const byName = Object.fromEntries(parsed.nodes.map((n) => [n.name, n]));
+  assert.deepStrictEqual(Object.keys(byName).sort(), ['box', 'k8s'], 'ENTER: both entries are really in the payload');
+
+  assert.deepStrictEqual(byName.k8s.transport, { kubectl: { target: 'svc/x', namespace: 'n' } },
+    'kubectl.target and .namespace survive; the foreign siblings do not');
+  assert.deepStrictEqual(byName.box.transport, { ssm: { target: 't' } });
+
+  const banned = /^(token|auth|secret|password)$/i;
+  (function walk(v, at) {
+    if (Array.isArray(v)) { v.forEach((x, i) => walk(x, `${at}[${i}]`)); return; }
+    if (!v || typeof v !== 'object') return;
+    for (const [k, val] of Object.entries(v)) {
+      assert.ok(!banned.test(k), `${at}.${k} is a credential-shaped key in -o json`);
+      walk(val, `${at}.${k}`);
+    }
+  })(parsed, 'nodes');
+  for (const leaked of ['NESTED_PASSWORD', 'NESTED_AUTHTOKEN', 'NESTED_SECRET']) {
+    assert.doesNotMatch(b.output, new RegExp(leaked), `${leaked} reached the renderer from inside a kind object`);
+  }
+  svc.dispose();
+});
+
+test('describe node --test dials the INJECTED transport, never the real one', async () => {
+  const file = tmpCtxFile();
+  const openTransport = fakeTransport();
+  const svc = createCtlService({ contextsFile: file, env: {}, openTransport });
+  await svc.run('create node prod --url http://prod.example --token SUPERSECRET');
+
+  const b = await svc.run('describe node prod --test');
+  assert.strictEqual(openTransport.opened.length, 1,
+    `the tab's injected transport must be the one dialed (${b.output})`);
+  assert.strictEqual(openTransport.opened[0].url, 'http://prod.example',
+    'and it was dialed with the resolved node, not some other context');
+  assert.doesNotMatch(b.output, /SUPERSECRET/, 'the token must not reach the renderer');
+  svc.dispose();
+});
+
+test('every ARRAY rule in ALLOWED names a verb the resource-word check re-judges', () => {
+  const V = require('../cli/src/verbs');
+  const arrayRuled = Object.entries(ALLOWED).filter(([, r]) => Array.isArray(r)).map(([v]) => v);
+  assert.ok(arrayRuled.length >= 2, `ENTER: there really are array rules to check (${arrayRuled.length})`);
+  for (const verb of arrayRuled) {
+    assert.ok(V.RESOURCE_VERBS[verb],
+      `ALLOWED.${verb} is a word array, but ${verb} is not in RESOURCE_VERBS — refuse() returns null for a non-resource second token and nothing re-judges it before wireFor`);
+  }
+});
+
 test('a name where a resource word belongs suggests the command the operator meant', async () => {
   const { svc } = mkService();
   for (const [line, want] of [

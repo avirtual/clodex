@@ -524,10 +524,8 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
       for (const [verb, rule] of Object.entries(ALLOWED)) {
         const entry = byName.get(verb);
         // `subs` is what the pane shows for a family the allowlist spells as a
-        // word array — today `restart`, narrowed to the session spellings
-        // because `restart node` is refused. Showing the surviving words rather
-        // than the registry's full usage line is the point: that usage line
-        // advertises both forms.
+        // word array. Showing the surviving words rather than the registry's
+        // full usage line is the point: that usage line advertises both forms.
         const subs = Array.isArray(rule) ? rule.slice() : null;
         rows.push({
           verb,

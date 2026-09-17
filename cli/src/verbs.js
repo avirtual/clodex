@@ -797,9 +797,41 @@ function nodeKind(e) {
 
 const TRANSPORT_FIELDS = ['url', 'ssh', 'tunnel', 'ssm', 'kubectl', 'gcloud', 'az', 'remotePort', 'deploy'];
 
+const KIND_FIELDS = Object.freeze({
+  ssm: ['target', 'ecs', 'region', 'profile'],
+  kubectl: ['target', 'namespace', 'context'],
+  gcloud: ['instance', 'zone', 'project'],
+  az: ['bastion', 'resourceGroup', 'target'],
+  deploy: ['flavor', 'release', 'namespace', 'kubeContext', 'container', 'dockerHost', 'host', 'stack', 'target', 'region', 'profile'],
+});
+
+function projectKind(kind, v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const o = {};
+  for (const f of KIND_FIELDS[kind]) {
+    const x = v[f];
+    if (x == null) continue;
+    const t = typeof x;
+    if (t === 'string' || t === 'number' || t === 'boolean') o[f] = x;
+  }
+  return o;
+}
+
 function transportOf(e) {
   const t = {};
-  for (const k of TRANSPORT_FIELDS) if (e[k] != null) t[k] = e[k];
+  for (const k of TRANSPORT_FIELDS) {
+    if (e[k] == null) continue;
+    if (KIND_FIELDS[k]) {
+      const projected = projectKind(k, e[k]);
+      if (projected) t[k] = projected;
+      continue;
+    }
+    if (k === 'tunnel') {
+      if (Array.isArray(e[k])) t[k] = e[k].map((a) => String(a));
+      continue;
+    }
+    t[k] = e[k];
+  }
   return t;
 }
 
@@ -994,4 +1026,5 @@ module.exports = {
   nodeList, nodeCurrent, nodeDescribe, nodeCreate, nodeDelete, nodeUse,
   entryKind, entryTarget,
   requireName, parseIntOr, QUERY_KINDS, SESSION_SUBRESOURCES, takeResourceWord, checkResourceWord, RESOURCE_VERBS, DEPLOYABLE,
+  KIND_FIELDS, TRANSPORT_FIELDS,
 };

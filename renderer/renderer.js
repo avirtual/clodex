@@ -5565,7 +5565,7 @@ function renderPeersImport(res) {
     parts.push(`<div class="peer-status-warn">${esc(w)}</div>`);
   }
   if (cands.length === 0) {
-    parts.push('<div class="peer-status-note">No contexts found. Add one with <code>clodexctl ctx add</code>.</div>');
+    parts.push('<div class="peer-status-note">No contexts found. Add one with <code>clodexctl create node</code>.</div>');
   }
   for (const c of cands) {
     const tok = c.tokenState === 'set' ? 'token set' : 'no token';
