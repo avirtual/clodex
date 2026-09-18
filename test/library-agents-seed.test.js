@@ -1,12 +1,3 @@
-// The two baked hand subagents (t992): they ship under resources/library/agents,
-// seed into ~/.clodex/agents, and the hand templates grant them by name.
-//
-// The grant IS the capability and the seed IS the definition: a template naming
-// an agent no registry holds spawns nothing, and a seeded file no template names
-// is invisible to the seat. Both halves are pinned here because the hand prompt
-// now instructs a hand to spawn them by name, so either half missing turns a
-// documented route into a dead end with nothing reporting it.
-
 'use strict';
 
 const test = require('node:test');
@@ -41,9 +32,6 @@ test('the shipped agent defs parse with description, tools and model', () => {
 });
 
 test('the redproof def forbids the full suite and a dirty tree; locate stays read-only', () => {
-  // The two prohibitions the loop actually pays for: a delegated full-suite run
-  // deadlocks against the granted command's lock, and a revert over uncommitted
-  // work destroys it with nothing to restore from.
   const redproof = fs.readFileSync(path.join(AGENTS_SRC, 'clodex-redproof.md'), 'utf-8');
   assert.match(redproof, /Never run the full suite/);
   assert.match(redproof, /git status --short/);
@@ -89,8 +77,6 @@ test('they seed into a fresh registry\'s agents root and surface through agentLi
       assert.strictEqual(rec.tools, want.tools, `${name}: the tool list survives the store round-trip`);
       assert.strictEqual(rec.model, want.model);
     }
-    // The manifest sibling is not an agent: list() filters on `.md`, and a
-    // seeded root that listed its own bookkeeping would offer it as a spawnable.
     assert.ok(fs.existsSync(path.join(dest, '.seed-state.json')),
       'ENTER: the manifest is there to be mis-listed');
     assert.ok(!listed.some((a) => a.name.startsWith('.')), 'no dotfile is listed as an agent');
