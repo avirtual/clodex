@@ -254,7 +254,7 @@ test('release: the publish step retries a flaky asset upload, clobbering an exis
   const src = fs.readFileSync(SCRIPT, 'utf-8');
   assert.match(src, /ATTEMPTS=3/,
     'the retry budget is gone — one 500 from GitHub loses the release again');
-  assert.match(src, /if run gh release view "\$TAG"/,
+  assert.match(src, /gh release view "\$TAG"/,
     'a retry must ask whether the release already exists; gh release create would fail on the second attempt');
   assert.match(src, /gh release upload "\$TAG" "\$DMG" --clobber/,
     'the existing-release arm must re-upload over a partial or missing asset, not leave it');

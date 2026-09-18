@@ -327,9 +327,9 @@ bundle), whose packaged form is the Docker image under
   Three consumers across two processes read it (the fire-time gate in
   `_handleIntent`, the renderer checklist, and `buildIpcPrompt`).
 - **exec-schema.js** — the payload validator for `[agent:exec <cmd>] {json}`.
-  Deliberately tiny (type/required/maxLength/enum + `array` items/bounds + the
-  `filename` token guard + a raw-body size cap) so it stays auditable; a full
-  ajv would not be.
+  Deliberately tiny (type/required/maxLength/enum + `array` items/bounds
+  + the `filename` token guard
+  + a raw-body size cap) so it stays auditable; a full ajv would not be.
 - **agent-transport.js** — per-agent registry (`run/<name>/agent.json`) +
   Unix-socket (`run/<name>/agent.sock`) transport; discovery iterates
   `run/*/agent.json`.
