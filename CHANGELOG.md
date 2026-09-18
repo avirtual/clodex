@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Hands get two built-in subagents, `clodex-redproof` and `clodex-locate`, so a red-proof or a lookup is one spawn line instead of a written-out protocol.
+
 ## 5.75.0 — 2026-09-17
 
 - **`clodexctl exec` waits for the whole turn.** The wire's activity event now reports a turn end only when the agent actually stops, so `exec` (and the in-app console) returns with the full reply instead of settling on the first tool call.

@@ -4,7 +4,10 @@
   "type": "claude",
   "cwd": "${TEAM_ROOT}",
   "proxy": null,
-  "agents": [],
+  "agents": [
+    "clodex-redproof",
+    "clodex-locate"
+  ],
   "execCommands": [
     "clodex-team",
     "clodex-monitor",

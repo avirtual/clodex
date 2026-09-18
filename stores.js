@@ -1664,6 +1664,7 @@ function initStores(userDataPath, {
   // Best-effort: a failed read/copy is logged and skipped, never thrown.
   const SEED_SRC = resourcesDir || path.join(__dirname, 'resources', 'library');
   const SKILLS_SEED_SRC = skillsResourcesDir || path.join(__dirname, 'resources', 'skills');
+  const AGENTS_SEED_SRC = path.join(SEED_SRC, 'agents');
   const SEED_STATE_NAME = '.seed-state.json';
   // Sibling of .seed-state.json, deliberately NOT a reserved key inside it:
   // .seed-state.json is documented as a flat relPath -> hash map, and a reserved
@@ -1845,6 +1846,7 @@ function initStores(userDataPath, {
     }
     seedRoot(SEED_SRC, path.join(registryDir, 'library'), 'library');
     seedRoot(SKILLS_SEED_SRC, SKILLS_LIB_DIR, 'skills');
+    seedRoot(AGENTS_SEED_SRC, AGENTS_DIR, 'agents');
   }
 
   // Holds secret VALUES at rest: every write chmods 0600. Reads NEVER mask (the
