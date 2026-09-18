@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Exec command payloads may declare array fields, which `clodex-commit`'s file list needs.
 
 - `clodex-commit` handles file names with glob characters or non-ASCII, and its refusals stay readable on a wide index; the slow-gate digest preserves its run for the report; a re-run review round no longer inherits the previous attempt's delta diff.
 
