@@ -7661,6 +7661,7 @@ function createTicketMethods(deps, shared) {
     async _writeTicketDelta(team, ticket, round, prevHeadSha, branch) {
       const none = { ok: false, path: null };
       if (!prevHeadSha || !branch || Number(round) < 2) return none;
+      this._stampRoundFile(team, ticket.id, round, 'deltaFile', null);
       const dest = this._ticketDiffDest(team, ticket);
       if (!dest.ok) return none;
       const file = path.join(dest.dir, `review-${ticket.id}-r${round}.delta.diff`);
@@ -7794,7 +7795,7 @@ function createTicketMethods(deps, shared) {
           // moment it becomes available.
           ...(recovery ? ['', `RECOVERY: ${recovery}`] : []),
         ].join('\n');
-        const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticketId} ESCALATED]`);
+        const r = this._gatedDeliver(team.lead, 'ticket-loop', body, true, `[ticket ${ticketId} ESCALATED]`);
         const reached = !!(r && (r.queued || r.parked));
         // Two independent reasons to keep the hold, deliberately not collapsed
         // into one branch: an undelivered escalation keeps it so the watchdog

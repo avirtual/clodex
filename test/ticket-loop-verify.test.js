@@ -347,6 +347,7 @@ function mkLoop({
   const injected = [];
   const gated = [];
   const tags = [];
+  const urgents = [];
   const broadcasts = [];
   const logs = [];
   const deps = {
@@ -450,11 +451,11 @@ function mkLoop({
   // models a system where no stall episode is ever stamped — under which the
   // one-nudge-per-episode assertions below would fail for a reason that exists
   // only in the fixture.
-  // `tag` is recorded ALONGSIDE the body, not merged into the pushed row: the
-  // deepStrictEqual pins below assert `gated` entries whole, and widening that
-  // shape would rewrite pins that are not about the tag.
+  // `tag` and `urgent` are recorded ALONGSIDE the body, not merged into the
+  // pushed row: the deepStrictEqual pins below assert `gated` entries whole,
+  // and widening that shape would rewrite pins that are not about either.
   m._gatedDeliver = (target, sender, body, urgent, tag, onWrite) => {
-    gated.push({ target, sender, body }); tags.push(tag);
+    gated.push({ target, sender, body }); tags.push(tag); urgents.push(urgent);
     if (typeof onWrite === 'function') onWrite();
     return { queued: true };
   };
@@ -483,7 +484,7 @@ function mkLoop({
   tstore.save(team.root, [ticket]);
 
   return {
-    m, team, home, tstore, persistence, injected, gated, tags, broadcasts, created, seat, logs, deps,
+    m, team, home, tstore, persistence, injected, gated, tags, urgents, broadcasts, created, seat, logs, deps,
     reminders,
     one: (id = 't1') => tstore.load(team.root).find((t) => t.id === id),
     esc: () => gated.filter((g) => /ESCALATED/.test(g.body)),
@@ -695,6 +696,7 @@ test('a round that fails to write its delta CLEARS the previous attempt\'s file 
   assert.deepStrictEqual(f.diffFile().map((q) => pathReal.basename(q)), ['review-t1-r2.delta.diff'],
     'ENTER: the stale file must sit where the loop writes THIS round\'s delta, or its removal is vacuous');
   const r2before = f.one().rounds.find((r) => r.round === 2);
+  assert.ok(r2before, 'ENTER: round 2 entry exists before the re-save, or the stale-stamp half of this pin is vacuous');
   f.tstore.save(f.team.root, f.tstore.load(f.team.root).map((t) => ({
     ...t,
     rounds: t.rounds.map((r) => (r.round === 2 ? { ...r2before, deltaFile: 'review-t1-r2.delta.diff' } : r)),
@@ -834,6 +836,9 @@ test('zero commits on the branch escalates and spawns nothing', async () => {
   assert.strictEqual(esc[0].target, 'lead');
   assert.match(esc[0].body, /commits-on-branch/, 'the escalation names the failing check');
   assert.match(esc[0].body, /0 commits beyond/, 'the escalation carries the actual evidence');
+  const escIdx = f.gated.findIndex((g) => /ESCALATED/.test(g.body));
+  assert.strictEqual(f.urgents[escIdx], true,
+    'an escalation waits on a human-paced lead: parked until the lead`s next turn is hours, so it must be urgent');
   assert.strictEqual(f.created.length, 0, 'no reviewer may be spawned on a red check');
   assert.strictEqual(f.persistence.list().filter((e) => e.reviewTicket).length, 0);
 });

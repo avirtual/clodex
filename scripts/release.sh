@@ -255,10 +255,22 @@ say "pushed master and $TAG to origin"
 
 # --- publish ---------------------------------------------------------------
 step "Creating GitHub release $TAG"
-run gh release create "$TAG" "$DMG" \
-  --title "$TITLE" \
-  --notes-file "$NOTES" \
-  || die "gh release create failed (tag/commit are already pushed — fix and re-run just the gh step)"
+# GitHub's asset upload has answered HTTP 500 on a healthy release; a retry succeeded.
+ATTEMPTS=3
+attempt=1
+published=0
+while [ "$attempt" -le "$ATTEMPTS" ]; do
+  if [ "$attempt" -gt 1 ]; then sleep 15; fi
+  if run gh release view "$TAG" >/dev/null 2>&1; then
+    if run gh release upload "$TAG" "$DMG" --clobber; then published=1; break; fi
+  elif run gh release create "$TAG" "$DMG" \
+    --title "$TITLE" \
+    --notes-file "$NOTES"; then
+    published=1; break
+  fi
+  attempt=$((attempt + 1))
+done
+[ "$published" = 1 ] || die "gh release create failed (tag/commit are already pushed — fix and re-run just the gh step)"
 
 # --- prune old release assets ---------------------------------------------
 # Keep the DMG pile bounded: only the newest KEEP releases retain binaries

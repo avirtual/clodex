@@ -12,7 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
-
+- A loop escalation wakes the lead instead of waiting for its next turn, and the release script retries a failed GitHub asset upload.
 - `clodex-commit` handles file names with glob characters or non-ASCII, and its refusals stay readable on a wide index; the slow-gate digest preserves its run for the report; a re-run review round no longer inherits the previous attempt's delta diff.
 
 ## 5.76.0 — 2026-09-18

@@ -249,3 +249,15 @@ test('release: the image milestone does not restate the registry address', () =>
     'the registry address is duplicated from publish-image.sh; state the fact, not a second copy');
   assert.match(m[1], /latest/, 'publish-image.sh pushes :latest too — a report naming only the version is incomplete');
 });
+
+test('release: the publish step retries a flaky asset upload, clobbering an existing release', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  assert.match(src, /ATTEMPTS=3/,
+    'the retry budget is gone — one 500 from GitHub loses the release again');
+  assert.match(src, /gh release view "\$TAG"/,
+    'a retry must ask whether the release already exists; gh release create would fail on the second attempt');
+  assert.match(src, /gh release upload "\$TAG" "\$DMG" --clobber/,
+    'the existing-release arm must re-upload over a partial or missing asset, not leave it');
+  assert.match(src, /die "gh release create failed/,
+    'the last failure must still die with the re-run instructions');
+});
