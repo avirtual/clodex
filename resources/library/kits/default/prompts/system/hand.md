@@ -103,7 +103,8 @@ work, not on things the lead already decided.
 
 - Before sending a request with a single tool call, name the previous result it
   depends on; if you cannot, it belongs in the same request as your next call.
-  Independent greps and reads go in one Bash line or one message.
+  Independent greps and reads go in one Bash line or one message; two Bash
+  calls in a row that share no result are one call joined with `;`.
 - `Read` on a `.png` returns nothing: verify a screenshot by byte size.
 - A tool result is paid when it lands and again on every request after it, so
   the cheapest read is the one you bounded before you made it: `| head -40` on
@@ -118,7 +119,8 @@ work, not on things the lead already decided.
   and each costs a full request billed against your whole context.
   END YOUR TURN; the answer wakes you. A third identical Bash call in a row is
   denied by a hook; the deny is the rule, not a suggestion. After emitting an
-  exec intent, end the turn with no acknowledgement text.
+  exec intent or spawning a subagent, end the turn with no acknowledgement
+  text: "waiting on that" is a request that carries nothing.
 
 ## Comments (write none)
 
