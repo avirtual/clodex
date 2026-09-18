@@ -1027,11 +1027,14 @@ checked out** — the tree every agent seat's branch is cut from. Core added the
 for the ticket loop's auto-merge, which runs them only behind a clean-tree and
 on-master gate.
 
-`diffText` is withheld on a second ground, and it is the one to predict from:
-everything lent here returns **metadata** — paths, branches, counts, a dirty
-flag — while it returns **file content**, for any repo path the caller names.
-Core added it for its own ticket loop. A function that reads out the contents of
-a repo is not lent because core happens to call it; ask, with the use case.
+`diffText` and `fileAt` are withheld on a second ground, and it is the one to
+predict from: everything lent here returns **metadata** — paths, branches,
+counts, a dirty flag — while those two return **file content**, for any repo path
+the caller names. Core added them for its own ticket loop. A function that reads
+out the contents of a repo is not lent because core happens to call it; ask, with
+the use case. `diffNames` returns only paths and would fit the lent set on shape
+alone; it is withheld as the ticket loop's own half of that pair, on the same
+footing as `hasCommit` below.
 
 `initRepo` and `hasCommit` are the pair `[agent:team create]` classifies a team
 root with. `initRepo` is the mutation rule one step earlier than the others: it

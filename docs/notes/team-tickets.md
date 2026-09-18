@@ -107,15 +107,14 @@ The runner exits non-zero when a test point crosses `SLOW_MS` with ZERO failing
 tests, printing the offenders both as `SLOW:` lines on stdout and in the `✖`
 block on stderr — so exit code and `✖` names alone report a green branch as red.
 `_runTicketSuite` sets `slowOnly` when the two name sets agree and nothing
-escaped; `green` still reads false, and the ARMS decide. An UNOWNED slow-only
-run (no test file the branch changed contains the name) passes the verify arm to
-the reviewer with the names on the ticket's `suiteSlow`, and passes the
-post-merge arm without a revert; an OWNED one rejects, or escalates after the
-merge, saying `slow gate` rather than FAILS — the fix it names is a seam or a
+escaped; `green` still reads false, and the ARMS decide. An UNOWNED slow-only run
+(no test file the branch changed contains the name) passes the verify arm to the
+reviewer with the names on the ticket's `suiteSlow`, and passes the post-merge
+arm without a revert; an OWNED one rejects, or escalates after the merge, saying
+`slow gate` rather than FAILS — the fix it names is a seam or a
 `test/slow-tests.json` entry, not a broken assertion. A `stale allowlist entry`
 line is never slowOnly: that is a real defect the hand must clear.
 
-Ownership is read out of GIT (`diffNames` + `fileAt` against the branch), not
-off the worktree: the merge arm asks after the branch has landed, and a tree the
-lead has torn down would answer "nothing owned" for a branch that owns
-everything.
+Ownership is read out of GIT (`diffNames` + `fileAt` against the branch), not off
+the worktree: the merge arm asks after the branch has landed, and a torn-down
+tree would answer "nothing owned" for a branch that owns everything.
