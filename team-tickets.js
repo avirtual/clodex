@@ -6473,12 +6473,7 @@ function createTicketMethods(deps, shared) {
         let firstRed = null;
         let remeasureError = null;
         let slowOwned = [];
-        if (suite.ran && suite.slowOnly) {
-          slowOwned = await this._slowTestsOwned(team, still, suite.slow);
-          still = this._loadTicket(team, ticketId);
-          if (!still || still.loopStep !== 'verify') return;
-          if (!slowOwned.length) this._stampSuiteSlow(team, ticketId, suite.slow);
-        } else if (suite.ran && !suite.green) {
+        if (suite.ran && !suite.slowOnly && !suite.green) {
           log.info('ticket', `ticket ${ticketId}: verify suite red (${suite.summary}) — re-measuring once`);
           const again = await this._runTicketSuite(team, ticket);
           still = this._loadTicket(team, ticketId);
@@ -6493,6 +6488,12 @@ function createTicketMethods(deps, shared) {
           } else {
             remeasureError = again.error;
           }
+        }
+        if (suite.ran && suite.slowOnly) {
+          slowOwned = await this._slowTestsOwned(team, still, suite.slow);
+          still = this._loadTicket(team, ticketId);
+          if (!still || still.loopStep !== 'verify') return;
+          if (!slowOwned.length) this._stampSuiteSlow(team, ticketId, suite.slow);
         }
         if (!suite.ran) {
           // Could not RUN is not the same as failed, and must not reject: the

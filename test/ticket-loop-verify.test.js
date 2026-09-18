@@ -150,12 +150,16 @@ const SUITE_STUBS = {
   // it, which is why `green` is a conjunction of both.
   escaped: 'console.log("TOTALS: 4 pass, 1 fail, 5 tests");\nprocess.exit(0);\n',
   slowgate: `${SLOW_STDOUT}${SLOW_STDERR}process.exit(1);\n`,
-  stalelist: 'console.log("SLOW: stale allowlist entry a test that no longer exists");\n'
+  stalelist: `console.log("SLOW: 6042ms ${SLOW_ONE}");\n`
+    + 'console.log("SLOW: stale allowlist entry a test that no longer exists");\n'
     + 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\n'
+    + `console.error(" \\u2716 ${SLOW_ONE} (6042ms)");\n`
     + 'console.error(" \\u2716 stale allowlist entry a test that no longer exists (0ms)");\n'
     + 'process.exit(1);\n',
   slowplus: `${SLOW_STDOUT}${SLOW_STDERR}`
     + 'console.error(" \\u2716 something else entirely (12.00ms)");\nprocess.exit(1);\n',
+  flakyslow: `${RUN_COUNTER}if (n === 1) {\n${RED_LINES}process.exit(1);\n}\n`
+    + `${SLOW_STDOUT}${SLOW_STDERR}process.exit(1);\n`,
   // A test file that cannot be PARSED. Measured, not assumed: node does not
   // crash the run — it reports the unloadable file as one failing test NAMED BY
   // ITS PATH and still prints a summary. So this is a rejection with the file
@@ -1696,6 +1700,25 @@ test('a stale allowlist entry is a real defect, not a slow gate to wave through'
   assert.match(sent[0].body, /stale allowlist entry/, 'and says what is stale');
   assert.strictEqual(f.one().suiteSlow, undefined,
     'nothing is recorded as an excused slow test');
+});
+
+test('a red run 1 whose re-measure comes back slow-only is still classified by ownership', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'test/owned.test.js', `test('${SLOW_ONE}', () => {});\n`);
+  const f = mkLoop({ repo, suite: 'flakyslow' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(runCount(repo), 2, 'ENTER: run 1 was red, so it WAS re-measured and run 2 decided');
+  assert.strictEqual(f.created.length, 0,
+    'the ownership check runs on the FINAL measurement, or an owned slow test is waved through verify '
+    + 'and caught only post-merge, where it reverts master');
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'ENTER: exactly one rejection was delivered');
+  assert.match(sent[0].body, /slow gate/, 'and it is the slow-gate wording, run 2 having failed nothing');
+  assert.ok(sent[0].body.includes(SLOW_ONE));
 });
 
 test('a ✖ name outside the SLOW lines is not slow-only, even with zero failures', async () => {
