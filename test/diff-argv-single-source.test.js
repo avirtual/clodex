@@ -68,7 +68,7 @@ function leafDiffFlags(src) {
     const tok = raw.trim();
     if (!tok.startsWith("'") && !tok.startsWith('"')) continue;   // skip `${base}..${head}` etc
     const lit = tok.slice(1, -1);
-    if (lit.startsWith('--')) flags.push(lit);
+    if (lit.startsWith('-')) flags.push(lit);
   }
   return flags;
 }
@@ -122,7 +122,7 @@ function quotedDiffFlags(src) {
   const seen = new Map();
   for (const call of src.matchAll(/gitWorktree\.diffText\(/g)) {
     const near = src.slice(call.index, call.index + CALL_WINDOW);
-    for (const m of near.matchAll(/`git (?:-C \$\{[^}]*\}\s+)?diff ((?:--[\w-]+\s+)*)\$\{[^}]*\}\.\.\$\{[^}]*\}/g)) {
+    for (const m of near.matchAll(/`git (?:-C \$\{[^}]*\}\s+)?diff ((?:-{1,2}[\w-]+\s+)*)\$\{[^}]*\}\.\.\$\{[^}]*\}/g)) {
       seen.set(call.index + m.index, m[1].trim().split(/\s+/).filter(Boolean));
     }
   }
@@ -166,6 +166,30 @@ test('FIXTURES: the leaf extractor reads the flags out of diffText, and only dif
   // extractor anchored on `git(repo, [` and returned exactly those two.
   assert.ok(!leafDiffFlags(fake).includes('--verify'), 'and neither is a non-diff call inside diffText');
   assert.strictEqual(leafDiffFlags('function nothing() {}'), null, 'a file without diffText yields null, not []');
+});
+
+test('FIXTURES: a SINGLE-dash flag is read on both sides, not silently dropped', () => {
+  const leaf = [
+    "async function diffText(cwd, base, head) {",
+    "  const r = await git(repo, ['diff', '--text', '-U20', `${base}..${head}`]);",
+    "}",
+    "",
+  ].join('\n');
+  assert.deepStrictEqual(leafDiffFlags(leaf), ['--text', '-U20'],
+    'the leaf extractor keeps a one-dash flag, in its argv position. Measured on the day the leaf '
+    + 'gained -U20: both extractors matched `--` only, so each side dropped the SAME flag and the '
+    + 'comparison agreed over two lists that had both lost it');
+
+  const quoted = "const d = await gitWorktree.diffText(a, b, c);\n"
+    + "fail('a', `git diff --text -U20 ${x}..${y} failed`);";
+  assert.deepStrictEqual(quotedDiffFlags(quoted), [['--text', '-U20']],
+    'and so does the message extractor, or the comparison is made over a flag neither side sees');
+
+  const stale = "const d = await gitWorktree.diffText(a, b, c);\n"
+    + "fail('a', `git diff --text ${x}..${y} failed`);";
+  assert.ok(!agrees(leafDiffFlags(leaf), quotedDiffFlags(stale)),
+    'a message quoting only the two-dash flags disagrees with a leaf that passes -U20 — the '
+    + 'pairing that makes this a guard rather than a decoration');
 });
 
 test('FIXTURES: the message extractor reads every quoted RANGE diff near the call', () => {
