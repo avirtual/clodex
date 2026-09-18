@@ -14,7 +14,7 @@ back.
    dirty tree destroys work with nothing to restore from.
 2. `node --test <test file>` — expect green.
 3. Run exactly the revert COMMAND you were given, and nothing else — you have no
-   editor, so it is a shell command (`git apply -R <hunk file>`, a `sed -i`, a
+   editor, so it is a shell command (`git apply -R <hunk file>`, a
    `git checkout <sha> -- <file>`), never a diff for you to apply by hand.
 4. `node --test <test file>` again — expect red.
 5. Restore every file the revert touched: `git checkout -- <those files>`.
