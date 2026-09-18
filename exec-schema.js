@@ -83,9 +83,8 @@ function clampReplyBody(stderr, maxBytes, { truncated = false } = {}) {
 }
 
 // Validate an already-parsed value against a schema node. Returns
-// { ok: true } or { ok: false, error: '<path>: <reason>' }. Recurses for
-// nested objects; supported leaf types: string, number, integer, boolean,
-// filename. Unknown schema types are a schema-authoring error (fail closed).
+// { ok: true } or { ok: false, error: '<path>: <reason>' }. Unknown schema
+// types are a schema-authoring error (fail closed).
 function validateAgainstSchema(schema, value, at = 'payload') {
   if (!schema || typeof schema !== 'object') {
     return { ok: false, error: `${at}: no schema` };
@@ -110,6 +109,23 @@ function validateAgainstSchema(schema, value, at = 'payload') {
       if (!(key in value)) continue; // absent optional — required already checked
       const r = validateAgainstSchema(props[key], value[key], `${at}.${key}`);
       if (!r.ok) return r;
+    }
+    return { ok: true };
+  }
+
+  if (t === 'array') {
+    if (!Array.isArray(value)) return { ok: false, error: `${at}: expected array` };
+    if (typeof schema.maxItems === 'number' && value.length > schema.maxItems) {
+      return { ok: false, error: `${at}: exceeds maxItems ${schema.maxItems}` };
+    }
+    if (typeof schema.minItems === 'number' && value.length < schema.minItems) {
+      return { ok: false, error: `${at}: below minItems ${schema.minItems}` };
+    }
+    if (schema.items) {
+      for (let i = 0; i < value.length; i += 1) {
+        const r = validateAgainstSchema(schema.items, value[i], `${at}[${i}]`);
+        if (!r.ok) return r;
+      }
     }
     return { ok: true };
   }
@@ -277,9 +293,6 @@ function parseAndValidate(entry, raw) {
 // properties as bare NAMES, which is the cheapest thing that still makes a field
 // discoverable. argv is never rendered — it can carry absolute paths.
 
-// One leaf type -> its placeholder token. Mirrors the leaf cases of
-// validateAgainstSchema; `object` is handled structurally by the caller.
-//
 // STRING-VALUED tokens carry their own double quotes. The rendered form is meant
 // to be copied and filled in, so an unquoted `"action":roster|retire|tickets`
 // would teach an agent to emit invalid JSON and earn it a "payload: invalid
@@ -295,6 +308,9 @@ function typeToken(node) {
     case 'integer': return '<int>';
     case 'boolean': return '<bool>';
     case 'object': return '{...}';
+    case 'array': return (node.items && typeof node.items === 'object')
+      ? `[${typeToken(node.items)}, …]`
+      : '[…]';
     default: return '<value>';
   }
 }

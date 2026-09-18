@@ -33,7 +33,11 @@ exec code comment names this explicitly as the intended growth path
 **The shape of a clodex tool, generalized:**
 
 - The exec launcher is the control plane: `start` / `stop` / `list` verbs,
-  validated by the entry's `schema`. Message discipline: **queries reply**
+  validated by the entry's `schema`. The schema subset is `object` (with
+  `required` / `properties` / `additionalProperties:false`), `string`
+  (`minLength` / `maxLength` / `enum`), `number` / `integer` (`minimum` /
+  `maximum`), `boolean`, `filename`, and `array` (`items` / `minItems` /
+  `maxItems`). Message discipline: **queries reply**
   (`list`, via `replyStderr`), **command success is silent** (empty stderr +
   exit 0 → the dispatcher injects nothing, so an ack never costs a turn),
   **failures are loud** (exit 1 → the dispatcher always injects the error),
@@ -80,7 +84,7 @@ one file). Registry: `~/.clodex/library/exec/clodex-monitor.json`.
 | `action` | all | `start` \| `stop` \| `list` |
 | `agent` | all | the invoking seat's own name (v1 — see below) |
 | `command` | start | shell command; the COMMAND decides what a status change is (poll+diff, `until`, `grep --line-buffered`), the watcher only forwards its stdout |
-| `ws` | start | `{url, protocols?}` — WebSocket source instead of `command`: each text frame is an event, binary frames become a placeholder, close ends the watch with the code surfaced. `protocols` is a comma-separated string (the exec validator has no array type); exactly one of `command`/`ws` |
+| `ws` | start | `{url, protocols?}` — WebSocket source instead of `command`: each text frame is an event, binary frames become a placeholder, close ends the watch with the code surfaced. `protocols` is a comma-separated string; exactly one of `command`/`ws` |
 | `wake` | start | `true` → every event wakes the agent (built-in Monitor behavior). Default: status events are passive |
 | `description` | start | short label, shown in every event |
 | `persistent` | start | run until the target exits or an explicit `stop` (no timeout) |

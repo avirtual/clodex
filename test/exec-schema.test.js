@@ -218,6 +218,56 @@ test('validateAgainstSchema: nested object recurses', () => {
   assert.strictEqual(validateAgainstSchema(schema, { meta: {} }).ok, false);
 });
 
+const pathsSchema = () => ({
+  type: 'object',
+  required: ['paths'],
+  properties: { paths: { type: 'array', minItems: 1, maxItems: 3, items: { type: 'string', maxLength: 6 } } },
+});
+
+test('t995 validateAgainstSchema: array of strings — accepts, rejects non-array, names the bad INDEX', () => {
+  const schema = pathsSchema();
+  assert.strictEqual(validateAgainstSchema(schema, { paths: ['a.js', 'b.js'] }).ok, true);
+  assert.strictEqual(validateAgainstSchema(schema, { paths: 'a.js' }).error, 'payload.paths: expected array');
+  assert.strictEqual(validateAgainstSchema(schema, { paths: {} }).error, 'payload.paths: expected array');
+  assert.strictEqual(
+    validateAgainstSchema(schema, { paths: ['a.js', 'toolongforthis'] }).error,
+    'payload.paths[1]: exceeds maxLength 6',
+  );
+});
+
+test('t995 validateAgainstSchema: array size caps', () => {
+  const schema = pathsSchema();
+  assert.strictEqual(validateAgainstSchema(schema, { paths: ['a', 'b', 'c', 'd'] }).error, 'payload.paths: exceeds maxItems 3');
+  assert.strictEqual(validateAgainstSchema(schema, { paths: [] }).error, 'payload.paths: below minItems 1');
+});
+
+test('t995 validateAgainstSchema: the filename guard still bites INSIDE an array', () => {
+  const schema = { type: 'array', items: { type: 'filename' } };
+  assert.strictEqual(validateAgainstSchema(schema, ['ok.json', 'also-ok']).ok, true);
+  const bad = validateAgainstSchema(schema, ['ok.json', '../evil']);
+  assert.strictEqual(bad.ok, false);
+  assert.match(bad.error, /^payload\[1\]: not a safe filename token/);
+});
+
+test('t995 validateAgainstSchema: an array with no items accepts mixed elements', () => {
+  const schema = { type: 'array', maxItems: 5 };
+  assert.strictEqual(validateAgainstSchema(schema, ['a', 1, true, null, { x: 1 }]).ok, true);
+  assert.strictEqual(validateAgainstSchema(schema, []).ok, true);
+});
+
+test('t995 validateAgainstSchema: an unknown type INSIDE items still fails closed', () => {
+  const schema = { type: 'array', items: { type: 'weird' } };
+  assert.strictEqual(validateAgainstSchema(schema, ['x']).error, 'payload[0]: unknown schema type "weird"');
+  assert.strictEqual(validateAgainstSchema({ type: 'array', items: null }, ['x']).ok, true);
+});
+
+test('t995 payloadForm: an array-of-string field renders a copyable element shape', () => {
+  const schema = pathsSchema();
+  assert.strictEqual(payloadForm(schema), '{"paths":["<string>", …]}');
+  assert.strictEqual(typeToken({ type: 'array', items: { type: 'filename' } }), '["<filename>", …]');
+  assert.strictEqual(typeToken({ type: 'array' }), '[…]');
+});
+
 test('parseAndValidate: happy path returns parsed value', () => {
   const entry = { maxBytes: 4096, schema: { type: 'object', required: ['id'], properties: { id: { type: 'filename' } } } };
   const r = parseAndValidate(entry, '{"id":"r1.json"}');
@@ -331,6 +381,7 @@ test('t81 typeToken: every leaf type the validator supports has a token', () => 
   assert.strictEqual(typeToken({ type: 'integer' }), '<int>');
   assert.strictEqual(typeToken({ type: 'boolean' }), '<bool>');
   assert.strictEqual(typeToken({ type: 'object' }), '{...}');
+  assert.strictEqual(typeToken({ type: 'array', items: { type: 'string' } }), '["<string>", …]');
   // enum wins over type, and carries its own quotes
   assert.strictEqual(typeToken({ type: 'string', enum: ['a', 'b'] }), '"a|b"');
 });
