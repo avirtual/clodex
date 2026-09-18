@@ -639,6 +639,8 @@ t959-hostlog-
 t959-hostlog-clean-
 t959-nodelog-
 t959-term-
+t992-reg-
+t992-ud-
 team-home-
 teams-menu-
 tl-home-

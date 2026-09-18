@@ -90,10 +90,12 @@ test('it carries no systemPromptFile — the role prompt arrives via the team bl
   assert.strictEqual(tpl.systemPromptFile, null);
 });
 
-test('the lead and hand templates differ in exactly name, spawnerHint and intents', () => {
+test('the lead and hand templates differ in exactly name, spawnerHint, intents and agents', () => {
   const keys = new Set([...Object.keys(tpl), ...Object.keys(hand)]);
   const differ = [...keys].filter((k) => JSON.stringify(tpl[k]) !== JSON.stringify(hand[k])).sort();
-  assert.deepStrictEqual(differ, ['intents', 'name', 'spawnerHint']);
+  assert.deepStrictEqual(differ, ['agents', 'intents', 'name', 'spawnerHint']);
+  assert.deepStrictEqual(tpl.agents, [],
+    'the hand\'s baked subagents are ticket work — the lead grants none by symmetry');
 });
 
 test('it seeds into a fresh registry byte-exact and surfaces through the templates store', () => {
