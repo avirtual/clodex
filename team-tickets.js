@@ -7641,9 +7641,7 @@ function createTicketMethods(deps, shared) {
       const dest = this._ticketDiffDest(team, ticket);
       if (!dest.ok) return { ok: false, path: null, round: null, prevHeadSha: null, error: dest.error };
       const taskDir = dest.dir;
-      // The round is in the NAME so round 2 does not overwrite round 1: round 1's
-      // diff is the one artifact a round 2 reviewer might want to diff against,
-      // and it is unrecoverable once the branch moves on.
+      // The round is in the NAME so round 2 does not overwrite round 1.
       const round = (Number(ticket.reviewRound) || 0) + 1;
       const rounds = Array.isArray(ticket.rounds) ? ticket.rounds : [];
       const prev = rounds.find((r) => r && Number(r.round) === round - 1);
