@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A test outside a ticket's diff tripping the suite's slow gate no longer rejects the ticket or reverts its merge; the loop records the test and carries on.
+
 ## 5.77.0 — 2026-09-18
 
 - Exec command payloads may declare array fields, which `clodex-commit`'s file list needs.

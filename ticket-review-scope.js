@@ -174,8 +174,8 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
     out.push('');
   }
 
-  // The reviewer is only reached on a GREEN suite: verify runs it on the branch
-  // and rejects a red one to the hand before any reviewer is spawned. The
+  // The reviewer is only reached on a suite with NO failing test: verify runs it
+  // on the branch and rejects a red one to the hand before any spawn. The
   // contention that once made an automated run unsafe is handled rather than
   // avoided — the run takes the root checkout's lock and waits, so it serializes
   // with the lead's run instead of deadlocking against it.
@@ -198,6 +198,13 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
     out.push(`SUITE RE-MEASURED: the first run was ${text(remeasured.first) || '(unrecorded)'} `
       + `(${text(remeasured.firstFailing) || 'no names recorded'}); the second run, on the same commit, `
       + 'was green. Treat that as a box-contention flake unless the diff touches those tests.');
+  }
+  const slow = Array.isArray(t.suiteSlow) ? t.suiteSlow.map((n) => text(n)).filter(Boolean) : [];
+  if (slow.length) {
+    out.push(`SLOW GATE (not a failure, outside this diff): ${slow.join('; ')}. `
+      + 'Those tests crossed the suite\'s six-second duration bar on a loaded box, which exits the runner '
+      + 'non-zero with ZERO failing tests. No test file this branch changed contains them, so they are not '
+      + 'this ticket\'s work and not a must-fix: do not hunt for a broken assertion behind them.');
   }
   out.push('');
 

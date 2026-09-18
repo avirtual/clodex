@@ -113,6 +113,15 @@ const RUN_COUNTER = 'const fs = require("fs");\n'
   + 'let n = 0; try { n = Number(fs.readFileSync(p, "utf8")) || 0; } catch {}\n'
   + 'n += 1;\nfs.writeFileSync(p, String(n));\n';
 
+const SLOW_ONE = 'composite: pooling lets a big corpus SILENCE a small one, merging does not';
+const SLOW_TWO = 'tree: two runs naming DIFFERENT trees still serialize on the root lock';
+const SLOW_STDOUT = `console.log("SLOW: 6042ms ${SLOW_ONE}");\n`
+  + `console.log("SLOW: 6311ms ${SLOW_TWO}");\n`
+  + 'console.log("SLOW: inject the clock or constant through a seam, or list the test in test/slow-tests.json with the mechanism it waits on");\n'
+  + 'console.log("TOTALS: 8050 pass, 0 fail, 8050 tests");\n';
+const SLOW_STDERR = `console.error(" \\u2716 ${SLOW_ONE} (6042ms)");\n`
+  + `console.error(" \\u2716 ${SLOW_TWO} (6311ms)");\n`;
+
 const SUITE_STUBS = {
   // Exit 0 AND fail 0 — the only shape that reaches a reviewer.
   green: 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\nprocess.exit(0);\n',
@@ -140,6 +149,17 @@ const SUITE_STUBS = {
   // Exit 0 with failures counted: the escape shape. Neither signal alone catches
   // it, which is why `green` is a conjunction of both.
   escaped: 'console.log("TOTALS: 4 pass, 1 fail, 5 tests");\nprocess.exit(0);\n',
+  slowgate: `${SLOW_STDOUT}${SLOW_STDERR}process.exit(1);\n`,
+  stalelist: `console.log("SLOW: 6042ms ${SLOW_ONE}");\n`
+    + 'console.log("SLOW: stale allowlist entry a test that no longer exists");\n'
+    + 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\n'
+    + `console.error(" \\u2716 ${SLOW_ONE} (6042ms)");\n`
+    + 'console.error(" \\u2716 stale allowlist entry a test that no longer exists (0ms)");\n'
+    + 'process.exit(1);\n',
+  slowplus: `${SLOW_STDOUT}${SLOW_STDERR}`
+    + 'console.error(" \\u2716 something else entirely (12.00ms)");\nprocess.exit(1);\n',
+  flakyslow: `${RUN_COUNTER}if (n === 1) {\n${RED_LINES}process.exit(1);\n}\n`
+    + `${SLOW_STDOUT}${SLOW_STDERR}process.exit(1);\n`,
   // A test file that cannot be PARSED. Measured, not assumed: node does not
   // crash the run — it reports the unloadable file as one failing test NAMED BY
   // ITS PATH and still prints a summary. So this is a rejection with the file
@@ -260,6 +280,7 @@ function mkRepo() {
 function commitOnBranch(dir, branch, file, body) {
   const cur = git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
   git(dir, ['checkout', '-q', branch]);
+  fsReal.mkdirSync(pathReal.dirname(pathReal.join(dir, file)), { recursive: true });
   fsReal.writeFileSync(pathReal.join(dir, file), body);
   git(dir, ['add', file]);
   git(dir, ['commit', '-q', '-m', `work on ${file}`]);
@@ -1613,6 +1634,108 @@ test('a red suite rejects to the hand and spawns NO reviewer', async () => {
   assert.strictEqual(t.state, 'open', 'the ticket is reopened for rework');
   assert.ok(!('loopStep' in t), 'and the loop stops holding it');
   assert.strictEqual(t.closedAt, null, 'reopening clears the close stamp, exactly as _taskReject does');
+});
+
+test('an UNOWNED slow gate reaches the reviewer, with the names on the ticket and in the scope', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'slowgate' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 1, 'the reviewer is spawned: nothing FAILED on this branch');
+  assert.deepStrictEqual(f.gated.filter((g) => /rejected/.test(g.body)), [],
+    'and no rework round is spent on a test the diff never touched');
+  const t = f.one();
+  assert.deepStrictEqual(t.suiteSlow, [SLOW_ONE, SLOW_TWO],
+    'the names are recorded on the ticket, so the fact survives the run that measured it');
+  const prompt = f.created[0].systemPrompt;
+  assert.match(prompt, /SLOW GATE \(not a failure, outside this diff\)/,
+    'and reach the reviewer, or it hunts for a red assertion that does not exist');
+  assert.ok(prompt.includes(SLOW_ONE), 'named, not merely alluded to');
+  assert.ok(prompt.includes(SLOW_TWO));
+  assert.strictEqual(t.suiteRemeasured, undefined,
+    'a slow-only run is not re-measured, so no re-measure stamp is written');
+});
+
+test('an OWNED slow gate rejects, and the rejection says slow gate rather than FAILS', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'test/owned.test.js',
+    `test('${SLOW_ONE}', () => {});\n`);
+  const f = mkLoop({ repo, suite: 'slowgate' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 0, 'no reviewer: the branch owes a fix first');
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'ENTER: exactly one rejection was delivered');
+  assert.match(sent[0].body, /slow gate/, 'the rejection names the gate that tripped');
+  assert.ok(sent[0].body.includes(SLOW_ONE), 'and the test, or the hand cannot find it');
+  assert.ok(!/the test suite FAILS/.test(sent[0].body),
+    'and NOT the red-suite wording — there is no failing assertion to hunt for');
+  assert.match(sent[0].body, /slow-tests\.json/,
+    'the fix it names is a seam or an allowlist entry, which is what the hand actually owes');
+  assert.ok(!sent[0].body.includes(SLOW_TWO),
+    'the unowned offender is not charged to this branch');
+  assert.strictEqual(f.one().state, 'open', 'the ticket is reopened for rework');
+});
+
+test('a stale allowlist entry is a real defect, not a slow gate to wave through', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'stalelist' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 0,
+    'no reviewer: an entry naming a test that no longer runs is the hand`s to delete');
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'ENTER: it rejected rather than passing the branch through');
+  assert.match(sent[0].body, /stale allowlist entry/, 'and says what is stale');
+  assert.strictEqual(f.one().suiteSlow, undefined,
+    'nothing is recorded as an excused slow test');
+});
+
+test('a red run 1 whose re-measure comes back slow-only is still classified by ownership', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'test/owned.test.js', `test('${SLOW_ONE}', () => {});\n`);
+  const f = mkLoop({ repo, suite: 'flakyslow' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(runCount(repo), 2, 'ENTER: run 1 was red, so it WAS re-measured and run 2 decided');
+  assert.strictEqual(f.created.length, 0,
+    'the ownership check runs on the FINAL measurement, or an owned slow test is waved through verify '
+    + 'and caught only post-merge, where it reverts master');
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'ENTER: exactly one rejection was delivered');
+  assert.match(sent[0].body, /slow gate/, 'and it is the slow-gate wording, run 2 having failed nothing');
+  assert.ok(sent[0].body.includes(SLOW_ONE));
+});
+
+test('a ✖ name outside the SLOW lines is not slow-only, even with zero failures', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'slowplus' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 0, 'a fault nobody read must not reach a reviewer');
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'ENTER: it took the red arm');
+  assert.match(sent[0].body, /the test suite FAILS/, 'and the red-suite wording, not the slow-gate one');
+  assert.ok(sent[0].body.includes('something else entirely'),
+    'naming the test the SLOW lines never accounted for');
 });
 
 // ── a red verify run is measured twice before it costs a rework round ──────

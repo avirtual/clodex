@@ -2207,14 +2207,22 @@ function createTicketMethods(deps, shared) {
         // optional and must not be a question put to the lead: revert first,
         // escalate with the evidence second.
         const suite = await this._runTicketSuite(team, ticket, team.root);
-        if (!suite.ran || !suite.green) {
+        const mergeSlowOwned = suite.ran && suite.slowOnly
+          ? await this._slowTestsOwned(team, ticket, suite.slow)
+          : [];
+        const slowPass = suite.ran && suite.slowOnly && !mergeSlowOwned.length;
+        if ((!suite.ran || !suite.green) && !slowPass) {
           // `ran:false` is undone as well as red, though the spec names only
           // red: an unverified merge sitting on master is the state this whole
           // step exists to prevent, and a revert is cheap and recoverable while
           // a silently unverified master is neither.
-          const why = suite.ran
-            ? `the suite FAILS on ${MERGE_TARGET_BRANCH} after the merge — ${suite.summary}\nFAILING: ${suite.failing || '(the runner reported no test names)'}`
-            : `the suite could not be RUN on ${MERGE_TARGET_BRANCH} after the merge: ${suite.error}`;
+          const why = mergeSlowOwned.length
+            ? `the suite's slow gate tripped on ${MERGE_TARGET_BRANCH} after the merge — ${suite.summary}, 0 failing\n`
+              + `SLOW GATE: ${mergeSlowOwned.join('; ')}\nThese are tests a file this branch changed contains, so they are this `
+              + 'ticket\'s to fix with a seam or a test/slow-tests.json entry — verify should have caught it before the merge.'
+            : suite.ran
+              ? `the suite FAILS on ${MERGE_TARGET_BRANCH} after the merge — ${suite.summary}\nFAILING: ${suite.failing || '(the runner reported no test names)'}`
+              : `the suite could not be RUN on ${MERGE_TARGET_BRANCH} after the merge: ${suite.error}`;
 
           // The failing output, kept — the SAME writer the loop's verify run
           // uses, not a second mechanism. This dump matters more than that one:
@@ -2339,6 +2347,7 @@ function createTicketMethods(deps, shared) {
         }
         this._notifyMergeLanded(team, ticketId, {
           branch, sha: merged.sha, rounds, summary: suite.summary, changelog, unioned: merged.unioned, closeOut,
+          slow: slowPass ? suite.slow : null,
         });
       } catch (e) {
         // A throw AFTER the merge landed is the dangerous shape: master carries
@@ -2449,7 +2458,7 @@ function createTicketMethods(deps, shared) {
     // and `closedOut` are all read; every other shape falls to the step line, so
     // a forgotten argument cannot report a teardown that never ran. A REOPEN
     // renders no verb anywhere in the body, reassurance line included.
-    _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary, changelog, unioned, closeOut = null }) {
+    _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary, changelog, unioned, closeOut = null, slow = null }) {
       try {
         // Collapsed and capped BEFORE it reaches the array. git stderr is routinely
         // multi-line, and this body's safety property is that no line starts with
@@ -2500,6 +2509,7 @@ function createTicketMethods(deps, shared) {
           stepLine,
           '',
           `Review rounds: ${rounds}. Suite on ${MERGE_TARGET_BRANCH} after the merge: ${summary}.`,
+          ...(slow && slow.length ? [`slow gate tripped by tests outside this diff: ${wideLine(slow.join('; '))}`] : []),
           ...(unioned ? [`${unioned} conflicted with a bullet another ticket merged first; the loop kept BOTH (the earlier one above this ticket's). Read ## Unreleased once before the next release.`] : []),
           ...(stamp ? [`Verify suite was re-measured. First run: ${oneLine(stamp.first) || 'unrecorded'} (${wideLine(stamp.firstFailing) || 'no names recorded'}).`] : []),
           changelogLine,
@@ -6447,6 +6457,7 @@ function createTicketMethods(deps, shared) {
         // nothing before this check could have caught it.
         atStep = 'verify: suite';
         this._stampSuiteRemeasured(team, ticketId, null);
+        this._stampSuiteSlow(team, ticketId, null);
         let suite = await this._runTicketSuite(team, ticket);
         // Checks 1-3 were milliseconds of git; this await is MINUTES, and the
         // entry guard above is now a snapshot that old. A lead `task accept`
@@ -6461,7 +6472,8 @@ function createTicketMethods(deps, shared) {
         if (!still || still.loopStep !== 'verify') return;
         let firstRed = null;
         let remeasureError = null;
-        if (suite.ran && !suite.green) {
+        let slowOwned = [];
+        if (suite.ran && !suite.slowOnly && !suite.green) {
           log.info('ticket', `ticket ${ticketId}: verify suite red (${suite.summary}) — re-measuring once`);
           const again = await this._runTicketSuite(team, ticket);
           still = this._loadTicket(team, ticketId);
@@ -6477,6 +6489,12 @@ function createTicketMethods(deps, shared) {
             remeasureError = again.error;
           }
         }
+        if (suite.ran && suite.slowOnly) {
+          slowOwned = await this._slowTestsOwned(team, still, suite.slow);
+          still = this._loadTicket(team, ticketId);
+          if (!still || still.loopStep !== 'verify') return;
+          if (!slowOwned.length) this._stampSuiteSlow(team, ticketId, suite.slow);
+        }
         if (!suite.ran) {
           // Could not RUN is not the same as failed, and must not reject: the
           // hand cannot fix a lock it does not hold or a runner that would not
@@ -6486,7 +6504,8 @@ function createTicketMethods(deps, shared) {
             `ran the suite in ${suite.cwd || 'the ticket worktree'}; no reviewer spawned`, 'infra');
           return;
         }
-        if (!suite.green) {
+        const slowPass = suite.slowOnly && !slowOwned.length;
+        if (!suite.green && !slowPass) {
           // BEFORE the reject, which increments `reworkRound` — the file is
           // named for the round that just FAILED, not the one it opens, so the
           // number in the path matches the run the hand is being sent back over.
@@ -6539,17 +6558,27 @@ function createTicketMethods(deps, shared) {
           const remeasureLine = remeasureError
             ? `\n\nA re-measure was attempted and could not run: ${remeasureError}`
             : '';
-          const rejected = this._rejectTicketFromLoop(team, ticketId,
-            `the test suite FAILS on your branch — ${suite.summary}\n\n`
-            + `${failingLines}${remeasureLine}\n\n`
-            + `${evidence}\n\n`
-            + 'Fix these and close the ticket again. No reviewer was spawned: a review of a '
-            + 'red branch is wasted, and the suite is the gate.');
+          const rejected = slowOwned.length
+            ? this._rejectTicketFromLoop(team, ticketId,
+              `the suite's slow gate tripped on your branch — ${suite.summary}, 0 failing\n\n`
+              + `SLOW GATE: ${slowOwned.join('; ')}\n\n`
+              + 'These are tests a file your branch changed contains, and each ran past the six-second '
+              + 'bar. Nothing asserted wrong: inject the clock or the timeout constant through a seam, '
+              + 'or list the test in test/slow-tests.json with the mechanism it genuinely waits on. '
+              + 'No reviewer was spawned: the suite is the gate.')
+            : this._rejectTicketFromLoop(team, ticketId,
+              `the test suite FAILS on your branch — ${suite.summary}\n\n`
+              + `${failingLines}${remeasureLine}\n\n`
+              + `${evidence}\n\n`
+              + 'Fix these and close the ticket again. No reviewer was spawned: a review of a '
+              + 'red branch is wasted, and the suite is the gate.');
           // Reject is the designed rework channel, but it needs a seat to reach.
           // With none, the ticket would sit reopened and unread, so the lead
           // gets it instead — the failure is real either way and must surface.
           if (!rejected.ok) {
-            fail('verify: suite', `the suite fails on ${branch} (${suite.summary}) and the rework could not be sent back: ${rejected.error}`,
+            fail('verify: suite', slowOwned.length
+              ? `the suite's slow gate tripped on ${branch} (${suite.summary}, 0 failing) over ${slowOwned.join('; ')} and the rework could not be sent back: ${rejected.error}`
+              : `the suite fails on ${branch} (${suite.summary}) and the rework could not be sent back: ${rejected.error}`,
               `ran the suite (exit ${suite.code}); no reviewer spawned; failing: ${suite.failing || 'unnamed'}`
               // The file is written BEFORE the reject is attempted, so it exists
               // on this path too — and this is the arm where the lead is the only
@@ -6672,7 +6701,7 @@ function createTicketMethods(deps, shared) {
       // its pid is still in the lock dir (a killed runner never runs its exit
       // handler). Without this the revert gate blames a process that no longer
       // exists and tells the lead to wait for a suite that will never finish.
-      const out = { ran: false, green: false, code: null, summary: '', failing: '', output: '', cwd, error: null, runnerPid: null, head: null, startedAt: null, headEnd: null };
+      const out = { ran: false, green: false, slowOnly: false, slow: [], code: null, summary: '', failing: '', output: '', cwd, error: null, runnerPid: null, head: null, startedAt: null, headEnd: null };
       if (!cwd) { out.error = 'the ticket has no worktree path to run in'; return out; }
 
       const runner = path.join(cwd, 'scripts', 'run-tests.js');
@@ -6952,6 +6981,17 @@ function createTicketMethods(deps, shared) {
           const esc = /ESCAPES: (?!0)(.*)/.exec(text);
           if (esc) out.failing = `escaped errors — ${esc[1].trim().slice(0, 500)}`;
         }
+        const slowNames = [];
+        let staleEntry = false;
+        const stdoutText = String(res.stdout || '');
+        const slowRe = /^SLOW: (?:(\d+)ms (.+)|stale allowlist entry (.+))$/gm;
+        for (let m = slowRe.exec(stdoutText); m; m = slowRe.exec(stdoutText)) {
+          if (m[3]) { staleEntry = true; slowNames.push(`stale allowlist entry ${m[3].trim()}`); } else slowNames.push(m[2].trim());
+        }
+        out.slow = slowNames;
+        out.slowOnly = Number(failed) === 0 && !staleEntry && slowNames.length > 0
+          && !/^ESCAPES: [1-9]/m.test(text)
+          && names.length > 0 && names.every((n) => slowNames.includes(n));
       }
       return out;
     },
@@ -7324,6 +7364,37 @@ function createTicketMethods(deps, shared) {
         ticketsStore.save(team.root, tickets);
       } catch (e) {
         log.error('ticket', `verify hold stamp for ${ticketId} failed: ${e.message}`);
+      }
+    },
+
+    async _slowTestsOwned(team, ticket, names) {
+      const wanted = (names || []).map((n) => String(n)).filter(Boolean);
+      if (!wanted.length) return [];
+      const wt = (ticket && ticket.worktree) || {};
+      const base = wt.baseSha;
+      const branch = wt.branch;
+      if (!base || !branch) return [];
+      const d = await gitWorktree.diffNames(team.root, base, branch, ['test/'])
+        .catch(() => ({ ok: false, names: null }));
+      if (!d || !d.ok || !Array.isArray(d.names) || !d.names.length) return [];
+      const owned = new Set();
+      for (const rel of d.names) {
+        const f = await gitWorktree.fileAt(team.root, branch, rel).catch(() => ({ ok: false, text: null }));
+        if (!f || !f.ok || typeof f.text !== 'string') continue;
+        for (const n of wanted) if (f.text.includes(n)) owned.add(n);
+      }
+      return wanted.filter((n) => owned.has(n));
+    },
+
+    _stampSuiteSlow(team, ticketId, names) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec) return;
+        if (!names || !names.length) { if (!('suiteSlow' in rec)) return; delete rec.suiteSlow; } else rec.suiteSlow = names.slice(0, 20).map((n) => String(n).slice(0, 200));
+        ticketsStore.save(team.root, tickets);
+      } catch (e) {
+        log.error('ticket', `suite slow stamp for ${ticketId} failed: ${e.message}`);
       }
     },
 
