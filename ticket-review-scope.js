@@ -103,7 +103,7 @@ function budgetEntries(chunks) {
 // when resolution is REFUSED, the raw escaping string is what would be shown.
 // Naming no task dir is the correct degradation; the caller resolves or the
 // scope says nothing.
-function buildReviewScope({ ticket, diffPath = null, taskDir = null, taskDirRule = '' } = {}) {
+function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir = null, taskDirRule = '' } = {}) {
   const t = ticket || {};
   const id = text(t.id) || '(unknown)';
   const wt = t.worktree || {};
@@ -133,8 +133,21 @@ function buildReviewScope({ ticket, diffPath = null, taskDir = null, taskDirRule
 
   if (diffPath) {
     out.push(`DIFF: the full diff of that range is materialized at ${diffPath}. `
-      + 'Read it first; it is the authoritative statement of what changed.');
+      + 'Read it first; it is the authoritative statement of what changed. '
+      + 'Each hunk carries 20 lines of context on both sides; a re-read to see the code immediately around a hunk is already answered by the diff.');
     out.push('');
+    // Gated on the CALLER having a delta path, never derived from the round
+    // number: the loop writes this file only when the previous round recorded a
+    // head sha AND the delta diff came back non-empty, so a scope that inferred
+    // it from `reviewRound >= 1` would name a file that is not there for every
+    // ticket in flight across the upgrade.
+    const delta = text(deltaPath);
+    if (delta) {
+      const prior = Number(t.reviewRound) || 0;
+      out.push(`DELTA: what changed since round ${prior}'s review is at ${delta}. `
+        + 'Read the delta first for the fixes; the cumulative diff above stays authoritative for everything else.');
+      out.push('');
+    }
   }
 
   if (dir) {

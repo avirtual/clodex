@@ -1382,6 +1382,8 @@ function createTicketMethods(deps, shared) {
           reviewedAt: null,
           verdictFile: null,
           diffFile: null,
+          deltaFile: null,
+          headSha: null,
         };
         ticket.rounds.push(entry);
       }
@@ -6119,6 +6121,8 @@ function createTicketMethods(deps, shared) {
           reviewedAt: null,
           verdictFile: null,
           diffFile: null,
+          deltaFile: null,
+          headSha: null,
         });
       }
       // NOT `closedAt` on a re-entry, which is the FIRST close and may be hours
@@ -6410,22 +6414,26 @@ function createTicketMethods(deps, shared) {
         const diff = await gitWorktree.diffText(team.root, baseSha, branch)
           .catch((e) => ({ ok: false, text: null, error: e.message }));
         if (!diff.ok) {
-          fail('verify: diff', `git diff --text --no-ext-diff ${baseSha}..${branch} failed: ${diff.error}`,
+          fail('verify: diff', `git diff --text --no-ext-diff -U20 ${baseSha}..${branch} failed: ${diff.error}`,
             `ran diffText(${baseSha}, ${branch})`, 'infra');
           return;
         }
         if (!diff.text || !diff.text.trim()) {
-          fail('verify: diff', `git diff --text --no-ext-diff ${baseSha}..${branch} is empty despite ${commits.count} commit(s) on the branch — there is nothing to review`,
+          fail('verify: diff', `git diff --text --no-ext-diff -U20 ${baseSha}..${branch} is empty despite ${commits.count} commit(s) on the branch — there is nothing to review`,
             `ran commitsOnBranch (${commits.count}) then diffText, both succeeded`, 'hand');
           return;
         }
 
-        const written = this._writeTicketDiff(team, ticket, diff.text);
+        const written = this._writeTicketDiff(team, ticket, diff.text, diff.headSha);
         if (!written.ok) {
           fail('verify: diff', `the diff could not be written for the reviewer to read: ${written.error}`,
             `ran diffText (${diff.text.length} bytes) then tried to write ${written.path || 'the task dir'}`, 'infra');
           return;
         }
+        // Best-effort and unchecked BY DESIGN: a missing delta costs the
+        // reviewer a re-read, where a failed one that escalated would cost the
+        // ticket a round over an artifact nothing depends on.
+        const delta = await this._writeTicketDelta(team, ticket, written.round, written.prevHeadSha, branch);
 
         // CHECK 5 — the suite actually RUNS, on the ticket's branch, and passes.
         //
@@ -6562,7 +6570,7 @@ function createTicketMethods(deps, shared) {
 
         this._setLoopStep(team, ticketId, 'review');
         atStep = 'review';
-        this._spawnTicketReview(team, ticketId, written.path);
+        this._spawnTicketReview(team, ticketId, written.path, delta.path);
       } catch (e) {
         // The catch-all is an escalation, never a swallow: an unexpected throw
         // here leaves a ticket marked in-flight, and the watchdog's one nudge is
@@ -7354,14 +7362,19 @@ function createTicketMethods(deps, shared) {
       }
     },
 
-    _stampRoundFile(team, ticketId, round, field, basename) {
+    // The generic round-entry setter. `value` is a BASENAME for the artifact
+    // fields (`diffFile`, `verdictFile`, `deltaFile`) — the directory is the
+    // record's taskDir, resolved at read time — and a plain string for
+    // `headSha`, which names no file. The helper itself has never cared: it
+    // assigns whatever it is given to whatever field it is told.
+    _stampRoundFile(team, ticketId, round, field, value) {
       try {
         const tickets = ticketsStore.load(team.root);
         const rec = tickets.find((t) => t.id === ticketId);
         if (!rec || !Array.isArray(rec.rounds)) return;
         const entry = rec.rounds.find((r) => r && Number(r.round) === Number(round));
         if (!entry) return;
-        entry[field] = basename;
+        entry[field] = value;
         ticketsStore.save(team.root, tickets);
       } catch (e) {
         log.error('ticket', `${field} stamp for ${ticketId} r${round} failed: ${e.message}`);
@@ -7632,30 +7645,84 @@ function createTicketMethods(deps, shared) {
     },
 
     // The materialized diff, written beside the ticket's other artifacts.
-    _writeTicketDiff(team, ticket, text) {
+    //
+    // `headSha` is the commit the diff was taken AT, stamped on the round beside
+    // the filename. It is what makes the next round's delta possible: round 2
+    // diffs round 1's head against the branch, and nothing else on the record
+    // remembers where round 1 stopped once the branch moves on. Stamped even
+    // when no delta will ever be computed, because which round is the LAST one
+    // is not knowable here.
+    //
+    // `prevHeadSha` comes back to the caller rather than being acted on: the
+    // delta is a git subprocess and this method is synchronous, and callers
+    // already await the leaf themselves.
+    _writeTicketDiff(team, ticket, text, headSha = null) {
       const dest = this._ticketDiffDest(team, ticket);
-      if (!dest.ok) return { ok: false, path: null, error: dest.error };
+      if (!dest.ok) return { ok: false, path: null, round: null, prevHeadSha: null, error: dest.error };
       const taskDir = dest.dir;
       // The round is in the NAME so round 2 does not overwrite round 1: round 1's
       // diff is the one artifact a round 2 reviewer might want to diff against,
       // and it is unrecoverable once the branch moves on.
       const round = (Number(ticket.reviewRound) || 0) + 1;
+      // Read BEFORE the stamp below, which would otherwise be read back as the
+      // previous round's on a re-entered close that rewrites the same round.
+      const rounds = Array.isArray(ticket.rounds) ? ticket.rounds : [];
+      const prev = rounds.find((r) => r && Number(r.round) === round - 1);
+      const prevHeadSha = (prev && typeof prev.headSha === 'string' && prev.headSha) || null;
       const file = path.join(taskDir, `review-${ticket.id}-r${round}.diff`);
       try {
         ensureDir(taskDir);
         fs.writeFileSync(file, text);
       } catch (e) {
-        return { ok: false, path: file, error: e.message };
+        return { ok: false, path: file, round, prevHeadSha, error: e.message };
       }
       this._stampRoundFile(team, ticket.id, round, 'diffFile', path.basename(file));
-      return { ok: true, path: file, error: null };
+      if (headSha) this._stampRoundFile(team, ticket.id, round, 'headSha', String(headSha));
+      return { ok: true, path: file, round, prevHeadSha, error: null };
+    },
+
+    // The round-N delta: what changed since the PREVIOUS round's review, as its
+    // own file beside the cumulative diff.
+    //
+    // Measured motivation: a round 2 cumulative diff is ~97% identical to round
+    // 1's, so a cold reviewer re-reads about a third of round 1's targets with
+    // nothing marking which hunks are new.
+    //
+    // EVERY failure is silent and writes nothing — no previous head sha (a
+    // ticket in flight across the upgrade), an unresolvable sha (the branch was
+    // rebased under the loop), a git error, an empty delta (the hand closed
+    // again without committing). The scope is built off the returned path, so
+    // writing nothing is exactly what keeps it from naming a file that is not
+    // there. An escalation would be worse than useless: the cumulative diff is
+    // whole, and the review can proceed on it alone.
+    async _writeTicketDelta(team, ticket, round, prevHeadSha, branch) {
+      const none = { ok: false, path: null };
+      if (!prevHeadSha || !branch || Number(round) < 2) return none;
+      const dest = this._ticketDiffDest(team, ticket);
+      if (!dest.ok) return none;
+      const d = await gitWorktree.diffText(team.root, prevHeadSha, branch)
+        .catch((e) => ({ ok: false, text: null, error: e.message }));
+      if (!d.ok || !d.text || !d.text.trim()) {
+        log.info('ticket', `ticket ${ticket.id} r${round}: no delta diff written (${d.ok ? 'empty range' : d.error})`);
+        return none;
+      }
+      const file = path.join(dest.dir, `review-${ticket.id}-r${round}.delta.diff`);
+      try {
+        ensureDir(dest.dir);
+        fs.writeFileSync(file, d.text);
+      } catch (e) {
+        log.error('ticket', `ticket ${ticket.id} r${round}: delta diff write failed: ${e.message}`);
+        return none;
+      }
+      this._stampRoundFile(team, ticket.id, round, 'deltaFile', path.basename(file));
+      return { ok: true, path: file };
     },
 
     // Spawn the loop's reviewer through the EXISTING team-review path, with the
     // constructed scope as its body. Not a hand-rolled spawn: that path already
     // owns the reviewer template, the tool cap, the name reservation and the
     // reviewTicket seed that routes the verdict back to the ticket.
-    _spawnTicketReview(team, ticketId, diffPath) {
+    _spawnTicketReview(team, ticketId, diffPath, deltaPath = null) {
       const ticket = this._loadTicket(team, ticketId);
       if (!ticket) return;
       // _handleTeamReview is lead-gated and replies into the CALLING session, so
@@ -7674,7 +7741,7 @@ function createTicketMethods(deps, shared) {
       // lands in the wrong tree exactly as it did the hand. buildReviewScope has no
       // `t.taskDir` fallback by design: a refusal names no task dir, never the raw one.
       const taskDirRender = this._ticketTaskDirRender(team, ticket);
-      const scope = buildReviewScope({ ticket, diffPath, taskDir: taskDirRender.dir, taskDirRule: taskDirRender.rule });
+      const scope = buildReviewScope({ ticket, diffPath, deltaPath, taskDir: taskDirRender.dir, taskDirRule: taskDirRender.rule });
       // onReply diverts _handleTeamReview's reply away from the lead's terminal.
       // Diverted, NOT suppressed: that reply is also how every spawn refusal
       // (a broken reviewer template, an empty tool intersection) is reported, and
