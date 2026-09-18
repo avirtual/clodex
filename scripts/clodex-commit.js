@@ -122,13 +122,21 @@ if (delta.status !== 0) {
   emit(`refused: comment ratchet +${added} in ${files.join(', ') || '(unnamed file)'}`, 1);
 }
 
+const indexNames = (t) => String(git(t, ['diff', '--cached', '--name-only']).stdout || '')
+  .split('\n').map((l) => l.trim()).filter(Boolean);
+
+const preStaged = indexNames(tree).filter((f) => !paths.includes(f));
+if (preStaged.length) {
+  emit(`refused: the index already holds files you did not name — ${preStaged.join(', ')}; `
+    + 'commit or reset them first', 1);
+}
+
 const add = git(tree, ['add', '--', ...paths]);
 if (add.status !== 0) {
   emit(`refused: git add failed — ${(String(add.stderr || '').trim().split('\n').pop() || '').slice(0, 200)}`, 1);
 }
 
-const staged = git(tree, ['diff', '--cached', '--name-only']);
-const stagedFiles = String(staged.stdout || '').split('\n').map((l) => l.trim()).filter(Boolean);
+const stagedFiles = indexNames(tree);
 if (!stagedFiles.length) emit('refused: nothing to commit for the given paths', 1);
 
 const commit = git(tree, ['commit', '-q', '-m', message]);

@@ -446,16 +446,19 @@ if (code === 0 && fail === 0) {
   emit(`[${LEAF}] ${TAG}${pass}/${tests} green (${wallShow(wallMs)})${breakdown}${slow}`, 0);
 }
 
-const SLOW_RE = /^SLOW: (\d+)ms (.+)$/gm;
-if (code !== 0 && fail === 0) {
+const SLOW_RE = /^SLOW: (?:(\d+)ms (.+)|(stale allowlist entry .+))$/gm;
+const ESCAPED_RE = /^ESCAPES: [1-9]/m;
+if (code !== 0 && fail === 0 && !ESCAPED_RE.test(stdout) && !ESCAPED_RE.test(stderr)) {
   const slow = [];
-  for (let m = SLOW_RE.exec(stdout); m; m = SLOW_RE.exec(stdout)) slow.push(`${m[2]} ${m[1]}ms`);
+  for (let m = SLOW_RE.exec(stdout); m; m = SLOW_RE.exec(stdout)) {
+    slow.push(m[3] ? m[3] : `${m[2]} ${m[1]}ms`);
+  }
   if (slow.length) {
+    const shown = slow.slice(0, 3).join('; ') + (slow.length > 3 ? `; +${slow.length - 3} more` : '');
     emit(
-      `[${LEAF}] ${TAG}${pass}/${tests} green, 0 failing — SLOW GATE (not a test failure): ${slow.join('; ')}`
+      `[${LEAF}] ${TAG}${pass}/${tests} green, 0 failing — SLOW GATE (not a test failure): ${shown}`
       + ' — a test outside your diff tripping the bar is box load: do not re-run, name it in your report',
       exitCode,
-      400,
     );
   }
 }

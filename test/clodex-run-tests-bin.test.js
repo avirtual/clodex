@@ -221,8 +221,72 @@ test('exit 1 with nothing failing and NO slow lines keeps the old wording', () =
       `[${path.basename(root)}] 3/3 green, 0 failing (${WALL}) (${KEEP_SHOW}): alpha`,
     );
     assert.ok(!r.digest.includes('SLOW GATE'),
-      'the slow-gate arm keys on the SLOW lines, not merely on exit != 0 with 0 failing: an escape or '
-      + 'a crashed file lands here too, and calling one of those a slow-gate trip is the same lie in reverse');
+      'the slow-gate arm keys on the SLOW lines, not merely on exit != 0 with 0 failing');
+    assert.strictEqual(r.code, 1);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('an ESCAPE alongside a slow trip is never captioned "not a test failure"', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, {
+      body: [
+        "console.log('SLOW: 7400ms alpha waits on a real timer');",
+        "console.log('ESCAPES: 1 — counted PASS by the runner, listed here because they are not:');",
+        "console.log('  ✖ ESCAPED \"beta\"');",
+        "console.log('TOTALS: 3 pass, 0 fail, 3 tests');",
+      ].join('\n'),
+      exit: 1,
+    });
+    const r = run(root, '{}');
+    assert.ok(!r.digest.includes('SLOW GATE'),
+      'an escape is exit != 0 with 0 failing and no ✖ (Nms) line, so it lands in this same arm: telling '
+      + 'a hand "not a test failure — do not re-run" over a genuine escape is the ticket\'s own lie in reverse');
+    assert.strictEqual(r.code, 1);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a stale-allowlist-only trip is named a slow-gate trip too, not left as bare "0 failing"', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, {
+      body: [
+        "console.log('SLOW: stale allowlist entry gamma sleeps');",
+        "console.error(' ✖ stale allowlist entry gamma sleeps (0ms)');",
+        "console.log('TOTALS: 3 pass, 0 fail, 3 tests');",
+      ].join('\n'),
+      exit: 1,
+    });
+    const r = run(root, '{}');
+    assert.strictEqual(
+      r.digest,
+      `[${path.basename(root)}] 3/3 green, 0 failing — SLOW GATE (not a test failure): `
+      + 'stale allowlist entry gamma sleeps — a test outside your diff tripping the bar is box load: '
+      + 'do not re-run, name it in your report',
+      'run-tests.js prints a stale entry with no <ms>ms, so a slow-gate regex keyed only on a duration '
+      + 'drops it back into the "0 failing + exit 1" read this arm exists to kill',
+    );
+    assert.strictEqual(r.code, 1);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('many offenders: the LIST is capped, so the do-not-re-run instruction always survives', () => {
+  const root = mkRoot();
+  try {
+    const names = ['alpha waits on a real timer', 'beta polls a lock', 'gamma sleeps',
+      'delta drains a queue', 'epsilon waits on a socket'];
+    writeStub(root, {
+      body: [
+        ...names.map((n) => `console.log('SLOW: 7400ms ${n}');`),
+        "console.log('TOTALS: 9 pass, 0 fail, 9 tests');",
+      ].join('\n'),
+      exit: 1,
+    });
+    const r = run(root, '{}');
+    assert.ok(r.digest.endsWith('do not re-run, name it in your report'),
+      'the instruction is the TAIL, and a character cap slices the tail: many offenders is exactly the '
+      + 'box-load case the sentence describes, so it may not be what falls off');
+    assert.ok(r.digest.includes('; +2 more'), 'the overflow is counted rather than silently dropped');
     assert.strictEqual(r.code, 1);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

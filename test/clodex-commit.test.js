@@ -83,6 +83,77 @@ test('a comment added to a tracked .js is refused, and NOTHING is staged', () =>
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('a file already staged that the payload never named blocks the commit', () => {
+  const root = mkRepo();
+  try {
+    put(root, 'lib/other.js', "'use strict';\nmodule.exports = 3;\n");
+    git(root, 'add', '--', 'lib/other.js');
+    put(root, 'lib/widget.js', "'use strict';\nmodule.exports = 2;\n");
+    const before = git(root, 'rev-parse', 'HEAD').trim();
+    const r = run(root, { paths: ['lib/widget.js'], message: 'widget: bump' });
+    assert.strictEqual(r.code, 1);
+    assert.strictEqual(r.digest,
+      'refused: the index already holds files you did not name — lib/other.js; commit or reset them first');
+    assert.strictEqual(git(root, 'rev-parse', 'HEAD').trim(), before,
+      'ENTER: `git commit` commits the whole INDEX, not the paths just added — a pre-existing staged '
+      + 'entry (a failed earlier run, a raw `git add`, a red-proof detour) would ride along silently '
+      + 'under a message that never mentions it');
+    assert.deepStrictEqual(git(root, 'diff', '--cached', '--name-only').split('\n').filter(Boolean),
+      ['lib/other.js'],
+      'the refusal comes before the add, so the index is exactly as the hand left it — nothing to undo');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a file already staged that the payload DID name is not an obstacle', () => {
+  const root = mkRepo();
+  try {
+    put(root, 'lib/widget.js', "'use strict';\nmodule.exports = 2;\n");
+    git(root, 'add', '--', 'lib/widget.js');
+    const r = run(root, { paths: ['lib/widget.js'], message: 'widget: bump' });
+    assert.strictEqual(r.code, 0, r.digest);
+    assert.deepStrictEqual(headFiles(root), ['lib/widget.js'],
+      'the guard is about files the payload never named; staging a named path first is the ordinary '
+      + 'case and refusing it would make the command unusable after any `git add`');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('an unnamed staged file wins over the nothing-to-commit refusal, and still commits nothing', () => {
+  const root = mkRepo();
+  try {
+    put(root, 'lib/other.js', "'use strict';\nmodule.exports = 3;\n");
+    git(root, 'add', '--', 'lib/other.js');
+    const before = git(root, 'rev-parse', 'HEAD').trim();
+    const r = run(root, { paths: ['lib/widget.js'], message: 'noop' });
+    assert.strictEqual(r.code, 1);
+    assert.ok(r.digest.startsWith('refused: the index already holds files you did not name'), r.digest);
+    assert.strictEqual(git(root, 'rev-parse', 'HEAD').trim(), before,
+      'ENTER: the named path has NO change here, so a staged-set-is-non-empty guard reads as '
+      + '"something to commit" and commits a file the payload never mentioned — the refusal inverts');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('an explicit tree that IS a registered worktree commits there, not in cwd', () => {
+  const root = mkRepo();
+  const wtRoot = fs.realpathSync(mkTmpRoot('cx-commit-wt-'));
+  const wt = path.join(wtRoot, 'wt');
+  try {
+    git(root, 'worktree', 'add', '-q', '-b', 'side', wt);
+    put(wt, 'lib/widget.js', "'use strict';\nmodule.exports = 9;\n");
+    const rootBefore = git(root, 'rev-parse', 'HEAD').trim();
+    const r = run(root, { tree: fs.realpathSync(wt), paths: ['lib/widget.js'], message: 'side: bump' });
+    assert.strictEqual(r.code, 0, r.digest);
+    const sha = git(wt, 'rev-parse', '--short', 'HEAD').trim();
+    assert.strictEqual(r.digest, `committed ${sha}: 1 file(s) — side: bump`);
+    assert.deepStrictEqual(headFiles(wt), ['lib/widget.js']);
+    assert.strictEqual(git(root, 'rev-parse', 'HEAD').trim(), rootBefore,
+      'every step must run with `git -C <tree>`: a step that fell back to cwd would commit in the '
+      + 'wrong checkout, which is the collision the worktree exists to prevent');
+  } finally {
+    fs.rmSync(wtRoot, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('a path outside the tree is refused before git is asked to stage anything', () => {
   const root = mkRepo();
   try {
