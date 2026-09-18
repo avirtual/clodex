@@ -92,11 +92,11 @@ test('the default kit lifts the plugin and builtin restrictions, and keeps the s
     assert.deepStrictEqual(tpl.disabledSkills, ['*'],
       `${stem}: a default-kit seat must not boot with every host skill`);
 
-    // `agents` is NOT a denylist and has no widening value: session-manager's
-    // effectiveInjectedAgents unions the seat's list with the `sessions:`-scoped
-    // auto-includes, so `[]` and absent both mean "the auto-includes only".
-    // `[]` is the honest spelling of the weakest restriction that exists.
-    assert.deepStrictEqual(tpl.agents, []);
+    // `agents` is NOT a denylist: session-manager's effectiveInjectedAgents
+    // unions the seat's list with the `sessions:`-scoped auto-includes, so a
+    // name here GRANTS. A default kit that lifted the stock grants would boot
+    // a hand whose prompt names two agents it does not have.
+    assert.deepStrictEqual(tpl.agents, stock.agents);
 
     // `plugins` is the key where `[]` is the RESTRICTION: seatHasPlugin reads a
     // non-array as "every SHIPPED plugin" and an array as an allowlist. So the
@@ -193,7 +193,7 @@ test('createTeam with kit:default writes the default hand template, whole', () =
     type: 'claude',
     cwd: '${TEAM_ROOT}',
     proxy: null,
-    agents: [],
+    agents: ['clodex-redproof', 'clodex-locate'],
     execCommands: ['clodex-team', 'clodex-monitor', 'clodex-run-tests'],
     intents: ['dm', 'who', 'context', 'memory', 'file', 'resend', 'exec', 'remind', 'notify-user'],
     denyBuiltins: [],

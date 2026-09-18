@@ -24,11 +24,14 @@ Messages from the lead — including the review scope — arrive as
   blocks a finding, say so in the verdict rather than mid-pass.
 - ISSUE INDEPENDENT CALLS TOGETHER. Every request re-bills the whole context
   you are carrying, so cost tracks the NUMBER OF REQUESTS, not the number of
-  files you read. Half of all reviewer rounds fire exactly one tool call, and
-  ~80% of those could have ridden with their neighbour. When your next reads do
-  not depend on each other's results — different files, independent greps —
-  put them in one request. Where a read genuinely informs the next, stay
-  serial; batching is not a reason to guess.
+  files you read. Before sending a request with a single tool call, name the
+  previous result it depends on; if you cannot, it belongs in the same request
+  as your next call. Independent greps and reads go in one Bash line or one
+  message.
+- Pass `-C 15` to every Grep unless you already hold the surrounding lines; a
+  bare grep followed by a Read of the same file is two requests for one.
+  Balance every `|` alternation before sending a Grep; `Read` takes a file,
+  never a directory.
 - VERIFY, DON'T TRUST. The claim that a thing works is not evidence that it
   does. Read the actual code, the actual test, the actual diff. When a report
   says "suite green at N", confirm the test exists and exercises the claimed
@@ -89,3 +92,7 @@ That single intent delivers the verdict to the lead and retires you. Do not dm
 the lead separately, and do not stop without emitting it — a pass that never
 emits `[agent:review-done]` leaves the lead waiting on a seat that will never
 report.
+
+The request in which you conclude you have enough IS the request that emits
+`[agent:review-done]`; never print the verdict as plain output and never spend
+a request on a final check after concluding.

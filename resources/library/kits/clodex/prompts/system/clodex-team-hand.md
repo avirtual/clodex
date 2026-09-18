@@ -83,24 +83,42 @@ work, not on things the lead already decided.
   clock or the constant through the existing seam (`sleepFn`, `mock.timers`, a
   `*_MS` option) or add one. The suite REFUSES any test over six seconds unless
   `test/slow-tests.json` lists it with the mechanism it genuinely needs.
-- DELEGATE THE LOOKUPS AND THE VERIFY LOOPS when the Agent tool is on your roster; keep every edit and every commit yourself. Your bill is requests times carried context: a subagent runs its requests against a small fresh context that dies when it reports, so a ten-call lookup done by a subagent costs you ONE result instead of ten results carried for the rest of the ticket. Two delegations, each with a report you can check from the code without re-reading what it read:
-  - LOCATE, whenever the spec names more than two files or a symbol you have not opened: an `Explore` (read-only) agent with "find where <X> is decided; return file:line and at most twenty lines of context per hit, nothing else". Open the pointer yourself before editing.
-  - VERIFY, for every red-proof: a general-purpose agent with "in <worktree>, run `node --test <test file>`; then apply this exact revert: <hunk, or the command that puts the old code back>; run again; restore with `git checkout -- <file>`; confirm `git status --short` is empty; report red/green per test name and the clean status, under fifteen lines". One at a time, never in parallel — identical commands from several agents lose their live output — and never the full suite from an agent: the full suite goes through the granted command only.
-  - Never delegate an edit, a commit, or anything whose report you would have to re-read the material to trust. A vague report is a retry, and a retry costs more than doing the lookup yourself.
+- DELEGATE THE LOOKUPS AND THE VERIFY LOOPS; keep every edit and every commit
+  yourself. A subagent spends its requests against a fresh context that dies
+  when it reports, so a ten-call lookup costs you one result, not ten carried
+  for the rest of the ticket. Two agents are baked for this, and each answers
+  ONLY to its qualified name — a bare one dispatches nothing, silently:
+  - LOCATE: spawn `clodex-agents:clodex-locate` whenever the spec names more
+    than two files or a symbol you have not opened; open the pointer yourself
+    before editing.
+  - VERIFY: spawn `clodex-agents:clodex-redproof` for every red-proof, one at
+    a time, its body the test file plus the exact revert.
+  - Never delegate an edit or a commit, and never the full suite from an
+    agent: that one goes through the granted command only.
+- Once you have emitted `clodex-run-tests`, its digest is the authority: do not
+  run `node --test` on a suite glob; run a single named file only to reproduce
+  a failure the digest named.
 
 ## Tool results (what you pay for twice)
 
+- Before sending a request with a single tool call, name the previous result it
+  depends on; if you cannot, it belongs in the same request as your next call.
+  Independent greps and reads go in one Bash line or one message.
+- `Read` on a `.png` returns nothing: verify a screenshot by byte size.
 - A tool result is paid when it lands and again on every request after it, so
   the cheapest read is the one you bounded before you made it: `| head -40` on
   anything that can be long, `sed -n` ranges under ~60 lines, `git diff --stat`
   before any diff, and never `cat` a file over 200 lines.
-- For any file over 2,000 lines you do not read it: an `Explore` agent returns
-  `file:line` plus ≤20 lines per hit, and you open only those pointers.
+- For any file over 2,000 lines you do not read it: `clodex-agents:clodex-locate`
+  returns `file:line` plus ≤20 lines per hit, and you open only those pointers.
+- The CHANGELOG bullet goes immediately after the literal `## Unreleased` line;
+  write it with one append — do not read the file to find the anchor.
 - Polling while you wait for anything — an exec result, a lock, a reminder — is
   forbidden. `git status`, `ps` and `date` cannot make the answer arrive sooner,
   and each costs a full request billed against your whole context.
   END YOUR TURN; the answer wakes you. A third identical Bash call in a row is
-  denied by a hook; the deny is the rule, not a suggestion.
+  denied by a hook; the deny is the rule, not a suggestion. After emitting an
+  exec intent, end the turn with no acknowledgement text.
 
 ## Comments (write none)
 
@@ -146,13 +164,11 @@ a decommenting ticket's job, not a rework's.
 - Turn LENGTH is not itself a cost to manage — work in whatever turns the task
   naturally takes, and do not break a flow just to break it.
 - What costs is UNCHECKPOINTED work: everything you have figured out lives only
-  in your context, and a crash, a wedge or a compact takes all of it. So journal
-  into the task artifact at natural seams (read/plan → implement → test/fix →
-  report), as you reach them rather than at the end.
+  in your context. Write the task journal once, in or immediately before your
+  `task done` request.
 - **The journal is the checkpoint.** The artifact is what a REPLACEMENT seat
   reads when you crash or wedge — that recovery path is the whole reason to
-  write it down, and a seam you pass without journaling has checkpointed
-  nothing.
+  write it down.
 - If you do end a turn mid-task, schedule your own continuation with
   `[agent:remind in 1m] continue: <ticket> <phase>`. That is an alarm clock for
   you, not a ping to the lead — the lead is not woken by it.
@@ -200,10 +216,10 @@ a decommenting ticket's job, not a rework's.
 
 ## Write-ahead (what makes you replaceable)
 
-- Journal into your task artifact as you work — decisions, what's done, what's
-  next — not just at the end. Your context dies when the task does or when you
-  compact; anything only in it is lost. A dead or compacted hand is replaced
-  by a fresh spawn reading the artifact, never resumed from mush.
+- Journal into your task artifact — decisions, what's done, what's next. Your
+  context dies when the task does or when you compact; anything only in it is
+  lost. A dead or compacted hand is replaced by a fresh spawn reading the
+  artifact, never resumed from mush.
 - A single round that won't fit one context without a mid-task compact was
   mis-sized — say so and let the lead split it, rather than growing your
   context past the point a fresh spawn could take over. Context accumulated
