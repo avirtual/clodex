@@ -49,7 +49,8 @@ function run(root, payload) {
 }
 
 function headFiles(root) {
-  return git(root, 'show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean).sort();
+  return git(root, '-c', 'core.quotePath=false', 'show', '--name-only', '--format=', 'HEAD')
+    .split('\n').filter(Boolean).sort();
 }
 
 test('the green path: the named files are staged, committed, and the digest names the sha', () => {
@@ -240,4 +241,59 @@ test('the bin never spells `git add -A`, `.` or `--amend`', () => {
     + 'edit that would undo the guard, so the source is the only place to pin it');
   assert.ok(!/--amend/.test(src), 'rewriting a commit is not this command\'s job');
   assert.ok(!/['"]push['"]/.test(src), 'pushing is the operator\'s');
+});
+
+test('a name holding a glob metacharacter stages that file and NOT its pathspec matches', () => {
+  const root = mkRepo();
+  try {
+    put(root, 'a[1].txt', 'first\n');
+    put(root, 'a1.txt', 'second\n');
+    git(root, '--literal-pathspecs', 'add', '--', 'a[1].txt', 'a1.txt');
+    git(root, 'commit', '-q', '-m', 'both files');
+    put(root, 'a[1].txt', 'first edited\n');
+    put(root, 'a1.txt', 'second edited\n');
+    const r = run(root, { paths: ['a[1].txt'], message: 'bracket: bump' });
+    assert.strictEqual(r.code, 0, r.digest);
+    assert.deepStrictEqual(headFiles(root), ['a[1].txt'],
+      'ENTER: `git add -- <name>` reads the name as a PATHSPEC, so `a[1].txt` matches `a1.txt` too — '
+      + 'the unnamed sibling rides the commit AFTER the pre-add guard passed on the names it was given, '
+      + 'which is the one hole that guard cannot see');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a non-ASCII name the payload NAMED is committed, not refused as already staged', () => {
+  const root = mkRepo();
+  try {
+    put(root, 'résumé.txt', 'one\n');
+    git(root, 'add', '--', 'résumé.txt');
+    git(root, 'commit', '-q', '-m', 'add the file');
+    put(root, 'résumé.txt', 'two\n');
+    git(root, 'add', '--', 'résumé.txt');
+    const r = run(root, { paths: ['résumé.txt'], message: 'resume: bump' });
+    assert.strictEqual(r.code, 0,
+      `ENTER: core.quotePath quotes the index name to "r\\303\\251sum\\303\\251.txt", which matches no `
+      + `entry in the payload's paths — so the file the hand DID name reads as one it did not and its `
+      + `own commit is refused. Got: ${r.digest}`);
+    assert.deepStrictEqual(headFiles(root), ['résumé.txt']);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a wide pre-staged index caps the list, so the instruction survives the 400-char slice', () => {
+  const root = mkRepo();
+  try {
+    const extras = [];
+    for (let i = 0; i < 10; i += 1) {
+      const rel = `lib/a-rather-long-unnamed-module-name-number-${i}.js`;
+      put(root, rel, `'use strict';\nmodule.exports = ${i};\n`);
+      extras.push(rel);
+    }
+    git(root, 'add', '--', ...extras);
+    put(root, 'lib/widget.js', "'use strict';\nmodule.exports = 2;\n");
+    const r = run(root, { paths: ['lib/widget.js'], message: 'widget: bump' });
+    assert.strictEqual(r.code, 1);
+    assert.ok(r.digest.endsWith('commit or reset them first'),
+      `the actionable tail is what the seat needs and a 400-char slice takes the TAIL; got: ${r.digest}`);
+    assert.ok(r.digest.includes(', +7 more'), 'the overflow is counted rather than silently dropped');
+    assert.ok(r.digest.length <= 400, `the whole sentence must clear the cap; got ${r.digest.length}`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

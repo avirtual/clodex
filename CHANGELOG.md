@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `clodex-commit` handles file names with glob characters or non-ASCII, and its refusals stay readable on a wide index; the slow-gate digest preserves its run for the report; a re-run review round no longer inherits the previous attempt's delta diff.
+
 ## 5.76.0 — 2026-09-18
 
 - Cold reviewers read less: the review diff carries 20 lines of context per hunk, and a second round gets a delta diff of what changed since the first.

@@ -78,6 +78,8 @@ for (const kit of ['clodex', 'default']) {
   });
 }
 
+const STOCK_AGENTS = { lead: [], hand: ['clodex-redproof', 'clodex-locate'] };
+
 test('the default kit lifts the plugin and builtin restrictions, and keeps the skill/tool denials', () => {
   for (const stem of ['lead', 'hand']) {
     const tpl = readTpl('default', stem);
@@ -96,6 +98,9 @@ test('the default kit lifts the plugin and builtin restrictions, and keeps the s
     // unions the seat's list with the `sessions:`-scoped auto-includes, so a
     // name here GRANTS. A default kit that lifted the stock grants would boot
     // a hand whose prompt names two agents it does not have.
+    assert.deepStrictEqual(stock.agents, STOCK_AGENTS[stem],
+      `ENTER: stock ${stem}'s agent grant is the thing the kit is compared AGAINST, so a stock list `
+      + 'that was emptied or renamed makes the next line pass by matching an equally empty kit list');
     assert.deepStrictEqual(tpl.agents, stock.agents);
 
     // `plugins` is the key where `[]` is the RESTRICTION: seatHasPlugin reads a
