@@ -5397,6 +5397,7 @@ function createSessionManager(deps) {
 
     _handleExecIntent(session, cmd, rawBody) {
       const reply = (msg) => this._injectText(session, `[agent:exec] ${msg}`, { parkable: true });
+      const notice = (msg) => this._injectTextPassive(session, `[agent:exec] ${msg}`);
       const who = session.name;
       const fail = (msg) => {
         reply(`${cmd}: ${msg}`);
@@ -5518,11 +5519,11 @@ function createSessionManager(deps) {
             ? Math.floor(entry.statusEveryMs) : EXEC_STATUS_DEFAULT_MS;
           const everyLabel = statusEveryMs % 60000 === 0
             ? `${statusEveryMs / 60000}m` : `${Math.round(statusEveryMs / 1000)}s`;
-          reply(`${cmd}: started (run #${seq}, pid ${child.pid}, ceiling ${ceilingMin}m). `
+          notice(`${cmd}: started (run #${seq}, pid ${child.pid}, ceiling ${ceilingMin}m). `
             + 'Do not poll, do not re-emit — END YOUR TURN. '
             + `A status line arrives every ${everyLabel} and the result when it ends.`);
           statusTimer = setInterval(() => {
-            reply(`${cmd}: still running — ${execElapsedLabel(Date.now() - startedAt)} `
+            notice(`${cmd}: still running — ${execElapsedLabel(Date.now() - startedAt)} `
               + `of a ${ceilingMin}m ceiling (run #${seq}). Do not poll; END YOUR TURN.`);
           }, statusEveryMs);
           if (statusTimer && typeof statusTimer.unref === 'function') statusTimer.unref();
@@ -7120,6 +7121,25 @@ function createSessionManager(deps) {
       this._broadcast('ipc-message', {
         ts: Date.now(), from: senderName, to: targetName, kind: 'passive',
         body: body.length > 200 ? `${body.slice(0, 200)}…` : body,
+      });
+    }
+
+    _injectTextPassive(session, text) {
+      if (!session || session._dead) return;
+      if (session.agentType !== 'claude') {
+        this._injectText(session, text, { parkable: true });
+        return;
+      }
+      try {
+        parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), null, true, this._bornFor(session.name));
+      } catch (e) {
+        log.error('inject', `passive park failed for ${session.name}: ${e.message} — delivering normally`);
+        this._injectText(session, text, { parkable: true });
+        return;
+      }
+      this._broadcast('ipc-message', {
+        ts: Date.now(), from: 'clodex', to: session.name, kind: 'passive',
+        body: text.length > 200 ? `${text.slice(0, 200)}…` : text,
       });
     }
 

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Team seats spend fewer turns: exec start and progress notices ride with the seat's next turn instead of waking it, the test digest names a slow-gate trip as not a failure, and a new `clodex-commit` command ratchets, stages named files and commits in one step.
+
 ## 5.75.0 — 2026-09-17
 
 - **`clodexctl exec` waits for the whole turn.** The wire's activity event now reports a turn end only when the agent actually stops, so `exec` (and the in-app console) returns with the full reply instead of settling on the first tool call.

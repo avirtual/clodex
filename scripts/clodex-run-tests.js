@@ -446,6 +446,20 @@ if (code === 0 && fail === 0) {
   emit(`[${LEAF}] ${TAG}${pass}/${tests} green (${wallShow(wallMs)})${breakdown}${slow}`, 0);
 }
 
+const SLOW_RE = /^SLOW: (\d+)ms (.+)$/gm;
+if (code !== 0 && fail === 0) {
+  const slow = [];
+  for (let m = SLOW_RE.exec(stdout); m; m = SLOW_RE.exec(stdout)) slow.push(`${m[2]} ${m[1]}ms`);
+  if (slow.length) {
+    emit(
+      `[${LEAF}] ${TAG}${pass}/${tests} green, 0 failing — SLOW GATE (not a test failure): ${slow.join('; ')}`
+      + ' — a test outside your diff tripping the bar is box load: do not re-run, name it in your report',
+      exitCode,
+      400,
+    );
+  }
+}
+
 const names = [];
 const NAME_RE = /^ *✖ (.+?) \(\d+(?:\.\d+)?ms\)\s*$/gm;
 for (let m = NAME_RE.exec(hay); m; m = NAME_RE.exec(hay)) names.push(m[1]);

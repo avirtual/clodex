@@ -19,6 +19,7 @@ const { EventEmitter } = require('node:events');
 
 const { createSessionManager } = require('../session-manager');
 const { isFilenameToken, parseAndValidate, validateExecDef } = require('../exec-schema');
+const { parkDelivery } = require('../pending-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // The dispatcher spawns on setImmediate, and the spawn itself is preceded by one
@@ -35,10 +36,13 @@ function harness(entry, { cwd = '/proj/alpha' } = {}) {
   fs.mkdirSync(execDir, { recursive: true });
   fs.writeFileSync(path.join(execDir, 'digest.json'), JSON.stringify(entry));
 
+  const PENDING_DIR = path.join(REGISTRY_DIR, 'pending');
   const children = [];
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     REGISTRY_DIR,
+    PENDING_DIR,
+    parkDelivery,
     isFilenameToken,
     parseAndValidate,
     resolveTeam: () => ({ name: 't', root: '/proj/alpha' }),
@@ -65,7 +69,14 @@ function harness(entry, { cwd = '/proj/alpha' } = {}) {
   m._broadcast = () => {};
   const session = { name: 'a', agentType: 'claude', cwd };
   const cleanup = () => fs.rmSync(REGISTRY_DIR, { recursive: true, force: true });
-  return { m, session, replies, children, cleanup };
+  const parked = () => {
+    const dir = path.join(PENDING_DIR, 'a');
+    let files = [];
+    try { files = fs.readdirSync(dir); } catch { return []; }
+    return files.filter((f) => f.endsWith('.json') && !f.startsWith('.')).sort()
+      .map((f) => ({ file: f, text: JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')).text }));
+  };
+  return { m, session, replies, parked, children, cleanup };
 }
 
 const LONG = {
@@ -78,46 +89,76 @@ const SHORT = { ...LONG, timeoutMs: 10000 };
 
 test('a long run acknowledges its start with the run number, pid and ceiling', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
-  const { m, session, replies, cleanup } = harness(LONG);
+  const { m, session, replies, parked, cleanup } = harness(LONG);
   try {
     m._handleExecIntent(session, 'digest', '{}');
     await settle();
 
     // ENTER: without this line the seat has NOTHING between the intent and the
     // digest minutes later, which is the silence that makes it poll.
-    assert.strictEqual(replies.length, 1, `exactly the ack, got ${JSON.stringify(replies)}`);
-    const ack = replies[0];
+    const acks = parked();
+    assert.strictEqual(acks.length, 1, `exactly the ack, got ${JSON.stringify(acks)}`);
+    const ack = acks[0].text;
     assert.match(ack, /^\[agent:exec\] digest: started \(run #1, pid 4242, ceiling 7m\)\./,
       'the ack names the run, the pid and the ceiling in minutes');
     assert.match(ack, /END YOUR TURN/, 'and tells the seat what to do instead of polling');
     assert.match(ack, /every 3m/, 'the default cadence is stated so the seat knows what to expect');
+    assert.match(acks[0].file, /\.passive\.json$/,
+      'the ack is progress, not a result: waking the seat for it buys one whole request that says '
+      + '"ending turn", and `.passive.` is the only thing on disk saying it rides the next organic turn');
+    assert.deepStrictEqual(replies, [], 'and nothing was injected actively');
   } finally { cleanup(); }
 });
 
 test('status lines tick with rising elapsed time, and stop dead at exit', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
-  const { m, session, replies, children, cleanup } = harness(LONG);
+  const { m, session, parked, children, cleanup } = harness(LONG);
   try {
     m._handleExecIntent(session, 'digest', '{}');
     await settle();
 
     t.mock.timers.tick(180000);
     t.mock.timers.tick(180000);
-    const status = replies.filter((r) => r.includes('still running'));
+    const status = parked().filter((r) => r.text.includes('still running'));
     // ENTER: two ticks must yield two DIFFERENT elapsed readings — a status line
     // that always says the same thing cannot distinguish a live run from a wedged
     // one, which is the whole question the seat is asking.
     assert.strictEqual(status.length, 2, `two ticks, two status lines, got ${status.length}`);
-    assert.match(status[0], /still running — 3m 00s of a 7m ceiling \(run #1\)/);
-    assert.match(status[1], /still running — 6m 00s of a 7m ceiling \(run #1\)/);
+    assert.match(status[0].text, /still running — 3m 00s of a 7m ceiling \(run #1\)/);
+    assert.match(status[1].text, /still running — 6m 00s of a 7m ceiling \(run #1\)/);
+    for (const s of status) {
+      assert.match(s.file, /\.passive\.json$/, 'a progress line may not wake the seat either');
+    }
 
     children[0].emit('exit', 0, null);
-    const after = replies.length;
+    const after = parked().length;
     t.mock.timers.tick(180000);
     // ENTER: a status line landing AFTER the result would tell the seat its
     // finished run is still going — worse than no status at all.
-    assert.strictEqual(replies.length, after,
-      `no status after the result, got ${JSON.stringify(replies.slice(after))}`);
+    assert.strictEqual(parked().length, after,
+      `no status after the result, got ${JSON.stringify(parked().slice(after))}`);
+  } finally { cleanup(); }
+});
+
+test('the ack rides passively while the RESULT still wakes the seat', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const { m, session, replies, parked, children, cleanup } = harness(LONG);
+  try {
+    m._handleExecIntent(session, 'digest', '{}');
+    await settle();
+    t.mock.timers.tick(180000);
+
+    assert.deepStrictEqual(replies, [],
+      'ENTER: nothing active before the run ends — ack and status cost the seat nothing');
+    assert.strictEqual(parked().length, 2, 'ack + one status, both parked');
+
+    children[0].stderr.emit('data', '811/811 green\n');
+    children[0].emit('exit', 0, null);
+
+    assert.deepStrictEqual(replies, ['[agent:exec] digest: run #1 811/811 green'],
+      'the digest the seat is waiting for must still arrive under its own power, or the run finishes '
+      + 'into silence and the seat is back to polling');
+    assert.strictEqual(parked().length, 2, 'and it was not parked');
   } finally { cleanup(); }
 });
 
@@ -153,7 +194,7 @@ test('a nonzero exit is stamped with the same run number through fail()', async 
 
 test('a short run stays silent — no ack, no status, whatever the def asks for', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
-  const { m, session, replies, cleanup } = harness({ ...SHORT, statusEveryMs: 30000 });
+  const { m, session, replies, parked, cleanup } = harness({ ...SHORT, statusEveryMs: 30000 });
   try {
     m._handleExecIntent(session, 'digest', '{}');
     await settle();
@@ -161,8 +202,11 @@ test('a short run stays silent — no ack, no status, whatever the def asks for'
     // report that it started. The floor is the ceiling, not the cadence: even an
     // explicit statusEveryMs buys nothing below it.
     assert.deepStrictEqual(replies, [], 'nothing at start');
+    assert.deepStrictEqual(parked(), [],
+      'silent means silent in BOTH classes — a parked ack is cheap, not free: it still lands in a prompt');
     t.mock.timers.tick(9999);
     assert.deepStrictEqual(replies, [], 'and nothing on a tick inside the ceiling');
+    assert.deepStrictEqual(parked(), [], 'still nothing parked');
   } finally { cleanup(); }
 });
 

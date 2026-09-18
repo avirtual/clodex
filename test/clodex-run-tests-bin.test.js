@@ -180,6 +180,53 @@ test('a red run: the failing NAMES ride the digest and the exit code survives', 
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+const SLOW_GATE_BODY = [
+  "console.log('SLOW: 7400ms alpha waits on a real timer');",
+  "console.log('SLOW: inject the clock or constant through a seam, or list the test in "
+    + "test/slow-tests.json with the mechanism it waits on');",
+  "console.error(' ✖ alpha waits on a real timer (7400ms)');",
+  "console.log('TOTALS: 3 pass, 0 fail, 3 tests');",
+].join('\n');
+
+test('exit 1 with nothing failing and SLOW lines is named a slow-gate trip, not a failure', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, { body: SLOW_GATE_BODY, exit: 1 });
+    const r = run(root, '{}');
+    assert.strictEqual(
+      r.digest,
+      `[${path.basename(root)}] 3/3 green, 0 failing — SLOW GATE (not a test failure): `
+      + 'alpha waits on a real timer 7400ms — a test outside your diff tripping the bar is box load: '
+      + 'do not re-run, name it in your report',
+      'ENTER: read as "3/3 green, 0 failing" beside exit 1, a hand cannot tell what broke and re-runs '
+      + 'the whole suite — three tickets paid for exactly that',
+    );
+    assert.strictEqual(r.code, 1, 'still red: the merge gate reads the exit code, not the wording');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('exit 1 with nothing failing and NO slow lines keeps the old wording', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, {
+      body: [
+        "console.error(' ✖ alpha (1.2ms)');",
+        "console.log('TOTALS: 3 pass, 0 fail, 3 tests');",
+      ].join('\n'),
+      exit: 1,
+    });
+    const r = run(root, '{}');
+    assertDigest(
+      r.digest,
+      `[${path.basename(root)}] 3/3 green, 0 failing (${WALL}) (${KEEP_SHOW}): alpha`,
+    );
+    assert.ok(!r.digest.includes('SLOW GATE'),
+      'the slow-gate arm keys on the SLOW lines, not merely on exit != 0 with 0 failing: an escape or '
+      + 'a crashed file lands here too, and calling one of those a slow-gate trip is the same lie in reverse');
+    assert.strictEqual(r.code, 1);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('an EMPTY tree is refused and the runner is never spawned', () => {
   // The shape a caller produces by templating an unset variable, `{"tree":"$WT"}`.
   // Falling through to the root here would hand a caller who asked about a
