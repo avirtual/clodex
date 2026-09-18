@@ -21,7 +21,7 @@ Clodex runs Claude Code and Codex sessions as terminals and adds three layers ar
 
 *Left: sessions grouped by project with context fill and cache warmth, a peered box (`TEST`) contributing its sessions. Centre: the session's terminal, with wire telemetry (model, context, turn, spend, cache state) underneath. Bottom: the IPC bus, where a lead dispatches a review to a reviewer it spawned and reads the verdict back.*
 
-Watch it run: [Clodex adding a feature to itself](https://github.com/avirtual/clodex/releases/download/v5.75.0/clodex-builds-itself-2x-cut3.mp4), six minutes at 2x, from ticket to merge.
+Watch it run: [Clodex adding a feature to itself](https://github.com/avirtual/clodex/releases/download/v5.75.0/clodex-builds-itself-2x-cut3.mp4), six minutes at 2x: a hand reports done, a reviewer accepts, the branch merges, and the next ticket starts.
 
 ## Install
 
