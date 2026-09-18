@@ -451,9 +451,6 @@ function mkLoop({
   // models a system where no stall episode is ever stamped — under which the
   // one-nudge-per-episode assertions below would fail for a reason that exists
   // only in the fixture.
-  // `tag` and `urgent` are recorded ALONGSIDE the body, not merged into the
-  // pushed row: the deepStrictEqual pins below assert `gated` entries whole,
-  // and widening that shape would rewrite pins that are not about either.
   m._gatedDeliver = (target, sender, body, urgent, tag, onWrite) => {
     gated.push({ target, sender, body }); tags.push(tag); urgents.push(urgent);
     if (typeof onWrite === 'function') onWrite();

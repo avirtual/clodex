@@ -253,12 +253,12 @@ test('t995 validateAgainstSchema: an array with no items accepts mixed elements'
   const schema = { type: 'array', maxItems: 5 };
   assert.strictEqual(validateAgainstSchema(schema, ['a', 1, true, null, { x: 1 }]).ok, true);
   assert.strictEqual(validateAgainstSchema(schema, []).ok, true);
+  assert.strictEqual(validateAgainstSchema({ type: 'array', items: null }, ['x']).ok, true);
 });
 
 test('t995 validateAgainstSchema: an unknown type INSIDE items still fails closed', () => {
   const schema = { type: 'array', items: { type: 'weird' } };
   assert.strictEqual(validateAgainstSchema(schema, ['x']).error, 'payload[0]: unknown schema type "weird"');
-  assert.strictEqual(validateAgainstSchema({ type: 'array', items: null }, ['x']).ok, true);
 });
 
 test('t995 payloadForm: an array-of-string field renders a copyable element shape', () => {
