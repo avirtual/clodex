@@ -195,7 +195,7 @@ test('exit 1 with nothing failing and SLOW lines is named a slow-gate trip, not 
     const r = run(root, '{}');
     assert.strictEqual(
       r.digest,
-      `[${path.basename(root)}] 3/3 green, 0 failing — SLOW GATE (not a test failure): `
+      `[${path.basename(root)}] 3/3 green, 0 failing (${KEEP_SHOW}) — SLOW GATE (not a test failure): `
       + 'alpha waits on a real timer 7400ms — a test outside your diff tripping the bar is box load: '
       + 'do not re-run, name it in your report',
       'ENTER: read as "3/3 green, 0 failing" beside exit 1, a hand cannot tell what broke and re-runs '
@@ -260,7 +260,7 @@ test('a stale-allowlist-only trip is named a slow-gate trip too, not left as bar
     const r = run(root, '{}');
     assert.strictEqual(
       r.digest,
-      `[${path.basename(root)}] 3/3 green, 0 failing — SLOW GATE (not a test failure): `
+      `[${path.basename(root)}] 3/3 green, 0 failing (${KEEP_SHOW}) — SLOW GATE (not a test failure): `
       + 'stale allowlist entry gamma sleeps — a test outside your diff tripping the bar is box load: '
       + 'do not re-run, name it in your report',
       'run-tests.js prints a stale entry with no <ms>ms, so a slow-gate regex keyed only on a duration '
@@ -287,6 +287,30 @@ test('many offenders: the LIST is capped, so the do-not-re-run instruction alway
       'the instruction is the TAIL, and a character cap slices the tail: many offenders is exactly the '
       + 'box-load case the sentence describes, so it may not be what falls off');
     assert.ok(r.digest.includes('; +2 more'), 'the overflow is counted rather than silently dropped');
+    assert.strictEqual(r.code, 1);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a slow-gate trip PRESERVES its run, so the offenders the digest cut are still readable', () => {
+  const root = mkRoot();
+  try {
+    const names = ['alpha waits on a real timer', 'beta polls a lock', 'gamma sleeps',
+      'delta drains a queue'];
+    writeStub(root, {
+      body: [
+        ...names.map((n) => `console.log('SLOW: 7400ms ${n}');`),
+        "console.log('TOTALS: 9 pass, 0 fail, 9 tests');",
+      ].join('\n'),
+      exit: 1,
+    });
+    const r = run(root, '{}');
+    assert.ok(r.digest.includes('; +1 more'),
+      `ENTER: fewer than four offenders and the digest cuts nothing, so this pins no loss; got: ${r.digest}`);
+    assert.ok(r.digest.includes(`(${KEEP_SHOW})`),
+      'the arm tells the hand to NAME the offenders while cutting them from its own line — without the '
+      + `kept-at suffix the cut ones are readable nowhere; got: ${r.digest}`);
+    assert.ok(r.kept, 'and last.txt must actually exist: a path named for a file nobody wrote is worse than none');
+    assert.ok(r.kept.includes(names[3]), 'the preserved body carries the offender the digest dropped');
     assert.strictEqual(r.code, 1);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

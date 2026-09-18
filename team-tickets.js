@@ -7663,19 +7663,28 @@ function createTicketMethods(deps, shared) {
       if (!prevHeadSha || !branch || Number(round) < 2) return none;
       const dest = this._ticketDiffDest(team, ticket);
       if (!dest.ok) return none;
+      const file = path.join(dest.dir, `review-${ticket.id}-r${round}.delta.diff`);
+      const dropStale = () => {
+        try { fs.unlinkSync(file); } catch (e) {
+          if (e.code !== 'ENOENT') {
+            log.error('ticket', `ticket ${ticket.id} r${round}: stale delta unlink failed: ${e.message}`);
+          }
+        }
+        this._stampRoundFile(team, ticket.id, round, 'deltaFile', null);
+        return none;
+      };
       const d = await gitWorktree.diffText(team.root, prevHeadSha, branch)
         .catch((e) => ({ ok: false, text: null, error: e.message }));
       if (!d.ok || !d.text || !d.text.trim()) {
         log.info('ticket', `ticket ${ticket.id} r${round}: no delta diff written (${d.ok ? 'empty range' : d.error})`);
-        return none;
+        return dropStale();
       }
-      const file = path.join(dest.dir, `review-${ticket.id}-r${round}.delta.diff`);
       try {
         ensureDir(dest.dir);
         fs.writeFileSync(file, d.text);
       } catch (e) {
         log.error('ticket', `ticket ${ticket.id} r${round}: delta diff write failed: ${e.message}`);
-        return none;
+        return dropStale();
       }
       this._stampRoundFile(team, ticket.id, round, 'deltaFile', path.basename(file));
       return { ok: true, path: file };

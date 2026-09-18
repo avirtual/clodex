@@ -68,7 +68,7 @@ function resolveTree(payload) {
 }
 
 function git(tree, args) {
-  return spawnSync('git', ['-C', tree, ...args], { encoding: 'utf8' });
+  return spawnSync('git', ['-C', tree, '--literal-pathspecs', ...args], { encoding: 'utf8' });
 }
 
 const payload = parsePayload(readStdin());
@@ -122,12 +122,14 @@ if (delta.status !== 0) {
   emit(`refused: comment ratchet +${added} in ${files.join(', ') || '(unnamed file)'}`, 1);
 }
 
-const indexNames = (t) => String(git(t, ['diff', '--cached', '--name-only']).stdout || '')
+const indexNames = (t) => String(git(t, ['-c', 'core.quotePath=false', 'diff', '--cached', '--name-only']).stdout || '')
   .split('\n').map((l) => l.trim()).filter(Boolean);
 
 const preStaged = indexNames(tree).filter((f) => !paths.includes(f));
 if (preStaged.length) {
-  emit(`refused: the index already holds files you did not name — ${preStaged.join(', ')}; `
+  const shown = preStaged.slice(0, 3).join(', ')
+    + (preStaged.length > 3 ? `, +${preStaged.length - 3} more` : '');
+  emit(`refused: the index already holds files you did not name — ${shown}; `
     + 'commit or reset them first', 1);
 }
 

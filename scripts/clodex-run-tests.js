@@ -455,8 +455,9 @@ if (code !== 0 && fail === 0 && !ESCAPED_RE.test(stdout) && !ESCAPED_RE.test(std
   }
   if (slow.length) {
     const shown = slow.slice(0, 3).join('; ') + (slow.length > 3 ? `; +${slow.length - 3} more` : '');
+    const at = keptFor(`${pass}/${tests} green, 0 failing — slow gate`, false);
     emit(
-      `[${LEAF}] ${TAG}${pass}/${tests} green, 0 failing — SLOW GATE (not a test failure): ${shown}`
+      `[${LEAF}] ${TAG}${pass}/${tests} green, 0 failing${at} — SLOW GATE (not a test failure): ${shown}`
       + ' — a test outside your diff tripping the bar is box load: do not re-run, name it in your report',
       exitCode,
     );

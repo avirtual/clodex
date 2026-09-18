@@ -676,6 +676,46 @@ test('round 2 with NO headSha on record writes no delta and prints no DELTA line
   assert.ok(prompt.includes('review-t1-r2.diff'), 'ENTER: it is still a real round-2 scope');
 });
 
+test('a round that fails to write its delta CLEARS the previous attempt\'s file and stamp', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'round one\n');
+  commitOnBranch(repo.dir, 'tl-1', 'fix.txt', 'the round two fix\n');
+  const f = mkLoop({ repo });
+  const gone = '0'.repeat(40);
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'verify', report: 'r2', reportedBy: 'team-hand',
+    reviewRound: 1, rounds: rounds({ headSha: gone }),
+  }]);
+  const stale = pathReal.join(
+    require('../clodex-paths').projectDirFor(f.home, repo.dir),
+    'tasks', 'loop-fixture', 'review-t1-r2.delta.diff',
+  );
+  fsReal.mkdirSync(pathReal.dirname(stale), { recursive: true });
+  fsReal.writeFileSync(stale, 'the delta of an EARLIER attempt at this same round\n');
+  assert.deepStrictEqual(f.diffFile().map((q) => pathReal.basename(q)), ['review-t1-r2.delta.diff'],
+    'ENTER: the stale file must sit where the loop writes THIS round\'s delta, or its removal is vacuous');
+  const r2before = f.one().rounds.find((r) => r.round === 2);
+  f.tstore.save(f.team.root, f.tstore.load(f.team.root).map((t) => ({
+    ...t,
+    rounds: t.rounds.map((r) => (r.round === 2 ? { ...r2before, deltaFile: 'review-t1-r2.delta.diff' } : r)),
+  })));
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.ok(!fsReal.existsSync(stale),
+    'ENTER: the round was re-run after a rebase, so prevHeadSha no longer resolves and this attempt '
+    + 'wrote no delta — the file left on disk is the PREVIOUS attempt\'s, taken from a head that is gone');
+  const r2 = f.one().rounds.find((r) => r.round === 2);
+  assert.strictEqual(r2.deltaFile, null,
+    'and the stamp goes with it: a surviving basename points the scope at a delta from a different head, '
+    + 'which reads as this round\'s fixes and is not');
+
+  const prompt = f.created[0].systemPrompt;
+  assert.ok(!prompt.includes('DELTA:'), 'no DELTA line names a file this round did not write');
+  assert.ok(prompt.includes('review-t1-r2.diff'), 'ENTER: it is still a real round-2 scope');
+});
+
 test('the reviewer is spawned with the constructed scope, carrying the report verbatim', async () => {
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
@@ -696,8 +736,8 @@ test('the reviewer is spawned with the constructed scope, carrying the report ve
 
 // SIBLING PIN: `--no-ext-diff`, another mandatory flag in this leaf's argv, is
 // pinned in test/ticket-auto-merge.test.js ("the diff leaf DEFEATS an external
-// diff driver"), and `-U20` in the subject directly below. Someone editing that
-// argv greps one flag and lands on one of the three; each names the others.
+// diff driver"), and `-U20` in "-U20 gives the reviewer 20 lines of context per
+// hunk". Editing that argv greps one flag and lands on one; each names the rest.
 test('--text keeps a NUL-containing file reviewable instead of "Binary files differ"', async () => {
   // The spec calls --text mandatory and not style, and this is why: git decides
   // binary-ness from content, so ONE NUL byte in a source file collapses the
