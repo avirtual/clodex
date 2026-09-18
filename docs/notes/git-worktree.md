@@ -13,3 +13,15 @@ The `-c user.name` / `-c user.email` pair on the commit is load-bearing: a box
 with no configured git identity (CI, docker) fails `git commit` and would leave
 a commitless repo behind — exactly the state `hasCommit` exists to keep teams
 out of.
+
+## diffText
+
+`-U20` is measured, not taste: over 16 cold reviewer rounds, 55 of 87 ranged
+source reads of a touched file landed within 25 lines of a hunk the diff already
+carried. At git's default 3 the diff answers almost none of them. The trade is
+size — the largest observed round-1 diff (96KB) roughly doubles.
+
+`headSha` is the full sha the `head` ref resolved to, taken from the `rev-parse
+--verify` already run for the existence check. Callers stamp it on a record that
+outlives the branch's position, where the ref name would later resolve somewhere
+else. Null on every failure arm, so a failed diff cannot be stamped.

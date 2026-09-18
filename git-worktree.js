@@ -481,16 +481,18 @@ async function diffText(cwd, base, head, { maxBuffer = 32 * 1024 * 1024 } = {}) 
   const repo = await repoToplevel(cwd);
   if (!repo) return { ok: false, text: null, error: 'not a git repository' };
   if (!base || !head) return { ok: false, text: null, error: 'no base or head given' };
+  const resolved = {};
   for (const ref of [base, head]) {
     const v = await git(repo, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
-    if (!v.ok) return { ok: false, text: null, error: `ref does not resolve: ${ref}` };
+    if (!v.ok) return { ok: false, text: null, headSha: null, error: `ref does not resolve: ${ref}` };
+    resolved[ref] = v.stdout.trim() || null;
   }
   // These flags are QUOTED back to the lead by team-tickets.js's CHECK 4 failure
   // messages so they can re-run the command by hand. That copy went stale once;
   // sweep it when this argv changes.
-  const r = await git(repo, ['diff', '--text', '--no-ext-diff', `${base}..${head}`], { maxBuffer });
-  if (!r.ok) return { ok: false, text: null, error: (r.stderr || 'git diff failed').trim() };
-  return { ok: true, text: r.stdout };
+  const r = await git(repo, ['diff', '--text', '--no-ext-diff', '-U20', `${base}..${head}`], { maxBuffer });
+  if (!r.ok) return { ok: false, text: null, headSha: null, error: (r.stderr || 'git diff failed').trim() };
+  return { ok: true, text: r.stdout, headSha: resolved[head], error: null };
 }
 
 // Which branch the checkout at `cwd` is actually ON, and its HEAD sha.

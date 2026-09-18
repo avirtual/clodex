@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Cold reviewers read less: the review diff carries 20 lines of context per hunk, and a second round gets a delta diff of what changed since the first.
+
 ## 5.75.0 — 2026-09-17
 
 - **`clodexctl exec` waits for the whole turn.** The wire's activity event now reports a turn end only when the agent actually stops, so `exec` (and the in-app console) returns with the full reply instead of settling on the first tool call.
