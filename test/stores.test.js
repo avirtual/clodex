@@ -2382,9 +2382,9 @@ test('seed: the hand prompts carry the delegate-lookups-and-verify rule', () => 
     'and what must stay on the hand itself');
   assert.match(hand, /never the full suite from an\s+agent/,
     'the full suite still goes through the granted command only, never a delegated agent');
-  assert.match(hand, /spawn `clodex-locate`/,
+  assert.match(hand, /spawn `clodex-agents:clodex-locate`/,
     'LOCATE names the baked agent, not a protocol the hand has to write out');
-  assert.match(hand, /spawn `clodex-redproof`/,
+  assert.match(hand, /spawn `clodex-agents:clodex-redproof`/,
     'and so does VERIFY');
   assert.doesNotMatch(append, /fails ~44 tests/,
     'the stale claim that a raw run always fails ~44 tests on missing deps is gone');

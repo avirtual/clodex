@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { parseAgentFrontmatter } = require('../agents-util');
+const { parseAgentFrontmatter, qualifiedAgentName } = require('../agents-util');
 const { initStores } = require('../stores');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -39,6 +39,33 @@ test('the redproof def forbids the full suite and a dirty tree; locate stays rea
   const locate = fs.readFileSync(path.join(AGENTS_SRC, 'clodex-locate.md'), 'utf-8');
   assert.match(locate, /read-only/);
   assert.match(locate, /twenty lines/, 'the context cap is what keeps a lookup cheaper than the read');
+});
+
+const HAND_PROMPTS = [
+  path.join(__dirname, '..', 'resources', 'library', 'prompts', 'system', 'clodex-team-hand.md'),
+  path.join(KIT_DIR, 'clodex', 'prompts', 'system', 'clodex-team-hand.md'),
+  path.join(KIT_DIR, 'default', 'prompts', 'system', 'hand.md'),
+];
+
+test('every hand prompt names the agents in the QUALIFIED form that dispatches', () => {
+  const names = Object.keys(EXPECTED);
+  for (const file of HAND_PROMPTS) {
+    const text = fs.readFileSync(file, 'utf-8');
+    const label = path.relative(path.join(__dirname, '..'), file);
+    for (const name of names) {
+      const hits = [...text.matchAll(new RegExp(name, 'g'))];
+      assert.ok(hits.length > 0, `ENTER: ${label} must mention ${name}, or this asserts nothing`);
+      for (const hit of hits) {
+        const prefix = text.slice(Math.max(0, hit.index - 'clodex-agents:'.length), hit.index);
+        assert.strictEqual(prefix, 'clodex-agents:',
+          `${label} names ${name} bare at index ${hit.index} — a library agent answers to `
+          + `${qualifiedAgentName(name)} and to no bare alias, so that delegation silently `
+          + 'dispatches nothing and no warning surface reports it');
+      }
+    }
+    assert.ok(text.includes(qualifiedAgentName('clodex-locate')),
+      `${label}: the qualified literal must be the one agents-util builds`);
+  }
 });
 
 test('every hand template grants both agents — shipped and every kit', () => {

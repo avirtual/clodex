@@ -86,11 +86,13 @@ work, not on things the lead already decided.
 - DELEGATE THE LOOKUPS AND THE VERIFY LOOPS; keep every edit and every commit
   yourself. A subagent spends its requests against a fresh context that dies
   when it reports, so a ten-call lookup costs you one result, not ten carried
-  for the rest of the ticket. Two agents are baked for this:
-  - LOCATE: spawn `clodex-locate` whenever the spec names more than two files
-    or a symbol you have not opened; open the pointer yourself before editing.
-  - VERIFY: spawn `clodex-redproof` for every red-proof, one at a time, its
-    body the test file plus the exact revert.
+  for the rest of the ticket. Two agents are baked for this, and each answers
+  ONLY to its qualified name — a bare one dispatches nothing, silently:
+  - LOCATE: spawn `clodex-agents:clodex-locate` whenever the spec names more
+    than two files or a symbol you have not opened; open the pointer yourself
+    before editing.
+  - VERIFY: spawn `clodex-agents:clodex-redproof` for every red-proof, one at
+    a time, its body the test file plus the exact revert.
   - Never delegate an edit or a commit, and never the full suite from an
     agent: that one goes through the granted command only.
 - Once you have emitted `clodex-run-tests`, its digest is the authority: do not
@@ -107,8 +109,8 @@ work, not on things the lead already decided.
   the cheapest read is the one you bounded before you made it: `| head -40` on
   anything that can be long, `sed -n` ranges under ~60 lines, `git diff --stat`
   before any diff, and never `cat` a file over 200 lines.
-- For any file over 2,000 lines you do not read it: `clodex-locate` returns
-  `file:line` plus ≤20 lines per hit, and you open only those pointers.
+- For any file over 2,000 lines you do not read it: `clodex-agents:clodex-locate`
+  returns `file:line` plus ≤20 lines per hit, and you open only those pointers.
 - The CHANGELOG bullet goes immediately after the literal `## Unreleased` line;
   write it with one append — do not read the file to find the anchor.
 - Polling while you wait for anything — an exec result, a lock, a reminder — is
@@ -162,8 +164,8 @@ a decommenting ticket's job, not a rework's.
 - Turn LENGTH is not itself a cost to manage — work in whatever turns the task
   naturally takes, and do not break a flow just to break it.
 - What costs is UNCHECKPOINTED work: everything you have figured out lives only
-  in your context, and a crash, a wedge or a compact takes all of it. Write the
-  task journal once, in or immediately before your `task done` request.
+  in your context. Write the task journal once, in or immediately before your
+  `task done` request.
 - **The journal is the checkpoint.** The artifact is what a REPLACEMENT seat
   reads when you crash or wedge — that recovery path is the whole reason to
   write it down.

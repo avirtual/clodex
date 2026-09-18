@@ -12,10 +12,10 @@ command that puts the old code back.
 
 1. `git status --short`. If it is not empty, stop and say so: a revert over a
    dirty tree destroys work with nothing to restore from.
-2. `node --test <file>` — expect green.
+2. `node --test <test file>` — expect green.
 3. Apply exactly the revert you were given, and nothing else.
-4. `node --test <file>` again — expect red.
-5. Restore with `git checkout -- <file>`.
+4. `node --test <test file>` again — expect red.
+5. Restore every file the revert touched: `git checkout -- <those files>`.
 6. `git status --short` again — confirm it is empty.
 
 If the revert does not apply, stop and say so.
