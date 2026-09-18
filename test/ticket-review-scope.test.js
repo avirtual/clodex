@@ -83,23 +83,19 @@ test('scope points at the materialized diff path', () => {
 });
 
 test('the DIFF line states the hunk context, so a re-read around a hunk is not made', () => {
-  // The measured defect this answers: 55 of 87 ranged source reads by a cold
-  // reviewer landed within 25 lines of a hunk the diff already carried. The
-  // widened diff is useless if the reviewer does not know it is wide — the
-  // reviewer cannot see the flags, only this sentence.
   const s = buildReviewScope({ ticket: ticket(), diffPath: '/tmp/d.diff' });
   assert.ok(s.includes('Each hunk carries 20 lines of context on both sides; '
     + 'a re-read to see the code immediately around a hunk is already answered by the diff.'),
-    'the context width is stated on the DIFF line');
-  // The NUMBER must agree with git-worktree.js's argv, or the scope tells the
-  // reviewer something false about the file it is about to read.
+    'the context width is stated on the DIFF line: a reviewer cannot see the flags, only this '
+    + 'sentence, and a widened diff nobody knows is wide buys nothing');
   const leaf = fsReal.readFileSync(pathReal.join(__dirname, '..', 'git-worktree.js'), 'utf8');
   const argv = /git\(repo,\s*\['diff',([^\]]*)\]/.exec(leaf.slice(leaf.indexOf('async function diffText(')));
   assert.ok(argv, 'ENTER: the leaf\'s diff argv was found');
   const u = /'-U(\d+)'/.exec(argv[1]);
   assert.ok(u, 'ENTER: the leaf passes an explicit -U flag');
   assert.ok(s.includes(`${u[1]} lines of context on both sides`),
-    `the scope claims the context the leaf actually passes (-U${u[1]})`);
+    `the scope claims the context the leaf actually passes (-U${u[1]}), or it tells the reviewer `
+    + 'something false about the file it is about to read');
 });
 
 test('a deltaPath renders a DELTA line under the DIFF line, opened by round number', () => {
@@ -110,28 +106,25 @@ test('a deltaPath renders a DELTA line under the DIFF line, opened by round numb
   assert.ok(s.includes("DELTA: what changed since round 1's review is at /tmp/d.delta.diff. "
     + 'Read the delta first for the fixes; the cumulative diff above stays authoritative for everything else.'),
     'the DELTA line names the file and says how to read it');
-  // ORDER: the DELTA line is the sentence that qualifies the DIFF line above it,
-  // and a reviewer reading top-down must meet them in that order.
-  assert.ok(s.indexOf('DELTA:') > s.indexOf('DIFF:'), 'DELTA comes after DIFF');
+  assert.ok(s.indexOf('DELTA:') > s.indexOf('DIFF:'),
+    'DELTA comes after DIFF, the line it qualifies, in the order a reviewer reads them');
   assert.match(s.slice(s.indexOf('DIFF:')), /^DIFF:[^\n]*\n\nDELTA:/,
     'and immediately after it, with nothing between');
 });
 
 test('NO deltaPath prints no DELTA line, whatever the round says', () => {
-  // The line is gated on the CALLER's path, never on the round number: the loop
-  // writes no delta when the previous round recorded no head sha, and a scope
-  // that inferred one from `reviewRound >= 1` would name a file that is not
-  // there for every ticket in flight across that upgrade.
   const r2 = buildReviewScope({
     ticket: ticket({ reviewRound: 1, verdict: 'REWORK', mustFix: '- x' }), diffPath: '/tmp/d.diff',
   });
   assert.match(r2, /THIS IS ROUND 2\./, 'ENTER: this really is a round-2 scope');
-  assert.ok(!/DELTA/.test(r2), 'a round 2 without a delta path names no delta');
+  assert.ok(!/DELTA/.test(r2),
+    'a round 2 without a delta path names no delta: the line is gated on the CALLER\'s path, and '
+    + 'one inferred from `reviewRound >= 1` would be an ENOENT for every ticket predating the field');
 
-  // And a delta path with NO diff path prints nothing either: the DELTA line
-  // says "the cumulative diff above", which would be a reference to nothing.
   const noDiff = buildReviewScope({ ticket: ticket({ reviewRound: 1 }), deltaPath: '/tmp/d.delta.diff' });
-  assert.ok(!/DELTA/.test(noDiff), 'a delta with no cumulative diff above it is not printed');
+  assert.ok(!/DELTA/.test(noDiff),
+    'a delta with no cumulative diff above it is not printed either — the line says "the '
+    + 'cumulative diff above", which would be a reference to nothing');
 });
 
 test("the hand's report is carried VERBATIM and framed as the hand's own account", () => {

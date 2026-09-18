@@ -594,15 +594,6 @@ test('the materialized diff is written, non-empty, and named in the scope', asyn
   assert.match(body, /work\.txt/);
 });
 
-// The `rounds[]` a round-2 fixture needs: a reviewed round 1, plus the
-// unreviewed round 2 entry the CLOSE path pushes. Both are written directly
-// because neither is producible from the loop in one call — `reviewRound`
-// advances on a verdict, and the round-2 entry is minted by `task done`, which
-// these subjects enter after rather than through.
-//
-// The round 2 stub matters: `_stampRoundFile` writes into an EXISTING entry and
-// silently returns when there is none, so a fixture carrying only round 1
-// records nothing and every stamp assertion below reads undefined.
 function rounds({ headSha = null } = {}) {
   return [
     {
@@ -620,9 +611,6 @@ function rounds({ headSha = null } = {}) {
 }
 
 test('round 2 writes a DELTA diff of prevHead..branch and names it in the scope', async () => {
-  // The measured defect: a round 2 cumulative diff is ~97% identical to round
-  // 1's with nothing marking the fixes, so the reviewer re-reads about a third
-  // of round 1's targets. The delta is the marker.
   const repo = mkRepo();
   const sha1 = commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'round one\n');
   const sha2 = commitOnBranch(repo.dir, 'tl-1', 'fix.txt', 'the round two fix\n');
@@ -641,13 +629,11 @@ test('round 2 writes a DELTA diff of prevHead..branch and names it in the scope'
   const deltaPath = byName.get('review-t1-r2.delta.diff');
   assert.ok(deltaPath, `the delta file is written for round 2 (${[...byName.keys()]})`);
 
-  // THE RANGE is the claim, not merely that a second file exists: a delta taken
-  // from the BASE instead of round 1's head is byte-identical to the cumulative
-  // diff and marks nothing, which is the failure this subject exists to catch.
   const delta = fsReal.readFileSync(deltaPath, 'utf8');
   assert.match(delta, /fix\.txt/, 'the delta carries round 2\'s file');
   assert.ok(!/work\.txt/.test(delta),
-    'and NOT round 1\'s, which is what makes it prevHead..branch rather than base..branch');
+    'and NOT round 1\'s: a delta taken from the BASE is byte-identical to the '
+    + 'cumulative diff and marks nothing, so the RANGE is the claim here, not the second file');
   assert.notStrictEqual(delta, fsReal.readFileSync(byName.get('review-t1-r2.diff'), 'utf8'),
     'the two artifacts differ; a delta equal to the cumulative diff is not a delta');
 
@@ -662,10 +648,6 @@ test('round 2 writes a DELTA diff of prevHead..branch and names it in the scope'
 });
 
 test('round 2 with NO headSha on record writes no delta and prints no DELTA line', async () => {
-  // A ticket in flight across this upgrade: round 1 was written before headSha
-  // was stamped, so there is no range to take. The scope must not name a file
-  // that does not exist — a reviewer sent to an ENOENT is worse off than one
-  // sent to the cumulative diff alone.
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'round one\n');
   commitOnBranch(repo.dir, 'tl-1', 'fix.txt', 'the round two fix\n');
@@ -686,9 +668,8 @@ test('round 2 with NO headSha on record writes no delta and prints no DELTA line
   const r2 = f.one().rounds.find((r) => r.round === 2);
   assert.strictEqual(r2.deltaFile, null,
     'the stamp never ran, so no reader can follow a name to an ENOENT');
-  // The round DOES stamp its own head: the missing sha is round 1's, and round 3
-  // must not inherit the gap.
-  assert.strictEqual(r2.headSha, git(repo.dir, ['rev-parse', 'tl-1']), 'round 2 still records where IT stopped');
+  assert.strictEqual(r2.headSha, git(repo.dir, ['rev-parse', 'tl-1']),
+    'round 2 still records where IT stopped: the missing sha is round 1\'s, and round 3 must not inherit the gap');
 
   const prompt = f.created[0].systemPrompt;
   assert.ok(!prompt.includes('DELTA:'), 'the scope prints no DELTA line');
@@ -713,10 +694,10 @@ test('the reviewer is spawned with the constructed scope, carrying the report ve
   assert.ok(prompt.includes('VERDICT'), 'the verdict grammar is in the scope');
 });
 
-// SIBLING PIN: `--no-ext-diff`, the other mandatory flag in this leaf's argv, is
+// SIBLING PIN: `--no-ext-diff`, another mandatory flag in this leaf's argv, is
 // pinned in test/ticket-auto-merge.test.js ("the diff leaf DEFEATS an external
-// diff driver"). Someone editing that argv greps one flag and lands on one of the
-// two subjects; each names the other so neither is edited alone.
+// diff driver"), and `-U20` in the subject directly below. Someone editing that
+// argv greps one flag and lands on one of the three; each names the others.
 test('--text keeps a NUL-containing file reviewable instead of "Binary files differ"', async () => {
   // The spec calls --text mandatory and not style, and this is why: git decides
   // binary-ness from content, so ONE NUL byte in a source file collapses the
@@ -745,24 +726,10 @@ test('--text keeps a NUL-containing file reviewable instead of "Binary files dif
   assert.match(r.text, /\+the real change/, 'the added line is readable in the diff');
 });
 
-// SIBLING PIN: the third flag in the same argv. `--text` and `--no-ext-diff`
-// each have their own subject (above, and in test/ticket-auto-merge.test.js);
-// this is `-U20`'s, so all three are found by a grep of the argv.
-//
-// NOT pinned in test/diff-argv-single-source.test.js, deliberately: that file
-// derives both sides from source and states that a literal flag list anywhere
-// in it is the one edit it must never receive. It answers "do the leaf and the
-// quoted messages AGREE"; this answers "is the context 20 lines", which no
-// derivation can.
 test('-U20 gives the reviewer 20 lines of context per hunk, not git\'s default 3', async () => {
-  // The measured defect: 55 of 87 ranged source reads by a cold reviewer landed
-  // within 25 lines of a hunk the diff already carried. At -U3 the diff answers
-  // 3 lines of that; at -U20 it answers the read.
   const repo = mkRepo();
   const cur = git(repo.dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
   git(repo.dir, ['checkout', '-q', 'tl-1']);
-  // 41 lines with the edit dead centre, so 20 lines of context on BOTH sides
-  // exist to be carried and a wider window would still be bounded by the file.
   const lines = Array.from({ length: 41 }, (_, i) => `line ${i}`);
   fsReal.writeFileSync(pathReal.join(repo.dir, 'wide.txt'), `${lines.join('\n')}\n`);
   git(repo.dir, ['add', 'wide.txt']);
@@ -778,36 +745,33 @@ test('-U20 gives the reviewer 20 lines of context per hunk, not git\'s default 3
   const r = await gw.diffText(repo.dir, wideBase, 'tl-1');
   assert.strictEqual(r.ok, true, `ENTER: the diff ran (${r.error})`);
 
-  // The FLAG, literally, so the argv cannot drift to a default that happens to
-  // be wide. Read off the leaf's own source — the behaviour below is what it
-  // buys, and both are asserted because either alone is satisfiable without the
-  // other (a `diff.context` config would widen the hunk with no flag).
   const leaf = fsReal.readFileSync(pathReal.join(__dirname, '..', 'git-worktree.js'), 'utf8');
   const argv = /git\(repo,\s*\['diff',([^\]]*)\]/.exec(leaf.slice(leaf.indexOf('async function diffText(')));
   assert.ok(argv, 'ENTER: the leaf\'s diff argv was found');
-  assert.match(argv[1], /'-U20'/, 'the leaf passes -U20 explicitly');
+  assert.match(argv[1], /'-U20'/,
+    'the leaf passes -U20 EXPLICITLY — asserted beside the behaviour below because either is '
+    + 'satisfiable without the other: a `diff.context` config widens the hunk with no flag');
 
-  // The BEHAVIOUR: the hunk header's line counts. A one-line edit at -U3 spans
-  // 7 lines; at -U20 it spans 41.
   const hunk = /^@@ -\d+,(\d+) \+\d+,(\d+) @@/m.exec(r.text);
   assert.ok(hunk, `ENTER: the diff carries a hunk header (${r.text.slice(0, 200)})`);
-  assert.strictEqual(Number(hunk[1]), 41, 'the hunk spans 20 lines each side of the edit, not 3');
+  assert.strictEqual(Number(hunk[1]), 41,
+    'the hunk spans 20 lines each side of the one-line edit, not git\'s 3 — a 41-line file with '
+    + 'the edit dead centre, so both sides exist to be carried');
   assert.strictEqual(Number(hunk[2]), 41);
   assert.match(r.text, /^ line 0$/m, 'the far context line 20 above the edit is in the diff');
   assert.match(r.text, /^ line 40$/m, 'and 20 below it');
 });
 
 test('diffText returns the RESOLVED head sha, which is what a later round deltas against', async () => {
-  // A branch NAME is not enough: the round entry outlives the branch's position,
-  // so stamping `tl-1` would make round 2 diff against wherever the branch is
-  // NOW — an empty delta — rather than where round 1 stopped.
   const repo = mkRepo();
   const sha = commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const gw = require('../git-worktree');
   const r = await gw.diffText(repo.dir, repo.baseSha, 'tl-1');
 
   assert.strictEqual(r.ok, true, `ENTER: the diff ran (${r.error})`);
-  assert.strictEqual(r.headSha, sha, 'the full 40-char sha the head ref resolved to, not the ref');
+  assert.strictEqual(r.headSha, sha,
+    'the full sha the head ref RESOLVED to, not the ref: a round entry outlives the branch\'s '
+    + 'position, so a stamped `tl-1` would delta against wherever the branch is now');
   assert.notStrictEqual(r.headSha, 'tl-1', 'ENTER: it is not merely echoing the argument back');
 
   const bad = await gw.diffText(repo.dir, repo.baseSha, 'no-such-branch');

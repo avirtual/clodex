@@ -136,11 +136,6 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
       + 'Read it first; it is the authoritative statement of what changed. '
       + 'Each hunk carries 20 lines of context on both sides; a re-read to see the code immediately around a hunk is already answered by the diff.');
     out.push('');
-    // Gated on the CALLER having a delta path, never derived from the round
-    // number: the loop writes this file only when the previous round recorded a
-    // head sha AND the delta diff came back non-empty, so a scope that inferred
-    // it from `reviewRound >= 1` would name a file that is not there for every
-    // ticket in flight across the upgrade.
     const delta = text(deltaPath);
     if (delta) {
       const prior = Number(t.reviewRound) || 0;

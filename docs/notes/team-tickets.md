@@ -62,6 +62,33 @@ Runs after the write succeeded, so a failed write leaves the field null rather
 than claiming an artifact that is not on disk. Silent when the round has no
 entry: that is a stamp for a write no close filed.
 
+`headSha` is the one field it stores that is not a basename — it names no file,
+and the helper has never inspected the value it is given.
+
+## _writeTicketDiff
+
+`headSha` is the commit the diff was taken AT. It is what makes the NEXT round's
+delta possible: nothing else on the record remembers where a round stopped once
+the branch moves on. Stamped on every round, because which round is the last one
+is not knowable here.
+
+`prevHeadSha` is read off the previous round BEFORE this round's stamp, and is
+returned rather than acted on: the delta is a git subprocess and this method is
+synchronous.
+
+## _writeTicketDelta
+
+Measured 2026-09-18 over 16 cold reviewer rounds: a round 2 cumulative diff is
+~97% identical to round 1's, and the round 2 reviewer re-reads about a third of
+round 1's targets because nothing marks which hunks are new.
+
+Every failure writes nothing and is silent — no previous head sha (a ticket in
+flight across the upgrade), an unresolvable sha (the branch was rebased under the
+loop), a git error, an empty range. `buildReviewScope` prints the DELTA line only
+when handed a path, so writing nothing is what keeps the scope from naming a file
+that is not there. An escalation would be worse than useless: the cumulative diff
+is whole and the review proceeds on it alone.
+
 ## _landVerdictOnTicket
 
 The `rounds` entry is found by its `round` value, never by index — a second
