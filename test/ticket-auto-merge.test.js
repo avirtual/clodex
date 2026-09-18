@@ -56,8 +56,15 @@ function git(cwd, args) {
 
 // The shapes are the ones ticket-loop-verify copied off a real run of
 // scripts/run-tests.js; only the three this file needs are here.
+const MERGE_SLOW = 'composite: pooling lets a big corpus SILENCE a small one, merging does not';
+
 const SUITE_STUBS = {
   green: 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\nprocess.exit(0);\n',
+  slowgate: `console.log("SLOW: 6042ms ${MERGE_SLOW}");\n`
+    + 'console.log("SLOW: inject the clock or constant through a seam, or list the test in test/slow-tests.json with the mechanism it waits on");\n'
+    + 'console.log("TOTALS: 8050 pass, 0 fail, 8050 tests");\n'
+    + `console.error(" \\u2716 ${MERGE_SLOW} (6042ms)");\n`
+    + 'process.exit(1);\n',
   red: 'console.log(".XX");\nconsole.log("");\nconsole.log("Failed tests:");\nconsole.log("");\n'
     + 'console.log("\\u2716 the merge broke this (1.15ms)");\n'
     + 'console.log("\\u2716 and this one too (0.42ms)");\n'
@@ -1881,6 +1888,23 @@ test('a suite that goes RED after the merge reverts the merge and escalates', as
     'the branch content is no longer on master');
   assert.strictEqual(git(repo.dir, ['status', '--porcelain']), '', 'and the tree is clean');
   assert.deepStrictEqual(f.landed(), [], 'a reverted merge is never announced as landed');
+});
+
+test('an UNOWNED slow gate after the merge does NOT revert: the merge stands and the notice names it', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, suite: 'slowgate' });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.ok(fsReal.existsSync(pathReal.join(repo.dir, 'work.txt')),
+    'the merge stands: nothing FAILED, a test outside this diff merely ran long');
+  assert.deepStrictEqual(f.esc(), [], 'and no escalation is spent on it');
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: the MERGED notice went out');
+  assert.match(notes[0].body, /slow gate tripped by tests outside this diff/,
+    'which says why the suite line reads non-zero, or the lead re-runs it to find out');
+  assert.ok(notes[0].body.includes(MERGE_SLOW), 'naming the test');
 });
 
 test('a suite that could not RUN reverts the merge too, rather than leaving master unverified', async () => {

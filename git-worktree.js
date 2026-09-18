@@ -495,6 +495,26 @@ async function diffText(cwd, base, head, { maxBuffer = 32 * 1024 * 1024 } = {}) 
   return { ok: true, text: r.stdout, headSha: resolved[head], error: null };
 }
 
+async function diffNames(cwd, base, head, pathspec = []) {
+  const repo = await repoToplevel(cwd);
+  if (!repo) return { ok: false, names: null, error: 'not a git repository' };
+  if (!base || !head) return { ok: false, names: null, error: 'no base or head given' };
+  const args = ['diff', '--name-only', `${base}..${head}`];
+  if (pathspec.length) args.push('--', ...pathspec);
+  const r = await git(repo, args);
+  if (!r.ok) return { ok: false, names: null, error: (r.stderr || 'git diff --name-only failed').trim() };
+  return { ok: true, names: r.stdout.split('\n').map((s) => s.trim()).filter(Boolean), error: null };
+}
+
+async function fileAt(cwd, ref, relPath, { maxBuffer = 8 * 1024 * 1024 } = {}) {
+  const repo = await repoToplevel(cwd);
+  if (!repo) return { ok: false, text: null, error: 'not a git repository' };
+  if (!ref || !relPath) return { ok: false, text: null, error: 'no ref or path given' };
+  const r = await git(repo, ['show', `${ref}:${relPath}`], { maxBuffer });
+  if (!r.ok) return { ok: false, text: null, error: (r.stderr || 'git show failed').trim() };
+  return { ok: true, text: r.stdout, error: null };
+}
+
 // Which branch the checkout at `cwd` is actually ON, and its HEAD sha.
 //
 // NOT `defaultBranch()`, which answers what the repo's mainline is CALLED — a
@@ -663,6 +683,6 @@ async function revertCommit(cwd, sha) {
 module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
   defaultBranch, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch,
-  diffText, currentBranch, mergeNoFf, revertCommit, initRepo, hasCommit,
+  diffText, diffNames, fileAt, currentBranch, mergeNoFf, revertCommit, initRepo, hasCommit,
   checkoutDetached, headSha, headShaSync,
 };
