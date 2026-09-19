@@ -17,6 +17,8 @@ blocks a release.
 
 - A test outside a ticket's diff tripping the suite's slow gate no longer rejects the ticket or reverts its merge; the loop records the test and carries on.
 
+- wirescope is vendored at v0.6.68: the context popover's utilization scan no longer stalls a long session's proxy, and it reports tool use since the last compact alongside the lifetime count.
+
 ## 5.77.0 — 2026-09-18
 
 - Exec command payloads may declare array fields, which `clodex-commit`'s file list needs.
