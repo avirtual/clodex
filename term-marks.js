@@ -42,12 +42,19 @@ const MARK_RE = /\x1b\]133;([^\x07]*)\x07/g;
 // output and then fail to frame anything.
 const PARTIAL_RE = /\x1b(?:\](?:1(?:3(?:3(?:;[^\x07]*)?)?)?)?)?$/;
 
+const ALT_RE = /\x1b\[\?(?:1049|1047|47)([hl])/g;
+const ALT_OVERLAP = 16;
+
 function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
   const MAX_OUT = maxOutput || 64 * 1024;
   let carry = '';
+  let altCarry = '';
+  let altScreen = false;
+  let seq = 0;
   let capturing = false;
   let command = '';
   let out = '';
+  const inner = { capturing: false, command: '', out: '', lastExit: null };
   // The exit status of the D mark most recently parsed, or null when the last
   // thing seen was not a D. Read only to classify the A that follows it: the
   // shim emits D then A from ONE precmd, so a D still standing when an A
@@ -57,15 +64,34 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
   let lastExit = null;
 
   function emit(exitCode) {
-    const rec = { command, exitCode, output: out };
+    const rec = { command, exitCode, output: out, depth: 0 };
     capturing = false;
     command = '';
     out = '';
     if (onCommand) onCommand(rec);
   }
 
+  function innerClear() {
+    inner.capturing = false;
+    inner.command = '';
+    inner.out = '';
+    inner.lastExit = null;
+  }
+
+  function scanAlt(chunk) {
+    const s = altCarry + chunk;
+    ALT_RE.lastIndex = 0;
+    let m;
+    while ((m = ALT_RE.exec(s)) !== null) {
+      if (m.index + m[0].length <= altCarry.length) continue;
+      altScreen = m[1] === 'h';
+    }
+    altCarry = s.slice(-ALT_OVERLAP);
+  }
+
   function text(chunk) {
     if (!chunk) return;
+    scanAlt(chunk);
     // OUTPUT BETWEEN A D AND AN A BREAKS THE PAIR. Our own shim prints both from
     // one precmd with nothing in between (verified in term-shim.js for both
     // shells, and measured on real zsh and bash: zero bytes between them), so
@@ -75,6 +101,11 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
     // inherit our D's status. Cleared before the capture guard below, because
     // the interrupt case is exactly the one where nothing is being captured.
     lastExit = null;
+    inner.lastExit = null;
+    if (inner.capturing) {
+      inner.out += chunk;
+      if (inner.out.length > MAX_OUT) inner.out = inner.out.slice(-MAX_OUT);
+    }
     if (!capturing) return;
     out += chunk;
     // Keep the TAIL, not the head: a build's last lines are where the error is,
@@ -94,7 +125,51 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
         text(s.slice(last, m.index));
         last = MARK_RE.lastIndex;
         const body = m[1];
-        if (body === 'A') {
+        const fields = body.split(';');
+        let tagged = false;
+        if (fields.length > 1 && /^nest=/.test(fields[fields.length - 1])) {
+          const nest = fields.pop();
+          if (nest !== 'nest=1') continue;
+          tagged = true;
+        }
+        const letter = fields[0];
+        const payload = fields.length > 1 ? fields[1] : '';
+        if (tagged) {
+          if (letter === 'C') {
+            if (!capturing) continue;
+            let cmd = '';
+            try { cmd = Buffer.from(payload, 'base64').toString('utf8'); } catch { cmd = ''; }
+            inner.command = cmd;
+            inner.capturing = true;
+            inner.out = '';
+            inner.lastExit = null;
+          } else if (letter === 'D') {
+            const n = Number(payload);
+            const parsed = payload !== '' && Number.isFinite(n) ? n : null;
+            if (inner.capturing) {
+              const rec = {
+                command: inner.command,
+                exitCode: parsed,
+                output: inner.out,
+                depth: 1,
+                inside: command,
+              };
+              innerClear();
+              if (onCommand) onCommand(rec);
+            }
+            inner.lastExit = parsed;
+          } else if (letter === 'A') {
+            if (inner.capturing) {
+              const rec = { command: inner.command, output: inner.out, depth: 1, inside: command };
+              innerClear();
+              if (onAbandon) onAbandon(rec);
+            }
+            if (onPrompt) { try { onPrompt({ interrupted: inner.lastExit === 130, depth: 1 }); } catch {} }
+            inner.lastExit = null;
+          }
+          continue;
+        }
+        if (letter === 'A') {
           // A fresh prompt while a command is open means it never finished and
           // never will — Ctrl-C at the prompt, or a shell that reset. The record
           // is still DROPPED (an abandoned line has no exit code, and holding it
@@ -104,12 +179,13 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
           // and the announcement carries no exitCode — there is none, and
           // inventing 130 would claim a SIGINT that may not be what happened.
           if (capturing) {
-            const rec = { command, output: out };
+            const rec = { command, output: out, depth: 0 };
             capturing = false;
             command = '';
             out = '';
             if (onAbandon) onAbandon(rec);
           }
+          innerClear();
           // Announced on EVERY A, including the ones above that report nothing:
           // this says "a prompt was drawn", which is a fact about the shell and
           // not about any command. Fired after the abandon so a consumer
@@ -128,30 +204,46 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
           // (measured: ^C then three bare Enters all report 130). A consumer
           // must treat this as a filter with a timeout behind it, never as
           // proof — drawer-pty's exec() keeps its clocks for exactly that.
-          if (onPrompt) { try { onPrompt({ interrupted: lastExit === 130 }); } catch {} }
+          if (onPrompt) { try { onPrompt({ interrupted: lastExit === 130, depth: 0 }); } catch {} }
           lastExit = null;
-        } else if (body === 'C' || body.startsWith('C;')) {
+          altScreen = false;
+        } else if (letter === 'C') {
           let cmd = '';
-          try { cmd = Buffer.from(body.slice(2), 'base64').toString('utf8'); } catch { cmd = ''; }
+          try { cmd = Buffer.from(payload, 'base64').toString('utf8'); } catch { cmd = ''; }
           // A command whose payload did not survive is still a real command;
           // reporting it with an empty line is honest, dropping it is not.
           command = cmd;
           capturing = true;
           out = '';
           lastExit = null;
-        } else if (body === 'D' || body.startsWith('D;')) {
+          innerClear();
+          seq += 1;
+          altScreen = false;
+        } else if (letter === 'D') {
           // D without a preceding C is the shell's FIRST prompt (precmd runs
           // before any command has been typed) and every prompt redraw after an
           // abandoned line. Nothing ran, so there is nothing to report.
-          const raw = body.slice(2);
-          const n = Number(raw);
-          const parsed = raw !== '' && Number.isFinite(n) ? n : null;
+          const n = Number(payload);
+          const parsed = payload !== '' && Number.isFinite(n) ? n : null;
           // Recorded OUTSIDE the capturing branch, because the interrupt case is
           // precisely the one where nothing is captured: a ^C on an idle prompt
           // still emits D;130, and gating this on `capturing` would drop the
           // only status that can identify the A about to follow.
           lastExit = parsed;
+          if (inner.capturing) {
+            const rec = {
+              command: inner.command,
+              exitCode: null,
+              output: inner.out,
+              depth: 1,
+              inside: command,
+              sessionEnded: true,
+            };
+            innerClear();
+            if (onCommand) onCommand(rec);
+          }
           if (capturing) emit(parsed);
+          altScreen = false;
         }
       }
       const rest = s.slice(last);
@@ -168,8 +260,19 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
     // stdin.
     isBusy: () => capturing,
     current: () => (capturing ? command : ''),
+    innerBusy: () => inner.capturing,
+    innerCurrent: () => (inner.capturing ? inner.command : ''),
+    outerSeq: () => seq,
+    altScreen: () => altScreen,
     // Test/diagnostic read.
-    _state: () => ({ capturing, command, carry: carry.length, out: out.length }),
+    _state: () => ({
+      capturing,
+      command,
+      carry: carry.length,
+      out: out.length,
+      inner: { capturing: inner.capturing, command: inner.command, out: inner.out.length },
+      altScreen,
+    }),
   };
 }
 
@@ -182,7 +285,7 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
 // to be NEWS — a nonzero exit — and a successful command reports its line alone.
 // A build that prints four thousand lines and works is not something the agent
 // needs in its context.
-function formatCommand(rec, { stripAnsi, maxLines, maxChars, always, assumed } = {}) {
+function formatCommand(rec, { stripAnsi, maxLines, maxChars, always, assumed, inside } = {}) {
   const cmd = String((rec && rec.command) || '').trim();
   // A record the shell did not NAME still has a real exit code and real output,
   // and which of those is worth keeping depends entirely on who is asking.
@@ -213,7 +316,9 @@ function formatCommand(rec, { stripAnsi, maxLines, maxChars, always, assumed } =
   // back does not.
   const marker = cmd ? '' : ' (assumed)';
   const doubt = cmd ? '' : '\n(the shell did not name the command that finished — this is the command that was sent, assumed to be it. If your operator ran something at that moment, the output below may be theirs.)';
-  const head = `[terminal] ${named}${marker}\n${status}${doubt}`;
+  const where = String(inside || '').trim();
+  const session = where ? `\nran inside \`${where}\`` : '';
+  const head = `[terminal] ${named}${marker}${session}\n${status}${doubt}`;
   if (!always && (code === 0 || code === null || code === undefined)) return head;
 
   let body = String((rec && rec.output) || '');

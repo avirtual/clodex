@@ -78,6 +78,16 @@ const TERM_EXEC_MAX = 2048;
 // catch, so it is refused rather than trusted to be noticed.
 const CTRL_RE = new RegExp('[\\u0000-\\u001F\\u007F\\u0080-\\u009F\\u200B-\\u200F\\u202A-\\u202E\\u2066-\\u2069\\uFEFF]');
 
+const CTRL_ALL_RE = new RegExp(CTRL_RE.source, 'gu');
+
+function sanitizeName(s, max = 80) {
+  const first = String(s == null ? '' : s).split(/[\r\n]/)[0];
+  const clean = first.replace(CTRL_ALL_RE, '');
+  const points = Array.from(clean);
+  if (points.length <= max) return clean;
+  return `${points.slice(0, max - 1).join('')}…`;
+}
+
 // What each control byte would actually DO if it reached the shell, which is why
 // this rejects rather than strips: a stripped `rm -rf /\nyes` becomes a
 // DIFFERENT command that still runs, and the agent is never told its command was
@@ -147,4 +157,4 @@ function vetTermCommand(raw) {
   return { ok: true, command: cmd };
 }
 
-module.exports = { termAvailableFor, termBackendFor, vetTermCommand, TERM_EXEC_MAX };
+module.exports = { termAvailableFor, termBackendFor, vetTermCommand, sanitizeName, TERM_EXEC_MAX };
