@@ -26102,9 +26102,10 @@ ${String(body || "").trim()}
       function collectExecChecklist(container) {
         return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
       }
+      var LEGACY_INTENT_KEYS = { "notify-user": "shout" };
       function intentRowChecked(row, intentsList) {
         if (!Array.isArray(intentsList)) return !row.privileged;
-        return intentsList.includes(row.type);
+        return intentsList.some((t) => (LEGACY_INTENT_KEYS[t] || t) === row.type);
       }
       function renderPluginChecklist(container, pluginsList) {
         container.innerHTML = "";
@@ -27538,11 +27539,20 @@ ${m[2].replace(/^\r?\n/, "")}`;
         { type: "team-create", label: "Create teams (team create) \u2014 privileged, off by default" }
       ];
       var PRIVILEGED_INTENTS = /* @__PURE__ */ new Set(["reboot", "term", "team-create"]);
+      var LEGACY_INTENT_KEYS = /* @__PURE__ */ new Map([["notify-user", "shout"]]);
+      function canonicalIntentKey(type) {
+        return LEGACY_INTENT_KEYS.get(type) || type;
+      }
       var GATEABLE_TYPES = new Set(GATEABLE_INTENTS.map((i) => i.type));
+      function canonicalIntentList(intentsList) {
+        if (!Array.isArray(intentsList)) return intentsList;
+        if (!intentsList.some((t) => LEGACY_INTENT_KEYS.has(t))) return intentsList;
+        return intentsList.map(canonicalIntentKey);
+      }
       function intentEnabled(type, intentsList) {
         if (!GATEABLE_TYPES.has(type)) return true;
         if (!Array.isArray(intentsList)) return !PRIVILEGED_INTENTS.has(type);
-        return intentsList.includes(type);
+        return canonicalIntentList(intentsList).includes(type);
       }
       function withoutPrivilegedIntents(intentsList) {
         if (!Array.isArray(intentsList)) return intentsList;
@@ -27560,7 +27570,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           (i) => !PRIVILEGED_INTENTS.has(i.type) && !intentEnabled(i.type, intentsList)
         ).length;
       }
-      module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount };
+      module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, LEGACY_INTENT_KEYS, canonicalIntentKey, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount };
     }
   });
 

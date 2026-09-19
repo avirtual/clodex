@@ -964,6 +964,22 @@ test('gate: the resend bounce spells out the parking fallback (delay, not loss)'
   );
 });
 
+test('gate: a stored allowlist still spelling notify-user is not denied shout (t1016)', async () => {
+  const { m, injected } = mkGate(['dm', 'notify-user']);
+  const shouted = [];
+  m._handleShoutIntent = (_s, body) => shouted.push(body);
+  await m._handleIntent('a', { type: 'shout', body: 'the disk is full' });
+  assert.deepStrictEqual(shouted, ['the disk is full'],
+    'the flag day renamed the catalog key with NO alias, but the allowlist is stored capability '
+    + 'data every seat and team template gated before t1016 still spells the old way; pure '
+    + 'membership denies the verb here while the ungated preamble tells the seat to use it — '
+    + 'leaving a seat with an operator-facing fact and no channel at all');
+  assert.deepStrictEqual(injected, [], 'and nothing bounced');
+  await m._handleIntent('a', { type: 'who' });
+  assert.strictEqual(injected[0], '[agent:who] the who intent is disabled for this session',
+    'not a blanket grant: what the operator really gated stays gated');
+});
+
 test('gate: `name` is never gateable, even with an empty allowlist', async () => {
   const { m, injected } = mkGate([]);
   await m._handleIntent('a', { type: 'name' });

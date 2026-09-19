@@ -64,3 +64,10 @@ is resolved against the SENDER's own directory.
 
 The title is DISCARDED at resolution: the file is authoritative, so an edited or
 stale title cannot change one byte of what the recipient gets.
+
+## SPILL_VERBS
+
+The operator-inbox key is `shout`. The vendored conformance suite
+(`proxylab/spill.py`) still gives `'notify-user'` as its one-word-verb example —
+that spelling was retired here with no alias, so the next vendor port must not
+re-derive it from that docstring.

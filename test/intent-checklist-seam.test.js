@@ -38,6 +38,7 @@ test("the renderer's checked-state matches the engine's gate for every core row"
     [],
     ['dm'],
     ['dm', 'reboot'],
+    ['dm', 'notify-user'],
     GATEABLE_INTENTS.map((i) => i.type),
     GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).map((i) => i.type),
   ];
@@ -134,6 +135,25 @@ test('collectIntentChecklist returns the RAW checked set, uncollapsed', () => {
   // ...and the engine is what turns it into the persisted null.
   assert.strictEqual(registry.allowlistFromChecked(collectIntentChecklist(allContainer)), null);
   assert.strictEqual(intentsAllowlistFromChecked(allCore), null, 'same answer the core leaf gives');
+});
+
+test('a stored allowlist spelling notify-user ticks the shout box, on both sides of the seam', () => {
+  const shoutRow = registry.catalogRows().find((r) => r.type === 'shout');
+  assert.ok(shoutRow, 'ENTER: the shout row really is served');
+  assert.strictEqual(intentRowChecked(shoutRow, ['dm', 'notify-user']), true,
+    'the t1016 flag day left the retired spelling in every pre-existing gated seat and saved '
+    + 'template; the renderer reimplements checked-state inline, so without the engine\'s same '
+    + 'mapping the popover opens with Operator inbox notes UNTICKED and an Apply writes a denial '
+    + 'the operator never chose');
+  assert.strictEqual(intentEnabled('shout', ['dm', 'notify-user']), true, 'and the engine agrees');
+  const spawnRow = registry.catalogRows().find((r) => r.type === 'spawn');
+  assert.strictEqual(intentRowChecked(spawnRow, ['dm', 'notify-user']), false,
+    'it maps ONE key and grants nothing else — a legacy entry is not a wildcard');
+  const ticked = registry.catalogRows().filter((r) => intentRowChecked(r, ['dm', 'notify-user'])).map((r) => r.type);
+  assert.deepStrictEqual(ticked, ['dm', 'shout'],
+    'saving that popover is what rewrites the stored list: collect returns ticked TYPES, which are '
+    + 'catalog keys, never the legacy one');
+  assert.deepStrictEqual(registry.allowlistFromChecked(ticked), ['dm', 'shout']);
 });
 
 test('setIntentCatalogCache tolerates a failed fetch without throwing', () => {

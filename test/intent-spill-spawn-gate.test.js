@@ -101,9 +101,9 @@ function mkManager({ intentSpill = 'off', backend = null } = {}) {
   return { m, persistence, registered, prompts, root, stop };
 }
 
-function spawn(m, name) {
+function spawn(m, name, intents = null) {
   return m.create(name, 'claude', os.tmpdir(), [], null, 'ws', null, false, null,
-    [], [], [], [], [], null, [], [], null, null, true, false);
+    [], [], [], [], [], null, [], [], intents, null, true, false);
 }
 
 test('a Claude seat spawned with the setting OFF still registers spill on the wire', async () => {
@@ -145,5 +145,31 @@ test('a Bedrock seat registers spill: null and carries no grammar line', async (
     assert.equal(h.registered[0].spill, null,
       'a tee-blind seat never reaches the wire, so arming it would promise a rewrite that cannot happen');
     assert.ok(!h.prompts[0].includes(GRAMMAR));
+  } finally { h.stop('seat'); }
+});
+
+test('a seat whose stored allowlist still says notify-user is armed and prompted for shout', async () => {
+  const h = mkManager({ intentSpill: 'on' });
+  try {
+    await spawn(h.m, 'seat', ['dm', 'who', 'notify-user', 'context', 'exec', 'remind', 'file', 'spawn', 'memory', 'resend']);
+    assert.equal(h.registered.length, 1, 'ENTER: the spawn reached the wire registration');
+    assert.ok([...h.registered[0].spill.verbs].includes('shout'),
+      't1016 renamed the catalog key with no alias, but `intents` is stored capability DATA that '
+      + 'every pre-flag-day seat and ~/.clodex/teams template still spells the old way; without the '
+      + 'legacy mapping the wire is unarmed here and a long note is emitted whole');
+    assert.ok(h.prompts[0].includes('[agent:shout] message'),
+      'and the same stale data decides whether the seat is even told the verb exists');
+  } finally { h.stop('seat'); }
+});
+
+test('a seat that really gated the inbox note off keeps it off', async () => {
+  const h = mkManager({ intentSpill: 'on' });
+  try {
+    await spawn(h.m, 'seat', ['dm', 'who']);
+    assert.equal(h.registered.length, 1, 'ENTER: the spawn reached the wire registration');
+    assert.ok(!(h.registered[0].spill.verbs || []).includes('shout'),
+      'the canonicalisation must not become a blanket grant, or the flag day silently RE-ENABLES '
+      + 'the channel on every seat whose operator deliberately switched it off');
+    assert.ok(!h.prompts[0].includes('[agent:shout] message'));
   } finally { h.stop('seat'); }
 });

@@ -281,9 +281,10 @@ function collectExecChecklist(container) {
 // The semantics are INLINE rather than a call to intent-catalog's intentEnabled:
 // that leaf would re-introduce the static require this seam exists to remove,
 // and it answers TRUE for a plugin verb it has never heard of.
+const LEGACY_INTENT_KEYS = { 'notify-user': 'shout' };
 function intentRowChecked(row, intentsList) {
   if (!Array.isArray(intentsList)) return !row.privileged;
-  return intentsList.includes(row.type);
+  return intentsList.some((t) => (LEGACY_INTENT_KEYS[t] || t) === row.type);
 }
 function renderPluginChecklist(container, pluginsList) {
   container.innerHTML = '';
