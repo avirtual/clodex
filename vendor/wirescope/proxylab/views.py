@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+import urllib.parse
 from pathlib import Path
 
 from proxylab import billing as billing_mod
@@ -102,6 +103,21 @@ tr:nth-child(even) td{background:#191c21}
 .bad{color:#e06c75}.warn{color:#e5c07b}.dim{color:#69707d}
 .badge{border:1px solid #2a2e36;border-radius:3px;padding:0 .35em;margin-right:.3em}
 .on{color:#7ec699}.off{color:#69707d}
+/* filter/order chips: a chip's label doubles as the glob it applies, so what a
+   human clicks and what a consumer passes as ?agent=/?hide= stay one string.
+   Each family chip has two targets — the body filters TO it, the ✕ filters it
+   OUT. (Keep this comment clear of the phrases the session-page suite greps
+   for: this block rides into _SESSION_CSS, so CSS prose here is served on the
+   session page too and once tripped the refusal-banner check.) */
+.filters span{margin-right:.4em}
+.chip{display:inline-block;border:1px solid #2a2e36;border-radius:3px;
+      padding:0 .4em;margin-right:.35em;color:#8a93a3;white-space:nowrap}
+.chip a{color:#8a93a3}
+.chip b{color:#cdd3dd;font-weight:600}
+.chip.on{border-color:#7ec699;color:#7ec699}.chip.on a,.chip.on b{color:#7ec699}
+.chip.off{border-style:dashed;opacity:.6}
+.chip .x{margin-left:.45em;padding-left:.4em;border-left:1px solid #2a2e36;color:#69707d}
+.chip .x:hover{color:#e06c75;text-decoration:none}
 /* out-of-band block: present on the wire, ahead of every cache marker and
    absent from the hashed prefix — dimmed + dashed so it reads as "not part of
    the cached prefix" rather than as the prefix's first element. */
@@ -143,7 +159,80 @@ def _render_quota_line(q, now):
             + f'<span class="dim">as of {e(_fmt_dur(age))} ago{stale}</span></p>')
 
 
-def _render_admin_html(snap, host="", show=60):
+def _filter_qs(p, show=60, by="state", *, agent=None, hide=None,
+               ended=None, all_s=None):
+    """Build an /_admin query string from the CURRENT filter state plus an
+    override, so every chip is an incremental edit of the view rather than a
+    reset (clicking `hide=brief-*` keeps your `by=recent`). Values that equal
+    the default are omitted, which keeps the bare /_admin url clean."""
+    f = p.get("filters") or {}
+    ag = f.get("agent") or [] if agent is None else agent
+    hd = f.get("hide") or [] if hide is None else hide
+    en = f.get("hide_ended") if ended is None else ended
+    parts = []
+    if show != 60:
+        parts.append(f"show={show}")
+    if by != "state":
+        parts.append(f"by={by}")
+    for g in ag:
+        parts.append(f"agent={urllib.parse.quote(g)}")
+    for g in hd:
+        parts.append(f"hide={urllib.parse.quote(g)}")
+    if en:
+        parts.append("ended=0")
+    if all_s:
+        parts.append("all=1")
+    return "/_admin" + ("?" + "&".join(parts) if parts else "")
+
+
+def _render_filter_bar(p, show, by):
+    """One-click family chips + the ordering selector.
+
+    The chips are the answer to a burst problem: 40 one-shot `brief-*` seats in
+    a 24h window push every real session off page one AND out of the enrichment
+    budget. Each chip's label doubles as the glob it applies, so what a human
+    clicks and what a consumer passes to /_status stay one string. Counts come
+    from the unfiltered universe, so they don't shift under the click."""
+    e = html.escape
+    fams = p.get("session_families") or []
+    f = p.get("filters") or {}
+    ag_on, hd_on = list(f.get("agent") or []), list(f.get("hide") or [])
+    bits = []
+    if ag_on or hd_on or f.get("hide_ended"):
+        bits.append(f'<a class="chip on" href="{_filter_qs(p, show, by, agent=[], hide=[], ended=False)}">'
+                    f'&#10005; clear</a>')
+    for fam in fams[:8]:
+        g, n = fam["family"], fam["sessions"]
+        if g in ag_on:      # showing only this family — click to drop the filter
+            bits.append(f'<a class="chip on" href="{_filter_qs(p, show, by, agent=[x for x in ag_on if x != g])}"'
+                        f' title="showing only {e(g)} — click to unset">{e(g)} <b>{n}</b></a>')
+        elif g in hd_on:    # hidden — click to bring it back
+            bits.append(f'<a class="chip off" href="{_filter_qs(p, show, by, hide=[x for x in hd_on if x != g])}"'
+                        f' title="hidden — click to restore">{e(g)} <b>{n}</b></a>')
+        else:
+            bits.append(
+                f'<span class="chip">'
+                f'<a href="{_filter_qs(p, show, by, agent=ag_on + [g])}" title="show only {e(g)}">'
+                f'{e(g)} <b>{n}</b></a>'
+                f'<a class="x" href="{_filter_qs(p, show, by, hide=hd_on + [g])}"'
+                f' title="hide {e(g)} — frees enrichment budget for other sessions">&#10005;</a>'
+                f'</span>')
+    endcls = "chip on" if f.get("hide_ended") else "chip"
+    bits.append(f'<a class="{endcls}" href="{_filter_qs(p, show, by, ended=not f.get("hide_ended"))}"'
+                f' title="drop sessions that reported SessionEnd">&#127937; hide ended</a>')
+    order = []
+    for key, lbl, tip in (
+            ("state", "by cache state",
+             "warm sessions first, then cold — the acting-on-a-session view"),
+            ("recent", "by recency",
+             "one table, strictly most-recent-first — the finding-a-session view")):
+        cls = "chip on" if by == key else "chip"
+        order.append(f'<a class="{cls}" href="{_filter_qs(p, show, key)}" title="{e(tip)}">{lbl}</a>')
+    return (f'<p class="kv filters"><span class="dim">filter</span>{"".join(bits)}</p>'
+            f'<p class="kv filters"><span class="dim">order</span>{"".join(order)}</p>')
+
+
+def _render_admin_html(snap, host="", show=60, by="state"):
     e = html.escape
     p = snap["proxy"]
     t = p["totals"]
@@ -174,7 +263,8 @@ def _render_admin_html(snap, host="", show=60):
         f'<span class="{"bad" if ref else "dim"}">refusals <b>{ref}</b></span>'
         f'<span class="dim">since restart: {s0.get("requests", 0):g} req / '
         f'${s0.get("est_usd", 0):.4f}</span></p>'
-        + _render_quota_line(snap.get("quota"), now))
+        + _render_quota_line(snap.get("quota"), now)
+        + _render_filter_bar(p, show, by))
     def _row(s):
         w = s["warmth"]
         segs = w.get("segments") or {}
@@ -291,10 +381,19 @@ def _render_admin_html(snap, host="", show=60):
             + (f'<a class="bad" href="/_session?session={e(sid)}#refusals">'
                f'{sref}</a>' if sref else "—") + '</td></tr>')
 
-    # Split by CACHE STATE, not recency: a warm 1h prefix that was idle 7m still
-    # matters more than a 5m prefix that lapsed 6m ago. Within each, snapshot
-    # order (most-recent-first) holds. Warm sessions are few (bounded by live
-    # TTLs); the cold list is the 24h long tail that pagination caps.
+    # Default splits by CACHE STATE, not recency: a warm 1h prefix that was idle
+    # 7m still matters more than a 5m prefix that lapsed 6m ago. Within each,
+    # snapshot order (most-recent-first) holds. Warm sessions are few (bounded
+    # by live TTLs); the cold list is the 24h long tail that pagination caps.
+    #
+    # But that split is the right axis for ACTING on a session (ping/hold) and
+    # the wrong one for FINDING one: every warm row sorts above every cold row
+    # however stale, so a session that turned seconds ago can render below one
+    # idle for an hour, and after a restart — when warmth is durable but the
+    # replayable in-memory state is not — the two axes decouple entirely and the
+    # order reads as arbitrary. `by=recent` is the finding view: one table,
+    # strictly last_seen-descending, warmth still legible in the time-left/ttl
+    # columns. `state` stays the default so nothing moves underfoot.
     warm_s = [s for s in snap["sessions"] if s["warmth"]["state"] == "warm"]
     cold_s = [s for s in snap["sessions"] if s["warmth"]["state"] != "warm"]
     _hdr = ('<tr><th>time left</th><th>ttl</th><th>tools</th><th>prompt</th>'
@@ -308,7 +407,13 @@ def _render_admin_html(snap, host="", show=60):
                 f'<table>{_hdr}{"".join(_row(s) for s in items)}</table>')
 
     if not snap["sessions"]:
-        body = "<p class=dim>no sessions tracked</p>"
+        f = p.get("filters") or {}
+        body = ('<p class=dim>no sessions match this filter</p>'
+                if (f.get("agent") or f.get("hide") or f.get("hide_ended"))
+                else "<p class=dim>no sessions tracked</p>")
+    elif by == "recent":
+        body = _table("&#128337; sessions <small class=dim>most recent first</small>",
+                      snap["sessions"])
     else:
         body = (_table("&#128293; warm cache", warm_s)
                 + _table("&#10052;&#65039; cold / expired", cold_s))
@@ -321,10 +426,20 @@ def _render_admin_html(snap, host="", show=60):
     more = ""
     if p.get("sessions_truncated"):
         more = (f' · <b>{shown}</b> of {total} (last 24h) · '
-                f'<a href="/_admin?show={show + 60}">show 60 more</a> · '
-                f'<a href="/_admin?all=1">show all</a>')
-    foot = ('<p class="dim">auto-refresh 10s · <a href="/_admin">last 24h</a> · '
-            '<a href="/_admin?all=1">all</a> · <a href="/_status">raw json</a>'
+                f'<a href="{_filter_qs(p, show + 60, by)}">show 60 more</a> · '
+                f'<a href="{_filter_qs(p, show, by, all_s=True)}">show all</a>')
+    # every footer link carries the active filters through (a pagination link
+    # that silently resets them re-floods the page you just cleaned up). The
+    # raw-json twin carries only the filters /_status actually honours —
+    # show/by are presentation, and echoing them would imply the JSON paginates.
+    f = p.get("filters") or {}
+    rawq = ([f"agent={urllib.parse.quote(g)}" for g in (f.get("agent") or [])]
+            + [f"hide={urllib.parse.quote(g)}" for g in (f.get("hide") or [])]
+            + (["ended=0"] if f.get("hide_ended") else []))
+    raw = "/_status" + ("?" + "&".join(rawq) if rawq else "")
+    foot = (f'<p class="dim">auto-refresh 10s · <a href="{_filter_qs(p, show, by)}">last 24h</a> · '
+            f'<a href="{_filter_qs(p, show, by, all_s=True)}">all</a> · '
+            f'<a href="{e(raw)}">raw json</a>'
             f'{more}</p>')
     return ('<!doctype html><html><head><meta charset="utf-8">'
             '<meta http-equiv="refresh" content="10">'

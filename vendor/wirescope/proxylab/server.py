@@ -6,6 +6,7 @@ import re
 import time
 
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route, WebSocketRoute
@@ -537,6 +538,22 @@ def _endpoint_auth_ok(auth_header, token_param):
     return auth_header == f"Bearer {tok}" or token_param == tok
 
 
+def _session_filters(q):
+    """Parse the shared session-list filters off a query string, for /_status
+    and /_admin alike (one parser so the JSON and the HTML can never disagree
+    about what `hide=brief-*` means). Repeatable and comma-separated both work;
+    `ended=0` drops sessions that already reported SessionEnd. Empty/whitespace
+    globs are discarded rather than matching everything."""
+    def _globs(key):
+        out = []
+        for raw in q.getlist(key):
+            out.extend(g.strip() for g in raw.split(",") if g.strip())
+        return out
+    return {"agent_globs": _globs("agent"),
+            "hide_globs": _globs("hide"),
+            "hide_ended": q.get("ended") in ("0", "no", "false")}
+
+
 async def handler(request: Request) -> Response:
     # ---- HEAD preflight (CLI >= Bun-1.4 builds, 2026-07-20) -------------------
     # Newer claude CLIs HEAD the ANTHROPIC_BASE_URL once at startup as a
@@ -571,11 +588,14 @@ async def handler(request: Request) -> Response:
                         status_code=401, media_type="application/json")
 
     # ---- status: what sessions are tracked + warmth/hold/identity/cost --------
-    # GET /_status[?session=<id>][&all=1] — read-only, spends nothing.
+    # GET /_status[?session=<id>][&all=1][&agent=<glob>][&hide=<glob>][&ended=0]
+    # — read-only, spends nothing.
     if request.method == "GET" and request.url.path.rstrip("/") == "/_status":
         q = request.query_params
-        res = status_mod._status_snapshot(session=q.get("session"),
-                               all_sessions=q.get("all") in ("1", "yes", "true"))
+        res = status_mod._status_snapshot(
+            session=q.get("session"),
+            all_sessions=q.get("all") in ("1", "yes", "true"),
+            **_session_filters(q))
         return Response(json.dumps(res, indent=2), media_type="application/json")
 
     # ---- context: tool rosters loaded for a session (main + each subagent) -----
@@ -589,7 +609,15 @@ async def handler(request: Request) -> Response:
             return Response(json.dumps({"error": "session required"}),
                             status_code=400, media_type="application/json")
         util = request.query_params.get("utilization") in ("1", "yes", "true")
-        res = status_mod._context_snapshot(sess, utilization=util)
+        # `utilization=1` walks the session's capture dir. That is fast now, but
+        # it is still unbounded disk work inside an async handler, and a
+        # synchronous scan here stalls the EVENT LOOP — i.e. every seat's live
+        # turn queues behind one human's popover click (measured before the fix:
+        # a 23s scan held an otherwise 0.9ms /_identity for 21.9s). Off the loop.
+        # The plain in-memory path stays inline; it is a dict lookup.
+        res = (await run_in_threadpool(status_mod._context_snapshot, sess,
+                                       utilization=True)
+               if util else status_mod._context_snapshot(sess))
         return Response(json.dumps(res, indent=2), media_type="application/json")
 
     # GET /_subagents?session=<sid>&child=<key>[&detail=1][&maxlen=N] — on-demand
@@ -777,7 +805,8 @@ async def handler(request: Request) -> Response:
                         media_type="text/html; charset=utf-8")
 
     # ---- admin page: the same snapshot for humans ------------------------------
-    # GET /_admin[?session=<id>][&all=1] — read-only HTML view of /_status.
+    # GET /_admin[?session=<id>][&all=1][&agent=][&hide=][&ended=0][&by=recent]
+    # — read-only HTML view of /_status.
     if request.method == "GET" and request.url.path.rstrip("/") == "/_admin":
         q = request.query_params
         all_s = q.get("all") in ("1", "yes", "true")
@@ -789,9 +818,11 @@ async def handler(request: Request) -> Response:
         show = max(10, min(show, 2000))
         res = status_mod._status_snapshot(
             session=sess, all_sessions=all_s,
-            limit=(None if (all_s or sess) else show))
+            limit=(None if (all_s or sess) else show),
+            **_session_filters(q))
         return Response(views_mod._render_admin_html(
-                            res, host=request.headers.get("host", ""), show=show),
+                            res, host=request.headers.get("host", ""), show=show,
+                            by=q.get("by") or "state"),
                         media_type="text/html; charset=utf-8")
 
     # ---- session context view: the replayable last request, for humans --------

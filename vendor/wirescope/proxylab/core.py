@@ -28,7 +28,9 @@ Point a CLI at the proxy either way:
             (codex: .../agent/<name>/openai) — <name> becomes the session's
             agent identity: dump filenames, /_status titles, subscriber routing.
 """
+import datetime
 import itertools
+import json
 import os
 import re
 import time
@@ -53,6 +55,88 @@ def _session_dir(session):
     if not s or "/" in s or "\\" in s or s in (".", ".."):
         return LOG_DIR / "_invalid-session-id"
     return LOG_DIR / s
+
+
+# --- cheap capture reads ----------------------------------------------------
+# A request record holds that turn's whole `messages` array (mean 0.37 MB, and
+# 347 KB/turn on a long clodex session), so json.loads-ing one to reach a field
+# the writer puts at the head or the tail is the single most expensive mistake a
+# capture-dir scan can make: it is the difference between a scan that costs
+# milliseconds and one that costs tens of seconds. These live in core rather
+# than report because both report._bust_scan and status._capture_scan need them
+# and core is the one module everyone may import.
+
+# `"ts": "<iso>"` as the writer emits it at the head of a request record.
+_TS_HEAD_RE = re.compile(rb'"ts"\s*:\s*"([^"]+)"')
+
+
+def _head_ts(path, nbytes=200):
+    """The capture's `ts` read from the first `nbytes` of a request record, WITHOUT
+    parsing the body. `ts` is the 2nd key the writer emits (server.py `record = {...}`),
+    measured at byte offset 17-20 across the corpus, so a 200-byte read is a ~10x
+    guard rather than a gamble; a miss returns None and the caller falls back to a
+    full parse. Exists because ordering the series needs only this one field while a
+    full json.load pays for the whole `messages` array (mean 0.37 MB)."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(nbytes)
+    except OSError:
+        return None
+    m = _TS_HEAD_RE.search(head)
+    return m.group(1).decode("utf-8", "replace") if m else None
+
+
+def _epoch_ts(ts):
+    """Capture timestamps come two ways: request.json `ts` is an ISO-8601 string
+    ('2026-06-13T19:01:56'), warmth.json `ts` is an epoch float. Normalise to a
+    float epoch (None if unparseable) so idle-gap and window math works."""
+    if ts is None:
+        return None
+    if isinstance(ts, (int, float)):
+        return float(ts)
+    try:
+        return datetime.datetime.fromisoformat(ts).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def _tail_summary(path, nbytes=4096):
+    """The capture's `summary` dict read from the LAST `nbytes` of a request record,
+    without parsing the body. The writer emits `summary` as the final key (verified:
+    no key follows it anywhere in the corpus) and it measures <1 KB, so a 4 KB tail
+    read reaches it whole; the scan finds the last `"summary"` and brace-matches its
+    object. Returns None if it isn't found intact — caller falls back to a full parse,
+    so this is an optimisation with a correct slow path, never a source of wrong data.
+
+    Validated against a full parse on 4,134 requests sampled across all 1,039 capture
+    dirs: 0 misses, 0 disagreements."""
+    try:
+        with open(path, "rb") as fh:
+            size = fh.seek(0, 2)
+            fh.seek(max(0, size - nbytes))
+            tail = fh.read()
+    except OSError:
+        return None
+    k = tail.rfind(b'"summary"')
+    if k < 0:
+        return None
+    start = tail.find(b"{", k)
+    if start < 0:
+        return None
+    depth = 0
+    for i in range(start, len(tail)):
+        c = tail[i : i + 1]
+        if c == b"{":
+            depth += 1
+        elif c == b"}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    obj = json.loads(tail[start : i + 1])
+                except Exception:
+                    return None
+                return obj if isinstance(obj, dict) else None
+    return None
 
 # hop-by-hop + accept-encoding (we want an uncompressed SSE stream we can read)
 _HOP = {"host", "content-length", "connection", "transfer-encoding",

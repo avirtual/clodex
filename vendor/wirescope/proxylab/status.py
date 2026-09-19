@@ -1,4 +1,5 @@
 import collections
+import fnmatch
 import json
 import re
 import time
@@ -87,6 +88,12 @@ def _identity():
             # unrefreshed and its restored stash never re-auths.
             "accounts": True,
             "stats": True,                # /_status is always served
+            # /_status + /_admin `agent=`/`hide=` globs and `ended=0`, plus the
+            # `proxy.session_families` rollup the globs come from. Must be
+            # feature-detected: an older proxy IGNORES the params and returns
+            # the unfiltered list, which a consumer would render as "these are
+            # all the sessions matching your filter" — wrong, and silently so.
+            "session_filters": True,
             "session_view": True,         # /_session HTML
             "context_view": True,         # /_context tool-roster JSON
             "context_composition": True,  # /_context per-category token breakdown
@@ -218,7 +225,49 @@ def _identity():
     }
 
 
-def _status_snapshot(session=None, all_sessions=False, limit=None):
+_HEXID_RE = re.compile(r"-[0-9a-f]{6,}$")
+_TICKET_RE = re.compile(r"\.t\d+\.")
+
+
+def _agent_family(agent):
+    """Collapse an agent route name to a GLOB that matches its whole family.
+
+    A family is returned as a glob (not a prefix) deliberately: the chips the
+    admin page renders ARE the `agent=`/`hide=` query values, so what a human
+    clicks and what a consumer passes are the same string, and there is no
+    second syntax to keep in sync. Three collapses, in order — a per-seat hex
+    suffix (`clodex-wirescope-46e6794f`), a ticket number (`…t978.hand`), and
+    finally a trailing non-hex segment, which is what makes 40 one-shot
+    `brief-zbcn`/`brief-well` seats read as one `brief-*` row.
+    """
+    if not agent:
+        return None
+    fam, n = _HEXID_RE.subn("-*", agent)
+    fam = _TICKET_RE.sub(".t*.", fam)
+    if not n and "-" in fam:
+        fam = fam.rsplit("-", 1)[0] + "-*"
+    return fam
+
+
+def _session_families(meta_rows, sids):
+    """Family rollup over the FULL windowed universe, before any filter or the
+    `limit` cut — so the counts a human filters against don't themselves move
+    as they filter. Biggest first; unrouted sessions are not a family."""
+    fams = collections.Counter()
+    for sid in sids:
+        r = meta_rows.get(sid)
+        fam = _agent_family(r[9] if r else None)
+        if fam:
+            fams[fam] += 1
+    return [{"family": f, "sessions": n} for f, n in fams.most_common()]
+
+
+def _match_globs(agent, globs):
+    return any(fnmatch.fnmatchcase(agent or "", g) for g in globs)
+
+
+def _status_snapshot(session=None, all_sessions=False, limit=None,
+                     agent_globs=(), hide_globs=(), hide_ended=False):
     """Everything a human (or the statusline) wants to know about the sessions
     this proxy tracks, one read-only JSON. Universe = in-memory pingable
     sessions ∪ armed holds ∪ durable session_meta rows (last 24h unless all=1).
@@ -230,7 +279,12 @@ def _status_snapshot(session=None, all_sessions=False, limit=None):
     thousands of sessions doesn't query + render them all every refresh. Armed
     holds are never dropped; `session`/`all_sessions` bypass the cap. The cut is
     by last_seen, and a warm prefix implies recent activity, so warm sessions
-    survive the cap in practice. Reports proxy.sessions_total/truncated."""
+    survive the cap in practice. Reports proxy.sessions_total/truncated.
+
+    `agent_globs`/`hide_globs` (fnmatch on the agent route name) and
+    `hide_ended` filter the universe BEFORE that cut, so a burst of one-shot
+    seats can be excluded from the enrichment budget rather than merely from
+    the rendered table. proxy.session_families lists the candidate globs."""
     now = time.time()
     with pinger_mod._LAST_REQUEST_LOCK:
         last_real = {sid: (e["ts"], bool(e.get("needs_auth")),
@@ -259,6 +313,27 @@ def _status_snapshot(session=None, all_sessions=False, limit=None):
     sids = set(meta_rows) | set(last_real) | set(holds)
     if session:
         sids &= {session}
+    # Family rollup is computed over the UNFILTERED universe (see
+    # _session_families) so the chip counts stay put while a human filters.
+    families = _session_families(meta_rows, sids)
+    # Agent filters run BEFORE the `limit` cut, not at render time: the cut is
+    # what decides which sessions get the expensive per-session enrichment, so
+    # filtering downstream of it would hide rows without buying back a single
+    # page-one slot — the whole point when 40 one-shot `brief-*` seats have
+    # displaced the real ones. An armed hold is never dropped by the cap, but
+    # IS subject to an explicit filter (the human asked).
+    if agent_globs or hide_globs or hide_ended:
+        def _keep(sid):
+            r = meta_rows.get(sid)
+            ag = (r[9] if r else None) or ""
+            if agent_globs and not _match_globs(ag, agent_globs):
+                return False
+            if hide_globs and _match_globs(ag, hide_globs):
+                return False
+            if hide_ended and r and r[7]:
+                return False
+            return True
+        sids = {sid for sid in sids if _keep(sid)}
     sessions_total = len(sids)
     truncated = False
     if (limit is not None and not session and not all_sessions
@@ -420,6 +495,15 @@ def _status_snapshot(session=None, all_sessions=False, limit=None):
                      "sessions_total": sessions_total,
                      "sessions_shown": len(sessions),
                      "sessions_truncated": truncated,
+                     # agent-route families in the window (biggest first),
+                     # counted BEFORE filters — the admin page renders these as
+                     # one-click chips, and each `family` string is itself a
+                     # valid `agent=`/`hide=` glob, so UI and API share one
+                     # vocabulary. `filters` echoes what was applied.
+                     "session_families": families,
+                     "filters": {"agent": list(agent_globs),
+                                 "hide": list(hide_globs),
+                                 "hide_ended": bool(hide_ended)},
                      "error_counts": dict(core_mod.ERROR_COUNTS),
                      "restored_at_start": dict(restore_mod._RESTORED),
                      "totals": dict(billing_mod._TOTALS),
@@ -1054,62 +1138,192 @@ def _strip_edit_acks_panel(obj, scale, total):
             "est_read_reclaim_usd_per_turn": est_usd}
 
 
-def _utilization(session):
-    """Lifetime tool-USE tally for a session, scanned from its capture dir
-    (LOG_DIR/<session>/). Answers 'of the tools loaded every turn, which ever
-    got exercised?' — the deadweight question, made per-session and live.
+# The injected skills list's anchored opener, as raw bytes — lets _capture_scan
+# ask "did this turn carry a skills roster?" without parsing the body. Must stay
+# the byte twin of _RE_SKILLS_LINE above; verified equal on 3,000 captures.
+_SKILLS_NEEDLE = b"The following skills are available for use with the"
 
-    On-demand only (a disk scan): callers gate it behind
-    `/_context?...&utilization=1` so the 10s poll / admin path never pays for it.
-    Scoped to the ONE session dir => naturally bounded to the live session_id (a
-    /clear mints a fresh id => fresh dir => the tally never spans the boundary).
 
-    Mirrors analyze_tools.py's accounting, joined request<->response by file
-    stem: only turns that LOADED tools AND actually RAN (200) count as a 'chance
-    to use' (a no-tools title side-call or an errored turn is not evidence of
-    waste). `used` is the RAW invocation count (3 Reads in one turn = 3; from
-    response meta.tool_uses), per clodex's contract.
+def _file_contains(path, needle, chunk=1 << 20):
+    """Does this file contain `needle`? Streamed, stopping at the first hit, so a
+    match costs only the bytes up to it — measured 0.59 GB instead of 0.97 GB
+    over one session's requests, which is what the page cache feels on a
+    multi-GB capture dir. Carries `len(needle)-1` bytes across the chunk seam so
+    a needle straddling it is still found."""
+    keep = len(needle) - 1
+    tail = b""
+    try:
+        with open(path, "rb") as fh:
+            while True:
+                block = fh.read(chunk)
+                if not block:
+                    return False
+                if needle in tail + block:
+                    return True
+                tail = block[-keep:] if keep else b""
+    except OSError:
+        return False
 
-    Returns {key -> {evaluable_turns, by_tool: {name -> used_count}}} keyed by
-    agent line: 'main' for the routed parent/unknown-role turns, else the
-    subagent INSTANCE's x-claude-code-agent-id (fallback role) — the same key
-    _context_snapshot resolves per agent, so the merge lines up. Empty map for a
-    cold/absent dir."""
-    out = {}
-    d = core_mod._session_dir(session)
-    if not d.is_dir():
-        return out
-    for f in sorted(d.glob("*.request.json")):
+
+def _sse_skill_names(path):
+    """The skill names a turn INVOKED, read off its response SSE.
+
+    The Skill tool_use streams as content_block_start(name="Skill") followed by
+    input_json_delta fragments carrying `{"skill": ..., "args": ...}`, so the
+    name is on the ISSUING turn's own receipt. That matters for more than speed:
+    reading it here means the tally never has to walk re-shipped history looking
+    for the same tool_use id, and so needs no cross-turn dedup set to stay
+    correct. Yields nothing for a turn with no Skill block, an absent/unreadable
+    SSE, or a fragment that doesn't parse — a skill we cannot name is not
+    counted, never guessed."""
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    if '"name":"Skill"' not in raw and '"name": "Skill"' not in raw:
+        return                       # cheap reject: no Skill block on this turn
+    idx, buf = None, []
+    for line in raw.splitlines():
+        if not line.startswith("data: "):
+            continue
         try:
-            rec = json.loads(f.read_text())
+            ev = json.loads(line[6:])
         except Exception:
             continue
-        summ = rec.get("summary") or {}
-        if not (summ.get("n_tools") or 0):
-            continue                       # no tools loaded => not a use-chance
+        kind = ev.get("type")
+        if kind == "content_block_start":
+            block = ev.get("content_block") or {}
+            idx = ev.get("index") if block.get("name") == "Skill" else None
+            buf = []
+        elif kind == "content_block_delta" and idx is not None \
+                and ev.get("index") == idx:
+            delta = ev.get("delta") or {}
+            if delta.get("type") == "input_json_delta":
+                buf.append(delta.get("partial_json") or "")
+        elif kind == "content_block_stop" and idx is not None \
+                and ev.get("index") == idx:
+            try:
+                name = json.loads("".join(buf)).get("skill")
+            except Exception:
+                name = None
+            if name:
+                yield name
+            idx, buf = None, []
+
+
+def _capture_scan(session, since_ts=None):
+    """Tool-USE and skill-INVOCATION tallies for a session, from ONE body-free
+    pass over its capture dir (LOG_DIR/<session>/). Answers 'of the tools and
+    skills loaded every turn, which ever got exercised?' — the deadweight
+    question, made per-session and live.
+
+    `since_ts` (epoch) counts only turns at or after it — the CURRENT context
+    window, when passed the compact boundary. This is the honest denominator for
+    a roster that describes the window: "never used" measured over turns the
+    model can no longer see says nothing about the tools it is carrying NOW.
+    None = lifetime, which is the right basis for the different question of
+    whether a tool should stay loaded at all. Both are cheap enough to compute
+    together, so callers get both rather than choosing (clodex: window for the
+    popover's 'did it pay off', lifetime for the trim labels).
+
+    Turn time comes from the head-read `ts` (core._head_ts, ISO-8601 local, the
+    writer's own stamp) — the file mtime would be the WRITER thread's flush, not
+    the turn's, and drifts under a backlog.
+
+    **NEVER json.loads a request record here.** A request holds that turn's whole
+    `messages` array (measured 347 KB/turn, 2.9 GB over one clodex session), and
+    the two tallies this replaces each parsed every one of them — 23s for a
+    single /_context call, past the consumer's own 20s timeout, i.e. a view that
+    could not load at all on the sessions it most needed to describe. Same
+    lesson, same fix as report._bust_scan: decide from the cheap reads.
+      * `summary`      — tail-read (core._tail_summary) for role/agent_id/n_tools.
+      * skills ROSTER  — a byte needle for the injected list's anchored opener,
+        checked against the parsed-body regex on 3,000 captures: 0 disagreements.
+      * skills USED    — the response SSE (_sse_skill_names), not request history.
+      * tools USED     — response meta.tool_uses, as before (receipts are small).
+    A tail-read that misses degrades to a full parse of that ONE file, so a
+    writer format change costs speed, never correctness.
+
+    On-demand only: callers gate it behind `/_context?...&utilization=1` so the
+    10s poll / admin path never pays for it. Scoped to the ONE session dir =>
+    naturally bounded to the live session_id (a /clear mints a fresh id => fresh
+    dir => the tally never spans the boundary).
+
+    Only turns that LOADED tools (resp. carried a skills roster) AND actually RAN
+    (200) count as a 'chance to use' — a no-tools title side-call or an errored
+    turn is not evidence of waste. `used` is the RAW invocation count (3 Reads in
+    one turn = 3), per clodex's contract.
+
+    Returns (tools, skills), each {key -> {evaluable_turns, by_tool|by_skill}},
+    keyed by agent line: 'main' for routed parent/unknown-role turns, else the
+    subagent INSTANCE's x-claude-code-agent-id (fallback role) — the same key
+    _context_snapshot resolves per agent, so the merge lines up. Empty maps for a
+    cold/absent dir.
+
+    The dir is LIVE: a long session writes captures while this runs, so both
+    tallies are a smear over the scan window rather than an instant — two
+    back-to-back calls on an active seat differ (measured 6,730 vs 6,732
+    evaluable turns). That is inherent to scanning a directory being written to,
+    not a defect to fix here; treat `evaluable_turns` as 'as of roughly now'."""
+    tools, skills = {}, {}
+    d = core_mod._session_dir(session)
+    if not d.is_dir():
+        return tools, skills
+    for f in sorted(d.glob("*.request.json")):
+        if since_ts is not None:
+            ts = core_mod._epoch_ts(core_mod._head_ts(f))
+            # A turn we cannot time is KEPT: dropping it would silently shrink
+            # the denominator and inflate every "used" rate, which reads as a
+            # cleaner roster than the wire supports.
+            if ts is not None and ts < since_ts:
+                continue
+        summ = core_mod._tail_summary(f)
+        if summ is None:                   # cheap read missed -> pay for one parse
+            try:
+                summ = (json.loads(f.read_text()) or {}).get("summary") or {}
+            except Exception:
+                continue
         role = summ.get("role")
         key = "main" if role in ("parent", "unknown", None) \
             else (summ.get("agent_id") or role)
         rp = f.with_name(f.name.replace(".request.json", ".response.json"))
-        ok, called = False, []
-        try:
-            resp = json.loads(rp.read_text())
-            ok = resp.get("status_code") == 200
-            called = (resp.get("meta") or {}).get("tool_uses") or []
-        except Exception:
-            pass
-        g = out.setdefault(key, {"evaluable_turns": 0,
-                                 "by_tool": collections.Counter()})
-        if ok:
+        receipt = None
+
+        def _resp():
+            """The turn's receipt, read at most once even though both tallies
+            ask whether it ran."""
+            nonlocal receipt
+            if receipt is None:
+                try:
+                    r = json.loads(rp.read_text())
+                    receipt = (r.get("status_code") == 200,
+                               (r.get("meta") or {}).get("tool_uses") or [])
+                except Exception:
+                    receipt = (False, [])
+            return receipt
+
+        if summ.get("n_tools") or 0:       # no tools loaded => not a use-chance
+            g = tools.setdefault(key, {"evaluable_turns": 0,
+                                       "by_tool": collections.Counter()})
+            ok, called = _resp()
+            if ok:
+                g["evaluable_turns"] += 1
+                for name in called:
+                    if name:
+                        g["by_tool"][name] += 1
+
+        g = skills.setdefault(key, {"evaluable_turns": 0,
+                                    "by_skill": collections.Counter()})
+        if _file_contains(f, _SKILLS_NEEDLE) and _resp()[0]:
             g["evaluable_turns"] += 1
-            for name in called:
-                if name:
-                    g["by_tool"][name] += 1
-    return out
+        for name in _sse_skill_names(
+                f.with_name(f.name.replace(".request.json", ".response.sse"))):
+            g["by_skill"][name] += 1
+    return tools, skills
 
 
 def _apply_utilization(tools, ustats):
-    """Fold one agent line's lifetime tally (from _utilization) into its tools
+    """Fold one agent line's lifetime tally (from _capture_scan) into its tools
     roster IN PLACE: stamp per_tool[].used, re-sort deadweight-first (never-used
     first, then biggest schema = the 'trim me' order clodex renders), and return
     a rollup {basis, evaluable_turns, loaded, used_distinct, deadweight_tokens}.
@@ -1128,70 +1342,6 @@ def _apply_utilization(tools, ustats):
     return {"basis": "capture-scan", "evaluable_turns": evaluable,
             "loaded": tools["count"], "used_distinct": used_distinct,
             "deadweight_tokens": deadweight}
-
-
-def _skill_utilization(session):
-    """Lifetime skill-INVOCATION tally for a session, scanned from its capture
-    dir — the per-skill twin of _utilization. Answers 'of the skills loaded every
-    turn, which ever got invoked?'.
-
-    The skill NAME is not in response meta.tool_uses (that records only the tool
-    name "Skill") — it lives in the assistant `tool_use` block's INPUT
-    (`{skill, args}`), which surfaces in the message history of LATER requests.
-    So we scan request bodies' assistant tool_use blocks where name=="Skill" and
-    count by input["skill"]. History accumulates, so the SAME tool_use id repeats
-    across a line's turns → we dedupe by id (counted once, at first sighting).
-    Ids never cross agent lines (separate threads), so the global seen-set is safe.
-
-    evaluable_turns = turns that LOADED skills (the list was in the body) AND ran
-    200 — the 'chance to invoke', mirroring _utilization's tool accounting.
-
-    Returns {key -> {evaluable_turns, by_skill: {name -> count}}}, key resolved
-    the same way as _utilization ('main' / subagent agent_id-or-role)."""
-    out = {}
-    d = core_mod._session_dir(session)
-    if not d.is_dir():
-        return out
-    seen = set()                          # tool_use ids counted once per session
-    for f in sorted(d.glob("*.request.json")):
-        try:
-            rec = json.loads(f.read_text())
-        except Exception:
-            continue
-        body = rec.get("body") or {}
-        if not isinstance(body, dict):
-            continue
-        summ = rec.get("summary") or {}
-        role = summ.get("role")
-        key = "main" if role in ("parent", "unknown", None) \
-            else (summ.get("agent_id") or role)
-        g = out.setdefault(key, {"evaluable_turns": 0,
-                                 "by_skill": collections.Counter()})
-        if any(_RE_SKILLS_LINE.search(t) for t in _iter_body_texts(body)):
-            rp = f.with_name(f.name.replace(".request.json", ".response.json"))
-            try:
-                if json.loads(rp.read_text()).get("status_code") == 200:
-                    g["evaluable_turns"] += 1
-            except Exception:
-                pass
-        for m in body.get("messages") or []:
-            if not isinstance(m, dict) or m.get("role") != "assistant":
-                continue
-            c = m.get("content")
-            if not isinstance(c, list):
-                continue
-            for b in c:
-                if not (isinstance(b, dict) and b.get("type") == "tool_use"
-                        and b.get("name") == "Skill"):
-                    continue
-                bid = b.get("id")
-                if bid in seen:
-                    continue
-                seen.add(bid)
-                sk = (b.get("input") or {}).get("skill")
-                if sk:
-                    g["by_skill"][sk] += 1
-    return out
 
 
 def _apply_skill_utilization(skills, ustats):
@@ -1215,6 +1365,26 @@ def _apply_skill_utilization(skills, ustats):
             "deadweight_tokens": deadweight}
 
 
+def _attach_lifetime(entry, tstats, sstats):
+    """Hang the LIFETIME counters off an entry's window rollups, as
+    `utilization.lifetime` / `skills_utilization.lifetime`.
+
+    Deliberately narrow: `evaluable_turns` + `used_distinct` only, never
+    per-tool `used`. Two `used` numbers on the same tool row is an invitation to
+    render the wrong one, and the lifetime question a consumer actually asks
+    ('has this tool EVER paid for itself on this seat?') is answered by the
+    distinct count. Absent rollup (codex / no roster) => nothing to attach."""
+    for field, stats, kind in (("utilization", tstats, "by_tool"),
+                               ("skills_utilization", sstats, "by_skill")):
+        roll = entry.get(field)
+        if not roll or stats is None:
+            continue
+        roll["lifetime"] = {
+            "evaluable_turns": stats.get("evaluable_turns", 0),
+            "used_distinct": sum(1 for v in (stats.get(kind) or {}).values()
+                                 if v > 0)}
+
+
 def _context_snapshot(session, utilization=False):
     """`GET /_context?session=<id>`: the tool rosters loaded for a session,
     main/parent line and each subagent INSTANCE reported separately (they carry
@@ -1226,15 +1396,54 @@ def _context_snapshot(session, utilization=False):
 
     When `utilization=True` each agent's tools roster is additionally enriched
     with per-tool `used` counts + a `utilization` rollup (deadweight pricing)
-    via a one-time disk scan of the session's capture dir (_utilization) — the
-    'did the loaded tools pay off?' view. Off by default so the cheap in-memory
-    path is unchanged for the poll/admin callers."""
+    via a disk scan of the session's capture dir (_capture_scan) — the 'did the
+    loaded tools pay off?' view. Off by default so the cheap in-memory path is
+    unchanged for the poll/admin callers.
+
+    `used` counts the CURRENT context window (since the last compact boundary),
+    because the roster being decorated is the current window: a tool called only
+    in turns the model can no longer see is deadweight NOW, whatever it did
+    before. The lifetime figures answer the different question of whether a tool
+    should stay loaded at all, so they ride alongside under
+    `utilization.lifetime` rather than replacing it (clodex renders the window
+    number on the popover and reads lifetime for its trim labels).
+
+    The boundary is billing's `since_compact.boundary_ts` — stamped on the
+    request path from a turns-in-context DECREASE and persisted in _session.json,
+    so it survives a restart and is exact. No baseline (pre-feature, or a session
+    that never compacted) => the window IS the lifetime, and both bases report
+    the same numbers rather than one going silently empty."""
     agents = []
-    util = _utilization(session) if utilization else {}
-    skutil = _skill_utilization(session) if utilization else {}
     with pinger_mod._LAST_REQUEST_LOCK:
         main = pinger_mod._LAST_REQUEST.get(session)
         main = dict(main) if main else None     # shallow copy; obj read outside lock
+    subs = meta_mod._subagent_request_objs(session)
+    # The scan DECORATES rosters, so it is worthless without one: an ended or
+    # restored session holds nothing in memory and returns agents=[] whatever the
+    # scan finds. Gating on that first is what makes the pathological case cheap
+    # — the sessions with the biggest capture dirs are exactly the long-lived
+    # ones most likely to have just rotated their id, and they used to pay a
+    # full-dir scan to be told there was nothing to report.
+    util, skutil, lifetime, lskutil = ({}, {}, {}, {})
+    scan_window = None
+    if utilization and (main or subs):
+        t0 = time.time()
+        boundary = (billing_mod.since_compact(
+            billing_mod._SESSION_TOTALS.get(session)) or {}).get("boundary_ts")
+        lifetime, lskutil = _capture_scan(session)
+        # One extra pass, not two: the windowed pass re-walks only the turns
+        # after the boundary, which on a compacted session is a small tail of
+        # the dir. A session that never compacted shares the lifetime result
+        # outright rather than scanning the same files twice for equal answers.
+        util, skutil = ((_capture_scan(session, since_ts=boundary), )[0]
+                        if boundary else (lifetime, lskutil))
+        scan_window = {"basis": "live-scan",
+                       "scan_s": round(time.time() - t0, 3),
+                       "compact_boundary_ts": boundary,
+                       # the dir is written to WHILE this runs, so the counts are
+                       # a smear across scan_s, not an instant (measured: two
+                       # back-to-back calls differed by 2 evaluable turns)
+                       "note": "counts scanned from a live capture dir"}
     if main:
         obj = main.get("obj")
         # main line carries a real usage receipt -> anchor the composition total
@@ -1254,8 +1463,9 @@ def _context_snapshot(session, utilization=False):
             entry["utilization"] = _apply_utilization(roster, util.get("main"))
             entry["skills_utilization"] = _apply_skill_utilization(
                 entry["skills"], skutil.get("main"))
+            _attach_lifetime(entry, lifetime.get("main"), lskutil.get("main"))
         agents.append(entry)
-    for s in meta_mod._subagent_request_objs(session):
+    for s in subs:
         obj = s.get("obj")
         roster = _tool_roster(obj)
         entry = {
@@ -1272,9 +1482,13 @@ def _context_snapshot(session, utilization=False):
             entry["utilization"] = _apply_utilization(roster, util.get(ukey))
             entry["skills_utilization"] = _apply_skill_utilization(
                 entry["skills"], skutil.get(ukey))
+            _attach_lifetime(entry, lifetime.get(ukey), lskutil.get(ukey))
         agents.append(entry)
     note = None
     if not agents:
         note = ("no in-memory request for this session "
                 "(cold/restored/ended); query while it is active")
-    return {"session_id": session, "agents": agents, "note": note}
+    out = {"session_id": session, "agents": agents, "note": note}
+    if scan_window:
+        out["scan"] = scan_window
+    return out

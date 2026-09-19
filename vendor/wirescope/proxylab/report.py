@@ -64,10 +64,6 @@ _SCORE_PCT_CEILING = 60.0
 
 _CHARS_PER_TOK = 4
 
-# `"ts": "<iso>"` as the writer emits it at the head of a request record — lets the
-# bust scan order the series without parsing the body (see _head_ts).
-_TS_HEAD_RE = re.compile(rb'"ts"\s*:\s*"([^"]+)"')
-
 # The preamble = the static, re-sent-every-turn prefix. These composition
 # categories make it up (everything that isn't live conversation / output).
 _PREAMBLE_CATEGORIES = ("system", "claudemd", "useremail", "agents", "skills",
@@ -92,59 +88,12 @@ def _load(path):
         return None
 
 
-def _head_ts(path, nbytes=200):
-    """The capture's `ts` read from the first `nbytes` of a request record, WITHOUT
-    parsing the body. `ts` is the 2nd key the writer emits (server.py `record = {...}`),
-    measured at byte offset 17-20 across the corpus, so a 200-byte read is a ~10x
-    guard rather than a gamble; a miss returns None and the caller falls back to a
-    full parse. Exists because ordering the series needs only this one field while a
-    full json.load pays for the whole `messages` array (mean 0.37 MB)."""
-    try:
-        with open(path, "rb") as fh:
-            head = fh.read(nbytes)
-    except OSError:
-        return None
-    m = _TS_HEAD_RE.search(head)
-    return m.group(1).decode("utf-8", "replace") if m else None
-
-
-def _tail_summary(path, nbytes=4096):
-    """The capture's `summary` dict read from the LAST `nbytes` of a request record,
-    without parsing the body. The writer emits `summary` as the final key (verified:
-    no key follows it anywhere in the corpus) and it measures <1 KB, so a 4 KB tail
-    read reaches it whole; the scan finds the last `"summary"` and brace-matches its
-    object. Returns None if it isn't found intact — caller falls back to a full parse,
-    so this is an optimisation with a correct slow path, never a source of wrong data.
-
-    Validated against a full parse on 4,134 requests sampled across all 1,039 capture
-    dirs: 0 misses, 0 disagreements."""
-    try:
-        with open(path, "rb") as fh:
-            size = fh.seek(0, 2)
-            fh.seek(max(0, size - nbytes))
-            tail = fh.read()
-    except OSError:
-        return None
-    k = tail.rfind(b'"summary"')
-    if k < 0:
-        return None
-    start = tail.find(b"{", k)
-    if start < 0:
-        return None
-    depth = 0
-    for i in range(start, len(tail)):
-        c = tail[i : i + 1]
-        if c == b"{":
-            depth += 1
-        elif c == b"}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    obj = json.loads(tail[start : i + 1])
-                except Exception:
-                    return None
-                return obj if isinstance(obj, dict) else None
-    return None
+# The two cheap capture reads live in core now (status._capture_scan needs them
+# too, and core is the module everyone may import). Re-exported under their
+# original names: they debuted here, the bust-scan prose still names them, and
+# test_bust_scan pins their behaviour through this module.
+_head_ts = core_mod._head_ts
+_tail_summary = core_mod._tail_summary
 
 
 def _line_key(summ):
@@ -295,18 +244,9 @@ def _usd(tokens, rate):
     return (tokens or 0) * rate / 1_000_000.0
 
 
-def _epoch(ts):
-    """Capture timestamps come two ways: request.json `ts` is an ISO-8601 string
-    ('2026-06-13T19:01:56'), warmth.json `ts` is an epoch float. Normalise to a
-    float epoch (None if unparseable) so idle-gap math works."""
-    if ts is None:
-        return None
-    if isinstance(ts, (int, float)):
-        return float(ts)
-    try:
-        return datetime.datetime.fromisoformat(ts).timestamp()
-    except (ValueError, TypeError):
-        return None
+# Also in core now (status._capture_scan windows on it); re-exported here under
+# the name this module's callers and prose already use.
+_epoch = core_mod._epoch_ts
 
 
 # ---------------------------------------------------------------------------
@@ -1653,8 +1593,7 @@ def session_report(session, detail=False):
                 "basis": "on-disk-capture", "note": "no capture on disk for this session",
                 "scope": {"requests": 0}, "findings": [], "verdict": None}
 
-    util = status_mod._utilization(session)
-    skutil = status_mod._skill_utilization(session)
+    util, skutil = status_mod._capture_scan(session)
     scope = _scope(pairs)
     totals = _totals(pairs)
     cost, misses = _cost_decomposition(pairs)
