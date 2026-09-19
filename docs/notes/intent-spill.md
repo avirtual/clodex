@@ -71,3 +71,9 @@ The operator-inbox key is `shout`. The vendored conformance suite
 (`proxylab/spill.py`) still gives `'notify-user'` as its one-word-verb example —
 that spelling was retired here with no alias, so the next vendor port must not
 re-derive it from that docstring.
+
+## capResumeSnapshot
+
+The board block is the only part that gives way under the cap. Host, git and
+roster answer questions a truncated board cannot, and a resume that lost them
+spends the turn it was saving re-asking for them.

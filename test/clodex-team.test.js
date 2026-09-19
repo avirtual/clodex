@@ -871,3 +871,36 @@ test('the script\'s copy of the rollup still agrees with core team-cost', () => 
   assert.strictEqual(mine.since, theirs.since);
   assert.deepStrictEqual([...mine.byTicket.entries()].sort(), [...theirs.byTicket.entries()].sort());
 });
+
+test('the extracted _taskListText returns exactly what [agent:task list] replies', () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, hand: {} } });
+  const rows = parityBoard();
+  mkTicketRegistry(home, proj, rows);
+  const team = { name: 'proj', root: proj, lead: 'lead' };
+  const SM = createSessionManager({ fs, path, REGISTRY_DIR: home, knownSkillNames: () => [] });
+  const m = new SM();
+
+  for (const filter of ['open', 'done', 'cancelled', 'all']) {
+    let reply = '';
+    m._taskList({ name: 'lead' }, team, { filter }, (s) => { reply = s; });
+    assert.ok(reply.length > 0, `ENTER: the ${filter} reply is not empty`);
+    assert.strictEqual(m._taskListText(team, filter, Date.now()), reply,
+      `the pure assembly and the intent reply disagree on the ${filter} board`);
+  }
+});
+
+test('_taskListText answers the empty board with the same sentence the reply does', () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, hand: {} } });
+  mkTicketRegistry(home, proj, []);
+  const team = { name: 'proj', root: proj, lead: 'lead' };
+  const m = new (createSessionManager({ fs, path, REGISTRY_DIR: home, knownSkillNames: () => [] }))();
+
+  let reply = '';
+  m._taskList({ name: 'lead' }, team, { filter: 'open' }, (s) => { reply = s; });
+  assert.strictEqual(reply, 'no tickets on proj');
+  assert.strictEqual(m._taskListText(team, 'open', Date.now()), reply);
+});

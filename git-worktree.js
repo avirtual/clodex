@@ -306,6 +306,18 @@ function headShaSync(dir) {
   } catch { return null; }
 }
 
+function headLogSync(dir) {
+  if (!dir || !fs.existsSync(dir)) return null;
+  try {
+    const out = execFileSync('git', ['-C', dir, 'log', '-1', '--format=%h %s'],
+      { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
+    const line = String(out || '').split('\n')[0].trim();
+    const m = /^([0-9a-f]{7,40})(?: (.*))?$/.exec(line);
+    if (!m) return null;
+    return { sha: m[1], subject: (m[2] || '').trim() };
+  } catch { return null; }
+}
+
 async function isWorktreeRoot(dir) {
   if (!dir || !fs.existsSync(dir)) return false;
   const r = await git(dir, ['rev-parse', '--show-toplevel']);
@@ -684,5 +696,5 @@ module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
   defaultBranch, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch,
   diffText, diffNames, fileAt, currentBranch, mergeNoFf, revertCommit, initRepo, hasCommit,
-  checkoutDetached, headSha, headShaSync,
+  checkoutDetached, headSha, headShaSync, headLogSync,
 };

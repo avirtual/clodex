@@ -9,6 +9,7 @@ const { atomicWriteFileSync } = require('./fs-util');
 
 const SPILL_MIN_BYTES = 800;
 const SPILL_MAX_BYTES = 262144;
+const SNAPSHOT_MAX_BYTES = 4096;
 
 const SPILL_VERBS = new Set([
   'task.add', 'task.respec', 'task.reject',
@@ -114,9 +115,22 @@ function pointerText(id) {
   return `@spill:${id}`;
 }
 
+function capResumeSnapshot(head, board, max = SNAPSHOT_MAX_BYTES) {
+  const rows = String(board == null ? '' : board).split('\n').filter((l) => l !== '');
+  const full = rows.length ? `${head}\n${rows.join('\n')}` : head;
+  if (Buffer.byteLength(full, 'utf8') <= max) return full;
+  for (let keep = rows.length - 1; keep > 0; keep--) {
+    const marker = `(… ${rows.length - keep} more rows — [agent:task list])`;
+    const candidate = `${head}\n${rows.slice(0, keep).join('\n')}\n${marker}`;
+    if (Buffer.byteLength(candidate, 'utf8') <= max) return candidate;
+  }
+  return `${head}\n(… ${rows.length} more rows — [agent:task list])`;
+}
+
 module.exports = {
   SPILL_MIN_BYTES,
   SPILL_MAX_BYTES,
+  SNAPSHOT_MAX_BYTES,
   SPILL_VERBS,
   ID_RE,
   AGENT_RE,
@@ -133,4 +147,5 @@ module.exports = {
   resolveSpill,
   pointerOf,
   pointerText,
+  capResumeSnapshot,
 };
