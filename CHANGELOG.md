@@ -24,6 +24,11 @@ blocks a release.
 - A busy terminal refusal names the program holding the tab by its command word
   only when command reporting is set to ask-only, and shows the full command
   line only under full reporting.
+- wirescope is vendored at v0.6.69: the Preferences capture-logs control and
+  the session report answer promptly on long sessions, including right after
+  a restart, and a cache-bust card names its cause — a CLI upgrade, or a
+  prompt change with the block that moved and by how much — instead of a
+  generic hint.
 
 ## 5.78.0 — 2026-09-19
 

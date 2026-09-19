@@ -113,9 +113,23 @@ def _seq_of(stem):
 
 
 def _iter_pairs(session):
-    """Per-request {stem, req, resp, warmth, summ, line, model, ts, billing,
+    """Per-request {stem, path, body, resp, warmth, summ, line, model, ts, billing,
     tokens, ok} for a session dir, in **chronological (timestamp) order**. The
     single disk pass the rest of the report joins against.
+
+    RECEIPTS-FIRST, like `_bust_scan`: the request BODY is NOT parsed here. A
+    request record holds that turn's whole `messages` array (mean 347 KB, 3.12 GB
+    over the 8,765-turn session that prompted this), and every field this pass
+    needs is either on the RECEIPT (`response.json` billing) or reachable by the
+    two cheap capture reads — `_head_ts` for the ordering key and `_tail_summary`
+    for role/agent_id/n_tools. Either cheap read falling short degrades to a full
+    parse of that ONE file, so a writer format change costs speed, never
+    correctness. Measured on that session: 17.04s -> 6.42s for this pass.
+
+    `body` is None until `_pair_body(p)` fills it in — only four consumers need
+    one, and three of them want a SINGLE body rather than all of them (see
+    `_representative_body` / `_user_turns`). Read it through `_pair_body`, never
+    off the dict, or the laziness is silently defeated.
 
     Ordered by `ts`, NOT by the capture seq/filename: seq is a global counter
     that RESETS to 0 on every proxy restart, so a session that spans a restart
@@ -128,18 +142,28 @@ def _iter_pairs(session):
         return []
     out = []
     for rf in d.glob("*.request.json"):
-        req = _load(rf)
-        if req is None:
-            continue
         stem = rf.name[: -len(".request.json")]
+        ts = _head_ts(rf)
+        summ = _tail_summary(rf)
+        body = None
+        if ts is None or summ is None:          # cheap reads missed -> full parse
+            req = _load(rf)
+            if req is None:
+                continue
+            summ = req.get("summary") or {}
+            ts = req.get("ts")
+            b = req.get("body")
+            # already paid for the parse — keep the body rather than re-read it
+            body = b if isinstance(b, dict) else False
         resp = _load(rf.with_name(stem + ".response.json")) or {}
         warmth = _load(rf.with_name(stem + ".warmth.json")) or {}
-        summ = req.get("summary") or {}
+        if ts is None:
+            ts = warmth.get("ts")
         billing = resp.get("billing") or {}
-        ts = req.get("ts") or warmth.get("ts")
         out.append({
             "stem": stem,
-            "req": req,
+            "path": rf,
+            "body": body,
             "resp": resp,
             "warmth": warmth,
             "summ": summ,
@@ -153,6 +177,25 @@ def _iter_pairs(session):
     out.sort(key=lambda p: (_epoch(p["ts"]) if _epoch(p["ts"]) is not None else 0.0,
                             _seq_of(p["stem"])))
     return out
+
+
+def _pair_body(p):
+    """Parse and memoise ONE pair's request body — the expensive read `_iter_pairs`
+    defers. Returns a dict, or None when the record is missing / unparseable /
+    bodiless, which is exactly how the old eager code treated a non-dict body.
+
+    The twin of `_bust_body`, kept separate because the two scans carry different
+    dicts; both memoise into a `body` slot whose False means 'looked, none there'
+    so a bodiless record is never re-read on a second ask.
+
+    A pair with no `path` resolves to its in-dict body alone (None if absent):
+    `is_classifier_pair`/`is_keepwarm_pair` are part of the module's surface and
+    get called on hand-built pairs, which must not be a disk read."""
+    if p.get("body") is None:
+        req = _load(p["path"]) if p.get("path") else None
+        body = (req or {}).get("body")
+        p["body"] = body if isinstance(body, dict) else False
+    return p["body"] or None
 
 
 def _codex_framing_key(item):
@@ -351,17 +394,22 @@ def _cost_decomposition(pairs):
 def _representative_body(pairs, line="main"):
     """The last tool-loaded request body on a line — the steady-state shape whose
     preamble (tools+system+CLAUDE.md+skills+agents) rides every turn. Returns the
-    body dict or None."""
-    chosen = None
-    for p in pairs:
+    body dict or None.
+
+    Walks BACKWARDS and stops at the first body it can parse: the answer is the
+    LAST qualifying turn, so forward iteration would parse every candidate body
+    only to discard all but the final one (8,765 parses for one answer on the
+    session that prompted the receipts-first pass). `n_tools` comes off the cheap
+    tail summary, so the filter itself costs no body read."""
+    for p in reversed(pairs):
         if p["line"] != line:
             continue
         if not (p["summ"].get("n_tools") or 0):
             continue
-        body = p["req"].get("body")
-        if isinstance(body, dict):
-            chosen = body
-    return chosen
+        body = _pair_body(p)
+        if body is not None:
+            return body
+    return None
 
 
 def _token_decomposition(pairs, util_by_line, skutil_by_line):
@@ -454,61 +502,139 @@ def _reclaimable_carriage_usd(tokens_per_request, requests, rates,
     return round(recurring + writes, 6)
 
 
+# Tool calls read off the ISSUING TURN'S OWN RECEIPT, never re-shipped history.
+#
+# The old pass walked every message of every request body and deduped tool_use ids
+# with a `seen_use` set. That set was the tell: history re-ships every prior
+# tool_use on every turn, so the scan was quadratic in content — it read the same
+# call thousands of times and discarded all but the first. Same defect the v0.6.68
+# skills tally fixed, and the same fix applies: a turn's NEW tool_use blocks debut
+# exactly once, in that turn's own response, so counting there is correct BY
+# CONSTRUCTION rather than by bookkeeping.
+#
+# Two halves, two sources, because they live in different places on the wire:
+#   * NAMES  -> `meta.tool_uses` on the receipt (already parsed for billing: free).
+#   * INPUTS -> the response SSE's input_json_delta fragments. Only the hints need
+#     these (Read.file_path, Bash.command), and only for two tool names, so a byte
+#     prefilter rejects the ~37% of turns that call neither before any parsing.
+#
+# The receipts are also strictly MORE correct than the history walk, which was the
+# surprise: measured on the 8,765-turn session, receipts saw 4,366 main-line calls
+# to history's 4,364. A tool_use enters history only when the CLI sends the NEXT
+# request carrying its tool_result, so any call whose result never came back is
+# invisible to a history walk — the last call of a session (no next request), and
+# any turn the user interrupted mid-tool. Both misses were real Bash calls that
+# happened and were billed.
+# Both spacings, like status._sse_skill_names: the live wire is compact, but the
+# needle is a pure OPTIMISATION and a whitespace-tolerant producer must not cause
+# a silent zero-count. A miss here is invisible (no error, just nothing found),
+# which is exactly the failure mode worth spending two extra needles on.
+_TOOL_INPUT_NEEDLES = (b'"name":"Read"', b'"name":"Bash"',
+                       b'"name": "Read"', b'"name": "Bash"')
+
+# The SSE carries the command the MODEL emitted; history carries the command the
+# CLI settled on, and the two differ on 54 of 6,125 Bash calls (0.9%) in exactly
+# one way: the model prefixes `cd <project root> && …` and the CLI strips it,
+# because it already runs the tool in that directory. Every measured difference
+# was this and only this.
+#
+# It matters here because the cheaper-tool heuristic keys on the FIRST WORD: read
+# raw, `cd /path && grep foo` is a `cd` and the grep is invisible. Unwrapping
+# keeps the SSE reading identical to what the history walk used to see, and is
+# the more honest reading anyway — the command a user would act on is the grep.
+_CD_PREFIX_RE = re.compile(r"^\s*cd\s+(?:'[^']*'|\"[^\"]*\"|\S+)\s*&&\s*")
+
+
+def _unwrap_cd(cmd):
+    """Strip leading `cd <dir> &&` hops from a shell command, the way the CLI does
+    before it writes the call into history. Repeated so `cd a && cd b && grep`
+    resolves to the grep."""
+    prev = None
+    while prev != cmd:
+        prev = cmd
+        cmd = _CD_PREFIX_RE.sub("", cmd, count=1)
+    return cmd
+
+
+def _sse_tool_inputs(path):
+    """Yield (tool_name, input_dict) for the Read/Bash calls a turn ISSUED, read
+    off its response SSE. The tool_use streams as content_block_start(name=...)
+    followed by input_json_delta fragments carrying the input JSON — the same
+    shape `status._sse_skill_names` reads for skills.
+
+    Yields nothing for an absent/unreadable SSE or a fragment that doesn't parse:
+    a call we cannot name is not counted, never guessed. Only Read and Bash are
+    decoded — they are the only inputs any hint reads, and skipping the rest keeps
+    this off the big tool_use payloads (Edit/Write ship whole file contents)."""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return
+    if not any(n in raw for n in _TOOL_INPUT_NEEDLES):
+        return                       # cheap reject: no Read/Bash block on this turn
+    idx, name, buf = None, None, []
+    for line in raw.splitlines():
+        if not line.startswith(b"data: "):
+            continue
+        try:
+            ev = json.loads(line[6:])
+        except Exception:
+            continue
+        kind = ev.get("type")
+        if kind == "content_block_start":
+            block = ev.get("content_block") or {}
+            if block.get("type") == "tool_use" and block.get("name") in ("Read", "Bash"):
+                idx, name, buf = ev.get("index"), block.get("name"), []
+            else:
+                idx = None
+        elif kind == "content_block_delta" and idx is not None \
+                and ev.get("index") == idx:
+            delta = ev.get("delta") or {}
+            if delta.get("type") == "input_json_delta":
+                buf.append(delta.get("partial_json") or "")
+        elif kind == "content_block_stop" and idx is not None \
+                and ev.get("index") == idx:
+            try:
+                inp = json.loads("".join(buf))
+            except Exception:
+                inp = None
+            if isinstance(inp, dict):
+                yield name, inp
+            idx, name, buf = None, None, []
+
+
 def _tool_result_attribution(pairs):
-    """Q1 / refinement C: per (line, tool) {calls, result_tokens}, by joining each
-    assistant tool_use id to its tool_result in the next request's history. Also
-    collects cheaper-tool and redundant-read evidence. Returns
-    {line -> {tool -> {calls, result_tokens}}} and a list of low-conf hints."""
-    by_line = {}                         # line -> {tool -> {calls, result_tokens}}
-    id_tool = {}                         # tool_use id -> (line, tool name)
-    counted_result = set()
+    """Q1 / refinement C: per (line, tool) {calls}, counted off each turn's own
+    receipt. Also collects cheaper-tool and redundant-read evidence from the
+    response SSE. Returns {line -> {tool -> {calls}}} and a list of low-conf hints.
+
+    `result_tokens` used to ride this dict. It was computed from the tool_result
+    blocks in the NEXT request's history — the one figure here that genuinely
+    needs a body — and in the whole life of /_report (since the endpoint's first
+    commit) NOTHING ever read it: not a finding, not the payload, not
+    INTEGRATION.md. It is dropped rather than carried at the cost of the scan it
+    was the sole reason for. If a consumer ever wants result sizes, add them back
+    deliberately with a consumer attached, and price the body read then."""
+    by_line = {}                         # line -> {tool -> {calls}}
     read_targets = collections.Counter()  # (line, file) -> count
     cheaper = collections.Counter()      # (line, cmd, alt) -> count
-    seen_use = set()
 
     for p in pairs:
         line = p["line"]
         slot = by_line.setdefault(line, {})
-        for m in (p["req"].get("body") or {}).get("messages") or []:
-            if not isinstance(m, dict):
+        for name in ((p["resp"].get("meta") or {}).get("tool_uses") or []):
+            if not name:
                 continue
-            c = m.get("content")
-            if not isinstance(c, list):
-                continue
-            for b in c:
-                if not isinstance(b, dict):
-                    continue
-                bt = b.get("type")
-                if bt == "tool_use":
-                    bid = b.get("id")
-                    name = b.get("name")
-                    if bid and bid not in seen_use:
-                        seen_use.add(bid)
-                        id_tool[bid] = (line, name)
-                        ts = slot.setdefault(name, {"calls": 0, "result_tokens": 0})
-                        ts["calls"] += 1
-                        inp = b.get("input") or {}
-                        if name == "Read" and inp.get("file_path"):
-                            read_targets[(line, inp["file_path"])] += 1
-                        if name == "Bash" and isinstance(inp.get("command"), str):
-                            w = inp["command"].strip().split()
-                            cmd = w[0] if w else ""
-                            cmd = cmd.split("/")[-1]
-                            if cmd in _CHEAPER_TOOL:
-                                cheaper[(line, cmd, _CHEAPER_TOOL[cmd])] += 1
-                elif bt == "tool_result":
-                    tid = b.get("tool_use_id")
-                    if tid in id_tool and tid not in counted_result:
-                        counted_result.add(tid)
-                        bc = b.get("content")
-                        ln = (len(bc) if isinstance(bc, str)
-                              else sum(len(x.get("text") or "") for x in bc
-                                       if isinstance(x, dict)) if isinstance(bc, list)
-                              else len(json.dumps(bc, ensure_ascii=False)) if bc is not None
-                              else 0)
-                        ln_tok = ln // _CHARS_PER_TOK
-                        lk, nm = id_tool[tid]
-                        by_line[lk][nm]["result_tokens"] += ln_tok
+            slot.setdefault(name, {"calls": 0})["calls"] += 1
+        sse = p["path"].with_name(p["stem"] + ".response.sse")
+        for name, inp in _sse_tool_inputs(sse):
+            if name == "Read" and inp.get("file_path"):
+                read_targets[(line, inp["file_path"])] += 1
+            elif name == "Bash" and isinstance(inp.get("command"), str):
+                w = _unwrap_cd(inp["command"]).strip().split()
+                cmd = w[0].split("/")[-1] if w else ""
+                if cmd in _CHEAPER_TOOL:
+                    cheaper[(line, cmd, _CHEAPER_TOOL[cmd])] += 1
     hints = []
     for (line, f), n in read_targets.items():
         if n >= 3:
@@ -778,11 +904,18 @@ def _user_turns(pairs):
     (largest) main request body; count user messages that are real prompts — not
     tool_result continuations and not harness-injected reminders. One user turn
     fans out into many requests (each tool-loop hop), which is why carriage is
-    priced per-REQUEST, not per-turn."""
+    priced per-REQUEST, not per-turn.
+
+    Backwards for the same reason as _representative_body: only the LAST main
+    body is ever used, so stopping at the first one that parses turns a
+    whole-corpus parse into a single read."""
     last_main = None
-    for p in pairs:
-        if p["line"] == "main" and isinstance(p["req"].get("body"), dict):
-            last_main = p["req"]["body"]
+    for p in reversed(pairs):
+        if p["line"] != "main":
+            continue
+        last_main = _pair_body(p)
+        if last_main is not None:
+            break
     if not last_main:
         return 0
     n = 0
@@ -857,6 +990,13 @@ def _scope(pairs):
             "agents": list(lines.values())}
 
 
+# Both of these prefer the summary TAG and fall back to the wire shape, which
+# needs a body. The tag covers everything captured since v0.6.65/66 (measured
+# 100% keepwarm / 97.8% sidecall on the live coordinator session), so the
+# fallback is a small tail on a current corpus — but a corpus captured entirely
+# BEFORE those versions takes the body path on every pair and pays the old eager
+# cost. That is the honest floor for pricing an untagged capture correctly, not a
+# regression: it is exactly what the eager pass did for every corpus.
 def is_classifier_pair(p):
     """An auto-mode permission-classifier side-call among _iter_pairs entries:
     the summary tag when the capture has one (v0.6.66+), else the wire shape off
@@ -864,7 +1004,7 @@ def is_classifier_pair(p):
     summ = p.get("summ") or {}
     if "sidecall" in summ:
         return summ["sidecall"] == "classifier"
-    body = (p.get("req") or {}).get("body")
+    body = _pair_body(p)
     return isinstance(body, dict) and meta_mod._is_classifier_call(body)
 
 
@@ -875,7 +1015,7 @@ def is_keepwarm_pair(p):
     summ = p.get("summ") or {}
     if "keepwarm" in summ:
         return bool(summ["keepwarm"])
-    body = (p.get("req") or {}).get("body")
+    body = _pair_body(p)
     return (isinstance(body, dict) and bool(body.get("tools"))
             and body.get("max_tokens") == 1)
 
@@ -946,7 +1086,11 @@ def _series(pairs):
         write_usd = _usd(w5, rates["cache_write_5m"]) + _usd(w1, rates["cache_write_1h"])
         gen_usd = _usd(out, rates["out"])
         read_usd = read_cached + read_uncached
-        comp = status_mod._composition(p["req"].get("body"))      # estimate, whole body
+        # The one consumer that is inherently per-request: a composition band is a
+        # property of THAT turn's window, so every main-line body is read. This is
+        # what keeps detail=1 costlier than detail=0, and why /_timeline is the
+        # heavy view — not something the receipts-first pass can fold away.
+        comp = status_mod._composition(_pair_body(p))              # estimate, whole body
         cats = {c["category"]: c["tokens"] for c in comp["by_category"]} if comp else {}
         bands = {name: sum(cats.get(k, 0) for k in keys) for name, keys in _TL_BANDS}
         i += 1

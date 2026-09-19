@@ -27,7 +27,7 @@ import importlib
 # against the directory listing — a new module fails the gate the day it lands).
 _MODULES = ("bake_session", "core", "store", "accounts", "codex", "transforms", "canary", "writer",
             "warmth", "subs", "meta", "pinger", "hold", "billing", "quota",
-            "receipts", "report", "prune", "restore", "status", "views",
+            "receipts", "report", "prune", "restore", "spill", "status", "views",
             "server", "fold", "hints", "hints_native", "tokest")
 
 

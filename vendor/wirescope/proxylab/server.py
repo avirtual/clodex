@@ -3,6 +3,7 @@ import contextlib
 import json
 import os
 import re
+import threading
 import time
 
 from starlette.applications import Starlette
@@ -27,6 +28,7 @@ from proxylab import prune as prune_mod
 from proxylab import receipts as receipts_mod
 from proxylab import report as report_mod
 from proxylab import restore as restore_mod
+from proxylab import spill as spill_mod
 from proxylab import status as status_mod
 from proxylab import subs as subs_mod
 from proxylab import transforms as transforms_mod
@@ -763,7 +765,14 @@ async def handler(request: Request) -> Response:
     # Action-endpoint convention: 400 only for malformed input; outcome in body.
     if request.url.path.rstrip("/") == "/_prune":
         if request.method == "GET":
-            return Response(json.dumps(prune_mod.prune_scan(), indent=2),
+            # Sizing every session dir is unbounded disk work, so it goes off
+            # the event loop for the same reason the /_context scan does: a
+            # synchronous walk here stalls every seat's live turn behind one
+            # readout. Memoized (prune.prune_scan), so the steady-state call is
+            # ~0.13s — but the first call after a restart is the full cold walk,
+            # which is exactly the case that must not block the loop.
+            res = await run_in_threadpool(prune_mod.prune_scan)
+            return Response(json.dumps(res, indent=2),
                             media_type="application/json")
         if request.method == "POST":
             q = request.query_params
@@ -781,7 +790,11 @@ async def handler(request: Request) -> Response:
                               "scope in {sessions,no-session,all}"}),
                     status_code=400, media_type="application/json")
             dry = q.get("dry_run") in ("1", "yes", "true")
-            res = prune_mod.prune(age, tier=tier, scope=scope, dry_run=dry)
+            # Off the loop for the same reason as the GET, and more so: this one
+            # walks every dir AND unlinks, so it is the longest-running handler
+            # in the proxy.
+            res = await run_in_threadpool(prune_mod.prune, age, tier=tier,
+                                          scope=scope, dry_run=dry)
             if not dry:
                 print(f"[prune] tier={tier} scope={scope} "
                       f"older_than={q.get('older_than')} -> "
@@ -1926,16 +1939,41 @@ async def handler(request: Request) -> Response:
     sub_tee = (subs_mod._tee_for(agent, session_id, f"{n}-{ts}")
                if m is not None and is_messages else None)
 
+    # Intent-body spill (scratchpad/SPILL-WIRE-FORMAT.md): rewrite an oversized
+    # greedy intent body to a content-addressed pointer. ROUTED traffic only —
+    # unrouted requests carry the literal agent name "ext", which is not a seat
+    # and has no resolver, so they must never write a spill file. Unlike
+    # buffer_resp this holds only the current intent body, never the whole
+    # response, so ordinary prose still streams.
+    # `not buffer_resp`: RESP_*/relay rewrite the whole blob at the end, which
+    # would discard what we rewrote mid-stream. They are off for agent-routed
+    # traffic, so this is mutual exclusion made explicit rather than a live case.
+    spill_tee = (spill_mod.SpillTee(agent)
+                 if m is not None and is_messages and not buffer_resp
+                 and spill_mod.enabled() and spill_mod.valid_agent(agent) else None)
+
     async def body_iter():
         out_blob = None
         try:
             async for chunk in up.aiter_raw():
                 if capture:
-                    chunks.append(chunk)
+                    chunks.append(chunk)   # capture the UNMODIFIED upstream bytes
                 if not buffer_resp:     # stream verbatim; when buffering we hold
-                    yield chunk
+                    yield spill_tee.feed(chunk) if spill_tee is not None else chunk
                 if sub_tee is not None:  # after yield: client bytes come first
+                    # Deliberately the ORIGINAL chunk: a subscriber is told what
+                    # the model SAID, while the CLI transcript gets the pointer.
+                    # The two therefore differ on a spilled turn — intended, but
+                    # stated here because it is the kind of asymmetry a consumer
+                    # should read rather than discover.
                     sub_tee.feed(chunk)
+            if spill_tee is not None:
+                tail = spill_tee.close()   # unterminated body: never dropped
+                if tail:
+                    yield tail
+                if spill_tee.fired:
+                    print(f"[spill] #{n} {agent} {spill_tee.fired} "
+                          f"body(ies) -> pointer", flush=True)
             if buffer_resp and chunks:
                 full = b"".join(chunks)
                 # relay stashes prose + blanks it as a side effect; compute ONCE
@@ -1989,6 +2027,15 @@ async def _lifespan(app):
     # silently dropped) on a freshly-resolved unpinned install. lifespan= has
     # been supported since 0.13, so this works on both old and new Starlette.
     await hold_mod._start_hold_loop()
+    # Warm the /_prune size memo off the request path. The memo persists, so
+    # this is a no-op cost on any store that has been scanned before (one stat
+    # per dir to re-validate, ~12ms on 4,654) — it exists for the store that has
+    # NEVER been scanned, where the first caller would otherwise pay the full
+    # cold walk (45.8s) against a 20s client timeout. Daemon thread, so it can
+    # never hold up a shutdown, and failures print rather than propagate: this
+    # is a cache warm, and the scan is correct without it either way.
+    threading.Thread(target=prune_mod.warm_stats_memo,
+                     name="prune-memo-warm", daemon=True).start()
     yield
 
 

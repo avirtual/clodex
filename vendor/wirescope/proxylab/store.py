@@ -15,7 +15,7 @@ column exists = fine); everything else must be IF-NOT-EXISTS-idempotent.
 Current tenants (owner module -> tables):
   warmth -> warmth, session_head     meta -> session_meta
   hold   -> hold_state               pinger -> last_request
-  subs   -> subscribers
+  subs   -> subscribers              prune -> prune_dir_stats
 
 WHY SQLite over Redis (2026-06-09, unchanged): stdlib + no daemon to babysit;
 durable per-commit by default; no "store unreachable" runtime state to

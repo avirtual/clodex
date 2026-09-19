@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import time
 
 from proxylab import core as core_mod
@@ -98,6 +99,25 @@ store_mod.register_schema(
     # prefix) is a /compact collapsing the thread to a summary — the signal that
     # splits a benign `compact` from a `conversation` flap. Additive; old rows -> NULL.
     "ALTER TABLE session_head ADD COLUMN msg_count INTEGER",
+    # model + CLI version (2026-09-19): the session's last-seen `model` and the
+    # `cc_version` off the billing header. These exist so the `system` bust class
+    # can say WHY it fired instead of guessing. The hint used to read "often a
+    # mid-session /model swap leaving a stale prompt; pin the model/prompt" —
+    # asserted on every system bust, while session_head stored no model at all, so
+    # the classifier could not have checked even in principle. clodex found two
+    # real events (2026-09-19) where the model was identical and the hint sent it
+    # hunting a swap that never happened. A cause named without being observed is
+    # the "metric is not a rationale" failure in CLAUDE.md, and a confidently wrong
+    # hint costs more than no hint. Both additive; old rows -> NULL, and a NULL
+    # declines to name a cause rather than inventing one.
+    "ALTER TABLE session_head ADD COLUMN model TEXT",
+    "ALTER TABLE session_head ADD COLUMN cc_version TEXT",
+    # per-block system sizes (2026-09-19): [[raw_index, char_len], ...] as JSON,
+    # billing header excluded. Lets a `client prompt change` name the block that
+    # moved and by how much ("block 0, -907 chars") — which is what identified the
+    # dropped section in clodex's 11:50 event — without storing the prompt text.
+    # Ints only: no user content lands in the store. Additive; old rows -> NULL.
+    "ALTER TABLE session_head ADD COLUMN sys_blocks TEXT",
     # REAL-BUST counter (2026-07-06): per-session cumulative count of turns whose
     # write landed UPSTREAM of the prior cache end (previously-cached tokens
     # invalidated + re-paid at the write premium) — NOT the normal tail-append
@@ -140,7 +160,20 @@ store_mod.register_schema(
     # together they give a consumer first/last/age without a per-event log (the
     # popover papercut: bust COUNTS with no "when"). Additive; old rows -> NULL,
     # so a consumer treats a missing first_ts as "unknown, fall back to last_ts".
-    "ALTER TABLE session_bust ADD COLUMN first_ts REAL")
+    "ALTER TABLE session_bust ADD COLUMN first_ts REAL",
+    # last-bust REASON (2026-09-19): for a `system` bust, WHY it fired —
+    # model_swap / cli_upgrade / client_prompt_change — plus the two values that
+    # differed and, when exactly one system block changed size, its ordinal and
+    # char delta. Stored only for the LAST bust, deliberately: the chip shows the
+    # most recent one, and a per-event log is /_bust's job (on disk, byte-exact).
+    # NULL means no reason could be OBSERVED, and the consumer must then fall back
+    # to the class-level hint rather than assuming a cause. Additive; old rows ->
+    # NULL, which reads correctly as "unknown" for every pre-migration bust.
+    "ALTER TABLE session_bust ADD COLUMN last_reason TEXT",
+    "ALTER TABLE session_bust ADD COLUMN last_reason_was TEXT",
+    "ALTER TABLE session_bust ADD COLUMN last_reason_now TEXT",
+    "ALTER TABLE session_bust ADD COLUMN last_block_index INTEGER",
+    "ALTER TABLE session_bust ADD COLUMN last_block_delta INTEGER")
 
 
 def _warmth_rows(hashes):
@@ -192,6 +225,92 @@ def _stable_sys_text(obj):
         return " ".join(b.get("text", "") for b in sys if isinstance(b, dict)
                         and not b.get("text", "").startswith("x-anthropic-billing-header"))
     return sys or ""
+
+
+_CC_VERSION_RE = re.compile(r"cc_version=([^\s;,]+)")
+
+
+def _cc_version(obj):
+    """The CLI RELEASE version off the out-of-band billing header, or None.
+
+    The wire value is `MAJOR.MINOR.PATCH.<3-hex>` (e.g. `2.1.269.c93`) and we keep
+    only the first three components ON PURPOSE. The hex suffix is PER-PROCESS, not
+    per-release: measured over 300 live sessions, the FULL string differs within
+    the same session 300/300 times (100%) while the `x.y.z` base differs 3/300
+    (1.0%), and those three are real consecutive upgrades (2.1.260 -> 2.1.261).
+    So comparing raw strings would report a "CLI upgrade" on essentially every
+    session — the label would fire constantly and mean nothing, which is the same
+    confidently-wrong-hint failure this whole change exists to remove.
+
+    Scans every system block rather than trusting index 0. It IS index 0 in 779/779
+    live bodies that carry it, but a custom `--system-prompt-file` harness omits the
+    block entirely, and a positional assumption that silently returns the wrong text
+    would mislabel a bust. Returns None when absent (codex bodies, side-calls, such
+    harnesses) — callers must treat None as "cannot say", never as "unchanged"."""
+    sys = obj.get("system")
+    if not isinstance(sys, list):
+        return None
+    for b in sys:
+        if not isinstance(b, dict):
+            continue
+        t = b.get("text") or ""
+        if t.startswith("x-anthropic-billing-header"):
+            m = _CC_VERSION_RE.search(t)
+            if not m:
+                return None
+            return ".".join(m.group(1).split(".")[:3])
+    return None
+
+
+def _sys_block_sizes(obj):
+    """[[raw_index, char_len], ...] for every system block EXCEPT the billing
+    header -> a compact JSON string, or None.
+
+    This exists to answer "which block moved, and by how much" without keeping the
+    prompt text itself: a few pairs of ints per session instead of ~60 KB of
+    prose, and no user content in the store (standing rule).
+
+    Indices are RAW positions in `system[]`, so an ordinal here is the one an
+    operator sees opening the request JSON — the point is to save them that trip.
+    The billing header is excluded because it carries a per-turn counter and would
+    report a spurious delta on every single turn."""
+    sys = obj.get("system")
+    if not isinstance(sys, list) or not sys:
+        return None
+    out = []
+    for i, b in enumerate(sys):
+        if not isinstance(b, dict):
+            continue
+        t = b.get("text") or ""
+        if t.startswith("x-anthropic-billing-header"):
+            continue
+        out.append([i, len(t)])
+    return json.dumps(out, separators=(",", ":")) if out else None
+
+
+def _sys_block_delta(prior_json, cur_json):
+    """(index, char_delta) for the ONE system block whose size changed, else None.
+
+    Deliberately narrow. It reports a block only when exactly one changed size, so
+    the label it produces ("block 0, -907 chars") is unambiguous; with several
+    moving, or with the array reshaped, there is no single honest ordinal to name
+    and the caller falls back to the reason alone.
+
+    KNOWN BLIND SPOT, stated rather than hidden: an edit that preserves length
+    (a swapped word, a reordered clause) is invisible here — the hash still fires
+    the bust and the reason is still right, this just adds no locator. A size delta
+    is evidence of a change, never proof of its absence."""
+    try:
+        p = {i: n for i, n in json.loads(prior_json or "")}
+        c = {i: n for i, n in json.loads(cur_json or "")}
+    except Exception:
+        return None
+    if not p or not c:
+        return None
+    moved = [(i, c[i] - p[i]) for i in sorted(set(p) & set(c)) if c[i] != p[i]]
+    if len(moved) == 1 and set(p) == set(c):
+        return moved[0]
+    return None
 
 
 def _sys_tools_fingerprint(obj):
@@ -285,8 +404,7 @@ BUST_COMPACT_MSG_RATIO = float(os.environ.get("BUST_COMPACT_MSG_RATIO", "0.5"))
 _BUST_FAULT = {
     "tools":        ("content", "tools[] changed upstream — a tool-set edit or an "
                                 "MCP connector (re)attaching; stabilize/trim the roster"),
-    "system":       ("content", "the system prompt changed — often a mid-session "
-                                "/model swap leaving a stale prompt; pin the model/prompt"),
+    "system":       ("content", "the system prompt changed upstream of the cache"),
     "preamble":     ("content", "messages[0] (claudeMd / userEmail / currentDate / "
                                 "scratchpad) changed — peel the volatile line to the tail"),
     "conversation": ("self",    "a settled prior turn was edited in place — an L2 transform "
@@ -302,6 +420,58 @@ _BUST_FAULT = {
                                 "and re-read at 1x — a marker transform (gate / compact "
                                 "strip / pin at full budget) left it unanchored"),
 }
+
+# --- WHY a `system` bust fired ----------------------------------------------
+# The class says WHERE the prefix diverged; the reason says WHAT moved, and it is
+# only ever emitted from something OBSERVED. The old hint asserted "often a
+# mid-session /model swap" on every system bust while session_head stored no
+# model, so it could not have checked — clodex hit two events (2026-09-19) where
+# the model was identical and went hunting a swap that never happened.
+#
+# Three reasons, in the order they are TESTED (most specific first), each gated on
+# a field that actually moved:
+#   model_swap          the model string differs. The only case that earns the
+#                       "/model swap; pin the model" advice.
+#   cli_upgrade         model identical, cc_version differs => a new CLI build
+#                       shipped new system prose / tool schemas. One-time, self-
+#                       healing; the operator's lever is pinning the CLI build,
+#                       NOT anything in-session.
+#   client_prompt_change  model AND cc_version identical => the same CLI edited
+#                       its own prompt text (a section added/dropped). Nothing to
+#                       pin per-turn; the useful thing is WHICH block and by how
+#                       much, which the caller carries as block/char-delta.
+# Anything unknown (a pre-migration row with no stored model, a codex body with no
+# billing header) yields None: the chip falls back to the class-level hint rather
+# than naming a cause nobody verified. NULL means "cannot say", never "unchanged".
+_BUST_REASON = {
+    "model_swap": "the model changed mid-session ({was} -> {now}), so the system "
+                  "prompt was rebuilt — pin the model for the session",
+    "cli_upgrade": "a new CLI build shipped ({was} -> {now}), which rewrites the "
+                   "system prose and tool schemas — a one-time re-cache that "
+                   "self-heals; pin the CLI build in the launcher to control when",
+    "client_prompt_change": "the CLI edited its own system prompt on the same build "
+                            "and same model — a one-time re-cache, nothing to pin "
+                            "per-turn",
+}
+
+
+def _system_bust_reason(prior_model, cur_model, prior_ccv, cur_ccv):
+    """Why a `system`-class bust fired -> (reason, was, now) or None.
+
+    Tested most-specific-first. Returns None when the evidence is missing rather
+    than falling through to a guess: a reason is a claim about what was OBSERVED,
+    and the whole point of this function is that the previous hint was not."""
+    if prior_model and cur_model and prior_model != cur_model:
+        return "model_swap", prior_model, cur_model
+    if prior_ccv and cur_ccv and prior_ccv != cur_ccv:
+        return "cli_upgrade", prior_ccv, cur_ccv
+    # Same build AND same model, both positively known: the CLI changed its own
+    # prompt. Requires BOTH to be known — with either missing we cannot rule out
+    # the two cases above, so we decline instead of defaulting to this one.
+    if prior_model and cur_model and prior_model == cur_model \
+            and prior_ccv and cur_ccv and prior_ccv == cur_ccv:
+        return "client_prompt_change", None, None
+    return None
 
 
 def _classify_bust(read, created, inp, *, prior, prior_read, prior_write=0,
@@ -603,7 +773,9 @@ def bust_summary(session):
         with store_mod.LOCK:
             r = con.execute(
                 f"SELECT {cols}, {rcols}, last_class, last_ts, last_write_tokens, "
-                "first_ts FROM session_bust WHERE session_id=?", (session,)).fetchone()
+                "first_ts, last_reason, last_reason_was, last_reason_now, "
+                "last_block_index, last_block_delta "
+                "FROM session_bust WHERE session_id=?", (session,)).fetchone()
     except Exception:
         return None
     if not r:
@@ -628,6 +800,32 @@ def bust_summary(session):
     if lc:
         last = {"class": lc, "ts": lt, "write_tokens": int(lw or 0),
                 "fault": _BUST_FAULT[lc][0], "fix_hint": _BUST_FAULT[lc][1]}
+        # WHY the last bust fired, when it was OBSERVED rather than assumed. The
+        # `reason` key is ABSENT (not null) when nothing could be established, so
+        # a consumer renders the class-level fix_hint and no cause — which is the
+        # honest state for every pre-migration row and every non-system class.
+        reason, was, now_v = r[2 * n + 4], r[2 * n + 5], r[2 * n + 6]
+        b_idx, b_delta = r[2 * n + 7], r[2 * n + 8]
+        if reason:
+            detail = _BUST_REASON[reason].format(was=was, now=now_v)
+            if b_idx is not None and b_delta is not None:
+                # the locator clodex asked for: "block 0, -907 chars" saves the
+                # operator opening the request JSON to find what moved
+                detail += (f" — system block {b_idx}, "
+                           f"{b_delta:+d} chars")
+            last["reason"] = reason
+            last["reason_detail"] = detail
+            if was:
+                last["reason_was"] = was
+            if now_v:
+                last["reason_now"] = now_v
+            if b_idx is not None:
+                last["block_index"] = b_idx
+                last["block_char_delta"] = b_delta
+            # the reason is strictly more specific than the class hint, so it
+            # REPLACES it for render; the class hint stays alongside for any
+            # consumer that only knows the old shape.
+            last["fix_hint"] = detail
     # actionable = the busts a code/config change could have prevented (a self flap
     # or a content divergence). The two fault=environment classes are NOT
     # actionable: `lapse` (keep-warm territory) and `compact` (expected contraction).
@@ -727,6 +925,10 @@ def _record_warmth(obj, usage, is_main=True):
         cur_msg0 = _msg0_hash(obj) if head_advance else None
         cur_sysfull = _sys_full_hash(obj) if head_advance else None
         cur_msgs = len(msgs) if head_advance else None
+        # evidence for WHY a system bust fired (see _system_bust_reason)
+        cur_model = (obj.get("model") or None) if head_advance else None
+        cur_ccv = _cc_version(obj) if head_advance else None
+        cur_blocks = _sys_block_sizes(obj) if head_advance else None
         inp = (usage or {}).get("input_tokens") or 0
         with store_mod.LOCK:
             # COLD-RESUME detection (before we restamp). A real turn whose
@@ -742,12 +944,14 @@ def _record_warmth(obj, usage, is_main=True):
             prior_seg = None
             prior_read = None
             prior_write = 0
+            prior_model = prior_ccv = prior_blocks = None
             restart_straddle = False
             if head_advance:
                 prev = con.execute(
                     "SELECT hash, cold_resumes, tools_hash, sys_hash, msg0_hash, "
                     "sysfull_hash, msg_count, updated_at, read_tokens, "
-                    "write_tokens FROM session_head WHERE session_id=?",
+                    "write_tokens, model, cc_version, sys_blocks "
+                    "FROM session_head WHERE session_id=?",
                     (sid,)).fetchone()
                 if prev:
                     pe = con.execute("SELECT expires_at FROM warmth WHERE hash=?",
@@ -758,6 +962,7 @@ def _record_warmth(obj, usage, is_main=True):
                     # the order _classify_bust unpacks its `prior` tuple in.
                     prior_seg = (prev[2], prev[3], prev[5], prev[4], prev[6])
                     prior_read, prior_write = prev[8], prev[9]
+                    prior_model, prior_ccv, prior_blocks = prev[10], prev[11], prev[12]
                     # DEPLOY-TAX detection: the prior head was written by a process
                     # that booted before this one (its updated_at predates our
                     # _START_TS) => the proxy restarted between the prior turn and
@@ -787,25 +992,54 @@ def _record_warmth(obj, usage, is_main=True):
                     cur_sysfull=cur_sysfull,
                     cur_msg0=cur_msg0, cur_msgs=cur_msgs, lapsed=resumed)
                 if bust_class:
+                    # WHY it fired, for the one class that used to guess. Computed
+                    # here rather than inside _classify_bust so the classifier keeps
+                    # returning a bare class string (its callers and the
+                    # session_bust column names both depend on that). Every field
+                    # is None unless something was positively OBSERVED to differ.
+                    b_reason = b_was = b_now = None
+                    b_idx = b_delta = None
+                    if bust_class == "system":
+                        r = _system_bust_reason(prior_model, cur_model,
+                                                prior_ccv, cur_ccv)
+                        if r:
+                            b_reason, b_was, b_now = r
+                            if b_reason == "client_prompt_change":
+                                d = _sys_block_delta(prior_blocks, cur_blocks)
+                                if d:
+                                    b_idx, b_delta = d
                     # increment the class counter, and — iff this bust straddled a
                     # restart — its deploy-tax sub-counter too, in the same upsert.
                     rcol = f"{bust_class}_restart"
                     rinc = 1 if restart_straddle else 0
                     con.execute(
                         f"INSERT INTO session_bust(session_id, {bust_class}, {rcol}, "
-                        "last_class, last_ts, last_write_tokens, first_ts) "
-                        "VALUES(?,1,?,?,?,?,?) "
+                        "last_class, last_ts, last_write_tokens, first_ts, "
+                        "last_reason, last_reason_was, last_reason_now, "
+                        "last_block_index, last_block_delta) "
+                        "VALUES(?,1,?,?,?,?,?,?,?,?,?,?) "
                         "ON CONFLICT(session_id) DO UPDATE SET "
                         f"{bust_class}={bust_class}+1, {rcol}={rcol}+{rinc}, "
                         "last_class=excluded.last_class, last_ts=excluded.last_ts, "
                         "last_write_tokens=excluded.last_write_tokens, "
+                        # the reason describes the LAST bust, so it is overwritten
+                        # wholesale — including back to NULL when the newest bust
+                        # has no observable cause. Carrying a previous bust's reason
+                        # forward would attach a real explanation to the wrong event.
+                        "last_reason=excluded.last_reason, "
+                        "last_reason_was=excluded.last_reason_was, "
+                        "last_reason_now=excluded.last_reason_now, "
+                        "last_block_index=excluded.last_block_index, "
+                        "last_block_delta=excluded.last_block_delta, "
                         # set-once: keep the earliest bust's ts across conflicts
                         "first_ts=COALESCE(first_ts, excluded.first_ts)",
-                        (sid, rinc, bust_class, now, created, now))
+                        (sid, rinc, bust_class, now, created, now,
+                         b_reason, b_was, b_now, b_idx, b_delta))
                 con.execute("INSERT INTO session_head(session_id, hash, updated_at, "
                             "tools_hash, sys_hash, msg0_hash, sysfull_hash, "
-                            "msg_count, cold_resumes, read_tokens, write_tokens) "
-                            "VALUES(?,?,?,?,?,?,?,?,?,?,?) "
+                            "msg_count, cold_resumes, read_tokens, write_tokens, "
+                            "model, cc_version, sys_blocks) "
+                            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                             "ON CONFLICT(session_id) DO UPDATE SET "
                             "hash=excluded.hash, updated_at=excluded.updated_at, "
                             "tools_hash=excluded.tools_hash, sys_hash=excluded.sys_hash, "
@@ -814,12 +1048,14 @@ def _record_warmth(obj, usage, is_main=True):
                             "msg_count=excluded.msg_count, "
                             "cold_resumes=excluded.cold_resumes, "
                             "read_tokens=excluded.read_tokens, "
-                            "write_tokens=excluded.write_tokens",
+                            "write_tokens=excluded.write_tokens, "
+                            "model=excluded.model, cc_version=excluded.cc_version, "
+                            "sys_blocks=excluded.sys_blocks",
                             (sid, h, now,
                              (segs.get("tools") or {}).get("hash"),
                              (segs.get("system") or {}).get("hash"),
                              cur_msg0, cur_sysfull, cur_msgs, new_resumes,
-                             read, created))
+                             read, created, cur_model, cur_ccv, cur_blocks))
             con.commit()
             size = con.execute("SELECT COUNT(*) FROM warmth").fetchone()[0]
     except Exception as e:

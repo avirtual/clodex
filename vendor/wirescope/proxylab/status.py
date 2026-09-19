@@ -2,6 +2,7 @@ import collections
 import fnmatch
 import json
 import re
+import threading
 import time
 
 from proxylab import accounts as accounts_mod
@@ -1211,7 +1212,7 @@ def _sse_skill_names(path):
             idx, buf = None, []
 
 
-def _capture_scan(session, since_ts=None):
+def _capture_scan(session, since_ts=None, _only_stems=None):
     """Tool-USE and skill-INVOCATION tallies for a session, from ONE body-free
     pass over its capture dir (LOG_DIR/<session>/). Answers 'of the tools and
     skills loaded every turn, which ever got exercised?' — the deadweight
@@ -1270,6 +1271,12 @@ def _capture_scan(session, since_ts=None):
     if not d.is_dir():
         return tools, skills
     for f in sorted(d.glob("*.request.json")):
+        # `_only_stems` (internal, from _lifetime_scan) folds just the captures
+        # written since the last call. Captures are write-once, so a turn's
+        # contribution never changes and the partial fold is EXACT.
+        if _only_stems is not None \
+                and f.name[:-len(".request.json")] not in _only_stems:
+            continue
         if since_ts is not None:
             ts = core_mod._epoch_ts(core_mod._head_ts(f))
             # A turn we cannot time is KEPT: dropping it would silently shrink
@@ -1320,6 +1327,113 @@ def _capture_scan(session, since_ts=None):
                 f.with_name(f.name.replace(".request.json", ".response.sse"))):
             g["by_skill"][name] += 1
     return tools, skills
+
+
+# --- the lifetime memo ------------------------------------------------------
+# The WINDOW pass is cheap by construction (it reads only turns after the
+# compact boundary — 40 of 8,647 files on the session that prompted all this).
+# The LIFETIME pass is not: it walks the whole dir, and the dir only grows.
+# Measured on the live coordinator seat: 7.35s at 3.08 GB, growing 0.31 GB/day
+# = +0.74s/day, which re-enters a 20s consumer timeout in ~17 days. So the
+# v0.6.68 fix bought time, not a fix, and this is the fix.
+#
+# It is an APPEND-ONLY FOLD, not a cache with an invalidation rule: a capture is
+# write-once (same premise the prune memo rests on, pinned by the same test), so
+# a turn's contribution to the tally never changes once written. Keep the
+# running counters plus the SET of stems already folded, and a later call folds
+# exactly the stems not in it. That is exact — not an approximation of a walk.
+#
+# The set is deliberate; a high-water MARK would be wrong here. Capture seq
+# numbers are not zero-padded ("001-…" through "20322-…"), so lexical order is
+# not write order — `9998-…` sorts above `20322-…`, and a lexical high-water
+# mark silently stops folding new turns forever, undercounting without ever
+# erroring. (Found by the incremental test below, which is why it appends a turn
+# and re-compares against a full walk rather than just checking it is fast.)
+# Sorting numerically instead would trade one parsing assumption about the
+# writer's naming for another; a set assumes nothing about the name at all.
+# Cost is ~1.4 MB for the largest session on this box, which is why the memo
+# holds few sessions — only those someone actually opens a popover on.
+#
+# PRUNE is the interesting case, and the reason this is not keyed on a file
+# count. `tier=receipts` deletes exactly what this scan reads (.request.json +
+# .response.sse are prune._BODY_SUFFIXES), so a pruned session re-walks to a
+# near-empty tally: evaluable_turns collapses, every tool reads as deadweight,
+# and a consumer renders confident trim advice from data that no longer exists.
+# A count-keyed memo would notice the drop and "recover" by rescanning INTO that
+# wrong answer. So instead: retain the pre-prune tally (it is the best available
+# number, and the turns really did happen) and SAY SO on the wire via
+# `basis: "memo-pre-prune"`. Clodex renders that as "counts predate a prune of
+# this session" and gates nothing on it.
+#
+# basis vocabulary (clodex's, a string not a boolean so the taxonomy can grow —
+# its popover already switches on basis strings):
+#   "walk"            fresh full scan, what every call did before this
+#   "memo"            served from the fold, exact
+#   "memo-pre-prune"  served from the fold, and the dir has since been pruned
+_LIFETIME_MEMO: dict = {}
+_LIFETIME_MEMO_LOCK = threading.Lock()
+# Each entry holds the folded stem set (~1.4 MB on this box's largest session),
+# so this is capped by MEMORY, not by session count. Only sessions someone
+# actually requests utilization for are ever in here.
+_LIFETIME_MEMO_MAX = 32
+
+
+def _merge_tally(dst, src, kind):
+    """Fold one scan's tally into a running one, in place."""
+    for key, g in src.items():
+        d = dst.setdefault(key, {"evaluable_turns": 0,
+                                 kind: collections.Counter()})
+        d["evaluable_turns"] += g["evaluable_turns"]
+        d[kind].update(g[kind])
+    return dst
+
+
+def _copy_tally(t, kind):
+    """A deep-enough copy that a caller mutating the result (the _apply_*
+    functions sort and stamp in place) cannot corrupt the memo."""
+    return {k: {"evaluable_turns": g["evaluable_turns"],
+                kind: collections.Counter(g[kind])} for k, g in t.items()}
+
+
+def _lifetime_scan(session, memo=True):
+    """The LIFETIME tallies for a session -> (tools, skills, basis).
+
+    Folds only the captures written since the last call (see the memo block
+    above). `memo=False` forces a full walk — the equivalence test uses it, and
+    it is the escape hatch if a fold is ever suspect."""
+    d = core_mod._session_dir(session)
+    if not memo or not d.is_dir():
+        t, s = _capture_scan(session)
+        return t, s, "walk"
+    stems = {f.name[:-len(".request.json")]
+             for f in d.glob("*.request.json")}
+    with _LIFETIME_MEMO_LOCK:
+        m = _LIFETIME_MEMO.get(session)
+    if m is None:
+        tools, skills = _capture_scan(session)
+        entry = {"folded": stems, "tools": tools, "skills": skills,
+                 "pruned": False}
+        with _LIFETIME_MEMO_LOCK:
+            if len(_LIFETIME_MEMO) >= _LIFETIME_MEMO_MAX:
+                _LIFETIME_MEMO.clear()
+            _LIFETIME_MEMO[session] = entry
+        return (_copy_tally(tools, "by_tool"),
+                _copy_tally(skills, "by_skill"), "walk")
+    fresh = stems - m["folded"]
+    # A stem we folded that is no longer on disk = a prune took the body. The
+    # tally keeps counting it (the turn really happened, and it is the best
+    # number available), and says so via the basis. Sticky: once pruned, this
+    # tally permanently predates that prune.
+    pruned = m["pruned"] or bool(m["folded"] - stems)
+    if fresh:
+        ft, fs = _capture_scan(session, _only_stems=fresh)
+        _merge_tally(m["tools"], ft, "by_tool")
+        _merge_tally(m["skills"], fs, "by_skill")
+        m["folded"] |= fresh
+    m["pruned"] = pruned
+    return (_copy_tally(m["tools"], "by_tool"),
+            _copy_tally(m["skills"], "by_skill"),
+            "memo-pre-prune" if pruned else "memo")
 
 
 def _apply_utilization(tools, ustats):
@@ -1426,11 +1540,16 @@ def _context_snapshot(session, utilization=False):
     # full-dir scan to be told there was nothing to report.
     util, skutil, lifetime, lskutil = ({}, {}, {}, {})
     scan_window = None
+    life_basis = "walk"
     if utilization and (main or subs):
         t0 = time.time()
         boundary = (billing_mod.since_compact(
             billing_mod._SESSION_TOTALS.get(session)) or {}).get("boundary_ts")
-        lifetime, lskutil = _capture_scan(session)
+        # The lifetime pass is the expensive one (it walks the whole dir, which
+        # only grows), so it folds incrementally; the window pass stays a live
+        # scan because it reads only the small tail after the boundary and must
+        # move the moment a turn lands.
+        lifetime, lskutil, life_basis = _lifetime_scan(session)
         # One extra pass, not two: the windowed pass re-walks only the turns
         # after the boundary, which on a compacted session is a small tail of
         # the dir. A session that never compacted shares the lifetime result
@@ -1440,6 +1559,10 @@ def _context_snapshot(session, utilization=False):
         scan_window = {"basis": "live-scan",
                        "scan_s": round(time.time() - t0, 3),
                        "compact_boundary_ts": boundary,
+                       # how the LIFETIME half was produced: walk | memo |
+                       # memo-pre-prune. Separate from `basis` above, which
+                       # describes the window half — they genuinely differ.
+                       "lifetime_basis": life_basis,
                        # the dir is written to WHILE this runs, so the counts are
                        # a smear across scan_s, not an instant (measured: two
                        # back-to-back calls differed by 2 evaluable turns)
