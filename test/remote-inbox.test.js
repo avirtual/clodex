@@ -167,13 +167,21 @@ test('GET /api/inbox/unread answers the count alone', async () => {
 // ── mutations ───────────────────────────────────────────────────────────────
 
 test('POST /api/inbox/read/:id is idempotent and keeps the ORIGINAL readAt; unknown is 404', async () => {
-  const store = fakeStore([mkNote('a', 100)]);
+  const store = fakeStore([mkNote('a', 100), mkNote('b', 200)]);
   await withServer(store, async (server) => {
+    const before = await req(server, 'GET', '/api/inbox');
+    assert.strictEqual(before.json.unread, 2);
     const first = await req(server, 'POST', '/api/inbox/read/a');
     assert.strictEqual(first.status, 200);
     assert.strictEqual(first.json.ok, true);
     assert.strictEqual(first.json.id, 'a');
     assert.strictEqual(typeof first.json.readAt, 'number');
+    const after = await req(server, 'GET', '/api/inbox');
+    assert.strictEqual(after.json.unread, 1, 'the read one leaves the badge');
+    assert.deepStrictEqual(
+      after.json.notes.map((n) => [n.id, n.readAt == null]), [['b', true], ['a', false]],
+      'readAt rides on each note, which is what the claim filters on',
+    );
     const again = await req(server, 'POST', '/api/inbox/read/a');
     assert.strictEqual(again.status, 200);
     // ENTER: a re-read that reported Date.now() would move a timestamp the phone

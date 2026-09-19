@@ -12,9 +12,9 @@
 //
 // WHAT IS PINNED, over a real socket:
 //   1. an `inbox` doorbell on a CLAIM-MARKED connection emits `peer-inbox` once
-//      and then removes each note from the box, EMIT FIRST — the desktop store
-//      write happens inside the emit, so a crash between the two duplicates a
-//      note rather than losing one,
+//      and then marks each note READ on the box, which KEEPS its copy, EMIT
+//      FIRST — the desktop store write happens inside the emit, so a crash
+//      between the two duplicates a note rather than losing one,
 //   2. the same doorbell on an UNMARKED connection claims nothing and does not
 //      even ask — the anti-degenerate half, without which "always claim" passes
 //      1 and quietly drains a laptop peer's inbox into its neighbour's,
@@ -29,14 +29,15 @@
 //   6. OVERLAPPING triggers deliver each note exactly once. The box has no
 //      atomic claim — the dm path gets one from the outbox's whole-dir rename,
 //      this path has nothing — so two GETs issued before the first claim's
-//      removes land both return the same notes, and the operator is told twice.
-//      A seat raising two notes in one turn is enough: the box emits one
-//      `added` frame per store write.
-//
-// Hello ALSO claims, so notes raised while the SSE feed was down are drained on
-// the next tick. That second trigger is why subject 6 exists: two triggers over
-// one un-atomic inbox is a duplicate delivery unless the connection serializes
-// them itself.
+//      read-marks land both return the same notes, and the operator is told
+//      twice. A seat raising two notes in one turn is enough: the box emits one
+//      `added` frame per store write,
+//   7. a note already READ on the box is never claimed again (`remove` gave
+//      that for free; `read` does not, so the claim filters on `readAt`),
+//   8. hello ALSO claims, so a note raised while the SSE feed was down is
+//      picked up on the next tick. That second trigger is why subject 6
+//      exists: two triggers over one un-atomic inbox duplicate a delivery
+//      unless the connection serializes them itself.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -51,13 +52,17 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const SELF = 'us';
 
 // A box that answers hello, holds /api/events open for the test to write frames
-// into, serves its inbox from `state.notes`, and records every remove. The
-// removes really splice, so a second claim of an already-drained inbox is empty
-// — which is what makes the emit count in subject 1 an assertion and not a race.
+// into, serves its inbox from `state.notes` verbatim, and records every request
+// path. Its read route really stamps `readAt`, so a second claim of an
+// already-read inbox emits nothing; its remove route stays MOUNTED, or subject
+// 1's "nothing removed" would hold for free against a box that 404s one.
 function inboxServer() {
-  const state = { notes: [], removes: [], inboxGets: 0, sessionGets: 0, streams: [], order: [] };
+  const state = {
+    notes: [], removes: [], reads: [], paths: [], inboxGets: 0, sessionGets: 0, streams: [], order: [],
+  };
   const server = http.createServer((req, res) => {
     const p = req.url.split('?')[0];
+    state.paths.push(p);
     if (p === '/api/peer/hello') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, app: 'clodex', host: 'h', caps: [], version: '1' }));
@@ -69,6 +74,13 @@ function inboxServer() {
       state.inboxGets++;
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, notes: state.notes.slice(), unread: state.notes.length }));
+    } else if (p.startsWith('/api/inbox/read/')) {
+      const id = decodeURIComponent(p.slice('/api/inbox/read/'.length));
+      state.reads.push(id);
+      state.order.push(`read:${id}`);
+      state.notes = state.notes.map((n) => (n.id === id && n.readAt == null ? { ...n, readAt: 5150 } : n));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, id }));
     } else if (p.startsWith('/api/inbox/remove/')) {
       const id = decodeURIComponent(p.slice('/api/inbox/remove/'.length));
       state.removes.push(id);
@@ -133,17 +145,17 @@ const doorbell = (state) =>
 const inboxEmits = (emits) => emits.filter((e) => e[0] === 'peer-inbox');
 
 const NOTES = [
-  { id: 'n1', from: 'lead', body: 'need a ruling on the merge' },
-  { id: 'n2', from: 'hand-9', body: 'blocked on a permission dialog' },
+  { id: 'n1', from: 'lead', body: 'need a ruling on the merge', readAt: null },
+  { id: 'n2', from: 'hand-9', body: 'blocked on a permission dialog', readAt: null },
 ];
 
 // WINDOW: the whole forward path. Against pre-fix code the waitFor times out —
 // the `inbox` frame reached an SSE handler that had no arm for it.
-test('an inbox doorbell on a claim-marked peer emits the notes ONCE, then removes them — emit first', async () => {
+test('an inbox doorbell on a claim-marked peer emits the notes ONCE, then marks them READ on the box — emit first, nothing removed', async () => {
   await withPeer(async (emits, state) => {
     state.notes = NOTES.map((n) => ({ ...n }));
     doorbell(state);
-    await waitFor('both notes removed from the box', () => state.removes.length === 2);
+    await waitFor('both notes read-marked on the box', () => state.reads.length === 2);
 
     // ENTER: the emit count is read BEFORE the payload. A path that claimed
     // twice for one doorbell would deliver the same note to the operator twice,
@@ -154,16 +166,45 @@ test('an inbox doorbell on a claim-marked peer emits the notes ONCE, then remove
     assert.deepStrictEqual(notes.map((n) => n.id), ['n1', 'n2']);
     assert.strictEqual(notes[0].body, 'need a ruling on the merge');
 
-    // The emit is what writes the note into the desktop store; the removes are
-    // what make it unrecoverable from the box. What this discriminates is an
-    // implementation that emits from the removes' CALLBACKS — there the box has
-    // already dropped the note when the claim dies mid-flight, and it exists
-    // nowhere. (A bare statement swap that still emits in the same synchronous
-    // step is NOT distinguishable here, and loses nothing: no socket has been
-    // written when the emit runs either way.)
-    assert.deepStrictEqual(state.order, ['emit', 'remove:n1', 'remove:n2']);
+    // The emit writes the note into the desktop store; the read-marks stop the
+    // box re-offering it. An implementation emitting from the read-marks'
+    // CALLBACKS loses a note whose claim dies mid-flight: filtered out, undelivered.
+    assert.deepStrictEqual(state.order, ['emit', 'read:n1', 'read:n2']);
 
-    assert.deepStrictEqual(state.notes, [], 'the box is drained, so a later claim is a no-op and not a redelivery');
+    assert.ok(state.paths.length > 0, 'the box was talked to at all');
+    assert.deepStrictEqual(
+      state.paths.filter((p) => p.startsWith('/api/inbox/remove/')), [],
+      'the box KEEPS its copy — a remove here is the old drain semantics',
+    );
+    assert.deepStrictEqual(state.removes, []);
+
+    assert.deepStrictEqual(
+      state.notes.map((n) => [n.id, n.readAt]), [['n1', 5150], ['n2', 5150]],
+      'both notes still on the box, read — so the box UI shows them and its badge does not nag',
+    );
+  }, { claimInbox: true });
+});
+
+test('a note already read on the box is not claimed again — the doorbell after a claim emits nothing', async () => {
+  await withPeer(async (emits, state) => {
+    state.notes = NOTES.map((n) => ({ ...n }));
+    doorbell(state);
+    await waitFor('the first claim to finish', () => state.reads.length === 2);
+    assert.strictEqual(inboxEmits(emits).length, 1);
+
+    // The box still HOLDS both notes: only the readAt filter stands between
+    // this second doorbell and a second delivery.
+    const getsBefore = state.inboxGets;
+    doorbell(state);
+    await waitFor('the second claim to have fetched', () => state.inboxGets > getsBefore);
+    assert.strictEqual(state.notes.length, 2, 'the box still serves both notes');
+
+    const sessionsBefore = state.sessionGets;
+    state.streams[0].write('event: sessions\ndata: {}\n\n');
+    await waitFor('the trailing sessions frame to be consumed', () => state.sessionGets > sessionsBefore);
+
+    assert.strictEqual(inboxEmits(emits).length, 1, 'still just the first emit — nothing re-delivered');
+    assert.deepStrictEqual(state.reads, ['n1', 'n2'], 'no second round of read-marks either');
   }, { claimInbox: true });
 });
 
@@ -283,21 +324,24 @@ test("sandbox registerPeer marks its own box inbox: 'claim', on a fresh row and 
   assert.strictEqual(synced, 1, 'the peer manager is told, or the mark takes effect only after a restart');
 });
 
-test('two overlapping triggers deliver each note exactly ONCE — no duplicate toast, no double remove', async () => {
+test('two overlapping triggers deliver each note exactly ONCE — no duplicate toast, no double read-mark', async () => {
   await withPeer(async (emits, state) => {
     // The notes appear only AFTER the startup hello has claimed an empty box.
-    // Seeding them before `start()` would let that hello drain them before the
+    // Seeding them before `start()` would let that hello claim them before the
     // frames below ever arrive — no overlap would form and this subject would
     // pass against the unserialized code it exists to red.
     state.notes = NOTES.map((n) => ({ ...n }));
     // Two `added` frames in ONE write: both reach the SSE handler in the same
     // tick, so an unserialized path issues both GETs before either claim's
-    // removes have been sent, and both read the same undrained inbox.
+    // read-marks have been sent, and both read the same still-unread inbox.
     state.streams[0].write(
       'event: inbox\ndata: {"kind":"added","unread":1}\n\n'
       + 'event: inbox\ndata: {"kind":"added","unread":2}\n\n',
     );
-    await waitFor('the box to be drained', () => state.notes.length === 0);
+    await waitFor('both notes read-marked on the box', () => state.reads.length >= 2);
+    const sessionsBefore = state.sessionGets;
+    state.streams[0].write('event: sessions\ndata: {}\n\n');
+    await waitFor('the trailing sessions frame to be consumed', () => state.sessionGets > sessionsBefore);
 
     // ENTER: there must be at least one emit — an implementation that claimed
     // NOTHING would satisfy every "exactly once" assertion below vacuously.
@@ -308,7 +352,7 @@ test('two overlapping triggers deliver each note exactly ONCE — no duplicate t
     // so a repeat here is a duplicate row and a duplicate toast in the inbox.
     const seen = inboxEmits(emits).flatMap((e) => e[2].map((n) => n.id));
     assert.deepStrictEqual(seen, ['n1', 'n2'], 'each note delivered exactly once across every claim');
-    assert.strictEqual(state.removes.length, 2, 'one remove per note — a repeat claim would 404 a second set');
+    assert.deepStrictEqual(state.reads, ['n1', 'n2'], 'one read-mark per note — a repeat claim would send a second set');
   }, { claimInbox: true });
 });
 
@@ -318,7 +362,7 @@ test('the hello tick claims on its own — a note raised while the SSE feed was 
     // deleting that call site reds this and nothing else — without it the
     // "drained on the next hello" promise in docs/peering.md is unpinned.
     await waitFor('the seeded note to be claimed', () => inboxEmits(emits).length === 1);
-    await waitFor('it to be removed from the box', () => state.removes.length === 1);
+    await waitFor('it to be read-marked on the box', () => state.reads.length === 1);
     assert.deepStrictEqual(inboxEmits(emits)[0][2].map((n) => n.id), ['n1']);
   }, { claimInbox: true }, [NOTES[0]]);
 });
