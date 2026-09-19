@@ -185,6 +185,8 @@ clodex-reg-
 clodex-release-die-
 clodex-release-log-
 clodex-remind-pending-
+clodex-remote-probe-
+clodex-remote-shell-
 clodex-rename-
 clodex-rename-proj-
 clodex-rename-seed-
