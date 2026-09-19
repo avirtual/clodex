@@ -173,6 +173,11 @@ class SpillFilter {
 
   close() {
     let out = '';
+    if (this.holding && this.pending.trim() === TERMINATOR && this.pending.indexOf('\n') === -1) {
+      const last = this.pending;
+      this.pending = '';
+      out += this._resolve() + last;
+    }
     if (this.holding) {
       out += this.originalHeld();
       this._clear();

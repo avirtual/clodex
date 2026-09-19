@@ -72,6 +72,25 @@ test('row 4: the spill fires, identically, at every chunk size', () => {
   assert.ok(outs.every((o) => o.includes('\n[agent:end]\n')), 'terminator re-emitted as received');
 });
 
+test('a terminator that ends the stream with no newline after it still spills', () => {
+  // A reply whose last line is `[agent:end]` ends exactly there — the model
+  // emits no trailing newline — so the terminator is still in `pending` at
+  // close(). Before this pin, close() re-emitted the whole held body verbatim:
+  // the lead's 8.8 KB ticket spec arrived on the operator's screen and in the
+  // hand's context unspilled (2026-09-20). The trailing-newline variant is row 4.
+  const T = `before\n[agent:task add t42 start] ${BIG}\n[agent:end]`;
+  const outs = SIZES.map((cs) => run(T, { cs }).out);
+  assert.ok(outs.every((o) => o.includes('[agent:task add t42 start] @spill:')), 'fires without the trailing newline');
+  assert.ok(outs.every((o) => !o.includes(BIG)), 'body is off the wire');
+  assert.ok(outs.every((o) => o.endsWith('\n[agent:end]')), 'stream still ends on the terminator, byte-exact');
+  assert.equal(new Set(outs).size, 1, 'output independent of chunking');
+  const { body } = diskOf(outs[0]);
+  assert.equal(body, BIG);
+  // Whitespace after the terminator is not a terminator line: unchanged.
+  const held = run(`[agent:task add t42 start] ${BIG}\n[agent:end]  x`).out;
+  assert.ok(!held.includes('@spill:'), 'a non-terminator tail still passes through held');
+});
+
 test('row 5: the file is the body exactly, and the id is its sha', () => {
   const body = `line one\n\n  indented  \n${BIG}\nlast`;
   const { out } = run(`[agent:task add t7] ${body}\n[agent:end]\n`);

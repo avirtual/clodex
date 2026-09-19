@@ -1165,6 +1165,8 @@ function registerIpcHandlers(deps) {
       // Offering a name from memory would offer one the operator cannot get.
       speakVoices: typeof listSpeakVoices === 'function' ? listSpeakVoices() : [],
       terminalReports: s.terminalReports,
+      terminalRemote: s.terminalRemote,
+      intentSpill: s.intentSpill,
       defaultSessionMode: s.defaultSessionMode,
       discoverOnStartup: s.discoverOnStartup,
       theme: s.theme,
