@@ -5519,6 +5519,11 @@ function appendDeployActions(tailBox, row, status, sshHost, port, logText) {
       const res = await window.api.peerDeployFix(sshHost, port, label, logText);
       if (res && res.ok) {
         showToast(`Opened agent session "${res.name}" to fix ${label}.`, { kind: 'peer-ui' });
+        const working = document.createElement('div');
+        working.className = 'peer-status-ok peer-fix-working';
+        working.textContent = `Agent ${res.name} is working on it in this workspace's session list — it will post to your inbox when done; then click Test & Set Up again.`;
+        actions.remove();
+        tailBox.appendChild(working);
       } else {
         showToast(`Open fix session failed: ${(res && res.error) || 'no response'}`, { kind: 'warm' });
       }

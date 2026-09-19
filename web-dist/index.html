@@ -37210,7 +37210,11 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
           ``,
           `HOW TO FIX: read ${readme} (the full manual playbook) and ${script} (the idempotent installer \u2014 env params REPO_URL, BRANCH, PORT, CLODEX_SRC). If those paths aren't readable, both live in the peering/ folder of ${repo}. Re-running the script is SAFE and idempotent (re-run = update); it emits ::step/::ok/::fail markers, and when it needs root it can't get, it prints the exact sudo commands and stops. You can ssh ${host} directly to inspect and run steps by hand. Common snags: system packages needing sudo, Node < 20, the node-pty native rebuild, or XDG_RUNTIME_DIR missing for systemctl --user.`,
           ``,
-          `When the hello curl returns "app":"clodex", you're done \u2014 report back.`
+          `When the hello curl returns "app":"clodex", you're done \u2014 report back.`,
+          ``,
+          `NODE: if the box has no Node at all, or one older than 20, install a USER-LOCAL Node 22 under ~/.local (download the tarball, unpack it to ~/.local/node, symlink node/npm/npx into ~/.local/bin) \u2014 do NOT sudo and do NOT use the distro package manager for Node; the service unit's PATH already leads with ~/.local/bin.`,
+          ``,
+          `REPORT BACK WITH [agent:notify-user] when you finish, either way \u2014 the operator is not watching this session. On success, quote the hello JSON's app, version and host fields and tell them to click Test & Set Up again. On failure, say what you found and what is still blocking.`
         ].join("\n");
       }
       function shSingleQuote(v) {
@@ -44633,6 +44637,11 @@ ${res.stderr}` : "");
             const res = await window.api.peerDeployFix(sshHost, port, label, logText);
             if (res && res.ok) {
               showToast(`Opened agent session "${res.name}" to fix ${label}.`, { kind: "peer-ui" });
+              const working = document.createElement("div");
+              working.className = "peer-status-ok peer-fix-working";
+              working.textContent = `Agent ${res.name} is working on it in this workspace's session list \u2014 it will post to your inbox when done; then click Test & Set Up again.`;
+              actions.remove();
+              tailBox.appendChild(working);
             } else {
               showToast(`Open fix session failed: ${res && res.error || "no response"}`, { kind: "warm" });
             }

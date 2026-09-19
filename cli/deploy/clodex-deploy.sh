@@ -19,7 +19,7 @@
 # NEVER prompts, NEVER hangs: if it needs root and can't sudo without a
 # password, it emits ::need-sudo + the exact commands and exits 42 (distinct
 # from a real failure's 1) — that exit is where the wizard offers the agent
-# fallback. Params via env: REPO_URL, BRANCH, PORT, CLODEX_SRC,
+# fallback. Params via env: REPO_URL, BRANCH, PORT, CLODEX_SRC, CLODEX_NODE_DIST_URL,
 # CLODEX_NO_WIRESCOPE (=1 → skip wirescope python deps + pin CLODEX_WIRESCOPE=off).
 
 set -uo pipefail
@@ -84,14 +84,73 @@ can_sudo() {
   return 1
 }
 
+ensure_node() {
+  local major=0
+  if command -v node >/dev/null 2>&1; then
+    major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+    if [ "$major" -ge 20 ] 2>/dev/null; then return 0; fi
+  fi
+  [ "$IS_MAC" = "1" ] && fail preflight "node-not-found-install-node-20+-e.g.-brew-install-node"
+  local dist="${CLODEX_NODE_DIST_URL:-https://nodejs.org/dist}"
+  local machine; machine="$(uname -m)"
+  local narch=""
+  case "$machine" in
+    x86_64) narch="x64";;
+    aarch64|arm64) narch="arm64";;
+    *) fail preflight "node-unsupported-arch-$machine";;
+  esac
+  local ver="${CLODEX_NODE_VERSION:-}"
+  if [ -z "$ver" ]; then
+    ver="$(curl -fsSL "$dist/index.json" 2>/dev/null \
+      | grep -o '"version" *: *"v22\.[^"]*"' | head -n 1 | cut -d'"' -f4)"
+  fi
+  [ -n "$ver" ] || fail preflight "node-install-failed"
+  local tmp; tmp="$(mktemp -d)" || fail preflight "node-install-failed"
+  local tb="node-$ver-linux-$narch.tar.xz"
+  curl -fsSL -o "$tmp/$tb" "$dist/$ver/$tb" \
+    || { rm -rf "$tmp"; fail preflight "node-install-failed"; }
+  curl -fsSL -o "$tmp/SHASUMS256.txt" "$dist/$ver/SHASUMS256.txt" \
+    || { rm -rf "$tmp"; fail preflight "node-install-failed"; }
+  ( cd "$tmp" && grep " $tb\$" SHASUMS256.txt | sha256sum -c - ) >/dev/null 2>&1 \
+    || { rm -rf "$tmp"; fail preflight "node-checksum-mismatch"; }
+  local dest="$HOME/.local/node"
+  rm -rf "$dest.new"
+  mkdir -p "$dest.new" "$HOME/.local/bin" \
+    || { rm -rf "$tmp"; fail preflight "node-install-failed"; }
+  tar -xJf "$tmp/$tb" -C "$dest.new" --strip-components=1 \
+    || { rm -rf "$tmp" "$dest.new"; fail preflight "node-install-failed"; }
+  rm -rf "$dest"
+  mv "$dest.new" "$dest" || { rm -rf "$tmp"; fail preflight "node-install-failed"; }
+  local b
+  for b in node npm npx; do
+    ln -sf "$dest/bin/$b" "$HOME/.local/bin/$b" \
+      || { rm -rf "$tmp"; fail preflight "node-install-failed"; }
+  done
+  rm -rf "$tmp"
+  export PATH="$HOME/.local/bin:$PATH"
+  hash -r 2>/dev/null || true
+  echo "::log node $ver installed to ~/.local/node"
+}
+
+py_present() {
+  case "$1" in
+    python3-pip) python3 -m pip --version >/dev/null 2>&1; return $?;;
+    python3-venv)
+      local d rc
+      d="$(mktemp -d)" || return 1
+      python3 -m venv --without-pip "$d/v" >/dev/null 2>&1; rc=$?
+      rm -rf "$d"
+      return $rc;;
+  esac
+  return 1
+}
+
 # --- preflight: the tools the rest of the script assumes -------------------
 step preflight
 command -v git  >/dev/null 2>&1 || fail preflight "git-not-found"
 command -v curl >/dev/null 2>&1 || fail preflight "curl-not-found"
-command -v node >/dev/null 2>&1 || fail preflight "node-not-found"
+ensure_node
 command -v npm  >/dev/null 2>&1 || fail preflight "npm-not-found"
-NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
-[ "$NODE_MAJOR" -ge 20 ] 2>/dev/null || fail preflight "node-$(node -v 2>/dev/null)-too-old-need-20+"
 # systemctl gates the Linux service step only; a mac never installs a unit.
 [ "$IS_MAC" = "1" ] || command -v systemctl >/dev/null 2>&1 || fail preflight "systemctl-not-found"
 ok preflight
@@ -113,12 +172,14 @@ elif command -v apt-get >/dev/null 2>&1; then
   # can't create venvs without python3-venv; AL-style pipless venvs exist too).
   # Wirescope opted out → the venv/pip packages are dead weight; skip them
   # (best-effort dep trim — python3 itself stays, node-gyp needs it).
-  # dpkg -s present-check keeps a satisfied box off the need-sudo path.
   APT_PKGS="build-essential python3 python3-venv python3-pip"
   [ "$WIRESCOPE_OFF" = "1" ] && APT_PKGS="build-essential python3"
   missing=""
   for p in $APT_PKGS; do
-    dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p"
+    case "$p" in
+      python3-venv|python3-pip) py_present "$p" || missing="$missing $p";;
+      *) dpkg -s "$p" >/dev/null 2>&1 || missing="$missing $p";;
+    esac
   done
   if [ -n "$missing" ]; then
     log "missing:$missing"
@@ -136,14 +197,16 @@ elif command -v apt-get >/dev/null 2>&1; then
 elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; then
   # RHEL/Fedora/Amazon Linux: gcc-c++ + make + python3 for node-gyp, plus
   # python3-pip — AL2023's base python3 creates venvs WITHOUT pip (ensurepip is
-  # split out), which breaks the wirescope managed venv. rpm -q is the
-  # present-check (dpkg doesn't exist here); PM is dnf when available, else yum.
+  # split out), which breaks the wirescope managed venv.
   PM="yum"; command -v dnf >/dev/null 2>&1 && PM="dnf"
   RPM_PKGS="gcc-c++ make python3 python3-pip"
   [ "$WIRESCOPE_OFF" = "1" ] && RPM_PKGS="gcc-c++ make python3"
   missing=""
   for p in $RPM_PKGS; do
-    rpm -q "$p" >/dev/null 2>&1 || missing="$missing $p"
+    case "$p" in
+      python3-pip) py_present "$p" || missing="$missing $p";;
+      *) rpm -q "$p" >/dev/null 2>&1 || missing="$missing $p";;
+    esac
   done
   if [ -n "$missing" ]; then
     log "missing:$missing"
@@ -315,6 +378,9 @@ if [ -n "${CLODEX_CLAUDE_TOKEN:-}" ]; then
   log "claude token drop-in written (unit env)"
 fi
 # enable-linger so the --user service runs without an active login session.
+if ! loginctl show-user "$USER" 2>/dev/null | grep -q 'Linger=yes'; then
+  loginctl enable-linger 2>/dev/null
+fi
 if ! loginctl show-user "$USER" 2>/dev/null | grep -q 'Linger=yes'; then
   if can_sudo; then
     $SUDO loginctl enable-linger "$USER" || fail service "enable-linger-failed"

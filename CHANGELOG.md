@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Deploying a headless node to a Linux box that has no Node.js now installs a user-local Node 22 first, a box whose Python venv or session linger can be set up without root no longer stops to ask for sudo, and the fix-with-an-agent session says where it is working and posts its outcome to the inbox.
 
 - A note a sandbox seat raises with notify-user now stays in that box's inbox as well as reaching the desktop inbox; the box copy is marked read once the desktop has it.
 

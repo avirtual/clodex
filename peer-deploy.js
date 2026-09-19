@@ -147,6 +147,10 @@ function buildDeployFixBriefing({ sshHost, port, label, logText, docsDir } = {})
     `HOW TO FIX: read ${readme} (the full manual playbook) and ${script} (the idempotent installer — env params REPO_URL, BRANCH, PORT, CLODEX_SRC). If those paths aren't readable, both live in the peering/ folder of ${repo}. Re-running the script is SAFE and idempotent (re-run = update); it emits ::step/::ok/::fail markers, and when it needs root it can't get, it prints the exact sudo commands and stops. You can ssh ${host} directly to inspect and run steps by hand. Common snags: system packages needing sudo, Node < 20, the node-pty native rebuild, or XDG_RUNTIME_DIR missing for systemctl --user.`,
     ``,
     `When the hello curl returns "app":"clodex", you're done — report back.`,
+    ``,
+    `NODE: if the box has no Node at all, or one older than 20, install a USER-LOCAL Node 22 under ~/.local (download the tarball, unpack it to ~/.local/node, symlink node/npm/npx into ~/.local/bin) — do NOT sudo and do NOT use the distro package manager for Node; the service unit's PATH already leads with ~/.local/bin.`,
+    ``,
+    `REPORT BACK WITH [agent:notify-user] when you finish, either way — the operator is not watching this session. On success, quote the hello JSON's app, version and host fields and tell them to click Test & Set Up again. On failure, say what you found and what is still blocking.`,
   ].join('\n');
 }
 
