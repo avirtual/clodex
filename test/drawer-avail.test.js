@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { termAvailableFor, vetTermCommand, TERM_EXEC_MAX } = require('../drawer-avail');
+const { termAvailableFor, vetTermCommand, sanitizeName, TERM_EXEC_MAX } = require('../drawer-avail');
 
 // Both exclusions are shipped defects, so each gets a test naming what it did
 // rather than asserting a boolean twice.
@@ -192,4 +192,46 @@ test('the length cap is on BYTES, not characters', () => {
   const wide = 'é'.repeat(TERM_EXEC_MAX / 2 + 1);
   assert.ok(wide.length < TERM_EXEC_MAX, 'ENTER: this passes a naive character count');
   assert.strictEqual(vetTermCommand(wide).ok, false);
+});
+
+test('sanitizeName strips every code point vetTermCommand would refuse', () => {
+  assert.strictEqual(sanitizeName(`ssh${ch(0x01)} ho${ch(0x7f)}st`), 'ssh host');
+  assert.strictEqual(sanitizeName(`a${ch(0x200b)}b${ch(0x200d)}c`), 'abc', 'zero-width');
+  assert.strictEqual(sanitizeName(`a${ch(0x202e)}b${ch(0x2066)}c${ch(0x2069)}`, 80), 'abc',
+    'bidi overrides and isolates');
+  assert.strictEqual(sanitizeName(`${ch(0xfeff)}ssh host`), 'ssh host', 'a leading BOM');
+  assert.strictEqual(sanitizeName(`x${ch(0x1b)}[2J`), 'x[2J',
+    'the ESC goes, so a name cannot clear the agent`s screen — its printable tail is not a sequence');
+});
+
+test('sanitizeName keeps the first line only', () => {
+  assert.strictEqual(sanitizeName('ssh host\nrm -rf /'), 'ssh host');
+  assert.strictEqual(sanitizeName('ssh host\r\nsecond'), 'ssh host');
+  assert.strictEqual(sanitizeName('\nsecond'), '', 'an empty first line is still the first line');
+});
+
+test('sanitizeName caps at max code points with the cut marked', () => {
+  const long = `ssh ${'a'.repeat(200)}`;
+  const capped = sanitizeName(long);
+  assert.strictEqual(Array.from(capped).length, 80, 'ENTER: the default cap is 80');
+  assert.ok(capped.endsWith('…'), 'and the cut is marked');
+  assert.strictEqual(sanitizeName('ssh host', 4), 'ssh…', 'an explicit max is honoured');
+  assert.strictEqual(sanitizeName('exact', 5), 'exact', 'exactly at the cap is not truncated');
+});
+
+test('sanitizeName never splits an astral code point, and counts it as one', () => {
+  const faces = '\u{1F600}'.repeat(100);
+  const capped = sanitizeName(faces);
+  assert.strictEqual(Array.from(capped).length, 80, 'eighty characters, not eighty units');
+  assert.deepStrictEqual([...new Set(Array.from(capped))], ['\u{1F600}', '…'],
+    'every code point is a whole face or the marker — no lone surrogate at the cut');
+  assert.strictEqual(sanitizeName('\u{1F600}ab', 3), '\u{1F600}ab',
+    'three code points is under a cap of three, though .length says four');
+});
+
+test('sanitizeName is total — a non-string is a name of nothing', () => {
+  for (const bad of [null, undefined, 0, {}, []]) {
+    assert.strictEqual(typeof sanitizeName(bad), 'string', `${String(bad)} still yields a string`);
+  }
+  assert.strictEqual(sanitizeName(null), '');
 });

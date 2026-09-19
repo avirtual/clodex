@@ -540,7 +540,7 @@ test('marks: a seat shell reports its finished commands', () => {
 
   assert.strictEqual(got.length, 1, 'ENTER: one command was reported');
   assert.strictEqual(got[0][0], 'alice', 'reported against the seat that ran it');
-  assert.deepStrictEqual(got[0][1], { command: 'npm test', exitCode: 0, output: 'ok\n' });
+  assert.deepStrictEqual(got[0][1], { command: 'npm test', exitCode: 0, output: 'ok\n', depth: 0 });
 });
 
 // There is nobody to report a workspace-wide shell's commands TO.

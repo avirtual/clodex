@@ -147,4 +147,14 @@ function vetTermCommand(raw) {
   return { ok: true, command: cmd };
 }
 
-module.exports = { termAvailableFor, termBackendFor, vetTermCommand, TERM_EXEC_MAX };
+const CTRL_ALL_RE = new RegExp(CTRL_RE.source, 'gu');
+
+function sanitizeName(s, max = 80) {
+  const first = String(s == null ? '' : s).split(/[\r\n]/)[0];
+  const clean = first.replace(CTRL_ALL_RE, '');
+  const points = Array.from(clean);
+  if (points.length <= max) return clean;
+  return `${points.slice(0, max - 1).join('')}…`;
+}
+
+module.exports = { termAvailableFor, termBackendFor, vetTermCommand, sanitizeName, TERM_EXEC_MAX };

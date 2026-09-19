@@ -1014,7 +1014,7 @@ test('the D mark settles the exec with the command that actually ran', () => {
   assert.strictEqual(results.length, 1, 'ENTER: exactly one delivery');
   assert.deepStrictEqual(results[0], ['alice', {
     status: 'ok',
-    record: { command: 'npm test', exitCode: 0, output: 'ok\n' },
+    record: { command: 'npm test', exitCode: 0, output: 'ok\n', depth: 0 },
     command: 'npm test',
     late: false,
   }]);
@@ -1154,7 +1154,7 @@ test('an abandoned command is reported as abandoned, not left hanging', () => {
   spawn.spawned[0].emit(A);
   assert.deepStrictEqual(results, [['alice', {
     status: 'abandoned',
-    record: { command: 'sleep 900', output: 'partial\n' },
+    record: { command: 'sleep 900', output: 'partial\n', depth: 0 },
     command: 'sleep 900',
     late: false,
   }]]);
@@ -1289,7 +1289,7 @@ test('the late result arrives flagged as late, superseding the timeout', () => {
   assert.strictEqual(results.length, 2, 'ENTER: both the deadline notice and the result landed');
   assert.deepStrictEqual(results[1], ['alice', {
     status: 'ok',
-    record: { command: 'sleep 900', exitCode: 0, output: 'done\n' },
+    record: { command: 'sleep 900', exitCode: 0, output: 'done\n', depth: 0 },
     command: 'sleep 900',
     // By now the agent has told someone the command outran its deadline. Without
     // this flag the second message reads as a duplicate rather than as the

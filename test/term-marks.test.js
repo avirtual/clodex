@@ -18,7 +18,7 @@ test('a framed command yields its line, exit code and output', () => {
   const { recs, parser } = collect();
   parser.feed(`${A}${C('echo hi')}hi\n${D(0)}${A}`);
   assert.strictEqual(recs.length, 1, 'ENTER: exactly one command was framed');
-  assert.deepStrictEqual(recs[0], { command: 'echo hi', exitCode: 0, output: 'hi\n' });
+  assert.deepStrictEqual(recs[0], { command: 'echo hi', exitCode: 0, output: 'hi\n', depth: 0 });
 });
 
 test('a nonzero exit is carried through', () => {
@@ -43,7 +43,7 @@ test('marks split across feeds are still framed', () => {
   const whole = `${C('ls')}a\n${D(0)}`;
   for (let i = 0; i < whole.length; i++) parser.feed(whole[i]);
   assert.strictEqual(recs.length, 1, 'ENTER: the byte-split stream framed one command');
-  assert.deepStrictEqual(recs[0], { command: 'ls', exitCode: 0, output: 'a\n' });
+  assert.deepStrictEqual(recs[0], { command: 'ls', exitCode: 0, output: 'a\n', depth: 0 });
 });
 
 // A partial mark held across feeds must not be printed as output — that is the
@@ -74,7 +74,7 @@ test('an abandoned command does not steal the next command output', () => {
   const { recs, parser } = collect();
   parser.feed(`${A}${C('abandoned')}${A}${C('real')}mine\n${D(0)}`);
   assert.strictEqual(recs.length, 1, 'ENTER: only the command that ran was framed');
-  assert.deepStrictEqual(recs[0], { command: 'real', exitCode: 0, output: 'mine\n' });
+  assert.deepStrictEqual(recs[0], { command: 'real', exitCode: 0, output: 'mine\n', depth: 0 });
 });
 
 // The case that makes the abandon-drop load-bearing, and the one a naive corpus
@@ -107,7 +107,7 @@ test('an abandoned command is ANNOUNCED, carrying what was abandoned', () => {
   assert.strictEqual(dropped.length, 1, 'ENTER: the drop was announced');
   // The command TEXT rides along: "something you asked for was abandoned" is not
   // actionable for a consumer that may have several commands in flight.
-  assert.deepStrictEqual(dropped[0], { command: 'sleep 900', output: 'partial output\n' });
+  assert.deepStrictEqual(dropped[0], { command: 'sleep 900', output: 'partial output\n', depth: 0 });
   // No exitCode field at all. There is none, and inventing 130 would claim a
   // SIGINT that may not be what happened — the shell may simply have reset.
   assert.ok(!('exitCode' in dropped[0]), 'an abandoned command has no exit status');
@@ -140,7 +140,7 @@ test('the abandoned state is cleared, so the next command is clean', () => {
   p.feed(`${C('abandoned')}stale\n${A}${C('real')}mine\n${D(0)}`);
 
   assert.strictEqual(dropped.length, 1, 'ENTER: the first was announced as abandoned');
-  assert.deepStrictEqual(recs, [{ command: 'real', exitCode: 0, output: 'mine\n' }],
+  assert.deepStrictEqual(recs, [{ command: 'real', exitCode: 0, output: 'mine\n', depth: 0 }],
     "the abandoned command's output did not leak into the next one");
 });
 
@@ -149,7 +149,7 @@ test('no onAbandon listener is not an error — the drop is still a drop', () =>
   // not news to report, only news to whoever was waiting on it.
   const { recs, parser } = collect();
   parser.feed(`${A}${C('rm -rf /')}${A}${C('real')}x\n${D(0)}`);
-  assert.deepStrictEqual(recs, [{ command: 'real', exitCode: 0, output: 'x\n' }]);
+  assert.deepStrictEqual(recs, [{ command: 'real', exitCode: 0, output: 'x\n', depth: 0 }]);
 });
 
 // precmd fires before anything has been typed, so the first prompt emits a bare
@@ -365,4 +365,240 @@ test('an abandoned command is not still reported as the one holding the tab', ()
 
   p.feed(A);
   assert.strictEqual(p.current(), '', 'the abandon cleared it, so no refusal can name a dead command');
+});
+
+const TC = (cmd) => `\x1b]133;C;${b64(cmd)};nest=1\x07`;
+const TD = (code) => `\x1b]133;D;${code};nest=1\x07`;
+const TA = '\x1b]133;A;nest=1\x07';
+
+function twoLayer() {
+  const events = [];
+  const parser = createMarkParser({
+    onCommand: (r) => events.push(['command', r]),
+    onAbandon: (r) => events.push(['abandon', r]),
+    onPrompt: (i) => events.push(['prompt', i]),
+  });
+  return { events, parser, recs: () => events.filter((e) => e[0] === 'command').map((e) => e[1]) };
+}
+
+test('a tagged command inside an open outer is a depth-1 record and does not close the outer', () => {
+  const { parser, recs } = twoLayer();
+  parser.feed(`${A}${C('ssh host')}`);
+  assert.strictEqual(parser.isBusy(), true, 'ENTER: the outer holds the tab');
+
+  parser.feed(`${TC('ls')}a.txt\n${TD(0)}`);
+  assert.deepStrictEqual(recs(), [{
+    command: 'ls', exitCode: 0, output: 'a.txt\n', depth: 1, inside: 'ssh host',
+  }]);
+  assert.strictEqual(parser.isBusy(), true, 'ssh still holds the tab — the far command finishing did not free it');
+  assert.strictEqual(parser.current(), 'ssh host', 'and the tab is still named by the OUTER command');
+  assert.strictEqual(parser.innerCurrent(), '', 'the far layer is idle again');
+  assert.strictEqual(parser.innerBusy(), false);
+});
+
+test('a tagged abandon drops the inner only, and its prompt carries depth 1', () => {
+  const { events, parser } = twoLayer();
+  parser.feed(`${C('ssh host')}${TC('sleep 900')}partial\n`);
+  assert.strictEqual(parser.innerBusy(), true, 'ENTER: the far command is open');
+
+  parser.feed(TA);
+  const abandons = events.filter((e) => e[0] === 'abandon');
+  assert.strictEqual(abandons.length, 1, 'exactly one abandon — the outer was not also dropped');
+  assert.deepStrictEqual(abandons[0][1], {
+    command: 'sleep 900', output: 'partial\n', depth: 1, inside: 'ssh host',
+  });
+  assert.strictEqual(parser.isBusy(), true, 'the outer survived its far side being interrupted');
+  assert.deepStrictEqual(events.filter((e) => e[0] === 'prompt').map((e) => e[1]),
+    [{ interrupted: false, depth: 1 }]);
+});
+
+test('ssh exiting settles the far command BEFORE the outer, with no status of its own', () => {
+  const { events, parser } = twoLayer();
+  parser.feed(`${C('ssh host')}${TC('apt upgrade')}working\n`);
+  assert.strictEqual(parser.innerBusy(), true, 'ENTER: the far command is open inside an open outer');
+
+  parser.feed(`${D(0)}${A}`);
+  const order = events.filter((e) => e[0] === 'command').map((e) => e[1]);
+  assert.strictEqual(order.length, 2, 'both layers settled');
+  assert.deepStrictEqual(order[0], {
+    command: 'apt upgrade', exitCode: null, output: 'working\n',
+    depth: 1, inside: 'ssh host', sessionEnded: true,
+  }, 'the INNER is first, and says the session ended rather than inventing an exit code');
+  assert.deepStrictEqual(order[1], {
+    command: 'ssh host', exitCode: 0, output: 'working\n', depth: 0,
+  }, 'the outer follows, with its own real exit code');
+  assert.strictEqual(parser.isBusy(), false);
+  assert.strictEqual(parser.innerBusy(), false);
+});
+
+test('an interrupt at the far prompt reports depth 0 on the outer A and still session-ends the inner', () => {
+  const { events, parser } = twoLayer();
+  parser.feed(`${C('ssh host')}${TC('sleep 900')}`);
+  parser.feed(`${D(130)}${A}`);
+
+  const recs = events.filter((e) => e[0] === 'command').map((e) => e[1]);
+  assert.strictEqual(recs[0].sessionEnded, true, 'ENTER: the inner was session-ended');
+  assert.deepStrictEqual(events.filter((e) => e[0] === 'prompt').map((e) => e[1]),
+    [{ interrupted: true, depth: 0 }], 'the depth is on the EVENT: this prompt is the local shell`s');
+});
+
+test('a tagged D;130 then a tagged A reports the interrupt at depth 1', () => {
+  const { events, parser } = twoLayer();
+  parser.feed(`${C('ssh host')}${TC('sleep 900')}`);
+  parser.feed(`${TD(130)}${TA}`);
+  assert.deepStrictEqual(events.filter((e) => e[0] === 'prompt').map((e) => e[1]),
+    [{ interrupted: true, depth: 1 }]);
+  assert.strictEqual(parser.isBusy(), true, 'the outer is untouched by either');
+});
+
+test('tagged marks with no outer open are ignored, and never reach the output', () => {
+  const { events, parser } = twoLayer();
+  parser.feed(`${TC('ls')}stray\n${TD(0)}${TA}`);
+  assert.deepStrictEqual(events, [],
+    'nothing was framed, and NO PROMPT either: T-C releases a typed command on a depth-1 prompt, so a stray tagged A after the session closed would type into the local shell');
+  assert.strictEqual(parser.innerBusy(), false);
+
+  parser.feed(`${C('real')}mine\n${D(0)}`);
+  const recs = events.filter((e) => e[0] === 'command').map((e) => e[1]);
+  assert.deepStrictEqual(recs, [{ command: 'real', exitCode: 0, output: 'mine\n', depth: 0 }],
+    'and the stray bytes did not leak into the next real command');
+});
+
+test('a nest level we do not understand is stripped and changes nothing', () => {
+  const { events, parser } = twoLayer();
+  parser.feed(`${C('ssh host')}${TC('bash')}`);
+  const before = parser._state();
+  assert.strictEqual(before.inner.capturing, true, 'ENTER: the far shell has a command open');
+
+  parser.feed(`\x1b]133;C;${b64('deeper')};nest=2\x07mid\n\x1b]133;D;0;nest=2\x07`);
+  assert.deepStrictEqual(events.filter((e) => e[0] !== 'prompt'), [], 'no record, no abandon');
+  const after = parser._state();
+  assert.strictEqual(after.inner.command, 'bash', 'the depth-1 capture is untouched');
+  assert.strictEqual(after.capturing, true);
+
+  parser.feed(TD(0));
+  const recs = events.filter((e) => e[0] === 'command').map((e) => e[1]);
+  assert.strictEqual(recs.length, 1);
+  assert.ok(!/133|nest=2/.test(recs[0].output), 'the unknown mark`s bytes were stripped, not captured');
+  assert.strictEqual(recs[0].output, 'mid\n', 'the text around it still is');
+});
+
+test('a new outer command resets a far capture and bumps outerSeq', () => {
+  const { events, parser } = twoLayer();
+  assert.strictEqual(parser.outerSeq(), 0, 'ENTER: no outer command has run');
+
+  parser.feed(`${C('ssh host')}`);
+  assert.strictEqual(parser.outerSeq(), 1);
+  parser.feed(TC('sleep 900'));
+  parser.feed(`${C('ssh other')}`);
+
+  assert.strictEqual(parser.outerSeq(), 2, 'the second session is a different instance');
+  assert.strictEqual(parser.innerBusy(), false, 'a new outer command cannot have the old far side still open');
+  assert.deepStrictEqual(events.filter((e) => e[0] === 'command'), [],
+    'the reset is silent — nothing ran to report');
+});
+
+test('an abandoned outer resets the far layer too', () => {
+  const { events, parser } = twoLayer();
+  parser.feed(`${C('ssh host')}${TC('sleep 900')}`);
+  assert.strictEqual(parser.innerBusy(), true, 'ENTER: both layers are open');
+
+  parser.feed(A);
+  assert.strictEqual(parser.isBusy(), false);
+  assert.strictEqual(parser.innerBusy(), false, 'an abandoned outer has no far side');
+  const abandons = events.filter((e) => e[0] === 'abandon');
+  assert.strictEqual(abandons.length, 1, 'ONE abandon: the outer`s. The inner reset is silent');
+  assert.strictEqual(abandons[0][1].depth, 0, 'and it is the outer that was announced');
+});
+
+test('altScreen tracks the switch even when a PTY read splits it', () => {
+  const { parser } = twoLayer();
+  assert.strictEqual(parser.altScreen(), false, 'ENTER: the far side is at a shell prompt');
+
+  parser.feed('\x1b[?10');
+  parser.feed('49h');
+  assert.strictEqual(parser.altScreen(), true, 'the halves were stitched across the feeds');
+
+  parser.feed('\x1b[?1049l');
+  assert.strictEqual(parser.altScreen(), false, 'leaving it clears the flag');
+});
+
+test('the alt-screen bytes still reach the captured output', () => {
+  const { recs, parser } = collect();
+  parser.feed(`${C('vim x')}\x1b[?1049hscreen\x1b[?1049l${D(0)}`);
+  assert.strictEqual(recs.length, 1, 'ENTER: the command was framed');
+  assert.strictEqual(recs[0].output, '\x1b[?1049hscreen\x1b[?1049l',
+    'the parser reads the switch, it does not consume it — the screen must still render');
+});
+
+test('the older 47 and 1047 switches count too', () => {
+  const { parser } = twoLayer();
+  parser.feed('\x1b[?47h');
+  assert.strictEqual(parser.altScreen(), true);
+  parser.feed('\x1b[?47l');
+  assert.strictEqual(parser.altScreen(), false);
+  parser.feed('\x1b[?1047h');
+  assert.strictEqual(parser.altScreen(), true);
+});
+
+test('an untagged mark clears altScreen — the local shell is back', () => {
+  const { parser } = twoLayer();
+  parser.feed(`${C('ssh host')}\x1b[?1049h`);
+  assert.strictEqual(parser.altScreen(), true, 'ENTER: the far side took the screen');
+
+  parser.feed(`${D(0)}`);
+  assert.strictEqual(parser.altScreen(), false, 'ssh exited, so nothing remote has the screen');
+  assert.strictEqual(parser._state().altScreen, false);
+});
+
+test('a depth-1 record says which session it ran inside', () => {
+  const out = formatCommand({ command: 'apt list --upgradable', exitCode: 0, output: '' },
+    { inside: 'ssh deploy@web-1' });
+  assert.strictEqual(out, '[terminal] apt list --upgradable\nran inside `ssh deploy@web-1`\nexit 0');
+});
+
+test('the session line sits between the command and its status, and survives output', () => {
+  const out = formatCommand({ command: 'false', exitCode: 1, output: 'boom\n' },
+    { inside: 'ssh host' });
+  assert.deepStrictEqual(out.split('\n').slice(0, 3),
+    ['[terminal] false', 'ran inside `ssh host`', 'exit 1']);
+  assert.match(out, /boom/);
+});
+
+test('a local command carries no session line at all', () => {
+  const out = formatCommand({ command: 'ls', exitCode: 0, output: '' });
+  assert.strictEqual(out, '[terminal] ls\nexit 0');
+  assert.strictEqual(formatCommand({ command: 'ls', exitCode: 0, output: '' }, { inside: '' }),
+    '[terminal] ls\nexit 0', 'an empty inside is not a session');
+});
+
+test('an A carrying another integration`s attributes is ignored, not an abandon', () => {
+  const { events, parser } = twoLayer();
+  parser.feed(`${C('npm test')}running\n`);
+  assert.strictEqual(parser.isBusy(), true, 'ENTER: our command is open and capturing');
+
+  for (const attrs of ['k=s', 'cl=m', 'aid=1234', 'k=s;cl=m']) {
+    parser.feed(`\x1b]133;A;${attrs}\x07`);
+  }
+  assert.deepStrictEqual(events, [],
+    'no abandon and no prompt: kitty emits A;k=s on a continuation prompt, and an abandon would tell the agent its running command died');
+  assert.strictEqual(parser.isBusy(), true, 'the capture is still open');
+
+  parser.feed(`more\n${D(0)}`);
+  const recs = events.filter((e) => e[0] === 'command').map((e) => e[1]);
+  assert.deepStrictEqual(recs, [{
+    command: 'npm test', exitCode: 0, output: 'running\nmore\n', depth: 0,
+  }], 'the real D still finds the capture and reports the true result');
+  assert.ok(!/133|k=s|aid=/.test(recs[0].output), 'and the foreign marks were stripped from it');
+});
+
+test('a foreign A does not disturb an open far capture either', () => {
+  const { events, parser } = twoLayer();
+  parser.feed(`${C('ssh host')}${TC('apt upgrade')}`);
+  assert.strictEqual(parser.innerBusy(), true, 'ENTER: both layers are open');
+
+  parser.feed('\x1b]133;A;aid=7\x07');
+  assert.deepStrictEqual(events, [], 'neither layer was settled');
+  assert.strictEqual(parser.innerBusy(), true, 'the far capture survived — innerClear() did not run');
+  assert.strictEqual(parser.isBusy(), true);
 });
