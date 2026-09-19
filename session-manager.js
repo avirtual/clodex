@@ -171,7 +171,7 @@ const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
 const { SPILL_VERBS } = require('./intent-spill');
-const { SPILL_GRAMMAR_LINE } = require('./ipc-prompt');
+const { spillGrammarLine } = require('./ipc-prompt');
 const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
@@ -3275,7 +3275,7 @@ function createSessionManager(deps) {
       const ipcPrompt = recipe.ipcDisabled
         ? ''
         : buildIpcPrompt(recipe.intents, this._resolveExecDefs(recipe.execCommands, team),
-          recipe.spillArmed ? [...extraGrammar, SPILL_GRAMMAR_LINE] : extraGrammar);
+          recipe.spillArmed ? [...extraGrammar, spillGrammarLine(REGISTRY_DIR)] : extraGrammar);
       const { cleaned, append } = mergeClaudeSystemPrompt(recipe.extraArgs, ipcPrompt, {
         appendBodies: readAppendBodies(recipe.appendPromptFiles, recipe.plugins, team),
         inlineBody: recipe.inlineBody,

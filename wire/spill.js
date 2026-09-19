@@ -25,6 +25,7 @@ class SpillFilter {
     this._write = typeof opts.writeSpill === 'function' ? opts.writeSpill : defaultWriteSpill;
 
     this.passthru = !validAgent(this.agent);
+    this.listenerFailed = false;
 
     this.pending = '';
     this.holding = false;
@@ -41,6 +42,11 @@ class SpillFilter {
 
   get latched() { return this.passthru; }
 
+  _notify(fn, info) {
+    if (!fn) return;
+    try { fn(info); } catch { this.listenerFailed = true; }
+  }
+
   feed(text) {
     if (this.passthru) return text;
     const out = [];
@@ -48,17 +54,28 @@ class SpillFilter {
     for (;;) {
       if (this.holding
           && this.bodyLen + Buffer.byteLength(this.pending, 'utf8') > this.maxBytes) {
-        out.push(this._originalHeld());
+        out.push(this.originalHeld());
         out.push(this.pending);
         this._clear();
         this.pending = '';
         this.passthru = true;
-        if (this.onBail) this.onBail({ reason: 'cap', verb: this.verb });
+        const capped = this.verb;
         this.verb = null;
+        this._notify(this.onBail, { reason: 'cap', verb: capped });
         return out.join('');
       }
       const nl = this.pending.indexOf('\n');
-      if (nl === -1) break;
+      if (nl === -1) {
+        if (couldBeHead(this.pending)
+            && Buffer.byteLength(this.pending, 'utf8') > this.maxBytes) {
+          out.push(this.pending);
+          this.pending = '';
+          this.passthru = true;
+          this._notify(this.onBail, { reason: 'cap', verb: null });
+          return out.join('');
+        }
+        break;
+      }
       const line = this.pending.slice(0, nl);
       this.pending = this.pending.slice(nl + 1);
       out.push(this._line(line));
@@ -79,11 +96,12 @@ class SpillFilter {
     if (this.holding) {
       if (line.trim() === TERMINATOR) return this._resolve() + line + '\n';
       if (cleanLine(line).startsWith(OPEN)) {
-        const held = this._originalHeld();
+        const held = this.originalHeld();
         this._clear();
         this.passthru = true;
-        if (this.onBail) this.onBail({ reason: 'nested-intent', verb: this.verb });
+        const nested = this.verb;
         this.verb = null;
+        this._notify(this.onBail, { reason: 'nested-intent', verb: nested });
         return held + line + '\n';
       }
       this.body.push(line);
@@ -98,7 +116,7 @@ class SpillFilter {
       this.verb = m[2] ? `${m[1]}.${m[2]}` : m[1];
       this.head = line.slice(0, cut);
       this.rawRest = line.slice(cut);
-      const rest = this.rawRest.startsWith(' ') ? this.rawRest.slice(1) : this.rawRest;
+      const rest = this.rawRest.trim();
       this.body = rest ? [rest] : [];
       this.headBodyCount = this.body.length;
       this.bodyLen = Buffer.byteLength(rest, 'utf8');
@@ -108,10 +126,12 @@ class SpillFilter {
   }
 
   _bodyText() {
-    return this.body.join('\n');
+    let end = this.body.length;
+    while (end > this.headBodyCount && !this.body[end - 1].trim()) end -= 1;
+    return this.body.slice(0, end).join('\n');
   }
 
-  _originalHeld() {
+  originalHeld() {
     if (!this.holding) return '';
     const tail = this.body.slice(this.headBodyCount);
     return `${this.head}${this.rawRest}\n${tail.map((l) => `${l}\n`).join('')}`;
@@ -138,11 +158,11 @@ class SpillFilter {
         this._clear();
         this.verb = null;
         this._fired += 1;
-        if (this.onSpill) this.onSpill({ verb, id, bytes });
+        this._notify(this.onSpill, { verb, id, bytes });
         return `${head} @spill:${id}\n`;
       }
     }
-    const held = this._originalHeld();
+    const held = this.originalHeld();
     this._clear();
     this.verb = null;
     return held;
@@ -151,7 +171,7 @@ class SpillFilter {
   close() {
     let out = '';
     if (this.holding) {
-      out += this._originalHeld();
+      out += this.originalHeld();
       this._clear();
       this.verb = null;
     }
@@ -215,7 +235,14 @@ class SpillTee {
   _panic(out, e) {
     this.dead = true;
     try { this.heldOut += this.filter.bail(); } catch { this.filter.passthru = true; }
-    this._flushHeld(out);
+    if (this.heldRaw.length && this.heldOut !== this.heldSrc) {
+      for (const r of this.heldRaw) out.push(r);
+      this.heldRaw = [];
+      this.heldSrc = '';
+      this.heldOut = '';
+    } else {
+      this._flushHeld(out);
+    }
     if (this.buf.length) { out.push(this.buf); this.buf = Buffer.alloc(0); }
     if (this.onBail) {
       try { this.onBail({ reason: 'error', error: (e && e.message) || String(e) }); } catch { this.dead = true; }
@@ -233,7 +260,19 @@ class SpillTee {
         const iCrlf = this.buf.indexOf('\r\n\r\n');
         let cut;
         let blen;
-        if (iCrlf !== -1 && (iLf === -1 || iCrlf < iLf)) { cut = iCrlf; blen = 4; } else if (iLf !== -1) { cut = iLf; blen = 2; } else break;
+        if (iCrlf !== -1 && (iLf === -1 || iCrlf < iLf)) { cut = iCrlf; blen = 4; } else if (iLf !== -1) { cut = iLf; blen = 2; } else {
+          if (this.buf.length > this.filter.maxBytes) {
+            this.dead = true;
+            this.heldOut += this.filter.bail();
+            this._flushHeld(out);
+            out.push(this.buf);
+            this.buf = Buffer.alloc(0);
+            if (this.onBail) {
+              try { this.onBail({ reason: 'frame-cap' }); } catch { this.dead = true; }
+            }
+          }
+          break;
+        }
         const raw = this.buf.slice(0, cut + blen);
         this.buf = this.buf.slice(cut + blen);
         const d = dataOf(raw.toString('utf8'));

@@ -8,25 +8,48 @@ this repo cannot see.
 
 ## SpillFilter
 
-Ported from spill.py's `_SpillFilter`, with ONE deliberate deviation: a line
-that clodex's own scanner would treat as an intent line makes the filter bail
-instead of swallowing it into the held body. spill.py delimits on the
-terminator only; `_extractIntents` closes a greedy body at the next parseable
-col-1 intent line, so a verbatim port would spill one body
-`spec\n[agent:task add b] spec2` and the second ticket would vanish into the
-first's spec. The deviation only shrinks which bodies spill; the bytes of a
-spill are unchanged and every test_spill.py case still passes.
+Ported from spill.py's `_SpillFilter`, with deliberate deviations, all of them
+in one direction: what this filter writes to a spill file must be BYTE-EQUAL to
+what `_extractIntents` would have delimited from the same text. S-B substitutes
+the file for the body the unspilled path would have carried, so a one-byte
+divergence dispatches a different spec than the operator's own transcript shows,
+silently. `test/wire-spill-sse.test.js` pins that equality by running the repo's
+real scanner, not a literal.
+
+1. A line clodex's scanner would treat as an intent line makes the filter bail
+   rather than swallow it into the held body. spill.py delimits on the
+   terminator only; `_extractIntents` closes a greedy body at the next parseable
+   col-1 intent line, so a verbatim port would spill one body
+   `spec\n[agent:task add b] spec2` and the second ticket would vanish into the
+   first's spec.
+2. The head-line rest is TRIMMED, where spill.py skips exactly one space.
+   `_extractIntents` takes `intent.body` from `parseIntent`, which trims; a
+   one-space skip leaves `'  body'` where the scanner yields `'body'`.
+3. Trailing blank lines are popped off the held body, because `_extractIntents`
+   pops them (`while (body.length && !body[body.length-1].trim()) body.pop()`).
+   The head-line fragment is never popped — it is the scanner's `firstBody`,
+   which the pop loop cannot reach.
+
+The deviations only change which bytes a spill contains and which bodies spill;
+every test_spill.py delimitation case is still ported in
+`test/wire-spill-filter.test.js`, with row 6 rewritten to the trimmed
+expectation and labelled as the deviation it is.
 
 The nested-intent test is `cleanLine(line).startsWith('[agent:')`, which is
-over-broad on purpose — a fenced example inside a spec bails too, because the
-filter cannot know fences without reimplementing `fencedLines`. A bail costs the
-saving on one response, never a spec.
+over-broad on purpose — the filter cannot know fences without reimplementing
+`fencedLines`, so it is deliberately wrong in the SAFE direction in both
+senses. A head line inside a fence spills (the scanner would never dispatch it,
+so a pointer replaces an example the reader can still recover from the
+content-addressed file), and a fenced example INSIDE a held body bails (costing
+the saving on one response, never a spec).
 
-`_originalHeld` reconstructs the head line as RECEIVED (`head + rawRest`) rather
+`originalHeld` reconstructs the head line as RECEIVED (`head + rawRest`) rather
 than spill.py's `head + " " + body_text`. For a head line with nothing after the
 `]` spill.py's form drops the source newline and adds a space; byte-identity on
 the forward-original paths is the whole failure policy, so that inexactness is
-not ported.
+not ported. Note this is the one place `rawRest` is still needed after the trim
+in deviation 2: what is FORWARDED is the original bytes, what is SPILLED is the
+scanner's delimitation.
 
 For that same head-on-its-own-line shape the sha input is `body.join('\n')`,
 which has NO leading newline where `_extractIntents` would have produced one.
@@ -52,10 +75,20 @@ response gets a fresh filter.
 ## maxBytes
 
 Enforced on HELD bytes before a line is consumed, never per completed line: a
-ticket spec is very often ONE long line, so a per-line check fires only once the
-line is fully buffered and never mid-line, and the oversized body spills anyway.
+ticket spec is very often ONE long line, so a per-line check would fire only
+once that line was fully buffered, and the oversized body would spill anyway.
 The mid-line bail emits `pending` with NO newline appended — the source newline
 has not arrived.
+
+The same cap also bounds the UNTERMINATED head line, before `holding` is ever
+set: `couldBeHead(pending)` with no newline yet is the shape that would
+otherwise buffer without limit, and on an armed seat a long `[agent:dm …]` line
+can never spill at all, so without this check the client would see no text for
+the whole line's duration.
+
+`SpillTee.buf` carries the same bound at the SSE-frame level: a 200-status
+`text/event-stream` that never sends `\n\n` would otherwise buffer the entire
+response while the unfiltered path forwarded it.
 
 ## SpillTee
 
@@ -75,3 +108,20 @@ a different index.
 While a body is held the client sees no text deltas, but pings and every
 non-text event keep flowing, so the socket never goes idle. wirescope measured
 ~43 chars/delta, so an 800 B body holds for ~18 deltas.
+
+## _panic
+
+`feed` records `heldRaw`/`heldSrc` BEFORE calling `filter.feed`, so at panic
+time the raw frames can hold text the filter never saw and `bail()` cannot
+re-materialise. `_flushHeld` alone would then push nothing — it only emits
+`heldOut` — and every accumulated event would be deleted from the client
+stream. So `_panic` forwards `heldRaw` verbatim whenever it disagrees with
+`heldOut`. That is safe because `heldOut` can never contain a pointer at panic
+time: a fire always flushes first, so a pointer is out of the hold before the
+next event is read.
+
+`SpillFilter._notify` wraps every `onSpill`/`onBail` call, so a throwing
+listener cannot drive the tee into that path at all — `proxy.js` re-emits both
+to arbitrary listeners, and a `_resolve` that threw after `_fired += 1` would
+lose the head line, the body and the terminator while never dispatching the
+intent.

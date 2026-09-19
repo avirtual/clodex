@@ -420,7 +420,14 @@ class WireProxy extends EventEmitter {
       res.writeHead(upRes.statusCode, respHeaders);
       upRes.on('data', (chunk) => {
         // Client first — the tee must never delay client-bound bytes.
-        const out = spill ? spill.feed(chunk) : chunk;
+        let out = chunk;
+        if (spill) {
+          try { out = spill.feed(chunk); } catch (e) {
+            spill = null;
+            out = chunk;
+            this.emit('spill-bail', { agent, reqId, reason: 'error', error: e.message });
+          }
+        }
         if (out.length) {
           res.write(out);
           this.stats.bytesForwarded += out.length;
@@ -428,7 +435,13 @@ class WireProxy extends EventEmitter {
         }
       });
       upRes.on('end', () => {
-        const tail = spill ? spill.close() : null;
+        let tail = null;
+        if (spill) {
+          try { tail = spill.close(); } catch (e) {
+            tail = null;
+            this.emit('spill-bail', { agent, reqId, reason: 'error', error: e.message });
+          }
+        }
         if (tail && tail.length) {
           res.write(tail);
           this.stats.bytesForwarded += tail.length;

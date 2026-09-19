@@ -79,11 +79,13 @@ test('row 5: the file is the body exactly, and the id is its sha', () => {
   assert.match(id, /^[0-9a-f]{16}$/);
 });
 
-test('row 6: exactly one space after the `]` is skipped — the rest is body', () => {
-  for (const [lead, expect] of [['   ', '  '], [' ', ''], ['\t', '\t']]) {
+test('row 6 (DEVIATION): the head-line rest is TRIMMED, as _extractIntents trims it', () => {
+  for (const lead of ['   ', ' ', '\t']) {
     const { out } = run(`[agent:task add t]${lead}${BIG}\n[agent:end]\n`);
-    assert.equal(diskOf(out).body, expect + BIG, `lead=${JSON.stringify(lead)}`);
+    assert.equal(diskOf(out).body, BIG, `lead=${JSON.stringify(lead)}`);
   }
+  const { out } = run(`[agent:task add t] ${BIG}   \n[agent:end]\n`);
+  assert.equal(diskOf(out).body, BIG, 'trailing whitespace on the head line goes too');
 });
 
 test('row 7: every write failure forwards the ORIGINAL body', () => {

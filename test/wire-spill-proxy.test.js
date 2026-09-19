@@ -215,6 +215,8 @@ test('an armed run bills exactly what an unarmed one bills', async () => {
   const plain = await runOnce(false);
   assert.deepEqual(armed.usage, plain.usage, 'usage rides message_start/message_delta, never text_delta');
   assert.deepEqual(armed.billing, plain.billing);
+  assert.deepEqual(armed.warmth, plain.warmth,
+    'warmth rides the same cache-read counters billing does, never text_delta');
   assert.equal(armed.stop, plain.stop);
   assert.ok(armed.client.includes('@spill:') && !armed.client.includes(BIG), 'the armed run really spilled');
   assert.ok(plain.client.includes(BIG), 'the unarmed run really did not');

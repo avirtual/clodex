@@ -6,8 +6,21 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { mk } = require('./lib/session-fixtures');
 const { SpillTee } = require('../wire/spill');
 const { UsageCollector, SSEFramer } = require('../wire/sse');
+
+const SCANNER = mk({
+  parseIntent: require('../intent-scanner').parseIntent,
+  looksLikeIntent: require('../intent-scanner').looksLikeIntent,
+  execBodyCap: 64 * 1024,
+});
+
+function scannerBody(text) {
+  const intents = SCANNER._extractIntents(text);
+  assert.equal(intents.length, 1, 'the original text parses to exactly one intent');
+  return intents[0].body.replace(/^\n/, '');
+}
 
 const BIG = 'z'.repeat(900);
 const VERBS = ['task.add', 'task.respec', 'context.compact'];
@@ -198,6 +211,36 @@ test('a throwing filter latches, flushes what it held, and forwards raw from the
   const after = ev('message_stop', { type: 'message_stop' });
   assert.deepEqual(tee.feed(after), after);
   assert.ok(out.toString('utf8').includes('message_stop'));
+  assert.ok(textOf(out).includes(BIG),
+    'the filter threw BEFORE recording its hold, so bail() has nothing to re-materialise; the '
+    + 'raw frames are the only byte-faithful copy and dropping them deletes assistant text');
+  assert.equal(textOf(out), `[agent:task add t] ${BIG}\n[agent:end]\n`,
+    'a panicking tee forwards the ORIGINAL text in full, not a truncation');
+});
+
+test('an onSpill listener that throws cannot cost the client its text', () => {
+  const stream = Buffer.concat([
+    ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+    td(0, `[agent:task add t] ${BIG}`),
+    td(0, '\n[agent:end]\nAfter.\n'),
+    ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
+    ev('message_stop', { type: 'message_stop' }),
+  ]);
+  for (const cs of [1, 43, 1024, stream.length]) {
+    const tee = new SpillTee({
+      agent: 'wirescope',
+      root: root(),
+      verbs: VERBS,
+      onSpill: () => { throw new Error('listener blew up'); },
+    });
+    const out = Buffer.concat([tee.feed(stream), tee.close()]);
+    const seen = textOf(out);
+    assert.ok(seen.includes('@spill:'), `@cs=${cs}: the spill still happened`);
+    assert.ok(seen.includes('After.'), `@cs=${cs}: the prose after the body survives`);
+    assert.equal(tee.fired, 1, `@cs=${cs}`);
+    assert.equal(tee.latched, false,
+      `@cs=${cs}: a throwing listener must not drive the tee into the panic path at all`);
+  }
 });
 
 test('an observer fed the OUTPUT bills exactly as one fed the INPUT', () => {
@@ -227,8 +270,9 @@ test('an observer fed the OUTPUT bills exactly as one fed the INPUT', () => {
     + 'billing-bearing event is ever rewritten');
 });
 
-test('the spilled file equals the body the intent scanner would have produced', () => {
+test('the spilled file equals the body the REAL intent scanner would have produced', () => {
   const body = `first line of the spec\n\n  indented detail  \n${BIG}\nlast line`;
+  const original = `Here you go.\n[agent:task add t42 start] ${body}\n[agent:end]\nDone.\n`;
   const stream = Buffer.concat([
     ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
     td(0, 'Here you go.\n[agent:task add t42 start] '),
@@ -237,12 +281,40 @@ test('the spilled file equals the body the intent scanner would have produced', 
     td(0, '\n[agent:end]\nDone.\n'),
     ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
   ]);
-  const { out } = drive(stream, 43);
-  const seen = textOf(out);
-  const id = /@spill:([0-9a-f]{16})/.exec(seen)[1];
-  assert.equal(fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${id}.md`), 'utf8'), body);
-  assert.equal(seen, `Here you go.\n[agent:task add t42 start] @spill:${id}\n[agent:end]\nDone.\n`,
-    'the client sees the head line, the pointer, the terminator and the prose around them');
+  for (const cs of [1, 43, 1024, stream.length]) {
+    const { out } = drive(stream, cs);
+    const seen = textOf(out);
+    const id = /@spill:([0-9a-f]{16})/.exec(seen)[1];
+    const onDisk = fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${id}.md`), 'utf8');
+    assert.equal(onDisk, scannerBody(original),
+      `@cs=${cs}: S-B substitutes this file for the body the UNSPILLED path would have carried, so `
+      + 'a one-byte divergence from the repo\'s own delimiter silently dispatches a different spec');
+    assert.equal(seen, `Here you go.\n[agent:task add t42 start] @spill:${id}\n[agent:end]\nDone.\n`,
+      `@cs=${cs}: the client sees the head line, the pointer, the terminator and the prose around them`);
+  }
+});
+
+test('scanner equivalence holds for the body shapes the delimiter treats specially', () => {
+  const cases = [
+    ['no rest on the head line', 'task add t1', `\n${BIG}\nlast`],
+    ['blank lines inside the body', 'task add t2', `one\n\n\n${BIG}\ntwo`],
+    ['trailing blank lines the scanner pops', 'task add t3', `one\n${BIG}\n\n  \n`],
+    ['CRLF-free indented continuation', 'context compact', `  keep going\n${BIG}\n   deeper  `],
+  ];
+  for (const [label, headArgs, body] of cases) {
+    const original = `[agent:${headArgs}] ${body}\n[agent:end]\n`;
+    const stream = Buffer.concat([
+      ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+      td(0, original),
+      ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
+    ]);
+    const { out } = drive(stream, 43);
+    const seen = textOf(out);
+    const m = /@spill:([0-9a-f]{16})/.exec(seen);
+    assert.ok(m, `${label}: spilled`);
+    const onDisk = fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${m[1]}.md`), 'utf8');
+    assert.equal(onDisk, scannerBody(original), label);
+  }
 });
 
 test('an invalid agent streams verbatim end to end', () => {
