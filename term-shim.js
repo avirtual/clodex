@@ -402,6 +402,37 @@ function unsupportedShellReason({ shell, probeVersion }) {
   return `your terminal runs ${shell || 'a shell Clodex does not shim'}, and only zsh and bash report command results back`;
 }
 
+const REMOTE_MARK_TAG = 'nest=1';
+
+const REMOTE_HELLO_B64 = Buffer.from('clodex marks', 'utf8').toString('base64');
+
+const BASH_FLOOR = BASH_MIN[0] * 100 + BASH_MIN[1];
+
+const FAR_HELPERS = `_cxp(){ command printf "\\033]133;$1;%s;${REMOTE_MARK_TAG}\\007" "$2"; }; `
+  + '_cxb(){ command printf %s "$1"|base64 2>/dev/null|tr -d "\\n"; }; '
+  + '_cxq(){ local s=$?; command printf '
+  + `"\\033]133;D;%s;${REMOTE_MARK_TAG}\\007\\033]133;A;${REMOTE_MARK_TAG}\\007" "$s"; return $s; }; `;
+
+const ZSH_BODY = 'if [ -z "${_cxo:-}" ]; then _cxe(){ _cxp C "$(_cxb "$1")"; }; '
+  + 'preexec_functions+=(_cxe); precmd_functions=(_cxq $precmd_functions); _cxo=1; fi; _cxr=0';
+
+const BASH_BODY = `if ((BASH_VERSINFO[0]*100+BASH_VERSINFO[1]>=${BASH_FLOOR})); then `
+  + 'if [ -z "${_cxo:-}" ]; then '
+  + '_cxe(){ local b= h; if [ -o history ] && [ -z "${HISTCONTROL:-}${HISTIGNORE:-}" ]; then '
+  + 'h=$(HISTTIMEFORMAT= command history 1 2>/dev/null); h=${h#*[0-9][[:space:]][[:space:]]}; '
+  + 'b=$(_cxb "$h"); fi; _cxp C "$b"; }; '
+  + 'if shopt -q promptvars; then PS0=\\$\\(_cxe\\)"${PS0:-}"; '
+  + `else PS0="\\e]133;C;;${REMOTE_MARK_TAG}\\a\${PS0:-}"; fi; `
+  + 'PROMPT_COMMAND="_cxq${PROMPT_COMMAND:+; $PROMPT_COMMAND}"; '
+  + '_cxo=1; fi; _cxr=0; else _cxr=3; fi';
+
+const REMOTE_INSTALL_LINE = FAR_HELPERS + `_cxp C ${REMOTE_HELLO_B64}; _cxr=2; `
+  + 'if [ -n "${ZSH_VERSION:-}" ]; then eval \'' + ZSH_BODY + '\'; '
+  + 'elif [ -n "${BASH_VERSION:-}" ]; then eval \'' + BASH_BODY + '\'; fi; '
+  + '_cxp D "$_cxr"';
+
+const REMOTE_LINE_MAX = 1019;
+
 // The one entry point the app uses. Dispatching here rather than in the caller
 // keeps shell knowledge in this file: engine.js asks for a shim and gets one or
 // null, and adding fish later does not touch it.
@@ -427,4 +458,10 @@ module.exports = {
   bashrcBody,
   forwardBody,
   FORWARDED,
+  REMOTE_INSTALL_LINE,
+  REMOTE_MARK_TAG,
+  REMOTE_HELLO_B64,
+  REMOTE_LINE_MAX,
+  ZSH_BODY,
+  BASH_BODY,
 };
