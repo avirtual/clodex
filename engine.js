@@ -1986,6 +1986,7 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
     const late = res.late ? '\n(this supersedes the still-running notice above)' : '';
     const inside = sanitizeName(res.inside);
     const insideLine = inside ? `\nran inside \`${inside}\`` : '';
+    const meantLine = inside ? `\nit was meant for \`${inside}\`` : '';
     let text;
     if (res.mismatch) {
       // The shell reported a DIFFERENT command finishing than the one we sent.
@@ -2015,12 +2016,13 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
       // reported back" — that would be a lie here. The line was abandoned and
       // the command was never typed, so NOTHING ran and a retry is safe. That
       // certainty is the whole value of the message.
-      text = `[terminal] ${res.command}${insideLine}\nthe terminal did not accept it (${res.reason}). It was never typed, so nothing ran — you can send it again.`;
+      text = `[terminal] ${res.command}${meantLine}\nthe terminal did not accept it (${res.reason}). It was never typed, so nothing ran — you can send it again.`;
     } else if (res.status === 'session-ended') {
-      const outer = programOf(res.inside) || 'the session';
-      text = `[terminal] ${res.command}\nran inside \`${inside}\` — the session ended (${outer} exited ${res.outerExit}) before the command reported a status of its own, so there is no exit code for it. Your terminal is back at its local shell.`;
+      const outer = sanitizeName(programOf(res.inside)) || 'the session';
+      const how = res.outerExit == null ? `${outer} exited, status unknown` : `${outer} exited ${res.outerExit}`;
+      text = `[terminal] ${res.command}\nran inside \`${inside}\` — the session ended (${how}) before the command reported a status of its own, so there is no exit code for it. Your terminal is back at its local shell.`;
     } else if (res.status === 'remote-unsupported') {
-      text = `[terminal] ${res.command}${insideLine}\n${res.reason}`;
+      text = `[terminal] ${res.command}${meantLine}\n${res.reason}`;
     } else if (res.status === 'shell-gone') {
       text = `[terminal] ${res.command}${insideLine}\n${res.reason} before the command reported back. Whether it ran is unknown.`;
     } else {
@@ -2162,7 +2164,7 @@ function termRefusalName(running) {
   const s = String(running || '');
   if (!s) return '';
   if (uiSettings.get().terminalReports === 'all') return sanitizeName(s);
-  return programOf(s) || '';
+  return sanitizeName(programOf(s) || '');
 }
 
 // Run one command on a seat's own terminal. The seam session-manager gets: it

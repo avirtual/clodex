@@ -144,12 +144,51 @@ test('every result branch carries the session when there is one', () => {
     { status: 'timeout', command: 'ls', afterMs: 120000, inside: 'ssh host' },
     { status: 'lost', command: 'ls', inside: 'ssh host' },
     { status: 'shell-exit', command: 'ls', exitCode: 1, inside: 'ssh host' },
-    { status: 'write-failed', command: 'ls', reason: 'EPIPE', inside: 'ssh host' },
     { status: 'shell-gone', command: 'ls', reason: 'the session ended', inside: 'ssh host' },
   ]) {
     assert.match(result(res), /\nran inside `ssh host`\n/,
       `${res.status} must say where it ran — "abandoned" alone reads as the local shell`);
   }
+});
+
+test('the two branches that DENY anything ran name the session in the future tense', () => {
+  reports('all');
+  for (const res of [
+    { status: 'write-failed', command: 'ls', reason: 'EPIPE', inside: 'ssh host' },
+    { status: 'remote-unsupported', command: 'ls', inside: 'ssh host', reason: 'the remote shell is neither bash 4.4+ nor zsh (a POSIX sh, busybox, or ksh), so it cannot report results back. Nothing was run there.' },
+  ]) {
+    const msg = result(res);
+    assert.match(msg, /\nit was meant for `ssh host`\n/,
+      `${res.status} asserts in its next sentence that nothing ran — "ran inside" would contradict it one line up`);
+    assert.ok(!msg.includes('ran inside'),
+      `${res.status} must not say the command ran anywhere`);
+  }
+});
+
+test('an outer session that died without a readable status says so rather than printing null', () => {
+  reports('all');
+  const msg = result({ status: 'session-ended', command: 'uptime', inside: 'ssh host', outerExit: null });
+  assert.match(msg, /the session ended \(ssh exited, status unknown\)/,
+    'an unparseable local D leaves outerExit null, and "exited null" reads as our bug');
+  assert.ok(!msg.includes('null'));
+});
+
+test('engine wires the four remote deps into drawer-pty, not just the callbacks', () => {
+  boot();
+  for (const k of ['remoteAllowed', 'shellHost', 'remoteInstallLine', 'remoteUnsupportedReason']) {
+    assert.ok(k in deps, `createDrawerPtys was handed \`${k}\` — drawer-pty requires nothing, so an unwired dep is a silently dead remote path`);
+  }
+  assert.strictEqual(typeof deps.shellHost, 'function');
+  assert.strictEqual(typeof deps.remoteUnsupportedReason, 'function');
+  assert.ok(String(deps.remoteInstallLine).length > 0);
+});
+
+test('a program word carrying control bytes is sanitised on the `asked` path too', () => {
+  reports('asked');
+  const msg = refusal({ ok: false, code: 'busy', running: `my${String.fromCharCode(0x1b)}[31msql` });
+  assert.ok(!msg.includes(String.fromCharCode(0x1b)),
+    'programOf keeps whatever argv[0] held, and under `asked` it is the ONLY name path — an ESC would reach the agent unfiltered');
+  assert.match(msg, /`my\[31msql` is still running/);
 });
 
 test('an ok result renders the session through formatCommand’s own line', () => {

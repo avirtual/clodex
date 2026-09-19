@@ -53,8 +53,7 @@ helper script: per-session in-memory hooks answer the exit code and the output
 completely. The local shim already does the same to the local shell through
 ZDOTDIR; this is that intrusion one hop away, and `exit` reverses it.
 
-What each far shell answers the line with, measured in
-test/term-remote-shell.test.js against real ones rather than derived here:
+What each far shell answers the line with:
 
 - zsh (any) and bash 4.4+ — `D;0`, hooks installed; the session is drivable.
 - bash below 4.4, `/bin/sh` on macOS — `D;3`: no PS0, so no preexec.

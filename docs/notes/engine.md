@@ -78,6 +78,12 @@ the only status there is. The catch-all now NAMES an unknown status rather than
 asserting the terminal went away: a wrong cause stated confidently is what sends
 an agent looking in the wrong place.
 
+The session line is tensed by the branch. Most say `ran inside <session>` — they
+either report a result or hedge ("whether it ran is unknown"). `write-failed` and
+`remote-unsupported` are the two that DENY anything ran, so they say
+`it was meant for <session>` instead; "ran inside" one line above "nothing ran"
+is the same confidently-wrong cause in a different dress.
+
 ## diagLines
 
 node-pty ships its `spawn-helper` for macOS only, so the helper path, its
