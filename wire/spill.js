@@ -190,17 +190,32 @@ class SpillTee {
     this.buf = Buffer.alloc(0);
     this.index = 0;
     this.dead = false;
+    this.heldRaw = [];
+    this.heldSrc = '';
+    this.heldOut = '';
   }
 
   get fired() { return this.filter.fired; }
 
   get latched() { return this.dead || this.filter.latched; }
 
+  _flushHeld(out) {
+    if (!this.heldRaw.length) {
+      if (this.heldOut) out.push(deltaEvent(this.index, this.heldOut));
+    } else if (this.heldOut === this.heldSrc) {
+      for (const r of this.heldRaw) out.push(r);
+    } else if (this.heldOut) {
+      out.push(deltaEvent(this.index, this.heldOut));
+    }
+    this.heldRaw = [];
+    this.heldSrc = '';
+    this.heldOut = '';
+  }
+
   _panic(out, e) {
     this.dead = true;
-    let tail = '';
-    try { tail = this.filter.bail(); } catch { tail = ''; }
-    if (tail) out.push(deltaEvent(this.index, tail));
+    try { this.heldOut += this.filter.bail(); } catch { this.filter.passthru = true; }
+    this._flushHeld(out);
     if (this.buf.length) { out.push(this.buf); this.buf = Buffer.alloc(0); }
     if (this.onBail) {
       try { this.onBail({ reason: 'error', error: (e && e.message) || String(e) }); } catch { this.dead = true; }
@@ -225,14 +240,16 @@ class SpillTee {
         if (d && d.type === 'content_block_delta' && d.delta && d.delta.type === 'text_delta') {
           if (typeof d.index === 'number') this.index = d.index;
           const src = typeof d.delta.text === 'string' ? d.delta.text : '';
-          const txt = this.filter.feed(src);
-          if (txt === src) out.push(raw);
-          else if (txt) out.push(deltaEvent(this.index, txt));
+          const before = this.filter.fired;
+          this.heldRaw.push(raw);
+          this.heldSrc += src;
+          this.heldOut += this.filter.feed(src);
+          if (this.filter.fired !== before || this.heldOut === this.heldSrc) this._flushHeld(out);
           continue;
         }
         if (d && d.type === 'content_block_stop') {
-          const tail = this.filter.close();
-          if (tail) out.push(deltaEvent(this.index, tail));
+          this.heldOut += this.filter.close();
+          this._flushHeld(out);
         }
         out.push(raw);
       }
@@ -246,8 +263,8 @@ class SpillTee {
     if (this.dead) return Buffer.alloc(0);
     const out = [];
     try {
-      const tail = this.filter.close();
-      if (tail) out.push(deltaEvent(this.index, tail));
+      this.heldOut += this.filter.close();
+      this._flushHeld(out);
       if (this.buf.length) { out.push(this.buf); this.buf = Buffer.alloc(0); }
     } catch (e) {
       return this._panic(out, e);
