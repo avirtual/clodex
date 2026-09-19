@@ -234,14 +234,14 @@ test('t189: noWire reaches every row shape — running, restored, archived and f
   // The RETURN row is only the sidebar's copy. The respawn itself must carry the
   // flag as create()'s 21st positional, or the process comes back wired while the
   // row still claims otherwise — the failure that would look like a UI bug.
-  // Indexed, not read off the tail: create() grew a 22nd positional (`plugins`)
-  // and a 23rd (`shellDeny`), and a tail read would then assert about the wrong
-  // argument entirely. The spy captures `...rest`, so `name` is not in this array
-  // and every index is one below create()'s own.
+  // Indexed, not read off the tail: create() grew a 22nd positional (`plugins`),
+  // a 23rd (`shellDeny`) and a 24th (`fixFor`), and a tail read would then assert
+  // about the wrong argument entirely. The spy captures `...rest`, so `name` is
+  // not in this array and every index is one below create()'s own.
   const NOWIRE_IDX = 19;
   const okArgs = createArgs.get('ok');
   assert.ok(okArgs, 'ENTER: the restored seat was actually spawned, so there are arguments to inspect');
-  assert.strictEqual(okArgs.length, 22, 'ENTER: every positional past name was passed, so the index below is the flag');
+  assert.strictEqual(okArgs.length, 23, 'ENTER: every positional past name was passed, so the index below is the flag');
   assert.strictEqual(okArgs[NOWIRE_IDX], true,
     'the restore respawn passes noWire through to create()');
   const wiredArgs = createArgs.get('wired');
