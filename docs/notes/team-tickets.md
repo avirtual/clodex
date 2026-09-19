@@ -118,16 +118,3 @@ line is never slowOnly: that is a real defect the hand must clear.
 Ownership is read out of GIT (`diffNames` + `fileAt` against the branch), not off
 the worktree: the merge arm asks after the branch has landed, and a torn-down
 tree would answer "nothing owned" for a branch that owns everything.
-
-## _taskDone
-
-The ordinary successful close injects NOTHING back to the sender. Measured on six
-hands (1010-1015): each answered the old `closed (done)` ack with a full turn of
-prose nobody reads, 1.5 KB on two of them. A rework arriving is its own receipt and
-the ack prescribed no action. Two arms still reply, both about something the seat
-can be wrong about: a re-entry (a held ticket's checks are running again, carried by
-no other signal), and a loop-ineligible close (no review will ever run, so a closer
-waiting for a verdict waits forever). Every failure return above still bounces —
-silence must never read as success. `nextSuffix` is not a third arm: `_advanceSeat`
-has already delivered the next ticket's spec to that seat urgently, so the suffix
-restates a message the seat already holds.
