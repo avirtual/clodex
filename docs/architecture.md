@@ -978,6 +978,9 @@ Own state + DOM, `init*(deps)`:
   register with `{id, label, available, mount, onShow, onHide, onResize}` and get
   a `notify(level)` back. Tab ids are frozen: `log`, `activity`, `console`,
   `ctl`, `term`.
+  Collapsed/expanded and the active tab are remembered PER SEAT and restored
+  when that seat becomes active again (a seat never visited boots collapsed);
+  `tall` stays per window.
   Its header comment carries the numbered rules a tenant author must not
   re-derive.
 - **ipc-log.js** — the `log` tenant: rows + export only.
