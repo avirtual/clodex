@@ -39,7 +39,7 @@ function fakeNode() {
 const FREE = [
   'document', 'window', 'esc', 'baseName', 'typeGlyph', 'ACCOUNT_DEFAULT',
   'switchSession', 'openSessionInfoPopover', 'archiveSessionRow', 'startRename',
-  'insertLocalSessionRow', 'sidebarMeta', 'scheduleSidebarRelayout',
+  'insertLocalSessionRow', 'sidebarMeta', 'scheduleSidebarRelayout', 'applyFixChip',
 ];
 
 function loadBuilder() {
@@ -62,6 +62,7 @@ function loadBuilder() {
     startRename() {}, insertLocalSessionRow() {},
     sidebarMeta: new Map(),
     scheduleSidebarRelayout() {},
+    applyFixChip() {},
   };
   // eslint-disable-next-line no-new-func
   const fn = new Function(...FREE, `${body}; return addSessionToSidebar;`)(...FREE.map((n) => env[n]));

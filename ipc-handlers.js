@@ -2,7 +2,7 @@
 // every native-GUI touch ride injected seams (handle/on, popupMenu, dialogs,
 // shell/app calls) supplied by the host.
 
-const { pathFor } = require('./clodex-paths');
+const { pathFor, fixDirFor } = require('./clodex-paths');
 const { nameConflict } = require('./session-manager');
 // The SAME predicate the inject queue gates deliveries on. Required directly
 // rather than injected so there is one draft notion: a focus decision computed
@@ -1484,16 +1484,24 @@ function registerIpcHandlers(deps) {
     // EVERY line of a 15-minute deploy and reports nothing. Logged once — a
     // per-line log would bury the run it is meant to explain.
     let lineDropLogged = false;
+    let lastMarker = null;
+    const timeoutMs = 15 * 60 * 1000;    // a cold clone+install+rebuild can be minutes
+    log.info('peer', `deploy to ${sshHost} port ${port} branch ${branch} begins`);
     try {
       const res = await sshRun(sshHost, preamble + script, {
-        timeoutMs: 15 * 60 * 1000,       // a cold clone+install+rebuild can be minutes
+        timeoutMs,
         onLine: (line) => {
+          if (typeof line === 'string' && line.startsWith('::')) lastMarker = line.trim();
           try { if (!wc.isDestroyed()) wc.send('peer-deploy-line', sshHost, line); }
           catch (err) {
             if (!lineDropLogged) { lineDropLogged = true; log.error('peer', `deploy progress dropped: ${err.message}`); }
           }
         },
       });
+      const outcome = res.timedOut
+        ? `timed out after ${Math.round(timeoutMs / 1000)}s`
+        : `exit ${res.code}`;
+      log.info('peer', `deploy to ${sshHost}: ${outcome}, last marker ${lastMarker || 'none'}`);
       return {
         ok: res.code === 0,
         code: res.timedOut ? null : res.code,
@@ -1502,7 +1510,9 @@ function registerIpcHandlers(deps) {
         stderr: (res.stderr || '').trim().split('\n').slice(-20).join('\n'),
       };
     } catch (err) {
-      return { ok: false, error: err && err.message ? err.message : 'ssh failed to start' };
+      const msg = err && err.message ? err.message : 'ssh failed to start';
+      log.error('peer', `deploy to ${sshHost} failed to start: ${msg}`);
+      return { ok: false, error: msg };
     }
   });
 
@@ -1515,12 +1525,18 @@ function registerIpcHandlers(deps) {
     for (const s of persistence.list()) taken.add(s.name);
     const name = fixSessionName(label || host || 'peer', taken);
     const wsId = workspaceOfSender(e);
-    const dir = os.homedir();
+    const dir = fixDirFor(REGISTRY_DIR, host);
+    try {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      try { fs.chmodSync(dir, 0o700); } catch {}
+    } catch (err) {
+      return { ok: false, error: `could not make fix dir: ${err.message}` };
+    }
     try {
       const out = await manager.create(
         name, 'claude', dir, [], null, wsId,
         null, false, null, [], [], [], [], [], null, [],
-        [], null, null, true,
+        [], null, null, true, false, null, null, host || null,
       );
       const briefing = buildDeployFixBriefing({
         sshHost: host, port: p, label, logText,
@@ -1530,7 +1546,7 @@ function registerIpcHandlers(deps) {
         try { manager._deliverMessage(name, 'user', briefing, 'dm'); } catch {}
       }, DEPLOY_FIX_INJECT_DELAY_MS);
       log.info('session', `deploy-fix session ${name} for ${host}`);
-      return { ok: true, name: out.name };
+      return { ok: true, name: out.name, type: 'claude', cwd: dir, backend: out.backend || null, fixFor: host || null };
     } catch (err) {
       return { ok: false, error: err && err.message ? err.message : 'could not create fix session' };
     }
@@ -2315,6 +2331,7 @@ function registerIpcHandlers(deps) {
         entry.noWire === true,
         Array.isArray(entry.plugins) ? entry.plugins : null,
         Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
+        typeof entry.fixFor === 'string' ? entry.fixFor : null,
       );
       return { ok: true };
     } catch (err) {

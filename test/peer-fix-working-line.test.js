@@ -66,6 +66,10 @@ function harness({ fixResult }) {
     },
     showToast: (text, opts) => toasts.push([text, opts]),
     peerTestAndSetUp: () => {},
+    sessions: new Map(),
+    createTerminal: () => {},
+    addSessionToSidebar: () => {},
+    switchToNewSession: async () => true,
   };
   const appendDeployActions = loadAppendDeployActions(stubs);
   const tailBox = el();

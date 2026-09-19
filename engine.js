@@ -70,6 +70,24 @@ function diagWarning(d = {}) {
   return null;
 }
 
+function diagLines(d = {}) {
+  const lines = [
+    '── Clodex startup diagnostics ──',
+    `process:      ${d.platform}/${d.procArch}${d.rosetta ? '  ⚠ Rosetta-translated' : ''}   electron ${d.electron}  node ${d.node}`,
+  ];
+  if (d.platform === 'darwin') {
+    lines.push(`spawn-helper: ${d.helperPath}`);
+    lines.push(`              exists=${d.helperExists} executable=${d.helperExecutable} arch=${d.helperArch}`);
+  }
+  lines.push(
+    `claude:       ${d.claude || 'NOT FOUND on PATH'}`,
+    `codex:        ${d.codex || 'NOT FOUND on PATH'}`,
+  );
+  const warning = diagWarning(d);
+  if (warning) lines.push(`⚠ ${warning}`);
+  return lines;
+}
+
 // Spill filenames minted by spillToFile (inside createEngine): the pointer
 // grammar the reference scan below recognizes. The two must move together — a
 // change to one shape without the other silently reopens the GC hole.
@@ -291,19 +309,8 @@ function diagSummary(d = collectSystemDiagnostics()) {
 }
 
 
-function logStartupDiagnostics() {
-  const d = collectSystemDiagnostics();
-  const lines = [
-    '── Clodex startup diagnostics ──',
-    `process:      ${d.platform}/${d.procArch}${d.rosetta ? '  ⚠ Rosetta-translated' : ''}   electron ${d.electron}  node ${d.node}`,
-    `spawn-helper: ${d.helperPath}`,
-    `              exists=${d.helperExists} executable=${d.helperExecutable} arch=${d.helperArch}`,
-    `claude:       ${d.claude || 'NOT FOUND on PATH'}`,
-    `codex:        ${d.codex || 'NOT FOUND on PATH'}`,
-  ];
-  const warning = diagWarning(d);
-  if (warning) lines.push(`⚠ ${warning}`);
-  console.log(lines.join('\n'));
+function logStartupDiagnostics(d = collectSystemDiagnostics()) {
+  console.log(diagLines(d).join('\n'));
   return d;
 }
 
@@ -2432,4 +2439,4 @@ const toolCache = createToolCache({ whichBin });
   };
 }
 
-module.exports = { createEngine, resolveRegistryDir, resolveSelfLabel, diagWarning, sweepSpilledMessages };
+module.exports = { createEngine, resolveRegistryDir, resolveSelfLabel, diagWarning, diagLines, sweepSpilledMessages };

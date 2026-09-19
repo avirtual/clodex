@@ -421,6 +421,7 @@ clx-shelldeny-
 clx-skill-catalog-
 clx-skillsoff-
 clx-statusq-
+clx-t1002-fix-
 clx-t279-
 clx-t282-
 clx-t283-

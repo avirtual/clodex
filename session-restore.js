@@ -103,6 +103,7 @@ async function restoreSessionsForWorkspace({
         entry.noWire === true,
         Array.isArray(entry.plugins) ? entry.plugins : null,
         Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
+        typeof entry.fixFor === 'string' ? entry.fixFor : null,
       );
       restored.push({
         name: entry.name,
@@ -138,6 +139,8 @@ async function restoreSessionsForWorkspace({
   // first time one of them is touched.
   const wireOff = new Set(saved.filter((e) => e.noWire === true).map((e) => e.name));
   for (const r of restored) if (wireOff.has(r.name)) r.noWire = true;
+  const fixHosts = new Map(saved.filter((e) => typeof e.fixFor === 'string' && e.fixFor).map((e) => [e.name, e.fixFor]));
+  for (const r of restored) if (fixHosts.has(r.name)) r.fixFor = fixHosts.get(r.name);
   return restored;
 }
 

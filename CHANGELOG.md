@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 - The bottom drawer remembers, per seat, whether it was open and which tab it showed, so switching to another seat no longer carries the terminal or activity deck along; the tall setting stays shared.
+
+- A headless deploy from the peer wizard now records each attempt's outcome in the log; the fix-with-an-agent session becomes the active tab when it opens, carries a "fix" chip naming the box it works on, runs in a scratch directory of its own instead of the home folder, and archives itself once it reports the deploy succeeded; the deployed box keeps its settings file private, and a Linux node's startup diagnostics no longer mention the macOS-only spawn helper.
 - Deploying a headless node to a Linux box that has no Node.js now installs a user-local Node 22 first, a box whose Python venv or session linger can be set up without root no longer stops to ask for sudo, and the fix-with-an-agent session says where it is working and posts its outcome to the inbox.
 - When a terminal command is refused because the tab is busy, the refusal now names the command that holds the terminal.
 

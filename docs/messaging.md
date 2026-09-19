@@ -329,6 +329,9 @@ announced in hello — in that order, case-insensitively, through the one
   lands in the BOX's inbox, and the desktop claims it onto its own inbox as
   `<seat>@<origin>` (toast and badge included), removing it from the box —
   see [peering.md](peering.md) for the `inbox: 'claim'` mark that gates it.
+- **Deploy-fix self-archive**: a note whose first line starts `DEPLOY OK `,
+  raised by a session carrying `fixFor`, archives that session after the note is
+  delivered — nothing else triggers it.
 
 ## 4a. Hub-relay federation (spoke ↔ hub ↔ spoke)
 
