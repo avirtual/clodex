@@ -8,13 +8,12 @@ this repo cannot see.
 
 ## SpillFilter
 
-Ported from spill.py's `_SpillFilter`, with deliberate deviations, all of them
-in one direction: what this filter writes to a spill file must be BYTE-EQUAL to
-what `_extractIntents` would have delimited from the same text. S-B substitutes
-the file for the body the unspilled path would have carried, so a one-byte
-divergence dispatches a different spec than the operator's own transcript shows,
-silently. `test/wire-spill-sse.test.js` pins that equality by running the repo's
-real scanner, not a literal.
+Ported from spill.py's `_SpillFilter`, with deliberate deviations, all in one
+direction: what this filter writes to a spill file must be BYTE-EQUAL to what
+`_extractIntents` would have delimited from the same text. S-B substitutes the
+file for the body the unspilled path would have carried, so a one-byte
+divergence silently dispatches a different spec than the transcript shows.
+`test/wire-spill-sse.test.js` pins it by running the real scanner, not a literal.
 
 1. A line clodex's scanner would treat as an intent line makes the filter bail
    rather than swallow it into the held body. spill.py delimits on the
@@ -30,18 +29,15 @@ real scanner, not a literal.
    The head-line fragment is never popped — it is the scanner's `firstBody`,
    which the pop loop cannot reach.
 
-The deviations only change which bytes a spill contains and which bodies spill;
-every test_spill.py delimitation case is still ported in
-`test/wire-spill-filter.test.js`, with row 6 rewritten to the trimmed
-expectation and labelled as the deviation it is.
+Every test_spill.py delimitation case is still ported in
+`test/wire-spill-filter.test.js`, row 6 rewritten to the trimmed expectation.
 
-The nested-intent test is `cleanLine(line).startsWith('[agent:')`, which is
-over-broad on purpose — the filter cannot know fences without reimplementing
-`fencedLines`, so it is deliberately wrong in the SAFE direction in both
-senses. A head line inside a fence spills (the scanner would never dispatch it,
-so a pointer replaces an example the reader can still recover from the
-content-addressed file), and a fenced example INSIDE a held body bails (costing
-the saving on one response, never a spec).
+The nested-intent test is `cleanLine(line).startsWith('[agent:')`, over-broad on
+purpose — the filter cannot know fences without reimplementing `fencedLines`, so
+it is wrong in the SAFE direction both ways. A head line inside a fence spills
+(the scanner would never dispatch it, and the content-addressed file still holds
+the example), and a fenced example inside a held body bails, costing the saving
+on one response, never a spec.
 
 `originalHeld` reconstructs the head line as RECEIVED (`head + rawRest`) rather
 than spill.py's `head + " " + body_text`. For a head line with nothing after the
@@ -80,14 +76,13 @@ once that line was fully buffered, and the oversized body would spill anyway.
 The mid-line bail emits `pending` with NO newline appended — the source newline
 has not arrived.
 
-The same cap also bounds the UNTERMINATED head line, before `holding` is ever
-set: `couldBeHead(pending)` with no newline yet is the shape that would
-otherwise buffer without limit, and on an armed seat a long `[agent:dm …]` line
-can never spill at all, so without this check the client would see no text for
-the whole line's duration.
+The same cap bounds the UNTERMINATED head line, before `holding` is ever set:
+`couldBeHead(pending)` with no newline yet is the shape that would otherwise
+buffer without limit, and a long `[agent:dm …]` line can never spill at all, so
+without it the client sees no text for the whole line's duration.
 
 `SpillTee.buf` carries the same bound at the SSE-frame level: a 200-status
-`text/event-stream` that never sends `\n\n` would otherwise buffer the entire
+`text/event-stream` that never sends `\n\n` would otherwise buffer the whole
 response while the unfiltered path forwarded it.
 
 ## SpillTee
@@ -111,17 +106,14 @@ non-text event keep flowing, so the socket never goes idle. wirescope measured
 
 ## _panic
 
-`feed` records `heldRaw`/`heldSrc` BEFORE calling `filter.feed`, so at panic
-time the raw frames can hold text the filter never saw and `bail()` cannot
-re-materialise. `_flushHeld` alone would then push nothing — it only emits
-`heldOut` — and every accumulated event would be deleted from the client
-stream. So `_panic` forwards `heldRaw` verbatim whenever it disagrees with
-`heldOut`. That is safe because `heldOut` can never contain a pointer at panic
-time: a fire always flushes first, so a pointer is out of the hold before the
-next event is read.
+`feed` records `heldRaw`/`heldSrc` BEFORE calling `filter.feed`, so at panic time
+the raw frames can hold text the filter never saw and `bail()` cannot
+re-materialise. `_flushHeld` alone would push nothing — it only emits `heldOut` —
+deleting every accumulated event from the client stream. So `_panic` forwards
+`heldRaw` verbatim whenever it disagrees with `heldOut`. Safe because `heldOut`
+can never hold a pointer at panic time: a fire always flushes first.
 
 `SpillFilter._notify` wraps every `onSpill`/`onBail` call, so a throwing
-listener cannot drive the tee into that path at all — `proxy.js` re-emits both
-to arbitrary listeners, and a `_resolve` that threw after `_fired += 1` would
-lose the head line, the body and the terminator while never dispatching the
-intent.
+listener cannot reach that path at all — `proxy.js` re-emits both to arbitrary
+listeners, and a `_resolve` that threw after `_fired += 1` would lose the head
+line, the body and the terminator while never dispatching the intent.
