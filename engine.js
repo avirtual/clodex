@@ -1383,6 +1383,9 @@ async function fetchProxyContext(name, opts) {
   }
 }
 
+const reportCache = new Map();
+manager._reportCache = reportCache;
+
 async function fetchProxyReport(name, opts) {
   const s = manager.sessions.get(name);
   if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
@@ -1393,14 +1396,22 @@ async function fetchProxyReport(name, opts) {
   if (snap.capabilities && snap.capabilities.context_report === false) {
     return { ok: false, error: 'This proxy does not produce session reports' };
   }
+  const wantDetail = !!(opts && opts.detail);
+  const fallback = (error) => {
+    const c = wantDetail ? null : reportCache.get(name);
+    return (c && c.sid === snap.sessionId)
+      ? { ok: true, data: c.data, at: c.at, stale: true, error }
+      : { ok: false, error };
+  };
   try {
     let q = `/_report?session=${encodeURIComponent(snap.sessionId)}`;
-    if (opts && opts.detail) q += '&detail=1';
+    if (wantDetail) q += '&detail=1';
     const r = await ProxyClient._getJson(s.proxyBase, q, PROXY_REPORT_TIMEOUT);
-    if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
+    if (r.status !== 200 || !r.json) return fallback(`proxy returned ${r.status}`);
+    if (!wantDetail) reportCache.set(name, { data: r.json, at: Date.now(), sid: snap.sessionId });
     return { ok: true, data: r.json };
   } catch (e) {
-    return { ok: false, error: String((e && e.message) || e) };
+    return fallback(String((e && e.message) || e));
   }
 }
 

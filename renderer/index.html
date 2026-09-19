@@ -1161,7 +1161,7 @@
           <label><input type="radio" name="prefs-terminal-reports" value="all"><span><b>Everything I run too.</b> Each of your own commands is reported as you go.</span></label>
         </div>
         <p class="hint-text">Reports are sent <b>verbatim and unredacted</b> — a command line with a token, a password in a URL or an <code>Authorization</code> header goes as written. Switching away from "everything I run" also discards any of your commands still waiting to be sent; ones already merged into a conversation cannot be recalled. Switching that off takes effect immediately, but turning marks on or off (the "Off" choice) applies to terminals opened afterwards.</p>
-        <div id="ws-logs-block" style="display: none;">
+        <div id="ws-logs-block">
           <h5>Capture logs</h5>
           <p class="hint-text">The proxy keeps per-session request captures on disk to power cost and cache-bust forensics. They accrue over time; clearing collapses old sessions to their billing receipts (cost history is preserved — only the detailed request forensics are removed) and clears the probe-traffic bucket. Active, warm, and recent sessions are never touched.</p>
           <div class="prefs-row" style="margin-top: 4px;">

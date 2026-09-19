@@ -1,24 +1,24 @@
-// popovers/cost-popover.js — the cost-over-time popover (wirescope detail=1
-// `series`), opened from the bar's ~$N cost segment. Renders the spine, a
-// cumulative-cost chart, and the content split. Self-contained island: DOM
-// handles + dismiss wiring live here; session data comes through
-// popoverApi(name).report({detail}); proxyState is the live poll-payload Map
-// (base/sessionId for the dashboard link). openExternal/openWirescope are
-// window.api shell actions (external-link, not the local-vs-peer data seam).
+// popovers/cost-popover.js — the cost summary popover, opened from the bar's
+// ~$N cost segment. Self-contained island: DOM handles + dismiss wiring live
+// here; session data comes through popoverApi(name).report({detail}); proxyState
+// is the live poll-payload Map (base/sessionId for the dashboard link).
+// openExternal/openWirescope are window.api shell actions (external-link, not
+// the local-vs-peer data seam).
 //
-// The painters are DOM-bound, so no unit tests per the R1 rule; the group wiring is not.
+// The painters are DOM-bound, so no unit tests per the R1 rule; the reduction in
+// renderer/lib/cost-report-view.js is tested.
 
-const { esc, fmtUsd } = require('../lib/format');
-const { costStackBlock, svgCostChart } = require('../lib/render-html');
-const { COST_SPINE, COST_CONTENT } = require('../lib/constants');
+const { esc, fmtUsd, fmtAgo } = require('../lib/format');
+const { costStackBlock } = require('../lib/render-html');
+const { COST_BUCKETS } = require('../lib/constants');
 const { costByLine } = require('../lib/cost-by-line');
+const { costReportModel } = require('../lib/cost-report-view');
 
 function initCostPopover({ popoverApi, proxyState, barPopovers }) {
-  // --- Cost-over-time popover ----------------------------------------------
-  // Native render of wirescope's detail=1 `series` (gated on context_timeline):
-  // the exact spine (read/write/generation), a cumulative-cost line chart over
-  // requests, and the ~est content split — plus a link out to the full
-  // /_timeline HTML dashboard. Opened from the bar's ~$N cost segment.
+  // --- Cost summary popover ------------------------------------------------
+  // Fetched WITHOUT detail=1: the per-request `series` is megabytes and 50s of
+  // proxy work on a long session, so the popover always timed out to show a
+  // chart nobody could read. The per-request timeline is the dashboard link now.
   const costPopover = document.getElementById('cost-popover');
   const costPopoverName = document.getElementById('cost-popover-name');
   const costPopoverBody = document.getElementById('cost-popover-body');
@@ -26,26 +26,49 @@ function initCostPopover({ popoverApi, proxyState, barPopovers }) {
   function closeCostPopover() { costPopover.classList.add('hidden'); costPopover.dataset.name = ''; }
   const closeSiblings = barPopovers.register('cost', closeCostPopover);
 
-  function renderCostTimeline(d, base, sid) {
-    const s = d && d.series;
+  function renderCostSummary(d, base, sid, stale) {
+    const m = costReportModel(d);
     const link = (base && sid)
       ? `<span class="px-link-ext" data-url="${esc(base + '/_timeline?session=' + encodeURIComponent(sid))}" title="Open in a clodex window (⌘-click for browser)">Open full dashboard →</span>`
       : '';
-    if (!s || !Array.isArray(s.requests) || !s.requests.length) {
-      return `<div class="cost-note">No per-request cost series yet — give the session a turn or two.</div>${link}`;
+    let html = '';
+    if (stale) {
+      html += `<div class="cost-note cost-stale">showing the last successful report (${esc(stale.age)})`
+        + `${stale.error ? ' — ' + esc(stale.error) : ''}</div>`;
     }
-    const st = s.spine_totals || {};
-    const total = (st.read || 0) + (st.write || 0) + (st.generation || 0);
-    const reqs = s.requests;
-    const cc = s.content_carriage_est || {};
-    const ccTotal = (cc.preamble || 0) + (cc.conversation || 0) + (cc.thinking || 0);
-    return `<div class="cost-head"><b>${fmtUsd(total)}</b> over <b>${s.count != null ? s.count : reqs.length}</b> requests · main line</div>`
-      + costStackBlock('Cost by type', '', COST_SPINE, st, total)
-      + `<div class="cost-sec-title"><span>Cumulative cost · req 1 → ${reqs.length}</span></div>`
-      + `<div class="cost-chart">${svgCostChart(reqs, COST_SPINE)}</div>`
-      + costStackBlock('What read pays to carry', ' <span class="ctx-est">~est</span>', COST_CONTENT, cc, ccTotal)
-      + `<div class="cost-note">Preamble = system + tools + agents + skills + CLAUDE.md, the fixed tax trimmed via 🛠 / 🧩 / 🤖. Conversation (incl. tool results) is the tail that grows with session depth.</div>`
-      + link;
+    if (m.allTime.usd != null || m.allTime.requests != null) {
+      const usd = m.allTime.usd != null ? `<b>${fmtUsd(m.allTime.usd)}</b> all-time` : 'All-time';
+      const reqs = m.allTime.requests != null ? ` over <b>${m.allTime.requests}</b> requests` : '';
+      html += `<div class="cost-head">${usd}${reqs} · the bar's chip is scoped separately — hover it</div>`;
+    }
+    if (m.headline) html += `<div class="cost-head-line">${esc(m.headline)}</div>`;
+    if (m.reclaimable) {
+      const r = m.reclaimable;
+      const pct = r.pct != null ? `${esc(String(r.pct))}% of spend` : '';
+      const body = r.usd != null
+        ? `<b>${fmtUsd(r.usd)}</b>${pct ? ` (${pct})` : ''}`
+        : (pct ? `<b>${pct}</b>` : '');
+      if (body) html += `<div class="cost-note">Reclaimable: ${body}</div>`;
+    }
+    if (m.buckets.length) {
+      const known = new Set(COST_BUCKETS.map((d) => d.key));
+      const vals = {}; let total = 0;
+      for (const b of m.buckets) {
+        if (!known.has(b.bucket)) continue;
+        vals[b.bucket] = b.usd || 0; total += b.usd || 0;
+      }
+      if (total > 0) html += costStackBlock('Cost by bucket', '', COST_BUCKETS, vals, total);
+    }
+    if (m.waste.length) {
+      const rows = m.waste.map((w) =>
+        `<div class="cost-line-row"><span class="cost-line-label">${esc(w.type)}`
+        + (w.lever ? ` <span class="cost-waste-lever">${esc(w.lever)}</span>` : '')
+        + `</span><span class="cost-line-usd">${w.usd != null ? fmtUsd(w.usd) : '—'}</span></div>`).join('');
+      html += `<div class="cost-sec-title"><span>Where it was wasted</span></div>`
+        + `<div class="cost-line-list">${rows}</div>`;
+    }
+    if (!html.trim()) html = '<div class="cost-note">No cost summary yet — give the session a turn or two.</div>';
+    return html + link;
   }
 
   // Per-line cost attribution (wirescope v0.6.22+ cost_by_line). Sourced from the
@@ -85,23 +108,24 @@ function initCostPopover({ popoverApi, proxyState, barPopovers }) {
     const base = p && p.base, sid = p && p.sessionId;
     costPopoverName.textContent = name;
     costPopover.dataset.name = name;
-    costPopoverBody.innerHTML = '<div class="cost-note">Loading cost timeline…</div>';
+    costPopoverBody.innerHTML = '<div class="cost-note">Loading cost summary…</div>';
     costPopover.classList.remove('hidden');
     const r = anchor.getBoundingClientRect();
     const w = costPopover.offsetWidth;
     costPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
     costPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
-    const res = await popoverApi(name).report({ detail: true });
+    const res = await popoverApi(name).report({ detail: false });
     if (costPopover.dataset.name !== name || costPopover.classList.contains('hidden')) return;
     if (!res || !res.ok) {
-      costPopoverBody.innerHTML = `<div class="cost-note">${esc(res && res.error ? res.error : 'Cost timeline unavailable')}</div>`;
+      costPopoverBody.innerHTML = `<div class="cost-note">${esc(res && res.error ? res.error : 'Cost summary unavailable')}</div>`;
       return;
     }
+    const stale = res.stale ? { age: fmtAgo(res.at || Date.now()), error: res.error } : null;
     // Prepend the live per-line attribution (free — from the poll payload) above
-    // the report-driven main-line timeline. Re-read the payload post-await so the
-    // shares are as fresh as the poll allows.
+    // the report-driven summary. Re-read the payload post-await so the shares
+    // are as fresh as the poll allows.
     const pNow = (proxyState.get(name) || {}).payload;
-    try { costPopoverBody.innerHTML = renderCostByLine(pNow) + renderCostTimeline(res.data, base, sid); }
+    try { costPopoverBody.innerHTML = renderCostByLine(pNow) + renderCostSummary(res.data, base, sid, stale); }
     catch (e) { costPopoverBody.innerHTML = `<div class="cost-note">Could not render: ${esc(String((e && e.message) || e))}</div>`; }
   }
 

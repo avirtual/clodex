@@ -10,7 +10,7 @@ const { PendingInput } = require('../peer-input-queue');
 const { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota } = require('../proxy-util');
 const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require('./lib/constants');
 const { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require('./lib/format');
-const { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require('./lib/render-html');
+const { renderDiffHtml, costStackBlock, bustRow } = require('./lib/render-html');
 const { renderMarkdown } = require('./lib/render-markdown');
 const { placeAboveAnchor } = require('./lib/popover-place');
 const { scanPaths } = require('./lib/path-scan');
@@ -3446,7 +3446,7 @@ function renderProxyBar() {
     const timeline = !!(p.capabilities && p.capabilities.context_timeline && p.base && p.sessionId)
       || peerQueries.includes('cost');
     if (timeline) {
-      segs.push(`<span class="px-seg px-cost px-ctx-btn" data-act="cost" data-tip="${esc(cSeg.tip)} — click for the over-time breakdown">${esc(cSeg.text)}</span>`);
+      segs.push(`<span class="px-seg px-cost px-ctx-btn" data-act="cost" data-tip="${esc(cSeg.tip)} — click for the cost summary">${esc(cSeg.text)}</span>`);
     } else {
       segs.push(`<span class="px-seg px-cost" data-tip="${esc(cSeg.tip)} (wirescope)">${esc(cSeg.text)}</span>`);
     }
@@ -3843,7 +3843,7 @@ setInterval(() => {
   const openPopoverOnPress = (e) => {
     if (e.button !== 0 || !activeSession) return;
     const ctxSeg = e.target.closest('[data-act="ctx"]');
-    if (ctxSeg) { openContextPopover(activeSession, ctxSeg); return; }
+    if (ctxSeg) { Promise.resolve(openContextPopover(activeSession, ctxSeg)).catch(() => {}); return; }
     const costSeg = e.target.closest('[data-act="cost"]');
     if (costSeg) { openCostPopover(activeSession, costSeg); return; }
     const bustSeg = e.target.closest('[data-act="bust"]');
@@ -5110,25 +5110,39 @@ function wsAgeLabel() {
   return opt ? opt.textContent.trim() : wsSelectedAge();
 }
 
+let wsLogsSizeKnown = false;
 async function refreshWsLogs() {
+  wsLogsBlock.style.display = '';
+  wsLogsSize.textContent = 'Capture logs: measuring…';
   let res;
   try { res = await window.api.wirescopePruneInfo(); } catch { res = null; }
-  if (!res || !res.ok || !res.data) { wsLogsBlock.style.display = 'none'; return; }
-  wsLogsBlock.style.display = '';
+  if (!res || !res.ok || !res.data) {
+    wsLogsSizeKnown = false;
+    wsLogsTotalBytes = 0;
+    const err = (res && res.error) ? res.error : 'no answer from the proxy';
+    wsLogsSize.textContent = `Capture logs: size unavailable (${err})`;
+    wsLogsClearBtn.disabled = false;
+    return;
+  }
+  wsLogsSizeKnown = true;
   wsLogsTotalBytes = res.data.total_bytes || 0;
   await previewWsLogs();
+}
+
+function wsLogsSizeText() {
+  return wsLogsSizeKnown ? `Capture logs: ${fmtBytes(wsLogsTotalBytes)}` : 'Capture logs';
 }
 
 async function previewWsLogs() {
   const seq = ++wsLogsPreviewSeq;
   wsLogsClearBtn.disabled = true;
-  wsLogsSize.textContent = `Capture logs: ${fmtBytes(wsLogsTotalBytes)} — checking…`;
+  wsLogsSize.textContent = `${wsLogsSizeText()} — checking…`;
   let pv;
   try {
     pv = await window.api.wirescopePrune({ olderThan: wsSelectedAge(), tier: 'receipts', scope: 'all', dryRun: true });
   } catch { pv = null; }
   if (seq !== wsLogsPreviewSeq) return; // superseded
-  let line = `Capture logs: ${fmtBytes(wsLogsTotalBytes)}`;
+  let line = wsLogsSizeText();
   if (pv && pv.ok && pv.data && pv.data.bytes_reclaimed > 0) {
     line += ` — ${fmtBytes(pv.data.bytes_reclaimed)} reclaimable`;
     wsLogsClearBtn.disabled = false;
@@ -5136,6 +5150,7 @@ async function previewWsLogs() {
     line += ' — nothing to clear at this age';
   } else {
     line += (pv && pv.error) ? ` — ${pv.error}` : ' — preview failed';
+    line += ' · pick another age to retry';
   }
   wsLogsSize.textContent = line;
 }
@@ -5151,7 +5166,8 @@ wsLogsClearBtn.addEventListener('click', async () => {
   try {
     const pv = await window.api.wirescopePrune({ olderThan: older, tier: 'receipts', scope: 'all', dryRun: true });
     if (!pv || !pv.ok || !pv.data) {
-      wsLogsSize.textContent = (pv && pv.error) ? `Error: ${pv.error}` : 'Preview failed';
+      wsLogsSize.textContent = ((pv && pv.error) ? `Error: ${pv.error}` : 'Preview failed')
+        + ' · pick another age to retry';
       return;
     }
     const p = pv.data;
@@ -5164,7 +5180,7 @@ wsLogsClearBtn.addEventListener('click', async () => {
       `Active, warm, and recent sessions are untouched${kept ? ` (${kept} kept)` : ''}.`
     );
     if (!ok) return;
-    wsLogsSize.textContent = `Capture logs: ${fmtBytes(wsLogsTotalBytes)} — clearing…`;
+    wsLogsSize.textContent = `${wsLogsSizeText()} — clearing…`;
     const r = await window.api.wirescopePrune({ olderThan: older, tier: 'receipts', scope: 'all' });
     if (!r || !r.ok || !r.data) {
       wsLogsSize.textContent = (r && r.error) ? `Error: ${r.error}` : 'Clear failed';

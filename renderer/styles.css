@@ -1841,8 +1841,6 @@ html, body {
 .cost-legend .ck { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: baseline; }
 .cost-legend .cv { color: var(--text-dim); }
 .cost-note { font-size: 10px; color: var(--text-dim); margin-top: 6px; }
-.cost-chart { margin-top: 4px; }
-.cost-chart svg { display: block; width: 100%; height: auto; }
 #cost-popover .px-link-ext { display: inline-block; margin-top: 12px; font-size: 11px; color: var(--accent); cursor: pointer; text-decoration: none; }
 #cost-popover .px-link-ext:hover { text-decoration: underline; }
 /* Per-line cost attribution (main line + subagent shares). */
@@ -1853,6 +1851,11 @@ html, body {
 .cost-line-usd { color: var(--text); font-weight: 600; flex: none; }
 .cost-line-pct { color: var(--text-dim); font-weight: 400; margin-left: 2px; }
 .cost-line-unbilled { color: var(--text-dim); font-weight: 400; font-style: italic; }
+/* Report summary: the verdict headline, a waste row's lever, and the muted
+   line that marks a cached report standing in for a slow one. */
+.cost-head-line { font-size: 11px; color: var(--text); margin-bottom: 6px; }
+.cost-waste-lever { color: var(--text-dim); font-weight: 400; }
+.cost-stale { font-style: italic; margin-top: 0; margin-bottom: 8px; }
 
 /* Cache-bust inspector popover — same shell as the cost popover, narrower. */
 #bust-popover {

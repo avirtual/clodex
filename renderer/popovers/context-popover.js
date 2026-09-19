@@ -258,66 +258,38 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
   function renderSkillUtilization(a) {
     return renderUtilBlock(a.skills_utilization, a.skills && a.skills.per_skill, 'Skill utilization');
   }
-  async function openContextPopover(name, anchor) {
-    closeSiblings();
-    ctxPopoverName.textContent = name;
-    ctxPopover.dataset.name = name;
-    ctxPopoverBody.innerHTML = '<div class="ctx-note">Loading…</div>';
-    ctxPopover.classList.remove('hidden');
-    placeCtxPopover(anchor);
-    // Opt into the (heavier) utilization capture-scan only when the proxy
-    // advertises it — otherwise this is byte-identical to the composition fetch.
-    // Skill usage rides the same &utilization=1 flag, so fetch it when either
-    // tool-utilization or the v0.4.14 skills roster is available.
-    const pl = proxyState.get(name)?.payload || {};
-    const caps = pl.capabilities || {};
-    const peerQueries = Array.isArray(pl.queries) ? pl.queries : [];
-    const wantUtil = !!(caps.context_utilization || caps.context_skills);
-    const res = await popoverApi(name).ctx({ utilization: wantUtil });
-    // Bail if the popover was closed or retargeted while the fetch was in flight.
-    if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains('hidden')) return;
-    if (!res || !res.ok) {
-      ctxPopoverBody.innerHTML = `<div class="ctx-note">${esc(res && res.error ? res.error : 'Unavailable')}</div>`;
-      placeCtxPopover(anchor); return;
-    }
-    const agents = (res.data && Array.isArray(res.data.agents)) ? res.data.agents : [];
-    if (!agents.length) {
-      const note = (res.data && res.data.note) || 'No live context for this session.';
-      ctxPopoverBody.innerHTML = `<div class="ctx-note">${esc(note)}</div>`;
-      placeCtxPopover(anchor); return;
-    }
+  function renderCompositionHalf(name, agents) {
     const withComp = agents.filter((a) => a.composition && Array.isArray(a.composition.by_category));
-    let html;
     if (withComp.length) {
       withComp.sort((a, b) => (a.line === 'main' ? -1 : b.line === 'main' ? 1 : 0));
-      // Two columns so the popover stays short: composition (what's loaded) on the
-      // left, tool + skill utilization (did it pay off) on the right. Falls back to
-      // a single column when there's no utilization (composition-only proxy).
       const stripLevel = (proxyState.get(name)?.payload?.stripLevel || 0);
-      const compCol = withComp.map((a) => renderCompositionLine(a, stripLevel)).join('');
-      // MCP leads the right-hand column when present: it is typically the
-      // largest single addition to a user's per-turn carriage, and it renders to
-      // '' when the line carries no MCP tools — so on a session without MCP the
-      // column is byte-identical to before this feature existed.
-      const utilCol = withComp.map((a) => renderMcpServers(a) + renderUtilization(a) + renderSkillUtilization(a)).join('');
-      html = utilCol.trim()
-        ? `<div class="ctx-cols"><div class="ctx-col">${compCol}</div><div class="ctx-col">${utilCol}</div></div>`
-        : compCol;
-    } else {
-      // context_view-only proxy: no composition, but the tools roster is there.
-      const main = agents.find((a) => a.line === 'main') || agents[0];
-      const t = main && main.tools;
-      if (t && Array.isArray(t.per_tool)) {
-        const rows = t.per_tool.slice(0, 12).map((pt) =>
-          `<div class="ctx-row"><div class="ctx-row-top"><span class="ctx-cat">${esc(pt.name)}</span>` +
-          `<span class="ctx-nums">${fmtTokens(pt.est_tokens)}</span></div></div>`).join('');
-        html = `<div class="ctx-line-head"><span>tools (${t.count})</span>` +
-          `<span class="ctx-line-total">${fmtTokens(t.est_tokens)}</span></div>${rows}` +
-          `<div class="ctx-note">Composition breakdown not available from this proxy build.</div>`;
-      } else {
-        html = '<div class="ctx-note">No breakdown available.</div>';
-      }
+      return withComp.map((a) => renderCompositionLine(a, stripLevel)).join('');
     }
+    const main = agents.find((a) => a.line === 'main') || agents[0];
+    const t = main && main.tools;
+    if (t && Array.isArray(t.per_tool)) {
+      const rows = t.per_tool.slice(0, 12).map((pt) =>
+        `<div class="ctx-row"><div class="ctx-row-top"><span class="ctx-cat">${esc(pt.name)}</span>` +
+        `<span class="ctx-nums">${fmtTokens(pt.est_tokens)}</span></div></div>`).join('');
+      return `<div class="ctx-line-head"><span>tools (${t.count})</span>` +
+        `<span class="ctx-line-total">${fmtTokens(t.est_tokens)}</span></div>${rows}` +
+        `<div class="ctx-note">Composition breakdown not available from this proxy build.</div>`;
+    }
+    return '<div class="ctx-note">No breakdown available.</div>';
+  }
+
+  // MCP leads the right-hand column when present: it is typically the largest
+  // single addition to a user's per-turn carriage, and it renders to '' when the
+  // line carries no MCP tools — so on a session without MCP the column is
+  // byte-identical to before this feature existed.
+  function renderUtilHalf(agents) {
+    const withComp = agents.filter((a) => a.composition && Array.isArray(a.composition.by_category));
+    withComp.sort((a, b) => (a.line === 'main' ? -1 : b.line === 'main' ? 1 : 0));
+    return withComp.map((a) => renderMcpServers(a) + renderUtilization(a) + renderSkillUtilization(a)).join('');
+  }
+
+  function renderCtxLinks(name, agents, caps, peerQueries) {
+    let html = '';
     // Cross-link to the tools manager for Claude sessions. When utilization data
     // is present, frame it as the trim lever: how many tools to drop and the
     // tokens it frees (the main agent's deadweight, only once it's conclusive).
@@ -362,7 +334,86 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     if (caps.context_report || peerQueries.includes('report')) {
       html += `<span class="ctx-tools-link" data-act="report">Full cost &amp; efficiency report →</span>`;
     }
+    return html;
+  }
+
+  const ctxPending = new Map();
+  const LOADING_NOTE = '<div class="ctx-note">Loading…</div>';
+  let ctxBodyName = null;
+
+  function paintCtxBody(name, html) {
     ctxPopoverBody.innerHTML = html;
+    ctxBodyName = name;
+  }
+
+  async function openContextPopover(name, anchor) {
+    closeSiblings();
+    ctxPopoverName.textContent = name;
+    ctxPopover.dataset.name = name;
+    ctxPopover.classList.remove('hidden');
+    placeCtxPopover(anchor);
+    if (ctxPending.has(name)) {
+      if (ctxBodyName !== name) paintCtxBody(name, LOADING_NOTE);
+      return ctxPending.get(name);
+    }
+    paintCtxBody(name, LOADING_NOTE);
+    const run = fetchAndPaint(name, anchor);
+    ctxPending.set(name, run);
+    try { return await run; }
+    finally { ctxPending.delete(name); }
+  }
+
+  async function fetchAndPaint(name, anchor) {
+    // Opt into the (heavier) utilization capture-scan only when the proxy
+    // advertises it. Skill usage rides the same &utilization=1 flag, so fetch it
+    // when either tool-utilization or the v0.4.14 skills roster is available.
+    const pl = proxyState.get(name)?.payload || {};
+    const caps = pl.capabilities || {};
+    const peerQueries = Array.isArray(pl.queries) ? pl.queries : [];
+    const wantUtil = !!(caps.context_utilization || caps.context_skills);
+    const res = await popoverApi(name).ctx({ utilization: false });
+    // Bail if the popover was closed or retargeted while the fetch was in flight.
+    if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains('hidden')) return;
+    if (!res || !res.ok) {
+      paintCtxBody(name, `<div class="ctx-note">${esc(res && res.error ? res.error : 'Unavailable')}</div>`);
+      placeCtxPopover(anchor); return;
+    }
+    const agents = (res.data && Array.isArray(res.data.agents)) ? res.data.agents : [];
+    if (!agents.length) {
+      const note = (res.data && res.data.note) || 'No live context for this session.';
+      paintCtxBody(name, `<div class="ctx-note">${esc(note)}</div>`);
+      placeCtxPopover(anchor); return;
+    }
+    const compHtml = renderCompositionHalf(name, agents);
+    const links = `<div id="ctx-links">${renderCtxLinks(name, agents, caps, peerQueries)}</div>`;
+    const plainCol = renderUtilHalf(agents);
+    const cols = (right) => `<div class="ctx-cols"><div class="ctx-col">${compHtml}</div>${right}</div>`;
+    if (!wantUtil) {
+      paintCtxBody(name, (plainCol.trim() ? cols(`<div class="ctx-col">${plainCol}</div>`) : compHtml) + links);
+      placeCtxPopover(anchor); return;
+    }
+    const scanning = '<div class="ctx-note">utilization: scanning…</div>';
+    paintCtxBody(name,
+      cols(`<div class="ctx-col" id="ctx-util-col">${plainCol}${scanning}</div>`) + links);
+    placeCtxPopover(anchor);
+    const ures = await popoverApi(name).ctx({ utilization: true });
+    if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains('hidden')) return;
+    const paintRight = (inner) => {
+      const c = document.getElementById('ctx-util-col');
+      if (c) c.innerHTML = inner;
+      else paintCtxBody(name, cols(`<div class="ctx-col" id="ctx-util-col">${inner}</div>`) + links);
+    };
+    if (!ures || !ures.ok) {
+      paintRight(plainCol
+        + `<div class="ctx-note">utilization unavailable (${esc(ures && ures.error ? ures.error : 'no answer')})</div>`);
+      placeCtxPopover(anchor); return;
+    }
+    const uAgents = (ures.data && Array.isArray(ures.data.agents)) ? ures.data.agents : [];
+    const utilCol = uAgents.length ? renderUtilHalf(uAgents) : '';
+    paintRight(utilCol.trim() ? utilCol
+      : (plainCol.trim() || '<div class="ctx-note">no utilization data yet</div>'));
+    const linkBox = document.getElementById('ctx-links');
+    if (linkBox && uAgents.length) linkBox.innerHTML = renderCtxLinks(name, uAgents, caps, peerQueries);
     placeCtxPopover(anchor);
   }
 

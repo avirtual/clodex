@@ -3951,6 +3951,7 @@ function createSessionManager(deps) {
       this.sessions.delete(name);
       const live = new Set(this.sessions.keys());
       try { this._intentDeduper.prune(live); this._activity.prune(live); } catch {}
+      if (this._reportCache) { try { this._reportCache.delete(name); } catch {} }
       if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
     }
 

@@ -2409,14 +2409,6 @@ body {
   color: var(--text-dim);
   margin-top: 6px;
 }
-.cost-chart {
-  margin-top: 4px;
-}
-.cost-chart svg {
-  display: block;
-  width: 100%;
-  height: auto;
-}
 #cost-popover .px-link-ext {
   display: inline-block;
   margin-top: 12px;
@@ -2464,6 +2456,20 @@ body {
   color: var(--text-dim);
   font-weight: 400;
   font-style: italic;
+}
+.cost-head-line {
+  font-size: 11px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.cost-waste-lever {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+.cost-stale {
+  font-style: italic;
+  margin-top: 0;
+  margin-bottom: 8px;
 }
 #bust-popover {
   position: fixed;
@@ -9354,7 +9360,7 @@ body.web-frontend #sidebar-header {
           <label><input type="radio" name="prefs-terminal-reports" value="all"><span><b>Everything I run too.</b> Each of your own commands is reported as you go.</span></label>
         </div>
         <p class="hint-text">Reports are sent <b>verbatim and unredacted</b> — a command line with a token, a password in a URL or an <code>Authorization</code> header goes as written. Switching away from "everything I run" also discards any of your commands still waiting to be sent; ones already merged into a conversation cannot be recalled. Switching that off takes effect immediately, but turning marks on or off (the "Off" choice) applies to terminals opened afterwards.</p>
-        <div id="ws-logs-block" style="display: none;">
+        <div id="ws-logs-block">
           <h5>Capture logs</h5>
           <p class="hint-text">The proxy keeps per-session request captures on disk to power cost and cache-bust forensics. They accrue over time; clearing collapses old sessions to their billing receipts (cost history is preserved — only the detailed request forensics are removed) and clears the probe-traffic bucket. Active, warm, and recent sessions are never touched.</p>
           <div class="prefs-row" style="margin-top: 4px;">
@@ -23617,6 +23623,13 @@ ${i3.join("\n")}
         uncached_input: "Uncached input",
         output: "Output"
       };
+      var COST_BUCKETS = [
+        "cache_read",
+        "cache_write_initial",
+        "cache_write_rewrite",
+        "uncached_input",
+        "output"
+      ].map((key) => ({ key, label: REP_BUCKET_LABEL[key], color: REP_BUCKET_COLOR[key] }));
       var REP_CAT_COLOR = {
         system: "#61afef",
         claudemd: "#e5c07b",
@@ -23631,6 +23644,7 @@ ${i3.join("\n")}
         CTX_CAT_LABELS,
         COST_SPINE,
         COST_CONTENT,
+        COST_BUCKETS,
         BUST_FAULT,
         REP_BUCKET_COLOR,
         REP_BUCKET_LABEL,
@@ -23783,33 +23797,6 @@ ${i3.join("\n")}
         }).join("");
         return `<div class="cost-sec-title"><span>${title}${badge}</span><span class="ctx-line-total">${fmtUsd(total)}</span></div><div class="cost-bar">${bar}</div><div class="cost-legend">${legend}</div>`;
       }
-      function svgCostChart(reqs, defs) {
-        const W = 600, H = 150, pl = 6, pr = 6, pt = 10, pb = 14;
-        const n = reqs.length;
-        const cum = {};
-        const run = {};
-        defs.forEach((d) => {
-          cum[d.key] = [];
-          run[d.key] = 0;
-        });
-        reqs.forEach((r) => defs.forEach((d) => {
-          run[d.key] += r[d.key + "_usd"] || 0;
-          cum[d.key].push(run[d.key]);
-        }));
-        let maxY = 0;
-        defs.forEach((d) => {
-          const last = cum[d.key][n - 1] || 0;
-          if (last > maxY) maxY = last;
-        });
-        maxY = maxY || 1;
-        const X = (i) => pl + (n <= 1 ? 0 : i / (n - 1) * (W - pl - pr));
-        const Y = (v) => H - pb - v / maxY * (H - pt - pb);
-        const paths = defs.map((d) => {
-          const pts = cum[d.key].map((v, i) => `${i === 0 ? "M" : "L"}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(" ");
-          return `<path d="${pts}" fill="none" stroke="${d.color}" stroke-width="1.5"/>`;
-        }).join("");
-        return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative cost by type over requests"><line x1="${pl}" y1="${H - pb}" x2="${W - pr}" y2="${H - pb}" stroke="#444" stroke-width="1"/>` + paths + `<text x="${pl}" y="${pt}" font-size="9" fill="#888">${esc(fmtUsd(maxY))}</text><text x="${pl}" y="${H - 3}" font-size="9" fill="#888">req 1</text><text x="${W - pr}" y="${H - 3}" font-size="9" fill="#888" text-anchor="end">req ${n}</text></svg>`;
-      }
       function fmtBustStamp(iso) {
         try {
           const d = new Date(iso);
@@ -23868,7 +23855,7 @@ ${i3.join("\n")}
         const diff = oldSnip || newSnip ? `<div class="bust-diff">${at}<div class="diff-line diff-del">- ${bustSnip(oldSnip)}</div><div class="diff-line diff-add">+ ${bustSnip(newSnip)}</div></div>` : "";
         return `<div class="bust-row bust-sev-${esc(sev)}"><div class="bust-row-head"><span class="bust-what">${esc(what)}</span>${faultBadge}${healBadge}</div><div class="bust-row-meta"><span class="bust-sev">${esc(sev)}</span>${mag}${stamp}${turnLink}</div>` + hint + diff + `</div>`;
       }
-      module.exports = { renderDiffHtml, costStackBlock, svgCostChart, bustRow, isZeroCostBust };
+      module.exports = { renderDiffHtml, costStackBlock, bustRow, isZeroCostBust };
     }
   });
 
@@ -33039,13 +33026,44 @@ Opening it here and saving would overwrite the file with what this editor could 
     }
   });
 
+  // renderer/lib/cost-report-view.js
+  var require_cost_report_view = __commonJS({
+    "renderer/lib/cost-report-view.js"(exports, module) {
+      "use strict";
+      function num(v) {
+        return typeof v === "number" && Number.isFinite(v) ? v : null;
+      }
+      function str(v) {
+        return typeof v === "string" && v ? v : null;
+      }
+      function costReportModel(report) {
+        const d = report && typeof report === "object" ? report : {};
+        const v = d.verdict && typeof d.verdict === "object" ? d.verdict : {};
+        const headline = str(v.headline);
+        const rUsd = num(v.reclaimable_usd_total);
+        const rPct = num(v.reclaimable_pct);
+        const reclaimable = rUsd == null && rPct == null ? null : { usd: rUsd, pct: rPct };
+        const cd = d.cost_decomposition && typeof d.cost_decomposition === "object" ? d.cost_decomposition : {};
+        const buckets = (Array.isArray(cd.by_bucket) ? cd.by_bucket : []).filter((b) => b && str(b.bucket)).map((b) => ({ bucket: b.bucket, usd: num(b.usd), tokens: num(b.tokens), pct: num(b.pct) }));
+        const w = d.waste && typeof d.waste === "object" ? d.waste : {};
+        const waste = (Array.isArray(w.by_type) ? w.by_type : []).filter((t) => t && str(t.type)).map((t) => ({ type: t.type, usd: num(t.usd), lever: str(t.lever), confidence: str(t.confidence) }));
+        const totals = d.totals && typeof d.totals === "object" ? d.totals : {};
+        const series = d.series && typeof d.series === "object" ? d.series : {};
+        const requests = num(series.count) != null ? num(series.count) : num(totals.requests);
+        return { headline, reclaimable, buckets, waste, allTime: { usd: num(totals.est_usd), requests } };
+      }
+      module.exports = { costReportModel };
+    }
+  });
+
   // renderer/popovers/cost-popover.js
   var require_cost_popover = __commonJS({
     "renderer/popovers/cost-popover.js"(exports, module) {
-      var { esc, fmtUsd } = require_format();
-      var { costStackBlock, svgCostChart } = require_render_html();
-      var { COST_SPINE, COST_CONTENT } = require_constants();
+      var { esc, fmtUsd, fmtAgo } = require_format();
+      var { costStackBlock } = require_render_html();
+      var { COST_BUCKETS } = require_constants();
       var { costByLine } = require_cost_by_line();
+      var { costReportModel } = require_cost_report_view();
       function initCostPopover({ popoverApi, proxyState, barPopovers }) {
         const costPopover = document.getElementById("cost-popover");
         const costPopoverName = document.getElementById("cost-popover-name");
@@ -33055,18 +33073,42 @@ Opening it here and saving would overwrite the file with what this editor could 
           costPopover.dataset.name = "";
         }
         const closeSiblings = barPopovers.register("cost", closeCostPopover);
-        function renderCostTimeline(d, base, sid) {
-          const s = d && d.series;
+        function renderCostSummary(d, base, sid, stale) {
+          const m = costReportModel(d);
           const link = base && sid ? `<span class="px-link-ext" data-url="${esc(base + "/_timeline?session=" + encodeURIComponent(sid))}" title="Open in a clodex window (\u2318-click for browser)">Open full dashboard \u2192</span>` : "";
-          if (!s || !Array.isArray(s.requests) || !s.requests.length) {
-            return `<div class="cost-note">No per-request cost series yet \u2014 give the session a turn or two.</div>${link}`;
+          let html = "";
+          if (stale) {
+            html += `<div class="cost-note cost-stale">showing the last successful report (${esc(stale.age)})${stale.error ? " \u2014 " + esc(stale.error) : ""}</div>`;
           }
-          const st = s.spine_totals || {};
-          const total = (st.read || 0) + (st.write || 0) + (st.generation || 0);
-          const reqs = s.requests;
-          const cc = s.content_carriage_est || {};
-          const ccTotal = (cc.preamble || 0) + (cc.conversation || 0) + (cc.thinking || 0);
-          return `<div class="cost-head"><b>${fmtUsd(total)}</b> over <b>${s.count != null ? s.count : reqs.length}</b> requests \xB7 main line</div>` + costStackBlock("Cost by type", "", COST_SPINE, st, total) + `<div class="cost-sec-title"><span>Cumulative cost \xB7 req 1 \u2192 ${reqs.length}</span></div><div class="cost-chart">${svgCostChart(reqs, COST_SPINE)}</div>` + costStackBlock("What read pays to carry", ' <span class="ctx-est">~est</span>', COST_CONTENT, cc, ccTotal) + `<div class="cost-note">Preamble = system + tools + agents + skills + CLAUDE.md, the fixed tax trimmed via \u{1F6E0} / \u{1F9E9} / \u{1F916}. Conversation (incl. tool results) is the tail that grows with session depth.</div>` + link;
+          if (m.allTime.usd != null || m.allTime.requests != null) {
+            const usd = m.allTime.usd != null ? `<b>${fmtUsd(m.allTime.usd)}</b> all-time` : "All-time";
+            const reqs = m.allTime.requests != null ? ` over <b>${m.allTime.requests}</b> requests` : "";
+            html += `<div class="cost-head">${usd}${reqs} \xB7 the bar's chip is scoped separately \u2014 hover it</div>`;
+          }
+          if (m.headline) html += `<div class="cost-head-line">${esc(m.headline)}</div>`;
+          if (m.reclaimable) {
+            const r = m.reclaimable;
+            const pct = r.pct != null ? `${esc(String(r.pct))}% of spend` : "";
+            const body = r.usd != null ? `<b>${fmtUsd(r.usd)}</b>${pct ? ` (${pct})` : ""}` : pct ? `<b>${pct}</b>` : "";
+            if (body) html += `<div class="cost-note">Reclaimable: ${body}</div>`;
+          }
+          if (m.buckets.length) {
+            const known = new Set(COST_BUCKETS.map((d2) => d2.key));
+            const vals = {};
+            let total = 0;
+            for (const b of m.buckets) {
+              if (!known.has(b.bucket)) continue;
+              vals[b.bucket] = b.usd || 0;
+              total += b.usd || 0;
+            }
+            if (total > 0) html += costStackBlock("Cost by bucket", "", COST_BUCKETS, vals, total);
+          }
+          if (m.waste.length) {
+            const rows = m.waste.map((w) => `<div class="cost-line-row"><span class="cost-line-label">${esc(w.type)}` + (w.lever ? ` <span class="cost-waste-lever">${esc(w.lever)}</span>` : "") + `</span><span class="cost-line-usd">${w.usd != null ? fmtUsd(w.usd) : "\u2014"}</span></div>`).join("");
+            html += `<div class="cost-sec-title"><span>Where it was wasted</span></div><div class="cost-line-list">${rows}</div>`;
+          }
+          if (!html.trim()) html = '<div class="cost-note">No cost summary yet \u2014 give the session a turn or two.</div>';
+          return html + link;
         }
         function renderCostByLine(p) {
           const model = costByLine(p);
@@ -33088,21 +33130,22 @@ Opening it here and saving would overwrite the file with what this editor could 
           const base = p && p.base, sid = p && p.sessionId;
           costPopoverName.textContent = name;
           costPopover.dataset.name = name;
-          costPopoverBody.innerHTML = '<div class="cost-note">Loading cost timeline\u2026</div>';
+          costPopoverBody.innerHTML = '<div class="cost-note">Loading cost summary\u2026</div>';
           costPopover.classList.remove("hidden");
           const r = anchor.getBoundingClientRect();
           const w = costPopover.offsetWidth;
           costPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
           costPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
-          const res = await popoverApi(name).report({ detail: true });
+          const res = await popoverApi(name).report({ detail: false });
           if (costPopover.dataset.name !== name || costPopover.classList.contains("hidden")) return;
           if (!res || !res.ok) {
-            costPopoverBody.innerHTML = `<div class="cost-note">${esc(res && res.error ? res.error : "Cost timeline unavailable")}</div>`;
+            costPopoverBody.innerHTML = `<div class="cost-note">${esc(res && res.error ? res.error : "Cost summary unavailable")}</div>`;
             return;
           }
+          const stale = res.stale ? { age: fmtAgo(res.at || Date.now()), error: res.error } : null;
           const pNow = (proxyState.get(name) || {}).payload;
           try {
-            costPopoverBody.innerHTML = renderCostByLine(pNow) + renderCostTimeline(res.data, base, sid);
+            costPopoverBody.innerHTML = renderCostByLine(pNow) + renderCostSummary(res.data, base, sid, stale);
           } catch (e) {
             costPopoverBody.innerHTML = `<div class="cost-note">Could not render: ${esc(String(e && e.message || e))}</div>`;
           }
@@ -36549,49 +36592,28 @@ You can add it back from this popover.` : "";
         function renderSkillUtilization(a) {
           return renderUtilBlock(a.skills_utilization, a.skills && a.skills.per_skill, "Skill utilization");
         }
-        async function openContextPopover(name, anchor) {
-          closeSiblings();
-          ctxPopoverName.textContent = name;
-          ctxPopover.dataset.name = name;
-          ctxPopoverBody.innerHTML = '<div class="ctx-note">Loading\u2026</div>';
-          ctxPopover.classList.remove("hidden");
-          placeCtxPopover(anchor);
-          const pl = proxyState.get(name)?.payload || {};
-          const caps = pl.capabilities || {};
-          const peerQueries = Array.isArray(pl.queries) ? pl.queries : [];
-          const wantUtil = !!(caps.context_utilization || caps.context_skills);
-          const res = await popoverApi(name).ctx({ utilization: wantUtil });
-          if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains("hidden")) return;
-          if (!res || !res.ok) {
-            ctxPopoverBody.innerHTML = `<div class="ctx-note">${esc(res && res.error ? res.error : "Unavailable")}</div>`;
-            placeCtxPopover(anchor);
-            return;
-          }
-          const agents = res.data && Array.isArray(res.data.agents) ? res.data.agents : [];
-          if (!agents.length) {
-            const note = res.data && res.data.note || "No live context for this session.";
-            ctxPopoverBody.innerHTML = `<div class="ctx-note">${esc(note)}</div>`;
-            placeCtxPopover(anchor);
-            return;
-          }
+        function renderCompositionHalf(name, agents) {
           const withComp = agents.filter((a) => a.composition && Array.isArray(a.composition.by_category));
-          let html;
           if (withComp.length) {
             withComp.sort((a, b) => a.line === "main" ? -1 : b.line === "main" ? 1 : 0);
             const stripLevel = proxyState.get(name)?.payload?.stripLevel || 0;
-            const compCol = withComp.map((a) => renderCompositionLine(a, stripLevel)).join("");
-            const utilCol = withComp.map((a) => renderMcpServers(a) + renderUtilization(a) + renderSkillUtilization(a)).join("");
-            html = utilCol.trim() ? `<div class="ctx-cols"><div class="ctx-col">${compCol}</div><div class="ctx-col">${utilCol}</div></div>` : compCol;
-          } else {
-            const main = agents.find((a) => a.line === "main") || agents[0];
-            const t = main && main.tools;
-            if (t && Array.isArray(t.per_tool)) {
-              const rows = t.per_tool.slice(0, 12).map((pt) => `<div class="ctx-row"><div class="ctx-row-top"><span class="ctx-cat">${esc(pt.name)}</span><span class="ctx-nums">${fmtTokens(pt.est_tokens)}</span></div></div>`).join("");
-              html = `<div class="ctx-line-head"><span>tools (${t.count})</span><span class="ctx-line-total">${fmtTokens(t.est_tokens)}</span></div>${rows}<div class="ctx-note">Composition breakdown not available from this proxy build.</div>`;
-            } else {
-              html = '<div class="ctx-note">No breakdown available.</div>';
-            }
+            return withComp.map((a) => renderCompositionLine(a, stripLevel)).join("");
           }
+          const main = agents.find((a) => a.line === "main") || agents[0];
+          const t = main && main.tools;
+          if (t && Array.isArray(t.per_tool)) {
+            const rows = t.per_tool.slice(0, 12).map((pt) => `<div class="ctx-row"><div class="ctx-row-top"><span class="ctx-cat">${esc(pt.name)}</span><span class="ctx-nums">${fmtTokens(pt.est_tokens)}</span></div></div>`).join("");
+            return `<div class="ctx-line-head"><span>tools (${t.count})</span><span class="ctx-line-total">${fmtTokens(t.est_tokens)}</span></div>${rows}<div class="ctx-note">Composition breakdown not available from this proxy build.</div>`;
+          }
+          return '<div class="ctx-note">No breakdown available.</div>';
+        }
+        function renderUtilHalf(agents) {
+          const withComp = agents.filter((a) => a.composition && Array.isArray(a.composition.by_category));
+          withComp.sort((a, b) => a.line === "main" ? -1 : b.line === "main" ? 1 : 0);
+          return withComp.map((a) => renderMcpServers(a) + renderUtilization(a) + renderSkillUtilization(a)).join("");
+        }
+        function renderCtxLinks(name, agents, caps, peerQueries) {
+          let html = "";
           const mainAgent = agents.find((a) => a.line === "main");
           const mainTools = mainAgent?.tools;
           if (mainTools && sessionTypeOf(name) === "claude") {
@@ -36619,7 +36641,85 @@ You can add it back from this popover.` : "";
           if (caps.context_report || peerQueries.includes("report")) {
             html += `<span class="ctx-tools-link" data-act="report">Full cost &amp; efficiency report \u2192</span>`;
           }
+          return html;
+        }
+        const ctxPending = /* @__PURE__ */ new Map();
+        const LOADING_NOTE = '<div class="ctx-note">Loading\u2026</div>';
+        let ctxBodyName = null;
+        function paintCtxBody(name, html) {
           ctxPopoverBody.innerHTML = html;
+          ctxBodyName = name;
+        }
+        async function openContextPopover(name, anchor) {
+          closeSiblings();
+          ctxPopoverName.textContent = name;
+          ctxPopover.dataset.name = name;
+          ctxPopover.classList.remove("hidden");
+          placeCtxPopover(anchor);
+          if (ctxPending.has(name)) {
+            if (ctxBodyName !== name) paintCtxBody(name, LOADING_NOTE);
+            return ctxPending.get(name);
+          }
+          paintCtxBody(name, LOADING_NOTE);
+          const run = fetchAndPaint(name, anchor);
+          ctxPending.set(name, run);
+          try {
+            return await run;
+          } finally {
+            ctxPending.delete(name);
+          }
+        }
+        async function fetchAndPaint(name, anchor) {
+          const pl = proxyState.get(name)?.payload || {};
+          const caps = pl.capabilities || {};
+          const peerQueries = Array.isArray(pl.queries) ? pl.queries : [];
+          const wantUtil = !!(caps.context_utilization || caps.context_skills);
+          const res = await popoverApi(name).ctx({ utilization: false });
+          if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains("hidden")) return;
+          if (!res || !res.ok) {
+            paintCtxBody(name, `<div class="ctx-note">${esc(res && res.error ? res.error : "Unavailable")}</div>`);
+            placeCtxPopover(anchor);
+            return;
+          }
+          const agents = res.data && Array.isArray(res.data.agents) ? res.data.agents : [];
+          if (!agents.length) {
+            const note = res.data && res.data.note || "No live context for this session.";
+            paintCtxBody(name, `<div class="ctx-note">${esc(note)}</div>`);
+            placeCtxPopover(anchor);
+            return;
+          }
+          const compHtml = renderCompositionHalf(name, agents);
+          const links = `<div id="ctx-links">${renderCtxLinks(name, agents, caps, peerQueries)}</div>`;
+          const plainCol = renderUtilHalf(agents);
+          const cols = (right) => `<div class="ctx-cols"><div class="ctx-col">${compHtml}</div>${right}</div>`;
+          if (!wantUtil) {
+            paintCtxBody(name, (plainCol.trim() ? cols(`<div class="ctx-col">${plainCol}</div>`) : compHtml) + links);
+            placeCtxPopover(anchor);
+            return;
+          }
+          const scanning = '<div class="ctx-note">utilization: scanning\u2026</div>';
+          paintCtxBody(
+            name,
+            cols(`<div class="ctx-col" id="ctx-util-col">${plainCol}${scanning}</div>`) + links
+          );
+          placeCtxPopover(anchor);
+          const ures = await popoverApi(name).ctx({ utilization: true });
+          if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains("hidden")) return;
+          const paintRight = (inner) => {
+            const c = document.getElementById("ctx-util-col");
+            if (c) c.innerHTML = inner;
+            else paintCtxBody(name, cols(`<div class="ctx-col" id="ctx-util-col">${inner}</div>`) + links);
+          };
+          if (!ures || !ures.ok) {
+            paintRight(plainCol + `<div class="ctx-note">utilization unavailable (${esc(ures && ures.error ? ures.error : "no answer")})</div>`);
+            placeCtxPopover(anchor);
+            return;
+          }
+          const uAgents = ures.data && Array.isArray(ures.data.agents) ? ures.data.agents : [];
+          const utilCol = uAgents.length ? renderUtilHalf(uAgents) : "";
+          paintRight(utilCol.trim() ? utilCol : plainCol.trim() || '<div class="ctx-note">no utilization data yet</div>');
+          const linkBox = document.getElementById("ctx-links");
+          if (linkBox && uAgents.length) linkBox.innerHTML = renderCtxLinks(name, uAgents, caps, peerQueries);
           placeCtxPopover(anchor);
         }
         ctxPopoverBody.addEventListener("click", (e) => {
@@ -39512,7 +39612,7 @@ ${detail}` });
       var { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota } = require_proxy_util();
       var { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require_constants();
       var { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require_format();
-      var { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require_render_html();
+      var { renderDiffHtml, costStackBlock, bustRow } = require_render_html();
       var { renderMarkdown } = require_render_markdown();
       var { placeAboveAnchor } = require_popover_place();
       var { scanPaths } = require_path_scan();
@@ -42694,7 +42794,7 @@ ${detail}` });
         if (cSeg) {
           const timeline = !!(p.capabilities && p.capabilities.context_timeline && p.base && p.sessionId) || peerQueries.includes("cost");
           if (timeline) {
-            segs.push(`<span class="px-seg px-cost px-ctx-btn" data-act="cost" data-tip="${esc(cSeg.tip)} \u2014 click for the over-time breakdown">${esc(cSeg.text)}</span>`);
+            segs.push(`<span class="px-seg px-cost px-ctx-btn" data-act="cost" data-tip="${esc(cSeg.tip)} \u2014 click for the cost summary">${esc(cSeg.text)}</span>`);
           } else {
             segs.push(`<span class="px-seg px-cost" data-tip="${esc(cSeg.tip)} (wirescope)">${esc(cSeg.text)}</span>`);
           }
@@ -43017,7 +43117,8 @@ Click for live activity`;
           if (e.button !== 0 || !activeSession) return;
           const ctxSeg = e.target.closest('[data-act="ctx"]');
           if (ctxSeg) {
-            openContextPopover(activeSession, ctxSeg);
+            Promise.resolve(openContextPopover(activeSession, ctxSeg)).catch(() => {
+            });
             return;
           }
           const costSeg2 = e.target.closest('[data-act="cost"]');
@@ -44212,7 +44313,10 @@ Click for live activity`;
         const opt = wsLogsAge.options[wsLogsAge.selectedIndex];
         return opt ? opt.textContent.trim() : wsSelectedAge();
       }
+      var wsLogsSizeKnown = false;
       async function refreshWsLogs() {
+        wsLogsBlock.style.display = "";
+        wsLogsSize.textContent = "Capture logs: measuring\u2026";
         let res;
         try {
           res = await window.api.wirescopePruneInfo();
@@ -44220,17 +44324,24 @@ Click for live activity`;
           res = null;
         }
         if (!res || !res.ok || !res.data) {
-          wsLogsBlock.style.display = "none";
+          wsLogsSizeKnown = false;
+          wsLogsTotalBytes = 0;
+          const err = res && res.error ? res.error : "no answer from the proxy";
+          wsLogsSize.textContent = `Capture logs: size unavailable (${err})`;
+          wsLogsClearBtn.disabled = false;
           return;
         }
-        wsLogsBlock.style.display = "";
+        wsLogsSizeKnown = true;
         wsLogsTotalBytes = res.data.total_bytes || 0;
         await previewWsLogs();
+      }
+      function wsLogsSizeText() {
+        return wsLogsSizeKnown ? `Capture logs: ${fmtBytes(wsLogsTotalBytes)}` : "Capture logs";
       }
       async function previewWsLogs() {
         const seq = ++wsLogsPreviewSeq;
         wsLogsClearBtn.disabled = true;
-        wsLogsSize.textContent = `Capture logs: ${fmtBytes(wsLogsTotalBytes)} \u2014 checking\u2026`;
+        wsLogsSize.textContent = `${wsLogsSizeText()} \u2014 checking\u2026`;
         let pv;
         try {
           pv = await window.api.wirescopePrune({ olderThan: wsSelectedAge(), tier: "receipts", scope: "all", dryRun: true });
@@ -44238,7 +44349,7 @@ Click for live activity`;
           pv = null;
         }
         if (seq !== wsLogsPreviewSeq) return;
-        let line = `Capture logs: ${fmtBytes(wsLogsTotalBytes)}`;
+        let line = wsLogsSizeText();
         if (pv && pv.ok && pv.data && pv.data.bytes_reclaimed > 0) {
           line += ` \u2014 ${fmtBytes(pv.data.bytes_reclaimed)} reclaimable`;
           wsLogsClearBtn.disabled = false;
@@ -44246,6 +44357,7 @@ Click for live activity`;
           line += " \u2014 nothing to clear at this age";
         } else {
           line += pv && pv.error ? ` \u2014 ${pv.error}` : " \u2014 preview failed";
+          line += " \xB7 pick another age to retry";
         }
         wsLogsSize.textContent = line;
       }
@@ -44259,7 +44371,7 @@ Click for live activity`;
         try {
           const pv = await window.api.wirescopePrune({ olderThan: older, tier: "receipts", scope: "all", dryRun: true });
           if (!pv || !pv.ok || !pv.data) {
-            wsLogsSize.textContent = pv && pv.error ? `Error: ${pv.error}` : "Preview failed";
+            wsLogsSize.textContent = (pv && pv.error ? `Error: ${pv.error}` : "Preview failed") + " \xB7 pick another age to retry";
             return;
           }
           const p = pv.data;
@@ -44276,7 +44388,7 @@ Reclaims ${fmtBytes(p.bytes_reclaimed)} (${p.files_deleted} files) from ${p.sess
 Billing/cost history is preserved \u2014 only detailed request forensics are removed. Active, warm, and recent sessions are untouched${kept ? ` (${kept} kept)` : ""}.`
           );
           if (!ok) return;
-          wsLogsSize.textContent = `Capture logs: ${fmtBytes(wsLogsTotalBytes)} \u2014 clearing\u2026`;
+          wsLogsSize.textContent = `${wsLogsSizeText()} \u2014 clearing\u2026`;
           const r = await window.api.wirescopePrune({ olderThan: older, tier: "receipts", scope: "all" });
           if (!r || !r.ok || !r.data) {
             wsLogsSize.textContent = r && r.error ? `Error: ${r.error}` : "Clear failed";

@@ -1275,6 +1275,13 @@ and are not, which is why the judgement worth testing is pushed down here.
   scope pick (`costRun || cost`) that keeps the section rendering identically
   with the W2 overlay on and off; distinct from turn-stat.js's `costScopes`,
   which deliberately returns BOTH scopes for the bar to label.
+- **cost-report-view.js** — the cost popover's reduction of a wirescope
+  `/_report` to what it paints: verdict headline, reclaimable, the bucket
+  decomposition and the waste levers. Sibling of cost-by-line.js and a different
+  SOURCE, not a different view: that one reads the free live poll, this one the
+  fetched report. Every section is optional (an older proxy omits
+  verdict/waste/cost_decomposition), so absent means empty here, never a throw
+  that would take the whole popover down.
 - **meta/session dialog leaves**: **args-model.js** (the Model field as a VIEW
   onto the `--model` token inside extraArgs — no separate persisted field),
   **env-edit.js** (the `KEY=value`-per-line textarea → the flat object `create()`

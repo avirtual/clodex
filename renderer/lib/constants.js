@@ -124,6 +124,10 @@ const REP_BUCKET_LABEL = {
   cache_write_rewrite: 'Cache write (rewrite)', uncached_input: 'Uncached input',
   output: 'Output',
 };
+const COST_BUCKETS = [
+  'cache_read', 'cache_write_initial', 'cache_write_rewrite', 'uncached_input', 'output',
+].map((key) => ({ key, label: REP_BUCKET_LABEL[key], color: REP_BUCKET_COLOR[key] }));
+
 const REP_CAT_COLOR = {
   system: '#61afef', claudemd: '#e5c07b', useremail: '#c678dd',
   skills: '#56b6c2', tools: '#98c379',
@@ -131,7 +135,7 @@ const REP_CAT_COLOR = {
 
 module.exports = {
   THEMES, STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS,
-  COST_SPINE, COST_CONTENT, BUST_FAULT,
+  COST_SPINE, COST_CONTENT, COST_BUCKETS, BUST_FAULT,
   REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR,
 };
 

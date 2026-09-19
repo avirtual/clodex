@@ -15,6 +15,7 @@ blocks a release.
 
 - A note a sandbox seat raises with notify-user now stays in that box's inbox as well as reaching the desktop inbox; the box copy is marked read once the desktop has it.
 
+- The context and cost popovers and the Preferences capture-logs control stay usable on long sessions: composition renders before the utilization scan, the cost view shows the report's verdict and waste levers instead of a per-request chart, and a slow proxy answer keeps the last good one on screen.
 - A test outside a ticket's diff tripping the suite's slow gate no longer rejects the ticket or reverts its merge; the loop records the test and carries on.
 
 - wirescope is vendored at v0.6.68: the context popover's utilization scan no longer stalls a long session's proxy, and it reports tool use since the last compact alongside the lifetime count.
