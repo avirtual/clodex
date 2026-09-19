@@ -38,7 +38,8 @@ function populate(settings) {
 test('the checkbox exists in the prefs markup with the wording the ticket fixed', () => {
   assert.ok(html.includes('id="prefs-intent-spill"'),
     'no checkbox means the store key stays unreachable, which is the state before this ticket');
-  assert.match(html, /Spill long intent bodies to files \(applies to seats started after the change\)/);
+  assert.match(html, /<span>Spill long intent bodies to files<\/span>/);
+  assert.match(html, /Claude seats only; on by default, and a change applies to every running seat from its next turn\./);
 });
 
 test('renderer.js holds the checkbox element, so the two expressions have something to read', () => {
@@ -57,16 +58,16 @@ test('a missing control saves `off` rather than undefined', () => {
 
 test('the box round-trips through a real settings store', () => {
   const { uiSettings } = openStores();
-  assert.strictEqual(uiSettings.get().intentSpill, 'off', 'ENTER: off is the shipped default');
-
-  uiSettings.set({ intentSpill: saveExpr({ checked: true }) });
-  assert.strictEqual(uiSettings.get().intentSpill, 'on');
-  assert.strictEqual(populate(uiSettings.get()), true,
-    'reopening Preferences must show the box the operator ticked');
+  assert.strictEqual(uiSettings.get().intentSpill, 'on', 'ENTER: on is the shipped default');
 
   uiSettings.set({ intentSpill: saveExpr({ checked: false }) });
   assert.strictEqual(uiSettings.get().intentSpill, 'off');
-  assert.strictEqual(populate(uiSettings.get()), false);
+  assert.strictEqual(populate(uiSettings.get()), false,
+    'reopening Preferences must show the box the operator cleared');
+
+  uiSettings.set({ intentSpill: saveExpr({ checked: true }) });
+  assert.strictEqual(uiSettings.get().intentSpill, 'on');
+  assert.strictEqual(populate(uiSettings.get()), true);
 });
 
 test('populate reads intentSpill and not a neighbouring on/off key', () => {

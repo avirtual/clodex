@@ -18,6 +18,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const { intentEnabled } = require('../intent-catalog');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -162,7 +163,7 @@ function mkManager({ bundles = [STOCKS], seatPlugins = null, skills = [], inject
     resolveSystemPromptFile: () => null,
     mergeClaudeSystemPrompt: (a) => ({ cleaned: [...a], append: null }),
     readAppendBodies: () => [],
-    pluginGrammarLines: () => [],
+    pluginGrammarLines: () => [], intentEnabled,
     getAgentLibrary: () => ({ list: () => [] }),
     unionEnabled: (names) => names || [],
     qualifiedAgentName,

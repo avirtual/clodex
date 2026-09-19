@@ -890,7 +890,12 @@ function createSessionManager(deps) {
         }
       }
       this._holdKeeper = hold;
-      const wire = new WireProxy({ requireTokens: true, warmth, hold });
+      const wire = new WireProxy({
+        requireTokens: true,
+        warmth,
+        hold,
+        spillEnabled: () => getUiSettings().get().intentSpill === 'on',
+      });
       // Account plan quota rides the `anthropic-ratelimit-unified-*` response
       // headers of every forwarded Claude turn. Header presence IS the gate for
       // a READING: a codex turn carries none, so a codex seat yields no quota
@@ -1596,16 +1601,15 @@ function createSessionManager(deps) {
             this._shadowLog({ type: 'claude-onboarding-preseeded', agent: name });
           }
           const sysFile = resolveSystemPromptFile(systemPromptFile, Array.isArray(plugins) ? plugins : null, resolvedTeam);
-          const spillArmed = !backend && getUiSettings().get().intentSpill === 'on';
-          const spillVerbs = spillArmed
-            ? [...SPILL_VERBS].filter((k) => intentEnabled(k.split('.')[0], intents))
-            : [];
+          const spillVerbs = backend
+            ? []
+            : [...SPILL_VERBS].filter((k) => intentEnabled(k.split('.')[0], intents));
           spillArmedForRecord = spillVerbs.length > 0;
           promptRecipe = {
             extraArgs,
             intents,
             execCommands,
-            spillArmed: spillArmed && spillVerbs.length > 0,
+            spillArmed: spillVerbs.length > 0,
             // Captured at spawn, exactly like `intents` beside it — refreshPrompt
             // REPLAYS this object, so a member that re-read persistence would
             // make clear/compact write different bytes than the spawn did. A

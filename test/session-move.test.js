@@ -23,6 +23,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const { intentEnabled } = require('../intent-catalog');
 const fsReal = require('node:fs');
 const pathReal = require('node:path');
 const osReal = require('node:os');
@@ -622,7 +623,7 @@ function mkExitProbe() {
     mergeClaudeSystemPrompt: (extraArgs, ipcPrompt) => ({ cleaned: [...extraArgs], append: ipcPrompt }),
     readAppendBodies: () => [],
     resolveSystemPromptFile: () => null,
-    pluginGrammarLines: () => [],
+    pluginGrammarLines: () => [], intentEnabled,
     resolveTeam: () => null,
     formatTeamBlock: () => '',
     matchSeatRole: () => null,

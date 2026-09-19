@@ -130,6 +130,7 @@ class WireProxy extends EventEmitter {
     this.requireTokens = !!opts.requireTokens;
     this.warmth = opts.warmth || null;
     this.hold = opts.hold || null;
+    this.spillEnabled = typeof opts.spillEnabled === 'function' ? opts.spillEnabled : () => true;
     this._tokens = new Map(); // agent name → token
     this._agentSessions = new Map(); // agent name → last main-line sessionId
     this._agentUpstreams = new Map(); // agent name → { provider: baseUrl } overrides
@@ -313,7 +314,7 @@ class WireProxy extends EventEmitter {
     }
 
     const spillCfg = this._agentSpill.get(agent) || null;
-    const spillEligible = !!spillCfg && provider === 'anthropic' && req.method === 'POST'
+    const spillEligible = !!spillCfg && this.spillEnabled() && provider === 'anthropic' && req.method === 'POST'
       && isMessages && !sideCall && !isSubagentRole(role);
 
     const fwdHeaders = {};

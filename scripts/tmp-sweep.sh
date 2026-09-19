@@ -425,6 +425,7 @@ clx-sbx-ud-
 clx-shelldeny-
 clx-skill-catalog-
 clx-skillsoff-
+clx-spillgate-
 clx-statusq-
 clx-t1002-fix-
 clx-t279-
