@@ -61,3 +61,11 @@ though". The refusal was right — typing would have gone to the remote shell.
 An empty `running` is reachable: a C mark whose base64 payload did not decode
 holds the terminal under no name. That arm keeps the old unnamed wording, since
 an empty backtick pair reads as our bug rather than as "we do not know which".
+
+## diagLines
+
+node-pty ships its `spawn-helper` for macOS only, so the helper path, its
+`exists=`/`executable=`/`arch=` probe and the three fatal helper warnings in
+`diagWarning` are all darwin-only facts. On a Linux node the path names a file
+that was never meant to be there, and a boot that printed it read as a fault
+report. Pinned by `test/deploy-visible.test.js`.

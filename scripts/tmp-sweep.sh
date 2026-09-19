@@ -472,6 +472,7 @@ clx-t702-shared-
 clx-t711-silent-
 clx-t711-verb-
 clx-t732-companions-
+clx-t1002-fix-
 clx-t738-home-
 clx-t738-repo-
 clx-t738-ud-
