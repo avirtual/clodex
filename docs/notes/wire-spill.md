@@ -118,16 +118,3 @@ can never hold a pointer at panic time: a fire always flushes first.
 listener cannot reach that path at all — `proxy.js` re-emits both to arbitrary
 listeners, and a `_resolve` that threw after `_fired += 1` would lose the head
 line, the body and the terminator while never dispatching the intent.
-
-## close
-
-A model reply whose last line is `[agent:end]` ends exactly there, with no
-trailing newline, so the terminator never reaches the line loop in `feed` and is
-still in `pending` when `close()` runs. Before the `pending.trim() === TERMINATOR`
-branch, `close()` fell straight through to `originalHeld()` and re-emitted the
-whole held body verbatim: an 8.8 KB ticket spec reached the operator's screen and
-the recipient's context unspilled (2026-09-20, reqId 1789859254044-861a0f, a
-wire-turn of textLen 8861 with no wire-spill row). The branch resolves first and
-then appends the pending bytes unchanged, so the stream still ends byte-exact on
-the terminator the model wrote. Whitespace or text AFTER the terminator on that
-last line is not a terminator, fails the `trim()` test, and stays held.
