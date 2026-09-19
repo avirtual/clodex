@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.82.0 — 2026-09-20
+
 - The operator inbox intent is now `[agent:shout]` (was `notify-user`; the old spelling no longer parses). A seat or template whose intent checklist already granted the old verb keeps the grant — nothing to re-tick. Agents no longer receive an acknowledgement for a successful `task done`, and their instructions now say that a turn answering a machine message ends with its intents — no status prose.
 - Long `shout` notes are spilled to files like specs and handoffs are, and a spilled body now keeps its first line in the terminal beside the `@spill:<id>` pointer, so the transcript still says which spec or note it was.
 
