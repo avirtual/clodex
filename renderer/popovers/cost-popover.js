@@ -42,14 +42,22 @@ function initCostPopover({ popoverApi, proxyState, barPopovers }) {
       html += `<div class="cost-head">${usd}${reqs} · the bar's chip is scoped separately — hover it</div>`;
     }
     if (m.headline) html += `<div class="cost-head-line">${esc(m.headline)}</div>`;
-    if (m.reclaimable && m.reclaimable.usd != null) {
-      html += `<div class="cost-note">Reclaimable: <b>${fmtUsd(m.reclaimable.usd)}</b>`
-        + (m.reclaimable.pct != null ? ` (${esc(String(m.reclaimable.pct))}% of spend)` : '') + `</div>`;
+    if (m.reclaimable) {
+      const r = m.reclaimable;
+      const pct = r.pct != null ? `${esc(String(r.pct))}% of spend` : '';
+      const body = r.usd != null
+        ? `<b>${fmtUsd(r.usd)}</b>${pct ? ` (${pct})` : ''}`
+        : (pct ? `<b>${pct}</b>` : '');
+      if (body) html += `<div class="cost-note">Reclaimable: ${body}</div>`;
     }
     if (m.buckets.length) {
+      const known = new Set(COST_BUCKETS.map((d) => d.key));
       const vals = {}; let total = 0;
-      for (const b of m.buckets) { vals[b.bucket] = b.usd || 0; total += b.usd || 0; }
-      html += costStackBlock('Cost by bucket', '', COST_BUCKETS, vals, total);
+      for (const b of m.buckets) {
+        if (!known.has(b.bucket)) continue;
+        vals[b.bucket] = b.usd || 0; total += b.usd || 0;
+      }
+      if (total > 0) html += costStackBlock('Cost by bucket', '', COST_BUCKETS, vals, total);
     }
     if (m.waste.length) {
       const rows = m.waste.map((w) =>

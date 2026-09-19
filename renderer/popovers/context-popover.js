@@ -337,13 +337,23 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     return html;
   }
 
+  const ctxPending = new Map();
+
   async function openContextPopover(name, anchor) {
     closeSiblings();
     ctxPopoverName.textContent = name;
     ctxPopover.dataset.name = name;
-    ctxPopoverBody.innerHTML = '<div class="ctx-note">Loading…</div>';
     ctxPopover.classList.remove('hidden');
     placeCtxPopover(anchor);
+    if (ctxPending.has(name)) return ctxPending.get(name);
+    ctxPopoverBody.innerHTML = '<div class="ctx-note">Loading…</div>';
+    const run = fetchAndPaint(name, anchor);
+    ctxPending.set(name, run);
+    try { return await run; }
+    finally { ctxPending.delete(name); }
+  }
+
+  async function fetchAndPaint(name, anchor) {
     // Opt into the (heavier) utilization capture-scan only when the proxy
     // advertises it. Skill usage rides the same &utilization=1 flag, so fetch it
     // when either tool-utilization or the v0.4.14 skills roster is available.
@@ -366,27 +376,29 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     }
     const compHtml = renderCompositionHalf(name, agents);
     const links = `<div id="ctx-links">${renderCtxLinks(name, agents, caps, peerQueries)}</div>`;
+    const plainCol = renderUtilHalf(agents);
+    const cols = (right) => `<div class="ctx-cols"><div class="ctx-col">${compHtml}</div>${right}</div>`;
     if (!wantUtil) {
-      ctxPopoverBody.innerHTML = compHtml + links;
+      ctxPopoverBody.innerHTML = (plainCol.trim() ? cols(`<div class="ctx-col">${plainCol}</div>`) : compHtml) + links;
       placeCtxPopover(anchor); return;
     }
-    // Two columns so the popover stays short: composition (what's loaded) on the
-    // left, tool + skill utilization (did it pay off) on the right.
+    const scanning = '<div class="ctx-note">utilization: scanning…</div>';
     ctxPopoverBody.innerHTML =
-      `<div class="ctx-cols"><div class="ctx-col">${compHtml}</div>` +
-      `<div class="ctx-col" id="ctx-util-col"><div class="ctx-note">utilization: scanning…</div></div></div>` + links;
+      cols(`<div class="ctx-col" id="ctx-util-col">${plainCol}${scanning}</div>`) + links;
     placeCtxPopover(anchor);
     const ures = await popoverApi(name).ctx({ utilization: true });
     if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains('hidden')) return;
     const col = document.getElementById('ctx-util-col');
     if (!col) return;
     if (!ures || !ures.ok) {
-      col.innerHTML = `<div class="ctx-note">utilization unavailable (${esc(ures && ures.error ? ures.error : 'no answer')})</div>`;
+      col.innerHTML = plainCol
+        + `<div class="ctx-note">utilization unavailable (${esc(ures && ures.error ? ures.error : 'no answer')})</div>`;
       placeCtxPopover(anchor); return;
     }
     const uAgents = (ures.data && Array.isArray(ures.data.agents)) ? ures.data.agents : [];
     const utilCol = uAgents.length ? renderUtilHalf(uAgents) : '';
-    col.innerHTML = utilCol.trim() ? utilCol : '<div class="ctx-note">no utilization data yet</div>';
+    col.innerHTML = utilCol.trim() ? utilCol
+      : (plainCol.trim() || '<div class="ctx-note">no utilization data yet</div>');
     const linkBox = document.getElementById('ctx-links');
     if (linkBox && uAgents.length) linkBox.innerHTML = renderCtxLinks(name, uAgents, caps, peerQueries);
     placeCtxPopover(anchor);

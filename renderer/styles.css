@@ -1841,8 +1841,6 @@ html, body {
 .cost-legend .ck { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: baseline; }
 .cost-legend .cv { color: var(--text-dim); }
 .cost-note { font-size: 10px; color: var(--text-dim); margin-top: 6px; }
-.cost-chart { margin-top: 4px; }
-.cost-chart svg { display: block; width: 100%; height: auto; }
 #cost-popover .px-link-ext { display: inline-block; margin-top: 12px; font-size: 11px; color: var(--accent); cursor: pointer; text-decoration: none; }
 #cost-popover .px-link-ext:hover { text-decoration: underline; }
 /* Per-line cost attribution (main line + subagent shares). */

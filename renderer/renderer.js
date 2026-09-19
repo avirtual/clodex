@@ -10,7 +10,7 @@ const { PendingInput } = require('../peer-input-queue');
 const { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota } = require('../proxy-util');
 const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require('./lib/constants');
 const { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require('./lib/format');
-const { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require('./lib/render-html');
+const { renderDiffHtml, costStackBlock, bustRow } = require('./lib/render-html');
 const { renderMarkdown } = require('./lib/render-markdown');
 const { placeAboveAnchor } = require('./lib/popover-place');
 const { scanPaths } = require('./lib/path-scan');
@@ -5166,7 +5166,8 @@ wsLogsClearBtn.addEventListener('click', async () => {
   try {
     const pv = await window.api.wirescopePrune({ olderThan: older, tier: 'receipts', scope: 'all', dryRun: true });
     if (!pv || !pv.ok || !pv.data) {
-      wsLogsSize.textContent = (pv && pv.error) ? `Error: ${pv.error}` : 'Preview failed';
+      wsLogsSize.textContent = ((pv && pv.error) ? `Error: ${pv.error}` : 'Preview failed')
+        + ' · pick another age to retry';
       return;
     }
     const p = pv.data;

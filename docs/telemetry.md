@@ -162,8 +162,10 @@ capture), `/_report&detail=1` is 49.5s and 3.07MB — 1.78MB of it the 6820-poin
   levers rather than the per-request series. The reduction is
   `renderer/lib/cost-report-view.js` `costReportModel` (pinned by
   `test/cost-report-view.test.js`); the per-request timeline is now reachable
-  only through the "Open full dashboard" link. The head line names BOTH scopes —
-  the report is all-time, the bar chip it was opened from is since-compact.
+  only through the "Open full dashboard" link. The head line names the report's
+  own scope (all-time) and says the bar's chip is scoped separately — `costSeg`
+  (turn-stat.js) renders since-compact, this-run or all-time depending on the
+  payload, so the popover may not claim a specific one on its behalf.
 - **`fetchProxyReport` keeps the last successful summary per session** in a Map
   on the manager (`_reportCache`). A timeout or non-200 with a cached report
   returns `{ok:true, data:cached, at, stale:true, error}` and the popover labels

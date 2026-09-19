@@ -17,7 +17,8 @@ function mkEngine() {
     log: { info() {}, warn() {}, error() {} },
   });
   engine.manager.sessions.set(NAME, { name: NAME, proxyBase: 'http://127.0.0.1:7999' });
-  engine.proxyPoller.snapshot = () => ({ linked: true, sessionId: 'sid-1' });
+  engine.sid = 'sid-1';
+  engine.proxyPoller.snapshot = () => ({ linked: true, sessionId: engine.sid });
   return engine;
 }
 
@@ -95,6 +96,25 @@ test('the detail fetch is neither cached nor served stale', async () => {
   const d = await withJson(engine, BOOM('timeout'), { detail: true });
   assert.strictEqual(d.res.ok, false,
     'a detail timeout must not be answered with the cached SUMMARY — the caller asked for series it would not get');
+});
+
+test('a re-linked session is not served the previous conversation report', async () => {
+  const engine = mkEngine();
+  await withJson(engine, OK(88));
+  assert.ok(engine.manager._reportCache.has(NAME),
+    'ENTER: the cache must hold the first conversation, or the miss below proves nothing');
+
+  engine.sid = 'sid-2';
+  const { calls, res } = await withJson(engine, BOOM('timeout'));
+  assert.match(calls[0].pathname, /session=sid-2/,
+    'ENTER: the fetch must be aimed at the NEW proxy session');
+  assert.strictEqual(res.ok, false,
+    'a /clear or re-link mints a new sessionId under the same pane without _cleanup running — serving the old conversation\'s all-time dollars under a "(40m ago)" label is a wrong number, not a stale one');
+
+  await withJson(engine, OK(5));
+  const back = await withJson(engine, BOOM('timeout'));
+  assert.strictEqual(back.res.stale, true, 'and the new conversation caches normally from there');
+  assert.deepStrictEqual(back.res.data, { totals: { est_usd: 5 } });
 });
 
 test('killing the session drops its cached report', async () => {

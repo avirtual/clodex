@@ -1399,14 +1399,16 @@ async function fetchProxyReport(name, opts) {
   const wantDetail = !!(opts && opts.detail);
   const fallback = (error) => {
     const c = wantDetail ? null : reportCache.get(name);
-    return c ? { ok: true, data: c.data, at: c.at, stale: true, error } : { ok: false, error };
+    return (c && c.sid === snap.sessionId)
+      ? { ok: true, data: c.data, at: c.at, stale: true, error }
+      : { ok: false, error };
   };
   try {
     let q = `/_report?session=${encodeURIComponent(snap.sessionId)}`;
     if (wantDetail) q += '&detail=1';
     const r = await ProxyClient._getJson(s.proxyBase, q, PROXY_REPORT_TIMEOUT);
     if (r.status !== 200 || !r.json) return fallback(`proxy returned ${r.status}`);
-    if (!wantDetail) reportCache.set(name, { data: r.json, at: Date.now() });
+    if (!wantDetail) reportCache.set(name, { data: r.json, at: Date.now(), sid: snap.sessionId });
     return { ok: true, data: r.json };
   } catch (e) {
     return fallback(String((e && e.message) || e));

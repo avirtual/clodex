@@ -72,33 +72,6 @@ function costStackBlock(title, badge, defs, vals, total) {
     + `<div class="cost-bar">${bar}</div><div class="cost-legend">${legend}</div>`;
 }
 
-// Cumulative-cost line chart: one line per spine bucket over request index.
-// read towers and bends super-linearly; write/generation stay near the floor —
-// that contrast is the point. Colors match the spine legend above.
-function svgCostChart(reqs, defs) {
-  const W = 600, H = 150, pl = 6, pr = 6, pt = 10, pb = 14;
-  const n = reqs.length;
-  const cum = {}; const run = {};
-  defs.forEach(d => { cum[d.key] = []; run[d.key] = 0; });
-  reqs.forEach(r => defs.forEach(d => { run[d.key] += (r[d.key + '_usd'] || 0); cum[d.key].push(run[d.key]); }));
-  let maxY = 0;
-  defs.forEach(d => { const last = cum[d.key][n - 1] || 0; if (last > maxY) maxY = last; });
-  maxY = maxY || 1;
-  const X = i => pl + (n <= 1 ? 0 : (i / (n - 1)) * (W - pl - pr));
-  const Y = v => H - pb - (v / maxY) * (H - pt - pb);
-  const paths = defs.map(d => {
-    const pts = cum[d.key].map((v, i) => `${i === 0 ? 'M' : 'L'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(' ');
-    return `<path d="${pts}" fill="none" stroke="${d.color}" stroke-width="1.5"/>`;
-  }).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative cost by type over requests">`
-    + `<line x1="${pl}" y1="${H - pb}" x2="${W - pr}" y2="${H - pb}" stroke="#444" stroke-width="1"/>`
-    + paths
-    + `<text x="${pl}" y="${pt}" font-size="9" fill="#888">${esc(fmtUsd(maxY))}</text>`
-    + `<text x="${pl}" y="${H - 3}" font-size="9" fill="#888">req 1</text>`
-    + `<text x="${W - pr}" y="${H - 3}" font-size="9" fill="#888" text-anchor="end">req ${n}</text>`
-    + `</svg>`;
-}
-
 // Per-row timestamp. /_bust entries carry `ts` as a zone-less ISO local-time
 // string ("2026-07-22T20:59:42") — Date() parses that as local, which matches
 // how the proxy stamped it. Absent/invalid (older proxy) → '' and the row
@@ -255,5 +228,5 @@ function bustRow(t, base, sid) {
     + `</div>`;
 }
 
-module.exports = { renderDiffHtml, costStackBlock, svgCostChart, bustRow, isZeroCostBust };
+module.exports = { renderDiffHtml, costStackBlock, bustRow, isZeroCostBust };
 
