@@ -1119,6 +1119,12 @@
           <span>Bake transcripts on resume</span>
         </label>
         <span id="prefs-compact-on-resume-why" class="prefs-dep-reason"></span>
+        <h5>Long intent bodies</h5>
+        <p class="hint-text">Ticket specs and context handoffs over 800 bytes that an agent emits are stored under <code>~/.clodex/spill/&lt;seat&gt;/</code> and its transcript keeps a one-line <code>@spill:&lt;id&gt;</code> pointer, so later turns stop re-reading them. Click the pointer in the terminal to read the body. The recipient still gets the whole text. Claude seats only; takes effect when a seat (re)starts.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-intent-spill">
+          <span>Spill long intent bodies to files (applies to seats started after the change)</span>
+        </label>
         <h5>Context pressure reminders</h5>
         <p class="hint-text">Clodex tells an agent its context is heavy once it passes the first threshold, and switches to sterner wording past the second &mdash; a note attached to its next prompt, never an interruption. The agent picks its own moment to run <code>[agent:context compact]</code>. Thresholds are absolute input tokens, not a share of the window: every turn re-sends the whole conversation, so a 250k conversation is expensive even on a 1M-window model. One-ticket seats are never nudged.</p>
         <div class="prefs-row" style="margin-top: 6px;">

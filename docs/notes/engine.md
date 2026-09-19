@@ -91,3 +91,12 @@ node-pty ships its `spawn-helper` for macOS only, so the helper path, its
 `diagWarning` are all darwin-only facts. On a Linux node the path names a file
 that was never meant to be there, and a boot that printed it read as a fault
 report. Pinned by `test/deploy-visible.test.js`.
+
+## resolveFilePath
+
+The `@spill:<id>` branch is the ONLY confinement on a spilled intent body:
+`fetchFilePeek` takes a bare path with no session, so whatever this returns is
+read. The clicked pane's session name is therefore the agent whose spill dir is
+consulted, and the id is the only thing taken from the pointer text — a
+resolver that searched every seat's dir would still satisfy the own-seat case.
+Pinned by `test/engine-spill-resolve.test.js`.
