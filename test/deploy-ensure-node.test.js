@@ -32,7 +32,8 @@ function mkMirror(root, { corruptSum = false } = {}) {
   const stage = mkTmpDirIn(root, 'stage-');
   const pkg = path.join(stage, `node-${VER}-linux-x64`);
   fs.mkdirSync(path.join(pkg, 'bin'), { recursive: true });
-  fs.writeFileSync(path.join(pkg, 'bin', 'node'), `#!/bin/sh\necho ${VER}\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(pkg, 'bin', 'node'),
+    `#!/bin/sh\nif [ "$1" = "-p" ]; then echo ${VER.slice(1).split('.')[0]}; else echo ${VER}; fi\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(pkg, 'bin', 'npm'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   fs.writeFileSync(path.join(pkg, 'bin', 'npx'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
 
@@ -50,8 +51,8 @@ function mkMirror(root, { corruptSum = false } = {}) {
   return mirror;
 }
 
-function runEnsureNode(root, { mirror, nodeOnPath = null, version = VER } = {}) {
-  const home = mkTmpDirIn(root, 'home-');
+function runEnsureNode(root, { mirror, nodeOnPath = null, version = VER, home = null } = {}) {
+  if (!home) home = mkTmpDirIn(root, 'home-');
   const bin = mkTmpDirIn(root, 'pathbin-');
   linkReal(bin, ['curl', 'grep', 'cut', 'head', 'mktemp', 'rm', 'mkdir', 'tar', 'mv', 'ln', 'sha256sum', 'sed', 'cat']);
   if (!fs.existsSync(path.join(bin, 'sha256sum'))) {
@@ -115,6 +116,22 @@ test('ensure_node: node >= 20 already on PATH → returns without downloading an
     `a satisfied box emits no marker at all; got: ${JSON.stringify(r.stdout)}`);
   assert.strictEqual(fs.existsSync(path.join(r.home, '.local', 'node')), false,
     '~/.local/node is absent — nothing was downloaded or unpacked');
+});
+
+test('ensure_node: a re-run adopts the user-local node it installed and never touches the mirror', () => {
+  const root = mkTmpRoot('ensure-node-rerun-');
+  const mirror = mkMirror(root);
+  const first = runEnsureNode(root, { mirror });
+  assert.strictEqual(first.status, 0, `the first run exited ${first.status}: ${first.stderr}`);
+  assert.ok(first.stdout.includes(`::log node ${VER} installed to ~/.local/node`),
+    'ENTER: the first run really installed');
+
+  const second = runEnsureNode(root, {
+    mirror: path.join(root, 'no-such-mirror'), home: first.home,
+  });
+  assert.strictEqual(second.status, 0, `the re-run exited ${second.status}: ${second.stdout} ${second.stderr}`);
+  assert.strictEqual(second.stdout.trim(), '::after-ensure-node',
+    `a re-run emits no install marker at all; got: ${JSON.stringify(second.stdout)}`);
 });
 
 test('ensure_node: checksum mismatch → ::fail preflight node-checksum-mismatch, nothing linked', () => {
@@ -270,6 +287,33 @@ test('sys-deps apt: a python3 that cannot make a venv still reaches the need-sud
   assert.strictEqual(r.status, 42, 'a genuinely missing venv exits with the need-sudo code');
   assert.match(r.stdout, /::sudo-cmd sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv/,
     `only the venv package is asked for; got: ${JSON.stringify(r.stdout)}`);
+});
+
+test('sys-deps apt: a venv module without ensurepip (the Debian split) still asks for python3-venv', () => {
+  const root = mkTmpRoot('sysdeps-apt-noensurepip-');
+  const { bin, log } = shimDir(root, 'aptbin-', {
+    'apt-get': 'exit 0',
+    dpkg: 'exit 0',
+    sudo: 'exit 1',
+    python3: `case "$1 $2" in "-c import ensurepip") exit 1;; esac
+case "$2" in venv) exit 0;; esac
+exit 0`,
+  });
+  const block = extractRange(/^step sys-deps$/, /^fi$/);
+  const program = [
+    'set -uo pipefail', 'IS_MAC=0', 'WIRESCOPE_OFF=0', 'SUDO=""',
+    'step() { echo "::step $1"; }', 'ok() { echo "::ok $1"; }', 'log() { echo "$*" >&2; }',
+    'fail() { echo "::fail $1 ${2:-}"; exit 1; }',
+    'need_sudo() { echo "::need-sudo $1"; shift; for c in "$@"; do echo "::sudo-cmd $c"; done; exit 42; }',
+    'can_sudo() { return 1; }',
+    extractFn('py_present'), block,
+  ].join('\n');
+  const r = spawnSync(BASH, ['-c', program], { encoding: 'utf8', env: { HOME: mkTmpDirIn(root, 'home-'), PATH: bin } });
+  assert.strictEqual(r.status, 42, 'a venv that cannot bootstrap pip still exits with the need-sudo code');
+  assert.match(r.stdout, /::sudo-cmd sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv/,
+    `python3-venv is asked for; got: ${JSON.stringify(r.stdout)}`);
+  assert.match(fs.readFileSync(log, 'utf8'), /^python3 -c import ensurepip$/m,
+    'the probe asked the interpreter about ensurepip, not just about venv');
 });
 
 test('linger: an argument-less enable-linger that works means no sudo is asked for', () => {

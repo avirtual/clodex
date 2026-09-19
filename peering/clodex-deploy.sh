@@ -20,6 +20,7 @@
 # password, it emits ::need-sudo + the exact commands and exits 42 (distinct
 # from a real failure's 1) — that exit is where the wizard offers the agent
 # fallback. Params via env: REPO_URL, BRANCH, PORT, CLODEX_SRC, CLODEX_NODE_DIST_URL,
+# CLODEX_NODE_VERSION,
 # CLODEX_NO_WIRESCOPE (=1 → skip wirescope python deps + pin CLODEX_WIRESCOPE=off).
 
 set -uo pipefail
@@ -86,6 +87,7 @@ can_sudo() {
 
 ensure_node() {
   local major=0
+  [ -x "$HOME/.local/bin/node" ] && { export PATH="$HOME/.local/bin:$PATH"; hash -r 2>/dev/null || true; }
   if command -v node >/dev/null 2>&1; then
     major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
     if [ "$major" -ge 20 ] 2>/dev/null; then return 0; fi
@@ -111,7 +113,10 @@ ensure_node() {
     || { rm -rf "$tmp"; fail preflight "node-install-failed"; }
   curl -fsSL -o "$tmp/SHASUMS256.txt" "$dist/$ver/SHASUMS256.txt" \
     || { rm -rf "$tmp"; fail preflight "node-install-failed"; }
-  ( cd "$tmp" && grep " $tb\$" SHASUMS256.txt | sha256sum -c - ) >/dev/null 2>&1 \
+  command -v sha256sum >/dev/null 2>&1 || { rm -rf "$tmp"; fail preflight "node-install-failed"; }
+  grep " $tb\$" "$tmp/SHASUMS256.txt" > "$tmp/want.sha" 2>/dev/null \
+    || { rm -rf "$tmp"; fail preflight "node-install-failed"; }
+  ( cd "$tmp" && sha256sum -c want.sha ) >/dev/null 2>&1 \
     || { rm -rf "$tmp"; fail preflight "node-checksum-mismatch"; }
   local dest="$HOME/.local/node"
   rm -rf "$dest.new"
@@ -138,7 +143,8 @@ py_present() {
     python3-venv)
       local d rc
       d="$(mktemp -d)" || return 1
-      python3 -m venv --without-pip "$d/v" >/dev/null 2>&1; rc=$?
+      python3 -m venv --without-pip "$d/v" >/dev/null 2>&1 \
+        && python3 -c 'import ensurepip' >/dev/null 2>&1; rc=$?
       rm -rf "$d"
       return $rc;;
   esac
