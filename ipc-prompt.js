@@ -289,4 +289,6 @@ function buildIpcPrompt(intentsList, execCommands, extraGrammarLines) {
 const DEFAULT_COMPACT_CONTINUATION =
   'Your context was just compacted. Review the summary above and continue with your current task.';
 
-module.exports = { IPC_PROMPT, buildIpcPrompt, DEFAULT_COMPACT_CONTINUATION };
+const SPILL_GRAMMAR_LINE = '- Bodies of task add/respec/reject and context compact/clear/reload longer than 800 bytes are stored under ~/.clodex/spill/<your-name>/<id>.md as you emit them; your transcript keeps `@spill:<id>` in their place and the recipient still gets the full body. Never type `@spill:` yourself — re-emit the full body instead. Read the file when you need your own words back.';
+
+module.exports = { IPC_PROMPT, buildIpcPrompt, DEFAULT_COMPACT_CONTINUATION, SPILL_GRAMMAR_LINE };

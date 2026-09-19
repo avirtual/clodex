@@ -1,10 +1,10 @@
 'use strict';
 
-// Tee, don't transform: the client receives the exact raw upstream bytes.
-// All parsing happens on an observer copy; parser failures degrade to "no
-// turn seen", never to a broken session. Ordering: client bytes first,
-// always — 'turn.completed' and 'stream-end' fire strictly after the final
-// client byte. A 'tee-failure' must disable ALL wire-fed controls, never some.
+// Tee, don't transform: the client receives the raw upstream bytes, with ONE sanctioned
+// exception — wire/spill.js swaps a listed intent's body for a pointer inside an armed
+// agent's main-line text_delta events, and forwards the original on any doubt. Observers
+// read what the CLIENT received; parser failures degrade to "no turn seen". Client bytes
+// first: turn.completed/stream-end fire after the last one; a 'tee-failure' disables ALL.
 
 const http = require('http');
 const https = require('https');
@@ -20,6 +20,7 @@ const { SSEFramer, anthropicDelta, openaiDelta, UsageCollector, OpenAIUsageColle
 const { Decompressor } = require('./decompress');
 const { RoleClassifier, isSubagentRole, isTitleCall, isProbeCall, isClassifierCall } = require('./role');
 const { billing, billingOpenai, Ledger } = require('./billing');
+const { SpillTee } = require('./spill');
 
 // Hop-by-hop headers per RFC 7230 §6.1, plus content-length/host which the
 // HTTP libs manage themselves. content-encoding stays — the client receives
@@ -132,6 +133,7 @@ class WireProxy extends EventEmitter {
     this._tokens = new Map(); // agent name → token
     this._agentSessions = new Map(); // agent name → last main-line sessionId
     this._agentUpstreams = new Map(); // agent name → { provider: baseUrl } overrides
+    this._agentSpill = new Map();
     this._roles = new RoleClassifier();
     this.billing = new Ledger(); // global + per-session running totals
     this.stats = {
@@ -168,6 +170,8 @@ class WireProxy extends EventEmitter {
   registerAgent(name, opts = {}) {
     if (opts.sessionId) this._agentSessions.set(name, opts.sessionId);
     if (opts.upstreams) this._agentUpstreams.set(name, { ...opts.upstreams });
+    if (opts.spill) this._agentSpill.set(name, { ...opts.spill });
+    else this._agentSpill.delete(name);
     if (this.requireTokens) {
       const token = crypto.randomBytes(16).toString('hex');
       this._tokens.set(name, token);
@@ -179,6 +183,7 @@ class WireProxy extends EventEmitter {
   unregisterAgent(name) {
     this._tokens.delete(name);
     this._agentUpstreams.delete(name);
+    this._agentSpill.delete(name);
     const sid = this._agentSessions.get(name);
     if (sid) this._roles.forgetSession(sid);
     this._agentSessions.delete(name);
@@ -186,6 +191,10 @@ class WireProxy extends EventEmitter {
 
   sessionOf(name) {
     return this._agentSessions.get(name) || null;
+  }
+
+  spillOf(name) {
+    return this._agentSpill.get(name) || null;
   }
 
   // Main-line identity binding: only called for parent/unknown non-side-call
@@ -298,15 +307,20 @@ class WireProxy extends EventEmitter {
 
     // count_tokens is excluded: it bills but never emits turn.completed, so
     // started/completed stay 1:1 and an in-flight counter can't leak.
-    if (provider === 'anthropic' && req.method === 'POST'
-        && upstreamPath.replace(/\/+$/, '').endsWith('/v1/messages')) {
+    const isMessages = upstreamPath.replace(/\/+$/, '').endsWith('/v1/messages');
+    if (provider === 'anthropic' && req.method === 'POST' && isMessages) {
       this.emit('turn.started', { agent, provider, reqId, sessionId, role, sideCall, model });
     }
+
+    const spillCfg = this._agentSpill.get(agent) || null;
+    const spillEligible = !!spillCfg && provider === 'anthropic' && req.method === 'POST'
+      && isMessages && !sideCall && !isSubagentRole(role);
 
     const fwdHeaders = {};
     for (const [k, v] of Object.entries(req.headers)) {
       if (!HOP_BY_HOP.has(k.toLowerCase())) fwdHeaders[k] = v;
     }
+    if (spillEligible) fwdHeaders['accept-encoding'] = 'identity';
     if (chatgptMode) {
       upstreamPath = rewriteChatgptRequest(upstreamPath, fwdHeaders);
     }
@@ -384,14 +398,42 @@ class WireProxy extends EventEmitter {
         }
       }
 
+      let spill = null;
+      if (spillEligible) {
+        const enc = (upRes.headers['content-encoding'] || '').toLowerCase().trim();
+        if (sse && upRes.statusCode === 200 && (enc === '' || enc === 'identity')) {
+          spill = new SpillTee({
+            agent,
+            ...spillCfg,
+            onSpill: (i) => this.emit('spill', { agent, reqId, ...i }),
+            onBail: (i) => this.emit('spill-bail', { agent, reqId, ...i }),
+          });
+        } else {
+          this.emit('spill-skip', {
+            agent,
+            reqId,
+            reason: !sse ? 'not-sse' : upRes.statusCode !== 200 ? 'status' : 'encoding',
+          });
+        }
+      }
+
       res.writeHead(upRes.statusCode, respHeaders);
       upRes.on('data', (chunk) => {
         // Client first — the tee must never delay client-bound bytes.
-        res.write(chunk);
-        this.stats.bytesForwarded += chunk.length;
-        if (tee) { try { tee.feed(chunk); } catch (e) { teeFail(e); } }
+        const out = spill ? spill.feed(chunk) : chunk;
+        if (out.length) {
+          res.write(out);
+          this.stats.bytesForwarded += out.length;
+          if (tee) { try { tee.feed(out); } catch (e) { teeFail(e); } }
+        }
       });
       upRes.on('end', () => {
+        const tail = spill ? spill.close() : null;
+        if (tail && tail.length) {
+          res.write(tail);
+          this.stats.bytesForwarded += tail.length;
+          if (tee) { try { tee.feed(tail); } catch (e) { teeFail(e); } }
+        }
         res.end();
         if (tee) { try { tee.close(); } catch (e) { teeFail(e); } }
       });
@@ -636,7 +678,7 @@ module.exports = { WireProxy, extractSessionId, detectSse };
 
 if (require.main === module) {
   const proxy = new WireProxy({ port: Number(process.argv[2]) || 9777 });
-  for (const ev of ['request', 'response', 'stream-start', 'stream-end', 'turn.completed', 'session', 'usage', 'proxy-error', 'tee-failure']) {
+  for (const ev of ['request', 'response', 'stream-start', 'stream-end', 'turn.completed', 'session', 'usage', 'proxy-error', 'tee-failure', 'spill', 'spill-bail', 'spill-skip']) {
     proxy.on(ev, (payload) => console.log(`[${ev}]`, JSON.stringify(payload)));
   }
   proxy.listen().then((port) => {
