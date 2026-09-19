@@ -784,12 +784,14 @@ class PeerConnection {
       if (err || !resp || !resp.ok || !Array.isArray(resp.notes) || !resp.notes.length) {
         return done(err ? { ok: false, error: err.message } : resp || { ok: false });
       }
-      this._emit('peer-inbox', this.id, resp.notes);
-      const ids = resp.notes.filter((n) => n && n.id != null).map((n) => String(n.id));
+      const fresh = resp.notes.filter((n) => n && n.readAt == null);
+      if (!fresh.length) return done(resp);
+      this._emit('peer-inbox', this.id, fresh);
+      const ids = fresh.filter((n) => n.id != null).map((n) => String(n.id));
       if (!ids.length) return done(resp);
       let left = ids.length;
       for (const id of ids) {
-        this._request('POST', `/api/inbox/remove/${encodeURIComponent(id)}`, null, () => {
+        this._request('POST', `/api/inbox/read/${encodeURIComponent(id)}`, null, () => {
           if (--left === 0) done(resp);
         });
       }

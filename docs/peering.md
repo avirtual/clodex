@@ -96,8 +96,12 @@ carries the full note). It is emitted from the STORE's `onChange`, not from the
 routes, so a desktop-side mark-read moves the phone's badge and vice versa.
 A peer entry marked `inbox: 'claim'` (set by the sandbox on its OWN box, and on
 nothing else — a laptop peer's inbox belongs to its own operator) has its notes
-claimed onto the local inbox as `<seat>@<origin>` on that `added` event and on
-every hello, then removed from the box.
+COPIED onto the local inbox as `<seat>@<origin>` on that `added` event and on
+every hello, then marked READ on the box — the note stays where the seat raised
+it, so the box UI still shows the operator what they were told, while the badge
+that nags is the desktop's alone. The read-mark is also what makes the claim
+idempotent: only notes with `readAt == null` are claimed, so the next doorbell
+or hello over the same page re-delivers nothing.
 
 **The node itself** is a target with no resource row to advertise it.
 `POST /api/restart` relaunches the ENGINE — the whole Clodex app on that

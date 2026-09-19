@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A note a sandbox seat raises with notify-user now stays in that box's inbox as well as reaching the desktop inbox; the box copy is marked read once the desktop has it.
+
 - A test outside a ticket's diff tripping the suite's slow gate no longer rejects the ticket or reverts its merge; the loop records the test and carries on.
 
 ## 5.77.0 — 2026-09-18
