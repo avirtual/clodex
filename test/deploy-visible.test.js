@@ -185,7 +185,7 @@ test('fixDirFor can never produce a traversal, and caps the leaf at 64 chars', (
 });
 
 
-test('peer:deployFix homes the seat in a 0700 dir under <root>/fix/ and marks the record fixFor', async () => {
+test('peer:deployFix homes the seat in a 0700 dir under <root>/fix/ and passes fixFor to create()', async () => {
   const root = mkTmpRoot('clx-t1002-fix-');
   const { log } = mkLog();
   const created = [];
@@ -206,7 +206,8 @@ test('peer:deployFix homes the seat in a 0700 dir under <root>/fix/ and marks th
   assert.ok(fs.existsSync(cwd), 'the dir exists before create() is called');
   assert.strictEqual(fs.statSync(cwd).mode & 0o777, 0o700, 'the fix dir is 0700');
   assert.strictEqual(persisted[0].fixFor, 'bogdan@192.168.0.122',
-    'the host rides create() as fixFor and lands on the record');
+    'the host reaches create() as its fixFor positional (this stubs create, so it pins the '
+    + 'handler\'s call, not the write; the live record and session:list are pinned below)');
   assert.strictEqual(res.fixFor, 'bogdan@192.168.0.122', 'the renderer is told the host so it can paint the chip');
   assert.strictEqual(res.cwd, cwd, 'the renderer is told the cwd for the sidebar row');
 });
@@ -372,6 +373,8 @@ test('a successful fix mint creates the tab and makes it the active session', as
 function mkArchiveFixture() {
   const archived = [];
   const added = [];
+  const sent = [];
+  const order = [];
   const m = mk({
     getNotifications: () => ({ add: (rec) => { added.push(rec); return { id: 'nt01', ...rec }; } }),
     notifyOS: () => {},
@@ -379,8 +382,12 @@ function mkArchiveFixture() {
   });
   m._injectText = () => {};
   m._broadcast = () => {};
-  m.archive = async (name) => { archived.push(name); };
-  return { m, archived, added };
+  m._sendToSession = (name, channel, payload) => {
+    sent.push({ name, channel, payload });
+    order.push(`send:${channel}`);
+  };
+  m.archive = async (name) => { archived.push(name); order.push('archive'); };
+  return { m, archived, added, sent, order };
 }
 
 test('a DEPLOY OK note from a fixFor session archives it exactly once, by name', async () => {
@@ -393,14 +400,33 @@ test('a DEPLOY OK note from a fixFor session archives it exactly once, by name',
   assert.strictEqual(added.length, 1, 'the note is still delivered to the inbox first');
 });
 
+test('the DEPLOY OK archive sends the retired signal FIRST, so the row survives as archived', async () => {
+  const { m, sent, order } = mkArchiveFixture();
+  const session = { name: 'fix-desktop', agentType: 'claude', workspaceId: 'ws-1', fixFor: 'bogdan@example' };
+  m._handleNotifyUserIntent(session, 'DEPLOY OK bogdan@example\napp=clodex version=5.77.0 host=box');
+  await Promise.resolve();
+
+  const retired = sent.filter((s) => s.channel === 'session:context-action');
+  assert.strictEqual(retired.length, 1, 'exactly one context-action was sent');
+  assert.strictEqual(retired[0].name, 'fix-desktop', 'addressed to the fix seat itself');
+  assert.deepStrictEqual(retired[0].payload,
+    { action: 'retired', name: 'fix-desktop', disposition: 'archive' },
+    'the payload the renderer stamps archivingSessions from');
+  assert.deepStrictEqual(order, ['send:session:context-action', 'archive'],
+    'ENTER: the signal must precede the archive — after the pty dies, session-exit has already '
+    + 'fallen through to removeSession and the row is gone');
+});
+
 test('the same DEPLOY OK body from a session without fixFor archives nothing', async () => {
-  const { m, archived, added } = mkArchiveFixture();
+  const { m, archived, added, sent } = mkArchiveFixture();
   m._handleNotifyUserIntent({ name: 'ordinary', agentType: 'claude', workspaceId: 'ws-1' },
     'DEPLOY OK bogdan@example\napp=clodex version=5.77.0 host=box');
   await Promise.resolve();
 
   assert.deepStrictEqual(archived, [], 'an ordinary seat writing DEPLOY OK is never archived');
   assert.strictEqual(added.length, 1, 'its note is delivered like any other');
+  assert.deepStrictEqual(sent.filter((s) => s.channel === 'session:context-action'), [],
+    'and no retired signal is sent — nothing is being archived to signal about');
 });
 
 test('DEPLOY FAILED, or any other note, leaves the fix seat running', async () => {
@@ -410,11 +436,13 @@ test('DEPLOY FAILED, or any other note, leaves the fix seat running', async () =
     'the deploy is fine: DEPLOY OK bogdan@example',
     'deploy ok bogdan@example',
   ]) {
-    const { m, archived, added } = mkArchiveFixture();
+    const { m, archived, added, sent } = mkArchiveFixture();
     m._handleNotifyUserIntent({ name: 'fix-desktop', agentType: 'claude', workspaceId: 'ws-1', fixFor: 'bogdan@example' }, body);
     await Promise.resolve();
     assert.deepStrictEqual(archived, [], `must not archive on: ${JSON.stringify(body)}`);
     assert.strictEqual(added.length, 1, 'the note is still delivered');
+    assert.deepStrictEqual(sent.filter((s) => s.channel === 'session:context-action'), [],
+      `must not signal retired on: ${JSON.stringify(body)}`);
   }
 });
 

@@ -1528,6 +1528,7 @@ function registerIpcHandlers(deps) {
     const dir = fixDirFor(REGISTRY_DIR, host);
     try {
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      try { fs.chmodSync(dir, 0o700); } catch {}
     } catch (err) {
       return { ok: false, error: `could not make fix dir: ${err.message}` };
     }

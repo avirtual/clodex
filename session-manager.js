@@ -4941,7 +4941,10 @@ function createSessionManager(deps) {
       log.info('intent', `notify-user by ${who}: ${rec.id}`);
 
       if (session.fixFor && text.split('\n')[0].startsWith('DEPLOY OK ')) {
-        Promise.resolve(this.archive(who)).catch(() => {});
+        this._sendToSession(who, 'session:context-action', { action: 'retired', name: who, disposition: 'archive' });
+        Promise.resolve(this.archive(who)).catch((e) => {
+          log.error('session', `fix session ${who} archive failed: ${e.message}`);
+        });
         log.info('session', `fix session ${who} archived after DEPLOY OK`);
       }
     }

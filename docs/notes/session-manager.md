@@ -114,3 +114,14 @@ That sweep is also why discovery must stay keyed on pty-descendancy and never on
 a process group or session id: the monitor daemon and the wirescope proxy occupy
 their own groups deliberately, and a sweep keyed on anything the seat shares with
 the engine would reach them.
+
+## _handleNotifyUserIntent
+
+The DEPLOY OK self-archive sends `session:context-action` `{action:'retired',
+disposition:'archive'}` to the seat BEFORE calling `archive()`. That ordering is
+load-bearing and not visible from either line alone: `archive()` kills the pty, whose
+`onExit` sends `session-exit`, and the renderer rebuilds the row as archived only for a
+name already present in `archivingSessions`. That map is stamped by the renderer's own
+`archiveSessionRow` or by this `retired` signal — nothing else. Send it after the
+archive, or not at all, and the row is removed instead of archived, with only a relaunch
+restoring it. `team-tickets.js`'s retire path is the canonical precedent.

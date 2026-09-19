@@ -421,6 +421,7 @@ clx-shelldeny-
 clx-skill-catalog-
 clx-skillsoff-
 clx-statusq-
+clx-t1002-fix-
 clx-t279-
 clx-t282-
 clx-t283-
@@ -472,7 +473,6 @@ clx-t702-shared-
 clx-t711-silent-
 clx-t711-verb-
 clx-t732-companions-
-clx-t1002-fix-
 clx-t738-home-
 clx-t738-repo-
 clx-t738-ud-
