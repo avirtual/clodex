@@ -6212,7 +6212,7 @@ function createTicketMethods(deps, shared) {
       const doneSeat = reentry ? null : this._ticketAssigneeSeat(team, ticket);
       const next = doneSeat ? this._advanceSeat(team, doneSeat, ticket) : null;
       const nextSuffix = next ? ` — next: ${next.id} delivered to ${doneSeat}` : '';
-      // `re-verifying` on a re-entry, matching the `reply` below. A re-entry does
+      // `re-verifying` on a re-entry. A re-entry does
       // not close anything — the ticket was already `done` — so a second "done"
       // on this channel is one close event rendered twice to every consumer, the
       // same reader-disagreement class as the recovery text one field over.
@@ -6231,10 +6231,6 @@ function createTicketMethods(deps, shared) {
       } else if (!loopEligible) {
         reply((isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`) + skipped + nextSuffix);
       }
-      // Fired AFTER the reply, and deliberately not awaited: this handler is
-      // synchronous and the checks shell out to git, so awaiting them here would
-      // hold the intent handler open across several subprocesses and delay the
-      // hand's own confirmation behind work the hand is not waiting for.
       if (loopEligible) this._runTicketLoop(team, ticket.id);
     },
 
