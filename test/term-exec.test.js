@@ -48,6 +48,7 @@ const constFromSource = (name) => {
   return Number(m[1]);
 };
 const MAX_MS = constFromSource('ABANDON_MAX_MS');
+const INSTALL_MS = constFromSource('INSTALL_TIMEOUT_MS');
 // Read for the same reason as the other one, and it was the one left hand-copied
 // as a bare `250` in eight places: `execTimers` EXCLUDES this value, so a drift
 // between source and test silently readmits the ack timer to the deadline list
@@ -171,6 +172,9 @@ function mk(over = {}) {
     onOutput: (seat, data) => mirrored.push([seat, data]),
     onShellEnd: (seat, code) => mirrored.push([seat, { exit: code }]),
     withUtf8Charset: require('../env-scopes').withUtf8Charset,
+    remoteAllowed: over.remoteAllowed || (() => false),
+    shellHost: over.shellHost || require('../term-host').shellHostOf,
+    remoteInstallLine: require('../term-shim').REMOTE_INSTALL_LINE,
   };
   assert.deepStrictEqual(Object.keys(deps).sort(), declaredDeps(),
     'the fixture must wire EVERY dep — an unwired one is undefined, which is legal and silent');
@@ -189,7 +193,7 @@ function mk(over = {}) {
 // looks unrelated. A new handshake clock must be excluded here in the same
 // commit that arms it, for that reason.
 const execTimers = (timers) => timers.filter(
-  (t) => t.ms !== 5000 && t.ms !== ACK_MS && t.ms !== NUDGE_MS && t.ms !== MAX_MS);
+  (t) => t.ms !== 5000 && t.ms !== ACK_MS && t.ms !== NUDGE_MS && t.ms !== MAX_MS && t.ms !== INSTALL_MS);
 
 // ── refusals ────────────────────────────────────────────────────────────────
 // Every one is checked INSIDE exec() rather than by a caller reading a status
@@ -989,6 +993,7 @@ test('an accepted command is typed as kill-line + kill-to-EOL + command + Enter'
   assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `git status${CR}`]);
   assert.deepStrictEqual(w._execState('ws-1', 'alice'), {
     shimmed: true, busy: false, pending: 'git status', timedOut: false,
+    inside: '', depth: 0, remoteInstalled: false,
   });
 });
 
@@ -1276,6 +1281,7 @@ test('a command that outruns the deadline is reported, and NOT cancelled', () =>
   assert.strictEqual(spawn.spawned[0].killed, false, 'nothing was killed to meet the deadline');
   assert.deepStrictEqual(w._execState('ws-1', 'alice'), {
     shimmed: true, busy: false, pending: 'sleep 900', timedOut: true,
+    inside: '', depth: 0, remoteInstalled: false,
   });
 });
 
@@ -1326,6 +1332,7 @@ test('a stale deadline cannot time out the command that replaced it', () => {
   assert.strictEqual(results.length, 1, 'the stale deadline reported nothing');
   assert.deepStrictEqual(w._execState('ws-1', 'alice'), {
     shimmed: true, busy: false, pending: 'second', timedOut: false,
+    inside: '', depth: 0, remoteInstalled: false,
   }, "the second command's own deadline is untouched");
 });
 

@@ -6,7 +6,7 @@
 
 // Keyed by (WINDOW, SEAT): collapsing the two gives a seat a shell in another
 // seat's directory. A seatless key is the workspace-wide shell.
-function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser, onExecResult, vetCommand, execTimeoutMs, onOutput, onShellEnd, withUtf8Charset }) {
+function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser, onExecResult, vetCommand, execTimeoutMs, onOutput, onShellEnd, withUtf8Charset, remoteAllowed, shellHost, remoteInstallLine }) {
   const ptys = new Map(); // key(windowId, seat) -> { proc, scrollback, cols, rows, windowId, seat }
 
   // NUL is the one byte neither half can contain; any other separator would let one
@@ -47,6 +47,13 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // 128+SIGINT: `$?` is latched and re-reports on every prompt cycle until a command
   // runs, so a stale or in-flight pair can arrive inside our race window. The clocks
   // above are the only thing standing behind that.
+  const REMOTE_QUIET_MS = ABANDON_ACK_MS;
+  const INSTALL_TIMEOUT_MS = 4000;
+  const REMOTE_UNSUPPORTED = {
+    2: 'the remote shell is neither bash 4.4+ nor zsh (a POSIX sh, busybox, or ksh), so it cannot report results back. Nothing was run there.',
+    3: 'the remote bash is older than 4.4 (no PS0), so it cannot report results back. Nothing was run there.',
+  };
+  const REMOTE_NO_ANSWER = `the remote side did not answer Clodex's mark setup within ${INSTALL_TIMEOUT_MS / 1000}s — it may be fish, PowerShell or cmd, a REPL, or a shell that is not at its prompt. Look at the terminal. Nothing was run there.`;
 
   function shellFor() {
     return shell || (env && env.SHELL) || process.env.SHELL || '/bin/zsh';
@@ -89,21 +96,52 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
 
     // Scrollback and live bytes take different IPC paths, so a seq-less renderer
     // double-prints the overlap or drops the tail.
-    const rec = { proc, scrollback: '', cols, rows, windowId, seat: seat || null, seq: 0, shimmed, pending: null };
+    const rec = {
+      proc, scrollback: '', cols, rows, windowId, seat: seat || null, seq: 0, shimmed, pending: null,
+      remote: null, remoteRecord: null, remotePrompt: null, endedInner: null,
+    };
     // Per shell, not per window: one parser shared across seats would attribute one
     // seat's output to another's command. Marks are still forwarded to the renderer —
     // stripping them would fork the same bytes into two divergent copies.
     rec.marks = (onCommand && makeMarkParser && seat)
       ? makeMarkParser({
         onCommand: (c) => {
+          const depth = (c && c.depth) || 0;
+          if (depth === 1) {
+            if (c.sessionEnded) {
+              const installing = !!rec.remoteRecord;
+              forgetRemote(rec);
+              if (installing) return;
+              const ours = !!rec.pending && rec.pending.depth === 1 && !foreignRecord(rec.pending, c);
+              if (ours) { rec.endedInner = c; return; }
+              try { onCommand(seat, c); } catch {}
+              return;
+            }
+            if (rec.remoteRecord && rec.remoteRecord(c)) return;
+          } else {
+            const ended = rec.endedInner;
+            rec.endedInner = null;
+            if (ended) settle(rec, { status: 'session-ended', outerExit: c.exitCode });
+            else if (rec.pending && rec.pending.depth === 1) settle(rec, { status: 'shell-gone', reason: 'the session ended' });
+            forgetRemote(rec);
+          }
           // Decided before settle(), which clears the record it reads.
           const mine = !!rec.pending && !foreignRecord(rec.pending, c);
           settle(rec, { status: 'ok', record: c });
           // Ours must not also reach the firehose: both feed one selection queue.
           if (!mine) { try { onCommand(seat, c); } catch {} }
         },
-        onAbandon: (c) => { settle(rec, { status: 'abandoned', record: c }); },
-        onPrompt: (info) => { if (rec.execPromptAck) rec.execPromptAck(info); },
+        onAbandon: (c) => {
+          if (((c && c.depth) || 0) === 0) forgetRemote(rec);
+          settle(rec, { status: 'abandoned', record: c });
+        },
+        onPrompt: (info) => {
+          if (((info && info.depth) || 0) === 1) {
+            if (rec.remotePrompt) rec.remotePrompt(info);
+            return;
+          }
+          if (rec.execPromptAck) rec.execPromptAck(info);
+        },
       })
       : null;
     ptys.set(key, rec);
@@ -162,6 +200,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     // refuse to claim the result.
     const mismatch = foreignRecord(p, outcome && outcome.record);
     const res = { ...outcome, command: p.command, late: !!p.timedOut };
+    if (p.inside) res.inside = p.inside;
     if (mismatch) res.mismatch = true;
     try { onExecResult(rec.seat, res); } catch {}
     return true;
@@ -170,6 +209,144 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   function foreignRecord(p, record) {
     const reported = String((record && record.command) || '').trim();
     return !!reported && reported !== p.command;
+  }
+
+  function forgetRemote(rec) {
+    rec.remote = null;
+    rec.remoteRecord = null;
+    rec.remotePrompt = null;
+  }
+
+  function handshake(rec, p, depth, onRelease) {
+    let armed = false;
+    const release = () => {
+      if (armed) return;
+      armed = true;
+      if (rec.execArm === arm) rec.execArm = null;
+      if (depth === 1) { if (rec.remotePrompt === promptAck) rec.remotePrompt = null; }
+      else if (rec.execPromptAck === promptAck) rec.execPromptAck = null;
+      // The command belongs to the exec that started it; `pending` may hold a later
+      // one, and typing then puts our bytes on a line its waiter will claim.
+      if (rec.pending !== p) return;
+      onRelease();
+    };
+    // A flag, not a cancelled handle: the timer seam is injected, so a caller's
+    // fake may return something clearTimeout ignores.
+    let spoke = false;
+    // Bytes do not release the command. ^C is consumed by the line discipline as a
+    // signal, delivered asynchronously with respect to the byte stream, so a shell
+    // can emit a quiet, line-editor-ready prompt while the interrupt is still
+    // pending — a quiet-window heuristic cannot work at any value.
+    const arm = () => { spoke = true; };
+    // A plain redraw carries no interrupt status and must not release the command,
+    // or we type onto a line the interrupt is about to kill. Counting redraws is
+    // wrong at any N: the number is theme-dependent and unbounded.
+    const promptAck = (info) => { if (info && info.interrupted) release(); };
+    if (depth === 1) rec.remotePrompt = promptAck;
+    else rec.execPromptAck = promptAck;
+    later(() => { if (!spoke) release(); }, ABANDON_ACK_MS);
+    // The shell spoke but never acked: it drew a prompt carrying no interrupt status,
+    // which is the exact state the ABANDON_MAX_MS write below then types into and
+    // loses a byte to. Repeat the abandon instead of typing into it — a shell at a
+    // prompt answers a second ^C with a fresh prompt cycle (measured: the elicited A
+    // mark arrives ~1ms later), and that mark releases the command through promptAck
+    // like any other. A shell that ignores the repeat too still falls through to the
+    // cap below, so this narrows the blind write rather than removing it.
+    //
+    // ONE repeat, not a retry loop: the escape hatch is ABANDON_MAX_MS, and a loop
+    // would keep signalling a foreground program that is legitimately slow to die.
+    // A silent shell must NOT be nudged — it is the ABANDON_ACK_MS case above, which
+    // has already typed, so a second ^C would interrupt that command. `armed` alone
+    // covers it whenever these two timers fire in their nominal order; `spoke` is
+    // read directly so the guard holds without depending on that order.
+    let nudged = false;
+    later(() => {
+      if (armed || nudged || !spoke) return;
+      nudged = true;
+      // Same identity check as the release: `pending` may hold a later exec by now,
+      // and signalling then kills a command this one does not own.
+      if (rec.pending !== p) return;
+      try { rec.proc.write(ABANDON_LINE); } catch {}
+    }, ABANDON_NUDGE_MS);
+    // Types eventually whatever the shell does, including for a background job
+    // writing to the tty (isBusy() false, so the exec is accepted); without the cap
+    // those hang to EXEC_TIMEOUT, reporting a timeout for a command that never ran.
+    later(release, ABANDON_MAX_MS);
+    rec.execArm = arm;
+  }
+
+  function typePending(rec, p) {
+    try {
+      rec.proc.write(p.command + ENTER);
+    } catch (e) {
+      // exec() already returned ok, so an error return here would reach nobody.
+      settle(rec, { status: 'write-failed', reason: String((e && e.message) || e) });
+    }
+  }
+
+  function armNested(rec, p) {
+    handshake(rec, p, 1, () => typePending(rec, p));
+  }
+
+  function armInstall(rec, p) {
+    let fired = false;
+    let gen = 0;
+    const fire = () => {
+      if (fired) return;
+      fired = true;
+      if (rec.execArm === arm) rec.execArm = null;
+      if (rec.pending !== p) return;
+      try {
+        rec.proc.write(' ' + String(remoteInstallLine || '') + ENTER);
+      } catch (e) {
+        settle(rec, { status: 'write-failed', reason: String((e && e.message) || e) });
+        return;
+      }
+      rec.remoteRecord = (c) => {
+        rec.remoteRecord = null;
+        if (rec.pending !== p) return true;
+        if (c.exitCode === 0) {
+          if (rec.remote) rec.remote.installed = true;
+          try {
+            rec.proc.write(ABANDON_LINE);
+          } catch (e) {
+            settle(rec, { status: 'write-failed', reason: String((e && e.message) || e) });
+            return true;
+          }
+          armNested(rec, p);
+          return true;
+        }
+        settle(rec, { status: 'remote-unsupported', reason: REMOTE_UNSUPPORTED[c.exitCode] || REMOTE_UNSUPPORTED[2] });
+        return true;
+      };
+      later(() => {
+        if (rec.pending !== p || !rec.remoteRecord) return;
+        rec.remoteRecord = null;
+        settle(rec, { status: 'remote-unsupported', reason: REMOTE_NO_ANSWER });
+      }, INSTALL_TIMEOUT_MS);
+    };
+    const arm = () => {
+      gen += 1;
+      const mine = gen;
+      later(() => { if (gen === mine) fire(); }, REMOTE_QUIET_MS);
+    };
+    rec.execArm = arm;
+    later(fire, ABANDON_MAX_MS);
+  }
+
+  function armDeadline(rec, p) {
+    const timer = later(() => {
+      if (rec.pending !== p || p.timedOut) return;
+      p.timedOut = true;
+      // The pending record deliberately survives: the command was not cancelled, so
+      // the eventual D mark still delivers, flagged `late`.
+      if (onExecResult) {
+        const notice = { status: 'timeout', command: p.command, afterMs: EXEC_TIMEOUT };
+        if (p.inside) notice.inside = p.inside;
+        try { onExecResult(rec.seat, notice); } catch {}
+      }
+    }, EXEC_TIMEOUT);
+    if (timer && typeof timer.unref === 'function') timer.unref();
   }
 
   function endShell(rec) {
@@ -227,16 +404,40 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       if (!rec.shimmed || !rec.marks) return { ok: false, code: 'no-marks' };
       // A timed-out command over an idle terminal never got an ending and never will;
       // without this every later exec answers `pending` and the seat is wedged.
-      if (rec.pending && rec.pending.timedOut && !rec.marks.isBusy()) {
-        settle(rec, { status: 'lost' });
+      if (rec.pending && rec.pending.timedOut) {
+        const layerBusy = rec.pending.depth === 1 ? rec.marks.innerBusy() : rec.marks.isBusy();
+        if (!layerBusy) settle(rec, { status: 'lost' });
       }
       // Distinct from `busy`: between the write and the C mark the parser is not
       // capturing yet, so a second exec passes a busy check and types over the first.
       if (rec.pending) return { ok: false, code: 'pending', running: rec.pending.command };
-      if (rec.marks.isBusy()) return { ok: false, code: 'busy', running: rec.marks.current() };
 
-      const p = { command: vet.command, timedOut: false };
+      let depth = 0;
+      let inside = '';
+      if (rec.marks.isBusy()) {
+        const running = rec.marks.current();
+        const host = shellHost ? shellHost(running) : null;
+        if (!(remoteAllowed && remoteAllowed())) {
+          const refusal = { ok: false, code: 'busy', running };
+          if (host) refusal.remoteOffer = true;
+          return refusal;
+        }
+        if (!host) return { ok: false, code: 'busy', running };
+        if (rec.marks.altScreen()) return { ok: false, code: 'full-screen', running };
+        if (rec.marks.innerBusy()) {
+          return { ok: false, code: 'busy', running: rec.marks.innerCurrent(), inside: running };
+        }
+        depth = 1;
+        inside = running;
+      }
+
+      const p = { command: vet.command, timedOut: false, depth, inside };
       rec.pending = p;
+      if (depth === 1) {
+        if (!rec.remote || rec.remote.seq !== rec.marks.outerSeq()) {
+          rec.remote = { seq: rec.marks.outerSeq(), installed: false };
+        }
+      }
       try {
         // Abandon the line first: `isBusy()` false says nothing about the line editor,
         // which may hold a half-typed line the C mark would then report as ours.
@@ -251,83 +452,20 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         // all, 2 of 192 still lost the byte, so there is no gap wide enough to buy
         // safety. What predicts the loss is the missing prompt, not the interval — over
         // 256 execs, every one of the 254 that saw an A mark after the ^C arrived
-        // intact and both that did not were truncated. Hence the release below waits
-        // for that mark rather than for a duration.
+        // intact and both that did not were truncated.
         rec.proc.write(ABANDON_LINE);
       } catch (e) {
         rec.pending = null;
         return { ok: false, code: 'write-failed', error: String((e && e.message) || e) };
       }
-      let armed = false;
-      const typeCommand = () => {
-        if (armed) return;
-        armed = true;
-        if (rec.execArm === arm) rec.execArm = null;
-        if (rec.execPromptAck === promptAck) rec.execPromptAck = null;
-        // The command belongs to the exec that started it; `pending` may hold a later
-        // one, and typing then puts our bytes on a line its waiter will claim.
-        if (rec.pending !== p) return;
-        try {
-          rec.proc.write(vet.command + ENTER);
-        } catch (e) {
-          // exec() already returned ok, so an error return here would reach nobody.
-          settle(rec, { status: 'write-failed', reason: String((e && e.message) || e) });
-        }
-      };
-      // A flag, not a cancelled handle: the timer seam is injected, so a caller's
-      // fake may return something clearTimeout ignores.
-      let spoke = false;
-      // Bytes do not release the command. ^C is consumed by the line discipline as a
-      // signal, delivered asynchronously with respect to the byte stream, so a shell
-      // can emit a quiet, line-editor-ready prompt while the interrupt is still
-      // pending — a quiet-window heuristic cannot work at any value.
-      const arm = () => { spoke = true; };
-      // A plain redraw carries no interrupt status and must not release the command,
-      // or we type onto a line the interrupt is about to kill. Counting redraws is
-      // wrong at any N: the number is theme-dependent and unbounded.
-      const promptAck = (info) => { if (info && info.interrupted) typeCommand(); };
-      rec.execPromptAck = promptAck;
-      later(() => { if (!spoke) typeCommand(); }, ABANDON_ACK_MS);
-      // The shell spoke but never acked: it drew a prompt carrying no interrupt status,
-      // which is the exact state the ABANDON_MAX_MS write below then types into and
-      // loses a byte to. Repeat the abandon instead of typing into it — a shell at a
-      // prompt answers a second ^C with a fresh prompt cycle (measured: the elicited A
-      // mark arrives ~1ms later), and that mark releases the command through promptAck
-      // like any other. A shell that ignores the repeat too still falls through to the
-      // cap below, so this narrows the blind write rather than removing it.
-      //
-      // ONE repeat, not a retry loop: the escape hatch is ABANDON_MAX_MS, and a loop
-      // would keep signalling a foreground program that is legitimately slow to die.
-      // A silent shell must NOT be nudged — it is the ABANDON_ACK_MS case above, which
-      // has already typed, so a second ^C would interrupt that command. `armed` alone
-      // covers it whenever these two timers fire in their nominal order; `spoke` is
-      // read directly so the guard holds without depending on that order.
-      let nudged = false;
-      later(() => {
-        if (armed || nudged || !spoke) return;
-        nudged = true;
-        // Same identity check as typeCommand: `pending` may hold a later exec by now,
-        // and signalling then kills a command this one does not own.
-        if (rec.pending !== p) return;
-        try { rec.proc.write(ABANDON_LINE); } catch {}
-      }, ABANDON_NUDGE_MS);
-      // Types eventually whatever the shell does, including for a background job
-      // writing to the tty (isBusy() false, so the exec is accepted); without the cap
-      // those hang to EXEC_TIMEOUT, reporting a timeout for a command that never ran.
-      later(typeCommand, ABANDON_MAX_MS);
-      rec.execArm = arm;
+      if (depth === 0) handshake(rec, p, 0, () => typePending(rec, p));
+      else if (rec.remote.installed) armNested(rec, p);
+      else armInstall(rec, p);
 
-      const timer = later(() => {
-        if (rec.pending !== p || p.timedOut) return;
-        p.timedOut = true;
-        // The pending record deliberately survives: the command was not cancelled, so
-        // the eventual D mark still delivers, flagged `late`.
-        if (onExecResult) {
-          try { onExecResult(seat, { status: 'timeout', command: p.command, afterMs: EXEC_TIMEOUT }); } catch {}
-        }
-      }, EXEC_TIMEOUT);
-      if (timer && typeof timer.unref === 'function') timer.unref();
-      return { ok: true, command: vet.command };
+      armDeadline(rec, p);
+      const answer = { ok: true, command: vet.command };
+      if (inside) answer.inside = inside;
+      return answer;
     },
 
     resize(windowId, seat, cols, rows) {
@@ -392,6 +530,9 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         busy: !!(rec.marks && rec.marks.isBusy()),
         pending: rec.pending ? rec.pending.command : null,
         timedOut: !!(rec.pending && rec.pending.timedOut),
+        inside: (rec.pending && rec.pending.inside) || '',
+        depth: rec.pending ? rec.pending.depth : 0,
+        remoteInstalled: !!(rec.remote && rec.remote.installed),
       };
     },
   };
