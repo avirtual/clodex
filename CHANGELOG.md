@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- After a compact, clear or reload, the handoff file an agent resumes from now ends with a generated snapshot — host version, master head, team roster and the open ticket board as they stand at resume — so its first turn starts on the work instead of on re-checking the board.
+
 ## 5.82.0 — 2026-09-20
 
 - The operator inbox intent is now `[agent:shout]` (was `notify-user`; the old spelling no longer parses). A seat or template whose intent checklist already granted the old verb keeps the grant — nothing to re-tick. Agents no longer receive an acknowledgement for a successful `task done`, and their instructions now say that a turn answering a machine message ends with its intents — no status prose.

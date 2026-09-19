@@ -25,3 +25,9 @@ size — the largest observed round-1 diff (96KB) roughly doubles.
 --verify` already run for the existence check. Callers stamp it on a record that
 outlives the branch's position, where the ref name would later resolve somewhere
 else. Null on every failure arm, so a failed diff cannot be stamped.
+
+## headLogSync
+
+`%h %s` on one line, so the subject may be empty (a commit with a blank subject)
+and the parse tolerates that. 2s timeout: the only caller is on the resume-handoff
+write path, where a hung git must not hold the handoff.

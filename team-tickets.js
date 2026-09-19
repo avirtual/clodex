@@ -9197,14 +9197,17 @@ function createTicketMethods(deps, shared) {
         reply(`error: unknown filter "${filter}" — use one of: ${TICKET_FILTERS.join(', ')}`);
         return;
       }
+      reply(this._taskListText(team, filter, Date.now()));
+    },
+
+    _taskListText(team, filter, now) {
       const tickets = ticketsStore.load(team.root).slice().sort((a, b) => {
         const na = Number(String(a.id).replace(/^t/, '')) || 0;
         const nb = Number(String(b.id).replace(/^t/, '')) || 0;
         return na - nb;
       });
-      if (!tickets.length) { reply(`no tickets on ${team.name}`); return; }
+      if (!tickets.length) return `no tickets on ${team.name}`;
       const shown = filter === 'all' ? tickets : tickets.filter((t) => t.state === filter);
-      const now = Date.now();
       // A parked ticket is open and assigned and yet will not be dispatched, so
       // without a marker the open list is the one place that reads exactly like
       // a ticket in flight.
@@ -9264,12 +9267,11 @@ function createTicketMethods(deps, shared) {
           + ' — [agent:task list done], [agent:task list cancelled] or [agent:task list all])'
         : '';
       if (!shown.length) {
-        reply(closed.length
+        return closed.length
           ? `no open tickets on ${team.name}${recentBlock}${tail}`
-          : `no ${filter} tickets on ${team.name}`);
-        return;
+          : `no ${filter} tickets on ${team.name}`;
       }
-      reply(`${head}:\n${lines.join('\n')}${recentBlock}${tail}`);
+      return `${head}:\n${lines.join('\n')}${recentBlock}${tail}`;
     },
 
     // Solo no-ops here, and in `_advanceSeat` — NOT because there is nothing to

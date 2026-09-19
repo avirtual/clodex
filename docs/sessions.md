@@ -288,6 +288,18 @@ telemetry. Claude side-channels ride `fs.watch` on the registry dir:
 `{name}-ctx` (statusline-written context numbers → `session-ctx` + ctxwarn
 reminder file) and `{name}-attn.jsonl` (Notification hook → attention state).
 
+The handoff body a compact, clear or reload resumes from goes through
+`_handoffText`. A Claude body over `SPILL_MIN_BYTES` is written to a spill file
+and the seat is handed a one-line `@`-pointer to it; that file now ends with a
+`---`-separated **resume snapshot** that `_resumeSnapshot` generates — host
+version, the cwd repo's head (`git log -1`, sync, 2s; `git: unavailable` on any
+failure), the team roster, and the open board as `_taskListText` renders it.
+It answers the `[agent:task list]` (plus git log, plus roster) that every lead
+spent its first post-compact turn on, at no billed turn. The section is capped
+at `SNAPSHOT_MAX_BYTES` with the board truncated last-rows-first; the author's
+bytes above the `---` and the injected pointer line are unchanged. The short,
+Codex and write-failure paths type the body as before — no snapshot.
+
 ## 4. Exit, kill, restore
 
 `ptyProc.onExit` runs a **fixed order** (each step depends on the previous
