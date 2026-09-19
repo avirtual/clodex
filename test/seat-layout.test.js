@@ -71,9 +71,15 @@ test('already-migrated is a no-op: the target dir is not re-moved or re-created'
 
   const neu = seatPathFor(root, 'ana', 'messages');
   const before = fs.statSync(neu);
+  const logged = [];
 
-  const res = migrateSeatLayout({ root, names: ['ana'], fs });
+  const res = migrateSeatLayout({ root, names: ['ana'], fs, log: { info: (t, m) => logged.push(m) } });
   assert.strictEqual(res.migrated, 0);
+  assert.deepStrictEqual(
+    logged.filter((m) => /not migrated/.test(m)), [],
+    'a linked kind must be SKIPPED, not attempted and caught: a rename onto the dir the link '
+    + 'already points at fails, so without the skip every re-run logs seven failures it survived',
+  );
 
   const after = fs.statSync(neu);
   assert.strictEqual(after.ino, before.ino);
