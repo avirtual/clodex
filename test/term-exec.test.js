@@ -271,8 +271,20 @@ test('a busy terminal is refused — the write would land in a program stdin', (
   spawn.spawned[0].emit(C('vim notes.txt'));   // the operator started something
 
   assert.strictEqual(w._execState('ws-1', 'alice').busy, true, 'ENTER: the parser sees a command open');
-  assert.deepStrictEqual(w.exec('ws-1', 'alice', 'ls'), { ok: false, code: 'busy' });
+  assert.deepStrictEqual(w.exec('ws-1', 'alice', 'ls'),
+    { ok: false, code: 'busy', running: 'vim notes.txt' });
   assert.deepStrictEqual(spawn.spawned[0].written, [], 'nothing was typed into vim');
+});
+
+test('the busy refusal NAMES the program holding the tab', () => {
+  const { w, spawn } = mk();
+  w.spawn('ws-1', 'alice', {});
+  spawn.spawned[0].emit(C('ssh bogdan@example'));
+
+  const r = w.exec('ws-1', 'alice', 'ls');
+  assert.strictEqual(r.code, 'busy');
+  assert.strictEqual(r.running, 'ssh bogdan@example',
+    'the command from the C mark rides the refusal, not just the boolean — an operator idle inside `ssh host` read the unnamed refusal as wrong');
 });
 
 test('a second exec in the same turn is refused as PENDING, not busy', () => {

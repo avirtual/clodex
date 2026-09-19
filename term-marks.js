@@ -163,13 +163,11 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
         text(rest);
       }
     },
-    // Whether a command is open. The ONE piece of live state exposed, and only
-    // as a boolean: an agent-driven exec must refuse to type while something is
-    // already running rather than injecting a line into a program's stdin. The
-    // command TEXT and the partial output stay private — a consumer that could
-    // see a half-finished command would be tempted to report it before its exit
-    // code exists.
+    // Whether a command is open. An agent-driven exec must refuse to type while
+    // something is already running rather than injecting a line into a program's
+    // stdin.
     isBusy: () => capturing,
+    current: () => (capturing ? command : ''),
     // Test/diagnostic read.
     _state: () => ({ capturing, command, carry: carry.length, out: out.length }),
   };

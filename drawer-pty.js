@@ -233,7 +233,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       // Distinct from `busy`: between the write and the C mark the parser is not
       // capturing yet, so a second exec passes a busy check and types over the first.
       if (rec.pending) return { ok: false, code: 'pending', running: rec.pending.command };
-      if (rec.marks.isBusy()) return { ok: false, code: 'busy' };
+      if (rec.marks.isBusy()) return { ok: false, code: 'busy', running: rec.marks.current() };
 
       const p = { command: vet.command, timedOut: false };
       rec.pending = p;
