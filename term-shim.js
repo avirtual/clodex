@@ -431,7 +431,7 @@ const REMOTE_INSTALL_LINE = FAR_HELPERS + `_cxp C ${REMOTE_HELLO_B64}; _cxr=2; `
   + 'elif [ -n "${BASH_VERSION:-}" ]; then eval \'' + BASH_BODY + '\'; fi; '
   + '_cxp D "$_cxr"';
 
-const REMOTE_LINE_MAX = 1024;
+const REMOTE_LINE_MAX = 1019;
 
 // The one entry point the app uses. Dispatching here rather than in the caller
 // keeps shell knowledge in this file: engine.js asks for a shim and gets one or

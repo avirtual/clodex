@@ -6,8 +6,10 @@ const MOSH_EXCLUDED_REASON = 'mosh cannot carry terminal marks; use ssh for agen
 
 const COMPOUND_RE = /[;|&<>`]|\$\(/;
 
-const SSH_ARG_OPTS = 'bcEeFIiJLlmOoPpQRSWw';
-const SSH_FLAG_OPTS = '1246AaCfGKMNnqsTtVvXxYy';
+const SSH_ARG_OPTS = 'bcDEeFIiJLlmOoPpQRSWw';
+const SSH_FLAG_OPTS = '1246AaCfgGkKMNnqsTtVvXxYy';
+
+const SSH_NO_SHELL_OPTS = 'NWTnf';
 
 function basename(word) {
   const s = String(word || '');
@@ -88,7 +90,7 @@ function stripPrefixes(words) {
 }
 
 function sshHost(argv) {
-  const positionals = [];
+  let host = '';
   let i = 1;
   while (i < argv.length) {
     const w = argv[i];
@@ -98,7 +100,7 @@ function sshHost(argv) {
       let consumed = false;
       while (j < w.length) {
         const c = w[j];
-        if (c === 'N' || c === 'W') return null;
+        if (SSH_NO_SHELL_OPTS.includes(c)) return null;
         if (SSH_ARG_OPTS.includes(c)) {
           if (j + 1 === w.length) consumed = true;
           j = w.length;
@@ -111,13 +113,18 @@ function sshHost(argv) {
       i += 1;
       continue;
     }
-    positionals.push(w);
+    host = w;
+    i += 1;
+    break;
+  }
+  if (!host) {
+    if (i >= argv.length) return null;
+    host = argv[i];
     i += 1;
   }
-  while (i < argv.length) { positionals.push(argv[i]); i += 1; }
-  if (positionals.length === 0) return null;
-  if (positionals.length === 1) return positionals[0];
-  if (positionals.length === 2 && isShellName(positionals[1])) return positionals[0];
+  const rest = argv.slice(i);
+  if (rest.length === 0) return host;
+  if (isShellName(rest[0]) && bareShell(rest) !== null) return host;
   return null;
 }
 
@@ -135,14 +142,17 @@ function suRecognised(argv) {
 }
 
 function sudoRecognised(argv) {
+  let loginFlag = false;
   for (let i = 1; i < argv.length; i += 1) {
     const w = argv[i];
-    if (w === '-i' || w === '--login' || w === '-s' || w === '--shell') return 'root';
+    if (w === '-i' || w === '--login' || w === '-s' || w === '--shell') { loginFlag = true; continue; }
     if (w.startsWith('-')) continue;
-    if (isShellName(w) || basename(w) === 'su') return 'root';
+    const rest = argv.slice(i);
+    if (isShellName(w)) return bareShell(rest) === null ? null : 'root';
+    if (basename(w) === 'su') return suRecognised(rest) === null ? null : 'root';
     return null;
   }
-  return null;
+  return loginFlag ? 'root' : null;
 }
 
 function containerShell(argv, { sub, wantTty }) {

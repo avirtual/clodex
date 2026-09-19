@@ -561,12 +561,12 @@ const {
 const { execFileSync } = require('child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-const CTRL_RE = new RegExp('[\\u0000-\\u001F\\u007F\\u0080-\\u009F\\u200B-\\u200F\\u202A-\\u202E\\u2066-\\u2069\\uFEFF]');
+const { vetTermCommand } = require('../drawer-avail');
 
 test('the install line is ONE line and carries no byte vetCommand would reject', () => {
   assert.ok(!/[\r\n]/.test(REMOTE_INSTALL_LINE), 'no newline: it is typed as one line');
-  assert.ok(!CTRL_RE.test(REMOTE_INSTALL_LINE),
-    'no control byte — the ESCs are the four printable characters \\033');
+  assert.strictEqual(vetTermCommand(REMOTE_INSTALL_LINE).ok, true,
+    'the shipping vetter, not a hand copy of its character class, judges the bytes');
 });
 
 test('the install line fits the terminal line the far tty will accept', () => {
@@ -657,11 +657,12 @@ for (const [name, candidates] of SHELLS) {
 const POSIX_ANSWERS = [
   ['dash', ['/bin/dash', '/usr/bin/dash'], '2'],
   ['ksh', ['/bin/ksh', '/usr/bin/ksh'], '2'],
+  ['bash32', ['/bin/bash'], '3'],
 ];
 
 for (const [name, candidates, want] of POSIX_ANSWERS) {
   const bin = findShell(candidates);
-  test(`a far ${name} answers D;${want};${REMOTE_MARK_TAG} and defines nothing`, { skip: bin ? false : `no ${name} on this machine` }, () => {
+  test(`a far ${name} answers D;${want};${REMOTE_MARK_TAG} and installs no hooks`, { skip: bin ? false : `no ${name} on this machine` }, () => {
     const out = execFileSync(bin, ['-c', REMOTE_INSTALL_LINE], { timeout: 10000, encoding: 'utf8' });
     const marks = [...out.matchAll(/\x1b\]133;([^\x07]*)\x07/g)].map((m) => m[1]);
     assert.deepStrictEqual(marks, [
@@ -747,6 +748,16 @@ test('a real far dash answers D;2 and installs nothing',
 test('installing twice then running one command emits exactly ONE tagged C for it',
   realOpts(FAR_BASH, 'no bash 4.4+ on this machine'), async () => {
     const { marks, raw } = await runInShell(FAR_BASH, ['--norc', '--noprofile', '-i'],
+      [' ' + REMOTE_INSTALL_LINE, ' ' + REMOTE_INSTALL_LINE, 'true']);
+    const want = `C;${Buffer.from('true').toString('base64')};${REMOTE_MARK_TAG}`;
+    const n = marks.filter((m) => m === want).length;
+    assert.strictEqual(n, 1,
+      `a re-install stacked the hooks and double-marked the command\n--- marks ---\n${marks.join('\n')}\n--- raw ---\n${raw}`);
+  });
+
+test('a re-installed zsh also emits exactly ONE tagged C: preexec_functions+= is the stacking risk',
+  realOpts(FAR_ZSH, 'no zsh on this machine'), async () => {
+    const { marks, raw } = await runInShell(FAR_ZSH, ['-f', '-i'],
       [' ' + REMOTE_INSTALL_LINE, ' ' + REMOTE_INSTALL_LINE, 'true']);
     const want = `C;${Buffer.from('true').toString('base64')};${REMOTE_MARK_TAG}`;
     const n = marks.filter((m) => m === want).length;
