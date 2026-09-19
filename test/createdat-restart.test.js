@@ -47,6 +47,7 @@
 
 const { test, after } = require('node:test');
 const assert = require('node:assert');
+const { intentEnabled } = require('../intent-catalog');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -422,7 +423,7 @@ test('create() hands the birth stamp to setupClaudeHook, so the generated drain 
     resolveSystemPromptFile: () => null,
     mergeClaudeSystemPrompt: (a) => ({ cleaned: [...a], append: null }),
     readAppendBodies: () => [],
-    pluginGrammarLines: () => [],
+    pluginGrammarLines: () => [], intentEnabled,
   });
   persistence.upsert({ name: 'h', type: 'claude', cwd: os.tmpdir(), workspaceId: 'ws', createdAt: BORN });
   // The full claude arm reaches a long way past the hook (wire registration,

@@ -25,6 +25,7 @@
 // ordered — separately from the behaviour it pins, and says so in the message.
 const { test } = require('node:test');
 const assert = require('node:assert');
+const { intentEnabled } = require('../intent-catalog');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -94,7 +95,7 @@ function reuseArgFor({ resumeId = null, mint = false, extraArgs = [] } = {}) {
     resolveSystemPromptFile: () => null,
     readAppendBodies: () => [],
     buildIpcPrompt: () => 'IPC PROTOCOL v1\n[agent:dm TARGET] body\n',
-    pluginGrammarLines: () => [],
+    pluginGrammarLines: () => [], intentEnabled,
     mergeClaudeSystemPrompt: (extraArgs, ipcPrompt) => ({ cleaned: [...extraArgs], append: ipcPrompt }),
     cleanupClaudeHook: () => {},
     cleanupSkills: () => {}, cleanupAgentPlugin: () => {},
