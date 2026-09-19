@@ -439,6 +439,7 @@ clx-t359-ud-
 clx-t363-
 clx-t363-cap-
 clx-t491-
+clx-t491-seed-
 clx-t5-
 clx-t518-
 clx-t678-bareflag-
