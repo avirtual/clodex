@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.81.0 — 2026-09-19
+
 - Spilling long intent bodies to files is now on by default, and the Settings switch applies to every running seat from its next turn — no restart needed to turn it on or off.
 
 ## 5.80.0 — 2026-09-19
