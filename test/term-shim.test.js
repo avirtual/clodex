@@ -554,3 +554,202 @@ test('nothing outside the shim dir is written, for either shell', () => {
     assert.ok(p.startsWith('/s/'), `wrote outside the shim dir: ${p}`);
   }
 });
+
+const {
+  REMOTE_INSTALL_LINE, REMOTE_MARK_TAG, REMOTE_HELLO_B64, REMOTE_LINE_MAX, ZSH_BODY, BASH_BODY,
+} = require('../term-shim');
+const { execFileSync } = require('child_process');
+const { mkTmpRoot } = require('./lib/tmp-roots');
+
+const CTRL_RE = new RegExp('[\\u0000-\\u001F\\u007F\\u0080-\\u009F\\u200B-\\u200F\\u202A-\\u202E\\u2066-\\u2069\\uFEFF]');
+
+test('the install line is ONE line and carries no byte vetCommand would reject', () => {
+  assert.ok(!/[\r\n]/.test(REMOTE_INSTALL_LINE), 'no newline: it is typed as one line');
+  assert.ok(!CTRL_RE.test(REMOTE_INSTALL_LINE),
+    'no control byte — the ESCs are the four printable characters \\033');
+});
+
+test('the install line fits the terminal line the far tty will accept', () => {
+  const typed = Buffer.byteLength(' ' + REMOTE_INSTALL_LINE);
+  assert.ok(typed <= REMOTE_LINE_MAX,
+    `the line plus its sacrificial space is ${typed} bytes, over the ${REMOTE_LINE_MAX} a canonical-mode tty accepts`);
+});
+
+test('every mark the install line emits carries the nest tag', () => {
+  const marks = REMOTE_INSTALL_LINE.match(/\\033\]133;.*?\\007|\\e\]133;.*?\\a/g) || [];
+  assert.ok(marks.length >= 4, `ENTER: the line emits marks (found ${marks.length})`);
+  for (const m of marks) {
+    assert.ok(m.includes(REMOTE_MARK_TAG), `untagged mark would be read as the OUTER shell's: ${m}`);
+  }
+});
+
+test('printf formats use octal escapes, never bash-only \\e and \\a', () => {
+  const withoutPs0 = REMOTE_INSTALL_LINE.replace(/PS0="[^"]*"/g, '');
+  assert.ok(!/\\e/.test(withoutPs0), 'dash prints \\e literally');
+  assert.ok(!/\\a/.test(withoutPs0), 'dash prints \\a literally');
+  assert.match(REMOTE_INSTALL_LINE, /\\033/, 'octal ESC');
+  assert.match(REMOTE_INSTALL_LINE, /\\007/, 'octal BEL');
+});
+
+test('no history-expandable ! outside single quotes', () => {
+  const outside = REMOTE_INSTALL_LINE.replace(/'[^']*'/g, '');
+  assert.ok(!outside.includes('!'),
+    'interactive bash and zsh history-expand ! even inside double quotes');
+});
+
+test('the shell-specific bodies are inside single-quoted evals a POSIX sh never parses', () => {
+  for (const [name, body] of [['zsh', ZSH_BODY], ['bash', BASH_BODY]]) {
+    assert.ok(!body.includes("'"), `${name} body carries no single quote, so eval '...' can hold it`);
+    assert.ok(REMOTE_INSTALL_LINE.includes(`eval '${body}'`), `${name} body is reached through eval`);
+  }
+  assert.match(BASH_BODY, /preexec_functions|PS0|PROMPT_COMMAND/, 'ENTER: the bash body is the shell-specific part');
+  assert.match(ZSH_BODY, /preexec_functions\+=/, 'a bare array assignment is a dash parse error at the top level');
+});
+
+test('a second install is a no-op: each body is guarded', () => {
+  for (const [name, body] of [['zsh', ZSH_BODY], ['bash', BASH_BODY]]) {
+    assert.match(body, /if \[ -z "\$\{_cxo:-\}" \]/, `${name} body is idempotent`);
+    assert.match(body, /_cxo=1/, `${name} body arms the guard`);
+  }
+});
+
+test('the exit code is the answer: 2 when neither branch matched, 3 for an old bash', () => {
+  assert.match(REMOTE_INSTALL_LINE, /_cxr=2;/, 'the default is unsupported');
+  assert.match(BASH_BODY, /else _cxr=3; fi$/, 'a bash below the floor answers 3');
+  assert.match(REMOTE_INSTALL_LINE, /_cxp D "\$_cxr"$/, 'the line ends by reporting that code');
+});
+
+test('the bash floor in the install line is read from BASH_MIN, not hand-copied', () => {
+  const floor = BASH_MIN[0] * 100 + BASH_MIN[1];
+  assert.match(BASH_BODY, new RegExp(`>=${floor}\\)`),
+    'two copies of the floor is how a supported shell starts being told it is unsupported');
+});
+
+test('the hello payload is the base64 the far C mark carries', () => {
+  assert.strictEqual(Buffer.from(REMOTE_HELLO_B64, 'base64').toString('utf8'), 'clodex marks');
+  assert.ok(REMOTE_INSTALL_LINE.includes(`_cxp C ${REMOTE_HELLO_B64};`), 'the line opens with its own tagged C');
+});
+
+const SHELLS = [
+  ['bash', ['/opt/homebrew/bin/bash', '/usr/local/bin/bash']],
+  ['zsh', ['/bin/zsh', '/usr/bin/zsh']],
+  ['dash', ['/bin/dash', '/usr/bin/dash']],
+  ['sh', ['/bin/sh']],
+];
+
+function findShell(candidates) {
+  for (const p of candidates) {
+    try { if (fs.statSync(p).isFile()) return p; } catch {}
+  }
+  return null;
+}
+
+for (const [name, candidates] of SHELLS) {
+  const bin = findShell(candidates);
+  test(`${name} parses the whole install line`, { skip: bin ? false : `no ${name} on this machine` }, () => {
+    const root = mkTmpRoot('clodex-install-line-');
+    const file = path.join(root, 'line.sh');
+    fs.writeFileSync(file, REMOTE_INSTALL_LINE);
+    execFileSync(bin, ['-n', file], { timeout: 10000 });
+  });
+}
+
+const POSIX_ANSWERS = [
+  ['dash', ['/bin/dash', '/usr/bin/dash'], '2'],
+  ['ksh', ['/bin/ksh', '/usr/bin/ksh'], '2'],
+];
+
+for (const [name, candidates, want] of POSIX_ANSWERS) {
+  const bin = findShell(candidates);
+  test(`a far ${name} answers D;${want};${REMOTE_MARK_TAG} and defines nothing`, { skip: bin ? false : `no ${name} on this machine` }, () => {
+    const out = execFileSync(bin, ['-c', REMOTE_INSTALL_LINE], { timeout: 10000, encoding: 'utf8' });
+    const marks = [...out.matchAll(/\x1b\]133;([^\x07]*)\x07/g)].map((m) => m[1]);
+    assert.deepStrictEqual(marks, [
+      `C;${REMOTE_HELLO_B64};${REMOTE_MARK_TAG}`,
+      `D;${want};${REMOTE_MARK_TAG}`,
+    ]);
+  });
+}
+
+let ptyMod = null;
+try { ptyMod = require('node-pty'); } catch {}
+
+const { reapPty } = require('./lib/pty-reap');
+
+function runInShell(bin, args, lines, ms = 9000) {
+  return new Promise((resolve) => {
+    const proc = ptyMod.spawn(bin, args, {
+      name: 'xterm-256color',
+      cols: 200,
+      rows: 24,
+      env: { ...process.env, PS1: 'cx> ', HISTFILE: path.join(mkTmpRoot('clodex-far-hist-'), 'h') },
+    });
+    let raw = '';
+    proc.onData((d) => { raw += d; });
+    const marks = () => [...raw.matchAll(/\x1b\]133;([^\x07]*)\x07/g)].map((m) => m[1]);
+    let i = 0;
+    const step = () => {
+      if (i < lines.length) {
+        proc.write(lines[i] + '\r');
+        i += 1;
+        setTimeout(step, 900);
+        return;
+      }
+      setTimeout(async () => {
+        const out = marks();
+        try { await reapPty(proc); } catch {}
+        resolve({ marks: out, raw });
+      }, 900);
+    };
+    setTimeout(step, 900);
+    setTimeout(async () => { try { await reapPty(proc); } catch {} resolve({ marks: marks(), raw }); }, ms);
+  });
+}
+
+const FAR_BASH = findShell(['/opt/homebrew/bin/bash', '/usr/local/bin/bash']);
+const FAR_ZSH = findShell(['/bin/zsh', '/usr/bin/zsh']);
+const FAR_DASH = findShell(['/bin/dash', '/usr/bin/dash']);
+
+const realOpts = (bin, why) => ({ skip: !ptyMod ? 'node-pty unavailable' : bin ? false : why, timeout: 60000 });
+
+test('a real far bash installs the hooks: the next command reports a tagged C and D;0',
+  realOpts(FAR_BASH, 'no bash 4.4+ on this machine'), async () => {
+    const { marks, raw } = await runInShell(FAR_BASH, ['--norc', '--noprofile', '-i'],
+      [' ' + REMOTE_INSTALL_LINE, 'true']);
+    assert.ok(marks.includes(`D;0;${REMOTE_MARK_TAG}`),
+      `the install answered 0 (supported)\n--- marks ---\n${marks.join('\n')}\n--- raw ---\n${raw}`);
+    assert.ok(marks.includes(`A;${REMOTE_MARK_TAG}`), 'the far precmd emits a tagged A — the success signal');
+    const cIdx = marks.findIndex((m) => m === `C;${Buffer.from('true').toString('base64')};${REMOTE_MARK_TAG}`);
+    assert.ok(cIdx !== -1, `the far preexec named the command it ran\n--- marks ---\n${marks.join('\n')}`);
+    assert.strictEqual(marks[cIdx + 1], `D;0;${REMOTE_MARK_TAG}`, '`true` reported exit 0, tagged');
+  });
+
+test('a real far zsh installs the hooks: the next command reports a tagged C and D;0',
+  realOpts(FAR_ZSH, 'no zsh on this machine'), async () => {
+    const { marks, raw } = await runInShell(FAR_ZSH, ['-f', '-i'],
+      [' ' + REMOTE_INSTALL_LINE, 'true']);
+    assert.ok(marks.includes(`D;0;${REMOTE_MARK_TAG}`),
+      `the install answered 0 (supported)\n--- marks ---\n${marks.join('\n')}\n--- raw ---\n${raw}`);
+    const cIdx = marks.findIndex((m) => m === `C;${Buffer.from('true').toString('base64')};${REMOTE_MARK_TAG}`);
+    assert.ok(cIdx !== -1, `the far preexec named the command it ran\n--- marks ---\n${marks.join('\n')}`);
+    assert.strictEqual(marks[cIdx + 1], `D;0;${REMOTE_MARK_TAG}`, '`true` reported exit 0, tagged');
+  });
+
+test('a real far dash answers D;2 and installs nothing',
+  realOpts(FAR_DASH, 'no dash on this machine'), async () => {
+    const { marks, raw } = await runInShell(FAR_DASH, ['-i'], [' ' + REMOTE_INSTALL_LINE, 'true']);
+    assert.deepStrictEqual(marks, [
+      `C;${REMOTE_HELLO_B64};${REMOTE_MARK_TAG}`,
+      `D;2;${REMOTE_MARK_TAG}`,
+    ], `a POSIX sh reaches the final printf and says "unsupported"\n--- raw ---\n${raw}`);
+  });
+
+test('installing twice then running one command emits exactly ONE tagged C for it',
+  realOpts(FAR_BASH, 'no bash 4.4+ on this machine'), async () => {
+    const { marks, raw } = await runInShell(FAR_BASH, ['--norc', '--noprofile', '-i'],
+      [' ' + REMOTE_INSTALL_LINE, ' ' + REMOTE_INSTALL_LINE, 'true']);
+    const want = `C;${Buffer.from('true').toString('base64')};${REMOTE_MARK_TAG}`;
+    const n = marks.filter((m) => m === want).length;
+    assert.strictEqual(n, 1,
+      `a re-install stacked the hooks and double-marked the command\n--- marks ---\n${marks.join('\n')}\n--- raw ---\n${raw}`);
+  });
