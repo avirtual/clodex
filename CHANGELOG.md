@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.79.0 — 2026-09-19
+
 - An agent's `[agent:term exec]` now runs inside an open ssh session — and
   inside `sudo -i`, `su`, `docker exec`, `kubectl exec`, or a nested shell — so
   a remote box can be configured through one session instead of an `ssh` per
