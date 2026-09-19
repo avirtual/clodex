@@ -314,8 +314,8 @@ class WireProxy extends EventEmitter {
     }
 
     const spillCfg = this._agentSpill.get(agent) || null;
-    const spillEligible = !!spillCfg && this.spillEnabled() && provider === 'anthropic' && req.method === 'POST'
-      && isMessages && !sideCall && !isSubagentRole(role);
+    const spillEligible = !!spillCfg && provider === 'anthropic' && req.method === 'POST'
+      && isMessages && !sideCall && !isSubagentRole(role) && this.spillEnabled();
 
     const fwdHeaders = {};
     for (const [k, v] of Object.entries(req.headers)) {
