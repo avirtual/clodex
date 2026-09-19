@@ -16,9 +16,15 @@ a two-byte loss eats the install's `C` mark while the rest of the line still run
 
 ## armNested
 
-The release waits on a TAGGED prompt. An untagged `D;130 A` is the LOCAL shell's,
-and an implementation that accepted it would type the command into a session the
-untagged D just closed.
+The release waits on a TAGGED prompt. An untagged `D;130 A` is the LOCAL shell's.
+
+NO SILENT RELEASE AT DEPTH 1. `ABANDON_ACK_MS` means "the shell produced nothing,
+so it is idle at a prompt" only when the shell is local; one hop away it means
+"nothing has crossed the network yet", and on a link whose RTT approaches 250ms a
+release there types into a far shell about to answer the interrupt — the same
+leading-byte loss, except the truncated line runs on someone else's machine. The
+nudge and the `ABANDON_MAX_MS` cap carry it instead, which keeps the blind-write
+budget at the one write §2 allows.
 
 ## forgetRemote
 

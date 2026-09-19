@@ -62,6 +62,22 @@ An empty `running` is reachable: a C mark whose base64 payload did not decode
 holds the terminal under no name. That arm keeps the old unnamed wording, since
 an empty backtick pair reads as our bug rather than as "we do not know which".
 
+WHICH name depends on the reporting pref, because the name is the operator's own
+typing. Under `all` they have accepted that every line is disclosed, so the full
+sanitised line goes; under `asked` they declined that, and only `programOf`'s
+word does — enough for the agent to know an `ssh` holds the tab, not enough to
+leak `mysql -pS3cret`. A line the tokeniser cannot read falls back to unnamed.
+
+The remote arms. `full-screen` says nothing was typed, which is the fact that
+makes it actionable: the alt-screen gate fires BEFORE the install line, so a
+retry after the far editor exits is safe. `remote-unsupported` renders
+`res.reason` verbatim — the reason is a whole sentence ending "Nothing was run
+there.", and the catch-all's "before the command reported back" would contradict
+it in the same breath. `session-ended` carries the OUTER exit code because it is
+the only status there is. The catch-all now NAMES an unknown status rather than
+asserting the terminal went away: a wrong cause stated confidently is what sends
+an agent looking in the wrong place.
+
 ## diagLines
 
 node-pty ships its `spawn-helper` for macOS only, so the helper path, its
