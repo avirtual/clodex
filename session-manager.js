@@ -170,6 +170,8 @@ function dupIdentity(intent) {
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
+const { SPILL_VERBS } = require('./intent-spill');
+const { spillGrammarLine } = require('./ipc-prompt');
 const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
@@ -918,6 +920,12 @@ function createSessionManager(deps) {
           }
         });
       });
+      wire.on('spill', (ev) => {
+        this._shadowLog({ type: 'wire-spill', ...ev });
+        log.info('intent', `spill ${ev.agent} ${ev.verb} @spill:${ev.id} (${ev.bytes} B)`);
+      });
+      wire.on('spill-bail', (ev) => this._shadowLog({ type: 'wire-spill-bail', ...ev }));
+      wire.on('spill-skip', (ev) => this._shadowLog({ type: 'wire-spill-skip', ...ev }));
       await wire.listen();
       this._shadow = new ShadowDiff((rec) => this._shadowLog(rec));
       wire.on('turn.completed', (t) => {
@@ -1473,6 +1481,7 @@ function createSessionManager(deps) {
       const agentType = (type === 'claude') ? 'claude' : (type === 'codex') ? 'codex' : null;
       let intentSource = 'jsonl';
       let wireRouted = false;
+      let spillArmedForRecord = false;
       // Claude-arm only; stays null for codex/bash, which have no baked prompt
       // and so no refresh path. Stashed on the session below so refreshPrompt()
       // replays the SAME inputs (see _realIpcFor).
@@ -1585,10 +1594,16 @@ function createSessionManager(deps) {
             this._shadowLog({ type: 'claude-onboarding-preseeded', agent: name });
           }
           const sysFile = resolveSystemPromptFile(systemPromptFile, Array.isArray(plugins) ? plugins : null, resolvedTeam);
+          const spillArmed = !backend && getUiSettings().get().intentSpill === 'on';
+          const spillVerbs = spillArmed
+            ? [...SPILL_VERBS].filter((k) => intentEnabled(k.split('.')[0], intents))
+            : [];
+          spillArmedForRecord = spillVerbs.length > 0;
           promptRecipe = {
             extraArgs,
             intents,
             execCommands,
+            spillArmed: spillArmed && spillVerbs.length > 0,
             // Captured at spawn, exactly like `intents` beside it — refreshPrompt
             // REPLAYS this object, so a member that re-read persistence would
             // make clear/compact write different bytes than the spawn did. A
@@ -1623,6 +1638,7 @@ function createSessionManager(deps) {
                 upstreams: proxyBase
                   ? { anthropic: `${proxyBase}/agent/${proxyAgent || name}/anthropic` }
                   : null,
+                spill: spillVerbs.length ? { root: REGISTRY_DIR, verbs: spillVerbs } : null,
               });
             } catch (e) {
               console.error('wire shadow unavailable, spawning unshadowed:', e.message);
@@ -2081,6 +2097,7 @@ function createSessionManager(deps) {
         // whose absence is a distinct living default), so there is nothing to lose
         // by writing the boolean every time.
         noWire: wireOff,
+        intentSpill: spillArmedForRecord && wireRouted,
         ...(fixHost ? { fixFor: fixHost } : {}),
         denyBuiltins: Array.isArray(denyBuiltins) ? denyBuiltins : [],
         disabledTools: Array.isArray(disabledTools) ? disabledTools : [],
@@ -3254,10 +3271,11 @@ function createSessionManager(deps) {
     // separately, being the part deliberately re-resolved per refresh: ONE resolution
     // answers for the block, the append stems and the exec defs (see _teamBlockFor).
     _realIpcFor(recipe, teamBlock, team) {
+      const extraGrammar = pluginGrammarLines(recipe.intents, recipe.plugins) || [];
       const ipcPrompt = recipe.ipcDisabled
         ? ''
         : buildIpcPrompt(recipe.intents, this._resolveExecDefs(recipe.execCommands, team),
-          pluginGrammarLines(recipe.intents, recipe.plugins));
+          recipe.spillArmed ? [...extraGrammar, spillGrammarLine(REGISTRY_DIR)] : extraGrammar);
       const { cleaned, append } = mergeClaudeSystemPrompt(recipe.extraArgs, ipcPrompt, {
         appendBodies: readAppendBodies(recipe.appendPromptFiles, recipe.plugins, team),
         inlineBody: recipe.inlineBody,
