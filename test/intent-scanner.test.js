@@ -211,30 +211,36 @@ test('shadowIntentKey: remind keys on spec + body', () => {
   assert.strictEqual(shadowIntentKey('t2', a), shadowIntentKey('t2', a2));
 });
 
-test('parseIntent: notify-user captures a free-text body (no sub/target)', () => {
-  assert.deepStrictEqual(parseIntent('[agent:notify-user] blocked on which API to use'),
-    { type: 'notify-user', body: 'blocked on which API to use' });
+test('parseIntent: shout captures a free-text body (no sub/target)', () => {
+  assert.deepStrictEqual(parseIntent('[agent:shout] blocked on which API to use'),
+    { type: 'shout', body: 'blocked on which API to use' });
   // Empty body is legal at the scanner (the handler bounces it, not here).
-  assert.deepStrictEqual(parseIntent('[agent:notify-user]'),
-    { type: 'notify-user', body: '' });
-  assert.deepStrictEqual(parseIntent('[agent:notify-user] '),
-    { type: 'notify-user', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:shout]'),
+    { type: 'shout', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:shout] '),
+    { type: 'shout', body: '' });
 });
 
-test('parseIntent: notify-user body spans multiple lines and keeps brackets', () => {
+test('parseIntent: shout body spans multiple lines and keeps brackets', () => {
   // The s flag keeps multi-line text; a ] in the body stays put (no spec to
   // terminate). The manager also captures to the next col-1 intent.
-  const r = parseIntent('[agent:notify-user] need a call on [option A]\nvs option B');
-  assert.strictEqual(r.type, 'notify-user');
+  const r = parseIntent('[agent:shout] need a call on [option A]\nvs option B');
+  assert.strictEqual(r.type, 'shout');
   assert.strictEqual(r.body, 'need a call on [option A]\nvs option B');
 });
 
-test('shadowIntentKey: notify-user keys on body (no head discriminator)', () => {
-  const a = parseIntent('[agent:notify-user] decide on the schema');
-  assert.strictEqual(shadowIntentKey('t3', a), 't3|notify-user||decide on the schema');
-  const b = parseIntent('[agent:notify-user] decide on the schema');
+test('t1016 flag day: the old `notify-user` spelling does not parse at all', () => {
+  assert.strictEqual(parseIntent('[agent:notify-user] blocked on the schema'), null,
+    'no alias, on purpose: a seat still carrying the old grammar takes the near-miss bounce and is told, where an alias would keep both spellings alive forever');
+  assert.strictEqual(parseIntent('[agent:notify-user]'), null);
+});
+
+test('shadowIntentKey: shout keys on body (no head discriminator)', () => {
+  const a = parseIntent('[agent:shout] decide on the schema');
+  assert.strictEqual(shadowIntentKey('t3', a), 't3|shout||decide on the schema');
+  const b = parseIntent('[agent:shout] decide on the schema');
   assert.strictEqual(shadowIntentKey('t3', a), shadowIntentKey('t3', b));
-  const c = parseIntent('[agent:notify-user] something else');
+  const c = parseIntent('[agent:shout] something else');
   assert.notStrictEqual(shadowIntentKey('t3', a), shadowIntentKey('t3', c));
 });
 

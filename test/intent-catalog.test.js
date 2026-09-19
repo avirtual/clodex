@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount } = require('../intent-catalog');
+const { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, LEGACY_INTENT_KEYS, canonicalIntentKey, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount } = require('../intent-catalog');
 
 const ALL_TYPES = GATEABLE_INTENTS.map((i) => i.type);
 // The ordinary (non-privileged) types — what "absent = all-enabled" covers, and
@@ -13,7 +13,7 @@ const NONPRIV_TYPES = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.t
 test('catalog: the 13 gateable types in grammar order (privileged last), name excluded', () => {
   assert.deepStrictEqual(
     GATEABLE_INTENTS.map((i) => i.type),
-    ['dm', 'who', 'context', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'notify-user', 'term', 'reboot', 'team-create'],
+    ['dm', 'who', 'context', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout', 'term', 'reboot', 'team-create'],
   );
   // The privileged set, and the reason it is worth naming all three: `term`
   // runs arbitrary shell in the operator's own login shell, so a seat
@@ -38,7 +38,7 @@ test('intentEnabled: absent list → ordinary intents enabled, PRIVILEGED off (T
   for (const list of [undefined, null, 'not-an-array', 42, {}]) {
     assert.strictEqual(intentEnabled('dm', list), true);
     assert.strictEqual(intentEnabled('exec', list), true);
-    assert.strictEqual(intentEnabled('notify-user', list), true);
+    assert.strictEqual(intentEnabled('shout', list), true);
     // reboot does NOT ride the all-enabled default — it must be granted explicitly.
     assert.strictEqual(intentEnabled('reboot', list), false);
   }
@@ -80,7 +80,7 @@ test('intentEnabled: present list → membership for gateable types', () => {
   assert.strictEqual(intentEnabled('remind', list), true);
   assert.strictEqual(intentEnabled('who', list), false);
   assert.strictEqual(intentEnabled('spawn', list), false);
-  assert.strictEqual(intentEnabled('notify-user', list), false);
+  assert.strictEqual(intentEnabled('shout', list), false);
 });
 
 test('intentEnabled: empty array is a real value → everything gated', () => {
@@ -177,4 +177,37 @@ test('intentsAllowlistFromChecked: stray/non-gateable values are dropped, not co
     intentsAllowlistFromChecked(['dm', 'name', 'bogus']),
     ['dm'], // strays dropped
   );
+});
+
+test('intentEnabled: a stored allowlist still spelling notify-user can still shout', () => {
+  const legacy = ['dm', 'who', 'notify-user', 'exec'];
+  assert.strictEqual(intentEnabled('shout', legacy), true,
+    'every seat and team template gated before the t1016 flag day holds the RETIRED spelling; '
+    + 'pure membership would strip the inbox channel from all of them, since this one predicate '
+    + 'decides the grammar row, the spill arming and the fire-time gate alike');
+  assert.strictEqual(intentEnabled('shout', ['notify-user']), true);
+  assert.strictEqual(intentEnabled('spawn', legacy), false,
+    'the migration is on STORED CAPABILITY DATA only — a legacy entry grants that one verb, not a wildcard');
+  assert.strictEqual(intentEnabled('shout', ['dm', 'who']), false);
+  assert.strictEqual(intentEnabled('shout', []), false);
+  assert.strictEqual(GATEABLE_TYPES.has('notify-user'), false,
+    'the retired spelling never became a second real catalog key — it is not an alias, and '
+    + '[agent:notify-user] still fails to parse');
+  assert.deepStrictEqual([...LEGACY_INTENT_KEYS], [['notify-user', 'shout']]);
+  assert.strictEqual(canonicalIntentKey('notify-user'), 'shout');
+  assert.strictEqual(canonicalIntentKey('dm'), 'dm');
+});
+
+test('deniedIntentCount: a legacy notify-user entry counts as the shout grant, not a denial', () => {
+  assert.strictEqual(
+    deniedIntentCount(NONPRIV_TYPES.map((t) => (t === 'shout' ? 'notify-user' : t))),
+    0,
+    'otherwise the templates chip shows a phantom lock on every pre-flag-day seat and the operator repairs a gate nobody set',
+  );
+});
+
+test('intentsAllowlistFromChecked: the retired spelling is NOT re-persisted on save', () => {
+  assert.deepStrictEqual(intentsAllowlistFromChecked(['dm', 'notify-user']), ['dm'],
+    'the checklist collects catalog types, so a stray legacy token drops like any other stray — '
+    + 'an edit-save is what finally rewrites the stored list to the new key');
 });

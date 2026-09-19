@@ -1,5 +1,5 @@
 // inbox-drawer.js — the operator inbox: a left-side drawer listing notes agents
-// raised via [agent:notify-user] when blocked on Bogdan's decision, plus the
+// raised via [agent:shout] when blocked on Bogdan's decision, plus the
 // always-visible unread badge in the sidebar footer. Newest-first; a note is
 // marked read when its row is clicked; a "Mark all read" button clears the lot.
 //

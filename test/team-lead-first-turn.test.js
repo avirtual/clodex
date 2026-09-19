@@ -44,7 +44,7 @@ test('the section names the runner, the brief file and the notify channel', () =
   const body = section(read());
   assert.ok(body.includes('scripts/run-tests.js'), 'names scripts/run-tests.js');
   assert.ok(body.includes('team-project'), 'names team-project');
-  assert.ok(body.includes('notify-user'), 'names notify-user');
+  assert.ok(body.includes('shout'), 'names shout');
 });
 
 test('the TAKEOVER arm names the files it must read before asking anything', () => {

@@ -43,7 +43,7 @@ test('the checkbox exists in the prefs markup with the wording the ticket fixed'
   assert.match(html, /keeps the first line and a one-line <code>@spill:&lt;id&gt;<\/code> pointer in their place/,
     'the operator reading the terminal sees a title beside the pointer, and the hint must say so');
   assert.match(html, /Ticket specs, operator notes and context handoffs over 800 bytes/,
-    'the hint ENUMERATES what spills, so leaving notify-user out of it is a false promise about the inbox');
+    'the hint ENUMERATES what spills, so leaving shout out of it is a false promise about the inbox');
 });
 
 test('renderer.js holds the checkbox element, so the two expressions have something to read', () => {

@@ -200,7 +200,7 @@ test('createTeam with kit:default writes the default hand template, whole', () =
     proxy: null,
     agents: ['clodex-redproof', 'clodex-locate'],
     execCommands: ['clodex-team', 'clodex-monitor', 'clodex-run-tests'],
-    intents: ['dm', 'who', 'context', 'memory', 'file', 'resend', 'exec', 'remind', 'notify-user'],
+    intents: ['dm', 'who', 'context', 'memory', 'file', 'resend', 'exec', 'remind', 'shout'],
     denyBuiltins: [],
     disabledTools: libTools,
     disabledSkills: ['*'],

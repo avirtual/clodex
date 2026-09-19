@@ -6,7 +6,7 @@ const {
 const { cleanLine } = require('../intent-scanner');
 const { titleLine, ticketTitle } = require('../tickets-store');
 
-const HEAD_RE = /^\[agent:([a-z][a-z-]*)(?:\s+([a-z-]+))?\b([^\]]*)\]/;
+const HEAD_RE = /^\[agent:([a-z]+)(?:\s+([a-z-]+))?\b([^\]]*)\]/;
 const TERMINATOR = '[agent:end]';
 const OPEN = '[agent:';
 

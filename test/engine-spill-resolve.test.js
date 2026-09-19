@@ -85,7 +85,7 @@ test('a pointer at the END of a titled line still resolves, so the terminal link
   const { engine, registryDir } = mkEngine();
   const id = writeSpill(registryDir, SEAT, 'x'.repeat(900));
 
-  const res = engine.resolveFilePath(SEAT, `S-E intent-spill: notify-user joins @spill:${id}`, null);
+  const res = engine.resolveFilePath(SEAT, `S-E intent-spill: shout joins @spill:${id}`, null);
   assert.strictEqual(res.ok, true, res.error);
   assert.strictEqual(res.path, spillPathFor(registryDir, SEAT, id),
     'the renderer hands main the pointer token, but a peek of the whole row must land on the same file');

@@ -22,7 +22,7 @@
     "resend",
     "exec",
     "remind",
-    "notify-user"
+    "shout"
   ],
   "denyBuiltins": [],
   "disabledTools": [

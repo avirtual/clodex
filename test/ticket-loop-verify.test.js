@@ -5463,3 +5463,86 @@ test('t975: a verdict on a ticket with no rounds appends one rather than throwin
   assert.strictEqual(t.rounds[0].reportedBy, null);
   assert.strictEqual(t.rounds[0].reportedAt, null);
 });
+
+test('t1016: an ordinary done injects NOTHING back to the closer', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  f.injected.length = 0;
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
+
+  assert.strictEqual(f.one().state, 'done', 'ENTER: the close landed, so the reply arm was reached');
+  assert.deepStrictEqual(f.injected, [],
+    'the closer already knows it closed, and the ack prescribed nothing it could act on: measured across hands 1010-1015, each answered it with a full turn of prose nobody reads');
+});
+
+test('t1016: the silence is only the REPLY — the report, the broadcast and the loop all still fire', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  f.gated.length = 0; f.broadcasts.length = 0;
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
+  for (let i = 0; i < 40 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+
+  assert.strictEqual(f.gated.filter((g) => g.target === 'lead' && /shipped it/.test(g.body)).length, 1,
+    'the report still reaches the lead — the silence is toward the SENDER only, and an early return would take this with it');
+  const tasks = f.broadcasts.filter((b) => b.channel === 'ipc-message' && b.msg.type === 'task');
+  assert.strictEqual(tasks.length, 1, 'the drawer still sees the close');
+  assert.strictEqual(tasks[0].msg.body, 'ticket t1 done');
+  assert.strictEqual(f.created.length, 1, 'and the loop still reached a reviewer spawn — without it no verdict is ever produced');
+  assert.strictEqual(f.one().loopStep, 'review');
+});
+
+test('t1016: a LOOP-INELIGIBLE close still replies — no review is coming, and the closer must know', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, ticketOver: { worktree: null } });
+  f.injected.length = 0;
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
+
+  const said = f.injected.join('\n');
+  assert.match(said, /closed \(done\)/, 'the one non-failure arm that keeps its reply: this ticket never enters the loop');
+  assert.match(said, /closed WITHOUT review: the ticket records no branch/,
+    'and it says WHY nothing follows — a seat waiting for a verdict here waits forever, and nothing else tells it');
+});
+
+test('t1016: a RE-ENTRY still gets its receipt, naming the check that had held it', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+
+  await strand(f);
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' });
+
+  const said = f.injected.join('\n');
+  assert.match(said, /re-verifying \(was held at "verify: commits-on-branch"\)/,
+    'not the ordinary path: nothing else on any channel says the held checks are running again, and t345 r2 pins the step-naming');
+});
+
+test('t1016: every FAILURE close still bounces — silence must never read as success', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  f.seat('stranger');
+
+  const says = (fn) => { f.injected.length = 0; fn(); return f.injected.join('\n'); };
+
+  assert.match(
+    says(() => f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: '  ' })),
+    /done needs a report/, 'a bodyless done bounces');
+  assert.match(
+    says(() => f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 'tNOPE', who: null, body: 'r' })),
+    /no ticket tNOPE/, 'an unknown id bounces');
+  assert.match(
+    says(() => f.m._handleTask(f.m.sessions.get('stranger'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'r' })),
+    /only ticket t1's assignee/, 'a seat that is neither the assignee nor the lead bounces');
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
+  f.tstore.save(f.team.root, [{ ...f.one(), loopStep: null }]);
+  assert.match(
+    says(() => f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'again' })),
+    /is done, not open/, 'a ticket that is not open bounces — four guards, one property: a hand told nothing concludes it finished');
+});

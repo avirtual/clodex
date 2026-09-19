@@ -554,7 +554,7 @@ function createPluginHostEngine(deps) {
     try {
       if (typeof broadcast === 'function') broadcast('ipc-message', { type: 'notify', from, to: 'user', body: preview });
     } catch {}
-    logFor(pluginId).info(`notify-user: ${rec.id}`);
+    logFor(pluginId).info(`shout: ${rec.id}`);
     return { ok: true, id: rec.id };
   }
 

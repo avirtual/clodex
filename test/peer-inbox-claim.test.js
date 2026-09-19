@@ -3,7 +3,7 @@
 // reach the desktop operator, and the box is the wrong place for it to sit.
 //
 // THE DEFECT THIS CLOSES. A box seat runs the same session-manager as the
-// desktop, so its `[agent:notify-user]` stores the note in the BOX's own
+// desktop, so its `[agent:shout]` stores the note in the BOX's own
 // notifications.json and the box broadcasts an `inbox` SSE event. Nobody reads a
 // box inbox — it is headless, and the desktop's PeerConnection handled only
 // `sessions`, `activity` and `dm-mail` on that feed. The note was dropped on the

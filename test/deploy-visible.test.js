@@ -393,7 +393,7 @@ function mkArchiveFixture() {
 test('a DEPLOY OK note from a fixFor session archives it exactly once, by name', async () => {
   const { m, archived, added } = mkArchiveFixture();
   const session = { name: 'fix-desktop', agentType: 'claude', workspaceId: 'ws-1', fixFor: 'bogdan@example' };
-  m._handleNotifyUserIntent(session, 'DEPLOY OK bogdan@example\napp=clodex version=5.77.0 host=box');
+  m._handleShoutIntent(session, 'DEPLOY OK bogdan@example\napp=clodex version=5.77.0 host=box');
   await Promise.resolve();
 
   assert.deepStrictEqual(archived, ['fix-desktop'], 'archived once, with its own name');
@@ -403,7 +403,7 @@ test('a DEPLOY OK note from a fixFor session archives it exactly once, by name',
 test('the DEPLOY OK archive sends the retired signal FIRST, so the row survives as archived', async () => {
   const { m, sent, order } = mkArchiveFixture();
   const session = { name: 'fix-desktop', agentType: 'claude', workspaceId: 'ws-1', fixFor: 'bogdan@example' };
-  m._handleNotifyUserIntent(session, 'DEPLOY OK bogdan@example\napp=clodex version=5.77.0 host=box');
+  m._handleShoutIntent(session, 'DEPLOY OK bogdan@example\napp=clodex version=5.77.0 host=box');
   await Promise.resolve();
 
   const retired = sent.filter((s) => s.channel === 'session:context-action');
@@ -419,7 +419,7 @@ test('the DEPLOY OK archive sends the retired signal FIRST, so the row survives 
 
 test('the same DEPLOY OK body from a session without fixFor archives nothing', async () => {
   const { m, archived, added, sent } = mkArchiveFixture();
-  m._handleNotifyUserIntent({ name: 'ordinary', agentType: 'claude', workspaceId: 'ws-1' },
+  m._handleShoutIntent({ name: 'ordinary', agentType: 'claude', workspaceId: 'ws-1' },
     'DEPLOY OK bogdan@example\napp=clodex version=5.77.0 host=box');
   await Promise.resolve();
 
@@ -437,7 +437,7 @@ test('DEPLOY FAILED, or any other note, leaves the fix seat running', async () =
     'deploy ok bogdan@example',
   ]) {
     const { m, archived, added, sent } = mkArchiveFixture();
-    m._handleNotifyUserIntent({ name: 'fix-desktop', agentType: 'claude', workspaceId: 'ws-1', fixFor: 'bogdan@example' }, body);
+    m._handleShoutIntent({ name: 'fix-desktop', agentType: 'claude', workspaceId: 'ws-1', fixFor: 'bogdan@example' }, body);
     await Promise.resolve();
     assert.deepStrictEqual(archived, [], `must not archive on: ${JSON.stringify(body)}`);
     assert.strictEqual(added.length, 1, 'the note is still delivered');

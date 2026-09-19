@@ -1,7 +1,7 @@
 // Intent Scanner (port of wb-wrap/scanner.py). Turns one line of assistant
 // output into a structured `[agent:…]` intent (or null). Pure string work — no
 // Electron, no main.js state — so the grammar (dm/who/name/context/memory/
-// spawn/file/resend/exec/remind/notify-user/team-review/review-done/task/reboot
+// spawn/file/resend/exec/remind/shout/team-review/review-done/task/reboot
 // + the `\[agent:` escape) is unit-testable in isolation.
 // Seam: plain named functions on raw strings; the caller owns column-1
 // anchoring by feeding it a single line at a time.
@@ -61,7 +61,7 @@ function parseIntent(rawLine) {
   if (escMatch) return { type: 'escape', text: escMatch[1] };
 
   // `end` = explicit body TERMINATOR, the only intent that IS nothing: it
-  // closes an open multi-line body capture (dm/memory/remind/notify-user/…)
+  // closes an open multi-line body capture (dm/memory/remind/shout/…)
   // and is then discarded — _extractIntents never emits it and _handleIntent
   // never sees it. Exists because free-text bodies otherwise run to the next
   // intent or end of turn, so an agent could not write operator prose AFTER

@@ -28,7 +28,7 @@ divergence silently dispatches a different spec than the transcript shows.
    pops them (`while (body.length && !body[body.length-1].trim()) body.pop()`).
    The head-line fragment is never popped — it is the scanner's `firstBody`,
    which the pop loop cannot reach.
-4. `HEAD_RE` admits `notify-user`; `ticketTitle` leads a multi-line body's pointer.
+4. `ticketTitle` leads a multi-line body's pointer.
 
 Every test_spill.py delimitation case is still ported in
 `test/wire-spill-filter.test.js`, row 6 rewritten to the trimmed expectation.

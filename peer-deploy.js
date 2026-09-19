@@ -152,7 +152,7 @@ function buildDeployFixBriefing({ sshHost, port, label, logText, docsDir } = {})
     ``,
     `NODE: if the box has no Node at all, or one older than 20, install a USER-LOCAL Node 22 under ~/.local (download the tarball, unpack it to ~/.local/node, symlink node/npm/npx into ~/.local/bin) — do NOT sudo and do NOT use the distro package manager for Node; the service unit's PATH already leads with ~/.local/bin.`,
     ``,
-    `REPORT BACK WITH [agent:notify-user] when you finish, either way — the operator is not watching this session. The note's FIRST LINE is exact, and Clodex reads it: on success it starts with \`DEPLOY OK ${host}\` and the rest of that note quotes the hello JSON's app, version and host fields and tells them to click Test & Set Up again; on failure it starts with \`DEPLOY FAILED ${host}\` followed by what you found and what is still blocking. Clodex archives this session once it sees a DEPLOY OK note, so send it only when the hello curl really answered.`,
+    `REPORT BACK WITH [agent:shout] when you finish, either way — the operator is not watching this session. The note's FIRST LINE is exact, and Clodex reads it: on success it starts with \`DEPLOY OK ${host}\` and the rest of that note quotes the hello JSON's app, version and host fields and tells them to click Test & Set Up again; on failure it starts with \`DEPLOY FAILED ${host}\` followed by what you found and what is still blocking. Clodex archives this session once it sees a DEPLOY OK note, so send it only when the hello curl really answered.`,
   ].join('\n');
 }
 

@@ -19,7 +19,7 @@
     "resend",
     "exec",
     "remind",
-    "notify-user",
+    "shout",
     "spawn"
   ],
   "denyBuiltins": [],

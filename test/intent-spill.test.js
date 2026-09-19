@@ -140,7 +140,7 @@ test('pointerOf: the body is the pointer alone, or ONE line whose tail is the po
 
 test('pointerOf: a title before the pointer is accepted and contributes nothing but its length', () => {
   const id = 'a'.repeat(16);
-  assert.equal(pointerOf(`S-E intent-spill: notify-user joins @spill:${id}`), id,
+  assert.equal(pointerOf(`S-E intent-spill: shout joins @spill:${id}`), id,
     'the tee emits the title so the transcript still says WHICH spec was filed');
   assert.equal(pointerOf(`x @spill:${id}`), id);
   assert.equal(pointerOf(`${'t'.repeat(80)} @spill:${id}`), id, '80 chars of title is the cap');
@@ -157,11 +157,11 @@ test('pointerOf: a title before the pointer is accepted and contributes nothing 
 
 test('the verb set is the dotted key, and only the seven listed verbs', () => {
   assert.equal(verbKeyOf({ type: 'task', sub: 'add' }), 'task.add');
-  assert.equal(verbKeyOf({ type: 'notify-user' }), 'notify-user');
+  assert.equal(verbKeyOf({ type: 'shout' }), 'shout');
   for (const v of [{ type: 'task', sub: 'add' }, { type: 'task', sub: 'respec' },
     { type: 'task', sub: 'reject' }, { type: 'context', sub: 'compact' },
     { type: 'context', sub: 'clear' }, { type: 'context', sub: 'reload' },
-    { type: 'notify-user' }]) {
+    { type: 'shout' }]) {
     assert.equal(isSpillVerb(v), true, JSON.stringify(v));
   }
   assert.equal(isSpillVerb({ type: 'memory', sub: 'remember' }), false,
@@ -171,7 +171,7 @@ test('the verb set is the dotted key, and only the seven listed verbs', () => {
   assert.equal(isSpillVerb({ type: 'task', sub: 'done' }), false,
     'a report is read by the lead out of the ticket, not re-read by the hand');
   assert.deepEqual([...SPILL_VERBS].sort(), ['context.clear', 'context.compact', 'context.reload',
-    'notify-user', 'task.add', 'task.reject', 'task.respec']);
+    'shout', 'task.add', 'task.reject', 'task.respec']);
   assert.equal(validAgent('t42.fix'), true);
   assert.equal(validAgent('..'), false);
 });

@@ -31,7 +31,7 @@ const GATEABLE_INTENTS = [
   { type: 'resend', label: 'Escalate a parked dm (resend)' },
   { type: 'exec', label: 'Run exec commands (exec)' },
   { type: 'remind', label: 'Durable self-reminders (remind)' },
-  { type: 'notify-user', label: 'Operator inbox notes (notify-user)' },
+  { type: 'shout', label: 'Operator inbox notes (shout)' },
   // Privileged (Task 27) — see PRIVILEGED_INTENTS. Gateable like the rest, but
   // OFF unless explicitly granted (absence does NOT enable it), and an
   // agent-initiated grant is stripped at the mint/wire boundary.
@@ -52,6 +52,12 @@ const GATEABLE_INTENTS = [
 // peer holding a capability nobody granted it.
 const PRIVILEGED_INTENTS = new Set(['reboot', 'term', 'team-create']);
 
+const LEGACY_INTENT_KEYS = new Map([['notify-user', 'shout']]);
+
+function canonicalIntentKey(type) {
+  return LEGACY_INTENT_KEYS.get(type) || type;
+}
+
 // The bare type set, for O(1) "is this gateable at all?" checks.
 const GATEABLE_TYPES = new Set(GATEABLE_INTENTS.map((i) => i.type));
 
@@ -66,12 +72,18 @@ const GATEABLE_TYPES = new Set(GATEABLE_INTENTS.map((i) => i.type));
 //   * PRIVILEGED type with an absent list → FALSE. This INVERTS the living default
 //     for reboot & friends: "absent = all-enabled" covers the ordinary verbs, but a
 //     privileged capability must be granted explicitly, never ridden in by default.
-//   * otherwise → membership: TRUE iff the list contains the type. An empty array
-//     is a real value meaning "everything gated" (no intents), distinct from absent.
+//   * otherwise → membership over LEGACY_INTENT_KEYS-canonicalised entries (a
+//     retired spelling still grants). `[]` is real ("all gated"), not absent.
+function canonicalIntentList(intentsList) {
+  if (!Array.isArray(intentsList)) return intentsList;
+  if (!intentsList.some((t) => LEGACY_INTENT_KEYS.has(t))) return intentsList;
+  return intentsList.map(canonicalIntentKey);
+}
+
 function intentEnabled(type, intentsList) {
   if (!GATEABLE_TYPES.has(type)) return true;
   if (!Array.isArray(intentsList)) return !PRIVILEGED_INTENTS.has(type);
-  return intentsList.includes(type);
+  return canonicalIntentList(intentsList).includes(type);
 }
 
 // Strip privileged intents from a REQUESTED allowlist (Task 27). Applied at every
@@ -123,4 +135,4 @@ function deniedIntentCount(intentsList) {
   ).length;
 }
 
-module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount };
+module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, LEGACY_INTENT_KEYS, canonicalIntentKey, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount };

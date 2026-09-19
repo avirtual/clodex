@@ -193,7 +193,7 @@ test('buildDeployFixBriefing names the box, the hello check, the log, and the pl
   // The GitHub repo is ALWAYS named as the backstop (packaged app.asar isn't
   // readable by an external CLI, so absolute on-disk paths can be dead).
   assert.match(b, /github\.com\/avirtual\/clodex/);
-  assert.match(b, /\[agent:notify-user\]/);
+  assert.match(b, /\[agent:shout\]/);
   assert.match(b, /click Test & Set Up again/);
   assert.match(b, /USER-LOCAL Node 22 under ~\/\.local/);
   assert.match(b, /do NOT sudo/);

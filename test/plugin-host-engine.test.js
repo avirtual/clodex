@@ -1254,7 +1254,7 @@ test('host.notify.user refuses an empty body, an oversized one, and an absent st
   assert.deepStrictEqual(host.notify.user({ body: over }),
     { ok: false, error: 'note too long (>16KB) — keep it a summary, not a payload' });
   // The boundary itself passes — an off-by-one here would silently narrow the
-  // limit the doc promises is the same one [agent:notify-user] enforces.
+  // limit the doc promises is the same one [agent:shout] enforces.
   assert.strictEqual(host.notify.user({ body: 'y'.repeat(16 * 1024) }).ok, true);
   assert.strictEqual(notes.length, 1, 'ENTER: only the in-limit note was stored');
 
