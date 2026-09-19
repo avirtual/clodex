@@ -299,8 +299,14 @@ test('the spilled file equals the body the REAL intent scanner would have produc
     assert.equal(onDisk, scannerBody(original),
       `@cs=${cs}: S-B substitutes this file for the body the UNSPILLED path would have carried, so `
       + 'a one-byte divergence from the repo\'s own delimiter silently dispatches a different spec');
-    assert.equal(seen, `Here you go.\n[agent:task add t42 start] @spill:${id}\n[agent:end]\nDone.\n`,
-      `@cs=${cs}: the client sees the head line, the pointer, the terminator and the prose around them`);
+    assert.equal(seen,
+      `Here you go.\n[agent:task add t42 start] first line of the spec @spill:${id}\n[agent:end]\nDone.\n`,
+      `@cs=${cs}: the client sees the head line, the body's first line, the pointer, the terminator and `
+      + 'the prose around them');
+    assert.equal(SCANNER._extractIntents(seen)[0].body.replace(/^\n/, ''),
+      `first line of the spec @spill:${id}`,
+      `@cs=${cs}: and the REWRITTEN text re-parses to one intent whose body is the pointer line — `
+      + 'a title the scanner mangled would reach _handleIntent as a spec nobody wrote');
   }
 });
 

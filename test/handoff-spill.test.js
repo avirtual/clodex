@@ -171,6 +171,28 @@ test('when the tee already spilled the body, the pointer names THAT file and it 
   assert.strictEqual(after.ino, before.ino, 'and not replaced by a fresh inode either');
 });
 
+test('a clear whose body arrived as a TITLED pointer hands off the FILE body, not the pointer line', async () => {
+  const h = mkH();
+  const s = seat(h);
+  const id = writeSpill(h.root, 'a', BIG);
+  assert.ok(id, 'ENTER: the tee-written file exists, or the resolve below proves nothing');
+
+  await h.m._handleIntent('a', {
+    type: 'context', sub: 'clear', body: `pick up the thread: @spill:${id}`,
+  });
+  assert.strictEqual(s._postClearContinuation, BIG,
+    'the chokepoint resolved before the continuation was stored — nothing downstream re-reads a pointer');
+
+  h.m._firePostClearContinuation(s);
+  await tick();
+
+  const p = spillPathFor(h.root, 'a', id);
+  assert.deepStrictEqual(h.injected.map((i) => i.text).slice(1),
+    [`Continue from your handoff: @${p} `],
+    'a clear is amnesiac: the whole briefing is what survives, so the title alone would be the handoff');
+  assert.strictEqual(fs.readFileSync(p, 'utf8'), BIG);
+});
+
 test('the handoff file survives the run dir, which is the only reason the fresh process can read it', async () => {
   const h = mkH();
   const s = seat(h);

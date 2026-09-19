@@ -91,6 +91,22 @@ test('paths and pointers on one row both link, so adding the scan drops neither'
     ['renderer.js:71', `@spill:${ID}`]);
 });
 
+test('a pointer at the end of a TITLED head line links over the pointer alone', async () => {
+  const row = `[agent:task add t42] S-E intent-spill: notify-user joins @spill:${ID}`;
+  const { provider, calls } = mkProvider(row, { ok: true, path: '/reg/spill/hand-one/x.md' });
+  const links = linksOf(provider);
+  assert.strictEqual(links.length, 1, 'the title itself is not a link');
+  assert.deepStrictEqual(links[0].range, {
+    start: { x: row.indexOf('@spill:') + 1, y: 1 },
+    end: { x: row.length, y: 1 },
+  });
+
+  await links[0].activate();
+  assert.deepStrictEqual(calls.resolve, [['hand-one', `@spill:${ID}`, null]],
+    'the title rides in the transcript only — main is asked about the pointer, as before the title existed');
+  assert.deepStrictEqual(calls.peek, [['hand-one', '/reg/spill/hand-one/x.md', 'file', null]]);
+});
+
 test('a row with neither a path nor a pointer still offers no links', () => {
   const { provider } = mkProvider('just ordinary output', { ok: true, path: '/x' });
   assert.strictEqual(linksOf(provider), undefined);

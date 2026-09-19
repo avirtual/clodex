@@ -81,6 +81,26 @@ test('a malformed pointer falls through to the ordinary displayed-path resolver'
     'adding the spill branch must not shadow the resolver it sits in front of');
 });
 
+test('a pointer at the END of a titled line still resolves, so the terminal link survives the title', () => {
+  const { engine, registryDir } = mkEngine();
+  const id = writeSpill(registryDir, SEAT, 'x'.repeat(900));
+
+  const res = engine.resolveFilePath(SEAT, `S-E intent-spill: notify-user joins @spill:${id}`, null);
+  assert.strictEqual(res.ok, true, res.error);
+  assert.strictEqual(res.path, spillPathFor(registryDir, SEAT, id),
+    'the renderer hands main the pointer token, but a peek of the whole row must land on the same file');
+});
+
+test('a title over 80 chars is not a pointer line, so the row falls through to the path resolver', () => {
+  const { engine, registryDir } = mkEngine();
+  const id = writeSpill(registryDir, SEAT, 'x'.repeat(900));
+
+  const res = engine.resolveFilePath(SEAT, `${'t'.repeat(81)} @spill:${id}`, null);
+  assert.strictEqual(res.ok, false);
+  assert.notStrictEqual(res.error, 'spill file not found',
+    'the widening stops exactly where the tee stops emitting, so no ordinary prose row is claimed');
+});
+
 test('a well-formed pointer with nothing behind it reports the spill miss, not a path miss', () => {
   const { engine } = mkEngine();
   const res = engine.resolveFilePath(SEAT, '@spill:0123456789abcdef', null);
