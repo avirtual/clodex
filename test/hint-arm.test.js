@@ -2085,6 +2085,36 @@ test('common: the retriever reads a SET, not an agent', () => {
   assert.strictEqual(hit.source, 'common', 'the source label distinguishes it from the agent store');
 });
 
+function mkUnits(texts, source = 'a') {
+  return texts.map((text, i) => ({
+    id: `mem-fixture-${String(i).padStart(4, '0')}`,
+    scope: '',
+    learned_at: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+    source,
+    pinned: false,
+    operatorPinned: false,
+    tags: '',
+    body: text,
+  }));
+}
+
+test('the in-memory corpus builder carries the same unit shape store.list() returns', () => {
+  const store = mkStore([{ text: 'cadence screenplay' }]).store;
+  const real = store.list('a');
+  assert.strictEqual(real.length, 1, 'ENTER: one written unit, or there is no shape to compare');
+  assert.deepStrictEqual(
+    Object.keys(mkUnits(['cadence screenplay'])[0]).sort(),
+    Object.keys(real[0]).sort(),
+    'mkUnits stands in for a real store in the composite subject: a key the store grows and this '
+    + 'does not is a corpus the retriever reads differently from the shipped one',
+  );
+  assert.deepStrictEqual(
+    unitsAsRecords(mkUnits(['cadence screenplay'])).map((r) => ({ ...r, id: '', learned_at: '' })),
+    unitsAsRecords(real).map((r) => ({ ...r, id: '', learned_at: '' })),
+    'and the records rank() actually sees are identical once the two minted-at fields are set aside',
+  );
+});
+
 test('composite: pooling lets a big corpus SILENCE a small one, merging does not', () => {
   // The measured regression this retriever exists to prevent: concatenating a
   // 1650-unit store into a 570-unit one raised the floor log(1+N) 6.35 -> 7.71
@@ -2095,24 +2125,25 @@ test('composite: pooling lets a big corpus SILENCE a small one, merging does not
   // bar rises past it. Sized to that — 2 terms at df=1 in memory (score 7.48,
   // floor 3.74) which reach df=41 once common is pooled (score 6.14, floor
   // 6.74). A fixture that merely adds records does NOT reproduce it.
-  const memStore = mkStore([{ text: 'cadence screenplay' }]).store;
+  const memTexts = ['cadence screenplay'];
   for (let i = 0; i < 40; i += 1) {
-    memStore.remember('a', { text: `Memory filler ${i} about archive rotation, tab dimming and worktree removal.` });
+    memTexts.push(`Memory filler ${i} about archive rotation, tab dimming and worktree removal.`);
   }
-  const filler = [];
-  for (let i = 0; i < 760; i += 1) filler.push({ text: `Shared ${i}: deployment topology, cluster sizing, billing envelope.` });
-  for (let i = 0; i < 40; i += 1) filler.push({ text: `Common ${i} cadence screenplay noted.` });
-  const commonStore = mkCommonStore(filler);
+  const commonTexts = [];
+  for (let i = 0; i < 760; i += 1) commonTexts.push(`Shared ${i}: deployment topology, cluster sizing, billing envelope.`);
+  for (let i = 0; i < 40; i += 1) commonTexts.push(`Common ${i} cadence screenplay noted.`);
+  const memUnits = mkUnits(memTexts);
+  const commonUnits = mkUnits(commonTexts, 'chat-extract');
 
   const draft = 'cadence screenplay';
-  const memR = createMemoryRetriever({ listUnits: (a) => memStore.list(a) });
-  const comR = createCommonRetriever({ listUnits: (s) => commonStore.list(s) });
+  const memR = createMemoryRetriever({ listUnits: (a) => (a === 'a' ? memUnits : []) });
+  const comR = createCommonRetriever({ listUnits: (s) => (s === 'chat-extract' ? commonUnits : []) });
 
   const alone = memR.retrieve(draft, { agent: 'a', limit: 1 });
   assert.strictEqual(alone.length, 1, 'the memory hit arms against its own store');
 
   const pooled = rank(
-    unitsAsRecords(memStore.list('a')).concat(unitsAsRecords(commonStore.list('chat-extract'), 'common')),
+    unitsAsRecords(memUnits).concat(unitsAsRecords(commonUnits, 'common')),
     draft, { limit: 1 },
   );
   assert.strictEqual(pooled.length, 0, 'pooled, the bigger corpus raises the floor past that hit');

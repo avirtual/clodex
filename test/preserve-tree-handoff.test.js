@@ -65,6 +65,16 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 // accidentally make the two agree by string luck.
 const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
 
+let seededTemplate = null;
+function reuseSeed(registryDir) {
+  if (seededTemplate) fs.cpSync(seededTemplate, registryDir, { recursive: true });
+}
+function captureSeed(registryDir) {
+  if (seededTemplate) return;
+  seededTemplate = path.join(real(mkTmpRoot('clx-t491-seed-')), 'clodex-home');
+  fs.cpSync(registryDir, seededTemplate, { recursive: true });
+}
+
 // A real repo with one real commit — `git worktree add` refuses to fork from a
 // repo with no commits — plus the team manifest the dispatch resolves against.
 // Two worktree-dispatch roles: the collision needs the re-dispatch to mint a
@@ -80,6 +90,7 @@ function mkWorld() {
   git('config', 'user.name', 't491');
   git('commit', '-q', '--allow-empty', '-m', 'base');
 
+  reuseSeed(registryDir);
   fs.mkdirSync(path.join(registryDir, 'teams', 'team'), { recursive: true });
   fs.writeFileSync(path.join(registryDir, 'teams', 'team', 'team.json'), JSON.stringify({
     name: 'team', root: repo, lead: 'lead', version: 3,
@@ -95,6 +106,7 @@ function mkWorld() {
     seams: { registryDir },
     log: { info() {}, warn() {}, error() {}, debug() {} },
   });
+  captureSeed(registryDir);
   const P = eng.stores.persistence;
   const m = eng.manager;
   const tstore = createTicketsStore({ clodexHome: registryDir });

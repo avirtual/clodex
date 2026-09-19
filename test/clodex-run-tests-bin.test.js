@@ -883,6 +883,7 @@ test('scope own: a root-level policy file is no subject — every branch edits C
       },
       onBranch: ({ put: p, git: g }) => {
         p('CHANGELOG.md', '## Unreleased\n- a bullet\n');
+        p('docs/guide.md', '# guide\n\nmore\n');
         g('commit', '-aqm', 'branch work');
       },
     });
@@ -893,30 +894,13 @@ test('scope own: a root-level policy file is no subject — every branch edits C
       'this repo\'s ticket flow REQUIRES a CHANGELOG.md edit, so a bare root-level name matched '
       + 'literally puts every test that mentions it — two of them heavy real-git suites — into '
       + 'every scoped run, which is the cost the scope exists to avoid');
-    assertDigest(r.digest,
-      `[${path.basename(root)}] own: 1/1 green (${WALL}) — ${OWN_SCANNERS.length} files: `
-      + `0 changed, 0 by subject, ${OWN_SCANNERS.length} scanners`);
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
-
-  const nested = mkRoot();
-  try {
-    mkBranchRepo(nested, {
-      extraOnMaster: {
-        'docs/guide.md': '# guide\n',
-        'test/mentions-guide.test.js': `${EMPTY_TEST}const G = 'docs/guide.md';\n`,
-      },
-      onBranch: ({ put: p, git: g }) => {
-        p('docs/guide.md', '# guide\n\nmore\n');
-        g('commit', '-aqm', 'branch work');
-      },
-    });
-    run(nested, '{"scope":"own"}');
-    const rec = stubRecord(nested);
-    assert.ok(rec, 'ENTER: the runner never ran');
     assert.ok(rec.argv.includes('test/mentions-guide.test.js'),
       'a non-.js subject inside a directory is still selected by its literal path: the exclusion '
       + 'is root-level bare names, not every non-.js file');
-  } finally { fs.rmSync(nested, { recursive: true, force: true }); }
+    assertDigest(r.digest,
+      `[${path.basename(root)}] own: 1/1 green (${WALL}) — ${OWN_SCANNERS.length + 1} files: `
+      + `0 changed, 1 by subject, ${OWN_SCANNERS.length} scanners`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('scope own: a subject reached only through a quoted relative path outside require()', () => {
