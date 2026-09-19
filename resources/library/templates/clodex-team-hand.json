@@ -23,7 +23,7 @@
     "resend",
     "exec",
     "remind",
-    "notify-user"
+    "shout"
   ],
   "denyBuiltins": [
     "claude-code-guide",

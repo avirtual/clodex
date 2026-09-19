@@ -31,7 +31,7 @@ const GATEABLE_INTENTS = [
   { type: 'resend', label: 'Escalate a parked dm (resend)' },
   { type: 'exec', label: 'Run exec commands (exec)' },
   { type: 'remind', label: 'Durable self-reminders (remind)' },
-  { type: 'notify-user', label: 'Operator inbox notes (notify-user)' },
+  { type: 'shout', label: 'Operator inbox notes (shout)' },
   // Privileged (Task 27) — see PRIVILEGED_INTENTS. Gateable like the rest, but
   // OFF unless explicitly granted (absence does NOT enable it), and an
   // agent-initiated grant is stripped at the mint/wire boundary.

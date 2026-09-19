@@ -1,5 +1,5 @@
 // body-preview.js — one-line preview of a stored intent body, for readouts
-// (remind list, memory list, the memory digest index, notify-user).
+// (remind list, memory list, the memory digest index, shout).
 //
 // WHY THIS IS NOT `body.split('\n')[0]`. The greedy body assembly in
 // session-manager.js (`_scanJsonlText`'s intent loop) joins the intent line's

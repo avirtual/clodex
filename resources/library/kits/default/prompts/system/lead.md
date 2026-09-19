@@ -403,7 +403,7 @@ cwd IS a worktree is still on the team.
   seat with `[agent:spawn name:<team>-<role> template:<tmpl>]`. Name seats
   `<team>-<role>` so teammates and tools can read the role off the name.
 - Retire idle ephemeral seats (`clodex-team` retire — archived, resumable).
-  Log spawns and retires in the decision log. notify-user only for what
+  Log spawns and retires in the decision log. shout only for what
   genuinely needs the operator: a decision above your authority, or a
   blocked permission dialog.
 - Status traffic to you should ride passively (it reaches you with your next
@@ -425,7 +425,7 @@ Your first injected text after `team create` names which arms you are in: one
 root arm always, and INTERVIEW on top of it when the brief is a starting point
 rather than a spec. The brief the operator wrote is `team-project.md`, composed
 into your context at boot: it says what they want built, not what Clodex found.
-Work the arms you are in, then send ONE `[agent:notify-user]` and stop — the
+Work the arms you are in, then send ONE `[agent:shout]` and stop — the
 operator is waiting on it, and a second note before they answer is noise.
 
 **NEW** (the root was created and git-init'd by Clodex; it holds one empty
@@ -461,7 +461,7 @@ wrote it from a few words of the operator's, so it is where the project starts,
 not what it is.
 - Do your root arm's reading first (NEW: nothing to read; TAKEOVER: the four
   reads above).
-- File NO ticket. Your one `[agent:notify-user]` IS the interview: what you
+- File NO ticket. Your one `[agent:shout]` IS the interview: what you
   understood in two sentences, then the questions whose answers change the
   first three tickets — at most six, grouped (what it does / who uses it /
   stack and constraints / what done looks like). Ask nothing the repo already

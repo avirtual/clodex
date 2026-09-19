@@ -105,12 +105,12 @@ test('a pointer that is not the tail of a ONE-line body is prose, titled or not'
   }
 });
 
-test('notify-user is a spill verb: the operator inbox gets the FILE body, never the pointer', async () => {
+test('shout is a spill verb: the operator inbox gets the FILE body, never the pointer', async () => {
   const h = mkH();
   const id = writeSpill(h.root, 'lead', BIG);
 
   await h.m._handleIntent('lead', {
-    type: 'notify-user', body: `spec line one @spill:${id}`,
+    type: 'shout', body: `spec line one @spill:${id}`,
   });
 
   assert.deepStrictEqual(h.inbox.map((r) => r.body), [BIG],
@@ -121,7 +121,7 @@ test('notify-user is a spill verb: the operator inbox gets the FILE body, never 
     'nothing bounced back at the seat: the body was there, it just arrived as a pointer');
 });
 
-test('every spill verb resolves: task add/respec/reject, notify-user and context compact/clear/reload', async () => {
+test('every spill verb resolves: task add/respec/reject, shout and context compact/clear/reload', async () => {
   for (const [type, sub] of [['task', 'add'], ['task', 'respec'], ['task', 'reject']]) {
     const h = mkH();
     const id = writeSpill(h.root, 'lead', BIG);
@@ -137,8 +137,8 @@ test('every spill verb resolves: task add/respec/reject, notify-user and context
   }
   const h = mkH();
   const id = writeSpill(h.root, 'lead', BIG);
-  await h.m._handleIntent('lead', { type: 'notify-user', body: `@spill:${id}` });
-  assert.deepStrictEqual(h.inbox.map((r) => r.body), [BIG], 'notify-user resolved');
+  await h.m._handleIntent('lead', { type: 'shout', body: `@spill:${id}` });
+  assert.deepStrictEqual(h.inbox.map((r) => r.body), [BIG], 'shout resolved');
 });
 
 test('memory remember and task done are not spill verbs, so a pointer in one is the text it is', async () => {

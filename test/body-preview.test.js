@@ -31,7 +31,7 @@
 //   * memory list / the digest index — immune, and pinned as such below. The
 //     body is trimmed THREE times before any preview sees it (the intent handler
 //     before `remember`, `remember` itself, and `parseMemoryUnit` on every read).
-//   * notify-user — immune, trimmed in the handler before the store.
+//   * shout — immune, trimmed in the handler before the store.
 //
 // Those immunity subjects are not padding: the trims are load-bearing for a
 // property nothing else states, and a refactor dropping one would silently
@@ -380,15 +380,15 @@ test('the digest INDEX LINE previews the first real line of an untrimmed body', 
     'the id must not be followed straight by the age — that is the blank-preview row');
 });
 
-// ── site 4: notify-user — immune, and the degradation the ticket asked about ─
+// ── site 4: shout — immune, and the degradation the ticket asked about ─
 
-test('notify-user trims before the store, so its OS preview is immune', () => {
+test('shout trims before the store, so its OS preview is immune', () => {
   const f = mkFixture();
   try {
-    const body = f.assemble('[agent:notify-user]\nfirst real line\nsecond line');
-    assert.strictEqual(body, ASSEMBLED, 'ENTER: notify-user is greedy and produced the defect shape');
+    const body = f.assemble('[agent:shout]\nfirst real line\nsecond line');
+    assert.strictEqual(body, ASSEMBLED, 'ENTER: shout is greedy and produced the defect shape');
 
-    f.m._handleNotifyUserIntent(f.session, body);
+    f.m._handleShoutIntent(f.session, body);
 
     // ENTER: the note reached the inbox with both lines.
     const notes = f.notifications.list();

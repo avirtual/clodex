@@ -26,7 +26,7 @@
 // fails only at runtime and only for browser clients. Widening the contract
 // means widening `handleFor` to match, in the same change.
 
-const NOTIFY_USER_MAX_BYTES = 16 * 1024;
+const SHOUT_MAX_BYTES = 16 * 1024;
 
 const REBOOT_MIN_INTERVAL = 5 * 60 * 1000;
 
@@ -416,7 +416,7 @@ const DENIED_SPILL_CAP = 3;
 function deniedBodyDisposition(intent) {
   if (!intent || !intent.body) return { how: 'none', label: null };
   switch (intent.type) {
-    case 'dm': case 'notify-user': case 'remind':
+    case 'dm': case 'shout': case 'remind':
       return { how: 'spill', label: intent.type };
     case 'memory':
       // `remember` is the only sub with a greedy body; a future one that gained a
@@ -4895,9 +4895,9 @@ function createSessionManager(deps) {
           this._handleRemindIntent(session, intent.spec, intent.body || '');
           break;
         }
-        case 'notify-user': {
+        case 'shout': {
           if (!session || !session.agentType) break;
-          this._handleNotifyUserIntent(session, intent.body || '');
+          this._handleShoutIntent(session, intent.body || '');
           break;
         }
         case 'team-review': {
@@ -4955,8 +4955,8 @@ function createSessionManager(deps) {
       }
     }
 
-    _handleNotifyUserIntent(session, body) {
-      const reply = (msg) => this._injectText(session, `[agent:notify-user] ${msg}`, { parkable: true });
+    _handleShoutIntent(session, body) {
+      const reply = (msg) => this._injectText(session, `[agent:shout] ${msg}`, { parkable: true });
       const who = session.name;
       const store = getNotifications && getNotifications();
       if (!store) { reply('the operator inbox is unavailable'); return; }
@@ -4966,14 +4966,14 @@ function createSessionManager(deps) {
         reply('empty note — say what decision you need from the operator');
         return;
       }
-      if (Buffer.byteLength(text, 'utf8') > NOTIFY_USER_MAX_BYTES) {
-        reply(`note too long (>${Math.round(NOTIFY_USER_MAX_BYTES / 1024)}KB) — keep it a summary, not a payload`);
+      if (Buffer.byteLength(text, 'utf8') > SHOUT_MAX_BYTES) {
+        reply(`note too long (>${Math.round(SHOUT_MAX_BYTES / 1024)}KB) — keep it a summary, not a payload`);
         return;
       }
 
       const rec = store.add({ from: who, workspaceId: session.workspaceId || null, body: text });
       this._raiseNote(who, text);
-      log.info('intent', `notify-user by ${who}: ${rec.id}`);
+      log.info('intent', `shout by ${who}: ${rec.id}`);
 
       if (session.fixFor && text.split('\n')[0].startsWith('DEPLOY OK ')) {
         this._sendToSession(who, 'session:context-action', { action: 'retired', name: who, disposition: 'archive' });

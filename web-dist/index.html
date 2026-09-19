@@ -8470,7 +8470,7 @@ body.web-frontend #sidebar-header {
     </div>
   </div>
 
-  <!-- Operator inbox drawer. Notes agents raised via [agent:notify-user] when
+  <!-- Operator inbox drawer. Notes agents raised via [agent:shout] when
        blocked on Bogdan's decision. Newest-first, read-on-click; no editor. -->
   <div id="inbox-drawer" class="hidden">
     <div id="inbox-header">
@@ -8480,7 +8480,7 @@ body.web-frontend #sidebar-header {
     </div>
     <div id="inbox-list"></div>
     <div id="inbox-empty" class="hint">
-      No notes yet. Agents raise one with <code>[agent:notify-user]</code> when they're blocked on a decision only you can make — it lands here and fires a notification.
+      No notes yet. Agents raise one with <code>[agent:shout]</code> when they're blocked on a decision only you can make — it lands here and fires a notification.
     </div>
   </div>
 
@@ -27529,7 +27529,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         { type: "resend", label: "Escalate a parked dm (resend)" },
         { type: "exec", label: "Run exec commands (exec)" },
         { type: "remind", label: "Durable self-reminders (remind)" },
-        { type: "notify-user", label: "Operator inbox notes (notify-user)" },
+        { type: "shout", label: "Operator inbox notes (shout)" },
         // Privileged (Task 27) — see PRIVILEGED_INTENTS. Gateable like the rest, but
         // OFF unless explicitly granted (absence does NOT enable it), and an
         // agent-initiated grant is stripped at the mint/wire boundary.
@@ -27621,9 +27621,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const m = cleaned.match(/^\[agent:remind\s+([^\]]+)\]\s*(.*)/s);
         return m ? { type: "remind", spec: m[1].trim(), body: m[2] } : null;
       }
-      function parseNotifyUser(cleaned) {
-        const m = cleaned.match(/^\[agent:notify-user\]\s*(.*)/s);
-        return m ? { type: "notify-user", body: m[1] } : null;
+      function parseShout(cleaned) {
+        const m = cleaned.match(/^\[agent:shout\]\s*(.*)/s);
+        return m ? { type: "shout", body: m[1] } : null;
       }
       function parseTeamReview(cleaned) {
         const m = cleaned.match(/^\[agent:team-review\]\s*(.*)/s);
@@ -27762,7 +27762,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         { type: "term", parse: parseTerm, bodyMode: NONE },
         { type: "exec", parse: parseExec, bodyMode: () => "json" },
         { type: "remind", parse: parseRemind, bodyMode: GREEDY },
-        { type: "notify-user", parse: parseNotifyUser, bodyMode: GREEDY },
+        { type: "shout", parse: parseShout, bodyMode: GREEDY },
         { type: "team-review", parse: parseTeamReview, bodyMode: GREEDY },
         { type: "review-done", parse: parseReviewDone, bodyMode: GREEDY },
         { type: "reboot", parse: parseReboot, bodyMode: NONE },
@@ -27953,7 +27953,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         "file",
         "exec",
         "remind",
-        "notify-user",
+        "shout",
         "team-review",
         "review-done",
         "task",
@@ -37389,7 +37389,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
           ``,
           `NODE: if the box has no Node at all, or one older than 20, install a USER-LOCAL Node 22 under ~/.local (download the tarball, unpack it to ~/.local/node, symlink node/npm/npx into ~/.local/bin) \u2014 do NOT sudo and do NOT use the distro package manager for Node; the service unit's PATH already leads with ~/.local/bin.`,
           ``,
-          `REPORT BACK WITH [agent:notify-user] when you finish, either way \u2014 the operator is not watching this session. The note's FIRST LINE is exact, and Clodex reads it: on success it starts with \`DEPLOY OK ${host}\` and the rest of that note quotes the hello JSON's app, version and host fields and tells them to click Test & Set Up again; on failure it starts with \`DEPLOY FAILED ${host}\` followed by what you found and what is still blocking. Clodex archives this session once it sees a DEPLOY OK note, so send it only when the hello curl really answered.`
+          `REPORT BACK WITH [agent:shout] when you finish, either way \u2014 the operator is not watching this session. The note's FIRST LINE is exact, and Clodex reads it: on success it starts with \`DEPLOY OK ${host}\` and the rest of that note quotes the hello JSON's app, version and host fields and tells them to click Test & Set Up again; on failure it starts with \`DEPLOY FAILED ${host}\` followed by what you found and what is still blocking. Clodex archives this session once it sees a DEPLOY OK note, so send it only when the hello curl really answered.`
         ].join("\n");
       }
       function shSingleQuote(v) {

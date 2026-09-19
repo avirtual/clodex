@@ -85,9 +85,9 @@ function parseRemind(cleaned) {
   return m ? { type: 'remind', spec: m[1].trim(), body: m[2] } : null;
 }
 
-function parseNotifyUser(cleaned) {
-  const m = cleaned.match(/^\[agent:notify-user\]\s*(.*)/s);
-  return m ? { type: 'notify-user', body: m[1] } : null;
+function parseShout(cleaned) {
+  const m = cleaned.match(/^\[agent:shout\]\s*(.*)/s);
+  return m ? { type: 'shout', body: m[1] } : null;
 }
 
 function parseTeamReview(cleaned) {
@@ -245,7 +245,7 @@ const CORE_ROWS = [
   { type: 'term', parse: parseTerm, bodyMode: NONE },
   { type: 'exec', parse: parseExec, bodyMode: () => 'json' },
   { type: 'remind', parse: parseRemind, bodyMode: GREEDY },
-  { type: 'notify-user', parse: parseNotifyUser, bodyMode: GREEDY },
+  { type: 'shout', parse: parseShout, bodyMode: GREEDY },
   { type: 'team-review', parse: parseTeamReview, bodyMode: GREEDY },
   { type: 'review-done', parse: parseReviewDone, bodyMode: GREEDY },
   { type: 'reboot', parse: parseReboot, bodyMode: NONE },
@@ -495,7 +495,7 @@ function pluginGrammarLines(intentsList, plugins) {
 // `end` stays last.
 const CORE_VALID_INTENT_NAMES = [
   'dm', 'resend', 'who', 'name', 'context', 'memory', 'spawn', 'file', 'exec',
-  'remind', 'notify-user', 'team-review', 'review-done', 'task', 'term', 'reboot',
+  'remind', 'shout', 'team-review', 'review-done', 'task', 'term', 'reboot',
 ];
 
 // Feeds the near-miss bounce, which is user-visible text: naming a verb here

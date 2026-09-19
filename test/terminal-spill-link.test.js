@@ -92,7 +92,7 @@ test('paths and pointers on one row both link, so adding the scan drops neither'
 });
 
 test('a pointer at the end of a TITLED head line links over the pointer alone', async () => {
-  const row = `[agent:task add t42] S-E intent-spill: notify-user joins @spill:${ID}`;
+  const row = `[agent:task add t42] S-E intent-spill: shout joins @spill:${ID}`;
   const { provider, calls } = mkProvider(row, { ok: true, path: '/reg/spill/hand-one/x.md' });
   const links = linksOf(provider);
   assert.strictEqual(links.length, 1, 'the title itself is not a link');

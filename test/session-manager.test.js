@@ -1107,8 +1107,8 @@ test('t170 the spill budget is per (seat, verb) and the overflow bounce admits t
 
   // A different verb has its own budget. A seat can be denied several capabilities
   // and one must not consume another's allowance.
-  await f.m._handleIntent('a', { type: 'notify-user', body: 'an operator note' });
-  assert.strictEqual(f.spills.length, 4, 'notify-user spills despite dm being exhausted');
+  await f.m._handleIntent('a', { type: 'shout', body: 'an operator note' });
+  assert.strictEqual(f.spills.length, 4, 'shout spills despite dm being exhausted');
   assert.match(f.recovered(), /an operator note/);
 });
 
@@ -1488,7 +1488,7 @@ test('near-miss bounce: the WHOLE valid-intents string is pinned, byte for byte'
     // this seat was granted. Omitting a granted verb here is the defect that put
     // term in it — a seat that typos `[agent:term exex]` would be handed a list
     // missing the one verb it can actually use.
-    + 'Valid intents: dm, resend, who, name, context, memory, spawn, file, exec, remind, notify-user, team-review, review-done, task, term, reboot, end. '
+    + 'Valid intents: dm, resend, who, name, context, memory, spawn, file, exec, remind, shout, team-review, review-done, task, term, reboot, end. '
     + 'To quote an intent literally, put it in a ``` code fence or escape it as \\[agent:…].',
   );
 });
@@ -12981,16 +12981,24 @@ test('remind: multi-line reminder text is captured greedily (allow-set), stops a
   assert.strictEqual(both[0].body, 'reassess');
 });
 
-test('notify-user: multi-line note is captured greedily (allow-set), stops at next intent', () => {
+test('shout: multi-line note is captured greedily (allow-set), stops at next intent', () => {
   const m = mkExtract();
   // Free-text body spans lines (greedy like dm).
-  const r = m._extractIntents('[agent:notify-user] blocked on the schema\nneed a decision')[0];
-  assert.strictEqual(r.type, 'notify-user');
+  const r = m._extractIntents('[agent:shout] blocked on the schema\nneed a decision')[0];
+  assert.strictEqual(r.type, 'shout');
   assert.strictEqual(r.body, 'blocked on the schema\nneed a decision');
   // A following col-1 intent ends the note and fires as its own intent.
-  const both = m._extractIntents('[agent:notify-user] decide please\n[agent:who]');
-  assert.deepStrictEqual(both.map((x) => x.type), ['notify-user', 'who']);
+  const both = m._extractIntents('[agent:shout] decide please\n[agent:who]');
+  assert.deepStrictEqual(both.map((x) => x.type), ['shout', 'who']);
   assert.strictEqual(both[0].body, 'decide please');
+});
+
+test('t1016 flag day: `[agent:notify-user]` is an UNKNOWN intent, bouncing like any other', () => {
+  const m = mkExtract();
+  const r = m._extractIntents('[agent:notify-user] blocked on the schema');
+  assert.deepStrictEqual(r.map((x) => x.type), ['unknown'],
+    'no alias was kept, so the retired spelling takes the near-miss path rather than a handler, and its body does not survive as a note either');
+  assert.match(r[0].text, /\[agent:notify-user\]/, 'and the bounce quotes what was typed');
 });
 
 // --- _handleRemindIntent — [agent:remind <spec>] text -----------------------
@@ -13075,10 +13083,10 @@ test('_handleRemindIntent: scheduler add failure (past at) bounces with its erro
   assert.match(replies.at(-1), /already in the past/);
 });
 
-// --- _handleNotifyUserIntent — [agent:notify-user] text ---------------------
+// --- _handleShoutIntent — [agent:shout] text ---------------------
 // The operator-inbox seam: add the note to the store, fire notifyOS UNCONDITION-
 // ally, broadcast one `notify` ipc line. Tone matches exec/remind — SILENT on a
-// clean add, LOUD `[agent:notify-user] …` bounce on an empty body or an over-cap
+// clean add, LOUD `[agent:shout] …` bounce on an empty body or an over-cap
 // (16KB) body. A fake store captures adds; a notifyOS spy captures the toast.
 function mkNotify() {
   const added = [], toasts = [], ipc = [];
@@ -13097,9 +13105,9 @@ function mkNotify() {
   return { m, session, added, toasts, ipc, replies };
 }
 
-test('_handleNotifyUserIntent: valid note is silent, stored, toasted, and broadcast', () => {
+test('_handleShoutIntent: valid note is silent, stored, toasted, and broadcast', () => {
   const { m, session, added, toasts, ipc, replies } = mkNotify();
-  m._handleNotifyUserIntent(session, 'blocked on which API to use');
+  m._handleShoutIntent(session, 'blocked on which API to use');
   assert.strictEqual(replies.length, 0); // silent success
   assert.deepStrictEqual(added, [{ from: 't1', workspaceId: 'ws-1', body: 'blocked on which API to use' }]);
   // OS notification fires unconditionally (title = sender, body = first line).
@@ -13112,41 +13120,41 @@ test('_handleNotifyUserIntent: valid note is silent, stored, toasted, and broadc
   assert.strictEqual(ipc.at(-1).to, 'user');
 });
 
-test('_handleNotifyUserIntent: an empty (or whitespace-only) body bounces loudly, no store write', () => {
+test('_handleShoutIntent: an empty (or whitespace-only) body bounces loudly, no store write', () => {
   const { m, session, added, toasts, replies } = mkNotify();
-  m._handleNotifyUserIntent(session, '   \n  ');
+  m._handleShoutIntent(session, '   \n  ');
   assert.strictEqual(added.length, 0);
   assert.strictEqual(toasts.length, 0);
-  assert.match(replies.at(-1), /^\[agent:notify-user\] /);
+  assert.match(replies.at(-1), /^\[agent:shout\] /);
   assert.match(replies.at(-1), /empty note/);
 });
 
-test('_handleNotifyUserIntent: an over-16KB body bounces with a keep-it-a-summary nudge', () => {
+test('_handleShoutIntent: an over-16KB body bounces with a keep-it-a-summary nudge', () => {
   const { m, session, added, replies } = mkNotify();
   const huge = 'x'.repeat(16 * 1024 + 1);
-  m._handleNotifyUserIntent(session, huge);
+  m._handleShoutIntent(session, huge);
   assert.strictEqual(added.length, 0); // never stored
-  assert.match(replies.at(-1), /^\[agent:notify-user\] /);
+  assert.match(replies.at(-1), /^\[agent:shout\] /);
   assert.match(replies.at(-1), /keep it a summary/);
 });
 
-test('_handleNotifyUserIntent: toast + broadcast use the FIRST line only (multi-line note)', () => {
+test('_handleShoutIntent: toast + broadcast use the FIRST line only (multi-line note)', () => {
   const { m, session, added, toasts, ipc } = mkNotify();
-  m._handleNotifyUserIntent(session, 'need a call on option A\nvs option B\ndetails here');
+  m._handleShoutIntent(session, 'need a call on option A\nvs option B\ndetails here');
   // Full body is stored; toast/broadcast preview only the first line.
   assert.strictEqual(added[0].body, 'need a call on option A\nvs option B\ndetails here');
   assert.strictEqual(toasts[0].body, 'need a call on option A');
   assert.strictEqual(ipc.at(-1).body, 'need a call on option A');
 });
 
-test('_handleNotifyUserIntent: missing workspaceId stores null (does not crash)', () => {
+test('_handleShoutIntent: missing workspaceId stores null (does not crash)', () => {
   const { m, added } = mkNotify();
-  m._handleNotifyUserIntent({ name: 't2', agentType: 'claude' }, 'no workspace on this session');
+  m._handleShoutIntent({ name: 't2', agentType: 'claude' }, 'no workspace on this session');
   assert.strictEqual(added[0].workspaceId, null);
 });
 
 // --- _deliverClaimedInbox — a box seat's note, claimed onto THIS inbox -------
-// A seat inside a sandbox box raises [agent:notify-user] against the BOX's
+// A seat inside a sandbox box raises [agent:shout] against the BOX's
 // session-manager, so the note lands in the box's own store — headless, unread
 // by anyone. peer-client claims it over the same wire it claims box dms on and
 // hands it here. What this seam owes the operator is exactly what a local note
@@ -18256,11 +18264,11 @@ test('task done on a spawn ticket: no loop step, no reviewer, done stays termina
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
-test('task done on a worktree ticket: the reply carries no WITHOUT-review clause', async () => {
+test('task done on a worktree ticket: the closer is told NOTHING — no ack at all', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);
   const replies = [];
-  f.m._injectText = (_s, text) => { replies.push(text); };
+  f.m._injectText = (s, text) => { replies.push({ to: s && s.name, text }); };
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   f.m._runTicketLoop = () => {};
   f.seat('lead');
@@ -18275,11 +18283,11 @@ test('task done on a worktree ticket: the reply carries no WITHOUT-review clause
   assert.ok(t.worktree && t.worktree.branch && t.worktree.baseSha,
     'ENTER: the ticket records a branch and a fork point, which is what the gate reads');
   assert.strictEqual(t.loopStep, 'verify',
-    'ENTER: so the close entered the loop — without this the absence below is the ineligible case again');
-  const reply = replies.find((r) => /closed \(done\)/.test(r));
-  assert.ok(reply, `ENTER: the close reply must have landed, got: ${JSON.stringify(replies)}`);
-  assert.ok(!/WITHOUT review/.test(reply),
-    'a review IS coming, so the clause must not appear — a lead told otherwise would accept unreviewed work');
+    'ENTER: so the close entered the loop — without this the silence below is the ineligible case, which DOES still speak');
+  assert.strictEqual(t.state, 'done', 'ENTER: and the close landed, so the arm was reached');
+  const back = replies.filter((r) => r.to === 'team-hand-1');
+  assert.deepStrictEqual(back, [],
+    'the closer knows it closed, and a reply that does not exist cannot claim a review was skipped when one is coming — which subsumes the WITHOUT-review clause this subject used to pin');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 

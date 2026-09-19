@@ -315,7 +315,7 @@ bundle), whose packaged form is the Docker image under
   (ANSI/decorator stripping, the `\[agent:…]` escape).
 - **body-preview.js** — one-line preview of a stored intent body, for the four
   readouts that show one (remind list, memory list, the memory digest index,
-  notify-user). Picks the first NON-EMPTY line: a greedy body written on the
+  shout). Picks the first NON-EMPTY line: a greedy body written on the
   lines following its intent line is stored with a leading newline, so
   `split('\n')[0]` renders intact data as blank.
 - **intent-registry.js** — the single verb table three consumers read (the
@@ -849,7 +849,7 @@ accept teardown removes.
   `proxy-lab/test_spill.py` is the conformance suite): constants, verb set,
   id/agent charsets, the content-addressed writer, the confined resolver and the
   `@spill:<id>` pointer parser, so the tee, the resolver and the injection half
-  cannot drift. The listed verbs are task add/respec/reject, notify-user and
+  cannot drift. The listed verbs are task add/respec/reject, shout and
   context compact/clear/reload; the transcript keeps the body's first line
   beside the pointer, capped by `tickets-store.ticketTitle`, and resolution
   discards it — the file is authoritative.
@@ -1052,7 +1052,7 @@ Own state + DOM, `init*(deps)`:
   shifts. Maps the token's string offset to a buffer COLUMN by walking cell
   widths — a wide char is two cells and one index, so `indexOf` as a column
   misplaces the span. Disposed BEFORE its terminal.
-- **inbox-drawer.js** — operator inbox for `[agent:notify-user]` notes +
+- **inbox-drawer.js** — operator inbox for `[agent:shout]` notes +
   the sidebar-footer unread badge; no core state, but takes `openFilePeek`
   and `showToast` by injection so a link in a note lands in the same peek
   modal and toasts the same miss a path click in the terminal does.

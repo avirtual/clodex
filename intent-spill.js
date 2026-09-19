@@ -13,7 +13,7 @@ const SPILL_MAX_BYTES = 262144;
 const SPILL_VERBS = new Set([
   'task.add', 'task.respec', 'task.reject',
   'context.compact', 'context.clear', 'context.reload',
-  'notify-user',
+  'shout',
 ]);
 
 const ID_RE = /^[0-9a-f]{16}$/;

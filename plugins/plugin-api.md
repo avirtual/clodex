@@ -1148,7 +1148,7 @@ telemetry yet, or if anything goes wrong. Treat `null` as the normal case.
 ### `host.notify.user`
 
 `user({ title, body })` raises a note in the operator's inbox — the same inbox an
-agent reaches by typing `[agent:notify-user]`, and the only way an engine half
+agent reaches by typing `[agent:shout]`, and the only way an engine half
 can reach the operator when no session is involved (a webhook arriving from
 outside, a background poll finding something). It fires an OS notification and
 shows in the inbox until read.
@@ -1160,7 +1160,7 @@ note's first line followed by a blank line; omit it and the body stands alone.
 
 Returns `{ ok: true, id }` with the stored note's id, or `{ ok: false, error }`.
 It never throws. It refuses an empty body, a body over 16 KiB (the same limit
-`[agent:notify-user]` enforces), and a call made after your plugin was
+`[agent:shout]` enforces), and a call made after your plugin was
 deactivated. If the inbox store is unavailable the refusal says so.
 
 This interrupts a human. Keep status and progress out of it: raise a note when

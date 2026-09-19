@@ -131,7 +131,7 @@ test('a narrow seat (dm+who+name only) documents exactly those intents', () => {
     // COMMUNICATE example, so probe the file GRAMMAR block's absence via its
     // `open` line, which lives only in GRAMMAR_LINES.
     '[agent:context compact]', '[agent:memory list]', '[agent:spawn name:X',
-    '[agent:file open PATH]', '[agent:remind every', '[agent:notify-user]',
+    '[agent:file open PATH]', '[agent:remind every', '[agent:shout]',
   ]) {
     assert.ok(!p.includes(line), `${line} should be gated out`);
   }
@@ -412,8 +412,8 @@ test('the input-kind prose states both directions and its escape hatches, in the
   const HUMAN = /human input — marked `\[agent:from user\]`, or carrying no marker at all \(your operator typing into the CLI\) — ends the turn with prose they read/;
   const MACHINE = /machine input — anything carrying another `\[agent:…\]` marker[^\n]*ends with the intents the situation calls for and nothing after them/;
   const UNCERTAIN = /When you cannot tell, it is human/;
-  const PROSE_NOT_WORK = /The rule governs PROSE, not work[^\n]*`notify-user`/;
-  const WAITING = /A machine-input turn holding what your operator is waiting for — a result they asked for, or work no intent carries — still ends in a terse line\./;
+  const PROSE_NOT_WORK = /The rule governs PROSE, not work[^\n]*`shout`/;
+  const ENDS = /A machine-input turn ends with its intents and nothing after: no acknowledgement, no restatement of the message, no status line — the operator reads the board, the log and their inbox, not your end-turn prose\. Something they must know goes through `shout`; a decision goes to your log\. After `task done` the turn is over\./;
   const ORDER = /ends the turn with prose they read: intents FIRST, prose last, so a forgotten `\[agent:end\]` swallows that prose into the message and they see none of it;/;
   const RULES_AGREE = /anything meant for your operator goes last, after an `\[agent:end\]`\./;
   for (const src of [IPC_PROMPT, buildIpcPrompt([])]) {
@@ -421,16 +421,24 @@ test('the input-kind prose states both directions and its escape hatches, in the
     assert.ok(MACHINE.test(src), 'machine input gets intents and nothing after them');
     assert.ok(UNCERTAIN.test(src), 'the uncertain case resolves toward speaking, not silence');
     assert.ok(PROSE_NOT_WORK.test(src),
-      'the rule is scoped to prose, naming notify-user as the escalation it must not swallow — unbracketed, since this preamble reaches gated seats whose prompt must not carry an [agent:notify-user] line');
+      'the rule is scoped to prose, naming shout as the escalation it must not swallow — unbracketed, since this preamble reaches gated seats whose prompt must not carry an [agent:shout] line');
     assert.ok(/a ticket its full report/.test(src),
       'the clause that keeps a hand from thinning its report into the intent');
-    assert.ok(WAITING.test(src),
-      'the hatch covers a result the operator asked for, not only a turn that carries no intent — an async answer arrives machine-marked');
+    assert.ok(ENDS.test(src),
+      'the machine-input turn ends at its intents, and the clause names where an operator-facing fact goes instead');
     assert.ok(ORDER.test(src),
       'human-input turns state the reading order and the greedy-body cost it raises');
     assert.ok(RULES_AGREE.test(src),
       'the greedy-body RULE agrees: prose-last is the single placement, not one of two options');
   }
+});
+
+test('t1016: the superseded "terse line" hatch is gone from BOTH copies of the paragraph', () => {
+  const TERSE = /still ends in a terse line/;
+  assert.ok(!TERSE.test(IPC_PROMPT),
+    'the clause lives twice, and every presence assertion above accepts a match in either source — so only an ABSENCE pin catches a replacement applied to one copy');
+  assert.ok(!TERSE.test(buildIpcPrompt([])), 'nor does the assembled prompt for a fully-gated seat, which is the copy such a seat receives');
+  assert.ok(!TERSE.test(buildIpcPrompt(null)), 'nor the ungated one');
 });
 
 // The generalisation of the bug, and the reason this is a test rather than a

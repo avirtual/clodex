@@ -93,7 +93,7 @@ keystroke.
   type/config; see sessions.md §5).
 - **Multi-line bodies** are captured in `_extractIntents`, not the scanner:
   a body runs from the intent line to the next column-1 real intent or end
-  of turn (applies to dm, memory remember, remind, notify-user, context
+  of turn (applies to dm, memory remember, remind, shout, context
   compact/reload).
 - **Fenced code blocks are quotes** (`fencedLines`, pure leaf in the
   scanner): a line inside a ```/~~~ fence is literal text at every level of
@@ -325,7 +325,7 @@ announced in hello — in that order, case-insensitively, through the one
 - Accepted asymmetries: a park on the mailbox leg sends the remote sender
   no notice; the claim endpoint is origin-unauthenticated (tunnel-trust,
   same posture as control acquisition).
-- **`[agent:notify-user]` from a box seat** rides the same pull: the note
+- **`[agent:shout]` from a box seat** rides the same pull: the note
   lands in the BOX's inbox, and the desktop claims it onto its own inbox as
   `<seat>@<origin>` (toast and badge included), removing it from the box —
   see [peering.md](peering.md) for the `inbox: 'claim'` mark that gates it.

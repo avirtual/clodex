@@ -13,7 +13,7 @@ const { pointerOf } = require('../intent-spill');
 
 const BIG = 'z'.repeat(900);
 const SMALL = 'y'.repeat(50);
-const VERBS = ['task.add', 'task.respec', 'context.compact', 'notify-user'];
+const VERBS = ['task.add', 'task.respec', 'context.compact', 'shout'];
 const SIZES = [1, 3, 7, 17, 64, 1e6];
 
 let ROOT = null;
@@ -82,13 +82,13 @@ test('row 5: the file is the body exactly, and the id is its sha', () => {
 });
 
 test('the pointer line keeps the body\'s first line, so the transcript still says which spec it was', () => {
-  const body = `S-E intent-spill: notify-user joins the spilled verbs\n${BIG}\nlast`;
+  const body = `S-E intent-spill: shout joins the spilled verbs\n${BIG}\nlast`;
   const T = `before\n[agent:task add t42 start] ${body}\n[agent:end]\nafter\n`;
   const outs = SIZES.map((cs) => run(T, { cs }).out);
   assert.equal(new Set(outs).size, 1, 'the title does not depend on chunking');
   const { id, body: disk } = diskOf(outs[0]);
   assert.equal(outs[0],
-    `before\n[agent:task add t42 start] S-E intent-spill: notify-user joins the spilled verbs @spill:${id}\n`
+    `before\n[agent:task add t42 start] S-E intent-spill: shout joins the spilled verbs @spill:${id}\n`
     + '[agent:end]\nafter\n');
   assert.equal(disk, body,
     'the FILE is still the whole body, title included, so the id is unchanged by the emission');
@@ -129,7 +129,7 @@ test('the emitted line parses as the SAME intent, which is what keeps the pointe
     ['task add t42 start', `plain first line\n${BIG}`],
     ['task add t9', `a title with a ] bracket in it\n${BIG}`],
     ['task add t9', `a title with a [ bracket and [agent:dm x] in it\n${BIG}`],
-    ['notify-user', `DEPLOY blocked: the cert expired\n${BIG}`],
+    ['shout', `DEPLOY blocked: the cert expired\n${BIG}`],
     ['context compact', `pick up at t1015 part 2\n${BIG}`],
   ];
   for (const [headArgs, body] of cases) {
@@ -146,13 +146,13 @@ test('the emitted line parses as the SAME intent, which is what keeps the pointe
   }
 });
 
-test('notify-user spills like a spec: an operator note is read in the inbox and can run long', () => {
+test('shout spills like a spec: an operator note is read in the inbox and can run long', () => {
   const body = `DEPLOY blocked on the signing cert\n${BIG}`;
-  const { out } = run(`[agent:notify-user] ${body}\n[agent:end]\n`);
+  const { out } = run(`[agent:shout] ${body}\n[agent:end]\n`);
   assert.ok(out.includes('@spill:'), 'the verb is listed');
   assert.ok(!out.includes(BIG), 'the note is off the wire');
   assert.equal(diskOf(out).body, body);
-  assert.ok(out.startsWith('[agent:notify-user] DEPLOY blocked on the signing cert @spill:'));
+  assert.ok(out.startsWith('[agent:shout] DEPLOY blocked on the signing cert @spill:'));
 });
 
 test('memory remember and task done stay unlisted, so the seat keeps seeing what it wrote', () => {

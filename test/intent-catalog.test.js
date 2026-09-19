@@ -13,7 +13,7 @@ const NONPRIV_TYPES = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.t
 test('catalog: the 13 gateable types in grammar order (privileged last), name excluded', () => {
   assert.deepStrictEqual(
     GATEABLE_INTENTS.map((i) => i.type),
-    ['dm', 'who', 'context', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'notify-user', 'term', 'reboot', 'team-create'],
+    ['dm', 'who', 'context', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout', 'term', 'reboot', 'team-create'],
   );
   // The privileged set, and the reason it is worth naming all three: `term`
   // runs arbitrary shell in the operator's own login shell, so a seat
@@ -38,7 +38,7 @@ test('intentEnabled: absent list → ordinary intents enabled, PRIVILEGED off (T
   for (const list of [undefined, null, 'not-an-array', 42, {}]) {
     assert.strictEqual(intentEnabled('dm', list), true);
     assert.strictEqual(intentEnabled('exec', list), true);
-    assert.strictEqual(intentEnabled('notify-user', list), true);
+    assert.strictEqual(intentEnabled('shout', list), true);
     // reboot does NOT ride the all-enabled default — it must be granted explicitly.
     assert.strictEqual(intentEnabled('reboot', list), false);
   }
@@ -80,7 +80,7 @@ test('intentEnabled: present list → membership for gateable types', () => {
   assert.strictEqual(intentEnabled('remind', list), true);
   assert.strictEqual(intentEnabled('who', list), false);
   assert.strictEqual(intentEnabled('spawn', list), false);
-  assert.strictEqual(intentEnabled('notify-user', list), false);
+  assert.strictEqual(intentEnabled('shout', list), false);
 });
 
 test('intentEnabled: empty array is a real value → everything gated', () => {

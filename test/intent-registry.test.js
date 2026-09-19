@@ -65,8 +65,8 @@ function parseIntentLegacy(rawLine) {
   const remindMatch = cleaned.match(/^\[agent:remind\s+([^\]]+)\]\s*(.*)/s);
   if (remindMatch) return { type: 'remind', spec: remindMatch[1].trim(), body: remindMatch[2] };
 
-  const notifyMatch = cleaned.match(/^\[agent:notify-user\]\s*(.*)/s);
-  if (notifyMatch) return { type: 'notify-user', body: notifyMatch[1] };
+  const shoutMatch = cleaned.match(/^\[agent:shout\]\s*(.*)/s);
+  if (shoutMatch) return { type: 'shout', body: shoutMatch[1] };
 
   const teamReviewMatch = cleaned.match(/^\[agent:team-review\]\s*(.*)/s);
   if (teamReviewMatch) return { type: 'team-review', body: teamReviewMatch[1] };
@@ -346,7 +346,7 @@ const ADVERSARIAL = [
   '[agent:remind every 30m] text', '[agent:remind in 45m]',
   '[agent:remind on compact] re-read', '[agent:remind cron 0 9 * * *] x',
   '[agent:remind list]', '[agent:remind]', '[agent:remind cancel abc]',
-  '[agent:notify-user]', '[agent:notify-user] note', '[agent:notify-user extra]',
+  '[agent:shout]', '[agent:shout] note', '[agent:shout extra]',
   '[agent:team-review]', '[agent:team-review] scope text',
   '[agent:review-done]', '[agent:review-done] verdict',
   '[agent:reboot]', '[agent:reboot] reason text', '[agent:reboot extra]',
@@ -758,7 +758,7 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
     i.type === 'dm'
     || i.type === 'exec'
     || i.type === 'remind'
-    || i.type === 'notify-user'
+    || i.type === 'shout'
     || i.type === 'team-review'
     || i.type === 'review-done'
     || (i.type === 'task' && (i.sub === 'add' || i.sub === 'done' || i.sub === 'reject' || i.sub === 'cancel'))
