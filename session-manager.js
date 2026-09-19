@@ -170,7 +170,9 @@ function dupIdentity(intent) {
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
-const { SPILL_VERBS } = require('./intent-spill');
+const {
+  SPILL_VERBS, SPILL_MIN_BYTES, isSpillVerb, pointerOf, resolveSpill, spillPathFor, verbKeyOf, writeSpill,
+} = require('./intent-spill');
 const { spillGrammarLine } = require('./ipc-prompt');
 const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
@@ -4214,8 +4216,9 @@ function createSessionManager(deps) {
         session._compactContinuation = null;
         setTimeout(() => {
           if (session._dead) return;
-          this._injectText(session, cont, { bypassHold: true });
-          const delay = cont.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY;
+          const text = this._handoffText(session, cont);
+          this._injectText(session, text, { bypassHold: true });
+          const delay = text.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY;
           setTimeout(() => this._releaseCompactGuard(session), delay + 200);
         }, COMPACT_CONTINUATION_DELAY);
       } else {
@@ -4290,7 +4293,7 @@ function createSessionManager(deps) {
       this._clearPostClearValve(session);
       setTimeout(() => {
         if (session._dead) return;
-        this._injectText(session, cont);
+        this._injectText(session, this._handoffText(session, cont));
       }, COMPACT_CONTINUATION_DELAY);
     }
 
@@ -4666,6 +4669,16 @@ function createSessionManager(deps) {
         return;
       }
 
+      if (isSpillVerb(intent)) {
+        const spillId = pointerOf(intent.body);
+        if (spillId) {
+          const r = resolveSpill(REGISTRY_DIR, senderName, spillId);
+          if (!r.ok) { this._spillUnresolved(session, senderName, intent, spillId, r); return; }
+          intent.body = r.body;
+          intent.spill = { id: spillId, path: r.path };
+        }
+      }
+
       if (!intentEnabledForSeat(intent.type, getPersistence().get(senderName))) {
         if (session && session.agentType) {
           const msg = intent.type === 'resend'
@@ -4964,6 +4977,22 @@ function createSessionManager(deps) {
           log.error('session', `fix session ${who} archive failed: ${e.message}`);
         });
         log.info('session', `fix session ${who} archived after DEPLOY OK`);
+      }
+    }
+
+    _spillUnresolved(session, senderName, intent, id, r) {
+      const verb = verbKeyOf(intent);
+      const where = r.path || spillPathFor(REGISTRY_DIR, senderName, id) || `${senderName}/${id}.md`;
+      log.error('intent', `${verb} ${senderName}: @spill:${id} did not resolve (${r.reason}) at ${where} — intent dropped`);
+      this._broadcast('ipc-message', {
+        type: 'intent', from: senderName, to: senderName,
+        body: `spill pointer @spill:${id} unresolvable (${r.reason}) — ${verb} dropped`,
+      });
+      this._raiseNote(senderName, `spill pointer @spill:${id} did not resolve (${r.reason}); the ${verb} was not applied`);
+      if (session && session.agentType) {
+        this._injectText(session,
+          `[agent:${intent.type}] error: your body arrived as @spill:${id} but ${where} could not be read (${r.reason}) — nothing was done; re-emit the intent with the full body`,
+          { parkable: true });
       }
     }
 
@@ -6194,7 +6223,19 @@ function createSessionManager(deps) {
         await new Promise(r => setTimeout(r, 100));
       }
       await new Promise(r => setTimeout(r, RELOAD_CONTINUATION_DELAY));
-      if (!session._dead) this._injectText(session, handoff);
+      if (!session._dead) this._injectText(session, this._handoffText(session, handoff));
+    }
+
+    _handoffText(session, body) {
+      const text = String(body == null ? '' : body);
+      if (!session || session.agentType !== 'claude') return text;
+      if (Buffer.byteLength(text, 'utf8') <= SPILL_MIN_BYTES) return text;
+      const id = writeSpill(REGISTRY_DIR, session.name, text);
+      if (!id) {
+        log.warn('intent', `handoff spill for ${session.name} failed — typing the body`);
+        return text;
+      }
+      return `Continue from your handoff: @${spillPathFor(REGISTRY_DIR, session.name, id)} `;
     }
 
 

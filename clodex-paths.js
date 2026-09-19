@@ -49,7 +49,7 @@
 // targets ~/.clodex/notices/<name>/queue.jsonl, and for the same reason: a
 // notice is typically enqueued at the spawn AFTER the exit that rm -rf'd the
 // run dir, and must survive the next one too),
-// fix/ (a deploy-fix session's scratch cwd — fixDirFor; outlives run/<name>/), agents/, skills/, library/, accounts/ + accounts.json (accounts.js is the authority),
+// fix/ (a deploy-fix session's scratch cwd — fixDirFor; outlives run/<name>/), spill/ (intent-body spill — spillDirFor, confined+resolved by intent-spill.js; content-addressed, outlives run/<name>/ AND the seat), agents/, skills/, library/, accounts/ + accounts.json (accounts.js is the authority),
 // plugins/ (the BYO plugin root — plugins/plugin-sources.md §3; deliberately NOT a
 // KIND, since it is shared rather than per-agent, and constructed at the engine
 // bootstrap like every other entry in this list), clodex.log,
@@ -179,6 +179,10 @@ function fixDirFor(root, host) {
   return path.join(root, 'fix', leaf);
 }
 
+function spillDirFor(root, name) {
+  return path.join(root, 'spill', name);
+}
+
 // The per-PROJECT artifact dir: ~/.clodex/projects/<leaf>-<hash8>/. Task
 // artifacts (specs, journals, design notes) and the TICKET BOARD
 // (tickets.json — tickets-store.js) live here, NOT in the user's own repo —
@@ -229,6 +233,6 @@ function legacySuffixes() {
 }
 
 module.exports = {
-  KINDS, LEGACY_SUFFIXES, runDirFor, fixDirFor, pathFor, legacyPathsFor, legacySuffixes,
+  KINDS, LEGACY_SUFFIXES, runDirFor, fixDirFor, spillDirFor, pathFor, legacyPathsFor, legacySuffixes,
   projectDirFor, taskDirFor, defaultClodexHome,
 };

@@ -4,9 +4,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
+const fs = require('fs');
 const {
   KINDS, LEGACY_SUFFIXES, runDirFor, pathFor, legacyPathsFor, legacySuffixes,
-  projectDirFor, taskDirFor,
+  projectDirFor, taskDirFor, spillDirFor,
 } = require('../clodex-paths');
 
 const ROOT = '/root/.clodex';
@@ -102,4 +103,24 @@ test('taskDirFor: task artifacts land under the project dir, never in the repo',
   assert.strictEqual(path.basename(path.dirname(d)), 'tasks');
   // The user's own tree is never a prefix of an artifact path.
   assert.ok(!d.startsWith('/home/x/work/api'), d);
+});
+
+test('spillDirFor: a SHARED root dir, deliberately not under run/', () => {
+  const d = spillDirFor(ROOT, 'lead');
+  assert.strictEqual(d, path.join(ROOT, 'spill', 'lead'));
+  assert.ok(!d.startsWith(runDirFor(ROOT, 'lead')), d);
+  assert.strictEqual(path.dirname(path.dirname(d)), ROOT);
+});
+
+test('spillDirFor is not a KIND, and a spill/ name cannot be reached through pathFor', () => {
+  assert.ok(!('spill' in KINDS));
+  assert.throws(() => pathFor(ROOT, 'a', 'spill'), /unknown kind 'spill'/);
+});
+
+test('the header names spill/ as a shared dir that outlives run/', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'clodex-paths.js'), 'utf8');
+  const header = src.slice(0, src.indexOf("const path = require('path')"));
+  const line = header.split('\n').find((l) => /\bspill\//.test(l));
+  assert.ok(line, 'spill/ is absent from the shared-dir header');
+  assert.match(line, /outlives run\/<name>\//);
 });
