@@ -519,6 +519,7 @@ ensure-node-fresh-
 ensure-node-mac-
 ensure-node-pick-
 ensure-node-present-
+ensure-node-rerun-
 env-scopes-
 envdef-home-
 envdef-home2-
@@ -599,6 +600,7 @@ stores-skillres-
 stores-ud-
 svcport-
 sysdeps-apt-
+sysdeps-apt-noensurepip-
 sysdeps-apt-novenv-
 t415-reg-
 t415-ud-
