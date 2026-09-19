@@ -120,6 +120,22 @@ test('a real wire delta (compact separators, padded) is forwarded byte-identical
   assert.deepEqual(drive(real, 7).out, real, why);
 });
 
+test('a non-firing intent split across deltas is re-emitted as the ORIGINAL frames', () => {
+  const stream = Buffer.concat([
+    ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+    td(0, 'On it.\n[agent:dm bob] '),
+    td(0, BIG.slice(0, 400)),
+    td(0, BIG.slice(400)),
+    td(0, '\n[agent:end]\ndone.\n'),
+    ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
+  ]);
+  for (const cs of [1, 43, 997, stream.length]) {
+    assert.deepEqual(drive(stream, cs).out, stream,
+      `@cs=${cs}: the filter withholds a partial line that could still become an opener, and `
+      + 'synthesizing one delta for the held run would re-frame traffic that never spilled');
+  }
+});
+
 test('pings keep flowing while a body is held, in order, and usage bytes are untouched', () => {
   const ping = ev('ping', { type: 'ping' });
   const usage = ev('message_delta', {
