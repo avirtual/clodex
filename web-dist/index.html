@@ -31270,6 +31270,14 @@ Opening it here and saving would overwrite the file with what this editor could 
       }
       var TERM_EXEC_MAX = 2048;
       var CTRL_RE = new RegExp("[\\u0000-\\u001F\\u007F\\u0080-\\u009F\\u200B-\\u200F\\u202A-\\u202E\\u2066-\\u2069\\uFEFF]");
+      var CTRL_ALL_RE = new RegExp(CTRL_RE.source, "gu");
+      function sanitizeName(s, max = 80) {
+        const first = String(s == null ? "" : s).split(/[\r\n]/)[0];
+        const clean = first.replace(CTRL_ALL_RE, "");
+        const points = Array.from(clean);
+        if (points.length <= max) return clean;
+        return `${points.slice(0, max - 1).join("")}\u2026`;
+      }
       var CTRL_WHY = /* @__PURE__ */ new Map([
         [10, "a newline (LF) \u2014 everything before it would execute immediately"],
         [13, "a carriage return (CR) \u2014 everything before it would execute immediately"],
@@ -31311,7 +31319,7 @@ Opening it here and saving would overwrite the file with what this editor could 
         }
         return { ok: true, command: cmd };
       }
-      module.exports = { termAvailableFor, termBackendFor, vetTermCommand, TERM_EXEC_MAX };
+      module.exports = { termAvailableFor, termBackendFor, vetTermCommand, sanitizeName, TERM_EXEC_MAX };
     }
   });
 
