@@ -153,10 +153,12 @@ capture), `/_report&detail=1` is 49.5s and 3.07MB — 1.78MB of it the 6820-poin
 
 - **The context popover issues two fetches.** The plain read paints the
   composition column immediately; the utilization scan is a second request, made
-  only when `capabilities.context_utilization || context_skills`, whose result
-  fills the right-hand column in place (`#ctx-util-col`) and repaints the
-  manage-tools/skills links, whose trim labels need it. A scan that fails or
-  never lands costs the column it owns and nothing else — never the composition.
+  only when `capabilities.context_utilization || context_skills`. The right-hand
+  column (MCP servers, and any utilization the plain read carried) is built from
+  the plain read; the scan only REPAINTS it in place (`#ctx-util-col`) and
+  repaints the manage-tools/skills links, whose trim labels need it. A scan that
+  fails or never lands costs only what it would have ADDED — never the
+  composition, and never the column itself.
 - **The cost popover fetches the SUMMARY**, `detail:false`, and renders the
   report's `verdict` headline, `cost_decomposition.by_bucket` and `waste.by_type`
   levers rather than the per-request series. The reduction is

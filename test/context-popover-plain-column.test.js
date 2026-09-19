@@ -31,7 +31,7 @@ function fakeEl(classes = []) {
   return el;
 }
 
-function harness({ payload, ctxImpl }) {
+function harness({ payload, payloads, ctxImpl }) {
   const prev = { document: global.document, window: global.window };
   const ids = ['ctx-popover', 'ctx-popover-name', 'ctx-popover-body', 'ctx-popover-close'];
   const els = new Map(ids.map((id) => [id, fakeEl(id === 'ctx-popover' ? ['hidden'] : [])]));
@@ -61,11 +61,14 @@ function harness({ payload, ctxImpl }) {
   const { createPopoverGroup } = require('../renderer/lib/popover-group');
   const { initContextPopover } = require('../renderer/popovers/context-popover');
   const calls = [];
+  const state = payloads
+    ? new Map(Object.entries(payloads).map(([n, p]) => [n, { payload: p }]))
+    : new Map([['seat-1', { payload }]]);
   const { openContextPopover } = initContextPopover({
-    popoverApi: () => ({ ctx: (a) => { calls.push(a); return ctxImpl(a); } }),
+    popoverApi: (name) => ({ ctx: (a) => { calls.push({ ...a, name }); return ctxImpl(a, name); } }),
     ctxCatLabel: (c) => c,
     openReportPanel() {}, openToolsPopover() {}, openSkillsPopover() {},
-    proxyState: new Map([['seat-1', { payload }]]),
+    proxyState: state,
     sessionTypeOf: () => 'claude',
     barPopovers: createPopoverGroup(),
   });
@@ -87,7 +90,7 @@ test('a peer payload (no capabilities) still renders the MCP column from the pla
     await h.open();
     assert.strictEqual(h.calls.length, 1,
       'ENTER: a caps-less payload must make exactly ONE fetch — the scan is not advertised, so asking for it would be the bug in the other direction');
-    assert.deepStrictEqual(h.calls[0], { utilization: false }, 'ENTER: and that fetch is the plain read');
+    assert.deepStrictEqual(h.calls[0], { utilization: false, name: 'seat-1' }, 'ENTER: and that fetch is the plain read');
     const body = h.body();
     assert.match(body, /MCP servers/,
       'peerProxyView forwards no capabilities, so wantUtil is false for EVERY peer — yet the owner side answers with tools.per_tool, so the MCP block must render without any scan');
@@ -170,5 +173,43 @@ test('a second click while a fetch is pending does not issue another pair', asyn
     await h.open();
     assert.strictEqual(h.calls.length, 2,
       'once settled the guard must have cleared, or the popover is wedged for the life of the window');
+  } finally { h.restore(); }
+});
+
+test('a re-click for a session whose fetch is pending repaints Loading… when the body shows another session', async () => {
+  let releaseA;
+  const gateA = new Promise((r) => { releaseA = r; });
+  const B_AGENT = {
+    line: 'main',
+    composition: { total_tokens: 900, basis: 'exact', by_category: [{ category: 'bees-marker', tokens: 900, pct: 100 }] },
+    tools: { count: 1, est_tokens: 900, per_tool: [{ name: 'mcp__bees__sting', est_tokens: 900, used: 0 }] },
+  };
+  const h = harness({
+    payloads: { A: { queries: ['ctx'] }, B: { queries: ['ctx'] } },
+    ctxImpl: async (a, name) => {
+      if (name === 'A') { await gateA; return { ok: true, data: { agents: [MCP_AGENT] } }; }
+      return { ok: true, data: { agents: [B_AGENT] } };
+    },
+  });
+  try {
+    const a = h.open('A');
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(h.calls.length, 1, 'ENTER: A must have a fetch in flight, or there is no guard to exercise');
+
+    await h.open('B');
+    assert.match(h.body(), /bees-marker/, 'ENTER: B must really be on screen — otherwise the re-click has nothing wrong to inherit');
+
+    const a2 = h.open('A');
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(h.calls.length, 2,
+      'the joined click must NOT issue a third fetch: A is still pending and B made the second');
+    assert.doesNotMatch(h.body(), /bees-marker/,
+      "a joined click that returns without repainting leaves B's tokens on screen under A's name — a wrong number attributed to the wrong seat");
+    assert.match(h.body(), /Loading…/, 'the body is reset to the pending note until A\'s own result lands');
+
+    releaseA();
+    await Promise.all([a, a2]);
+    assert.match(h.body(), /MCP servers/, "and A's own result still paints when it arrives");
+    assert.match(h.body(), /linear/, 'with A\'s data, not B\'s');
   } finally { h.restore(); }
 });

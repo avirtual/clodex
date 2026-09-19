@@ -3843,7 +3843,7 @@ setInterval(() => {
   const openPopoverOnPress = (e) => {
     if (e.button !== 0 || !activeSession) return;
     const ctxSeg = e.target.closest('[data-act="ctx"]');
-    if (ctxSeg) { openContextPopover(activeSession, ctxSeg); return; }
+    if (ctxSeg) { openContextPopover(activeSession, ctxSeg).catch(() => {}); return; }
     const costSeg = e.target.closest('[data-act="cost"]');
     if (costSeg) { openCostPopover(activeSession, costSeg); return; }
     const bustSeg = e.target.closest('[data-act="bust"]');

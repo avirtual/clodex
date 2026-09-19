@@ -338,6 +338,13 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
   }
 
   const ctxPending = new Map();
+  const LOADING_NOTE = '<div class="ctx-note">Loading…</div>';
+  let ctxBodyName = null;
+
+  function paintCtxBody(name, html) {
+    ctxPopoverBody.innerHTML = html;
+    ctxBodyName = name;
+  }
 
   async function openContextPopover(name, anchor) {
     closeSiblings();
@@ -345,8 +352,11 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     ctxPopover.dataset.name = name;
     ctxPopover.classList.remove('hidden');
     placeCtxPopover(anchor);
-    if (ctxPending.has(name)) return ctxPending.get(name);
-    ctxPopoverBody.innerHTML = '<div class="ctx-note">Loading…</div>';
+    if (ctxPending.has(name)) {
+      if (ctxBodyName !== name) paintCtxBody(name, LOADING_NOTE);
+      return ctxPending.get(name);
+    }
+    paintCtxBody(name, LOADING_NOTE);
     const run = fetchAndPaint(name, anchor);
     ctxPending.set(name, run);
     try { return await run; }
@@ -365,13 +375,13 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     // Bail if the popover was closed or retargeted while the fetch was in flight.
     if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains('hidden')) return;
     if (!res || !res.ok) {
-      ctxPopoverBody.innerHTML = `<div class="ctx-note">${esc(res && res.error ? res.error : 'Unavailable')}</div>`;
+      paintCtxBody(name, `<div class="ctx-note">${esc(res && res.error ? res.error : 'Unavailable')}</div>`);
       placeCtxPopover(anchor); return;
     }
     const agents = (res.data && Array.isArray(res.data.agents)) ? res.data.agents : [];
     if (!agents.length) {
       const note = (res.data && res.data.note) || 'No live context for this session.';
-      ctxPopoverBody.innerHTML = `<div class="ctx-note">${esc(note)}</div>`;
+      paintCtxBody(name, `<div class="ctx-note">${esc(note)}</div>`);
       placeCtxPopover(anchor); return;
     }
     const compHtml = renderCompositionHalf(name, agents);
@@ -379,12 +389,12 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     const plainCol = renderUtilHalf(agents);
     const cols = (right) => `<div class="ctx-cols"><div class="ctx-col">${compHtml}</div>${right}</div>`;
     if (!wantUtil) {
-      ctxPopoverBody.innerHTML = (plainCol.trim() ? cols(`<div class="ctx-col">${plainCol}</div>`) : compHtml) + links;
+      paintCtxBody(name, (plainCol.trim() ? cols(`<div class="ctx-col">${plainCol}</div>`) : compHtml) + links);
       placeCtxPopover(anchor); return;
     }
     const scanning = '<div class="ctx-note">utilization: scanning…</div>';
-    ctxPopoverBody.innerHTML =
-      cols(`<div class="ctx-col" id="ctx-util-col">${plainCol}${scanning}</div>`) + links;
+    paintCtxBody(name,
+      cols(`<div class="ctx-col" id="ctx-util-col">${plainCol}${scanning}</div>`) + links);
     placeCtxPopover(anchor);
     const ures = await popoverApi(name).ctx({ utilization: true });
     if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains('hidden')) return;
