@@ -4752,6 +4752,7 @@ const prefsCtxNudge = document.getElementById('prefs-ctx-nudge');
 const prefsCtxEscalate = document.getElementById('prefs-ctx-escalate');
 const prefsCtxModels = document.getElementById('prefs-ctx-models');
 const prefsTerminalReports = document.getElementById('prefs-terminal-reports');
+const prefsTerminalRemote = document.getElementById('prefs-terminal-remote');
 const prefsDefaultMode = document.getElementById('prefs-default-mode');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
@@ -7211,6 +7212,7 @@ async function openPrefs() {
   setSpeakSettings(s);
   setCtxThresholds(s);
   setTerminalReports(s.terminalReports);
+  if (prefsTerminalRemote) prefsTerminalRemote.checked = s.terminalRemote === 'on';
   if (prefsDefaultMode) prefsDefaultMode.value = defaultSessionMode(s);
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   restorePrefsGroups();
@@ -7327,6 +7329,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     // key is not omitted when the boxes are empty the way speakVoice is.
     ...(prefsCtxNudge && prefsCtxEscalate ? { ctxReminderThresholds: { default: readCtxThresholdPair() } } : {}),
     terminalReports: readTerminalReports(),
+    terminalRemote: (prefsTerminalRemote && prefsTerminalRemote.checked) ? 'on' : 'off',
     defaultSessionMode: prefsDefaultMode ? prefsDefaultMode.value : 'optimized',
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     remoteEnabled: prefsRemoteEnabled.checked,

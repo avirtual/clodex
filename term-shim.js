@@ -433,6 +433,20 @@ const REMOTE_INSTALL_LINE = FAR_HELPERS + `_cxp C ${REMOTE_HELLO_B64}; _cxr=2; `
 
 const REMOTE_LINE_MAX = 1019;
 
+function remoteUnsupportedReason({ status, timeoutMs } = {}) {
+  if (status === 'no-answer') {
+    return `the remote side did not answer Clodex's mark setup within ${(timeoutMs || 0) / 1000}s — it may be fish, PowerShell or cmd, a REPL, or a shell that is not at its prompt. Look at the terminal. Nothing was run there.`;
+  }
+  if (status === 2) {
+    return 'the remote shell is neither bash 4.4+ nor zsh (a POSIX sh, busybox, or ksh), so it cannot report results back. Nothing was run there.';
+  }
+  if (status === 3) {
+    return `the remote bash is older than ${BASH_MIN.join('.')} (no PS0), so it cannot report results back. Nothing was run there.`;
+  }
+  const seen = status === null || status === undefined ? 'none' : String(status);
+  return `the remote side answered Clodex's mark setup with an unexpected status \`${seen}\` — Clodex cannot tell what is on the far end. Nothing was run there.`;
+}
+
 // The one entry point the app uses. Dispatching here rather than in the caller
 // keeps shell knowledge in this file: engine.js asks for a shim and gets one or
 // null, and adding fish later does not touch it.
@@ -459,6 +473,7 @@ module.exports = {
   forwardBody,
   FORWARDED,
   REMOTE_INSTALL_LINE,
+  remoteUnsupportedReason,
   REMOTE_MARK_TAG,
   REMOTE_HELLO_B64,
   REMOTE_LINE_MAX,

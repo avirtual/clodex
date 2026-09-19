@@ -23,10 +23,10 @@ const constFromSource = (name) => {
   assert.ok(m, `ENTER: ${name} was found in drawer-pty.js`);
   return Number(m[1]);
 };
-const ACK_MS = constFromSource('ABANDON_ACK_MS');
+const NUDGE_MS = constFromSource('ABANDON_NUDGE_MS');
 const MAX_MS = constFromSource('ABANDON_MAX_MS');
 const INSTALL_MS = constFromSource('INSTALL_TIMEOUT_MS');
-const QUIET_MS = ACK_MS;
+const QUIET_MS = constFromSource('REMOTE_QUIET_MS');
 
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 const A = `${ESC}]133;A${BEL}`;
@@ -91,6 +91,7 @@ function mk(over = {}) {
     remoteAllowed: over.remoteAllowed || (() => true),
     shellHost: over.shellHost || shellHostOf,
     remoteInstallLine: 'remoteInstallLine' in over ? over.remoteInstallLine : REMOTE_INSTALL_LINE,
+    remoteUnsupportedReason: over.remoteUnsupportedReason || require('../term-shim').remoteUnsupportedReason,
   };
   const w = createDrawerPtys(deps);
   const fire = (ms, nth = 0) => {
@@ -182,6 +183,26 @@ test('the install line is written exactly once even if both clocks fire', () => 
   h.fire(MAX_MS);
 
   assert.deepStrictEqual(h.proc.written, [CTRL_C, INSTALL_WRITE]);
+});
+
+test('a silent far shell is NOT typed into at ABANDON_ACK_MS — only the cap can release it', () => {
+  const h = openSsh();
+  h.w.exec('ws-1', 'alice', 'ls');
+  h.proc.emit(`${CR}${LF}`);
+  h.fire(QUIET_MS);
+  const before = h.timers.length;
+  h.proc.emit(`${TC('clodex marks')}${TD(0)}`);
+  assert.strictEqual(h.proc.written[2], CTRL_C, 'ENTER: the install was acked and step 6 abandoned the far line');
+
+  assert.deepStrictEqual(h.timers.slice(before).map((t) => t.ms), [NUDGE_MS, MAX_MS],
+    'the depth-1 handshake arms the nudge and the cap and NOTHING else: 250ms of network silence is not evidence '
+    + 'of a far prompt, and a release there types a command that loses its leading byte on someone else’s machine. '
+    + 'Asserted as the timer SET, not as a count at ACK_MS — that value equals REMOTE_QUIET_MS today and the '
+    + 'subject would stop meaning this if the two ever diverge');
+
+  h.fire(MAX_MS, 1);
+  assert.deepStrictEqual(h.proc.written, [CTRL_C, INSTALL_WRITE, CTRL_C, `ls${CR}`],
+    'the cap still carries it, so a far side that never answers the interrupt is not wedged');
 });
 
 test('a tagged D;0 installs, and the nested exec then runs the local algorithm one hop down', () => {
@@ -280,6 +301,35 @@ test('a far bash below 4.4 answers D;3 and is named separately', () => {
   assert.match(h.results[0][1].reason, /older than 4\.4/);
   assert.notStrictEqual(h.results[0][1].reason, 'the remote shell is neither bash 4.4+ nor zsh (a POSIX sh, busybox, or ksh), so it cannot report results back. Nothing was run there.');
   assert.deepStrictEqual(h.proc.written, [CTRL_C, INSTALL_WRITE]);
+});
+
+test('a far status this build has never heard of is quoted back, never given D;2’s sentence', () => {
+  const h = openSsh();
+  h.w.exec('ws-1', 'alice', 'ls');
+  h.fire(MAX_MS);
+  h.proc.emit(`${TC('clodex marks')}${TD(9)}`);
+
+  assert.strictEqual(h.results.length, 1);
+  const [, res] = h.results[0];
+  assert.strictEqual(res.status, 'remote-unsupported');
+  assert.match(res.reason, /unexpected status `9`/,
+    'the base code fell back to REMOTE_UNSUPPORTED[2] for any status it did not know, i.e. it named a shell it had never seen');
+  assert.doesNotMatch(res.reason, /neither bash 4\.4\+ nor zsh/);
+  assert.deepStrictEqual(h.proc.written, [CTRL_C, INSTALL_WRITE], 'the command was never typed');
+});
+
+test('a far D whose payload does not parse reports no status rather than inventing one', () => {
+  const h = openSsh();
+  h.w.exec('ws-1', 'alice', 'ls');
+  h.fire(MAX_MS);
+  h.proc.emit(`${TC('clodex marks')}${TD('x')}`);
+
+  assert.strictEqual(h.results.length, 1);
+  const [, res] = h.results[0];
+  assert.strictEqual(res.status, 'remote-unsupported');
+  assert.match(res.reason, /unexpected status `none`/,
+    'the parser answers exitCode null for an unreadable payload, and `null` in the operator’s message reads as our bug');
+  assert.doesNotMatch(res.reason, /neither bash 4\.4\+ nor zsh/);
 });
 
 test('silence past INSTALL_TIMEOUT_MS is answered once, and a late tagged A resurrects nothing', () => {

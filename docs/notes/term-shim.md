@@ -42,3 +42,30 @@ The history rule is the conservative simplification of `BASH_HOOK_SNIPPET`'s: it
 names a command only when history is on and both `HISTCONTROL` and `HISTIGNORE`
 are empty, so it names strictly fewer commands and never a wrong one. An unnamed
 record is still answered through `assumed`.
+
+## remoteUnsupportedReason
+
+THE FAR-SHIM POSTURE, and why there is no file to point at. The far shim is two
+functions and two hook arrays in the far shell's MEMORY, typed in the clear as
+one line and gone when the session ends. Nothing is written on any box — not the
+operator's, not a third party's — which is the whole reason the design needs no
+helper script: per-session in-memory hooks answer the exit code and the output
+completely. The local shim already does the same to the local shell through
+ZDOTDIR; this is that intrusion one hop away, and `exit` reverses it.
+
+What each far shell answers the line with:
+
+- zsh (any) and bash 4.4+ — `D;0`, hooks installed; the session is drivable.
+- bash below 4.4, `/bin/sh` on macOS — `D;3`: no PS0, so no preexec.
+- dash, ash, ksh, busybox — `D;2`: the POSIX top level parses and answers, which
+  is what lets the refusal NAME the shell instead of timing out.
+- fish, PowerShell, cmd, a REPL, a shell not at its prompt — no answer at all,
+  refused on `INSTALL_TIMEOUT_MS`.
+- anything else, or a payload that did not parse — the status is quoted back and
+  nothing is claimed about what is on the far end.
+
+The gate above all of it is `terminalRemote === 'on'` AND reporting not `off`
+(engine.js `remoteAllowed`): remote mode hands the agent a session the operator
+authenticated to, so it is its own consent and no upgrade or other pref grants
+it. Reporting `off` bars it because the LOCAL shell is then unshimmed and there
+are no marks to nest under.

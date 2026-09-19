@@ -33,7 +33,7 @@ const CONTROLS = [
   'prefs-ctx-nudge', 'prefs-ctx-escalate', 'prefs-ctx-models',
   'prefs-context-hints', 'prefs-context-hints-why',
   'prefs-semantic-hints', 'prefs-semantic-hints-why',
-  'prefs-selection-hints', 'prefs-terminal-reports',
+  'prefs-selection-hints', 'prefs-terminal-reports', 'prefs-terminal-remote',
   'ws-logs-block', 'ws-logs-size', 'ws-logs-age', 'ws-logs-clear-btn',
   'prefs-remote-enabled', 'remote-dot', 'remote-status-text',
   'prefs-remote-base-path', 'prefs-remote-base-path-state', 'prefs-remote-base-path-applies',

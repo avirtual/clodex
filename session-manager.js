@@ -5669,16 +5669,17 @@ function createSessionManager(deps) {
         return;
       }
       const res = termExec(session.workspaceId, session.name, rawBody);
+      const where = res.inside ? ` (inside \`${res.inside}\`)` : '';
       this._broadcast('ipc-message', {
         type: 'term', from: session.name, to: session.name,
-        body: res.ok ? `exec: ${res.command}` : `exec REFUSED: ${res.error}`,
+        body: res.ok ? `exec${where}: ${res.command}` : `exec REFUSED: ${res.error}`,
       });
       if (!res.ok) {
         log.warn('intent', `term exec by ${session.name}: refused (${res.error})`);
         reply(res.error);
         return;
       }
-      log.info('intent', `term exec by ${session.name}: ${res.command}`);
+      log.info('intent', `term exec by ${session.name}${where}: ${res.command}`);
       // No "sent" acknowledgement. It would cost the agent a turn to read
       // something it already knows, and the result is coming on its own.
     }

@@ -5,5 +5,6 @@
   "notifications: ids are unique across many adds": "200 notifications.add calls, each an O(n) _mintId plus an atomicWriteFileSync doing two fsyncs",
   "reminders: ids are unique across many adds": "200 reminders.add calls through the same doubly-fsync'd atomic write",
   "a headless host builds the manager unless it identifies as in-box": "builds FOUR full createEngine instances, each re-seeding the shipped resources/library into a fresh registryDir",
-  "the engine const reads the env: CLODEX_LABEL reaches the wire as hostLabel": "four full createEngine builds through engineHostLabel, each re-seeding the shipped resources/library into a fresh tmp root with fsync'd writes"
+  "the engine const reads the env: CLODEX_LABEL reaches the wire as hostLabel": "four full createEngine builds through engineHostLabel, each re-seeding the shipped resources/library into a fresh tmp root with fsync'd writes",
+  "32 concurrent far shells: every install line keeps its command word": "spawns 32 real local shells, nests a real far shell in each, and waits on the far side's own interrupt answer: the leading-byte loss it measures was seen at 2 in 192 only under this concurrency, so the load IS the subject"
 }

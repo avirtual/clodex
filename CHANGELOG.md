@@ -13,6 +13,18 @@ blocks a release.
 
 ## Unreleased
 
+- An agent's `[agent:term exec]` now runs inside an open ssh session — and
+  inside `sudo -i`, `su`, `docker exec`, `kubectl exec`, or a nested shell — so
+  a remote box can be configured through one session instead of an `ssh` per
+  command: the command runs in the far shell, and the agent gets its exit code
+  and output as for a local command, with the report naming the session it ran
+  in. Off by default; switched on in Settings ▸ Terminal. A remote editor,
+  pager or other full-screen program, and any program that is not a shell,
+  still refuses by name and nothing is typed into it.
+- A busy terminal refusal names the program holding the tab by its command word
+  only when command reporting is set to ask-only, and shows the full command
+  line only under full reporting.
+
 ## 5.78.0 — 2026-09-19
 
 - The bottom drawer remembers, per seat, whether it was open and which tab it showed, so switching to another seat no longer carries the terminal or activity deck along; the tall setting stays shared.

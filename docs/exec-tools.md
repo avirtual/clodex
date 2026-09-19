@@ -180,6 +180,20 @@ Two spawn-time grants (both ride templates / persisted config):
 The coarse intent gate and the fine per-command `execCommands` gate must both
 allow — a seat with `exec` but not the command id is refused, and vice versa.
 
+## Terminal commands inside an open session
+
+`[agent:term exec]` is the other capability an operator grants a seat, and since
+t1008 it reaches INSIDE a session already open in the Terminal tab — an `ssh`, a
+`sudo -i`, a `docker exec`, a nested shell. The agent types no connection of its
+own: Clodex recognises the program holding the tab (`term-host.js`), types one
+in-memory hook installer into the far shell, and from then on the far shell's own
+marks frame the command exactly as the local ones do, so the agent gets a real
+exit code and real output with the report naming the session it ran in. It is OFF
+by default and switched on in Settings ▸ Terminal, separately from command
+reporting: driving a session the operator authenticated to is its own consent,
+and no upgrade grants it. A far editor or pager on the alternate screen, and any
+program that is not a shell, still refuse by name with nothing typed.
+
 ## Known v1 limitations / growth path
 
 - **Invoker identity is self-supplied.** The agent passes its own `agent` name;

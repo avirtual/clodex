@@ -122,6 +122,40 @@ test('a corrupt tri-state falls back to the boolean rather than to `asked`', () 
   assert.strictEqual(openStores(dir).uiSettings.get().terminalReports, 'all');
 });
 
+test('terminalRemote defaults to `off` and an unrecognised value sanitises to it', () => {
+  const dir = mkDir();
+  writeSettings(dir, {});
+  assert.strictEqual(openStores(dir).uiSettings.get().terminalRemote, 'off');
+
+  const dir2 = mkDir();
+  writeSettings(dir2, { terminalRemote: 'yes please' });
+  assert.strictEqual(openStores(dir2).uiSettings.get().terminalRemote, 'off',
+    'a value this store cannot recognise must not resolve to the state that hands an agent the operator’s authenticated session');
+});
+
+test('`on` round-trips, and nothing but this key can grant it', () => {
+  const dir = mkDir();
+  writeSettings(dir, { terminalRemote: 'on' });
+  assert.strictEqual(openStores(dir).uiSettings.get().terminalRemote, 'on');
+
+  const dir2 = mkDir();
+  writeSettings(dir2, { terminalReports: 'all', terminalReporting: true });
+  assert.strictEqual(openStores(dir2).uiSettings.get().terminalRemote, 'off');
+});
+
+test('a set that names only terminalReports leaves terminalRemote alone', () => {
+  const dir = mkDir();
+  writeSettings(dir, { terminalRemote: 'on' });
+  const { uiSettings } = openStores(dir);
+  uiSettings.set({ terminalReports: 'asked' });
+  assert.strictEqual(uiSettings.get().terminalRemote, 'on',
+    'absent means keep, exactly as every other key here');
+
+  uiSettings.set({ terminalRemote: 'nonsense' });
+  assert.strictEqual(uiSettings.get().terminalRemote, 'on',
+    'and a junk write cannot land a value that reads back as itself');
+});
+
 // ── engine: the two gates, pinned in source ───────────────────────────────
 
 const engineSrc = fs.readFileSync(require.resolve('../engine.js'), 'utf8');
@@ -635,4 +669,36 @@ test('a radio group with nothing checked reads as `off`', () => {
   const { radios, readTerminalReports } = loadRadioHelpers(null);
   assert.ok(radios.every((r) => !r.checked), 'ENTER: nothing is checked');
   assert.strictEqual(readTerminalReports(), 'off');
+});
+
+function remoteAllowedFrom(settings) {
+  const m = engineSrc.match(/remoteAllowed: (\(\) => [^\n]*?),\n/);
+  assert.ok(m, 'ENTER: the remoteAllowed predicate was found in engine.js');
+  return new Function('uiSettings', `return ${m[1]};`)({ get: () => settings });
+}
+
+test('remoteAllowed needs BOTH the remote pref on and the local shim to exist', () => {
+  assert.strictEqual(remoteAllowedFrom({ terminalRemote: 'off', terminalReports: 'all' })(), false,
+    'the firehose is not consent to drive the session — they are different questions');
+
+  assert.strictEqual(remoteAllowedFrom({ terminalRemote: 'on', terminalReports: 'off' })(), false,
+    'with reporting off the shell is born unshimmed, so there are no local marks to nest under: '
+    + 'remote mode would type the install line into a session nothing can frame');
+
+  assert.strictEqual(remoteAllowedFrom({ terminalRemote: 'on', terminalReports: 'asked' })(), true,
+    '`asked` grants the capability without the firehose, and remote mode is a capability');
+
+  assert.strictEqual(remoteAllowedFrom({ terminalRemote: 'on', terminalReports: 'all' })(), true);
+});
+
+test('the predicate reads the store per call, so switching it off bites a LIVE shell', () => {
+  const settings = { terminalRemote: 'on', terminalReports: 'asked' };
+  const m = engineSrc.match(/remoteAllowed: (\(\) => [^\n]*?),\n/);
+  assert.ok(m, 'ENTER: the predicate was found');
+  const allowed = new Function('uiSettings', `return ${m[1]};`)({ get: () => settings });
+
+  assert.strictEqual(allowed(), true, 'ENTER: remote mode is on');
+  settings.terminalRemote = 'off';
+  assert.strictEqual(allowed(), false,
+    'a captured boolean would keep an ssh session drivable until the next app launch');
 });
