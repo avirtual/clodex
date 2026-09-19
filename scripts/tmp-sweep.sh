@@ -407,6 +407,7 @@ clx-reload-env-
 clx-reload-ud-
 clx-repaint-
 clx-repo-
+clx-report-cache-
 clx-resumecwd-
 clx-resumecwd-gone-
 clx-resumecwd-nomain-
