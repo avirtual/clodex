@@ -2409,14 +2409,6 @@ body {
   color: var(--text-dim);
   margin-top: 6px;
 }
-.cost-chart {
-  margin-top: 4px;
-}
-.cost-chart svg {
-  display: block;
-  width: 100%;
-  height: auto;
-}
 #cost-popover .px-link-ext {
   display: inline-block;
   margin-top: 12px;
@@ -23805,33 +23797,6 @@ ${i3.join("\n")}
         }).join("");
         return `<div class="cost-sec-title"><span>${title}${badge}</span><span class="ctx-line-total">${fmtUsd(total)}</span></div><div class="cost-bar">${bar}</div><div class="cost-legend">${legend}</div>`;
       }
-      function svgCostChart(reqs, defs) {
-        const W = 600, H = 150, pl = 6, pr = 6, pt = 10, pb = 14;
-        const n = reqs.length;
-        const cum = {};
-        const run = {};
-        defs.forEach((d) => {
-          cum[d.key] = [];
-          run[d.key] = 0;
-        });
-        reqs.forEach((r) => defs.forEach((d) => {
-          run[d.key] += r[d.key + "_usd"] || 0;
-          cum[d.key].push(run[d.key]);
-        }));
-        let maxY = 0;
-        defs.forEach((d) => {
-          const last = cum[d.key][n - 1] || 0;
-          if (last > maxY) maxY = last;
-        });
-        maxY = maxY || 1;
-        const X = (i) => pl + (n <= 1 ? 0 : i / (n - 1) * (W - pl - pr));
-        const Y = (v) => H - pb - v / maxY * (H - pt - pb);
-        const paths = defs.map((d) => {
-          const pts = cum[d.key].map((v, i) => `${i === 0 ? "M" : "L"}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(" ");
-          return `<path d="${pts}" fill="none" stroke="${d.color}" stroke-width="1.5"/>`;
-        }).join("");
-        return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative cost by type over requests"><line x1="${pl}" y1="${H - pb}" x2="${W - pr}" y2="${H - pb}" stroke="#444" stroke-width="1"/>` + paths + `<text x="${pl}" y="${pt}" font-size="9" fill="#888">${esc(fmtUsd(maxY))}</text><text x="${pl}" y="${H - 3}" font-size="9" fill="#888">req 1</text><text x="${W - pr}" y="${H - 3}" font-size="9" fill="#888" text-anchor="end">req ${n}</text></svg>`;
-      }
       function fmtBustStamp(iso) {
         try {
           const d = new Date(iso);
@@ -23890,7 +23855,7 @@ ${i3.join("\n")}
         const diff = oldSnip || newSnip ? `<div class="bust-diff">${at}<div class="diff-line diff-del">- ${bustSnip(oldSnip)}</div><div class="diff-line diff-add">+ ${bustSnip(newSnip)}</div></div>` : "";
         return `<div class="bust-row bust-sev-${esc(sev)}"><div class="bust-row-head"><span class="bust-what">${esc(what)}</span>${faultBadge}${healBadge}</div><div class="bust-row-meta"><span class="bust-sev">${esc(sev)}</span>${mag}${stamp}${turnLink}</div>` + hint + diff + `</div>`;
       }
-      module.exports = { renderDiffHtml, costStackBlock, svgCostChart, bustRow, isZeroCostBust };
+      module.exports = { renderDiffHtml, costStackBlock, bustRow, isZeroCostBust };
     }
   });
 
@@ -33121,17 +33086,22 @@ Opening it here and saving would overwrite the file with what this editor could 
             html += `<div class="cost-head">${usd}${reqs} \xB7 the bar's chip is scoped separately \u2014 hover it</div>`;
           }
           if (m.headline) html += `<div class="cost-head-line">${esc(m.headline)}</div>`;
-          if (m.reclaimable && m.reclaimable.usd != null) {
-            html += `<div class="cost-note">Reclaimable: <b>${fmtUsd(m.reclaimable.usd)}</b>` + (m.reclaimable.pct != null ? ` (${esc(String(m.reclaimable.pct))}% of spend)` : "") + `</div>`;
+          if (m.reclaimable) {
+            const r = m.reclaimable;
+            const pct = r.pct != null ? `${esc(String(r.pct))}% of spend` : "";
+            const body = r.usd != null ? `<b>${fmtUsd(r.usd)}</b>${pct ? ` (${pct})` : ""}` : pct ? `<b>${pct}</b>` : "";
+            if (body) html += `<div class="cost-note">Reclaimable: ${body}</div>`;
           }
           if (m.buckets.length) {
+            const known = new Set(COST_BUCKETS.map((d2) => d2.key));
             const vals = {};
             let total = 0;
             for (const b of m.buckets) {
+              if (!known.has(b.bucket)) continue;
               vals[b.bucket] = b.usd || 0;
               total += b.usd || 0;
             }
-            html += costStackBlock("Cost by bucket", "", COST_BUCKETS, vals, total);
+            if (total > 0) html += costStackBlock("Cost by bucket", "", COST_BUCKETS, vals, total);
           }
           if (m.waste.length) {
             const rows = m.waste.map((w) => `<div class="cost-line-row"><span class="cost-line-label">${esc(w.type)}` + (w.lever ? ` <span class="cost-waste-lever">${esc(w.lever)}</span>` : "") + `</span><span class="cost-line-usd">${w.usd != null ? fmtUsd(w.usd) : "\u2014"}</span></div>`).join("");
@@ -36673,13 +36643,24 @@ You can add it back from this popover.` : "";
           }
           return html;
         }
+        const ctxPending = /* @__PURE__ */ new Map();
         async function openContextPopover(name, anchor) {
           closeSiblings();
           ctxPopoverName.textContent = name;
           ctxPopover.dataset.name = name;
-          ctxPopoverBody.innerHTML = '<div class="ctx-note">Loading\u2026</div>';
           ctxPopover.classList.remove("hidden");
           placeCtxPopover(anchor);
+          if (ctxPending.has(name)) return ctxPending.get(name);
+          ctxPopoverBody.innerHTML = '<div class="ctx-note">Loading\u2026</div>';
+          const run = fetchAndPaint(name, anchor);
+          ctxPending.set(name, run);
+          try {
+            return await run;
+          } finally {
+            ctxPending.delete(name);
+          }
+        }
+        async function fetchAndPaint(name, anchor) {
           const pl = proxyState.get(name)?.payload || {};
           const caps = pl.capabilities || {};
           const peerQueries = Array.isArray(pl.queries) ? pl.queries : [];
@@ -36700,25 +36681,28 @@ You can add it back from this popover.` : "";
           }
           const compHtml = renderCompositionHalf(name, agents);
           const links = `<div id="ctx-links">${renderCtxLinks(name, agents, caps, peerQueries)}</div>`;
+          const plainCol = renderUtilHalf(agents);
+          const cols = (right) => `<div class="ctx-cols"><div class="ctx-col">${compHtml}</div>${right}</div>`;
           if (!wantUtil) {
-            ctxPopoverBody.innerHTML = compHtml + links;
+            ctxPopoverBody.innerHTML = (plainCol.trim() ? cols(`<div class="ctx-col">${plainCol}</div>`) : compHtml) + links;
             placeCtxPopover(anchor);
             return;
           }
-          ctxPopoverBody.innerHTML = `<div class="ctx-cols"><div class="ctx-col">${compHtml}</div><div class="ctx-col" id="ctx-util-col"><div class="ctx-note">utilization: scanning\u2026</div></div></div>` + links;
+          const scanning = '<div class="ctx-note">utilization: scanning\u2026</div>';
+          ctxPopoverBody.innerHTML = cols(`<div class="ctx-col" id="ctx-util-col">${plainCol}${scanning}</div>`) + links;
           placeCtxPopover(anchor);
           const ures = await popoverApi(name).ctx({ utilization: true });
           if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains("hidden")) return;
           const col = document.getElementById("ctx-util-col");
           if (!col) return;
           if (!ures || !ures.ok) {
-            col.innerHTML = `<div class="ctx-note">utilization unavailable (${esc(ures && ures.error ? ures.error : "no answer")})</div>`;
+            col.innerHTML = plainCol + `<div class="ctx-note">utilization unavailable (${esc(ures && ures.error ? ures.error : "no answer")})</div>`;
             placeCtxPopover(anchor);
             return;
           }
           const uAgents = ures.data && Array.isArray(ures.data.agents) ? ures.data.agents : [];
           const utilCol = uAgents.length ? renderUtilHalf(uAgents) : "";
-          col.innerHTML = utilCol.trim() ? utilCol : '<div class="ctx-note">no utilization data yet</div>';
+          col.innerHTML = utilCol.trim() ? utilCol : plainCol.trim() || '<div class="ctx-note">no utilization data yet</div>';
           const linkBox = document.getElementById("ctx-links");
           if (linkBox && uAgents.length) linkBox.innerHTML = renderCtxLinks(name, uAgents, caps, peerQueries);
           placeCtxPopover(anchor);
@@ -39613,7 +39597,7 @@ ${detail}` });
       var { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota } = require_proxy_util();
       var { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require_constants();
       var { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require_format();
-      var { renderDiffHtml, costStackBlock, svgCostChart, bustRow } = require_render_html();
+      var { renderDiffHtml, costStackBlock, bustRow } = require_render_html();
       var { renderMarkdown } = require_render_markdown();
       var { placeAboveAnchor } = require_popover_place();
       var { scanPaths } = require_path_scan();
@@ -44371,7 +44355,7 @@ Click for live activity`;
         try {
           const pv = await window.api.wirescopePrune({ olderThan: older, tier: "receipts", scope: "all", dryRun: true });
           if (!pv || !pv.ok || !pv.data) {
-            wsLogsSize.textContent = pv && pv.error ? `Error: ${pv.error}` : "Preview failed";
+            wsLogsSize.textContent = (pv && pv.error ? `Error: ${pv.error}` : "Preview failed") + " \xB7 pick another age to retry";
             return;
           }
           const p = pv.data;
