@@ -169,7 +169,7 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
           }
           continue;
         }
-        if (letter === 'A') {
+        if (letter === 'A' && fields.length === 1) {
           // A fresh prompt while a command is open means it never finished and
           // never will — Ctrl-C at the prompt, or a shell that reset. The record
           // is still DROPPED (an abandoned line has no exit code, and holding it

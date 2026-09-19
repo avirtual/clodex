@@ -196,9 +196,10 @@ test('the length cap is on BYTES, not characters', () => {
 
 test('sanitizeName strips every code point vetTermCommand would refuse', () => {
   assert.strictEqual(sanitizeName(`ssh${ch(0x01)} ho${ch(0x7f)}st`), 'ssh host');
-  assert.strictEqual(sanitizeName('a​b‍c'), 'abc', 'zero-width');
-  assert.strictEqual(sanitizeName('a‮b⁦c⁩', 80), 'abc', 'bidi overrides and isolates');
-  assert.strictEqual(sanitizeName('﻿ssh host'), 'ssh host', 'a leading BOM');
+  assert.strictEqual(sanitizeName(`a${ch(0x200b)}b${ch(0x200d)}c`), 'abc', 'zero-width');
+  assert.strictEqual(sanitizeName(`a${ch(0x202e)}b${ch(0x2066)}c${ch(0x2069)}`, 80), 'abc',
+    'bidi overrides and isolates');
+  assert.strictEqual(sanitizeName(`${ch(0xfeff)}ssh host`), 'ssh host', 'a leading BOM');
   assert.strictEqual(sanitizeName(`x${ch(0x1b)}[2J`), 'x[2J',
     'the ESC goes, so a name cannot clear the agent`s screen — its printable tail is not a sequence');
 });

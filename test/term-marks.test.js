@@ -567,3 +567,34 @@ test('a local command carries no session line at all', () => {
   assert.strictEqual(formatCommand({ command: 'ls', exitCode: 0, output: '' }, { inside: '' }),
     '[terminal] ls\nexit 0', 'an empty inside is not a session');
 });
+
+test('an A carrying another integration`s attributes is ignored, not an abandon', () => {
+  const { events, parser } = twoLayer();
+  parser.feed(`${C('npm test')}running\n`);
+  assert.strictEqual(parser.isBusy(), true, 'ENTER: our command is open and capturing');
+
+  for (const attrs of ['k=s', 'cl=m', 'aid=1234', 'k=s;cl=m']) {
+    parser.feed(`\x1b]133;A;${attrs}\x07`);
+  }
+  assert.deepStrictEqual(events, [],
+    'no abandon and no prompt: kitty emits A;k=s on a continuation prompt, and an abandon would tell the agent its running command died');
+  assert.strictEqual(parser.isBusy(), true, 'the capture is still open');
+
+  parser.feed(`more\n${D(0)}`);
+  const recs = events.filter((e) => e[0] === 'command').map((e) => e[1]);
+  assert.deepStrictEqual(recs, [{
+    command: 'npm test', exitCode: 0, output: 'running\nmore\n', depth: 0,
+  }], 'the real D still finds the capture and reports the true result');
+  assert.ok(!/133|k=s|aid=/.test(recs[0].output), 'and the foreign marks were stripped from it');
+});
+
+test('a foreign A does not disturb an open far capture either', () => {
+  const { events, parser } = twoLayer();
+  parser.feed(`${C('ssh host')}${TC('apt upgrade')}`);
+  assert.strictEqual(parser.innerBusy(), true, 'ENTER: both layers are open');
+
+  parser.feed('\x1b]133;A;aid=7\x07');
+  assert.deepStrictEqual(events, [], 'neither layer was settled');
+  assert.strictEqual(parser.innerBusy(), true, 'the far capture survived — innerClear() did not run');
+  assert.strictEqual(parser.isBusy(), true);
+});
