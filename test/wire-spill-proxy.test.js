@@ -84,14 +84,15 @@ function startFakeUpstream(body = SPILL_SSE, opts = {}) {
         || { 'content-type': 'text/event-stream', 'x-upstream': 'fake' });
       const payload = Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf8');
       let off = 0;
-      const sizes = [7, 53, 211, 16, 1024];
+      const sizes = opts.sizes || [7, 53, 211, 16, 1024];
       let i = 0;
       const tick = () => {
         if (off >= payload.length) { res.end(); return; }
         const n = sizes[i++ % sizes.length];
         res.write(payload.slice(off, off + n));
         off += n;
-        setTimeout(tick, 1);
+        if (i === 1 && opts.afterFirstWrite) opts.afterFirstWrite();
+        setTimeout(tick, opts.gapMs || 1);
       };
       tick();
     });
@@ -153,7 +154,10 @@ function textOf(blob) {
 
 async function withProxy(upOpts, fn) {
   const up = await startFakeUpstream(upOpts.body, upOpts);
-  const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
+  const proxy = new WireProxy({
+    upstreams: { anthropic: `http://127.0.0.1:${up.port}` },
+    ...(upOpts.proxyOpts || {}),
+  });
   await proxy.listen();
   try {
     return await fn(proxy, up);
@@ -236,6 +240,73 @@ test('an unarmed agent is byte-identical and its accept-encoding is left alone',
   });
 });
 
+test('the gate off at request time: armed seat, byte-identical, accept-encoding left alone', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({ proxyOpts: { spillEnabled: () => false } }, async (proxy, up) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'] } });
+    assert.ok(proxy.spillOf('tester'), 'the seat really is armed — the gate is the only difference');
+    const events = collect(proxy, ['stream-end', 'spill', 'spill-skip']);
+    const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    await whenEvent(events, 'stream-end');
+    assert.equal(res.body.toString('utf8'), SPILL_SSE, 'byte-identical to upstream');
+    assert.equal(events.spill.length, 0);
+    assert.equal(events['spill-skip'].length, 0);
+    assert.equal(up.seen.requests[0].headers['accept-encoding'], 'gzip, br');
+    assert.ok(!fs.existsSync(path.join(root, 'spill')), 'nothing reached disk');
+  });
+});
+
+test('the gate flipped on between two requests applies to the second, same registration', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  let on = false;
+  await withProxy({ proxyOpts: { spillEnabled: () => on } }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'] } });
+    const events = collect(proxy, ['stream-end', 'spill']);
+
+    const first = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end', 1));
+    assert.equal(first.body.toString('utf8'), SPILL_SSE, 'gate off: untouched');
+    assert.equal(events.spill.length, 0);
+
+    on = true;
+    const second = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end', 2));
+    const seen = textOf(second.body);
+    const id = /@spill:([0-9a-f]{16})/.exec(seen)[1];
+    assert.ok(!seen.includes(BIG), 'gate on: the body is off the wire without a respawn');
+    assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${id}.md`), 'utf8'), BIG);
+    assert.equal(events.spill.length, 1);
+    assert.equal(events.spill[0].id, id);
+  });
+});
+
+test('the gate flipped off mid-stream does not disarm the response already in flight', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  let on = true;
+  await withProxy({
+    gapMs: 20,
+    sizes: [7, 1 << 20],
+    afterFirstWrite: () => { on = false; },
+    proxyOpts: { spillEnabled: () => on },
+  }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'] } });
+    const events = collect(proxy, ['stream-end', 'spill']);
+
+    const first = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end', 1));
+    assert.equal(on, false, 'the upstream really flipped the gate mid-response');
+    const seen = textOf(first.body);
+    assert.ok(!seen.includes(BIG),
+      'the decision is taken once per request, so a flip after the first chunk cannot reach it');
+    assert.equal(events.spill.length, 1);
+
+    const second = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end', 2));
+    assert.equal(second.body.toString('utf8'), SPILL_SSE, 'the NEXT request sees the flip');
+    assert.equal(events.spill.length, 1);
+  });
+});
+
 test('unregisterAgent clears the arming', async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({}, async (proxy) => {
@@ -256,7 +327,7 @@ test('a re-registration replaces the config rather than merging into it', async 
   proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'] } });
   proxy.registerAgent('tester', {});
   assert.equal(proxy.spillOf('tester'), null,
-    'a respawn that reads the option as off must not inherit the previous spawn arming');
+    'a respawn that arms nothing must not inherit the previous registration');
 });
 
 test('an armed agent whose upstream compresses anyway: exact bytes through, spill-skip encoding', async () => {

@@ -28,6 +28,7 @@ const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { createCliHooks } = require('../cli-hooks');
 const { pathFor, runDirFor } = require('../clodex-paths');
+const { intentEnabled } = require('../intent-catalog');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // The manager under test runs the REAL cli-hooks so the settings bytes asserted
@@ -94,6 +95,7 @@ function mkManager({ proxyBase = null, wireShadow = true } = {}) {
     mergeClaudeSystemPrompt: (a) => ({ cleaned: [...a], append: null }),
     readAppendBodies: () => [],
     pluginGrammarLines: () => [],
+    intentEnabled,
     // Past the settings write, on the way to sessions.set. None of this is under
     // test; it is the minimum that lets the claude arm reach the session object.
     getAgentLibrary: () => ({ list: () => [] }),

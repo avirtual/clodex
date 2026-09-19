@@ -128,33 +128,36 @@ test('uiSettings: a corrupt settings file yields a fresh default object each rea
   } finally { cleanup(); }
 });
 
-test('uiSettings: intentSpill ships off, round-trips, and refuses a junk value', () => {
+test('uiSettings: intentSpill ships on, round-trips, and refuses a junk value', () => {
   const { stores, cleanup } = freshStores();
   try {
     const { uiSettings } = stores;
-    assert.strictEqual(uiSettings.get().intentSpill, 'off',
-      'default OFF: the option rewrites what a seat emits, so it is opt-in');
-    uiSettings.set({ intentSpill: 'on' });
-    assert.strictEqual(uiSettings.get().intentSpill, 'on');
-    uiSettings.set({ theme: uiSettings.get().theme });
-    assert.strictEqual(uiSettings.get().intentSpill, 'on', 'survives an unrelated write');
-    uiSettings.set({ intentSpill: 'maybe' });
     assert.strictEqual(uiSettings.get().intentSpill, 'on',
-      'an unknown value keeps the current one rather than silently disarming a live setting');
+      'default ON: the spill is a plain optimization, so it is opt-OUT');
     uiSettings.set({ intentSpill: 'off' });
     assert.strictEqual(uiSettings.get().intentSpill, 'off');
+    uiSettings.set({ theme: uiSettings.get().theme });
+    assert.strictEqual(uiSettings.get().intentSpill, 'off', 'survives an unrelated write');
+    uiSettings.set({ intentSpill: 'maybe' });
+    assert.strictEqual(uiSettings.get().intentSpill, 'off',
+      'an unknown value keeps the current one rather than silently re-arming a disabled setting');
+    uiSettings.set({ intentSpill: 'on' });
+    assert.strictEqual(uiSettings.get().intentSpill, 'on');
   } finally { cleanup(); }
 });
 
-test('uiSettings: a settings file predating intentSpill reads back off', () => {
+test('uiSettings: a settings file predating intentSpill reads back ON', () => {
   const { stores, userData, cleanup } = freshStores();
   try {
     const p = path.join(userData, 'ui-settings.json');
     fs.writeFileSync(p, JSON.stringify({ theme: 'midnight' }));
-    assert.strictEqual(stores.uiSettings.get().intentSpill, 'off',
-      'an absent key is the same answer as off, so an upgrade never arms it');
+    assert.strictEqual(stores.uiSettings.get().intentSpill, 'on',
+      'an absent key is the same answer as on, so an upgrade gets the optimization');
     fs.writeFileSync(p, JSON.stringify({ intentSpill: 'yes please' }));
-    assert.strictEqual(stores.uiSettings.get().intentSpill, 'off');
+    assert.strictEqual(stores.uiSettings.get().intentSpill, 'on');
+    fs.writeFileSync(p, JSON.stringify({ intentSpill: 'off' }));
+    assert.strictEqual(stores.uiSettings.get().intentSpill, 'off',
+      'an explicit off is still honoured');
   } finally { cleanup(); }
 });
 

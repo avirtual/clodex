@@ -101,7 +101,7 @@ const DEFAULT_UI_SETTINGS = {
   // key to 'off' rather than falling through to the default.
   terminalReports: 'asked',
   terminalRemote: 'off',
-  intentSpill: 'off',
+  intentSpill: 'on',
   defaultSessionMode: 'optimized',
   discoverOnStartup: false,
   recentCwds: [],
@@ -1441,7 +1441,7 @@ function initStores(userDataPath, {
           speakRate: sanitizeSpeakRate(raw?.speakRate),
           terminalReports: sanitizeTerminalReports(raw),
           terminalRemote: TERMINAL_REMOTE.includes(raw?.terminalRemote) ? raw.terminalRemote : 'off',
-          intentSpill: INTENT_SPILL.includes(raw?.intentSpill) ? raw.intentSpill : 'off',
+          intentSpill: INTENT_SPILL.includes(raw?.intentSpill) ? raw.intentSpill : 'on',
           defaultSessionMode: SESSION_MODES.includes(raw?.defaultSessionMode) ? raw.defaultSessionMode : DEFAULT_UI_SETTINGS.defaultSessionMode,
           discoverOnStartup: typeof raw?.discoverOnStartup === 'boolean' ? raw.discoverOnStartup : DEFAULT_UI_SETTINGS.discoverOnStartup,
           recentCwds: Array.isArray(raw?.recentCwds) ? raw.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : defaultUiSettings().recentCwds,

@@ -857,6 +857,12 @@ accept teardown removes.
   state machine and SSE rewriter that hold a listed verb's body and emit the
   pointer), `session-manager._handleIntent`, `_handoffText`, and engine's
   `resolveFilePath`. Notes: `docs/notes/intent-spill.md`, `docs/notes/wire-spill.md`.
+  The `intentSpill` Settings switch (on by default) is NOT copied onto a seat at
+  spawn: every capable Claude seat registers `spill: {root, verbs}` on the wire
+  and carries the grammar line, and `WireProxy`'s injected `spillEnabled()` gate
+  is consulted ONCE PER REQUEST. So a flip reaches every running seat at its next
+  turn without a restart, an in-flight response finishes under the decision it
+  started with, and the baked prompt's bytes never move when the switch does.
 - **path-confine.js** — one caller-supplied name, one path segment, POSITIVELY
   confined to a directory Clodex owns. Positive because a charset regex is not
   containment: `.` and `..` pass `/^[a-zA-Z0-9._-]{1,64}$/`. Pure leaf, no I/O.
