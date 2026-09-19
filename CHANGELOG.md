@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.80.0 — 2026-09-19
+
 - Long intent bodies stay out of the transcript. With "Spill long intent bodies to files" on (Settings, off by default, applies to seats started afterwards), an agent's long `task add`, `task respec`, `task reject` and `context compact|clear|reload` bodies are saved to a file as the agent writes them and the terminal shows a one-line `@spill:<id>` in their place — click it to read the body — while the recipient still gets the whole text. Every later turn of that agent carries the pointer instead of the spec. Independently of the option, a long compact/clear/reload handoff now reaches the fresh context as an attached file instead of being typed into the terminal.
 
 ## 5.79.0 — 2026-09-19
