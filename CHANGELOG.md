@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Long notify-user notes are spilled to files like specs and handoffs are, and a spilled body now keeps its first line in the terminal beside the `@spill:<id>` pointer, so the transcript still says which spec or note it was.
+
 ## 5.81.0 — 2026-09-19
 
 - Spilling long intent bodies to files is now on by default, and the Settings switch applies to every running seat from its next turn — no restart needed to turn it on or off.

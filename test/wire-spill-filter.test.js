@@ -8,10 +8,12 @@ const crypto = require('node:crypto');
 
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { SpillFilter } = require('../wire/spill');
+const { parseIntent } = require('../intent-scanner');
+const { pointerOf } = require('../intent-spill');
 
 const BIG = 'z'.repeat(900);
 const SMALL = 'y'.repeat(50);
-const VERBS = ['task.add', 'task.respec', 'context.compact'];
+const VERBS = ['task.add', 'task.respec', 'context.compact', 'notify-user'];
 const SIZES = [1, 3, 7, 17, 64, 1e6];
 
 let ROOT = null;
@@ -77,6 +79,87 @@ test('row 5: the file is the body exactly, and the id is its sha', () => {
   assert.equal(disk, body, 'no normalisation: blank lines and trailing spaces survive');
   assert.equal(id, crypto.createHash('sha256').update(Buffer.from(body, 'utf8')).digest('hex').slice(0, 16));
   assert.match(id, /^[0-9a-f]{16}$/);
+});
+
+test('the pointer line keeps the body\'s first line, so the transcript still says which spec it was', () => {
+  const body = `S-E intent-spill: notify-user joins the spilled verbs\n${BIG}\nlast`;
+  const T = `before\n[agent:task add t42 start] ${body}\n[agent:end]\nafter\n`;
+  const outs = SIZES.map((cs) => run(T, { cs }).out);
+  assert.equal(new Set(outs).size, 1, 'the title does not depend on chunking');
+  const { id, body: disk } = diskOf(outs[0]);
+  assert.equal(outs[0],
+    `before\n[agent:task add t42 start] S-E intent-spill: notify-user joins the spilled verbs @spill:${id}\n`
+    + '[agent:end]\nafter\n');
+  assert.equal(disk, body,
+    'the FILE is still the whole body, title included, so the id is unchanged by the emission');
+  assert.equal(id, crypto.createHash('sha256').update(Buffer.from(body, 'utf8')).digest('hex').slice(0, 16),
+    'content-addressed on the body, never on what the transcript shows');
+  assert.ok(!outs[0].includes(BIG), 'and the rest of the body is still off the wire');
+});
+
+test('a single-line body emits the BARE pointer — a title equal to the body says nothing', () => {
+  const one = 'q'.repeat(900);
+  const { out } = run(`[agent:task add t] ${one}\n[agent:end]\n`);
+  assert.equal(out, `[agent:task add t] @spill:${diskOf(out).id}\n[agent:end]\n`,
+    'repeating an 80-char prefix of a body that has no structure costs context and tells the seat nothing new');
+  assert.equal(diskOf(out).body, one);
+});
+
+test('a body whose first non-blank line comes after blanks titles from THAT line', () => {
+  const held = `\n   the real first line   \n${BIG}`;
+  const { out } = run(`[agent:task add t] \n${held}\n[agent:end]\n`);
+  assert.ok(out.startsWith('[agent:task add t] the real first line @spill:'),
+    `titleLine trims and skips blanks, exactly as a ticket title does: ${JSON.stringify(out.slice(0, 80))}`);
+  assert.equal(diskOf(out).body, held,
+    'and the file keeps the blank line the title skipped — the title is display, the file is the body');
+});
+
+test('a first line over 80 chars is cut at 77 with an ellipsis, as ticketTitle cuts one', () => {
+  const first = 'w'.repeat(81);
+  const { out } = run(`[agent:task add t] ${first}\n${BIG}\n[agent:end]\n`);
+  const line = out.split('\n')[0];
+  const title = line.slice('[agent:task add t] '.length, line.indexOf(' @spill:'));
+  assert.equal(title, `${'w'.repeat(77)}…`);
+  assert.equal(title.length, 78, 'the cap is on characters, and the ellipsis is one of them');
+  assert.ok(diskOf(out).body.startsWith(first), 'the file still holds the untruncated line');
+});
+
+test('the emitted line parses as the SAME intent, which is what keeps the pointer resolvable', () => {
+  const cases = [
+    ['task add t42 start', `plain first line\n${BIG}`],
+    ['task add t9', `a title with a ] bracket in it\n${BIG}`],
+    ['task add t9', `a title with a [ bracket and [agent:dm x] in it\n${BIG}`],
+    ['notify-user', `DEPLOY blocked: the cert expired\n${BIG}`],
+    ['context compact', `pick up at t1015 part 2\n${BIG}`],
+  ];
+  for (const [headArgs, body] of cases) {
+    const { out } = run(`[agent:${headArgs}] ${body}\n[agent:end]\n`);
+    const line = out.split('\n')[0];
+    const parsed = parseIntent(line);
+    assert.ok(parsed, `${headArgs}: the titled head line still parses`);
+    const bare = parseIntent(`[agent:${headArgs}] @spill:${diskOf(out).id}`);
+    assert.equal(parsed.type, bare.type, headArgs);
+    assert.equal(parsed.sub, bare.sub, headArgs);
+    assert.equal(pointerOf(parsed.body), diskOf(out).id,
+      `${headArgs}: the scanner hands _handleIntent a body the resolver still recognises — `
+      + 'a title parseIntent mangled would dispatch the pointer text as the spec');
+  }
+});
+
+test('notify-user spills like a spec: an operator note is read in the inbox and can run long', () => {
+  const body = `DEPLOY blocked on the signing cert\n${BIG}`;
+  const { out } = run(`[agent:notify-user] ${body}\n[agent:end]\n`);
+  assert.ok(out.includes('@spill:'), 'the verb is listed');
+  assert.ok(!out.includes(BIG), 'the note is off the wire');
+  assert.equal(diskOf(out).body, body);
+  assert.ok(out.startsWith('[agent:notify-user] DEPLOY blocked on the signing cert @spill:'));
+});
+
+test('memory remember and task done stay unlisted, so the seat keeps seeing what it wrote', () => {
+  for (const head of ['memory remember', 'task done t42', 'dm bob']) {
+    const T = `[agent:${head}] ${BIG}\n[agent:end]\n`;
+    assert.equal(run(T).out, T, `${head} must stream verbatim`);
+  }
 });
 
 test('row 6 (DEVIATION): the head-line rest is TRIMMED, as _extractIntents trims it', () => {

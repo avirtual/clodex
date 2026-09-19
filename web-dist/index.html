@@ -9328,7 +9328,7 @@ body.web-frontend #sidebar-header {
         </label>
         <span id="prefs-compact-on-resume-why" class="prefs-dep-reason"></span>
         <h5>Long intent bodies</h5>
-        <p class="hint-text">Ticket specs and context handoffs over 800 bytes that an agent emits are stored under <code>~/.clodex/spill/&lt;seat&gt;/</code> and its transcript keeps a one-line <code>@spill:&lt;id&gt;</code> pointer, so later turns stop re-reading them. Click the pointer in the terminal to read the body. The recipient still gets the whole text. Claude seats only; on by default, and a change applies to every running seat from its next turn.</p>
+        <p class="hint-text">Ticket specs and context handoffs over 800 bytes that an agent emits are stored under <code>~/.clodex/spill/&lt;seat&gt;/</code> and its transcript keeps the first line and a one-line <code>@spill:&lt;id&gt;</code> pointer in their place, so later turns stop re-reading them. Click the pointer in the terminal to read the body. The recipient still gets the whole text. Claude seats only; on by default, and a change applies to every running seat from its next turn.</p>
         <label class="prefs-check">
           <input type="checkbox" id="prefs-intent-spill">
           <span>Spill long intent bodies to files</span>

@@ -4,8 +4,9 @@ const {
   SPILL_MIN_BYTES, SPILL_MAX_BYTES, validAgent, writeSpill: defaultWriteSpill,
 } = require('../intent-spill');
 const { cleanLine } = require('../intent-scanner');
+const { titleLine, ticketTitle } = require('../tickets-store');
 
-const HEAD_RE = /^\[agent:([a-z]+)(?:\s+([a-z-]+))?\b([^\]]*)\]/;
+const HEAD_RE = /^\[agent:([a-z][a-z-]*)(?:\s+([a-z-]+))?\b([^\]]*)\]/;
 const TERMINATOR = '[agent:end]';
 const OPEN = '[agent:';
 
@@ -159,7 +160,9 @@ class SpillFilter {
         this.verb = null;
         this._fired += 1;
         this._notify(this.onSpill, { verb, id, bytes });
-        return `${head} @spill:${id}\n`;
+        const first = titleLine(bodyText);
+        const title = (first && first !== bodyText.trim()) ? `${ticketTitle(bodyText)} ` : '';
+        return `${head} ${title}@spill:${id}\n`;
       }
     }
     const held = this.originalHeld();

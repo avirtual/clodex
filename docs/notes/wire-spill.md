@@ -28,6 +28,14 @@ divergence silently dispatches a different spec than the transcript shows.
    pops them (`while (body.length && !body[body.length-1].trim()) body.pop()`).
    The head-line fragment is never popped — it is the scanner's `firstBody`,
    which the pop loop cannot reach.
+4. `HEAD_RE`'s verb group is `[a-z][a-z-]*`, where spill.py builds `[a-z]+`. A
+   hyphenated one-word verb is a real clodex verb (`notify-user`), and `[a-z]+`
+   keys it as `notify`, which is in no verb set and so never spills.
+5. The pointer line carries the body's first line ahead of the pointer, capped
+   by `tickets-store.ticketTitle`, where spill.py emits the bare pointer. A
+   single-line body emits the bare pointer instead: a title equal to the body
+   repeats it for nothing. The FILE is always the whole body, so the id — the
+   sha of the body — is unchanged by what the transcript shows.
 
 Every test_spill.py delimitation case is still ported in
 `test/wire-spill-filter.test.js`, row 6 rewritten to the trimmed expectation.

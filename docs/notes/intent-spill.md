@@ -55,7 +55,12 @@ one outcome worse than a stall.
 
 ## POINTER_RE
 
-The WHOLE body must be the pointer, or the body is prose used verbatim. That is
-what makes a cross-seat read inexpressible: a peer's `@spill:<id>` copied into
-prose is never resolved, and a pointer resolved at all is resolved against the
-SENDER's own directory.
+The body must be the pointer alone, or ONE line ending in ` @spill:<id>` with at
+most 80 chars of title before it (`TITLED_POINTER_RE`) — the shape the tee emits
+so the transcript still says which spec it was. Anything else is prose used
+verbatim. That is what makes a cross-seat read inexpressible: a peer's
+`@spill:<id>` copied mid-prose is never resolved, and a pointer resolved at all
+is resolved against the SENDER's own directory.
+
+The title is DISCARDED at resolution: the file is authoritative, so an edited or
+stale title cannot change one byte of what the recipient gets.

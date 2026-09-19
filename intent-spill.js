@@ -13,11 +13,13 @@ const SPILL_MAX_BYTES = 262144;
 const SPILL_VERBS = new Set([
   'task.add', 'task.respec', 'task.reject',
   'context.compact', 'context.clear', 'context.reload',
+  'notify-user',
 ]);
 
 const ID_RE = /^[0-9a-f]{16}$/;
 const AGENT_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const POINTER_RE = /^\s*@spill:([0-9a-f]{16})\s*$/;
+const TITLED_POINTER_RE = /^([^\n]{0,79}[^\s\n]) @spill:([0-9a-f]{16})\s*$/;
 
 function verbKeyOf(intent) {
   if (!intent || typeof intent.type !== 'string') return null;
@@ -103,7 +105,9 @@ function resolveSpill(root, agent, id) {
 function pointerOf(body) {
   if (typeof body !== 'string') return null;
   const m = POINTER_RE.exec(body);
-  return m ? m[1] : null;
+  if (m) return m[1];
+  const t = TITLED_POINTER_RE.exec(body);
+  return t ? t[2] : null;
 }
 
 function pointerText(id) {
@@ -117,6 +121,7 @@ module.exports = {
   ID_RE,
   AGENT_RE,
   POINTER_RE,
+  TITLED_POINTER_RE,
   verbKeyOf,
   isSpillVerb,
   validAgent,

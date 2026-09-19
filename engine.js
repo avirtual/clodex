@@ -20,7 +20,7 @@ const { KINDS: PROMPT_KINDS, badStem, teamPromptFile, teamJsonFile, readTeamJson
 const { planGather, applyGather } = require('./team-gather');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
 const { resolveDisplayedPath } = require('./file-resolve');
-const { resolveSpill } = require('./intent-spill');
+const { resolveSpill, pointerOf } = require('./intent-spill');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
 const { readVoiceMode, writeVoiceMode, readVoiceTrigger } = require('./voice-settings');
 const { readVoiceCapabilityCached } = require('./voice-capability');
@@ -1472,8 +1472,9 @@ function resolveFilePath(name, raw, baseDir) {
   const s = manager.sessions.get(name);
   if (!s) return { ok: false, error: 'Session not running' };
   if (s.peer) return { ok: false, error: 'remote' };
-  if (typeof raw === 'string' && /^@spill:[0-9a-f]{16}$/.test(raw.trim())) {
-    const sp = resolveSpill(REGISTRY_DIR, name, raw.trim().slice(7));
+  const spillId = typeof raw === 'string' ? pointerOf(raw.trim()) : null;
+  if (spillId) {
+    const sp = resolveSpill(REGISTRY_DIR, name, spillId);
     return sp.ok ? { ok: true, path: sp.path, via: 'a spilled intent body' }
       : { ok: false, error: 'spill file not found' };
   }
