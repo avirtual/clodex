@@ -13,7 +13,7 @@
 // SHELL emits invisible marks at the boundaries it alone knows. That is what
 // makes this parser small and honest — it reads facts rather than deducing them.
 //
-// The subset this file understands, which is what term-shim.js emits:
+// The subset this file understands:
 //   ESC ] 133 ; A            BEL   prompt about to be drawn
 //   ESC ] 133 ; C ; <b64>    BEL   command STARTED; payload is what actually ran
 //   ESC ] 133 ; D ; <exit>   BEL   command finished, with its status
@@ -58,9 +58,7 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
   // The exit status of the D mark most recently parsed, or null when the last
   // thing seen was not a D. Read only to classify the A that follows it: the
   // shim emits D then A from ONE precmd, so a D still standing when an A
-  // arrives is that A's own status. Cleared on every other mark so a `130` can
-  // never be carried across an unrelated prompt and make a later A look like an
-  // interrupt's.
+  // arrives is that A's own status.
   let lastExit = null;
 
   function emit(exitCode) {
@@ -159,6 +157,7 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
             }
             inner.lastExit = parsed;
           } else if (letter === 'A') {
+            if (!capturing) continue;
             if (inner.capturing) {
               const rec = { command: inner.command, output: inner.out, depth: 1, inside: command };
               innerClear();

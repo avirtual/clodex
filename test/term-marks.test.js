@@ -454,7 +454,8 @@ test('a tagged D;130 then a tagged A reports the interrupt at depth 1', () => {
 test('tagged marks with no outer open are ignored, and never reach the output', () => {
   const { events, parser } = twoLayer();
   parser.feed(`${TC('ls')}stray\n${TD(0)}${TA}`);
-  assert.deepStrictEqual(events.filter((e) => e[0] !== 'prompt'), [], 'nothing was framed');
+  assert.deepStrictEqual(events, [],
+    'nothing was framed, and NO PROMPT either: T-C releases a typed command on a depth-1 prompt, so a stray tagged A after the session closed would type into the local shell');
   assert.strictEqual(parser.innerBusy(), false);
 
   parser.feed(`${C('real')}mine\n${D(0)}`);
@@ -498,13 +499,16 @@ test('a new outer command resets a far capture and bumps outerSeq', () => {
 });
 
 test('an abandoned outer resets the far layer too', () => {
-  const { parser } = twoLayer();
+  const { events, parser } = twoLayer();
   parser.feed(`${C('ssh host')}${TC('sleep 900')}`);
   assert.strictEqual(parser.innerBusy(), true, 'ENTER: both layers are open');
 
   parser.feed(A);
   assert.strictEqual(parser.isBusy(), false);
   assert.strictEqual(parser.innerBusy(), false, 'an abandoned outer has no far side');
+  const abandons = events.filter((e) => e[0] === 'abandon');
+  assert.strictEqual(abandons.length, 1, 'ONE abandon: the outer`s. The inner reset is silent');
+  assert.strictEqual(abandons[0][1].depth, 0, 'and it is the outer that was announced');
 });
 
 test('altScreen tracks the switch even when a PTY read splits it', () => {
