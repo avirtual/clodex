@@ -803,6 +803,11 @@ accept teardown removes.
 - **term-marks.js** — OSC 133 semantic prompt marks: the parser, and the prose
   that describes a finished command back to the agent. A terminal is a screen,
   not a stream of results, which is why the marks exist at all.
+- **term-host.js** — decides whether the program holding a terminal is hosting
+  a shell an agent's command could be typed into (`ssh`, `su`, `sudo -i`,
+  `docker exec -it`, a nested shell), from the C-mark command text alone. Narrow
+  by design: a false negative refuses and costs one message, a false positive
+  types into something that is not a shell.
 - **term-shim.js** — the generated shell startup that emits those marks. THIS
   REACHES INTO THE OPERATOR'S SHELL STARTUP, the most intrusive thing Clodex
   does to a surface it does not own; its header is the constraint list.

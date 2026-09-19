@@ -82,6 +82,7 @@ clodex-eoo2-
 clodex-escape-
 clodex-exec-
 clodex-fake-plugin-
+clodex-far-hist-
 clodex-first-run-
 clodex-fix-outbox-
 clodex-folder-
@@ -99,6 +100,7 @@ clodex-home-
 clodex-hooks-
 clodex-hs-
 clodex-init-
+clodex-install-line-
 clodex-ipccache-
 clodex-jsonlw-
 clodex-keymap-
