@@ -9327,6 +9327,12 @@ body.web-frontend #sidebar-header {
           <span>Bake transcripts on resume</span>
         </label>
         <span id="prefs-compact-on-resume-why" class="prefs-dep-reason"></span>
+        <h5>Long intent bodies</h5>
+        <p class="hint-text">Ticket specs and context handoffs over 800 bytes that an agent emits are stored under <code>~/.clodex/spill/&lt;seat&gt;/</code> and its transcript keeps a one-line <code>@spill:&lt;id&gt;</code> pointer, so later turns stop re-reading them. Click the pointer in the terminal to read the body. The recipient still gets the whole text. Claude seats only; takes effect when a seat (re)starts.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-intent-spill">
+          <span>Spill long intent bodies to files (applies to seats started after the change)</span>
+        </label>
         <h5>Context pressure reminders</h5>
         <p class="hint-text">Clodex tells an agent its context is heavy once it passes the first threshold, and switches to sterner wording past the second &mdash; a note attached to its next prompt, never an interruption. The agent picks its own moment to run <code>[agent:context compact]</code>. Thresholds are absolute input tokens, not a share of the window: every turn re-sends the whole conversation, so a 250k conversation is expensive even on a 1M-window model. One-ticket seats are never nudged.</p>
         <div class="prefs-row" style="margin-top: 6px;">
@@ -24203,6 +24209,22 @@ ${i3.join("\n")}
         }
         return out;
       }
+      var SPILL_RE = /@spill:([0-9a-f]{16})\b/g;
+      function scanSpillPointers(text) {
+        if (typeof text !== "string" || !text) return [];
+        const out = [];
+        SPILL_RE.lastIndex = 0;
+        for (let m = SPILL_RE.exec(text); m; m = SPILL_RE.exec(text)) {
+          out.push({
+            start: m.index,
+            end: m.index + m[0].length,
+            text: m[0],
+            path: m[0],
+            line: null
+          });
+        }
+        return out;
+      }
       function scanLinks(text) {
         if (typeof text !== "string" || !text) return [];
         const marks = [];
@@ -24230,7 +24252,7 @@ ${i3.join("\n")}
         if (at < text.length) out.push({ kind: "text", text: text.slice(at) });
         return out;
       }
-      module.exports = { scanPaths, scanLinks, PATH_RE, EXTENSIONS };
+      module.exports = { scanPaths, scanSpillPointers, scanLinks, PATH_RE, SPILL_RE, EXTENSIONS };
     }
   });
 
@@ -39672,7 +39694,7 @@ ${detail}` });
       var { renderDiffHtml, costStackBlock, bustRow } = require_render_html();
       var { renderMarkdown } = require_render_markdown();
       var { placeAboveAnchor } = require_popover_place();
-      var { scanPaths } = require_path_scan();
+      var { scanPaths, scanSpillPointers } = require_path_scan();
       var { matchGutterRow, findGutterFile } = require_gutter_scan();
       var GUTTER_HEADER_SCAN = 400;
       var { splitModelArg, withModelArg } = require_args_model();
@@ -40929,7 +40951,7 @@ ${detail}` });
             const line = terminal.buffer.active.getLine(y - 1);
             if (!line) return cb(void 0);
             const raw = line.translateToString(true);
-            const hits = scanPaths(raw);
+            const hits = scanPaths(raw).concat(scanSpillPointers(raw));
             const g = !line.isWrapped ? matchGutterRow(raw) : null;
             if (g) {
               const above = [];
@@ -43958,6 +43980,7 @@ Click for live activity`;
       var prefsCtxModels = document.getElementById("prefs-ctx-models");
       var prefsTerminalReports = document.getElementById("prefs-terminal-reports");
       var prefsTerminalRemote = document.getElementById("prefs-terminal-remote");
+      var prefsIntentSpill = document.getElementById("prefs-intent-spill");
       var prefsDefaultMode = document.getElementById("prefs-default-mode");
       var prefsDiscoverOnStartup = document.getElementById("prefs-discover-on-startup");
       var prefsToolsRow = document.getElementById("prefs-tools-row");
@@ -46444,6 +46467,7 @@ ${res.stderr}` : "");
         setCtxThresholds(s);
         setTerminalReports(s.terminalReports);
         if (prefsTerminalRemote) prefsTerminalRemote.checked = s.terminalRemote === "on";
+        if (prefsIntentSpill) prefsIntentSpill.checked = s.intentSpill === "on";
         if (prefsDefaultMode) prefsDefaultMode.value = defaultSessionMode(s);
         if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
         restorePrefsGroups();
@@ -46561,6 +46585,7 @@ ${res.stderr}` : "");
           ...prefsCtxNudge && prefsCtxEscalate ? { ctxReminderThresholds: { default: readCtxThresholdPair() } } : {},
           terminalReports: readTerminalReports(),
           terminalRemote: prefsTerminalRemote && prefsTerminalRemote.checked ? "on" : "off",
+          intentSpill: prefsIntentSpill && prefsIntentSpill.checked ? "on" : "off",
           defaultSessionMode: prefsDefaultMode ? prefsDefaultMode.value : "optimized",
           discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
           remoteEnabled: prefsRemoteEnabled.checked,

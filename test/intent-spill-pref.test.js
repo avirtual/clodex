@@ -1,0 +1,89 @@
+'use strict';
+
+const { test } = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { initStores } = require('../stores.js');
+const { mkTmpRoot } = require('./lib/tmp-roots');
+
+const ROOT = path.join(__dirname, '..');
+const html = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
+const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
+
+function openStores() {
+  const dir = mkTmpRoot('clodex-spill-');
+  return initStores(dir, {
+    log: { info: () => {}, error: () => {} },
+    registryDir: path.join(dir, 'registry'),
+    resourcesDir: path.join(dir, '__no_seed__'),
+  });
+}
+
+function saveExpr(checkbox) {
+  const m = rendererSrc.match(/\n\s*intentSpill: (.*),\n/);
+  assert.ok(m, 'ENTER: the save payload names intentSpill in renderer.js');
+  return new Function('prefsIntentSpill', `return ${m[1]};`)(checkbox);
+}
+
+function populate(settings) {
+  const m = rendererSrc.match(/\n\s*if \(prefsIntentSpill\) prefsIntentSpill\.checked = (.*);\n/);
+  assert.ok(m, 'ENTER: openPrefs paints prefsIntentSpill from the settings object');
+  const box = { checked: 'untouched' };
+  new Function('prefsIntentSpill', 's', `prefsIntentSpill.checked = ${m[1]};`)(box, settings);
+  return box.checked;
+}
+
+test('the checkbox exists in the prefs markup with the wording the ticket fixed', () => {
+  assert.ok(html.includes('id="prefs-intent-spill"'),
+    'no checkbox means the store key stays unreachable, which is the state before this ticket');
+  assert.match(html, /Spill long intent bodies to files \(applies to seats started after the change\)/);
+});
+
+test('renderer.js holds the checkbox element, so the two expressions have something to read', () => {
+  assert.match(rendererSrc,
+    /const prefsIntentSpill = document\.getElementById\('prefs-intent-spill'\);/);
+});
+
+test('a ticked box saves `on` and an unticked one saves `off`', () => {
+  assert.strictEqual(saveExpr({ checked: true }), 'on');
+  assert.strictEqual(saveExpr({ checked: false }), 'off');
+});
+
+test('a missing control saves `off` rather than undefined', () => {
+  assert.strictEqual(saveExpr(null), 'off');
+});
+
+test('the box round-trips through a real settings store', () => {
+  const { uiSettings } = openStores();
+  assert.strictEqual(uiSettings.get().intentSpill, 'off', 'ENTER: off is the shipped default');
+
+  uiSettings.set({ intentSpill: saveExpr({ checked: true }) });
+  assert.strictEqual(uiSettings.get().intentSpill, 'on');
+  assert.strictEqual(populate(uiSettings.get()), true,
+    'reopening Preferences must show the box the operator ticked');
+
+  uiSettings.set({ intentSpill: saveExpr({ checked: false }) });
+  assert.strictEqual(uiSettings.get().intentSpill, 'off');
+  assert.strictEqual(populate(uiSettings.get()), false);
+});
+
+test('populate reads intentSpill and not a neighbouring on/off key', () => {
+  assert.strictEqual(populate({ intentSpill: 'on', terminalRemote: 'off' }), true);
+  assert.strictEqual(populate({ intentSpill: 'off', terminalRemote: 'on' }), false);
+});
+
+test('saving the spill box does not disturb the pref it was modelled on', () => {
+  const { uiSettings } = openStores();
+  uiSettings.set({ terminalRemote: 'on' });
+  uiSettings.set({ intentSpill: 'on' });
+  assert.strictEqual(uiSettings.get().terminalRemote, 'on');
+});
+
+test('the web bundle carries the same three halves as the renderer source', () => {
+  const bundle = fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8');
+  assert.ok(bundle.includes('id="prefs-intent-spill"'));
+  assert.match(bundle, /prefsIntentSpill = document\.getElementById\("prefs-intent-spill"\)/);
+  assert.match(bundle, /intentSpill: prefsIntentSpill/);
+});

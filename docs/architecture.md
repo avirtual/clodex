@@ -1365,7 +1365,12 @@ and are not, which is why the judgement worth testing is pushed down here.
 - **path-scan.js** — find path-like tokens (with an optional `:line`) in a line
   of plain text, as offsets. Answers "what LOOKS like a path here" and nothing
   about existence — resolution is main-side (`file-resolve.js`), because only
-  main can stat.
+  main can stat. `scanSpillPointers` is the second scan over the same line: a
+  `@spill:<id>` an agent's transcript carries in place of a long intent body
+  (`intent-spill.js`). The terminal's link provider merges both hit lists; the
+  inbox drawer and the files popover scan paths ONLY, because a `@spill:` inside
+  a dm body is the SENDER's pointer and resolves in no reader's seat dir. Which
+  seat a pointer is read against is engine's `resolveFilePath`, never the text.
 - **gutter-scan.js** — recognize the line-number gutter the CLI prints under a
   file-editing tool call, so those numbers become clickable. Offsets only.
 - **drop-paths.js** — the string typed at the prompt when files are dropped on a

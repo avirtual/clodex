@@ -13,7 +13,7 @@ const { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, f
 const { renderDiffHtml, costStackBlock, bustRow } = require('./lib/render-html');
 const { renderMarkdown } = require('./lib/render-markdown');
 const { placeAboveAnchor } = require('./lib/popover-place');
-const { scanPaths } = require('./lib/path-scan');
+const { scanPaths, scanSpillPointers } = require('./lib/path-scan');
 const { matchGutterRow, findGutterFile } = require('./lib/gutter-scan');
 
 // How far above a gutter row to look for its `Update(file)` header. The search
@@ -1338,7 +1338,7 @@ function createTerminal(name, peer = null) {
       const line = terminal.buffer.active.getLine(y - 1);
       if (!line) return cb(undefined);
       const raw = line.translateToString(true);
-      const hits = scanPaths(raw);
+      const hits = scanPaths(raw).concat(scanSpillPointers(raw));
 
       // A gutter number, linked to the file its tool-call header names. Only on
       // an unwrapped row: a continuation row's leading digits are content.
@@ -4753,6 +4753,7 @@ const prefsCtxEscalate = document.getElementById('prefs-ctx-escalate');
 const prefsCtxModels = document.getElementById('prefs-ctx-models');
 const prefsTerminalReports = document.getElementById('prefs-terminal-reports');
 const prefsTerminalRemote = document.getElementById('prefs-terminal-remote');
+const prefsIntentSpill = document.getElementById('prefs-intent-spill');
 const prefsDefaultMode = document.getElementById('prefs-default-mode');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
@@ -7213,6 +7214,7 @@ async function openPrefs() {
   setCtxThresholds(s);
   setTerminalReports(s.terminalReports);
   if (prefsTerminalRemote) prefsTerminalRemote.checked = s.terminalRemote === 'on';
+  if (prefsIntentSpill) prefsIntentSpill.checked = s.intentSpill === 'on';
   if (prefsDefaultMode) prefsDefaultMode.value = defaultSessionMode(s);
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   restorePrefsGroups();
@@ -7330,6 +7332,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     ...(prefsCtxNudge && prefsCtxEscalate ? { ctxReminderThresholds: { default: readCtxThresholdPair() } } : {}),
     terminalReports: readTerminalReports(),
     terminalRemote: (prefsTerminalRemote && prefsTerminalRemote.checked) ? 'on' : 'off',
+    intentSpill: (prefsIntentSpill && prefsIntentSpill.checked) ? 'on' : 'off',
     defaultSessionMode: prefsDefaultMode ? prefsDefaultMode.value : 'optimized',
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     remoteEnabled: prefsRemoteEnabled.checked,
