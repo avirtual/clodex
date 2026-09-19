@@ -26484,7 +26484,19 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const panesEl = document.getElementById("drawer-panes");
         const tenants = /* @__PURE__ */ new Map();
         let activeId = null;
+        const decks = /* @__PURE__ */ new Map();
+        let restoring = false;
         const isCollapsed = () => drawer.classList.contains("collapsed");
+        function deckOf(name) {
+          const deck = name ? decks.get(name) : null;
+          return deck ? { expanded: deck.expanded, tab: deck.tab } : { expanded: false, tab: null };
+        }
+        function recordDeck() {
+          if (restoring) return;
+          const name = activeName();
+          if (!name) return;
+          decks.set(name, { expanded: !isCollapsed(), tab: activeId });
+        }
         const TALL_KEY = "clodex-drawer-tall";
         let tall = false;
         try {
@@ -26587,12 +26599,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
             }
           }
           syncCopy();
+          recordDeck();
           refitSessionTerminal();
         }
         function open(id) {
           if (!tenants.has(id)) return;
           select(id);
           if (isCollapsed()) toggle();
+          recordDeck();
         }
         function servesSeat(rec) {
           if (!rec.def.availableFor) return true;
@@ -26644,6 +26658,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             }
             select(def.id);
             if (isCollapsed()) toggle();
+            recordDeck();
           });
           const rec = {
             id: def.id,
@@ -26861,10 +26876,22 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (rec && isVisible(rec.id)) dispatchResize(rec);
         }).observe(panesEl);
         window.api.onRequestOpenIpcLog(() => open("log"));
+        function restoreDeck() {
+          const deck = deckOf(activeName());
+          restoring = true;
+          try {
+            const rec = deck.tab ? tenants.get(deck.tab) : null;
+            if (rec && servesSeat(rec)) select(deck.tab);
+            if (deck.expanded !== !isCollapsed()) toggle();
+          } finally {
+            restoring = false;
+          }
+        }
         function onSessionChanged() {
           clearTimeout(armTimer);
           armTimer = null;
           releasePeek();
+          restoreDeck();
           syncSeatAvailability();
           const active = tenants.get(activeId);
           if (active && active.shown && active.def.onSeatChanged) {
@@ -26876,7 +26903,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
           refreshStatus();
         }
         function forgetSession(name) {
-          if (!name || !attachedBy.delete(name)) return;
+          if (!name) return;
+          decks.delete(name);
+          if (!attachedBy.delete(name)) return;
           if (peekOn === name) releasePeek();
           refreshStatus();
         }
@@ -26908,6 +26937,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           toggle,
           hasFocus,
           domSelection,
+          deckOf,
           onSessionChanged,
           forgetSession,
           onSelectionSent,
