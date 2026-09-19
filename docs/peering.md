@@ -361,7 +361,8 @@ than the operator's home, so its notes land somewhere Clodex owns; the session
 record carries `fixFor: <host>`, which puts a muted `fix` chip on the sidebar
 row naming the box it ssh-es into. Its briefing pins the outcome note's first
 line: `DEPLOY OK <host>` or `DEPLOY FAILED <host>`. A `DEPLOY OK` note from a
-`fixFor` seat archives it (never kills it — the transcript stays resumable);
+`fixFor` seat archives it (never kills it — the transcript stays resumable) and
+its sidebar row stays visible as an archived row rather than disappearing;
 anything else leaves it running.
 
 ## Invariants (do not break)
