@@ -100,6 +100,7 @@ const DEFAULT_UI_SETTINGS = {
   // reach this value for this key — sanitizeTerminalReports resolves an absent
   // key to 'off' rather than falling through to the default.
   terminalReports: 'asked',
+  terminalRemote: 'off',
   defaultSessionMode: 'optimized',
   discoverOnStartup: false,
   recentCwds: [],
@@ -375,6 +376,7 @@ function sanitizeRebootNotice(v) {
 // a command, but stop narrating everything I type" was unexpressable, and is
 // almost certainly what most operators want.
 const TERMINAL_REPORTS = ['off', 'asked', 'all'];
+const TERMINAL_REMOTE = ['off', 'on'];
 const SESSION_MODES = ['optimized', 'standard'];
 const SETUP_CHOICES = ['optimized', 'standard', 'skipped'];
 
@@ -1436,6 +1438,7 @@ function initStores(userDataPath, {
             : DEFAULT_UI_SETTINGS.speakVoice,
           speakRate: sanitizeSpeakRate(raw?.speakRate),
           terminalReports: sanitizeTerminalReports(raw),
+          terminalRemote: TERMINAL_REMOTE.includes(raw?.terminalRemote) ? raw.terminalRemote : 'off',
           defaultSessionMode: SESSION_MODES.includes(raw?.defaultSessionMode) ? raw.defaultSessionMode : DEFAULT_UI_SETTINGS.defaultSessionMode,
           discoverOnStartup: typeof raw?.discoverOnStartup === 'boolean' ? raw.discoverOnStartup : DEFAULT_UI_SETTINGS.discoverOnStartup,
           recentCwds: Array.isArray(raw?.recentCwds) ? raw.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : defaultUiSettings().recentCwds,
@@ -1528,6 +1531,7 @@ function initStores(userDataPath, {
         // narrates at 5 wpm without complaint.
         speakRate: partial?.speakRate === undefined ? cur.speakRate : sanitizeSpeakRate(partial.speakRate),
         terminalReports: TERMINAL_REPORTS.includes(partial?.terminalReports) ? partial.terminalReports : cur.terminalReports,
+        terminalRemote: TERMINAL_REMOTE.includes(partial?.terminalRemote) ? partial.terminalRemote : cur.terminalRemote,
         defaultSessionMode: SESSION_MODES.includes(partial?.defaultSessionMode) ? partial.defaultSessionMode : cur.defaultSessionMode,
         discoverOnStartup: partial?.discoverOnStartup ?? cur.discoverOnStartup,
         recentCwds: Array.isArray(partial?.recentCwds) ? partial.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : cur.recentCwds,

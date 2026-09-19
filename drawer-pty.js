@@ -6,7 +6,7 @@
 
 // Keyed by (WINDOW, SEAT): collapsing the two gives a seat a shell in another
 // seat's directory. A seatless key is the workspace-wide shell.
-function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser, onExecResult, vetCommand, execTimeoutMs, onOutput, onShellEnd, withUtf8Charset, remoteAllowed, shellHost, remoteInstallLine }) {
+function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser, onExecResult, vetCommand, execTimeoutMs, onOutput, onShellEnd, withUtf8Charset, remoteAllowed, shellHost, remoteInstallLine, remoteUnsupportedReason }) {
   const ptys = new Map(); // key(windowId, seat) -> { proc, scrollback, cols, rows, windowId, seat }
 
   // NUL is the one byte neither half can contain; any other separator would let one
@@ -47,13 +47,11 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   // 128+SIGINT: `$?` is latched and re-reports on every prompt cycle until a command
   // runs, so a stale or in-flight pair can arrive inside our race window. The clocks
   // above are the only thing standing behind that.
-  const REMOTE_QUIET_MS = ABANDON_ACK_MS;
+  const REMOTE_QUIET_MS = 250;
   const INSTALL_TIMEOUT_MS = 4000;
-  const REMOTE_UNSUPPORTED = {
-    2: 'the remote shell is neither bash 4.4+ nor zsh (a POSIX sh, busybox, or ksh), so it cannot report results back. Nothing was run there.',
-    3: 'the remote bash is older than 4.4 (no PS0), so it cannot report results back. Nothing was run there.',
-  };
-  const REMOTE_NO_ANSWER = `the remote side did not answer Clodex's mark setup within ${INSTALL_TIMEOUT_MS / 1000}s — it may be fish, PowerShell or cmd, a REPL, or a shell that is not at its prompt. Look at the terminal. Nothing was run there.`;
+  const remoteReason = (status) => (remoteUnsupportedReason
+    ? remoteUnsupportedReason({ status, timeoutMs: INSTALL_TIMEOUT_MS })
+    : `the remote session cannot report results back (${status}). Nothing was run there.`);
 
   function shellFor() {
     return shell || (env && env.SHELL) || process.env.SHELL || '/bin/zsh';
@@ -244,7 +242,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     const promptAck = (info) => { if (info && info.interrupted) release(); };
     if (depth === 1) rec.remotePrompt = promptAck;
     else rec.execPromptAck = promptAck;
-    later(() => { if (!spoke) release(); }, ABANDON_ACK_MS);
+    if (depth === 0) later(() => { if (!spoke) release(); }, ABANDON_ACK_MS);
     // The shell spoke but never acked: it drew a prompt carrying no interrupt status,
     // which is the exact state the ABANDON_MAX_MS write below then types into and
     // loses a byte to. Repeat the abandon instead of typing into it — a shell at a
@@ -255,10 +253,6 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     //
     // ONE repeat, not a retry loop: the escape hatch is ABANDON_MAX_MS, and a loop
     // would keep signalling a foreground program that is legitimately slow to die.
-    // A silent shell must NOT be nudged — it is the ABANDON_ACK_MS case above, which
-    // has already typed, so a second ^C would interrupt that command. `armed` alone
-    // covers it whenever these two timers fire in their nominal order; `spoke` is
-    // read directly so the guard holds without depending on that order.
     let nudged = false;
     later(() => {
       if (armed || nudged || !spoke) return;
@@ -316,13 +310,13 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
           armNested(rec, p);
           return true;
         }
-        settle(rec, { status: 'remote-unsupported', reason: REMOTE_UNSUPPORTED[c.exitCode] || REMOTE_UNSUPPORTED[2] });
+        settle(rec, { status: 'remote-unsupported', reason: remoteReason(c.exitCode) });
         return true;
       };
       later(() => {
         if (rec.pending !== p || !rec.remoteRecord) return;
         rec.remoteRecord = null;
-        settle(rec, { status: 'remote-unsupported', reason: REMOTE_NO_ANSWER });
+        settle(rec, { status: 'remote-unsupported', reason: remoteReason('no-answer') });
       }, INSTALL_TIMEOUT_MS);
     };
     const arm = () => {

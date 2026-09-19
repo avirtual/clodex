@@ -57,6 +57,7 @@ const ACK_MS = constFromSource('ABANDON_ACK_MS');
 // Read for the same reason, and excluded from `execTimers` for the same reason:
 // it is another exec-armed timer that is not the settle deadline.
 const NUDGE_MS = constFromSource('ABANDON_NUDGE_MS');
+const QUIET_MS = constFromSource('REMOTE_QUIET_MS');
 
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 const A = `${ESC}]133;A${BEL}`;
@@ -175,6 +176,7 @@ function mk(over = {}) {
     remoteAllowed: over.remoteAllowed || (() => false),
     shellHost: over.shellHost || require('../term-host').shellHostOf,
     remoteInstallLine: require('../term-shim').REMOTE_INSTALL_LINE,
+    remoteUnsupportedReason: require('../term-shim').remoteUnsupportedReason,
   };
   assert.deepStrictEqual(Object.keys(deps).sort(), declaredDeps(),
     'the fixture must wire EVERY dep — an unwired one is undefined, which is legal and silent');
@@ -193,7 +195,8 @@ function mk(over = {}) {
 // looks unrelated. A new handshake clock must be excluded here in the same
 // commit that arms it, for that reason.
 const execTimers = (timers) => timers.filter(
-  (t) => t.ms !== 5000 && t.ms !== ACK_MS && t.ms !== NUDGE_MS && t.ms !== MAX_MS && t.ms !== INSTALL_MS);
+  (t) => t.ms !== 5000 && t.ms !== ACK_MS && t.ms !== NUDGE_MS && t.ms !== MAX_MS
+    && t.ms !== INSTALL_MS && t.ms !== QUIET_MS);
 
 // ── refusals ────────────────────────────────────────────────────────────────
 // Every one is checked INSIDE exec() rather than by a caller reading a status

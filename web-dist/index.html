@@ -9368,6 +9368,10 @@ body.web-frontend #sidebar-header {
           <label><input type="radio" name="prefs-terminal-reports" value="asked"><span><b>Only what the agent asks for.</b> It can run a command and see that one's result. What you type is not reported.</span></label>
           <label><input type="radio" name="prefs-terminal-reports" value="all"><span><b>Everything I run too.</b> Each of your own commands is reported as you go.</span></label>
         </div>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-terminal-remote">
+          <span>Let agents run commands inside a session open in my terminal (ssh, sudo -i, docker exec…). Off: an agent is refused while such a session holds the tab.</span>
+        </label>
         <p class="hint-text">Reports are sent <b>verbatim and unredacted</b> — a command line with a token, a password in a URL or an <code>Authorization</code> header goes as written. Switching away from "everything I run" also discards any of your commands still waiting to be sent; ones already merged into a conversation cannot be recalled. Switching that off takes effect immediately, but turning marks on or off (the "Off" choice) applies to terminals opened afterwards.</p>
         <div id="ws-logs-block">
           <h5>Capture logs</h5>
@@ -43953,6 +43957,7 @@ Click for live activity`;
       var prefsCtxEscalate = document.getElementById("prefs-ctx-escalate");
       var prefsCtxModels = document.getElementById("prefs-ctx-models");
       var prefsTerminalReports = document.getElementById("prefs-terminal-reports");
+      var prefsTerminalRemote = document.getElementById("prefs-terminal-remote");
       var prefsDefaultMode = document.getElementById("prefs-default-mode");
       var prefsDiscoverOnStartup = document.getElementById("prefs-discover-on-startup");
       var prefsToolsRow = document.getElementById("prefs-tools-row");
@@ -46438,6 +46443,7 @@ ${res.stderr}` : "");
         setSpeakSettings(s);
         setCtxThresholds(s);
         setTerminalReports(s.terminalReports);
+        if (prefsTerminalRemote) prefsTerminalRemote.checked = s.terminalRemote === "on";
         if (prefsDefaultMode) prefsDefaultMode.value = defaultSessionMode(s);
         if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
         restorePrefsGroups();
@@ -46554,6 +46560,7 @@ ${res.stderr}` : "");
           // key is not omitted when the boxes are empty the way speakVoice is.
           ...prefsCtxNudge && prefsCtxEscalate ? { ctxReminderThresholds: { default: readCtxThresholdPair() } } : {},
           terminalReports: readTerminalReports(),
+          terminalRemote: prefsTerminalRemote && prefsTerminalRemote.checked ? "on" : "off",
           defaultSessionMode: prefsDefaultMode ? prefsDefaultMode.value : "optimized",
           discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
           remoteEnabled: prefsRemoteEnabled.checked,

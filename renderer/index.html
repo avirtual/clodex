@@ -1160,6 +1160,10 @@
           <label><input type="radio" name="prefs-terminal-reports" value="asked"><span><b>Only what the agent asks for.</b> It can run a command and see that one's result. What you type is not reported.</span></label>
           <label><input type="radio" name="prefs-terminal-reports" value="all"><span><b>Everything I run too.</b> Each of your own commands is reported as you go.</span></label>
         </div>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-terminal-remote">
+          <span>Let agents run commands inside a session open in my terminal (ssh, sudo -i, docker exec…). Off: an agent is refused while such a session holds the tab.</span>
+        </label>
         <p class="hint-text">Reports are sent <b>verbatim and unredacted</b> — a command line with a token, a password in a URL or an <code>Authorization</code> header goes as written. Switching away from "everything I run" also discards any of your commands still waiting to be sent; ones already merged into a conversation cannot be recalled. Switching that off takes effect immediately, but turning marks on or off (the "Off" choice) applies to terminals opened afterwards.</p>
         <div id="ws-logs-block">
           <h5>Capture logs</h5>

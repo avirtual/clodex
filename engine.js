@@ -1115,7 +1115,7 @@ function spillToFile(sender, body, recipient) {
 // `termAvailableFor` eagerly, and a `const` destructured later in the file is in
 // its temporal dead zone at that moment — a ReferenceError at startup, not a
 // lazy binding.
-const { termAvailableFor, vetTermCommand } = require('./drawer-avail');
+const { termAvailableFor, vetTermCommand, sanitizeName } = require('./drawer-avail');
 
 const { createSessionManager } = require('./session-manager');
 
@@ -1902,7 +1902,8 @@ const ctlService = enableCtl ? createCtlService({}) : null;
 const PASSIVE_TERM_KIND = 'terminal-passive';
 const { createDrawerPtys } = require('./drawer-pty');
 const { withUtf8Charset } = require('./env-scopes');
-const { buildTermShim, unsupportedShellReason } = require('./term-shim');
+const { buildTermShim, unsupportedShellReason, REMOTE_INSTALL_LINE, remoteUnsupportedReason } = require('./term-shim');
+const { shellHostOf, programOf } = require('./term-host');
 const { formatCommand, createMarkParser } = require('./term-marks');
 const { stripAnsi } = require('./cli/src/output');
 const drawerPtys = enableLocalTerminal ? createDrawerPtys({
@@ -1983,41 +1984,55 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
     // close would otherwise render "closed before the command reported back …
     // it has now finished".
     const late = res.late ? '\n(this supersedes the still-running notice above)' : '';
+    const inside = sanitizeName(res.inside);
+    const insideLine = inside ? `\nran inside \`${inside}\`` : '';
     let text;
     if (res.mismatch) {
       // The shell reported a DIFFERENT command finishing than the one we sent.
       // Its output is deliberately NOT rendered: that output is the operator's
       // own work, and the firehose is the thing they rejected.
       const ran = (res.record && res.record.command) || 'something else';
-      text = `[terminal] ${res.command}\nthe terminal reported \`${ran}\` finishing instead — that was already running when your command arrived. Yours may never have run, or may still be queued behind it. Look at the terminal before sending it again.`;
+      text = `[terminal] ${res.command}${insideLine}\nthe terminal reported \`${ran}\` finishing instead — that was already running when your command arrived. Yours may never have run, or may still be queued behind it. Look at the terminal before sending it again.`;
     } else if (res.status === 'ok') {
       // `assumed` is what makes this branch total. A shell that did not name the
       // command still reported its exit code and its output, and dropping all of
       // that for a missing label answered nothing — vetTermCommand guarantees
       // `res.command` is a non-empty single line, so formatCommand always has a
       // name to use and cannot answer null here.
-      text = formatCommand(res.record, { stripAnsi, always: true, assumed: res.command });
+      text = formatCommand(res.record, { stripAnsi, always: true, assumed: res.command, inside });
     } else if (res.status === 'abandoned') {
-      text = `[terminal] ${res.command}\nabandoned — a new prompt appeared before it finished, so it was interrupted (Ctrl-C) or the shell reset. There is no exit code. Its output was not captured; look at the terminal, or ask your operator.`;
+      text = `[terminal] ${res.command}${insideLine}\nabandoned — a new prompt appeared before it finished, so it was interrupted (Ctrl-C) or the shell reset. There is no exit code. Its output was not captured; look at the terminal, or ask your operator.`;
     } else if (res.status === 'timeout') {
-      text = `[terminal] ${res.command}\nstill running after ${Math.round(res.afterMs / 1000)}s. NOT cancelled — it is still going, and you will get its output when it finishes. Do not run it again.`;
+      text = `[terminal] ${res.command}${insideLine}\nstill running after ${Math.round(res.afterMs / 1000)}s. NOT cancelled — it is still going, and you will get its output when it finishes. Do not run it again.`;
     } else if (res.status === 'lost') {
       // A timed-out command whose ending never arrived, cleared out of the way
       // so the seat's terminal is usable again.
-      text = `[terminal] ${res.command}\nno ending was ever reported for it, and the terminal is idle again — whether it ran is unknown. The terminal is free for another command.`;
+      text = `[terminal] ${res.command}${insideLine}\nno ending was ever reported for it, and the terminal is idle again — whether it ran is unknown. The terminal is free for another command.`;
     } else if (res.status === 'shell-exit') {
-      text = `[terminal] ${res.command}\nthe terminal's shell exited (${res.exitCode}) before the command reported back. Whether it ran is unknown.`;
+      text = `[terminal] ${res.command}${insideLine}\nthe terminal's shell exited (${res.exitCode}) before the command reported back. Whether it ran is unknown.`;
     } else if (res.status === 'write-failed') {
       // Distinct from the catch-all below, which says "before the command
       // reported back" — that would be a lie here. The line was abandoned and
       // the command was never typed, so NOTHING ran and a retry is safe. That
       // certainty is the whole value of the message.
-      text = `[terminal] ${res.command}\nthe terminal did not accept it (${res.reason}). It was never typed, so nothing ran — you can send it again.`;
+      text = `[terminal] ${res.command}${insideLine}\nthe terminal did not accept it (${res.reason}). It was never typed, so nothing ran — you can send it again.`;
+    } else if (res.status === 'session-ended') {
+      const outer = programOf(res.inside) || 'the session';
+      text = `[terminal] ${res.command}\nran inside \`${inside}\` — the session ended (${outer} exited ${res.outerExit}) before the command reported a status of its own, so there is no exit code for it. Your terminal is back at its local shell.`;
+    } else if (res.status === 'remote-unsupported') {
+      text = `[terminal] ${res.command}${insideLine}\n${res.reason}`;
+    } else if (res.status === 'shell-gone') {
+      text = `[terminal] ${res.command}${insideLine}\n${res.reason} before the command reported back. Whether it ran is unknown.`;
     } else {
-      text = `[terminal] ${res.command}\n${res.reason || 'the terminal went away'} before the command reported back. Whether it ran is unknown.`;
+      const why = res.reason || (res.status ? `the terminal reported \`${res.status}\`` : 'the terminal went away');
+      text = `[terminal] ${res.command}${insideLine}\n${why} before the command reported back. Whether it ran is unknown.`;
     }
     deliverExecResult(seat, `${text}${late}`);
   },
+  remoteAllowed: () => uiSettings.get().terminalRemote === 'on' && uiSettings.get().terminalReports !== 'off',
+  shellHost: shellHostOf,
+  remoteInstallLine: REMOTE_INSTALL_LINE,
+  remoteUnsupportedReason,
   log,
 }) : null;
 
@@ -2143,6 +2158,13 @@ function termShimDiagnosis() {
   return 'this shell was opened before terminal reporting was switched on — close the terminal tab and reopen it';
 }
 
+function termRefusalName(running) {
+  const s = String(running || '');
+  if (!s) return '';
+  if (uiSettings.get().terminalReports === 'all') return sanitizeName(s);
+  return programOf(s) || '';
+}
+
 // Run one command on a seat's own terminal. The seam session-manager gets: it
 // passes a seat and a workspace it derived from the sender and receives a
 // refusal it can hand straight to the agent, without learning drawer-pty's
@@ -2150,18 +2172,28 @@ function termShimDiagnosis() {
 function termExec(workspaceId, seat, command) {
   if (!drawerPtys) return { ok: false, error: 'terminal tabs are not available on this host' };
   const r = drawerPtys.exec(workspaceId, seat, command);
-  if (r.ok) return r;
+  if (r.ok) return r.inside ? { ...r, inside: sanitizeName(r.inside) } : r;
   switch (r.code) {
     case 'bad-command': return { ok: false, error: r.error };
     case 'no-shell': return { ok: false, error: 'no terminal is open for your seat — ask your operator to open the terminal tab in the drawer. Nothing was queued.' };
     case 'no-marks': return { ok: false, error: `your terminal cannot report a command's result, so running one blind would leave you waiting forever: ${termShimDiagnosis()}` };
     case 'busy': {
-      const running = String(r.running || '');
-      if (!running) return { ok: false, error: 'your terminal is busy — a command is running, or a full-screen program (an editor, a pager, a REPL) has it. Typing now would go into that program, not the shell.' };
-      const shown = running.length > 80 ? `${running.slice(0, 79)}…` : running;
-      return { ok: false, error: `your terminal is busy — \`${shown}\` is still running in it (a command, or a full-screen program such as an ssh session, an editor, a pager or a REPL). Typing now would go into that program, not the shell. Nothing was queued.` };
+      const shown = termRefusalName(r.running);
+      const offer = r.remoteOffer
+        ? ' — running commands inside it is possible if your operator switches on remote terminal commands in Settings ▸ Terminal'
+        : '';
+      if (!shown) return { ok: false, error: `your terminal is busy — a command is running, or a full-screen program (an editor, a pager, a REPL) has it. Typing now would go into that program, not the shell.${offer}` };
+      const inside = sanitizeName(r.inside);
+      const where = inside ? ` inside \`${inside}\`` : ' in it';
+      return { ok: false, error: `your terminal is busy — \`${shown}\` is still running${where} (a command, or a full-screen program such as an ssh session, an editor, a pager or a REPL). Typing now would go into that program, not the shell. Nothing was queued${offer}.` };
     }
-    case 'pending': return { ok: false, error: `you already have \`${r.running}\` running in your terminal — wait for its result before sending another.` };
+    case 'full-screen': {
+      const shown = termRefusalName(r.running);
+      const held = shown ? ` \`${shown}\` holds your terminal, and something` : ' something';
+      return { ok: false, error: `a full-screen program has the remote session; nothing was typed —${held} on the far side (an editor, a pager, top) is on the alternate screen. Wait until it exits, then send the command again.` };
+    }
+    case 'remote-unsupported': return { ok: false, error: String(r.reason || 'the remote session cannot report results back') };
+    case 'pending': return { ok: false, error: `you already have \`${sanitizeName(r.running)}\` running in your terminal — wait for its result before sending another.` };
     case 'write-failed': return { ok: false, error: `the terminal did not accept the command (${r.error}). Nothing ran.` };
     case 'no-seat': return { ok: false, error: 'your session has no terminal of its own' };
     default: return { ok: false, error: `terminal refused the command (${r.code})` };

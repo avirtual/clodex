@@ -26,7 +26,7 @@ const constFromSource = (name) => {
 const ACK_MS = constFromSource('ABANDON_ACK_MS');
 const MAX_MS = constFromSource('ABANDON_MAX_MS');
 const INSTALL_MS = constFromSource('INSTALL_TIMEOUT_MS');
-const QUIET_MS = ACK_MS;
+const QUIET_MS = constFromSource('REMOTE_QUIET_MS');
 
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 const A = `${ESC}]133;A${BEL}`;
@@ -91,6 +91,7 @@ function mk(over = {}) {
     remoteAllowed: over.remoteAllowed || (() => true),
     shellHost: over.shellHost || shellHostOf,
     remoteInstallLine: 'remoteInstallLine' in over ? over.remoteInstallLine : REMOTE_INSTALL_LINE,
+    remoteUnsupportedReason: over.remoteUnsupportedReason || require('../term-shim').remoteUnsupportedReason,
   };
   const w = createDrawerPtys(deps);
   const fire = (ms, nth = 0) => {
@@ -182,6 +183,18 @@ test('the install line is written exactly once even if both clocks fire', () => 
   h.fire(MAX_MS);
 
   assert.deepStrictEqual(h.proc.written, [CTRL_C, INSTALL_WRITE]);
+});
+
+test('a silent far shell is NOT typed into at ABANDON_ACK_MS — only the cap can release it', () => {
+  const h = installed();
+
+  assert.strictEqual(h.timers.filter((t) => t.ms === ACK_MS && !t.fired).length, 0,
+    'no silent-release timer is armed at depth 1: 250ms of network silence is not evidence of a far prompt, '
+    + 'and a release here types a command that loses its leading byte on someone else’s machine');
+
+  h.fire(MAX_MS, 1);
+  assert.deepStrictEqual(h.proc.written, [CTRL_C, INSTALL_WRITE, CTRL_C, `ls${CR}`],
+    'the cap still carries it, so a far side that never answers the interrupt is not wedged');
 });
 
 test('a tagged D;0 installs, and the nested exec then runs the local algorithm one hop down', () => {
