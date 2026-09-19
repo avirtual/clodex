@@ -78,8 +78,10 @@ test('a re-click for the same session joins the in-flight fetch instead of issui
     'the in-flight guard is a per-name Map of pending promises');
   const opener = CTX.match(/async function openContextPopover\([\s\S]*?\n  }\n/);
   assert.ok(opener, 'ENTER: openContextPopover must still be found by this anchor');
-  assert.ok(/if \(ctxPending\.has\(name\)\) return ctxPending\.get\(name\);/.test(opener[0]),
+  assert.ok(/if \(ctxPending\.has\(name\)\) \{[\s\S]*?return ctxPending\.get\(name\);/.test(opener[0]),
     'a second click for the SAME session must return the pending run rather than start a second pair of fetches — the scan alone is a 20.1s disk walk');
+  assert.ok(/if \(ctxPending\.has\(name\)\) \{\s*if \(ctxBodyName !== name\) paintCtxBody\(name, LOADING_NOTE\);/.test(opener[0]),
+    'and it must repaint the pending note first when the body still holds ANOTHER session — joining without repainting shows that session\'s tokens under this name');
   assert.ok(/ctxPending\.set\(name, run\)/.test(opener[0]) && /finally \{ ctxPending\.delete\(name\); \}/.test(opener[0]),
     'and the entry must clear in a finally, or one rejected fetch wedges that session\'s popover for the life of the window');
 
