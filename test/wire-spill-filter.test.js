@@ -113,6 +113,23 @@ test('row 8: the cap is enforced on HELD bytes, so a single-line body cannot spi
   }
 });
 
+test('the cap also bounds an UNTERMINATED head line, before the hold ever starts', () => {
+  const long = `[agent:task add t] ${'q'.repeat(3000)}`;
+  for (const cs of [1, 64, 1e6]) {
+    const bails = [];
+    const r = run(long, { cs, maxBytes: 500, onBail: (i) => bails.push(i) });
+    assert.equal(r.out, long,
+      `@cs=${cs}: a ticket spec is very often ONE long line that never arrives complete, so a cap `
+      + 'gated on `holding` bounds nothing and the client sees no text for the whole line');
+    assert.equal(r.filter.latched, true, `@cs=${cs}: and the bail latches like every other`);
+    assert.equal(bails.length, 1, `@cs=${cs}`);
+    assert.equal(bails[0].reason, 'cap', `@cs=${cs}`);
+  }
+  const dm = `[agent:dm bob] ${'q'.repeat(3000)}`;
+  assert.equal(run(dm, { cs: 64, maxBytes: 500 }).out, dm,
+    'a long dm line can never spill at all, so holding it back buys nothing');
+});
+
 test('row 9: a head line with nothing after the `]` is reconstructed byte-exactly', () => {
   const T = `[agent:task add a]\n${BIG}\n[agent:end]\n`;
   for (const cs of [1, 7, 64, 1e6]) {

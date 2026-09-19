@@ -243,6 +243,16 @@ test('an onSpill listener that throws cannot cost the client its text', () => {
   }
 });
 
+test('an SSE body that never terminates a frame is forwarded, not buffered forever', () => {
+  const tee = new SpillTee({ agent: 'wirescope', root: root(), verbs: VERBS, maxBytes: 500 });
+  const blob = Buffer.from(`event: content_block_delta\ndata: ${'q'.repeat(3000)}`, 'utf8');
+  const out = Buffer.concat([tee.feed(blob), tee.close()]);
+  assert.deepEqual(out, blob,
+    'a 200 text/event-stream with no `\\n\\n` would otherwise buffer the whole response while '
+    + 'the unfiltered path forwarded every byte of it');
+  assert.equal(tee.latched, true);
+});
+
 test('an observer fed the OUTPUT bills exactly as one fed the INPUT', () => {
   const withUsage = Buffer.concat([
     ev('message_start', {
