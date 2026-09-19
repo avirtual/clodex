@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- The bottom drawer remembers, per seat, whether it was open and which tab it showed, so switching to another seat no longer carries the terminal or activity deck along; the tall setting stays shared.
 - Deploying a headless node to a Linux box that has no Node.js now installs a user-local Node 22 first, a box whose Python venv or session linger can be set up without root no longer stops to ask for sudo, and the fix-with-an-agent session says where it is working and posts its outcome to the inbox.
 - When a terminal command is refused because the tab is busy, the refusal now names the command that holds the terminal.
 

@@ -102,7 +102,22 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   const tenants = new Map(); // id -> { id, def, pane, actions, tabEl, badgeEl, unread, mounted }
   let activeId = null;
 
+  const decks = new Map();
+  let restoring = false;
+
   const isCollapsed = () => drawer.classList.contains('collapsed');
+
+  function deckOf(name) {
+    const deck = name ? decks.get(name) : null;
+    return deck ? { expanded: deck.expanded, tab: deck.tab } : { expanded: false, tab: null };
+  }
+
+  function recordDeck() {
+    if (restoring) return;
+    const name = activeName();
+    if (!name) return;
+    decks.set(name, { expanded: !isCollapsed(), tab: activeId });
+  }
 
   // Tall mode persists per window across restarts — a drawer the operator sized
   // for a debugging session should still be that size after a reload. localStorage
@@ -242,6 +257,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
     // Collapse gates the copy button (see syncCopy), and collapsing fires no
     // selectionchange — so without this the state set while expanded persists.
     syncCopy();
+    recordDeck();
     refitSessionTerminal();
   }
 
@@ -249,6 +265,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
     if (!tenants.has(id)) return;
     select(id);
     if (isCollapsed()) toggle();
+    recordDeck();
   }
 
   // Tenants register statically from renderer.js at boot; the register calls
@@ -326,6 +343,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
       if (def.id === activeId && !isCollapsed()) { toggle(); return; }
       select(def.id);
       if (isCollapsed()) toggle();
+      recordDeck();
     });
 
     const rec = {
@@ -651,6 +669,18 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   // its behaviour is now "open the drawer on the log tab".
   window.api.onRequestOpenIpcLog(() => open('log'));
 
+  function restoreDeck() {
+    const deck = deckOf(activeName());
+    restoring = true;
+    try {
+      const rec = deck.tab ? tenants.get(deck.tab) : null;
+      if (rec && servesSeat(rec)) select(deck.tab);
+      if (deck.expanded !== !isCollapsed()) toggle();
+    } finally {
+      restoring = false;
+    }
+  }
+
   // Called when the operator switches SESSIONS. The peek is registered on one
   // session's route, so leaving that session must take it back — otherwise the
   // status line claims text is riding a request the operator is no longer
@@ -661,6 +691,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
     clearTimeout(armTimer);
     armTimer = null;
     releasePeek();
+    restoreDeck();
     // BEFORE the re-acquire below: a tenant that cannot serve the new seat must
     // not be told to re-acquire for it. Without this ordering the terminal is
     // asked to spawn a shell for the very seat it is being hidden for.
@@ -685,7 +716,9 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   // itself (selectionArm.forget); this drops the renderer's half so a rebuilt
   // session of the same name does not inherit a claim it never made.
   function forgetSession(name) {
-    if (!name || !attachedBy.delete(name)) return;
+    if (!name) return;
+    decks.delete(name);
+    if (!attachedBy.delete(name)) return;
     if (peekOn === name) releasePeek();
     refreshStatus();
   }
@@ -724,7 +757,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   }
 
   return {
-    register, open, toggle, hasFocus, domSelection,
+    register, open, toggle, hasFocus, domSelection, deckOf,
     onSessionChanged, forgetSession, onSelectionSent, setQuota,
     // Separate from onSessionChanged because that one is deliberately skipped on
     // the FIRST activation (nothing was armed yet, so there is no peek to
