@@ -514,6 +514,13 @@ cwdreal-
 cx-commit-
 cx-commit-other-
 cx-commit-wt-
+ensure-node-arch-
+ensure-node-badsum-
+ensure-node-fresh-
+ensure-node-mac-
+ensure-node-pick-
+ensure-node-present-
+ensure-node-rerun-
 env-scopes-
 envdef-home-
 envdef-home2-
@@ -537,6 +544,8 @@ ipc-team-home-
 ipc-team-root-
 legib-home-
 legib-proj-
+linger-fallback-
+linger-self-
 nodev-
 notif-reg-
 notif-ud-
@@ -591,6 +600,9 @@ stores-res-
 stores-skillres-
 stores-ud-
 svcport-
+sysdeps-apt-
+sysdeps-apt-noensurepip-
+sysdeps-apt-novenv-
 t415-reg-
 t415-ud-
 t748-bad-
