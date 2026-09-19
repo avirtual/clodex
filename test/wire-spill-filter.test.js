@@ -16,7 +16,7 @@ const SIZES = [1, 3, 7, 17, 64, 1e6];
 
 let ROOT = null;
 function root() {
-  if (!ROOT) ROOT = mkTmpRoot('clodex-spillfilter-');
+  if (!ROOT) ROOT = mkTmpRoot('clodex-spill-');
   return ROOT;
 }
 
@@ -92,7 +92,7 @@ test('row 7: every write failure forwards the ORIGINAL body', () => {
     const { out } = run(T, { agent: bad });
     assert.ok(out.includes(BIG) && !out.includes('@spill'), `agent ${JSON.stringify(bad)}`);
   }
-  const badRoot = mkTmpRoot('clodex-spillbad-');
+  const badRoot = mkTmpRoot('clodex-spill-');
   fs.writeFileSync(path.join(badRoot, 'spill'), 'not a directory');
   const un = run(T, { root: badRoot });
   assert.ok(un.out.includes(BIG) && !un.out.includes('@spill'), 'unwritable root');

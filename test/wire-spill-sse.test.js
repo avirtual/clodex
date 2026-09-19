@@ -14,7 +14,7 @@ const VERBS = ['task.add', 'task.respec', 'context.compact'];
 
 let ROOT = null;
 function root() {
-  if (!ROOT) ROOT = mkTmpRoot('clodex-spillsse-');
+  if (!ROOT) ROOT = mkTmpRoot('clodex-spill-');
   return ROOT;
 }
 

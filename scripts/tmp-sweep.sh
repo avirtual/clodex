@@ -215,6 +215,7 @@ clodex-sinfo-overlay-
 clodex-sm-
 clodex-solo-home-
 clodex-solo-repo-
+clodex-spill-
 clodex-surface-
 clodex-surface-gate-
 clodex-sweep-

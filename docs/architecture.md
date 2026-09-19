@@ -845,6 +845,18 @@ accept teardown removes.
   can't be misattributed); `findOrphans` is pure.
 - **project-root.js** — the git-repository root for a cwd, for keying a PROJECT
   ticket board when no team owns that cwd. Pure leaf; `fs` injectable.
+- **intent-spill.js** — the FORMAT of intent-body spill (`proxy-lab/SPILL.md`;
+  `proxy-lab/test_spill.py` is the conformance suite): constants, verb set,
+  id/agent charsets, the content-addressed writer, the confined resolver and the
+  `@spill:<id>` pointer parser, so the tee, the resolver and the injection half
+  cannot drift. `id = sha256(body)[:16]`, path `<root>/spill/<agent>/<id>.md`,
+  0700 dir / 0600 file, an existing file left alone. Pure leaf (`fs`, `path`,
+  `crypto`, plus `path-confine` and `fs-util`). Every failure returns null or an
+  `ok:false` reason and the caller forwards the original body — a truncated
+  spec is worse than a spammy transcript. Callers: `wire/spill.js` (the line
+  state machine and SSE rewriter that hold a listed verb's body and emit the
+  pointer), `session-manager._handleIntent`, `_handoffText`, and engine's
+  `resolveFilePath`. Notes: `docs/notes/intent-spill.md`, `docs/notes/wire-spill.md`.
 - **path-confine.js** — one caller-supplied name, one path segment, POSITIVELY
   confined to a directory Clodex owns. Positive because a charset regex is not
   containment: `.` and `..` pass `/^[a-zA-Z0-9._-]{1,64}$/`. Pure leaf, no I/O.

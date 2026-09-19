@@ -164,7 +164,7 @@ async function withProxy(upOpts, fn) {
 }
 
 test('an armed seat: the client receives the pointer, and the observer reads what the client got', async () => {
-  const root = mkTmpRoot('clodex-spillproxy-');
+  const root = mkTmpRoot('clodex-spill-');
   await withProxy({}, async (proxy, up) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'] } });
     const events = collect(proxy, ['turn.completed', 'spill', 'stream-end']);
@@ -195,7 +195,7 @@ test('an armed seat: the client receives the pointer, and the observer reads wha
 });
 
 test('an armed run bills exactly what an unarmed one bills', async () => {
-  const root = mkTmpRoot('clodex-spillbill-');
+  const root = mkTmpRoot('clodex-spill-');
   const runOnce = (spill) => withProxy({}, async (proxy) => {
     proxy.registerAgent('tester', spill ? { spill: { root, verbs: ['task.add'] } } : {});
     const events = collect(proxy, ['turn.completed', 'usage', 'stream-end']);
@@ -235,7 +235,7 @@ test('an unarmed agent is byte-identical and its accept-encoding is left alone',
 });
 
 test('unregisterAgent clears the arming', async () => {
-  const root = mkTmpRoot('clodex-spillunreg-');
+  const root = mkTmpRoot('clodex-spill-');
   await withProxy({}, async (proxy) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'] } });
     assert.ok(proxy.spillOf('tester'));
@@ -249,7 +249,7 @@ test('unregisterAgent clears the arming', async () => {
 });
 
 test('a re-registration replaces the config rather than merging into it', async () => {
-  const root = mkTmpRoot('clodex-spillrereg-');
+  const root = mkTmpRoot('clodex-spill-');
   const proxy = new WireProxy();
   proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'] } });
   proxy.registerAgent('tester', {});
@@ -258,7 +258,7 @@ test('a re-registration replaces the config rather than merging into it', async 
 });
 
 test('an armed agent whose upstream compresses anyway: exact bytes through, spill-skip encoding', async () => {
-  const root = mkTmpRoot('clodex-spillgz-');
+  const root = mkTmpRoot('clodex-spill-');
   const gz = zlib.gzipSync(Buffer.from(SPILL_SSE, 'utf8'));
   await withProxy({
     body: gz,
@@ -276,7 +276,7 @@ test('an armed agent whose upstream compresses anyway: exact bytes through, spil
 });
 
 test('an armed agent on a subagent request is never rewritten', async () => {
-  const root = mkTmpRoot('clodex-spillsub-');
+  const root = mkTmpRoot('clodex-spill-');
   await withProxy({}, async (proxy) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'] } });
     const events = collect(proxy, ['stream-end', 'spill']);
@@ -289,7 +289,7 @@ test('an armed agent on a subagent request is never rewritten', async () => {
 });
 
 test('an armed agent on a non-200 SSE error stream is never rewritten', async () => {
-  const root = mkTmpRoot('clodex-spill529-');
+  const root = mkTmpRoot('clodex-spill-');
   await withProxy({
     status: 529,
     headers: { 'content-type': 'text/event-stream' },
@@ -306,7 +306,7 @@ test('an armed agent on a non-200 SSE error stream is never rewritten', async ()
 });
 
 test('an armed agent on a non-SSE messages response is never rewritten', async () => {
-  const root = mkTmpRoot('clodex-spilljson-');
+  const root = mkTmpRoot('clodex-spill-');
   await withProxy({
     body: '{"type":"message","content":[]}',
     headers: { 'content-type': 'application/json' },
@@ -321,7 +321,7 @@ test('an armed agent on a non-SSE messages response is never rewritten', async (
 });
 
 test('a verb the seat did not arm is left inline', async () => {
-  const root = mkTmpRoot('clodex-spillverb-');
+  const root = mkTmpRoot('clodex-spill-');
   await withProxy({}, async (proxy) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['context.compact'] } });
     const events = collect(proxy, ['stream-end', 'spill']);
