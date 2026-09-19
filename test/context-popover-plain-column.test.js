@@ -185,31 +185,38 @@ test('a re-click for a session whose fetch is pending repaints Loading… when t
     tools: { count: 1, est_tokens: 900, per_tool: [{ name: 'mcp__bees__sting', est_tokens: 900, used: 0 }] },
   };
   const h = harness({
-    payloads: { A: { queries: ['ctx'] }, B: { queries: ['ctx'] } },
+    payloads: { A: { capabilities: { context_utilization: true } }, B: { queries: ['ctx'] } },
     ctxImpl: async (a, name) => {
-      if (name === 'A') { await gateA; return { ok: true, data: { agents: [MCP_AGENT] } }; }
-      return { ok: true, data: { agents: [B_AGENT] } };
+      if (name !== 'A') return { ok: true, data: { agents: [B_AGENT] } };
+      if (a.utilization) { await gateA; return { ok: true, data: { agents: [MCP_AGENT] } }; }
+      return { ok: true, data: { agents: [MCP_AGENT] } };
     },
   });
   try {
     const a = h.open('A');
     await new Promise((r) => setImmediate(r));
-    assert.strictEqual(h.calls.length, 1, 'ENTER: A must have a fetch in flight, or there is no guard to exercise');
+    assert.strictEqual(h.calls.length, 2,
+      'ENTER: A advertises the scan, so its plain read must have landed and the 20.1s scan must be the call left in flight — the only path where a repaint can strand a result');
 
     await h.open('B');
     assert.match(h.body(), /bees-marker/, 'ENTER: B must really be on screen — otherwise the re-click has nothing wrong to inherit');
 
     const a2 = h.open('A');
     await new Promise((r) => setImmediate(r));
-    assert.strictEqual(h.calls.length, 2,
-      'the joined click must NOT issue a third fetch: A is still pending and B made the second');
+    assert.strictEqual(h.calls.length, 3,
+      'the joined click must NOT issue a fourth fetch: A is still pending and B made the third');
     assert.doesNotMatch(h.body(), /bees-marker/,
       "a joined click that returns without repainting leaves B's tokens on screen under A's name — a wrong number attributed to the wrong seat");
     assert.match(h.body(), /Loading…/, 'the body is reset to the pending note until A\'s own result lands');
 
     releaseA();
     await Promise.all([a, a2]);
-    assert.match(h.body(), /MCP servers/, "and A's own result still paints when it arrives");
-    assert.match(h.body(), /linear/, 'with A\'s data, not B\'s');
+    const body = h.body();
+    assert.doesNotMatch(body, /Loading…/,
+      'the repaint destroyed #ctx-util-col, so a scan result that gives up on a missing column strands the popover on Loading… for good — a control hidden by a slow proxy');
+    assert.match(body, /ctx-line-head/, "A's composition must be back: the 13ms read already paid for it");
+    assert.match(body, /MCP servers/, "and A's own result still paints when it arrives");
+    assert.match(body, /linear/, 'with A\'s data, not B\'s');
+    assert.match(body, /ctx-links/, 'with the links row re-emitted, or Manage tools / skills / Full report stay unreachable');
   } finally { h.restore(); }
 });

@@ -398,17 +398,20 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     placeCtxPopover(anchor);
     const ures = await popoverApi(name).ctx({ utilization: true });
     if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains('hidden')) return;
-    const col = document.getElementById('ctx-util-col');
-    if (!col) return;
+    const paintRight = (inner) => {
+      const c = document.getElementById('ctx-util-col');
+      if (c) c.innerHTML = inner;
+      else paintCtxBody(name, cols(`<div class="ctx-col" id="ctx-util-col">${inner}</div>`) + links);
+    };
     if (!ures || !ures.ok) {
-      col.innerHTML = plainCol
-        + `<div class="ctx-note">utilization unavailable (${esc(ures && ures.error ? ures.error : 'no answer')})</div>`;
+      paintRight(plainCol
+        + `<div class="ctx-note">utilization unavailable (${esc(ures && ures.error ? ures.error : 'no answer')})</div>`);
       placeCtxPopover(anchor); return;
     }
     const uAgents = (ures.data && Array.isArray(ures.data.agents)) ? ures.data.agents : [];
     const utilCol = uAgents.length ? renderUtilHalf(uAgents) : '';
-    col.innerHTML = utilCol.trim() ? utilCol
-      : (plainCol.trim() || '<div class="ctx-note">no utilization data yet</div>');
+    paintRight(utilCol.trim() ? utilCol
+      : (plainCol.trim() || '<div class="ctx-note">no utilization data yet</div>'));
     const linkBox = document.getElementById('ctx-links');
     if (linkBox && uAgents.length) linkBox.innerHTML = renderCtxLinks(name, uAgents, caps, peerQueries);
     placeCtxPopover(anchor);
