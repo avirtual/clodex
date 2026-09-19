@@ -12,17 +12,14 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
-- The bottom drawer remembers, per seat, whether it was open and which tab it showed, so switching to another seat no longer carries the terminal or activity deck along; the tall setting stays shared.
 
+- The bottom drawer remembers, per seat, whether it was open and which tab it showed, so switching to another seat no longer carries the terminal or activity deck along; the tall setting stays shared.
 - A headless deploy from the peer wizard now records each attempt's outcome in the log; the fix-with-an-agent session becomes the active tab when it opens, carries a "fix" chip naming the box it works on, runs in a scratch directory of its own instead of the home folder, and archives itself once it reports the deploy succeeded; the deployed box keeps its settings file private, and a Linux node's startup diagnostics no longer mention the macOS-only spawn helper.
 - Deploying a headless node to a Linux box that has no Node.js now installs a user-local Node 22 first, a box whose Python venv or session linger can be set up without root no longer stops to ask for sudo, and the fix-with-an-agent session says where it is working and posts its outcome to the inbox.
 - When a terminal command is refused because the tab is busy, the refusal now names the command that holds the terminal.
-
 - A note a sandbox seat raises with notify-user now stays in that box's inbox as well as reaching the desktop inbox; the box copy is marked read once the desktop has it.
-
 - The context and cost popovers and the Preferences capture-logs control stay usable on long sessions: composition renders before the utilization scan, the cost view shows the report's verdict and waste levers instead of a per-request chart, and a slow proxy answer keeps the last good one on screen.
 - A test outside a ticket's diff tripping the suite's slow gate no longer rejects the ticket or reverts its merge; the loop records the test and carries on.
-
 - wirescope is vendored at v0.6.68: the context popover's utilization scan no longer stalls a long session's proxy, and it reports tool use since the last compact alongside the lifetime count.
 
 ## 5.77.0 — 2026-09-18
