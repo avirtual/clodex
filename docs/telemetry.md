@@ -145,6 +145,38 @@ must run `claude login`. It rides every payload as `authRefresh` beside
 sidebar `#auth-banner` off `refreshQuotaChip`'s sweep; an older proxy sends
 no block and `authRefresh` is null, which shows nothing.
 
+**The three popover fetches are budgeted against MEASURED proxy latency,
+not against a uniform timeout.** On an 8.5k-request session `/_context` is
+13ms but `/_context&utilization=1` is 20.1s (it disk-scans every retained
+capture), `/_report&detail=1` is 49.5s and 3.07MB — 1.78MB of it the 6820-point
+`series` — and `/_prune` is 51s, all against a 20s `PROXY_REPORT_TIMEOUT`. So:
+
+- **The context popover issues two fetches.** The plain read paints the
+  composition column immediately; the utilization scan is a second request, made
+  only when `capabilities.context_utilization || context_skills`, whose result
+  fills the right-hand column in place (`#ctx-util-col`) and repaints the
+  manage-tools/skills links, whose trim labels need it. A scan that fails or
+  never lands costs the column it owns and nothing else — never the composition.
+- **The cost popover fetches the SUMMARY**, `detail:false`, and renders the
+  report's `verdict` headline, `cost_decomposition.by_bucket` and `waste.by_type`
+  levers rather than the per-request series. The reduction is
+  `renderer/lib/cost-report-view.js` `costReportModel` (pinned by
+  `test/cost-report-view.test.js`); the per-request timeline is now reachable
+  only through the "Open full dashboard" link. The head line names BOTH scopes —
+  the report is all-time, the bar chip it was opened from is since-compact.
+- **`fetchProxyReport` keeps the last successful summary per session** in a Map
+  on the manager (`_reportCache`). A timeout or non-200 with a cached report
+  returns `{ok:true, data:cached, at, stale:true, error}` and the popover labels
+  it; with nothing cached it returns the failure as before. `detail:true`
+  neither fills nor reads it. `SessionManager._cleanup` drops the entry with the
+  session, so a same-named replacement never inherits its predecessor's report.
+
+**The Preferences capture-logs block is never hidden by a failed `/_prune`.**
+It rides the wirescope panel; a failed `pruneInfo` sets the size line to
+`Capture logs: size unavailable (<error>)` and leaves the age select and Clear
+usable — Clear runs its own dry-run preview and confirm, which is the real
+guard. A failed preview disables Clear alone, and the age `change` re-runs it.
+
 **`popoverApi(name)`** is the local-vs-peer data seam: local sessions call
 the direct IPC (getProxyContext/Report/Bust, sessionFiles, filePeek,
 fileDiff); peer sessions route the same kinds through `peerQuery`, with

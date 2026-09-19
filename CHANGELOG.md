@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- The context and cost popovers and the Preferences capture-logs control stay usable on long sessions: composition renders before the utilization scan, the cost view shows the report's verdict and waste levers instead of a per-request chart, and a slow proxy answer keeps the last good one on screen.
 - A test outside a ticket's diff tripping the suite's slow gate no longer rejects the ticket or reverts its merge; the loop records the test and carries on.
 
 ## 5.77.0 — 2026-09-18
