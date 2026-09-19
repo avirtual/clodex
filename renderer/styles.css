@@ -392,6 +392,14 @@ html, body {
   border: 1px solid currentColor;
   margin-left: 4px;
 }
+.session-fix {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  margin-left: 4px;
+  color: var(--text-dim);
+}
 .session-pr.open { color: #2ecc71; }
 .session-pr.merged { color: #a371f7; }
 .session-pr.closed { color: #e5534b; }
@@ -5350,7 +5358,7 @@ body.web-frontend #sidebar-header {
 #session-list .session-item.peer-offline .session-name,
 #session-list .session-item.peer-offline .session-cwd { color: var(--text-tertiary); }
 #session-list .session-item.peer-offline .session-chip { opacity: 0.55; }
-.session-pr { font-size: 10px; border-radius: var(--radius-sm); }
+.session-pr, .session-fix { font-size: 10px; border-radius: var(--radius-sm); }
 
 .peer-header {
   padding: 6px var(--sp-2) 6px 10px;

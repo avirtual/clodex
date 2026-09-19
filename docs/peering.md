@@ -354,6 +354,16 @@ Stock Clodex under Xvfb as a systemd `--user` unit (`Restart=always`,
 handles bulk session add/remove via service restart; day-to-day
 create/kill/restart now ride the `create` cap over the wire.
 
+"Fix with an agent…" on a failed deploy mints an ad-hoc claude seat
+(`peer:deployFix`) that becomes the active tab. Its cwd is
+`~/.clodex/fix/<sanitized-host>/` (`clodex-paths.js` `fixDirFor`, 0700) rather
+than the operator's home, so its notes land somewhere Clodex owns; the session
+record carries `fixFor: <host>`, which puts a muted `fix` chip on the sidebar
+row naming the box it ssh-es into. Its briefing pins the outcome note's first
+line: `DEPLOY OK <host>` or `DEPLOY FAILED <host>`. A `DEPLOY OK` note from a
+`fixFor` seat archives it (never kills it — the transcript stays resumable);
+anything else leaves it running.
+
 ## Invariants (do not break)
 
 - 127.0.0.1 bind + tunnel-is-auth; only input/resize token-gated.

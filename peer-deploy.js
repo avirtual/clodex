@@ -121,7 +121,7 @@ function fixSessionName(label, taken = new Set()) {
   return `fix-${Date.now().toString(36)}`.slice(0, FIX_NAME_MAX);
 }
 
-// The fix session's cwd is the operator's HOMEDIR, not the repo, so relative
+// The fix session's cwd is a Clodex-made scratch dir, not the repo, so relative
 // `peering/…` pointers would be dead — hence absolute paths when docsDir is
 // given. The repo URL is always named too: in a packaged app those files live
 // inside app.asar, which an external claude CLI cannot read.
@@ -135,6 +135,8 @@ function buildDeployFixBriefing({ sshHost, port, label, logText, docsDir } = {})
   const repo = 'https://github.com/avirtual/clodex';
   return [
     `You're an ad-hoc troubleshooting session. A Clodex headless deploy to ${host}${who} just failed and I need you to get it running.`,
+    ``,
+    `Your working directory is a scratch dir Clodex made for this fix; write notes there, not in $HOME.`,
     ``,
     `GOAL: Clodex should answer the peer protocol on http://127.0.0.1:${p}/ of ${host}, running as a systemd --user service. Verify with:`,
     `  ssh ${host} 'curl -fsS http://127.0.0.1:${p}/api/peer/hello'`,
@@ -150,7 +152,7 @@ function buildDeployFixBriefing({ sshHost, port, label, logText, docsDir } = {})
     ``,
     `NODE: if the box has no Node at all, or one older than 20, install a USER-LOCAL Node 22 under ~/.local (download the tarball, unpack it to ~/.local/node, symlink node/npm/npx into ~/.local/bin) — do NOT sudo and do NOT use the distro package manager for Node; the service unit's PATH already leads with ~/.local/bin.`,
     ``,
-    `REPORT BACK WITH [agent:notify-user] when you finish, either way — the operator is not watching this session. On success, quote the hello JSON's app, version and host fields and tell them to click Test & Set Up again. On failure, say what you found and what is still blocking.`,
+    `REPORT BACK WITH [agent:notify-user] when you finish, either way — the operator is not watching this session. The note's FIRST LINE is exact, and Clodex reads it: on success it starts with \`DEPLOY OK ${host}\` and the rest of that note quotes the hello JSON's app, version and host fields and tells them to click Test & Set Up again; on failure it starts with \`DEPLOY FAILED ${host}\` followed by what you found and what is still blocking. Clodex archives this session once it sees a DEPLOY OK note, so send it only when the hello curl really answered.`,
   ].join('\n');
 }
 

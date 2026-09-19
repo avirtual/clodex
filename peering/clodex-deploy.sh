@@ -397,6 +397,8 @@ if ! loginctl show-user "$USER" 2>/dev/null | grep -q 'Linger=yes'; then
 fi
 systemctl --user daemon-reload            || fail service "daemon-reload-failed"
 systemctl --user enable clodex.service >&2 || fail service "enable-failed"
+chmod 700 "$HOME/.config/clodex" 2>/dev/null || true
+chmod 600 "$HOME/.config/clodex/ui-settings.json" 2>/dev/null || true
 # restart (not just `enable --now`): on the UPDATE path an OLD unit is already
 # running — for a fresh Xvfb/Electron→headless flip the new ExecStart only takes
 # effect on an actual restart, and `start` is a no-op on an already-active unit.

@@ -604,7 +604,7 @@ async function deleteSessionRow(name) {
   }
 }
 
-function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false, account = null) {
+function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false, account = null, fixFor = null) {
   const item = document.createElement('div');
   item.className = 'session-item';
   item.dataset.name = name;
@@ -641,6 +641,7 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
     <button class="session-info-btn" data-tip="Session info — cost, compactions, activity">i</button>
     <button class="session-close" data-tip="Archive session">&times;</button>
   `;
+  applyFixChip(item, fixFor);
 
   item.addEventListener('click', (e) => {
     if (e.target.closest('.session-close')) return;
@@ -1118,6 +1119,19 @@ function refreshSidebarView() {
       }
     }
   }
+}
+
+function applyFixChip(item, fixFor) {
+  const host = typeof fixFor === 'string' ? fixFor.trim() : '';
+  if (!host) return;
+  const badges = item.querySelector('.session-badges');
+  if (!badges) return;
+  item.dataset.fixFor = host;
+  const chip = document.createElement('span');
+  chip.className = 'session-fix';
+  chip.textContent = 'fix';
+  chip.title = `ad-hoc fix session for ${host} — it runs ssh against that box`;
+  badges.appendChild(chip);
 }
 
 function applyPrBadge(item) {
@@ -5535,6 +5549,12 @@ function appendDeployActions(tailBox, row, status, sshHost, port, logText) {
       const res = await window.api.peerDeployFix(sshHost, port, label, logText);
       if (res && res.ok) {
         showToast(`Opened agent session "${res.name}" to fix ${label}.`, { kind: 'peer-ui' });
+        if (!sessions.has(res.name)) {
+          createTerminal(res.name);
+          addSessionToSidebar(res.name, res.type || 'claude', res.cwd || '', null,
+            res.backend || null, null, false, null, res.fixFor || sshHost);
+        }
+        await switchToNewSession(res.name, { agentInitiated: false });
         const working = document.createElement('div');
         working.className = 'peer-status-ok peer-fix-working';
         working.textContent = `Agent ${res.name} is working on it in this workspace's session list — it will post to your inbox when done; then click Test & Set Up again.`;
@@ -7702,7 +7722,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
         continue;
       }
       const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
-      addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
+      addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true, null, entry.fixFor || null);
       if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
       const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
       if (item) {

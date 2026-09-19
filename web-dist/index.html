@@ -576,6 +576,14 @@ body {
   border: 1px solid currentColor;
   margin-left: 4px;
 }
+.session-fix {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  margin-left: 4px;
+  color: var(--text-dim);
+}
 .session-pr.open {
   color: #2ecc71;
 }
@@ -7169,7 +7177,8 @@ body.web-frontend #sidebar-header {
 #session-list .session-item.peer-offline .session-chip {
   opacity: 0.55;
 }
-.session-pr {
+.session-pr,
+.session-fix {
   font-size: 10px;
   border-radius: var(--radius-sm);
 }
@@ -37300,6 +37309,8 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         return [
           `You're an ad-hoc troubleshooting session. A Clodex headless deploy to ${host}${who} just failed and I need you to get it running.`,
           ``,
+          `Your working directory is a scratch dir Clodex made for this fix; write notes there, not in $HOME.`,
+          ``,
           `GOAL: Clodex should answer the peer protocol on http://127.0.0.1:${p}/ of ${host}, running as a systemd --user service. Verify with:`,
           `  ssh ${host} 'curl -fsS http://127.0.0.1:${p}/api/peer/hello'`,
           `Success = JSON containing "app":"clodex".`,
@@ -37314,7 +37325,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
           ``,
           `NODE: if the box has no Node at all, or one older than 20, install a USER-LOCAL Node 22 under ~/.local (download the tarball, unpack it to ~/.local/node, symlink node/npm/npx into ~/.local/bin) \u2014 do NOT sudo and do NOT use the distro package manager for Node; the service unit's PATH already leads with ~/.local/bin.`,
           ``,
-          `REPORT BACK WITH [agent:notify-user] when you finish, either way \u2014 the operator is not watching this session. On success, quote the hello JSON's app, version and host fields and tell them to click Test & Set Up again. On failure, say what you found and what is still blocking.`
+          `REPORT BACK WITH [agent:notify-user] when you finish, either way \u2014 the operator is not watching this session. The note's FIRST LINE is exact, and Clodex reads it: on success it starts with \`DEPLOY OK ${host}\` and the rest of that note quotes the hello JSON's app, version and host fields and tells them to click Test & Set Up again; on failure it starts with \`DEPLOY FAILED ${host}\` followed by what you found and what is still blocking. Clodex archives this session once it sees a DEPLOY OK note, so send it only when the hello curl really answered.`
         ].join("\n");
       }
       function shSingleQuote(v) {
@@ -40200,7 +40211,7 @@ ${detail}` });
           refreshSidebarView();
         }
       }
-      function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false, account = null) {
+      function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false, account = null, fixFor = null) {
         const item = document.createElement("div");
         item.className = "session-item";
         item.dataset.name = name;
@@ -40232,6 +40243,7 @@ ${detail}` });
     <button class="session-info-btn" data-tip="Session info \u2014 cost, compactions, activity">i</button>
     <button class="session-close" data-tip="Archive session">&times;</button>
   `;
+        applyFixChip(item, fixFor);
         item.addEventListener("click", (e) => {
           if (e.target.closest(".session-close")) return;
           if (e.target.closest(".session-info-btn")) return;
@@ -40684,6 +40696,18 @@ ${detail}` });
             }
           }
         }
+      }
+      function applyFixChip(item, fixFor) {
+        const host = typeof fixFor === "string" ? fixFor.trim() : "";
+        if (!host) return;
+        const badges = item.querySelector(".session-badges");
+        if (!badges) return;
+        item.dataset.fixFor = host;
+        const chip = document.createElement("span");
+        chip.className = "session-fix";
+        chip.textContent = "fix";
+        chip.title = `ad-hoc fix session for ${host} \u2014 it runs ssh against that box`;
+        badges.appendChild(chip);
       }
       function applyPrBadge(item) {
         const badges = item.querySelector(".session-badges");
@@ -44749,6 +44773,21 @@ ${res.stderr}` : "");
             const res = await window.api.peerDeployFix(sshHost, port, label, logText);
             if (res && res.ok) {
               showToast(`Opened agent session "${res.name}" to fix ${label}.`, { kind: "peer-ui" });
+              if (!sessions.has(res.name)) {
+                createTerminal(res.name);
+                addSessionToSidebar(
+                  res.name,
+                  res.type || "claude",
+                  res.cwd || "",
+                  null,
+                  res.backend || null,
+                  null,
+                  false,
+                  null,
+                  res.fixFor || sshHost
+                );
+              }
+              await switchToNewSession(res.name, { agentInitiated: false });
               const working = document.createElement("div");
               working.className = "peer-status-ok peer-fix-working";
               working.textContent = `Agent ${res.name} is working on it in this workspace's session list \u2014 it will post to your inbox when done; then click Test & Set Up again.`;
@@ -46863,7 +46902,7 @@ ${res.stderr}` : "");
               continue;
             }
             const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
-            addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
+            addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true, null, entry.fixFor || null);
             if (entry.createdAt) sidebarMeta.set(entry.name, { ...sidebarMeta.get(entry.name) || {}, createdAt: entry.createdAt });
             const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
             if (item) {

@@ -829,9 +829,10 @@ accept teardown removes.
   `node -e "console.log(Object.keys(require('./clodex-paths').KINDS).length)"`),
   the single source every mint site routes through, plus `projectDirFor` for the
   project board. Pure leaf (no I/O, like scope-util); NOT in the leak-scanner
-  lists. Shared dirs (`messages/`, `pending/`, `agents/`, `skills/`, …) stay at
-  the root and are outside the grammar — its header is the authority on which,
-  because a dir is there precisely because it must OUTLIVE `run/<name>/`.
+  lists. Shared dirs (`messages/`, `pending/`, `agents/`, `skills/`, `fix/`, …)
+  stay at the root and are outside the grammar — its header is the authority on
+  which, because a dir is there precisely because it must OUTLIVE `run/<name>/`.
+  `fixDirFor(root, host)` mints the `fix/` leaf a deploy-fix seat runs in.
 - **legacy-sweep.js** — one-time, marker-gated (`run/.migrated`), name-driven
   migration of the OLD flat `{name}-*` artifacts into `run/<name>/`, plus a
   log-only orphan pass. `runLegacySweep` deletes only `{knownName}{knownSuffix}`

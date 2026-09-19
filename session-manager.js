@@ -1415,7 +1415,7 @@ function createSessionManager(deps) {
       }
     }
 
-    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null) {
+    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null) {
       if (this.sessions.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
@@ -1458,6 +1458,7 @@ function createSessionManager(deps) {
       // nulls it.
       const wireOff = noWire === true;
       if (wireOff) proxyBase = null;
+      const fixHost = (typeof fixFor === 'string' && fixFor) ? fixFor : null;
 
       if (accountDir && proxyBase && accountDir !== claudeHome()) {
         Promise.resolve().then(() => ProxyClient.probe(proxyBase)).then((probe) => {
@@ -1992,6 +1993,7 @@ function createSessionManager(deps) {
         // inherit its spawner's route — a real decision, but not this one.
         proxyRequested: typeof proxy === 'string' ? normalizeProxyBase(proxy) : (proxy === false ? false : null),
         intentSource, wireRouted, backend, noWire: wireOff, sentinel: null,
+        ...(fixHost ? { fixFor: fixHost } : {}),
         fileTouches: [],
         // Called defensively because this runs AFTER the agent socket is bound:
         // an observer dep that is merely absent must degrade to "no feed" (which
@@ -2079,6 +2081,7 @@ function createSessionManager(deps) {
         // whose absence is a distinct living default), so there is nothing to lose
         // by writing the boolean every time.
         noWire: wireOff,
+        ...(fixHost ? { fixFor: fixHost } : {}),
         denyBuiltins: Array.isArray(denyBuiltins) ? denyBuiltins : [],
         disabledTools: Array.isArray(disabledTools) ? disabledTools : [],
         ...(Array.isArray(shellDeny) ? { shellDeny } : {}),
@@ -3051,6 +3054,7 @@ function createSessionManager(deps) {
             entry.noWire === true,
             Array.isArray(entry.plugins) ? entry.plugins : null,
             Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
+            typeof entry.fixFor === 'string' ? entry.fixFor : null,
           );
         } catch (err) {
           const kept = { ...entry, name: newName };
@@ -3130,6 +3134,7 @@ function createSessionManager(deps) {
             entry.noWire === true,
             Array.isArray(entry.plugins) ? entry.plugins : null,
             Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
+            typeof entry.fixFor === 'string' ? entry.fixFor : null,
           );
         } catch (err) {
           getPersistence().upsert(this._stripClaimedTree({ ...entry, cwd: newCwd }));
@@ -3766,6 +3771,7 @@ function createSessionManager(deps) {
         ticket: s.agentType ? openTicketFor(s) : null,
         backend: s.backend || null,
         noWire: !!s.noWire,
+        ...(s.fixFor ? { fixFor: s.fixFor } : {}),
         activity: s.activityState || 'idle',
         attention: s.needsAttention ? s.needsAttention.kind : null,
         account: this.accountFor(s.name, resolveAccount),
@@ -4933,6 +4939,11 @@ function createSessionManager(deps) {
       const rec = store.add({ from: who, workspaceId: session.workspaceId || null, body: text });
       this._raiseNote(who, text);
       log.info('intent', `notify-user by ${who}: ${rec.id}`);
+
+      if (session.fixFor && text.split('\n')[0].startsWith('DEPLOY OK ')) {
+        Promise.resolve(this.archive(who)).catch(() => {});
+        log.info('session', `fix session ${who} archived after DEPLOY OK`);
+      }
     }
 
     _raiseNote(from, body) {
@@ -6027,6 +6038,7 @@ function createSessionManager(deps) {
               entry.noWire === true,
               Array.isArray(entry.plugins) ? entry.plugins : null,
               Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
+              typeof entry.fixFor === 'string' ? entry.fixFor : null,
             );
             const lvl = stripLevelOf(entry);
             if (lvl >= 1) getPersistence().setStripLevel(name, lvl);
