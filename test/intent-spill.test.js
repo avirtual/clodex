@@ -8,7 +8,7 @@ const crypto = require('node:crypto');
 
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
-  SPILL_MAX_BYTES, spillIdOf, spillDirFor, spillPathFor,
+  SPILL_MAX_BYTES, SPILL_VERBS, spillIdOf, spillDirFor, spillPathFor,
   writeSpill, resolveSpill, pointerOf, pointerText, isSpillVerb, verbKeyOf, validAgent,
 } = require('../intent-spill');
 
@@ -128,27 +128,50 @@ test('spillDirFor confines: a traversal name resolves to no directory at all', (
   assert.equal(spillPathFor(r, '..', 'a'.repeat(16)), null);
 });
 
-test('pointerOf: the WHOLE body is the pointer, or it is prose', () => {
+test('pointerOf: the body is the pointer alone, or ONE line whose tail is the pointer', () => {
   const id = 'a'.repeat(16);
   assert.equal(pointerOf(pointerText(id)), id);
   assert.equal(pointerOf(` @spill:${id}\n`), id);
   assert.equal(pointerOf(`@spill:${id} plus`), null);
-  assert.equal(pointerOf(`x @spill:${id}`), null);
   assert.equal(pointerOf(`@spill:${'a'.repeat(15)}`), null);
   assert.equal(pointerOf(`@spill:${'A'.repeat(16)}`), null);
   assert.equal(pointerOf(null), null);
 });
 
-test('the verb set is the dotted key, and only the six listed verbs', () => {
+test('pointerOf: a title before the pointer is accepted and contributes nothing but its length', () => {
+  const id = 'a'.repeat(16);
+  assert.equal(pointerOf(`S-E intent-spill: notify-user joins @spill:${id}`), id,
+    'the tee emits the title so the transcript still says WHICH spec was filed');
+  assert.equal(pointerOf(`x @spill:${id}`), id);
+  assert.equal(pointerOf(`${'t'.repeat(80)} @spill:${id}`), id, '80 chars of title is the cap');
+  assert.equal(pointerOf(`${'t'.repeat(81)} @spill:${id}\n`), null,
+    'past the cap it is a spec that mentions a pointer, and resolving it would replace a real body');
+  assert.equal(pointerOf(`title  @spill:${id}`), null, 'exactly one space, as the tee writes it');
+  assert.equal(pointerOf(`title\t@spill:${id}`), null);
+  assert.equal(pointerOf(`title @spill:${id} trailing`), null, 'nothing but whitespace after the id');
+  assert.equal(pointerOf(`first\ntitle @spill:${id}`), null,
+    'a pointer on a LATER line is prose: the spilled body is one line, never a paragraph');
+  assert.equal(pointerOf(`title @spill:${id}\nmore`), null);
+  assert.equal(pointerOf(`title @spill:${id}\n`), id, 'a consumer that kept the newline still resolves');
+});
+
+test('the verb set is the dotted key, and only the seven listed verbs', () => {
   assert.equal(verbKeyOf({ type: 'task', sub: 'add' }), 'task.add');
   assert.equal(verbKeyOf({ type: 'notify-user' }), 'notify-user');
-  for (const v of [{ type: 'task', sub: 'add' }, { type: 'context', sub: 'reload' }]) {
+  for (const v of [{ type: 'task', sub: 'add' }, { type: 'task', sub: 'respec' },
+    { type: 'task', sub: 'reject' }, { type: 'context', sub: 'compact' },
+    { type: 'context', sub: 'clear' }, { type: 'context', sub: 'reload' },
+    { type: 'notify-user' }]) {
     assert.equal(isSpillVerb(v), true, JSON.stringify(v));
   }
-  for (const v of [{ type: 'dm', target: 'bob' }, { type: 'memory', sub: 'remember' },
-    { type: 'task', sub: 'done' }, { type: 'notify-user' }]) {
-    assert.equal(isSpillVerb(v), false, JSON.stringify(v));
-  }
+  assert.equal(isSpillVerb({ type: 'memory', sub: 'remember' }), false,
+    'memory remember is out on purpose: the seat must keep SEEING what it memorized');
+  assert.equal(isSpillVerb({ type: 'dm', target: 'bob' }), false,
+    "a dm resolves in no reader's seat dir, so a pointer in one is the text it is");
+  assert.equal(isSpillVerb({ type: 'task', sub: 'done' }), false,
+    'a report is read by the lead out of the ticket, not re-read by the hand');
+  assert.deepEqual([...SPILL_VERBS].sort(), ['context.clear', 'context.compact', 'context.reload',
+    'notify-user', 'task.add', 'task.reject', 'task.respec']);
   assert.equal(validAgent('t42.fix'), true);
   assert.equal(validAgent('..'), false);
 });

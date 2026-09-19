@@ -21,6 +21,7 @@ function mkH(overrides = {}) {
   const tasks = [];
   const contexts = [];
   const dms = [];
+  const inbox = [];
   const entry = overrides.entry === undefined ? null : overrides.entry;
   delete overrides.entry;
 
@@ -30,6 +31,7 @@ function mkH(overrides = {}) {
     PENDING_DIR: path.join(root, 'pending'),
     ensureDir: (d) => fs.mkdirSync(d, { recursive: true }),
     getPersistence: () => ({ list: () => [], get: () => entry }),
+    getNotifications: () => ({ add: (rec) => { inbox.push(rec); return { id: `n${inbox.length}`, ...rec }; } }),
     MSG_MAX_AGE: 1800,
     log: {
       info: () => {}, debug: () => {}, warn: () => {},
@@ -48,7 +50,7 @@ function mkH(overrides = {}) {
   };
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', workspaceId: 'ws1' });
   m.sessions.set('bob', { name: 'bob', agentType: 'claude', workspaceId: 'ws1' });
-  return { m, root, injected, broadcasts, errors, notes, tasks, contexts, dms };
+  return { m, root, injected, broadcasts, errors, notes, tasks, contexts, dms, inbox };
 }
 
 test('the REAL _handleIntent substitutes a whole-body pointer before dispatch, which is the only reason every dispatch path gets it', async () => {
@@ -66,7 +68,60 @@ test('the REAL _handleIntent substitutes a whole-body pointer before dispatch, w
     'the provenance rides the intent so a consumer can say where the body came from');
 });
 
-test('every spill verb resolves: task add/respec/reject and context compact/clear/reload', async () => {
+test('a TITLED pointer resolves, and the title is discarded — the file is authoritative', async () => {
+  const h = mkH();
+  const id = writeSpill(h.root, 'lead', BIG);
+
+  await h.m._handleIntent('lead', {
+    type: 'task', sub: 'add', body: `a title that does NOT match the file @spill:${id}`,
+  });
+
+  assert.strictEqual(h.tasks.length, 1);
+  assert.strictEqual(h.tasks[0].body, BIG,
+    'the transcript title is display only, so an edited or stale one cannot change one byte of the spec');
+  assert.deepStrictEqual(h.tasks[0].spill, { id, path: spillPathFor(h.root, 'lead', id) });
+});
+
+test('a title over 80 chars is NOT a pointer, so a spec that happens to end in one is dispatched whole', async () => {
+  const h = mkH();
+  const id = writeSpill(h.root, 'lead', BIG);
+  const body = `${'t'.repeat(81)} @spill:${id}`;
+
+  await h.m._handleIntent('lead', { type: 'task', sub: 'add', body });
+
+  assert.strictEqual(h.tasks[0].body, body,
+    'the tee never emits a title this long, so a line that carries one is prose the resolver must not eat');
+  assert.deepStrictEqual(h.errors, []);
+});
+
+test('a pointer that is not the tail of a ONE-line body is prose, titled or not', async () => {
+  const h = mkH();
+  const id = writeSpill(h.root, 'lead', BIG);
+  for (const body of [`title @spill:${id}\nand more`, `first line\ntitle @spill:${id}`,
+    `title @spill:${id} trailing`, `title  @spill:${id}`]) {
+    h.tasks.length = 0;
+    await h.m._handleIntent('lead', { type: 'task', sub: 'add', body });
+    assert.strictEqual(h.tasks[0].body, body, `not a pointer line: ${JSON.stringify(body)}`);
+  }
+});
+
+test('notify-user is a spill verb: the operator inbox gets the FILE body, never the pointer', async () => {
+  const h = mkH();
+  const id = writeSpill(h.root, 'lead', BIG);
+
+  await h.m._handleIntent('lead', {
+    type: 'notify-user', body: `spec line one @spill:${id}`,
+  });
+
+  assert.deepStrictEqual(h.inbox.map((r) => r.body), [BIG],
+    'an operator reads the note in the inbox, so a 23-byte pointer there is a note with no content');
+  assert.strictEqual(h.inbox[0].from, 'lead');
+  assert.deepStrictEqual(h.notes.map((n) => n.body), [BIG], 'and the OS notification previews the real text');
+  assert.deepStrictEqual(h.injected, [],
+    'nothing bounced back at the seat: the body was there, it just arrived as a pointer');
+});
+
+test('every spill verb resolves: task add/respec/reject, notify-user and context compact/clear/reload', async () => {
   for (const [type, sub] of [['task', 'add'], ['task', 'respec'], ['task', 'reject']]) {
     const h = mkH();
     const id = writeSpill(h.root, 'lead', BIG);
@@ -80,6 +135,23 @@ test('every spill verb resolves: task add/respec/reject and context compact/clea
     await h.m._handleIntent('lead', { type: 'context', sub, body: `@spill:${id}` });
     assert.deepStrictEqual(h.contexts, [{ sub, body: BIG }], `context ${sub} resolved`);
   }
+  const h = mkH();
+  const id = writeSpill(h.root, 'lead', BIG);
+  await h.m._handleIntent('lead', { type: 'notify-user', body: `@spill:${id}` });
+  assert.deepStrictEqual(h.inbox.map((r) => r.body), [BIG], 'notify-user resolved');
+});
+
+test('memory remember and task done are not spill verbs, so a pointer in one is the text it is', async () => {
+  for (const intent of [{ type: 'memory', sub: 'remember' }, { type: 'task', sub: 'done' }]) {
+    const h = mkH();
+    const memos = [];
+    h.m._handleMemoryIntent = (s, sub, body) => memos.push({ sub, body });
+    const id = writeSpill(h.root, 'lead', BIG);
+    await h.m._handleIntent('lead', { ...intent, body: `@spill:${id}` });
+    const seen = intent.type === 'memory' ? memos[0].body : h.tasks[0].body;
+    assert.strictEqual(seen, `@spill:${id}`,
+      `${intent.type}.${intent.sub}: a memo the seat cannot see is a memo it did not make`);
+  }
 });
 
 test('a non-spill verb is never inspected, which is what makes a cross-seat read inexpressible', async () => {
@@ -91,13 +163,14 @@ test('a non-spill verb is never inspected, which is what makes a cross-seat read
     + "its OWN intent would resolve against the RECEIVER's directory and miss");
 });
 
-test('a pointer plus other text is PROSE and is used verbatim; surrounding whitespace alone still resolves', async () => {
+test('text AFTER the pointer is PROSE and is used verbatim; surrounding whitespace alone still resolves', async () => {
   const h = mkH();
   const id = writeSpill(h.root, 'lead', BIG);
-  for (const body of [`@spill:${id} plus`, `see @spill:${id}`, `@spill:${id}\n\nmore`]) {
+  for (const body of [`@spill:${id} plus`, `@spill:${id}\n\nmore`, `see @spill:${id} and more`]) {
     h.tasks.length = 0;
     await h.m._handleIntent('lead', { type: 'task', sub: 'add', body });
-    assert.strictEqual(h.tasks[0].body, body, `not a whole-body pointer: ${JSON.stringify(body)}`);
+    assert.strictEqual(h.tasks[0].body, body,
+      `the pointer must END the one line it sits on: ${JSON.stringify(body)}`);
   }
   h.tasks.length = 0;
   await h.m._handleIntent('lead', { type: 'task', sub: 'add', body: ` @spill:${id}\n` });

@@ -849,7 +849,11 @@ accept teardown removes.
   `proxy-lab/test_spill.py` is the conformance suite): constants, verb set,
   id/agent charsets, the content-addressed writer, the confined resolver and the
   `@spill:<id>` pointer parser, so the tee, the resolver and the injection half
-  cannot drift. `id = sha256(body)[:16]`, path `<root>/spill/<agent>/<id>.md`,
+  cannot drift. The listed verbs are task add/respec/reject, notify-user and
+  context compact/clear/reload; the transcript keeps the body's first line
+  beside the pointer, capped by `tickets-store.ticketTitle`, and resolution
+  discards it — the file is authoritative.
+  `id = sha256(body)[:16]`, path `<root>/spill/<agent>/<id>.md`,
   0700 dir / 0600 file, an existing file left alone. Pure leaf (`fs`, `path`,
   `crypto`, plus `path-confine` and `fs-util`). Every failure returns null or an
   `ok:false` reason and the caller forwards the original body — a truncated
