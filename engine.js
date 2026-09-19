@@ -2137,7 +2137,12 @@ function termExec(workspaceId, seat, command) {
     case 'bad-command': return { ok: false, error: r.error };
     case 'no-shell': return { ok: false, error: 'no terminal is open for your seat — ask your operator to open the terminal tab in the drawer. Nothing was queued.' };
     case 'no-marks': return { ok: false, error: `your terminal cannot report a command's result, so running one blind would leave you waiting forever: ${termShimDiagnosis()}` };
-    case 'busy': return { ok: false, error: 'your terminal is busy — a command is running, or a full-screen program (an editor, a pager, a REPL) has it. Typing now would go into that program, not the shell.' };
+    case 'busy': {
+      const running = String(r.running || '');
+      if (!running) return { ok: false, error: 'your terminal is busy — a command is running, or a full-screen program (an editor, a pager, a REPL) has it. Typing now would go into that program, not the shell.' };
+      const shown = running.length > 80 ? `${running.slice(0, 79)}…` : running;
+      return { ok: false, error: `your terminal is busy — \`${shown}\` is still running in it (a command, or a full-screen program such as an ssh session, an editor, a pager or a REPL). Typing now would go into that program, not the shell. Nothing was queued.` };
+    }
     case 'pending': return { ok: false, error: `you already have \`${r.running}\` running in your terminal — wait for its result before sending another.` };
     case 'write-failed': return { ok: false, error: `the terminal did not accept the command (${r.error}). Nothing ran.` };
     case 'no-seat': return { ok: false, error: 'your session has no terminal of its own' };

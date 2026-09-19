@@ -50,3 +50,14 @@ PERSISTS only. The settings file the CLI reads is written by `setupClaudeHook`,
 whose one call site is `session-manager.js`'s spawn arm, so a skill toggled from
 the per-session popover applies on the seat's next fresh start — which is what
 the popover's own confirm text says when it offers "Restart fresh".
+
+## termExec
+
+The `busy` refusal names the program holding the tab when `drawer-pty` supplies
+one, because the unnamed wording was read as wrong: printed at an operator whose
+shell sat idle inside `ssh host`, "a command is running" drew the reply "not busy
+though". The refusal was right — typing would have gone to the remote shell.
+
+An empty `running` is reachable: a C mark whose base64 payload did not decode
+holds the terminal under no name. That arm keeps the old unnamed wording, since
+an empty backtick pair reads as our bug rather than as "we do not know which".

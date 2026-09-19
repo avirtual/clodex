@@ -344,3 +344,25 @@ test('output between a D and an A breaks the pair', () => {
   assert.deepStrictEqual(seen, [false],
     'an A separated from the D by output is not that D`s prompt');
 });
+
+test('current() names the open command between C and D, and is empty after it', () => {
+  const p = createMarkParser({ onCommand: () => {} });
+  assert.strictEqual(p.current(), '', 'ENTER: nothing is open before any C');
+
+  p.feed(`${A}${C('ssh bogdan@example')}`);
+  assert.strictEqual(p.isBusy(), true);
+  assert.strictEqual(p.current(), 'ssh bogdan@example');
+
+  p.feed(`${D(0)}${A}`);
+  assert.strictEqual(p.isBusy(), false);
+  assert.strictEqual(p.current(), '', 'a finished command is no longer the one holding the tab');
+});
+
+test('an abandoned command is not still reported as the one holding the tab', () => {
+  const p = createMarkParser({ onCommand: () => {} });
+  p.feed(`${C('ssh bogdan@example')}`);
+  assert.strictEqual(p.current(), 'ssh bogdan@example', 'ENTER: the line is open');
+
+  p.feed(A);
+  assert.strictEqual(p.current(), '', 'the abandon cleared it, so no refusal can name a dead command');
+});

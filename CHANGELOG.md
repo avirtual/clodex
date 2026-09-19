@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- When a terminal command is refused because the tab is busy, the refusal now names the command that holds the terminal.
 
 - A note a sandbox seat raises with notify-user now stays in that box's inbox as well as reaching the desktop inbox; the box copy is marked read once the desktop has it.
 
