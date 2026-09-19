@@ -20,6 +20,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const { intentEnabled } = require('../intent-catalog');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -317,7 +318,7 @@ function producerHarness({ appVersion, entry = null, resumeId = null, mint = fal
     resolveSystemPromptFile: () => null,
     readAppendBodies: () => [],
     buildIpcPrompt: () => 'IPC PROTOCOL v1\n[agent:dm TARGET] body\n',
-    pluginGrammarLines: () => [],
+    pluginGrammarLines: () => [], intentEnabled,
     mergeClaudeSystemPrompt: (args, ipcPrompt) => ({ cleaned: [...args], append: ipcPrompt }),
     cleanupClaudeHook: () => {},
     cleanupSkills: () => {}, cleanupAgentPlugin: () => {},

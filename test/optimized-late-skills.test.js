@@ -14,6 +14,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const { intentEnabled } = require('../intent-catalog');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -277,7 +278,7 @@ function mkSpawner(registryRoot, knownSkillNames) {
     resolveSystemPromptFile: () => null,
     mergeClaudeSystemPrompt: (a) => ({ cleaned: [...a], append: null }),
     readAppendBodies: () => [],
-    pluginGrammarLines: () => [],
+    pluginGrammarLines: () => [], intentEnabled,
     effectiveInjectedAgents: () => [],
     effectiveInjectedSkills: () => [],
     unresolvedSubagentRefs: () => [],

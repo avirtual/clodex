@@ -10,6 +10,7 @@
 // left to integration + Bogdan's GUI smoke test.
 const { test } = require('node:test');
 const assert = require('node:assert');
+const { intentEnabled } = require('../intent-catalog');
 const { createSessionManager, deniedBodyDisposition, findPeerByOrigin, isStaleRegistration, nameConflict, peerOriginSuffix } = require('../session-manager');
 const { canFireCompact } = require('../inject-queue');
 const { mkTmpRoot } = require('./lib/tmp-roots');
@@ -4520,7 +4521,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
     mergeClaudeSystemPrompt: (extraArgs, ipcPrompt) => ({ cleaned: [...extraArgs], append: ipcPrompt }),
     readAppendBodies: () => [],
     resolveSystemPromptFile: () => null,
-    pluginGrammarLines: () => [],
+    pluginGrammarLines: () => [], intentEnabled,
     resolveTeam: () => null,
     formatTeamBlock: () => '',
     matchSeatRole: () => null,
@@ -15080,7 +15081,7 @@ function mkAgentCreateProbe(opts = {}) {
     JsonlWatcher: class { start() {} stop() {} },
     // Codex-arm leaves, stubbed to their shapes — none of them is under test here.
     mergeCodexInstructions: () => ({ cleaned: [], merged: 'instructions' }),
-    readAppendBodies: () => [], buildIpcPrompt: () => 'ipc', pluginGrammarLines: () => [],
+    readAppendBodies: () => [], buildIpcPrompt: () => 'ipc', pluginGrammarLines: () => [], intentEnabled,
     codexStatusLineArg: () => 'tui.status_line=x',
     resolveProxyAgentId: () => 'clodex-probe-x', resolveTeam: () => null,
     memoryStore: { list: () => [] }, composeDigest: () => null,
@@ -18593,7 +18594,7 @@ function mkSkillsOffRig(extraDeps = {}) {
     resolveSystemPromptFile: () => null,
     mergeClaudeSystemPrompt: (a) => ({ cleaned: [...a], append: null }),
     readAppendBodies: () => [],
-    pluginGrammarLines: () => [],
+    pluginGrammarLines: () => [], intentEnabled,
     // Past the hook and as far as the persistence upsert, which is where the
     // sentinel's OTHER half lives: an expansion that also rewrote the record
     // would pass every settings assertion above and still be the defect.
