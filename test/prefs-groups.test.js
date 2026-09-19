@@ -29,7 +29,7 @@ const CONTROLS = [
   'prefs-speak-replies', 'prefs-speak-voice', 'prefs-speak-rate',
   'prefs-claude-components', 'prefs-claude-sl-cmd', 'prefs-codex-components',
   'prefs-proxy-enabled', 'ws-dot', 'ws-status-text', 'ws-restart-btn',
-  'prefs-compact-on-resume', 'prefs-compact-on-resume-why',
+  'prefs-compact-on-resume', 'prefs-compact-on-resume-why', 'prefs-intent-spill',
   'prefs-ctx-nudge', 'prefs-ctx-escalate', 'prefs-ctx-models',
   'prefs-context-hints', 'prefs-context-hints-why',
   'prefs-semantic-hints', 'prefs-semantic-hints-why',
