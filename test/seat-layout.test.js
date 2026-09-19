@@ -2,9 +2,10 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { migrateSeatLayout, ensureSeatLink, seatLayoutActive, MARKER } = require('../seat-layout');
+const { migrateSeatLayout, ensureSeatLink, seatLayoutActive, MARKER, DEFERRED_KINDS } = require('../seat-layout');
 const { runDirFor, seatPathFor, legacySeatPathFor, SEAT_KINDS } = require('../clodex-paths');
 const { createCliHooks } = require('../cli-hooks');
+const { createMemoryStore } = require('../memory-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function tmp() { return mkTmpRoot('clodex-seatlayout-'); }
@@ -14,7 +15,6 @@ const ROWS = [
   ['pending', 'sessions/ana/pending'],
   ['notices', 'sessions/ana/notices'],
   ['promptcache', 'sessions/ana/promptcache'],
-  ['memory', 'sessions/ana/memory'],
   ['spill', 'sessions/ana/spill'],
   ['monitors', 'sessions/ana/monitors'],
 ];
@@ -27,13 +27,13 @@ function seedAllEight(root, name) {
   }
 }
 
-test('migration moves the 7 durable kinds and leaves a link at every old spelling', () => {
+test('migration moves the 6 durable kinds and leaves a link at every old spelling', () => {
   const root = tmp();
   seedAllEight(root, 'ana');
 
   const res = migrateSeatLayout({ root, names: ['ana'], fs });
   assert.strictEqual(res.skipped, false);
-  assert.strictEqual(res.migrated, 7);
+  assert.strictEqual(res.migrated, 6);
 
   for (const [kind, expectedTail] of ROWS) {
     const old = legacySeatPathFor(root, 'ana', kind);
@@ -78,7 +78,7 @@ test('already-migrated is a no-op: the target dir is not re-moved or re-created'
   assert.deepStrictEqual(
     logged.filter((m) => /not migrated/.test(m)), [],
     'a linked kind must be SKIPPED, not attempted and caught: a rename onto the dir the link '
-    + 'already points at fails, so without the skip every re-run logs seven failures it survived',
+    + 'already points at fails, so without the skip every re-run logs six failures it survived',
   );
 
   const after = fs.statSync(neu);
@@ -105,7 +105,7 @@ test('the marker short-circuits migration: an un-migrated seat is left alone', (
   assert.strictEqual(fs.existsSync(path.join(root, 'sessions', 'ana')), false);
 });
 
-test('one failing kind does not cost the seat its other six, and the marker is still written', () => {
+test('one failing kind does not cost the seat its other five, and the marker is still written', () => {
   const root = tmp();
   seedAllEight(root, 'ana');
   const logged = [];
@@ -120,7 +120,7 @@ test('one failing kind does not cost the seat its other six, and the marker is s
   };
 
   const res = migrateSeatLayout({ root, names: ['ana'], fs: fsStub, log });
-  assert.strictEqual(res.migrated, 6);
+  assert.strictEqual(res.migrated, 5);
 
   const old = legacySeatPathFor(root, 'ana', 'pending');
   assert.ok(!fs.lstatSync(old).isSymbolicLink(),
@@ -154,6 +154,49 @@ test('socket budget: run/<seat>/agent.sock is the shorter path, by exactly 9 byt
   assert.strictEqual(seat.length - legacy.length, 9, why);
 });
 
+test('the memory kind is DEFERRED: library/memory/<n> stays a real dir after migration', () => {
+  const why = 'memory-store.agents() filters readdir Dirents on isDirectory(), which is FALSE for a '
+    + 'symlink, so a linked library/memory/<n> empties the vector cache\'s live-key universe and '
+    + 'hint-embed flushes every key it does not see — the measured re-embed-forever loop. Its two '
+    + 'link-refusing readers are both repaired in L-B, so the move goes with them';
+  const root = tmp();
+  seedAllEight(root, 'ana');
+
+  migrateSeatLayout({ root, names: ['ana'], fs });
+
+  const old = legacySeatPathFor(root, 'ana', 'memory');
+  assert.ok(fs.lstatSync(old).isDirectory() && !fs.lstatSync(old).isSymbolicLink(), why);
+  assert.strictEqual(fs.readFileSync(path.join(old, 'memory.txt'), 'utf8'), 'memory-body', why);
+  assert.strictEqual(fs.existsSync(seatPathFor(root, 'ana', 'memory')), false,
+    'and no empty sessions/<n>/memory is pre-minted for a kind nothing writes through yet');
+  assert.ok(DEFERRED_KINDS.has('memory'), 'ENTER: memory must be the deferred kind this subject is about');
+});
+
+test('memory-store.agents() still sees a migrated seat — the cache GC universe survives', () => {
+  const root = tmp();
+  const store = createMemoryStore(path.join(root, 'library', 'memory'));
+  store.remember('ana', { scope: 'proj', text: 'The seat layout moved.' });
+  seedAllEight(root, 'ana');
+  assert.deepStrictEqual(store.agents(), ['ana'], 'ENTER: the store must list the seat BEFORE migration');
+
+  migrateSeatLayout({ root, names: ['ana'], fs });
+
+  assert.deepStrictEqual(store.agents(), ['ana'],
+    'agents() feeds engine liveKeys, and hint-embed flush DELETES every vector key outside it: an '
+    + 'empty list here prunes the whole cache and re-embeds it on every backfill, forever');
+  assert.strictEqual(store.list('ana').length, 1, 'and the units are still readable');
+});
+
+test('ensureSeatLink refuses the deferred kind outright', () => {
+  const root = tmp();
+  migrateSeatLayout({ root, names: [], fs });
+
+  assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'memory', fs }), false);
+  assert.strictEqual(fs.existsSync(legacySeatPathFor(root, 'bo', 'memory')), false);
+  assert.strictEqual(fs.existsSync(seatPathFor(root, 'bo', 'memory')), false,
+    'a deferred kind mints nothing on either side, or L-B inherits an empty dir it did not make');
+});
+
 test('ensureSeatLink mints the link when the legacy path is absent', () => {
   const root = tmp();
   migrateSeatLayout({ root, names: [], fs });
@@ -165,6 +208,21 @@ test('ensureSeatLink mints the link when the legacy path is absent', () => {
   assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'run', fs }), true,
     'idempotent: a second call over the link it just made changes nothing');
   assert.ok(fs.lstatSync(old).isSymbolicLink());
+});
+
+test('ensureSeatLink re-creates the TARGET of a link that survived its dir', () => {
+  const root = tmp();
+  migrateSeatLayout({ root, names: [], fs });
+  ensureSeatLink({ root, name: 'bo', kind: 'run', fs });
+  fs.rmSync(seatPathFor(root, 'bo', 'run'), { recursive: true, force: true });
+  assert.throws(() => fs.statSync(runDirFor(root, 'bo')), /ENOENT/,
+    'ENTER: the link must be DANGLING here, or the repair below is about a healthy one');
+
+  assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'run', fs }), true);
+
+  assert.ok(fs.statSync(runDirFor(root, 'bo')).isDirectory(),
+    'the link alone is not enough: cleanup drops the real dir at every exit and the next spawn '
+    + 'writes THROUGH the surviving link, so the target has to be re-made or every hook write ENOENTs');
 });
 
 test('ensureSeatLink leaves a REAL legacy dir alone rather than replacing it', () => {
@@ -179,6 +237,9 @@ test('ensureSeatLink leaves a REAL legacy dir alone rather than replacing it', (
   assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'run', fs }), false, why);
   assert.ok(!fs.lstatSync(old).isSymbolicLink(), why);
   assert.strictEqual(fs.readFileSync(path.join(old, 'keep'), 'utf8'), 'k', why);
+  assert.strictEqual(fs.existsSync(seatPathFor(root, 'bo', 'run')), false,
+    'and it mints no empty sessions/<n>/run either: the bail comes before both mkdirs, or every '
+    + 'exempt seat leaves an unused dir nothing ever writes to');
 });
 
 test('ensureSeatLink is inert before the marker exists', () => {

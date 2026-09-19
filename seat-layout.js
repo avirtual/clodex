@@ -3,6 +3,8 @@ const { seatDirFor, seatPathFor, legacySeatPathFor, SEAT_KINDS } = require('./cl
 
 const MARKER = '.migrated';
 
+const DEFERRED_KINDS = new Set(['memory']);
+
 function markerPathFor(root) {
   return path.join(root, 'sessions', MARKER);
 }
@@ -31,6 +33,7 @@ function migrateSeatLayout({ root, names = [], fs = require('fs'), log = null } 
       continue;
     }
     for (const kind of Object.keys(SEAT_KINDS)) {
+      if (DEFERRED_KINDS.has(kind)) continue;
       try {
         const old = legacySeatPathFor(root, name, kind);
         const neu = seatPathFor(root, name, kind);
@@ -58,13 +61,14 @@ function migrateSeatLayout({ root, names = [], fs = require('fs'), log = null } 
 }
 
 function ensureSeatLink({ root, name, kind, fs = require('fs') } = {}) {
-  if (!seatLayoutActive(root, fs)) return false;
+  if (!seatLayoutActive(root, fs) || DEFERRED_KINDS.has(kind)) return false;
   const neu = seatPathFor(root, name, kind);
   const old = legacySeatPathFor(root, name, kind);
   try {
+    if (exists(fs, old) && !isSymlink(fs, old)) return false;
     fs.mkdirSync(seatDirFor(root, name), { recursive: true, mode: 0o700 });
     fs.mkdirSync(neu, { recursive: true, mode: 0o700 });
-    if (exists(fs, old)) return isSymlink(fs, old);
+    if (exists(fs, old)) return true;
     fs.mkdirSync(path.dirname(old), { recursive: true, mode: 0o700 });
     fs.symlinkSync(neu, old);
     return true;
@@ -73,4 +77,4 @@ function ensureSeatLink({ root, name, kind, fs = require('fs') } = {}) {
   }
 }
 
-module.exports = { migrateSeatLayout, ensureSeatLink, seatLayoutActive, MARKER };
+module.exports = { migrateSeatLayout, ensureSeatLink, seatLayoutActive, MARKER, DEFERRED_KINDS };

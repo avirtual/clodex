@@ -844,10 +844,11 @@ accept teardown removes.
   (never filename-parsed, so shared `wire-shadow.jsonl` / `codex-session-hook.sh`
   can't be misattributed); `findOrphans` is pure.
 - **seat-layout.js** — one-time, marker-gated (`sessions/.migrated`) move of a
-  seat's 8 shared dirs into the single home `sessions/<seat>/`, leaving a symlink
+  seat's shared dirs into the single home `sessions/<seat>/`, leaving a symlink
   at each old spelling (`ensureSeatLink` mints one at first use). Pure leaf,
   `fs`/`log` injected; `run/` is deleted rather than moved and stays the socket
-  bind path.
+  bind path, and `DEFERRED_KINDS` (`memory`) waits for the readers that refuse a
+  symlink to be repaired.
 - **project-root.js** — the git-repository root for a cwd, for keying a PROJECT
   ticket board when no team owns that cwd. Pure leaf; `fs` injectable.
 - **intent-spill.js** — the FORMAT of intent-body spill (`proxy-lab/SPILL.md`;
