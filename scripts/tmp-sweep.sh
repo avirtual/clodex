@@ -210,6 +210,7 @@ clodex-rtn-
 clodex-rv-
 clodex-scm-
 clodex-scope-
+clodex-seatlayout-
 clodex-sinfo-
 clodex-sinfo-overlay-
 clodex-sm-
