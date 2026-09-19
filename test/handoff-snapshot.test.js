@@ -203,3 +203,24 @@ test('an empty board still gets the roster and the store\'s own no-tickets wordi
   assert.match(snap, /\nteam team, role hand: team-hand \(idle /);
   assert.match(snap, /\nno tickets on team\n?$/, 'the board block is the listing\'s own answer, not a second phrasing');
 });
+
+test('a board too big for the cap is truncated ON THE REAL PATH, host/git/roster intact', () => {
+  const now = Date.now();
+  const tickets = Array.from({ length: 200 }, (_, i) => ({
+    id: `t${i + 1}`, title: `row ${i} ${'w'.repeat(40)}`, role: 'hand', state: 'open',
+    openedAt: now - 3600_000, closedAt: null,
+  }));
+  const h = mkSnap({ tickets });
+  const snap = spilled(h).body.split(SEP)[1];
+
+  assert.ok(Buffer.byteLength(`---\n${snap}`, 'utf8') <= SNAPSHOT_MAX_BYTES + 1,
+    `the generated section is capped: ${Buffer.byteLength(snap, 'utf8')} bytes`);
+  assert.match(snap, new RegExp(`\\nhost 9\\.9\\.9; master ${h.sha} "the base commit" \\(`));
+  assert.match(snap, /\nteam team, role hand: team-hand \(idle /);
+  const m = /\n\(… (\d+) more rows — \[agent:task list\]\)\n?$/.exec(snap);
+  assert.ok(m, `the marker is the section's last line: ${JSON.stringify(snap.slice(-120))}`);
+  const kept = snap.split('\n').filter((l) => /^t\d+ \[open\]/.test(l)).length;
+  assert.ok(kept > 0 && kept < 200, `some rows survived and some did not: kept ${kept}`);
+  assert.strictEqual(kept + Number(m[1]), 200, 'the count names exactly the ticket rows that were dropped');
+  assert.match(snap, /\ntickets on team:\n/, 'and the listing head line is not one of the rows that gave way');
+});
