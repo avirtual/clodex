@@ -8,6 +8,7 @@ const fs = require('fs');
 const {
   KINDS, LEGACY_SUFFIXES, runDirFor, pathFor, legacyPathsFor, legacySuffixes,
   projectDirFor, taskDirFor, spillDirFor,
+  SEAT_KINDS, seatDirFor, seatPathFor, legacySeatPathFor,
 } = require('../clodex-paths');
 
 const ROOT = '/root/.clodex';
@@ -115,6 +116,45 @@ test('spillDirFor: a SHARED root dir, deliberately not under run/', () => {
 test('spillDirFor is not a KIND, and a spill/ name cannot be reached through pathFor', () => {
   assert.ok(!('spill' in KINDS));
   assert.throws(() => pathFor(ROOT, 'a', 'spill'), /unknown kind 'spill'/);
+});
+
+test('seatDirFor: one home per seat under sessions/', () => {
+  assert.strictEqual(seatDirFor(ROOT, 'alice'), path.join(ROOT, 'sessions', 'alice'));
+});
+
+const SEAT_ROWS = [
+  ['messages', '/root/.clodex/sessions/alice/messages', '/root/.clodex/messages/alice'],
+  ['pending', '/root/.clodex/sessions/alice/pending', '/root/.clodex/pending/alice'],
+  ['notices', '/root/.clodex/sessions/alice/notices', '/root/.clodex/notices/alice'],
+  ['promptcache', '/root/.clodex/sessions/alice/promptcache', '/root/.clodex/promptcache/alice'],
+  ['memory', '/root/.clodex/sessions/alice/memory', '/root/.clodex/library/memory/alice'],
+  ['spill', '/root/.clodex/sessions/alice/spill', '/root/.clodex/spill/alice'],
+  ['monitors', '/root/.clodex/sessions/alice/monitors', '/root/.clodex/monitors/alice'],
+  ['run', '/root/.clodex/sessions/alice/run', '/root/.clodex/run/alice'],
+];
+
+test('seatPathFor / legacySeatPathFor: 8 kinds, both spellings', () => {
+  assert.strictEqual(SEAT_ROWS.length, Object.keys(SEAT_KINDS).length);
+  for (const [kind, neu, old] of SEAT_ROWS) {
+    assert.strictEqual(seatPathFor(ROOT, 'alice', kind), neu, kind);
+    assert.strictEqual(legacySeatPathFor(ROOT, 'alice', kind), old, kind);
+  }
+});
+
+test("legacySeatPathFor('run') and runDirFor agree — the link and the bind path are one", () => {
+  assert.strictEqual(
+    legacySeatPathFor(ROOT, 'alice', 'run'), runDirFor(ROOT, 'alice'),
+    'the socket binds at runDirFor and the migration links at legacySeatPathFor: two spellings '
+    + 'that drift leave the socket binding somewhere the link does not cover, with no symptom until a spawn');
+});
+
+test('seat kinds: an unknown one throws in BOTH directions, like pathFor', () => {
+  assert.throws(() => seatPathFor(ROOT, 'a', 'nope'), /unknown seat kind 'nope'/);
+  assert.throws(() => legacySeatPathFor(ROOT, 'a', 'nope'), /unknown seat kind 'nope'/);
+  assert.throws(() => seatPathFor(ROOT, 'a', 'transcript'), /unknown seat kind 'transcript'/,
+    'a run/ artifact kind is not a seat kind: the two grammars are separate namespaces');
+  assert.throws(() => pathFor(ROOT, 'a', 'messages'), /unknown kind 'messages'/,
+    'and a seat kind is not an artifact kind, in the other direction');
 });
 
 test('the header names spill/ as a shared dir that outlives run/', () => {

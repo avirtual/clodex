@@ -237,6 +237,20 @@ layout triggers a one-time, marker-gated (`run/.migrated`), name-driven sweep at
 launch (legacy-sweep.js) that deletes only exact `{knownName}{knownSuffix}`
 files — shared files can't be misattributed — plus a log-only orphan pass.
 
+### Seat directory
+
+One seat's durable state has ONE home, `~/.clodex/sessions/<seat>/`
+(`seatDirFor` / `SEAT_KINDS`), holding `messages/ pending/ notices/
+promptcache/ memory/ spill/ monitors/ run/`. That dir is the real one; the 8 old
+spellings (`~/.clodex/{messages,pending,notices,promptcache,spill,monitors}/<seat>`,
+`library/memory/<seat>`, `run/<seat>`) are SYMLINKS into it, because byte-pinned
+hook bodies and every transcript carry the old spelling. `seat-layout.js`
+migrates existing seats once at launch, marker-gated by `sessions/.migrated`;
+`run/<seat>` is deleted rather than moved (stale residue) and re-minted as a link
+at spawn, which keeps `agent.sock` at the shorter path. Today only `run/` is
+minted for a BRAND-NEW seat: the other 7 stay at their old spelling until a
+later release teaches each first-use site to call `ensureSeatLink`.
+
 Per Claude session: `run/<name>/hook.sh` (SessionStart — atomically repoints the
 `run/<name>/transcript.jsonl` symlink; emits the memory digest only for
 conversations being born), `run/<name>/hook.json` (the `--settings` payload:

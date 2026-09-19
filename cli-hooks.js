@@ -2,7 +2,8 @@
 const fs = require('fs');
 const path = require('path');
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
-const { pathFor, runDirFor } = require('./clodex-paths');
+const { pathFor, runDirFor, seatPathFor } = require('./clodex-paths');
+const { ensureSeatLink } = require('./seat-layout');
 const { composeDigest } = require('./memory-store');
 const { renderClaudeStatusScript } = require('./statusline');
 const { CLAUDE_TOOLS } = require('./catalogs');
@@ -34,6 +35,7 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
   // seat then runs blind with no signal, because an absent roster is
   // indistinguishable from a team of one.
   function writeClaudeDigestFile(name) {
+    ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const digest = composeDigest(memoryStore.list(name));
     let roster = null;
@@ -48,6 +50,7 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
   }
 
   function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = []) {
+    ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
     const scriptPath = pathFor(REGISTRY_DIR, name, 'hook');
@@ -681,6 +684,7 @@ JSEOF
   }
 
   function setupCodexHook(name, cwd) {
+    ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const scriptPath = path.join(REGISTRY_DIR, 'codex-session-hook.sh');
     const outputPath = pathFor(REGISTRY_DIR, name, 'hookOutput');
@@ -752,15 +756,20 @@ OUTPUT="\${RUNDIR}/hook-output.json"
     });
   }
 
-  // Both cleanups drop the whole per-agent run/<name>/ dir. The SHARED
-  // pending/<name>/ parked-DM dir is deliberately untouched, as is the shared
-  // codex-session-hook.sh.
-  function cleanupClaudeHook(name) {
+  // rmSync on a symlink removes the LINK, so the real dir is named first or exit
+  // leaves it behind. SHARED pending/<name>/, codex-session-hook.sh and
+  // sessions/<name>/ are deliberately untouched.
+  function dropRunDir(name) {
+    try { fs.rmSync(seatPathFor(REGISTRY_DIR, name, 'run'), { recursive: true, force: true }); } catch {}
     try { fs.rmSync(runDirFor(REGISTRY_DIR, name), { recursive: true, force: true }); } catch {}
   }
 
+  function cleanupClaudeHook(name) {
+    dropRunDir(name);
+  }
+
   function cleanupCodexHook(name, cwd) {
-    try { fs.rmSync(runDirFor(REGISTRY_DIR, name), { recursive: true, force: true }); } catch {}
+    dropRunDir(name);
     const codexDir = path.join(cwd, '.codex');
     const hooksPath = path.join(codexDir, 'hooks.json');
     const backupPath = hooksPath + '.wb-wrap-backup';
