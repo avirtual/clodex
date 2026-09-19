@@ -47,3 +47,16 @@ Branch t1014-s-d-intent-spill-on-by-default-and-the, base master 3ce18693 (ances
   different mechanism. No arm-at-spawn sentence exists there or in docs/notes/*.
 - No test pinned the session record's `intentSpill` field (2102) or the old spawn-time gating beyond what is
   listed above; nothing was deleted.
+
+## Round 2 — suite fallout (own scope, 73 then 11 failing)
+`create()`'s claude arm now ALWAYS reaches `intentEnabled` (the old `setting === 'on'` short-circuit
+hid it whenever a harness left the setting unset). 11 spawn-path test harnesses injected no
+`intentEnabled` dep and died with `TypeError: intentEnabled is not a function`. Added
+`intentEnabled` (from `../intent-catalog`, the real function — it is pure) to the deps of:
+agent-plugin-spawn, ephemeral-ctxwarn, notice-queue, optimized-late-skills, plugin-bundle-spawn,
+reviewer-shell-deny-plumbing, session-manager (3 rigs), stock-template-tool-floor, wire-off,
+createdat-restart, ipc-prompt-cache-rework, session-move. No subject rewritten, none deleted.
+Also added `clx-spillgate-` (the new test file's tmp prefix) to scripts/tmp-sweep.sh's PREFIXES,
+which `test/tmp-sweep-prefix-coverage.test.js` requires.
+
+own digest after: `own: 4303/4303 green (2m 04s) — 171 files: 16 changed, 147 by subject, 8 scanners`.
