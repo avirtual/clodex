@@ -23,6 +23,16 @@ removes any torn-read window.
 Any failure at all returns null, and every caller forwards the original body on
 null. A truncated task spec is far worse than a spammy transcript.
 
+Nothing sweeps what this writes. Files are capped at 256 KiB and a handful a day
+per lead; a compact summary can carry `@spill:<id>` as prose indefinitely, and
+the CLI's own transcript retention is not something Clodex tracks. `spill/` sits
+at the ~/.clodex root precisely so it survives the `rm -rf` of `run/<name>/` on
+exit, and it is deliberately NOT removed by forget/delete/team-delete — a
+re-minted name reuses the dir and content-addressing makes that harmless.
+`engine.js`'s `sweepSpilledMessages` must never be pointed here: it deletes by
+30-minute age. A future sweep would be mtime-age >= 90 days over the whole root,
+one policy, recorded beside that function.
+
 ## AGENT_RE
 
 Mirrors clodex's seat-minting rule. Dots are LEGAL and only an all-dots name is
