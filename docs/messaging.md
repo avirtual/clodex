@@ -98,9 +98,9 @@ keystroke.
   `rewind [<label>]` take an optional one; `end` and `rewind` take a greedy body
   and an optional `replay` modifier (`[agent:scratch end replay]`,
   `[agent:scratch rewind <label> replay]`). A label is `[A-Za-z0-9._-]`, 1–32
-  chars, not all dots (`SCRATCH_LABEL_RE`, intent-catalog.js), and never
-  `replay`: on `rewind` the word is a modifier, so `[agent:scratch rewind
-  replay]` is a bare rewind WITH replay, not a rewind to a mark called replay.
+  chars (`SCRATCH_LABEL_RE`, intent-catalog.js), and never `replay`: on
+  `rewind` the word is a modifier, so `[agent:scratch rewind replay]` is a bare
+  rewind WITH replay, not a rewind to a mark called replay.
   The cut itself, named marks and the survival rule are sessions.md §3a; what
   belongs here is that all five are ordinary gateable intents whose bounces ride
   `_injectText`, parkable, each naming the mark AND the verb that was used

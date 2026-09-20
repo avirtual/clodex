@@ -19942,6 +19942,15 @@ test('scratch replay: the §3 header in the code is byte-equal to the one docs/m
     `docs/messaging.md does not carry this header verbatim:\n${generic}`);
 });
 
+test('scratch named marks: the noteless sentence and the re-arm line docs/sessions.md quotes are byte-equal to the code', () => {
+  const { SCRATCH_NOTELESS_SENTENCE, scratchReArmLine } = require('../scratch-mark');
+  const docs = fsReal.readFileSync(pathReal.join(__dirname, '..', 'docs', 'sessions.md'), 'utf8');
+  const unwrapped = docs.replace(/\n\s*/g, ' ');
+  assert.ok(unwrapped.includes(SCRATCH_NOTELESS_SENTENCE), 'docs/sessions.md does not carry SCRATCH_NOTELESS_SENTENCE verbatim');
+  const rearm = scratchReArmLine({ nonce: 'r3arm1', label: 'survey' }).replace('r3arm1', '<nonce>').replaceAll('survey', '<L>');
+  assert.ok(unwrapped.includes(rearm), `docs/sessions.md does not carry the re-arm line verbatim:\n${rearm}`);
+});
+
 test('scratch replay: an arrival with no usable timestamp drops the clock rather than printing Invalid Date', () => {
   const { scratchReplayLine } = require('../scratch-mark');
   const line = scratchReplayLine({ nonce: 'n1' }, { at: null, text: 'body' });
