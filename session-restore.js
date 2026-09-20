@@ -42,6 +42,7 @@ async function restoreSessionsForWorkspace({
         archived: true,
         archivedAt: entry.archivedAt,
         createdAt: entry.createdAt || null,
+        movedTo: entry.movedTo || null,
       });
       continue;
     }

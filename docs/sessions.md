@@ -487,7 +487,12 @@ far box. A refusal (nothing quiesced yet) stays inline in the dialog so the cwd 
 be corrected and resubmitted; a `{ok:false, kept:true}` failure closes the dialog
 and takes the ghost-row arm instead. A sticky toast tracks `session:move-progress`
 while the shipment runs and is replaced on success by one naming the far peer and
-anything `dropped`.
+anything `dropped`. The success arm DRAWS the archived row itself: the quiesce kill
+already fired `session:exit`, which removed the live row, and no `session:list`
+refresh follows a move — so the row is rebuilt from a snapshot taken before the
+dialog opened, stamped with `movedTo`. `session-restore.js` carries `movedTo` in the
+archived payload for the same reason, or the sub-label reverts to a plain "archived"
+on the next app start.
 
 On success the source record is stamped `movedTo` and ARCHIVED, never deleted, and
 nothing it read is moved or removed: this box keeps the backup. The far copy is

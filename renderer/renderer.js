@@ -768,6 +768,12 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   const snapType = item ? item.dataset.type || null : null;
   const snapBackend = item ? item.dataset.backend || null : null;
+  const snapCwd = item ? item.dataset.cwd || '' : (cwd || '');
+  const snapTeam = item ? item.dataset.team || null : null;
+  const nameEl = item ? item.querySelector('.session-name') : null;
+  const displayed = nameEl ? nameEl.textContent : name;
+  const snapLabel = displayed && displayed !== name ? displayed : null;
+  const snapCreatedAt = (sidebarMeta.get(name) || {}).createdAt || null;
   pendingPeerMove.set(name, async (farCwd) => {
     const toast = showToast(`Moving ${name} to ${peerLabel}…`, { sticky: true, name });
     movingToPeer.set(name, { toast, peerLabel });
@@ -780,6 +786,13 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
     }
     if (res && res.ok) {
       const dropped = res.dropped && res.dropped.length ? ` (did not travel: ${res.dropped.join(', ')})` : '';
+      removeSession(name, { keepPersisted: true });
+      addArchivedSessionToSidebar({
+        name, type: snapType, cwd: snapCwd, label: snapLabel, backend: snapBackend,
+        team: snapTeam, archivedAt: Date.now(), createdAt: snapCreatedAt,
+        movedTo: { peer: peerId, peerLabel: res.peer || peerLabel, farCwd: res.farCwd },
+      });
+      refreshSidebarView();
       showToast(`${name} moved to ${res.peer} — archived here as a backup${dropped}`, { name, duration: 10000 });
       return res;
     }

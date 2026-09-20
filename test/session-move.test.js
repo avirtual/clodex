@@ -1035,10 +1035,25 @@ test('the peer move reuses the local move\'s kept arm, and the archived row says
   assert.ok(body.indexOf('removeSession(name') < body.indexOf('addFailedSessionToSidebar('),
     'live row torn down BEFORE the ghost, as in the local move');
 
+  assert.ok(/addArchivedSessionToSidebar\(/.test(body),
+    'the success arm DRAWS the archived row: the pty exit already removed the live row and '
+    + 'no session:list refresh follows a move, so a toast-only arm leaves the seat with no row at all');
+  assert.ok(/movedTo:/.test(body), 'and stamps movedTo on it, which is what the sub-label reads');
+
   const row = src.slice(src.indexOf('function addArchivedSessionToSidebar'));
   const rowBody = row.slice(0, row.indexOf('\n}\n') + 1);
   assert.ok(/entry\.movedTo\.peerLabel/.test(rowBody),
     'the archived row names the peer it went to, not a bare "archived"');
+});
+
+test('the archived restore payload carries movedTo, so the row survives a restart', () => {
+  const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'session-restore.js'), 'utf-8');
+  const arm = src.slice(src.indexOf('if (entry.archivedAt'));
+  const body = arm.slice(0, arm.indexOf('continue;'));
+  assert.ok(body.includes('archived: true'), 'ENTER: this is the archived branch');
+  assert.ok(/movedTo: entry\.movedTo/.test(body),
+    'the payload is built field-by-field, so an omitted movedTo silently downgrades a moved '
+    + 'seat back to a plain "archived" row on the next app start');
 });
 
 const THREE_PEERS = [
