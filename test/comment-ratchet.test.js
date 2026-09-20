@@ -184,13 +184,35 @@ function noteFiles() {
 function sourceCandidates(noteBase) {
   const parts = noteBase.split('-');
   const out = [];
-  for (let cut = 0; cut < parts.length; cut++) {
-    const dir = parts.slice(0, cut).join('/');
-    const file = parts.slice(cut).join('-');
-    out.push(dir ? `${dir}/${file}.js` : `${file}.js`);
+  for (let drop = 0; drop < parts.length; drop++) {
+    const head = parts.slice(0, parts.length - drop);
+    for (let cut = 0; cut < head.length; cut++) {
+      const dir = head.slice(0, cut).join('/');
+      const file = head.slice(cut).join('-');
+      out.push(dir ? `${dir}/${file}.js` : `${file}.js`);
+    }
   }
   return out;
 }
+
+test('a note split off by TOPIC still resolves to its module, and only as a last resort', () => {
+  assert.ok(sourceCandidates('renderer-lib-format').includes('renderer/lib/format.js'),
+    'ENTER: the ordinary dir/file reading still works');
+
+  const split = sourceCandidates('session-manager-scratch');
+  assert.ok(split.includes('session-manager.js'),
+    'session-manager.md hit the 120-line cap, so its scratch half moved to '
+    + 'session-manager-scratch.md — still a note about session-manager.js, and a heading gate that '
+    + 'could not find the module would report every heading in it as an orphan');
+  assert.ok(split.indexOf('session-manager-scratch.js') < split.indexOf('session-manager.js'),
+    'but the note\'s OWN name is tried first: a file really named session-manager-scratch.js must '
+    + 'win, or a note would silently be graded against a module it does not describe');
+
+  const whole = sourceCandidates('team-cost');
+  assert.strictEqual(whole[0], 'team-cost.js');
+  assert.ok(whole.indexOf('team-cost.js') < whole.indexOf('team.js'),
+    'and a name that resolves whole never falls through to its own prefix');
+});
 
 test('each docs/notes file is within the line cap', () => {
   for (const f of noteFiles()) {

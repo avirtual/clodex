@@ -568,6 +568,21 @@ test('cutStats: tokens are NULL, never zero, when no usage can be read', () => {
   assert.deepStrictEqual(stats.bytes, { before: 0, kept: 0, dropped: 0 });
 });
 
+test('cutStats: a mark with an EMPTY usageAtBegin gives null tokens, not zero', () => {
+  const stats = cutStats({ parsed: [], cutOffset: 0, size: 0, mark: { usageAtBegin: {} } });
+  assert.strictEqual(stats.tokens.atBegin, null,
+    'the `mark: null` case above returns null through a different door — markUsageTotal bails on '
+    + 'the absent object — so it stays green against a markUsageTotal that sums an empty usage to '
+    + '0. This is the case that reds: a 0 here means "the episode began at zero context", which no '
+    + 'episode ever does');
+  assert.strictEqual(stats.tokens.dropped, null, 'and dropped stays null rather than becoming atCut');
+
+  const partial = cutStats({ parsed: [], cutOffset: 0, size: 0, mark: { usageAtBegin: { cacheRead: 40000 } } });
+  assert.strictEqual(partial.tokens.atBegin, 40000,
+    'while ONE finite field is enough to resolve the total — the absent siblings count as zero, '
+    + 'which is what an absent usage field means');
+});
+
 test('cutStats: turns.dropped counts string-content prompts only, and background tasks are logged', () => {
   const { tape, leaf } = prefix();
   const n = 'cnt001';
