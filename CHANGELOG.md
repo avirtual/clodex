@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Right-click ▸ "Move to Peer…" moves an agent to another peer: its transcript, memory, messages and reminders travel with it and it resumes there under the folder you choose. The original stays archived here as a backup, and the dialog names what does not travel (exec grants, privileged intents; the account is matched by label on the far box).
+
 ## 5.82.3 — 2026-09-20
 
 - Every session now has one home, `~/.clodex/sessions/<name>/` — its runtime files, messages, notices, prompt cache, spill files, monitors and memory all live there, with the old `~/.clodex/<kind>/<name>` paths kept as links. Renaming a session moves that one folder; deleting it removes the folder and its links; right-click ▸ "Reveal Seat Folder in Finder" opens it.

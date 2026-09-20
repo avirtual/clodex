@@ -936,7 +936,7 @@ test('a move on a NOT-LIVE seat arms no backstop — there is no process to kill
 
 // The real session:context-menu handler, with popupMenu capturing the template.
 // Only the deps that path touches are wired; the rest are never reached.
-function mkMenuTemplate(entry, { REGISTRY_DIR = null, revealed = [] } = {}) {
+function mkMenuTemplate(entry, { REGISTRY_DIR = null, revealed = [], peers = null, sent = [] } = {}) {
   let template = null;
   const handlers = new Map();
   registerIpcHandlers({
@@ -949,8 +949,12 @@ function mkMenuTemplate(entry, { REGISTRY_DIR = null, revealed = [] } = {}) {
     REGISTRY_DIR,
     fs: fsReal,
     showItemInFolder: (p) => revealed.push(p),
+    getPeerManager: () => (peers ? { statuses: () => peers } : null),
   });
-  handlers.get('session:context-menu')({ sender: { send: () => {} } }, { name: entry.name, cwd: entry.cwd });
+  handlers.get('session:context-menu')(
+    { sender: { send: (channel, payload) => sent.push({ channel, payload }) } },
+    { name: entry.name, cwd: entry.cwd },
+  );
   return template;
 }
 
@@ -1016,6 +1020,62 @@ test('Reveal Seat Folder is disabled for an agent with no seat dir, and for a ba
     'Reveal Seat Folder in Finder');
   assert.strictEqual(bash.enabled, false,
     'and a bash row is not a seat — the dir here is a decoy, so this is the isAgent gate and not the existsSync');
+});
+
+test('the peer move reuses the local move\'s kept arm, and the archived row says where it went', () => {
+  const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf-8');
+  const fn = src.slice(src.indexOf('function moveSessionToPeerWithDialog'));
+  const body = fn.slice(0, fn.indexOf('\n}\n') + 1);
+  assert.ok(body.length > 0 && body.includes('moveSessionToPeerWithDialog'),
+    'ENTER: the function was found and sliced');
+  assert.ok(/res\.kept/.test(body), 'a far refusal after quiesce restarts the seat here — same flag as the local move');
+  assert.ok(/movingFailed\.set\(/.test(body),
+    'and it stashes for session-exit rather than drawing a ghost beside the live row');
+  assert.ok(/addFailedSessionToSidebar\(/.test(body), 'the other arm rebuilds the row directly');
+  assert.ok(body.indexOf('removeSession(name') < body.indexOf('addFailedSessionToSidebar('),
+    'live row torn down BEFORE the ghost, as in the local move');
+
+  const row = src.slice(src.indexOf('function addArchivedSessionToSidebar'));
+  const rowBody = row.slice(0, row.indexOf('\n}\n') + 1);
+  assert.ok(/entry\.movedTo\.peerLabel/.test(rowBody),
+    'the archived row names the peer it went to, not a bare "archived"');
+});
+
+const THREE_PEERS = [
+  { id: 'p1', label: 'murmurfi', host: 'murmurfi.local', online: true, canImport: true, needsUpgrade: false },
+  { id: 'p2', label: 'old', online: true, canImport: true, needsUpgrade: true },
+  { id: 'p3', label: 'off', online: false, canImport: true, needsUpgrade: false },
+];
+
+test('Move to Peer… lists only the online, importing, up-to-date peer, and sends its id', () => {
+  const sent = [];
+  const tpl = mkMenuTemplate({ name: 'a', type: 'claude', cwd: '/x' }, { peers: THREE_PEERS, sent });
+  const item = menuItem(tpl, 'Move to Peer…');
+  assert.ok(item, 'ENTER: the item is in the template at all');
+  assert.deepStrictEqual(item.submenu.map((s) => s.label), ['murmurfi.local'],
+    'needsUpgrade and offline peers are filtered out; the label is host||label');
+  item.submenu[0].click();
+  assert.deepStrictEqual(sent, [{
+    channel: 'session:context-action',
+    payload: { action: 'moveToPeer', name: 'a', cwd: '/x', peerId: 'p1', peerLabel: 'murmurfi.local' },
+  }], 'the click carries the peer id the renderer hands to moveSessionToPeer');
+});
+
+test('Move to Peer… is present but disabled when no peer takes a move', () => {
+  for (const peers of [[], [THREE_PEERS[1], THREE_PEERS[2]], null]) {
+    const item = menuItem(mkMenuTemplate({ name: 'a', type: 'claude', cwd: '/x' }, { peers }), 'Move to Peer…');
+    assert.ok(item, `the operator still learns the feature exists (peers=${JSON.stringify(peers)})`);
+    assert.strictEqual(item.enabled, false);
+    assert.ok(!('submenu' in item), 'a disabled item carries no empty submenu');
+  }
+});
+
+test('Move to Peer… is absent for codex and bash rows', () => {
+  for (const type of ['codex', 'bash']) {
+    const labels = mkMenu({ name: 'a', type, cwd: '/x' }, { peers: THREE_PEERS });
+    assert.ok(!labels.includes('Move to Peer…'), `${type}: the manager refuses it — no dead item`);
+    assert.ok(labels.includes('Restart Session'), `ENTER: the menu was built for the ${type} row`);
+  }
 });
 
 test('peer and sandbox rows never reach this menu at all', () => {
