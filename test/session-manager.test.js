@@ -18991,6 +18991,9 @@ function scratchPrefix(f) {
   const tape = new ScratchTape();
   tape.prompt('find the bug');
   tape.turn('here is what I found', { toolId: 'toolu_p1', usage: { input_tokens: 20, cache_read_input_tokens: 40000, cache_creation_input_tokens: 1000 } });
+  tape.beginPrompt = tape.prompt('now open an episode');
+  tape.beginOffset = Buffer.byteLength(tape.text, 'utf8');
+  tape.turn('[agent:scratch begin]');
   f.write(tape);
   return tape;
 }
@@ -19051,22 +19054,23 @@ test('scratch begin: a text+tool_use reply is TWO assistant records, and the sec
   assert.strictEqual(f.s._scratch, undefined);
 });
 
-test('scratch begin: on a boundary it marks the file and acks with ACK_PREFIX + nonce FIRST', () => {
+test('scratch begin: on a boundary it marks the file at the begin reply and acks with ACK_PREFIX + nonce FIRST', () => {
   const f = mkScratch();
   const tape = scratchPrefix(f);
-  const size = Buffer.byteLength(tape.text, 'utf8');
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
   const mark = f.s._scratch;
   assert.ok(mark, 'the mark is on the session');
-  assert.strictEqual(mark.sizeAtBegin, size, 'captured immediately before the ack is enqueued');
+  assert.strictEqual(mark.sizeAtBegin, tape.beginOffset, 'the first byte of the reply that carried begin, not the end of the file');
   assert.strictEqual(mark.realpath, f.target);
   assert.strictEqual(mark.sessionId, SCRATCH_SID);
-  assert.strictEqual(mark.leafUuid, tape.parent, 'the last conversation record before the mark');
+  assert.strictEqual(mark.leafUuid, tape.beginPrompt, 'the last conversation record before the begin reply');
   assert.deepStrictEqual(mark.usageAtBegin, { input: 20, cacheRead: 40000, cacheWrite: 1000 });
-  assert.ok(Buffer.isBuffer(mark.tailBytes) && mark.tailBytes.length > 0);
+  assert.strictEqual(mark.tailBytes.length, 512);
+  assert.ok(Buffer.from(f.read(), 'utf8').subarray(tape.beginOffset - 512, tape.beginOffset).equals(mark.tailBytes),
+    'the tail ends where the cut starts, so the rewritten check covers the kept prefix');
   assert.ok(f.injected[0].startsWith(`${SCRATCH_ACK_PREFIX_T}${mark.nonce}`),
     'the ack STARTS with the needle validateScratchCut searches for — a prefix in front of it makes '
-    + 'the cut point unfindable and every end refuse ack-missing');
+    + 'the episode unprovable and every end refuse ack-missing');
 });
 
 test('scratch begin: a second begin REPLACES the mark, and the re-open note goes BELOW the ack line', () => {
@@ -19110,8 +19114,8 @@ test('scratch begin (wire): the intent fires BEFORE the CLI wrote the end_turn r
   const mark = f.s._scratch;
   assert.ok(mark, 'once the end_turn + turn_duration land, the mark opens');
   assert.ok(f.injected[0].startsWith(`${SCRATCH_ACK_PREFIX_T}${mark.nonce}`), f.injected[0].slice(0, 80));
-  assert.strictEqual(mark.leafUuid, late.parent, 'the leaf is the turn_duration that closed THIS reply');
-  assert.strictEqual(mark.sizeAtBegin, Buffer.byteLength(f.read(), 'utf8'), 'captured after the turn landed');
+  assert.strictEqual(mark.leafUuid, tape.parent, 'the leaf is the prompt THIS reply answered');
+  assert.strictEqual(mark.sizeAtBegin, Buffer.byteLength(tape.text, 'utf8'), 'the cut starts where the late reply starts');
   assert.strictEqual(f.s._scratchPendingBegin, null, 'and the wait is torn down');
 });
 
@@ -19157,10 +19161,10 @@ test('scratch begin (wire): the wait times out into the refusal and leaves no ma
   assert.strictEqual(f.s._scratchPendingBegin, null, 'and no wait left armed');
 });
 
-test('scratch begin: an end_turn whose turn_duration has not landed waits for it — marking early makes the cut refuse leaf-mismatch', async () => {
+test('scratch begin: an end_turn whose turn_duration has not landed waits for it', async () => {
   const f = mkScratch();
   const tape = scratchPrefix(f);
-  tape.prompt('now open an episode');
+  const asked = tape.prompt('now open an episode');
   tape.conv({ type: 'assistant', message: { role: 'assistant', id: 'msg_e', stop_reason: 'end_turn', content: [{ type: 'text', text: '[agent:scratch begin]' }] } });
   f.write(tape);
   f.s._flushTurnEnd = true;
@@ -19173,7 +19177,8 @@ test('scratch begin: an end_turn whose turn_duration has not landed waits for it
   const dur = late.conv({ type: 'system', subtype: 'turn_duration', durationMs: 10 });
   f.append(late.text);
   await waitFor(() => f.injected.length > 0);
-  assert.strictEqual(f.s._scratch.leafUuid, dur, 'the leaf is the turn_duration, which is what the cut will find last in the kept set');
+  assert.ok(dur);
+  assert.strictEqual(f.s._scratch.leafUuid, asked, 'the leaf is the prompt the begin answered; the turn_duration is dropped with the reply');
 });
 
 test('scratch cancel: drops the mark, cuts nothing, and says so', () => {
@@ -19239,8 +19244,11 @@ test('scratch end: the §3 steps run in ORDER — park, keeper, kill, bak, tmp, 
   const after = f.read();
   assert.ok(after.length < before.length, 'the transcript really shrank');
   assert.ok(!after.includes('I read a lot'), 'the research is gone');
-  assert.ok(!after.includes(SCRATCH_ACK_PREFIX_T), 'and so is the ack record, which is the first dropped byte');
+  assert.ok(!after.includes(SCRATCH_ACK_PREFIX_T), 'and so is the ack record');
+  assert.ok(!after.includes('[agent:scratch begin]'), 'and so is the reply that carried begin, which is the first dropped byte');
   assert.ok(after.includes('here is what I found'), 'while the pre-mark prefix is intact');
+  assert.ok(after.endsWith(`${JSON.stringify('now open an episode')}},"origin":{"kind":"human"},"promptSource":"typed"}\n`),
+    'the kept file ends on the record BEFORE the begin reply');
   assert.ok(after.endsWith('\n'), 'the cut lands on a record boundary, never mid-line');
 });
 
@@ -19288,6 +19296,25 @@ test('scratch end: the summary is injected into the FRESH seat, framed as Clodex
     'the framing is operator-side on purpose — "as you recall" invites the model to remember '
     + 'details the summary does not carry');
   assert.ok(summary.endsWith('the parser lives in scratch-mark.js:86'), 'the body rides verbatim');
+});
+
+test('scratch end: a briefing over SPILL_MIN_BYTES is spilled WITHOUT the `State at resume` snapshot the reload handoff carries', async () => {
+  const f = mkScratch();
+  scratchOpen(f);
+  scratchResearch(f);
+  f.s._flushTurnEnd = true;
+  const body = `the parser lives in scratch-mark.js:86\n${'x'.repeat(900)}`;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body });
+  await new Promise((r) => setTimeout(r, 60));
+
+  const pointer = f.injected[f.injected.length - 1];
+  assert.ok(pointer.startsWith('Continue from your handoff: @'), pointer.slice(0, 80));
+  const spilled = fsReal.readFileSync(pointer.slice('Continue from your handoff: @'.length).trimEnd(), 'utf8');
+  assert.match(spilled, /^Scratch episode result · mark \w+ \(delivered by Clodex\)/);
+  assert.ok(spilled.endsWith(body), 'the body rides verbatim and is the LAST thing in the file');
+  assert.ok(!spilled.includes('State at resume'),
+    'a reload needs the snapshot because the fresh seat has no memory; a scratch cut keeps the context up to the mark');
+  assert.ok(!spilled.includes('\n---\n'));
 });
 
 test('scratch end: the backup lives outside run/<name>/, which the respawn deletes and recreates', async () => {

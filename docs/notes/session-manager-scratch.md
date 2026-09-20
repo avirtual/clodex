@@ -5,10 +5,14 @@ The `[agent:scratch]` half of session-manager.js — split out of
 
 ## _scratchBegin
 
-The mark's `sizeAtBegin` is captured BEFORE the ack is enqueued, and the ack's
-first line must keep starting with `ACK_PREFIX`: the validator finds the cut
-point by searching for `ACK_PREFIX + nonce`, so a re-worded first line makes
-every re-opened episode refuse `ack-missing`. The re-open note goes on line 2.
+The mark's `sizeAtBegin` is the first byte of the reply that carried `begin`
+(`beginCutAt`: the last assistant message, all of its records when the CLI
+split it), so the begin reply, its `turn_duration` and the ack are the first
+records dropped and the kept leaf is the user record that reply answered. The
+ack's first line must keep starting with `ACK_PREFIX`: the validator proves the
+episode opened by finding `ACK_PREFIX + nonce` past `sizeAtBegin`, so a
+re-worded first line makes every re-opened episode refuse `ack-missing`. The
+re-open note goes on line 2.
 
 The boundary test reads the file, not the record the scanner fired on. Claude
 Code 2.1.278 writes one text+tool_use API message as TWO `assistant` records
@@ -22,10 +26,8 @@ BEFORE the CLI has appended the reply's `end_turn` record: the tail then ends
 on the previous prompt or tool_result and `boundaryAt` answers about the wrong
 turn. A `behind` tail waits on `fs.watch` of the transcript (the CLI's own
 append is the wake), bounded by `SCRATCH_CLOSE_TIMEOUT`, and re-validates. The
-CLI writes `turn_duration` a few ms AFTER `end_turn`; a mark taken between the
-two leaves the `turn_duration` past `sizeAtBegin`, so the cut's kept-set leaf
-is not `mark.leafUuid` and every end refuses `leaf-mismatch` — hence a bare
-`end_turn` also waits while `_flushTurnEnd` is true.
+CLI writes `turn_duration` a few ms AFTER `end_turn`; a bare `end_turn` also
+waits for it while `_flushTurnEnd` is true.
 
 ## _scratchRecycle
 
@@ -59,6 +61,10 @@ Validation runs TWICE against the same `opts`: once on the live file before
 anything is killed, once on the quiet file after. The window the second one
 covers is real — the exiting CLI writes `cost-state`, sidecars and, when the
 operator compacted at the wrong moment, an `isCompactSummary` record.
+
+The briefing goes through `_injectAfterBoot` with `snapshot: false`: the
+`State at resume` block is for a reload, whose seat has no memory; a cut seat
+still holds everything up to the mark.
 
 The measurement row is written from a `finally`, so every arm produces one:
 refused, failed and cut alike; `_scratchCancel` writes its own. A file holding only successes cannot answer the
