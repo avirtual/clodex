@@ -192,8 +192,9 @@ const { SEAT_KINDS, seatPathFor, claudeProjectSlug, scratchDirFor } = require('.
 const {
   ACK_PREFIX: SCRATCH_ACK_PREFIX, boundaryAt: scratchBoundaryAt,
   parseTranscriptTail: scratchParseTail, validateScratchCut, scratchBriefing,
-  nonce: scratchNonce,
+  nonce: scratchNonce, scratchReplayLine, arrivalClock: scratchArrivalClock,
 } = require('./scratch-mark');
+const { SCRATCH_COST_FILE, scratchCostRecord } = require('./team-cost');
 const { SEGMENT_RE: IMPORT_SEGMENT_RE, SESSION_ID_RE: IMPORT_SESSION_ID_RE } = require('./seat-import');
 const { effectiveModel } = require('./accounts');
 const { liveSnapshotFor, archivedSnapshotFor, stampConfigFlags } = require('./session-restore');
@@ -607,6 +608,7 @@ function createSessionManager(deps) {
     renameRole,
     setTeamWatchdog,
     setLead,
+    teamsDir,
     fs,
     hasActivePending,
     bodyModeFor,
@@ -6430,6 +6432,7 @@ function createSessionManager(deps) {
               action: 'reattach', name, type: entry.type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
             });
             const fresh = this.sessions.get(name);
+            if (fresh && session._scratchVoid) fresh._scratchVoid = session._scratchVoid;
             if (fresh) this._injectReloadHandoff(fresh, handoff);
           } catch (err) {
             console.error(`[agent:context reload] ${name} failed:`, err.message);
@@ -6605,6 +6608,8 @@ function createSessionManager(deps) {
       reply(`[agent:scratch] episode cancelled · mark ${mark.nonce} is dropped. Nothing was cut; everything `
         + 'you read since begin stays in your transcript as ordinary history.');
       log.info('intent', `scratch ${session.name}: mark ${mark.nonce} cancelled`);
+      this._recordScratchEpisode(session, mark, { body: '', replay: false },
+        { outcome: 'cancelled', reason: null, stats: null, replayed: null, recycleMs: null });
     }
 
     _scratchEnd(session, intent, reply) {
@@ -6626,7 +6631,11 @@ function createSessionManager(deps) {
           + `did), closed by [agent:end]. Nothing was cut; the mark ${mark.nonce} is still open.`);
         return;
       }
-      if (mark.closing) return;
+      if (mark.closing) {
+        reply(`[agent:scratch] end already pending for mark ${mark.nonce} — waiting for your reply to `
+          + 'finish. Nothing was cut yet; the first end is the one that will fire.');
+        return;
+      }
       mark.closing = { body, replay: intent.replay === true };
       if (session._flushTurnEnd === true) {
         setImmediate(() => this._fireScratchClose(session));
@@ -6673,7 +6682,8 @@ function createSessionManager(deps) {
             + 'you). Nothing was cut; emit begin again when idle.';
         case 'arrivals': {
           const who = (v.arrivals || []).map((a) => {
-            const at = a.at ? ` at ${String(a.at).slice(11, 16)}` : '';
+            const clock = scratchArrivalClock(a.at);
+            const at = clock ? ` at ${clock}` : '';
             return `${previewLine(a.text, 60)}${at}`;
           }).join(', ');
           return `[agent:scratch] end refused: ${(v.arrivals || []).length} message(s) arrived during the `
@@ -6758,42 +6768,122 @@ function createSessionManager(deps) {
     }
 
     async _runScratchCut(session, mark, closing) {
+      let ep = null;
+      try {
+        ep = await this._scratchCutSteps(session, mark, closing);
+      } catch (e) {
+        ep = { outcome: 'failed', reason: e.message, stats: null, replayed: null, recycleMs: null };
+        throw e;
+      } finally {
+        this._recordScratchEpisode(session, mark, closing, ep);
+      }
+    }
+
+    _scratchCostPath(session) {
+      const name = session && session.name;
+      if (!name) return null;
+      let team = null;
+      try { team = resolveTeam(session.cwd); } catch { team = null; }
+      try {
+        if (team && team.name && teamsDir) return path.join(teamsDir, team.name, SCRATCH_COST_FILE);
+        return path.join(scratchDirFor(REGISTRY_DIR, name), 'episodes.jsonl');
+      } catch { return null; }
+    }
+
+    _recordScratchEpisode(session, mark, closing, ep) {
+      const e = ep || { outcome: 'failed', reason: 'no disposition', stats: null, replayed: null, recycleMs: null };
+      let team = null;
+      try { team = resolveTeam(session.cwd); } catch { team = null; }
+      const body = (closing && typeof closing.body === 'string') ? closing.body : '';
+      const row = scratchCostRecord({
+        seat: session.name,
+        team: team && team.name ? team.name : null,
+        sessionId: mark.sessionId || session.sessionId || null,
+        nonce: mark.nonce,
+        beganAt: mark.beganAt,
+        endedAt: Date.now(),
+        stats: e.stats,
+        summaryBytes: Buffer.byteLength(body, 'utf8'),
+        replayed: e.replayed,
+        dispatched: (mark.dispatched || []).map((d) => (d && typeof d.token === 'string' ? d.token : null)),
+        outcome: e.outcome,
+        reason: e.reason,
+        recycleMs: e.recycleMs,
+      });
+      const file = this._scratchCostPath(session);
+      if (file) {
+        try {
+          ensureDir(path.dirname(file));
+          fs.appendFileSync(file, `${JSON.stringify(row)}\n`);
+        } catch (err) {
+          log.warn('intent', `scratch ${session.name}: the measurement row could not be appended: ${err.message}`);
+        }
+      }
+      this._broadcast('ipc-message', {
+        type: 'scratch', from: session.name, to: session.name,
+        body: `scratch ${mark.nonce} → ${this._scratchEpisodeLine(row)}`,
+      });
+    }
+
+    _scratchEpisodeLine(row) {
+      if (row.outcome !== 'cut') return `${row.outcome}${row.reason ? ` (${row.reason})` : ''}`;
+      const kb = (n) => (typeof n === 'number' ? `${Math.round(n / 1024)}KB` : '?KB');
+      const tok = typeof row.tokens.dropped === 'number'
+        ? `~${Math.round(row.tokens.dropped / 1000)}k tokens` : 'tokens unknown';
+      const replay = row.replayed ? `, replayed ${row.replayed}` : '';
+      const reason = row.reason ? ` — ${row.reason}` : '';
+      return `cut ${kb(row.bytes.dropped)} / ${row.turns.dropped == null ? '?' : row.turns.dropped} turns / `
+        + `${tok}, summary ${kb(row.summaryBytes)}${replay}${reason}`;
+    }
+
+    async _scratchCutSteps(session, mark, closing) {
       const name = session.name;
       const reply = (msg) => this._injectText(session, msg, { parkable: true });
+      const refused = (reason, stats = null) => ({ outcome: 'refused', reason, stats, replayed: null, recycleMs: null });
       const entry = getPersistence().get(name);
       if (!entry) {
         reply(`[agent:scratch] end refused: this seat has no persistence record, so it cannot be respawned `
           + `on a cut transcript. Nothing was cut; the mark ${mark.nonce} is still open.`);
-        return;
+        return refused('no-record');
       }
 
       const live = this._readScratchFile(mark.realpath);
       if (!live) {
         reply(`[agent:scratch] end refused: the marked transcript ${mark.realpath} could not be read. `
           + `Nothing was cut; the mark ${mark.nonce} is still open.`);
-        return;
+        return refused('unreadable');
       }
       let realpath = null;
       try { realpath = fs.realpathSync(pathFor(REGISTRY_DIR, name, 'transcript')); } catch { realpath = null; }
       const opts = { realpath: realpath === null ? undefined : realpath, body: closing.body, replay: closing.replay };
       const v1 = validateScratchCut(mark, live, opts);
-      if (!v1.ok) { reply(this._scratchRefusalLine(mark, v1)); return; }
-      if (closing.replay && (v1.arrivals || []).length) {
-        reply(`[agent:scratch] end refused: \`replay\` is parsed but the re-delivery of the `
-          + `${v1.arrivals.length} message(s) that arrived inside the episode is not implemented yet, and `
-          + 'cutting them away without it would lose them. Answer them, then close with a plain '
-          + `\`[agent:scratch end]\`. Nothing was cut; the mark ${mark.nonce} is still open.`);
-        return;
-      }
+      if (!v1.ok) { reply(this._scratchRefusalLine(mark, v1)); return refused(v1.reason, v1.stats); }
 
+      if (this._movingNames.has(name)) {
+        reply('[agent:scratch] end refused: this seat is being moved or renamed right now, and cutting '
+          + `across that would race two respawns under one name. Nothing was cut; the mark ${mark.nonce} `
+          + 'is still open — re-emit end when the move is done.');
+        return refused('moving', v1.stats);
+      }
+      this._movingNames.add(name);
+      try {
+        return await this._scratchCutAfterGuard(session, mark, closing, entry, opts, reply);
+      } finally {
+        this._movingNames.delete(name);
+      }
+    }
+
+    async _scratchCutAfterGuard(session, mark, closing, entry, opts, reply) {
+      const name = session.name;
       this._parkHeldInjects(session);
       try { if (this._holdKeeper && session.sessionId) this._holdKeeper.endSession(session.sessionId); } catch {}
       session._holdRearmed = false;
 
+      const recycleStart = Date.now();
       if (!await this._scratchRecycle(session, entry)) {
         reply('[agent:scratch] end refused: the old process did not exit in time — nothing was cut. The '
           + `mark ${mark.nonce} is still open.`);
-        return;
+        return { outcome: 'refused', reason: 'exit-timeout', stats: null, replayed: null, recycleMs: null };
       }
 
       const quiet = this._readScratchFile(mark.realpath);
@@ -6808,7 +6898,10 @@ function createSessionManager(deps) {
             + 'own turn above; carry on from it.',
             { logPrefix: '[agent:scratch]', dropBody: 'scratch → abandon notice NOT injected' });
         }
-        return;
+        return {
+          outcome: 'refused', reason: v2 ? (v2.reason || 'revalidate') : 'unreadable',
+          stats: v2 ? v2.stats : null, replayed: null, recycleMs: Date.now() - recycleStart,
+        };
       }
 
       const dir = scratchDirFor(REGISTRY_DIR, name);
@@ -6833,7 +6926,10 @@ function createSessionManager(deps) {
             + 'can re-emit end. Your summary is in your own turn above.',
             { logPrefix: '[agent:scratch]', dropBody: 'scratch → write-failure notice NOT injected' });
         }
-        return;
+        return {
+          outcome: 'failed', reason: `write: ${err.message}`, stats: v2.stats,
+          replayed: null, recycleMs: Date.now() - recycleStart,
+        };
       }
 
       let fresh = null;
@@ -6843,24 +6939,42 @@ function createSessionManager(deps) {
         log.error('intent', `scratch ${name}: respawn after the cut failed: ${err.message}`);
         this._scratchRestore(mark, bak);
         getPersistence().upsert(this._stripClaimedTree(entry));
-        this._broadcast('ipc-message', {
-          type: 'scratch', from: name, to: name,
-          body: `scratch → respawn FAILED, transcript restored (${err.message})`,
-        });
-        return;
+        return {
+          outcome: 'failed', reason: `respawn: ${err.message}`, stats: v2.stats,
+          replayed: null, recycleMs: Date.now() - recycleStart,
+        };
       }
 
       log.info('intent', `scratch ${name}: mark ${mark.nonce} cut ${v2.stats.bytes.dropped} bytes `
         + `(${v2.stats.records.dropped} records) at ${v2.cutOffset}; backup ${bak}`);
-      this._broadcast('ipc-message', {
-        type: 'scratch', from: name, to: name,
-        body: `scratch ${mark.nonce} → cut ${v2.stats.bytes.dropped} bytes, respawned`,
+      const done = (replayed) => ({
+        outcome: 'cut', reason: null, stats: v2.stats,
+        replayed, recycleMs: Date.now() - recycleStart,
       });
-      if (!fresh) return;
-      await this._injectAfterBoot(fresh, scratchBriefing(mark, v2.stats, closing.body), {
+      const notInjected = () => ({ ...done(null), reason: 'summary-not-injected' });
+      if (!fresh) return notInjected();
+      const landed = await this._injectAfterBoot(fresh, scratchBriefing(mark, v2.stats, closing.body), {
         logPrefix: '[agent:scratch]',
         dropBody: `scratch ${mark.nonce} → summary NOT injected (fresh CLI never signaled boot)`,
       });
+      if (!landed) return notInjected();
+      return done(this._replayScratchArrivals(fresh, mark, closing, v2.arrivals));
+    }
+
+    _replayScratchArrivals(session, mark, closing, arrivals) {
+      if (!closing.replay) return 0;
+      const list = Array.isArray(arrivals) ? arrivals : [];
+      let n = 0;
+      for (const a of list) {
+        try {
+          this._injectText(session, scratchReplayLine(mark, a));
+          n++;
+        } catch (e) {
+          log.warn('intent', `scratch ${session.name}: replaying an arrival failed: ${e.message}`);
+        }
+      }
+      if (n) log.info('intent', `scratch ${session.name}: replayed ${n} arrival(s) after the summary`);
+      return n;
     }
 
     _scratchRestore(mark, bak) {
@@ -6884,10 +6998,6 @@ function createSessionManager(deps) {
       } catch (err) {
         log.error('intent', `scratch ${name}: respawn after an abandoned cut failed: ${err.message}`);
         getPersistence().upsert(this._stripClaimedTree(entry));
-        this._broadcast('ipc-message', {
-          type: 'scratch', from: name, to: name,
-          body: `scratch → respawn FAILED after an abandoned cut (${err.message})`,
-        });
         return null;
       }
     }

@@ -416,6 +416,35 @@ the seat's context holds:
 Every bounce names the mark and ends on either "Nothing was cut" or "your summary
 is in your own turn above" — the two facts the seat needs to recover.
 
+A second `end` while one is parked for the turn boundary answers `end already
+pending for mark X` rather than returning silently, and the FIRST body is the
+one that will be cut with. An `end` while a Move or Rename holds the seat's name
+bounces too: the cut's kill→create span is registered in `_movingNames`, so the
+two cannot interleave and restore a pre-cut file over a resumed transcript.
+
+**Replay.** `[agent:scratch end replay] <summary>` is the escape from the
+`arrivals` refusal. The cut proceeds; the summary is injected first, and only if
+it lands does each arrival follow, in the order it arrived, verbatim from the
+transcript under a header naming the mark and the arrival time and telling the
+seat not to re-answer unless its own summary says to. A summary that never
+reaches the seat replays nothing — a bare arrival with no episode behind it is
+the double-action hazard the explicit modifier exists to prevent, and the `.bak`
+is what recovers the messages in that case; its row says `summary-not-injected`
+with `replayed` null. An arrival is injected inline whatever its length: the
+handoff spill that shapes the summary never touches a replayed message.
+
+**Measurement.** Every episode appends one row — cut, refused, cancelled or failed alike —
+to `~/.clodex/teams/<team>/scratch-cost.jsonl`, or to
+`~/.clodex/scratch/<name>/episodes.jsonl` for a seat on no team. The row carries
+the mark nonce (what ties it to a wirescope observation of the post-resume
+request), the bytes and records dropped, the turn count, the token totals read
+from the transcript's own `message.usage` at `begin` and at the cut, the summary
+size, how many arrivals were replayed, and the kill→boot span. Anything that
+could not be measured is `null`, never `0`: an episode whose bytes were never
+counted must not read as one that dropped nothing. The refused rows are the
+point — they say how often a seat opens an episode it cannot close. One
+`ipc-message` row per episode mirrors it into the activity tab.
+
 ## 4. Exit, kill, restore
 
 `ptyProc.onExit` runs a **fixed order** (each step depends on the previous

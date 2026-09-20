@@ -121,7 +121,14 @@ keystroke.
     `Replayed from scratch episode <mark> (arrived HH:MM; you saw it inside the
     episode and your summary says what you did about it — do not re-answer unless
     it says otherwise):` followed by the content verbatim from the transcript.
-    `[agent:scratch cancel]` keeps everything.
+    `[agent:scratch cancel]` keeps everything. The replay follows the summary and
+    only if the summary landed; an arrival with no episode behind it is the
+    double-action hazard the explicit modifier exists to prevent.
+  - a second `end` while one is parked for the turn boundary: *end already
+    pending for mark X — waiting for your reply to finish* — and the FIRST body
+    is the one that will be cut with, not the second.
+  - `end` during a Move or Rename of the seat: refused while the name is held,
+    the mark left open.
   - a Codex seat: *Claude seats only — a Codex transcript has a different shape
     and no rewind has been proven for it.*
 - **Multi-line bodies** are captured in `_extractIntents`, not the scanner:

@@ -356,6 +356,64 @@ function reviewCostRecord({
   };
 }
 
+const SCRATCH_COST_FILE = 'scratch-cost.jsonl';
+const SCRATCH_COST_VERSION = 1;
+
+function scratchCostRecord({
+  seat, team = null, sessionId = null, nonce = null, beganAt = null, endedAt = null,
+  stats = null, summaryBytes = null, replayed = null, dispatched = null,
+  outcome = null, reason = null, recycleMs = null, now = Date.now(),
+} = {}) {
+  const at = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const began = at(beganAt);
+  const ended = at(endedAt) ?? at(now);
+  const ms = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : null);
+  const s = stats && typeof stats === 'object' ? stats : null;
+  const block = (key) => (s && s[key] && typeof s[key] === 'object' ? s[key] : null);
+  const bytes = block('bytes');
+  const records = block('records');
+  const turns = block('turns');
+  const tokens = block('tokens');
+  const count = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  return {
+    version: SCRATCH_COST_VERSION,
+    seat: seat || null,
+    team: team || null,
+    sessionId: sessionId || null,
+    nonce: nonce || null,
+    beganAt: began,
+    endedAt: ended,
+    wallMs: (began !== null && ended !== null && ended >= began) ? ended - began : null,
+    recycleMs: ms(recycleMs),
+    outcome: outcome || null,
+    reason: reason || null,
+    bytes: bytes
+      ? { before: count(bytes.before), kept: count(bytes.kept), dropped: count(bytes.dropped) }
+      : { before: null, kept: null, dropped: null },
+    records: records
+      ? {
+        dropped: count(records.dropped),
+        byType: records.byType && typeof records.byType === 'object' ? { ...records.byType } : null,
+        toolResults: count(records.toolResults),
+        toolResultBytes: count(records.toolResultBytes),
+        backgroundTasksDropped: count(records.backgroundTasksDropped),
+      }
+      : {
+        dropped: null, byType: null, toolResults: null,
+        toolResultBytes: null, backgroundTasksDropped: null,
+      },
+    turns: { dropped: turns ? count(turns.dropped) : null },
+    tokens: tokens
+      ? { atBegin: count(tokens.atBegin), atCut: count(tokens.atCut), dropped: count(tokens.dropped) }
+      : { atBegin: null, atCut: null, dropped: null },
+    summaryBytes: count(summaryBytes),
+    replayed: count(replayed),
+    dispatched: Array.isArray(dispatched)
+      ? dispatched.map((d) => (typeof d === 'string' ? d : null)).filter(Boolean)
+      : [],
+  };
+}
+
 // A ticket seat's branch, as _mintTicketSeat spells it: `<ticket-id>` or
 // `<ticket-id>-<slug>`.
 const TICKET_BRANCH_RE = /^t\d+(-[a-zA-Z0-9._-]+)?$/;
@@ -567,8 +625,9 @@ function rollupTeam(rows) {
 module.exports = {
   COST_FILE, COST_VERSION, MAX_LABEL, TICKET_BRANCH_RE,
   REVIEW_COST_FILE, REVIEW_COST_VERSION, TEAM_LEDGER_FILE,
+  SCRATCH_COST_FILE, SCRATCH_COST_VERSION,
   wireLabelFor, reviewWireLabelFor, ticketIdFromScope, resolveTaskDir,
-  sumSessions, cachedFraction, costRecord, reviewCostRecord, orphanedCheckouts,
+  sumSessions, cachedFraction, costRecord, reviewCostRecord, scratchCostRecord, orphanedCheckouts,
   ticketLedgerRow, reviewLedgerRow, seatLedgerRow,
   parseTeamLedger, readTeamLedger, rollupTeam,
 };
