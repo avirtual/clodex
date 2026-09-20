@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.83.1 — 2026-09-20
+
 - On a turn started by a Clodex-injected message (a peer dm, a ticket or exec reply, a reminder), an agent's trailing prose — or a reply with no intent at all — is spilled to a pointer file instead of being cached and re-read on every later turn. Anything you type or send from the panel is answered in full, and narration before a tool call is never touched.
 
 ## 5.83.0 — 2026-09-20
