@@ -809,7 +809,7 @@ function assertSeatGone(home, name, why) {
 }
 
 test('destroy() removes the seat directory and every legacy spelling — the no-worktree arm', async (t) => {
-  const why = 'Delete Session… is the one true delete (CLAUDE.md Session lifecycle), and before '
+  const why = 'Delete Session… is the one true delete (docs/sessions.md lifecycle table), and before '
     + 'L-B2 it removed run/ only: the deleted seat\'s messages, promptcache, notices and memory '
     + 'stayed on disk under its name forever. That leak is what rename\'s "already owns … a '
     + 'leftover from an earlier seat" refusal exists to catch — it makes the name unrenameable-to '

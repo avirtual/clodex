@@ -112,7 +112,7 @@ logged skip leaves that kind readable where it is.
 ## removeSeat
 
 The home AND every legacy spelling, symlink or real dir. Delete Session… is the
-one true delete (CLAUDE.md §Session lifecycle); before this it took `run/` only,
+one true delete (docs/sessions.md lifecycle table); before this it took `run/` only,
 and the messages, promptcache, notices and memory left behind are exactly what
 rename's "already owns … a leftover from an earlier seat" refusal exists to
 catch — a leak that makes the name unusable afterwards. `pending/<name>` is

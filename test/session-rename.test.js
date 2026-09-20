@@ -9,9 +9,11 @@
 //
 // What rename can silently get wrong that move cannot:
 //
-//   the five shared dirs  messages/, pending/, promptcache/, notices/ and
-//                         library/memory/ are keyed by SEAT NAME at the
-//                         ~/.clodex ROOT and outlive run/<name>/.
+//   the seat's state     messages/, promptcache/, notices/ and library/memory/
+//                         are keyed by SEAT NAME and outlive run/<name>/. Since
+//                         L-B2 they live under sessions/<seat>/ with links at
+//                         those spellings; rename moves the one home
+//                         (renameSeat) and pending/ moves on its own.
 //                         A rename that forgets one leaves the seat's DMs,
 //                         parked messages, frozen prompt or memory behind under
 //                         a name nothing answers to — silent, because the seat
@@ -33,19 +35,19 @@ const { createSessionManager } = require('../session-manager');
 const { createRemindScheduler } = require('../remind-scheduler');
 const { initStores } = require('../stores');
 const { createTeamManifest, matchSeatRole } = require('../team-manifest');
-const { projectDirFor } = require('../clodex-paths');
+const { projectDirFor, seatPathFor, legacySeatPathFor, SEAT_KINDS } = require('../clodex-paths');
 const { enqueueNotice, parseNotices } = require('../notice-queue');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { migrateSeatLayout } = require('../seat-layout');
-const { seatPathFor, legacySeatPathFor, SEAT_KINDS } = require('../clodex-paths');
 const { createMemoryStore } = require('../memory-store');
 
 // ------------------------------------------------------------- the fixture
 
-// The five per-SEAT paths, as absolute src/dest pairs under `root`. Written out
-// here as literals rather than by calling the manager's own `_renameDirs`: a
-// test that asked the subject where its dirs are would agree with itself about
-// a dir the subject forgot.
+// The per-SEAT paths, as absolute src/dest pairs under `root`. Written out here
+// as literals rather than by calling the manager's own `_renameDirs`: a test
+// that asked the subject where its dirs are would agree with itself about a dir
+// the subject forgot. Since L-B2 four are LEGACY spellings, links on a migrated
+// box; these literals are the pre-migration shape most subjects here seed.
 //
 // library/exec/ is deliberately NOT here. It is the exec COMMAND registry keyed
 // by command id (clodex-monitor.json, clodex-check-syntax.json, …), shared by

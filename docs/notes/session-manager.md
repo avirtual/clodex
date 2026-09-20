@@ -21,14 +21,14 @@ move cannot detect a bad resume id and report it.
 
 ## _renameDirs
 
-`run/<name>/` is absent from the list on purpose. `cleanupClaudeHook` rm -rf's it
-on every exit path, including the kill `rename` performs, and `create()` rebuilds
-it under the new name — so moving it would race a delete that is already running.
+One row, `pending/`: the seat kinds moved out to `seat-layout.js` `renameSeat`,
+called just above this loop, and `pending/` is permanently exempt from the seat
+layout (`docs/notes/seat-layout.md`).
 
-`library/exec/<name>.json` is absent for the opposite reason, and it is the one a
-reader is likeliest to add back: that directory is the exec COMMAND registry,
-keyed by command id and shared by every seat, not per-seat state. Moving it on a
-rename breaks the command for every seat granted it.
+`library/exec/<name>.json` was never in it, and is the entry a reader is likeliest
+to add: that dir is the exec COMMAND registry, keyed by command id and shared by
+every seat, not per-seat state. Moving it breaks the command for every seat
+granted it.
 
 ## rename
 
