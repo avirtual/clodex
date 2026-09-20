@@ -783,7 +783,7 @@ test('t1044: scratch mark/rewind parse as LITERALS — the label post-rules per 
   }
   for (const label of ['a', 'A.b-c_9', 'a'.repeat(32), 'a'.repeat(33), 'a b', 'a/b', '', 'replay']) {
     const parsed = parseIntent(`[agent:scratch mark ${label}]`);
-    assert.strictEqual(parsed !== null, SCRATCH_LABEL_RE.test(label) && label !== 'replay',
+    assert.strictEqual(parsed !== null, SCRATCH_LABEL_RE.test(label),
       `label ${JSON.stringify(label)}: the parser and SCRATCH_LABEL_RE must accept the same set`);
   }
 });

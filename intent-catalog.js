@@ -55,7 +55,7 @@ const PRIVILEGED_INTENTS = new Set(['reboot', 'term', 'team-create']);
 
 const LEGACY_INTENT_KEYS = new Map([['notify-user', 'shout']]);
 
-const SCRATCH_LABEL_RE = /^[A-Za-z0-9._-]{1,32}$/;
+const SCRATCH_LABEL_RE = /^(?!replay$)[A-Za-z0-9._-]{1,32}$/;
 
 function canonicalIntentKey(type) {
   return LEGACY_INTENT_KEYS.get(type) || type;

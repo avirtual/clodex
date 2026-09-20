@@ -391,7 +391,7 @@ function scratchBriefing(mark, stats, body, opts = {}) {
   const noteless = opts.noteless === true || note.trim() === '';
   const earlier = (Array.isArray(opts.notes) ? opts.notes : [])
     .filter((n) => n && typeof n.body === 'string')
-    .map((n) => `[${formatTime(n.at)}] ${n.body}`);
+    .map((n) => (Number.isFinite(n.at) ? `[${formatTime(n.at)}] ` : '') + n.body);
   const tail = noteless
     ? `. ${SCRATCH_NOTELESS_SENTENCE}`
     : ' — only the note(s) below survive. They are your own conclusions, delivered as given facts: '

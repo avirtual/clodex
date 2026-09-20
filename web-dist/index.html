@@ -27562,7 +27562,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       ];
       var PRIVILEGED_INTENTS = /* @__PURE__ */ new Set(["reboot", "term", "team-create"]);
       var LEGACY_INTENT_KEYS = /* @__PURE__ */ new Map([["notify-user", "shout"]]);
-      var SCRATCH_LABEL_RE = /^[A-Za-z0-9._-]{1,32}$/;
+      var SCRATCH_LABEL_RE = /^(?!replay$)[A-Za-z0-9._-]{1,32}$/;
       function canonicalIntentKey(type) {
         return LEGACY_INTENT_KEYS.get(type) || type;
       }
