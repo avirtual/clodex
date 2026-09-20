@@ -332,7 +332,7 @@ most costly mistake the loop can make. A red verify run is measured a second
 time before it rejects — a green re-run proceeds to review and the record names
 the first run, while a second red rejects carrying both runs' failing names.
 A rework is never handed to a ticket seat whose context is already past the
-compact threshold (175k tokens by default): that seat is archived, a fresh one is
+compact threshold (150k tokens by default, 200k for Fable 5.1): that seat is archived, a fresh one is
 spawned onto the same branch and the same worktree, the must-fixes are delivered
 there, and the reject reply names both seats.
 
