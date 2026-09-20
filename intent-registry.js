@@ -5,6 +5,7 @@
 const {
   GATEABLE_INTENTS,
   PRIVILEGED_INTENTS,
+  SCRATCH_LABEL_RE,
   intentEnabled,
   intentsAllowlistFromChecked,
   withoutPrivilegedIntents,
@@ -37,11 +38,15 @@ function parseContext(cleaned) {
 }
 
 function parseScratch(cleaned) {
-  const m = cleaned.match(/^\[agent:scratch\s+(begin|end|cancel)(\s+replay)?\]\s*(.*)$/s);
+  const m = cleaned.match(/^\[agent:scratch\s+(begin|end|cancel|mark|rewind)(?:\s+(?!replay\])([A-Za-z0-9._-]{1,32}))?(\s+replay)?\]\s*(.*)$/s);
   if (!m) return null;
   const sub = m[1].toLowerCase();
-  if (m[2] && sub !== 'end') return null;
-  return { type: 'scratch', sub, replay: !!m[2], body: m[3] };
+  const label = m[2] || null;
+  if (label && !SCRATCH_LABEL_RE.test(label)) return null;
+  if (sub === 'mark' && !label) return null;
+  if ((sub === 'begin' || sub === 'end') && label) return null;
+  if (m[3] && sub !== 'end' && sub !== 'rewind') return null;
+  return { type: 'scratch', sub, label, replay: !!m[3], body: m[4] };
 }
 
 function parseMemory(cleaned) {
@@ -241,7 +246,7 @@ const CORE_ROWS = [
   { type: 'who', parse: parseWho, bodyMode: NONE },
   { type: 'name', parse: parseName, bodyMode: NONE },
   { type: 'context', parse: parseContext, bodyMode: (i) => (i.sub === 'compact' || i.sub === 'reload' || i.sub === 'clear' ? 'greedy' : 'none') },
-  { type: 'scratch', parse: parseScratch, bodyMode: (i) => (i.sub === 'end' ? 'greedy' : 'none') },
+  { type: 'scratch', parse: parseScratch, bodyMode: (i) => (i.sub === 'end' || i.sub === 'rewind' ? 'greedy' : 'none') },
   { type: 'memory', parse: parseMemory, bodyMode: (i) => (i.sub === 'remember' ? 'greedy' : 'none') },
   { type: 'file', parse: parseFile, bodyMode: NONE },
   // Line-scoped, unlike every other body-carrying row here: the command is

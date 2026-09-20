@@ -17,7 +17,7 @@ const path = require('node:path');
 
 const { parseIntent, cleanLine } = require('../intent-scanner');
 const registry = require('../intent-registry');
-const { GATEABLE_INTENTS, PRIVILEGED_INTENTS, intentsAllowlistFromChecked } = require('../intent-catalog');
+const { GATEABLE_INTENTS, PRIVILEGED_INTENTS, SCRATCH_LABEL_RE, intentsAllowlistFromChecked } = require('../intent-catalog');
 
 // --- the frozen legacy oracle -----------------------------------------------
 
@@ -43,11 +43,14 @@ function parseIntentLegacy(rawLine) {
   const ctxMatch = cleaned.match(/^\[agent:context\s+(\S+)\]\s*(.*)/s);
   if (ctxMatch) return { type: 'context', sub: ctxMatch[1].toLowerCase(), body: ctxMatch[2] };
 
-  const scratchMatch = cleaned.match(/^\[agent:scratch\s+(begin|end|cancel)(\s+replay)?\]\s*(.*)$/s);
+  const scratchMatch = cleaned.match(/^\[agent:scratch\s+(begin|end|cancel|mark|rewind)(?:\s+(?!replay\])([A-Za-z0-9._-]{1,32}))?(\s+replay)?\]\s*(.*)$/s);
   if (scratchMatch) {
     const sub = scratchMatch[1].toLowerCase();
-    if (scratchMatch[2] && sub !== 'end') return null;
-    return { type: 'scratch', sub, replay: !!scratchMatch[2], body: scratchMatch[3] };
+    const label = scratchMatch[2] || null;
+    if (sub === 'mark' && !label) return null;
+    if ((sub === 'begin' || sub === 'end') && label) return null;
+    if (scratchMatch[3] && sub !== 'end' && sub !== 'rewind') return null;
+    return { type: 'scratch', sub, label, replay: !!scratchMatch[3], body: scratchMatch[4] };
   }
 
   const memMatch = cleaned.match(/^\[agent:memory\s+(\S+)\]\s*(.*)/s);
@@ -341,6 +344,12 @@ const ADVERSARIAL = [
   '[agent:scratch end] line one\nline two', '[agent:scratch END] shouty',
   '[agent:scratch cancel]', '[agent:scratch cancel] trailing',
   '[agent:scratch]', '[agent:scratch resume]', '[agent:scratch  begin]',
+  '[agent:scratch mark a]', '[agent:scratch mark]', '[agent:scratch rewind]',
+  '[agent:scratch rewind a]', '[agent:scratch rewind a replay]', '[agent:scratch rewind replay]',
+  '[agent:scratch mark replay]', '[agent:scratch begin a]', '[agent:scratch end a]',
+  '[agent:scratch cancel a]', '[agent:scratch rewind a] a note\nline two',
+  '[agent:scratch cancel replay]', '[agent:scratch mark a-b.c_1]', '[agent:scratch mark a b]',
+  '[agent:scratch mark aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]', '[agent:scratch rewind] noteless',
   '[agent:memory list]', '[agent:memory remember] text', '[agent:memory RECALL] q',
   '[agent:memory]',
   '[agent:file view /a/b.txt]', '[agent:file open /a b/c.txt]',
@@ -476,7 +485,7 @@ const CLOSED_SUB_VERB_FAMILIES = ['task', 'team', 'scratch'];
 // pinned, so shrinking the grammar trips this rather than quietly shrinking
 // what the loop below iterates. A single shared floor would have to be the
 // smallest family's and would stop measuring every larger one.
-const MIN_SUBS = { task: 9, team: 11, scratch: 3 };
+const MIN_SUBS = { task: 9, team: 11, scratch: 5 };
 
 function corpusCovers(family, sub) {
   return CORPUS.some((line) => {
@@ -745,6 +754,38 @@ test('bodyMode per sub-verb for team / memory / context', () => {
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:scratch end] summary')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:scratch begin]')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:scratch cancel]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:scratch rewind] note')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:scratch rewind a] note')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:scratch mark a]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:scratch cancel a]')), 'none');
+});
+
+test('t1044: scratch mark/rewind parse as LITERALS — the label post-rules per sub-verb', () => {
+  const row = (sub, label, replay, body) => ({ type: 'scratch', sub, label, replay, body });
+  assert.deepStrictEqual(parseIntent('[agent:scratch mark a]'), row('mark', 'a', false, ''));
+  assert.deepStrictEqual(parseIntent('[agent:scratch mark a-b.c_1]'), row('mark', 'a-b.c_1', false, ''));
+  assert.deepStrictEqual(parseIntent('[agent:scratch rewind]'), row('rewind', null, false, ''));
+  assert.deepStrictEqual(parseIntent('[agent:scratch rewind] noteless'), row('rewind', null, false, 'noteless'));
+  assert.deepStrictEqual(parseIntent('[agent:scratch rewind a]'), row('rewind', 'a', false, ''));
+  assert.deepStrictEqual(parseIntent('[agent:scratch rewind a] a note\nline two'),
+    row('rewind', 'a', false, 'a note\nline two'));
+  assert.deepStrictEqual(parseIntent('[agent:scratch rewind a replay]'), row('rewind', 'a', true, ''));
+  assert.deepStrictEqual(parseIntent('[agent:scratch rewind replay]'), row('rewind', null, true, ''));
+  assert.deepStrictEqual(parseIntent('[agent:scratch cancel a]'), row('cancel', 'a', false, ''));
+  assert.deepStrictEqual(parseIntent('[agent:scratch begin]'), row('begin', null, false, ''));
+  assert.deepStrictEqual(parseIntent('[agent:scratch end] x'), row('end', null, false, 'x'));
+  for (const line of [
+    '[agent:scratch mark]', '[agent:scratch mark replay]', '[agent:scratch begin a]',
+    '[agent:scratch end a]', '[agent:scratch cancel replay]', '[agent:scratch mark a b]',
+    '[agent:scratch mark aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]', '[agent:scratch mark a/b]',
+  ]) {
+    assert.strictEqual(parseIntent(line), null, `${line} must not be an intent`);
+  }
+  for (const label of ['a', 'A.b-c_9', 'a'.repeat(32), 'a'.repeat(33), 'a b', 'a/b', '', 'replay']) {
+    const parsed = parseIntent(`[agent:scratch mark ${label}]`);
+    assert.strictEqual(parsed !== null, SCRATCH_LABEL_RE.test(label) && label !== 'replay',
+      `label ${JSON.stringify(label)}: the parser and SCRATCH_LABEL_RE must accept the same set`);
+  }
 });
 
 test('t1037: the scratch row is gateable, ordinary, and parses a closed alternation', () => {
@@ -823,7 +864,7 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   const newSinceLegacy = (i) => (i.type === 'task' && (i.sub === 'accept' || i.sub === 'respec'))
     || (i.type === 'team' && (i.sub === 'template-save' || i.sub === 'prompt-save'))
     || i.type === 'team-create'
-    || (i.type === 'scratch' && i.sub === 'end');
+    || (i.type === 'scratch' && (i.sub === 'end' || i.sub === 'rewind'));
   const deliberatelyNarrowed = (i) => i.type === 'team'
     && (i.sub === 'role-add' || i.sub === 'role-set')
     && ['prompt', 'template', 'dispatch', 'cwd', 'model', 'account'].some((k) => i[k] != null)
@@ -888,7 +929,7 @@ function bodyModeSubsFromSource(row) {
 
 // The pair count the predicates named when this was pinned. An arm deleted from a
 // predicate shrinks the loop below rather than failing it, so the count is floored.
-const MIN_BODYMODE_SUBS = 14;
+const MIN_BODYMODE_SUBS = 15;
 
 test('t341: every sub-verb a bodyMode predicate names is reachable in the corpus', () => {
   let pairs = 0;

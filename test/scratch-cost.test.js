@@ -56,6 +56,19 @@ test('scratchCostRecord: a cut row carries the §8 shape', () => {
   assert.deepStrictEqual(r.dispatched, ['t99']);
 });
 
+test('t1044 scratchCostRecord: label is the string given, null when absent or empty, and noteless is summaryBytes 0', () => {
+  const named = cutRow({ label: 'before-survey', summaryBytes: 0 });
+  assert.strictEqual(named.label, 'before-survey');
+  assert.strictEqual(named.summaryBytes, 0, 'a measured zero, not null — end refuses an empty body, so 0 can only be a noteless rewind');
+  assert.strictEqual(Object.keys(named).indexOf('label'), Object.keys(named).indexOf('nonce') + 1,
+    'label sits beside the nonce it qualifies');
+  assert.strictEqual(cutRow().label, null);
+  assert.strictEqual(cutRow({ label: '' }).label, null);
+  assert.strictEqual(cutRow({ label: 7 }).label, null);
+  assert.ok(!('noteless' in named), 'no separate flag — summaryBytes 0 is the signal');
+  assert.deepStrictEqual(Object.keys(cutRow({ label: 'a' })), Object.keys(cutRow()), 'label is present on every row, never conditional');
+});
+
 test('scratchCostRecord: byType is COPIED, so a later mutation of stats cannot rewrite a written row', () => {
   const stats = JSON.parse(JSON.stringify(STATS));
   const r = cutRow({ stats });

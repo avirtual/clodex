@@ -12778,11 +12778,18 @@ test('[agent:end]: closes a scratch end summary; begin and cancel capture no bod
     + 'would carry text the model wrote for its operator into the post-rewind briefing as if it were a '
     + 'conclusion, and a body that closed early would lose part of the only surviving record');
 
-  for (const sub of ['begin', 'cancel']) {
+  for (const sub of ['begin', 'cancel', 'mark a', 'cancel a']) {
     const bare = m._extractIntents(`[agent:scratch ${sub}]\nPlain prose under the intent.`);
     assert.deepStrictEqual(bare.map((x) => x.type), ['scratch'], `${sub} emits one intent`);
     assert.strictEqual(bare[0].body, '', `${sub} is bodiless — the prose below it is not swallowed`);
   }
+
+  const rewind = m._extractIntents(
+    '[agent:scratch rewind a] the note\nline two\n[agent:end]\nNow I talk to my operator.');
+  assert.deepStrictEqual(rewind.map((x) => x.type), ['scratch']);
+  assert.strictEqual(rewind[0].sub, 'rewind');
+  assert.strictEqual(rewind[0].label, 'a');
+  assert.strictEqual(rewind[0].body, 'the note\nline two', 'a rewind note closes at [agent:end] exactly like an end summary');
 });
 
 // The contrast that makes the terminator worth documenting on the line at all.
