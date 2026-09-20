@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- Every session now has one home, `~/.clodex/sessions/<name>/` — its runtime files, messages, notices, prompt cache, spill files, monitors and memory all live there, with the old `~/.clodex/<kind>/<name>` paths kept as links. Renaming a session moves that one folder; deleting it removes everything the session owned; right-click ▸ "Reveal Seat Folder in Finder" opens it.
+- Every session now has one home, `~/.clodex/sessions/<name>/` — its runtime files, messages, notices, prompt cache, spill files, monitors and memory all live there, with the old `~/.clodex/<kind>/<name>` paths kept as links. Renaming a session moves that one folder; deleting it removes the folder and its links; right-click ▸ "Reveal Seat Folder in Finder" opens it.
 
 ## 5.82.2 — 2026-09-20
 
