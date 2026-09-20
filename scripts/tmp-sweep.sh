@@ -220,6 +220,9 @@ clodex-scm-
 clodex-scope-
 clodex-seatimp-
 clodex-seatimp-cp-
+clodex-seatimp-far-
+clodex-seatimp-home-
+clodex-seatimp-proj-
 clodex-seatlayout-
 clodex-seatlayout-outside-
 clodex-sinfo-
