@@ -19088,6 +19088,94 @@ test('scratch begin: a second begin REPLACES the mark, and the re-open note goes
     + 'ack-missing, because the validator matches startsWith(ACK_PREFIX + nonce) on the first bytes');
 });
 
+test('scratch begin (wire): the intent fires BEFORE the CLI wrote the end_turn record — begin waits for it, then acks', async () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  tape.prompt('now open an episode');
+  f.write(tape);
+  f.s._flushTurnEnd = true;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepStrictEqual(f.injected, [],
+    'the tail ends on the prompt — the reply that carried begin is not on disk yet — so neither a refusal '
+    + 'nor an ack may go out: the boundary rule is being asked about the WRONG turn');
+  assert.strictEqual(f.s._scratch, undefined, 'and nothing is marked yet');
+  assert.ok(f.s._scratchPendingBegin, 'the begin is parked on the seat');
+
+  const late = new ScratchTape();
+  late.parent = tape.parent;
+  late.turn('[agent:scratch begin]');
+  f.append(late.text);
+  await waitFor(() => f.injected.length > 0);
+  const mark = f.s._scratch;
+  assert.ok(mark, 'once the end_turn + turn_duration land, the mark opens');
+  assert.ok(f.injected[0].startsWith(`${SCRATCH_ACK_PREFIX_T}${mark.nonce}`), f.injected[0].slice(0, 80));
+  assert.strictEqual(mark.leafUuid, late.parent, 'the leaf is the turn_duration that closed THIS reply');
+  assert.strictEqual(mark.sizeAtBegin, Buffer.byteLength(f.read(), 'utf8'), 'captured after the turn landed');
+  assert.strictEqual(f.s._scratchPendingBegin, null, 'and the wait is torn down');
+});
+
+test('scratch begin (wire): a reply that goes on to call tools is still refused once its tool_use lands', async () => {
+  const f = mkScratch();
+  const tape = new ScratchTape();
+  tape.prompt('go');
+  f.write(tape);
+  f.s._flushTurnEnd = false;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepStrictEqual(f.injected, [], 'nothing is decided while the file is behind the wire');
+
+  const late = new ScratchTape();
+  late.parent = tape.parent;
+  late.conv({ type: 'assistant', message: { role: 'assistant', id: 'msg_w', stop_reason: 'tool_use', content: [{ type: 'text', text: '[agent:scratch begin]' }] } });
+  late.toolUse('toolu_w1');
+  f.append(late.text);
+  await waitFor(() => f.injected.length > 0);
+  assert.strictEqual(f.injected[0],
+    '[agent:scratch] begin refused: it must be the last line of a reply (your reply went on to '
+    + 'call tools). Emit it alone and stop; the episode opens when Clodex acks it. Not marked.');
+  assert.strictEqual(f.s._scratch, undefined);
+  assert.strictEqual(f.s._scratchPendingBegin, null);
+});
+
+test('scratch begin (wire): the wait times out into the refusal and leaves no mark', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  tape.prompt('now open an episode');
+  f.write(tape);
+  f.s._flushTurnEnd = true;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
+  assert.deepStrictEqual(f.injected, []);
+  t.mock.timers.tick(119999);
+  assert.deepStrictEqual(f.injected, [], 'the wait is the same bound `end` uses');
+  t.mock.timers.tick(1);
+  assert.strictEqual(f.injected[0],
+    '[agent:scratch] begin refused: it must be the last line of a reply (your reply went on to '
+    + 'call tools). Emit it alone and stop; the episode opens when Clodex acks it. Not marked.');
+  assert.strictEqual(f.s._scratch, undefined, 'no mark');
+  assert.strictEqual(f.s._scratchPendingBegin, null, 'and no wait left armed');
+});
+
+test('scratch begin: an end_turn whose turn_duration has not landed waits for it — marking early makes the cut refuse leaf-mismatch', async () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  tape.prompt('now open an episode');
+  tape.conv({ type: 'assistant', message: { role: 'assistant', id: 'msg_e', stop_reason: 'end_turn', content: [{ type: 'text', text: '[agent:scratch begin]' }] } });
+  f.write(tape);
+  f.s._flushTurnEnd = true;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.strictEqual(f.s._scratch, undefined, 'not yet: the turn_duration would land AFTER sizeAtBegin');
+
+  const late = new ScratchTape();
+  late.parent = tape.parent;
+  const dur = late.conv({ type: 'system', subtype: 'turn_duration', durationMs: 10 });
+  f.append(late.text);
+  await waitFor(() => f.injected.length > 0);
+  assert.strictEqual(f.s._scratch.leafUuid, dur, 'the leaf is the turn_duration, which is what the cut will find last in the kept set');
+});
+
 test('scratch cancel: drops the mark, cuts nothing, and says so', () => {
   const f = mkScratch();
   scratchPrefix(f);

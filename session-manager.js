@@ -4281,6 +4281,7 @@ function createSessionManager(deps) {
       try { speaker.stop(); } catch {}
       if (s.sentinel) { try { s.sentinel.stop(); } catch {} }
       if (s.ctxWatcher) { try { s.ctxWatcher.close(); } catch {} }
+      this._scratchDropPendingBegin(s);
       if (s.transport) s.transport.stop();
       if (s.agentType) registry.unregister(name);
       if (s.agentType === 'claude') { cleanupClaudeHook(name); cleanupAgentPlugin(name); }
@@ -6540,13 +6541,9 @@ function createSessionManager(deps) {
       return null;
     }
 
-    _scratchBegin(session, reply) {
+    _scratchBeginTail(session) {
       const t = this._scratchTranscript(session);
-      if (!t) {
-        reply('[agent:scratch] begin refused: this seat has no readable transcript file yet, so there is '
-          + 'nothing to mark. Not marked.');
-        return;
-      }
+      if (!t) return { state: 'no-transcript' };
       const from = Math.max(0, t.size - SCRATCH_TAIL_SCAN);
       let buf;
       try {
@@ -6556,17 +6553,88 @@ function createSessionManager(deps) {
           fs.readSync(fd, buf, 0, buf.length, from);
         } finally { fs.closeSync(fd); }
       } catch {
+        return { state: 'unreadable' };
+      }
+      const { records } = scratchParseTail(buf, { baseOffset: from });
+      const boundary = scratchBoundaryAt(records);
+      if (boundary.ok) return { state: 'ok', t, buf, records, boundary };
+      if (boundary.entry && boundary.entry.type === 'assistant') return { state: 'mid-turn' };
+      return { state: 'behind' };
+    }
+
+    _scratchBeginRefuse(reply, state) {
+      if (state === 'no-transcript') {
+        reply('[agent:scratch] begin refused: this seat has no readable transcript file yet, so there is '
+          + 'nothing to mark. Not marked.');
+        return;
+      }
+      if (state === 'unreadable') {
         reply('[agent:scratch] begin refused: the transcript tail could not be read, so the cut point '
           + 'cannot be proven to be a turn boundary. Not marked.');
         return;
       }
-      const { records } = scratchParseTail(buf, { baseOffset: from });
-      const boundary = scratchBoundaryAt(records);
-      if (!boundary.ok) {
-        reply('[agent:scratch] begin refused: it must be the last line of a reply (your reply went on to '
-          + 'call tools). Emit it alone and stop; the episode opens when Clodex acks it. Not marked.');
+      reply('[agent:scratch] begin refused: it must be the last line of a reply (your reply went on to '
+        + 'call tools). Emit it alone and stop; the episode opens when Clodex acks it. Not marked.');
+    }
+
+    _scratchBeginSettled(session, v) {
+      if (v.state === 'behind') return false;
+      if (v.state === 'ok' && v.boundary.entry.type !== 'system' && session._flushTurnEnd === true) return false;
+      return true;
+    }
+
+    _scratchBegin(session, reply) {
+      this._scratchDropPendingBegin(session);
+      const v = this._scratchBeginTail(session);
+      if (!this._scratchBeginSettled(session, v)) {
+        this._scratchDeferBegin(session, reply);
         return;
       }
+      if (v.state === 'ok') { this._scratchMark(session, v, reply); return; }
+      this._scratchBeginRefuse(reply, v.state);
+    }
+
+    _scratchDeferBegin(session, reply) {
+      const pending = { reply, watcher: null, timer: null };
+      session._scratchPendingBegin = pending;
+      const wake = () => this._scratchWakePendingBegin(session, pending);
+      const t = this._scratchTranscript(session);
+      try {
+        pending.watcher = t ? fs.watch(t.realpath, { persistent: false }, wake) : null;
+        if (pending.watcher) pending.watcher.on('error', () => {});
+      } catch { pending.watcher = null; }
+      pending.timer = setTimeout(() => {
+        pending.timer = null;
+        if (session._scratchPendingBegin !== pending) return;
+        this._scratchDropPendingBegin(session);
+        const v = this._scratchBeginTail(session);
+        if (v.state === 'ok') { this._scratchMark(session, v, reply); return; }
+        this._scratchBeginRefuse(reply, v.state);
+      }, SCRATCH_CLOSE_TIMEOUT);
+      setImmediate(wake);
+      log.info('intent', `scratch ${session.name}: begin waits for the transcript to reach the turn end`);
+    }
+
+    _scratchDropPendingBegin(session) {
+      const pending = session._scratchPendingBegin;
+      if (!pending) return;
+      session._scratchPendingBegin = null;
+      if (pending.timer) clearTimeout(pending.timer);
+      if (pending.watcher) { try { pending.watcher.close(); } catch {} }
+    }
+
+    _scratchWakePendingBegin(session, pending) {
+      if (session._scratchPendingBegin !== pending) return;
+      if (session._dead) { this._scratchDropPendingBegin(session); return; }
+      const v = this._scratchBeginTail(session);
+      if (!this._scratchBeginSettled(session, v)) return;
+      this._scratchDropPendingBegin(session);
+      if (v.state === 'ok') { this._scratchMark(session, v, pending.reply); return; }
+      this._scratchBeginRefuse(pending.reply, v.state);
+    }
+
+    _scratchMark(session, v, reply) {
+      const { t, buf, records, boundary } = v;
       const prior = session._scratch;
       if (prior && prior._closeTimer) clearTimeout(prior._closeTimer);
       const n = scratchNonce();
@@ -6597,6 +6665,7 @@ function createSessionManager(deps) {
     }
 
     _scratchCancel(session, reply) {
+      this._scratchDropPendingBegin(session);
       const mark = session._scratch;
       session._scratchVoid = null;
       if (!mark) {
