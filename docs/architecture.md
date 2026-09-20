@@ -880,6 +880,11 @@ accept teardown removes.
   is consulted ONCE PER REQUEST. So a flip reaches every running seat at its next
   turn without a restart, an in-flight response finishes under the decision it
   started with, and the baked prompt's bytes never move when the switch does.
+  S-G2 extends the same tee one level up: on a turn Clodex INJECTED (the seat's
+  `lastSubmitInjected`, read once per request through `registerAgent`'s
+  `turnInjected`), the seat's trailing prose after its last intent — or a whole
+  reply with no intent — spills to a bare `@spill:<id>` line under the same floor
+  and writer, while a typed turn is never touched.
 - **path-confine.js** — one caller-supplied name, one path segment, POSITIVELY
   confined to a directory Clodex owns. Positive because a charset regex is not
   containment: `.` and `..` pass `/^[a-zA-Z0-9._-]{1,64}$/`. Pure leaf, no I/O.

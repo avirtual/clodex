@@ -131,6 +131,12 @@ test('the grammar line is in the prompt with the setting OFF, so a flip changes 
     assert.ok(off.prompts[0].includes('Never type `@spill:` yourself'));
     assert.ok(off.prompts[0].includes("your transcript keeps the body's first line and `@spill:<id>` in their place"),
       'the seat is told the title rides along, so it does not read a titled pointer as a corrupted emission');
+    assert.ok(off.prompts[0].includes(
+      'On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last '
+      + 'intent — or a whole reply with no intent — is spilled the same way once it passes 800 bytes: '
+      + 'what the operator must know goes inside an intent, not after it.'),
+    'and that its trailing prose on an injected turn goes the same way, so a pointer where its '
+    + 'sign-off was does not read as the wire having eaten something');
     const norm = (s, r) => s.split(r).join('<root>');
     assert.equal(norm(off.prompts[0], off.root), norm(on.prompts[0], on.root),
       'flipping the setting changes zero prompt bytes');

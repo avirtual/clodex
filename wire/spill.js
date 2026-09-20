@@ -233,7 +233,7 @@ class SpillFilter {
       this._clear();
       this.verb = null;
     } else if (this.proseSpill) {
-      if (!this.foreignBody) {
+      if (!this.foreignBody && !couldBeHead(this.pending)) {
         this.tail += this.pending;
         this.pending = '';
       }

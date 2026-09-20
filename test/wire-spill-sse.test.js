@@ -338,3 +338,43 @@ test('an invalid agent streams verbatim end to end', () => {
   assert.deepEqual(out, THINKING_STREAM);
   assert.equal(tee.fired, 0);
 });
+
+
+test('proseSpill: the pointer delta precedes content_block_stop, and the stop is byte-identical', () => {
+  const stop = ev('content_block_stop', { type: 'content_block_stop', index: 0 });
+  const stream = Buffer.concat([
+    ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+    td(0, 'Acknowledged.\n'),
+    td(0, BIG.slice(0, 400)),
+    td(0, `${BIG.slice(400)}\n`),
+    stop,
+    ev('message_stop', { type: 'message_stop' }),
+  ]);
+  const { out, tee } = drive(stream, 17, { proseSpill: true });
+  const s = out.toString('utf8');
+
+  assert.equal(tee.fired, 1);
+  assert.ok(!s.includes(BIG), 'the prose is off the wire');
+  assert.ok(s.indexOf('@spill:') < s.indexOf('event: content_block_stop'),
+    'held text cannot outlive its block — the pointer is emitted before the stop');
+  assert.ok(s.includes(stop.toString('utf8')), 'the stop frame is byte-identical');
+  assert.equal(textOf(out), `@spill:${/@spill:([0-9a-f]{16})/.exec(s)[1]}\n`,
+    'and the block carries exactly the pointer line');
+});
+
+test('proseSpill: a thinking block is never touched', () => {
+  const think = ev('content_block_delta', {
+    type: 'content_block_delta',
+    index: 0,
+    delta: { type: 'thinking_delta', thinking: BIG, text: BIG },
+  });
+  const stream = Buffer.concat([
+    ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'thinking' } }),
+    think,
+    ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
+  ]);
+  const { out, tee } = drive(stream, 23, { proseSpill: true });
+  assert.ok(out.toString('utf8').includes(think.toString('utf8')),
+    'a rewritten thinking block breaks its signature, so the delta type is the guard');
+  assert.equal(tee.fired, 0);
+});

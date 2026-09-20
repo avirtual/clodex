@@ -101,6 +101,7 @@ clodex-hooks-
 clodex-hs-
 clodex-impwire-
 clodex-impwire-home-
+clodex-injbit-
 clodex-impwire-reg-
 clodex-impwire-src-
 clodex-init-
