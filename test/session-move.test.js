@@ -936,7 +936,8 @@ test('a move on a NOT-LIVE seat arms no backstop — there is no process to kill
 
 // The real session:context-menu handler, with popupMenu capturing the template.
 // Only the deps that path touches are wired; the rest are never reached.
-function mkMenuTemplate(entry, { REGISTRY_DIR = null, revealed = [], peers = null, sent = [] } = {}) {
+function mkMenuTemplate(entry, { REGISTRY_DIR = null, revealed = [], peers = null, sent = [],
+  workspaceList = [{ id: 'ws1', name: 'Home' }], here = 'ws1' } = {}) {
   let template = null;
   const handlers = new Map();
   registerIpcHandlers({
@@ -950,6 +951,8 @@ function mkMenuTemplate(entry, { REGISTRY_DIR = null, revealed = [], peers = nul
     fs: fsReal,
     showItemInFolder: (p) => revealed.push(p),
     getPeerManager: () => (peers ? { statuses: () => peers } : null),
+    workspaces: { list: () => workspaceList },
+    workspaceOfSender: () => here,
   });
   handlers.get('session:context-menu')(
     { sender: { send: (channel, payload) => sent.push({ channel, payload }) } },
@@ -1062,9 +1065,9 @@ test('the peer move reuses the local move\'s kept arm, and the archived row says
 
 test('the archived restore payload carries movedTo, so the row survives a restart', () => {
   const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'session-restore.js'), 'utf-8');
-  const arm = src.slice(src.indexOf('if (entry.archivedAt'));
-  const body = arm.slice(0, arm.indexOf('continue;'));
-  assert.ok(body.includes('archived: true'), 'ENTER: this is the archived branch');
+  const arm = src.slice(src.indexOf('function archivedSnapshotFor('));
+  const body = arm.slice(0, arm.indexOf('\n}'));
+  assert.ok(body.includes('archived: true'), 'ENTER: this is the archived row builder');
   assert.ok(/movedTo: entry\.movedTo/.test(body),
     'the payload is built field-by-field, so an omitted movedTo silently downgrades a moved '
     + 'seat back to a plain "archived" row on the next app start');
@@ -1115,4 +1118,48 @@ test('peer and sandbox rows never reach this menu at all', () => {
   // never called for them.
   assert.ok(src.includes('showPeerContextMenu'), 'peers-ui routes its rows to the PEER menu');
   assert.ok(!src.includes('showSessionContextMenu'), 'and never to the session menu this item lives in');
+});
+
+const THREE_WORKSPACES = [
+  { id: 'ws1', name: 'Home' },
+  { id: 'ws2', name: 'Research' },
+  { id: 'ws3', name: 'Ops' },
+];
+
+test('Move to Workspace… lists every workspace but the sender\'s own, and sends its id', () => {
+  const sent = [];
+  const tpl = mkMenuTemplate({ name: 'a', type: 'claude', cwd: '/x' },
+    { workspaceList: THREE_WORKSPACES, here: 'ws1', sent });
+  const item = menuItem(tpl, 'Move to Workspace…');
+  assert.ok(item, 'ENTER: the item is in the template at all');
+  assert.deepStrictEqual(item.submenu.map((s) => s.label), ['Research', 'Ops'],
+    'the window the operator right-clicked in is not a destination');
+  item.submenu[1].click();
+  assert.deepStrictEqual(sent, [{
+    channel: 'session:context-action',
+    payload: { action: 'moveToWorkspace', name: 'a', workspaceId: 'ws3', workspaceName: 'Ops' },
+  }], 'the click carries the id the renderer hands to moveSessionToWorkspace');
+});
+
+test('Move to Workspace… falls back to the id when a workspace has no name', () => {
+  const item = menuItem(mkMenuTemplate({ name: 'a', type: 'claude', cwd: '/x' },
+    { workspaceList: [{ id: 'ws1', name: 'Home' }, { id: 'ws2', name: '' }], here: 'ws1' }),
+  'Move to Workspace…');
+  assert.deepStrictEqual(item.submenu.map((s) => s.label), ['ws2']);
+});
+
+test('Move to Workspace… is present but disabled when there is nowhere to move', () => {
+  const item = menuItem(mkMenuTemplate({ name: 'a', type: 'claude', cwd: '/x' },
+    { workspaceList: [{ id: 'ws1', name: 'Home' }], here: 'ws1' }), 'Move to Workspace…');
+  assert.ok(item, 'the operator still learns the feature exists');
+  assert.strictEqual(item.enabled, false);
+  assert.ok(!('submenu' in item), 'a disabled item carries no empty submenu');
+});
+
+test('Move to Workspace… is offered for EVERY row type, bash included', () => {
+  for (const type of ['claude', 'codex', 'bash']) {
+    const labels = mkMenu({ name: 'a', type, cwd: '/x' },
+      { workspaceList: THREE_WORKSPACES, here: 'ws1' });
+    assert.ok(labels.includes('Move to Workspace…'), `${type}: no conversation is involved`);
+  }
 });

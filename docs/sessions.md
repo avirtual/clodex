@@ -402,6 +402,7 @@ worktree-removal failure is toasted by the renderer while the row goes.
 | Restore (archived) | kept | never spawned | dimmed archived row (click = resume) |
 | Move (right-click "Move Session…") | kept, `cwd` rewritten (archive stamp cleared) | killed + respawned (`--resume`) | tab rebuilt under the new folder; failed ghost row if the respawn throws |
 | Move to peer (right-click "Move to Peer…" ▸ peer) | entry kept, `movedTo` stamped, `archivedAt` set | killed; shipped; not respawned (failure → respawned like Move) | archived row "moved to <peer>" |
+| Move to workspace (right-click "Move to Workspace…" ▸ name) | entry kept, only `workspaceId` rewritten | untouched — keeps running; output buffered until the new window attaches | tab leaves this window, appears in the other (or when it next opens) |
 
 **Move Session…** (right-click, agent rows only) changes a seat's cwd. A move is
 "same record, new cwd, restart": `manager.move(name, newCwd)` refuses an unknown
@@ -522,6 +523,34 @@ it carries `respawned: true` to tell the renderer a live seat needs a real row. 
 also carries `installed` — non-null when the far commit got far enough to leave
 the transcript and seat dirs in place. Every later move of that name is then
 refused by the far name collision, so the retry has to happen on the far box.
+
+**Move to Workspace…** (right-click, every row type including bash) re-homes a
+session to another LOCAL workspace window with no kill and no respawn.
+`manager.moveToWorkspace(name, workspaceId)` refuses an unknown name (resolved
+against the RECORD, so an archived row moves too), an unknown workspace id and a
+move to the workspace the session is already in; a refusal writes nothing. The
+effect is one `upsert({name, workspaceId})` plus the same rewrite on the live
+Session — every window-bound path already keys on that field
+(`_sendToSession` → `windowForSession` → `windowForWorkspace`, `session:list` →
+`listForWorkspace`), so the field IS the move.
+
+Both windows are then told directly, never through `_sendToSession`, which
+resolves the window from the NEW id and so could not reach the old one. The
+source window gets `session:moved-out {name}` and drops its tab with
+`removeSession(name, {keepPersisted: true})` — the pty is untouched, only this
+terminal is disposed. The destination window, if open, gets `session:moved-in`
+carrying exactly the row `session-restore.js` builds for a reattach
+(`liveSnapshotFor`, or `archivedSnapshotFor` for an archived record), and mounts
+it through `mountRestoredSession` — the same function the restore loop calls, so
+the two cannot drift. It does not switch to it: the operator's click landed in
+the other window. If the destination is CLOSED nothing is sent and
+`pendingOutput` is deliberately not drained; the session appears there when that
+workspace next opens, through the ordinary restore.
+
+No team notices fire (the cwd is unchanged). The per-workspace env scope is
+applied at SPAWN (`mergeSessionEnv({workspace: …})`), so a moved live seat keeps
+the OLD workspace's env until its next restart — by design, since restarting to
+refresh env would defeat the point of a move that costs no context.
 
 `restartSession` (engine.js) — shared by the local IPC handler and the peer
 restart endpoint. `opts.fresh` drops the resumeId (required for skill roster

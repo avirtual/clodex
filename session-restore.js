@@ -7,18 +7,61 @@
 // future headless engine share ONE restore path, and the failure semantics are
 // finally test-pinned.
 //
-// Body is move-only from ipc-handlers.js: same iteration, same manager.create
-// arg order, same return-entry shapes, and — load-bearing — the SAME failure
-// contract: a session that throws during restore is NOT removed from persistence;
-// it comes back as a `{ failed: true }` entry so the renderer's retry/forget UI
-// can offer it. Silently wiping it was the pre-v0.5.3 "upgrade kills my agents"
-// bug (see CLAUDE.md gotcha).
+// Load-bearing: a session that throws during restore is NOT removed from
+// persistence; it comes back as a `{ failed: true }` entry so the renderer's
+// retry/forget UI can offer it. Silently wiping it was the pre-v0.5.3
+// "upgrade kills my agents" bug (see CLAUDE.md gotcha).
 //
 // `readCtxFor` is injected (not inlined) because it moved to main.js alongside
 // this extraction — it was a single-consumer local const in ipc-handlers, and the
 // closure that now calls this leaf owns it. See its main.js header for the why.
 
 'use strict';
+
+function archivedSnapshotFor({ manager, entry }) {
+  return {
+    name: entry.name,
+    type: entry.type,
+    cwd: entry.cwd,
+    label: entry.label || null,
+    backend: entry.backend || null,
+    // Team name owning this cwd (sidebar group-by-project key), or null.
+    team: manager.teamNameFor(entry.cwd),
+    archived: true,
+    archivedAt: entry.archivedAt,
+    createdAt: entry.createdAt || null,
+    movedTo: entry.movedTo || null,
+  };
+}
+
+function liveSnapshotFor({ manager, entry, session, readCtxFor, proxyPoller }) {
+  const replay = session.pendingOutput || null;
+  session.pendingOutput = '';
+  return {
+    name: entry.name,
+    type: entry.type,
+    cwd: entry.cwd,
+    label: entry.label || null,
+    backend: session.backend || null,
+    team: manager.teamNameFor(entry.cwd),
+    replay,
+    // Seed the sidebar dot with the CURRENT state — activity events
+    // while detached were dropped, so without this a busy or blocked
+    // session reattaches showing idle grey until its next transition.
+    activity: session.activityState || 'idle',
+    attention: session.needsAttention || null,
+    pendingCount: manager.pendingCountFor(entry.name),
+    createdAt: entry.createdAt || null,
+    ...readCtxFor(entry.name),
+    proxy: proxyPoller.snapshot(entry.name),
+  };
+}
+
+function stampConfigFlags(row, entry) {
+  if (entry.noWire === true) row.noWire = true;
+  if (typeof entry.fixFor === 'string' && entry.fixFor) row.fixFor = entry.fixFor;
+  return row;
+}
 
 async function restoreSessionsForWorkspace({
   workspaceId, persistence, manager, proxyPoller,
@@ -31,45 +74,15 @@ async function restoreSessionsForWorkspace({
     // as archived rows so the sidebar's status filter (active/archived/all) has
     // something to show and the operator can resume them on demand.
     if (entry.archivedAt && !manager.sessions.has(entry.name)) {
-      restored.push({
-        name: entry.name,
-        type: entry.type,
-        cwd: entry.cwd,
-        label: entry.label || null,
-        backend: entry.backend || null,
-        // Team name owning this cwd (sidebar group-by-project key), or null.
-        team: manager.teamNameFor(entry.cwd),
-        archived: true,
-        archivedAt: entry.archivedAt,
-        createdAt: entry.createdAt || null,
-        movedTo: entry.movedTo || null,
-      });
+      restored.push(archivedSnapshotFor({ manager, entry }));
       continue;
     }
     if (manager.sessions.has(entry.name)) {
       // Already running — report it and flush any buffered output so the
       // new terminal shows everything that happened while detached
-      const session = manager.sessions.get(entry.name);
-      const replay = session.pendingOutput || null;
-      session.pendingOutput = '';
-      restored.push({
-        name: entry.name,
-        type: entry.type,
-        cwd: entry.cwd,
-        label: entry.label || null,
-        backend: session.backend || null,
-        team: manager.teamNameFor(entry.cwd),
-        replay,
-        // Seed the sidebar dot with the CURRENT state — activity events
-        // while detached were dropped, so without this a busy or blocked
-        // session reattaches showing idle grey until its next transition.
-        activity: session.activityState || 'idle',
-        attention: session.needsAttention || null,
-        pendingCount: manager.pendingCountFor(entry.name),
-        createdAt: entry.createdAt || null,
-        ...readCtxFor(entry.name),
-        proxy: proxyPoller.snapshot(entry.name),
-      });
+      restored.push(liveSnapshotFor({
+        manager, entry, session: manager.sessions.get(entry.name), readCtxFor, proxyPoller,
+      }));
       continue;
     }
     try {
@@ -135,14 +148,15 @@ async function restoreSessionsForWorkspace({
     }
   }
   // Wire-off is persisted config, so it belongs on EVERY row shape this loop
-  // emits — live-reattach, freshly restored, archived and failed alike. Stamped
-  // once here rather than in the four pushes above, which would drift apart the
-  // first time one of them is touched.
-  const wireOff = new Set(saved.filter((e) => e.noWire === true).map((e) => e.name));
-  for (const r of restored) if (wireOff.has(r.name)) r.noWire = true;
-  const fixHosts = new Map(saved.filter((e) => typeof e.fixFor === 'string' && e.fixFor).map((e) => [e.name, e.fixFor]));
-  for (const r of restored) if (fixHosts.has(r.name)) r.fixFor = fixHosts.get(r.name);
+  // emits — live-reattach, freshly restored, archived and failed alike.
+  const byName = new Map(saved.map((e) => [e.name, e]));
+  for (const r of restored) {
+    const entry = byName.get(r.name);
+    if (entry) stampConfigFlags(r, entry);
+  }
   return restored;
 }
 
-module.exports = { restoreSessionsForWorkspace };
+module.exports = {
+  restoreSessionsForWorkspace, liveSnapshotFor, archivedSnapshotFor, stampConfigFlags,
+};

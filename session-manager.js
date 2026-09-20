@@ -185,6 +185,7 @@ const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = req
 const { SEAT_KINDS, seatPathFor, claudeProjectSlug } = require('./clodex-paths');
 const { SEGMENT_RE: IMPORT_SEGMENT_RE, SESSION_ID_RE: IMPORT_SESSION_ID_RE } = require('./seat-import');
 const { effectiveModel } = require('./accounts');
+const { liveSnapshotFor, archivedSnapshotFor, stampConfigFlags } = require('./session-restore');
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
 // module's path. Removing the re-export as unused breaks those importers.
@@ -674,6 +675,7 @@ function createSessionManager(deps) {
     getPluginBundles,
     readSystemPromptBody,
     getPersistence, getTemplates, getUiSettings, getEnvScopes, getAccounts, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getReminders, getNotifications,
+    getWorkspaces, readCtxFor,
     getPluginHooks,
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp, relaunchUnavailable,
   } = deps;
@@ -3237,6 +3239,39 @@ function createSessionManager(deps) {
       } finally {
         this._movingNames.delete(name);
       }
+    }
+
+    moveToWorkspace(name, workspaceId) {
+      const entry = getPersistence().get(name);
+      if (!entry) return { ok: false, error: `Session not found: ${name}` };
+      const ws = getWorkspaces ? getWorkspaces().get(workspaceId) : null;
+      if (!ws) return { ok: false, error: 'unknown workspace' };
+      const oldId = entry.workspaceId || DEFAULT_WORKSPACE_ID;
+      const workspaceName = ws.name || ws.id;
+      if (oldId === workspaceId) return { ok: false, error: `${name} is already in ${workspaceName}` };
+
+      const s = this.sessions.get(name);
+      getPersistence().upsert({ name, workspaceId });
+      if (s) s.workspaceId = workspaceId;
+
+      const destWin = this.windowForWorkspace(workspaceId);
+      if (s) {
+        const srcWin = this.windowForWorkspace(oldId);
+        if (srcWin) srcWin.webContents.send('session:moved-out', { name });
+      }
+      if (destWin) {
+        const record = getPersistence().get(name) || entry;
+        const row = s
+          ? liveSnapshotFor({
+            manager: this, entry: record, session: s,
+            readCtxFor: readCtxFor || (() => ({ ctx: null, ctxTok: null, ctxSize: null, ctxCost: null, ctxModel: null })),
+            proxyPoller: this._proxyPoller || { snapshot: () => null },
+          })
+          : archivedSnapshotFor({ manager: this, entry: record });
+        destWin.webContents.send('session:moved-in', stampConfigFlags(row, record));
+      }
+      log.info('session', `move-to-workspace ${name} ${oldId} → ${workspaceId}`);
+      return { ok: true, name, workspaceId, workspaceName, live: !!s };
     }
 
     _moveBadSegment(name) {
