@@ -202,6 +202,36 @@ test('t808: the sandbox row is present in the literal AND in GRAMMAR_LINES', () 
   }
 });
 
+test('t1039: the scratch rows are present in the literal AND in GRAMMAR_LINES — a row missing from both copies keeps the byte-pins green and ships a verb whose `end` CUTS the transcript', () => {
+  for (const ROW of [/^ {2}\[agent:scratch begin\] {12}Open a SCRATCH EPISODE/m,
+    /^ {2}\[agent:scratch end\] <summary> {4}Close the episode:/m,
+    /^ {2}\[agent:scratch cancel\] {11}Bare; drops the mark and cuts nothing/m]) {
+    assert.ok(ROW.test(IPC_PROMPT), `the literal carries ${ROW}`);
+    assert.ok(ROW.test(buildIpcPrompt(['scratch'])), `and so does a seat granted scratch: ${ROW}`);
+  }
+  for (const src of [IPC_PROMPT, buildIpcPrompt(['scratch'])]) {
+    assert.ok(/before a stretch of reading whose only value is the conclusion/.test(src),
+      'the row says WHEN — an episode opened over reads that must be cited loses the citations');
+    assert.ok(/Bare, and the LAST line of your reply: emit it and stop/.test(src),
+      'begin is refused off a turn boundary, so the position rule has to be in the row that fires it');
+    assert.ok(/Greedy body to a bare \[agent:end\], and it must be the LAST thing in your reply/.test(src),
+      'and end has BOTH constraints: the greedy body and the same position rule');
+    assert.ok(/the rewind drops the conversation, not the work on disk, and the post-cut you does not remember doing any of it/.test(src),
+      'the one fact no seat infers: side effects survive a cut that erases the memory of causing them');
+    assert.ok(/about five seconds, and the cached prefix up to the cut is kept/.test(src),
+      'what it COSTS — a seat that fears a cold respawn never opens an episode');
+    assert.ok(/A bodyless end is refused/.test(src) && /Claude seats only/.test(src),
+      'the two refusals a seat meets first');
+  }
+});
+
+test('t1039: scratch is gateable — a seat without it sees none of the three rows, which the byte-pins cannot show (both pass lists that ENABLE scratch)', () => {
+  const off = buildIpcPrompt(ALL_GATEABLE.filter((t) => t !== 'scratch'));
+  assert.ok(!off.includes('[agent:scratch'), 'no scratch row for a seat denied the verb');
+  assert.ok(!buildIpcPrompt([]).includes('[agent:scratch'), 'nor for a fully-gated seat');
+  assert.ok(off.includes('[agent:context compact]'), 'ENTER: its neighbours still render');
+});
+
 // The `]]` that t754 above used to guard rides the LAST kv, and t830 appended
 // account: after model:. Pinned here rather than there so the closing bracket
 // still has exactly one owner: a row whose kv list runs past the intent's `]`

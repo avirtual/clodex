@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- **Scratch episodes** — a Claude seat can emit `[agent:scratch begin]`, read and reason freely, then `[agent:scratch end] <summary>`: Clodex cuts the episode out of the transcript, respawns the seat on the same session and hands the summary back as a user turn, so only the conclusion is carried and the session compacts later. Refused, never guessed: a cut that would orphan a tool call, span a compact, or drop an operator message bounces with the reason.
 
 ## 5.83.4 — 2026-09-20
 
