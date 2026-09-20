@@ -100,9 +100,9 @@ Off, the filter is byte-for-byte pre-S-G2, which is why every older subject stil
 runs against the default. On, text outside a held body accumulates in `tail`, and
 any intent head line FLUSHES it — keeping prose BETWEEN intents on the wire.
 
-`foreignBody` covers the verb the filter does NOT hold: a `dm` body is ordinary
-text to the line scanner, so without it the message would land in `tail` and leave
-as a pointer its recipient cannot read. `couldBeHead(pending)` guards a block end
+`foreignBody` covers the verb the filter does NOT hold: a `remind` body is ordinary
+text to the line scanner, so without it the reminder would land in `tail` and fire
+carrying a pointer. `couldBeHead(pending)` guards a block end
 likewise: an unterminated head line is an intent, not a tail. The floor is SHARED
 with the body path; the pointer is BARE, and `POINTER_RE` accepts that form.
 

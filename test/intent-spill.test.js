@@ -155,23 +155,23 @@ test('pointerOf: a title before the pointer is accepted and contributes nothing 
   assert.equal(pointerOf(`title @spill:${id}\n`), id, 'a consumer that kept the newline still resolves');
 });
 
-test('the verb set is the dotted key, and only the seven listed verbs', () => {
+test('the verb set is the dotted key, and only the nine listed verbs', () => {
   assert.equal(verbKeyOf({ type: 'task', sub: 'add' }), 'task.add');
   assert.equal(verbKeyOf({ type: 'shout' }), 'shout');
   for (const v of [{ type: 'task', sub: 'add' }, { type: 'task', sub: 'respec' },
-    { type: 'task', sub: 'reject' }, { type: 'context', sub: 'compact' },
+    { type: 'task', sub: 'reject' }, { type: 'task', sub: 'done' },
+    { type: 'context', sub: 'compact' },
     { type: 'context', sub: 'clear' }, { type: 'context', sub: 'reload' },
-    { type: 'shout' }]) {
+    { type: 'shout' }, { type: 'dm', target: 'bob' }]) {
     assert.equal(isSpillVerb(v), true, JSON.stringify(v));
   }
   assert.equal(isSpillVerb({ type: 'memory', sub: 'remember' }), false,
     'memory remember is out on purpose: the seat must keep SEEING what it memorized');
-  assert.equal(isSpillVerb({ type: 'dm', target: 'bob' }), false,
-    "a dm resolves in no reader's seat dir, so a pointer in one is the text it is");
-  assert.equal(isSpillVerb({ type: 'task', sub: 'done' }), false,
-    'a report is read by the lead out of the ticket, not re-read by the hand');
+  assert.equal(isSpillVerb({ type: 'dm', target: 'bob', sub: 'whatever' }), false,
+    'KEY_FIELDS gives a dm a target, never a sub, so the plain `dm` key is what the '
+    + 'receiving side sees');
   assert.deepEqual([...SPILL_VERBS].sort(), ['context.clear', 'context.compact', 'context.reload',
-    'shout', 'task.add', 'task.reject', 'task.respec']);
+    'dm', 'shout', 'task.add', 'task.done', 'task.reject', 'task.respec']);
   assert.equal(validAgent('t42.fix'), true);
   assert.equal(validAgent('..'), false);
 });

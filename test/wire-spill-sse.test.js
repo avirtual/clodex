@@ -136,7 +136,7 @@ test('a real wire delta (compact separators, padded) is forwarded byte-identical
 test('a non-firing intent split across deltas is re-emitted as the ORIGINAL frames', () => {
   const stream = Buffer.concat([
     ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
-    td(0, 'On it.\n[agent:dm bob] '),
+    td(0, 'On it.\n[agent:remind in 5m] '),
     td(0, BIG.slice(0, 400)),
     td(0, BIG.slice(400)),
     td(0, '\n[agent:end]\ndone.\n'),
@@ -146,6 +146,35 @@ test('a non-firing intent split across deltas is re-emitted as the ORIGINAL fram
     assert.deepEqual(drive(stream, cs).out, stream,
       `@cs=${cs}: the filter withholds a partial line that could still become an opener, and `
       + 'synthesizing one delta for the held run would re-frame traffic that never spilled');
+  }
+});
+
+const DM_STREAM = Buffer.concat([
+  ev('message_start', { type: 'message_start' }),
+  ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+  td(0, 'On it.\n[agent:dm bob] '),
+  td(0, BIG.slice(0, 400)),
+  td(0, BIG.slice(400)),
+  td(0, '\n[agent:end]\n'),
+  ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
+  ev('message_stop', { type: 'message_stop' }),
+]);
+
+test('a dm body spills through the tee, and the same stream with dm unlisted is byte-identical', () => {
+  for (const cs of [1, 43, 997, DM_STREAM.length]) {
+    const { out, tee } = drive(DM_STREAM, cs, { verbs: [...VERBS, 'dm'] });
+    const seen = textOf(out);
+    const id = seen.split('@spill:')[1].split('\n')[0];
+    assert.equal(seen, `On it.\n[agent:dm bob] @spill:${id}\n[agent:end]\n`, `@cs=${cs}`);
+    assert.equal(fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${id}.md`), 'utf8'), BIG,
+      `@cs=${cs}: the recipient's copy is on disk in full`);
+    assert.equal(tee.fired, 1, `@cs=${cs}`);
+  }
+  assert.ok(!VERBS.includes('dm'), 'ENTER: the base fixture really omits dm');
+  for (const cs of [1, 43, 997, DM_STREAM.length]) {
+    const { out, tee } = drive(DM_STREAM, cs);
+    assert.deepEqual(out, DM_STREAM, `@cs=${cs}: an unarmed seat's stream is untouched`);
+    assert.equal(tee.fired, 0, `@cs=${cs}`);
   }
 });
 

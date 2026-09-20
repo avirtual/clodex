@@ -134,12 +134,15 @@ class SpillFilter {
     }
 
     const m = HEAD_RE.exec(line);
-    if (m && this.verbs.has(m[2] ? `${m[1]}.${m[2]}` : m[1])) {
+    const key = m
+      ? (this.verbs.has(m[1]) ? m[1] : (m[2] ? `${m[1]}.${m[2]}` : m[1]))
+      : null;
+    if (m && this.verbs.has(key)) {
       const flushed = this.proseSpill ? this._flushTail() : '';
       this.foreignBody = false;
       const cut = m[0].length;
       this.holding = true;
-      this.verb = m[2] ? `${m[1]}.${m[2]}` : m[1];
+      this.verb = key;
       this.head = line.slice(0, cut);
       this.rawRest = line.slice(cut);
       const rest = this.rawRest.trim();
