@@ -103,18 +103,28 @@ test('parseIntent: context sub-command + optional body', () => {
   assert.deepStrictEqual(r, { type: 'context', sub: 'compact', body: 'keep going on task X' });
 });
 
-test('parseIntent: scratch — three sub-verbs, only `end` carrying a body', () => {
+test('parseIntent: scratch — five sub-verbs, only `end` and `rewind` carrying a body', () => {
   assert.deepStrictEqual(parseIntent('[agent:scratch begin]'),
-    { type: 'scratch', sub: 'begin', replay: false, body: '' });
+    { type: 'scratch', sub: 'begin', label: null, replay: false, body: '' });
   assert.deepStrictEqual(parseIntent('[agent:scratch cancel]'),
-    { type: 'scratch', sub: 'cancel', replay: false, body: '' });
+    { type: 'scratch', sub: 'cancel', label: null, replay: false, body: '' });
   assert.deepStrictEqual(parseIntent('[agent:scratch end] what I now know'),
-    { type: 'scratch', sub: 'end', replay: false, body: 'what I now know' });
+    { type: 'scratch', sub: 'end', label: null, replay: false, body: 'what I now know' });
+  assert.deepStrictEqual(parseIntent('[agent:scratch mark before-survey]'),
+    { type: 'scratch', sub: 'mark', label: 'before-survey', replay: false, body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:scratch rewind before-survey] the note'),
+    { type: 'scratch', sub: 'rewind', label: 'before-survey', replay: false, body: 'the note' });
+  assert.deepStrictEqual(parseIntent('[agent:scratch rewind]'),
+    { type: 'scratch', sub: 'rewind', label: null, replay: false, body: '' });
 });
 
-test('parseIntent: `replay` is an end-only modifier — begin/cancel do not take it', () => {
+test('parseIntent: `replay` is an end/rewind-only modifier — begin/cancel/mark do not take it', () => {
   assert.deepStrictEqual(parseIntent('[agent:scratch end replay] the summary'),
-    { type: 'scratch', sub: 'end', replay: true, body: 'the summary' });
+    { type: 'scratch', sub: 'end', label: null, replay: true, body: 'the summary' });
+  assert.deepStrictEqual(parseIntent('[agent:scratch rewind a replay] the note'),
+    { type: 'scratch', sub: 'rewind', label: 'a', replay: true, body: 'the note' });
+  assert.strictEqual(parseIntent('[agent:scratch mark replay]'), null,
+    '`replay` is the modifier, never a label — mark without a label is not an intent');
   for (const line of ['[agent:scratch begin replay]', '[agent:scratch cancel replay]']) {
     assert.strictEqual(parseIntent(line), null,
       `${line} must not parse. replay only means anything at the cut — accepting it on begin would `
@@ -148,7 +158,7 @@ test('parseIntent: scratch is a CLOSED alternation — an unknown sub-verb is no
 
 test('parseIntent: a scratch end body spans multiple lines (s flag), and the escape still quotes it', () => {
   assert.deepStrictEqual(parseIntent('[agent:scratch end] line one\nline two'),
-    { type: 'scratch', sub: 'end', replay: false, body: 'line one\nline two' });
+    { type: 'scratch', sub: 'end', label: null, replay: false, body: 'line one\nline two' });
   assert.deepStrictEqual(parseIntent('\\[agent:scratch begin]'),
     { type: 'escape', text: '[agent:scratch begin]' });
 });

@@ -360,7 +360,7 @@ const SCRATCH_COST_FILE = 'scratch-cost.jsonl';
 const SCRATCH_COST_VERSION = 1;
 
 function scratchCostRecord({
-  seat, team = null, sessionId = null, nonce = null, beganAt = null, endedAt = null,
+  seat, team = null, sessionId = null, nonce = null, label = null, beganAt = null, endedAt = null,
   stats = null, summaryBytes = null, replayed = null, dispatched = null,
   outcome = null, reason = null, recycleMs = null, now = Date.now(),
 } = {}) {
@@ -381,6 +381,7 @@ function scratchCostRecord({
     team: team || null,
     sessionId: sessionId || null,
     nonce: nonce || null,
+    label: typeof label === 'string' && label ? label : null,
     beganAt: began,
     endedAt: ended,
     wallMs: (began !== null && ended !== null && ended >= began) ? ended - began : null,

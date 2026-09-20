@@ -1,6 +1,8 @@
 'use strict';
 
 const ACK_PREFIX = '[agent:scratch] episode open · mark ';
+const SCRATCH_NOTELESS_SENTENCE = 'You left no note: you recorded that stretch as a negative result — '
+  + 'nothing in it was worth keeping. Do not repeat it; take a different approach or report the dead end.';
 
 const CONVERSATION_TYPES = new Set(['user', 'assistant', 'system']);
 
@@ -375,13 +377,37 @@ function scratchBriefing(mark, stats, body, opts = {}) {
   const droppedBytes = ((stats || {}).bytes || {}).dropped || 0;
   const kb = Math.round(droppedBytes / 1024);
 
-  const header = `Scratch episode result · mark ${mark.nonce} (delivered by Clodex). `
-    + `You opened this episode at ${formatTime(mark.beganAt)} and closed it at ${formatTime(endedAt)}; `
-    + `the ${turns} turns / ${kb} KB of reads between them are no longer in your transcript — `
-    + 'only the summary below, which you wrote at close, survives. It is your own conclusion, delivered as '
-    + 'given facts: what it does not state, you have not verified. Continue from it.';
+  const label = typeof opts.label === 'string' && opts.label ? opts.label : (mark.label || null);
+  if (!label) {
+    const header = `Scratch episode result · mark ${mark.nonce} (delivered by Clodex). `
+      + `You opened this episode at ${formatTime(mark.beganAt)} and closed it at ${formatTime(endedAt)}; `
+      + `the ${turns} turns / ${kb} KB of reads between them are no longer in your transcript — `
+      + 'only the summary below, which you wrote at close, survives. It is your own conclusion, delivered as '
+      + 'given facts: what it does not state, you have not verified. Continue from it.';
+    return `${header}\n\n${String(body == null ? '' : body)}`;
+  }
 
-  return `${header}\n\n${String(body == null ? '' : body)}`;
+  const note = String(body == null ? '' : body);
+  const noteless = opts.noteless === true || note.trim() === '';
+  const earlier = (Array.isArray(opts.notes) ? opts.notes : [])
+    .filter((n) => n && typeof n.body === 'string')
+    .map((n) => (Number.isFinite(n.at) ? `[${formatTime(n.at)}] ` : '') + n.body);
+  const tail = noteless
+    ? `. ${SCRATCH_NOTELESS_SENTENCE}`
+    : ' — only the note(s) below survive. They are your own conclusions, delivered as given facts: '
+      + 'what they do not state, you have not verified. Continue from them.';
+  const header = `Scratch rewind result · mark ${mark.nonce} · label ${label} (delivered by Clodex). `
+    + `You set this mark at ${formatTime(mark.beganAt)} and rewound to it at ${formatTime(endedAt)}; `
+    + `the ${turns} turns / ${kb} KB between them are no longer in your transcript${tail}`;
+  const blocks = [header];
+  if (earlier.length) blocks.push((noteless ? 'Notes left at this mark earlier:\n' : '') + earlier.join('\n\n'));
+  if (!noteless) blocks.push(`[${formatTime(endedAt)}] ${note}`);
+  return blocks.join('\n\n');
+}
+
+function scratchReArmLine(mark) {
+  return `${ACK_PREFIX}${mark.nonce} · label ${mark.label} re-armed here — `
+    + `rewind to it again with \`[agent:scratch rewind ${mark.label}] <note>\`.`;
 }
 
 module.exports = {
@@ -395,6 +421,8 @@ module.exports = {
   cutStats,
   validateScratchCut,
   scratchBriefing,
+  scratchReArmLine,
   scratchReplayLine,
   arrivalClock,
+  SCRATCH_NOTELESS_SENTENCE,
 };

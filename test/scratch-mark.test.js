@@ -16,6 +16,8 @@ const {
   cutStats,
   validateScratchCut,
   scratchBriefing,
+  scratchReArmLine,
+  SCRATCH_NOTELESS_SENTENCE,
 } = require('../scratch-mark');
 
 const SID = '5196a6e4-1111-2222-3333-444455556666';
@@ -707,6 +709,101 @@ test('scratchBriefing: an empty or missing body still produces a header', () => 
     assert.ok(out.includes('mark x1'));
     assert.ok(out.endsWith('\n\n'), 'never the string "null" pasted under the header');
   }
+});
+
+const ISO_CLOCK = (ms) => new Date(ms).toISOString().slice(11, 16);
+
+test('t1044 scratchBriefing: a labelled mark gets the rewind header, earlier notes, and this note last', () => {
+  const mark = { nonce: 's7f3a1', beganAt: Date.UTC(2026, 8, 20, 18, 24), label: 'before-survey' };
+  const stats = { turns: { dropped: 14 }, bytes: { dropped: 212 * 1024 } };
+  const body = 'What I now know: the bail moved to format.js:41.';
+  const notes = [{ at: Date.UTC(2026, 8, 20, 18, 27), body: 'first pass: dead end in the scanner' }];
+
+  const out = scratchBriefing(mark, stats, body, { endedAt: Date.UTC(2026, 8, 20, 18, 31), formatTime: ISO_CLOCK, notes });
+  assert.ok(out.startsWith('Scratch rewind result · mark s7f3a1 · label before-survey (delivered by Clodex). '));
+  assert.ok(out.includes('You set this mark at 18:24 and rewound to it at 18:31'));
+  assert.ok(out.includes('14 turns / 212 KB'));
+  assert.ok(out.includes('only the note(s) below survive. They are your own conclusions, delivered as given facts: '
+    + 'what they do not state, you have not verified. Continue from them.'));
+  assert.ok(out.includes('\n\n[18:27] first pass: dead end in the scanner\n\n'), 'earlier notes carry their own clock');
+  assert.ok(out.endsWith(`\n\n[18:31] ${body}`), 'this note is last, stamped with the rewind time');
+  assert.ok(!out.includes(SCRATCH_NOTELESS_SENTENCE));
+  assert.ok(!out.includes('Notes left at this mark earlier'));
+
+  const first = scratchBriefing(mark, stats, body, { endedAt: Date.UTC(2026, 8, 20, 18, 31), formatTime: ISO_CLOCK });
+  assert.ok(first.endsWith(`\n\n[18:31] ${body}`));
+  assert.ok(!first.includes('[18:27]'), 'a first rewind has no earlier notes to print');
+
+  const anon = scratchBriefing({ nonce: 's7f3a1', beganAt: mark.beganAt }, stats, body,
+    { endedAt: Date.UTC(2026, 8, 20, 18, 31), formatTime: ISO_CLOCK, notes });
+  assert.ok(anon.startsWith('Scratch episode result · mark s7f3a1 (delivered by Clodex). '),
+    'no label on the mark → the anonymous text, whatever opts carry');
+  assert.ok(anon.endsWith(`\n\n${body}`));
+});
+
+test('t1044 scratchBriefing: noteless carries the negative-result sentence verbatim and no empty note', () => {
+  const mark = { nonce: 'n0te00', beganAt: 0, label: 'L' };
+  const stats = { turns: { dropped: 2 }, bytes: { dropped: 3 * 1024 } };
+  const out = scratchBriefing(mark, stats, '', { endedAt: 60000, formatTime: ISO_CLOCK, noteless: true });
+  assert.strictEqual(out,
+    'Scratch rewind result · mark n0te00 · label L (delivered by Clodex). You set this mark at 00:00 and rewound to it '
+    + `at 00:01; the 2 turns / 3 KB between them are no longer in your transcript. ${SCRATCH_NOTELESS_SENTENCE}`);
+  assert.strictEqual(SCRATCH_NOTELESS_SENTENCE,
+    'You left no note: you recorded that stretch as a negative result — nothing in it was worth keeping. '
+    + 'Do not repeat it; take a different approach or report the dead end.');
+  assert.ok(!out.includes('only the note(s) below survive'));
+
+  const withEarlier = scratchBriefing(mark, stats, '', {
+    endedAt: 60000, formatTime: ISO_CLOCK, noteless: true, notes: [{ at: 30000, body: 'earlier note' }],
+  });
+  assert.ok(withEarlier.endsWith('\n\nNotes left at this mark earlier:\n[00:00] earlier note'),
+    'earlier notes still print, under their own heading, when this rewind left none');
+
+  for (const body of [null, undefined, '', '   ']) {
+    assert.strictEqual(scratchBriefing(mark, stats, body, { endedAt: 60000, formatTime: ISO_CLOCK }), out,
+      `an empty body on a labelled mark is noteless without the flag (${JSON.stringify(body)})`);
+  }
+});
+
+test('t1044 scratchReArmLine: starts with ACK_PREFIX + nonce, names the label, and stays under 200 bytes', () => {
+  const line = scratchReArmLine({ nonce: 'r3arm1', label: 'before-survey' });
+  assert.ok(line.startsWith(`${ACK_PREFIX}r3arm1`), 'the validator finds the re-arm by this exact needle');
+  assert.ok(line.includes('label before-survey'));
+  assert.ok(line.includes('[agent:scratch rewind before-survey] <note>'), 'the only place the agent learns the rewind syntax again');
+  assert.ok(!line.includes('\n'), 'one record, one line');
+  const longest = scratchReArmLine({ nonce: 'r3arm1', label: 'a'.repeat(32) });
+  assert.ok(Buffer.byteLength(longest) <= 200, `${Buffer.byteLength(longest)} bytes`);
+});
+
+test('t1044 validateScratchCut: a mark carrying label/notes/operator validates byte-identically to the same mark without them', () => {
+  const runs = [];
+  for (const extra of [{}, { label: 'before-survey', notes: [{ at: 1, body: 'x' }], operator: false }]) {
+    uuidSeq = 0;
+    const { tape } = prefix();
+    const n = 'lbl001';
+    tape.prompt('[agent:from lead] find out where the parser lives');
+    tape.assistantText('[agent:scratch mark before-survey]', { id: 'msg_begin' });
+    tape.turnEnd();
+    const mark = markAtBegin(tape, n, extra);
+    ack(tape, n);
+    tape.turn('read three files', { toolId: 'toolu_b1', usage: USAGE(61000, 4000, 30) });
+    const buf = tape.bytes;
+    const ok = validateScratchCut(mark, buf, { realpath: mark.realpath, body: 'note' });
+    assert.strictEqual(ok.ok, true, ok.detail);
+    const missing = validateScratchCut({ ...mark, nonce: 'other1' }, buf, { realpath: mark.realpath, body: 'note' });
+    assert.strictEqual(missing.reason, 'ack-missing');
+    const dispatched = validateScratchCut({ ...mark, dispatched: [{ type: 'task', sub: 'add', token: 't1', at: 1 }] },
+      buf, { realpath: mark.realpath, body: '' });
+    assert.strictEqual(dispatched.reason, 'dispatch-unmentioned', 'an empty note still cannot hide a dispatch');
+    runs.push(JSON.stringify([ok, missing, dispatched]));
+  }
+  assert.strictEqual(runs[0], runs[1], 'the validator never reads label, notes or operator');
+});
+
+test('t1044: validateScratchCut is byte-identical to the base — named marks changed nothing inside it', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scratch-mark.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function validateScratchCut('), src.indexOf('function defaultFormatTime('));
+  assert.ok(!/label|notes|operator/.test(fn), 'the validator names none of the fields a named mark adds');
 });
 
 
