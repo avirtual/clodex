@@ -87,3 +87,32 @@ The tombstone is written on the session object, so on any arm that RESPAWNS the
 seat it must be copied to the fresh one: `create()` replaces the object, and a
 post-reload `end` would otherwise get the bare "no episode is open", which
 asserts the seat never opened one.
+
+## _scratchCarryMarks
+
+A named mark survives a cut to L only if its own `ACK_PREFIX + nonce` user
+record sits below `cutOffset`: a parked or late ack that landed above it would
+leave a mark that can never validate (`ack-missing`), so it is dropped and
+logged instead of carried.
+
+## _scratchValidate
+
+A CARRIED older mark sits under the briefing Clodex wrote for the cut that
+carried it (`Scratch … result · mark`, or the `Continue from your handoff`
+pointer `_handoffText` spills it into), at `offset > a.sizeAtBegin`, and
+`classifyUserRecord` calls a plain-string user record that does not start with
+`[agent:` an `arrival`. Untreated, the first `rewind a` refuses `arrivals` and
+`replay` pastes the dead briefing back as a peer message. The validator is
+T-E's and stays untouched, so the wrapper re-validates with `replay: true` when
+EVERY arrival is one of `SCRATCH_CUT_TEXT_PREFIXES`, per call (v1 and v2 each
+decide for themselves — a real dm that lands in the recycle window must still
+abandon), and `_replayScratchArrivals` and the refusal line drop those texts.
+
+## _scratchReArm
+
+The re-arm ack is its own `_injectText` AFTER `_injectAfterBoot` has landed the
+briefing: the briefing spills over `SPILL_MIN_BYTES` into a pointer record, so
+an ack folded into it would not start with `ACK_PREFIX`. The briefing is the
+first record written on the cut file, at `offset === cutOffset` exactly, and
+the validator's arrival filter is `offset > cutOffset` — that is what keeps a
+second rewind to the re-armed mark from refusing `arrivals` on its own briefing.
