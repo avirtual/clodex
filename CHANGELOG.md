@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.83.3 — 2026-09-20
+
 - Right-click ▸ "Move to Workspace…" moves a session to another workspace window without restarting it — the terminal keeps running and its output is waiting when the other window shows it.
 - Compact nudges are now per model: every model is nudged at 150k tokens (escalated at 200k), and Fable 5.1 — whose cache reads are cheap and whose compacts are expensive — at 200k (escalated at 250k). Settings shows the Fable row read-only under the baseline boxes; a per-model row in ui-settings.json still overrides it.
 - Long messages between seats (`dm`) and ticket reports (`task done`) now spill to a file the same way long ticket specs do: the sender's transcript keeps a one-line pointer instead of carrying the whole text on every later turn, and the recipient still gets it in full. Same 800-byte floor, same Settings switch.
