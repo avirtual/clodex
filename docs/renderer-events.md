@@ -1,12 +1,12 @@
 # Renderer event push surface — the other half of the browser contract
 
 The contract map for every event the main process pushes at a renderer.
-`preload.js` invoke/send is the request half of `window.api` (240 endpoints);
+`preload.js` invoke/send is the request half of `window.api` (241 endpoints);
 THIS is the push half. A browser frontend must receive each of these over WS
 exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
-`preload.js` (67 channels). This doc maps each to its emission point, its
+`preload.js` (69 channels). This doc maps each to its emission point, its
 payload shape (field NAMES, not full types), and the interception point a web
 host subscribes to.
 
@@ -38,10 +38,12 @@ the renderer through one of four paths:
 | **D. desktop-shell-only** | native-menu / app-lifecycle `win.webContents.send(ch, …)` **outside** A–C | **not served** — the browser's menu is in-page DOM; designated, not routed |
 
 `_sendToSession` and `_broadcast` are the two primary interception points; a web
-host subscribes there. One in-engine session-scoped emit (`session-file-view`)
-resolves a handle from the same map directly rather than via `_sendToSession`,
-because it needs `.show()` + `.focus()` + `.send()` on one handle — still the
-same map, still no new seam.
+host subscribes there. Two in-engine session-scoped emits resolve a handle from
+the same map directly rather than via `_sendToSession` — still the same map,
+still no new seam. `session-file-view` does it because it needs `.show()` +
+`.focus()` + `.send()` on one handle; the workspace-move pair does it because
+`_sendToSession` resolves from the session's workspace id, which a move has
+already rewritten, so the OLD window is exactly the one it can no longer reach.
 
 ## A. Session-scoped channels (via `_sendToSession`)
 
@@ -59,6 +61,8 @@ reattach — a web host needs the same replay-on-connect for a reloaded tab.
 | `session-proxy` | `name, payload` (status-bar telemetry snapshot; wire-overlay shape) | wirescope-proxy poller |
 | `session-files` | `name, files` (fileTouches array) | session-manager |
 | `session-file-view` | `name, filePath` — **direct handle** (`show`+`focus`+`send`), `[agent:file view]` | session-manager |
+| `session:moved-out` | `{name}` — **direct handle** on the OLD workspace's window: the row leaves it, the pty keeps running (`removeSession(name, {keepPersisted:true})`) | session-manager `moveToWorkspace` |
+| `session:moved-in` | the restore row (`session-restore.js` `liveSnapshotFor`/`archivedSnapshotFor`) — **direct handle** on the destination window, sent only when that window is open, because building it DRAINS `pendingOutput` | session-manager `moveToWorkspace` |
 | `session-attention` | `name, attn` (needs-attention fact object, or null to clear) | session-manager `_setAttention` |
 | `session-mention` | `name, mtype, from` (`dm`/…) | session-manager (dm/mention gate) |
 | `session:context-action` | `msg` object `{action, name, …}` (`reattach`/`spawn` path) | session-manager |
