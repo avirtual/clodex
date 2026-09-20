@@ -1208,12 +1208,12 @@ test('t222 a seat with no terminal of its own is refused before any exec is atte
 test('t170 every bodiless gateable verb is structurally unspillable', () => {
   const { GATEABLE_INTENTS } = require('../intent-catalog');
   const { bodyModeFor } = require('../intent-registry');
-  // Probed across subs, not called bare: `context`, `memory` and `term` answer
-  // 'none' for a MISSING sub and 'greedy' for compact/remember/exec, so a single
-  // bare call would misfile all three as bodiless and this test would then certify
-  // a spill path it never exercised. Bodiless means bodiless for every sub the verb
-  // can carry — so a verb whose body hides behind ONE sub needs that sub in this
-  // list, or the ratchet below silently stops guarding it.
+  // Probed across subs, not called bare: context/memory/term/scratch all answer
+  // 'none' for a MISSING sub and 'greedy' for one of their real ones, so a single
+  // bare call would misfile every one of them as bodiless and this test would then
+  // certify a spill path it never exercised. Bodiless means bodiless for every sub
+  // the verb can carry — so a verb whose body hides behind ONE sub needs that sub
+  // in this list, or the ratchet below silently stops guarding it.
   const SUBS = [null, 'compact', 'clear', 'reload', 'remember', 'recall', 'add', 'done', 'list', 'exec', 'begin', 'end', 'cancel'];
   const bodiless = GATEABLE_INTENTS
     .map((i) => i.type)

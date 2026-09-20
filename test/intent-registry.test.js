@@ -471,7 +471,7 @@ const CLOSED_SUB_VERB_FAMILIES = ['task', 'team', 'scratch'];
 // Per-family anti-vacuity floor. Each is the count the family HAD when it was
 // pinned, so shrinking the grammar trips this rather than quietly shrinking
 // what the loop below iterates. A single shared floor would have to be the
-// smaller of the two and would stop measuring the larger family.
+// smallest family's and would stop measuring every larger one.
 const MIN_SUBS = { task: 9, team: 11, scratch: 3 };
 
 function corpusCovers(family, sub) {
