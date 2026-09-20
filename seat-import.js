@@ -345,4 +345,7 @@ function createSeatImport({
   return { begin, putFile, abort, sweep, commit, maxBytes };
 }
 
-module.exports = { createSeatImport, IMPORT_MAX_BYTES, IMPORT_CHUNK_MAX };
+module.exports = {
+  createSeatImport, IMPORT_MAX_BYTES, IMPORT_CHUNK_MAX,
+  SEGMENT_RE, SESSION_ID_RE,
+};

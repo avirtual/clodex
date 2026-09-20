@@ -6,7 +6,7 @@ const fsReal = require('node:fs');
 const pathReal = require('node:path');
 
 const { createSessionManager } = require('../session-manager');
-const { seatPathFor, claudeProjectSlug, SEAT_KINDS } = require('../clodex-paths');
+const { seatPathFor, claudeProjectSlug, pathFor, SEAT_KINDS } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SESSION_ID = '11111111-2222-3333-4444-555555555555';
@@ -22,6 +22,7 @@ const BASE = {
   ephemeral: true, reviewFor: 'x', reviewTicket: 't1', reviewerTemplate: 'r',
   pluginGrants: ['g'], wireLabel: 'w', ticketId: 't1', holdUntil: 9, rosterSentAt: 8,
   worktree: null, archivedAt: null, failed: null,
+  movedTo: { peer: 'p0', peerLabel: 'older-box', farCwd: '/old/far', at: 1, sessionId: SESSION_ID },
 };
 
 function seedSeat(root, name) {
@@ -51,7 +52,7 @@ function mkMove({
   entries = [BASE], reply = { ok: true, dropped: ['account:opsguru'] },
   caps = ['dm', 'import'], needsUpgrade = false, peer = true,
   reminderRows = [{ id: 'r1', agent: 'seat', kind: 'in', spec: 'in 1h', body: 'ping' }],
-  createThrows = null, seed = true,
+  createThrows = null, seed = true, chunks = 1,
 } = {}) {
   const root = mkTmpRoot('clodex-movepeer-');
   const claudeDir = mkTmpRoot('clodex-movepeer-claude-');
@@ -80,7 +81,10 @@ function mkMove({
       shipped.push(arg);
       for (const f of arg.files) {
         const total = f.bytes ? f.bytes.length : fsReal.statSync(f.path).size;
-        if (typeof arg.onProgress === 'function') arg.onProgress({ relPath: f.relPath, sent: total, total });
+        if (typeof arg.onProgress !== 'function') continue;
+        for (let i = 1; i <= chunks; i += 1) {
+          arg.onProgress({ relPath: f.relPath, sent: Math.round((total * i) / chunks), total });
+        }
       }
       return reply;
     },
@@ -103,6 +107,7 @@ function mkMove({
     getReminders: () => ({ listForAgent: (n) => reminderRows.filter((r) => r.agent === n) }),
     fs: fsReal,
     path: pathReal,
+    pathFor,
     DEFAULT_WORKSPACE_ID: 'default',
     resolveTeam: () => null,
     findProjectRoot: () => null,
@@ -194,6 +199,12 @@ const REFUSALS = [
     error: 'seat has no conversation to move — start it once, or move it locally instead',
   },
   {
+    why: 'a conversation id the far begin would reject',
+    build: () => mkMove({ entries: [{ ...BASE, sessionId: 'not-a-uuid' }] }),
+    args: ['seat', 'p1', {}],
+    error: "seat's conversation id 'not-a-uuid' is not a session uuid — a peer refuses it",
+  },
+  {
     why: 'unknown peer',
     build: () => mkMove({ peer: false }),
     args: ['seat', 'p1', {}],
@@ -245,6 +256,79 @@ test('a missing transcript is refused BEFORE the seat is quiesced', async () => 
   assert.deepStrictEqual(shipped, []);
 });
 
+test('a seat file the far SEGMENT_RE refuses is caught BEFORE the seat is quiesced', async () => {
+  const { m, root, shipped } = mkMove();
+  fsReal.writeFileSync(pathReal.join(seatPathFor(root, 'seat', 'memory'), 'naïve unit.md'), 'x');
+  const s = seedLive(m, 'seat');
+  const out = await m.moveToPeer('seat', 'p1', {});
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.error,
+    'seat/memory/naïve unit.md cannot travel — a peer refuses any file name outside [A-Za-z0-9._-]');
+  assert.deepStrictEqual(s.killed, [],
+    'the far staging would refuse this after the kill, costing a respawn for something knowable now');
+  assert.deepStrictEqual(shipped, []);
+});
+
+test('a parked DM with a refused file name is caught the same way', async () => {
+  const { m, root } = mkMove();
+  fsReal.writeFileSync(pathReal.join(root, 'pending', 'seat', 'msg#2'), 'x');
+  const s = seedLive(m, 'seat');
+  const out = await m.moveToPeer('seat', 'p1', {});
+  assert.strictEqual(out.error,
+    'pending/msg#2 cannot travel — a peer refuses any file name outside [A-Za-z0-9._-]');
+  assert.deepStrictEqual(s.killed, []);
+});
+
+test('a conversation resumed from another directory ships via the Clodex transcript link', async () => {
+  const { m, root, claudeDir, shipped } = mkMove({ seed: false });
+  seedSeat(root, 'seat');
+  const real = seedTranscript(claudeDir, '/where/it/started', SESSION_ID);
+  const link = pathFor(root, 'seat', 'transcript');
+  fsReal.mkdirSync(pathReal.dirname(link), { recursive: true });
+  fsReal.symlinkSync(real, link);
+  seedLive(m, 'seat');
+
+  const out = await m.moveToPeer('seat', 'p1', {});
+  assert.strictEqual(out.ok, true, `expected ok (got: ${out.error})`);
+  assert.strictEqual(shipped[0].files[0].path, fsReal.realpathSync(real),
+    'the composed <slug of cwd>/<id>.jsonl does not exist — the CLI kept writing under the ORIGINAL slug');
+});
+
+test('the link is NOT used when it points at a different conversation', async () => {
+  const { m, root, claudeDir } = mkMove({ seed: false });
+  seedSeat(root, 'seat');
+  const other = seedTranscript(claudeDir, '/where/it/started', '99999999-2222-3333-4444-555555555555');
+  const link = pathFor(root, 'seat', 'transcript');
+  fsReal.mkdirSync(pathReal.dirname(link), { recursive: true });
+  fsReal.symlinkSync(other, link);
+  const s = seedLive(m, 'seat');
+
+  const out = await m.moveToPeer('seat', 'p1', {});
+  assert.strictEqual(out.ok, false);
+  assert.match(out.error, /^transcript not found at /,
+    'the link is a live pointer — a stale one must not smuggle the wrong conversation onto the far box');
+  assert.deepStrictEqual(s.killed, []);
+});
+
+test('a half-installed far commit reports what is already on the peer', async () => {
+  const { m } = mkMove({
+    reply: { ok: false, error: 'install failed: ENOSPC', installed: { transcript: '/far/t.jsonl', seatDir: '/far/seat' } },
+  });
+  seedLive(m, 'seat');
+  const out = await m.moveToPeer('seat', 'p1', {});
+  assert.strictEqual(out.kept, true);
+  assert.strictEqual(out.peer, 'murmurfi');
+  assert.deepStrictEqual(out.installed, { transcript: '/far/t.jsonl', seatDir: '/far/seat' },
+    'the far name is now taken, so the retry has to happen THERE — silence here sends the operator round the loop again');
+});
+
+test('a clean far refusal carries no installed pointer', async () => {
+  const { m } = mkMove({ reply: { ok: false, error: 'far: name taken' } });
+  seedLive(m, 'seat');
+  const out = await m.moveToPeer('seat', 'p1', {});
+  assert.strictEqual(out.installed, null);
+});
+
 test('a second moveToPeer while one is in flight is refused off _movingNames', async () => {
   const { m } = mkMove();
   m._movingNames.add('seat');
@@ -286,7 +370,7 @@ test('the success arm ships exactly the seeded files, archives the source and st
   assert.strictEqual(rec.execCommands, undefined, 'exec grants never ride the wire');
   assert.deepStrictEqual(rec.intents, ['dm'],
     'intents are NOT stripped here — the far side strips the privileged ones and reports them');
-  for (const k of ['worktree', 'archivedAt', 'failed', 'ephemeral', 'reviewFor', 'reviewTicket',
+  for (const k of ['worktree', 'archivedAt', 'failed', 'movedTo', 'ephemeral', 'reviewFor', 'reviewTicket',
     'reviewerTemplate', 'pluginGrants', 'wireLabel', 'ticketId', 'holdUntil', 'rosterSentAt']) {
     assert.strictEqual(rec[k], undefined, `${k} is omitted — the far create cannot re-seed it`);
   }
@@ -374,7 +458,7 @@ test('a far refusal respawns locally and leaves the record byte-identical', asyn
   assert.strictEqual(out.type, 'claude');
   assert.deepStrictEqual(persistence.get('seat'), before,
     'nothing about the record was touched — a record stamped for a move that never landed is the silent failure here');
-  assert.strictEqual(store[0].movedTo, undefined);
+  assert.deepStrictEqual(store[0].movedTo, BASE.movedTo, 'the stale stamp is left exactly as it was');
   assert.strictEqual(store[0].archivedAt, null, 'the seat is NOT archived on the failure arm');
 
   assert.strictEqual(created.length, 1, 'the seat was respawned exactly once');
@@ -423,7 +507,7 @@ test('the exit-TIMEOUT arm mirrors move(): kept, at the OLD cwd, nothing shipped
   assert.deepStrictEqual(shipped, [],
     'the transcript is complete only once the CLI exits, so nothing ships');
   assert.deepStrictEqual(created, [], 'nothing was respawned');
-  assert.strictEqual(store[0].movedTo, undefined);
+  assert.deepStrictEqual(store[0].movedTo, BASE.movedTo, 'no stamp was written on the timeout arm');
 });
 
 test('progress events arrive on session:move-progress in phase order', async () => {
@@ -433,11 +517,34 @@ test('progress events arrive on session:move-progress in phase order', async () 
   assert.strictEqual(out.ok, true);
 
   const mine = events.filter((e) => e.channel === 'session:move-progress');
-  assert.deepStrictEqual(mine.map((e) => e.payload.phase), [
-    'begin', 'transcript', 'seat', 'seat', 'seat', 'seat', 'seat', 'commit',
-  ]);
-  for (const e of mine) assert.strictEqual(e.payload.name, 'seat');
-  assert.deepStrictEqual(mine[0].payload, { name: 'seat', phase: 'begin', bytes: 0, total: 6 });
+  assert.deepStrictEqual(mine.map((e) => e.payload), [
+    { name: 'seat', phase: 'begin', bytes: 0, total: 122, files: 6, fileIndex: 0 },
+    { name: 'seat', phase: 'transcript', bytes: 16, total: 122, files: 6, fileIndex: 1 },
+    { name: 'seat', phase: 'seat', bytes: 24, total: 122, files: 6, fileIndex: 2 },
+    { name: 'seat', phase: 'seat', bytes: 30, total: 122, files: 6, fileIndex: 3 },
+    { name: 'seat', phase: 'seat', bytes: 36, total: 122, files: 6, fileIndex: 4 },
+    { name: 'seat', phase: 'seat', bytes: 53, total: 122, files: 6, fileIndex: 5 },
+    { name: 'seat', phase: 'seat', bytes: 122, total: 122, files: 6, fileIndex: 6 },
+    { name: 'seat', phase: 'commit', bytes: 122, total: 122, files: 6, fileIndex: 6 },
+  ], 'bytes is a MONOTONIC running total over the whole shipment against a fixed total, '
+    + 'so a bar reading bytes/total never jumps backwards at a file boundary');
+});
+
+test('a chunked file reports its partial bytes without double-counting the ones before it', async () => {
+  const { m, events } = mkMove({ chunks: 2 });
+  seedLive(m, 'seat');
+  const out = await m.moveToPeer('seat', 'p1', {});
+  assert.strictEqual(out.ok, true);
+
+  const mine = events.filter((e) => e.channel === 'session:move-progress');
+  const bytes = mine.map((e) => e.payload.bytes);
+  assert.deepStrictEqual(bytes, bytes.slice().sort((a, b) => a - b), 'never goes backwards');
+  assert.strictEqual(bytes[bytes.length - 1], 122, 'and lands exactly on the total');
+  assert.deepStrictEqual(mine.filter((e) => e.payload.phase === 'transcript').map((e) => e.payload.bytes),
+    [8, 16], 'two chunks of the transcript, each reported against the shipment total');
+  assert.deepStrictEqual(mine.map((e) => e.payload.fileIndex),
+    [0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 6],
+    'a second chunk of the SAME file does not advance the file counter');
 });
 
 test('no progress is emitted when the move is refused', async () => {

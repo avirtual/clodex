@@ -312,8 +312,8 @@ function captureRegistrations() {
 // Main→renderer pushes, so they are NOT ipcMain registrations and must be
 // excluded from both directions below. `kind: 'on'` names a renderer-side
 // subscription; `deps.on` is ipcMain.on, which carries `kind: 'send'`. Same
-// word, opposite direction — comparing registrations against all 239 rows
-// would report every one of these as missing.
+// word, opposite direction — comparing registrations against every row would
+// report every one of these as missing.
 const CALLABLE_KINDS = ['invoke', 'send'];
 
 test('every invoke channel has a registered handler in ipc-handlers', () => {

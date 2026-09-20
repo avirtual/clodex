@@ -183,6 +183,7 @@ const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
 const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
 const { SEAT_KINDS, seatPathFor, claudeProjectSlug } = require('./clodex-paths');
+const { SEGMENT_RE: IMPORT_SEGMENT_RE, SESSION_ID_RE: IMPORT_SESSION_ID_RE } = require('./seat-import');
 const { effectiveModel } = require('./accounts');
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
@@ -491,10 +492,15 @@ function dmContentKey(senderTag, body) {
 }
 
 const MOVE_TO_PEER_OMIT = [
-  'execCommands', 'worktree', 'archivedAt', 'failed',
+  'execCommands', 'worktree', 'archivedAt', 'failed', 'movedTo',
   'ephemeral', 'reviewFor', 'reviewTicket', 'reviewerTemplate', 'pluginGrants',
   'wireLabel', 'ticketId', 'holdUntil', 'rosterSentAt',
 ];
+
+function moveFileBytes(fs, f) {
+  if (f.bytes) return f.bytes.length;
+  try { return fs.statSync(f.path).size; } catch { return 0; }
+}
 
 function seatRelFiles(fs, path, dir) {
   const out = [];
@@ -3223,6 +3229,21 @@ function createSessionManager(deps) {
       }
     }
 
+    _moveBadSegment(name) {
+      const scan = (dir, prefix) => {
+        for (const rel of seatRelFiles(fs, path, dir)) {
+          if (rel.split('/').every((seg) => IMPORT_SEGMENT_RE.test(seg))) continue;
+          return `${prefix}${rel}`;
+        }
+        return null;
+      };
+      for (const kind of Object.keys(SEAT_KINDS).filter((k) => k !== 'run').sort()) {
+        const bad = scan(seatPathFor(REGISTRY_DIR, name, kind), `seat/${kind}/`);
+        if (bad) return bad;
+      }
+      return scan(path.join(REGISTRY_DIR, 'pending', name), 'pending/');
+    }
+
     _moveShipment(name, entry, farCwd, transcriptPath) {
       const record = { ...entry, cwd: farCwd };
       for (const k of MOVE_TO_PEER_OMIT) delete record[k];
@@ -3279,12 +3300,25 @@ function createSessionManager(deps) {
       }
       const destCwd = path.resolve(farCwd || entry.cwd);
 
-      const transcriptPath = path.join(
+      if (!IMPORT_SESSION_ID_RE.test(entry.sessionId)) {
+        return { ok: false, error: `${name}'s conversation id '${entry.sessionId}' is not a session uuid — a peer refuses it` };
+      }
+      const badSegment = this._moveBadSegment(name);
+      if (badSegment) {
+        return { ok: false, error: `${badSegment} cannot travel — a peer refuses any file name outside [A-Za-z0-9._-]` };
+      }
+
+      const composed = path.join(
         claudeHome(), 'projects', claudeProjectSlug(entry.cwd), `${entry.sessionId}.jsonl`,
       );
-      let hasTranscript = false;
-      try { hasTranscript = fs.existsSync(transcriptPath); } catch { hasTranscript = false; }
-      if (!hasTranscript) return { ok: false, error: `transcript not found at ${transcriptPath}` };
+      let transcriptPath = null;
+      try { if (fs.existsSync(composed)) transcriptPath = composed; } catch {}
+      if (!transcriptPath) {
+        let linked = null;
+        try { linked = fs.realpathSync(pathFor(REGISTRY_DIR, name, 'transcript')); } catch {}
+        if (linked && path.basename(linked) === `${entry.sessionId}.jsonl`) transcriptPath = linked;
+      }
+      if (!transcriptPath) return { ok: false, error: `transcript not found at ${composed}` };
 
       this._movingNames.add(name);
       try {
@@ -3304,19 +3338,29 @@ function createSessionManager(deps) {
         }
 
         const { record, files } = this._moveShipment(name, entry, destCwd, transcriptPath);
-        this._broadcast('session:move-progress', { name, phase: 'begin', bytes: 0, total: files.length });
+        const totalBytes = files.reduce((n, f) => n + moveFileBytes(fs, f), 0);
+        const progress = (phase, bytes, fileIndex) => {
+          this._broadcast('session:move-progress',
+            { name, phase, bytes, total: totalBytes, files: files.length, fileIndex });
+        };
+        progress('begin', 0, 0);
+        let doneBytes = 0;
+        let lastRel = null;
+        let lastSent = 0;
+        let fileIndex = 0;
         const out = await conn.importSeat({
           name,
           record,
           files,
-          onProgress: ({ relPath, sent, total }) => {
-            const phase = relPath === 'transcript.jsonl' ? 'transcript' : 'seat';
-            this._broadcast('session:move-progress', { name, phase, bytes: sent, total });
+          onProgress: ({ relPath, sent }) => {
+            if (relPath !== lastRel) { doneBytes += lastSent; lastRel = relPath; lastSent = 0; fileIndex += 1; }
+            lastSent = sent;
+            progress(relPath === 'transcript.jsonl' ? 'transcript' : 'seat', doneBytes + sent, fileIndex);
           },
         });
 
         if (out && out.ok) {
-          this._broadcast('session:move-progress', { name, phase: 'commit', bytes: files.length, total: files.length });
+          progress('commit', totalBytes, files.length);
           const departing = s || {
             name,
             agentType: (entry.type === 'claude' || entry.type === 'codex') ? entry.type : null,
@@ -3360,6 +3404,8 @@ function createSessionManager(deps) {
         }
         return {
           ok: false, kept: true, error: farError,
+          installed: (out && out.installed) || null,
+          peer: peerLabel,
           type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
         };
       } finally {
