@@ -181,8 +181,7 @@ const { foldDraft } = require('./hint-arm');
 const { didGrow, parsePsRows, descendantPids } = require('./stall-evidence');
 const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
-const { ensureSeatLink, renameSeat, removeSeat } = require('./seat-layout');
-const { seatDirFor } = require('./clodex-paths');
+const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
 const { effectiveModel } = require('./accounts');
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
@@ -3031,8 +3030,8 @@ function createSessionManager(deps) {
       }
       if (this.sessions.has(newName)) return { ok: false, error: `${newName} is already a live session` };
       if (getPersistence().get(newName)) return { ok: false, error: `${newName} is already a saved session` };
-      for (const dest of [seatDirFor(REGISTRY_DIR, newName), ...this._renameDirs(name, newName).map(([, d]) => d)]) {
-        if (fs.existsSync(dest)) return { ok: false, error: `${newName} already owns ${dest} — a leftover from an earlier seat; clear it first` };
+      for (const dest of [...renameTargets(REGISTRY_DIR, newName), ...this._renameDirs(name, newName).map(([, d]) => d)]) {
+        if (pathInUse(fs, dest)) return { ok: false, error: `${newName} already owns ${dest} — a leftover from an earlier seat; clear it first` };
       }
       if (this._movingNames.has(name)) return { ok: false, error: 'move already in progress' };
 

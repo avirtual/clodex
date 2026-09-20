@@ -77,6 +77,7 @@ function renameSeat({ root, oldName, newName, fs = require('fs') } = {}) {
   const to = seatDirFor(root, newName);
   if (exists(fs, to)) throw new Error(`seat-layout: ${to} already exists`);
   if (exists(fs, from)) fs.renameSync(from, to);
+  try { fs.rmSync(seatPathFor(root, newName, 'run'), { recursive: true, force: true }); } catch {}
 
   const moved = [];
   const relinked = [];
@@ -87,9 +88,14 @@ function renameSeat({ root, oldName, newName, fs = require('fs') } = {}) {
       const newLegacy = legacySeatPathFor(root, newName, kind);
       if (isSymlink(fs, oldLegacy)) fs.unlinkSync(oldLegacy);
       else if (exists(fs, oldLegacy)) {
-        if (exists(fs, newLegacy)) throw new Error(`${newLegacy} already exists`);
-        fs.renameSync(oldLegacy, newLegacy);
-        moved.push(kind);
+        if (kind === 'run') fs.rmSync(oldLegacy, { recursive: true, force: true });
+        else if (exists(fs, newLegacy)) {
+          throw new Error(`${newLegacy} already exists — ${kind} stays at `
+            + `${seatPathFor(root, newName, kind)} and the legacy spelling points elsewhere`);
+        } else {
+          fs.renameSync(oldLegacy, newLegacy);
+          moved.push(kind);
+        }
       }
       if (kind === 'run') continue;
       const seatKind = seatPathFor(root, newName, kind);
@@ -183,8 +189,21 @@ function ensureSeatLink({ root, name, kind, fs = require('fs') } = {}) {
   }
 }
 
+function renameTargets(root, newName) {
+  const out = [seatDirFor(root, newName)];
+  for (const kind of Object.keys(SEAT_KINDS)) {
+    if (kind === 'run') continue;
+    out.push(legacySeatPathFor(root, newName, kind));
+  }
+  return out;
+}
+
+function pathInUse(fs, p) {
+  return exists(fs, p);
+}
+
 module.exports = {
   migrateSeatLayout, ensureSeatLink, seatLayoutActive, readMarker,
-  renameSeat, removeSeat,
+  renameSeat, removeSeat, renameTargets, pathInUse,
   MARKER, DEFERRED_KINDS, LEGACY_MARKER_KINDS,
 };

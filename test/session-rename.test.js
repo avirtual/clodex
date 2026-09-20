@@ -38,7 +38,7 @@ const { createTeamManifest, matchSeatRole } = require('../team-manifest');
 const { projectDirFor, seatPathFor, legacySeatPathFor, SEAT_KINDS } = require('../clodex-paths');
 const { enqueueNotice, parseNotices } = require('../notice-queue');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { migrateSeatLayout } = require('../seat-layout');
+const { migrateSeatLayout, renameSeat } = require('../seat-layout');
 const { createMemoryStore } = require('../memory-store');
 
 // ------------------------------------------------------------- the fixture
@@ -516,7 +516,7 @@ test('rename on a MIGRATED seat leaves memory reachable at library/memory/<new> 
   assert.strictEqual(memStore.list('newseat').length, 1, 'with its units readable through the link');
 });
 
-for (const key of ['pending', 'seat']) {
+for (const key of ['messages', 'pending', 'promptcache', 'notices', 'memory', 'seat']) {
   test(`rename refuses when ${key} already exists under the new name`, async () => {
     const root = mkTmpRoot('clodex-rename-');
     seedDirs(root, 'seat');
@@ -526,11 +526,7 @@ for (const key of ['pending', 'seat']) {
     fsReal.mkdirSync(dest, { recursive: true });
     const { m, store, created } = mkRename({ root, entries: [BASE] });
     const r = await m.rename('seat', 'newseat');
-    assert.strictEqual(r.ok, false,
-      `expected a refusal on a colliding ${key}: sessions/<new> is the seat's ONE home, so a `
-      + 'leftover there is the whole collision for a migrated seat, and pending/ is the only kind '
-      + 'rename still moves itself. A refusal that looked at neither would rename a seat straight '
-      + "on top of a stranger's state");
+    assert.strictEqual(r.ok, false, `expected a refusal on a colliding ${key}`);
     assert.match(r.error, /already owns/);
     assert.match(r.error, new RegExp(dest.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
       'and it names the path to clear — the operator has to find it by hand');
@@ -543,26 +539,62 @@ for (const key of ['pending', 'seat']) {
   });
 }
 
+test('an ordinary rename on a MIGRATED root is not refused by the legacy pre-check', async () => {
+  const why = 'the pre-check reads the NEW name\'s spellings, which no ordinary rename has yet — '
+    + 'renameSeat mints them AFTER it. This is the control for the six refusal subjects above: '
+    + 'without it, a pre-check that refused everything would satisfy all six';
+  const root = mkTmpRoot('clodex-rename-');
+  seedDirs(root, 'seat');
+  migrateSeatLayout({ root, names: ['seat'], fs: fsReal });
+  assert.ok(fsReal.lstatSync(legacySeatPathFor(root, 'seat', 'memory')).isSymbolicLink(),
+    'ENTER: the OLD name\'s spellings really are links now, which is the state the deleted '
+    + 'pre-check was wrongly believed to refuse');
+
+  const { m, store } = mkRename({ root, entries: [BASE] });
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, true, `${why} (got: ${r.error})`);
+  assert.strictEqual(store[0].name, 'newseat');
+});
+
+test('rename refuses a DANGLING sessions/<new> link rather than half-renaming', async () => {
+  const why = 'existsSync FOLLOWS the link and answers false for a dangling one, so the seat would '
+    + 'pass the pre-check and renameSeat would then throw AFTER persistence.rename had run — a '
+    + 'half-rename reported only by a log.warn. The pre-check is lstat-based for exactly this';
+  const root = mkTmpRoot('clodex-rename-');
+  seedDirs(root, 'seat');
+  fsReal.mkdirSync(pathReal.join(root, 'sessions'), { recursive: true });
+  fsReal.symlinkSync(pathReal.join(root, 'sessions', 'nowhere'), pathReal.join(root, 'sessions', 'newseat'));
+  assert.strictEqual(fsReal.existsSync(pathReal.join(root, 'sessions', 'newseat')), false,
+    'ENTER: the link really is dangling — existsSync says absent, which is the trap');
+
+  const { m, store, created } = mkRename({ root, entries: [BASE] });
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, false, `${why} (got ok)`);
+  assert.match(r.error, /already owns/);
+  assert.strictEqual(store[0].name, 'seat', 'the record was NOT rewritten — no half-rename');
+  assert.deepStrictEqual(created, []);
+});
+
 for (const key of ['messages', 'promptcache', 'notices', 'memory']) {
-  test(`rename leaves a stranger's ${key} at the new name intact`, async () => {
+  test(`a stranger's ${key} at the new name survives even if the pre-check is bypassed`, async () => {
+    const why = 'the pre-check above is the refusal an operator sees; this is the floor UNDER it, '
+      + 'on renameSeat called directly. A silent overwrite here would hand the renamed seat a '
+      + "stranger's dir as its own, which is the harm the refusal exists to prevent";
     const root = mkTmpRoot('clodex-rename-');
     seedDirs(root, 'seat');
     const dest = dirsUnder(root, 'newseat')[key];
     fsReal.mkdirSync(dest, { recursive: true });
     fsReal.writeFileSync(pathReal.join(dest, 'stranger.txt'), 'not yours');
-    const { m, store } = mkRename({ root, entries: [BASE] });
 
-    const r = await m.rename('seat', 'newseat');
-    assert.strictEqual(r.ok, true, `expected the rename to proceed (got: ${r.error})`);
-    assert.strictEqual(store[0].name, 'newseat', 'ENTER: the rename really happened');
+    const res = renameSeat({ root, oldName: 'seat', newName: 'newseat', fs: fsReal });
 
     assert.strictEqual(fsReal.readFileSync(pathReal.join(dest, 'stranger.txt'), 'utf8'), 'not yours',
-      `${key}/newseat is byte-intact: the four legacy spellings are no longer PRE-checked, since `
-      + 'on a migrated box they are links renameSeat unlinks and re-mints and a pre-check on one '
-      + 'would refuse every ordinary rename — so the property the pre-check protected is asserted '
-      + 'directly instead. The colliding kind is skipped and logged, never overwritten');
-    assert.ok(fsReal.existsSync(dirsUnder(root, 'seat')[key]),
-      `and the old seat's ${key} is left where it is rather than destroyed`);
+      `${key}/newseat is byte-intact — ${why}`);
+    assert.ok(!res.moved.includes(key), `and ${key} is NOT reported as moved`);
+    const reported = res.failed.find((f) => f.kind === key);
+    assert.ok(reported, `the collision is REPORTED in failed, never silent — silence is what `
+      + "session-manager's warn loop would print nothing for");
+    assert.match(reported.error, /already exists/, 'and the message names the collision');
   });
 }
 

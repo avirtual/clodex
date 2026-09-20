@@ -262,14 +262,20 @@ Rename moves that ONE dir (`renameSeat`): `sessions/<old>` → `sessions/<new>`,
 then every legacy spelling of the old name is unlinked and re-minted at the new
 one pointing into `sessions/<new>/<kind>` — the only shape the link-aware readers
 accept. A kind still held as a REAL dir (an unmigrated seat) is moved as a dir
-instead, with no link. `run/` is not re-minted; the next spawn does it. Delete
-Session… (`removeSeat`) removes `sessions/<seat>` and every legacy spelling,
-symlink or real dir: it is the one true delete. `pending/<seat>` is exempt from
-both — rename moves it separately, delete leaves it for the hook to drain.
+instead, with no link. `run/` is deleted rather than carried, at both the old
+spelling and inside the moved home, and re-minted at the next spawn. Rename
+REFUSES up front if the new name already owns `sessions/<new>`, any legacy
+spelling of it, or `pending/<new>` — that check is `lstat`-based, so a dangling
+link is a refusal and not a half-rename. Delete Session… (`removeSeat`) removes
+`sessions/<seat>` and every legacy spelling, symlink or real dir: it is the one
+true delete. `pending/<seat>` is exempt from both — rename moves it separately,
+delete leaves it for the hook to drain.
 
 `sessions/<seat>/seat.json` is a snapshot of the seat's `sessions.json` record,
-rewritten on every persistence upsert and once more at the end of a rename. It
-is read by nothing: it is there for inspection and for a move to carry.
+rewritten whenever that record is written under a name (`persistence._save`'s
+touched-name argument, which every upsert and name-keyed setter passes) and once
+more at the end of a rename. It is read by nothing: it is there for inspection
+and for a move to carry.
 
 Right-click a session ▸ "Reveal Seat Folder in Finder" opens `sessions/<seat>/`.
 Agents only, and disabled when the seat has no home dir yet.

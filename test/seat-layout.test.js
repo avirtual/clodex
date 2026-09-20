@@ -534,6 +534,65 @@ test('renameSeat refuses a name outside the seat-name rule', () => {
   assert.throws(() => renameSeat({ root, oldName: 'ana', newName: '..', fs }), /refusing seat name/);
 });
 
+test('renameSeat carries no run residue into the new home, and leaves no run link', () => {
+  const why = 'run is the one kind DELETED rather than moved (see the migrateSeatLayout note): it '
+    + 'holds a dead agent.sock and an agent.json naming the OLD seat and its dead socket, and '
+    + 'cleanupClaudeHook drops it by the OLD name, so anything carried over survives until create() '
+    + 'happens to overwrite each file';
+  const root = tmp();
+  migratedSeat(root, 'ana');
+  const oldRun = seatPathFor(root, 'ana', 'run');
+  fs.mkdirSync(oldRun, { recursive: true });
+  fs.writeFileSync(path.join(oldRun, 'agent.json'), '{"name":"ana"}');
+  assert.ok(fs.existsSync(path.join(oldRun, 'agent.json')), 'ENTER: the old home really holds run residue');
+
+  renameSeat({ root, oldName: 'ana', newName: 'bea', fs });
+
+  assert.strictEqual(fs.existsSync(seatPathFor(root, 'bea', 'run')), false,
+    `sessions/<new>/run is gone — ${why}`);
+  assert.strictEqual(exists(legacySeatPathFor(root, 'bea', 'run')), false, 'and no run link was minted');
+});
+
+test('renameSeat DELETES an unmigrated real run/<old> rather than moving it to run/<new>', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, 'sessions', 'ana'), { recursive: true });
+  const oldRun = legacySeatPathFor(root, 'ana', 'run');
+  fs.mkdirSync(oldRun, { recursive: true });
+  fs.writeFileSync(path.join(oldRun, 'agent.sock'), '');
+  assert.ok(!fs.lstatSync(oldRun).isSymbolicLink(), 'ENTER: run/<old> is a REAL dir here, not a link');
+
+  const res = renameSeat({ root, oldName: 'ana', newName: 'bea', fs });
+
+  assert.strictEqual(exists(oldRun), false, 'run/<old> is gone');
+  assert.strictEqual(exists(legacySeatPathFor(root, 'bea', 'run')), false,
+    'and it was NOT renamed to run/<new>: the same residue rule the migration applies, so the two '
+    + 'entry points cannot disagree about what run/ is');
+  assert.ok(!res.moved.includes('run'), 'nor is it reported as moved');
+});
+
+test('renameSeat REPORTS a colliding legacy dir in failed rather than moving onto it', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, 'sessions', 'ana'), { recursive: true });
+  const oldNotices = legacySeatPathFor(root, 'ana', 'notices');
+  fs.mkdirSync(oldNotices, { recursive: true });
+  fs.writeFileSync(path.join(oldNotices, 'mine.txt'), 'mine');
+  const newNotices = legacySeatPathFor(root, 'bea', 'notices');
+  fs.mkdirSync(newNotices, { recursive: true });
+  fs.writeFileSync(path.join(newNotices, 'stranger.txt'), 'not yours');
+
+  const res = renameSeat({ root, oldName: 'ana', newName: 'bea', fs });
+
+  assert.strictEqual(fs.readFileSync(path.join(newNotices, 'stranger.txt'), 'utf8'), 'not yours',
+    "the stranger's dir is byte-intact");
+  assert.strictEqual(fs.readFileSync(path.join(oldNotices, 'mine.txt'), 'utf8'), 'mine',
+    'and the old one is left where it is rather than destroyed');
+  const reported = res.failed.find((f) => f.kind === 'notices');
+  assert.ok(reported, 'the collision rides `failed`, which session-manager log.warns — a silent '
+    + 'skip would split the seat between two dirs with nothing in the log');
+  assert.match(reported.error, /already exists/);
+  assert.ok(!res.moved.includes('notices'), 'and it is not claimed as moved');
+});
+
 test('removeSeat takes the home AND every legacy spelling, and leaves pending/ alone', () => {
   const why = 'Delete Session… is the one true delete. Today it removes run/ only, and the '
     + 'messages/promptcache/notices/memory left behind are exactly what the "already owns … a '

@@ -88,33 +88,33 @@ is already a LINK still falls through the mkdirs: cleanup drops the target at
 every exit while the link survives, so the target must be re-made or the next
 spawn writes through a dangling name.
 
-A legacy path that exists and is NOT a symlink is left alone — it is either a
-seat created while the marker was absent or a foreign directory, and replacing
-it would destroy state nothing has copied yet.
+A legacy path that exists and is NOT a symlink is left alone — a seat created
+while the marker was absent, or a foreign directory, and replacing it would
+destroy state nothing has copied yet.
 
 ## renameSeat
 
 One `renameSync` of the home, then the legacy spellings: old links UNLINKED,
 fresh ones minted at the new name. Rename used to move the LINKS, leaving
 `library/memory/<new>` → `sessions/<old>/memory` — a shape every L-B1 reader
-refuses (a link counts only at its own seat spelling) and the message sweep
-unlinks, so a renamed seat went dark with its state intact on disk.
+refuses and the sweep unlinks, so a renamed seat went dark, state intact.
 
-A legacy path that is a REAL dir moves as a dir and gets no link: that is an
-unmigrated kind, and a link over it would strand the contents. `run` is unlinked
-but never re-minted — `ensureSeatLink` does that at the next spawn, and a link to
-a dir cleanup drops at every exit would dangle until then.
-
-Per-kind failures land in `failed` rather than throwing: the persistence rename
-has already happened by then, so a throw leaves the seat half-renamed while a
-logged skip leaves that kind readable where it is.
+A REAL dir at a legacy path moves as a dir, no link (unmigrated kind; a link over
+it would strand the contents) — UNLESS the new name's spelling is taken, when it
+is left alone and reported in `failed`. Silence there SPLITS the seat: the home
+travels while every reader and writer keeps using the legacy spelling, now naming
+a stranger's dir. `rename()` refuses those spellings up front for the same reason
+and this is the floor under it; that pre-check is lstat-based, so a DANGLING
+`sessions/<new>` cannot slip past and make this throw after `persistence.rename`
+ran. `run` is DELETED at both ends per the migration's rule; failures ride
+`failed` rather than throwing, the rename having already happened.
 
 ## removeSeat
 
 The home AND every legacy spelling, symlink or real dir. Delete Session… is the
-one true delete (docs/sessions.md lifecycle table); before this it took `run/` only,
-and the messages, promptcache, notices and memory left behind are exactly what
-rename's "already owns … a leftover from an earlier seat" refusal exists to
-catch — a leak that makes the name unusable afterwards. `pending/<name>` is
-untouched, per the DEFERRED_KINDS paragraph: not seat state, and its bash
-drainer owns the shared-root spelling.
+one true delete (docs/sessions.md lifecycle table); before this it took `run/`
+only, and the messages, promptcache, notices and memory left behind are what
+rename's "already owns … a leftover" refusal exists to catch. `pending/<name>`
+is untouched, per DEFERRED_KINDS. `spill/<name>` IS taken — a trade against
+`clodex-paths.js`'s "outlives the seat": a transcript's `@spill:<id>` into a
+deleted seat renders one missing body, while exempting it leaks a dir per delete.

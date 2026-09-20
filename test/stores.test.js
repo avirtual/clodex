@@ -76,6 +76,29 @@ test('persistence: seat.json mirrors the record beside the seat, and only when t
   } finally { cleanup(); }
 });
 
+test('persistence: seat.json is refreshed by the name-keyed SETTERS, not upsert alone', () => {
+  const why = 'sessionId is the conversation pointer and the field a move-to-peer needs most, and '
+    + 'setSessionId never goes through upsert. A snapshot wired into upsert only goes stale on '
+    + 'exactly that field while still LOOKING current';
+  const { stores, registryDir, cleanup } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'default' });
+    migrateSeatLayout({ root: registryDir, names: ['a'], fs });
+    stores.persistence.upsert({ name: 'a', type: 'claude' });
+    const seatFile = path.join(registryDir, 'sessions', 'a', 'seat.json');
+    assert.ok(!JSON.parse(fs.readFileSync(seatFile, 'utf8')).sessionId,
+      'ENTER: no conversation id in the snapshot yet');
+
+    stores.persistence.setSessionId('a', 's-99');
+    assert.strictEqual(JSON.parse(fs.readFileSync(seatFile, 'utf8')).sessionId, 's-99', why);
+
+    stores.persistence.setCwd('a', '/somewhere');
+    stores.persistence.setStripLevel('a', 2);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(seatFile, 'utf8')), stores.persistence.get('a'),
+      'and the whole record stays in step — a spot check on one setter would read around the other 24');
+  } finally { cleanup(); }
+});
+
 test('persistence: snapshotSeat rewrites under the NEW name after a rename', () => {
   const { stores, registryDir, cleanup } = freshStores();
   try {
