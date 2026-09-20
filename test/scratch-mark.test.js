@@ -702,13 +702,19 @@ test('scratchBriefing: real numbers, the operator framing, and the body verbatim
   assert.ok(out.endsWith(`\n\n${body}`), 'the body is last and verbatim, so a spill pointer can be sliced off the header');
 });
 
-test('scratchBriefing: an empty or missing body still produces a header', () => {
+test('scratchBriefing: an empty or missing body on the ANONYMOUS mark is noteless — the header ends on the negative-result sentence, nothing follows', () => {
   const mark = { nonce: 'x1', beganAt: 0 };
-  for (const body of [null, undefined, '']) {
+  for (const body of [null, undefined, '', '   ']) {
     const out = scratchBriefing(mark, { turns: { dropped: 0 }, bytes: { dropped: 0 } }, body, { endedAt: 0 });
-    assert.ok(out.includes('mark x1'));
-    assert.ok(out.endsWith('\n\n'), 'never the string "null" pasted under the header');
+    assert.ok(out.startsWith('Scratch episode result · mark x1 (delivered by Clodex). '));
+    assert.ok(out.endsWith(`no longer in your transcript. ${SCRATCH_NOTELESS_SENTENCE}`), out);
+    assert.ok(!out.includes('null') && !out.includes('\n'), `never "null" and never an empty body under the header (${JSON.stringify(body)})`);
+    assert.ok(!out.includes('only the summary below'), 'the "summary below" clause is dropped when there is none');
   }
+  const flagged = scratchBriefing(mark, { turns: { dropped: 0 }, bytes: { dropped: 0 } }, 'kept', { endedAt: 0, noteless: true });
+  assert.ok(flagged.endsWith(SCRATCH_NOTELESS_SENTENCE) && !flagged.includes('kept'), 'opts.noteless wins over a body, like the labelled arm');
+  const full = scratchBriefing(mark, { turns: { dropped: 0 }, bytes: { dropped: 0 } }, 'the summary', { endedAt: 0 });
+  assert.ok(full.endsWith('Continue from it.\n\nthe summary') && !full.includes(SCRATCH_NOTELESS_SENTENCE));
 });
 
 const ISO_CLOCK = (ms) => new Date(ms).toISOString().slice(11, 16);

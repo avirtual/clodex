@@ -20112,12 +20112,57 @@ test('scratch rewind: a CARRIED older mark is usable on first use — the b-brie
 
 test('scratch rewind: a carried mark under a SPILLED briefing (the "Continue from your handoff" pointer) cuts on first use too', async () => {
   const f = mkScratch();
+  const { SPILL_MIN_BYTES: MIN } = require('../intent-spill');
   const tape = scratchPrefix(f);
-  const { a, fresh } = await scratchCarriedAfterCut(f, tape, () => `Continue from your handoff: @${f.root}/spill/a/abc.md `);
+  let pointer = null;
+  const { a, fresh } = await scratchCarriedAfterCut(f, tape, (briefing) => {
+    pointer = f.m._handoffText(f.m.sessions.get('a'), `${briefing}\n\n${'x'.repeat(MIN + 1)}`, { snapshot: false });
+    return pointer;
+  });
+  assert.ok(pointer.startsWith('Continue from your handoff: @'), `the producer spilled it: ${pointer.slice(0, 80)}`);
   const n = f.injected.length;
   await scratchRewind(f, fresh, 'a', 'note');
   assert.strictEqual(fsReal.statSync(f.target).size, a.sizeAtBegin, `cut at a: ${f.injected.slice(n).map((t) => t.slice(0, 90))}`);
   assert.ok(!f.injected.slice(n).some((t) => t.startsWith('Replayed from scratch episode')));
+});
+
+test('scratch rewind: a TYPED prompt opening with "Continue from your handoff, …" above a carried mark is a real arrival, not a Clodex pointer', async () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  const { a, fresh } = await scratchCarriedAfterCut(f, tape);
+  const typed = new ScratchTape();
+  typed.parent = tape.parent;
+  typed.prompt('Continue from your handoff, I was saying the build is red');
+  f.append(typed.text);
+  scratchResearch(f, 'looked again');
+  const size = fsReal.statSync(f.target).size;
+  const n = f.injected.length;
+  await scratchRewind(f, fresh, 'a', 'note');
+  assert.strictEqual(fsReal.statSync(f.target).size, size, 'nothing cut');
+  assert.strictEqual(f.injected.length, n + 1);
+  assert.match(f.injected[n], /^\[agent:scratch\] rewind refused: 1 message\(s\) arrived during the episode and would be cut with it — Continue from your handoff, I was saying/);
+  assert.strictEqual(f.m.sessions.get('a'), fresh, 'no respawn');
+  assert.strictEqual(fsReal.statSync(f.target).size, size);
+  assert.ok(f.m.sessions.get('a')._scratchMarks.get('a') === a, 'the mark is still open');
+});
+
+test('scratch rewind: a bare rewind with an EMPTY note onto the ANONYMOUS mark cuts with the noteless sentence, not a header over nothing', async () => {
+  const f = mkScratch();
+  const { SCRATCH_NOTELESS_SENTENCE } = require('../scratch-mark');
+  scratchOpen(f);
+  const anon = f.s._scratch;
+  scratchResearch(f, 'read one');
+  const whole = f.read();
+  await scratchRewind(f, f.s, null, '');
+  assert.strictEqual(f.read(), Buffer.from(whole, 'utf8').subarray(0, anon.sizeAtBegin).toString('utf8'), 'the noteless rewind DID cut at the anonymous mark');
+  const briefing = f.injected[f.injected.length - 1];
+  assert.match(briefing, new RegExp(`^Scratch episode result · mark ${anon.nonce} `));
+  assert.ok(briefing.endsWith(SCRATCH_NOTELESS_SENTENCE), briefing);
+  assert.ok(!briefing.includes('only the summary below') && !briefing.includes('\n'), 'no empty summary block under the header');
+  const fresh = f.m.sessions.get('a');
+  assert.strictEqual(fresh._scratch, undefined, 'the anonymous mark is consumed by its own cut, never re-armed');
+  const rows = fsReal.readFileSync(pathReal.join(f.root, 'scratch', 'a', 'episodes.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepStrictEqual(rows.map((r) => [r.outcome, r.label, r.summaryBytes]), [['cut', null, 0]]);
 });
 
 test('scratch rewind: a REAL arrival above the carried mark still refuses — counted without the Clodex briefing — and replay re-delivers only it', async () => {
