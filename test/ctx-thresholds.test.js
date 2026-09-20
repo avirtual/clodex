@@ -105,7 +105,7 @@ test('invariant 4: fed the base commit\'s thresholds, the decision reproduces it
     const r = ctxThresholdsFor(model, {});
     assert.deepStrictEqual({ nudge: r.nudge, escalate: r.escalate },
       { nudge: CTX_REMINDER_NUDGE_TOKENS, escalate: CTX_REMINDER_ESCALATE_TOKENS },
-      `${model} must resolve to the shipped baseline while no row ships`);
+      `${model} owns no shipped row and must resolve to the baseline`);
     assert.strictEqual(r.source, 'builtin-default', `${model} reached a table row it should not have`);
   }
 
