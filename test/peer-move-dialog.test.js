@@ -115,6 +115,21 @@ test('a move-mode open locks the name, hides the type row and shows the note', (
     'the note names what does NOT travel — the dialog is the only place it is said');
 });
 
+test('close itself restores the create shape, without waiting for the next open', () => {
+  const { ui, byId } = mkPeersUi();
+  ui.openPeerSessionDialog('p1', 'murmurfi', { move: { name: 'crypto-hand', cwd: '/far/app' } });
+  ui.closePeerSessionDialog();
+  assert.deepStrictEqual({
+    nameDisabled: byId('peer-input-name').disabled,
+    typeHidden: byId('peer-input-type-row').style.display === 'none',
+    noteHidden: byId('peer-session-note').style.display === 'none',
+    createLabel: byId('peer-session-create').textContent,
+  }, {
+    nameDisabled: false, typeHidden: false, noteHidden: true, createLabel: 'Create',
+  }, 'asserted BEFORE any reopen: a later open re-asserts the whole shape, so checking after '
+    + 'one would pass with no restore in close at all');
+});
+
 test('close restores the create shape, so the next create-mode open is unchanged', () => {
   const { ui, shape } = mkPeersUi();
   ui.openPeerSessionDialog('p1', 'murmurfi', { move: { name: 'crypto-hand', cwd: '/far/app' } });
