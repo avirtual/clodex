@@ -2,9 +2,10 @@
 
 ## createSeatImport
 
-Staging is `manifest.json` (`{name, record, startedAt}`, 0600 — it holds
-`record.env`) plus `files/<relPath>`, dirs 0700; one per name at a time, so two
-transfers cannot race onto one install path.
+The owner-side fs half of Move-to-peer: the destination stages a seat under
+`<root>/import/<id>/` and installs it atomically. Staging is `manifest.json`
+(`{name, record, startedAt}`, 0600 — it holds `record.env`) plus
+`files/<relPath>`, dirs 0700; one per name, so two transfers cannot race.
 
 ## ID_RE
 
@@ -12,9 +13,8 @@ Exactly the 16 hex `begin` mints, required by every entry point along with a
 readable manifest. The charset regex guarding a relPath SEGMENT is not enough
 for an id, which is a whole path component fed to `path.join`, and `path.join`
 NORMALIZES: `.` and `..` are spelled in that charset, so `join(root, 'import',
-'..')` is the registry root itself and `abort` would `rm -rf` it. Both are
-attacker-controlled over the wire; neither gets a looser grammar than `begin`
-mints.
+'..')` is the registry root and `abort` would `rm -rf` it. Both are
+attacker-controlled; neither gets a looser grammar than `begin` mints.
 
 ## putFile
 
