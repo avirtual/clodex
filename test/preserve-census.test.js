@@ -252,6 +252,10 @@ const NOT_PRESERVED = {
     + 'suppress the roster inject it exists to trigger.',
   archivedAt: 'an archived seat has no live process, and every restart seam is gated on '
     + '`manager.sessions.has(name)`, so no restart path runs against an archived record.',
+  movedTo: 'written only by moveToPeer, in the same breath as setArchived(name, true) — so it rides '
+    + 'archivedAt\'s argument exactly: no restart seam runs against an archived record. It is also the '
+    + 'stamp for a seat that now lives on ANOTHER box, and a restart here is a deliberate fork; '
+    + 'regrowing the stamp onto the fork would claim the far copy is still the only one.',
 };
 
 // The backlog this census found open when it was written (t487) — `worktree`,

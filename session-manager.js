@@ -3322,10 +3322,8 @@ function createSessionManager(deps) {
             agentType: (entry.type === 'claude' || entry.type === 'codex') ? entry.type : null,
             cwd: entry.cwd,
           };
-          getPersistence().upsert({
-            name,
-            movedTo: { peer: peerId, peerLabel, farCwd: destCwd, at: Date.now(), sessionId: entry.sessionId },
-          });
+          const movedTo = { peer: peerId, peerLabel, farCwd: destCwd, at: Date.now(), sessionId: entry.sessionId };
+          getPersistence().upsert({ name, movedTo });
           getPersistence().setArchived(name, true);
           if (this.teamNameFor(entry.cwd)) this._notifyComposition(departing, 'moved out');
           return {
