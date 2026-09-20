@@ -37716,9 +37716,43 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
     }
   });
 
+  // renderer/lib/far-cwd-guess.js
+  var require_far_cwd_guess = __commonJS({
+    "renderer/lib/far-cwd-guess.js"(exports, module) {
+      "use strict";
+      var FAR_HOME_ROOT = { linux: "/home", darwin: "/Users" };
+      function localFromHome(homedir) {
+        const home = typeof homedir === "string" ? homedir : "";
+        const platform = Object.keys(FAR_HOME_ROOT).find((p) => home.startsWith(`${FAR_HOME_ROOT[p]}/`)) || null;
+        const segs = home.split("/").filter(Boolean);
+        return {
+          platform,
+          username: platform && segs.length === 2 ? segs[1] : null
+        };
+      }
+      function farCwdGuess({ cwd, farPlatform, platform, homedir, username } = {}) {
+        const local = typeof cwd === "string" ? cwd : "";
+        if (!local || !farPlatform || !platform || farPlatform === platform) {
+          return { cwd: local, note: null };
+        }
+        const root = FAR_HOME_ROOT[farPlatform];
+        const home = typeof homedir === "string" ? homedir : "";
+        const note = `The peer runs ${farPlatform}; the folder was guessed from yours \u2014 check it exists there.`;
+        if (!root || !home || !username) return { cwd: local, note };
+        const prefix = home.endsWith("/") ? home : `${home}/`;
+        if (local !== home && !local.startsWith(prefix)) return { cwd: local, note };
+        const rest = local === home ? "" : local.slice(prefix.length);
+        const farHome = `${root}/${username}`;
+        return { cwd: rest ? `${farHome}/${rest}` : farHome, note };
+      }
+      module.exports = { farCwdGuess, localFromHome };
+    }
+  });
+
   // renderer/peers-ui.js
   var require_peers_ui = __commonJS({
     "renderer/peers-ui.js"(exports, module) {
+      var os = require_os_shim();
       var { PendingInput } = require_peer_input_queue();
       var { versionSeverity, updateApplies, releaseAgeInfo, isHumanPtyInput } = require_proxy_util();
       var { parseDeployLine } = require_peer_deploy();
@@ -37732,6 +37766,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       var { isPeerExpanded, togglePeerExpanded } = require_peer_collapse();
       var { servedBannerView } = require_served_banner();
       var { placeAboveAnchor } = require_popover_place();
+      var { farCwdGuess, localFromHome } = require_far_cwd_guess();
       function initPeersUi({
         sessions,
         sessionList,
@@ -38337,10 +38372,19 @@ ${detail}` });
           nameEl.value = move ? move.name : "";
           nameEl.disabled = !!move;
           document.getElementById("peer-input-type").value = "claude";
-          document.getElementById("peer-input-cwd").value = move ? move.cwd || "" : "";
+          const home = os.homedir();
+          const local = localFromHome(home);
+          const guessed = move ? farCwdGuess({
+            cwd: move.cwd || "",
+            farPlatform: move.farPlatform || null,
+            platform: local.platform,
+            homedir: home,
+            username: local.username
+          }) : { cwd: "", note: null };
+          document.getElementById("peer-input-cwd").value = guessed.cwd;
           if (typeRow) typeRow.style.display = move ? "none" : "";
           if (note) {
-            note.textContent = move ? MOVE_NOTE : "";
+            note.textContent = move ? `${MOVE_NOTE}${guessed.note ? ` ${guessed.note}` : ""}` : "";
             note.style.display = move ? "block" : "none";
           }
           document.getElementById("peer-session-create").textContent = move ? "Move" : "Create";
@@ -40536,14 +40580,19 @@ ${detail}` });
                 addFailedSessionToSidebar(row);
               }
             }
+            const kept = res.installed ? Object.keys(res.installed).filter((k) => res.installed[k]) : [];
+            const far = kept.length ? ` \u2014 the far box kept: ${kept.join(", ")}` : "";
             showToast(
-              res.respawned ? `Move to ${peerLabel} failed: ${res.error} \u2014 ${name} restarted here` : `Move to ${peerLabel} failed: ${res.error} \u2014 ${name} kept here`,
+              res.respawned ? `Move to ${peerLabel} failed: ${res.error} \u2014 ${name} restarted here${far}` : `Move to ${peerLabel} failed: ${res.error} \u2014 ${name} kept here${far}`,
               { kind: "error", duration: 1e4, name }
             );
           }
           return res;
         });
-        openPeerSessionDialog(peerId, peerLabel, { move: { name, cwd } });
+        const farStatus = peerStatuses.get(peerId);
+        openPeerSessionDialog(peerId, peerLabel, {
+          move: { name, cwd, farPlatform: farStatus && farStatus.platform || null }
+        });
       }
       async function moveSessionToPeerFromDialog(name, peerId, farCwd) {
         const run = pendingPeerMove.get(name);

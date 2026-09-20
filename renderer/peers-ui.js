@@ -1,4 +1,5 @@
 
+const os = require('os');
 const { PendingInput } = require('../peer-input-queue');
 const { versionSeverity, updateApplies, releaseAgeInfo, isHumanPtyInput } = require('../proxy-util');
 const { parseDeployLine } = require('../peer-deploy');
@@ -12,6 +13,7 @@ const { peerStateText, NEEDS_UPGRADE_TIP } = require('./lib/peer-state-text');
 const { isPeerExpanded, togglePeerExpanded } = require('./lib/peer-collapse');
 const { servedBannerView } = require('./lib/served-banner');
 const { placeAboveAnchor } = require('./lib/popover-place');
+const { farCwdGuess, localFromHome } = require('./lib/far-cwd-guess');
 
 function initPeersUi({
   sessions, sessionList, getActiveSession, createTerminal, switchSession,
@@ -658,10 +660,19 @@ function initPeersUi({
     nameEl.value = move ? move.name : '';
     nameEl.disabled = !!move;
     document.getElementById('peer-input-type').value = 'claude';
-    document.getElementById('peer-input-cwd').value = move ? (move.cwd || '') : '';
+    const home = os.homedir();
+    const local = localFromHome(home);
+    const guessed = move ? farCwdGuess({
+      cwd: move.cwd || '',
+      farPlatform: move.farPlatform || null,
+      platform: local.platform,
+      homedir: home,
+      username: local.username,
+    }) : { cwd: '', note: null };
+    document.getElementById('peer-input-cwd').value = guessed.cwd;
     if (typeRow) typeRow.style.display = move ? 'none' : '';
     if (note) {
-      note.textContent = move ? MOVE_NOTE : '';
+      note.textContent = move ? `${MOVE_NOTE}${guessed.note ? ` ${guessed.note}` : ''}` : '';
       note.style.display = move ? 'block' : 'none';
     }
     document.getElementById('peer-session-create').textContent = move ? 'Move' : 'Create';

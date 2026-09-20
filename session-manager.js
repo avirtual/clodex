@@ -3254,7 +3254,7 @@ function createSessionManager(deps) {
       return scan(path.join(REGISTRY_DIR, 'pending', name), 'pending/');
     }
 
-    _moveShipment(name, entry, farCwd, transcriptPath) {
+    _moveRecord(name, entry, farCwd) {
       const record = { ...entry, cwd: farCwd };
       for (const k of MOVE_TO_PEER_OMIT) delete record[k];
       const accountDir = entry.env && entry.env.CLAUDE_CONFIG_DIR;
@@ -3263,7 +3263,10 @@ function createSessionManager(deps) {
         try { label = getAccounts ? getAccounts().labelFor(accountDir) : null; } catch { label = null; }
         if (label) record.accountLabel = label;
       }
+      return record;
+    }
 
+    _moveShipment(name, entry, transcriptPath) {
       const files = [{ relPath: 'transcript.jsonl', path: transcriptPath }];
       for (const kind of Object.keys(SEAT_KINDS).filter((k) => k !== 'run').sort()) {
         const dir = seatPathFor(REGISTRY_DIR, name, kind);
@@ -3281,7 +3284,7 @@ function createSessionManager(deps) {
       try { rows = getReminders ? (getReminders().listForAgent(name) || []) : []; } catch { rows = []; }
       if (rows.length) files.push({ relPath: 'reminders.json', bytes: Buffer.from(JSON.stringify(rows)) });
 
-      return { record, files };
+      return files;
     }
 
     async moveToPeer(name, peerId, { farCwd = null } = {}) {
@@ -3331,7 +3334,16 @@ function createSessionManager(deps) {
       if (!transcriptPath) return { ok: false, error: `transcript not found at ${composed}` };
 
       this._movingNames.add(name);
+      let stagingId = null;
       try {
+        const begun = await conn.importBegin({
+          name, record: this._moveRecord(name, entry, destCwd),
+        });
+        if (!begun || !begun.ok) {
+          return { ok: false, error: (begun && begun.error) || 'peer refused the import' };
+        }
+        stagingId = begun.id;
+
         const s = this.sessions.get(name);
         if (s) {
           log.info('session', `move-to-peer ${name} → ${peerLabel}:${destCwd} pid=${s.pty.pid}`);
@@ -3339,6 +3351,7 @@ function createSessionManager(deps) {
           try { s.pty.kill(); } catch {}
           setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
           if (!await this._waitForExit(name)) {
+            try { await conn.importAbort(stagingId); } catch {}
             return {
               ok: false, kept: true,
               error: 'old process did not exit in time — session not moved',
@@ -3347,7 +3360,7 @@ function createSessionManager(deps) {
           }
         }
 
-        const { record, files } = this._moveShipment(name, entry, destCwd, transcriptPath);
+        const files = this._moveShipment(name, entry, transcriptPath);
         const totalBytes = files.reduce((n, f) => n + moveFileBytes(fs, f), 0);
         const progress = (phase, bytes, fileIndex) => {
           this._broadcast('session:move-progress',
@@ -3358,9 +3371,8 @@ function createSessionManager(deps) {
         let lastRel = null;
         let lastSent = 0;
         let fileIndex = 0;
-        const out = await conn.importSeat({
-          name,
-          record,
+        const out = await conn.importShip({
+          id: stagingId,
           files,
           onProgress: ({ relPath, sent }) => {
             if (relPath !== lastRel) { doneBytes += lastSent; lastRel = relPath; lastSent = 0; fileIndex += 1; }
@@ -3409,6 +3421,7 @@ function createSessionManager(deps) {
           return {
             ok: false, kept: true,
             error: `${err.message} — session kept; retry from the sidebar row, or forget it.`,
+            installed: (out && out.installed) || null,
             type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
           };
         }
@@ -3418,6 +3431,9 @@ function createSessionManager(deps) {
           peer: peerLabel,
           type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
         };
+      } catch (e) {
+        if (stagingId) { try { await conn.importAbort(stagingId); } catch {} }
+        throw e;
       } finally {
         this._movingNames.delete(name);
       }

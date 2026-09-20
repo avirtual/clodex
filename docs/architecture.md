@@ -1445,6 +1445,11 @@ and are not, which is why the judgement worth testing is pushed down here.
 - **peer-web-view.js** — the pure decision behind the peer web-view (↗)
   affordance: given a peer's live hello state and its web-tunnel state, does the
   button render, what does it say, is a click a "close".
+- **far-cwd-guess.js** — the pure decision behind the Move-to-Peer dialog's
+  prefilled folder: same platform ⇒ the local cwd verbatim and no note; a peer
+  on another OS ⇒ the local home prefix swapped for a guess at the far one, plus
+  the note that says it IS a guess. A cwd outside home, or a platform with no
+  home root we know, keeps the path and still warns.
 - **peer-state-text.js** — the pure decision behind the word in a peer header's
   state slot: offline, tunnel down, `needs upgrade` (online but too old to serve
   the sessions subresource wire), or nothing. Unreachable outranks the dialect

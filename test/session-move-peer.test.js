@@ -12,6 +12,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const SESSION_ID = '11111111-2222-3333-4444-555555555555';
 const SRC_CWD = '/old';
 const FAR_CWD = '/far/crypto-app';
+const STAGING_ID = '0123456789abcdef';
 
 const BASE = {
   name: 'seat', type: 'claude', cwd: SRC_CWD, workspaceId: 'ws1',
@@ -52,7 +53,7 @@ function mkMove({
   entries = [BASE], reply = { ok: true, dropped: ['account:opsguru'] },
   caps = ['dm', 'import'], needsUpgrade = false, peer = true,
   reminderRows = [{ id: 'r1', agent: 'seat', kind: 'in', spec: 'in 1h', body: 'ping' }],
-  createThrows = null, seed = true, chunks = 1,
+  createThrows = null, seed = true, chunks = 1, beginRefusal = null, beginGate = null,
 } = {}) {
   const root = mkTmpRoot('clodex-movepeer-');
   const claudeDir = mkTmpRoot('clodex-movepeer-claude-');
@@ -75,10 +76,21 @@ function mkMove({
   };
 
   const shipped = [];
+  const begun = [];
+  const aborted = [];
+  let openStaging = null;
   const conn = {
     status: () => ({ id: 'p1', label: 'murmurfi', caps, needsUpgrade }),
-    importSeat: async (arg) => {
-      shipped.push(arg);
+    importBegin: async (arg) => {
+      begun.push(arg);
+      if (beginGate && begun.length === 1) await beginGate;
+      if (beginRefusal) return { ok: false, error: beginRefusal };
+      openStaging = arg;
+      return { ok: true, id: STAGING_ID };
+    },
+    importAbort: async (id) => { aborted.push(id); return { ok: true }; },
+    importShip: async (arg) => {
+      shipped.push({ ...arg, name: openStaging.name, record: openStaging.record });
       for (const f of arg.files) {
         const total = f.bytes ? f.bytes.length : fsReal.statSync(f.path).size;
         if (typeof arg.onProgress !== 'function') continue;
@@ -151,7 +163,7 @@ function mkMove({
     }
   };
 
-  return { m, root, claudeDir, store, persistence, created, shipped, events, kills };
+  return { m, root, claudeDir, store, persistence, created, shipped, events, kills, begun, aborted };
 }
 
 function seedLive(m, name) {
@@ -355,7 +367,7 @@ test('the success arm ships exactly the seeded files, archives the source and st
   assert.deepStrictEqual(s.killed, [true], 'the seat was quiesced exactly once');
   assert.deepStrictEqual(kills, [], 'the 5s SIGKILL backstop never fired');
 
-  assert.strictEqual(shipped.length, 1, 'importSeat was called once');
+  assert.strictEqual(shipped.length, 1, 'importShip was called once');
   assert.deepStrictEqual(shipped[0].files.map((f) => f.relPath), [
     'transcript.jsonl',
     'seat/memory/mem-1.md',
@@ -495,6 +507,70 @@ test('a respawn that throws returns the kept ghost row', async () => {
   assert.strictEqual(created.length, 1);
   assert.notStrictEqual(out.respawned, true,
     'the respawn THREW, so nothing is live — the renderer must draw the ghost row on this arm');
+});
+
+test('a far cwd the peer refuses at begin costs nothing: the pty lives, the record is untouched', async () => {
+  const why = "far folder's parent does not exist: /Users/bogdan/projects — on murmurfi the project lives somewhere else";
+  const { m, store, shipped, created, begun, aborted } = mkMove({ beginRefusal: why });
+  const s = seedLive(m, 'seat');
+  const before = JSON.stringify(store[0]);
+
+  const out = await m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD });
+
+  assert.deepStrictEqual(out, { ok: false, error: why },
+    'no kept key: nothing was killed, so the renderer leaves the dialog open for a correction '
+    + 'instead of drawing the respawn/ghost arms');
+  assert.deepStrictEqual(s.killed, [], 'the pty was never quiesced');
+  assert.strictEqual(m.sessions.get('seat'), s, 'and the live session is still the same object');
+  assert.strictEqual(begun.length, 1, 'the probe ran BEFORE the kill, which is the whole point');
+  assert.strictEqual(begun[0].record.cwd, FAR_CWD, 'the probe carries the cwd the operator typed');
+  assert.deepStrictEqual(shipped, [], 'not a byte moved');
+  assert.deepStrictEqual(created, [], 'and nothing had to be respawned');
+  assert.deepStrictEqual(aborted, [], 'a refused begin opened no staging to abort');
+  assert.strictEqual(JSON.stringify(store[0]), before, 'the persisted entry is byte-identical');
+});
+
+test('the exit-TIMEOUT arm aborts the staging the pre-quiesce begin opened', async () => {
+  const { m, aborted } = mkMove();
+  const s = seedLive(m, 'seat');
+  s.pty.kill = () => {};
+  m._waitForExit = async () => false;
+
+  const out = await m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD });
+  assert.strictEqual(out.kept, true);
+  assert.deepStrictEqual(aborted, [STAGING_ID],
+    'the probe opened a staging dir on the far box; the arm that ships nothing must reap it');
+});
+
+test('a throw between begin and ship still reaps the staging the probe opened', async () => {
+  const { m, aborted } = mkMove();
+  seedLive(m, 'seat');
+  m._moveShipment = () => { throw new Error('the seat tree walk exploded'); };
+
+  await assert.rejects(m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD }), /walk exploded/);
+  assert.deepStrictEqual(aborted, [STAGING_ID],
+    'otherwise the far manifest holds the name for an hour and the retry reads "already in progress" — '
+    + 'the leftover-workaround shape this ticket exists to kill');
+});
+
+test('the in-progress guard is taken before the probe, so two concurrent moves cannot both quiesce', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const { m, begun } = mkMove({ beginGate: held });
+  const s = seedLive(m, 'seat');
+
+  const first = m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD });
+  const second = await m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD });
+  release();
+  const firstOut = await first;
+
+  assert.deepStrictEqual(second, { ok: false, error: 'move already in progress' },
+    'the guard and the add used to be separated by the awaited probe, so two frontends — or two '
+    + 'DIFFERENT peers — could both pass it and both quiesce the same pty. Only the FIRST '
+    + 'probe is gated, so a build that lets the second through answers here rather than hanging');
+  assert.strictEqual(begun.length, 1, 'the second caller never reached the peer');
+  assert.strictEqual(firstOut.ok, true, 'and the first move is unaffected');
+  assert.deepStrictEqual(s.killed, [true], 'the pty was quiesced exactly once');
 });
 
 test('the exit-TIMEOUT arm mirrors move(): kept, at the OLD cwd, nothing shipped', async () => {

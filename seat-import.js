@@ -26,6 +26,8 @@ function fail(error) {
 function createSeatImport({
   root, claudeProjects, reminders,
   fs = require('fs'), now = Date.now, log = null, maxBytes = IMPORT_MAX_BYTES,
+  refuseUnder = [], hostLabel = 'this box',
+  caseInsensitive = process.platform === 'darwin' || process.platform === 'win32',
 } = {}) {
   if (!root) throw new Error('seat-import: root is required');
   if (!claudeProjects) throw new Error('seat-import: claudeProjects is required');
@@ -142,6 +144,31 @@ function createSeatImport({
     return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
   }
 
+  function isUnder(child, parent) {
+    if (typeof parent !== 'string' || !parent) return false;
+    const fold = (p) => (caseInsensitive ? p.toLowerCase() : p);
+    const base = fold(path.resolve(parent));
+    const kid = fold(child);
+    if (kid === base) return true;
+    return kid.startsWith(base.endsWith(path.sep) ? base : `${base}${path.sep}`);
+  }
+
+  function cwdRefusal(cwd) {
+    const parent = path.dirname(cwd);
+    let parentStat = null;
+    try { parentStat = fs.statSync(parent); } catch { parentStat = null; }
+    if (!parentStat || !parentStat.isDirectory()) {
+      return `far folder's parent does not exist: ${parent} — on ${hostLabel} the project lives somewhere else`;
+    }
+    let own = null;
+    try { own = fs.statSync(cwd); } catch { own = null; }
+    if (own && !own.isDirectory()) return `far path is a file, not a folder: ${cwd}`;
+    for (const under of (Array.isArray(refuseUnder) ? refuseUnder : [])) {
+      if (isUnder(cwd, under)) return `far path is inside Clodex's own data: ${cwd}`;
+    }
+    return null;
+  }
+
   function begin({ name, record } = {}) {
     if (typeof name !== 'string' || !SEAT_NAME_RE.test(name)) return fail(`invalid seat name '${name}'`);
     if (!record || typeof record !== 'object' || Array.isArray(record)) return fail('record must be an object');
@@ -152,6 +179,8 @@ function createSeatImport({
     }
     if (typeof record.cwd !== 'string' || !path.isAbsolute(record.cwd)) return fail('record.cwd must be an absolute path');
     if (record.cwd !== path.resolve(record.cwd)) return fail(`record.cwd must be resolved, not '${record.cwd}'`);
+    const badCwd = cwdRefusal(record.cwd);
+    if (badCwd) return fail(badCwd);
 
     for (const other of listStagings()) {
       const m = readManifest(other);

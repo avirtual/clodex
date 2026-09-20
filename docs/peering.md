@@ -276,7 +276,15 @@ wiring mistake would most plausibly leave open.
 
 - `POST /api/import/begin` `{name, record}` → `{ok, id, dropped}`. Refuses
   before any staging dir exists when the name is live or persisted here
-  (`importCreate.check`), as well as on seat-import's own dir collisions.
+  (`importCreate.check`), as well as on seat-import's own dir collisions, and
+  when `record.cwd` cannot be a folder on THIS box: its parent must exist and be
+  a directory (the leaf may be absent — `importCreate`'s `ensureDir` makes it),
+  the path itself must not be a file, and it must not fall inside this box's
+  `REGISTRY_DIR`, `~/.claude` or userData (`refuseUnder`, passed in by
+  remote-wiring so the module stays pure). Each refusal is a sentence the far
+  OPERATOR reads in the move dialog and names this box by `hostLabel`. A wrong
+  far path therefore costs nothing: the source has not quiesced yet, no staging
+  dir was opened, and nothing is left behind to clean up on a retry.
 - `PUT /api/import/<id>/file/<relPath...>` — RAW body, not JSON. Per-request cap
   `IMPORT_CHUNK_MAX` = 4 MiB (413 past it); `offset` from
   `Content-Range: bytes <start>-<end>/*`, absent header = 0. `<id>` must match
@@ -300,9 +308,13 @@ staged, hashed, installed, never parsed. Logs carry sizes and names only.
 
 Consumer half: `PeerConnection.importSeat({name, record, files, onProgress})`
 drives begin → chunked PUTs → commit and aborts on any failure, streaming a file
-from disk in 4 MiB reads rather than loading a transcript whole. `_requestRaw`
-is `_request`'s sibling for the non-JSON leg (same auth headers). `canImport`
-rides `status()` next to `needsUpgrade`.
+from disk in 4 MiB reads rather than loading a transcript whole. It is a wrapper
+over `importBegin({name, record}) → {ok, id}` and `importShip({id, files,
+onProgress})`, split so a caller can ask begin to JUDGE the record before it
+pays for anything — `moveToPeer` probes with `importBegin` before it quiesces,
+and `importAbort(id)` reaps the staging that probe opened on the arms that never
+ship. `_requestRaw` is `_request`'s sibling for the non-JSON leg (same auth
+headers). `canImport` rides `status()` next to `needsUpgrade`.
 
 ## 4. Settings reconciliation (peer-wiring.js)
 
