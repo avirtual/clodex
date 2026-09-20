@@ -3266,9 +3266,7 @@ function createSessionManager(deps) {
       return record;
     }
 
-    _moveShipment(name, entry, farCwd, transcriptPath) {
-      const record = this._moveRecord(name, entry, farCwd);
-
+    _moveShipment(name, entry, transcriptPath) {
       const files = [{ relPath: 'transcript.jsonl', path: transcriptPath }];
       for (const kind of Object.keys(SEAT_KINDS).filter((k) => k !== 'run').sort()) {
         const dir = seatPathFor(REGISTRY_DIR, name, kind);
@@ -3286,7 +3284,7 @@ function createSessionManager(deps) {
       try { rows = getReminders ? (getReminders().listForAgent(name) || []) : []; } catch { rows = []; }
       if (rows.length) files.push({ relPath: 'reminders.json', bytes: Buffer.from(JSON.stringify(rows)) });
 
-      return { record, files };
+      return files;
     }
 
     async moveToPeer(name, peerId, { farCwd = null } = {}) {
@@ -3335,16 +3333,17 @@ function createSessionManager(deps) {
       }
       if (!transcriptPath) return { ok: false, error: `transcript not found at ${composed}` };
 
-      const begun = await conn.importBegin({
-        name, record: this._moveRecord(name, entry, destCwd),
-      });
-      if (!begun || !begun.ok) {
-        return { ok: false, error: (begun && begun.error) || 'peer refused the import' };
-      }
-      const stagingId = begun.id;
-
       this._movingNames.add(name);
+      let stagingId = null;
       try {
+        const begun = await conn.importBegin({
+          name, record: this._moveRecord(name, entry, destCwd),
+        });
+        if (!begun || !begun.ok) {
+          return { ok: false, error: (begun && begun.error) || 'peer refused the import' };
+        }
+        stagingId = begun.id;
+
         const s = this.sessions.get(name);
         if (s) {
           log.info('session', `move-to-peer ${name} → ${peerLabel}:${destCwd} pid=${s.pty.pid}`);
@@ -3361,7 +3360,7 @@ function createSessionManager(deps) {
           }
         }
 
-        const { files } = this._moveShipment(name, entry, destCwd, transcriptPath);
+        const files = this._moveShipment(name, entry, transcriptPath);
         const totalBytes = files.reduce((n, f) => n + moveFileBytes(fs, f), 0);
         const progress = (phase, bytes, fileIndex) => {
           this._broadcast('session:move-progress',
@@ -3422,6 +3421,7 @@ function createSessionManager(deps) {
           return {
             ok: false, kept: true,
             error: `${err.message} — session kept; retry from the sidebar row, or forget it.`,
+            installed: (out && out.installed) || null,
             type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
           };
         }
@@ -3431,6 +3431,9 @@ function createSessionManager(deps) {
           peer: peerLabel,
           type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
         };
+      } catch (e) {
+        if (stagingId) { try { await conn.importAbort(stagingId); } catch {} }
+        throw e;
       } finally {
         this._movingNames.delete(name);
       }

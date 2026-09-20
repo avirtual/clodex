@@ -82,6 +82,15 @@ test('begin judges the far cwd against this box: parent, file-in-the-way, and Cl
     refuseUnder: [clodexHome, claudeHome, userData],
     hostLabel: 'murmurfi',
   });
+  const folding = mkImport({
+    refuseUnder: [clodexHome], hostLabel: 'murmurfi', caseInsensitive: true,
+  }).imp;
+  const swapped = clodexHome.replace('/.clodex', '/.CLODEX');
+  assert.strictEqual(
+    folding.begin({ name: 'case', record: record({ cwd: path.join(swapped, 'x') }) }).error,
+    `far path is inside Clodex's own data: ${path.join(swapped, 'x')}`,
+    'a case-insensitive volume reaches the same directory through a differently-cased path',
+  );
 
   const rows = [
     {

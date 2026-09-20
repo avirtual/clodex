@@ -2,6 +2,17 @@
 
 const FAR_HOME_ROOT = { linux: '/home', darwin: '/Users' };
 
+function localFromHome(homedir) {
+  const home = typeof homedir === 'string' ? homedir : '';
+  const platform = Object.keys(FAR_HOME_ROOT)
+    .find((p) => home.startsWith(`${FAR_HOME_ROOT[p]}/`)) || null;
+  const segs = home.split('/').filter(Boolean);
+  return {
+    platform,
+    username: platform && segs.length === 2 ? segs[1] : null,
+  };
+}
+
 function farCwdGuess({ cwd, farPlatform, platform, homedir, username } = {}) {
   const local = typeof cwd === 'string' ? cwd : '';
   if (!local || !farPlatform || !platform || farPlatform === platform) {
@@ -18,4 +29,4 @@ function farCwdGuess({ cwd, farPlatform, platform, homedir, username } = {}) {
   return { cwd: rest ? `${farHome}/${rest}` : farHome, note };
 }
 
-module.exports = { farCwdGuess };
+module.exports = { farCwdGuess, localFromHome };

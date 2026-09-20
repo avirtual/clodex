@@ -37721,6 +37721,15 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
     "renderer/lib/far-cwd-guess.js"(exports, module) {
       "use strict";
       var FAR_HOME_ROOT = { linux: "/home", darwin: "/Users" };
+      function localFromHome(homedir) {
+        const home = typeof homedir === "string" ? homedir : "";
+        const platform = Object.keys(FAR_HOME_ROOT).find((p) => home.startsWith(`${FAR_HOME_ROOT[p]}/`)) || null;
+        const segs = home.split("/").filter(Boolean);
+        return {
+          platform,
+          username: platform && segs.length === 2 ? segs[1] : null
+        };
+      }
       function farCwdGuess({ cwd, farPlatform, platform, homedir, username } = {}) {
         const local = typeof cwd === "string" ? cwd : "";
         if (!local || !farPlatform || !platform || farPlatform === platform) {
@@ -37736,7 +37745,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         const farHome = `${root}/${username}`;
         return { cwd: rest ? `${farHome}/${rest}` : farHome, note };
       }
-      module.exports = { farCwdGuess };
+      module.exports = { farCwdGuess, localFromHome };
     }
   });
 
@@ -37757,7 +37766,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       var { isPeerExpanded, togglePeerExpanded } = require_peer_collapse();
       var { servedBannerView } = require_served_banner();
       var { placeAboveAnchor } = require_popover_place();
-      var { farCwdGuess } = require_far_cwd_guess();
+      var { farCwdGuess, localFromHome } = require_far_cwd_guess();
       function initPeersUi({
         sessions,
         sessionList,
@@ -38363,12 +38372,14 @@ ${detail}` });
           nameEl.value = move ? move.name : "";
           nameEl.disabled = !!move;
           document.getElementById("peer-input-type").value = "claude";
+          const home = os.homedir();
+          const local = localFromHome(home);
           const guessed = move ? farCwdGuess({
             cwd: move.cwd || "",
             farPlatform: move.farPlatform || null,
-            platform: process.platform,
-            homedir: os.homedir(),
-            username: os.userInfo().username
+            platform: local.platform,
+            homedir: home,
+            username: local.username
           }) : { cwd: "", note: null };
           document.getElementById("peer-input-cwd").value = guessed.cwd;
           if (typeRow) typeRow.style.display = move ? "none" : "";

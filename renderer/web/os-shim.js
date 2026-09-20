@@ -1,7 +1,6 @@
 'use strict';
 // os-shim.js — browser stand-in for node's `os`, aliased by esbuild (build/
-// build-web.js) for the only two renderer sites that touch node: the
-// `require('os').homedir()` calls in renderer.js and renderer/lib/format.js.
+// build-web.js) for the renderer sites that touch node.
 // The home directory isn't knowable in the browser, so the web host sends it in
 // its `welcome` frame (welcome.home) and boot.js seeds it here BEFORE renderer.js
 // executes — so both call sites read the real value on first use.

@@ -27,6 +27,7 @@ function createSeatImport({
   root, claudeProjects, reminders,
   fs = require('fs'), now = Date.now, log = null, maxBytes = IMPORT_MAX_BYTES,
   refuseUnder = [], hostLabel = 'this box',
+  caseInsensitive = process.platform === 'darwin' || process.platform === 'win32',
 } = {}) {
   if (!root) throw new Error('seat-import: root is required');
   if (!claudeProjects) throw new Error('seat-import: claudeProjects is required');
@@ -145,9 +146,11 @@ function createSeatImport({
 
   function isUnder(child, parent) {
     if (typeof parent !== 'string' || !parent) return false;
-    const base = path.resolve(parent);
-    if (child === base) return true;
-    return child.startsWith(base.endsWith(path.sep) ? base : `${base}${path.sep}`);
+    const fold = (p) => (caseInsensitive ? p.toLowerCase() : p);
+    const base = fold(path.resolve(parent));
+    const kid = fold(child);
+    if (kid === base) return true;
+    return kid.startsWith(base.endsWith(path.sep) ? base : `${base}${path.sep}`);
   }
 
   function cwdRefusal(cwd) {

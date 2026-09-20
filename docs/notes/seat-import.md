@@ -80,4 +80,5 @@ The far cwd's PARENT is what must exist, not the leaf: `importCreate` creates th
 leaf on purpose (`ensureDir`, exactly as a local spawn does), while a path from
 another box's home fails at the parent — which is the shape of the only move that
 has ever gone wrong here. `refuseUnder` is injected rather than computed so this
-module needs no knowledge of Electron's userData.
+module needs no knowledge of Electron's userData, and the containment compare folds case
+on darwin and win32, where `/users/x/.clodex` and `/Users/x/.clodex` are one directory.

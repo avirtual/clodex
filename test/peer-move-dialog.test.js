@@ -2,6 +2,11 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const os = require('node:os');
+
+const { localFromHome } = require('../renderer/lib/far-cwd-guess');
+
+const LOCAL = localFromHome(os.homedir());
 
 function mkEl(id) {
   const el = {
@@ -118,7 +123,7 @@ test('a move-mode open locks the name, hides the type row and shows the note', (
 test('a same-platform peer prefills the cwd verbatim and adds no guess warning', () => {
   const { ui, byId } = mkPeersUi();
   ui.openPeerSessionDialog('p1', 'murmurfi', {
-    move: { name: 'crypto-hand', cwd: '/far/app', farPlatform: process.platform },
+    move: { name: 'crypto-hand', cwd: '/far/app', farPlatform: LOCAL.platform },
   });
   assert.strictEqual(byId('peer-input-cwd').value, '/far/app');
   assert.doesNotMatch(byId('peer-session-note').textContent, /guessed from yours/,
@@ -126,7 +131,7 @@ test('a same-platform peer prefills the cwd verbatim and adds no guess warning',
 });
 
 test('a peer on another OS warns in the note that the folder was guessed', () => {
-  const foreign = process.platform === 'win32' ? 'linux' : 'win32';
+  const foreign = LOCAL.platform === 'linux' ? 'darwin' : 'linux';
   const { ui, byId } = mkPeersUi();
   ui.openPeerSessionDialog('p1', 'murmurfi', {
     move: { name: 'crypto-hand', cwd: '/far/app', farPlatform: foreign },

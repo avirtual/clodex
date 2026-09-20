@@ -53,7 +53,7 @@ function mkMove({
   entries = [BASE], reply = { ok: true, dropped: ['account:opsguru'] },
   caps = ['dm', 'import'], needsUpgrade = false, peer = true,
   reminderRows = [{ id: 'r1', agent: 'seat', kind: 'in', spec: 'in 1h', body: 'ping' }],
-  createThrows = null, seed = true, chunks = 1, beginRefusal = null,
+  createThrows = null, seed = true, chunks = 1, beginRefusal = null, beginGate = null,
 } = {}) {
   const root = mkTmpRoot('clodex-movepeer-');
   const claudeDir = mkTmpRoot('clodex-movepeer-claude-');
@@ -83,6 +83,7 @@ function mkMove({
     status: () => ({ id: 'p1', label: 'murmurfi', caps, needsUpgrade }),
     importBegin: async (arg) => {
       begun.push(arg);
+      if (beginGate) await beginGate;
       if (beginRefusal) return { ok: false, error: beginRefusal };
       openStaging = arg;
       return { ok: true, id: STAGING_ID };
@@ -539,6 +540,36 @@ test('the exit-TIMEOUT arm aborts the staging the pre-quiesce begin opened', asy
   assert.strictEqual(out.kept, true);
   assert.deepStrictEqual(aborted, [STAGING_ID],
     'the probe opened a staging dir on the far box; the arm that ships nothing must reap it');
+});
+
+test('a throw between begin and ship still reaps the staging the probe opened', async () => {
+  const { m, aborted } = mkMove();
+  seedLive(m, 'seat');
+  m._moveShipment = () => { throw new Error('the seat tree walk exploded'); };
+
+  await assert.rejects(m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD }), /walk exploded/);
+  assert.deepStrictEqual(aborted, [STAGING_ID],
+    'otherwise the far manifest holds the name for an hour and the retry reads "already in progress" — '
+    + 'the leftover-workaround shape this ticket exists to kill');
+});
+
+test('the in-progress guard is taken before the probe, so two concurrent moves cannot both quiesce', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const { m, begun } = mkMove({ beginGate: held });
+  const s = seedLive(m, 'seat');
+
+  const first = m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD });
+  const second = await m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD });
+  release();
+  const firstOut = await first;
+
+  assert.deepStrictEqual(second, { ok: false, error: 'move already in progress' },
+    'the guard and the add used to be separated by the awaited probe, so two frontends — or two '
+    + 'DIFFERENT peers — could both pass it and both quiesce the same pty');
+  assert.strictEqual(begun.length, 1, 'the second caller never reached the peer');
+  assert.strictEqual(firstOut.ok, true, 'and the first move is unaffected');
+  assert.deepStrictEqual(s.killed, [true], 'the pty was quiesced exactly once');
 });
 
 test('the exit-TIMEOUT arm mirrors move(): kept, at the OLD cwd, nothing shipped', async () => {
