@@ -7,8 +7,8 @@
 // which they do not read — so a path that fails to snapshot it drops the chip on
 // every restart until the next meta refresh happens to repaint it.
 //
-// `accountOfRow` is the shared helper all five sites take it from, so it is the
-// unit under test; the SOURCE assertion below is what keeps the five call sites
+// `accountOfRow` is the shared helper all six sites take it from, so it is the
+// unit under test; the SOURCE assertion below is what keeps the six call sites
 // honest, since renderer.js is DOM-bound and cannot be required.
 
 const { test } = require('node:test');
@@ -46,7 +46,7 @@ test('accountOfRow answers null for a default row and for a row that is already 
 });
 
 test('every restart path snapshots the account and passes it to the rebuild', () => {
-  // The five sites that destroy and rebuild a row. Each must take the account
+  // The six sites that destroy and rebuild a row. Each must take the account
   // from the shared helper (or, for the args-save path, recompute it from the env
   // it is about to write) and hand it to addSessionToSidebar as the 8th argument.
   const rebuilds = [...rendererSrc.matchAll(/addSessionToSidebar\(([^;]*?)\);/g)]
@@ -54,18 +54,18 @@ test('every restart path snapshots the account and passes it to the rebuild', ()
   // Only the rebuild sites take a snapshot; the fresh-spawn sites derive the
   // account from the create result or pass none, so they are excluded by name.
   const restarts = rebuilds.filter((c) => /snapAccount/.test(c));
-  assert.strictEqual(restarts.length, 5,
-    `expected the five restart rebuilds to carry snapAccount, found ${restarts.length}:\n${rebuilds.join('\n')}`);
+  assert.strictEqual(restarts.length, 6,
+    `expected the six restart rebuilds to carry snapAccount, found ${restarts.length}:\n${rebuilds.join('\n')}`);
 
   // ENTER: snapAccount is DEFINED at each of those sites, not merely referenced —
   // a free identifier would be a ReferenceError only on the restart itself.
   const defs = [...rendererSrc.matchAll(/const snapAccount = /g)];
-  assert.strictEqual(defs.length, 5, 'one definition per rebuild site');
+  assert.strictEqual(defs.length, 6, 'one definition per rebuild site');
 
-  // Four take it off the row; the args-save path must NOT, because that dialog
+  // Five take it off the row; the args-save path must NOT, because that dialog
   // can CHANGE the account and the row still holds the pre-edit value.
   const fromRow = [...rendererSrc.matchAll(/const snapAccount = accountOfRow\(/g)];
-  assert.strictEqual(fromRow.length, 4, 'four snapshot the row');
+  assert.strictEqual(fromRow.length, 5, 'five snapshot the row');
   assert.match(rendererSrc, /const snapAccount = env === undefined\s*\n\s*\? accountOfRow\(name\)\s*\n\s*: accountFromEnv\(/,
     'the args-save path recomputes from the env it is saving, falling back to the row for a peer save');
 });
