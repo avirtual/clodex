@@ -248,12 +248,12 @@ test('every agent-initiated reattach push is marked background', () => {
   }
 });
 
-test('the reload respawn does NOT claim to be background', () => {
-  // It is the operator's own seat coming back from [agent:context reload];
-  // marking it would move focus away from the session they are watching.
+test('the in-place respawns do NOT claim to be background', () => {
+  // The operator's own seat coming back under the name they are watching —
+  // [agent:context reload] and the [agent:scratch end] cut, never a new session.
   const pushes = reattachPushes(read('session-manager.js'));
-  assert.strictEqual(pushes.length, 1, 'ENTER: session-manager still emits its one reattach push');
-  assert.doesNotMatch(pushes[0], /background:\s*true/);
+  assert.strictEqual(pushes.length, 2, 'ENTER: session-manager still emits the reload and scratch reattach pushes');
+  for (const p of pushes) assert.doesNotMatch(p, /background:\s*true/, p.slice(0, 120));
 });
 
 test('the renderer routes new sessions through the policy, not straight to switchSession', () => {

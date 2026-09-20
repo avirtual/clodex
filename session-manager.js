@@ -6730,8 +6730,9 @@ function createSessionManager(deps) {
     }
 
     async _scratchRespawn(name, entry) {
+      const cwd = this.resumeCwdOf(entry);
       await this.create(
-        name, entry.type, this.resumeCwdOf(entry), entry.extraArgs || [], entry.sessionId || null,
+        name, entry.type, cwd, entry.extraArgs || [], entry.sessionId || null,
         entry.workspaceId || DEFAULT_WORKSPACE_ID,
         entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
         entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
@@ -6750,7 +6751,7 @@ function createSessionManager(deps) {
       if (lvl >= 1) getPersistence().setStripLevel(name, lvl);
       if (entry.label) getPersistence().setLabel(name, entry.label);
       this._sendToSession(name, 'session:context-action', {
-        action: 'reattach', name, type: entry.type, cwd: this.resumeCwdOf(entry),
+        action: 'reattach', name, type: entry.type, cwd,
         backend: (fresh || {}).backend || null, noWire: !!(fresh || {}).noWire,
       });
       return fresh || null;
