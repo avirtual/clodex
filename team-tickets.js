@@ -4024,7 +4024,7 @@ function createTicketMethods(deps, shared) {
     // A reviewer seat that never takes its first turn, and nothing says so.
     //
     // The scope lives in the seat's system prompt and cannot be lost in delivery,
-    // so what goes missing is the contentless START nudge — and a reviewer with no
+    // so what goes missing is the START nudge — and a reviewer with no
     // nudge has no other traffic to earn a turn from. The park's two drain edges
     // (boot-ready rising edge, `_armParkedDrainFallback`) are the recovery; when
     // both miss, the seat is silent and permanent with nothing watching.
@@ -4040,10 +4040,10 @@ function createTicketMethods(deps, shared) {
     // A seat that took a turn cannot be idle-with-no-transcript — it reached idle
     // THROUGH thinking, which is what writes the file.
     //
-    // REDELIVERS ONCE, then escalates. The nudge at the spawn site is deliberately
-    // CONTENTLESS ('…scope is in your system prompt. Begin.'), so a second copy
-    // duplicates no content and can strand nothing — worst case a reviewer is told
-    // to begin twice. That is what makes this safe where a spec redelivery needs
+    // REDELIVERS ONCE, then escalates. The redelivery below restates no scope and
+    // re-attaches nothing, so it duplicates no content and can strand nothing —
+    // worst case a reviewer is told to begin twice and reads the diff at the path
+    // its scope names. That is what makes this safe where a spec redelivery needs
     // _checkSpecConfirm's whole latch argument to be.
     //
     // Measured 3/3 against the real CLI (scripts/t381-injection-repro): a seat
@@ -4100,8 +4100,8 @@ function createTicketMethods(deps, shared) {
           ts: Date.now(), from: 'clodex', to: session.name, kind: 'review-renudged',
           body: `${session.name} never started — re-sending the start nudge`,
         });
-        // Contentless for the spawn site's reason: the scope lives in the system
-        // prompt, and a second copy here would be the two-copies-disagree bug.
+        // Restates no scope, for the spawn site's reason: the scope lives in the
+        // system prompt, and a second copy here would be the two-copies-disagree bug.
         //
         // The trailing clause is not politeness. A nudge submitted at t=89.9s
         // leaves the seat idle-with-no-transcript when this fires at t=90s, so the
