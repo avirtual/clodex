@@ -5,7 +5,6 @@
 const {
   GATEABLE_INTENTS,
   PRIVILEGED_INTENTS,
-  SCRATCH_LABEL_RE,
   intentEnabled,
   intentsAllowlistFromChecked,
   withoutPrivilegedIntents,
@@ -42,7 +41,6 @@ function parseScratch(cleaned) {
   if (!m) return null;
   const sub = m[1].toLowerCase();
   const label = m[2] || null;
-  if (label && !SCRATCH_LABEL_RE.test(label)) return null;
   if (sub === 'mark' && !label) return null;
   if ((sub === 'begin' || sub === 'end') && label) return null;
   if (m[3] && sub !== 'end' && sub !== 'rewind') return null;
