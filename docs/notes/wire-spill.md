@@ -56,15 +56,14 @@ never held, and a later in-cap intent forwards whole.
 
 ## maxBytes
 
-Enforced on HELD bytes before a line is consumed, never per completed line: a
-ticket spec is very often ONE long line, so a per-line check would fire only
-once that line was fully buffered, and the oversized body would spill anyway.
+Enforced on HELD bytes before a line is consumed, never per completed line: a ticket
+spec is very often ONE long line, so a per-line check would fire only once that
+line was fully buffered, and the oversized body would spill anyway.
 
-The same cap bounds the UNTERMINATED head line, before `holding` is set:
-`couldBeHead(pending)` with no newline would buffer without limit, and a long
-`[agent:dm …]` line can never spill anyway. It bounds the `proseSpill` tail too,
-and `SpillTee.buf` at the SSE frame level: a 200 `text/event-stream` that never
-sends `\n\n` would buffer the whole response.
+The same cap bounds the UNTERMINATED head line, before `holding` is set — a long
+`[agent:dm …]` line can never spill, and `couldBeHead(pending)` with no newline
+would buffer without limit — plus the `proseSpill` tail and `SpillTee.buf` at the
+SSE frame level: a 200 `text/event-stream` that never sends `\n\n` would buffer all.
 
 ## SpillTee
 
@@ -79,8 +78,8 @@ cannot outlive its block, or the next `content_block_start` would carry it into
 a different index. A `proseSpill` tail does not; see below.
 
 While a body is held the client sees no text deltas, but pings keep flowing, past
-a held stop too, or a long upstream pause after a block boundary would send zero
-bytes. ~43 chars/delta: an 800 B body holds ~18; a tail holds to the end, same cap.
+a held stop too, or a long pause after a block boundary would send zero bytes.
+~43 chars/delta: an 800 B body holds ~18; a tail holds to the end, same cap.
 
 ## _panic
 
