@@ -363,7 +363,7 @@ test("the lead's reply and the log name both seats, so the lead can see where th
   const reply = f.injected.find((x) => x.includes('reopened (rework)'));
   assert.ok(reply, 'ENTER: the reject replied at all');
   assert.match(reply, /seat team-hand-1 replaced by team-hand-1-r2/, 'the reply names the seat that went and the one that came');
-  assert.match(reply, /context ~200k, past the 175k compact threshold/, 'with the number and the line it crossed');
+  assert.match(reply, /context ~200k, past the 150k compact threshold/, 'with the number and the line it crossed');
   assert.match(reply, /same branch and tree/, 'and says the work was not lost, which is the lead\'s first question');
   const line = f.logs.find((l) => l.msg && l.msg.startsWith('task reject t1'));
   assert.ok(line && line.msg.includes('replaced by team-hand-1-r2'),

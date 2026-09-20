@@ -37,37 +37,30 @@
 // `ephemeral`, not the threshold — reach for that, or for a per-model row below,
 // not for these.
 //
-// The exact value is a measured trade, not a natural constant, and the two facts
-// that decide it are the SHAPE of the cost curve, not the number: replaying a
-// real 25-day stream under each cap, everything from 150k to 175k costs within
-// ~1% (the region is flat, so buying fewer compacts there is nearly free), and
-// the curve only bends upward past 200k. 175k takes the fewer-compacts end of
-// that flat region.
-//
-// The nudge also stays UNDER 200k, the point a long-context surcharge would
-// begin if the vendor applies one to a model we route. The nudge is what asks a
-// seat to act, so it must get to act before crossing that line; the escalate at
-// 225k is only the backstop for a seat that ignored it and is already past.
-// Reason from the curve and that line, not from the number — reasoning from the
-// number is how this reached 200k the first time.
-const CTX_REMINDER_NUDGE_TOKENS = 175_000;
-const CTX_REMINDER_ESCALATE_TOKENS = 225_000;
+// The baseline sits LOW because on Opus-shaped pricing the compact is the CHEAP
+// event and a long warm context the expensive one. The value is a measured
+// trade, not a natural constant, and what decides it is the SHAPE of the curve:
+// replaying a real 25-day stream under each cap, everything from 150k to 175k
+// costs within ~1% and the curve only bends upward past 200k. 150k takes the
+// more-compacts end of that flat region, where a seat still has room to hand off.
+const CTX_REMINDER_NUDGE_TOKENS = 150_000;
+const CTX_REMINDER_ESCALATE_TOKENS = 200_000;
 
-// Per-model thresholds, keyed by the family `modelFamily` derives. Keyed on the
-// model ID, never the display name: the display name is vendor prose ("Sonnet
-// 4.6") and is not what a threshold priced per model can be indexed by.
+// Per-model thresholds, keyed by `modelFamily`'s output and never by the display
+// name (vendor prose), so `claude-fable-5-1[1m]` and a Bedrock-prefixed id both
+// land on the one row below.
 //
-// EMPTY ON PURPOSE, and not dead code. A model whose read price is low enough
-// genuinely wants to compact later — a compact's cost is nearly all fixed while
-// the per-turn saving scales with the read rate — but the measured payback was
-// already several-fold at a threshold higher than the one shipped here, so
-// raising a model buys a margin rather than averting a loss. Against that sits a
-// possible long-context surcharge beginning at 200k: if one applies, every turn
-// a raised row spends above that line is billed at a higher rate and the
-// optimisation inverts. A usage receipt carries token counts and never a rate,
-// so nothing here can detect it. The costs of being wrong are asymmetric, so no
-// row ships and the settings map is what makes a correction free.
-const CTX_MODEL_THRESHOLDS = new Map();
+// Fable 5.1's price shape is INVERTED against Opus: a warm cache read is 1/40 of
+// a cold read and a cache write is 80x a warm read, so Fable reads at about half
+// Opus's rate and writes — output, compact summary, cold re-cache — at about
+// twice. The compact is therefore the most expensive event in a Fable session
+// and a long warm context the cheap state, which is why this row sits 50k above
+// the baseline. The earlier rule that the nudge stay under 200k against a
+// possible long-context surcharge is superseded, for this family, by the
+// operator's price data (2026-09-20).
+const CTX_MODEL_THRESHOLDS = new Map([
+  ['fable-5-1', { nudge: 200_000, escalate: 250_000 }],
+]);
 
 // A nudge below this fires on a session that has merely loaded its system prompt
 // and tools, which trains the agent to ignore it; above the ceiling it can never

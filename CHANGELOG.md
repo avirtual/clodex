@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Compact nudges are now per model: every model is nudged at 150k tokens (escalated at 200k), and Fable 5.1 — whose cache reads are cheap and whose compacts are expensive — at 200k (escalated at 250k). Settings shows the Fable row read-only under the baseline boxes; a per-model row in ui-settings.json still overrides it.
+
 ## 5.83.2 — 2026-09-20
 
 - Move to Peer… now checks the far folder before anything moves: a path that cannot exist on the peer (its parent folder is missing, or it points into Clodex's own data) is refused in the dialog with the seat still running, and when the peer runs a different OS the folder is pre-filled with its home directory swapped in.
