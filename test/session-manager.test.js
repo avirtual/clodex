@@ -19128,7 +19128,7 @@ test('scratch end: with no mark and no tombstone it says no episode is open', ()
   assert.strictEqual(f.injected[0], '[agent:scratch] end refused: no episode is open — nothing was cut.');
 });
 
-test('scratch end: the §3 steps run in ORDER — validate, park, keeper, kill, re-validate, bak, tmp, rename, create, inject', async () => {
+test('scratch end: the §3 steps run in ORDER — park, keeper, kill, bak, tmp, rename, create', async () => {
   const f = mkScratch();
   scratchOpen(f);
   scratchResearch(f);
@@ -19153,6 +19153,36 @@ test('scratch end: the §3 steps run in ORDER — validate, park, keeper, kill, 
   assert.ok(!after.includes(SCRATCH_ACK_PREFIX_T), 'and so is the ack record, which is the first dropped byte');
   assert.ok(after.includes('here is what I found'), 'while the pre-mark prefix is intact');
   assert.ok(after.endsWith('\n'), 'the cut lands on a record boundary, never mid-line');
+});
+
+test('scratch end: the RE-VALIDATE after the kill catches what the exiting CLI wrote, and abandons the cut', async () => {
+  const f = mkScratch();
+  scratchOpen(f);
+  scratchResearch(f);
+  f.s._flushTurnEnd = true;
+  const base = f.s.pty.kill;
+  let atExit = null;
+  f.s.pty.kill = () => {
+    base();
+    const late = new ScratchTape();
+    late.prompt('Compacted context follows', { isCompactSummary: true });
+    f.append(late.text);
+    atExit = f.read();
+  };
+
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.ok(!f.order.includes('bak'),
+    'no backup was taken. The CLI writes as it exits — here it flushes a /compact the model ran inside '
+    + 'the episode, which the FIRST validation, taken while the process was still alive, could not see. '
+    + 'That window is all the second read covers, and so the only shape that tells the two apart');
+  assert.ok(!f.order.includes('rename'), 'and NOTHING was written over the transcript — a cut computed '
+    + 'from the pre-kill verdict would have truncated a file whose tail changed under it');
+  assert.strictEqual(f.read(), atExit, 'the file is exactly what the exiting CLI left');
+  assert.ok(f.order.includes('create'), 'and the seat still came back, on the uncut transcript');
+  assert.match(f.injected[f.injected.length - 1],
+    /the cut was ABANDONED after your process was recycled: a compact landed inside the episode/);
 });
 
 test('scratch end: the summary is injected into the FRESH seat, framed as Clodex-delivered given facts', async () => {
