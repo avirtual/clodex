@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.82.2 — 2026-09-20
+
 - Fixed: a `task add`, `shout` or `context` body whose reply ended on `[agent:end]` with no newline after it was not spilled — the whole body reached the screen and the recipient's context.
 - Fixed: the "Let agents run commands inside a session open in my terminal" and "Spill long intent bodies to files" Settings checkboxes showed unchecked after a relaunch even though the setting was on.
 
