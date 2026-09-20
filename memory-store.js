@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { confine } = require('./path-confine');
 const { previewLine } = require('./body-preview');
+const { seatPathFor, legacySeatPathFor } = require('./clodex-paths');
 
 // A charset filter, NOT the containment check — it admits `.` and `..`, which
 // are spelled entirely in this charset. Containment is enforced positively in
@@ -30,6 +31,16 @@ const MEMORY_AGENT_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/; // mirrors session nam
 const MEMORY_ID_RE = /^mem-\d+-[a-z0-9]+$/;
 
 const CORE_META_KEYS = ['id', 'scope', 'learned_at', 'source'];
+
+function linksToSeatMemory(rootDir, name) {
+  const root = path.dirname(path.dirname(rootDir));
+  if (legacySeatPathFor(root, name, 'memory') !== path.join(rootDir, name)) return false;
+  try {
+    const real = fs.realpathSync(path.join(rootDir, name));
+    return fs.statSync(real).isDirectory()
+      && real === fs.realpathSync(seatPathFor(root, name, 'memory'));
+  } catch { return false; }
+}
 
 function readUnitFile(file) {
   let fd = null;
@@ -102,7 +113,9 @@ function createMemoryStore(rootDir) {
       try { entries = fs.readdirSync(rootDir, { withFileTypes: true }); }
       catch { return []; }
       return entries
-        .filter((e) => e.isDirectory() && MEMORY_AGENT_RE.test(e.name))
+        .filter((e) => (e.isDirectory()
+          || (e.isSymbolicLink() && linksToSeatMemory(rootDir, e.name)))
+          && MEMORY_AGENT_RE.test(e.name))
         .map((e) => e.name);
     },
     list(agent) {

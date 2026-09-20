@@ -240,27 +240,30 @@ files — shared files can't be misattributed — plus a log-only orphan pass.
 ### Seat directory
 
 One seat's durable state has ONE home, `~/.clodex/sessions/<seat>/`
-(`seatDirFor` / `SEAT_KINDS`), holding `messages/ pending/ notices/ promptcache/
-memory/ spill/ monitors/ run/`. That dir is the real one and each old spelling
-(`~/.clodex/{messages,pending,notices,promptcache,spill,monitors}/<seat>`,
+(`seatDirFor` / `SEAT_KINDS`), holding `messages/ notices/ promptcache/ memory/
+spill/ monitors/ run/`. That dir is the real one and each old spelling
+(`~/.clodex/{messages,notices,promptcache,spill,monitors}/<seat>`,
 `library/memory/<seat>`, `run/<seat>`) becomes a SYMLINK into it, because
-byte-pinned hook bodies and every transcript carry the old spelling.
-`seat-layout.js` migrates existing seats once at launch, marker-gated by
-`sessions/.migrated`; `run/<seat>` is deleted rather than moved (stale residue)
-and re-minted as a link at spawn, which keeps `agent.sock` at the shorter path.
+byte-pinned hook bodies and every transcript carry the old spelling. All 7 kinds
+move; every reader over a shared parent dir is link-aware. `seat-layout.js`
+migrates existing seats at launch, gated by a PER-KIND record in
+`sessions/.migrated` (`{"kinds":{"<kind>":"<iso>"}}`) — a kind runs over all
+known names once and is then stamped, so a kind added later still migrates on a
+box that already launched. `run/<seat>` is deleted rather than moved (stale
+residue) and re-minted as a link at spawn, which keeps `agent.sock` at the
+shorter path.
 
-That state is MIXED today, and a reader of one seat's dir must not assume
-otherwise. Three kinds are DEFERRED (`DEFERRED_KINDS`) because an operator over
-their parent dir refuses or destroys a symlink: `memory` (`memory-store.agents()`
-and the memory viewer), `messages` (the 5-minute spill sweep unlinks the link)
-and `pending` (a drain's rename+rm claims the link instead of the dir). Each
-moves in the release that repairs its reader — see `docs/notes/seat-layout.md`,
-which also records that `pending`'s repair must land BEFORE anything mints that
-link. Of the rest, only `run/` is minted for a BRAND-NEW seat — the other 4 stay
-at their old spelling until each first-use site calls `ensureSeatLink`. And the
-marker is global and written once, so a seat absent from `persistence.list()` at
-that boot is never migrated and `ensureSeatLink` will not adopt its real dir
-afterwards.
+`pending/<seat>` is deliberately NOT a seat kind and never moves: it is a
+transient delivery queue with two rename-claiming drainers, one of them a
+byte-pinned bash hook body, and a move-to-peer drains it rather than carrying
+it. See `docs/notes/seat-layout.md`.
+
+Of the 7, only `run/` is minted for a BRAND-NEW seat — the other 6 stay at their
+old spelling until each first-use site calls `ensureSeatLink`. A seat absent from
+`persistence.list()` when its kind was stamped is never migrated and
+`ensureSeatLink` will not adopt its real dir afterwards, so a mixed tree is
+still the expected steady state and a reader of one seat's dir must not assume
+otherwise.
 
 Per Claude session: `run/<name>/hook.sh` (SessionStart — atomically repoints the
 `run/<name>/transcript.jsonl` symlink; emits the memory digest only for

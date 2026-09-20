@@ -13,7 +13,7 @@ const { execSync, spawn, execFile } = require('child_process');
 const crypto = require('crypto');
 const pty = require('node-pty');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
-const { pathFor, runDirFor, defaultClodexHome } = require('./clodex-paths');
+const { pathFor, runDirFor, defaultClodexHome, seatPathFor } = require('./clodex-paths');
 const { confine } = require('./path-confine');
 const { createSkillDelivery } = require('./skill-delivery');
 const { KINDS: PROMPT_KINDS, badStem, teamPromptFile, teamJsonFile, readTeamJson } = require('./team-prompt-dir');
@@ -108,6 +108,13 @@ function referencedSpillNames(pendingDir) {
   return refs;
 }
 
+function linksToSeatDir(linkPath, seatPath) {
+  try {
+    const real = fs.realpathSync(linkPath);
+    return fs.statSync(real).isDirectory() && real === fs.realpathSync(seatPath);
+  } catch { return false; }
+}
+
 // Exempting parked pointers means a seat that never returns grows disk forever.
 // Deliberate: the alternative caps disk by destroying undelivered dms. If it
 // ever bites, add a `pending/` expiry — ONE policy for both lifetimes — rather
@@ -120,7 +127,9 @@ function sweepSpilledMessages(msgDir, pendingDir, maxAgeSec, now = Date.now()) {
   for (const entry of fs.readdirSync(msgDir, { withFileTypes: true })) {
     try {
       const epath = path.join(msgDir, entry.name);
-      if (entry.isDirectory()) {
+      const linkToSeat = entry.isSymbolicLink()
+        && linksToSeatDir(epath, seatPathFor(path.dirname(msgDir), entry.name, 'messages'));
+      if (entry.isDirectory() || linkToSeat) {
         for (const fname of fs.readdirSync(epath)) {
           try {
             if (referenced.has(fname)) continue;
