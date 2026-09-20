@@ -164,6 +164,9 @@ const SCRATCH_TAIL_SCAN = 64 * 1024;
 const SCRATCH_MARK_TAIL = 512;
 const SCRATCH_CLOSE_TIMEOUT = 120000;
 const SCRATCH_BAK_TTL_MS = 7 * 24 * 3600 * 1000;
+const SCRATCH_CUT_TEXT_PREFIXES = ['Scratch episode result · mark ', 'Scratch rewind result · mark ', 'Continue from your handoff'];
+const isScratchCutText = (text) => typeof text === 'string' && SCRATCH_CUT_TEXT_PREFIXES.some((p) => text.startsWith(p));
+const scratchRealArrivals = (list) => (Array.isArray(list) ? list : []).filter((a) => !isScratchCutText(a && a.text));
 
 const SCRATCH_DISPATCH_TYPES = new Set(['task', 'spawn', 'team', 'team-create', 'team-review', 'review-done']);
 
@@ -6528,15 +6531,20 @@ function createSessionManager(deps) {
       if (typeof label !== 'string' || !SCRATCH_LABEL_RE.test(label)) throw new Error(`invalid scratch label ${JSON.stringify(label)}`);
       const v = this._scratchBeginTail(session);
       const settled = this._scratchBeginSettled(session, v);
-      if (!settled || v.state !== 'ok' || session.activityState === 'thinking') {
-        const state = settled && v.state !== 'ok' ? v.state : 'mid-turn';
-        const error = `scratch mark ${label} refused: ${state} — re-try when the seat is idle`;
+      const refuse = (why) => {
+        const error = `scratch mark ${label} refused: ${why}`;
         this._broadcast('ipc-message', { type: 'scratch', from: name, to: name, body: error });
         return { ok: false, error };
+      };
+      if (!settled || v.state !== 'ok' || session.activityState === 'thinking') {
+        const state = v.state === 'ok' ? 'mid-turn' : v.state;
+        return refuse(`${state} — re-try when the seat is idle`);
       }
+      const taken = this._scratchOpenMarks(session).find((m) => m.label && m.label !== label && m.sizeAtBegin === v.t.size);
+      if (taken) return refuse(`"${taken.label}" already marks this exact point`);
       const reply = (msg) => this._injectText(session, msg, { parkable: true });
       const mark = this._scratchMark(session, v, reply, { label, operator: true, atEnd: true });
-      if (!mark) return { ok: false, error: `scratch mark ${label} refused: another label already marks this point` };
+      if (!mark) return refuse('another label already marks this point');
       return { ok: true, nonce: mark.nonce, offset: mark.sizeAtBegin };
     }
 
@@ -6888,12 +6896,13 @@ function createSessionManager(deps) {
           return `[agent:scratch] ${verb} refused: the episode never opened (the ack after begin never reached `
             + 'you). Nothing was cut; emit begin again when idle.';
         case 'arrivals': {
-          const who = (v.arrivals || []).map((a) => {
+          const real = scratchRealArrivals(v.arrivals);
+          const who = real.map((a) => {
             const clock = scratchArrivalClock(a.at);
             const at = clock ? ` at ${clock}` : '';
             return `${previewLine(a.text, 60)}${at}`;
           }).join(', ');
-          return `[agent:scratch] ${verb} refused: ${(v.arrivals || []).length} message(s) arrived during the `
+          return `[agent:scratch] ${verb} refused: ${real.length} message(s) arrived during the `
             + `episode and would be cut with it — ${who}. Handle them now if you have not, then re-emit `
             + '`[agent:scratch end replay] <summary>` to cut AND have them re-delivered verbatim after your '
             + `summary, or \`[agent:scratch cancel]\` to keep everything. Nothing was cut; the mark ${mark.nonce} is still open.`;
@@ -7065,7 +7074,7 @@ function createSessionManager(deps) {
       let realpath = null;
       try { realpath = fs.realpathSync(pathFor(REGISTRY_DIR, name, 'transcript')); } catch { realpath = null; }
       const opts = { realpath: realpath === null ? undefined : realpath, body: closing.body, replay: closing.replay };
-      const v1 = validateScratchCut(mark, live, opts);
+      const v1 = this._scratchValidate(mark, live, opts);
       if (!v1.ok) { reply(this._scratchRefusalLine(mark, v1, verb)); return refused(v1.reason, v1.stats); }
 
       if (this._movingNames.has(name)) {
@@ -7097,7 +7106,7 @@ function createSessionManager(deps) {
       }
 
       const quiet = this._readScratchFile(mark.realpath);
-      const v2 = quiet ? validateScratchCut(mark, quiet, opts) : null;
+      const v2 = quiet ? this._scratchValidate(mark, quiet, opts) : null;
       if (!v2 || !v2.ok) {
         const why = v2 ? (v2.detail || v2.reason) : `${mark.realpath} could not be re-read`;
         const fresh = await this._scratchRespawnSafely(session, entry, mark, null);
@@ -7173,9 +7182,18 @@ function createSessionManager(deps) {
         snapshot: false,
         dropBody: `scratch ${mark.nonce} → summary NOT injected (fresh CLI never signaled boot)`,
       });
-      if (!landed) return notInjected();
+      if (!landed) {
+        if (mark.label) log.info('intent', `scratch ${fresh.name}: mark ${mark.label} NOT re-armed — the briefing did not land`);
+        return notInjected();
+      }
       if (mark.label) this._scratchReArm(fresh, mark, closing, v2.cutOffset, quiet, kept, endedAt);
       return done(this._replayScratchArrivals(fresh, mark, closing, v2.arrivals));
+    }
+
+    _scratchValidate(mark, buf, opts) {
+      const v = validateScratchCut(mark, buf, opts);
+      if (v.ok || v.reason !== 'arrivals' || scratchRealArrivals(v.arrivals).length) return v;
+      return validateScratchCut(mark, buf, { ...opts, replay: true });
     }
 
     _scratchPruneBaks(dir, keep) {
@@ -7245,9 +7263,8 @@ function createSessionManager(deps) {
 
     _replayScratchArrivals(session, mark, closing, arrivals) {
       if (!closing.replay) return 0;
-      const list = Array.isArray(arrivals) ? arrivals : [];
       let n = 0;
-      for (const a of list) {
+      for (const a of scratchRealArrivals(arrivals)) {
         try {
           this._injectText(session, scratchReplayLine(mark, a));
           n++;

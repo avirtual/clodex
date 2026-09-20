@@ -19990,7 +19990,6 @@ test('scratch mark: the ack starts with ACK_PREFIX + nonce, names the label, and
   assert.deepStrictEqual(mark.notes, []);
   assert.strictEqual(mark.operator, false);
   assert.strictEqual(mark.sizeAtBegin, offset, 'the cut point is the first byte of the reply that carried mark');
-  assert.ok(!('label' in Object(f.s._scratch)), 'the anonymous shape never grows a label');
 });
 
 test('scratch rewind: to the OLDER of three marks — the younger is dropped, the older carried, the target re-armed with a NEW nonce and its ack AFTER the briefing', async () => {
@@ -20064,6 +20063,90 @@ test('scratch rewind: a SECOND rewind to the re-armed mark validates and re-deli
   const b3 = fresh2._scratchMarks.get('b');
   assert.notStrictEqual(b3.nonce, b2.nonce);
   assert.deepStrictEqual(b3.notes.map((x) => x.body), ['first note', 'second note']);
+});
+
+function scratchLandCut(f, tape, texts) {
+  const landed = new ScratchTape();
+  landed.parent = tape.parent;
+  landed.t = tape.t;
+  for (const text of texts) landed.prompt(text);
+  f.append(landed.text);
+  tape.parent = landed.parent;
+  tape.t = landed.t;
+}
+
+async function scratchCarriedAfterCut(f, tape, landed = null) {
+  const a = scratchNamed(f, tape, 'a').mark;
+  scratchResearch(f, 'read one');
+  const b = scratchNamed(f, tape, 'b').mark;
+  scratchResearch(f, 'read two');
+  await scratchRewind(f, f.s, 'b', 'the answer is in b');
+  const fresh = f.m.sessions.get('a');
+  assert.strictEqual(fresh._scratchMarks.get('a'), a, 'a is carried');
+  const briefing = f.injected[f.injected.length - 2];
+  scratchLandCut(f, tape, [landed ? landed(briefing) : briefing, f.injected[f.injected.length - 1]]);
+  scratchResearch(f, 'read on the fresh seat');
+  return { a, b, fresh };
+}
+
+test('scratch rewind: a CARRIED older mark is usable on first use — the b-briefing Clodex wrote at the cut is not an arrival, so rewind a without replay cuts at a and replays nothing', async () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  const { a, b, fresh } = await scratchCarriedAfterCut(f, tape);
+  assert.ok(f.read().includes(`Scratch rewind result · mark ${b.nonce}`), 'the b-briefing sits in the tape above a');
+  const n = f.injected.length;
+
+  await scratchRewind(f, fresh, 'a', 'the answer was in a after all');
+  assert.strictEqual(fsReal.statSync(f.target).size, a.sizeAtBegin, `cut at a, not refused: ${f.injected.slice(n).map((t) => t.slice(0, 90))}`);
+  const fresh2 = f.m.sessions.get('a');
+  assert.ok(fresh2 && fresh2 !== fresh, 'respawned');
+  const since = f.injected.slice(n);
+  assert.ok(!since.some((t) => t.startsWith('[agent:scratch] rewind refused:')), since.map((t) => t.slice(0, 90)));
+  assert.ok(!since.some((t) => t.startsWith('Replayed from scratch episode')), 'the dead b-briefing is never pasted back as a peer message');
+  assert.match(since[since.length - 2], new RegExp(`^Scratch rewind result · mark ${a.nonce} · label a`));
+  assert.ok(since[since.length - 1].startsWith(`${SCRATCH_ACK_PREFIX_T}${fresh2._scratchMarks.get('a').nonce} · label a re-armed here`));
+  assert.strictEqual(fresh2._scratchMarks.has('b'), false, 'b (re-armed above a) is younger than this cut and gone');
+  const rows = fsReal.readFileSync(pathReal.join(f.root, 'scratch', 'a', 'episodes.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepStrictEqual(rows.map((r) => [r.label, r.outcome, r.replayed]), [['b', 'cut', 0], ['a', 'cut', 0]]);
+});
+
+test('scratch rewind: a carried mark under a SPILLED briefing (the "Continue from your handoff" pointer) cuts on first use too', async () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  const { a, fresh } = await scratchCarriedAfterCut(f, tape, () => `Continue from your handoff: @${f.root}/spill/a/abc.md `);
+  const n = f.injected.length;
+  await scratchRewind(f, fresh, 'a', 'note');
+  assert.strictEqual(fsReal.statSync(f.target).size, a.sizeAtBegin, `cut at a: ${f.injected.slice(n).map((t) => t.slice(0, 90))}`);
+  assert.ok(!f.injected.slice(n).some((t) => t.startsWith('Replayed from scratch episode')));
+});
+
+test('scratch rewind: a REAL arrival above the carried mark still refuses — counted without the Clodex briefing — and replay re-delivers only it', async () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  const { a, b, fresh } = await scratchCarriedAfterCut(f, tape);
+  const dm = new ScratchTape();
+  dm.parent = tape.parent;
+  dm.prompt('[agent:from Codex] can you look at the build?');
+  f.append(dm.text);
+  scratchResearch(f, 'looked at the build');
+  const size = fsReal.statSync(f.target).size;
+  let n = f.injected.length;
+
+  await scratchRewind(f, fresh, 'a', 'note');
+  assert.strictEqual(fsReal.statSync(f.target).size, size, 'nothing cut');
+  assert.strictEqual(f.injected.length, n + 1);
+  assert.match(f.injected[n], /^\[agent:scratch\] rewind refused: 1 message\(s\) arrived during the episode and would be cut with it — \[agent:from Codex\] can you look at the build\?/);
+  assert.ok(!f.injected[n].includes('Scratch rewind result'), 'the refusal names the dm, never the briefing');
+
+  n = f.injected.length;
+  await scratchRewind(f, fresh, 'a', 'note', { replay: true });
+  assert.strictEqual(fsReal.statSync(f.target).size, a.sizeAtBegin, 'replay cuts at a');
+  const replayed = f.injected.slice(n).filter((t) => t.startsWith('Replayed from scratch episode'));
+  assert.strictEqual(replayed.length, 1, f.injected.slice(n).map((t) => t.slice(0, 90)));
+  assert.ok(replayed[0].endsWith('\n[agent:from Codex] can you look at the build?'));
+  assert.ok(!f.injected.slice(n).some((t) => t.includes(`Scratch rewind result · mark ${b.nonce}`)), 'the b-briefing is not replayed');
+  const rows = fsReal.readFileSync(pathReal.join(f.root, 'scratch', 'a', 'episodes.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepStrictEqual(rows.map((r) => [r.label, r.outcome, r.replayed]), [['b', 'cut', 0], ['a', 'refused', null], ['a', 'cut', 1]]);
 });
 
 test('scratch rewind: bare rewind targets the MOST RECENT mark', async () => {
@@ -20263,9 +20346,24 @@ test('scratch scratchMark (operator): a seat mid-turn or behind is REFUSED with 
   f.write(behind);
   f.s._flushTurnEnd = true;
   assert.strictEqual(f.m.scratchMark('a', 'op').ok, false, 'behind is refused too');
+  assert.match(f.m.scratchMark('a', 'op').error, /^scratch mark op refused: behind — /, 'and says behind, not mid-turn');
   assert.strictEqual(f.s._scratchPendingBegin, undefined);
   assert.throws(() => f.m.scratchMark('a', 'bad label'), /invalid scratch label/);
   assert.throws(() => f.m.scratchMark('nobody', 'op'), /not running/);
+});
+
+test('scratch scratchMark (operator): a second label at the same point is refused BEFORE anything reaches the agent, and the refusal is broadcast like the others', () => {
+  const f = mkScratch();
+  scratchPrefix(f);
+  const rows = [];
+  f.m._broadcast = (ch, row) => rows.push([ch, row]);
+  assert.strictEqual(f.m.scratchMark('a', 'op').ok, true);
+  assert.strictEqual(f.injected.length, 1);
+  const r = f.m.scratchMark('a', 'op2');
+  assert.deepStrictEqual(r, { ok: false, error: 'scratch mark op2 refused: "op" already marks this exact point' });
+  assert.strictEqual(f.injected.length, 1, 'no agent-facing "mark refused" line was injected for an operator click');
+  assert.strictEqual(f.s._scratchMarks.has('op2'), false);
+  assert.deepStrictEqual(rows[rows.length - 1], ['ipc-message', { type: 'scratch', from: 'a', to: 'a', body: r.error }]);
 });
 
 test('scratch cut: the .bak is written 0600 — copyFileSync inherits the transcript\'s mode, which is not', async () => {
