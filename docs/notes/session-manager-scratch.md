@@ -15,6 +15,18 @@ Code 2.1.278 writes one text+tool_use API message as TWO `assistant` records
 sharing a `message.id`, and the scanner sees the FIRST — whose `stop_reason` is
 already `tool_use` — so "the record I was called for" can never be the test.
 
+## _scratchDeferBegin
+
+On the wire junction the intent fires from the proxy's end-of-message event,
+BEFORE the CLI has appended the reply's `end_turn` record: the tail then ends
+on the previous prompt or tool_result and `boundaryAt` answers about the wrong
+turn. A `behind` tail waits on `fs.watch` of the transcript (the CLI's own
+append is the wake), bounded by `SCRATCH_CLOSE_TIMEOUT`, and re-validates. The
+CLI writes `turn_duration` a few ms AFTER `end_turn`; a mark taken between the
+two leaves the `turn_duration` past `sizeAtBegin`, so the cut's kept-set leaf
+is not `mark.leafUuid` and every end refuses `leaf-mismatch` — hence a bare
+`end_turn` also waits while `_flushTurnEnd` is true.
+
 ## _scratchRecycle
 
 Move's shape, not `kill()` and not reload. `kill()` removes the persistence
