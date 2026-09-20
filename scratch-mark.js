@@ -333,13 +333,16 @@ function defaultFormatTime(ms) {
   return new Date(ms).toTimeString().slice(0, 5);
 }
 
-function arrivalClock(at) {
+function arrivalClock(at, formatTime = defaultFormatTime) {
   const s = at == null ? '' : String(at);
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s) ? s.slice(11, 16) : null;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) return null;
+  const ms = Date.parse(s);
+  return Number.isFinite(ms) ? formatTime(ms) : null;
 }
 
-function scratchReplayLine(mark, arrival) {
-  const clock = arrivalClock(arrival && arrival.at);
+function scratchReplayLine(mark, arrival, opts = {}) {
+  const formatTime = typeof opts.formatTime === 'function' ? opts.formatTime : defaultFormatTime;
+  const clock = arrivalClock(arrival && arrival.at, formatTime);
   const when = clock ? `arrived ${clock}; ` : '';
   const header = `Replayed from scratch episode ${mark.nonce} (${when}you saw it inside the episode `
     + 'and your summary says what you did about it — do not re-answer unless it says otherwise):';
@@ -374,4 +377,5 @@ module.exports = {
   validateScratchCut,
   scratchBriefing,
   scratchReplayLine,
+  arrivalClock,
 };

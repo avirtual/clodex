@@ -178,9 +178,6 @@ function noteFiles() {
   return fs.readdirSync(NOTES_DIR).filter((f) => f.endsWith('.md')).sort();
 }
 
-// docs/notes/renderer-lib-x.md describes renderer/lib/x.js: the path with
-// separators flattened to hyphens. Hyphens are also legal in a filename, so the
-// split is ambiguous and every reading is tried, shallowest first.
 function sourceCandidates(noteBase) {
   const parts = noteBase.split('-');
   const out = [];

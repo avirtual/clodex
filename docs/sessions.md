@@ -429,9 +429,11 @@ transcript under a header naming the mark and the arrival time and telling the
 seat not to re-answer unless its own summary says to. A summary that never
 reaches the seat replays nothing — a bare arrival with no episode behind it is
 the double-action hazard the explicit modifier exists to prevent, and the `.bak`
-is what recovers the messages in that case.
+is what recovers the messages in that case; its row says `summary-not-injected`
+with `replayed` null. An arrival is injected inline whatever its length: the
+handoff spill that shapes the summary never touches a replayed message.
 
-**Measurement.** Every episode appends one row — cut, refused or failed alike —
+**Measurement.** Every episode appends one row — cut, refused, cancelled or failed alike —
 to `~/.clodex/teams/<team>/scratch-cost.jsonl`, or to
 `~/.clodex/scratch/<name>/episodes.jsonl` for a seat on no team. The row carries
 the mark nonce (what ties it to a wirescope observation of the post-resume

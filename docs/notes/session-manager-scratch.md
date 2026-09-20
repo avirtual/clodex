@@ -49,7 +49,7 @@ covers is real — the exiting CLI writes `cost-state`, sidecars and, when the
 operator compacted at the wrong moment, an `isCompactSummary` record.
 
 The measurement row is written from a `finally`, so every arm produces one:
-refused, failed and cut alike. A file holding only successes cannot answer the
+refused, failed and cut alike; `_scratchCancel` writes its own. A file holding only successes cannot answer the
 question it exists for, which is how often a seat opens an episode it cannot
 close.
 
@@ -59,7 +59,9 @@ Fires only after `_injectAfterBoot` returns true. An arrival re-delivered into
 a seat that never received its summary reads as a live message with no episode
 behind it — the double-action hazard the explicit `replay` modifier exists to
 prevent — so a dropped summary means a dropped replay, and the transcript's
-`.bak` is what recovers the arrivals in that case.
+`.bak` is what recovers the arrivals in that case (row: `summary-not-injected`,
+`replayed` null). Arrivals bypass `_handoffText`: an 800-byte-plus arrival routed
+through it arrived as a second `Continue from your handoff` pointer.
 
 ## _voidScratchMark
 

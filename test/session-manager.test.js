@@ -18924,7 +18924,7 @@ class ScratchTape {
   get text() { return this.lines.map((l) => `${l}\n`).join(''); }
 }
 
-function mkScratch({ entry = {}, holdKeeper = null, fsWrap = null } = {}) {
+function mkScratch({ entry = {}, holdKeeper = null, fsWrap = null, deps = {} } = {}) {
   const root = mkTmpRoot('scratch-mark-');
   fsReal.mkdirSync(runDirForReal(root, 'a'), { recursive: true });
   const raw = pathReal.join(root, 'projects', `${SCRATCH_SID}.jsonl`);
@@ -18960,6 +18960,7 @@ function mkScratch({ entry = {}, holdKeeper = null, fsWrap = null } = {}) {
       setStripLevel() {}, setLabel() {}, setSessionId() {}, upsert() { order.push('upsert'); },
     }),
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+    ...deps,
   });
   m._injectText = (s, text) => injected.push(text);
   m._broadcast = () => {};
@@ -19686,6 +19687,126 @@ test('scratch end: WITHOUT replay an arrival still refuses — the modifier is t
   assert.match(f.injected[f.injected.length - 1], /1 message\(s\) arrived during the episode/);
   assert.deepStrictEqual(f.order, [], 'nothing was cut');
   assert.ok(f.s._scratch, 'and the mark is still open');
+});
+
+test('scratch end replay: an arrival over SPILL_MIN_BYTES is still injected inline under the §3 header, never as a handoff pointer', async () => {
+  const { SPILL_MIN_BYTES: MIN } = require('../intent-spill');
+  const f = mkScratch();
+  scratchOpen(f);
+  scratchResearch(f);
+  const long = `[agent:from Codex] ${'lorem ipsum '.repeat(Math.ceil(MIN / 12) + 8)}END-OF-DM`;
+  assert.ok(Buffer.byteLength(long, 'utf8') > MIN, 'the fixture really crosses the spill threshold');
+  const dm = new ScratchTape();
+  dm.prompt(long);
+  dm.turn('I will');
+  f.append(dm.text);
+  f.s._flushTurnEnd = true;
+
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: true, body: 'a summary' });
+  await new Promise((r) => setTimeout(r, 80));
+
+  const replayed = f.injected.filter((t) => t.startsWith('Replayed from scratch episode'));
+  assert.strictEqual(replayed.length, 1, 'the long arrival was replayed once, and it is the text that starts with the header');
+  assert.ok(replayed[0].endsWith(`\n${long}`), 'with the body verbatim — a replayed arrival is not a handoff');
+  assert.ok(!f.injected.some((t) => t.startsWith('Continue from your handoff:')),
+    'the reload-handoff shaper never touches an arrival: a second "Continue from your handoff" pointer '
+    + 'is indistinguishable in shape from the summary the seat just received');
+  assert.ok(!fsReal.existsSync(pathReal.join(f.root, 'spill', 'a')), 'and nothing was spilled to disk for it');
+});
+
+test('scratch end: a summary that never reached a seat records replayed=null with a reason, not a clean-looking cut', async () => {
+  const f = mkScratch();
+  scratchOpen(f);
+  scratchResearch(f);
+  scratchTwoArrivals(f);
+  f.s._flushTurnEnd = true;
+  f.m._injectAfterBoot = async () => false;
+
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: true, body: 'a summary' });
+  await new Promise((r) => setTimeout(r, 80));
+
+  const file = pathReal.join(f.root, 'scratch', 'a', 'episodes.jsonl');
+  const rows = fsReal.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].outcome, 'cut', 'the transcript WAS cut');
+  assert.strictEqual(rows[0].reason, 'summary-not-injected',
+    'but the row says the summary never landed — the one case where the .bak is the only copy of the arrivals');
+  assert.strictEqual(rows[0].replayed, null,
+    'replayed is null, not 0: a 0 here is byte-identical to a clean cut with no arrivals, which is the '
+    + '"unresolved reads as zero" the null-never-zero rule forbids');
+});
+
+test('scratch cancel: a cancelled episode is recorded — cancels are half of "how often a seat cannot close"', () => {
+  const f = mkScratch();
+  scratchOpen(f);
+  const nonce = f.s._scratch.nonce;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', replay: false, body: '' });
+
+  const file = pathReal.join(f.root, 'scratch', 'a', 'episodes.jsonl');
+  const rows = fsReal.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].outcome, 'cancelled');
+  assert.strictEqual(rows[0].nonce, nonce);
+  assert.strictEqual(rows[0].replayed, null);
+  assert.strictEqual(rows[0].bytes.dropped, null, 'nothing was measured, so nothing reads as a number');
+  assert.strictEqual(f.s._scratch, null, 'and the mark is gone');
+});
+
+test('scratch cancel: with no episode open, nothing is recorded', () => {
+  const f = mkScratch();
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', replay: false, body: '' });
+  assert.ok(!fsReal.existsSync(pathReal.join(f.root, 'scratch', 'a', 'episodes.jsonl')));
+});
+
+test('scratch end: a seat ON a team appends its row to <teamsDir>/<team>/scratch-cost.jsonl', async () => {
+  const teamsDir = pathReal.join(mkTmpRoot('scratch-mark-'), 'teams');
+  const f = mkScratch({ deps: { teamsDir, resolveTeam: (cwd) => (cwd && cwd.endsWith(pathReal.sep + 'a') ? null : { name: 't' }) } });
+  scratchOpen(f);
+  scratchResearch(f);
+  f.s._flushTurnEnd = true;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
+  await new Promise((r) => setTimeout(r, 80));
+
+  const file = pathReal.join(teamsDir, 't', 'scratch-cost.jsonl');
+  assert.ok(fsReal.existsSync(file), 'the row lands in the team dir, next to cost.jsonl');
+  const rows = fsReal.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].team, 't');
+  assert.strictEqual(rows[0].outcome, 'cut');
+  assert.ok(!fsReal.existsSync(pathReal.join(f.root, 'scratch', 'a', 'episodes.jsonl')),
+    'and NOT in the teamless file');
+});
+
+test('scratch end: a respawn failure after the cut still yields exactly ONE scratch ipc row — the finally row', async () => {
+  const f = mkScratch();
+  const rows = [];
+  f.m._broadcast = (channel, msg) => rows.push([channel, msg]);
+  f.m._scratchRespawn = async () => { throw new Error('boot exploded'); };
+  scratchOpen(f);
+  scratchResearch(f);
+  f.s._flushTurnEnd = true;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
+  await new Promise((r) => setTimeout(r, 80));
+
+  assert.ok(f.order.includes('restore'), 'the transcript was restored from the .bak');
+  const scratchRows = rows.filter(([c, m]) => c === 'ipc-message' && m.type === 'scratch');
+  assert.strictEqual(scratchRows.length, 1, 'one episode, one row — on the failure arm as much as the happy path');
+  assert.match(scratchRows[0][1].body, /^scratch \w+ → failed \(respawn: boot exploded\)$/);
+});
+
+test('scratch clocks agree: the replay header, the refusal line and the briefing all use the same local formatter', () => {
+  const { scratchReplayLine, scratchBriefing, arrivalClock } = require('../scratch-mark');
+  const at = '2026-09-20T18:26:00.000Z';
+  const ms = Date.parse(at);
+  const local = new Date(ms).toTimeString().slice(0, 5);
+  assert.strictEqual(arrivalClock(at), local, 'arrivalClock is the local wall clock, not the ISO (UTC) slice');
+  assert.ok(scratchReplayLine({ nonce: 'n1' }, { at, text: 'x' }).startsWith(`Replayed from scratch episode n1 (arrived ${local}; `));
+  const brief = scratchBriefing({ nonce: 'n1', beganAt: ms }, { turns: { dropped: 1 }, bytes: { dropped: 1 } }, 'b', { endedAt: ms });
+  assert.ok(brief.includes(`opened this episode at ${local} and closed it at ${local}`),
+    'the briefing prints the same minute for the same instant');
+  const f = mkScratch();
+  const line = f.m._scratchRefusalLine({ nonce: 'n1' }, { reason: 'arrivals', arrivals: [{ at, text: 'hello' }] });
+  assert.ok(line.includes(`hello at ${local}`), `the refusal line agrees too: ${line}`);
 });
 
 test('scratch replay: the §3 header in the code is byte-equal to the one docs/messaging.md quotes', () => {
