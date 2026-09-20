@@ -8981,7 +8981,7 @@ body.web-frontend #sidebar-header {
       <label>Name
         <input type="text" id="peer-input-name" placeholder="e.g. worker" spellcheck="false">
       </label>
-      <label>Type
+      <label id="peer-input-type-row">Type
         <select id="peer-input-type">
           <option value="claude">claude</option>
           <option value="codex">codex</option>
@@ -8992,6 +8992,7 @@ body.web-frontend #sidebar-header {
         <input type="text" id="peer-input-cwd" placeholder="~ or /absolute/path (on the peer)" spellcheck="false">
         <span class="hint-text">Directory on the remote machine. Created if it doesn't exist.</span>
       </label>
+      <span id="peer-session-note" class="hint-text" style="display:none;"></span>
       <div id="peer-session-error" class="peer-bar-error" style="display:none;"></div>
       <div class="dialog-actions">
         <div style="flex: 1;"></div>
@@ -37759,7 +37760,8 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
         openFilePeek,
         isFilesPopoverForKey,
         openArgsDialog,
-        openSkillsPopover
+        openSkillsPopover,
+        moveSessionToPeer
       }) {
         let releasesCache = [];
         window.api.getReleases().then((r) => {
@@ -38322,27 +38324,45 @@ ${detail}` });
             }
           }
         });
+        const MOVE_NOTE = "Transcript, memory, messages and reminders travel. Exec grants and privileged intents do not; the account is matched by label on the far box.";
         let peerSessionDialogTarget = null;
-        function openPeerSessionDialog(id, label) {
-          peerSessionDialogTarget = { id, label };
+        function openPeerSessionDialog(id, label, opts = {}) {
+          const move = opts && opts.move ? opts.move : null;
+          peerSessionDialogTarget = { id, label, move };
           const overlay = document.getElementById("peer-session-overlay");
-          document.getElementById("peer-session-title").textContent = `New Session on ${label}`;
-          document.getElementById("peer-input-name").value = "";
+          const nameEl = document.getElementById("peer-input-name");
+          const typeRow = document.getElementById("peer-input-type-row");
+          const note = document.getElementById("peer-session-note");
+          document.getElementById("peer-session-title").textContent = move ? `Move ${move.name} to ${label}` : `New Session on ${label}`;
+          nameEl.value = move ? move.name : "";
+          nameEl.disabled = !!move;
           document.getElementById("peer-input-type").value = "claude";
-          document.getElementById("peer-input-cwd").value = "";
+          document.getElementById("peer-input-cwd").value = move ? move.cwd || "" : "";
+          if (typeRow) typeRow.style.display = move ? "none" : "";
+          if (note) {
+            note.textContent = move ? MOVE_NOTE : "";
+            note.style.display = move ? "block" : "none";
+          }
+          document.getElementById("peer-session-create").textContent = move ? "Move" : "Create";
           const err = document.getElementById("peer-session-error");
           err.style.display = "none";
           err.textContent = "";
           overlay.classList.remove("hidden");
-          document.getElementById("peer-input-name").focus();
+          (move ? document.getElementById("peer-input-cwd") : nameEl).focus();
         }
         function closePeerSessionDialog() {
           peerSessionDialogTarget = null;
           document.getElementById("peer-session-overlay").classList.add("hidden");
+          document.getElementById("peer-input-name").disabled = false;
+          const typeRow = document.getElementById("peer-input-type-row");
+          if (typeRow) typeRow.style.display = "";
+          const note = document.getElementById("peer-session-note");
+          if (note) note.style.display = "none";
+          document.getElementById("peer-session-create").textContent = "Create";
         }
         async function submitPeerSessionDialog() {
           if (!peerSessionDialogTarget) return;
-          const { id, label } = peerSessionDialogTarget;
+          const { id, label, move } = peerSessionDialogTarget;
           const err = document.getElementById("peer-session-error");
           const showErr = (m) => {
             err.textContent = m;
@@ -38355,6 +38375,18 @@ ${detail}` });
           if (!cwd) return showErr("Working directory is required.");
           const btn = document.getElementById("peer-session-create");
           btn.disabled = true;
+          if (move) {
+            const res2 = await moveSessionToPeer(name, id, cwd);
+            btn.disabled = false;
+            if (res2 && res2.ok || res2 && res2.kept) {
+              closePeerSessionDialog();
+              return;
+            }
+            const why = res2 && res2.error || "move failed \u2014 no response";
+            if (peerSessionDialogTarget) showErr(why);
+            else showToast(`Move of "${name}" to ${label} was refused: ${why}`, { kind: "error", duration: 1e4 });
+            return;
+          }
           const res = await window.api.peerCreateSession(id, { name, type, cwd });
           btn.disabled = false;
           if (res && res.ok) {
@@ -38912,6 +38944,7 @@ ${detail}` });
           renderPeerBar,
           forgetControlMirror,
           openPeerSession,
+          openPeerSessionDialog,
           closePeerSessionDialog,
           peerDisplayHost,
           peerHideFromList,
@@ -40212,7 +40245,7 @@ ${detail}` });
     <div class="session-info">
       <div class="session-name">${esc(displayName)}</div>
       <div class="session-meta">
-        <span class="session-archived-label">archived \u2014 click to resume</span>
+        <span class="session-archived-label">${entry.movedTo ? `moved to ${esc(entry.movedTo.peerLabel)} \u2014 click to resume a copy here` : "archived \u2014 click to resume"}</span>
       </div>
     </div>
     <button class="session-close" data-tip="Delete archived session">&times;</button>
@@ -40424,7 +40457,108 @@ ${detail}` });
           });
         });
       }
-      window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition, background }) => {
+      var movingToPeer = /* @__PURE__ */ new Map();
+      var pendingPeerMove = /* @__PURE__ */ new Map();
+      var MiB = (n) => (Number(n || 0) / (1024 * 1024)).toFixed(1);
+      function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
+        if (movingToPeer.has(name)) return;
+        pendingPeerMove.clear();
+        const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+        const snapType = item ? item.dataset.type || null : null;
+        const snapBackend = item ? item.dataset.backend || null : null;
+        const snapCwd = item ? item.dataset.cwd || "" : cwd || "";
+        const snapTeam = item ? item.dataset.team || null : null;
+        const nameEl = item ? item.querySelector(".session-name") : null;
+        const displayed = nameEl ? nameEl.textContent : name;
+        const snapLabel = displayed && displayed !== name ? displayed : null;
+        const snapCreatedAt = (sidebarMeta.get(name) || {}).createdAt || null;
+        const snapNoWire = item ? item.dataset.noWire === "1" : false;
+        const snapAccount = accountOfRow(name);
+        pendingPeerMove.set(name, async (farCwd) => {
+          if (movingToPeer.has(name)) return { ok: false, error: "move already in progress" };
+          const toast = showToast(`Moving ${name} to ${peerLabel}\u2026`, { sticky: true, name });
+          movingToPeer.set(name, { toast, peerLabel });
+          let res;
+          try {
+            res = await window.api.moveSessionToPeer(name, peerId, farCwd);
+          } finally {
+            const held = movingToPeer.get(name);
+            if (held) {
+              held.toast();
+              movingToPeer.delete(name);
+            }
+          }
+          if (res && res.ok) {
+            const dropped = res.dropped && res.dropped.length ? ` (did not travel: ${res.dropped.join(", ")})` : "";
+            removeSession(name, { keepPersisted: true });
+            addArchivedSessionToSidebar({
+              name,
+              type: snapType,
+              cwd: snapCwd,
+              label: snapLabel,
+              backend: snapBackend,
+              team: snapTeam,
+              archivedAt: Date.now(),
+              createdAt: snapCreatedAt,
+              movedTo: { peer: peerId, peerLabel: res.peer || peerLabel, farCwd: res.farCwd }
+            });
+            refreshSidebarView();
+            showToast(`${name} moved to ${res.peer} \u2014 archived here as a backup${dropped}`, { name, duration: 1e4 });
+            return res;
+          }
+          if (res && res.kept) {
+            if (res.respawned) {
+              createTerminal(name);
+              addSessionToSidebar(
+                name,
+                res.type || snapType,
+                res.cwd,
+                snapLabel,
+                snapBackend,
+                res.team || null,
+                snapNoWire,
+                snapAccount
+              );
+              switchSession(name);
+            } else {
+              const row = {
+                name,
+                type: res.type || snapType,
+                cwd: res.cwd,
+                error: res.error,
+                team: res.team || null,
+                backend: snapBackend
+              };
+              if (sessions.has(name)) {
+                movingFailed.set(name, row);
+              } else {
+                removeSession(name, { keepPersisted: true });
+                addFailedSessionToSidebar(row);
+              }
+            }
+            showToast(
+              res.respawned ? `Move to ${peerLabel} failed: ${res.error} \u2014 ${name} restarted here` : `Move to ${peerLabel} failed: ${res.error} \u2014 ${name} kept here`,
+              { kind: "error", duration: 1e4, name }
+            );
+          }
+          return res;
+        });
+        openPeerSessionDialog(peerId, peerLabel, { move: { name, cwd } });
+      }
+      async function moveSessionToPeerFromDialog(name, peerId, farCwd) {
+        const run = pendingPeerMove.get(name);
+        if (!run) return { ok: false, error: `no move is pending for ${name}` };
+        const res = await run(farCwd);
+        if (res && (res.ok || res.kept)) pendingPeerMove.delete(name);
+        return res;
+      }
+      window.api.onSessionMoveProgress(({ name, phase, bytes, total, files, fileIndex }) => {
+        const held = movingToPeer.get(name);
+        if (!held || typeof held.toast.set !== "function") return;
+        const head = `Moving ${name} to ${held.peerLabel} \u2014 ${phase}`;
+        held.toast.set(total ? `${head} ${MiB(bytes)}/${MiB(total)} MiB (${fileIndex}/${files})` : head);
+      });
+      window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition, background, peerId, peerLabel }) => {
         switch (action) {
           case "editArgs":
             openArgsDialog(name);
@@ -40434,6 +40568,9 @@ ${detail}` });
             break;
           case "move":
             moveSessionWithPicker(name);
+            break;
+          case "moveToPeer":
+            moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd);
             break;
           case "reattach":
             if (type) {
@@ -43170,6 +43307,9 @@ Click for live activity`;
         host.appendChild(el);
         requestAnimationFrame(() => el.classList.add("show"));
         if (!opts.sticky) setTimeout(dismiss, opts.duration || 9e3);
+        dismiss.set = (text) => {
+          body.textContent = text;
+        };
         return dismiss;
       }
       var WARM_WARN_S = 300;
@@ -43622,6 +43762,7 @@ Click for live activity`;
         renderPeerBar,
         forgetControlMirror,
         openPeerSession,
+        openPeerSessionDialog,
         closePeerSessionDialog,
         peerDisplayHost,
         peerHideFromList,
@@ -43657,7 +43798,8 @@ Click for live activity`;
         openFilePeek,
         isFilesPopoverForKey,
         openArgsDialog,
-        openSkillsPopover
+        openSkillsPopover,
+        moveSessionToPeer: (name, peerId, farCwd) => moveSessionToPeerFromDialog(name, peerId, farCwd)
       });
       var { openSearch, closeSearch, isSearchOpen, setSearchInfo } = createTermSearch({ sessions, getActiveSession: () => activeSession });
       function refitActiveTerminal() {

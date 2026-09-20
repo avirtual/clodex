@@ -401,6 +401,7 @@ worktree-removal failure is toasted by the renderer while the row goes.
 | Restore failure | kept, returned `{failed:true}` | never spawned | failed ghost tab (retry / forget) |
 | Restore (archived) | kept | never spawned | dimmed archived row (click = resume) |
 | Move (right-click "Move Session…") | kept, `cwd` rewritten (archive stamp cleared) | killed + respawned (`--resume`) | tab rebuilt under the new folder; failed ghost row if the respawn throws |
+| Move to peer (right-click "Move to Peer…" ▸ peer) | entry kept, `movedTo` stamped, `archivedAt` set | killed; shipped; not respawned (failure → respawned like Move) | archived row "moved to <peer>" |
 
 **Move Session…** (right-click, agent rows only) changes a seat's cwd. A move is
 "same record, new cwd, restart": `manager.move(name, newCwd)` refuses an unknown
@@ -473,12 +474,38 @@ Progress rides `session:move-progress`
 `seat` → `commit`; `bytes`/`total` are bytes across the WHOLE shipment, `files`/
 `fileIndex` the count).
 
+The UI half: right-click an agent row ▸ **Move to Peer…**, whose submenu lists
+the peers that are online, carry the `import` cap and are not behind on version —
+no eligible peer leaves the item present but disabled, so the feature is
+discoverable from a box that cannot yet use it. Codex rows do not get the item at
+all (the manager refuses them). Picking a peer opens the peer session dialog in
+MOVE mode: the name is locked to the travelling seat, the type row is hidden, the
+far cwd is prefilled with the seat's own and is the one editable field, and a note
+says what does not travel — transcript, memory, messages and reminders do; exec
+grants and privileged intents do not, and the account is matched by label on the
+far box. A refusal (nothing quiesced yet) stays inline in the dialog so the cwd can
+be corrected and resubmitted; a `{ok:false, kept:true}` failure closes the dialog and
+splits on `respawned`: the far-refusal arm has already brought the seat back up here,
+so the row is rebuilt LIVE (terminal, sidebar, switch), while the two arms with nothing
+running — the exit timeout and a respawn that threw — draw the ghost retry row. Drawing
+a ghost over a live pty is the bug that split invites: its retry throws "already exists"
+and its ✕ offers to forget a running seat. A sticky toast tracks `session:move-progress`
+while the shipment runs and is replaced on success by one naming the far peer and
+anything `dropped`. The success arm DRAWS the archived row itself: the quiesce kill
+already fired `session:exit`, which removed the live row, and no `session:list`
+refresh follows a move — so the row is rebuilt from a snapshot taken before the
+dialog opened, stamped with `movedTo`. `session-restore.js` carries `movedTo` in the
+archived payload for the same reason, or the sub-label reverts to a plain "archived"
+on the next app start.
+
 On success the source record is stamped `movedTo` and ARCHIVED, never deleted, and
 nothing it read is moved or removed: this box keeps the backup. The far copy is
 authoritative from then on, so clicking the archived row resumes a FORK — two
 conversations from one transcript, diverging. Any failure after quiescing respawns
-here from the untouched record and returns the same `{ok:false, kept:true}` ghost
-row a failed local Move does; the record is not modified on that arm. That result
+here from the untouched record and returns `{ok:false, kept:true}`; the record is not
+modified on that arm. Unlike local Move, whose two kept arms never leave a seat
+running, the far-refusal arm respawns FIRST and only then learns the peer said no, so
+it carries `respawned: true` to tell the renderer a live seat needs a real row. That result
 also carries `installed` — non-null when the far commit got far enough to leave
 the transcript and seat dirs in place. Every later move of that name is then
 refused by the far name collision, so the retry has to happen on the far box.

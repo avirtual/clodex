@@ -20,7 +20,7 @@ function initPeersUi({
   syncSeatAvailability,
   getDeployLineHandlers, proxyState, ctxPct, ctxTokens, peerFilesCount,
   filesUnseen, applyCtxBadge, applyWarmBadge, renderProxyBar, openFilePeek,
-  isFilesPopoverForKey, openArgsDialog, openSkillsPopover,
+  isFilesPopoverForKey, openArgsDialog, openSkillsPopover, moveSessionToPeer,
 }) {
   let releasesCache = [];
   window.api.getReleases().then((r) => { releasesCache = Array.isArray(r) ? r : []; }).catch(() => {});
@@ -644,27 +644,46 @@ function initPeersUi({
     }
   });
 
-  let peerSessionDialogTarget = null; // { id, label }
-  function openPeerSessionDialog(id, label) {
-    peerSessionDialogTarget = { id, label };
+  const MOVE_NOTE = 'Transcript, memory, messages and reminders travel. Exec grants and privileged intents do not; the account is matched by label on the far box.';
+  let peerSessionDialogTarget = null; // { id, label, move }
+  function openPeerSessionDialog(id, label, opts = {}) {
+    const move = opts && opts.move ? opts.move : null;
+    peerSessionDialogTarget = { id, label, move };
     const overlay = document.getElementById('peer-session-overlay');
-    document.getElementById('peer-session-title').textContent = `New Session on ${label}`;
-    document.getElementById('peer-input-name').value = '';
+    const nameEl = document.getElementById('peer-input-name');
+    const typeRow = document.getElementById('peer-input-type-row');
+    const note = document.getElementById('peer-session-note');
+    document.getElementById('peer-session-title').textContent =
+      move ? `Move ${move.name} to ${label}` : `New Session on ${label}`;
+    nameEl.value = move ? move.name : '';
+    nameEl.disabled = !!move;
     document.getElementById('peer-input-type').value = 'claude';
-    document.getElementById('peer-input-cwd').value = '';
+    document.getElementById('peer-input-cwd').value = move ? (move.cwd || '') : '';
+    if (typeRow) typeRow.style.display = move ? 'none' : '';
+    if (note) {
+      note.textContent = move ? MOVE_NOTE : '';
+      note.style.display = move ? 'block' : 'none';
+    }
+    document.getElementById('peer-session-create').textContent = move ? 'Move' : 'Create';
     const err = document.getElementById('peer-session-error');
     err.style.display = 'none';
     err.textContent = '';
     overlay.classList.remove('hidden');
-    document.getElementById('peer-input-name').focus();
+    (move ? document.getElementById('peer-input-cwd') : nameEl).focus();
   }
   function closePeerSessionDialog() {
     peerSessionDialogTarget = null;
     document.getElementById('peer-session-overlay').classList.add('hidden');
+    document.getElementById('peer-input-name').disabled = false;
+    const typeRow = document.getElementById('peer-input-type-row');
+    if (typeRow) typeRow.style.display = '';
+    const note = document.getElementById('peer-session-note');
+    if (note) note.style.display = 'none';
+    document.getElementById('peer-session-create').textContent = 'Create';
   }
   async function submitPeerSessionDialog() {
     if (!peerSessionDialogTarget) return;
-    const { id, label } = peerSessionDialogTarget;
+    const { id, label, move } = peerSessionDialogTarget;
     const err = document.getElementById('peer-session-error');
     const showErr = (m) => { err.textContent = m; err.style.display = 'block'; };
     const name = document.getElementById('peer-input-name').value.trim();
@@ -674,6 +693,15 @@ function initPeersUi({
     if (!cwd) return showErr('Working directory is required.');
     const btn = document.getElementById('peer-session-create');
     btn.disabled = true;
+    if (move) {
+      const res = await moveSessionToPeer(name, id, cwd);
+      btn.disabled = false;
+      if ((res && res.ok) || (res && res.kept)) { closePeerSessionDialog(); return; }
+      const why = (res && res.error) || 'move failed — no response';
+      if (peerSessionDialogTarget) showErr(why);
+      else showToast(`Move of "${name}" to ${label} was refused: ${why}`, { kind: 'error', duration: 10000 });
+      return;
+    }
     const res = await window.api.peerCreateSession(id, { name, type, cwd });
     btn.disabled = false;
     if (res && res.ok) {
@@ -1318,7 +1346,7 @@ function initPeersUi({
 
   return {
     typeToTakeControl, renderPeerBar, forgetControlMirror,
-    openPeerSession, closePeerSessionDialog, peerDisplayHost, peerHideFromList,
+    openPeerSession, openPeerSessionDialog, closePeerSessionDialog, peerDisplayHost, peerHideFromList,
     ensurePeerSessionVisible, openPeerArgs,
   };
 }

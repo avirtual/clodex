@@ -522,7 +522,9 @@ function addArchivedSessionToSidebar(entry) {
     <div class="session-info">
       <div class="session-name">${esc(displayName)}</div>
       <div class="session-meta">
-        <span class="session-archived-label">archived — click to resume</span>
+        <span class="session-archived-label">${entry.movedTo
+          ? `moved to ${esc(entry.movedTo.peerLabel)} — click to resume a copy here`
+          : 'archived — click to resume'}</span>
       </div>
     </div>
     <button class="session-close" data-tip="Delete archived session">&times;</button>
@@ -757,7 +759,93 @@ function moveSessionWithPicker(name) {
   });
 }
 
-window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition, background }) => {
+const movingToPeer = new Map();
+const pendingPeerMove = new Map();
+const MiB = (n) => (Number(n || 0) / (1024 * 1024)).toFixed(1);
+
+function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
+  if (movingToPeer.has(name)) return;
+  pendingPeerMove.clear();
+  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  const snapType = item ? item.dataset.type || null : null;
+  const snapBackend = item ? item.dataset.backend || null : null;
+  const snapCwd = item ? item.dataset.cwd || '' : (cwd || '');
+  const snapTeam = item ? item.dataset.team || null : null;
+  const nameEl = item ? item.querySelector('.session-name') : null;
+  const displayed = nameEl ? nameEl.textContent : name;
+  const snapLabel = displayed && displayed !== name ? displayed : null;
+  const snapCreatedAt = (sidebarMeta.get(name) || {}).createdAt || null;
+  const snapNoWire = item ? item.dataset.noWire === '1' : false;
+  const snapAccount = accountOfRow(name);
+  pendingPeerMove.set(name, async (farCwd) => {
+    if (movingToPeer.has(name)) return { ok: false, error: 'move already in progress' };
+    const toast = showToast(`Moving ${name} to ${peerLabel}…`, { sticky: true, name });
+    movingToPeer.set(name, { toast, peerLabel });
+    let res;
+    try {
+      res = await window.api.moveSessionToPeer(name, peerId, farCwd);
+    } finally {
+      const held = movingToPeer.get(name);
+      if (held) { held.toast(); movingToPeer.delete(name); }
+    }
+    if (res && res.ok) {
+      const dropped = res.dropped && res.dropped.length ? ` (did not travel: ${res.dropped.join(', ')})` : '';
+      removeSession(name, { keepPersisted: true });
+      addArchivedSessionToSidebar({
+        name, type: snapType, cwd: snapCwd, label: snapLabel, backend: snapBackend,
+        team: snapTeam, archivedAt: Date.now(), createdAt: snapCreatedAt,
+        movedTo: { peer: peerId, peerLabel: res.peer || peerLabel, farCwd: res.farCwd },
+      });
+      refreshSidebarView();
+      showToast(`${name} moved to ${res.peer} — archived here as a backup${dropped}`, { name, duration: 10000 });
+      return res;
+    }
+    if (res && res.kept) {
+      if (res.respawned) {
+        createTerminal(name);
+        addSessionToSidebar(name, res.type || snapType, res.cwd, snapLabel,
+          snapBackend, res.team || null, snapNoWire, snapAccount);
+        switchSession(name);
+      } else {
+        const row = {
+          name, type: res.type || snapType, cwd: res.cwd,
+          error: res.error, team: res.team || null, backend: snapBackend,
+        };
+        if (sessions.has(name)) {
+          movingFailed.set(name, row);
+        } else {
+          removeSession(name, { keepPersisted: true });
+          addFailedSessionToSidebar(row);
+        }
+      }
+      showToast(res.respawned
+        ? `Move to ${peerLabel} failed: ${res.error} — ${name} restarted here`
+        : `Move to ${peerLabel} failed: ${res.error} — ${name} kept here`,
+      { kind: 'error', duration: 10000, name });
+    }
+    return res;
+  });
+  openPeerSessionDialog(peerId, peerLabel, { move: { name, cwd } });
+}
+
+async function moveSessionToPeerFromDialog(name, peerId, farCwd) {
+  const run = pendingPeerMove.get(name);
+  if (!run) return { ok: false, error: `no move is pending for ${name}` };
+  const res = await run(farCwd);
+  if (res && (res.ok || res.kept)) pendingPeerMove.delete(name);
+  return res;
+}
+
+window.api.onSessionMoveProgress(({ name, phase, bytes, total, files, fileIndex }) => {
+  const held = movingToPeer.get(name);
+  if (!held || typeof held.toast.set !== 'function') return;
+  const head = `Moving ${name} to ${held.peerLabel} — ${phase}`;
+  held.toast.set(total
+    ? `${head} ${MiB(bytes)}/${MiB(total)} MiB (${fileIndex}/${files})`
+    : head);
+});
+
+window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition, background, peerId, peerLabel }) => {
   switch (action) {
     case 'editArgs':
       openArgsDialog(name);
@@ -767,6 +855,9 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, d
       break;
     case 'move':
       moveSessionWithPicker(name);
+      break;
+    case 'moveToPeer':
+      moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd);
       break;
     case 'reattach':
       if (type) {
@@ -3774,9 +3865,9 @@ initSessionHovercard({
 initTooltips();
 
 // --- Toast bubbles -----------------------------------------------------------
-// Transient bottom-right notifications. Returns nothing; auto-dismisses unless
-// opts.sticky. Body text is set via textContent (never innerHTML) so a session
-// name can't inject markup.
+// Transient bottom-right notifications; auto-dismisses unless opts.sticky.
+// Body text is set via textContent (never innerHTML) so a session name can't
+// inject markup.
 function showToast(msg, opts = {}) {
   const host = document.getElementById('toast-host');
   if (!host) return;
@@ -3809,6 +3900,7 @@ function showToast(msg, opts = {}) {
   host.appendChild(el);
   requestAnimationFrame(() => el.classList.add('show'));
   if (!opts.sticky) setTimeout(dismiss, opts.duration || 9000);
+  dismiss.set = (text) => { body.textContent = text; };
   return dismiss;
 }
 
@@ -4360,7 +4452,7 @@ voiceCore.start();
 
 const {
   typeToTakeControl, renderPeerBar, forgetControlMirror,
-  openPeerSession, closePeerSessionDialog, peerDisplayHost, peerHideFromList,
+  openPeerSession, openPeerSessionDialog, closePeerSessionDialog, peerDisplayHost, peerHideFromList,
   ensurePeerSessionVisible, openPeerArgs,
 } = initPeersUi({
   sessions, sessionList, getActiveSession: () => activeSession,
@@ -4376,6 +4468,7 @@ const {
   openFilePeek, isFilesPopoverForKey,
   openArgsDialog,
   openSkillsPopover,
+  moveSessionToPeer: (name, peerId, farCwd) => moveSessionToPeerFromDialog(name, peerId, farCwd),
 });
 
 

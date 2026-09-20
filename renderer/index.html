@@ -773,7 +773,7 @@
       <label>Name
         <input type="text" id="peer-input-name" placeholder="e.g. worker" spellcheck="false">
       </label>
-      <label>Type
+      <label id="peer-input-type-row">Type
         <select id="peer-input-type">
           <option value="claude">claude</option>
           <option value="codex">codex</option>
@@ -784,6 +784,7 @@
         <input type="text" id="peer-input-cwd" placeholder="~ or /absolute/path (on the peer)" spellcheck="false">
         <span class="hint-text">Directory on the remote machine. Created if it doesn't exist.</span>
       </label>
+      <span id="peer-session-note" class="hint-text" style="display:none;"></span>
       <div id="peer-session-error" class="peer-bar-error" style="display:none;"></div>
       <div class="dialog-actions">
         <div style="flex: 1;"></div>

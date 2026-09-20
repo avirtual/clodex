@@ -1988,6 +1988,27 @@ function registerIpcHandlers(deps) {
         },
       })) : [{ label: '(no append prompts in library)', enabled: false }]),
     ];
+    const movePeerItem = () => {
+      let eligible = [];
+      try {
+        const pm = getPeerManager();
+        eligible = (pm ? pm.statuses() : [])
+          .filter((st) => st.online && st.canImport && !st.needsUpgrade);
+      } catch { eligible = []; }
+      if (!eligible.length) return { label: 'Move to Peer…', enabled: false };
+      return {
+        label: 'Move to Peer…',
+        submenu: eligible.map((st) => {
+          const peerLabel = st.host || st.label;
+          return {
+            label: peerLabel,
+            click: () => e.sender.send('session:context-action', {
+              action: 'moveToPeer', name, cwd, peerId: st.id, peerLabel,
+            }),
+          };
+        }),
+      };
+    };
     popupMenu([
       {
         label: 'Rename…',
@@ -2006,6 +2027,7 @@ function registerIpcHandlers(deps) {
         label: 'Move Session…',
         click: () => e.sender.send('session:context-action', { action: 'move', name }),
       }] : []),
+      ...(entry.type === 'claude' ? [movePeerItem()] : []),
       { type: 'separator' },
       {
         label: 'Reveal Working Directory in Finder',
