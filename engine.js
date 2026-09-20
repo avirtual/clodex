@@ -13,7 +13,7 @@ const { execSync, spawn, execFile } = require('child_process');
 const crypto = require('crypto');
 const pty = require('node-pty');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
-const { pathFor, runDirFor, defaultClodexHome, seatPathFor } = require('./clodex-paths');
+const { pathFor, runDirFor, defaultClodexHome, seatPathFor, claudeProjectSlug } = require('./clodex-paths');
 const { confine } = require('./path-confine');
 const { createSkillDelivery } = require('./skill-delivery');
 const { KINDS: PROMPT_KINDS, badStem, teamPromptFile, teamJsonFile, readTeamJson } = require('./team-prompt-dir');
@@ -992,7 +992,7 @@ function readEffectiveToolState(cwd) {
 
 function claudeProjectDir(cwd) {
   if (!cwd) return null;
-  return path.join(os.homedir(), '.claude', 'projects', cwd.replace(/[/.]/g, '-'));
+  return path.join(os.homedir(), '.claude', 'projects', claudeProjectSlug(cwd));
 }
 
 function lastTranscriptWrite(agentType, cwd, sessionId) {

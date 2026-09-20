@@ -852,6 +852,10 @@ accept teardown removes.
   `fs`/`log` injected; `run/` is deleted rather than moved and stays the socket
   bind path, and `DEFERRED_KINDS` is empty — every reader over a shared parent
   is link-aware, and `pending` is not a seat kind at all.
+- **seat-import.js** — the owner-side fs half of Move-to-peer: stages a shipped
+  seat under `~/.clodex/import/<id>/` and installs it atomically (transcript,
+  seat kinds, pending, loadlog, reminders), checking everything before it writes.
+  Pure fs leaf, no HTTP — M-A2 owns the routes. See `docs/notes/seat-import.md`.
 - **project-root.js** — the git-repository root for a cwd, for keying a PROJECT
   ticket board when no team owns that cwd. Pure leaf; `fs` injectable.
 - **intent-spill.js** — the FORMAT of intent-body spill (`proxy-lab/SPILL.md`;

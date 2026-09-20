@@ -268,8 +268,12 @@ function legacySuffixes() {
   return Object.values(LEGACY_SUFFIXES).slice().sort((a, b) => b.length - a.length);
 }
 
+function claudeProjectSlug(cwd) {
+  return String(cwd == null ? '' : cwd).replace(/[/.]/g, '-');
+}
+
 module.exports = {
   KINDS, LEGACY_SUFFIXES, runDirFor, fixDirFor, spillDirFor, pathFor, legacyPathsFor, legacySuffixes,
   projectDirFor, taskDirFor, defaultClodexHome,
-  SEAT_KINDS, seatDirFor, seatPathFor, legacySeatPathFor,
+  SEAT_KINDS, seatDirFor, seatPathFor, legacySeatPathFor, claudeProjectSlug,
 };

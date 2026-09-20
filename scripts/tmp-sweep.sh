@@ -211,6 +211,8 @@ clodex-rtn-
 clodex-rv-
 clodex-scm-
 clodex-scope-
+clodex-seatimp-
+clodex-seatimp-cp-
 clodex-seatlayout-
 clodex-seatlayout-outside-
 clodex-sinfo-
