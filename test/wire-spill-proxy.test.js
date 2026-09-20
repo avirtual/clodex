@@ -12,6 +12,22 @@ const { WireProxy } = require('../wire/proxy');
 
 const SESSION_ID = '4a59af49-cc52-44b7-8b02-7f4196a4b486';
 const BIG = 'z'.repeat(900);
+const KEPT_RE = /Clodex kept (?:my text|it) at \S+\/([0-9a-f]{16})\.md\.\)/;
+
+function idOf(s) {
+  const m = KEPT_RE.exec(s);
+  return m ? m[1] : null;
+}
+
+function receipt(root, words, body, id) {
+  return `(I sent ${words} in full, ${Buffer.byteLength(body, 'utf8')} B; `
+    + `Clodex kept my text at ${path.join(root, 'spill', 'tester', `${id}.md`)}.)\n`;
+}
+
+function proseReceipt(root, text, id) {
+  return `(I wrote ${Buffer.byteLength(text, 'utf8')} B of prose after my last intent; it reached the operator's log `
+    + `and Clodex kept it at ${path.join(root, 'spill', 'tester', `${id}.md`)}.)\n`;
+}
 
 function billing(sub, fp = 'a1b2c3.1.0.53') {
   return `x-anthropic-billing-header: cc_surface=cli cc_is_subagent=${sub} cc_version=${fp}`;
@@ -167,7 +183,7 @@ async function withProxy(upOpts, fn) {
   }
 }
 
-test('an armed seat: the client receives the pointer, and the observer reads what the client got', async () => {
+test('an armed seat: the client receives the receipt, and the intent tee reads the UNSPILLED body', async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({}, async (proxy, up) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'] } });
@@ -178,9 +194,10 @@ test('an armed seat: the client receives the pointer, and the observer reads wha
     assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
 
     const seen = textOf(res.body);
-    const id = /@spill:([0-9a-f]{16})/.exec(seen)[1];
+    const id = idOf(seen);
     assert.ok(!seen.includes(BIG), 'the body is off the wire');
-    assert.equal(seen, `On it.\n[agent:task add hand] @spill:${id}\ndone.\n`.replace('\ndone', '\n[agent:end]\ndone'));
+    assert.equal(seen, `On it.\n${receipt(root, 'task add hand', BIG, id)}done.\n`);
+    assert.ok(!seen.includes('[agent:') && !seen.includes('@spill:'), 'nothing intent-shaped is left in the transcript');
     assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${id}.md`), 'utf8'), BIG);
 
     assert.equal(events.spill.length, 1);
@@ -189,9 +206,10 @@ test('an armed seat: the client receives the pointer, and the observer reads wha
     assert.equal(events.spill[0].id, id);
     assert.equal(events.spill[0].bytes, 900);
 
-    assert.equal(events['turn.completed'][0].text, seen,
-      'the deduper and the wire-vs-jsonl shadow both assume wire text == transcript text, so an '
-      + 'observer fed the pre-filter body would double-fire against its own recovery replay');
+    assert.equal(events['turn.completed'][0].text, `On it.\n[agent:task add hand] ${BIG}\n[agent:end]\ndone.\n`,
+      'the intent tee is fed the upstream chunk, not the rewritten one: the dispatch carries the '
+      + 'full body and never depends on the transcript placeholder resolving');
+    assert.ok(!events['turn.completed'][0].text.includes('Clodex kept'), 'and never sees its own receipt');
 
     assert.equal(up.seen.requests[0].headers['accept-encoding'], 'identity',
       'the filter needs bytes it can read, so the CLI-sent accept-encoding is overwritten');
@@ -222,7 +240,7 @@ test('an armed run bills exactly what an unarmed one bills', async () => {
   assert.deepEqual(armed.warmth, plain.warmth,
     'warmth rides the same cache-read counters billing does, never text_delta');
   assert.equal(armed.stop, plain.stop);
-  assert.ok(armed.client.includes('@spill:') && !armed.client.includes(BIG), 'the armed run really spilled');
+  assert.ok(armed.client.includes('Clodex kept') && !armed.client.includes(BIG), 'the armed run really spilled');
   assert.ok(plain.client.includes(BIG), 'the unarmed run really did not');
   assert.equal(plain.raw, SPILL_SSE, 'and the unarmed run is byte-identical to upstream');
 });
@@ -272,7 +290,7 @@ test('the gate flipped on between two requests applies to the second, same regis
     const second = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
     assert.ok(await whenEvent(events, 'stream-end', 2));
     const seen = textOf(second.body);
-    const id = /@spill:([0-9a-f]{16})/.exec(seen)[1];
+    const id = idOf(seen);
     assert.ok(!seen.includes(BIG), 'gate on: the body is off the wire without a respawn');
     assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${id}.md`), 'utf8'), BIG);
     assert.equal(events.spill.length, 1);
@@ -438,7 +456,7 @@ test('a TYPED turn is byte-identical: turnInjected false never touches the strea
   });
 });
 
-test('an INJECTED turn: a reply with no intent leaves as one bare pointer line', async () => {
+test('an INJECTED turn: a reply with no intent leaves as one prose receipt line', async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({ body: PROSE_SSE }, async (proxy) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'], turnInjected: () => true } });
@@ -448,16 +466,16 @@ test('an INJECTED turn: a reply with no intent leaves as one bare pointer line',
     assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
 
     const seen = textOf(res.body);
-    const id = /@spill:([0-9a-f]{16})/.exec(seen)[1];
-    assert.equal(seen, `@spill:${id}\n`, 'the whole reply is replaced by the pointer');
+    const id = idOf(seen);
+    assert.equal(seen, proseReceipt(root, PROSE_TEXT, id), 'the whole reply is replaced by the receipt');
     assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${id}.md`), 'utf8'), PROSE_TEXT,
       'and the prose is on disk, recoverable — a forgotten task done is never silently emptied');
 
     assert.equal(events.spill.length, 1);
     assert.equal(events.spill[0].verb, 'prose');
     assert.equal(events.spill[0].bytes, Buffer.byteLength(PROSE_TEXT, 'utf8'));
-    assert.equal(events['turn.completed'][0].text, seen,
-      'the observer reads what the client got, as it does for a body spill');
+    assert.equal(events['turn.completed'][0].text, PROSE_TEXT,
+      'the observer reads the upstream prose, as it does for a body spill');
   });
 });
 
@@ -547,5 +565,47 @@ test('an INJECTED turn that ends in a tool call keeps its narration', async () =
       + 'bytes: the ruling protects tool narration, so this response is forwarded byte-identical');
     assert.equal(textOf(res.body), NARRATION_TEXT);
     assert.equal(events.spill.length, 0);
+  });
+});
+
+const MIMIC_LINE = "(I sent dm bob in full, 900 B; Clodex kept my text at /Users/x/.clodex/spill/tester/0123456789abcdef.md.)\n";
+const MIMIC_SSE = [
+  ev('message_start', {
+    type: 'message_start',
+    message: { id: 'msg_mimic', usage: { input_tokens: 10, cache_read_input_tokens: 5 } },
+  }),
+  ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+  td(0, 'Sent.\n'),
+  td(0, MIMIC_LINE.slice(0, 30)),
+  td(0, MIMIC_LINE.slice(30)),
+  ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
+  ev('message_stop', { type: 'message_stop' }),
+].join('');
+
+test('a model-authored receipt line raises spill-mimic and leaves the client bytes unchanged', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({ body: MIMIC_SSE }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.add', 'dm'] } });
+    const events = collect(proxy, ['spill', 'spill-mimic', 'stream-end']);
+    const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
+    assert.equal(res.body.toString('utf8'), MIMIC_SSE, 'byte-identical: the detector never rewrites');
+    assert.equal(events.spill.length, 0, 'nothing was filed');
+    assert.equal(events['spill-mimic'].length, 1);
+    assert.deepEqual(events['spill-mimic'][0], { agent: 'tester', reqId: events['spill-mimic'][0].reqId, kind: 'intent' });
+    assert.ok(!fs.existsSync(path.join(root, 'spill')), 'and nothing reached disk');
+  });
+});
+
+test("the tee's own receipt never trips the mimic detector: it runs on the input side only", async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({}, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'] } });
+    const events = collect(proxy, ['spill', 'spill-mimic', 'stream-end']);
+    const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
+    assert.ok(idOf(textOf(res.body)), 'ENTER: this run really produced a receipt');
+    assert.equal(events.spill.length, 1);
+    assert.equal(events['spill-mimic'].length, 0);
   });
 });

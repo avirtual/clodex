@@ -866,19 +866,32 @@ accept teardown removes.
   ticket board when no team owns that cwd. Pure leaf; `fs` injectable.
 - **intent-spill.js** — the FORMAT of intent-body spill (`proxy-lab/SPILL.md`;
   `proxy-lab/test_spill.py` is the conformance suite): constants, verb set,
-  id/agent charsets, the content-addressed writer, the confined resolver and the
+  id/agent charsets, the content-addressed writer, the confined resolver, the
+  receipt grammar (`RECEIPT_RE`, `receiptOf`, `resolveReceipt`) and the legacy
   `@spill:<id>` pointer parser, so the tee, the resolver and the injection half
-  cannot drift. The listed verbs are task add/respec/reject, shout and
-  context compact/clear/reload; the transcript keeps the body's first line
-  beside the pointer, capped by `tickets-store.ticketTitle`, and resolution
-  discards it — the file is authoritative.
+  cannot drift. The listed verbs are task add/respec/reject/done, dm, shout and
+  context compact/clear/reload; the transcript keeps a one-line first-person
+  past-tense receipt — `(I sent task add hand — "title" in full, N B; Clodex
+  kept my text at <path>.)`, the title capped by `tickets-store.ticketTitle`
+  minus its ellipsis — and its closing `[agent:end]` is swallowed, so nothing an
+  agent could copy as an intent shape is left in its own prior output. The
+  intent tee reads the UNSPILLED upstream bytes, so the wire path dispatches the
+  full body and never a pointer; only the client transcript sees the receipt. A
+  non-wire scan (`_scanJsonlText`, sentinel recovery) expands a receipt line
+  back into the intent from the named file, after confining the path to the
+  sender's own spill dir — a copied or typed receipt fails confinement or the
+  file check and bounces with the same note as a typed pointer. The filter also
+  watches the RAW stream it is fed for a receipt-shaped line (`mimicKindOf`)
+  outside any intent body it holds or passes through: upstream of its own
+  rewrite, such a line is model-authored by construction, so it raises
+  `spill-mimic` and the seat is told nothing was sent.
   `id = sha256(body)[:16]`, path `<root>/spill/<agent>/<id>.md`,
   0700 dir / 0600 file, an existing file left alone. Pure leaf (`fs`, `path`,
   `crypto`, plus `path-confine` and `fs-util`). Every failure returns null or an
   `ok:false` reason and the caller forwards the original body — a truncated
   spec is worse than a spammy transcript. Callers: `wire/spill.js` (the line
   state machine and SSE rewriter that hold a listed verb's body and emit the
-  pointer), `session-manager._handleIntent`, `_handoffText`, and engine's
+  receipt), `session-manager._handleIntent`, `_handoffText`, and engine's
   `resolveFilePath`. Notes: `docs/notes/intent-spill.md`, `docs/notes/wire-spill.md`.
   The `intentSpill` Settings switch (on by default) is NOT copied onto a seat at
   spawn: every capable Claude seat registers `spill: {root, verbs}` on the wire
@@ -889,8 +902,9 @@ accept teardown removes.
   S-G2 extends the same tee one level up: on a turn Clodex INJECTED (the seat's
   `lastSubmitInjected`, read once per request through `registerAgent`'s
   `turnInjected`), the seat's trailing prose after its last intent — or a whole
-  reply with no intent — spills to a bare `@spill:<id>` line under the same floor
-  and writer, while a typed turn is never touched.
+  reply with no intent — spills to a one-line receipt (`(I wrote N B of prose
+  after my last intent; it reached the operator's log and Clodex kept it at
+  <path>.)`) under the same floor and writer, while a typed turn is never touched.
 - **path-confine.js** — one caller-supplied name, one path segment, POSITIVELY
   confined to a directory Clodex owns. Positive because a charset regex is not
   containment: `.` and `..` pass `/^[a-zA-Z0-9._-]{1,64}$/`. Pure leaf, no I/O.
@@ -1400,8 +1414,9 @@ and are not, which is why the judgement worth testing is pushed down here.
   of plain text, as offsets. Answers "what LOOKS like a path here" and nothing
   about existence — resolution is main-side (`file-resolve.js`), because only
   main can stat. `scanSpillPointers` is the second scan over the same line: a
-  `@spill:<id>` an agent's transcript carries in place of a long intent body
-  (`intent-spill.js`). The terminal's link provider merges both hit lists; the
+  `@spill:<id>` a legacy transcript carries in place of a long intent body
+  (`intent-spill.js`; a current transcript names the absolute path in a receipt,
+  which the path scan already finds). The terminal's link provider merges both hit lists; the
   inbox drawer and the files popover scan paths ONLY, because a `@spill:` inside
   a dm body is the SENDER's pointer and resolves in no reader's seat dir. Which
   seat a pointer is read against is engine's `resolveFilePath`, never the text.

@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  SPILL_MIN_BYTES, SPILL_MAX_BYTES, validAgent, writeSpill: defaultWriteSpill,
+  SPILL_MIN_BYTES, SPILL_MAX_BYTES, validAgent, writeSpill: defaultWriteSpill, spillPathFor, mimicKindOf,
 } = require('../intent-spill');
 const { cleanLine } = require('../intent-scanner');
 const { titleLine, ticketTitle } = require('../tickets-store');
@@ -9,6 +9,7 @@ const { titleLine, ticketTitle } = require('../tickets-store');
 const HEAD_RE = /^\[agent:([a-z]+)(?:\s+([a-z-]+))?\b([^\]]*)\]/;
 const TERMINATOR = '[agent:end]';
 const OPEN = '[agent:';
+const MIMIC_LINE_CAP = 1024;
 
 function couldBeHead(s) {
   return OPEN.startsWith(s.slice(0, OPEN.length)) || s.startsWith(OPEN);
@@ -23,6 +24,7 @@ class SpillFilter {
     this.maxBytes = Number.isFinite(opts.maxBytes) ? opts.maxBytes : SPILL_MAX_BYTES;
     this.onSpill = typeof opts.onSpill === 'function' ? opts.onSpill : null;
     this.onBail = typeof opts.onBail === 'function' ? opts.onBail : null;
+    this.onMimic = typeof opts.onMimic === 'function' ? opts.onMimic : null;
     this._write = typeof opts.writeSpill === 'function' ? opts.writeSpill : defaultWriteSpill;
 
     this.proseSpill = opts.proseSpill === true;
@@ -30,6 +32,8 @@ class SpillFilter {
     this.passthru = !validAgent(this.agent);
     this.listenerFailed = false;
 
+    this.lineBuf = '';
+    this.lineSkip = false;
     this.tail = '';
     this.foreignBody = false;
     this.pending = '';
@@ -52,8 +56,50 @@ class SpillFilter {
     try { fn(info); } catch { this.listenerFailed = true; }
   }
 
+  _observe(text) {
+    if (!this.onMimic) return;
+    let s = this.lineBuf + text;
+    for (;;) {
+      const nl = s.indexOf('\n');
+      if (nl === -1) break;
+      if (!this.lineSkip) this._mimic(s.slice(0, nl));
+      this.lineSkip = false;
+      s = s.slice(nl + 1);
+    }
+    if (s.length > MIMIC_LINE_CAP) { this.lineSkip = true; s = ''; }
+    this.lineBuf = s;
+  }
+
+  _mimic(line) {
+    const kind = mimicKindOf(line);
+    if (kind) this._notify(this.onMimic, { kind });
+  }
+
+  _shadow(partial) {
+    if (!this.onMimic || this.lineSkip) return;
+    const s = this.lineBuf + partial;
+    if (s.length > MIMIC_LINE_CAP) { this.lineSkip = true; this.lineBuf = ''; return; }
+    this.lineBuf = s;
+  }
+
+  _mimicLine(line) {
+    if (this.onMimic && !this.lineSkip && !this.holding && !this.foreignBody) this._mimic(this.lineBuf + line);
+    this.lineBuf = '';
+    this.lineSkip = false;
+  }
+
+  _latch(rest) {
+    this.lineBuf = '';
+    this.lineSkip = rest.length > 0 && !rest.endsWith('\n');
+    this.pending = '';
+    this.passthru = true;
+  }
+
   feed(text) {
-    if (this.passthru) return text;
+    if (this.passthru) {
+      this._observe(text);
+      return text;
+    }
     const out = [];
     this.pending += text;
     for (;;) {
@@ -62,8 +108,7 @@ class SpillFilter {
         out.push(this.originalHeld());
         out.push(this.pending);
         this._clear();
-        this.pending = '';
-        this.passthru = true;
+        this._latch(this.pending);
         const capped = this.verb;
         this.verb = null;
         this._notify(this.onBail, { reason: 'cap', verb: capped });
@@ -75,8 +120,7 @@ class SpillFilter {
         out.push(this.tail);
         out.push(this.pending);
         this.tail = '';
-        this.pending = '';
-        this.passthru = true;
+        this._latch(this.pending);
         this._notify(this.onBail, { reason: 'cap', verb: null });
         return out.join('');
       }
@@ -87,8 +131,7 @@ class SpillFilter {
           out.push(this.tail);
           this.tail = '';
           out.push(this.pending);
-          this.pending = '';
-          this.passthru = true;
+          this._latch(this.pending);
           this._notify(this.onBail, { reason: 'cap', verb: null });
           return out.join('');
         }
@@ -96,14 +139,16 @@ class SpillFilter {
       }
       const line = this.pending.slice(0, nl);
       this.pending = this.pending.slice(nl + 1);
+      this._mimicLine(line);
       out.push(this._line(line));
       if (this.passthru) {
         out.push(this.pending);
-        this.pending = '';
+        this._latch(this.pending);
         return out.join('');
       }
     }
     if (this.pending && !this.holding && !this.proseSpill && !couldBeHead(this.pending)) {
+      this._shadow(this.pending);
       out.push(this.pending);
       this.pending = '';
     }
@@ -118,7 +163,10 @@ class SpillFilter {
 
   _line(line) {
     if (this.holding) {
-      if (line.trim() === TERMINATOR) return this._resolve() + line + '\n';
+      if (line.trim() === TERMINATOR) {
+        const r = this._resolve();
+        return r.spilled ? r.text : r.text + line + '\n';
+      }
       if (cleanLine(line).startsWith(OPEN)) {
         const held = this.originalHeld();
         this._clear();
@@ -164,6 +212,8 @@ class SpillFilter {
       this.tail += `${line}\n`;
       return '';
     }
+    const cleaned = cleanLine(line).trim();
+    if (cleaned.startsWith(OPEN)) this.foreignBody = cleaned !== TERMINATOR;
     return line + '\n';
   }
 
@@ -188,6 +238,10 @@ class SpillFilter {
     this.bodyLen = 0;
   }
 
+  _keptAt(id) {
+    return spillPathFor(this.root, this.agent, id) || `spill/${this.agent}/${id}.md`;
+  }
+
   _resolve() {
     const bodyText = this._bodyText();
     const head = this.head;
@@ -202,14 +256,19 @@ class SpillFilter {
         this._fired += 1;
         this._notify(this.onSpill, { verb, id, bytes });
         const first = titleLine(bodyText);
-        const title = (first && first !== bodyText.trim()) ? `${ticketTitle(bodyText)} ` : '';
-        return `${head} ${title}@spill:${id}\n`;
+        const title = (first && first !== bodyText.trim())
+          ? ` — "${ticketTitle(bodyText).replace(/"/g, "'").replace(/…/g, '')}"` : '';
+        const words = head.slice(OPEN.length, -1).trim().replace(/\s+/g, ' ');
+        return {
+          spilled: true,
+          text: `(I sent ${words}${title} in full, ${bytes} B; Clodex kept my text at ${this._keptAt(id)}.)\n`,
+        };
       }
     }
     const held = this.originalHeld();
     this._clear();
     this.verb = null;
-    return held;
+    return { spilled: false, text: held };
   }
 
   _resolveTail() {
@@ -221,15 +280,17 @@ class SpillFilter {
     if (!id) return text;
     this._fired += 1;
     this._notify(this.onSpill, { verb: 'prose', id, bytes });
-    return `@spill:${id}\n`;
+    return `(I wrote ${bytes} B of prose after my last intent; it reached the operator's log and Clodex kept it at ${this._keptAt(id)}.)\n`;
   }
 
   endBlock() {
     let out = '';
+    if (!this.holding && this.pending) this._shadow(this.pending);
     if (this.holding && this.pending.trim() === TERMINATOR && this.pending.indexOf('\n') === -1) {
       const last = this.pending;
       this.pending = '';
-      out += this._resolve() + last;
+      const r = this._resolve();
+      out += r.spilled ? r.text : r.text + last;
     }
     if (this.holding) {
       out += this.originalHeld();
@@ -248,10 +309,12 @@ class SpillFilter {
 
   close() {
     let out = '';
+    this._mimicLine(this.pending);
     if (this.holding && this.pending.trim() === TERMINATOR && this.pending.indexOf('\n') === -1) {
       const last = this.pending;
       this.pending = '';
-      out += this._resolve() + last;
+      const r = this._resolve();
+      out += r.spilled ? r.text : r.text + last;
     }
     if (this.holding) {
       out += this.originalHeld();

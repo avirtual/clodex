@@ -1,9 +1,9 @@
 'use strict';
 
 // Tee, don't transform: the client receives the raw upstream bytes, with ONE sanctioned
-// exception — wire/spill.js swaps a listed intent's body for a pointer inside an armed
-// agent's main-line text_delta events, and forwards the original on any doubt. Observers
-// read what the CLIENT received; parser failures degrade to "no turn seen". Client bytes
+// exception — wire/spill.js swaps a listed intent's body for a receipt inside an armed
+// agent's main-line text_delta events, and forwards the original on any doubt. Parser
+// failures degrade to "no turn seen". Client bytes
 // first: turn.completed/stream-end fire after the last one; a 'tee-failure' disables ALL.
 
 const http = require('http');
@@ -413,6 +413,7 @@ class WireProxy extends EventEmitter {
             proseSpill,
             onSpill: (i) => this.emit('spill', { agent, reqId, ...i }),
             onBail: (i) => this.emit('spill-bail', { agent, reqId, ...i }),
+            onMimic: (i) => this.emit('spill-mimic', { agent, reqId, ...i }),
           });
         } else {
           this.emit('spill-skip', {
@@ -437,8 +438,8 @@ class WireProxy extends EventEmitter {
         if (out.length) {
           res.write(out);
           this.stats.bytesForwarded += out.length;
-          if (tee) { try { tee.feed(out); } catch (e) { teeFail(e); } }
         }
+        if (tee) { try { tee.feed(chunk); } catch (e) { teeFail(e); } }
       });
       upRes.on('end', () => {
         let tail = null;
@@ -451,7 +452,6 @@ class WireProxy extends EventEmitter {
         if (tail && tail.length) {
           res.write(tail);
           this.stats.bytesForwarded += tail.length;
-          if (tee) { try { tee.feed(tail); } catch (e) { teeFail(e); } }
         }
         res.end();
         if (tee) { try { tee.close(); } catch (e) { teeFail(e); } }
@@ -697,7 +697,7 @@ module.exports = { WireProxy, extractSessionId, detectSse };
 
 if (require.main === module) {
   const proxy = new WireProxy({ port: Number(process.argv[2]) || 9777 });
-  for (const ev of ['request', 'response', 'stream-start', 'stream-end', 'turn.completed', 'session', 'usage', 'proxy-error', 'tee-failure', 'spill', 'spill-bail', 'spill-skip']) {
+  for (const ev of ['request', 'response', 'stream-start', 'stream-end', 'turn.completed', 'session', 'usage', 'proxy-error', 'tee-failure', 'spill', 'spill-bail', 'spill-skip', 'spill-mimic']) {
     proxy.on(ev, (payload) => console.log(`[${ev}]`, JSON.stringify(payload)));
   }
   proxy.listen().then((port) => {

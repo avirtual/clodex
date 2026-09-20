@@ -7,7 +7,7 @@ const path = require('node:path');
 const { mk } = require('./lib/session-fixtures');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { writeSpill, spillPathFor } = require('../intent-spill');
-const { shadowIntentKey } = require('../intent-scanner');
+const { shadowIntentKey, parseIntent, looksLikeIntent } = require('../intent-scanner');
 const { IntentDeduper } = require('../wire-intents');
 
 const BIG = `spec line one\n${'z'.repeat(1200)}\nlast line`;
@@ -34,6 +34,9 @@ function mkH(overrides = {}) {
     getPersistence: () => ({ list: () => [], get: () => entry }),
     getNotifications: () => ({ add: (rec) => { inbox.push(rec); return { id: `n${inbox.length}`, ...rec }; } }),
     MSG_MAX_AGE: 1800,
+    parseIntent,
+    looksLikeIntent,
+    execBodyCap: 64 * 1024,
     log: {
       info: () => {}, debug: () => {}, warn: () => {},
       error: (...a) => errors.push(a.join(' ')),
@@ -206,9 +209,9 @@ test('a dm whose pointer file is gone BOUNCES rather than delivering the pointer
 
   assert.deepStrictEqual(h.dms, [], 'nothing was delivered');
   assert.strictEqual(h.injected.length, 1, 'exactly one bounce, at the sender');
-  assert.match(h.injected[0].text, /^\[agent:dm\] error: your body arrived as @spill:/);
+  assert.match(h.injected[0].text, /^\[agent:dm\] error: your body arrived as a pointer that Clodex never wrote/);
   assert.strictEqual(h.errors.length, 1);
-  assert.match(h.errors[0], /dm was not applied|did not resolve \(missing\)/);
+  assert.match(h.errors[0], /names no spill file Clodex wrote \(missing\)/);
   assert.strictEqual(h.notes.length, 1, 'and the operator is raised a note');
 });
 
@@ -250,7 +253,7 @@ test('a DENIED spill verb with a broken pointer is told its BODY is gone, which 
 
   assert.deepStrictEqual(h.contexts, [], 'the denied verb still did not run');
   assert.strictEqual(h.injected.length, 1, 'exactly one bounce, not one of each');
-  assert.match(h.injected[0].text, /your body arrived as @spill:/, h.injected[0].text);
+  assert.match(h.injected[0].text, /your body arrived as a pointer that Clodex never wrote/, h.injected[0].text);
   assert.ok(!/is disabled for this session/.test(h.injected[0].text),
     'the disabled bounce is what the seat gets BELOW the gate, and it hides the lost body. '
     + "(_deniedIntentPayload's byte-size sentence cannot be the subject here: `task` is not a gateable "
@@ -281,7 +284,7 @@ test("another seat's file is not reachable — resolution is confined to the SEN
 
   assert.deepStrictEqual(h.tasks, [], 'no ticket');
   assert.strictEqual(h.errors.length, 1);
-  assert.match(h.errors[0], /did not resolve \(missing\)/);
+  assert.match(h.errors[0], /names no spill file Clodex wrote \(missing\)/);
 });
 
 test('unresolvable: log.error + _raiseNote + a bounce to the sender, and the intent DROPPED', async () => {
@@ -309,16 +312,19 @@ test('unresolvable: log.error + _raiseNote + a bounce to the sender, and the int
     assert.deepStrictEqual(h.tasks, [],
       `${reason}: no ticket is minted from an unreadable body — an empty spec is worse than a stall`);
     assert.strictEqual(h.errors.length, 1, `${reason}: logged once`);
-    assert.match(h.errors[0], new RegExp(`@spill:${id} did not resolve \\(${reason}\\)`), h.errors[0]);
+    assert.match(h.errors[0], new RegExp(`@spill:${id} names no spill file Clodex wrote \\(${reason}\\)`), h.errors[0]);
     assert.match(h.errors[0], /intent dropped/);
     assert.deepStrictEqual(h.notes.map((n) => n.from), ['lead'], `${reason}: the operator is raised a note`);
-    assert.match(h.notes[0].body, new RegExp(`did not resolve \\(${reason}\\)`));
+    assert.match(h.notes[0].body, new RegExp(`typed a spill pointer Clodex never wrote \\(@spill:${id}, ${reason}\\)`));
     assert.match(h.notes[0].body, /task\.add was not applied/);
-    assert.ok(h.broadcasts.some((b) => b.type === 'intent' && /unresolvable/.test(b.body)),
+    assert.ok(h.broadcasts.some((b) => b.type === 'intent' && /a pointer Clodex never wrote/.test(b.body)),
       `${reason}: surfaced in the IPC log`);
     assert.strictEqual(h.injected.length, 1, `${reason}: exactly one bounce`);
-    assert.match(h.injected[0].text, /^\[agent:task\] error: your body arrived as @spill:/);
-    assert.match(h.injected[0].text, /re-emit the intent with the full body/);
+    assert.strictEqual(h.injected[0].text,
+      '[agent:task] error: your body arrived as a pointer that Clodex never wrote — Clodex only replaces a body '
+      + 'AFTER it has been delivered, so a pointer in your output means you typed it and no body exists. '
+      + 'Re-emit the intent with the full text.',
+      `${reason}: the bounce says what happened, not "file missing"`);
     assert.deepStrictEqual(h.injected[0].opts, { parkable: true });
   }
 });
@@ -371,4 +377,112 @@ test('the dedupe key is computed on the POINTER form at both dispatch sites, and
   const second = d.claim('lead', before, 'recovery');
   assert.strictEqual(second.ok, false, 'the recovery replay of the same pointer turn is rejected');
   assert.match(second.reason, /cross-path overlap/);
+});
+
+
+function receiptLine(words, body, filePath, title) {
+  const t = title === undefined ? '' : ` — "${title}"`;
+  return `(I sent ${words}${t} in full, ${Buffer.byteLength(body, 'utf8')} B; Clodex kept my text at ${filePath}.)`;
+}
+
+test('recovery (3a): a receipt line on a non-wire scan is expanded back into the intent from the file', async () => {
+  const h = mkH();
+  const id = writeSpill(h.root, 'lead', BIG);
+  const filePath = spillPathFor(h.root, 'lead', id);
+  const text = `On it.\n${receiptLine('task add hand start', BIG, filePath, 'spec line one')}\nDone.\n`;
+
+  assert.deepStrictEqual(h.m._extractIntents(text), [],
+    'the wire scan never expands a receipt: the tee reads the unspilled stream, so a receipt there is typed');
+  const intents = h.m._extractIntents(text, { receiptsFor: 'lead' });
+  assert.strictEqual(intents.length, 1);
+  assert.strictEqual(intents[0].type, 'task');
+  assert.strictEqual(intents[0].sub, 'add');
+  assert.strictEqual(intents[0].body.replace(/^\n/, ''), BIG, 'the FILE is the body, the title is discarded');
+  assert.deepStrictEqual(intents[0].spill, { id, path: filePath }, 'provenance rides the intent, as a pointer\'s did');
+  assert.strictEqual(intents[0].bodyOpen, undefined, 'the reconstructed body is closed');
+
+  const original = h.m._extractIntents(`On it.\n[agent:task add hand start] ${BIG}\n[agent:end]\nDone.\n`);
+  assert.strictEqual(shadowIntentKey('lead', intents[0]), shadowIntentKey('lead', original[0]),
+    'the same dedupe key as the wire path claimed for the original, so an overlap replay is swallowed');
+  assert.strictEqual(original[0].start, intents[0].start);
+  assert.strictEqual(original[0].who, intents[0].who);
+
+  await h.m._handleIntent('lead', intents[0]);
+  assert.strictEqual(h.tasks.length, 1, 'and it dispatches');
+  assert.strictEqual(h.tasks[0].body.replace(/^\n/, ''), BIG);
+});
+
+test('recovery (3a): a receipt whose path is outside the sender\'s spill dir is refused before any stat', async () => {
+  const h = mkH();
+  const id = writeSpill(h.root, 'other', BIG);
+  const foreign = spillPathFor(h.root, 'other', id);
+  assert.ok(fs.existsSync(foreign), 'ENTER: the file exists, so the refusal below is confinement');
+  const cases = [
+    ['another seat', foreign],
+    ['a traversal', path.join(h.root, 'spill', 'lead', '..', 'other', `${id}.md`)],
+    ['a foreign tree', `/etc/${id}.md`],
+    ['a non-id name', path.join(h.root, 'spill', 'lead', 'notes.md')],
+  ];
+  for (const [label, p] of cases) {
+    const hh = mkH();
+    const intents = hh.m._extractIntents(receiptLine('dm bob', BIG, p), { receiptsFor: 'lead' });
+    assert.strictEqual(intents.length, 1, label);
+    assert.deepStrictEqual(intents[0].receipt, { path: p, reason: 'outside' }, label);
+    await hh.m._handleIntent('lead', intents[0]);
+    assert.deepStrictEqual(hh.dms, [], `${label}: nothing delivered`);
+    assert.strictEqual(hh.injected.length, 1, `${label}: one bounce`);
+    assert.match(hh.injected[0].text, /^\[agent:dm\] error: your body arrived as a pointer that Clodex never wrote/);
+    assert.strictEqual(hh.notes.length, 1, `${label}: operator note`);
+    assert.match(hh.errors[0], /names no spill file Clodex wrote \(outside\)/, label);
+  }
+});
+
+test('recovery (3a): a receipt naming a missing file bounces like a typed pointer', async () => {
+  const h = mkH();
+  const id = writeSpill(h.root, 'lead', BIG);
+  const filePath = spillPathFor(h.root, 'lead', id);
+  fs.rmSync(filePath);
+  const intents = h.m._extractIntents(receiptLine('shout', BIG, filePath), { receiptsFor: 'lead' });
+  assert.strictEqual(intents.length, 1);
+  assert.deepStrictEqual(intents[0].receipt, { path: filePath, reason: 'missing' });
+  await h.m._handleIntent('lead', intents[0]);
+  assert.deepStrictEqual(h.inbox, [], 'no operator note is minted from a body that does not exist');
+  assert.strictEqual(h.injected.length, 1);
+  assert.match(h.injected[0].text, /^\[agent:shout\] error: your body arrived as a pointer that Clodex never wrote/);
+  assert.match(h.errors[0], /names no spill file Clodex wrote \(missing\)/);
+});
+
+test('recovery (3a): two unresolved receipts in one turn carry distinct dedupe keys, so the second bounces too', () => {
+  const h = mkH();
+  const a = spillPathFor(h.root, 'lead', '0123456789abcdef');
+  const b = spillPathFor(h.root, 'lead', 'fedcba9876543210');
+  const intents = h.m._extractIntents(`${receiptLine('dm bob', BIG, a)}\n${receiptLine('dm bob', BIG, b)}\n`, { receiptsFor: 'lead' });
+  assert.strictEqual(intents.length, 2);
+  assert.notStrictEqual(shadowIntentKey('lead', intents[0]), shadowIntentKey('lead', intents[1]),
+    'the empty body alone would collapse both to `lead|dm||` and the scan would swallow the second as an intra-turn dup');
+});
+
+test('recovery (3a): a receipt naming a non-spill verb, or sitting in a fence, is prose', () => {
+  const h = mkH();
+  const id = writeSpill(h.root, 'lead', BIG);
+  const filePath = spillPathFor(h.root, 'lead', id);
+  assert.deepStrictEqual(h.m._extractIntents(receiptLine('exec run-tests', BIG, filePath), { receiptsFor: 'lead' }), [],
+    'only a verb the filter could have spilled is a receipt');
+  assert.deepStrictEqual(h.m._extractIntents(receiptLine('remind in 5m', BIG, filePath), { receiptsFor: 'lead' }), []);
+  const fenced = '```\n' + receiptLine('dm bob', BIG, filePath) + '\n```\n';
+  assert.deepStrictEqual(h.m._extractIntents(fenced, { receiptsFor: 'lead' }), [], 'a fenced receipt is a quote');
+});
+
+test('spill-mimic (item 8): the wire event is answered with a wire-spill-mimic row and one parkable advisory', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
+  const arm = src.match(/wire\.on\('spill-mimic', \(ev\) => \{[\s\S]{0,700}?\n\s*\}\);/);
+  assert.ok(arm, 'the spill-mimic event has a consumer beside the spill/spill-bail rows');
+  assert.match(arm[0], /this\._shadowLog\(\{ type: 'wire-spill-mimic', \.\.\.ev \}\)/, 'the diag row');
+  assert.match(arm[0], /this\._injectText\(s, SPILL_MIMIC_BOUNCE, \{ parkable: true \}\)/, 'parkable, like the other advisory bounces');
+  assert.match(arm[0], /if \(s && s\.agentType\)/, 'and only at a live session');
+  const bounce = src.match(/const SPILL_MIMIC_BOUNCE = '([^']+)';/);
+  assert.ok(bounce, 'the advisory is one constant');
+  assert.strictEqual(bounce[1],
+    '[agent] you wrote a receipt line yourself — nothing was sent or filed. Clodex writes a receipt only after '
+    + 'it has delivered a body you wrote. If you meant to send something, emit the intent with its full text.');
 });

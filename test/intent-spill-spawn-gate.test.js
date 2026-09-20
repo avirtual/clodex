@@ -11,7 +11,7 @@ const { buildIpcPrompt } = require('../ipc-prompt');
 const { intentEnabled } = require('../intent-catalog');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-const GRAMMAR = 'Bodies of task add/respec/reject/done, dm, shout, and context compact/clear/reload longer than 800 bytes';
+const GRAMMAR = 'A long intent body (dm, shout, task add/respec/reject/done, context compact/clear/reload — over 800 bytes) is delivered in full and then filed under';
 
 function mkManager({ intentSpill = 'off', backend = null } = {}) {
   const root = mkTmpRoot('clx-spillgate-');
@@ -128,12 +128,13 @@ test('the grammar line is in the prompt with the setting OFF, so a flip changes 
     await spawn(on.m, 'seat');
     assert.ok(off.prompts[0].includes(GRAMMAR),
       'the prompt is captured at spawn and replayed on clear/compact, so it must not track the setting');
-    assert.ok(off.prompts[0].includes('Never type `@spill:` yourself'));
-    assert.ok(off.prompts[0].includes("your transcript keeps the body's first line and `@spill:<id>` in their place"),
-      'the seat is told the title rides along, so it does not read a titled pointer as a corrupted emission');
+    assert.ok(off.prompts[0].includes('your transcript keeps a one-line receipt naming the file, so a body is never lost and never needs re-sending'));
+    assert.ok(off.prompts[0].includes('Always write the body itself: a body you did not write does not exist, and a receipt is something Clodex writes after delivery, never something you write.'),
+      'the paragraph names no token and no form: the pointer shape it used to teach is what the seats copied');
+    assert.ok(!off.prompts[0].includes('@spill'), 'no pointer token anywhere in the prompt');
     assert.ok(off.prompts[0].includes(
       'On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last '
-      + 'intent — or a whole reply with no intent — is spilled the same way once it passes 800 bytes: '
+      + 'intent — or a reply with no intent — is filed the same way once it passes 800 bytes: '
       + 'what the operator must know goes inside an intent, not after it — a dm from your '
       + 'operator counts as typed.'),
     'and that its trailing prose on an injected turn goes the same way, so a pointer where its '

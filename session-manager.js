@@ -182,9 +182,12 @@ const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
 const {
   SPILL_VERBS, SPILL_MIN_BYTES, isSpillVerb, pointerOf, resolveSpill, spillPathFor, verbKeyOf, writeSpill,
+  receiptOf, resolveReceipt,
   capResumeSnapshot,
 } = require('./intent-spill');
 const { spillGrammarLine } = require('./ipc-prompt');
+
+const SPILL_MIMIC_BOUNCE = '[agent] you wrote a receipt line yourself — nothing was sent or filed. Clodex writes a receipt only after it has delivered a body you wrote. If you meant to send something, emit the intent with its full text.';
 const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
@@ -982,6 +985,12 @@ function createSessionManager(deps) {
         log.info('intent', `spill ${ev.agent} ${ev.verb} @spill:${ev.id} (${ev.bytes} B)`);
       });
       wire.on('spill-bail', (ev) => this._shadowLog({ type: 'wire-spill-bail', ...ev }));
+      wire.on('spill-mimic', (ev) => {
+        this._shadowLog({ type: 'wire-spill-mimic', ...ev });
+        log.warn('intent', `${ev.agent} wrote a ${ev.kind} receipt line itself — nothing was sent or filed`);
+        const s = this.sessions.get(ev.agent);
+        if (s && s.agentType) this._injectText(s, SPILL_MIMIC_BOUNCE, { parkable: true });
+      });
       wire.on('spill-skip', (ev) => this._shadowLog({ type: 'wire-spill-skip', ...ev }));
       await wire.listen();
       this._shadow = new ShadowDiff((rec) => this._shadowLog(rec));
@@ -1122,7 +1131,7 @@ function createSessionManager(deps) {
                 files: Array.isArray(touches) ? touches : [],
               });
               const fired = new Set();
-              for (const intent of this._extractIntents(text)) {
+              for (const intent of this._extractIntents(text, { receiptsFor: ev.agent })) {
                 const bkey = shadowIntentKey(ev.agent, intent);
                 if (fired.has(bkey)) {
                   log.warn('intent', `intra-turn dup ${intent.type} ${ev.agent} — swallowed`);
@@ -4770,9 +4779,36 @@ function createSessionManager(deps) {
     }
 
 
-    _extractIntents(text) {
+    _expandReceipts(lines, agent) {
+      const fenced = fencedLines(lines);
+      const out = [];
+      const spillAt = new Map();
+      const unresolved = [];
+      for (let i = 0; i < lines.length; i++) {
+        const rc = fenced[i] ? null : receiptOf(lines[i]);
+        if (!rc) { out.push(lines[i]); continue; }
+        const r = resolveReceipt(REGISTRY_DIR, agent, rc.path);
+        if (!r.ok) {
+          unresolved.push({ type: rc.type, sub: rc.sub, body: '', text: rc.path, receipt: { path: rc.path, reason: r.reason } });
+          continue;
+        }
+        const bodyLines = r.body.split('\n');
+        spillAt.set(out.length, { id: r.id, path: r.path });
+        out.push(`[agent:${rc.head}] ${bodyLines[0]}`, ...bodyLines.slice(1), '[agent:end]');
+      }
+      return { lines: out, spillAt, unresolved };
+    }
+
+    _extractIntents(text, opts = {}) {
       const intents = [];
-      const lines = text.split('\n');
+      let lines = text.split('\n');
+      let spillAt = null;
+      if (opts.receiptsFor) {
+        const ex = this._expandReceipts(lines, opts.receiptsFor);
+        lines = ex.lines;
+        spillAt = ex.spillAt.size ? ex.spillAt : null;
+        intents.push(...ex.unresolved);
+      }
       const jsonComplete = (s) => {
         const t = s.trim();
         if (!t) return false;
@@ -4789,10 +4825,12 @@ function createSessionManager(deps) {
       while (i < lines.length) {
         const line = lines[i].trim();
         const inFence = fenced[i];
+        const headAt = i;
         i++;
         if (inFence) continue;
         const intent = parseIntent(line);
         if (intent && intent.type === 'end') continue;
+        if (intent && spillAt && spillAt.has(headAt)) intent.spill = spillAt.get(headAt);
         if (!intent || intent.type === 'escape') {
           const nearMiss = !intent && looksLikeIntent(line);
           if (nearMiss) {
@@ -4873,7 +4911,7 @@ function createSessionManager(deps) {
           files: Array.isArray(touches) ? touches : [],
         });
       }
-      const intents = this._extractIntents(text);
+      const intents = this._extractIntents(text, { receiptsFor: senderName });
       for (const intent of intents) {
         if (meta && meta.interrupted && intent.bodyOpen) {
           if (s) this._injectText(s, `[agent:intent] your turn was interrupted while the body of `
@@ -4993,10 +5031,14 @@ function createSessionManager(deps) {
       }
 
       if (isSpillVerb(intent)) {
+        if (intent.receipt) {
+          this._spillUnresolved(session, senderName, intent, intent.receipt.path, intent.receipt);
+          return;
+        }
         const spillId = pointerOf(intent.body);
         if (spillId) {
           const r = resolveSpill(REGISTRY_DIR, senderName, spillId);
-          if (!r.ok) { this._spillUnresolved(session, senderName, intent, spillId, r); return; }
+          if (!r.ok) { this._spillUnresolved(session, senderName, intent, `@spill:${spillId}`, r); return; }
           intent.body = r.body;
           intent.spill = { id: spillId, path: r.path };
         }
@@ -5314,18 +5356,17 @@ function createSessionManager(deps) {
       }
     }
 
-    _spillUnresolved(session, senderName, intent, id, r) {
+    _spillUnresolved(session, senderName, intent, pointer, r) {
       const verb = verbKeyOf(intent);
-      const where = r.path || spillPathFor(REGISTRY_DIR, senderName, id) || `${senderName}/${id}.md`;
-      log.error('intent', `${verb} ${senderName}: @spill:${id} did not resolve (${r.reason}) at ${where} — intent dropped`);
+      log.error('intent', `${verb} ${senderName}: body pointer ${pointer} names no spill file Clodex wrote (${r.reason}) — intent dropped`);
       this._broadcast('ipc-message', {
         type: 'intent', from: senderName, to: senderName,
-        body: `spill pointer @spill:${id} unresolvable (${r.reason}) — ${verb} dropped`,
+        body: `${verb} dropped: its body was a pointer Clodex never wrote (${pointer}, ${r.reason}) — the agent typed it`,
       });
-      this._raiseNote(senderName, `spill pointer @spill:${id} did not resolve (${r.reason}); the ${verb} was not applied`);
+      this._raiseNote(senderName, `${senderName} typed a spill pointer Clodex never wrote (${pointer}, ${r.reason}); the ${verb} was not applied`);
       if (session && session.agentType) {
         this._injectText(session,
-          `[agent:${intent.type}] error: your body arrived as @spill:${id} but ${where} could not be read (${r.reason}) — nothing was done; re-emit the intent with the full body`,
+          `[agent:${intent.type}] error: your body arrived as a pointer that Clodex never wrote — Clodex only replaces a body AFTER it has been delivered, so a pointer in your output means you typed it and no body exists. Re-emit the intent with the full text.`,
           { parkable: true });
       }
     }
