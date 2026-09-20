@@ -84,16 +84,16 @@ deltas; a `proseSpill` tail holds to the end of the response, same cap.
 
 `feed` records `heldRaw`/`heldSrc` BEFORE calling `filter.feed`, so at panic time
 the raw frames can hold text the filter never saw and `bail()` cannot
-re-materialise. `_flushHeld` alone would push nothing — it only emits `heldOut` —
-deleting every accumulated event from the client stream. So `_panic` forwards
-`heldRaw` verbatim only while it is the SUPERSET, `heldOut.length <=
-heldSrc.length`; longer means `bail()` released bytes OLDER than that window — a
+re-materialise, while `_flushHeld` alone emits only `heldOut` and would delete
+every accumulated event from the client stream. So `_panic` forwards `heldRaw`
+verbatim only while it is the SUPERSET, `heldOut.length <= heldSrc.length`;
+longer means `bail()` released bytes OLDER than that window — a
 previous block's tail, whose frames `_flushHeld` dropped — which only `heldOut`
 holds, so that case synthesizes. A pointer is never the excess: a fire always
-flushes first, in the stop branch as in the delta branch. `_notify`
-wraps every `onSpill`/`onBail` call, so a throwing listener cannot reach that
-path — a `_resolve` that threw after `_fired += 1` would lose the head line, the
-body and the terminator while never dispatching the intent.
+flushes first, in the stop branch as in the delta branch. `_notify` wraps every
+`onSpill`/`onBail` call, so a throwing listener cannot reach that path — a
+`_resolve` that threw after `_fired += 1` would lose the head line, the body and
+the terminator while never dispatching the intent.
 
 ## proseSpill
 
@@ -108,10 +108,9 @@ likewise: an unterminated head line is an intent, not a tail. The floor is SHARE
 with the body path; the pointer is BARE, and `POINTER_RE` accepts that form.
 
 An operator dm is the ONE injection that leaves the bit CLEAR: `_deliverMessage`
-passes `human` for sender `user`, the queue carries it to `onSubmitted`. Him
-sending from the panel is the two of them TALKING — the same input as typing. The
-bit is still read ONCE per request under `spillEnabled()`'s contract, and a
-throwing `turnInjected` reads as not-injected.
+passes `human` for sender `user` and the queue carries it to `onSubmitted` — him
+sending from the panel is the two of them TALKING, the same input as typing. The
+bit is read ONCE per request; a throwing `turnInjected` reads as not-injected.
 
 The tail CROSSES block boundaries: `endBlock()` is `close()` without the tail
 decision, and only `close()` — the stream end — resolves one. A non-text
