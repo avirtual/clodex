@@ -9,6 +9,7 @@ const { ensureSeatLink, renameTargets, pathInUse } = require('./seat-layout');
 const SEAT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const SESSION_ID_RE = /^[0-9a-f-]{36}$/;
 const SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
+const ID_RE = /^[0-9a-f]{16}$/;
 
 const IMPORT_MAX_BYTES = 512 * 1024 * 1024;
 const STAGING_MAX_AGE_MS = 60 * 60 * 1000;
@@ -161,7 +162,7 @@ function createSeatImport({
     const id = crypto.randomBytes(8).toString('hex');
     try {
       fs.mkdirSync(filesDir(id), { recursive: true, mode: 0o700 });
-      fs.writeFileSync(manifestPath(id), `${JSON.stringify({ name, record, startedAt: now() })}\n`);
+      fs.writeFileSync(manifestPath(id), `${JSON.stringify({ name, record, startedAt: now() })}\n`, { mode: 0o600 });
     } catch (e) {
       rmStaging(id);
       return fail(`cannot create staging: ${e.message}`);
@@ -171,7 +172,7 @@ function createSeatImport({
   }
 
   function putFile({ id, relPath, bytes, offset = 0 } = {}) {
-    if (typeof id !== 'string' || !SEGMENT_RE.test(id) || !readManifest(id)) return fail(`unknown staging '${id}'`);
+    if (typeof id !== 'string' || !ID_RE.test(id) || !readManifest(id)) return fail(`unknown staging '${id}'`);
     const failed = failureReason(id);
     if (failed) return fail(`staging is failed: ${failed}`);
     const bad = checkRelPath(relPath);
@@ -200,8 +201,7 @@ function createSeatImport({
   }
 
   function abort({ id } = {}) {
-    if (typeof id !== 'string' || !SEGMENT_RE.test(id)) return fail(`unknown staging '${id}'`);
-    if (!exists(stagingDir(id))) return fail(`unknown staging '${id}'`);
+    if (typeof id !== 'string' || !ID_RE.test(id) || !readManifest(id)) return fail(`unknown staging '${id}'`);
     rmStaging(id);
     return { ok: true };
   }
@@ -211,8 +211,13 @@ function createSeatImport({
     const cutoff = now() - STAGING_MAX_AGE_MS;
     for (const id of listStagings()) {
       const m = readManifest(id);
-      if (!m || typeof m.startedAt !== 'number') continue;
-      if (m.startedAt < cutoff) {
+      let startedAt = m && typeof m.startedAt === 'number' ? m.startedAt : null;
+      if (startedAt === null) {
+        let st;
+        try { st = fs.statSync(stagingDir(id)); } catch { continue; }
+        startedAt = st.birthtimeMs || st.mtimeMs;
+      }
+      if (startedAt < cutoff) {
         rmStaging(id);
         removed.push(id);
       }
@@ -222,7 +227,7 @@ function createSeatImport({
   }
 
   function commit({ id } = {}) {
-    if (typeof id !== 'string' || !SEGMENT_RE.test(id)) return fail(`unknown staging '${id}'`);
+    if (typeof id !== 'string' || !ID_RE.test(id)) return fail(`unknown staging '${id}'`);
     const manifest = readManifest(id);
     if (!manifest) return fail(`unknown staging '${id}'`);
     const failed = failureReason(id);
@@ -278,50 +283,54 @@ function createSeatImport({
     const installed = { transcript: null, seatDir: null, pending: null, loadlog: null, reminders: 0 };
     const dropped = [];
 
-    if (transcriptIdentical) {
-      installed.transcript = 'identical';
-    } else {
-      fs.mkdirSync(projectDir, { recursive: true, mode: 0o700 });
-      const tmpTarget = `${transcriptTarget}.import-${id}`;
-      fs.copyFileSync(stagedTranscript, tmpTarget);
-      fs.renameSync(tmpTarget, transcriptTarget);
-      installed.transcript = transcriptTarget;
-    }
-
-    const seatDir = seatDirFor(root, name);
-    fs.mkdirSync(seatDir, { recursive: true, mode: 0o700 });
-    for (const kind of kinds) fs.renameSync(path.join(staged, 'seat', kind), seatPathFor(root, name, kind));
-    for (const kind of IMPORTABLE_KINDS) ensureSeatLink({ root, name, kind, fs });
-    installed.seatDir = seatDir;
-
-    if (exists(stagedPending)) {
-      const pendingTarget = path.join(root, 'pending', name);
-      fs.mkdirSync(path.dirname(pendingTarget), { recursive: true, mode: 0o700 });
-      fs.renameSync(stagedPending, pendingTarget);
-      installed.pending = pendingTarget;
-    }
-
-    if (exists(stagedLoadlog)) {
-      fs.mkdirSync(path.dirname(loadlogTarget), { recursive: true, mode: 0o700 });
-      fs.renameSync(stagedLoadlog, loadlogTarget);
-      installed.loadlog = loadlogTarget;
-    }
-
-    if (reminderRows) {
-      let ticketBound = 0;
-      for (const row of reminderRows) {
-        if (row.ticket) ticketBound += 1;
-        reminders.add({
-          agent: name,
-          kind: row.kind,
-          spec: row.spec,
-          body: typeof row.body === 'string' ? row.body : '',
-          nextFireAt: typeof row.nextFireAt === 'number' ? row.nextFireAt : null,
-          ticket: null,
-        });
-        installed.reminders += 1;
+    try {
+      if (transcriptIdentical) {
+        installed.transcript = 'identical';
+      } else {
+        fs.mkdirSync(projectDir, { recursive: true, mode: 0o700 });
+        const tmpTarget = `${transcriptTarget}.import-${id}`;
+        fs.copyFileSync(stagedTranscript, tmpTarget);
+        fs.renameSync(tmpTarget, transcriptTarget);
+        installed.transcript = transcriptTarget;
       }
-      if (ticketBound) dropped.push(`reminders.ticket-bound:${ticketBound}`);
+
+      const seatDir = seatDirFor(root, name);
+      fs.mkdirSync(seatDir, { recursive: true, mode: 0o700 });
+      for (const kind of kinds) fs.renameSync(path.join(staged, 'seat', kind), seatPathFor(root, name, kind));
+      for (const kind of IMPORTABLE_KINDS) ensureSeatLink({ root, name, kind, fs });
+      installed.seatDir = seatDir;
+
+      if (exists(stagedPending)) {
+        const pendingTarget = path.join(root, 'pending', name);
+        fs.mkdirSync(path.dirname(pendingTarget), { recursive: true, mode: 0o700 });
+        fs.renameSync(stagedPending, pendingTarget);
+        installed.pending = pendingTarget;
+      }
+
+      if (exists(stagedLoadlog)) {
+        fs.mkdirSync(path.dirname(loadlogTarget), { recursive: true, mode: 0o700 });
+        fs.renameSync(stagedLoadlog, loadlogTarget);
+        installed.loadlog = loadlogTarget;
+      }
+
+      if (reminderRows) {
+        let ticketBound = 0;
+        for (const row of reminderRows) {
+          if (row.ticket) ticketBound += 1;
+          reminders.add({
+            agent: name,
+            kind: row.kind,
+            spec: row.spec,
+            body: typeof row.body === 'string' ? row.body : '',
+            nextFireAt: typeof row.nextFireAt === 'number' ? row.nextFireAt : null,
+            ticket: null,
+          });
+          installed.reminders += 1;
+        }
+        if (ticketBound) dropped.push(`reminders.ticket-bound:${ticketBound}`);
+      }
+    } catch (e) {
+      return { ok: false, error: `install failed: ${e.message}`, installed };
     }
 
     if (record.env && record.env.CLAUDE_CONFIG_DIR) dropped.push('account');

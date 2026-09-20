@@ -853,14 +853,9 @@ accept teardown removes.
   bind path, and `DEFERRED_KINDS` is empty — every reader over a shared parent
   is link-aware, and `pending` is not a seat kind at all.
 - **seat-import.js** — the owner-side fs half of Move-to-peer: stages a shipped
-  seat under `~/.clodex/import/<id>/` (whitelisted relPaths, resumable
-  offset-keyed chunks, 512 MiB cap) and installs it atomically — transcript to
-  `~/.claude/projects/<slug>/<sessionId>.jsonl` (opaque bytes; an existing one
-  refuses unless byte-identical, which makes a died-after-install commit
-  re-runnable), seat kinds into `sessions/<name>/`, pending, loadlog, and
-  reminder rows re-added with `ticket` dropped. Checks everything before it
-  writes, so a refusal leaves the tree untouched; factory with `fs`/`now`/`log`
-  injected, no HTTP (M-A2 owns the routes). See `docs/notes/seat-import.md`.
+  seat under `~/.clodex/import/<id>/` and installs it atomically (transcript,
+  seat kinds, pending, loadlog, reminders), checking everything before it writes.
+  Pure fs leaf, no HTTP — M-A2 owns the routes. See `docs/notes/seat-import.md`.
 - **project-root.js** — the git-repository root for a cwd, for keying a PROJECT
   ticket board when no team owns that cwd. Pure leaf; `fs` injectable.
 - **intent-spill.js** — the FORMAT of intent-body spill (`proxy-lab/SPILL.md`;

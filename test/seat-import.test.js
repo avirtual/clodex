@@ -249,6 +249,68 @@ test('abort removes the staging and a second abort refuses', () => {
   assert.match(imp.abort({ id: 'a/b' }).error, /unknown staging/);
 });
 
+test('a traversing id cannot delete the registry root or a sibling staging', () => {
+  const { root, imp } = mkImport();
+  const live = imp.begin({ name: 'ana', record: record() });
+  put(imp, live.id, 'transcript.jsonl', '{"t":1}\n');
+
+  for (const id of ['..', '.', '...', 'a'.repeat(16), '0123456789abcdeF', '0123456789abcde']) {
+    assert.match(imp.abort({ id }).error, /unknown staging/, `abort ${id}`);
+    assert.match(imp.commit({ id }).error, /unknown staging/, `commit ${id}`);
+    assert.match(imp.putFile({ id, relPath: 'transcript.jsonl', bytes: Buffer.from('x') }).error,
+      /unknown staging/, `putFile ${id}`);
+    assert.strictEqual(fs.existsSync(root), true, `registry root survives ${id}`);
+    assert.strictEqual(fs.existsSync(path.join(root, 'import')), true, `import dir survives ${id}`);
+    assert.strictEqual(fs.existsSync(path.join(root, 'sessions')), true, `sessions dir survives ${id}`);
+    assert.strictEqual(fs.existsSync(path.join(root, 'import', live.id, 'files', 'transcript.jsonl')), true,
+      `sibling staging survives ${id}`);
+  }
+
+  assert.deepStrictEqual(imp.abort({ id: live.id }), { ok: true });
+});
+
+test('abort refuses a bare directory under import/ that has no manifest', () => {
+  const { root, imp } = mkImport();
+  const orphan = 'abcdef0123456789';
+  fs.mkdirSync(path.join(root, 'import', orphan, 'files'), { recursive: true });
+  assert.match(imp.abort({ id: orphan }).error, /unknown staging/);
+  assert.strictEqual(fs.existsSync(path.join(root, 'import', orphan)), true);
+});
+
+test('sweep reaps a manifest-less staging on its directory timestamp', () => {
+  const { root } = mkRoots();
+  let clock = 1_000_000_000_000;
+  const imp = createSeatImport({ root, claudeProjects: root, reminders: stubReminders(), fs, now: () => clock });
+
+  const orphan = path.join(root, 'import', 'fedcba9876543210');
+  fs.mkdirSync(path.join(orphan, 'files'), { recursive: true });
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  fs.utimesSync(orphan, old, old);
+
+  clock = Date.now();
+  assert.deepStrictEqual(imp.sweep(), ['fedcba9876543210']);
+  assert.strictEqual(fs.existsSync(orphan), false);
+});
+
+test('an fs error in the write phase comes back as a refusal, not a throw', () => {
+  const { root, claudeProjects } = mkRoots();
+  const imp = createSeatImport({
+    root,
+    claudeProjects: path.join(claudeProjects, 'blocked'),
+    reminders: stubReminders(),
+    fs,
+  });
+  fs.writeFileSync(path.join(claudeProjects, 'blocked'), 'not a directory');
+
+  const { id } = imp.begin({ name: 'ana', record: record() });
+  put(imp, id, 'transcript.jsonl', '{"t":1}\n');
+
+  const res = imp.commit({ id });
+  assert.strictEqual(res.ok, false);
+  assert.match(res.error, /^install failed: /);
+  assert.strictEqual(fs.existsSync(path.join(root, 'sessions', 'ana')), false);
+});
+
 test('sweep removes a staging older than an hour by manifest startedAt and keeps a fresh one', () => {
   const { root } = mkRoots();
   let clock = 1_000_000_000_000;
