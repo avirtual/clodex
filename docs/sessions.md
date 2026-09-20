@@ -384,8 +384,8 @@ bytes anyway. The whole file is copied to a `.bak` under the scratch root (outsi
 `run/<name>/`, which the respawn deletes, and outside `~/.claude/projects/`, whose
 `*.jsonl` glob feeds the CLI's own picker), `[0, cutOffset)` is written to a temp
 file, fsynced and renamed over the original. The `.bak` is removed only once the
-respawned CLI has written its first record past the summary; any failure before
-that renames it back.
+respawned CLI has written its first **assistant** record past the summary; any
+failure before that renames it back.
 
 **The respawn** takes **Move's shape, not `kill()` and not reload**: `_moving`,
 pty kill, wait for exit, then `create()` on the same `sessionId`. `kill()` would
@@ -407,6 +407,8 @@ the seat's context holds:
 | a `tool_use` in the kept set has no `tool_result` | `orphaned-tool-use` — the CLI would silently re-parent it and fabricate a reply (`docs/notes/scratch-mark.md`) |
 | the last kept record is not a turn boundary, or is not the marked leaf | `leaf-mismatch` / the `boundaryAt` reason |
 | the ack never landed (the seat was blocked when `begin` fired) | `ack-missing` — nothing was cut |
+| two acks for the mark are found after it | `ack-duplicate` — the cut point is no longer unique |
+| the file shrank, or the 512 bytes before `sizeAtBegin` no longer match | `rewritten` — the prefix moved under us; unknown CLI behaviour, so refuse rather than cut to a guessed offset |
 | a dispatch made inside the episode is unnamed in the summary | `dispatch-unmentioned` — after the cut the seat will not remember doing it |
 | bodyless `end` | refused: an empty summary is a rewind that loses the work. Not treated as a cancel — that conflates "I changed my mind" with "I forgot the body" |
 | a Codex seat | refused outright: a rollout is a different record shape and no rewind has been proven for it |

@@ -3,9 +3,9 @@
 ## boundaryAt
 
 Claude Code 2.1.278 ends a turn with an `assistant` record carrying `message.stop_reason:
-"end_turn"` followed by a `system` record with `subtype: "turn_duration"`; one API message with text
-+ tool_use is written as TWO `assistant` records sharing a `message.id`, both `stop_reason:
-"tool_use"`.
+"end_turn"` followed by a `system` record with `subtype: "turn_duration"`; one API message
+with text+tool_use is written as TWO `assistant` records sharing a `message.id`, both
+`stop_reason: "tool_use"`.
 
 ## validateScratchCut
 

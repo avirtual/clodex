@@ -63,7 +63,7 @@ function collectAnchors(blocks, out) {
 
 test('a bullet item with 5-space ordered children keeps them as a nested ordered list', () => {
   const lines = read('docs/messaging.md').split('\n');
-  const slice = lines.slice(251, 281);
+  const slice = lines.slice(253, 283);
   assert.strictEqual(slice.length, 30);
   assert.strictEqual(slice[0], '- One directory per agent under the pending root; one file per message.');
   assert.ok(slice[7].startsWith('- **Three park types,'), `moved: ${slice[7]}`);
