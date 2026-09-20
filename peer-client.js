@@ -718,8 +718,6 @@ class PeerConnection {
     });
   }
 
-// withoutExecGrants is the client-side mirror of the server backstop — exec
-// grants must never ride the wire in either direction.
   _hasCap(cap) {
     return (this.hello && Array.isArray(this.hello.caps) ? this.hello.caps : []).includes(cap);
   }
@@ -795,6 +793,8 @@ class PeerConnection {
     return done;
   }
 
+// withoutExecGrants is the client-side mirror of the server backstop — exec
+// grants must never ride the wire in either direction.
   createSession(spec, cb) {
     this._request('POST', '/api/sessions', withoutExecGrants(spec || {}), (err, body) => {
       cb(err ? { ok: false, error: err.message } : body || { ok: false });
