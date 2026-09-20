@@ -361,7 +361,11 @@ dispatch check).
 
 **The mark.** `begin` records `session._scratch` in memory — a nonce, the
 transcript's realpath and sessionId, `sizeAtBegin`, the 512 bytes immediately
-before it, and the uuid of the last record before it. In memory on purpose: a
+before it, and the uuid of the last record before it. `sizeAtBegin` is the first
+byte of the assistant record that carried `begin` (`beginCutAt`, all of the
+reply's records when the CLI split it), so the begin reply, its `turn_duration`
+and the ack are the first records dropped and the kept file ends on the user
+record that reply answered. In memory on purpose: a
 Clodex restart voids the mark, because a mark that outlives the process has no
 ledger of what arrived during its episode. `begin` is **refused, not marked**, if
 the reply that carried it went on to call tools — the ack has to land on a turn
@@ -371,10 +375,9 @@ record followed by `system`/`turn_duration`; see `docs/notes/scratch-mark.md` fo
 the vendor shapes.
 
 **The ack** is an ordinary `_injectText` whose first line is `ACK_PREFIX` plus the
-nonce. That line is not decoration: it is the cut point. The first byte dropped is
-the first byte of a record Clodex itself wrote, so the cut is self-describing —
-the alternative, a byte offset captured at `begin`, lands mid-line the moment the
-CLI writes a sidecar between the stat and the ack.
+nonce. That line is not decoration: `validateScratchCut` proves the episode
+opened by finding it past `sizeAtBegin`, inside the dropped range, and refuses
+`ack-missing` without it.
 
 **The cut.** `end` runs `validateScratchCut(mark, fileBuffer)` — pure, returns
 `{ ok, cutOffset, reason, stats, arrivals }`, and **every check refuses rather
@@ -394,7 +397,8 @@ expected and the renderer keeps the tab. The seat's name, registry entry and
 `agent.sock` are unchanged, so peers' dms route to the new process untouched. The
 summary is injected afterwards as a user turn, framed by `scratchBriefing` as a
 briefing delivered **by Clodex** rather than as the seat's own memory — what it
-does not state, the seat has not verified.
+does not state, the seat has not verified. Unlike the reload handoff it carries
+no `State at resume` snapshot: the seat's context up to the mark is intact.
 
 **When it refuses.** The transcript, not live tracking, is the authority on what
 the seat's context holds:
@@ -407,7 +411,7 @@ the seat's context holds:
 | a `tool_use` in the kept set has no `tool_result` | `orphaned-tool-use` — the CLI would silently re-parent it and fabricate a reply (`docs/notes/scratch-mark.md`) |
 | the last kept record is not a turn boundary, or is not the marked leaf | `leaf-mismatch` / the `boundaryAt` reason |
 | the ack never landed (the seat was blocked when `begin` fired) | `ack-missing` — nothing was cut |
-| two acks for the mark are found after it | `ack-duplicate` — the cut point is no longer unique |
+| two acks for the mark are found after it | `ack-duplicate` — the mark is no longer unique |
 | the file shrank, or the 512 bytes before `sizeAtBegin` no longer match | `rewritten` — the prefix moved under us; unknown CLI behaviour, so refuse rather than cut to a guessed offset |
 | a dispatch made inside the episode is unnamed in the summary | `dispatch-unmentioned` — after the cut the seat will not remember doing it |
 | bodyless `end` | refused: an empty summary is a rewind that loses the work. Not treated as a cancel — that conflates "I changed my mind" with "I forgot the body" |

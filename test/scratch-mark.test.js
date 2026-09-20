@@ -11,6 +11,7 @@ const {
   nonce,
   parseTranscriptTail,
   boundaryAt,
+  beginCutAt,
   classifyUserRecord,
   cutStats,
   validateScratchCut,
@@ -263,10 +264,58 @@ test('classifyUserRecord: promptSource system alone classifies, and a non-user r
 });
 
 
-test('validateScratchCut: a clean episode cuts at the FIRST BYTE of the ack record', () => {
-  const { tape, leaf } = prefix();
+function beginTurn(tape, text = '[agent:scratch begin]', { id = 'msg_begin' } = {}) {
+  tape.prompt('[agent:from lead] find out where the parser lives');
+  const cut = tape.assistantText(text, { id });
+  tape.turnEnd();
+  return cut;
+}
+
+function markAtBegin(tape, n, extra = {}) {
+  const parsed = parseTranscriptTail(tape.bytes).records;
+  const cut = beginCutAt(parsed);
+  const buf = tape.bytes;
+  return markFrom(tape, n, cut.leaf ? cut.leaf.record.uuid : null, {
+    sizeAtBegin: cut.offset,
+    tailBytes: buf.subarray(Math.max(0, cut.offset - 512), cut.offset),
+    ...extra,
+  });
+}
+
+test('beginCutAt: the cut starts at the last assistant message, and the leaf is the record before it', () => {
+  const { tape } = prefix();
+  const promptUuid = tape.prompt('[agent:from lead] go');
+  const beginUuid = tape.assistantText('[agent:scratch begin]', { id: 'msg_begin' });
+  tape.turnEnd();
+  const parsed = parseTranscriptTail(tape.bytes).records;
+  const cut = beginCutAt(parsed);
+  assert.strictEqual(JSON.parse(tape.bytes.subarray(cut.offset, tape.bytes.indexOf(0x0a, cut.offset)).toString('utf8')).uuid, beginUuid,
+    'the first dropped byte is the first byte of the begin reply, not of the ack Clodex wrote a turn later');
+  assert.strictEqual(cut.leaf.record.uuid, promptUuid, 'the leaf is the prompt the begin answered — a user record');
+});
+
+test('beginCutAt: a reply the CLI split into several assistant records sharing message.id is cut as ONE', () => {
+  const { tape } = prefix();
+  const promptUuid = tape.prompt('go');
+  const thinking = tape.conv({ type: 'assistant', message: { role: 'assistant', id: 'msg_split', stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: 'hm' }] } });
+  tape.sidecar('file-history-snapshot', { snapshot: {} });
+  tape.assistantText('[agent:scratch begin]', { id: 'msg_split' });
+  tape.turnEnd();
+  const cut = beginCutAt(parseTranscriptTail(tape.bytes).records);
+  assert.strictEqual(JSON.parse(tape.bytes.subarray(cut.offset, tape.bytes.indexOf(0x0a, cut.offset)).toString('utf8')).uuid, thinking,
+    'a kept thinking-only half would be an assistant turn with no text');
+  assert.strictEqual(cut.leaf.record.uuid, promptUuid);
+  assert.strictEqual(beginCutAt(parseTranscriptTail(Buffer.from('')).records), null);
+});
+
+test('validateScratchCut: a clean episode cuts at the FIRST BYTE of the begin reply, and the ack is inside the dropped range', () => {
+  const { tape } = prefix();
   const n = 's7f3a1';
-  const mark = markFrom(tape, n, leaf);
+  tape.prompt('[agent:from lead] find out where the parser lives');
+  const keptBytes = tape.bytes;
+  const beginUuid = tape.assistantText('[agent:scratch begin]', { id: 'msg_begin' });
+  tape.turnEnd();
+  const mark = markAtBegin(tape, n);
 
   const ackUuid = ack(tape, n);
   tape.turn('read three files', { toolId: 'toolu_b1', usage: USAGE(61000, 4000, 30) });
@@ -276,37 +325,66 @@ test('validateScratchCut: a clean episode cuts at the FIRST BYTE of the ack reco
   const res = validateScratchCut(mark, buf, { realpath: mark.realpath, body: 'summary' });
   assert.strictEqual(res.ok, true, res.detail);
   assert.strictEqual(res.reason, null);
+  assert.strictEqual(res.cutOffset, mark.sizeAtBegin, 'the cut point is the offset the mark recorded');
 
   const cutLine = JSON.parse(buf.subarray(res.cutOffset, buf.indexOf(0x0a, res.cutOffset)).toString('utf8'));
-  assert.strictEqual(cutLine.uuid, ackUuid, 'the first DROPPED byte is the first byte of the ack Clodex itself wrote');
-  assert.ok(cutLine.message.content.startsWith(ACK_PREFIX + n));
+  assert.strictEqual(cutLine.uuid, beginUuid, 'the first DROPPED byte is the first byte of the reply that carried begin');
   assert.strictEqual(buf[res.cutOffset - 1], 0x0a, 'and the byte before it is a newline — the kept prefix ends whole');
-  assert.deepStrictEqual(res.arrivals, []);
+  const kept = buf.subarray(0, res.cutOffset).toString('utf8');
+  assert.ok(!kept.includes('[agent:scratch begin]'), 'the begin reply is gone');
+  assert.ok(!kept.includes(ACK_PREFIX), 'and so is the ack');
+  assert.ok(kept.includes('find out where the parser lives'), 'while the prompt that begin answered is kept');
+  assert.strictEqual(kept, keptBytes.toString('utf8'), 'the kept set is byte-exact the file up to the begin reply');
+  assert.ok(buf.subarray(res.cutOffset).toString('utf8').includes(`${ACK_PREFIX}${n}`),
+    'the ack is found in the DROPPED range — it proves the episode opened, it is not the cut point');
+  assert.strictEqual(JSON.parse(kept.trim().split('\n').pop()).message.content, '[agent:from lead] find out where the parser lives',
+    'the kept file ends on the user record the begin answered');
+  assert.deepStrictEqual(res.arrivals, [], 'that prompt, being kept, is not an arrival');
+  assert.ok(ackUuid);
 });
 
-test('validateScratchCut: sidecars between turn_duration and the ack neither move the cut nor break the boundary', () => {
-  const { tape, leaf } = prefix();
+test('validateScratchCut: sidecars between the begin reply and the ack are dropped with it — the cut is one offset', () => {
+  const { tape } = prefix();
   const n = 'sid001';
-  const mark = markFrom(tape, n, leaf);
+  beginTurn(tape);
+  const mark = markAtBegin(tape, n);
 
   tape.sidecar('file-history-snapshot', { snapshot: {} });
   tape.sidecar('queue-operation', { operation: 'enqueue', content: 'x' });
   tape.sidecar('cost-state', { cost: 1 });
   tape.sidecar('last-prompt', { content: 'x' });
-  const ackUuid = ack(tape, n);
+  ack(tape, n);
   tape.turn('research');
   tape.sidecar('cost-state', { cost: 2 });
 
   const buf = tape.bytes;
   const res = validateScratchCut(mark, buf, { realpath: mark.realpath, body: 's' });
   assert.strictEqual(res.ok, true, res.detail);
-  assert.strictEqual(JSON.parse(buf.subarray(res.cutOffset, buf.indexOf(0x0a, res.cutOffset)).toString('utf8')).uuid, ackUuid);
-  assert.ok(res.cutOffset > mark.sizeAtBegin + 4,
-    'the four sidecars sit between the mark and the ack, so the cut point is past sizeAtBegin, not at it');
-  assert.strictEqual(res.stats.records.byType.sidecar, 1,
-    'the cut writes [0, cutOffset), so the four sidecars the CLI wrote BETWEEN the stat and the ack survive '
-    + 'and only the one written inside the episode is dropped. They are latest-state records with no uuid, so '
-    + 'keeping them costs nothing — but it is the opposite of what "everything after the mark goes" suggests');
+  assert.strictEqual(res.cutOffset, mark.sizeAtBegin);
+  assert.strictEqual(res.stats.records.byType.sidecar, 5,
+    'the four sidecars the CLI wrote between the begin reply and the ack sit past sizeAtBegin, so they go '
+    + 'with the episode; they are latest-state records with no uuid, so dropping them costs nothing');
+  assert.strictEqual(res.stats.records.byType.assistant, 2, 'the begin reply and the research reply');
+});
+
+test('validateScratchCut: the kept set may end on a tool_result — the reply that carried begin came after tool calls', () => {
+  const { tape } = prefix();
+  tape.prompt('go');
+  tape.assistantToolUse('toolu_pre', { id: 'msg_pre' });
+  const resultUuid = tape.toolResult('toolu_pre');
+  tape.assistantText('[agent:scratch begin]', { id: 'msg_begin' });
+  tape.turnEnd();
+  const n = 'res001';
+  const mark = markAtBegin(tape, n);
+  assert.strictEqual(mark.leafUuid, resultUuid);
+  ack(tape, n);
+  tape.turn('research');
+
+  const res = validateScratchCut(mark, tape.bytes, { realpath: mark.realpath, body: 's' });
+  assert.strictEqual(res.ok, true, res.detail);
+  assert.strictEqual(boundaryAt(parseTranscriptTail(tape.bytes).records.filter((e) => e.offset < res.cutOffset)).ok, false,
+    'boundaryAt alone would refuse a user leaf: the cut accepts one because its tool pairing was checked and the '
+    + 'next record appended is a user turn anyway');
 });
 
 

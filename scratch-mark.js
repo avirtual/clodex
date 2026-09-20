@@ -107,6 +107,23 @@ function boundaryAt(records) {
   return { ok: false, reason: 'no-conversation-record', entry: null };
 }
 
+function beginCutAt(records) {
+  const list = Array.isArray(records) ? records : [];
+  let i = list.length - 1;
+  while (i >= 0 && list[i].type !== 'assistant') i--;
+  if (i < 0) return null;
+  const id = (list[i].record.message || {}).id;
+  let start = i;
+  for (let j = i - 1; j >= 0; j--) {
+    const e = list[j];
+    if (!e.conversation) continue;
+    if (e.type !== 'assistant' || !id || (e.record.message || {}).id !== id) break;
+    start = j;
+  }
+  const leaf = list.slice(0, start).reverse().find((e) => e.conversation) || null;
+  return { offset: list[start].offset, leaf };
+}
+
 function classifyUserRecord(record) {
   if (!record || record.type !== 'user') return null;
   const content = record.message && record.message.content;
@@ -266,7 +283,7 @@ function validateScratchCut(mark, fileBuffer, opts = {}) {
   if (acks.length === 0) return refuse('ack-missing', `no ack for mark ${mark.nonce} was found after the mark`);
   if (acks.length > 1) return refuse('ack-duplicate', `${acks.length} acks for mark ${mark.nonce} were found after the mark`);
 
-  const cutOffset = acks[0].offset;
+  const cutOffset = mark.sizeAtBegin;
 
   const compacted = after.find((e) => e.record.isCompactSummary === true);
   if (compacted) return refuse('compacted', 'a compact landed inside the episode');
@@ -290,7 +307,8 @@ function validateScratchCut(mark, fileBuffer, opts = {}) {
       `${orphans.length} tool_use block(s) in the kept set have no tool_result: ${orphans.join(', ')}`);
   }
 
-  const boundary = boundaryAt(kept);
+  const leaf = [...kept].reverse().find((e) => e.conversation) || null;
+  const boundary = leaf && leaf.type === 'user' ? { ok: true, reason: null, entry: leaf } : boundaryAt(kept);
   if (!boundary.ok) {
     return refuse(boundary.reason, 'the last kept record is not a turn boundary');
   }
@@ -372,6 +390,7 @@ module.exports = {
   nonce,
   parseTranscriptTail,
   boundaryAt,
+  beginCutAt,
   classifyUserRecord,
   cutStats,
   validateScratchCut,

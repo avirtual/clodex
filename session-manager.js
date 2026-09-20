@@ -190,7 +190,7 @@ const { readTeamJson } = require('./team-prompt-dir');
 const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
 const { SEAT_KINDS, seatPathFor, claudeProjectSlug, scratchDirFor } = require('./clodex-paths');
 const {
-  ACK_PREFIX: SCRATCH_ACK_PREFIX, boundaryAt: scratchBoundaryAt,
+  ACK_PREFIX: SCRATCH_ACK_PREFIX, boundaryAt: scratchBoundaryAt, beginCutAt: scratchBeginCutAt,
   parseTranscriptTail: scratchParseTail, validateScratchCut, scratchBriefing,
   nonce: scratchNonce, scratchReplayLine, arrivalClock: scratchArrivalClock,
 } = require('./scratch-mark');
@@ -6638,14 +6638,18 @@ function createSessionManager(deps) {
       const prior = session._scratch;
       if (prior && prior._closeTimer) clearTimeout(prior._closeTimer);
       const n = scratchNonce();
-      const tail = buf.subarray(Math.max(0, buf.length - SCRATCH_MARK_TAIL));
+      const cut = scratchBeginCutAt(records);
+      const cutOffset = cut ? cut.offset : t.size;
+      const leaf = cut ? cut.leaf : boundary.entry;
+      const end = cutOffset - (t.size - buf.length);
+      const tail = buf.subarray(Math.max(0, end - SCRATCH_MARK_TAIL), end);
       session._scratch = {
         nonce: n,
         realpath: t.realpath,
         sessionId: session.sessionId || null,
-        sizeAtBegin: t.size,
+        sizeAtBegin: cutOffset,
         tailBytes: Buffer.from(tail),
-        leafUuid: (boundary.entry.record && boundary.entry.record.uuid) || null,
+        leafUuid: (leaf && leaf.record && leaf.record.uuid) || null,
         beganAt: Date.now(),
         arrivals: [],
         dispatched: [],
@@ -6661,7 +6665,7 @@ function createSessionManager(deps) {
           + 'now ordinary history and will NOT be cut.';
       }
       reply(ack);
-      log.info('intent', `scratch ${session.name}: mark ${n} opened at ${t.size}${prior ? ` (replaces ${prior.nonce})` : ''}`);
+      log.info('intent', `scratch ${session.name}: mark ${n} opened at ${cutOffset}${prior ? ` (replaces ${prior.nonce})` : ''}`);
     }
 
     _scratchCancel(session, reply) {
@@ -7024,6 +7028,7 @@ function createSessionManager(deps) {
       if (!fresh) return notInjected();
       const landed = await this._injectAfterBoot(fresh, scratchBriefing(mark, v2.stats, closing.body), {
         logPrefix: '[agent:scratch]',
+        snapshot: false,
         dropBody: `scratch ${mark.nonce} → summary NOT injected (fresh CLI never signaled boot)`,
       });
       if (!landed) return notInjected();
@@ -7180,7 +7185,7 @@ function createSessionManager(deps) {
       }
       await new Promise(r => setTimeout(r, RELOAD_CONTINUATION_DELAY));
       if (session._dead) return false;
-      this._injectText(session, this._handoffText(session, text));
+      this._injectText(session, this._handoffText(session, text, { snapshot: opts.snapshot !== false }));
       return true;
     }
 
@@ -7208,12 +7213,14 @@ function createSessionManager(deps) {
       return capResumeSnapshot(`---\n${head.join('\n')}`, board);
     }
 
-    _handoffText(session, body) {
+    _handoffText(session, body, opts = {}) {
       const text = String(body == null ? '' : body);
       if (!session || session.agentType !== 'claude') return text;
       if (Buffer.byteLength(text, 'utf8') <= SPILL_MIN_BYTES) return text;
       let spilled = text;
-      try { spilled = `${text}\n\n${this._resumeSnapshot(session)}\n`; } catch { spilled = text; }
+      if (opts.snapshot !== false) {
+        try { spilled = `${text}\n\n${this._resumeSnapshot(session)}\n`; } catch { spilled = text; }
+      }
       const id = writeSpill(REGISTRY_DIR, session.name, spilled);
       if (!id) {
         log.warn('intent', `handoff spill for ${session.name} failed — typing the body`);
