@@ -1300,7 +1300,7 @@ function createTicketMethods(deps, shared) {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
             background: true,
           });
-          // Kept, and deliberately CONTENTLESS: the prompt above carries the scope, but a prompt alone
+          // Kept, and carrying no copy of the scope: the prompt above has it, but a prompt alone
           // never makes the CLI take a turn. This is the nudge that starts it. Losing this one to the
           // boot re-render costs a start, not the scope — and the t194 fallback re-drains it; losing the
           // scope with it was the failure. Do not re-inline the scope here: two copies would disagree the
