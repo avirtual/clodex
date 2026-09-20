@@ -552,12 +552,12 @@ function registerIpcHandlers(deps) {
   handle('session:rename', async (_e, name, newName) => manager.rename(name, newName));
   handle('session:scratch-mark', (e, { name, label } = {}) => {
     const here = workspaceOfSender(e);
-    if (!manager.listForWorkspace(here).some((s) => s.name === name)) {
+    if (!persistence.listForWorkspace(here).some((s) => s.name === name)) {
       return { ok: false, error: `session ${name} is not in this workspace` };
     }
     let res;
     try { res = manager.scratchMark(name, label); } catch (err) { return { ok: false, error: err.message }; }
-    if (res && res.ok === false) return { ok: false, error: res.error || res.reason || 'scratch mark refused' };
+    if (res && res.ok === false) return { ok: false, error: res.error || 'scratch mark refused' };
     return { ok: true };
   });
   handle('session:flushPending', (_e, name) => manager.flushPending(name));

@@ -881,7 +881,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, d
       break;
     case 'scratchMark':
       promptText(`Scratch mark on "${name}" — label`, '').then((raw) => {
-        if (raw == null) return;
+        if (raw == null || !raw.trim()) return;
         const label = raw.trim();
         if (!/^(?!replay$)[A-Za-z0-9._-]{1,32}$/.test(label)) {
           showToast('Label must be 1–32 chars: letters, digits, . _ - (not "replay")', { kind: 'error', duration: 8000, name });

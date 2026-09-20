@@ -3,13 +3,16 @@ const assert = require('node:assert');
 const fs = require('fs');
 const { registerIpcHandlers } = require('../ipc-handlers');
 
-function mkHandlers({ entry = { name: 'a', type: 'claude', cwd: '/x' }, manager = {}, here = 'ws1', sent = [] } = {}) {
+function mkHandlers({ entry = { name: 'a', type: 'claude', cwd: '/x', workspaceId: 'ws1' }, manager = {}, here = 'ws1', sent = [] } = {}) {
   const handlers = new Map();
   registerIpcHandlers({
     handle: (ch, fn) => handlers.set(ch, fn),
     on: (ch, fn) => handlers.set(ch, fn),
     log: { info() {}, warn() {}, error() {} },
-    persistence: { get: () => entry },
+    persistence: {
+      get: () => entry,
+      listForWorkspace: (ws) => (ws === entry.workspaceId ? [entry] : []),
+    },
     promptLibrary: { list: () => [] },
     popupMenu: () => {},
     REGISTRY_DIR: null,
@@ -19,7 +22,8 @@ function mkHandlers({ entry = { name: 'a', type: 'claude', cwd: '/x' }, manager 
     workspaces: { list: () => [{ id: 'ws1', name: 'Home' }] },
     workspaceOfSender: () => here,
     manager: {
-      listForWorkspace: (ws) => (ws === 'ws1' ? [{ name: 'a' }] : []),
+      sessions: new Map(),
+      listForWorkspace: () => [],
       ...manager,
     },
   });
@@ -81,11 +85,16 @@ test('a {ok:false} refusal from manager.scratchMark is passed through as {ok:fal
   });
   const res = await handlers.get('session:scratch-mark')(e, { name: 'a', label: 'x' });
   assert.deepStrictEqual(res, { ok: false, error: 'scratch mark x refused: mid-turn — re-try when the seat is idle' });
-  const viaReason = mkHandlers({ manager: { scratchMark: () => ({ ok: false, reason: 'behind' }) } });
-  assert.deepStrictEqual(
-    await viaReason.handlers.get('session:scratch-mark')(viaReason.e, { name: 'a', label: 'x' }),
-    { ok: false, error: 'behind' },
-  );
+});
+
+test('a persisted-but-not-live seat in this workspace REACHES manager.scratchMark — the guard scopes by persistence, not liveness', async () => {
+  const calls = [];
+  const { handlers, e } = mkHandlers({
+    manager: { scratchMark: (name, label) => { calls.push([name, label]); throw new Error('session a is not running'); } },
+  });
+  const res = await handlers.get('session:scratch-mark')(e, { name: 'a', label: 'x' });
+  assert.deepStrictEqual(calls, [['a', 'x']], 'the manager, not the guard, answers for an exited seat');
+  assert.deepStrictEqual(res, { ok: false, error: 'session a is not running' });
 });
 
 test('the workspace guard refuses a name outside the sender window\'s workspace without calling the manager', async () => {
