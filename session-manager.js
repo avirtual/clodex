@@ -6824,12 +6824,12 @@ function createSessionManager(deps) {
         fs.renameSync(tmp, mark.realpath);
       } catch (err) {
         try { fs.unlinkSync(tmp); } catch {}
-        const fresh = await this._scratchRespawnSafely(name, entry, mark, bak);
+        const fresh = await this._scratchRespawnSafely(name, entry, mark, bak, { keepMark: true });
         if (fresh) {
           await this._injectAfterBoot(fresh,
             `[agent:scratch] the cut FAILED while writing: ${err.message}. The transcript was restored from `
-            + 'backup and your seat respawned WITHOUT cutting; the mark is dropped. Your summary is in your '
-            + 'own turn above; carry on from it.',
+            + `backup and your seat respawned WITHOUT cutting; the mark ${mark.nonce} is still open, so you `
+            + 'can re-emit end. Your summary is in your own turn above.',
             { logPrefix: '[agent:scratch]', dropBody: 'scratch → write-failure notice NOT injected' });
         }
         return;
@@ -6874,10 +6874,12 @@ function createSessionManager(deps) {
       }
     }
 
-    async _scratchRespawnSafely(name, entry, mark, bak) {
+    async _scratchRespawnSafely(name, entry, mark, bak, { keepMark = false } = {}) {
       this._scratchRestore(mark, bak);
       try {
-        return await this._scratchRespawn(name, entry);
+        const fresh = await this._scratchRespawn(name, entry);
+        if (fresh && keepMark) { fresh._scratch = mark; mark.closing = null; }
+        return fresh;
       } catch (err) {
         log.error('intent', `scratch ${name}: respawn after an abandoned cut failed: ${err.message}`);
         getPersistence().upsert(this._stripClaimedTree(entry));
