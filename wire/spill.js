@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  SPILL_MIN_BYTES, SPILL_MAX_BYTES, validAgent, writeSpill: defaultWriteSpill,
+  SPILL_MIN_BYTES, SPILL_MAX_BYTES, validAgent, writeSpill: defaultWriteSpill, spillPathFor,
 } = require('../intent-spill');
 const { cleanLine } = require('../intent-scanner');
 const { titleLine, ticketTitle } = require('../tickets-store');
@@ -118,7 +118,10 @@ class SpillFilter {
 
   _line(line) {
     if (this.holding) {
-      if (line.trim() === TERMINATOR) return this._resolve() + line + '\n';
+      if (line.trim() === TERMINATOR) {
+        const r = this._resolve();
+        return r.spilled ? r.text : r.text + line + '\n';
+      }
       if (cleanLine(line).startsWith(OPEN)) {
         const held = this.originalHeld();
         this._clear();
@@ -188,6 +191,10 @@ class SpillFilter {
     this.bodyLen = 0;
   }
 
+  _keptAt(id) {
+    return spillPathFor(this.root, this.agent, id) || `spill/${this.agent}/${id}.md`;
+  }
+
   _resolve() {
     const bodyText = this._bodyText();
     const head = this.head;
@@ -202,14 +209,19 @@ class SpillFilter {
         this._fired += 1;
         this._notify(this.onSpill, { verb, id, bytes });
         const first = titleLine(bodyText);
-        const title = (first && first !== bodyText.trim()) ? `${ticketTitle(bodyText)} ` : '';
-        return `${head} ${title}@spill:${id}\n`;
+        const title = (first && first !== bodyText.trim())
+          ? ` "${ticketTitle(bodyText).replace(/"/g, "'")}"` : '';
+        const words = head.slice(OPEN.length, -1).trim().replace(/\s+/g, ' ');
+        return {
+          spilled: true,
+          text: `(Clodex: you sent ${words}${title} — delivered in full, ${bytes} B; your text is kept at ${this._keptAt(id)})\n`,
+        };
       }
     }
     const held = this.originalHeld();
     this._clear();
     this.verb = null;
-    return held;
+    return { spilled: false, text: held };
   }
 
   _resolveTail() {
@@ -221,7 +233,7 @@ class SpillFilter {
     if (!id) return text;
     this._fired += 1;
     this._notify(this.onSpill, { verb: 'prose', id, bytes });
-    return `@spill:${id}\n`;
+    return `(Clodex: the ${bytes} B of prose that followed reached the operator's log; kept at ${this._keptAt(id)})\n`;
   }
 
   endBlock() {
@@ -229,7 +241,8 @@ class SpillFilter {
     if (this.holding && this.pending.trim() === TERMINATOR && this.pending.indexOf('\n') === -1) {
       const last = this.pending;
       this.pending = '';
-      out += this._resolve() + last;
+      const r = this._resolve();
+      out += r.spilled ? r.text : r.text + last;
     }
     if (this.holding) {
       out += this.originalHeld();
@@ -251,7 +264,8 @@ class SpillFilter {
     if (this.holding && this.pending.trim() === TERMINATOR && this.pending.indexOf('\n') === -1) {
       const last = this.pending;
       this.pending = '';
-      out += this._resolve() + last;
+      const r = this._resolve();
+      out += r.spilled ? r.text : r.text + last;
     }
     if (this.holding) {
       out += this.originalHeld();

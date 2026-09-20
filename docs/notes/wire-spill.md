@@ -23,7 +23,23 @@ silently dispatches a different spec than the transcript shows.
    comes from `parseIntent`, which trims.
 3. Trailing blank lines are popped off the held body, as `_extractIntents` pops
    them. The head-line fragment is never popped — it is `firstBody`.
-4. `ticketTitle` leads a multi-line body's pointer.
+4. `ticketTitle` leads a multi-line body's receipt, with `"` folded to `'` so
+   the receipt grammar's quoted title stays one token.
+
+## _resolve
+
+The placeholder is parenthesised past-tense prose with no `[agent:` and no
+`@spill:` in it, and the block's closing `[agent:end]` is swallowed with it,
+because the rewritten line sits in the model's own transcript as its own prior
+output and became a few-shot example: measured on the wirescope seat, 5 of 10
+pointer emissions were fabricated (no file behind them) after its first real
+rewrite and none before; the lead seat fabricated 11 in one day. A receipt is
+not an emittable form, so copying it fires nothing.
+
+The intent tee in `wire/proxy.js` is fed the ORIGINAL upstream chunk, not the
+spill's output, so the scanner dispatches the full body and the transcript
+placeholder carries nothing the dispatch depends on; the spill's `close()` tail
+is never an intent source.
 
 The nested-intent test is over-broad on purpose — the filter cannot know fences
 without reimplementing `fencedLines`, so it is wrong in the SAFE direction both
@@ -89,7 +105,7 @@ every accumulated event from the client stream. So `_panic` forwards `heldRaw`
 verbatim only while it is the SUPERSET, `heldOut.length <= heldSrc.length`;
 longer means `bail()` released bytes OLDER than that window — a
 previous block's tail, whose frames `_flushHeld` dropped — which only `heldOut`
-holds, so that case synthesizes. A pointer is never the excess: a fire always
+holds, so that case synthesizes. A receipt is never the excess: a fire always
 flushes first, in the stop branch as in the delta branch. `_notify` wraps every
 `onSpill`/`onBail` call, so a throwing listener cannot reach that path — a
 `_resolve` that threw after `_fired += 1` would lose the head line, the body and
@@ -105,7 +121,7 @@ any intent head line FLUSHES it — keeping prose BETWEEN intents on the wire.
 ordinary text to the line scanner, so without it the reminder would land in
 `tail` and fire carrying a pointer. `couldBeHead(pending)` guards a block end
 likewise: an unterminated head line is an intent, not a tail. The floor is SHARED
-with the body path; the pointer is BARE, and `POINTER_RE` accepts that form.
+with the body path; the tail's receipt names no verb, since nothing dispatches it.
 
 An operator dm is the ONE injection that leaves the bit CLEAR: `_deliverMessage`
 passes `human` for sender `user` and the queue carries it to `onSubmitted` — him

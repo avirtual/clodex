@@ -21,6 +21,7 @@ const ID_RE = /^[0-9a-f]{16}$/;
 const AGENT_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const POINTER_RE = /^\s*@spill:([0-9a-f]{16})\s*$/;
 const TITLED_POINTER_RE = /^([^\n]{0,79}[^\s\n]) @spill:([0-9a-f]{16})\s*$/;
+const RECEIPT_RE = /^\(Clodex: you sent (\S+(?: \S+)*?)(?: "[^"]*")? — delivered in full, \d+ B; your text is kept at (\/\S+\.md)\)$/;
 
 function verbKeyOf(intent) {
   if (!intent || typeof intent.type !== 'string') return null;
@@ -115,6 +116,28 @@ function pointerText(id) {
   return `@spill:${id}`;
 }
 
+function receiptOf(line) {
+  if (typeof line !== 'string') return null;
+  const m = RECEIPT_RE.exec(line.trim());
+  if (!m) return null;
+  const words = m[1].split(' ');
+  const key = SPILL_VERBS.has(words[0]) ? words[0] : `${words[0]}.${words[1]}`;
+  if (!SPILL_VERBS.has(key)) return null;
+  return { head: m[1], type: words[0], sub: key === words[0] ? null : words[1], path: m[2] };
+}
+
+function resolveReceipt(root, agent, filePath) {
+  const dir = spillDirFor(root, agent);
+  if (dir === null) return { ok: false, reason: 'invalid', path: null };
+  const base = path.basename(filePath);
+  const id = base.endsWith('.md') ? base.slice(0, -3) : '';
+  if (!ID_RE.test(id) || confine(dir, base) !== path.resolve(filePath)) {
+    return { ok: false, reason: 'outside', path: filePath };
+  }
+  const r = resolveSpill(root, agent, id);
+  return r.ok ? { ...r, id } : r;
+}
+
 function capResumeSnapshot(head, board, max = SNAPSHOT_MAX_BYTES) {
   const rows = String(board == null ? '' : board).split('\n').filter((l) => l !== '');
   const full = rows.length ? `${head}\n${rows.join('\n')}` : head;
@@ -136,6 +159,7 @@ module.exports = {
   AGENT_RE,
   POINTER_RE,
   TITLED_POINTER_RE,
+  RECEIPT_RE,
   verbKeyOf,
   isSpillVerb,
   validAgent,
@@ -147,5 +171,7 @@ module.exports = {
   resolveSpill,
   pointerOf,
   pointerText,
+  receiptOf,
+  resolveReceipt,
   capResumeSnapshot,
 };
