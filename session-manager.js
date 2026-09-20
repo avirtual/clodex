@@ -7081,6 +7081,7 @@ function createSessionManager(deps) {
         this._injectText(target, finalText, {
           parkable: true,
           parkKey,
+          human: senderName === 'user',
           // A park via the fire-time divert is durable too, so the stamp is taken
           // once the producer runs and the write is imminent — the same instant the
           // divert decides. Returning the text unchanged keeps this a pure hook.
@@ -7299,6 +7300,7 @@ function createSessionManager(deps) {
       const qopts = {};
       if (divert) qopts.divert = divert;
       if (produce) qopts.produce = produce;
+      if (opts.human === true) qopts.human = true;
       this._injectQueueFor(session).enqueue(produce ? '' : text, Object.keys(qopts).length ? qopts : undefined);
     }
 
@@ -7380,7 +7382,7 @@ function createSessionManager(deps) {
           speaking: () => Date.now() - (session.lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS,
           isDead: () => !!session._dead,
           bracketedPaste: () => !!session._pasteModeOn,
-          onSubmitted: () => { session.lastSubmitInjected = true; },
+          onSubmitted: (_t, meta) => { session.lastSubmitInjected = !(meta && meta.human); },
           ready: isClaude ? () => !!session._bootReadySeen : undefined,
           readyMaxWaitMs: INJECT_BOOT_MAXWAIT,
           onReadyCapFire: isClaude ? () => {

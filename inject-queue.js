@@ -101,12 +101,13 @@ class InjectQueue {
     this._length++;
     const divert = typeof opts.divert === 'function' ? opts.divert : null;
     const produce = typeof opts.produce === 'function' ? opts.produce : null;
-    const run = () => this._drain(text, divert, produce).finally(() => { this._length--; });
+    const human = opts.human === true;
+    const run = () => this._drain(text, divert, produce, human).finally(() => { this._length--; });
     this._chain = this._chain.then(run, run);   // run even if a prior item rejected
     return this._chain;
   }
 
-  async _drain(text, divert = null, produce = null) {
+  async _drain(text, divert = null, produce = null, human = false) {
     // Bytes written before a fresh seat's input loop enters raw mode are buffered
     // and read as ONE paste-like chunk, so the trailing Enter lands as content
     // instead of submitting. Runs before the quiet-gate: a virgin seat has no
@@ -175,7 +176,7 @@ class InjectQueue {
     await this._sleep(this._settleMsFor(text));
     if (this._isDead()) return;
     this._write('\r');                                 // Enter — closes the unit
-    if (this._onSubmitted) { try { this._onSubmitted(text); } catch {} }
+    if (this._onSubmitted) { try { this._onSubmitted(text, { human }); } catch {} }
   }
 }
 

@@ -151,7 +151,7 @@ class SpillFilter {
     if (this.proseSpill) {
       const cleaned = cleanLine(line).trim();
       if (cleaned.startsWith(`\\${OPEN}`)) {
-        return this.foreignBody ? `${line}\n` : this._flushTail() + line + '\n';
+        return this._flushTail() + line + '\n';
       }
       if (cleaned.startsWith(OPEN)) {
         this.foreignBody = cleaned !== TERMINATOR;
@@ -221,6 +221,28 @@ class SpillFilter {
     return `@spill:${id}\n`;
   }
 
+  endBlock() {
+    let out = '';
+    if (this.holding && this.pending.trim() === TERMINATOR && this.pending.indexOf('\n') === -1) {
+      const last = this.pending;
+      this.pending = '';
+      out += this._resolve() + last;
+    }
+    if (this.holding) {
+      out += this.originalHeld();
+      this._clear();
+      this.verb = null;
+    } else if (this.proseSpill && !this.foreignBody && !couldBeHead(this.pending)) {
+      this.tail += this.pending;
+      this.pending = '';
+    }
+    if (this.pending) {
+      out += this._flushTail() + this.pending;
+      this.pending = '';
+    }
+    return out;
+  }
+
   close() {
     let out = '';
     if (this.holding && this.pending.trim() === TERMINATOR && this.pending.indexOf('\n') === -1) {
@@ -279,6 +301,7 @@ class SpillTee {
     this.heldRaw = [];
     this.heldSrc = '';
     this.heldOut = '';
+    this.heldStopAt = -1;
   }
 
   get fired() { return this.filter.fired; }
@@ -286,16 +309,19 @@ class SpillTee {
   get latched() { return this.dead || this.filter.latched; }
 
   _flushHeld(out) {
-    if (!this.heldRaw.length) {
+    const cut = this.heldStopAt === -1 ? this.heldRaw.length : this.heldStopAt;
+    if (!cut) {
       if (this.heldOut) out.push(deltaEvent(this.index, this.heldOut));
     } else if (this.heldOut === this.heldSrc) {
-      for (const r of this.heldRaw) out.push(r);
+      for (let i = 0; i < cut; i += 1) out.push(this.heldRaw[i]);
     } else if (this.heldOut) {
       out.push(deltaEvent(this.index, this.heldOut));
     }
+    for (let i = cut; i < this.heldRaw.length; i += 1) out.push(this.heldRaw[i]);
     this.heldRaw = [];
     this.heldSrc = '';
     this.heldOut = '';
+    this.heldStopAt = -1;
   }
 
   _panic(out, e) {
@@ -306,6 +332,7 @@ class SpillTee {
       this.heldRaw = [];
       this.heldSrc = '';
       this.heldOut = '';
+      this.heldStopAt = -1;
     } else {
       this._flushHeld(out);
     }
@@ -343,6 +370,7 @@ class SpillTee {
         this.buf = this.buf.slice(cut + blen);
         const d = dataOf(raw.toString('utf8'));
         if (d && d.type === 'content_block_delta' && d.delta && d.delta.type === 'text_delta') {
+          if (this.heldStopAt !== -1) this._flushHeld(out);
           if (typeof d.index === 'number') this.index = d.index;
           const src = typeof d.delta.text === 'string' ? d.delta.text : '';
           const before = this.filter.fired;
@@ -350,6 +378,28 @@ class SpillTee {
           this.heldSrc += src;
           this.heldOut += this.filter.feed(src);
           if (this.filter.fired !== before || this.heldOut === this.heldSrc) this._flushHeld(out);
+          continue;
+        }
+        if (this.filter.proseSpill) {
+          if (d && d.type === 'content_block_start') {
+            const isText = !!(d.content_block && d.content_block.type === 'text');
+            if (!isText) this.heldOut += this.filter._flushTail();
+            this._flushHeld(out);
+            if (isText && typeof d.index === 'number') this.index = d.index;
+            out.push(raw);
+            continue;
+          }
+          if (d && d.type === 'content_block_stop') {
+            this.heldOut += this.filter.endBlock();
+            this.heldRaw.push(raw);
+            if (this.heldStopAt === -1) this.heldStopAt = this.heldRaw.length - 1;
+            continue;
+          }
+          if (this.heldStopAt !== -1) {
+            this.heldRaw.push(raw);
+            continue;
+          }
+          out.push(raw);
           continue;
         }
         if (d && d.type === 'content_block_stop') {
