@@ -624,3 +624,68 @@ test('InjectQueue: once ready, a subsequent item never re-blocks (latch is the c
   assert.deepStrictEqual(writes, ['\x15', 'one', '\r', '\x15', 'two', '\r']);
   assert.strictEqual(clock, 0, 'ready seat waits zero ticks (boot gate never blocks) on either item');
 });
+
+
+test('InjectQueue: onSubmitted fires after the closing Enter, once per unit', async () => {
+  const writes = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 0,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    onSubmitted: () => writes.push('SUBMITTED'),
+  });
+  await q.enqueue('one');
+  await q.enqueue('two');
+  assert.deepStrictEqual(writes,
+    ['\x15', 'one', '\r', 'SUBMITTED', '\x15', 'two', '\r', 'SUBMITTED'],
+    'the hook lands AFTER the Enter: before it, the CLI has not started the turn');
+});
+
+test('InjectQueue: a unit that dies before the Enter never reports a submit', async () => {
+  const writes = [];
+  let submits = 0;
+  let dead = false;
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 5,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => dead,
+    sleep: (ms) => { dead = true; return new Promise((r) => setTimeout(r, ms)); },
+    onSubmitted: () => { submits += 1; },
+  });
+  await q.enqueue('vanishes');
+  assert.ok(!writes.includes('\r'), 'no Enter was written');
+  assert.strictEqual(submits, 0, 'and no turn was claimed to have started');
+});
+
+test('InjectQueue: a throwing onSubmitted cannot break the drain', async () => {
+  const writes = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 0,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    onSubmitted: () => { throw new Error('listener blew up'); },
+  });
+  await q.enqueue('one');
+  await q.enqueue('two');
+  assert.deepStrictEqual(writes, ['\x15', 'one', '\r', '\x15', 'two', '\r'],
+    'delivery is not optional; the bit is');
+});
+
+test('InjectQueue: onSubmitted absent leaves the drained bytes exactly as before', async () => {
+  const writes = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+  });
+  await q.enqueue('line1\nline2');
+  assert.deepStrictEqual(writes, ['\x15', 'line1\rline2', '\r']);
+});

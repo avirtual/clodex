@@ -33,6 +33,7 @@ function run(text, opts = {}) {
     onSpill: opts.onSpill,
     onBail: opts.onBail,
     writeSpill: opts.writeSpill,
+    proseSpill: opts.proseSpill,
   });
   let out = '';
   for (let i = 0; i < text.length; i += cs) out += f.feed(text.slice(i, i + cs));
@@ -315,4 +316,123 @@ test('prose streams with no added latency: a partial line is held only while it 
   const g = new SpillFilter({ agent: 'wirescope', root: root(), verbs: VERBS });
   assert.equal(g.feed('[age'), '', 'a possible opener is withheld');
   assert.equal(g.feed('nt:dm bob] hi\n'), '[agent:dm bob] hi\n');
+});
+
+
+const PROSE = `${'p'.repeat(899)}\n`;
+
+function runProse(text, opts = {}) {
+  return run(text, { ...opts, proseSpill: true });
+}
+
+test('proseSpill off is the default: a 900-byte trailing tail streams verbatim', () => {
+  assert.ok(Buffer.byteLength(PROSE, 'utf8') > 800,
+    'ENTER: the fixture tail must exceed the 800 B floor, or the subject proves nothing');
+  const T = `[agent:task add t1] ${SMALL}\n[agent:end]\n${PROSE}`;
+  for (const cs of SIZES) assert.equal(run(T, { cs }).out, T, `@cs=${cs}`);
+});
+
+test('proseSpill on: trailing prose after a body becomes a bare pointer, the body untouched', () => {
+  const T = `[agent:task add t1] ${SMALL}\n[agent:end]\n${PROSE}`;
+  const outs = SIZES.map((cs) => runProse(T, { cs }).out);
+  assert.equal(new Set(outs).size, 1, 'output independent of chunking');
+  const out = outs[0];
+  const id = diskOf(out).id;
+  assert.equal(out, `[agent:task add t1] ${SMALL}\n[agent:end]\n@spill:${id}\n`,
+    'the under-floor intent body streams as written; only the tail is replaced');
+  assert.equal(diskOf(out).body, PROSE, 'the file holds the tail byte-for-byte');
+  assert.equal(pointerOf(`@spill:${id}`), id, 'the bare pointer resolves with no head line');
+});
+
+test('proseSpill on: a reply with no intent at all is exactly the pointer line', () => {
+  const outs = SIZES.map((cs) => runProse(PROSE, { cs }).out);
+  assert.equal(new Set(outs).size, 1);
+  const out = outs[0];
+  assert.equal(out, `@spill:${diskOf(out).id}\n`);
+  assert.equal(diskOf(out).body, PROSE);
+});
+
+test('proseSpill on: prose BETWEEN two intents is never the candidate', () => {
+  const T = `[agent:task add a] ${SMALL}\n[agent:end]\n${PROSE}[agent:task add b] ${SMALL}\n[agent:end]\n`;
+  for (const cs of SIZES) {
+    assert.equal(runProse(T, { cs }).out, T,
+      `the head line that follows resets the tail, so it forwards as original @cs=${cs}`);
+  }
+});
+
+test('proseSpill on: a tail under the floor streams verbatim', () => {
+  const small = `${'q'.repeat(700)}\n`;
+  assert.ok(Buffer.byteLength(small, 'utf8') < 800, 'ENTER: under the floor');
+  const T = `[agent:task add t1] ${SMALL}\n[agent:end]\n${small}`;
+  assert.equal(runProse(T).out, T);
+});
+
+test('proseSpill on: a writer that returns null forwards the original tail', () => {
+  const r = runProse(PROSE, { writeSpill: () => null });
+  assert.equal(r.out, PROSE);
+  assert.equal(r.filter.fired, 0);
+});
+
+test('proseSpill on: a throwing writer forwards the original tail and never propagates', () => {
+  const r = runProse(PROSE, { writeSpill: () => { throw new Error('injected'); } });
+  assert.equal(r.out, PROSE);
+  assert.equal(r.filter.fired, 0);
+});
+
+test("proseSpill on: onSpill carries verb 'prose' and the tail's byte count", () => {
+  const seen = [];
+  const r = runProse(PROSE, { onSpill: (i) => seen.push(i) });
+  assert.equal(seen.length, 1);
+  assert.deepStrictEqual(seen[0], {
+    verb: 'prose', id: diskOf(r.out).id, bytes: Buffer.byteLength(PROSE, 'utf8'),
+  });
+  assert.equal(r.filter.fired, 1);
+});
+
+test('proseSpill on: an UNLISTED verb keeps its whole body, tail spill and all', () => {
+  const T = `[agent:dm bob] ${PROSE}[agent:end]\n`;
+  assert.equal(runProse(T).out, T,
+    'a dm is not a spill verb, so the filter never holds it — unguarded, its body would fall '
+    + 'into the tail and the message would leave as a pointer its recipient cannot read');
+});
+
+test('proseSpill on: a listed body still spills, and its own tail spills separately', () => {
+  const T = `[agent:task add t] ${BIG}\n[agent:end]\n${PROSE}`;
+  const { out, filter } = runProse(T);
+  assert.equal(filter.fired, 2, 'the body and the tail are two fires');
+  assert.ok(!out.includes(BIG) && !out.includes(PROSE.trim()), 'neither is on the wire');
+  assert.ok(out.startsWith('[agent:task add t] @spill:'), 'the body keeps its head line');
+  assert.ok(out.endsWith('\n'), 'and the reply ends on the bare pointer line');
+});
+
+test('proseSpill on: a held, unterminated body flushes as the original with an empty tail', () => {
+  const T = `[agent:task add t] head\n${BIG}\n`;
+  const { out, filter } = runProse(T);
+  assert.equal(out, T,
+    'the terminator never arrives, so close() takes the holding branch and the tail is empty '
+    + 'by construction — the original is re-emitted byte-for-byte');
+  assert.equal(filter.fired, 0);
+});
+
+test('proseSpill on: an unterminated HEAD LINE is not swallowed as prose', () => {
+  const T = `[agent:task add t] ${BIG}`;
+  const { out, filter } = runProse(T);
+  assert.equal(out, T,
+    'no newline ever arrives, so holding is never set and the line sits in pending: it is an '
+    + 'intent the operator still has to see, not a tail');
+  assert.equal(filter.fired, 0);
+});
+
+test('proseSpill on: a bare terminator and an escaped intent are not prose', () => {
+  const T = `[agent:end]\n\\[agent:task add x] example\n${'m'.repeat(899)}\n`;
+  const { out } = runProse(T);
+  assert.ok(out.startsWith('[agent:end]\n\\[agent:task add x] example\n'),
+    'both lines forward where they were written');
+  assert.ok(out.endsWith('@spill:' + diskOf(out).id + '\n'), 'only the prose after them spills');
+});
+
+test('proseSpill on: a bail mid-response reverts to byte-for-byte passthrough', () => {
+  const T = `[agent:task add a] x\n[agent:task add b] y\n${PROSE}`;
+  const { out } = runProse(T);
+  assert.equal(out, T, 'the nested-intent bail latches, so nothing after it is held');
 });

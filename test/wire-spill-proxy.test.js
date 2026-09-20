@@ -405,3 +405,106 @@ test('a verb the seat did not arm is left inline', async () => {
     assert.equal(events.spill.length, 0);
   });
 });
+
+
+const PROSE_SSE = [
+  ev('message_start', {
+    type: 'message_start',
+    message: { id: 'msg_prose', usage: { input_tokens: 10, cache_read_input_tokens: 5 } },
+  }),
+  ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+  td(0, 'Ticket closed; the report is with the lead.\n'),
+  td(0, 'z'.repeat(400)),
+  td(0, `${'z'.repeat(499)}\n`),
+  ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
+  ev('message_delta', {
+    type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 42 },
+  }),
+  ev('message_stop', { type: 'message_stop' }),
+].join('');
+
+const PROSE_TEXT = `Ticket closed; the report is with the lead.\n${'z'.repeat(899)}\n`;
+
+test('a TYPED turn is byte-identical: turnInjected false never touches the stream', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({ body: PROSE_SSE }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'], turnInjected: () => false } });
+    const events = collect(proxy, ['spill', 'stream-end']);
+
+    const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
+    assert.equal(textOf(res.body), PROSE_TEXT, 'every byte of the conversation survives');
+    assert.equal(events.spill.length, 0, 'nothing spilled');
+  });
+});
+
+test('an INJECTED turn: a reply with no intent leaves as one bare pointer line', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({ body: PROSE_SSE }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'], turnInjected: () => true } });
+    const events = collect(proxy, ['turn.completed', 'spill', 'stream-end']);
+
+    const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
+
+    const seen = textOf(res.body);
+    const id = /@spill:([0-9a-f]{16})/.exec(seen)[1];
+    assert.equal(seen, `@spill:${id}\n`, 'the whole reply is replaced by the pointer');
+    assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${id}.md`), 'utf8'), PROSE_TEXT,
+      'and the prose is on disk, recoverable — a forgotten task done is never silently emptied');
+
+    assert.equal(events.spill.length, 1);
+    assert.equal(events.spill[0].verb, 'prose');
+    assert.equal(events.spill[0].bytes, Buffer.byteLength(PROSE_TEXT, 'utf8'));
+    assert.equal(events['turn.completed'][0].text, seen,
+      'the observer reads what the client got, as it does for a body spill');
+  });
+});
+
+test('turnInjected is evaluated ONCE per request: a flip mid-response cannot take effect', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  let flag = false;
+  await withProxy({
+    body: PROSE_SSE,
+    afterFirstWrite: () => { flag = true; },
+  }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'], turnInjected: () => flag } });
+    const events = collect(proxy, ['spill', 'stream-end']);
+
+    const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
+    assert.equal(flag, true, 'ENTER: the flag really did flip, or this passes for the wrong reason');
+    assert.equal(textOf(res.body), PROSE_TEXT,
+      'flipped mid-stream, after the upstream\'s first write: under spillEnabled()\'s contract the '
+      + 'response finishes on the decision it started with, so nothing can half-filter one reply');
+    assert.equal(events.spill.length, 0);
+  });
+});
+
+test('a seat with no turnInjected at all keeps the pre-S-G2 behaviour', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({ body: PROSE_SSE }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'] } });
+    const events = collect(proxy, ['spill', 'stream-end']);
+
+    const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
+    assert.equal(textOf(res.body), PROSE_TEXT);
+    assert.equal(events.spill.length, 0);
+  });
+});
+
+test('a THROWING turnInjected reads as not-injected rather than failing the turn', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({ body: PROSE_SSE }, async (proxy) => {
+    proxy.registerAgent('tester', {
+      spill: { root, verbs: ['task.add'], turnInjected: () => { throw new Error('gone'); } },
+    });
+    const events = collect(proxy, ['spill', 'stream-end']);
+
+    const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
+    assert.equal(textOf(res.body), PROSE_TEXT, 'doubt forwards the original, as everywhere else here');
+    assert.equal(events.spill.length, 0);
+  });
+});

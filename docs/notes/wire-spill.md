@@ -1,109 +1,87 @@
 # wire/spill notes
 
 Format spec: `proxy-lab/SPILL.md`. Conformance arbiter for delimitation and the
-sha: `proxy-lab/test_spill.py`, whose cases are ported into
-`test/wire-spill-filter.test.js`. Two implementations now compute the same sha
-over the same delimited bytes, so a drift here is a drift against a consumer
-this repo cannot see.
+sha: `proxy-lab/test_spill.py`, ported into `test/wire-spill-filter.test.js`. Two
+implementations compute the same sha over the same delimited bytes, so a drift
+here is a drift against a consumer this repo cannot see.
 
 ## SpillFilter
 
 Ported from spill.py's `_SpillFilter`, with deliberate deviations, all in one
 direction: what this filter writes to a spill file must be BYTE-EQUAL to what
 `_extractIntents` would have delimited from the same text. S-B substitutes the
-file for the body the unspilled path would have carried, so a one-byte
-divergence silently dispatches a different spec than the transcript shows.
+file for the body the unspilled path would have carried, so a one-byte divergence
+silently dispatches a different spec than the transcript shows.
 `test/wire-spill-sse.test.js` pins it by running the real scanner, not a literal.
 
 1. A line clodex's scanner would treat as an intent line makes the filter bail
-   rather than swallow it into the held body. spill.py delimits on the
-   terminator only; `_extractIntents` closes a greedy body at the next parseable
-   col-1 intent line, so a verbatim port would spill one body
-   `spec\n[agent:task add b] spec2` and the second ticket would vanish into the
-   first's spec.
-2. The head-line rest is TRIMMED, where spill.py skips exactly one space.
-   `_extractIntents` takes `intent.body` from `parseIntent`, which trims; a
-   one-space skip leaves `'  body'` where the scanner yields `'body'`.
-3. Trailing blank lines are popped off the held body, because `_extractIntents`
-   pops them (`while (body.length && !body[body.length-1].trim()) body.pop()`).
-   The head-line fragment is never popped — it is the scanner's `firstBody`,
-   which the pop loop cannot reach.
+   rather than swallow it into the held body. spill.py delimits on the terminator
+   only; `_extractIntents` closes a greedy body at the next parseable col-1 intent
+   line, so a verbatim port would spill `spec\n[agent:task add b] spec2` as one
+   body and lose the second ticket into the first.
+2. The head-line rest is TRIMMED, where spill.py skips one space: `intent.body`
+   comes from `parseIntent`, which trims.
+3. Trailing blank lines are popped off the held body, as `_extractIntents` pops
+   them. The head-line fragment is never popped — it is `firstBody`.
 4. `ticketTitle` leads a multi-line body's pointer.
 
-Every test_spill.py delimitation case is still ported in
-`test/wire-spill-filter.test.js`, row 6 rewritten to the trimmed expectation.
+The nested-intent test is over-broad on purpose — the filter cannot know fences
+without reimplementing `fencedLines`, so it is wrong in the SAFE direction both
+ways: a head line inside a fence spills, a fenced example inside a held body
+bails, costing the saving on one response, never a spec.
 
-The nested-intent test is `cleanLine(line).startsWith('[agent:')`, over-broad on
-purpose — the filter cannot know fences without reimplementing `fencedLines`, so
-it is wrong in the SAFE direction both ways. A head line inside a fence spills
-(the scanner would never dispatch it, and the content-addressed file still holds
-the example), and a fenced example inside a held body bails, costing the saving
-on one response, never a spec.
-
-`originalHeld` reconstructs the head line as RECEIVED (`head + rawRest`) rather
-than spill.py's `head + " " + body_text`. For a head line with nothing after the
-`]` spill.py's form drops the source newline and adds a space; byte-identity on
-the forward-original paths is the whole failure policy, so that inexactness is
-not ported. Note this is the one place `rawRest` is still needed after the trim
-in deviation 2: what is FORWARDED is the original bytes, what is SPILLED is the
-scanner's delimitation.
-
-For that same head-on-its-own-line shape the sha input is `body.join('\n')`,
-which has NO leading newline where `_extractIntents` would have produced one.
-Every consumer trims or strips a leading newline (`team-tickets.js`,
-`_handleContextIntent`), so the round-trip difference is invisible to them.
+`originalHeld` reconstructs the head line as RECEIVED rather than spill.py's
+`head + " " + body_text`, which drops the source newline and adds a space.
+Byte-identity on the forward-original paths is the whole failure policy, so that
+inexactness is not ported — and it is why `rawRest` outlives the trim in deviation
+2: what is FORWARDED is the original bytes, what is SPILLED is the scanner's
+delimitation. For that same shape the sha input has no leading newline where
+`_extractIntents` would; every consumer trims one, so it is invisible.
 
 ## passthru
 
-The bail-out LATCH, set once and never unset. After a bail the filter has
-already emitted bytes its line scanner never consumed, and resynchronising
-against them is what split `[agent:end]` across two deltas into `[ag\nent:end]`.
-It must take hold MID-BUFFER, not at the next `feed()`: the remainder of the
-current buffer is exactly where that desync reappears, via the partial-line hold
-withholding a `[` and re-emitting it after the line that followed it.
+The bail-out LATCH, set once and never unset. After a bail the filter has already
+emitted bytes its line scanner never consumed, and resynchronising against them is
+what split `[agent:end]` across two deltas into `[ag\nent:end]`. It must take hold
+MID-BUFFER, not at the next `feed()`: the remainder of the current buffer is
+exactly where that desync reappears. `bail()` also clears `proseSpill`, so a
+latched filter can never hold a tail it will not resolve.
 
 Set in the constructor for an agent name that fails `validAgent`, so a stream
-that could never produce a path is never held or re-chunked.
-
-The cost is that a later, in-cap intent in the SAME response forwards whole. No
-spec is lost, only the saving, on a response that already blew the cap. A fresh
-response gets a fresh filter.
+that could never produce a path is never held or re-chunked. The cost is that a
+later, in-cap intent in the SAME response forwards whole — no spec is lost, only
+the saving, and a fresh response gets a fresh filter.
 
 ## maxBytes
 
 Enforced on HELD bytes before a line is consumed, never per completed line: a
 ticket spec is very often ONE long line, so a per-line check would fire only
 once that line was fully buffered, and the oversized body would spill anyway.
-The mid-line bail emits `pending` with NO newline appended — the source newline
-has not arrived.
 
 The same cap bounds the UNTERMINATED head line, before `holding` is ever set:
-`couldBeHead(pending)` with no newline yet is the shape that would otherwise
-buffer without limit, and a long `[agent:dm …]` line can never spill at all, so
-without it the client sees no text for the whole line's duration.
-
-`SpillTee.buf` carries the same bound at the SSE-frame level: a 200-status
-`text/event-stream` that never sends `\n\n` would otherwise buffer the whole
-response while the unfiltered path forwarded it.
+`couldBeHead(pending)` with no newline yet would otherwise buffer without limit,
+and a long `[agent:dm …]` line can never spill at all. It bounds the `proseSpill`
+tail too, which is otherwise unbounded by construction. `SpillTee.buf` carries
+the same bound at the SSE-frame level: a 200-status `text/event-stream` that
+never sends `\n\n` would otherwise buffer the whole response.
 
 ## SpillTee
 
 An unchanged delta is forwarded as its ORIGINAL bytes, never re-serialised:
-Anthropic's SSE uses compact separators and pads events with trailing spaces, so
-a re-encode is a different line even when the text is identical — a wire change
-on 100% of traffic to buy nothing on the ~0% that spills.
+Anthropic's SSE uses compact separators and pads events with trailing spaces, so a
+re-encode is a different line even when the text is identical — a wire change on
+100% of traffic to buy nothing on the ~0% that spills.
 
 The thinking guard is the delta TYPE, not the key name: a `thinking_delta`
 carrying a `text` key must still pass untouched, because a rewritten thinking
-block breaks its signature.
+block breaks its signature. `content_block_stop` flushes held text BEFORE the stop
+is forwarded — held text cannot outlive its block, or the next
+`content_block_start` would carry it into a different index.
 
-`content_block_stop` flushes held text BEFORE the stop is forwarded — held text
-cannot outlive its block, or the next `content_block_start` would carry it into
-a different index.
-
-While a body is held the client sees no text deltas, but pings and every
-non-text event keep flowing, so the socket never goes idle. wirescope measured
-~43 chars/delta, so an 800 B body holds for ~18 deltas.
+While a body is held the client sees no text deltas, but pings and every non-text
+event keep flowing, so the socket never goes idle. wirescope measured ~43
+chars/delta, so an 800 B body holds ~18 deltas; a `proseSpill` tail holds to the
+block's end, bounded by the same cap.
 
 ## _panic
 
@@ -112,9 +90,31 @@ the raw frames can hold text the filter never saw and `bail()` cannot
 re-materialise. `_flushHeld` alone would push nothing — it only emits `heldOut` —
 deleting every accumulated event from the client stream. So `_panic` forwards
 `heldRaw` verbatim whenever it disagrees with `heldOut`. Safe because `heldOut`
-can never hold a pointer at panic time: a fire always flushes first.
+can never hold a pointer at panic time: a fire always flushes first. `_notify`
+wraps every `onSpill`/`onBail` call, so a throwing listener cannot reach that
+path — a `_resolve` that threw after `_fired += 1` would lose the head line, the
+body and the terminator while never dispatching the intent.
 
-`SpillFilter._notify` wraps every `onSpill`/`onBail` call, so a throwing
-listener cannot reach that path at all — `proxy.js` re-emits both to arbitrary
-listeners, and a `_resolve` that threw after `_fired += 1` would lose the head
-line, the body and the terminator while never dispatching the intent.
+## proseSpill
+
+Off, the filter is byte-for-byte pre-S-G2, which is why every older subject still
+runs against the default. On, text outside a held body accumulates in `tail`
+instead of forwarding, and any intent head line FLUSHES it first. That reset keeps
+prose BETWEEN intents — often the actual answer — on the wire; only what survives
+to `close()` spills.
+
+`foreignBody` covers the verb the filter does NOT hold: a `dm` body is ordinary
+text to the line scanner, so without it the message would land in `tail` and leave
+as a pointer its recipient cannot read. Set by any head line that is not the
+terminator, cleared by a listed head. `couldBeHead(pending)` guards `close()`
+likewise: an unterminated head line is an intent, not a tail.
+
+The floor is SHARED with the body path rather than tuned — tool narration and a
+one-line answer must pass, and a second constant is a second thing to retune. The
+pointer is BARE, because there is no head; `POINTER_RE` already accepts that form,
+so the resume snapshot and the terminal link resolve it unchanged.
+
+The bit is evaluated ONCE per request in `proxy.js`, beside `spillEligible` and
+under `spillEnabled()`'s contract: a response finishes under the decision it
+started with, so a turn cannot be half-filtered. A throwing `turnInjected` reads
+as not-injected — doubt forwards the original, as everywhere else here.

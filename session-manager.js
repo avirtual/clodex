@@ -1674,7 +1674,13 @@ function createSessionManager(deps) {
                 upstreams: proxyBase
                   ? { anthropic: `${proxyBase}/agent/${proxyAgent || name}/anthropic` }
                   : null,
-                spill: spillVerbs.length ? { root: REGISTRY_DIR, verbs: spillVerbs } : null,
+                spill: spillVerbs.length
+                  ? {
+                    root: REGISTRY_DIR,
+                    verbs: spillVerbs,
+                    turnInjected: () => this.sessions.get(name)?.lastSubmitInjected === true,
+                  }
+                  : null,
               });
             } catch (e) {
               console.error('wire shadow unavailable, spawning unshadowed:', e.message);
@@ -2077,6 +2083,7 @@ function createSessionManager(deps) {
         // the prompt after that. Unproxied sessions are still blocked by the
         // payload.linked guard, so seeding unconditionally is safe.
         lastMainStop: { isTurn: true, ts: Date.now(), seeded: true },
+        lastSubmitInjected: false,
         bootResumeId: resumeId || null,
         promptRecipe,
         // Recompute rather than re-write: setupClaudeHook already wrote the
@@ -2434,7 +2441,10 @@ function createSessionManager(deps) {
         const wasInPaste = s._inPaste;
         const sig = draftChunkSignal(data, s._inPaste);
         s._inPaste = sig.inPaste;
-        if (sig.closes) s.lastUserSubmitTs = s.lastUserInputTs;
+        if (sig.closes) {
+          s.lastUserSubmitTs = s.lastUserInputTs;
+          s.lastSubmitInjected = false;
+        }
         s.lastMainStop = null;
         if (s.needsAttention) this._setAttention(s, null);
         // Draft accumulation for hint arming. Inside the isHumanPtyInput gate on
@@ -7370,6 +7380,7 @@ function createSessionManager(deps) {
           speaking: () => Date.now() - (session.lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS,
           isDead: () => !!session._dead,
           bracketedPaste: () => !!session._pasteModeOn,
+          onSubmitted: () => { session.lastSubmitInjected = true; },
           ready: isClaude ? () => !!session._bootReadySeen : undefined,
           readyMaxWaitMs: INJECT_BOOT_MAXWAIT,
           onReadyCapFire: isClaude ? () => {
