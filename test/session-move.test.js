@@ -1035,16 +1035,20 @@ test('the peer move reuses the local move\'s kept arm, and the archived row says
   assert.ok(body.indexOf('removeSession(name') < body.indexOf('addFailedSessionToSidebar('),
     'live row torn down BEFORE the ghost, as in the local move');
 
-  assert.ok(/res\.respawned/.test(body),
+  const keptArm = body.slice(body.indexOf('if (res && res.kept)'));
+  assert.ok(keptArm.includes('if (res.respawned) {'),
     'the kept arm splits on it: the far-refusal arm has ALREADY respawned the seat locally, so '
     + 'the ghost row would be a dead "click to retry" over a live pty — retrySpawn then throws '
     + '"already exists" and the row\'s ✕ offers to forget a running seat');
-  assert.ok(/addSessionToSidebar\(/.test(body),
-    'so that arm rebuilds a REAL row for the live seat');
-  assert.ok(/movingToPeer\.has\(name\)/.test(body),
-    'and the in-flight guard is inside the runner, not only at the dialog-opening door: the '
-    + 'dialog submits on Enter without checking btn.disabled, and a second entry would orphan '
-    + 'the first sticky toast with nothing left to dismiss it');
+  assert.ok(keptArm.indexOf('addSessionToSidebar(') < keptArm.indexOf('addFailedSessionToSidebar('),
+    'and the LIVE row is the first branch, the ghost the fallback');
+
+  const runner = body.slice(body.indexOf('pendingPeerMove.set(name, async'));
+  const firstStmt = runner.slice(0, runner.indexOf('\n', runner.indexOf('\n') + 1));
+  assert.ok(/movingToPeer\.has\(name\)/.test(firstStmt),
+    'the in-flight guard is the runner\'s FIRST statement, not only at the dialog-opening door: '
+    + 'the dialog submits on Enter without checking btn.disabled, so a second entry would open a '
+    + 'second sticky toast and orphan the first with nothing left to dismiss it');
   assert.ok(/addArchivedSessionToSidebar\(/.test(body),
     'the success arm DRAWS the archived row: the pty exit already removed the live row and '
     + 'no session:list refresh follows a move, so a toast-only arm leaves the seat with no row at all');
