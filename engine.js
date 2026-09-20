@@ -13,7 +13,7 @@ const { execSync, spawn, execFile } = require('child_process');
 const crypto = require('crypto');
 const pty = require('node-pty');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
-const { pathFor, runDirFor, defaultClodexHome } = require('./clodex-paths');
+const { pathFor, runDirFor, defaultClodexHome, seatPathFor } = require('./clodex-paths');
 const { confine } = require('./path-confine');
 const { createSkillDelivery } = require('./skill-delivery');
 const { KINDS: PROMPT_KINDS, badStem, teamPromptFile, teamJsonFile, readTeamJson } = require('./team-prompt-dir');
@@ -108,8 +108,11 @@ function referencedSpillNames(pendingDir) {
   return refs;
 }
 
-function statIsDir(p) {
-  try { return fs.statSync(p).isDirectory(); } catch { return false; }
+function linksToSeatDir(linkPath, seatPath) {
+  try {
+    const real = fs.realpathSync(linkPath);
+    return fs.statSync(real).isDirectory() && real === fs.realpathSync(seatPath);
+  } catch { return false; }
 }
 
 // Exempting parked pointers means a seat that never returns grows disk forever.
@@ -124,8 +127,9 @@ function sweepSpilledMessages(msgDir, pendingDir, maxAgeSec, now = Date.now()) {
   for (const entry of fs.readdirSync(msgDir, { withFileTypes: true })) {
     try {
       const epath = path.join(msgDir, entry.name);
-      const linkToDir = entry.isSymbolicLink() && statIsDir(epath);
-      if (entry.isDirectory() || linkToDir) {
+      const linkToSeat = entry.isSymbolicLink()
+        && linksToSeatDir(epath, seatPathFor(path.dirname(msgDir), entry.name, 'messages'));
+      if (entry.isDirectory() || linkToSeat) {
         for (const fname of fs.readdirSync(epath)) {
           try {
             if (referenced.has(fname)) continue;

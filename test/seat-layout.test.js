@@ -179,6 +179,11 @@ test('memory-store.agents() survives the re-embed-loop guard: a migrated seat is
     'ENTER: memory must actually have MOVED, or this subject is about an ordinary directory');
   assert.deepStrictEqual(store.agents(), ['ana'], why);
   assert.strictEqual(store.list('ana').length, 1, 'and the units are still readable through the link');
+
+  fs.symlinkSync(seatPathFor(root, 'ana', 'memory'), path.join(root, 'library', 'memory', 'thief'));
+  assert.deepStrictEqual(store.agents(), ['ana'],
+    'a link aimed at a SIBLING seat is not an agent: agents() takes a symlink only at its own seat '
+    + 'spelling, the same rule the message sweep and the memory viewer enforce');
 });
 
 test('the spill sweep keeps the migrated messages link AND keeps collecting through it', () => {
@@ -216,6 +221,38 @@ test('the spill sweep keeps the migrated messages link AND keeps collecting thro
     'From: bob\n\nfresh',
     'a write through the OLD spelling still lands in sessions/<n>/messages — the whole point of '
     + 'keeping the link alive rather than letting the sweep replace it with a fresh real dir');
+});
+
+test('the sweep descends a seat link only: a planted link out of the root keeps its files', () => {
+  const why = 'the sweep DELETES, so "symlink whose target is a directory" is too wide a door: any '
+    + 'seat with a shell can write messages/<x> -> ~/Desktop, and a bare statIsDir would have the '
+    + '5-minute timer unlink every file directly inside it, permanently and silently. Only the '
+    + 'migrated seat spelling earns the directory branch; anything else falls to the unlink '
+    + 'else-branch, whose blast radius is the LINK NAME (unlink does not follow)';
+  const root = tmp();
+  const outside = mkTmpRoot('clodex-seatlayout-outside-');
+  const msgDir = path.join(root, 'messages');
+  const pendingDir = path.join(root, 'pending');
+  fs.mkdirSync(path.join(msgDir, 'ana'), { recursive: true });
+  fs.mkdirSync(pendingDir, { recursive: true });
+  const now = 1_800_000_000_000;
+  const stale = (now - 1860 * 1000) / 1000;
+  const seatBody = path.join(msgDir, 'ana', 'msg-55910-41.txt');
+  fs.writeFileSync(seatBody, 'From: bob\n\nseat');
+  fs.utimesSync(seatBody, stale, stale);
+  const loot = path.join(outside, 'private.txt');
+  fs.writeFileSync(loot, 'not a message');
+  fs.utimesSync(loot, stale, stale);
+
+  migrateSeatLayout({ root, names: ['ana'], fs });
+  fs.symlinkSync(outside, path.join(msgDir, 'evil'));
+
+  sweepSpilledMessages(msgDir, pendingDir, 1800, now);
+
+  assert.strictEqual(fs.readFileSync(loot, 'utf8'), 'not a message', why);
+  assert.strictEqual(fs.existsSync(seatBody), false,
+    'CONTROL: the migrated seat link is still collected through, so the refusal above is about '
+    + 'containment and not about the sweep having stopped following links at all');
 });
 
 test('pending is NOT a seat kind: it stays at the shared root permanently', () => {

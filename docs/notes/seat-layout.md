@@ -11,14 +11,20 @@ release as its reader's repair. The three original entries — `memory`,
 
 `memory` and `messages` MOVED, with their readers repaired in the same release.
 `memory-store.agents()` and `sweepSpilledMessages` both filtered `readdirSync`
-Dirents on `isDirectory()`, FALSE for a symlink; each now also takes a symlink
-whose `statSync` target is a directory. The two failures were not symmetric and
-both are pinned: `agents()` is the ONLY caller feeding the engine's `liveKeys`
-union and `hint-embed`'s `flush` deletes every vector key outside that set, so
-an empty list pruned the whole cache and re-embedded it forever; the sweep's
-else-branch `statSync` FOLLOWED the link and `unlinkSync`'d the SPELLING on a
-5-minute timer. The memory viewer's realpath-equals-self check is the third
-reader — see `resolveAgentDir` there, which now accepts the seat spelling too.
+Dirents on `isDirectory()`, FALSE for a symlink. All three readers now take a
+symlink under ONE rule: its realpath is the migrated seat spelling for that same
+name, `sessions/<n>/<kind>` — not the weaker "its target is a directory", which
+was too wide a door for the sweep, the only reader that DELETES. Any seat with a
+shell can write `messages/<x> -> ~/Desktop`, and the wide rule had the 5-minute
+timer unlink every file directly inside whatever it named; under the narrow rule
+such an entry falls to the unlink else-branch, whose blast radius is the link
+name, since `unlink` does not follow. The two original failures were not
+symmetric and both are pinned: `agents()` is the ONLY caller feeding the
+engine's `liveKeys` union and `hint-embed`'s `flush` deletes every vector key
+outside that set, so an empty list pruned the whole cache and re-embedded it
+forever; the sweep's else-branch `statSync` FOLLOWED the link and
+`unlinkSync`'d the SPELLING on a 5-minute timer. The memory viewer's
+realpath-equals-self check is the third reader — see `resolveAgentDir` there.
 
 `pending` is RULED OUT and stays at the shared root permanently. It is a
 transient delivery queue, not seat state. Two independent claimers —
