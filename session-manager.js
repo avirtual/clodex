@@ -182,6 +182,8 @@ const { didGrow, parsePsRows, descendantPids } = require('./stall-evidence');
 const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
 const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
+const { SEAT_KINDS, seatPathFor, claudeProjectSlug } = require('./clodex-paths');
+const { SEGMENT_RE: IMPORT_SEGMENT_RE, SESSION_ID_RE: IMPORT_SESSION_ID_RE } = require('./seat-import');
 const { effectiveModel } = require('./accounts');
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
@@ -489,6 +491,32 @@ function dmContentKey(senderTag, body) {
     .update(`${senderTag}\n${body}`).digest('hex').slice(0, 16);
 }
 
+const MOVE_TO_PEER_OMIT = [
+  'execCommands', 'worktree', 'archivedAt', 'failed', 'movedTo',
+  'ephemeral', 'reviewFor', 'reviewTicket', 'reviewerTemplate', 'pluginGrants',
+  'wireLabel', 'ticketId', 'holdUntil', 'rosterSentAt',
+];
+
+function moveFileBytes(fs, f) {
+  if (f.bytes) return f.bytes.length;
+  try { return fs.statSync(f.path).size; } catch { return 0; }
+}
+
+function seatRelFiles(fs, path, dir) {
+  const out = [];
+  const walk = (cur, prefix) => {
+    let entries;
+    try { entries = fs.readdirSync(cur, { withFileTypes: true }); } catch { return; }
+    for (const e of entries.slice().sort((a, b) => (a.name < b.name ? -1 : (a.name > b.name ? 1 : 0)))) {
+      const rel = prefix ? `${prefix}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(path.join(cur, e.name), rel);
+      else if (e.isFile()) out.push(rel);
+    }
+  };
+  walk(dir, '');
+  return out;
+}
+
 function createSessionManager(deps) {
   const {
     AGENT_NAME_RE,
@@ -645,7 +673,7 @@ function createSessionManager(deps) {
     writeBundlePlugins,
     getPluginBundles,
     readSystemPromptBody,
-    getPersistence, getTemplates, getUiSettings, getEnvScopes, getAccounts, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getNotifications,
+    getPersistence, getTemplates, getUiSettings, getEnvScopes, getAccounts, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getReminders, getNotifications,
     getPluginHooks,
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp, relaunchUnavailable,
   } = deps;
@@ -3195,6 +3223,190 @@ function createSessionManager(deps) {
           type: entry.type,
           backend: (this.sessions.get(name) || {}).backend || null,
           team: this.teamNameFor(newCwd),
+        };
+      } finally {
+        this._movingNames.delete(name);
+      }
+    }
+
+    _moveBadSegment(name) {
+      const scan = (dir, prefix) => {
+        for (const rel of seatRelFiles(fs, path, dir)) {
+          if (rel.split('/').every((seg) => IMPORT_SEGMENT_RE.test(seg))) continue;
+          return `${prefix}${rel}`;
+        }
+        return null;
+      };
+      for (const kind of Object.keys(SEAT_KINDS).filter((k) => k !== 'run').sort()) {
+        const bad = scan(seatPathFor(REGISTRY_DIR, name, kind), `seat/${kind}/`);
+        if (bad) return bad;
+      }
+      return scan(path.join(REGISTRY_DIR, 'pending', name), 'pending/');
+    }
+
+    _moveShipment(name, entry, farCwd, transcriptPath) {
+      const record = { ...entry, cwd: farCwd };
+      for (const k of MOVE_TO_PEER_OMIT) delete record[k];
+      const accountDir = entry.env && entry.env.CLAUDE_CONFIG_DIR;
+      if (accountDir) {
+        let label = null;
+        try { label = getAccounts ? getAccounts().labelFor(accountDir) : null; } catch { label = null; }
+        if (label) record.accountLabel = label;
+      }
+
+      const files = [{ relPath: 'transcript.jsonl', path: transcriptPath }];
+      for (const kind of Object.keys(SEAT_KINDS).filter((k) => k !== 'run').sort()) {
+        const dir = seatPathFor(REGISTRY_DIR, name, kind);
+        for (const rel of seatRelFiles(fs, path, dir)) {
+          files.push({ relPath: `seat/${kind}/${rel}`, path: path.join(dir, ...rel.split('/')) });
+        }
+      }
+      const pendingDir = path.join(REGISTRY_DIR, 'pending', name);
+      for (const rel of seatRelFiles(fs, path, pendingDir)) {
+        files.push({ relPath: `pending/${rel}`, path: path.join(pendingDir, ...rel.split('/')) });
+      }
+      const loadlog = path.join(REGISTRY_DIR, 'library', 'memory-loadlog', `${name}.jsonl`);
+      try { if (fs.existsSync(loadlog)) files.push({ relPath: 'loadlog.jsonl', path: loadlog }); } catch {}
+      let rows = [];
+      try { rows = getReminders ? (getReminders().listForAgent(name) || []) : []; } catch { rows = []; }
+      if (rows.length) files.push({ relPath: 'reminders.json', bytes: Buffer.from(JSON.stringify(rows)) });
+
+      return { record, files };
+    }
+
+    async moveToPeer(name, peerId, { farCwd = null } = {}) {
+      const entry = getPersistence().get(name);
+      if (!entry) return { ok: false, error: `Session not found: ${name}` };
+      if (entry.worktree && entry.worktree.path) {
+        return { ok: false, error: `${name} runs in a ticket worktree (${entry.worktree.path}) — that checkout belongs to the ticket loop, so it cannot be moved.` };
+      }
+      if (entry.type !== 'claude') return { ok: false, error: 'only Claude seats can be moved to a peer' };
+      if (!entry.sessionId) {
+        return { ok: false, error: `${name} has no conversation to move — start it once, or move it locally instead` };
+      }
+      if (this._movingNames.has(name)) return { ok: false, error: 'move already in progress' };
+
+      const conn = getPeerManager() ? getPeerManager().get(peerId) : null;
+      if (!conn) return { ok: false, error: 'unknown peer' };
+      const st = conn.status();
+      const peerLabel = st.label || peerId;
+      if (st.needsUpgrade) return { ok: false, error: `peer ${peerLabel} runs an older Clodex — upgrade it first` };
+      if (!(st.caps || []).includes('import')) {
+        return { ok: false, error: `peer ${peerLabel} does not accept moved sessions` };
+      }
+
+      if (farCwd != null && (typeof farCwd !== 'string' || !farCwd || !path.isAbsolute(farCwd))) {
+        return { ok: false, error: 'Destination must be an absolute path' };
+      }
+      const destCwd = path.resolve(farCwd || entry.cwd);
+
+      if (!IMPORT_SESSION_ID_RE.test(entry.sessionId)) {
+        return { ok: false, error: `${name}'s conversation id '${entry.sessionId}' is not a session uuid — a peer refuses it` };
+      }
+      const badSegment = this._moveBadSegment(name);
+      if (badSegment) {
+        return { ok: false, error: `${badSegment} cannot travel — a peer refuses any file name outside [A-Za-z0-9._-]` };
+      }
+
+      const composed = path.join(
+        claudeHome(), 'projects', claudeProjectSlug(entry.cwd), `${entry.sessionId}.jsonl`,
+      );
+      let transcriptPath = null;
+      try { if (fs.existsSync(composed)) transcriptPath = composed; } catch {}
+      if (!transcriptPath) {
+        let linked = null;
+        try { linked = fs.realpathSync(pathFor(REGISTRY_DIR, name, 'transcript')); } catch {}
+        if (linked && path.basename(linked) === `${entry.sessionId}.jsonl`) transcriptPath = linked;
+      }
+      if (!transcriptPath) return { ok: false, error: `transcript not found at ${composed}` };
+
+      this._movingNames.add(name);
+      try {
+        const s = this.sessions.get(name);
+        if (s) {
+          log.info('session', `move-to-peer ${name} → ${peerLabel}:${destCwd} pid=${s.pty.pid}`);
+          s._moving = true;
+          try { s.pty.kill(); } catch {}
+          setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
+          if (!await this._waitForExit(name)) {
+            return {
+              ok: false, kept: true,
+              error: 'old process did not exit in time — session not moved',
+              type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+            };
+          }
+        }
+
+        const { record, files } = this._moveShipment(name, entry, destCwd, transcriptPath);
+        const totalBytes = files.reduce((n, f) => n + moveFileBytes(fs, f), 0);
+        const progress = (phase, bytes, fileIndex) => {
+          this._broadcast('session:move-progress',
+            { name, phase, bytes, total: totalBytes, files: files.length, fileIndex });
+        };
+        progress('begin', 0, 0);
+        let doneBytes = 0;
+        let lastRel = null;
+        let lastSent = 0;
+        let fileIndex = 0;
+        const out = await conn.importSeat({
+          name,
+          record,
+          files,
+          onProgress: ({ relPath, sent }) => {
+            if (relPath !== lastRel) { doneBytes += lastSent; lastRel = relPath; lastSent = 0; fileIndex += 1; }
+            lastSent = sent;
+            progress(relPath === 'transcript.jsonl' ? 'transcript' : 'seat', doneBytes + sent, fileIndex);
+          },
+        });
+
+        if (out && out.ok) {
+          progress('commit', totalBytes, files.length);
+          const departing = s || {
+            name,
+            agentType: (entry.type === 'claude' || entry.type === 'codex') ? entry.type : null,
+            cwd: entry.cwd,
+          };
+          const movedTo = { peer: peerId, peerLabel, farCwd: destCwd, at: Date.now(), sessionId: entry.sessionId };
+          getPersistence().upsert({ name, movedTo });
+          getPersistence().setArchived(name, true);
+          if (this.teamNameFor(entry.cwd)) this._notifyComposition(departing, 'moved out');
+          return {
+            ok: true, name, peer: peerLabel, farCwd: destCwd,
+            sessionId: entry.sessionId,
+            dropped: Array.isArray(out.dropped) ? out.dropped : [],
+          };
+        }
+
+        const farError = (out && out.error) || 'peer refused the import';
+        const workspaceId = entry.workspaceId || DEFAULT_WORKSPACE_ID;
+        try {
+          await this.create(
+            name, entry.type, entry.cwd, entry.extraArgs || [], entry.sessionId || null, workspaceId,
+            entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
+            entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
+            entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
+            Array.isArray(entry.execCommands) ? entry.execCommands : [],
+            Array.isArray(entry.intents) ? entry.intents : null,
+            (entry.env && typeof entry.env === 'object') ? entry.env : null,
+            false,
+            entry.noWire === true,
+            Array.isArray(entry.plugins) ? entry.plugins : null,
+            Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
+            typeof entry.fixFor === 'string' ? entry.fixFor : null,
+          );
+        } catch (err) {
+          getPersistence().upsert(this._stripClaimedTree({ ...entry }));
+          return {
+            ok: false, kept: true,
+            error: `${err.message} — session kept; retry from the sidebar row, or forget it.`,
+            type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+          };
+        }
+        return {
+          ok: false, kept: true, error: farError,
+          installed: (out && out.installed) || null,
+          peer: peerLabel,
+          type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
         };
       } finally {
         this._movingNames.delete(name);

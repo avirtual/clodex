@@ -1355,6 +1355,7 @@ const SessionManager = createSessionManager({
   getRemoteServer: () => remoteServer,
   getPeerManager: () => peerManager,
   getRemindScheduler: () => remindScheduler,
+  getReminders: () => reminders,
   getNotifications: () => notifications,
   getSandboxManager: () => sandboxManager,
   getUserDataPath: () => userDataPath,

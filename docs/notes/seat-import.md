@@ -1,5 +1,12 @@
 # seat-import.js
 
+| route | method |
+| --- | --- |
+| `POST /api/import/begin` | `begin({name, record})` |
+| `PUT /api/import/<id>/file/<relPath...>` | `putFile({id, relPath, bytes, offset})` |
+| `POST /api/import/<id>/commit` | `commit({id})`, then the injected `importCreate` |
+| `DELETE /api/import/<id>` | `abort({id})` |
+
 ## createSeatImport
 
 The owner-side fs half of Move-to-peer: the destination stages a seat under
@@ -66,12 +73,3 @@ write leaves a dir nothing else reaps, so an unreadable manifest falls back to
 the directory's `mtimeMs` rather than skipping it. NOT `birthtimeMs`: it is the
 one stat field `utimesSync` cannot move, so a backdated subject would pin this
 branch only on a filesystem that records a birthtime at all.
-
-## IMPORT_CHUNK_MAX
-
-| route | method |
-| --- | --- |
-| `POST /api/import/begin` | `begin({name, record})` |
-| `PUT /api/import/<id>/file/<relPath...>` | `putFile({id, relPath, bytes, offset})` |
-| `POST /api/import/<id>/commit` | `commit({id})`, then the injected `importCreate` |
-| `DELETE /api/import/<id>` | `abort({id})` |

@@ -281,8 +281,9 @@ wiring mistake would most plausibly leave open.
   `IMPORT_CHUNK_MAX` = 4 MiB (413 past it); `offset` from
   `Content-Range: bytes <start>-<end>/*`, absent header = 0. `<id>` must match
   `^[0-9a-f]{16}$` at the route as well as in the module. Reply `{ok, size}`.
-- `POST /api/import/<id>/commit` — seeds the shipped `createdAt` into
-  persistence, then installs, then calls the injected far `create()`. Reply `{ok, name, pid, cwd, sessionId, installed, dropped}`. If the
+- `POST /api/import/<id>/commit` — installs, then calls the injected
+  `importCreate`, which seeds the shipped `createdAt` into persistence before the
+  far `create()`. Reply `{ok, name, pid, cwd, sessionId, installed, dropped}`. If the
   install succeeded and the create did not: 500 `{ok:false, error, installed}`
   and the files STAY on disk — the transcript is the expensive thing, and the
   client can retry the spawn alone through `POST /api/sessions` with `resumeId`.

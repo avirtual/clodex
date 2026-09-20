@@ -147,6 +147,8 @@ clodex-move-home-
 clodex-move-inrepo-
 clodex-move-outrepo-
 clodex-move-outrepo2-
+clodex-movepeer-
+clodex-movepeer-claude-
 clodex-msg-
 clodex-mv-data-
 clodex-mv-decoyhome-
