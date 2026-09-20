@@ -1852,6 +1852,8 @@ const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
   getUiSettings: () => uiSettings,
   getWorkspaces: () => workspaces,
   getNotifications: () => notifications,
+  getReminders: () => reminders,
+  getAccounts: () => accounts,
   getRemoteServer: () => remoteServer,
   // A getter because drawerPtys is built below this call, and because it is
   // null outright on a host with drawer services off — the peer terminal must

@@ -31,15 +31,21 @@ outlive a restart mid-transfer and an in-memory counter does not.
 
 ## commit
 
-Checked entirely, then written, so every refusal leaves the tree byte-identical,
-and a refusal is always a return — an fs error in the write phase comes back as
-`install failed: <msg>`. The collision set is `renameTargets` plus
-`pending/<name>`, reused from seat-layout, so rename's refusal and this one
-cannot drift apart.
+Checked entirely, then written, so a CHECK-phase refusal leaves the tree
+byte-identical. The write phase cannot promise that: an fs error there (the
+transcript copy, a seat-kind rename, the pending or loadlog rename, a reminder
+add) comes back as `install failed: <msg>` carrying `installed`, which names
+what did land — a return rather than a throw, but not a rollback. The collision
+set is `renameTargets` plus `pending/<name>`, reused from seat-layout, so
+rename's refusal and this one cannot drift apart.
 
 Transcript bytes are OPAQUE and never parsed: the CLI owns that format and
 `--resume` only needs the file under the far encoding of the far cwd, which is
-`claudeProjectSlug` (in clodex-paths, so engine.js cannot disagree). An existing
+`claudeProjectSlug` (in clodex-paths, so engine.js cannot disagree) of the cwd
+VERBATIM — which is why `begin` refuses a `record.cwd` that is not already
+`path.resolve`d: the far `importCreate` spawns in the resolved path, so `/a/b/`
+would slug the transcript under a dir the resumed CLI never reads and `--resume`
+would silently start a new conversation. An existing
 transcript is a refusal UNLESS its size and sha256 match the staged one, making
 a commit that died after the transcript landed re-runnable: the retry reports
 `installed.transcript = 'identical'` and installs the rest. Never overwrite —
@@ -50,10 +56,22 @@ persistence store writes it on the far `create()`. Reminder rows are re-added
 through the far store so ids are minted there, and `ticket` is dropped to null:
 it names a row on the SOURCE box's board, so a bound reminder would be cancelled
 by whatever reused that id, or never. Counted in `dropped`, as is `account` when
-the record has `env.CLAUDE_CONFIG_DIR` — reported, not mapped.
+the record has `env.CLAUDE_CONFIG_DIR` — this module reports it; the route layer
+replaces that entry with the account-by-label outcome.
 
 ## sweep
 
 Removes stagings older than 1h. A crash between `begin`'s mkdir and its manifest
 write leaves a dir nothing else reaps, so an unreadable manifest falls back to
-the directory's birthtime rather than skipping it.
+the directory's `mtimeMs` rather than skipping it. NOT `birthtimeMs`: it is the
+one stat field `utimesSync` cannot move, so a backdated subject would pin this
+branch only on a filesystem that records a birthtime at all.
+
+## IMPORT_CHUNK_MAX
+
+| route | method |
+| --- | --- |
+| `POST /api/import/begin` | `begin({name, record})` |
+| `PUT /api/import/<id>/file/<relPath...>` | `putFile({id, relPath, bytes, offset})` |
+| `POST /api/import/<id>/commit` | `commit({id})`, then the injected `importCreate` |
+| `DELETE /api/import/<id>` | `abort({id})` |

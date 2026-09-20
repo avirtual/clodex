@@ -99,6 +99,10 @@ clodex-hint-
 clodex-home-
 clodex-hooks-
 clodex-hs-
+clodex-impwire-
+clodex-impwire-home-
+clodex-impwire-reg-
+clodex-impwire-src-
 clodex-init-
 clodex-install-line-
 clodex-ipccache-

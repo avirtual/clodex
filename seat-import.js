@@ -12,6 +12,7 @@ const SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 const ID_RE = /^[0-9a-f]{16}$/;
 
 const IMPORT_MAX_BYTES = 512 * 1024 * 1024;
+const IMPORT_CHUNK_MAX = 4 * 1024 * 1024;
 const STAGING_MAX_AGE_MS = 60 * 60 * 1000;
 
 const TOP_LEVEL = new Set(['transcript.jsonl', 'seat', 'pending', 'loadlog.jsonl', 'reminders.json']);
@@ -150,6 +151,7 @@ function createSeatImport({
       return fail('record.sessionId is required and must be a session uuid');
     }
     if (typeof record.cwd !== 'string' || !path.isAbsolute(record.cwd)) return fail('record.cwd must be an absolute path');
+    if (record.cwd !== path.resolve(record.cwd)) return fail(`record.cwd must be resolved, not '${record.cwd}'`);
 
     for (const other of listStagings()) {
       const m = readManifest(other);
@@ -215,7 +217,7 @@ function createSeatImport({
       if (startedAt === null) {
         let st;
         try { st = fs.statSync(stagingDir(id)); } catch { continue; }
-        startedAt = st.birthtimeMs || st.mtimeMs;
+        startedAt = st.mtimeMs;
       }
       if (startedAt < cutoff) {
         rmStaging(id);
@@ -343,4 +345,4 @@ function createSeatImport({
   return { begin, putFile, abort, sweep, commit, maxBytes };
 }
 
-module.exports = { createSeatImport, IMPORT_MAX_BYTES };
+module.exports = { createSeatImport, IMPORT_MAX_BYTES, IMPORT_CHUNK_MAX };

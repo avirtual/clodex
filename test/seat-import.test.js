@@ -53,6 +53,16 @@ function listTree(root) {
   return out;
 }
 
+test('begin refuses an absolute cwd that path.resolve would still change', () => {
+  const { imp } = mkImport();
+  for (const cwd of ['/a/b/', '/a/./b', '/a/b/../b']) {
+    assert.match(imp.begin({ name: 'ana', record: record({ cwd }) }).error,
+      /cwd must be resolved/,
+      `${cwd}: the transcript slug is the cwd VERBATIM, the far spawn is its resolved form`);
+  }
+  assert.strictEqual(imp.begin({ name: 'ana', record: record({ cwd: '/a/b' }) }).ok, true);
+});
+
 test('begin refuses a bad name, a codex seat, a missing sessionId and a relative cwd', () => {
   const { imp } = mkImport();
   assert.match(imp.begin({ name: '..', record: record() }).error, /invalid seat name/);

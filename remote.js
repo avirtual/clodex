@@ -10,6 +10,7 @@ const { relayVersionOk, isQualifiedSender } = require('./relay-protocol');
 const { makeTokenGate } = require('./auth-token');
 const { BOX_ID_RE } = require('./sandbox');
 const { maskSecrets } = require('./log-mask');
+const { IMPORT_CHUNK_MAX } = require('./seat-import');
 
 // A bind host counts as loopback when nothing off-box can reach it — the case
 // where "trust is the tunnel" still holds and no token is required. 0.0.0.0 / ::
@@ -109,6 +110,8 @@ const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const TICKET_ID_RE = /^t\d+$/;
 const TICKET_STATES = ['open', 'done', 'cancelled', 'all'];
 const MAX_BODY = 64 * 1024;          // matches the IPC message cap
+const IMPORT_ID_RE = /^[0-9a-f]{16}$/;
+const CONTENT_RANGE_RE = /^bytes\s+(\d+)-(\d+)\/\*$/i;
 const SSE_HEARTBEAT_MS = 25000;
 const ATTACH_MAX_BUFFERED = 4 * 1024 * 1024;
 const RESIZE_DEBOUNCE_MS = 80;
@@ -139,6 +142,7 @@ class RemoteServer {
   constructor({ port, host, basePath, warn, pagePath, getSessions, getSession, listWorkspaces, getTranscript, send, restartApp, restartUnavailable,
                 hostLabel, version, srcDir, voiceCapable, getWebInfo, getWirescopeInfo, getAttachInfo, sendInput, resizePty, onControlChange,
                 query, createSession, killSession, restartSession, getCatalogs, nodeLogFile,
+                seatImport, importCreate,
                 listPeers, getPeer, listTeams, getTeam, listTickets,
                 listSandboxes, getSandbox, listAgents, getAgent, listWorktrees,
                 listDocs, getDoc, getDocSection, searchDocs,
@@ -180,6 +184,8 @@ class RemoteServer {
     this._restartSession = restartSession || null;
     this._getCatalogs = getCatalogs || null;
     this._nodeLogFile = typeof nodeLogFile === 'function' ? nodeLogFile : null;
+    this._seatImport = seatImport || null;
+    this._importCreate = importCreate || null;
     this._listPeers = listPeers || null;
     this._getPeer = getPeer || null;
     this._listTeams = listTeams || null;
@@ -836,6 +842,85 @@ class RemoteServer {
     });
   }
 
+  _readRaw(req, res, cb) {
+    const chunks = [];
+    let total = 0;
+    let over = false;
+    req.on('data', (chunk) => {
+      if (over) return;
+      total += chunk.length;
+      if (total > IMPORT_CHUNK_MAX) {
+        over = true;
+        this._json(res, 413, { ok: false, error: `chunk exceeds the ${IMPORT_CHUNK_MAX} byte cap` });
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('error', () => { over = true; });
+    req.on('end', () => { if (!over) cb(Buffer.concat(chunks, total)); });
+  }
+
+  _handleImportBegin(req, res) {
+    return this._readBody(req, res, (body) => {
+      let msg;
+      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      const name = msg && msg.name;
+      if (this._importCreate && typeof this._importCreate.check === 'function') {
+        let taken;
+        try { taken = this._importCreate.check(name); }
+        catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
+        if (taken && !taken.ok) return this._json(res, 400, taken);
+      }
+      let out;
+      try { out = this._seatImport.begin({ name, record: msg && msg.record }); }
+      catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
+      return this._json(res, out && out.ok ? 200 : 400, out || { ok: false, error: 'begin failed' });
+    });
+  }
+
+  _handleImportFile(id, relPath, req, res) {
+    const range = req.headers && req.headers['content-range'];
+    let offset = 0;
+    if (range != null && String(range).trim() !== '') {
+      const m = CONTENT_RANGE_RE.exec(String(range).trim());
+      if (!m) return this._json(res, 400, { ok: false, error: 'bad Content-Range (expected bytes <start>-<end>/*)' });
+      offset = Number(m[1]);
+      if (!Number.isSafeInteger(offset)) return this._json(res, 400, { ok: false, error: 'bad Content-Range start' });
+    }
+    return this._readRaw(req, res, (bytes) => {
+      let out;
+      try { out = this._seatImport.putFile({ id, relPath, bytes, offset }); }
+      catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
+      return this._json(res, out && out.ok ? 200 : 400, out || { ok: false, error: 'putFile failed' });
+    });
+  }
+
+  _handleImportCommit(id, res) {
+    let out;
+    try { out = this._seatImport.commit({ id }); }
+    catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
+    if (!out || !out.ok) return this._json(res, 400, out || { ok: false, error: 'commit failed' });
+    const { name, record, installed, dropped } = out;
+    return Promise.resolve()
+      .then(() => this._importCreate({ name, record, installed, dropped }))
+      .then((made) => {
+        if (!made || !made.ok) {
+          return this._json(res, 500, { ok: false, error: (made && made.error) || 'create failed', installed });
+        }
+        return this._json(res, 200, {
+          ok: true,
+          name: made.name,
+          pid: made.pid != null ? made.pid : null,
+          cwd: made.cwd != null ? made.cwd : null,
+          sessionId: made.sessionId != null ? made.sessionId : null,
+          installed,
+          dropped: made.dropped || dropped || [],
+        });
+      })
+      .catch((e) => this._json(res, 500, { ok: false, error: e.message, installed }));
+  }
+
   _route(req, res) {
     if (!this._authGate(req, res)) return;
     const url = new URL(req.url, 'http://localhost');
@@ -920,6 +1005,7 @@ class RemoteServer {
       if (this._wtermOpen) caps.push('shell'); // peer terminal — present only while a peer holds the grant
       if (this._notifications) caps.push('inbox');
       if (this._voiceCapable) caps.push('voice');
+      if (this._seatImport && this._importCreate) caps.push('import');
       caps.push('resources');
       return this._json(res, 200, {
         ok: true, app: 'clodex', host: this._hostLabel,
@@ -1079,6 +1165,29 @@ class RemoteServer {
           .then((out) => this._json(res, out && out.ok ? 200 : 400, out || { ok: false, error: 'create failed' }))
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
+    }
+    if (p.startsWith('/api/import/')) {
+      if (!this._seatImport || !this._importCreate) return this._json(res, 501, { ok: false, error: 'import not supported' });
+      if (req.method === 'POST' && p === '/api/import/begin') return this._handleImportBegin(req, res);
+      const rest = p.slice('/api/import/'.length).split('/');
+      const id = rest[0];
+      if (!IMPORT_ID_RE.test(id)) return this._json(res, 400, { ok: false, error: `unknown staging '${id}'` });
+      if (req.method === 'DELETE' && rest.length === 1) {
+        let out;
+        try { out = this._seatImport.abort({ id }); }
+        catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
+        return this._json(res, out && out.ok ? 200 : 400, out || { ok: false, error: 'abort failed' });
+      }
+      if (req.method === 'POST' && rest.length === 2 && rest[1] === 'commit') {
+        return this._handleImportCommit(id, res);
+      }
+      if (req.method === 'PUT' && rest.length > 2 && rest[1] === 'file') {
+        let relPath;
+        try { relPath = rest.slice(2).map((seg) => decodeURIComponent(seg)).join('/'); }
+        catch { return this._json(res, 400, { ok: false, error: 'bad file path' }); }
+        return this._handleImportFile(id, relPath, req, res);
+      }
+      return this._json(res, 404, { ok: false, error: 'not found' });
     }
     if (req.method === 'GET' && p === '/api/node/logs') {
       if (!this._nodeLogFile) return this._json(res, 501, { ok: false, error: 'node logs not available' });
@@ -1414,4 +1523,5 @@ class RemoteServer {
 module.exports = {
   RemoteServer, RESOURCES, resolveRemoteBasePath, coerceRemoteBasePath, resolveRemoteBasePathSetting,
   REMOTE_BASE_PATH_ENV, DEFAULT_REMOTE_BASE_PATH, readLogTail, NODE_LOG_MAX_LINES,
+  IMPORT_CHUNK_MAX,
 };

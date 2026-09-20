@@ -263,6 +263,46 @@ suppressed — the two tickets would cancel out, silently, in the one state they
 were both built for. A source-level test in `test/api-shim.test.js` pins the
 single-reader rule.
 
+### 2b. Seat import (owner side, M-A2)
+
+Move-to-peer's destination half. The moving box is the CLIENT; this box stages
+what arrives under `<REGISTRY_DIR>/import/<id>/` (seat-import.js, M-A1) and then
+spawns the shipped record as the SAME seat. Cap `import`, advertised only when
+remote-wiring injected BOTH a `seatImport` and an `importCreate`; without either
+every route below answers 501 `{ok:false,error:'import not supported'}`, so a
+half-wired box never stages bytes it could not then commit. All four sit behind
+`_authGate` like every other route — the file route included, which is the one a
+wiring mistake would most plausibly leave open.
+
+- `POST /api/import/begin` `{name, record}` → `{ok, id, dropped}`. Refuses
+  before any staging dir exists when the name is live or persisted here
+  (`importCreate.check`), as well as on seat-import's own dir collisions.
+- `PUT /api/import/<id>/file/<relPath...>` — RAW body, not JSON. Per-request cap
+  `IMPORT_CHUNK_MAX` = 4 MiB (413 past it); `offset` from
+  `Content-Range: bytes <start>-<end>/*`, absent header = 0. `<id>` must match
+  `^[0-9a-f]{16}$` at the route as well as in the module. Reply `{ok, size}`.
+- `POST /api/import/<id>/commit` — seeds the shipped `createdAt` into
+  persistence, then installs, then calls the injected far `create()`. Reply `{ok, name, pid, cwd, sessionId, installed, dropped}`. If the
+  install succeeded and the create did not: 500 `{ok:false, error, installed}`
+  and the files STAY on disk — the transcript is the expensive thing, and the
+  client can retry the spawn alone through `POST /api/sessions` with `resumeId`.
+- `DELETE /api/import/<id>` — abort; the staging dir goes.
+
+Trust posture is the remote-create posture, unchanged: the peer token is the
+auth, `execCommands` is forced `[]`, intents go through
+`withoutPrivilegedIntentsFor`, env through `sanitizeFlat`. The ACCOUNT is mapped
+by LABEL, never by path — `record.accountLabel` is looked up in this box's
+accounts and `env.CLAUDE_CONFIG_DIR` is rewritten to the far dir on a hit; a miss
+deletes the key (far default account) and reports `account:<label>` in `dropped`.
+A source-box config path never reaches `create()`. Transcript bytes are opaque:
+staged, hashed, installed, never parsed. Logs carry sizes and names only.
+
+Consumer half: `PeerConnection.importSeat({name, record, files, onProgress})`
+drives begin → chunked PUTs → commit and aborts on any failure, streaming a file
+from disk in 4 MiB reads rather than loading a transcript whole. `_requestRaw`
+is `_request`'s sibling for the non-JSON leg (same auth headers). `canImport`
+rides `status()` next to `needsUpgrade`.
+
 ## 4. Settings reconciliation (peer-wiring.js)
 
 `syncPeerManager` lazily constructs both managers, then reconciles from
@@ -376,6 +416,10 @@ anything else leaves it running.
 - A forwardable port is ADVERTISED or absent, never guessed — and the wirescope
   forward is subordinate to the web view it decorates: it may cost the dashboard
   link and nothing else.
+- An imported seat is a RESTORE (mint=false) of the shipped record — never a
+  mint over the shipped promptcache.
+- The shipped `createdAt` is in persistence BEFORE the far `create()` — the
+  pending-drain hook bakes it, and mail that rode with the seat dies otherwise.
 - Restore sweep is one-shot per name.
 - Control auto-releases on last-detach; re-take rides replay, not a loop.
 - A wterm want is owned by a window and dies with it (both edges: navigation
