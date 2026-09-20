@@ -3,7 +3,7 @@ const { seatDirFor, seatPathFor, legacySeatPathFor, SEAT_KINDS } = require('./cl
 
 const MARKER = '.migrated';
 
-const DEFERRED_KINDS = new Set(['memory']);
+const DEFERRED_KINDS = new Set(['memory', 'messages', 'pending']);
 
 function markerPathFor(root) {
   return path.join(root, 'sessions', MARKER);

@@ -847,8 +847,8 @@ accept teardown removes.
   seat's shared dirs into the single home `sessions/<seat>/`, leaving a symlink
   at each old spelling (`ensureSeatLink` mints one at first use). Pure leaf,
   `fs`/`log` injected; `run/` is deleted rather than moved and stays the socket
-  bind path, and `DEFERRED_KINDS` (`memory`) waits for the readers that refuse a
-  symlink to be repaired.
+  bind path, and `DEFERRED_KINDS` (`memory`, `messages`, `pending`) waits for the
+  readers that refuse or destroy a symlink to be repaired.
 - **project-root.js** — the git-repository root for a cwd, for keying a PROJECT
   ticket board when no team owns that cwd. Pure leaf; `fs` injectable.
 - **intent-spill.js** — the FORMAT of intent-body spill (`proxy-lab/SPILL.md`;

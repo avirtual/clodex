@@ -250,13 +250,17 @@ byte-pinned hook bodies and every transcript carry the old spelling.
 and re-minted as a link at spawn, which keeps `agent.sock` at the shorter path.
 
 That state is MIXED today, and a reader of one seat's dir must not assume
-otherwise. `memory` is DEFERRED (`DEFERRED_KINDS`): `memory-store.agents()` and
-the memory viewer both refuse a symlink, and both are repaired in the same
-release that migrates it. Of the rest, only `run/` is minted for a BRAND-NEW
-seat — the other 6 stay at their old spelling until each first-use site calls
-`ensureSeatLink`. And the marker is global and written once, so a seat absent
-from `persistence.list()` at that boot is never migrated and `ensureSeatLink`
-will not adopt its real dir afterwards.
+otherwise. Three kinds are DEFERRED (`DEFERRED_KINDS`) because an operator over
+their parent dir refuses or destroys a symlink: `memory` (`memory-store.agents()`
+and the memory viewer), `messages` (the 5-minute spill sweep unlinks the link)
+and `pending` (a drain's rename+rm claims the link instead of the dir). Each
+moves in the release that repairs its reader — see `docs/notes/seat-layout.md`,
+which also records that `pending`'s repair must land BEFORE anything mints that
+link. Of the rest, only `run/` is minted for a BRAND-NEW seat — the other 4 stay
+at their old spelling until each first-use site calls `ensureSeatLink`. And the
+marker is global and written once, so a seat absent from `persistence.list()` at
+that boot is never migrated and `ensureSeatLink` will not adopt its real dir
+afterwards.
 
 Per Claude session: `run/<name>/hook.sh` (SessionStart — atomically repoints the
 `run/<name>/transcript.jsonl` symlink; emits the memory digest only for

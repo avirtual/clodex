@@ -55,10 +55,10 @@
 // the authority on which records go where and why),
 // codex-session-hook.sh (shared Codex hook, routed by $WB_WRAP_NAME), setup.json.
 //
-// SEAT LAYOUT. A seat's durable state lives in ONE dir, sessions/<seat>/
-// (seatDirFor, a subdir per SEAT_KINDS entry): that dir is REAL and the old
-// spellings are SYMLINKS into it. seat-layout.js mints them and says which kinds
-// are linked yet; runDirFor is NOT rewritten (socket length — notes/).
+// SEAT LAYOUT. A seat's durable state is collecting into ONE dir,
+// sessions/<seat>/ (seatDirFor, a subdir per SEAT_KINDS entry), reached through
+// its old spelling. seat-layout.js owns which spellings are links by now and
+// which are still real; runDirFor is NOT rewritten (socket length — notes/).
 //
 // BASH-MIRRORED GRAMMAR. cli-hooks.js setupCodexHook resolves the agent name at
 // RUNTIME ($WB_WRAP_NAME) and so rebuilds these paths in bash (LINK / OUTPUT:
