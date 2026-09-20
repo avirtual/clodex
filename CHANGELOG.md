@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The plan-quota chip in the header now reads the way statuslines do — `5h 26% (3h0m) · 7d 86% (4d16h) · 7d Fable 84% (4d16h)` — with each window's reset time inline instead of only in the tooltip.
+
 ## 5.83.3 — 2026-09-20
 
 - Right-click ▸ "Move to Workspace…" moves a session to another workspace window without restarting it — the terminal keeps running and its output is waiting when the other window shows it.

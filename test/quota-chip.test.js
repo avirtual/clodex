@@ -7,7 +7,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { shapeQuota, quotaChip, quotaChips, fmtQuotaReset, QUOTA_429_RECENT_S, QUOTA_WINDOW_LABEL } = require('../proxy-util');
+const { shapeQuota, quotaChip, quotaChips, fmtQuotaReset, fmtQuotaResetTight, QUOTA_429_RECENT_S, QUOTA_WINDOW_LABEL } = require('../proxy-util');
 const { CLAIM_WINDOW } = require('../wire/quota');
 
 // Measured verbatim off this box's wirescope v0.6.53 /_status at 95% weekly.
@@ -181,7 +181,7 @@ const THREE = (over = {}) => shapeQuota({
 test('quotaChip: all three windows read compactly, labelled the way the CLI names them', () => {
   const chip = quotaChip(THREE());
   assert.strictEqual(chip.level, 'warn');
-  assert.strictEqual(chip.text, '5h:0% | W:76% | F:86%');
+  assert.strictEqual(chip.text, '5h 0% (4h52m) · 7d 76% (18h32m) · 7d Fable 86% (18h32m)');
   // The resets moved here, one line per window in the same order. Whole-prefix
   // literal: the point of the change is which window each number belongs to,
   // and a regex on a percentage cannot tell those apart.
@@ -192,10 +192,37 @@ test('quotaChip: all three windows read compactly, labelled the way the CLI name
   assert.strictEqual(chip.stale, false);
 });
 
+test('fmtQuotaResetTight: the same units as fmtQuotaReset with the inner space closed up', () => {
+  for (const [s, tight, spaced] of [
+    [3600 * 4 + 59 * 60, '4h59m', '4h 59m'],
+    [86400 * 6 + 23 * 3600, '6d23h', '6d 23h'],
+    [58 * 60, '58m', '58m'],
+    [3 * 3600, '3h0m', '3h'],
+    [45, '1m', '1m'],
+    [0, null, null],
+  ]) {
+    assert.strictEqual(fmtQuotaResetTight(s), tight, `tight rendering of ${s}s`);
+    assert.strictEqual(fmtQuotaReset(s), spaced, `ENTER: the spaced twin of ${s}s must be unchanged`);
+  }
+});
+
+test('quotaChip: a window with no reset renders its percentage bare, no empty parens', () => {
+  const q = THREE({
+    windows: {
+      '7d': { used_pct: 86, status: 'allowed_warning', resets_in_s: null },
+    },
+  });
+  assert.strictEqual(q.windows['7d'].resetsInS, null,
+    'ENTER: the shaped window must really carry no reset, or the parens branch is not being skipped');
+  const chip = quotaChip(q);
+  assert.strictEqual(chip.text, '7d 86%');
+  assert.ok(!chip.text.includes('('), `no parens when there is nothing to put in them: ${chip.text}`);
+});
+
 test('quotaChip: a recent refusal stays last after the window bar', () => {
   const chip = quotaChip(THREE({ last_429_age_s: 120 }));
   assert.strictEqual(chip.level, 'loud');
-  assert.strictEqual(chip.text, '5h:0% | W:76% | F:86% · rate-limited 2m ago');
+  assert.strictEqual(chip.text, '5h 0% (4h52m) · 7d 76% (18h32m) · 7d Fable 86% (18h32m) · rate-limited 2m ago');
 });
 
 test('quotaChip: every window allowed and no refusal → nothing rendered at all', () => {
@@ -223,7 +250,7 @@ test('quotaChip: one window at rejected takes the whole chip loud', () => {
   });
   const chip = quotaChip(q);
   assert.strictEqual(chip.level, 'loud');
-  assert.strictEqual(chip.text, '5h:0% | W:76% | F:100%');
+  assert.strictEqual(chip.text, '5h 0% (4h52m) · 7d 76% (18h32m) · 7d Fable 100% (18h32m)');
 });
 
 test('quotaChip: a window with no percentage neither renders nor votes on the level', () => {
@@ -243,7 +270,7 @@ test('quotaChip: a window with no percentage neither renders nor votes on the le
     'ENTER: the shaped map must really carry a rejected overage, or nothing is being suppressed');
   const chip = quotaChip(q);
   assert.strictEqual(chip.level, 'warn');
-  assert.strictEqual(chip.text, '5h:0% | W:76% | F:86%');
+  assert.strictEqual(chip.text, '5h 0% (4h52m) · 7d 76% (18h32m) · 7d Fable 86% (18h32m)');
   assert.doesNotMatch(chip.tip, /overage/);
 });
 
@@ -255,7 +282,7 @@ test('quotaChip: an unknown window key falls back to the key itself, chip and to
     },
   });
   const chip = quotaChip(q);
-  assert.strictEqual(chip.text, '5h:0% | x1:12%');
+  assert.strictEqual(chip.text, '5h 0% (4h52m) · x1 12% (40m)');
   assert.match(chip.tip, /^5h: 0% used, resets in 4h 52m\nx1: 12% used, resets in 40m\n/);
 });
 
@@ -263,7 +290,7 @@ test('quotaChip: the live payload renders the windows it carries, overage droppe
   // LIVE is a verbatim /_status: three windows, `overage` percentage-less.
   const chip = quotaChip(shapeQuota(LIVE, CAPS));
   assert.strictEqual(chip.level, 'warn');
-  assert.strictEqual(chip.text, '5h:32% | W:95%');
+  assert.strictEqual(chip.text, '5h 32% (58m) · 7d 95% (2d22h)');
   assert.strictEqual(chip.stale, false);
 });
 
@@ -488,7 +515,7 @@ test('#drawer-quota max-width fits the longest string quotaChip can emit', () =>
   // window label or a longer part is measured rather than assumed. Both shapes
   // the chip can emit are generated: the single-window fallback over every
   // CLAIM_WINDOW value, and the multi-window bar over every label the table
-  // knows. `23h 59m` is the longest reset rendering — fmtQuotaReset's
+  // knows. `23h 59m` is the longest reset rendering in either formatter — the
   // `${h}h ${m}m` branch runs up to 23h, wider than any `Nd Nh` — and 100%/59s
   // the longest pct and age.
   const RESET = 23 * 3600 + 59 * 60;
@@ -500,19 +527,20 @@ test('#drawer-quota max-width fits the longest string quotaChip can emit', () =>
     .map((w) => quotaChip({ status: 'rejected', window: w, usedPct: 100, resetsInS: RESET, last429AgeS: 59, ageS: 1 }, 0).text)
     .concat(quotaChip({ status: 'rejected', windows: everyWindow, last429AgeS: 59, ageS: 1 }, 0).text);
   const longest = candidates.reduce((a, b) => (b.length > a.length ? b : a));
-  // The FALLBACK wins, not the bar the chip normally shows: spelling the window
-  // out beats four abbreviated segments. Sizing to the common shape would
-  // ellipsise the refusal off a wirescope reading that carries no window map.
-  assert.strictEqual(longest, 'week (all models) quota 100% used · resets in 23h 59m · rate-limited 59s ago');
-  assert.strictEqual(
-    candidates.find((t) => t.startsWith('5h:')), '5h:100% | W:100% | F:100% | O:100% · rate-limited 59s ago',
-    'ENTER: the multi-window bar must be among the candidates, or only the fallback was measured');
+  // The BAR wins now that every window carries its own reset inline: four
+  // parenthesised segments beat the one spelled-out window of the fallback
+  // (that shape is still generated above, 389px, and is no longer the cap).
+  assert.strictEqual(longest,
+    '5h 100% (23h59m) · 7d 100% (23h59m) · 7d Fable 100% (23h59m) · overage 100% (23h59m) · rate-limited 59s ago');
+  assert.ok(
+    candidates.includes('week (all models) quota 100% used · resets in 23h 59m · rate-limited 59s ago'),
+    'ENTER: the single-window fallback must be among the candidates, or only the bar was measured');
 
-  // 389px measured in Electron for this string at 10px in the app's font stack,
-  // border-box (padding included); 76 × 5.2 = 396 keeps the pin at or above
+  // 575px measured in Electron for this string at 10px in the app's font stack,
+  // border-box (padding included); 107 × 5.4 = 578 keeps the pin at or above
   // that. Re-measure rather than rescaling the constant if the wording changes.
-  assert.ok(cap >= Math.ceil(longest.length * 5.2),
-    `#drawer-quota max-width ${cap}px ellipsises "${longest}" (${longest.length}ch, measured 389px) — the trailing refusal is what gets cut`);
+  assert.ok(cap >= Math.ceil(longest.length * 5.4),
+    `#drawer-quota max-width ${cap}px ellipsises "${longest}" (${longest.length}ch, measured 575px) — the trailing refusal is what gets cut`);
 });
 
 test('the drawer tabs are rigid and the quota chip is the header\'s shrinker', () => {
