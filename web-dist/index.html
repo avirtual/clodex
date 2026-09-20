@@ -2998,14 +2998,16 @@ body {
     monospace;
   font-size: 11px;
   line-height: 1.45;
-  white-space: pre;
-  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   background: var(--active-bg);
   border-radius: 5px;
   padding: 8px 10px;
 }
 .diff-line {
   min-height: 1em;
+  padding-left: 5ch;
+  text-indent: -5ch;
 }
 .diff-ctx {
   color: var(--text);
@@ -3017,6 +3019,7 @@ body {
   opacity: 0.55;
   user-select: none;
   text-align: right;
+  text-indent: 0;
 }
 .peek-line-hit {
   background: rgba(97, 175, 239, 0.16);

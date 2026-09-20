@@ -2107,15 +2107,15 @@ html, body {
 #file-peek-editor:focus { outline: none; border-color: var(--accent); }
 .file-peek-pre {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px; line-height: 1.45; white-space: pre; overflow-x: auto;
+  font-size: 11px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere;
   background: var(--active-bg); border-radius: 5px; padding: 8px 10px;
 }
-.diff-line { min-height: 1em; }
+.diff-line { min-height: 1em; padding-left: 5ch; text-indent: -5ch; }
 .diff-ctx { color: var(--text); }
 /* user-select:none keeps the gutter out of a copied selection. */
 .peek-ln {
   display: inline-block; margin-right: 12px; color: var(--text-dim);
-  opacity: 0.55; user-select: none; text-align: right;
+  opacity: 0.55; user-select: none; text-align: right; text-indent: 0;
 }
 .peek-line-hit { background: rgba(97, 175, 239, 0.16); }
 .diff-file { color: var(--text-dim); font-weight: 600; }
