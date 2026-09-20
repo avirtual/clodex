@@ -181,6 +181,7 @@ const { foldDraft } = require('./hint-arm');
 const { didGrow, parsePsRows, descendantPids } = require('./stall-evidence');
 const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
+const { ensureSeatLink } = require('./seat-layout');
 const { effectiveModel } = require('./accounts');
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
@@ -1812,11 +1813,12 @@ function createSessionManager(deps) {
               clearNotices(REGISTRY_DIR, name);
             }
           } catch { /* an advisory must never block a spawn */ }
-          // ensureDir so the write never depends on hook-setup ordering having
-          // created the dir first: run/<name>/ is created as a side effect of
-          // setupClaudeHook, which is SKIPPED when the caller supplies its own
-          // --settings, so without this a --settings session ENOENTs here and
-          // cannot spawn at all.
+          // Link + dir so the write never depends on hook-setup ordering having
+          // run first: both are side effects of setupClaudeHook, which is SKIPPED
+          // when the caller supplies its own --settings, so without them a
+          // --settings session ENOENTs here and is exempt from the seat layout
+          // forever (ensureSeatLink never adopts a real legacy dir).
+          ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
           ensureDir(runDirFor(REGISTRY_DIR, name));
           fs.writeFileSync(promptPath, baked, { mode: 0o600 });
           args.push('--append-system-prompt-file', promptPath);

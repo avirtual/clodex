@@ -167,7 +167,6 @@ function runDirFor(root, name) {
 
 const SEAT_KINDS = {
   messages: 'messages',
-  pending: 'pending',
   notices: 'notices',
   promptcache: 'promptcache',
   memory: 'memory',
@@ -178,7 +177,6 @@ const SEAT_KINDS = {
 
 const LEGACY_SEAT_DIRS = {
   messages: ['messages'],
-  pending: ['pending'],
   notices: ['notices'],
   promptcache: ['promptcache'],
   memory: ['library', 'memory'],

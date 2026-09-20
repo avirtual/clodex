@@ -843,12 +843,15 @@ accept teardown removes.
   log-only orphan pass. `runLegacySweep` deletes only `{knownName}{knownSuffix}`
   (never filename-parsed, so shared `wire-shadow.jsonl` / `codex-session-hook.sh`
   can't be misattributed); `findOrphans` is pure.
-- **seat-layout.js** — one-time, marker-gated (`sessions/.migrated`) move of a
-  seat's shared dirs into the single home `sessions/<seat>/`, leaving a symlink
-  at each old spelling (`ensureSeatLink` mints one at first use). Pure leaf,
+- **seat-layout.js** — PER-KIND, marker-gated (`sessions/.migrated`, a
+  `{"kinds":{…}}` record) move of a seat's shared dirs into the single home
+  `sessions/<seat>/`, leaving a symlink at each old spelling (`ensureSeatLink`
+  mints one at first use). A kind runs over all known names once and is then
+  stamped, so a kind un-deferred later still migrates on a box that already
+  launched; a bare-timestamp marker is read as L-A's five kinds. Pure leaf,
   `fs`/`log` injected; `run/` is deleted rather than moved and stays the socket
-  bind path, and `DEFERRED_KINDS` (`memory`, `messages`, `pending`) waits for the
-  readers that refuse or destroy a symlink to be repaired.
+  bind path, and `DEFERRED_KINDS` is empty — every reader over a shared parent
+  is link-aware, and `pending` is not a seat kind at all.
 - **project-root.js** — the git-repository root for a cwd, for keying a PROJECT
   ticket board when no team owns that cwd. Pure leaf; `fs` injectable.
 - **intent-spill.js** — the FORMAT of intent-body spill (`proxy-lab/SPILL.md`;

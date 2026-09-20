@@ -4,6 +4,7 @@ const fs = require('fs');
 const net = require('net');
 const { ensureDir } = require('./fs-util');
 const { pathFor, runDirFor } = require('./clodex-paths');
+const { ensureSeatLink } = require('./seat-layout');
 
 // 250ms, not send()'s 2000ms: this probe runs on the session-start path, and a
 // Unix-domain connect either succeeds in microseconds or nothing is bound there.
@@ -30,6 +31,7 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
 
   const registry = {
     register(name, socketPath, cwd = null) {
+      ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
       ensureDir(runDirFor(REGISTRY_DIR, name));
       const regPath = pathFor(REGISTRY_DIR, name, 'registry');
       const data = JSON.stringify({ name, socket: socketPath, pid: process.pid, ...(cwd ? { cwd } : {}) });

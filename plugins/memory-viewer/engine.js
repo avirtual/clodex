@@ -15,8 +15,12 @@ const path = require('node:path');
 // core's memory-store is the reach-around the boundary lint refuses. The
 // CLODEX_HOME half mirrors clodex-paths.js defaultClodexHome, so the board and
 // core move together.
-const MEMORY_ROOT = path.join(
-  process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex'), 'library', 'memory');
+const CLODEX_ROOT = process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex');
+const MEMORY_ROOT = path.join(CLODEX_ROOT, 'library', 'memory');
+
+function seatMemoryDir(agent) {
+  return path.join(CLODEX_ROOT, 'sessions', agent, 'memory');
+}
 
 // Same rule as core's session names — a character filter, nothing more. NOT the
 // containment check: `.` is in the class, so '.' and '..' both match it, and
@@ -74,6 +78,26 @@ function parseUnit(text, key) {
   };
 }
 
+// README.md §"The agent folder, and the two shapes it may have" — the two legal
+// answers, and why the second does not widen the sibling-alias refusal.
+function resolveAgentDir(dir, agent) {
+  let real;
+  try {
+    real = fs.realpathSync(dir);
+    if (!fs.statSync(real).isDirectory()) return null;
+  } catch (_) {
+    return null;
+  }
+  if (real === dir) return real;
+  let seat;
+  try {
+    seat = fs.realpathSync(seatMemoryDir(agent));
+  } catch (_) {
+    return null;
+  }
+  return real === seat ? real : null;
+}
+
 function listAgentDirs() {
   const root = realRoot();
   if (root === null) return [];
@@ -83,10 +107,9 @@ function listAgentDirs() {
   } catch (_) {
     return [];
   }
-  // A Dirent's isDirectory() does not follow the link, so a symlinked folder is
-  // false here and never becomes an agent row. Do not swap it for a statSync.
   return names
-    .filter((d) => d.isDirectory() && AGENT_NAME_RE.test(d.name))
+    .filter((d) => AGENT_NAME_RE.test(d.name)
+      && resolveAgentDir(path.join(root, d.name), d.name) !== null)
     .map((d) => d.name)
     .sort();
 }
@@ -127,13 +150,10 @@ function confineToDir(base, entryPath) {
 function readUnits(agent) {
   const dir = agentDir(agent);
   if (dir === null) return [];
-  // The folder must resolve to ITSELF, not merely inside the root: an agent that
-  // replaced its memory dir with a symlink gets nothing, whether it aims out of
-  // the root or at a SIBLING agent's folder, whose memories would otherwise
-  // render under this agent's name. listAgentDirs refusing to list such a dir is
-  // not the guard — `agent` arrives over IPC, not necessarily from that listing.
-  const base = confineToDir(realRoot(), dir);
-  if (base !== dir) return [];
+  // listAgentDirs refusing to list a bad folder is not the guard — `agent`
+  // arrives over IPC, not necessarily from that listing.
+  const base = resolveAgentDir(dir, agent);
+  if (base === null) return [];
   let files;
   try {
     files = fs.readdirSync(dir);

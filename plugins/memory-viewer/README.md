@@ -39,6 +39,28 @@ boot-digest rewrite for any live claude session of that agent — core's job, on
 core's timing. Everything else here is still read-only: it does not pin, unpin
 or edit, and the `[agent:memory …]` intent remains the only way to write one.
 
+## The agent folder, and the two shapes it may have
+
+`resolveAgentDir` decides whether `library/memory/<agent>` is that agent's
+folder, and accepts exactly two answers: the path resolves to ITSELF, or it
+resolves to `sessions/<agent>/memory`. The second is the seat layout —
+`seat-layout.js` moves a seat's memory dir under its one home and leaves a
+symlink at the old spelling, so a resolve-to-itself rule alone made every
+migrated seat go dark here, silently, since an empty list is also what a seat
+with no memories looks like.
+
+The security property is unchanged by that second answer, because the seat path
+is derived from the agent name being ASKED FOR. A link aimed at a sibling seat's
+memory (`library/memory/a -> sessions/b/memory`) resolves to neither `a`'s own
+path nor `a`'s seat path, so it renders nothing — the same refusal the
+resolve-to-itself rule gave, for the same reason: `agent` arrives over IPC and
+need not have come from the listing.
+
+`seatMemoryDir` mirrors core's path grammar by hand rather than importing it.
+The boundary lint refuses a require that leaves this directory, so this is the
+same trade `MEMORY_ROOT` already makes against `defaultClodexHome`: a change to
+core's `SEAT_KINDS.memory` must reach both lines.
+
 ## Freshness
 
 Nothing notifies a plugin when a memory file changes, so the store is read on

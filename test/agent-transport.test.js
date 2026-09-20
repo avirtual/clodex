@@ -9,7 +9,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { createAgentTransport } = require('../agent-transport');
-const { pathFor, runDirFor } = require('../clodex-paths');
+const { pathFor, runDirFor, seatPathFor } = require('../clodex-paths');
+const { migrateSeatLayout } = require('../seat-layout');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function tmp() { return mkTmpRoot('clodex-reg-'); }
@@ -263,4 +264,25 @@ test('unregister: removes the record', () => {
   registry.register('z', sock);
   registry.unregister('z');
   assert.ok(!fs.existsSync(regFile(REGISTRY_DIR, 'z')));
+});
+
+test('register mints run/<name> as a seat LINK, not a bare real dir', () => {
+  const why = 'a seat spawned with a user --settings never runs setupClaudeHook, so register() is '
+    + 'the only thing that creates its run dir. Without the link mint that dir is REAL, and '
+    + 'ensureSeatLink refuses to adopt a real legacy dir afterwards: the seat is then permanently '
+    + 'exempt from the seat layout, with no symptom until something reads sessions/<n>/run';
+  const REGISTRY_DIR = tmp();
+  migrateSeatLayout({ root: REGISTRY_DIR, names: [], fs });
+  const { registry } = mk(REGISTRY_DIR);
+
+  registry.register('settings-seat', path.join(REGISTRY_DIR, 'settings-seat.sock'));
+
+  const old = runDirFor(REGISTRY_DIR, 'settings-seat');
+  assert.ok(fs.lstatSync(old).isSymbolicLink(), `run/<name> must be the link, not the real dir — ${why}`);
+  assert.strictEqual(
+    fs.realpathSync(old),
+    fs.realpathSync(seatPathFor(REGISTRY_DIR, 'settings-seat', 'run')),
+    'and it must resolve into the seat home');
+  assert.ok(fs.existsSync(path.join(seatPathFor(REGISTRY_DIR, 'settings-seat', 'run'), 'agent.json')),
+    'so the registry entry it just wrote lands in the REAL dir under sessions/<n>/');
 });

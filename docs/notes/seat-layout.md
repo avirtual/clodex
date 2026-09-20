@@ -2,34 +2,35 @@
 
 ## DEFERRED_KINDS
 
-The membership criterion: a kind belongs here while ANY operator over its shared
-parent dir refuses or destroys a symlink. Removing an entry is not a tidying
-edit — it ships that operator's misbehaviour to every migrated seat, silently,
-so each removal goes in the same release as its reader's repair.
+Empty. The membership criterion, for the next kind that needs it: a kind belongs
+here while ANY operator over its shared parent dir refuses or destroys a
+symlink. Adding an entry is cheap; removing one ships that operator's
+misbehaviour to every migrated seat, silently, so each removal goes in the same
+release as its reader's repair. The three original entries — `memory`,
+`messages`, `pending` — were closed as follows.
 
-`memory` — `memory-store.agents()` filters `readdirSync` Dirents on
-`isDirectory()`, FALSE for a symlink, and it is the only caller feeding the
-engine's `liveKeys` union; `hint-embed`'s `flush` deletes every vector key
-outside that set, so a linked `library/memory/<seat>` prunes the whole cache and
-re-embeds it on the next backfill, forever — the measured pathology
-`hint-embed.js` says it already fixed once. The memory viewer's
-realpath-equals-self check refuses the same link.
+`memory` and `messages` MOVED, with their readers repaired in the same release.
+`memory-store.agents()` and `sweepSpilledMessages` both filtered `readdirSync`
+Dirents on `isDirectory()`, FALSE for a symlink; each now also takes a symlink
+whose `statSync` target is a directory. The two failures were not symmetric and
+both are pinned: `agents()` is the ONLY caller feeding the engine's `liveKeys`
+union and `hint-embed`'s `flush` deletes every vector key outside that set, so
+an empty list pruned the whole cache and re-embedded it forever; the sweep's
+else-branch `statSync` FOLLOWED the link and `unlinkSync`'d the SPELLING on a
+5-minute timer. The memory viewer's realpath-equals-self check is the third
+reader — see `resolveAgentDir` there, which now accepts the seat spelling too.
 
-`messages` — `sweepSpilledMessages` takes the same `isDirectory()` Dirent
-branch, and its else-branch `statSync` FOLLOWS the link to a directory whose
-mtime is almost always past `MSG_MAX_AGE`, so the 5-minute sweep `unlinkSync`s
-the SPELLING: the migrated files strand under `sessions/<seat>/messages`, the
-next spill mkdirs a fresh real dir, and every pointer already delivered to a seat
-dangles. While the link does survive, the per-seat GC is off entirely.
-
-`pending` — `drainPending` claims with `renameSync(dir, claim)` and ends with
-`rmSync(claim)`. On a symlink both act on the LINK: the seat un-migrates itself
-at the first drain and every delivered `.json` survives inside
-`sessions/<seat>/pending`, against the destructive-claim invariant. Its repair
-must land BEFORE anything mints a `pending` link — claim through
-`realpathSync`, or rename the target rather than the name — or the day the link
-appears it points at a directory of already-delivered mail and re-delivers all
-of it.
+`pending` is RULED OUT and stays at the shared root permanently. It is a
+transient delivery queue, not seat state. Two independent claimers —
+`drainPending` and the `pending.sh` hook body — claim by `renameSync(dir,
+claim)` and finish by removing the claim, which on a symlink moves and then
+deletes the LINK while every already-delivered `.json` survives inside the
+target, to be re-delivered the day anything re-points the name. One of the two
+is bash inside a byte-pinned hook, so it cannot be taught to claim through the
+link without breaking the pin, and a second copy of the claim rule in two
+languages is the drift this program exists to remove. `seatPathFor(root, n,
+'pending')` therefore throws like any unknown kind, and a move-to-peer DRAINS
+the queue rather than carrying it.
 
 ## migrateSeatLayout
 
@@ -41,17 +42,37 @@ and are byte-pinned, and every transcript and memory already written teaches
 agents `~/.clodex/messages/<seat>/`.
 
 `run` is the one kind that is DELETED rather than moved. It is regenerated at
-every spawn and `rm -rf`'d at every exit, so at bootstrap — the only time this
-runs — it is residue from the last exit; moving it would carry a dead socket and
-a stale registry entry into the home nothing cleans.
+every spawn and `rm -rf`'d at every exit, so it is residue from the last exit;
+moving it would carry a dead socket and a stale registry entry into the home
+nothing cleans.
 
-The marker is GLOBAL and written AFTER the per-seat loop, so a throw before that
-point leaves it absent and the next launch retries. A per-kind failure is logged
-and skipped instead: whatever did not move is still readable at its old spelling,
-and a seat that never migrates keeps working unchanged. A seat absent from the
-name list at that single boot is likewise never migrated and never adopted
-afterwards — `ensureSeatLink` correctly leaves its real dir alone — so a mixed
-tree is the expected steady state, not a transient.
+The marker is PER-KIND, and that is what makes un-deferring a kind a real
+migration rather than a green suite. Under the original global one-shot marker,
+a release that dropped an entry from `DEFERRED_KINDS` migrated the kind on fresh
+tmp roots in tests and did NOTHING on any box that had already launched:
+`migrateSeatLayout` short-circuited on the marker and `ensureSeatLink` correctly
+refuses a legacy path that is a real dir, which is exactly what those seats
+hold. So the loop is kind-OUTERMOST: every kind not yet stamped runs over ALL
+names and is stamped when its loop completes, and the record is rewritten each
+launch.
+
+A kind is stamped even when a seat inside its loop threw. The alternative
+re-runs that kind at every launch forever on a box with one bad seat, and buys
+nothing: a per-kind failure is logged and skipped, whatever did not move is
+still readable at its old spelling, and a seat that never migrates keeps working
+unchanged. A seat absent from the name list when its kind was stamped is
+likewise never migrated and never adopted afterwards, so a mixed tree is the
+expected steady state, not a transient.
+
+A marker whose whole content is one ISO timestamp is the shape L-A wrote and
+every box that ran it holds. It is read as `{ notices, promptcache, spill,
+monitors, run }` stamped with that timestamp — the kinds L-A actually moved —
+and rewritten in the record shape. Read as "nothing is stamped" it would re-run
+those five; read as "everything is stamped" `memory` and `messages` would never
+move on any box that had already launched. Anything else unparseable is treated
+as ABSENT: a marker we cannot read tells us nothing about what moved, and
+re-running is safe because every kind skips a legacy path that is already a
+symlink.
 
 ## ensureSeatLink
 
@@ -63,11 +84,7 @@ A legacy path that is a real dir is refused BEFORE either mkdir, so an exempt
 seat mints no empty `sessions/<seat>/<kind>` nothing will write to. A path that
 is already a LINK still falls through the mkdirs: cleanup drops the target at
 every exit while the link survives, so the target must be re-made or the next
-spawn writes through a dangling name. Not every `run/` mint site calls this —
-`session-manager.js`'s `--settings` path and `agent-transport.js` still
-`ensureDir(runDirFor(...))` bare — so such a seat gets a real `run/<seat>` and
-stays exempt; harmless while `cleanupClaudeHook` names both spellings, but
-nothing may assume `run/` is a link.
+spawn writes through a dangling name.
 
 A legacy path that exists and is NOT a symlink is left alone — it is either a
 seat created while the marker was absent or a foreign directory, and replacing

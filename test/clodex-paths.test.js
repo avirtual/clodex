@@ -124,7 +124,6 @@ test('seatDirFor: one home per seat under sessions/', () => {
 
 const SEAT_ROWS = [
   ['messages', '/root/.clodex/sessions/alice/messages', '/root/.clodex/messages/alice'],
-  ['pending', '/root/.clodex/sessions/alice/pending', '/root/.clodex/pending/alice'],
   ['notices', '/root/.clodex/sessions/alice/notices', '/root/.clodex/notices/alice'],
   ['promptcache', '/root/.clodex/sessions/alice/promptcache', '/root/.clodex/promptcache/alice'],
   ['memory', '/root/.clodex/sessions/alice/memory', '/root/.clodex/library/memory/alice'],
@@ -133,7 +132,7 @@ const SEAT_ROWS = [
   ['run', '/root/.clodex/sessions/alice/run', '/root/.clodex/run/alice'],
 ];
 
-test('seatPathFor / legacySeatPathFor: 8 kinds, both spellings', () => {
+test('seatPathFor / legacySeatPathFor: 7 kinds, both spellings', () => {
   assert.strictEqual(SEAT_ROWS.length, Object.keys(SEAT_KINDS).length);
   for (const [kind, neu, old] of SEAT_ROWS) {
     assert.strictEqual(seatPathFor(ROOT, 'alice', kind), neu, kind);
@@ -150,6 +149,9 @@ test("legacySeatPathFor('run') and runDirFor agree — the link and the bind pat
 
 test('seat kinds: an unknown one throws in BOTH directions, like pathFor', () => {
   assert.throws(() => seatPathFor(ROOT, 'a', 'nope'), /unknown seat kind 'nope'/);
+  assert.throws(() => seatPathFor(ROOT, 'a', 'pending'), /unknown seat kind 'pending'/,
+    'pending is not a seat kind: it is a transient delivery queue with two rename-claiming '
+    + 'drainers, one of them a byte-pinned bash hook body, so it never leaves the shared root');
   assert.throws(() => legacySeatPathFor(ROOT, 'a', 'nope'), /unknown seat kind 'nope'/);
   assert.throws(() => seatPathFor(ROOT, 'a', 'transcript'), /unknown seat kind 'transcript'/,
     'a run/ artifact kind is not a seat kind: the two grammars are separate namespaces');

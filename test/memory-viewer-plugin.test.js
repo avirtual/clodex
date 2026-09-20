@@ -34,6 +34,7 @@ const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
 const viewerEngine = require('../plugins/memory-viewer/engine');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { migrateSeatLayout } = require('../seat-layout');
 
 // The plugin derives MEMORY_ROOT at require time (it is deliberately not
 // injectable — see its header). Point HOME at a temp dir and re-require so the
@@ -500,4 +501,57 @@ test('memory-viewer: the store follows CLODEX_HOME, not the home-derived root', 
     fs.rmSync(overrideHome, { recursive: true, force: true });
     fs.rmSync(decoyHome, { recursive: true, force: true });
   }
+});
+
+test('memory-viewer: a MIGRATED seat still lists and renders its units', async () => {
+  const why = 'the seat-layout migration makes library/memory/<agent> a symlink into '
+    + 'sessions/<agent>/memory, and the realpath-equals-itself rule refused exactly that shape — '
+    + 'so every migrated seat went dark in the viewer while its memories sat on disk, silently, '
+    + 'since an empty list is also what a seat with no memories looks like. migrateSeatLayout is '
+    + 'required from the TEST, never from the plugin: the boundary lint forbids the plugin that '
+    + 'require, which is why the viewer mirrors the seat spelling by hand and why this pins it';
+  const { host, root, cleanup } = boot();
+  const clodexHome = path.resolve(root, '..', '..');
+  try {
+    writeUnit(root, 'clodex', 'mem-1-aaaaaa', { body: 'survives the move' });
+    const res = migrateSeatLayout({ root: clodexHome, names: ['clodex'], fs });
+    assert.strictEqual(res.skipped, false, 'ENTER: the migration must actually run');
+    assert.ok(fs.lstatSync(path.join(root, 'clodex')).isSymbolicLink(),
+      'ENTER: library/memory/clodex must BE a symlink, or this subject is about a plain dir');
+
+    const agents = await host.dispatch('memory-viewer', 'agents', [], 'desktop');
+    assert.deepEqual(agents.agents.map((a) => a.agent), ['clodex'],
+      `a migrated seat is still an agent row — ${why}`);
+    assert.deepEqual(agents.agents.map((a) => a.count), [1], 'with its unit counted');
+
+    const units = await host.dispatch('memory-viewer', 'units', ['clodex'], 'desktop');
+    assert.deepEqual(units.units.map((u) => u.body), ['survives the move'],
+      `and the units read through the link — ${why}`);
+  } finally { cleanup(); }
+});
+
+test("memory-viewer: a link to a SIBLING seat's memory is still refused after migration", async () => {
+  const why = 'the security property the seat spelling must not widen. resolveAgentDir accepts a '
+    + "link resolving to THIS agent's seat dir, derived from the name being ASKED FOR — so "
+    + 'library/memory/a -> sessions/b/memory matches neither itself nor sessions/a/memory and '
+    + 'renders nothing, exactly as the resolve-to-itself rule did';
+  const { host, root, cleanup } = boot();
+  const clodexHome = path.resolve(root, '..', '..');
+  try {
+    writeUnit(root, 'victim', 'mem-7-rrrrrr', { body: 'the sibling body' });
+    migrateSeatLayout({ root: clodexHome, names: ['victim'], fs });
+    const victimSeat = path.join(clodexHome, 'sessions', 'victim', 'memory');
+    assert.ok(fs.statSync(victimSeat).isDirectory(), 'ENTER: the victim seat must have moved');
+    fs.symlinkSync(victimSeat, path.join(root, 'thief'));
+
+    const aliased = await host.dispatch('memory-viewer', 'units', ['thief'], 'desktop');
+    assert.deepEqual(aliased.units, [], `the thief's name reads nothing — ${why}`);
+    assert.equal(JSON.stringify(aliased).includes('the sibling body'), false,
+      "the victim's body never reaches the renderer under the thief's name");
+
+    const agents = await host.dispatch('memory-viewer', 'agents', [], 'desktop');
+    assert.deepEqual(agents.agents.map((a) => a.agent), ['victim'],
+      'nor is the thief an agent row — and the CONTROL is that the victim still is, '
+      + 'so this is a refusal of the alias and not of the whole migrated store');
+  } finally { cleanup(); }
 });

@@ -31,6 +31,10 @@ const MEMORY_ID_RE = /^mem-\d+-[a-z0-9]+$/;
 
 const CORE_META_KEYS = ['id', 'scope', 'learned_at', 'source'];
 
+function statIsDir(p) {
+  try { return fs.statSync(p).isDirectory(); } catch { return false; }
+}
+
 function readUnitFile(file) {
   let fd = null;
   try {
@@ -102,7 +106,9 @@ function createMemoryStore(rootDir) {
       try { entries = fs.readdirSync(rootDir, { withFileTypes: true }); }
       catch { return []; }
       return entries
-        .filter((e) => e.isDirectory() && MEMORY_AGENT_RE.test(e.name))
+        .filter((e) => (e.isDirectory()
+          || (e.isSymbolicLink() && statIsDir(path.join(rootDir, e.name))))
+          && MEMORY_AGENT_RE.test(e.name))
         .map((e) => e.name);
     },
     list(agent) {

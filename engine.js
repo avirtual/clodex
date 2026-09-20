@@ -108,6 +108,10 @@ function referencedSpillNames(pendingDir) {
   return refs;
 }
 
+function statIsDir(p) {
+  try { return fs.statSync(p).isDirectory(); } catch { return false; }
+}
+
 // Exempting parked pointers means a seat that never returns grows disk forever.
 // Deliberate: the alternative caps disk by destroying undelivered dms. If it
 // ever bites, add a `pending/` expiry — ONE policy for both lifetimes — rather
@@ -120,7 +124,8 @@ function sweepSpilledMessages(msgDir, pendingDir, maxAgeSec, now = Date.now()) {
   for (const entry of fs.readdirSync(msgDir, { withFileTypes: true })) {
     try {
       const epath = path.join(msgDir, entry.name);
-      if (entry.isDirectory()) {
+      const linkToDir = entry.isSymbolicLink() && statIsDir(epath);
+      if (entry.isDirectory() || linkToDir) {
         for (const fname of fs.readdirSync(epath)) {
           try {
             if (referenced.has(fname)) continue;
