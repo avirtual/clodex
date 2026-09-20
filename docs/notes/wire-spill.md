@@ -28,18 +28,29 @@ silently dispatches a different spec than the transcript shows.
 
 ## _resolve
 
-The placeholder is parenthesised past-tense prose with no `[agent:` and no
-`@spill:` in it, and the block's closing `[agent:end]` is swallowed with it,
-because the rewritten line sits in the model's own transcript as its own prior
-output and became a few-shot example: measured on the wirescope seat, 5 of 10
-pointer emissions were fabricated (no file behind them) after its first real
-rewrite and none before; the lead seat fabricated 11 in one day. A receipt is
-not an emittable form, so copying it fires nothing.
+The placeholder is FIRST-PERSON parenthesised past-tense prose with no
+`[agent:`, no `@spill:` and no `…` in it, and the block's closing `[agent:end]`
+is swallowed with it, because the rewritten line sits in the model's own
+transcript as its own prior output and became a few-shot example: measured on
+the wire (captures upstream of the tee, so every pointer in a response is
+model-authored), 19 fabricated pointers in 12 h across the two lead seats, 0
+resolvable, 18 of 19 copying the tee's ellipsis title shape byte-for-byte, and
+none on either seat before its first real rewrite. A "you sent …" line in the
+model's turn is Clodex addressing the model and is itself a shape it starts
+emitting; "I sent …" reads as its own note of something already done.
 
 The intent tee in `wire/proxy.js` is fed the ORIGINAL upstream chunk, not the
 spill's output, so the scanner dispatches the full body and the transcript
 placeholder carries nothing the dispatch depends on; the spill's `close()` tail
 is never an intent source.
+
+## onMimic
+
+The filter never feeds itself, so a line in ITS input matching `RECEIPT_RE` or
+`TAIL_RECEIPT_RE` was written by the model: `mimicKindOf` runs on every
+completed non-held line and on the unterminated remainder at `close()`, the
+bytes go to the client unchanged, and session-manager answers the
+`spill-mimic` event by telling the seat nothing was sent or filed.
 
 The nested-intent test is over-broad on purpose — the filter cannot know fences
 without reimplementing `fencedLines`, so it is wrong in the SAFE direction both

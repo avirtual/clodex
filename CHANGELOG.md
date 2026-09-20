@@ -12,7 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
-- Spilled intent bodies leave a one-line receipt in the transcript ("Clodex: you sent dm X — delivered in full, kept at <path>") instead of a pointer line; agents were copying the pointer shape and emitting bodiless dms and tickets.
+- Spilled intent bodies leave a one-line first-person receipt in the transcript ("I sent dm X in full; Clodex kept my text at <path>") instead of a pointer line, and intents are read from the unspilled stream; agents were copying the pointer shape and emitting bodiless dms and tickets.
 - **Scratch episodes** — a Claude seat can emit `[agent:scratch begin]`, read and reason freely, then `[agent:scratch end] <summary>`: Clodex cuts the episode out of the transcript, respawns the seat on the same session and hands the summary back as a user turn, so only the conclusion is carried and the session compacts later. Refused, never guessed: a cut that would orphan a tool call, span a compact, or drop an operator message bounces with the reason — and for that last one `[agent:scratch end replay]` cuts anyway and re-delivers each message after the summary, so a seat that gets dms all day can still close an episode without losing them.
 
 ## 5.83.4 — 2026-09-20

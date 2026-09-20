@@ -297,7 +297,7 @@ const DEFAULT_COMPACT_CONTINUATION =
 
 function spillGrammarLine(root) {
   const where = root ? `${root}/spill/<your-name>/<id>.md` : 'your registry directory, under `spill/<your-name>/<id>.md`';
-  return `- A long intent body (dm, shout, task add/respec/reject/done, context compact/clear/reload — over 800 bytes) is delivered in full and then filed under ${where}; your transcript keeps a one-line receipt naming the file, so a body is never lost and never needs re-sending. Always write the body itself: a body you did not write does not exist. On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last intent — or a reply with no intent — is filed the same way once it passes 800 bytes: what the operator must know goes inside an intent, not after it — a dm from your operator counts as typed.`;
+  return `- A long intent body (dm, shout, task add/respec/reject/done, context compact/clear/reload — over 800 bytes) is delivered in full and then filed under ${where}; your transcript keeps a one-line receipt naming the file, so a body is never lost and never needs re-sending. Always write the body itself: a body you did not write does not exist, and a receipt is something Clodex writes after delivery, never something you write. On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last intent — or a reply with no intent — is filed the same way once it passes 800 bytes: what the operator must know goes inside an intent, not after it — a dm from your operator counts as typed.`;
 }
 
 module.exports = { IPC_PROMPT, buildIpcPrompt, DEFAULT_COMPACT_CONTINUATION, spillGrammarLine };

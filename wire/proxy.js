@@ -413,6 +413,7 @@ class WireProxy extends EventEmitter {
             proseSpill,
             onSpill: (i) => this.emit('spill', { agent, reqId, ...i }),
             onBail: (i) => this.emit('spill-bail', { agent, reqId, ...i }),
+            onMimic: (i) => this.emit('spill-mimic', { agent, reqId, ...i }),
           });
         } else {
           this.emit('spill-skip', {
@@ -696,7 +697,7 @@ module.exports = { WireProxy, extractSessionId, detectSse };
 
 if (require.main === module) {
   const proxy = new WireProxy({ port: Number(process.argv[2]) || 9777 });
-  for (const ev of ['request', 'response', 'stream-start', 'stream-end', 'turn.completed', 'session', 'usage', 'proxy-error', 'tee-failure', 'spill', 'spill-bail', 'spill-skip']) {
+  for (const ev of ['request', 'response', 'stream-start', 'stream-end', 'turn.completed', 'session', 'usage', 'proxy-error', 'tee-failure', 'spill', 'spill-bail', 'spill-skip', 'spill-mimic']) {
     proxy.on(ev, (payload) => console.log(`[${ev}]`, JSON.stringify(payload)));
   }
   proxy.listen().then((port) => {

@@ -182,6 +182,8 @@ const {
   capResumeSnapshot,
 } = require('./intent-spill');
 const { spillGrammarLine } = require('./ipc-prompt');
+
+const SPILL_MIMIC_BOUNCE = '[agent] you wrote a receipt line yourself — nothing was sent or filed. Clodex writes a receipt only after it has delivered a body you wrote. If you meant to send something, emit the intent with its full text.';
 const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
@@ -978,6 +980,12 @@ function createSessionManager(deps) {
         log.info('intent', `spill ${ev.agent} ${ev.verb} @spill:${ev.id} (${ev.bytes} B)`);
       });
       wire.on('spill-bail', (ev) => this._shadowLog({ type: 'wire-spill-bail', ...ev }));
+      wire.on('spill-mimic', (ev) => {
+        this._shadowLog({ type: 'wire-spill-mimic', ...ev });
+        log.warn('intent', `${ev.agent} wrote a ${ev.kind} receipt line itself — nothing was sent or filed`);
+        const s = this.sessions.get(ev.agent);
+        if (s && s.agentType) this._injectText(s, SPILL_MIMIC_BOUNCE, { parkable: true });
+      });
       wire.on('spill-skip', (ev) => this._shadowLog({ type: 'wire-spill-skip', ...ev }));
       await wire.listen();
       this._shadow = new ShadowDiff((rec) => this._shadowLog(rec));

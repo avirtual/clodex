@@ -21,7 +21,8 @@ const ID_RE = /^[0-9a-f]{16}$/;
 const AGENT_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const POINTER_RE = /^\s*@spill:([0-9a-f]{16})\s*$/;
 const TITLED_POINTER_RE = /^([^\n]{0,79}[^\s\n]) @spill:([0-9a-f]{16})\s*$/;
-const RECEIPT_RE = /^\(Clodex: you sent (\S+(?: \S+)*?)(?: "[^"]*")? — delivered in full, \d+ B; your text is kept at (\/\S+\.md)\)$/;
+const RECEIPT_RE = /^\(I sent (\S+(?: \S+)*?)(?: — "[^"]*")? in full, \d+ B; Clodex kept my text at (\/\S+\.md)\.\)$/;
+const TAIL_RECEIPT_RE = /^\(I wrote \d+ B of prose after my last intent; it reached the operator's log and Clodex kept it at \/\S+\.md\.\)$/;
 
 function verbKeyOf(intent) {
   if (!intent || typeof intent.type !== 'string') return null;
@@ -116,6 +117,14 @@ function pointerText(id) {
   return `@spill:${id}`;
 }
 
+function mimicKindOf(line) {
+  if (typeof line !== 'string') return null;
+  const t = line.trim();
+  if (RECEIPT_RE.test(t)) return 'intent';
+  if (TAIL_RECEIPT_RE.test(t)) return 'prose';
+  return null;
+}
+
 function receiptOf(line) {
   if (typeof line !== 'string') return null;
   const m = RECEIPT_RE.exec(line.trim());
@@ -160,6 +169,7 @@ module.exports = {
   POINTER_RE,
   TITLED_POINTER_RE,
   RECEIPT_RE,
+  TAIL_RECEIPT_RE,
   verbKeyOf,
   isSpillVerb,
   validAgent,
@@ -171,6 +181,7 @@ module.exports = {
   resolveSpill,
   pointerOf,
   pointerText,
+  mimicKindOf,
   receiptOf,
   resolveReceipt,
   capResumeSnapshot,

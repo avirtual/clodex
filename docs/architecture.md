@@ -870,17 +870,20 @@ accept teardown removes.
   receipt grammar (`RECEIPT_RE`, `receiptOf`, `resolveReceipt`) and the legacy
   `@spill:<id>` pointer parser, so the tee, the resolver and the injection half
   cannot drift. The listed verbs are task add/respec/reject/done, dm, shout and
-  context compact/clear/reload; the transcript keeps a one-line past-tense
-  receipt — `(Clodex: you sent task add hand "title" — delivered in full, N B;
-  your text is kept at <path>)`, the title capped by `tickets-store.ticketTitle`
-  — and its closing `[agent:end]` is swallowed, so nothing an agent could copy
-  as an intent shape is left in its own prior output. The intent tee reads the
-  UNSPILLED upstream bytes, so the wire path dispatches the full body and never
-  a pointer; only the client transcript sees the receipt. A non-wire scan
-  (`_scanJsonlText`, sentinel recovery) expands a receipt line back into the
-  intent from the named file, after confining the path to the sender's own
-  spill dir — a copied or typed receipt fails confinement or the file check and
-  bounces with the same note as a typed pointer.
+  context compact/clear/reload; the transcript keeps a one-line first-person
+  past-tense receipt — `(I sent task add hand — "title" in full, N B; Clodex
+  kept my text at <path>.)`, the title capped by `tickets-store.ticketTitle`
+  minus its ellipsis — and its closing `[agent:end]` is swallowed, so nothing an
+  agent could copy as an intent shape is left in its own prior output. The
+  intent tee reads the UNSPILLED upstream bytes, so the wire path dispatches the
+  full body and never a pointer; only the client transcript sees the receipt. A
+  non-wire scan (`_scanJsonlText`, sentinel recovery) expands a receipt line
+  back into the intent from the named file, after confining the path to the
+  sender's own spill dir — a copied or typed receipt fails confinement or the
+  file check and bounces with the same note as a typed pointer. The filter also
+  watches the RAW stream it is fed for a receipt-shaped line (`mimicKindOf`):
+  upstream of its own rewrite, such a line is model-authored by construction,
+  so it raises `spill-mimic` and the seat is told nothing was sent.
   `id = sha256(body)[:16]`, path `<root>/spill/<agent>/<id>.md`,
   0700 dir / 0600 file, an existing file left alone. Pure leaf (`fs`, `path`,
   `crypto`, plus `path-confine` and `fs-util`). Every failure returns null or an
@@ -898,9 +901,9 @@ accept teardown removes.
   S-G2 extends the same tee one level up: on a turn Clodex INJECTED (the seat's
   `lastSubmitInjected`, read once per request through `registerAgent`'s
   `turnInjected`), the seat's trailing prose after its last intent — or a whole
-  reply with no intent — spills to a one-line receipt (`(Clodex: the N B of
-  prose that followed reached the operator's log; kept at <path>)`) under the
-  same floor and writer, while a typed turn is never touched.
+  reply with no intent — spills to a one-line receipt (`(I wrote N B of prose
+  after my last intent; it reached the operator's log and Clodex kept it at
+  <path>.)`) under the same floor and writer, while a typed turn is never touched.
 - **path-confine.js** — one caller-supplied name, one path segment, POSITIVELY
   confined to a directory Clodex owns. Positive because a charset regex is not
   containment: `.` and `..` pass `/^[a-zA-Z0-9._-]{1,64}$/`. Pure leaf, no I/O.

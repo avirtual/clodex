@@ -31,6 +31,29 @@ function root() {
   return ROOT;
 }
 
+const MARK = 'Clodex kept ';
+const KEPT_RE = /Clodex kept (?:my text|it) at \S+\/([0-9a-f]{16})\.md\.\)/;
+
+function idOf(s) {
+  const m = KEPT_RE.exec(typeof s === 'string' ? s : s.toString('utf8'));
+  return m ? m[1] : null;
+}
+
+function keptPath(id, r = root()) {
+  return path.join(r, 'spill', 'wirescope', `${id}.md`);
+}
+
+function receipt(words, body, id, title) {
+  const t = title === undefined ? '' : ` — "${title}"`;
+  return `(I sent ${words}${t} in full, ${Buffer.byteLength(body, 'utf8')} B; `
+    + `Clodex kept my text at ${keptPath(id)}.)\n`;
+}
+
+function proseReceipt(text, id, r = root()) {
+  return `(I wrote ${Buffer.byteLength(text, 'utf8')} B of prose after my last intent; it reached the operator's log `
+    + `and Clodex kept it at ${keptPath(id, r)}.)\n`;
+}
+
 function ev(type, data) {
   return Buffer.from(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`, 'utf8');
 }
@@ -89,12 +112,12 @@ test('a thinking block carrying an intent is never touched; the text block besid
   for (const cs of [1, 13, 997, THINKING_STREAM.length]) {
     const { out, tee } = drive(THINKING_STREAM, cs);
     assert.ok(textOf(out, 'thinking_delta', 'thinking').includes(BIG), `thinking intact @cs=${cs}`);
-    assert.ok(textOf(out).includes('@spill:'), `text rewritten @cs=${cs}`);
+    assert.ok(textOf(out).includes(MARK), `text rewritten @cs=${cs}`);
     assert.ok(!textOf(out).includes(BIG), `body off the wire @cs=${cs}`);
     assert.equal(out.toString('utf8').match(/event: content_block_start/g).length, 2);
     assert.equal(out.toString('utf8').match(/event: content_block_stop/g).length, 2);
     assert.equal(out.toString('utf8').match(/event: message_stop/g).length, 1);
-    assert.equal(tee.fired, 1, `one pointer @cs=${cs}`);
+    assert.equal(tee.fired, 1, `one receipt @cs=${cs}`);
   }
 });
 
@@ -164,8 +187,8 @@ test('a dm body spills through the tee, and the same stream with dm unlisted is 
   for (const cs of [1, 43, 997, DM_STREAM.length]) {
     const { out, tee } = drive(DM_STREAM, cs, { verbs: [...VERBS, 'dm'] });
     const seen = textOf(out);
-    const id = seen.split('@spill:')[1].split('\n')[0];
-    assert.equal(seen, `On it.\n[agent:dm bob] @spill:${id}\n[agent:end]\n`, `@cs=${cs}`);
+    const id = idOf(seen);
+    assert.equal(seen, `On it.\n${receipt('dm bob', BIG, id)}`, `@cs=${cs}`);
     assert.equal(fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${id}.md`), 'utf8'), BIG,
       `@cs=${cs}: the recipient's copy is on disk in full`);
     assert.equal(tee.fired, 1, `@cs=${cs}`);
@@ -197,7 +220,7 @@ test('pings keep flowing while a body is held, in order, and usage bytes are unt
   const { out } = drive(stream, 13);
   const s = out.toString('utf8');
   assert.equal(s.match(/event: ping/g).length, 2, 'both pings forwarded');
-  assert.ok(s.indexOf('event: ping') < s.indexOf('@spill:'), 'pings arrive before the pointer');
+  assert.ok(s.indexOf('event: ping') < s.indexOf(MARK), 'pings arrive before the receipt');
   assert.ok(s.includes(usage.toString('utf8')), 'usage event byte-identical');
   assert.ok(!s.includes(BIG));
 });
@@ -212,7 +235,7 @@ test('content_block_stop flushes a held, unterminated body BEFORE the stop event
   const { out, tee } = drive(stream, 29);
   const s = out.toString('utf8');
   assert.ok(textOf(out).includes(BIG), 'the held original is emitted');
-  assert.ok(!s.includes('@spill:'));
+  assert.ok(!s.includes(MARK));
   assert.equal(tee.fired, 0);
   assert.ok(s.indexOf(BIG.slice(0, 40)) < s.indexOf('event: content_block_stop'),
     'flushed before the stop');
@@ -264,7 +287,7 @@ test('an onSpill listener that throws cannot cost the client its text', () => {
     });
     const out = Buffer.concat([tee.feed(stream), tee.close()]);
     const seen = textOf(out);
-    assert.ok(seen.includes('@spill:'), `@cs=${cs}: the spill still happened`);
+    assert.ok(seen.includes(MARK), `@cs=${cs}: the spill still happened`);
     assert.ok(seen.includes('After.'), `@cs=${cs}: the prose after the body survives`);
     assert.equal(tee.fired, 1, `@cs=${cs}`);
     assert.equal(tee.latched, false,
@@ -305,8 +328,7 @@ test('an observer fed the OUTPUT bills exactly as one fed the INPUT', () => {
   const { out, tee } = drive(withUsage, 17);
   assert.equal(tee.fired, 1, 'the run under test actually spilled');
   assert.deepEqual(collect(out), collect(withUsage),
-    'proxy.js feeds the observer the bytes the CLIENT got, which is only safe because no '
-    + 'billing-bearing event is ever rewritten');
+    'no billing-bearing event is ever rewritten, so a collector on either side of the spill agrees');
 });
 
 test('the spilled file equals the body the REAL intent scanner would have produced', () => {
@@ -323,19 +345,18 @@ test('the spilled file equals the body the REAL intent scanner would have produc
   for (const cs of [1, 43, 1024, stream.length]) {
     const { out } = drive(stream, cs);
     const seen = textOf(out);
-    const id = /@spill:([0-9a-f]{16})/.exec(seen)[1];
+    const id = idOf(seen);
     const onDisk = fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${id}.md`), 'utf8');
     assert.equal(onDisk, scannerBody(original),
       `@cs=${cs}: S-B substitutes this file for the body the UNSPILLED path would have carried, so `
       + 'a one-byte divergence from the repo\'s own delimiter silently dispatches a different spec');
     assert.equal(seen,
-      `Here you go.\n[agent:task add t42 start] first line of the spec @spill:${id}\n[agent:end]\nDone.\n`,
-      `@cs=${cs}: the client sees the head line, the body's first line, the pointer, the terminator and `
-      + 'the prose around them');
-    assert.equal(SCANNER._extractIntents(seen)[0].body.replace(/^\n/, ''),
-      `first line of the spec @spill:${id}`,
-      `@cs=${cs}: and the REWRITTEN text re-parses to one intent whose body is the pointer line — `
-      + 'a title the scanner mangled would reach _handleIntent as a spec nobody wrote');
+      `Here you go.\n${receipt('task add t42 start', scannerBody(original), id, 'first line of the spec')}Done.\n`,
+      `@cs=${cs}: the client sees the receipt with the body's first line, and the prose around it; `
+      + 'the head line and the terminator are gone');
+    assert.deepEqual(SCANNER._extractIntents(seen), [],
+      `@cs=${cs}: and the REWRITTEN text re-parses to NO intent — the transcript carries nothing `
+      + 'the seat could copy as an emission');
   }
 });
 
@@ -355,9 +376,9 @@ test('scanner equivalence holds for the body shapes the delimiter treats special
     ]);
     const { out } = drive(stream, 43);
     const seen = textOf(out);
-    const m = /@spill:([0-9a-f]{16})/.exec(seen);
-    assert.ok(m, `${label}: spilled`);
-    const onDisk = fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${m[1]}.md`), 'utf8');
+    const id = idOf(seen);
+    assert.ok(id, `${label}: spilled`);
+    const onDisk = fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${id}.md`), 'utf8');
     assert.equal(onDisk, scannerBody(original), label);
   }
 });
@@ -369,7 +390,7 @@ test('an invalid agent streams verbatim end to end', () => {
 });
 
 
-test('proseSpill: the pointer delta precedes content_block_stop, and the stop is byte-identical', () => {
+test('proseSpill: the receipt delta precedes content_block_stop, and the stop is byte-identical', () => {
   const stop = ev('content_block_stop', { type: 'content_block_stop', index: 0 });
   const stream = Buffer.concat([
     ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
@@ -384,11 +405,11 @@ test('proseSpill: the pointer delta precedes content_block_stop, and the stop is
 
   assert.equal(tee.fired, 1);
   assert.ok(!s.includes(BIG), 'the prose is off the wire');
-  assert.ok(s.indexOf('@spill:') < s.indexOf('event: content_block_stop'),
-    'held text cannot outlive its block — the pointer is emitted before the stop');
+  assert.ok(s.indexOf(MARK) < s.indexOf('event: content_block_stop'),
+    'held text cannot outlive its block — the receipt is emitted before the stop');
   assert.ok(s.includes(stop.toString('utf8')), 'the stop frame is byte-identical');
-  assert.equal(textOf(out), `@spill:${/@spill:([0-9a-f]{16})/.exec(s)[1]}\n`,
-    'and the block carries exactly the pointer line');
+  assert.equal(textOf(out), proseReceipt(`Acknowledged.\n${BIG}\n`, idOf(s)),
+    'and the block carries exactly the receipt line');
 });
 
 test('proseSpill: a thinking block is never touched', () => {
@@ -489,7 +510,7 @@ test('proseSpill: only the text AFTER the last non-text block is the tail', () =
     assert.ok(textOf(out).startsWith(`${NARRATION}\n`),
       `@cs=${cs}: the first text block is narration and survives verbatim`);
     assert.ok(!s.includes(BIG), `@cs=${cs}: the second is the sign-off and goes to disk`);
-    const id = /@spill:([0-9a-f]{16})/.exec(s)[1];
+    const id = idOf(s);
     assert.equal(fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${id}.md`), 'utf8'),
       `${BIG}\n`, `@cs=${cs}: and the file holds exactly those 900 bytes`);
     assert.deepEqual(typesOf(out), [
@@ -497,17 +518,17 @@ test('proseSpill: only the text AFTER the last non-text block is the tail', () =
       'content_block_start', 'content_block_stop',
       'content_block_start', 'content_block_delta', 'content_block_stop',
       'message_delta', 'message_stop',
-    ], `@cs=${cs}: the pointer delta lands INSIDE the last text block — the held stop frame and `
+    ], `@cs=${cs}: the receipt delta lands INSIDE the last text block — the held stop frame and `
       + 'everything after it are released in their original order');
   }
 });
 
-test('proseSpill: a lone text block still spills, with the stop frames after the pointer', () => {
+test('proseSpill: a lone text block still spills, with the stop frames after the receipt', () => {
   for (const cs of [1, 23, LONE_TEXT.length]) {
     const { out, tee } = drive(LONE_TEXT, cs, { proseSpill: true });
     assert.equal(tee.fired, 1, `@cs=${cs}`);
-    const id = /@spill:([0-9a-f]{16})/.exec(out.toString('utf8'))[1];
-    assert.equal(textOf(out), `@spill:${id}\n`, `@cs=${cs}`);
+    const id = idOf(out);
+    assert.equal(textOf(out), proseReceipt(fs.readFileSync(keptPath(id), 'utf8'), id), `@cs=${cs}`);
     assert.deepEqual(typesOf(out),
       ['content_block_start', 'content_block_delta', 'content_block_stop', 'message_stop'],
       `@cs=${cs}: holding the stop must not reorder or drop it`);
@@ -519,8 +540,8 @@ test('proseSpill: a thinking block PRECEDES rather than follows, so the text aft
     const { out, tee } = drive(THINK_THEN_TEXT, cs, { proseSpill: true });
     assert.equal(tee.fired, 1,
       `@cs=${cs}: a non-text block flushes only a tail already standing, and there was none`);
-    const id = /@spill:([0-9a-f]{16})/.exec(out.toString('utf8'))[1];
-    assert.equal(textOf(out), `@spill:${id}\n`, `@cs=${cs}`);
+    const id = idOf(out);
+    assert.equal(textOf(out), proseReceipt(fs.readFileSync(keptPath(id), 'utf8'), id), `@cs=${cs}`);
   }
 });
 
@@ -596,7 +617,7 @@ test('proseSpill: pings pass a held stop, so a pause after a block boundary is n
   }
 });
 
-test('proseSpill: a ping passes the held stop; message_delta stays behind the pointer', () => {
+test('proseSpill: a ping passes the held stop; message_delta stays behind the receipt', () => {
   const usage = ev('message_delta', {
     type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 42 },
   });
@@ -610,8 +631,8 @@ test('proseSpill: a ping passes the held stop; message_delta stays behind the po
     assert.deepEqual(typesOf(out), [
       'content_block_start', 'content_block_delta', 'content_block_stop',
       'message_delta', 'message_stop',
-    ], `@cs=${cs}: message_delta must follow the pointer delta — it closes the message the `
-      + 'pointer is part of');
+    ], `@cs=${cs}: message_delta must follow the receipt delta — it closes the message the `
+      + 'receipt is part of');
   }
   for (const cs of [1, 23, 997, pinged.length]) {
     const { out, tee } = drive(pinged, cs, { proseSpill: true });
@@ -621,7 +642,7 @@ test('proseSpill: a ping passes the held stop; message_delta stays behind the po
       'content_block_start', 'ping', 'content_block_delta', 'content_block_stop',
       'message_delta', 'message_stop',
     ], `@cs=${cs}: only the ping is let past the hold`);
-    assert.ok(s.indexOf('event: ping') < s.indexOf('@spill:'), `@cs=${cs}`);
+    assert.ok(s.indexOf('event: ping') < s.indexOf(MARK), `@cs=${cs}`);
   }
 });
 
@@ -636,23 +657,23 @@ test('proseSpill: a fire AT the stop is flushed there, not left behind the hold'
     stopAt(0),
   ]));
   const s = first.toString('utf8');
-  const m = /@spill:([0-9a-f]{16})/.exec(s);
+  const m = KEPT_RE.exec(s);
   assert.ok(m, 'the terminator is the block\'s last unterminated line, so endBlock resolves it — '
     + 'and the stop branch flushes on that fire the way the delta branch does');
   assert.deepEqual(typesOf(first),
     ['content_block_start', 'content_block_delta', 'content_block_stop'],
-    'the pointer is forwarded at the stop, ahead of every later frame');
+    'the receipt is forwarded at the stop, ahead of every later frame');
   assert.equal(tee.fired, 1);
 
   const second = tee.feed(Buffer.concat([start(1, 'tool_use'), stopAt(1)]));
-  assert.ok(!second.toString('utf8').includes('@spill:'), 'no second pointer at the next block');
+  assert.ok(!second.toString('utf8').includes(MARK), 'no second receipt at the next block');
   const rest = Buffer.concat([second, tee.feed(ev('message_stop', { type: 'message_stop' })), tee.close()]);
   assert.deepEqual(typesOf(rest),
     ['content_block_start', 'content_block_stop', 'message_stop']);
   assert.equal(tee.fired, 1);
   const dir = path.join(freshRoot, 'spill', 'wirescope');
   assert.deepEqual(fs.readdirSync(dir), [`${m[1]}.md`],
-    'exactly one file: a pointer stranded in heldOut would be dropped on a panic and orphan it');
+    'exactly one file: a receipt stranded in heldOut would be dropped on a panic and orphan it');
   assert.equal(fs.readFileSync(path.join(dir, `${m[1]}.md`), 'utf8'), BIG);
 });
 

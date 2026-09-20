@@ -65,10 +65,12 @@ is resolved against the SENDER's own directory.
 
 ## RECEIPT_RE
 
-The tee's current placeholder. Recognised only on the non-wire scans (the
+The tee's current placeholder, `(I sent <words> — "<title>" in full, N B;
+Clodex kept my text at <path>.)`. Recognised only on the non-wire scans (the
 sentinel's recovery replay, `_scanJsonlText`): the wire tee reads the unspilled
-stream, so a receipt in wire text can only have been typed. The verb words must
-name a `SPILL_VERBS` key or the line is prose.
+stream, so a receipt in wire text can only have been typed, and `mimicKindOf`
+is what the spill filter runs on its input to catch exactly that. The verb
+words must name a `SPILL_VERBS` key or the line is prose.
 
 ## resolveReceipt
 
