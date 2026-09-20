@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Long messages between seats (`dm`) and ticket reports (`task done`) now spill to a file the same way long ticket specs do: the sender's transcript keeps a one-line pointer instead of carrying the whole text on every later turn, and the recipient still gets it in full. Same 800-byte floor, same Settings switch.
+
 ## 5.83.2 — 2026-09-20
 
 - Move to Peer… now checks the far folder before anything moves: a path that cannot exist on the peer (its parent folder is missing, or it points into Clodex's own data) is refused in the dialog with the seat still running, and when the peer runs a different OS the folder is pre-filled with its home directory swapped in.

@@ -12,9 +12,9 @@ const SPILL_MAX_BYTES = 262144;
 const SNAPSHOT_MAX_BYTES = 4096;
 
 const SPILL_VERBS = new Set([
-  'task.add', 'task.respec', 'task.reject',
+  'task.add', 'task.respec', 'task.reject', 'task.done',
   'context.compact', 'context.clear', 'context.reload',
-  'shout',
+  'shout', 'dm',
 ]);
 
 const ID_RE = /^[0-9a-f]{16}$/;

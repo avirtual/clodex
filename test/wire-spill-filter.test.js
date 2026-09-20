@@ -13,7 +13,7 @@ const { pointerOf } = require('../intent-spill');
 
 const BIG = 'z'.repeat(900);
 const SMALL = 'y'.repeat(50);
-const VERBS = ['task.add', 'task.respec', 'context.compact', 'shout'];
+const VERBS = ['task.add', 'task.respec', 'context.compact', 'shout', 'dm', 'task.done'];
 const SIZES = [1, 3, 7, 17, 64, 1e6];
 
 let ROOT = null;
@@ -52,7 +52,7 @@ test('row 1-3: traffic that does not spill is byte-identical at every chunk size
     'prose with brackets': 'See [1], [agent], [agentx:foo]\ndone\n',
     'no trailing newline': 'abc',
     'bare terminator': '[agent:end]\n',
-    'unlisted verb (dm)': `[agent:dm bob] ${BIG}\n[agent:end]\n`,
+    'unlisted verb (remind)': `[agent:remind in 5m] ${BIG}\n[agent:end]\n`,
     'below threshold': `[agent:task add t1] ${SMALL}\n[agent:end]\n`,
   };
   for (const [name, t] of Object.entries(cases)) {
@@ -169,11 +169,78 @@ test('shout spills like a spec: an operator note is read in the inbox and can ru
   assert.ok(out.startsWith('[agent:shout] DEPLOY blocked on the signing cert @spill:'));
 });
 
-test('memory remember and task done stay unlisted, so the seat keeps seeing what it wrote', () => {
-  for (const head of ['memory remember', 'task done t42', 'dm bob']) {
+test('memory remember, remind and team role-add stay unlisted, so the seat keeps seeing what it wrote', () => {
+  for (const head of ['memory remember', 'remind in 5m', 'team role-add hand']) {
     const T = `[agent:${head}] ${BIG}\n[agent:end]\n`;
     assert.equal(run(T).out, T, `${head} must stream verbatim`);
   }
+});
+
+test('a dm body spills: the head line rides out whole and only the message becomes a pointer', () => {
+  const seen = [];
+  const T = `[agent:dm bob]\n${BIG}\n[agent:end]\n`;
+  const { out, filter } = run(T, { onSpill: (i) => seen.push(i) });
+  const { id, body } = diskOf(out);
+  assert.equal(out, `[agent:dm bob] @spill:${id}\n[agent:end]\n`);
+  assert.equal(body, BIG, 'the file holds the 900 bytes the recipient still gets in full');
+  assert.equal(filter.fired, 1);
+  assert.deepStrictEqual(seen, [{ verb: 'dm', id, bytes: 900 }],
+    "the one-word key wins before `dm.<target>` is tried — m[2] of a dm head is a TARGET");
+});
+
+test('a dm head\'s TARGET and urgent flag ride the head line, never the spilled body', () => {
+  const seen = [];
+  for (const head of ['dm clodex-hand-1029 urgent', 'dm bob@peer', 'dm bob urgent']) {
+    seen.length = 0;
+    const { out } = run(`[agent:${head}]\n${BIG}\n[agent:end]\n`, { onSpill: (i) => seen.push(i) });
+    const { id, body } = diskOf(out);
+    assert.equal(out, `[agent:${head}] @spill:${id}\n[agent:end]\n`,
+      `${head}: head line byte-identical — a lost target or flag misroutes the message`);
+    assert.equal(body, BIG, head);
+    assert.deepStrictEqual(seen, [{ verb: 'dm', id, bytes: 900 }],
+      `${head}: keyed as plain dm, not as dm.<second token>`);
+  }
+  const { out } = run(`[agent:dm clodex-hand-1029 urgent]\n${BIG}\n[agent:end]\n`);
+  assert.ok(out.split('\n')[0].includes('urgent'),
+    'ENTER: the flag really is on the head line under test, or the assertion above is vacuous');
+});
+
+test('a dm body under the floor streams verbatim, flag and all', () => {
+  for (const head of ['dm bob', 'dm clodex-hand-1029 urgent']) {
+    const T = `[agent:${head}]\n${'y'.repeat(200)}\n[agent:end]\n`;
+    for (const cs of SIZES) assert.equal(run(T, { cs }).out, T, `${head} @cs=${cs}`);
+  }
+});
+
+test('a task done report spills, keyed task.done — the two-word form still wins for task', () => {
+  const seen = [];
+  const { out, filter } = run(`[agent:task done t42]\n${BIG}\n[agent:end]\n`,
+    { onSpill: (i) => seen.push(i) });
+  const { id, body } = diskOf(out);
+  assert.equal(out, `[agent:task done t42] @spill:${id}\n[agent:end]\n`);
+  assert.equal(body, BIG);
+  assert.equal(filter.fired, 1);
+  assert.deepStrictEqual(seen, [{ verb: 'task.done', id, bytes: 900 }],
+    '`task` alone is not in the set, so the fallback derives the two-word key');
+  const add = run(`[agent:task add hand start]\n${BIG}\n[agent:end]\n`, { onSpill: (i) => seen.push(i) });
+  assert.ok(add.out.startsWith('[agent:task add hand start] @spill:'), 'task.add unchanged');
+});
+
+test('an unheld verb still goes out through foreignBody, not the new one-word key path', () => {
+  assert.ok(!VERBS.includes('remind'),
+    'ENTER: remind must be absent from the set, or this proves nothing about unheld verbs');
+  const T = `[agent:remind in 5m] ${BIG}\n`;
+  for (const cs of SIZES) assert.equal(run(T, { cs }).out, T, `@cs=${cs}`);
+});
+
+test('proseSpill on: an under-floor dm body and a 900-byte tail are two separate decisions', () => {
+  const T = `[agent:dm bob] ${SMALL}\n[agent:end]\n${'p'.repeat(899)}\n`;
+  const { out, filter } = run(T, { proseSpill: true });
+  const { id, body } = diskOf(out);
+  assert.equal(out, `[agent:dm bob] ${SMALL}\n[agent:end]\n@spill:${id}\n`,
+    'the held body streams as written because it is under the floor; the tail is what spills');
+  assert.equal(body, `${'p'.repeat(899)}\n`);
+  assert.equal(filter.fired, 1, 'one fire: the two mechanisms do not merge into one file');
 });
 
 test('row 6 (DEVIATION): the head-line rest is TRIMMED, as _extractIntents trims it', () => {
@@ -222,9 +289,9 @@ test('the cap also bounds an UNTERMINATED head line, before the hold ever starts
     assert.equal(bails.length, 1, `@cs=${cs}`);
     assert.equal(bails[0].reason, 'cap', `@cs=${cs}`);
   }
-  const dm = `[agent:dm bob] ${'q'.repeat(3000)}`;
-  assert.equal(run(dm, { cs: 64, maxBytes: 500 }).out, dm,
-    'a long dm line can never spill at all, so holding it back buys nothing');
+  const unlisted = `[agent:remind in 5m] ${'q'.repeat(3000)}`;
+  assert.equal(run(unlisted, { cs: 64, maxBytes: 500 }).out, unlisted,
+    'a long line under an unlisted verb can never spill at all, so holding it back buys nothing');
 });
 
 test('row 9: a head line with nothing after the `]` is reconstructed byte-exactly', () => {
@@ -315,7 +382,7 @@ test('prose streams with no added latency: a partial line is held only while it 
   assert.equal(f.feed(' and more'), ' and more');
   const g = new SpillFilter({ agent: 'wirescope', root: root(), verbs: VERBS });
   assert.equal(g.feed('[age'), '', 'a possible opener is withheld');
-  assert.equal(g.feed('nt:dm bob] hi\n'), '[agent:dm bob] hi\n');
+  assert.equal(g.feed('nt:remind in 5m] hi\n'), '[agent:remind in 5m] hi\n');
 });
 
 
@@ -390,10 +457,12 @@ test("proseSpill on: onSpill carries verb 'prose' and the tail's byte count", ()
 });
 
 test('proseSpill on: an UNLISTED verb keeps its whole body, tail spill and all', () => {
-  const T = `[agent:dm bob] ${PROSE}[agent:end]\n`;
+  const T = `[agent:remind in 5m] ${PROSE}[agent:end]\n`;
+  assert.ok(!VERBS.includes('remind'),
+    'ENTER: the fixture verb must really be unlisted, or this subject proves nothing');
   assert.equal(runProse(T).out, T,
-    'a dm is not a spill verb, so the filter never holds it — unguarded, its body would fall '
-    + 'into the tail and the message would leave as a pointer its recipient cannot read');
+    'remind is not a spill verb, so the filter never holds it — unguarded, its body would fall '
+    + 'into the tail and the reminder would fire carrying a pointer');
 });
 
 test('proseSpill on: a listed body still spills, and its own tail spills separately', () => {

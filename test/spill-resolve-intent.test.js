@@ -21,6 +21,7 @@ function mkH(overrides = {}) {
   const tasks = [];
   const contexts = [];
   const dms = [];
+  const reminds = [];
   const inbox = [];
   const entry = overrides.entry === undefined ? null : overrides.entry;
   delete overrides.entry;
@@ -44,13 +45,14 @@ function mkH(overrides = {}) {
   m._raiseNote = (from, body) => notes.push({ from, body });
   m._handleTask = (s, intent) => tasks.push(intent);
   m._handleContextIntent = (s, sub, body) => contexts.push({ sub, body });
+  m._handleRemindIntent = (s, spec, body) => reminds.push({ spec, body });
   m._gatedDeliver = (to, from, body) => {
     dms.push({ to, from, body });
     return { parked: false, held: false, superseded: null };
   };
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', workspaceId: 'ws1' });
   m.sessions.set('bob', { name: 'bob', agentType: 'claude', workspaceId: 'ws1' });
-  return { m, root, injected, broadcasts, errors, notes, tasks, contexts, dms, inbox };
+  return { m, root, injected, broadcasts, errors, notes, tasks, contexts, dms, reminds, inbox };
 }
 
 test('the REAL _handleIntent substitutes a whole-body pointer before dispatch, which is the only reason every dispatch path gets it', async () => {
@@ -121,8 +123,8 @@ test('shout is a spill verb: the operator inbox gets the FILE body, never the po
     'nothing bounced back at the seat: the body was there, it just arrived as a pointer');
 });
 
-test('every spill verb resolves: task add/respec/reject, shout and context compact/clear/reload', async () => {
-  for (const [type, sub] of [['task', 'add'], ['task', 'respec'], ['task', 'reject']]) {
+test('every spill verb resolves: task add/respec/reject/done, dm, shout and context compact/clear/reload', async () => {
+  for (const [type, sub] of [['task', 'add'], ['task', 'respec'], ['task', 'reject'], ['task', 'done']]) {
     const h = mkH();
     const id = writeSpill(h.root, 'lead', BIG);
     await h.m._handleIntent('lead', { type, sub, body: `@spill:${id}` });
@@ -139,28 +141,75 @@ test('every spill verb resolves: task add/respec/reject, shout and context compa
   const id = writeSpill(h.root, 'lead', BIG);
   await h.m._handleIntent('lead', { type: 'shout', body: `@spill:${id}` });
   assert.deepStrictEqual(h.inbox.map((r) => r.body), [BIG], 'shout resolved');
+
+  const d = mkH();
+  const did = writeSpill(d.root, 'lead', BIG);
+  await d.m._handleIntent('lead', { type: 'dm', target: 'bob', body: `@spill:${did}` });
+  assert.deepStrictEqual(d.dms, [{ to: 'bob', from: 'lead', body: BIG }], 'dm resolved');
 });
 
-test('memory remember and task done are not spill verbs, so a pointer in one is the text it is', async () => {
-  for (const intent of [{ type: 'memory', sub: 'remember' }, { type: 'task', sub: 'done' }]) {
-    const h = mkH();
-    const memos = [];
-    h.m._handleMemoryIntent = (s, sub, body) => memos.push({ sub, body });
-    const id = writeSpill(h.root, 'lead', BIG);
-    await h.m._handleIntent('lead', { ...intent, body: `@spill:${id}` });
-    const seen = intent.type === 'memory' ? memos[0].body : h.tasks[0].body;
-    assert.strictEqual(seen, `@spill:${id}`,
-      `${intent.type}.${intent.sub}: a memo the seat cannot see is a memo it did not make`);
-  }
+test('memory remember is not a spill verb, so a pointer in one is the text it is', async () => {
+  const h = mkH();
+  const memos = [];
+  h.m._handleMemoryIntent = (s, sub, body) => memos.push({ sub, body });
+  const id = writeSpill(h.root, 'lead', BIG);
+  await h.m._handleIntent('lead', { type: 'memory', sub: 'remember', body: `@spill:${id}` });
+  assert.strictEqual(memos[0].body, `@spill:${id}`,
+    'a memo the seat cannot see is a memo it did not make');
 });
 
 test('a non-spill verb is never inspected, which is what makes a cross-seat read inexpressible', async () => {
   const h = mkH();
   const id = writeSpill(h.root, 'lead', BIG);
+  await h.m._handleIntent('lead', { type: 'remind', spec: 'in 5m', body: `@spill:${id}` });
+  assert.deepStrictEqual(h.reminds, [{ spec: 'in 5m', body: `@spill:${id}` }],
+    "a peer's pointer pasted into an unheld verb is used as the text it is; the receiver copying it "
+    + "into its OWN intent would resolve against the RECEIVER's directory and miss");
+});
+
+test('a dm resolves BEFORE routing, so the recipient is injected the full message', async () => {
+  const h = mkH({ shouldHoldDm: require('../proxy-util').shouldHoldDm });
+  delete h.m._gatedDeliver;
+  const bob = h.m.sessions.get('bob');
+  bob.activityState = 'thinking';
+  const id = writeSpill(h.root, 'lead', BIG);
+
+  await h.m._handleIntent('lead', { type: 'dm', target: 'bob', body: `first line @spill:${id}` });
+
+  assert.strictEqual(h.injected.length, 1, 'exactly one delivery, and no bounce');
+  assert.ok(h.injected[0].text.includes(BIG),
+    'the REAL delivery path carries the file body: the resolve sits above `case \'dm\'`, so '
+    + `_deliverMessage never sees a pointer. Got: ${JSON.stringify(h.injected[0].text.slice(0, 120))}`);
+  assert.ok(!h.injected[0].text.includes(`@spill:${id}`),
+    'and no pointer survives into the recipient\'s transcript — it would resolve in the wrong dir');
+});
+
+test('a task done report resolves before the ticket handler, which is what the lead reads', async () => {
+  const h = mkH();
+  const id = writeSpill(h.root, 'lead', BIG);
+
+  await h.m._handleIntent('lead', { type: 'task', sub: 'done', id: 't1', body: `@spill:${id}` });
+
+  assert.strictEqual(h.tasks.length, 1, 'the close still dispatched');
+  assert.strictEqual(h.tasks[0].body, BIG,
+    'the report arrives whole at the ticket store; a 23-byte pointer there is a closed ticket '
+    + 'whose report nobody can read');
+  assert.deepStrictEqual(h.tasks[0].spill, { id, path: spillPathFor(h.root, 'lead', id) });
+});
+
+test('a dm whose pointer file is gone BOUNCES rather than delivering the pointer text', async () => {
+  const h = mkH();
+  const id = writeSpill(h.root, 'lead', BIG);
+  fs.rmSync(spillPathFor(h.root, 'lead', id));
+
   await h.m._handleIntent('lead', { type: 'dm', target: 'bob', body: `@spill:${id}` });
-  assert.deepStrictEqual(h.dms, [{ to: 'bob', from: 'lead', body: `@spill:${id}` }],
-    "a peer's pointer pasted into a dm is delivered as the text it is; the receiver copying it into "
-    + "its OWN intent would resolve against the RECEIVER's directory and miss");
+
+  assert.deepStrictEqual(h.dms, [], 'nothing was delivered');
+  assert.strictEqual(h.injected.length, 1, 'exactly one bounce, at the sender');
+  assert.match(h.injected[0].text, /^\[agent:dm\] error: your body arrived as @spill:/);
+  assert.strictEqual(h.errors.length, 1);
+  assert.match(h.errors[0], /dm was not applied|did not resolve \(missing\)/);
+  assert.strictEqual(h.notes.length, 1, 'and the operator is raised a note');
 });
 
 test('text AFTER the pointer is PROSE and is used verbatim; surrounding whitespace alone still resolves', async () => {

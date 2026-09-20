@@ -67,6 +67,11 @@ stale title cannot change one byte of what the recipient gets.
 
 ## SPILL_VERBS
 
+The set now holds `dm` and `task.done` too: both have exactly one recipient who
+reads the text out of a file, so the sender need not carry it. A dm head's SECOND
+token is a target (`[agent:dm bob urgent]`), never a sub-verb, which is why the
+tee tries the one-word key before the two-word form.
+
 The operator-inbox key is `shout`. The vendored conformance suite
 (`proxylab/spill.py`) still gives `'notify-user'` as its one-word-verb example —
 that spelling was retired here with no alias, so the next vendor port must not
