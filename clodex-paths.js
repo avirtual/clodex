@@ -38,17 +38,14 @@
 //     zsh/               generated ZDOTDIR for the drawer terminal's OSC 133
 //                        shim — a DIRECTORY, unlike every other kind
 //
-// 27 per-agent artifacts. SHARED dirs stay at the ~/.clodex ROOT and never
-// move: messages/ (HARD — --add-dir scope + IPC_PROMPT teaching + historical
-// spill pointers), pending/ (parked DMs — pending.sh RELOCATES but its BODY
-// still targets ~/.clodex/pending/<name>/), promptcache/ (the frozen system
-// prompt + its delta staging — ipcdelta.sh RELOCATES here but its BODY targets
-// ~/.clodex/promptcache/<name>/; this dir MUST outlive the run dir, which is
-// rm -rf'd on every exit, or the resume it exists to serve would find it gone),
-// notices/ (the deferred-notice queue — notices.sh RELOCATES but its BODY
-// targets ~/.clodex/notices/<name>/queue.jsonl, and for the same reason: a
-// notice is typically enqueued at the spawn AFTER the exit that rm -rf'd the
-// run dir, and must survive the next one too),
+// 30 per-agent artifacts. SHARED dirs keep their ~/.clodex ROOT spelling:
+// messages/ (HARD — --add-dir scope + IPC_PROMPT teaching +
+// historical spill pointers), pending/ (parked DMs — pending.sh RELOCATES but
+// its BODY still targets ~/.clodex/pending/<name>/), promptcache/ (the frozen
+// system prompt + its delta staging) and notices/ (queue.jsonl) — same
+// script-RELOCATES-but-BODY-keeps-the-shared-spelling story, and all three MUST
+// outlive the run dir, which is rm -rf'd on every exit, or the resume and the
+// notice they exist to serve would find them gone,
 // fix/ (a deploy-fix session's scratch cwd — fixDirFor; outlives run/<name>/), spill/ (intent-body spill — spillDirFor, confined+resolved by intent-spill.js; content-addressed, outlives run/<name>/ AND the seat), agents/, skills/, library/, accounts/ + accounts.json (accounts.js is the authority),
 // plugins/ (the BYO plugin root — plugins/plugin-sources.md §3; deliberately NOT a
 // KIND, since it is shared rather than per-agent, and constructed at the engine
@@ -58,12 +55,15 @@
 // the authority on which records go where and why),
 // codex-session-hook.sh (shared Codex hook, routed by $WB_WRAP_NAME), setup.json.
 //
-// BASH-MIRRORED GRAMMAR. One generated script resolves the agent name at
-// RUNTIME ($WB_WRAP_NAME) and so must rebuild these paths in bash — the
-// module can't be required from a shell script. That site carries a cross-ref
-// comment; the byte-pinned hook test enforces the mirror mechanically:
-//   - cli-hooks.js setupCodexHook  (LINK / OUTPUT: run/$NAME/{transcript.jsonl,hook-output.json})
-// If the grammar below changes, update the Codex hook template in cli-hooks.js.
+// SEAT LAYOUT. A seat's durable state is collecting into ONE dir,
+// sessions/<seat>/ (seatDirFor, a subdir per SEAT_KINDS entry), reached through
+// its old spelling. seat-layout.js owns which spellings are links by now and
+// which are still real; runDirFor is NOT rewritten (socket length — notes/).
+//
+// BASH-MIRRORED GRAMMAR. cli-hooks.js setupCodexHook resolves the agent name at
+// RUNTIME ($WB_WRAP_NAME) and so rebuilds these paths in bash (LINK / OUTPUT:
+// run/$NAME/{transcript.jsonl,hook-output.json}) — a change to the grammar below
+// must reach that template too; the byte-pinned hook test enforces the mirror.
 
 const path = require('path');
 const os = require('os');
@@ -125,8 +125,8 @@ const KINDS = {
 // The OLD flat-grammar suffixes, per kind — what the one-time legacy sweep
 // deletes as `{name}{suffix}` at the ~/.clodex root. Name-DRIVEN: the sweep
 // only ever builds `{knownName}{suffix}`, never parses arbitrary filenames, so
-// the shared collisions (wire-shadow.jsonl, wire-shadow-diag.jsonl,
-// codex-session-hook.sh) can never be misattributed to an agent.
+// the shared collisions (wire-shadow.jsonl, codex-session-hook.sh) can never be
+// misattributed to an agent.
 const LEGACY_SUFFIXES = {
   transcript: '.jsonl',
   registry: '.json',
@@ -163,6 +163,44 @@ const LEGACY_SUFFIXES = {
 // The per-agent runtime dir: ~/.clodex/run/<name>/.
 function runDirFor(root, name) {
   return path.join(root, 'run', name);
+}
+
+const SEAT_KINDS = {
+  messages: 'messages',
+  pending: 'pending',
+  notices: 'notices',
+  promptcache: 'promptcache',
+  memory: 'memory',
+  spill: 'spill',
+  monitors: 'monitors',
+  run: 'run',
+};
+
+const LEGACY_SEAT_DIRS = {
+  messages: ['messages'],
+  pending: ['pending'],
+  notices: ['notices'],
+  promptcache: ['promptcache'],
+  memory: ['library', 'memory'],
+  spill: ['spill'],
+  monitors: ['monitors'],
+  run: ['run'],
+};
+
+function seatDirFor(root, name) {
+  return path.join(root, 'sessions', name);
+}
+
+function seatPathFor(root, name, kind) {
+  const leaf = SEAT_KINDS[kind];
+  if (!leaf) throw new Error(`clodex-paths: unknown seat kind '${kind}'`);
+  return path.join(seatDirFor(root, name), leaf);
+}
+
+function legacySeatPathFor(root, name, kind) {
+  const segs = LEGACY_SEAT_DIRS[kind];
+  if (!segs) throw new Error(`clodex-paths: unknown seat kind '${kind}'`);
+  return path.join(root, ...segs, name);
 }
 
 const FIX_DIR_MAX = 64;
@@ -235,4 +273,5 @@ function legacySuffixes() {
 module.exports = {
   KINDS, LEGACY_SUFFIXES, runDirFor, fixDirFor, spillDirFor, pathFor, legacyPathsFor, legacySuffixes,
   projectDirFor, taskDirFor, defaultClodexHome,
+  SEAT_KINDS, seatDirFor, seatPathFor, legacySeatPathFor,
 };

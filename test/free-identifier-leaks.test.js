@@ -267,6 +267,7 @@ const SCANNED_MODULES = [
   // against a fixture directory with no repo wired up. A reach for a real `fs`
   // or a coordinator const would quietly undo that.
   'team-measure.js',
+  'seat-layout.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction

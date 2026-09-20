@@ -22,6 +22,7 @@ const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
 const { resolveDisplayedPath } = require('./file-resolve');
 const { resolveSpill, pointerOf } = require('./intent-spill');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
+const { migrateSeatLayout } = require('./seat-layout');
 const { readVoiceMode, writeVoiceMode, readVoiceTrigger } = require('./voice-settings');
 const { readVoiceCapabilityCached } = require('./voice-capability');
 const { createSpeaker, createVoiceCatalog } = require('./speaker');
@@ -2316,6 +2317,7 @@ const toolCache = createToolCache({ whichBin });
     ]);
     const names = [...candidateNames];
     runLegacySweep({ root: REGISTRY_DIR, names, log });
+    migrateSeatLayout({ root: REGISTRY_DIR, names, fs, log });
     let runEntries = [];
     let rootEntries = [];
     try { runEntries = fs.readdirSync(path.join(REGISTRY_DIR, 'run')); } catch {}
