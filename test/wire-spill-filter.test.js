@@ -549,12 +549,15 @@ test('endBlock flushes a held, unterminated body as the original, exactly as clo
 test('endBlock resolves a held body whose terminator is the block\'s last unterminated line', () => {
   const f = proseFilter();
   assert.equal(f.feed(`[agent:task add t] ${BIG}\n[agent:end]`), '');
+  const before = f.fired;
   const out = f.endBlock();
   assert.ok(out.startsWith('[agent:task add t] @spill:'),
     'endBlock takes close()\'s terminator-in-pending branch, so a body the block ends on still '
     + 'spills rather than forwarding whole');
   assert.ok(out.endsWith('[agent:end]'), 'and the terminator goes out behind it, unchanged');
-  assert.equal(f.fired, 1);
+  assert.equal(f.fired, before + 1,
+    'the tee reads exactly this increment across endBlock() to decide whether a content_block_stop '
+    + 'has to flush the pointer instead of parking it behind the held stop');
 });
 
 test('bail() forwards a held tail as the ORIGINAL, which is the only thing that does', () => {

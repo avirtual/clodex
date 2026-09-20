@@ -330,7 +330,7 @@ class SpillTee {
   _panic(out, e) {
     this.dead = true;
     try { this.heldOut += this.filter.bail(); } catch { this.filter.passthru = true; }
-    if (this.heldRaw.length && this.heldOut !== this.heldSrc) {
+    if (this.heldRaw.length && this.heldOut.length <= this.heldSrc.length) {
       for (const r of this.heldRaw) out.push(r);
       this.heldRaw = [];
       this.heldSrc = '';
@@ -393,9 +393,15 @@ class SpillTee {
             continue;
           }
           if (d && d.type === 'content_block_stop') {
+            const before = this.filter.fired;
             this.heldOut += this.filter.endBlock();
             this.heldRaw.push(raw);
             if (this.heldStopAt === -1) this.heldStopAt = this.heldRaw.length - 1;
+            if (this.filter.fired !== before) this._flushHeld(out);
+            continue;
+          }
+          if (d && d.type === 'ping') {
+            out.push(raw);
             continue;
           }
           if (this.heldStopAt !== -1) {
