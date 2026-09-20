@@ -375,6 +375,8 @@ const API_CONTRACT = [
   { name: 'setSessionArgs', kind: 'invoke', channel: 'session:setArgs' },
   { name: 'restartSession', kind: 'invoke', channel: 'session:restart' },
   { name: 'moveSession', kind: 'invoke', channel: 'session:move' },
+  { name: 'moveSessionToPeer', kind: 'invoke', channel: 'session:move-to-peer' },
+  { name: 'onSessionMoveProgress', kind: 'on', channel: 'session:move-progress' },
   { name: 'renameSession', kind: 'invoke', channel: 'session:rename' },
   { name: 'setSessionTools', kind: 'invoke', channel: 'session:setTools' },
   { name: 'setSessionSkills', kind: 'invoke', channel: 'session:setSkills' },

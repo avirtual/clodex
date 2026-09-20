@@ -444,6 +444,29 @@ the seat to the late `session-exit`, whose `removeSession` has no `failed` guard
 The `cwd` the result carries is the one the record actually holds — the destination
 when the record was rewritten, the origin when the move never got that far.
 
+**Move to a peer** (`manager.moveToPeer(name, peerId, {farCwd})`, IPC
+`session:move-to-peer`) ships the SAME seat to another box. It refuses everything
+local Move refuses plus a codex or bash seat, a seat with no `sessionId`, an
+unknown or un-upgraded peer, a peer whose hello lacks the `import` cap, and a
+missing transcript — all before the pty is touched. Then it quiesces exactly as
+Move does (the transcript file is complete only once the CLI exits) and hands
+`PeerConnection.importSeat` a record plus a file list: the transcript, every seat
+kind except `run`, `pending/<name>/`, the memory load log and the seat's reminder
+rows. `farCwd` defaults to the seat's own cwd and is `path.resolve`d, since the far
+`begin` refuses a cwd resolution would change. What does NOT travel: `execCommands`
+and privileged intents (a peer must not mint privilege there), `run/`, wire warmth,
+and the fields the far `create()` re-seeds itself (`ephemeral`, the review keys,
+`pluginGrants`, `wireLabel`, `ticketId`, `holdUntil`, `rosterSentAt`). The account
+travels by LABEL, not by path. Progress rides `session:move-progress`
+(`{name, phase, bytes, total}`, phases `begin` → `transcript` → `seat` → `commit`).
+
+On success the source record is stamped `movedTo` and ARCHIVED, never deleted, and
+nothing it read is moved or removed: this box keeps the backup. The far copy is
+authoritative from then on, so clicking the archived row resumes a FORK — two
+conversations from one transcript, diverging. Any failure after quiescing respawns
+here from the untouched record and returns the same `{ok:false, kept:true}` ghost
+row a failed local Move does; the record is not modified on that arm.
+
 `restartSession` (engine.js) — shared by the local IPC handler and the peer
 restart endpoint. `opts.fresh` drops the resumeId (required for skill roster
 changes, which are frozen on resume).
