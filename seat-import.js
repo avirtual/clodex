@@ -151,6 +151,7 @@ function createSeatImport({
       return fail('record.sessionId is required and must be a session uuid');
     }
     if (typeof record.cwd !== 'string' || !path.isAbsolute(record.cwd)) return fail('record.cwd must be an absolute path');
+    if (record.cwd !== path.resolve(record.cwd)) return fail(`record.cwd must be resolved, not '${record.cwd}'`);
 
     for (const other of listStagings()) {
       const m = readManifest(other);

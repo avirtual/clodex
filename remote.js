@@ -857,6 +857,7 @@ class RemoteServer {
       }
       chunks.push(chunk);
     });
+    req.on('error', () => { over = true; });
     req.on('end', () => { if (!over) cb(Buffer.concat(chunks, total)); });
   }
 
@@ -896,7 +897,6 @@ class RemoteServer {
   }
 
   _handleImportCommit(id, res) {
-    if (!this._importCreate) return this._json(res, 501, { ok: false, error: 'import not supported' });
     let out;
     try { out = this._seatImport.commit({ id }); }
     catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
@@ -1005,7 +1005,7 @@ class RemoteServer {
       if (this._wtermOpen) caps.push('shell'); // peer terminal — present only while a peer holds the grant
       if (this._notifications) caps.push('inbox');
       if (this._voiceCapable) caps.push('voice');
-      if (this._seatImport) caps.push('import');
+      if (this._seatImport && this._importCreate) caps.push('import');
       caps.push('resources');
       return this._json(res, 200, {
         ok: true, app: 'clodex', host: this._hostLabel,
@@ -1167,7 +1167,7 @@ class RemoteServer {
       });
     }
     if (p.startsWith('/api/import/')) {
-      if (!this._seatImport) return this._json(res, 501, { ok: false, error: 'import not supported' });
+      if (!this._seatImport || !this._importCreate) return this._json(res, 501, { ok: false, error: 'import not supported' });
       if (req.method === 'POST' && p === '/api/import/begin') return this._handleImportBegin(req, res);
       const rest = p.slice('/api/import/'.length).split('/');
       const id = rest[0];

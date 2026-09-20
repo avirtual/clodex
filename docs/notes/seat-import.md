@@ -35,13 +35,17 @@ Checked entirely, then written, so a CHECK-phase refusal leaves the tree
 byte-identical. The write phase cannot promise that: an fs error there (the
 transcript copy, a seat-kind rename, the pending or loadlog rename, a reminder
 add) comes back as `install failed: <msg>` carrying `installed`, which names
-what did land — a return rather than a throw, but not a rollback. The collision set is `renameTargets` plus
-`pending/<name>`, reused from seat-layout, so rename's refusal and this one
-cannot drift apart.
+what did land — a return rather than a throw, but not a rollback. The collision
+set is `renameTargets` plus `pending/<name>`, reused from seat-layout, so
+rename's refusal and this one cannot drift apart.
 
 Transcript bytes are OPAQUE and never parsed: the CLI owns that format and
 `--resume` only needs the file under the far encoding of the far cwd, which is
-`claudeProjectSlug` (in clodex-paths, so engine.js cannot disagree). An existing
+`claudeProjectSlug` (in clodex-paths, so engine.js cannot disagree) of the cwd
+VERBATIM — which is why `begin` refuses a `record.cwd` that is not already
+`path.resolve`d: the far `importCreate` spawns in the resolved path, so `/a/b/`
+would slug the transcript under a dir the resumed CLI never reads and `--resume`
+would silently start a new conversation. An existing
 transcript is a refusal UNLESS its size and sha256 match the staged one, making
 a commit that died after the transcript landed re-runnable: the retry reports
 `installed.transcript = 'identical'` and installs the rest. Never overwrite —
@@ -64,19 +68,6 @@ one stat field `utimesSync` cannot move, so a backdated subject would pin this
 branch only on a filesystem that records a birthtime at all.
 
 ## IMPORT_CHUNK_MAX
-
-The per-REQUEST body cap on the file route (4 MiB), distinct from `maxBytes`,
-which caps the whole staging. The route reads a raw Buffer rather than
-`_readBody`: that helper accumulates a string under a 64 KiB cap, and a
-transcript is neither text to the wire nor small. `offset` comes from
-`Content-Range: bytes <start>-<end>/*`; an absent header is offset 0, which is
-what makes a single-chunk PUT work with no header at all.
-
-### route table
-
-remote.js serves the owner half; every route is behind `_authGate` and 501s
-`import not supported` when no `seatImport` is injected, which is also the gate
-on hello's `import` cap.
 
 | route | method |
 | --- | --- |

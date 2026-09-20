@@ -257,6 +257,7 @@ function createRemoteWiring(deps) {
     catch (e) { return { ok: false, error: `cannot create cwd "${dir}": ${e.message}` }; }
     const env = importEnv(rec, out);
     const envKeys = Object.keys(env).sort();
+    if (typeof rec.createdAt === 'number') getPersistence().upsert({ name, createdAt: rec.createdAt });
     let made;
     try {
       made = await manager.create(
@@ -283,11 +284,11 @@ function createRemoteWiring(deps) {
         Array.isArray(rec.shellDeny) ? rec.shellDeny : null,
       );
     } catch (e) {
+      try { getPersistence().remove(name); } catch {}
       log.error('session', `import create ${name} failed: ${e.message}`);
       return { ok: false, error: `spawn failed: ${e.message}` };
     }
     const seed = { name };
-    if (typeof rec.createdAt === 'number') seed.createdAt = rec.createdAt;
     if (Array.isArray(rec.sessionIds)) seed.sessionIds = rec.sessionIds;
     if (rec.keepWarmAlways === true) seed.keepWarmAlways = true;
     if (rec.autoCompact === false) seed.autoCompact = false;

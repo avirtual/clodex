@@ -31,3 +31,19 @@ ungated line would log on writes that started nothing.
 `try {} catch {}` because the surrounding `.catch` is the BIND-failure handler:
 it records a remote error and nulls the server, which under a live socket makes
 the next sync bind the same port again and get EADDRINUSE.
+
+## importCreate
+
+`createdAt` is upserted into persistence BEFORE `manager.create`, not seeded
+after it with the other preserved fields. `create()` reads
+`(existingEntry && existingEntry.createdAt) || Date.now()` and BAKES that value
+into the generated pending-drain hook, so a post-create seed leaves the hook
+expecting the far box's now. The `pending/` mail seat-import just installed
+carries the SOURCE box's stamp, and the drainers are directional:
+`born < expected` is discarded with no restore, `born > expected` is parked
+forever. A failed spawn removes the record again, or the retry through
+`POST /api/sessions` would find the name taken.
+
+`_preserveAcrossRestart` is deliberately NOT used here: its always-preserve set
+carries `worktree`/`ticketId`/`wireLabel`/`pluginGrants`/`holdUntil`, which name
+things on the source box.

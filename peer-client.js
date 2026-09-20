@@ -745,6 +745,9 @@ class PeerConnection {
     const begun = await this._ask('POST', '/api/import/begin', { name, record });
     if (!begun.ok) return begun;
     const id = begun.id;
+    if (typeof id !== 'string' || !/^[0-9a-f]{16}$/.test(id)) {
+      return { ok: false, error: `bad staging id '${id}'` };
+    }
     const bail = async (out) => {
       await this._ask('DELETE', `/api/import/${id}`, null);
       return out;

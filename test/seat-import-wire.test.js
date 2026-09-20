@@ -10,6 +10,7 @@ const { RemoteServer, IMPORT_CHUNK_MAX } = require('../remote');
 const { createRemoteWiring } = require('../remote-wiring');
 const { PeerConnection } = require('../peer-client');
 const { claudeProjectSlug } = require('../clodex-paths');
+const { drainPending } = require('../pending-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SID = '11111111-2222-3333-4444-555555555555';
@@ -88,7 +89,11 @@ test('hello carries the import cap only when a seatImport is injected', async ()
     const off = await call(bare.port, 'GET', '/api/peer/hello');
     assert.deepStrictEqual(off.body.caps, DEFAULT_CAPS);
   });
-  await withServer({ seatImport: stubSeatImport() }, async (wired) => {
+  await withServer({ seatImport: stubSeatImport() }, async (half) => {
+    const on = await call(half.port, 'GET', '/api/peer/hello');
+    assert.deepStrictEqual(on.body.caps, DEFAULT_CAPS);
+  });
+  await withServer({ seatImport: stubSeatImport(), importCreate: () => ({ ok: true }) }, async (wired) => {
     const on = await call(wired.port, 'GET', '/api/peer/hello');
     assert.deepStrictEqual(on.body.caps, [
       'transcript', 'transcript-since', 'transcript-after', 'send', 'import', 'resources',
@@ -97,20 +102,30 @@ test('hello carries the import cap only when a seatImport is injected', async ()
 });
 
 
-test('every import route answers 501 with no seatImport injected', async () => {
-  await withServer({}, async (s) => {
-    const id = '0123456789abcdef';
-    const rows = [
-      await call(s.port, 'POST', '/api/import/begin', { body: { name: 'a', record: record() } }),
-      await call(s.port, 'PUT', `/api/import/${id}/file/transcript.jsonl`, { body: Buffer.from('x') }),
-      await call(s.port, 'POST', `/api/import/${id}/commit`),
-      await call(s.port, 'DELETE', `/api/import/${id}`),
-    ];
-    assert.deepStrictEqual(rows.map((r) => r.status), [501, 501, 501, 501]);
-    assert.deepStrictEqual(rows.map((r) => r.body.error), [
-      'import not supported', 'import not supported', 'import not supported', 'import not supported',
-    ]);
+test('every import route answers 501 unless BOTH halves are wired', async () => {
+  const seen = [];
+  const half = stubSeatImport({
+    begin: () => { seen.push('begin'); return { ok: true, id: '0123456789abcdef', dropped: [] }; },
+    putFile: () => { seen.push('putFile'); return { ok: true, size: 1 }; },
+    abort: () => { seen.push('abort'); return { ok: true }; },
   });
+  for (const opts of [{}, { seatImport: half }, { importCreate: () => ({ ok: true }) }]) {
+    await withServer(opts, async (s) => {
+      const id = '0123456789abcdef';
+      const rows = [
+        await call(s.port, 'POST', '/api/import/begin', { body: { name: 'a', record: record() } }),
+        await call(s.port, 'PUT', `/api/import/${id}/file/transcript.jsonl`, { body: Buffer.from('x') }),
+        await call(s.port, 'POST', `/api/import/${id}/commit`),
+        await call(s.port, 'DELETE', `/api/import/${id}`),
+      ];
+      assert.deepStrictEqual(rows.map((r) => r.status), [501, 501, 501, 501]);
+      assert.deepStrictEqual(rows.map((r) => r.body.error), [
+        'import not supported', 'import not supported', 'import not supported', 'import not supported',
+      ]);
+    });
+  }
+  assert.deepStrictEqual(seen, [],
+    'a half-wired box never stages bytes it could not then commit');
 });
 
 
@@ -158,7 +173,7 @@ test('a body past the chunk cap is 413 and leaves the staged file untouched', as
       return { ok: true, size: fs.statSync(target).size, relPath };
     },
   });
-  await withServer({ seatImport }, async (s) => {
+  await withServer({ seatImport, importCreate: () => ({ ok: true }) }, async (s) => {
     const id = '0123456789abcdef';
     const first = await call(s.port, 'PUT', `/api/import/${id}/file/transcript.jsonl`,
       { body: Buffer.from('seed') });
@@ -188,7 +203,7 @@ test('two Content-Range chunks land as one file, and a header-less PUT is offset
     },
   });
   const source = Buffer.concat([Buffer.alloc(1000, 0x41), Buffer.alloc(1500, 0x42)]);
-  await withServer({ seatImport }, async (s) => {
+  await withServer({ seatImport, importCreate: () => ({ ok: true }) }, async (s) => {
     const id = '0123456789abcdef';
     const a = await call(s.port, 'PUT', `/api/import/${id}/file/transcript.jsonl`, {
       body: source.subarray(0, 1000), headers: { 'Content-Range': 'bytes 0-999/*' },
@@ -212,7 +227,7 @@ test('two Content-Range chunks land as one file, and a header-less PUT is offset
 test('a malformed Content-Range is a 400 and never reaches the module', async () => {
   let reached = 0;
   const seatImport = stubSeatImport({ putFile: () => { reached += 1; return { ok: true, size: 1 }; } });
-  await withServer({ seatImport }, async (s) => {
+  await withServer({ seatImport, importCreate: () => ({ ok: true }) }, async (s) => {
     const res = await call(s.port, 'PUT', '/api/import/0123456789abcdef/file/transcript.jsonl', {
       body: Buffer.from('x'), headers: { 'Content-Range': 'chunks 0-1/7' },
     });
@@ -227,7 +242,7 @@ test('a staging id off the 16-hex grammar is refused at the route layer', async 
     putFile: () => { reached += 1; return { ok: true, size: 1 }; },
     abort: () => { reached += 1; return { ok: true }; },
   });
-  await withServer({ seatImport }, async (s) => {
+  await withServer({ seatImport, importCreate: () => ({ ok: true }) }, async (s) => {
     const bad = await call(s.port, 'PUT', '/api/import/..%2F..%2Fetc/file/transcript.jsonl',
       { body: Buffer.from('x') });
     const badAbort = await call(s.port, 'DELETE', '/api/import/zzzz');
@@ -245,6 +260,7 @@ function mkWiring(over = {}) {
     `${JSON.stringify({ kinds: { messages: 'x', notices: 'x', promptcache: 'x', memory: 'x', spill: 'x', monitors: 'x', run: 'x' } })}\n`);
 
   const createCalls = [];
+  const bornBaked = [];
   const persisted = new Map();
   const reminderRows = [];
   const persistence = {
@@ -257,6 +273,8 @@ function mkWiring(over = {}) {
     sessions: new Map(),
     create: async function create(...args) {
       createCalls.push(args);
+      const existingEntry = persisted.get(args[0]) || null;
+      bornBaked.push((existingEntry && existingEntry.createdAt) || Date.now());
       if (over.createThrows) throw new Error(over.createThrows);
       return { name: args[0], type: args[1], pid: 4242 };
     },
@@ -305,7 +323,7 @@ function mkWiring(over = {}) {
   finally { remoteMod.RemoteServer = orig; }
   assert.ok(opts && opts.seatImport && opts.importCreate, 'ENTER: the wire carries both halves');
   return {
-    root, home, opts, createCalls, persisted, reminderRows, manager,
+    root, home, opts, createCalls, bornBaked, persisted, reminderRows, manager,
     claudeProjects: path.join(home, '.claude', 'projects'),
   };
 }
@@ -382,6 +400,8 @@ test('begin refuses a name that is live or persisted here, before any staging di
 });
 
 
+const PARKED = JSON.stringify({ text: 'a message that rode with the seat', born: 1700000000000 });
+
 test('importSeat ships a 9 MiB transcript in three chunks and the far create is a RESTORE', async () => {
   const w = mkWiring();
   const cwd = path.join(w.root, 'proj');
@@ -428,15 +448,20 @@ test('importSeat ships a 9 MiB transcript in three chunks and the far create is 
     });
     conn.start();
     const progress = [];
+    let out;
     try {
       await waitFor(() => conn.status().canImport === true, 'the import cap in status()');
-      const out = await conn.importSeat({
+      out = await conn.importSeat({
         name: 'ana',
         record: rec,
         files: [
           { relPath: 'transcript.jsonl', path: transcript },
           { relPath: 'seat/memory/unit.md', bytes: Buffer.from('# a memory unit\n') },
-          { relPath: 'reminders.json', bytes: Buffer.from(JSON.stringify([{ kind: 'every', spec: '30m', body: 'stretch' }])) },
+          { relPath: 'pending/1700000000001.1.json', bytes: Buffer.from(PARKED) },
+          { relPath: 'reminders.json', bytes: Buffer.from(JSON.stringify([
+            { kind: 'every', spec: '30m', body: 'stretch' },
+            { kind: 'in', spec: '40m', body: 'chase t7', ticket: 't7' },
+          ])) },
         ],
         onProgress: (p) => progress.push(p),
       });
@@ -480,6 +505,14 @@ test('importSeat ships a 9 MiB transcript in three chunks and the far create is 
       'mint=false: an imported seat is a RESTORE over the shipped promptcache');
     assert.deepStrictEqual(w.createCalls[0][16], [], 'exec grants never cross the wire');
 
+    assert.deepStrictEqual(w.bornBaked, [1700000000000],
+      'the shipped createdAt is in persistence BEFORE create(), which bakes it into the drain hook');
+    assert.deepStrictEqual(
+      drainPending(path.join(w.root, 'pending'), 'ana', 'tag', w.bornBaked[0]),
+      ['a message that rode with the seat'],
+      'mail parked on the source box survives the move instead of being discarded as born < expected',
+    );
+
     const entry = w.persisted.get('ana');
     assert.strictEqual(entry.createdAt, 1700000000000);
     assert.deepStrictEqual(entry.sessionIds, ['aaaa', SID]);
@@ -492,7 +525,9 @@ test('importSeat ships a 9 MiB transcript in three chunks and the far create is 
     assert.strictEqual(typeof entry.importedFrom.at, 'number');
 
     assert.deepStrictEqual(w.reminderRows.map((r) => [r.agent, r.spec, r.ticket]),
-      [['ana', '30m', null]]);
+      [['ana', '30m', null], ['ana', '40m', null]]);
+    assert.deepStrictEqual(out.dropped, ['reminders.ticket-bound:1'],
+      'seat-import\'s own dropped rows ride the reply out; only "account" is replaced');
     assert.deepStrictEqual(fs.readdirSync(path.join(w.root, 'import')), [],
       'the staging is gone once the install committed');
   });
