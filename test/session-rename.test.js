@@ -36,6 +36,9 @@ const { createTeamManifest, matchSeatRole } = require('../team-manifest');
 const { projectDirFor } = require('../clodex-paths');
 const { enqueueNotice, parseNotices } = require('../notice-queue');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { migrateSeatLayout } = require('../seat-layout');
+const { seatPathFor, legacySeatPathFor, SEAT_KINDS } = require('../clodex-paths');
+const { createMemoryStore } = require('../memory-store');
 
 // ------------------------------------------------------------- the fixture
 
@@ -473,25 +476,91 @@ test('rename refuses when the new name is PERSISTED but not live', async () => {
   assertUntouched(root, 'seat', 'newseat');
 });
 
-// One case per dir: the collision check must cover ALL five, and a check that
-// looked at only messages/ would pass every other row here while renaming a
-// seat straight on top of a stranger's memory.
-for (const key of ['messages', 'pending', 'promptcache', 'notices', 'memory']) {
+test('rename on a MIGRATED seat leaves memory reachable at library/memory/<new> through a link', async () => {
+  const why = 'the ONLY subject here driving the real rename() against a MIGRATED root. Every '
+    + 'other one seeds plain dirs — the pre-migration world, where the legacy spellings are real '
+    + 'and moving them is indistinguishable from moving the home. Only here is the state reachable '
+    + 'ONLY through a link, which is where rename went wrong before L-B2: it moved the LINKS, '
+    + 'leaving library/memory/<new> -> sessions/<old>/memory, a shape every L-B1 reader refuses '
+    + 'and the message sweep unlinks';
+  const root = mkTmpRoot('clodex-rename-');
+  const memStore = createMemoryStore(pathReal.join(root, 'library', 'memory'));
+  memStore.remember('seat', { scope: 'proj', text: 'The seat layout moved.' });
+  seedDirs(root, 'seat');
+  migrateSeatLayout({ root, names: ['seat'], fs: fsReal });
+  assert.ok(fsReal.lstatSync(legacySeatPathFor(root, 'seat', 'memory')).isSymbolicLink(),
+    'ENTER: the seat must be migrated, or this is the plain-dir world every other subject covers');
+
+  const { m, store } = mkRename({ root, entries: [BASE] });
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.strictEqual(store[0].name, 'newseat');
+
+  assert.strictEqual(fsReal.existsSync(pathReal.join(root, 'sessions', 'seat')), false,
+    'the one home moved, rather than being copied');
+  const migratedKinds = Object.keys(SEAT_KINDS)
+    .filter((k) => k !== 'run' && fsReal.existsSync(seatPathFor(root, 'newseat', k)));
+  assert.deepStrictEqual(migratedKinds.sort(), ['memory', 'messages', 'notices', 'promptcache'],
+    'ENTER: exactly the kinds seedDirs seeded moved — spill/ and monitors/ are absent here, and a '
+    + 'link minted for a kind with no dir would dangle');
+  for (const kind of migratedKinds) {
+    const link = legacySeatPathFor(root, 'newseat', kind);
+    assert.ok(fsReal.lstatSync(link).isSymbolicLink(), `${kind}: the new legacy spelling is a link`);
+    assert.strictEqual(fsReal.realpathSync(link), fsReal.realpathSync(seatPathFor(root, 'newseat', kind)),
+      `${kind}: pointing at the RENAMED seat's own dir, which is the only shape the readers accept`);
+  }
+  assert.deepStrictEqual(memStore.agents(), ['newseat'],
+    `and memory-store.agents() lists the seat under its new name, so the viewer is not dark — ${why}`);
+  assert.strictEqual(memStore.list('newseat').length, 1, 'with its units readable through the link');
+});
+
+for (const key of ['pending', 'seat']) {
   test(`rename refuses when ${key} already exists under the new name`, async () => {
     const root = mkTmpRoot('clodex-rename-');
     seedDirs(root, 'seat');
-    const dest = dirsUnder(root, 'newseat')[key];
+    const dest = key === 'seat'
+      ? pathReal.join(root, 'sessions', 'newseat')
+      : dirsUnder(root, 'newseat')[key];
     fsReal.mkdirSync(dest, { recursive: true });
     const { m, store, created } = mkRename({ root, entries: [BASE] });
     const r = await m.rename('seat', 'newseat');
-    assert.strictEqual(r.ok, false, `expected a refusal on a colliding ${key}`);
+    assert.strictEqual(r.ok, false,
+      `expected a refusal on a colliding ${key}: sessions/<new> is the seat's ONE home, so a `
+      + 'leftover there is the whole collision for a migrated seat, and pending/ is the only kind '
+      + 'rename still moves itself. A refusal that looked at neither would rename a seat straight '
+      + "on top of a stranger's state");
     assert.match(r.error, /already owns/);
+    assert.match(r.error, new RegExp(dest.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      'and it names the path to clear — the operator has to find it by hand');
     assert.strictEqual(store[0].name, 'seat', 'the record was not rewritten');
     assert.deepStrictEqual(created, []);
     const from = dirsUnder(root, 'seat');
     for (const k of Object.keys(from)) {
       assert.ok(fsReal.existsSync(from[k]), `${k} still under the old name`);
     }
+  });
+}
+
+for (const key of ['messages', 'promptcache', 'notices', 'memory']) {
+  test(`rename leaves a stranger's ${key} at the new name intact`, async () => {
+    const root = mkTmpRoot('clodex-rename-');
+    seedDirs(root, 'seat');
+    const dest = dirsUnder(root, 'newseat')[key];
+    fsReal.mkdirSync(dest, { recursive: true });
+    fsReal.writeFileSync(pathReal.join(dest, 'stranger.txt'), 'not yours');
+    const { m, store } = mkRename({ root, entries: [BASE] });
+
+    const r = await m.rename('seat', 'newseat');
+    assert.strictEqual(r.ok, true, `expected the rename to proceed (got: ${r.error})`);
+    assert.strictEqual(store[0].name, 'newseat', 'ENTER: the rename really happened');
+
+    assert.strictEqual(fsReal.readFileSync(pathReal.join(dest, 'stranger.txt'), 'utf8'), 'not yours',
+      `${key}/newseat is byte-intact: the four legacy spellings are no longer PRE-checked, since `
+      + 'on a migrated box they are links renameSeat unlinks and re-mints and a pre-check on one '
+      + 'would refuse every ordinary rename — so the property the pre-check protected is asserted '
+      + 'directly instead. The colliding kind is skipped and logged, never overwritten');
+    assert.ok(fsReal.existsSync(dirsUnder(root, 'seat')[key]),
+      `and the old seat's ${key} is left where it is rather than destroyed`);
   });
 }
 

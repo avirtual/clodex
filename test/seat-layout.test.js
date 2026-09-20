@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const {
   migrateSeatLayout, ensureSeatLink, seatLayoutActive, readMarker,
+  renameSeat, removeSeat,
   MARKER, DEFERRED_KINDS, LEGACY_MARKER_KINDS,
 } = require('../seat-layout');
 const { runDirFor, seatPathFor, legacySeatPathFor, SEAT_KINDS } = require('../clodex-paths');
@@ -428,4 +429,144 @@ test('cleanupClaudeHook through the link leaves neither path, and keeps the seat
   assert.strictEqual(fs.existsSync(real), false, why);
   assert.throws(() => fs.lstatSync(old), /ENOENT/, 'the link must be gone too');
   assert.ok(fs.statSync(path.join(root, 'sessions', 'bo')).isDirectory(), 'the seat home survives exit');
+});
+
+const ALL_KINDS = Object.keys(SEAT_KINDS);
+
+function migratedSeat(root, name) {
+  seedAllSeven(root, name);
+  migrateSeatLayout({ root, names: [name], fs });
+}
+
+test('renameSeat moves the one home and re-mints every legacy link at the NEW name', () => {
+  const why = 'the L-B1 readers accept a legacy symlink ONLY when it resolves to sessions/<same '
+    + 'name>/<kind>. A rename that moved the LINKS instead would leave library/memory/<new> '
+    + 'pointing at sessions/<old>/memory, which every reader refuses and the sweep unlinks';
+  const root = tmp();
+  migratedSeat(root, 'ana');
+  assert.ok(fs.lstatSync(legacySeatPathFor(root, 'ana', 'memory')).isSymbolicLink(),
+    'ENTER: the fixture must be migrated, or this subject is about plain dirs');
+
+  const res = renameSeat({ root, oldName: 'ana', newName: 'bea', fs });
+  assert.deepStrictEqual(res.failed, [], 'no kind failed');
+
+  assert.ok(fs.existsSync(path.join(root, 'sessions', 'bea')), 'sessions/<new> exists');
+  assert.strictEqual(fs.existsSync(path.join(root, 'sessions', 'ana')), false, 'sessions/<old> is gone');
+
+  for (const kind of ALL_KINDS) {
+    assert.strictEqual(exists(legacySeatPathFor(root, 'ana', kind)), false,
+      `${kind}: nothing is left at the OLD legacy spelling`);
+  }
+  for (const [kind] of ROWS) {
+    const link = legacySeatPathFor(root, 'bea', kind);
+    assert.ok(fs.lstatSync(link).isSymbolicLink(), `${kind}: the NEW legacy spelling is a symlink`);
+    assert.strictEqual(fs.realpathSync(link), fs.realpathSync(seatPathFor(root, 'bea', kind)),
+      `${kind}: and it resolves to the renamed seat's own dir — ${why}`);
+    assert.strictEqual(fs.readFileSync(path.join(link, `${kind}.txt`), 'utf8'), `${kind}-body`,
+      `${kind}: the seeded body travelled with the home`);
+  }
+  assert.strictEqual(exists(legacySeatPathFor(root, 'bea', 'run')), false,
+    'run/<new> is NOT re-minted here: ensureSeatLink mints it at the next spawn, and a link to a '
+    + 'dir cleanup drops at every exit would dangle until then');
+});
+
+function exists(p) {
+  try { fs.lstatSync(p); return true; } catch { return false; }
+}
+
+test('the L-B1 readers accept the seat at its NEW name after renameSeat', () => {
+  const why = 'this is the whole point of re-minting the links: memory-store.agents() and the '
+    + 'memory viewer both take a legacy symlink only at its own seat spelling';
+  const root = tmp();
+  const store = createMemoryStore(path.join(root, 'library', 'memory'));
+  store.remember('ana', { scope: 'proj', text: 'The seat layout moved.' });
+  migrateSeatLayout({ root, names: ['ana'], fs });
+  assert.deepStrictEqual(store.agents(), ['ana'], 'ENTER: listed under the old name before the rename');
+
+  renameSeat({ root, oldName: 'ana', newName: 'bea', fs });
+
+  assert.deepStrictEqual(store.agents(), ['bea'], why);
+  assert.strictEqual(store.list('bea').length, 1, 'and the units are readable through the new link');
+
+  fs.symlinkSync(seatPathFor(root, 'bea', 'memory'), path.join(root, 'library', 'memory', 'thief'));
+  assert.deepStrictEqual(store.agents(), ['bea'],
+    'the sibling refusal still holds after a rename: a link aimed at ANOTHER seat is not an agent');
+});
+
+test('renameSeat moves an UNMIGRATED kind as a real dir and mints no link for it', () => {
+  const why = 'a seat created while the marker lacked that kind holds a real dir at the legacy '
+    + 'spelling. Today rename MOVES it; replacing that with a link would strand the contents';
+  const root = tmp();
+  fs.mkdirSync(path.join(root, 'sessions', 'ana'), { recursive: true });
+  const oldNotices = legacySeatPathFor(root, 'ana', 'notices');
+  fs.mkdirSync(oldNotices, { recursive: true });
+  fs.writeFileSync(path.join(oldNotices, 'queue.jsonl'), 'a line\n');
+  assert.ok(!fs.lstatSync(oldNotices).isSymbolicLink(), 'ENTER: the fixture kind is a REAL dir, not a link');
+
+  const res = renameSeat({ root, oldName: 'ana', newName: 'bea', fs });
+
+  const newNotices = legacySeatPathFor(root, 'bea', 'notices');
+  assert.ok(fs.lstatSync(newNotices).isDirectory() && !fs.lstatSync(newNotices).isSymbolicLink(),
+    `notices/<new> is still a REAL dir — ${why}`);
+  assert.strictEqual(fs.readFileSync(path.join(newNotices, 'queue.jsonl'), 'utf8'), 'a line\n',
+    'and it carries the old contents');
+  assert.ok(res.moved.includes('notices'), `moved names it (got ${JSON.stringify(res.moved)})`);
+  assert.ok(!res.relinked.includes('notices'), 'and it is not in relinked — there is nothing to link to');
+});
+
+test('renameSeat throws when sessions/<new> already exists, and moves nothing', () => {
+  const root = tmp();
+  migratedSeat(root, 'ana');
+  fs.mkdirSync(path.join(root, 'sessions', 'bea'), { recursive: true });
+
+  assert.throws(() => renameSeat({ root, oldName: 'ana', newName: 'bea', fs }), /already exists/);
+
+  assert.ok(fs.existsSync(path.join(root, 'sessions', 'ana')),
+    'ENTER-and-assert: the old home still stands — the refusal came before the renameSync');
+  assert.ok(fs.lstatSync(legacySeatPathFor(root, 'ana', 'memory')).isSymbolicLink(),
+    'and the old links are untouched');
+});
+
+test('renameSeat refuses a name outside the seat-name rule', () => {
+  const root = tmp();
+  migratedSeat(root, 'ana');
+  assert.throws(() => renameSeat({ root, oldName: 'ana', newName: '../escape', fs }), /refusing seat name/);
+  assert.throws(() => renameSeat({ root, oldName: 'ana', newName: '..', fs }), /refusing seat name/);
+});
+
+test('removeSeat takes the home AND every legacy spelling, and leaves pending/ alone', () => {
+  const why = 'Delete Session… is the one true delete. Today it removes run/ only, and the '
+    + 'messages/promptcache/notices/memory left behind are exactly what the "already owns … a '
+    + 'leftover from an earlier seat" refusal on rename exists to catch';
+  const root = tmp();
+  migratedSeat(root, 'ana');
+  const pending = path.join(root, 'pending', 'ana');
+  fs.mkdirSync(pending, { recursive: true });
+  fs.writeFileSync(path.join(pending, 'dm-1.json'), '{}');
+  assert.ok(fs.existsSync(path.join(pending, 'dm-1.json')), 'ENTER: pending/<name> is seeded before the delete');
+
+  removeSeat({ root, name: 'ana', fs });
+
+  assert.strictEqual(fs.existsSync(path.join(root, 'sessions', 'ana')), false, 'the home is gone');
+  for (const kind of ALL_KINDS) {
+    assert.strictEqual(exists(legacySeatPathFor(root, 'ana', kind)), false,
+      `${kind}: the legacy spelling is gone too — ${why}`);
+  }
+  assert.strictEqual(fs.readFileSync(path.join(pending, 'dm-1.json'), 'utf8'), '{}',
+    'pending/<name> is NOT a seat kind and survives: the hook body drains it at the shared root');
+});
+
+test('removeSeat removes a legacy path that is still a REAL dir', () => {
+  const why = 'an unmigrated seat keeps everything at the legacy spellings; unlinking only '
+    + 'symlinks would leak the whole seat on the boxes that need the delete most';
+  const root = tmp();
+  seedAllSeven(root, 'ana');
+  assert.ok(!fs.lstatSync(legacySeatPathFor(root, 'ana', 'messages')).isSymbolicLink(),
+    'ENTER: the fixture is UNmigrated — every legacy path is a real dir');
+
+  removeSeat({ root, name: 'ana', fs });
+
+  for (const kind of ALL_KINDS) {
+    assert.strictEqual(exists(legacySeatPathFor(root, 'ana', kind)), false, `${kind}: removed — ${why}`);
+  }
 });

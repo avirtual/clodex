@@ -181,7 +181,8 @@ const { foldDraft } = require('./hint-arm');
 const { didGrow, parsePsRows, descendantPids } = require('./stall-evidence');
 const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
-const { ensureSeatLink } = require('./seat-layout');
+const { ensureSeatLink, renameSeat, removeSeat } = require('./seat-layout');
+const { seatDirFor } = require('./clodex-paths');
 const { effectiveModel } = require('./accounts');
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
@@ -2955,14 +2956,23 @@ function createSessionManager(deps) {
         this.clearHintForRecord(name);
         getPersistence().remove(name);
       };
+      const dropSeatDir = () => {
+        try {
+          const r = removeSeat({ root: REGISTRY_DIR, name, fs });
+          for (const f of r.failed) log.warn('session', `destroy ${name}: ${f.path} not removed (${f.error})`);
+        } catch (e) {
+          log.warn('session', `destroy ${name}: seat dir not removed (${e.message})`);
+        }
+      };
       await this.kill(name);
       // No tree to lose, so nothing can strand: this is the r1 case the drop
       // exists for, and it must keep dropping.
-      if (!worktree) { dropRecord(); return { ok: true, live: wasLive }; }
+      if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }
       await this._waitForExit(name);
       const r = await gitWorktree.removeWorktree(worktree.path).catch((e) => ({ ok: false, error: e.message }));
       if (r && r.ok) {
         dropRecord();
+        dropSeatDir();
         log.info('worktree', `removed ${worktree.path} (branch ${worktree.branch}) after destroying ${name}`);
         return { ok: true, worktreeRemoved: true, live: wasLive };
       }
@@ -2990,11 +3000,7 @@ function createSessionManager(deps) {
 
     _renameDirs(oldName, newName) {
       return [
-        [path.join(REGISTRY_DIR, 'messages', oldName), path.join(REGISTRY_DIR, 'messages', newName)],
         [path.join(REGISTRY_DIR, 'pending', oldName), path.join(REGISTRY_DIR, 'pending', newName)],
-        [path.join(REGISTRY_DIR, 'promptcache', oldName), path.join(REGISTRY_DIR, 'promptcache', newName)],
-        [path.join(REGISTRY_DIR, 'notices', oldName), path.join(REGISTRY_DIR, 'notices', newName)],
-        [path.join(REGISTRY_DIR, 'library', 'memory', oldName), path.join(REGISTRY_DIR, 'library', 'memory', newName)],
       ];
     }
 
@@ -3025,7 +3031,7 @@ function createSessionManager(deps) {
       }
       if (this.sessions.has(newName)) return { ok: false, error: `${newName} is already a live session` };
       if (getPersistence().get(newName)) return { ok: false, error: `${newName} is already a saved session` };
-      for (const [, dest] of this._renameDirs(name, newName)) {
+      for (const dest of [seatDirFor(REGISTRY_DIR, newName), ...this._renameDirs(name, newName).map(([, d]) => d)]) {
         if (fs.existsSync(dest)) return { ok: false, error: `${newName} already owns ${dest} — a leftover from an earlier seat; clear it first` };
       }
       if (this._movingNames.has(name)) return { ok: false, error: 'move already in progress' };
@@ -3051,11 +3057,20 @@ function createSessionManager(deps) {
         if (sched && typeof sched.renameAgent === 'function') {
           try { sched.renameAgent(name, newName); } catch {}
         }
+        try {
+          const seatRes = renameSeat({ root: REGISTRY_DIR, oldName: name, newName, fs });
+          for (const f of seatRes.failed) {
+            log.warn('session', `rename ${name} → ${newName}: ${f.kind} did not move (${f.error})`);
+          }
+        } catch (e) {
+          log.warn('session', `rename ${name} → ${newName}: seat dir did not move (${e.message})`);
+        }
         for (const [src, dest] of this._renameDirs(name, newName)) {
           try { if (fs.existsSync(src)) fs.renameSync(src, dest); } catch (e) {
             log.warn('session', `rename ${name} → ${newName}: ${src} did not move (${e.message})`);
           }
         }
+        try { getPersistence().snapshotSeat(newName); } catch {}
         if (team && team.lead === name) {
           try { setLead(team.name, newName); } catch (e) {
             log.warn('session', `rename ${name} → ${newName}: team "${team.name}" lead pointer not repointed (${e.message})`);

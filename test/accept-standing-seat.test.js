@@ -38,6 +38,8 @@ const { intentEnabled } = require('../intent-catalog');
 const { initStores } = require('../stores');
 const { createRemindScheduler } = require('../remind-scheduler');
 const { createTeamManifest } = require('../team-manifest');
+const { migrateSeatLayout } = require('../seat-layout');
+const { legacySeatPathFor, SEAT_KINDS } = require('../clodex-paths');
 const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -786,6 +788,62 @@ test('destroy() drops a dead seat\'s record when there is no worktree to remove'
     'and the record is dropped: with no tree to lose there is nothing to strand, which is the r1 fix this ordering must not regress');
 });
 
+function seedSeatOnDisk(home, name) {
+  for (const kind of Object.keys(SEAT_KINDS)) {
+    const dir = legacySeatPathFor(home, name, kind);
+    fsReal.mkdirSync(dir, { recursive: true });
+    fsReal.writeFileSync(pathReal.join(dir, `${kind}.txt`), 'state');
+  }
+  migrateSeatLayout({ root: home, names: [name], fs: fsReal });
+}
+
+function assertSeatGone(home, name, why) {
+  assert.strictEqual(fsReal.existsSync(pathReal.join(home, 'sessions', name)), false,
+    `sessions/${name} is gone — ${why}`);
+  for (const kind of Object.keys(SEAT_KINDS)) {
+    const legacy = legacySeatPathFor(home, name, kind);
+    let there = true;
+    try { fsReal.lstatSync(legacy); } catch { there = false; }
+    assert.strictEqual(there, false, `${kind}/${name} is gone too — ${why}`);
+  }
+}
+
+test('destroy() removes the seat directory and every legacy spelling — the no-worktree arm', async (t) => {
+  const why = 'Delete Session… is the one true delete (CLAUDE.md Session lifecycle), and before '
+    + 'L-B2 it removed run/ only: the deleted seat\'s messages, promptcache, notices and memory '
+    + 'stayed on disk under its name forever. That leak is what rename\'s "already owns … a '
+    + 'leftover from an earlier seat" refusal exists to catch — it makes the name unrenameable-to '
+    + 'and hands the next seat of that name a stranger\'s memory';
+  const f = mkFixture(t);
+  f.persistence.upsert({ name: 'plain', cwd: f.repoDir, ephemeral: true });
+  seedSeatOnDisk(f.home, 'plain');
+  const pending = pathReal.join(f.home, 'pending', 'plain');
+  fsReal.mkdirSync(pending, { recursive: true });
+  fsReal.writeFileSync(pathReal.join(pending, 'dm-1.json'), '{}');
+  assert.ok(fsReal.existsSync(pathReal.join(f.home, 'sessions', 'plain', 'memory', 'memory.txt')),
+    'ENTER: the seat really has state under its home before the delete');
+
+  await f.m.destroy('plain');
+
+  assertSeatGone(f.home, 'plain', why);
+  assert.strictEqual(fsReal.readFileSync(pathReal.join(pending, 'dm-1.json'), 'utf8'), '{}',
+    'pending/<name> is NOT a seat kind and is left for the hook to drain');
+});
+
+test('destroy() removes the seat directory on the WORKTREE arm too', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  f.m.sessions.delete('team-hand-t1');
+  seedSeatOnDisk(f.home, 'team-hand-t1');
+
+  const r = await f.m.destroy('team-hand-t1');
+  assert.strictEqual(r.worktreeRemoved, true, `ENTER: this is the removal arm (tree still at ${wt}?)`);
+
+  assertSeatGone(f.home, 'team-hand-t1',
+    'the arms are separate returns, and a removal wired into only one of them leaks on the other');
+});
+
 // The invariant stated as itself, over the real bytes. The subjects above pin
 // the two reachable outcomes; this pins the PROPERTY — that no return which
 // drops the record can sit after a removal whose failure it ignores. Neither
@@ -925,9 +983,9 @@ test('t486: the source pin actually discriminates — the edits that must redden
   // 3. r1's original bug, once more, through the new scanner: hoisting the drop
   //    above the removal leaves the two calls collapsed into one early one.
   const hoisted = real
-    .replace('      if (!worktree) { dropRecord(); return { ok: true, live: wasLive }; }',
-      '      dropRecord();\n      if (!worktree) { return { ok: true, live: wasLive }; }')
-    .replace('        dropRecord();\n        log.info', '        log.info');
+    .replace('      if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }',
+      '      dropRecord();\n      if (!worktree) { dropSeatDir(); return { ok: true, live: wasLive }; }')
+    .replace('        dropRecord();\n        dropSeatDir();\n        log.info', '        dropSeatDir();\n        log.info');
   assert.ok(hoisted !== real, 'ENTER: the hoist really applied');
   assert.strictEqual(scanDestroy(hoisted).calls.length, 1,
     'the hoisted drop is one unconditional call, not two guarded ones — the count alone catches r1\'s bug');
@@ -939,8 +997,8 @@ test('t486: the source pin actually discriminates — the edits that must redden
   //    false because the call missed a 40-byte window before the return; the span
   //    check sees it wherever on the failure path it sits.
   const movedOntoFailurePath = real
-    .replace('      if (!worktree) { dropRecord(); return { ok: true, live: wasLive }; }',
-      '      if (!worktree) { return { ok: true, live: wasLive }; }')
+    .replace('      if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }',
+      '      if (!worktree) { dropSeatDir(); return { ok: true, live: wasLive }; }')
     .replace("      const error = (r && r.error) || 'unknown error';",
       "      dropRecord();\n      const error = (r && r.error) || 'unknown error';");
   assert.ok(movedOntoFailurePath !== real, 'ENTER: the move really applied');

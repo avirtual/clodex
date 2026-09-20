@@ -58,6 +58,72 @@ function exists(fs, p) {
   try { fs.lstatSync(p); return true; } catch { return false; }
 }
 
+function isRealDir(fs, p) {
+  try { return fs.lstatSync(p).isDirectory(); } catch { return false; }
+}
+
+const SEAT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+
+function checkName(name) {
+  if (typeof name !== 'string' || !SEAT_NAME_RE.test(name)) {
+    throw new Error(`seat-layout: refusing seat name '${name}'`);
+  }
+}
+
+function renameSeat({ root, oldName, newName, fs = require('fs') } = {}) {
+  checkName(oldName);
+  checkName(newName);
+  const from = seatDirFor(root, oldName);
+  const to = seatDirFor(root, newName);
+  if (exists(fs, to)) throw new Error(`seat-layout: ${to} already exists`);
+  if (exists(fs, from)) fs.renameSync(from, to);
+
+  const moved = [];
+  const relinked = [];
+  const failed = [];
+  for (const kind of Object.keys(SEAT_KINDS)) {
+    try {
+      const oldLegacy = legacySeatPathFor(root, oldName, kind);
+      const newLegacy = legacySeatPathFor(root, newName, kind);
+      if (isSymlink(fs, oldLegacy)) fs.unlinkSync(oldLegacy);
+      else if (exists(fs, oldLegacy)) {
+        if (exists(fs, newLegacy)) throw new Error(`${newLegacy} already exists`);
+        fs.renameSync(oldLegacy, newLegacy);
+        moved.push(kind);
+      }
+      if (kind === 'run') continue;
+      const seatKind = seatPathFor(root, newName, kind);
+      if (isRealDir(fs, seatKind) && !exists(fs, newLegacy)) {
+        fs.mkdirSync(path.dirname(newLegacy), { recursive: true, mode: 0o700 });
+        fs.symlinkSync(seatKind, newLegacy);
+        relinked.push(kind);
+      }
+    } catch (e) {
+      failed.push({ kind, error: (e && e.message) || String(e) });
+    }
+  }
+  return { moved, relinked, failed };
+}
+
+function removeSeat({ root, name, fs = require('fs') } = {}) {
+  checkName(name);
+  const removed = [];
+  const failed = [];
+  const drop = (p) => {
+    try {
+      if (isSymlink(fs, p)) fs.unlinkSync(p);
+      else if (exists(fs, p)) fs.rmSync(p, { recursive: true, force: true });
+      else return;
+      removed.push(p);
+    } catch (e) {
+      failed.push({ path: p, error: (e && e.message) || String(e) });
+    }
+  };
+  drop(seatDirFor(root, name));
+  for (const kind of Object.keys(SEAT_KINDS)) drop(legacySeatPathFor(root, name, kind));
+  return { removed, failed };
+}
+
 function migrateSeatLayout({ root, names = [], fs = require('fs'), log = null } = {}) {
   const record = readMarker(root, fs);
   const kinds = pendingKinds(record);
@@ -119,5 +185,6 @@ function ensureSeatLink({ root, name, kind, fs = require('fs') } = {}) {
 
 module.exports = {
   migrateSeatLayout, ensureSeatLink, seatLayoutActive, readMarker,
+  renameSeat, removeSeat,
   MARKER, DEFERRED_KINDS, LEGACY_MARKER_KINDS,
 };

@@ -25,6 +25,8 @@ const {
   CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR, DEFAULT_SKILL_DENY_FLOOR, DEFAULT_BUILTIN_DENY_FLOOR,
 } = require('./catalogs');
 const { deferredSkillDeny, isSkillDenyDirective } = require('./skills-off');
+const { seatDirFor } = require('./clodex-paths');
+const { seatLayoutActive } = require('./seat-layout');
 
 const PROMPT_KINDS = ['system', 'append'];
 const PROMPT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/; // mirrors session/agent name rule
@@ -473,12 +475,27 @@ function initStores(userDataPath, {
     listForWorkspace(workspaceId) {
       return this._load().filter(s => s.workspaceId === workspaceId);
     },
+    snapshotSeat(name) {
+      if (!registryDir || !seatLayoutActive(registryDir, fs)) return false;
+      const dir = seatDirFor(registryDir, name);
+      if (!fs.existsSync(dir)) return false;
+      const entry = this.get(name);
+      if (!entry) return false;
+      try {
+        atomicWriteFileSync(path.join(dir, 'seat.json'), `${JSON.stringify(entry, null, 2)}\n`);
+        return true;
+      } catch (e) {
+        if (log && log.warn) log.warn('stores', `seat.json not written for ${name} (${e.message})`);
+        return false;
+      }
+    },
     upsert(entry) {
       const all = this._load();
       const idx = all.findIndex(s => s.name === entry.name);
       if (idx >= 0) all[idx] = { ...all[idx], ...entry };
       else all.push(entry);
       this._save(all);
+      this.snapshotSeat(entry.name);
     },
     remove(name) {
       this._save(this._load().filter(s => s.name !== name));
