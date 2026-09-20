@@ -557,3 +557,131 @@ test('proseSpill OFF: every one of those four streams is byte-identical to upstr
     }
   }
 });
+
+const PING = ev('ping', { type: 'ping' });
+const SHORT = 'Fifty bytes of follow-up, well under the floor.\n';
+
+const PAUSE_AFTER_STOP = Buffer.concat([
+  start(0, 'text'),
+  td(0, SHORT),
+  stopAt(0),
+  PING,
+  PING,
+  start(1, 'tool_use'),
+  stopAt(1),
+  ev('message_stop', { type: 'message_stop' }),
+]);
+
+test('proseSpill: pings pass a held stop, so a pause after a block boundary is not silent', () => {
+  assert.deepEqual(typesOf(PAUSE_AFTER_STOP), [
+    'content_block_start', 'content_block_delta', 'content_block_stop',
+    'ping', 'ping', 'content_block_start', 'content_block_stop', 'message_stop',
+  ], 'ENTER: upstream sends the stop BEFORE the pings, so passing them is a reorder');
+  for (const cs of [1, 17, 997, PAUSE_AFTER_STOP.length]) {
+    const { out } = drive(PAUSE_AFTER_STOP, cs, { proseSpill: true });
+    const s = out.toString('utf8');
+    assert.deepEqual(typesOf(out), [
+      'content_block_start', 'ping', 'ping', 'content_block_delta', 'content_block_stop',
+      'content_block_start', 'content_block_stop', 'message_stop',
+    ], `@cs=${cs}: a ping carries no block state, so it is legal ahead of the held stop — and `
+      + 'holding it would send the client zero bytes for the whole upstream pause');
+    assert.equal(s.split(PING.toString('utf8')).length - 1, 2,
+      `@cs=${cs}: both pings forwarded, byte-identical to upstream`);
+    assert.ok(s.indexOf('event: ping') < s.indexOf('event: content_block_stop'),
+      `@cs=${cs}: ahead of the stop they were queued behind`);
+  }
+  for (const cs of [1, 17, 997, PAUSE_AFTER_STOP.length]) {
+    assert.deepEqual(drive(PAUSE_AFTER_STOP, cs).out, PAUSE_AFTER_STOP,
+      `@cs=${cs}: OFF, nothing is held at all, so the pings go out where upstream put them`);
+  }
+});
+
+test('proseSpill: a ping passes the held stop; message_delta stays behind the pointer', () => {
+  const usage = ev('message_delta', {
+    type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 42 },
+  });
+  const tail = [stopAt(0), usage, ev('message_stop', { type: 'message_stop' })];
+  const head = [start(0, 'text'), td(0, `${BIG}\n`)];
+  const plain = Buffer.concat([...head, ...tail]);
+  const pinged = Buffer.concat([...head, tail[0], PING, tail[1], tail[2]]);
+  for (const cs of [1, 23, 997, plain.length]) {
+    const { out, tee } = drive(plain, cs, { proseSpill: true });
+    assert.equal(tee.fired, 1, `@cs=${cs}`);
+    assert.deepEqual(typesOf(out), [
+      'content_block_start', 'content_block_delta', 'content_block_stop',
+      'message_delta', 'message_stop',
+    ], `@cs=${cs}: message_delta must follow the pointer delta — it closes the message the `
+      + 'pointer is part of');
+  }
+  for (const cs of [1, 23, 997, pinged.length]) {
+    const { out, tee } = drive(pinged, cs, { proseSpill: true });
+    const s = out.toString('utf8');
+    assert.equal(tee.fired, 1, `@cs=${cs}`);
+    assert.deepEqual(typesOf(out), [
+      'content_block_start', 'ping', 'content_block_delta', 'content_block_stop',
+      'message_delta', 'message_stop',
+    ], `@cs=${cs}: only the ping is let past the hold`);
+    assert.ok(s.indexOf('event: ping') < s.indexOf('@spill:'), `@cs=${cs}`);
+  }
+});
+
+test('proseSpill: a fire AT the stop is flushed there, not left behind the hold', () => {
+  const freshRoot = mkTmpRoot('clodex-spill-');
+  const tee = new SpillTee({
+    agent: 'wirescope', root: freshRoot, verbs: VERBS, proseSpill: true,
+  });
+  const first = tee.feed(Buffer.concat([
+    start(0, 'text'),
+    td(0, `[agent:task add t] ${BIG}\n[agent:end]`),
+    stopAt(0),
+  ]));
+  const s = first.toString('utf8');
+  const m = /@spill:([0-9a-f]{16})/.exec(s);
+  assert.ok(m, 'the terminator is the block\'s last unterminated line, so endBlock resolves it — '
+    + 'and the stop branch flushes on that fire the way the delta branch does');
+  assert.deepEqual(typesOf(first),
+    ['content_block_start', 'content_block_delta', 'content_block_stop'],
+    'the pointer is forwarded at the stop, ahead of every later frame');
+  assert.equal(tee.fired, 1);
+
+  const second = tee.feed(Buffer.concat([start(1, 'tool_use'), stopAt(1)]));
+  assert.ok(!second.toString('utf8').includes('@spill:'), 'no second pointer at the next block');
+  const rest = Buffer.concat([second, tee.feed(ev('message_stop', { type: 'message_stop' })), tee.close()]);
+  assert.deepEqual(typesOf(rest),
+    ['content_block_start', 'content_block_stop', 'message_stop']);
+  assert.equal(tee.fired, 1);
+  const dir = path.join(freshRoot, 'spill', 'wirescope');
+  assert.deepEqual(fs.readdirSync(dir), [`${m[1]}.md`],
+    'exactly one file: a pointer stranded in heldOut would be dropped on a panic and orphan it');
+  assert.equal(fs.readFileSync(path.join(dir, `${m[1]}.md`), 'utf8'), BIG);
+});
+
+test('proseSpill: _panic forwards the FILTER when it holds bytes older than the raw window', () => {
+  const A = 'a'.repeat(900);
+  const B = 'b'.repeat(50);
+  const bails = [];
+  const tee = new SpillTee({
+    agent: 'wirescope', root: root(), verbs: VERBS, proseSpill: true, onBail: (i) => bails.push(i),
+  });
+  const first = tee.feed(Buffer.concat([start(0, 'text'), td(0, `${A}\n`), stopAt(0), start(1, 'text')]));
+  assert.deepEqual(typesOf(first),
+    ['content_block_start', 'content_block_stop', 'content_block_start'],
+    'ENTER: the first block\'s delta frame is DROPPED at the text→text boundary, while its '
+    + 'bytes live on in the filter tail — from here heldRaw is no longer the superset');
+
+  let win = null;
+  const realFlush = tee._flushHeld.bind(tee);
+  tee._flushHeld = (out) => { if (!win) win = [tee.heldOut.length, tee.heldSrc.length]; return realFlush(out); };
+  const realFeed = tee.filter.feed.bind(tee.filter);
+  tee.filter.feed = (t) => { realFeed(t); throw new Error('injected after the filter consumed it'); };
+
+  const out = Buffer.concat([first, tee.feed(td(1, `${B}\n`))]);
+  assert.equal(bails[0].reason, 'error');
+  assert.equal(tee.latched, true);
+  assert.ok(win && win[0] > win[1],
+    `ENTER: at the panic the filter held ${win && win[0]} bytes against a ${win && win[1]}-byte raw window`);
+  assert.equal(textOf(out), `${A}\n${B}\n`,
+    'bail() re-materialises both blocks\' prose, so the synthesized delta is the only copy that '
+    + 'still carries the first block — forwarding heldRaw verbatim here deletes it');
+  assert.equal(tee.fired, 0);
+});

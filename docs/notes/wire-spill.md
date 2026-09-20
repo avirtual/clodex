@@ -47,9 +47,8 @@ exactly where that desync reappears. `bail()` also clears `proseSpill`, so a
 latched filter can never hold a tail it will not resolve.
 
 Set in the constructor for an agent name that fails `validAgent`, so a stream
-that could never produce a path is never held or re-chunked. The cost is that a
-later, in-cap intent in the SAME response forwards whole — no spec is lost, only
-the saving, and a fresh response gets a fresh filter.
+that could never produce a path is never held. The cost: a later, in-cap intent
+in the SAME response forwards whole — the saving, never a spec.
 
 ## maxBytes
 
@@ -57,42 +56,44 @@ Enforced on HELD bytes before a line is consumed, never per completed line: a
 ticket spec is very often ONE long line, so a per-line check would fire only
 once that line was fully buffered, and the oversized body would spill anyway.
 
-The same cap bounds the UNTERMINATED head line, before `holding` is ever set:
-`couldBeHead(pending)` with no newline yet would otherwise buffer without limit,
-and a long `[agent:dm …]` line can never spill at all. It bounds the `proseSpill`
-tail too, which is otherwise unbounded by construction. `SpillTee.buf` carries
-the same bound at the SSE-frame level: a 200-status `text/event-stream` that
-never sends `\n\n` would otherwise buffer the whole response.
+The same cap bounds the UNTERMINATED head line, before `holding` is set:
+`couldBeHead(pending)` with no newline would buffer without limit, and a long
+`[agent:dm …]` line can never spill anyway. It bounds the `proseSpill` tail too,
+unbounded by construction, and `SpillTee.buf` at the SSE frame level: a 200
+`text/event-stream` that never sends `\n\n` would buffer the whole response.
 
 ## SpillTee
 
 An unchanged delta is forwarded as its ORIGINAL bytes, never re-serialised:
-Anthropic's SSE uses compact separators and pads events with trailing spaces, so a
-re-encode is a different line even when the text is identical — a wire change on
-100% of traffic to buy nothing on the ~0% that spills.
+Anthropic's SSE pads events with trailing spaces, so a re-encode is a different
+line even when the text is identical — a wire change on 100% of traffic to buy
+nothing on the ~0% that spills.
 
 The thinking guard is the delta TYPE, not the key name: a `thinking_delta`
 carrying a `text` key must still pass untouched, because a rewritten thinking
-block breaks its signature. `content_block_stop` flushes a held BODY before the stop
-is forwarded — a body cannot outlive its block, or the next `content_block_start`
-would carry it into a different index. A `proseSpill` tail does not; see below.
+block breaks its signature. `content_block_stop` flushes a held BODY first — a
+body cannot outlive its block, or the next `content_block_start` would carry it
+into a different index. A `proseSpill` tail does not; see below.
 
-While a body is held the client sees no text deltas, but pings and every non-text
-event keep flowing, so the socket never goes idle. wirescope measured ~43
-chars/delta, so an 800 B body holds ~18 deltas; a `proseSpill` tail holds to the
-end of the response, bounded by the same cap.
+While a body is held the client sees no text deltas, but pings keep flowing, past
+a held stop too — a long upstream pause after a block boundary would otherwise
+send zero bytes for its whole length. ~43 chars/delta, so an 800 B body holds ~18
+deltas; a `proseSpill` tail holds to the end of the response, same cap.
 
 ## _panic
 
 `feed` records `heldRaw`/`heldSrc` BEFORE calling `filter.feed`, so at panic time
 the raw frames can hold text the filter never saw and `bail()` cannot
-re-materialise. `_flushHeld` alone would push nothing — it only emits `heldOut` —
-deleting every accumulated event from the client stream. So `_panic` forwards
-`heldRaw` verbatim whenever it disagrees with `heldOut`. Safe because `heldOut`
-can never hold a pointer at panic time: a fire always flushes first. `_notify`
-wraps every `onSpill`/`onBail` call, so a throwing listener cannot reach that
-path — a `_resolve` that threw after `_fired += 1` would lose the head line, the
-body and the terminator while never dispatching the intent.
+re-materialise, while `_flushHeld` alone emits only `heldOut` and would delete
+every accumulated event from the client stream. So `_panic` forwards `heldRaw`
+verbatim only while it is the SUPERSET, `heldOut.length <= heldSrc.length`;
+longer means `bail()` released bytes OLDER than that window — a
+previous block's tail, whose frames `_flushHeld` dropped — which only `heldOut`
+holds, so that case synthesizes. A pointer is never the excess: a fire always
+flushes first, in the stop branch as in the delta branch. `_notify` wraps every
+`onSpill`/`onBail` call, so a throwing listener cannot reach that path — a
+`_resolve` that threw after `_fired += 1` would lose the head line, the body and
+the terminator while never dispatching the intent.
 
 ## proseSpill
 
@@ -100,17 +101,16 @@ Off, the filter is byte-for-byte pre-S-G2, which is why every older subject stil
 runs against the default. On, text outside a held body accumulates in `tail`, and
 any intent head line FLUSHES it — keeping prose BETWEEN intents on the wire.
 
-`foreignBody` covers the verb the filter does NOT hold: a `remind` body is ordinary
-text to the line scanner, so without it the reminder would land in `tail` and fire
-carrying a pointer. `couldBeHead(pending)` guards a block end
+`foreignBody` covers the verb the filter does NOT hold: a `remind` body is
+ordinary text to the line scanner, so without it the reminder would land in
+`tail` and fire carrying a pointer. `couldBeHead(pending)` guards a block end
 likewise: an unterminated head line is an intent, not a tail. The floor is SHARED
 with the body path; the pointer is BARE, and `POINTER_RE` accepts that form.
 
 An operator dm is the ONE injection that leaves the bit CLEAR: `_deliverMessage`
-passes `human` for sender `user`, the queue carries it to `onSubmitted`. Him
-sending from the panel is the two of them TALKING — the same input as typing. The
-bit is still read ONCE per request under `spillEnabled()`'s contract, and a
-throwing `turnInjected` reads as not-injected.
+passes `human` for sender `user` and the queue carries it to `onSubmitted` — him
+sending from the panel is the two of them TALKING, the same input as typing. The
+bit is read ONCE per request; a throwing `turnInjected` reads as not-injected.
 
 The tail CROSSES block boundaries: `endBlock()` is `close()` without the tail
 decision, and only `close()` — the stream end — resolves one. A non-text
