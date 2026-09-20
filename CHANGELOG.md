@@ -12,7 +12,6 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
-- Level 1 wire stripping no longer strips thinking inside the running turn (Clodex now launches wirescope with STRIP_MIDTURN_THINKING=0). Measured over 14 days, the mid-turn half cost more in uncached tail re-reads than it saved on 78% of Opus and 99% of Fable seats; the prior-turn strip stays. The Level 1 description now states the measured bill effect instead of a token percentage.
 - **Scratch episodes** — a Claude seat can emit `[agent:scratch begin]`, read and reason freely, then `[agent:scratch end] <summary>`: Clodex cuts the episode out of the transcript, respawns the seat on the same session and hands the summary back as a user turn, so only the conclusion is carried and the session compacts later. Refused, never guessed: a cut that would orphan a tool call, span a compact, or drop an operator message bounces with the reason — and for that last one `[agent:scratch end replay]` cuts anyway and re-delivers each message after the summary, so a seat that gets dms all day can still close an episode without losing them.
 
 ## 5.83.4 — 2026-09-20

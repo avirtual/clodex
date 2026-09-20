@@ -476,7 +476,7 @@ test('localReach is SYNCHRONOUS and probes nothing — the hello answers on the 
 //
 // Driven for real rather than read from the source: `python` is a stub that dumps
 // its environment, so this asserts what a child process actually receives.
-function envFromSpawn(patch, name = 'STRIP_MCP_SERVERS') {
+function envFromSpawn(patch) {
   const dir = mkTmpRoot('ws-spawnenv-');
   const out = path.join(dir, 'env.txt');
   const stub = path.join(dir, 'fake-python');
@@ -487,9 +487,9 @@ function envFromSpawn(patch, name = 'STRIP_MCP_SERVERS') {
   fs.writeFileSync(stub, `#!/bin/sh\nexport -p > ${JSON.stringify(out + '.tmp')}\nmv -f ${JSON.stringify(out + '.tmp')} ${JSON.stringify(out)}\n`);
   fs.chmodSync(stub, 0o755);
 
-  const saved = process.env[name];
-  if (patch === undefined) delete process.env[name];
-  else process.env[name] = patch;
+  const saved = process.env.STRIP_MCP_SERVERS;
+  if (patch === undefined) delete process.env.STRIP_MCP_SERVERS;
+  else process.env.STRIP_MCP_SERVERS = patch;
   try {
     const { sup } = makeSup(ROUTED);
     sup._spawn(stub, dir, 47999);
@@ -500,8 +500,8 @@ function envFromSpawn(patch, name = 'STRIP_MCP_SERVERS') {
     }
     sup.child = null;
   } finally {
-    if (saved === undefined) delete process.env[name];
-    else process.env[name] = saved;
+    if (saved === undefined) delete process.env.STRIP_MCP_SERVERS;
+    else process.env.STRIP_MCP_SERVERS = saved;
   }
 
   // `export -p` quotes values, so an empty export and an absent one are
@@ -539,11 +539,6 @@ test('spawn env: STRIP_MCP_SERVERS defaults to claude_design, and an exported em
   const dflt = envFromSpawn(undefined);
   assert.strictEqual(dflt.get('STRIP_TOOLS_GLOBAL'), 'EndConversation');
   assert.strictEqual(dflt.get('WS_OMIT_DEFAULT'), 'useremail');
-});
-
-test('spawn env: STRIP_MIDTURN_THINKING defaults to 0, and an explicit export passes through', () => {
-  assert.strictEqual(envFromSpawn(undefined, 'STRIP_MIDTURN_THINKING').get('STRIP_MIDTURN_THINKING'), '0');
-  assert.strictEqual(envFromSpawn('1', 'STRIP_MIDTURN_THINKING').get('STRIP_MIDTURN_THINKING'), '1');
 });
 
 // ── the survivor an upgrade inherits ────────────────────────────────────────

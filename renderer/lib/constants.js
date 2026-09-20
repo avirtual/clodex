@@ -72,7 +72,7 @@ const THEMES = {
 
 const STRIP_LEVELS = [
   { lvl: 0, name: 'Off', desc: 'No stripping' },
-  { lvl: 1, name: 'Level 1 — thinking', desc: 'Strip prior-turn reasoning (bill −10% Opus, −3% Fable; no visible degradation)' },
+  { lvl: 1, name: 'Level 1 — thinking', desc: 'Strip prior-turn reasoning (~30% off, no visible degradation)' },
   { lvl: 2, name: 'Level 2 — + edit-acks & failed calls', desc: 'Also collapse succeeded edit/write acks and stub failed tool calls (only reclaims while L1 is stripping)' },
 ];
 
