@@ -83,7 +83,7 @@ function mkMove({
     status: () => ({ id: 'p1', label: 'murmurfi', caps, needsUpgrade }),
     importBegin: async (arg) => {
       begun.push(arg);
-      if (beginGate) await beginGate;
+      if (beginGate && begun.length === 1) await beginGate;
       if (beginRefusal) return { ok: false, error: beginRefusal };
       openStaging = arg;
       return { ok: true, id: STAGING_ID };
@@ -566,7 +566,8 @@ test('the in-progress guard is taken before the probe, so two concurrent moves c
 
   assert.deepStrictEqual(second, { ok: false, error: 'move already in progress' },
     'the guard and the add used to be separated by the awaited probe, so two frontends — or two '
-    + 'DIFFERENT peers — could both pass it and both quiesce the same pty');
+    + 'DIFFERENT peers — could both pass it and both quiesce the same pty. Only the FIRST '
+    + 'probe is gated, so a build that lets the second through answers here rather than hanging');
   assert.strictEqual(begun.length, 1, 'the second caller never reached the peer');
   assert.strictEqual(firstOut.ok, true, 'and the first move is unaffected');
   assert.deepStrictEqual(s.killed, [true], 'the pty was quiesced exactly once');
