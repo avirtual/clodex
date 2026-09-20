@@ -71,11 +71,9 @@ const SWEEP = [
 
 // The model axis is REAL here: each id is resolved through ctxThresholdsFor with
 // no overrides, so the loop asserts that every one of them lands on the same
-// baseline pair. That is the claim worth making — the shipped table is empty, so
-// no model may resolve anywhere else — and it is what would fail if a row were
-// added without a decision to add it. Fable is the interesting id: it is the
-// model the ticket was raised about, and the pair 5.1/5.0 must resolve alike
-// while remaining independently addressable.
+// baseline pair. fable-5-1 is deliberately absent — it is the one family that
+// ships a row, and its exclusion is asserted below rather than assumed, so a
+// second row appearing without a decision to add it fails here.
 const UNCHANGED_MODELS = [
   null,
   'claude-opus-5',
@@ -83,7 +81,6 @@ const UNCHANGED_MODELS = [
   'claude-sonnet-5',
   'claude-haiku-4-5',
   'claude-fable-5',
-  'claude-fable-5-1',
   'claude-3-5-sonnet-20241022',
   'something-that-is-not-a-model',
 ];
@@ -99,14 +96,16 @@ test('invariant 4: fed the base commit\'s thresholds, the decision reproduces it
   assert.strictEqual(typeof base.ctxThresholdsFor, 'undefined',
     'the base module predates the per-model resolver');
 
-  // Shape first: no model may resolve away from the shipped baseline while the
-  // table is empty. This is what makes the sweep below a statement about every
-  // model rather than about one pair checked nine times.
+  // Shape first: every model but the one shipped row resolves to the baseline.
+  // This is what makes the sweep below a statement about every model rather than
+  // about one pair checked nine times.
+  assert.deepStrictEqual(UNCHANGED_MODELS.filter((m) => CTX_MODEL_THRESHOLDS.has(modelFamily(m))), [],
+    'ENTER: no id in this list may own a shipped row, or the loop below asserts the wrong baseline');
   for (const model of UNCHANGED_MODELS) {
     const r = ctxThresholdsFor(model, {});
     assert.deepStrictEqual({ nudge: r.nudge, escalate: r.escalate },
       { nudge: CTX_REMINDER_NUDGE_TOKENS, escalate: CTX_REMINDER_ESCALATE_TOKENS },
-      `${model} must resolve to the shipped baseline while no row ships`);
+      `${model} owns no shipped row and must resolve to the baseline`);
     assert.strictEqual(r.source, 'builtin-default', `${model} reached a table row it should not have`);
   }
 
@@ -134,18 +133,16 @@ test('invariant 4: fed the base commit\'s thresholds, the decision reproduces it
 // The retune itself, stated as the behaviour change it is: a standing seat is
 // now nudged earlier. Literals on both sides — reading the constants would
 // make this true of any retune, including back to the values it corrects.
-test('the baseline retune fires 25k earlier than the base commit did', (t) => {
+test('the baseline retune fires 50k earlier than the base commit did', (t) => {
   const base = loadBaseModule(t);
   const now = ctxThresholdsFor('claude-opus-5', {});
   assert.deepStrictEqual({ nudge: now.nudge, escalate: now.escalate },
-    { nudge: 175_000, escalate: 225_000 });
-  assert.strictEqual(base.ctxReminderFor(175_000), null, 'the base module was silent at 175k');
-  assert.ok(ctxReminderFor(175_000, now).includes('getting heavy'), 'and this one nudges there');
-  // The nudge stays under 200k, where a long-context surcharge would begin: the
-  // nudge is what asks a seat to act, so it must fire before that line.
-  assert.ok(now.nudge < 200_000, 'the nudge must not cross the surcharge line');
+    { nudge: 150_000, escalate: 200_000 });
+  assert.strictEqual(base.ctxReminderFor(150_000), null, 'the base module was silent at 150k');
+  assert.ok(ctxReminderFor(150_000, now).includes('getting heavy'), 'and this one nudges there');
+  assert.strictEqual(ctxReminderFor(149_999, now), null, 'ENTER: and silent just under, or the line is not there');
   assert.ok(ctxReminderFor(199_999, now).includes('getting heavy'),
-    'a seat is still only nudged, not escalated, just under the line');
+    'a seat is still only nudged, not escalated, just under the escalate');
 });
 
 test('invariant 4: a real settings file lacking the key resolves to the shipped default', (t) => {
@@ -167,7 +164,7 @@ test('invariant 4: a real settings file lacking the key resolves to the shipped 
   assert.deepStrictEqual({ nudge: r.nudge, escalate: r.escalate },
     { nudge: CTX_REMINDER_NUDGE_TOKENS, escalate: CTX_REMINDER_ESCALATE_TOKENS });
   assert.deepStrictEqual({ nudge: r.nudge, escalate: r.escalate },
-    { nudge: 175_000, escalate: 225_000 }, 'and those are the ruled values');
+    { nudge: 150_000, escalate: 200_000 }, 'and those are the ruled values');
 });
 
 // ---------------------------------------------------------------------------
@@ -258,39 +255,45 @@ test('invariant 3: no model id reaches a row belonging to another family', () =>
   }
 });
 
-// The shipped table is empty today, so the builtin-model arm has no live row to
-// exercise. Ships-with-no-row is a DEFAULTS decision, not a mechanism decision:
-// this inserts a row to prove the arm resolves and that the decision uses what
-// it returns, which is what makes reinstating a row a data change.
-test('the per-model mechanism works even though no model differs by default', () => {
-  assert.strictEqual(CTX_MODEL_THRESHOLDS.size, 0,
-    'no differentiated row ships: the >200k surcharge question is unanswered');
-  assert.ok(!CTX_MODEL_THRESHOLDS.has('fable-5-1'), 'fable 5.1 in particular is at the baseline');
+// The whole table as one literal, not a membership check: "there is fable 5.1
+// and everyone else" is the shipped claim, so a second row arriving must break
+// this rather than pass alongside it. Each id carries its expected family as a
+// literal, because the row is only reachable through modelFamily's output.
+const FABLE_IDS = [
+  ['claude-fable-5-1', 'fable-5-1'],
+  ['claude-fable-5-1[1m]', 'fable-5-1'],
+  ['us.anthropic.claude-fable-5-1-20260601-v1:0', 'fable-5-1'],
+];
 
-  const restore = new Map(CTX_MODEL_THRESHOLDS);
-  try {
-    CTX_MODEL_THRESHOLDS.set('fable-5-1', { nudge: 250_000, escalate: 310_000 });
-    const fable = ctxThresholdsFor('claude-fable-5-1', {});
-    assert.strictEqual(fable.source, 'builtin-model');
-    assert.deepStrictEqual({ nudge: fable.nudge, escalate: fable.escalate },
-      { nudge: 250_000, escalate: 310_000 });
-    // The decision USES it, not merely reports it.
-    assert.strictEqual(ctxReminderFor(210_000, fable), null, 'a raised row defers the nudge');
-    assert.ok(ctxReminderFor(260_000, fable).includes('getting heavy'));
-    assert.ok(ctxReminderFor(310_000, fable).includes('very heavy'));
-    // And it does not leak to a model that does not own it.
-    const opus = ctxThresholdsFor('claude-opus-5', {});
-    assert.strictEqual(opus.source, 'builtin-default');
-    assert.ok(ctxReminderFor(210_000, opus), 'opus still nudges at the baseline');
-    // A settings row still outranks a shipped one.
-    const over = ctxThresholdsFor('claude-fable-5-1', { 'fable-5-1': { nudge: 400_000, escalate: 500_000 } });
-    assert.strictEqual(over.source, 'settings-model');
-    assert.strictEqual(over.nudge, 400_000);
-  } finally {
-    CTX_MODEL_THRESHOLDS.clear();
-    for (const [k, v] of restore) CTX_MODEL_THRESHOLDS.set(k, v);
+test('the shipped table carries exactly one row, fable 5.1, and it resolves through builtin-model', () => {
+  assert.deepStrictEqual([...CTX_MODEL_THRESHOLDS],
+    [['fable-5-1', { nudge: 200_000, escalate: 250_000 }]]);
+
+  for (const [id, family] of FABLE_IDS) {
+    assert.deepStrictEqual(ctxThresholdsFor(id, {}),
+      { nudge: 200_000, escalate: 250_000, family, source: 'builtin-model' }, id);
   }
-  assert.strictEqual(CTX_MODEL_THRESHOLDS.size, 0, 'the fixture row is not left behind');
+
+  // The decision USES the row, and it does not leak to a model without one.
+  const fable = ctxThresholdsFor('claude-fable-5-1', {});
+  assert.strictEqual(ctxReminderFor(190_000, fable), null, 'the raised row defers the nudge past the baseline');
+  assert.ok(ctxReminderFor(200_000, fable).includes('getting heavy'));
+  assert.ok(ctxReminderFor(250_000, fable).includes('very heavy'));
+  const opus = ctxThresholdsFor('claude-opus-5', {});
+  assert.strictEqual(opus.source, 'builtin-default');
+  assert.ok(ctxReminderFor(190_000, opus).includes('getting heavy'), 'opus still nudges at the baseline');
+
+  // The minor version is the priced axis: 5.0 owns no row and must not inherit
+  // 5.1's, and its family is a real string rather than a lookup miss.
+  const older = ctxThresholdsFor('claude-fable-5', {});
+  assert.strictEqual(older.family, 'fable-5');
+  assert.strictEqual(older.source, 'builtin-default');
+  assert.strictEqual(older.nudge, CTX_REMINDER_NUDGE_TOKENS);
+
+  // A settings row still outranks the shipped one.
+  const over = ctxThresholdsFor('claude-fable-5-1', { 'fable-5-1': { nudge: 400_000, escalate: 500_000 } });
+  assert.strictEqual(over.source, 'settings-model');
+  assert.strictEqual(over.nudge, 400_000);
 });
 
 // The defect this file exists to prevent, stated over the SHIPPED price table
@@ -350,7 +353,7 @@ test('invariant 3: a model matching nothing lands on the baseline AUDIBLY', () =
   assert.strictEqual(r.nudge, CTX_REMINDER_NUDGE_TOKENS);
   // A row whose values happen to equal the baseline is distinguishable from a
   // miss — which is the whole difference a silent lookup would erase.
-  const named = ctxThresholdsFor('claude-opus-5', { 'opus-5': { nudge: 175_000, escalate: 225_000 } });
+  const named = ctxThresholdsFor('claude-opus-5', { 'opus-5': { nudge: 150_000, escalate: 200_000 } });
   assert.strictEqual(named.source, 'settings-model');
   assert.deepStrictEqual(
     { nudge: named.nudge, escalate: named.escalate },
@@ -361,16 +364,16 @@ test('invariant 3: a model matching nothing lands on the baseline AUDIBLY', () =
 // The ENTER for the whole file: the mechanism is live.
 // ---------------------------------------------------------------------------
 
-test('ENTER: the shipped baseline is the ruled one, and it applies to every model', () => {
-  assert.strictEqual(CTX_REMINDER_NUDGE_TOKENS, 175_000);
-  assert.strictEqual(CTX_REMINDER_ESCALATE_TOKENS, 225_000);
-  for (const id of ['claude-fable-5-1', 'claude-opus-5', 'us.anthropic.claude-sonnet-4-6']) {
+test('ENTER: the shipped baseline is the ruled one, and every model without a row takes it', () => {
+  assert.strictEqual(CTX_REMINDER_NUDGE_TOKENS, 150_000);
+  assert.strictEqual(CTX_REMINDER_ESCALATE_TOKENS, 200_000);
+  for (const id of ['claude-fable-5', 'claude-opus-5', 'us.anthropic.claude-sonnet-4-6']) {
     const r = ctxThresholdsFor(id, {});
     assert.deepStrictEqual({ nudge: r.nudge, escalate: r.escalate },
-      { nudge: 175_000, escalate: 225_000 }, id);
-    assert.strictEqual(ctxReminderFor(174_999, r), null, `${id} is not nudged below 175k`);
-    assert.ok(ctxReminderFor(175_000, r).includes('getting heavy'), `${id} nudges at 175k`);
-    assert.ok(ctxReminderFor(225_000, r).includes('very heavy'), `${id} escalates at 225k`);
+      { nudge: 150_000, escalate: 200_000 }, id);
+    assert.strictEqual(ctxReminderFor(149_999, r), null, `${id} is not nudged below 150k`);
+    assert.ok(ctxReminderFor(150_000, r).includes('getting heavy'), `${id} nudges at 150k`);
+    assert.ok(ctxReminderFor(200_000, r).includes('very heavy'), `${id} escalates at 200k`);
   }
 });
 
@@ -388,18 +391,11 @@ test('ENTER: an operator override reaches the decision and outranks the shipped 
 });
 
 test('a baseline override does not move a model that has its own row', () => {
-  const restore = new Map(CTX_MODEL_THRESHOLDS);
-  try {
-    CTX_MODEL_THRESHOLDS.set('fable-5-1', { nudge: 250_000, escalate: 310_000 });
-    const fable = ctxThresholdsFor('claude-fable-5-1', { default: { nudge: 100_000, escalate: 400_000 } });
-    assert.strictEqual(fable.source, 'builtin-model');
-    assert.deepStrictEqual({ nudge: fable.nudge, escalate: fable.escalate },
-      { nudge: 250_000, escalate: 310_000 },
-      'most specific wins: a baseline edit must not silently erase per-model tuning');
-  } finally {
-    CTX_MODEL_THRESHOLDS.clear();
-    for (const [k, v] of restore) CTX_MODEL_THRESHOLDS.set(k, v);
-  }
+  const fable = ctxThresholdsFor('claude-fable-5-1', { default: { nudge: 100_000, escalate: 400_000 } });
+  assert.strictEqual(fable.source, 'builtin-model');
+  assert.deepStrictEqual({ nudge: fable.nudge, escalate: fable.escalate },
+    { nudge: 200_000, escalate: 250_000 },
+    'most specific wins: a baseline edit must not silently erase per-model tuning');
 });
 
 // ---------------------------------------------------------------------------

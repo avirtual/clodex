@@ -173,10 +173,10 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
 }
 
 // Derived from the thresholds in force for the fixture's OWN model rather than
-// from the baseline constant. They are the same today — no model ships a
-// differentiated row — but this is the INPUT that has to reach the
-// over-threshold state, and a per-model row added later would silently stop it
-// reaching it, vacuuming out the ENTER every skip assertion below leans on.
+// from the baseline constant: this is the INPUT that has to reach the
+// over-threshold state, and a shipped row for the fixture's model would
+// otherwise silently stop it reaching it, vacuuming out the ENTER every skip
+// assertion below leans on. fable-5 owns no row; fable-5.1 does.
 const FIXTURE_MODEL = 'claude-fable-5';
 const FIXTURE_THRESHOLDS = ctxThresholdsFor(FIXTURE_MODEL, {});
 const OVER = FIXTURE_THRESHOLDS.nudge + 10_000;

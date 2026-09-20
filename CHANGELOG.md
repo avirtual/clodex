@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Right-click ▸ "Move to Workspace…" moves a session to another workspace window without restarting it — the terminal keeps running and its output is waiting when the other window shows it.
+- Compact nudges are now per model: every model is nudged at 150k tokens (escalated at 200k), and Fable 5.1 — whose cache reads are cheap and whose compacts are expensive — at 200k (escalated at 250k). Settings shows the Fable row read-only under the baseline boxes; a per-model row in ui-settings.json still overrides it.
 
 ## 5.83.2 — 2026-09-20
 
