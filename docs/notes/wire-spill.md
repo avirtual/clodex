@@ -35,8 +35,7 @@ bails, costing the saving on one response, never a spec.
 Byte-identity on the forward-original paths is the whole failure policy, so that
 inexactness is not ported — and it is why `rawRest` outlives the trim in deviation
 2: what is FORWARDED is the original bytes, what is SPILLED is the scanner's
-delimitation. For that same shape the sha input has no leading newline where
-`_extractIntents` would; every consumer trims one, so it is invisible.
+delimitation.
 
 ## passthru
 
@@ -74,14 +73,14 @@ re-encode is a different line even when the text is identical — a wire change 
 
 The thinking guard is the delta TYPE, not the key name: a `thinking_delta`
 carrying a `text` key must still pass untouched, because a rewritten thinking
-block breaks its signature. `content_block_stop` flushes held text BEFORE the stop
-is forwarded — held text cannot outlive its block, or the next
-`content_block_start` would carry it into a different index.
+block breaks its signature. `content_block_stop` flushes a held BODY before the stop
+is forwarded — a body cannot outlive its block, or the next `content_block_start`
+would carry it into a different index. A `proseSpill` tail does not; see below.
 
 While a body is held the client sees no text deltas, but pings and every non-text
 event keep flowing, so the socket never goes idle. wirescope measured ~43
 chars/delta, so an 800 B body holds ~18 deltas; a `proseSpill` tail holds to the
-block's end, bounded by the same cap.
+end of the response, bounded by the same cap.
 
 ## _panic
 
@@ -98,23 +97,24 @@ body and the terminator while never dispatching the intent.
 ## proseSpill
 
 Off, the filter is byte-for-byte pre-S-G2, which is why every older subject still
-runs against the default. On, text outside a held body accumulates in `tail`
-instead of forwarding, and any intent head line FLUSHES it first. That reset keeps
-prose BETWEEN intents — often the actual answer — on the wire; only what survives
-to `close()` spills.
+runs against the default. On, text outside a held body accumulates in `tail`, and
+any intent head line FLUSHES it — keeping prose BETWEEN intents on the wire.
 
 `foreignBody` covers the verb the filter does NOT hold: a `dm` body is ordinary
 text to the line scanner, so without it the message would land in `tail` and leave
-as a pointer its recipient cannot read. Set by any head line that is not the
-terminator, cleared by a listed head. `couldBeHead(pending)` guards `close()`
-likewise: an unterminated head line is an intent, not a tail.
+as a pointer its recipient cannot read. `couldBeHead(pending)` guards a block end
+likewise: an unterminated head line is an intent, not a tail. The floor is SHARED
+with the body path; the pointer is BARE, and `POINTER_RE` accepts that form.
 
-The floor is SHARED with the body path rather than tuned — tool narration and a
-one-line answer must pass, and a second constant is a second thing to retune. The
-pointer is BARE, because there is no head; `POINTER_RE` already accepts that form,
-so the resume snapshot and the terminal link resolve it unchanged.
+An operator dm is the ONE injection that leaves the bit CLEAR: `_deliverMessage`
+passes `human` for sender `user`, the queue carries it to `onSubmitted`. Him
+sending from the panel is the two of them TALKING — the same input as typing. The
+bit is still read ONCE per request under `spillEnabled()`'s contract, and a
+throwing `turnInjected` reads as not-injected.
 
-The bit is evaluated ONCE per request in `proxy.js`, beside `spillEligible` and
-under `spillEnabled()`'s contract: a response finishes under the decision it
-started with, so a turn cannot be half-filtered. A throwing `turnInjected` reads
-as not-injected — doubt forwards the original, as everywhere else here.
+The tail CROSSES block boundaries: `endBlock()` is `close()` without the tail
+decision, and only `close()` — the stream end — resolves one. A non-text
+`content_block_start` flushes a standing tail as the original, because that text
+was narration before a tool call. So the tee must HOLD the last text block's
+`content_block_stop`, and the frames behind it, in `heldRaw` past `heldStopAt`:
+at that stop frame it cannot yet know whether another block follows. Gated on `proseSpill`.

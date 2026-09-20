@@ -378,3 +378,153 @@ test('proseSpill: a thinking block is never touched', () => {
     'a rewritten thinking block breaks its signature, so the delta type is the guard');
   assert.equal(tee.fired, 0);
 });
+
+const NARRATION = 'n'.repeat(900);
+
+function typesOf(blob) {
+  const out = [];
+  for (const e of blob.toString('utf8').split('\n\n')) {
+    const m = /^event: (\S+)/.exec(e);
+    if (m) out.push(m[1]);
+  }
+  return out;
+}
+
+function start(index, type) {
+  return ev('content_block_start', { type: 'content_block_start', index, content_block: { type } });
+}
+const stopAt = (index) => ev('content_block_stop', { type: 'content_block_stop', index });
+
+const NARRATE_THEN_TOOL = Buffer.concat([
+  ev('message_start', { type: 'message_start' }),
+  start(0, 'text'),
+  td(0, `${NARRATION}\n`),
+  stopAt(0),
+  start(1, 'tool_use'),
+  stopAt(1),
+  start(2, 'text'),
+  td(2, 'Fifty bytes of follow-up, well under the floor.\n'),
+  stopAt(2),
+  ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn' } }),
+  ev('message_stop', { type: 'message_stop' }),
+]);
+
+const TWO_FAT_BLOCKS = Buffer.concat([
+  start(0, 'text'),
+  td(0, `${NARRATION}\n`),
+  stopAt(0),
+  start(1, 'tool_use'),
+  stopAt(1),
+  start(2, 'text'),
+  td(2, `${BIG}\n`),
+  stopAt(2),
+  ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn' } }),
+  ev('message_stop', { type: 'message_stop' }),
+]);
+
+const LONE_TEXT = Buffer.concat([
+  start(0, 'text'),
+  td(0, `${BIG}\n`),
+  stopAt(0),
+  ev('message_stop', { type: 'message_stop' }),
+]);
+
+const THINK_THEN_TEXT = Buffer.concat([
+  start(0, 'thinking'),
+  ev('content_block_delta', {
+    type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'weighing it' },
+  }),
+  stopAt(0),
+  start(1, 'text'),
+  td(1, `${BIG}\n`),
+  stopAt(1),
+  ev('message_stop', { type: 'message_stop' }),
+]);
+
+test('proseSpill: narration before a tool_use is forwarded whole, at every chunk size', () => {
+  for (const cs of [1, 17, 997, NARRATE_THEN_TOOL.length]) {
+    const { out, tee } = drive(NARRATE_THEN_TOOL, cs, { proseSpill: true });
+    assert.deepEqual(out, NARRATE_THEN_TOOL,
+      `@cs=${cs}: the narration is 900 bytes, well past the floor, so only the non-text `
+      + 'content_block_start keeps it off the pointer path — the ruling says tool narration is '
+      + 'never touched, and "end of response" means the response, not the block');
+    assert.equal(tee.fired, 0, `@cs=${cs}: the 50-byte tail after the tool call is under the floor`);
+  }
+});
+
+test('proseSpill: only the text AFTER the last non-text block is the tail', () => {
+  for (const cs of [1, 17, 997, TWO_FAT_BLOCKS.length]) {
+    const { out, tee } = drive(TWO_FAT_BLOCKS, cs, { proseSpill: true });
+    const s = out.toString('utf8');
+    assert.equal(tee.fired, 1, `@cs=${cs}`);
+    assert.ok(textOf(out).startsWith(`${NARRATION}\n`),
+      `@cs=${cs}: the first text block is narration and survives verbatim`);
+    assert.ok(!s.includes(BIG), `@cs=${cs}: the second is the sign-off and goes to disk`);
+    const id = /@spill:([0-9a-f]{16})/.exec(s)[1];
+    assert.equal(fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${id}.md`), 'utf8'),
+      `${BIG}\n`, `@cs=${cs}: and the file holds exactly those 900 bytes`);
+    assert.deepEqual(typesOf(out), [
+      'content_block_start', 'content_block_delta', 'content_block_stop',
+      'content_block_start', 'content_block_stop',
+      'content_block_start', 'content_block_delta', 'content_block_stop',
+      'message_delta', 'message_stop',
+    ], `@cs=${cs}: the pointer delta lands INSIDE the last text block — the held stop frame and `
+      + 'everything after it are released in their original order');
+  }
+});
+
+test('proseSpill: a lone text block still spills, with the stop frames after the pointer', () => {
+  for (const cs of [1, 23, LONE_TEXT.length]) {
+    const { out, tee } = drive(LONE_TEXT, cs, { proseSpill: true });
+    assert.equal(tee.fired, 1, `@cs=${cs}`);
+    const id = /@spill:([0-9a-f]{16})/.exec(out.toString('utf8'))[1];
+    assert.equal(textOf(out), `@spill:${id}\n`, `@cs=${cs}`);
+    assert.deepEqual(typesOf(out),
+      ['content_block_start', 'content_block_delta', 'content_block_stop', 'message_stop'],
+      `@cs=${cs}: holding the stop must not reorder or drop it`);
+  }
+});
+
+test('proseSpill: a thinking block PRECEDES rather than follows, so the text after it spills', () => {
+  for (const cs of [1, 23, THINK_THEN_TEXT.length]) {
+    const { out, tee } = drive(THINK_THEN_TEXT, cs, { proseSpill: true });
+    assert.equal(tee.fired, 1,
+      `@cs=${cs}: a non-text block flushes only a tail already standing, and there was none`);
+    const id = /@spill:([0-9a-f]{16})/.exec(out.toString('utf8'))[1];
+    assert.equal(textOf(out), `@spill:${id}\n`, `@cs=${cs}`);
+  }
+});
+
+test('proseSpill: a panic while the last stop frame is held forwards it verbatim', () => {
+  const tee = new SpillTee({ agent: 'wirescope', root: root(), verbs: VERBS, proseSpill: true });
+  const head = Buffer.concat([start(0, 'text'), td(0, `${BIG}\n`), stopAt(0)]);
+  const first = tee.feed(head);
+  assert.equal(first.toString('utf8'), start(0, 'text').toString('utf8'),
+    'ENTER: the delta and the stop are both still held — nothing to panic about otherwise');
+
+  tee.filter.close = () => { throw new Error('socket died mid-close'); };
+  const out = Buffer.concat([first, tee.close()]);
+  assert.equal(tee.latched, true);
+  assert.ok(out.toString('utf8').includes(td(0, `${BIG}\n`).toString('utf8')),
+    'the original delta frame is the only byte-faithful copy of the prose');
+  assert.ok(out.toString('utf8').includes(stopAt(0).toString('utf8')),
+    'and the held stop frame is released too: a block the client never sees closed hangs it');
+  assert.deepEqual(typesOf(out),
+    ['content_block_start', 'content_block_delta', 'content_block_stop']);
+});
+
+test('proseSpill OFF: every one of those four streams is byte-identical to upstream', () => {
+  const cases = {
+    'narration then tool_use': NARRATE_THEN_TOOL,
+    'two fat text blocks': TWO_FAT_BLOCKS,
+    'a lone text block': LONE_TEXT,
+    'thinking then text': THINK_THEN_TEXT,
+  };
+  for (const [label, stream] of Object.entries(cases)) {
+    for (const cs of [1, 17, 997, stream.length]) {
+      assert.deepEqual(drive(stream, cs).out, stream,
+        `${label} @cs=${cs}: the held-stop framing is gated on proseSpill, so the default path `
+        + 'keeps the byte identity every older subject rests on');
+    }
+  }
+});

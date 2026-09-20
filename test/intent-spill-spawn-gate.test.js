@@ -134,7 +134,8 @@ test('the grammar line is in the prompt with the setting OFF, so a flip changes 
     assert.ok(off.prompts[0].includes(
       'On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last '
       + 'intent — or a whole reply with no intent — is spilled the same way once it passes 800 bytes: '
-      + 'what the operator must know goes inside an intent, not after it.'),
+      + 'what the operator must know goes inside an intent, not after it — a dm from your '
+      + 'operator counts as typed.'),
     'and that its trailing prose on an injected turn goes the same way, so a pointer where its '
     + 'sign-off was does not read as the wire having eaten something');
     const norm = (s, r) => s.split(r).join('<root>');

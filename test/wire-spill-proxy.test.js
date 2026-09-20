@@ -508,3 +508,44 @@ test('a THROWING turnInjected reads as not-injected rather than failing the turn
     assert.equal(events.spill.length, 0);
   });
 });
+
+const NARRATE_TOOL_SSE = [
+  ev('message_start', {
+    type: 'message_start',
+    message: { id: 'msg_narr', usage: { input_tokens: 10, cache_read_input_tokens: 5 } },
+  }),
+  ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+  td(0, 'Here is the plan before I touch anything.\n'),
+  td(0, 'n'.repeat(400)),
+  td(0, `${'n'.repeat(499)}\n`),
+  ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
+  ev('content_block_start', {
+    type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'tu_1', name: 'Bash', input: {} },
+  }),
+  ev('content_block_delta', {
+    type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"command":"ls"}' },
+  }),
+  ev('content_block_stop', { type: 'content_block_stop', index: 1 }),
+  ev('message_delta', {
+    type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 42 },
+  }),
+  ev('message_stop', { type: 'message_stop' }),
+].join('');
+
+const NARRATION_TEXT = `Here is the plan before I touch anything.\n${'n'.repeat(899)}\n`;
+
+test('an INJECTED turn that ends in a tool call keeps its narration', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({ body: NARRATE_TOOL_SSE }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'], turnInjected: () => true } });
+    const events = collect(proxy, ['spill', 'stream-end']);
+
+    const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
+    assert.equal(res.body.toString('utf8'), NARRATE_TOOL_SSE,
+      'the hand\'s first step on an injected ticket is plan-then-tool-call, and the plan is 900 '
+      + 'bytes: the ruling protects tool narration, so this response is forwarded byte-identical');
+    assert.equal(textOf(res.body), NARRATION_TEXT);
+    assert.equal(events.spill.length, 0);
+  });
+});

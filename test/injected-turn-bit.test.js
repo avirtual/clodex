@@ -11,11 +11,19 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function boot() {
   const PENDING_DIR = mkTmpRoot('clodex-injbit-');
+  const metas = [];
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
-    InjectQueue,
+    InjectQueue: class extends InjectQueue {
+      constructor(o) {
+        super({ ...o, onSubmitted: (t, meta) => { metas.push(meta); o.onSubmitted(t, meta); } });
+      }
+    },
     PENDING_DIR, parkDelivery, drainPending, hasActivePending, isDraftOpen,
     countPending, isHumanPtyInput, draftChunkSignal,
+    getPersistence: () => ({ list: () => [], get: () => null }),
+    intentEnabled: require('../intent-catalog').intentEnabled,
+    MSG_SPILL_THRESHOLD: 1e9,
     INJECT_QUIET_MS: 0,
     INJECT_QUIET_MAXWAIT: 3_600_000,
     INJECT_BOOT_MAXWAIT: 0,
@@ -35,7 +43,7 @@ function boot() {
     pty: { write: (b) => writes.push(b) },
   };
   m.sessions = new Map([['hand', s]]);
-  return { m, s, writes, PENDING_DIR };
+  return { m, s, writes, metas, PENDING_DIR };
 }
 
 function cleanup(h) {
@@ -43,24 +51,74 @@ function cleanup(h) {
   try { fs.rmSync(h.PENDING_DIR, { recursive: true, force: true }); } catch {}
 }
 
-test('the bit tracks the turn, not the request: [false, true, true, false]', async () => {
+const settle = (h) => h.m._injectQueueFor(h.s)._chain;
+
+test('the bit tracks the turn, not the request: [false, true, false]', async () => {
   const h = boot();
   const seq = [];
+  const turnInjected = () => h.m.sessions.get('hand')?.lastSubmitInjected === true;
 
   seq.push(h.s.lastSubmitInjected);
 
   await h.m._injectQueueFor(h.s).enqueue('[agent:from lead] pick up t1026');
   seq.push(h.s.lastSubmitInjected);
 
-  seq.push(h.s.lastSubmitInjected);
+  const perRequest = [turnInjected(), turnInjected()];
 
   h.m.write('hand', 'now do the other thing\r');
   seq.push(h.s.lastSubmitInjected);
 
-  assert.deepStrictEqual(seq, [false, true, true, false],
-    'fresh seat, then a dm Clodex delivered, then a tool-call continuation inside that same '
-    + 'turn — a second REQUEST but not a second turn, passing through neither call site, so the '
-    + 'bit still describes the dm — then the operator typing and hitting Enter');
+  assert.deepStrictEqual(seq, [false, true, false],
+    'fresh seat, then a dm Clodex delivered, then the operator typing and hitting Enter');
+  assert.deepStrictEqual(perRequest, [true, true],
+    'the closure proxy.js holds is read once per REQUEST, and a tool-call continuation is a '
+    + 'second request inside the same turn: it passes through neither call site, so both reads '
+    + 'see the dm that started the turn');
+  cleanup(h);
+});
+
+test('an operator dm is a human turn: the bit is CLEARED, as a keystroke clears it', async () => {
+  const h = boot();
+  const seq = [h.s.lastSubmitInjected];
+
+  h.m._deliverMessage('hand', 'user', 'hello', 'dm');
+  await settle(h);
+  seq.push(h.s.lastSubmitInjected);
+
+  h.m._deliverMessage('hand', 'reviewer', 'nit 3 again', 'dm');
+  await settle(h);
+  seq.push(h.s.lastSubmitInjected);
+
+  h.m._deliverMessage('hand', 'user', 'and one more thing', 'dm');
+  await settle(h);
+  seq.push(h.s.lastSubmitInjected);
+
+  h.m.write('hand', 'typed\r');
+  seq.push(h.s.lastSubmitInjected);
+
+  assert.deepStrictEqual(seq, [false, false, true, false, false],
+    'the operator sending from the panel or POST /api/sessions/:name/dm is the two of them '
+    + 'TALKING — the same input as typing, so his own answer is never spilled to a pointer. A '
+    + 'peer dm travels the same queue and stays injected');
+
+  assert.deepStrictEqual(h.metas, [{ human: true }, { human: false }, { human: true }],
+    'and the queue is told which it was at submit time, not guessed from the text');
+
+  const delivered = h.writes.filter((b) => b !== '\x15' && b !== '\r');
+  assert.ok(delivered[0].startsWith('[agent:from user]'),
+    'ENTER: the operator keeps the sender prefix he always had — human-ness rides the queue '
+    + 'option, not a rewritten envelope');
+  assert.ok(delivered[1].startsWith('[agent:from reviewer]'));
+  cleanup(h);
+});
+
+test('nothing but the operator clears the bit: a reminder stays injected', async () => {
+  const h = boot();
+  h.m._deliverMessage('hand', 'reminder', 'continue: t1027 tests', 'dm');
+  await settle(h);
+  assert.strictEqual(h.s.lastSubmitInjected, true,
+    'a reminder, a ticket reply and an exec result are all Clodex speaking, not the operator');
+  assert.deepStrictEqual(h.metas, [{ human: false }]);
   cleanup(h);
 });
 

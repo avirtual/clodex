@@ -436,3 +436,67 @@ test('proseSpill on: a bail mid-response reverts to byte-for-byte passthrough', 
   const { out } = runProse(T);
   assert.equal(out, T, 'the nested-intent bail latches, so nothing after it is held');
 });
+
+function proseFilter(opts = {}) {
+  return new SpillFilter({
+    agent: 'wirescope', root: root(), verbs: VERBS, proseSpill: true, ...opts,
+  });
+}
+
+test('endBlock KEEPS the tail; only close() resolves it', () => {
+  const f = proseFilter();
+  assert.equal(f.feed(PROSE), '', 'the tail is held, as inside any one block');
+  assert.equal(f.endBlock(), '',
+    'a block boundary is not the end of the response: the tee cannot know at a stop frame '
+    + 'whether another block follows, so the tail crosses it intact');
+  assert.equal(f.feed(''), '');
+  const out = f.close();
+  assert.equal(out, `@spill:${diskOf(out).id}\n`, 'and the stream end is what resolves it');
+  assert.equal(f.fired, 1);
+  assert.equal(diskOf(out).body, PROSE, 'the file holds the tail from before the boundary');
+});
+
+test('a tail spanning two blocks spills as ONE file, in order', () => {
+  const f = proseFilter();
+  f.feed('first half of the sign-off\n');
+  f.endBlock();
+  f.feed(PROSE);
+  const out = f.close();
+  assert.equal(diskOf(out).body, `first half of the sign-off\n${PROSE}`,
+    'the boundary is invisible to the tail — it is one run of prose to the response');
+});
+
+test('endBlock flushes a held, unterminated body as the original, exactly as close() does', () => {
+  const f = proseFilter();
+  const T = `[agent:task add t] head\n${BIG}\n`;
+  assert.equal(f.feed(T), '');
+  assert.equal(f.endBlock(), T,
+    'a body the terminator never closed cannot outlive its block: the next block would carry it '
+    + 'into a different index');
+  assert.equal(f.fired, 0);
+  assert.equal(f.close(), '', 'and nothing is left behind for the stream end');
+});
+
+test('endBlock resolves a held body whose terminator is the block\'s last unterminated line', () => {
+  const f = proseFilter();
+  assert.equal(f.feed(`[agent:task add t] ${BIG}\n[agent:end]`), '');
+  const out = f.endBlock();
+  assert.ok(out.startsWith('[agent:task add t] @spill:'),
+    'endBlock takes close()\'s terminator-in-pending branch, so a body the block ends on still '
+    + 'spills rather than forwarding whole');
+  assert.ok(out.endsWith('[agent:end]'), 'and the terminator goes out behind it, unchanged');
+  assert.equal(f.fired, 1);
+});
+
+test('bail() forwards a held tail as the ORIGINAL, which is the only thing that does', () => {
+  const f = proseFilter();
+  assert.equal(f.feed(PROSE), '', 'ENTER: the 899-byte tail is really held, not streamed');
+  const out = f.bail();
+  assert.equal(out, PROSE,
+    'bail clears proseSpill BEFORE close(), so close()\'s _resolveTail arm is skipped and the '
+    + 'unconditional _flushTail is the only path that returns the tail. Drop it and SpillTee\'s '
+    + 'frame-cap bail leaves heldOut short of heldSrc, _flushHeld synthesizes one delta from the '
+    + 'short string, and the prose is silently deleted from the client stream');
+  assert.equal(f.fired, 0, 'a bail never spills — nothing is ever written on the way out');
+  assert.equal(f.latched, true);
+});
