@@ -155,7 +155,7 @@ test('pointerOf: a title before the pointer is accepted and contributes nothing 
   assert.equal(pointerOf(`title @spill:${id}\n`), id, 'a consumer that kept the newline still resolves');
 });
 
-test('the verb set is the dotted key, and only the seven listed verbs', () => {
+test('the verb set is the dotted key, and only the nine listed verbs', () => {
   assert.equal(verbKeyOf({ type: 'task', sub: 'add' }), 'task.add');
   assert.equal(verbKeyOf({ type: 'shout' }), 'shout');
   for (const v of [{ type: 'task', sub: 'add' }, { type: 'task', sub: 'respec' },
