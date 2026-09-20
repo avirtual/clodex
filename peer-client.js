@@ -3,12 +3,14 @@
 
 const http = require('http');
 const https = require('https');
+const fs = require('fs');
 const { URL } = require('url');
 const { RELAY_ENVELOPE_V } = require('./relay-protocol');
 const { withoutExecGrants } = require('./session-args');
 const { makeWatchdog, STALE_MS } = require('./cli/src/sse-guard');
 const { makeSseDecoder, MAX_BUFFER_BYTES } = require('./cli/src/sse-frame');
 const { peerHasShellCap, peerShellRefusal, vetWireResize } = require('./peer-shell');
+const { IMPORT_CHUNK_MAX } = require('./seat-import');
 
 const HELLO_INTERVAL_MS = 15000;      // offline poll cadence
 const RECONNECT_MIN_MS = 1000;        // attach/events stream backoff
@@ -40,6 +42,7 @@ const WTERM_STATUS_CODE = {
 };
 const REQUEST_TIMEOUT_MS = 5000;
 const QUERY_TIMEOUT_MS = 20000;
+const IMPORT_TIMEOUT_MS = 120000;
 const OVERFLOW_LOG_INTERVAL_MS = 60000;
 const CLAIM_FAIL_LOG_INTERVAL_MS = 60000;
 
@@ -204,6 +207,7 @@ class PeerConnection {
       direct: this._direct,
       online: this.online,
       needsUpgrade: this.needsUpgrade,
+      canImport: this._hasCap('import'),
       host: this.hello ? this.hello.host : null,
       version: this.hello ? this.hello.version : null,
       caps: this.hello ? this.hello.caps : [],
@@ -716,6 +720,81 @@ class PeerConnection {
 
 // withoutExecGrants is the client-side mirror of the server backstop — exec
 // grants must never ride the wire in either direction.
+  _hasCap(cap) {
+    return (this.hello && Array.isArray(this.hello.caps) ? this.hello.caps : []).includes(cap);
+  }
+
+  _ask(method, path, payload, timeout = REQUEST_TIMEOUT_MS) {
+    return new Promise((resolve) => {
+      this._request(method, path, payload, (err, body) => {
+        resolve(err ? { ok: false, error: err.message } : body || { ok: false, error: 'no response' });
+      }, timeout);
+    });
+  }
+
+  _askRaw(method, path, buffer, headers) {
+    return new Promise((resolve) => {
+      this._requestRaw(method, path, buffer, headers, (err, body) => {
+        resolve(err ? { ok: false, error: err.message } : body || { ok: false, error: 'no response' });
+      });
+    });
+  }
+
+  async importSeat({ name, record, files = [], onProgress } = {}) {
+    if (!this._hasCap('import')) {
+      return { ok: false, error: `${this.label} does not accept seat imports` };
+    }
+    const begun = await this._ask('POST', '/api/import/begin', { name, record });
+    if (!begun.ok) return begun;
+    const id = begun.id;
+    const bail = async (out) => {
+      await this._ask('DELETE', `/api/import/${id}`, null);
+      return out;
+    };
+    for (const file of files) {
+      const relPath = file && file.relPath;
+      const urlPath = `/api/import/${id}/file/${String(relPath).split('/').map(encodeURIComponent).join('/')}`;
+      let sent = 0;
+      let total;
+      let fd = null;
+      if (Buffer.isBuffer(file.bytes)) total = file.bytes.length;
+      else {
+        try { total = fs.statSync(file.path).size; }
+        catch (e) { return bail({ ok: false, error: `cannot read ${relPath}: ${e.message}` }); }
+        try { fd = fs.openSync(file.path, 'r'); }
+        catch (e) { return bail({ ok: false, error: `cannot read ${relPath}: ${e.message}` }); }
+      }
+      try {
+        do {
+          let chunk;
+          if (fd == null) chunk = file.bytes.subarray(sent, sent + IMPORT_CHUNK_MAX);
+          else {
+            const buf = Buffer.allocUnsafe(Math.min(IMPORT_CHUNK_MAX, Math.max(total - sent, 0)));
+            let read;
+            try { read = fs.readSync(fd, buf, 0, buf.length, sent); }
+            catch (e) { return bail({ ok: false, error: `cannot read ${relPath}: ${e.message}` }); }
+            chunk = buf.subarray(0, read);
+          }
+          const end = sent + chunk.length - 1;
+          const out = await this._askRaw('PUT', urlPath, chunk, {
+            'Content-Range': `bytes ${sent}-${end < sent ? sent : end}/*`,
+          });
+          if (!out.ok) return bail(out);
+          sent += chunk.length;
+          if (typeof onProgress === 'function') {
+            try { onProgress({ relPath, sent, total }); } catch {}
+          }
+          if (chunk.length === 0) break;
+        } while (sent < total);
+      } finally {
+        if (fd != null) { try { fs.closeSync(fd); } catch {} }
+      }
+    }
+    const done = await this._ask('POST', `/api/import/${id}/commit`, null, IMPORT_TIMEOUT_MS);
+    if (!done.ok && !done.installed) return bail(done);
+    return done;
+  }
+
   createSession(spec, cb) {
     this._request('POST', '/api/sessions', withoutExecGrants(spec || {}), (err, body) => {
       cb(err ? { ok: false, error: err.message } : body || { ok: false });
@@ -876,6 +955,41 @@ class PeerConnection {
     req.on('timeout', () => req.destroy(new Error('timeout')));
     req.on('error', (e) => cb(e));
     if (body) req.write(body);
+    req.end();
+  }
+
+  _requestRaw(method, path, buffer, headers, cb, timeout = IMPORT_TIMEOUT_MS) {
+    let d;
+    try { d = dialOptions(this.url, path); } catch (e) { return cb(e); }
+    const body = Buffer.isBuffer(buffer) ? buffer : Buffer.alloc(0);
+    const req = (d.secure ? https : http).request({
+      hostname: d.hostname, port: d.port,
+      path: d.path, method,
+      agent: this._reqAgent, timeout,
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': body.length,
+        ...(headers || {}),
+        ...this._authHeaders(),
+      },
+    }, (res) => {
+      let buf = '';
+      let tooLarge = false;
+      res.on('data', (c) => {
+        buf += c;
+        if (tooLarge || buf.length <= 1024 * 1024) return;
+        tooLarge = true;
+        req.destroy(new Error('response too large'));
+      });
+      res.on('end', () => {
+        if (tooLarge) return;
+        try { cb(null, JSON.parse(buf)); }
+        catch { cb(new Error('bad response')); }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', (e) => cb(e));
+    if (body.length) req.write(body);
     req.end();
   }
 

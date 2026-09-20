@@ -16,6 +16,7 @@ const { withoutPrivilegedIntentsFor } = require('./intent-registry');
 // Env scopes cross the wire on a create body — never trust the client: sanitize
 // server-side (drops invalid/denied/newline keys) before it reaches create().
 const { sanitizeFlat } = require('./env-scopes');
+const { createSeatImport } = require('./seat-import');
 // The peer-terminal grant (t219). A pure leaf shared with peer-client and the
 // renderer so the three cannot disagree about what the operator granted.
 const { shellCapGranted } = require('./peer-shell');
@@ -44,6 +45,7 @@ function createRemoteWiring(deps) {
     fetchSessionFiles, fetchFilePeek, fetchFileDiff,
     CLAUDE_TOOLS, getPromptLibrary, getAgentLibrary, getSkillLibrary, getHelpCorpus,
     getPersistence, getUiSettings, getWorkspaces, getNotifications,
+    getReminders, getAccounts,
     getRemoteServer, setRemoteServer, setRemoteError, getDrawerPtys,
     readRemoteEnvToken, resolveRemoteToken,
     appVersion, isPackaged,
@@ -207,6 +209,102 @@ function createRemoteWiring(deps) {
     });
   }
 
+  let seatImport = null;
+  function getSeatImport() {
+    if (!seatImport) {
+      seatImport = createSeatImport({
+        root: REGISTRY_DIR,
+        claudeProjects: path.join(os.homedir(), '.claude', 'projects'),
+        reminders: getReminders ? getReminders() : null,
+        log,
+      });
+    }
+    return seatImport;
+  }
+
+  function importNameTaken(name) {
+    if (typeof name !== 'string' || !AGENT_NAME_RE.test(name)) {
+      return { ok: false, error: `invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars` };
+    }
+    if (manager.sessions.has(name) || getPersistence().get(name)) {
+      return { ok: false, error: `name taken "${name}"` };
+    }
+    return { ok: true };
+  }
+
+  function importEnv(record, dropped) {
+    const env = sanitizeFlat(record.env);
+    if (!env.CLAUDE_CONFIG_DIR) return env;
+    const label = typeof record.accountLabel === 'string' ? record.accountLabel : '';
+    const accounts = getAccounts ? getAccounts() : null;
+    let dir = null;
+    if (label && accounts) { try { dir = accounts.configDirFor(label); } catch { dir = null; } }
+    if (dir) env.CLAUDE_CONFIG_DIR = dir;
+    else {
+      delete env.CLAUDE_CONFIG_DIR;
+      dropped.push(`account:${label || 'unknown'}`);
+    }
+    return env;
+  }
+
+  async function importCreate({ name, record, dropped } = {}) {
+    const rec = record && typeof record === 'object' ? record : {};
+    const taken = importNameTaken(name);
+    if (!taken.ok) return taken;
+    const out = (Array.isArray(dropped) ? dropped : []).filter((d) => d !== 'account');
+    const dir = path.resolve(String(rec.cwd || '').replace(/^~(?=$|\/)/, os.homedir()));
+    try { ensureDir(dir); }
+    catch (e) { return { ok: false, error: `cannot create cwd "${dir}": ${e.message}` }; }
+    const env = importEnv(rec, out);
+    const envKeys = Object.keys(env).sort();
+    let made;
+    try {
+      made = await manager.create(
+        name, rec.type, dir,
+        rec.extraArgs || [],
+        rec.sessionId || null,
+        DEFAULT_WORKSPACE_ID,
+        rec.systemPrompt || null,
+        false,
+        rec.proxy ?? null,
+        rec.agents || [],
+        rec.denyBuiltins || [],
+        rec.disabledTools || [],
+        rec.disabledSkills || [],
+        rec.injectSkills || [],
+        rec.systemPromptFile || null,
+        rec.appendPromptFiles || [],
+        [],
+        withoutPrivilegedIntentsFor(Array.isArray(rec.intents) ? rec.intents : null),
+        envKeys.length ? env : null,
+        false,
+        rec.noWire === true,
+        Array.isArray(rec.plugins) ? rec.plugins : null,
+        Array.isArray(rec.shellDeny) ? rec.shellDeny : null,
+      );
+    } catch (e) {
+      log.error('session', `import create ${name} failed: ${e.message}`);
+      return { ok: false, error: `spawn failed: ${e.message}` };
+    }
+    const seed = { name };
+    if (typeof rec.createdAt === 'number') seed.createdAt = rec.createdAt;
+    if (Array.isArray(rec.sessionIds)) seed.sessionIds = rec.sessionIds;
+    if (rec.keepWarmAlways === true) seed.keepWarmAlways = true;
+    if (rec.autoCompact === false) seed.autoCompact = false;
+    if (Array.isArray(rec.digested)) seed.digested = rec.digested;
+    seed.importedFrom = { peer: (rec.importedFrom && rec.importedFrom.peer) || null, at: Date.now() };
+    getPersistence().upsert(seed);
+    if (rec.label) getPersistence().setLabel(name, rec.label);
+    if (rec.stripLevel === 1 || rec.stripLevel === 2) getPersistence().setStripLevel(name, rec.stripLevel);
+    if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
+    log.info('session', `import ${name} (${rec.type}) @ ${dir} pid=${made.pid}`);
+    return {
+      ok: true, name: made.name, pid: made.pid, cwd: dir,
+      sessionId: rec.sessionId || null, dropped: out,
+    };
+  }
+  importCreate.check = importNameTaken;
+
   function syncRemoteServer() {
     watchInbox();
     const s = getUiSettings().get();
@@ -232,6 +330,7 @@ function createRemoteWiring(deps) {
     }
     const constructed = !getRemoteServer();
     if (constructed) {
+      try { getSeatImport().sweep(); } catch (e) { log.error('seat-import', `sweep failed: ${e.message}`); }
       const { RemoteServer } = require('./remote');
       setRemoteServer(new RemoteServer({
         port: s.remotePort,
@@ -360,6 +459,8 @@ function createRemoteWiring(deps) {
             return { ok: false, error: `spawn failed: ${e.message}` };
           }
         },
+        seatImport: getSeatImport(),
+        importCreate,
         nodeLogFile: getNodeLogFile ? () => getNodeLogFile() : null,
         getCatalogs: () => ({
           agents: getAgentLibrary().list(),

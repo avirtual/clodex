@@ -31,9 +31,11 @@ outlive a restart mid-transfer and an in-memory counter does not.
 
 ## commit
 
-Checked entirely, then written, so every refusal leaves the tree byte-identical,
-and a refusal is always a return — an fs error in the write phase comes back as
-`install failed: <msg>`. The collision set is `renameTargets` plus
+Checked entirely, then written, so a CHECK-phase refusal leaves the tree
+byte-identical. The write phase cannot promise that: an fs error there (the
+transcript copy, a seat-kind rename, the pending or loadlog rename, a reminder
+add) comes back as `install failed: <msg>` carrying `installed`, which names
+what did land — a return rather than a throw, but not a rollback. The collision set is `renameTargets` plus
 `pending/<name>`, reused from seat-layout, so rename's refusal and this one
 cannot drift apart.
 
@@ -50,10 +52,35 @@ persistence store writes it on the far `create()`. Reminder rows are re-added
 through the far store so ids are minted there, and `ticket` is dropped to null:
 it names a row on the SOURCE box's board, so a bound reminder would be cancelled
 by whatever reused that id, or never. Counted in `dropped`, as is `account` when
-the record has `env.CLAUDE_CONFIG_DIR` — reported, not mapped.
+the record has `env.CLAUDE_CONFIG_DIR` — this module reports it; the route layer
+replaces that entry with the account-by-label outcome.
 
 ## sweep
 
 Removes stagings older than 1h. A crash between `begin`'s mkdir and its manifest
 write leaves a dir nothing else reaps, so an unreadable manifest falls back to
-the directory's birthtime rather than skipping it.
+the directory's `mtimeMs` rather than skipping it. NOT `birthtimeMs`: it is the
+one stat field `utimesSync` cannot move, so a backdated subject would pin this
+branch only on a filesystem that records a birthtime at all.
+
+## IMPORT_CHUNK_MAX
+
+The per-REQUEST body cap on the file route (4 MiB), distinct from `maxBytes`,
+which caps the whole staging. The route reads a raw Buffer rather than
+`_readBody`: that helper accumulates a string under a 64 KiB cap, and a
+transcript is neither text to the wire nor small. `offset` comes from
+`Content-Range: bytes <start>-<end>/*`; an absent header is offset 0, which is
+what makes a single-chunk PUT work with no header at all.
+
+### route table
+
+remote.js serves the owner half; every route is behind `_authGate` and 501s
+`import not supported` when no `seatImport` is injected, which is also the gate
+on hello's `import` cap.
+
+| route | method |
+| --- | --- |
+| `POST /api/import/begin` | `begin({name, record})` |
+| `PUT /api/import/<id>/file/<relPath...>` | `putFile({id, relPath, bytes, offset})` |
+| `POST /api/import/<id>/commit` | `commit({id})`, then the injected `importCreate` |
+| `DELETE /api/import/<id>` | `abort({id})` |
