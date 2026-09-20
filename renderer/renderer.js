@@ -879,6 +879,23 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, d
     case 'moveToWorkspace':
       moveSessionToWorkspace(name, workspaceId, workspaceName);
       break;
+    case 'scratchMark':
+      promptText(`Scratch mark on "${name}" — label`, '').then((raw) => {
+        if (raw == null) return;
+        const label = raw.trim();
+        if (!/^(?!replay$)[A-Za-z0-9._-]{1,32}$/.test(label)) {
+          showToast('Label must be 1–32 chars: letters, digits, . _ - (not "replay")', { kind: 'error', duration: 8000, name });
+          return;
+        }
+        return window.api.scratchMark(name, label).then((res) => {
+          if (!res || !res.ok) {
+            showToast((res && res.error) || 'Scratch mark failed', { kind: 'error', duration: 10000, name });
+            return;
+          }
+          showToast(`Mark "${label}" set on ${name}`, { name });
+        });
+      });
+      break;
     case 'reattach':
       if (type) {
         const snapAccount = accountOfRow(name);
