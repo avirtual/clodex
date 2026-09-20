@@ -350,6 +350,70 @@ at `SNAPSHOT_MAX_BYTES` with the board truncated last-rows-first; the author's
 bytes above the `---` and the injected pointer line are unchanged. The short,
 Codex and write-failure paths type the body as before — no snapshot.
 
+## 3a. Scratch episodes
+
+A Claude seat that is about to read a lot, and will carry only the conclusion,
+opens an episode with `[agent:scratch begin]`. What Clodex removes afterwards is
+the seat's own transcript — a **rewind of the conversation, never of the work**:
+files written, commits, dms and tickets dispatched inside the episode all stand
+(which is why the `end` summary is required to name them; see `validateScratchCut`'s
+dispatch check).
+
+**The mark.** `begin` records `session._scratch` in memory — a nonce, the
+transcript's realpath and sessionId, `sizeAtBegin`, the 512 bytes immediately
+before it, and the uuid of the last record before it. In memory on purpose: a
+Clodex restart voids the mark, because a mark that outlives the process has no
+ledger of what arrived during its episode. `begin` is **refused, not marked**, if
+the reply that carried it went on to call tools — the ack has to land on a turn
+boundary, and `boundaryAt` (`scratch-mark.js`) is the authority on whether the
+tail of the file is one. Claude Code writes a boundary as an `end_turn` assistant
+record followed by `system`/`turn_duration`; see `docs/notes/scratch-mark.md` for
+the vendor shapes.
+
+**The ack** is an ordinary `_injectText` whose first line is `ACK_PREFIX` plus the
+nonce. That line is not decoration: it is the cut point. The first byte dropped is
+the first byte of a record Clodex itself wrote, so the cut is self-describing —
+the alternative, a byte offset captured at `begin`, lands mid-line the moment the
+CLI writes a sidecar between the stat and the ack.
+
+**The cut.** `end` runs `validateScratchCut(mark, fileBuffer)` — pure, returns
+`{ ok, cutOffset, reason, stats, arrivals }`, and **every check refuses rather
+than writes**. It waits for a turn boundary first: an `end` the model wrote before
+continuing is held until the reply finishes, since everything after it is episode
+bytes anyway. The whole file is copied to a `.bak` under the scratch root (outside
+`run/<name>/`, which the respawn deletes, and outside `~/.claude/projects/`, whose
+`*.jsonl` glob feeds the CLI's own picker), `[0, cutOffset)` is written to a temp
+file, fsynced and renamed over the original. The `.bak` is removed only once the
+respawned CLI has written its first record past the summary; any failure before
+that renames it back.
+
+**The respawn** takes **Move's shape, not `kill()` and not reload**: `_moving`,
+pty kill, wait for exit, then `create()` on the same `sessionId`. `kill()` would
+drop the persistence record and tell peers the seat retired; Move's exit is
+expected and the renderer keeps the tab. The seat's name, registry entry and
+`agent.sock` are unchanged, so peers' dms route to the new process untouched. The
+summary is injected afterwards as a user turn, framed by `scratchBriefing` as a
+briefing delivered **by Clodex** rather than as the seat's own memory — what it
+does not state, the seat has not verified.
+
+**When it refuses.** The transcript, not live tracking, is the authority on what
+the seat's context holds:
+
+| condition | disposition |
+|---|---|
+| `/clear`, `context clear` or `reload` after `begin` | `cleared` — realpath or sessionId moved; the mark is gone and nothing can be cut |
+| `/compact` after `begin` | `compacted` — the summary was written from compacted memory, and un-compacting a context that just hit the threshold re-fires the compact |
+| a message arrived inside the episode | `arrivals` — refused by default: the operator did not consent to losing a message they typed. Re-emit as `[agent:scratch end replay]` to cut AND have them re-delivered after the summary, or cancel |
+| a `tool_use` in the kept set has no `tool_result` | `orphaned-tool-use` — the CLI would silently re-parent it and fabricate a reply (`docs/notes/scratch-mark.md`) |
+| the last kept record is not a turn boundary, or is not the marked leaf | `leaf-mismatch` / the `boundaryAt` reason |
+| the ack never landed (the seat was blocked when `begin` fired) | `ack-missing` — nothing was cut |
+| a dispatch made inside the episode is unnamed in the summary | `dispatch-unmentioned` — after the cut the seat will not remember doing it |
+| bodyless `end` | refused: an empty summary is a rewind that loses the work. Not treated as a cancel — that conflates "I changed my mind" with "I forgot the body" |
+| a Codex seat | refused outright: a rollout is a different record shape and no rewind has been proven for it |
+
+Every bounce names the mark and ends on either "Nothing was cut" or "your summary
+is in your own turn above" — the two facts the seat needs to recover.
+
 ## 4. Exit, kill, restore
 
 `ptyProc.onExit` runs a **fixed order** (each step depends on the previous
