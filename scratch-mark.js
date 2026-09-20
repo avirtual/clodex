@@ -3,6 +3,9 @@
 const ACK_PREFIX = '[agent:scratch] episode open · mark ';
 const SCRATCH_NOTELESS_SENTENCE = 'You left no note: you recorded that stretch as a negative result — '
   + 'nothing in it was worth keeping. Do not repeat it; take a different approach or report the dead end.';
+const SCRATCH_EPISODE_HEADER = 'Scratch episode result · mark ';
+const SCRATCH_REWIND_HEADER = 'Scratch rewind result · mark ';
+const SCRATCH_BRIEFING_PREFIXES = [SCRATCH_EPISODE_HEADER, SCRATCH_REWIND_HEADER];
 
 const CONVERSATION_TYPES = new Set(['user', 'assistant', 'system']);
 
@@ -378,17 +381,19 @@ function scratchBriefing(mark, stats, body, opts = {}) {
   const kb = Math.round(droppedBytes / 1024);
 
   const label = typeof opts.label === 'string' && opts.label ? opts.label : (mark.label || null);
-  if (!label) {
-    const header = `Scratch episode result · mark ${mark.nonce} (delivered by Clodex). `
-      + `You opened this episode at ${formatTime(mark.beganAt)} and closed it at ${formatTime(endedAt)}; `
-      + `the ${turns} turns / ${kb} KB of reads between them are no longer in your transcript — `
-      + 'only the summary below, which you wrote at close, survives. It is your own conclusion, delivered as '
-      + 'given facts: what it does not state, you have not verified. Continue from it.';
-    return `${header}\n\n${String(body == null ? '' : body)}`;
-  }
-
   const note = String(body == null ? '' : body);
   const noteless = opts.noteless === true || note.trim() === '';
+  if (!label) {
+    const anonTail = noteless
+      ? `. ${SCRATCH_NOTELESS_SENTENCE}`
+      : ' — only the summary below, which you wrote at close, survives. It is your own conclusion, delivered as '
+        + 'given facts: what it does not state, you have not verified. Continue from it.';
+    const header = `${SCRATCH_EPISODE_HEADER}${mark.nonce} (delivered by Clodex). `
+      + `You opened this episode at ${formatTime(mark.beganAt)} and closed it at ${formatTime(endedAt)}; `
+      + `the ${turns} turns / ${kb} KB of reads between them are no longer in your transcript${anonTail}`;
+    return noteless ? header : `${header}\n\n${note}`;
+  }
+
   const earlier = (Array.isArray(opts.notes) ? opts.notes : [])
     .filter((n) => n && typeof n.body === 'string')
     .map((n) => (Number.isFinite(n.at) ? `[${formatTime(n.at)}] ` : '') + n.body);
@@ -396,7 +401,7 @@ function scratchBriefing(mark, stats, body, opts = {}) {
     ? `. ${SCRATCH_NOTELESS_SENTENCE}`
     : ' — only the note(s) below survive. They are your own conclusions, delivered as given facts: '
       + 'what they do not state, you have not verified. Continue from them.';
-  const header = `Scratch rewind result · mark ${mark.nonce} · label ${label} (delivered by Clodex). `
+  const header = `${SCRATCH_REWIND_HEADER}${mark.nonce} · label ${label} (delivered by Clodex). `
     + `You set this mark at ${formatTime(mark.beganAt)} and rewound to it at ${formatTime(endedAt)}; `
     + `the ${turns} turns / ${kb} KB between them are no longer in your transcript${tail}`;
   const blocks = [header];
@@ -425,4 +430,5 @@ module.exports = {
   scratchReplayLine,
   arrivalClock,
   SCRATCH_NOTELESS_SENTENCE,
+  SCRATCH_BRIEFING_PREFIXES,
 };

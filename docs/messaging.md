@@ -91,13 +91,21 @@ keystroke.
   `name`, `context <sub>`, `memory <sub>`, `file <view|open> <path>`,
   `spawn name:X cwd:Y` (optional `template:Z` — matched by name, supplies
   type/config; see sessions.md §5).
-- `scratch <begin|end|cancel>` (Claude seats only) — a closed alternation, so a
-  typo'd sub-verb is not an intent at all: `end` CUTS the transcript, and a
-  half-parsed one is not a safe failure. `begin` and `cancel` are bare; `end`
-  takes a greedy body and an optional `replay` modifier (`[agent:scratch end
-  replay]`). The cut itself is sessions.md §3a; what belongs here is that all
-  three are ordinary gateable intents whose bounces ride `_injectText`, parkable,
-  each naming the mark:
+- `scratch <begin|end|cancel|mark|rewind>` (Claude seats only) — a closed
+  alternation, so a typo'd sub-verb is not an intent at all: `end` and `rewind`
+  CUT the transcript, and a half-parsed one is not a safe failure. `begin` is
+  bare; `mark <label>` is bare and REQUIRES a label; `cancel [<label>]` and
+  `rewind [<label>]` take an optional one; `end` and `rewind` take a greedy body
+  and an optional `replay` modifier (`[agent:scratch end replay]`,
+  `[agent:scratch rewind <label> replay]`). A label is `[A-Za-z0-9._-]`, 1–32
+  chars (`SCRATCH_LABEL_RE`, intent-catalog.js), and never `replay`: on
+  `rewind` the word is a modifier, so `[agent:scratch rewind replay]` is a bare
+  rewind WITH replay, not a rewind to a mark called replay.
+  The cut itself, named marks and the survival rule are sessions.md §3a; what
+  belongs here is that all five are ordinary gateable intents whose bounces ride
+  `_injectText`, parkable, each naming the mark AND the verb that was used
+  (`end refused:` for `end`, `rewind refused:` for `rewind`, `mark refused:`
+  for `mark`) — the same condition bounces under whichever verb hit it:
   - `begin` off a turn boundary: *it must be the last line of a reply (your reply
     went on to call tools). Emit it alone and stop; the episode opens when Clodex
     acks it. Not marked.*
@@ -127,6 +135,22 @@ keystroke.
   - a second `end` while one is parked for the turn boundary: *end already
     pending for mark X — waiting for your reply to finish* — and the FIRST body
     is the one that will be cut with, not the second.
+  - `rewind <label>` with no such mark: *rewind refused: no mark named "<label>"
+    is set — marks set: a, b (most recent first). Nothing was cut.* — the list is
+    the open labels, youngest first, so a case slip self-corrects.
+  - `rewind` (bare or labelled) with no mark at all: *rewind refused: no mark is
+    set — set one with [agent:scratch mark <label>] as the last line of a reply.
+    Nothing was cut.* `cancel <label>` bounces the same two lines under `cancel
+    refused:`.
+  - `mark <label>` at a point another label already marks: *mark refused:
+    "<other>" already marks this exact point — one label per point. Not marked.*
+    (`begin` at that point is allowed — the anonymous episode is a different
+    store.) `mark` with a label already in use MOVES it, and the ack says so on
+    its second line: *Label <label> re-set: the earlier point is dropped; what
+    you read since it is ordinary history and will NOT be cut.*
+  - `rewind` with an EMPTY body is NOT a bounce: it cuts and the briefing
+    records a negative result (sessions.md §3a, "Named marks"); only `end`
+    refuses an empty body.
   - `end` during a Move or Rename of the seat: refused while the name is held,
     the mark left open.
   - a Codex seat: *Claude seats only — a Codex transcript has a different shape

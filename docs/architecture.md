@@ -327,7 +327,7 @@ bundle), whose packaged form is the Docker image under
   Three consumers across two processes read it (the fire-time gate in
   `_handleIntent`, the renderer checklist, and `buildIpcPrompt`).
 - **scratch-mark.js** — the pure validator behind `[agent:scratch begin|end|
-  cancel]`: parses a transcript tail into records, finds the turn boundary, and
+  cancel|mark|rewind]`: parses a transcript tail into records, finds the turn boundary, and
   decides whether the marked span may be cut. Every abort (cleared, compacted,
   an orphaned `tool_use`, a split text+tool_use pair, arrivals, an unmentioned
   dispatch) returns a reason instead of writing, so the cut in session-manager

@@ -205,7 +205,9 @@ test('t808: the sandbox row is present in the literal AND in GRAMMAR_LINES', () 
 test('t1039: the scratch rows are present in the literal AND in GRAMMAR_LINES — a row missing from both copies keeps the byte-pins green and ships a verb whose `end` CUTS the transcript', () => {
   for (const ROW of [/^ {2}\[agent:scratch begin\] {12}Claude seats only\. Open a SCRATCH EPISODE/m,
     /^ {2}\[agent:scratch end\] <summary> {4}Close the episode:/m,
-    /^ {2}\[agent:scratch cancel\] {11}Bare; drops the mark and cuts nothing/m]) {
+    /^ {2}\[agent:scratch cancel\] {11}Bare; drops the mark and cuts nothing/m,
+    /^ {2}\[agent:scratch mark <label>\] {5}Set a NAMED rewind point/m,
+    /^ {2}\[agent:scratch rewind \[<label>\]\] <note> {3}Cut back to that mark/m]) {
     assert.ok(ROW.test(IPC_PROMPT), `the literal carries ${ROW}`);
     assert.ok(ROW.test(buildIpcPrompt(['scratch'])), `and so does a seat granted scratch: ${ROW}`);
   }
@@ -493,7 +495,9 @@ test('every rendered grammar line parses, with its placeholders filled in', () =
     .replace('name:X', 'name:x')
     .replace('cwd:Y', 'cwd:/tmp')
     .replace('template:Y', 'template:tpl')
-    .replace('[reason]', 'why');
+    .replace('[reason]', 'why')
+    .replace('[<label>]', 'survey')
+    .replace('<label>', 'survey');
   // The grammar block is `  [agent:…]` at two-space indent; prose paragraphs
   // that MENTION an intent are not indented that way and are not forms.
   // A run of 2+ spaces ends the FORM and starts its aligned description — which

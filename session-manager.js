@@ -164,7 +164,6 @@ const SCRATCH_TAIL_SCAN = 64 * 1024;
 const SCRATCH_MARK_TAIL = 512;
 const SCRATCH_CLOSE_TIMEOUT = 120000;
 const SCRATCH_BAK_TTL_MS = 7 * 24 * 3600 * 1000;
-const SCRATCH_CUT_TEXT_PREFIXES = ['Scratch episode result · mark ', 'Scratch rewind result · mark ', 'Continue from your handoff'];
 const isScratchCutText = (text) => typeof text === 'string' && SCRATCH_CUT_TEXT_PREFIXES.some((p) => text.startsWith(p));
 const scratchRealArrivals = (list) => (Array.isArray(list) ? list : []).filter((a) => !isScratchCutText(a && a.text));
 
@@ -199,8 +198,9 @@ const { SEAT_KINDS, seatPathFor, claudeProjectSlug, scratchDirFor } = require('.
 const {
   ACK_PREFIX: SCRATCH_ACK_PREFIX, boundaryAt: scratchBoundaryAt, beginCutAt: scratchBeginCutAt,
   parseTranscriptTail: scratchParseTail, validateScratchCut, scratchBriefing, scratchReArmLine,
-  nonce: scratchNonce, scratchReplayLine, arrivalClock: scratchArrivalClock,
+  nonce: scratchNonce, scratchReplayLine, arrivalClock: scratchArrivalClock, SCRATCH_BRIEFING_PREFIXES,
 } = require('./scratch-mark');
+const SCRATCH_CUT_TEXT_PREFIXES = [...SCRATCH_BRIEFING_PREFIXES, 'Continue from your handoff: @'];
 const { SCRATCH_COST_FILE, scratchCostRecord } = require('./team-cost');
 const { SCRATCH_LABEL_RE } = require('./intent-catalog');
 const { SEGMENT_RE: IMPORT_SEGMENT_RE, SESSION_ID_RE: IMPORT_SESSION_ID_RE } = require('./seat-import');
