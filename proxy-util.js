@@ -482,6 +482,15 @@ function fmtQuotaReset(s) {
   return h % 24 ? `${d}d ${h % 24}h` : `${d}d`;
 }
 
+function fmtQuotaResetTight(s) {
+  if (typeof s !== 'number' || !Number.isFinite(s) || s <= 0) return null;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${Math.max(m, 1)}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h${m % 60}m`;
+  return `${Math.floor(h / 24)}d${h % 24}h`;
+}
+
 // Elapsed-time twin of fmtQuotaReset. A zero here is a real reading ("just
 // now"), not the absent value fmtQuotaReset maps to null.
 function fmtQuotaAge(s) {
@@ -492,9 +501,9 @@ function fmtQuotaAge(s) {
 
 const QUOTA_WINDOW_LABEL = {
   '5h': { short: '5h', long: '5h' },
-  '7d': { short: 'W', long: 'week (all models)' },
-  '7d_oi': { short: 'F', long: 'week (Fable)' },
-  overage: { short: 'O', long: 'overage' },
+  '7d': { short: '7d', long: 'week (all models)' },
+  '7d_oi': { short: '7d Fable', long: 'week (Fable)' },
+  overage: { short: 'overage', long: 'overage' },
 };
 const QUOTA_WINDOW_ORDER = ['5h', '7d', '7d_oi', 'overage'];
 
@@ -539,7 +548,10 @@ function quotaChip(q, clientAgeS = 0) {
   const parts = [];
   let tipLines = [];
   if (shown.length) {
-    parts.push(shown.map((w) => `${quotaWindowLabel(w.key).short}:${Math.round(w.usedPct)}%`).join(' | '));
+    parts.push(shown.map((w) => {
+      const r = fmtQuotaResetTight(w.resetsInS);
+      return `${quotaWindowLabel(w.key).short} ${Math.round(w.usedPct)}%${r ? ` (${r})` : ''}`;
+    }).join(' \u00b7 '));
     tipLines = shown.map((w) => {
       const r = fmtQuotaReset(w.resetsInS);
       return `${quotaWindowLabel(w.key).long}: ${Math.round(w.usedPct)}% used${r ? `, resets in ${r}` : ''}`;
@@ -654,7 +666,7 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
 
 module.exports = {
   PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shapeSubagent,
-  shapeQuota, quotaChip, quotaChips, pickQuota, fmtQuotaReset, QUOTA_STALE_S, QUOTA_429_RECENT_S,
+  shapeQuota, quotaChip, quotaChips, pickQuota, fmtQuotaReset, fmtQuotaResetTight, QUOTA_STALE_S, QUOTA_429_RECENT_S,
   QUOTA_WINDOW_LABEL,
   boxWirescopeView, strictMcpReason, STRICT_MCP_EXPLANATION,
   AUTO_COMPACT, headroomBand, shouldAutoCompact, autoCompactDecision, isHumanPtyInput,

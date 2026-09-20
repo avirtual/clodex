@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Keepalive pings are no longer held back while the wire proxy waits to see whether a reply's last text block is really its last: a long server-side pause after a block boundary keeps the connection visibly alive, and a spill that fires exactly at a block boundary is forwarded there instead of behind it.
+- The plan-quota chip in the header now reads the way statuslines do — `5h 26% (3h0m) · 7d 86% (4d16h) · 7d Fable 84% (4d16h)` — with each window's reset time inline instead of only in the tooltip.
 
 ## 5.83.3 — 2026-09-20
 

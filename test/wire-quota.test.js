@@ -394,7 +394,7 @@ test('pickQuota: a reading that renders only off its window map still counts as 
     { quota: q, at: nowMs - 5000, source: 'wirescope' },
     { quota: shapeQuota({ status: 'allowed_warning', age_s: 1 }, { quota: true }), at: nowMs, source: 'wire' },
   ], nowMs);
-  assert.strictEqual(quotaChip(picked.quota, 0).text, 'W:95%');
+  assert.strictEqual(quotaChip(picked.quota, 0).text, '7d 95% (16m)');
 });
 
 test('pickQuota: the wire source outranks wirescope even when wirescope polled later', () => {
@@ -513,7 +513,7 @@ test('the whole path: live headers → store → shapeQuota → pickQuota → ch
   assert.strictEqual(chip.level, 'warn');
   // Both windows the live headers carry, each countdown derived by pickQuota
   // from that window's own absolute reset — 3490s and 252490s off NOW.
-  assert.strictEqual(chip.text, '5h:32% | W:95%');
+  assert.strictEqual(chip.text, '5h 32% (58m) · 7d 95% (2d22h)');
   assert.ok(chip.tip.startsWith('5h: 32% used, resets in 58m\nweek (all models): 95% used, resets in 2d 22h\n'),
     `tooltip did not lead with the per-window lines: ${JSON.stringify(chip.tip)}`);
   assert.match(chip.tip, /not this session/i);

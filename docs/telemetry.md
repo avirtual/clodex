@@ -118,18 +118,20 @@ carries no label, so it files under `default` and only while the wire has said
 nothing about `default` itself.
 
 `quotaChip` (proxy-util.js) renders every window the payload carries as one
-compact bar — `5h:0% | W:76% | F:86%` — with a recent refusal appended last and
-past-tense, `· rate-limited 2m ago`, since a 429 up to five minutes old is not
-a present-tense outage. Per-window resets live in the tooltip, one line each
-(`week (all models): 76% used, resets in 18h 32m`). Labels are single-sourced
+compact bar — `5h 0% (4h52m) · 7d 76% (18h32m) · 7d Fable 86% (18h32m)` — with
+a recent refusal appended last and past-tense, `· rate-limited 2m ago`, since a
+429 up to five minutes old is not a present-tense outage. Each window carries
+its own reset inline, in `fmtQuotaResetTight`'s spaceless units; the tooltip
+repeats them spelled out, one line each (`week (all models): 76% used, resets
+in 18h 32m`). Labels are single-sourced
 in `QUOTA_WINDOW_LABEL`, against the names Claude Code's own panel uses:
 
 | API key | chip | tooltip |
 |---|---|---|
 | `5h` | `5h` | 5h |
-| `7d` | `W` | week (all models) |
-| `7d_oi` | `F` | week (Fable) |
-| `overage` | `O` | overage |
+| `7d` | `7d` | week (all models) |
+| `7d_oi` | `7d Fable` | week (Fable) |
+| `overage` | `overage` | overage |
 
 An unknown key uses the key itself for both. Only windows carrying a percentage
 are shown, and only those vote on the level — an org with overage disabled
