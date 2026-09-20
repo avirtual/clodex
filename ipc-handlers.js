@@ -548,6 +548,7 @@ function registerIpcHandlers(deps) {
   handle('session:kill', async (_e, name) => manager.destroy(name));
   handle('session:move', async (_e, name, newCwd) => manager.move(name, newCwd));
   handle('session:move-to-peer', async (_e, name, peerId, farCwd) => manager.moveToPeer(name, peerId, { farCwd }));
+  handle('session:move-to-workspace', (_e, name, workspaceId) => manager.moveToWorkspace(name, workspaceId));
   handle('session:rename', async (_e, name, newName) => manager.rename(name, newName));
   handle('session:flushPending', (_e, name) => manager.flushPending(name));
   handle('session:peekPending', (_e, name) => manager.peekPendingFor(name));
@@ -2009,6 +2010,24 @@ function registerIpcHandlers(deps) {
         }),
       };
     };
+    const moveWorkspaceItem = () => {
+      const here = workspaceOfSender(e);
+      let others = [];
+      try { others = (workspaces.list() || []).filter((w) => w.id !== here); } catch { others = []; }
+      if (!others.length) return { label: 'Move to Workspace…', enabled: false };
+      return {
+        label: 'Move to Workspace…',
+        submenu: others.map((w) => {
+          const workspaceName = w.name || w.id;
+          return {
+            label: workspaceName,
+            click: () => e.sender.send('session:context-action', {
+              action: 'moveToWorkspace', name, workspaceId: w.id, workspaceName,
+            }),
+          };
+        }),
+      };
+    };
     popupMenu([
       {
         label: 'Rename…',
@@ -2028,6 +2047,7 @@ function registerIpcHandlers(deps) {
         click: () => e.sender.send('session:context-action', { action: 'move', name }),
       }] : []),
       ...(entry.type === 'claude' ? [movePeerItem()] : []),
+      moveWorkspaceItem(),
       { type: 'separator' },
       {
         label: 'Reveal Working Directory in Finder',

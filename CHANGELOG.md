@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Right-click ▸ "Move to Workspace…" moves a session to another workspace window without restarting it — the terminal keeps running and its output is waiting when the other window shows it.
+
 ## 5.83.2 — 2026-09-20
 
 - Move to Peer… now checks the far folder before anything moves: a path that cannot exist on the peer (its parent folder is missing, or it points into Clodex's own data) is refused in the dialog with the seat still running, and when the peer runs a different OS the folder is pre-filled with its home directory swapped in.

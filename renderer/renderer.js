@@ -759,6 +759,16 @@ function moveSessionWithPicker(name) {
   });
 }
 
+function moveSessionToWorkspace(name, workspaceId, workspaceName) {
+  return window.api.moveSessionToWorkspace(name, workspaceId).then((res) => {
+    if (!res || !res.ok) {
+      showToast(`Move failed: ${(res && res.error) || 'unknown error'}`, { kind: 'error', duration: 10000 });
+      return;
+    }
+    showToast(`${name} moved to ${res.workspaceName || workspaceName}`);
+  });
+}
+
 const movingToPeer = new Map();
 const pendingPeerMove = new Map();
 const MiB = (n) => (Number(n || 0) / (1024 * 1024)).toFixed(1);
@@ -852,7 +862,7 @@ window.api.onSessionMoveProgress(({ name, phase, bytes, total, files, fileIndex 
     : head);
 });
 
-window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition, background, peerId, peerLabel }) => {
+window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition, background, peerId, peerLabel, workspaceId, workspaceName }) => {
   switch (action) {
     case 'editArgs':
       openArgsDialog(name);
@@ -865,6 +875,9 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, d
       break;
     case 'moveToPeer':
       moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd);
+      break;
+    case 'moveToWorkspace':
+      moveSessionToWorkspace(name, workspaceId, workspaceName);
       break;
     case 'reattach':
       if (type) {
@@ -7812,6 +7825,47 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
 }));
 
 
+function mountRestoredSession(entry) {
+  const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
+  addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true, null, entry.fixFor || null);
+  if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
+  const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
+  if (item) {
+    if (entry.activity) {
+      item.dataset.activity = entry.activity;
+      if (entry.activity === 'thinking') item.dataset.thinkingSince = String(Date.now());
+    }
+    if (entry.attention) {
+      item.dataset.attention = entry.attention.kind;
+      item.dataset.attentionMsg = entry.attention.message || '';
+    }
+    if (entry.ticket) item.dataset.ticket = entry.ticket;
+  }
+  try {
+    fitAddon.fit();
+    window.api.resizeSession(entry.name, terminal.cols, terminal.rows);
+  } catch {}
+  if (entry.replay) terminal.write(echoRewrite(entry.replay));
+  if (typeof entry.ctx === 'number') { ctxPct.set(entry.name, entry.ctx); applyCtxBadge(entry.name, entry.ctx); }
+  if (typeof entry.ctxTok === 'number' && typeof entry.ctxSize === 'number' && entry.ctxSize > 0) {
+    ctxTokens.set(entry.name, { used: entry.ctxTok, size: entry.ctxSize, cost: typeof entry.ctxCost === 'number' ? entry.ctxCost : null, model: entry.ctxModel || null });
+  }
+  if (entry.proxy) { proxyState.set(entry.name, { payload: entry.proxy, at: Date.now() }); applyWarmBadge(entry.name); }
+  if (typeof entry.pendingCount === 'number') applyPendingBadge(entry.name, entry.pendingCount);
+}
+
+window.api.onSessionMovedOut(({ name }) => {
+  removeSession(name, { keepPersisted: true });
+  refreshSidebarView();
+});
+
+window.api.onSessionMovedIn((entry) => {
+  if (!entry || !entry.name) return;
+  if (entry.archived) addArchivedSessionToSidebar(entry);
+  else mountRestoredSession(entry);
+  refreshSidebarView();
+});
+
 (async function restoreSessions() {
   try {
     const restored = await window.api.restoreSessions();
@@ -7827,32 +7881,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
         addFailedSessionToSidebar(entry);
         continue;
       }
-      const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
-      addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true, null, entry.fixFor || null);
-      if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
-      const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
-      if (item) {
-        if (entry.activity) {
-          item.dataset.activity = entry.activity;
-          if (entry.activity === 'thinking') item.dataset.thinkingSince = String(Date.now());
-        }
-        if (entry.attention) {
-          item.dataset.attention = entry.attention.kind;
-          item.dataset.attentionMsg = entry.attention.message || '';
-        }
-        if (entry.ticket) item.dataset.ticket = entry.ticket;
-      }
-      try {
-        fitAddon.fit();
-        window.api.resizeSession(entry.name, terminal.cols, terminal.rows);
-      } catch {}
-      if (entry.replay) terminal.write(echoRewrite(entry.replay));
-      if (typeof entry.ctx === 'number') { ctxPct.set(entry.name, entry.ctx); applyCtxBadge(entry.name, entry.ctx); }
-      if (typeof entry.ctxTok === 'number' && typeof entry.ctxSize === 'number' && entry.ctxSize > 0) {
-        ctxTokens.set(entry.name, { used: entry.ctxTok, size: entry.ctxSize, cost: typeof entry.ctxCost === 'number' ? entry.ctxCost : null, model: entry.ctxModel || null });
-      }
-      if (entry.proxy) { proxyState.set(entry.name, { payload: entry.proxy, at: Date.now() }); applyWarmBadge(entry.name); }
-      if (typeof entry.pendingCount === 'number') applyPendingBadge(entry.name, entry.pendingCount);
+      mountRestoredSession(entry);
       if (!firstHealthy) firstHealthy = entry.name;
     }
     let view = null;

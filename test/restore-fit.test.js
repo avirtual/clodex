@@ -25,9 +25,14 @@ const SRC = read('renderer/renderer.js');
 
 // The whole `(async function restoreSessions() { … })();` IIFE. Ended on the
 // `})();` at column 0, so a nested arrow or catch block inside cannot close it
-// early — a clipped region would read as an ABSENT fit.
+// early.
 function restoreLoop(src) {
   const m = src.match(/\(async function restoreSessions\(\)[\s\S]*?\n\}\)\(\);/);
+  return m ? m[0] : null;
+}
+
+function mountBody(src) {
+  const m = src.match(/function mountRestoredSession\(entry\) \{[\s\S]*?\n\}/);
   return m ? m[0] : null;
 }
 
@@ -42,8 +47,13 @@ function replayWriteIndex(loop) {
 }
 
 test('the restore loop measures each terminal before replaying into it', () => {
-  const loop = restoreLoop(SRC);
-  assert.ok(loop, 'ENTER: the restoreSessions IIFE is still the restore path');
+  const loop = mountBody(SRC);
+  assert.ok(loop, 'ENTER: mountRestoredSession — the per-row body the loop calls — is '
+    + 'still where the fit and the replay write live');
+  assert.match(restoreLoop(SRC) || '', /mountRestoredSession\(entry\)/,
+    'ENTER: and the restore loop still reaches a terminal through it. The ordering is '
+    + 'pinned in that body rather than in this IIFE because both callers inherit it from '
+    + 'there: a session moved into a background window mounts through the same write');
 
   const write = replayWriteIndex(loop);
   assert.ok(write > 0, 'ENTER: the loop still writes the buffered replay');
@@ -59,8 +69,8 @@ test('the restore loop measures each terminal before replaying into it', () => {
 });
 
 test('the restore loop does not defer its fit into a rAF', () => {
-  const loop = restoreLoop(SRC);
-  assert.ok(loop, 'ENTER: the restoreSessions IIFE is still the restore path');
+  const loop = mountBody(SRC);
+  assert.ok(loop, 'ENTER: mountRestoredSession is still the restore mount path');
 
   const helper = SRC.match(/function fitSessionInBackground[\s\S]*?\n\}/);
   assert.ok(helper, 'ENTER: fitSessionInBackground still exists to be ruled out');
