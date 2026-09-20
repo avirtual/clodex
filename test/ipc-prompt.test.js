@@ -493,7 +493,9 @@ test('every rendered grammar line parses, with its placeholders filled in', () =
     .replace('name:X', 'name:x')
     .replace('cwd:Y', 'cwd:/tmp')
     .replace('template:Y', 'template:tpl')
-    .replace('[reason]', 'why');
+    .replace('[reason]', 'why')
+    .replace('[<label>]', 'survey')
+    .replace('<label>', 'survey');
   // The grammar block is `  [agent:…]` at two-space indent; prose paragraphs
   // that MENTION an intent are not indented that way and are not forms.
   // A run of 2+ spaces ends the FORM and starts its aligned description — which

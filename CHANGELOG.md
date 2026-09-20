@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Scratch episodes gain NAMED rewind points: `[agent:scratch mark <label>]` sets one, `[agent:scratch rewind [<label>]] <note>` cuts back to it (bare = most recent; an empty note records a negative result), `[agent:scratch cancel <label>]` drops one. Marks below a cut survive it and the rewound label is re-armed at the cut, so a seat can return to the same point repeatedly; each rewind's cost row carries the label.
 - **Scratch episodes** — a Claude seat can emit `[agent:scratch begin]`, read and reason freely, then `[agent:scratch end] <summary>`: Clodex cuts the episode out of the transcript, respawns the seat on the same session and hands the summary back as a user turn, so only the conclusion is carried and the session compacts later. Refused, never guessed: a cut that would orphan a tool call, span a compact, or drop an operator message bounces with the reason — and for that last one `[agent:scratch end replay]` cuts anyway and re-delivers each message after the summary, so a seat that gets dms all day can still close an episode without losing them.
 
 ## 5.83.4 — 2026-09-20

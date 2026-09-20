@@ -449,6 +449,70 @@ counted must not read as one that dropped nothing. The refused rows are the
 point — they say how often a seat opens an episode it cannot close. One
 `ipc-message` row per episode mirrors it into the activity tab.
 
+**Named marks.** `[agent:scratch mark <label>]` sets a rewind point that is not
+an episode: it lives in `session._scratchMarks` (label → mark, the same object
+shape as `_scratch` plus `label`, `notes` and `operator`), several may be open at
+once, and `begin`/`end`/`cancel` keep reading only `_scratch`. Each mark gets its
+own nonce and its own `ACK_PREFIX` ack, so `validateScratchCut` proves it opened
+the same way it proves an episode did — nothing inside the validator changed.
+`[agent:scratch rewind [<label>]] <note>` cuts back to that mark (bare: the mark
+with the highest `sizeAtBegin`, the anonymous episode included); `[agent:scratch
+cancel <label>]` drops one. Setting a label that is already set MOVES it; two
+labels on one exact offset are refused, `begin` on that offset is not.
+
+*Survival.* At a cut to mark L at offset X, another named mark M survives iff
+`M.sizeAtBegin < X` AND its own `ACK_PREFIX + M.nonce` user record sits below X
+in the quiet file (`_scratchCarryMarks`); everything younger is dropped and
+logged — a parked or late ack that landed above the cut would leave a mark that
+can never validate. The anonymous `_scratch` is carried by the same rule.
+Compact, clear, reload and reboot void EVERY mark eagerly through
+`_voidScratchMark`, and the tombstone bounces under whichever verb hits it next.
+
+*Re-arm.* After a rewind to L, L is set again AT the cut with a fresh nonce
+(`_scratchReArm`), so a seat can return to the same point repeatedly. Its ack is
+a separate `_injectText` AFTER `_injectAfterBoot` has landed the briefing — the
+briefing spills over `SPILL_MIN_BYTES` into a `Continue from your handoff: @`
+pointer, and an ack folded into it would not start with `ACK_PREFIX`. The re-arm
+ack is `scratchReArmLine`, verbatim:
+
+> [agent:scratch] episode open · mark <nonce> · label <L> re-armed here — rewind to it again with `[agent:scratch rewind <L>] <note>`.
+
+A second rewind to the re-armed mark passes the `arrivals` check only because
+Clodex's own cut records — the briefing (`SCRATCH_BRIEFING_PREFIXES`) or the
+handoff pointer it spills into — are excluded by `_scratchValidate`, per call,
+before the refusal; a real dm above the mark still refuses. If the CLI ever
+writes a record of its own before the briefing on resume, that path needs
+`replay`.
+
+*Notes.* Every rewind to L banks its note on L (`notes: [{at, body}]`), so the
+next briefing from the same label prints the earlier notes, each under its own
+clock, before this one. An EMPTY note is allowed on `rewind` — it records a
+negative result — while `end` still refuses one. The noteless briefing replaces
+the "only the note(s) below survive" clause with `SCRATCH_NOTELESS_SENTENCE`,
+verbatim:
+
+> You left no note: you recorded that stretch as a negative result — nothing in it was worth keeping. Do not repeat it; take a different approach or report the dead end.
+
+and any earlier notes then print under `Notes left at this mark earlier:`. The
+same sentence closes the anonymous `Scratch episode result` header when a bare
+`rewind` resolves to the anonymous episode with an empty note.
+
+*Operator route.* `manager.scratchMark(name, label)` sets a mark from outside
+the seat (the entry point for the sidebar's `Scratch mark…` item, wired by
+T-F′): the mark sits at the END of the
+transcript (`atEnd`, offset `t.size`, leaf = the boundary record), `beganAt` is
+the click, and the agent sees the same labelled ack with `, set by your operator
+at HH:MM` added, since a silent mark can never validate. It refuses — as an
+`ipc-message` row `scratch mark <label> refused: <why>`, nothing injected —
+while the seat is mid-turn or `thinking`, when the tail is `behind`,
+`no-transcript` or `unreadable`, and when another label already marks
+`t.size`: that collision is checked before anything reaches the agent.
+
+*Measurement.* The cost row gains `label` (null for an anonymous episode), and
+the activity-tab mirror prints ` · <label>` after the nonce. `summaryBytes: 0`
+on a `cut` row means a noteless rewind — unambiguous, because `end` refuses an
+empty body, and a measured zero rather than an unmeasured one.
+
 ## 4. Exit, kill, restore
 
 `ptyProc.onExit` runs a **fixed order** (each step depends on the previous
