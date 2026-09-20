@@ -316,6 +316,10 @@ class WireProxy extends EventEmitter {
     const spillCfg = this._agentSpill.get(agent) || null;
     const spillEligible = !!spillCfg && provider === 'anthropic' && req.method === 'POST'
       && isMessages && !sideCall && !isSubagentRole(role) && this.spillEnabled();
+    let proseSpill = false;
+    if (spillEligible && typeof spillCfg.turnInjected === 'function') {
+      try { proseSpill = spillCfg.turnInjected() === true; } catch { proseSpill = false; }
+    }
 
     const fwdHeaders = {};
     for (const [k, v] of Object.entries(req.headers)) {
@@ -406,6 +410,7 @@ class WireProxy extends EventEmitter {
           spill = new SpillTee({
             agent,
             ...spillCfg,
+            proseSpill,
             onSpill: (i) => this.emit('spill', { agent, reqId, ...i }),
             onBail: (i) => this.emit('spill-bail', { agent, reqId, ...i }),
           });

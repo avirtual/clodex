@@ -25,9 +25,13 @@ class SpillFilter {
     this.onBail = typeof opts.onBail === 'function' ? opts.onBail : null;
     this._write = typeof opts.writeSpill === 'function' ? opts.writeSpill : defaultWriteSpill;
 
+    this.proseSpill = opts.proseSpill === true;
+
     this.passthru = !validAgent(this.agent);
     this.listenerFailed = false;
 
+    this.tail = '';
+    this.foreignBody = false;
     this.pending = '';
     this.holding = false;
     this.head = '';
@@ -65,10 +69,23 @@ class SpillFilter {
         this._notify(this.onBail, { reason: 'cap', verb: capped });
         return out.join('');
       }
+      if (this.proseSpill && !this.holding
+          && Buffer.byteLength(this.tail, 'utf8')
+             + Buffer.byteLength(this.pending, 'utf8') > this.maxBytes) {
+        out.push(this.tail);
+        out.push(this.pending);
+        this.tail = '';
+        this.pending = '';
+        this.passthru = true;
+        this._notify(this.onBail, { reason: 'cap', verb: null });
+        return out.join('');
+      }
       const nl = this.pending.indexOf('\n');
       if (nl === -1) {
         if (couldBeHead(this.pending)
             && Buffer.byteLength(this.pending, 'utf8') > this.maxBytes) {
+          out.push(this.tail);
+          this.tail = '';
           out.push(this.pending);
           this.pending = '';
           this.passthru = true;
@@ -86,11 +103,17 @@ class SpillFilter {
         return out.join('');
       }
     }
-    if (this.pending && !this.holding && !couldBeHead(this.pending)) {
+    if (this.pending && !this.holding && !this.proseSpill && !couldBeHead(this.pending)) {
       out.push(this.pending);
       this.pending = '';
     }
     return out.join('');
+  }
+
+  _flushTail() {
+    const t = this.tail;
+    this.tail = '';
+    return t;
   }
 
   _line(line) {
@@ -112,6 +135,8 @@ class SpillFilter {
 
     const m = HEAD_RE.exec(line);
     if (m && this.verbs.has(m[2] ? `${m[1]}.${m[2]}` : m[1])) {
+      const flushed = this.proseSpill ? this._flushTail() : '';
+      this.foreignBody = false;
       const cut = m[0].length;
       this.holding = true;
       this.verb = m[2] ? `${m[1]}.${m[2]}` : m[1];
@@ -121,6 +146,19 @@ class SpillFilter {
       this.body = rest ? [rest] : [];
       this.headBodyCount = this.body.length;
       this.bodyLen = Buffer.byteLength(rest, 'utf8');
+      return flushed;
+    }
+    if (this.proseSpill) {
+      const cleaned = cleanLine(line).trim();
+      if (cleaned.startsWith(`\\${OPEN}`)) {
+        return this.foreignBody ? `${line}\n` : this._flushTail() + line + '\n';
+      }
+      if (cleaned.startsWith(OPEN)) {
+        this.foreignBody = cleaned !== TERMINATOR;
+        return this._flushTail() + line + '\n';
+      }
+      if (this.foreignBody) return `${line}\n`;
+      this.tail += `${line}\n`;
       return '';
     }
     return line + '\n';
@@ -171,6 +209,18 @@ class SpillFilter {
     return held;
   }
 
+  _resolveTail() {
+    const text = this._flushTail();
+    const bytes = Buffer.byteLength(text, 'utf8');
+    if (bytes <= this.minBytes) return text;
+    let id = null;
+    try { id = this._write(this.root, this.agent, text); } catch { id = null; }
+    if (!id) return text;
+    this._fired += 1;
+    this._notify(this.onSpill, { verb: 'prose', id, bytes });
+    return `@spill:${id}\n`;
+  }
+
   close() {
     let out = '';
     if (this.holding && this.pending.trim() === TERMINATOR && this.pending.indexOf('\n') === -1) {
@@ -182,7 +232,14 @@ class SpillFilter {
       out += this.originalHeld();
       this._clear();
       this.verb = null;
+    } else if (this.proseSpill) {
+      if (!this.foreignBody) {
+        this.tail += this.pending;
+        this.pending = '';
+      }
+      out += this._resolveTail();
     }
+    out += this._flushTail();
     if (this.pending) {
       out += this.pending;
       this.pending = '';
@@ -191,6 +248,7 @@ class SpillFilter {
   }
 
   bail() {
+    this.proseSpill = false;
     const out = this.close();
     this.passthru = true;
     return out;

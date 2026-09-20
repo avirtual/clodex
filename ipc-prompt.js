@@ -291,7 +291,7 @@ const DEFAULT_COMPACT_CONTINUATION =
 
 function spillGrammarLine(root) {
   const where = root ? `${root}/spill/<your-name>/<id>.md` : 'your registry directory, under `spill/<your-name>/<id>.md`';
-  return `- Bodies of task add/respec/reject, shout, and context compact/clear/reload longer than 800 bytes MAY be stored under ${where} as you emit them (a Settings switch, on by default); when that happens your transcript keeps the body's first line and \`@spill:<id>\` in their place and the recipient still gets the full body. Never type \`@spill:\` yourself — re-emit the full body instead. Read the file when you need your own words back.`;
+  return `- Bodies of task add/respec/reject, shout, and context compact/clear/reload longer than 800 bytes MAY be stored under ${where} as you emit them (a Settings switch, on by default); when that happens your transcript keeps the body's first line and \`@spill:<id>\` in their place and the recipient still gets the full body. Never type \`@spill:\` yourself — re-emit the full body instead. Read the file when you need your own words back. On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last intent — or a whole reply with no intent — is spilled the same way once it passes 800 bytes: what the operator must know goes inside an intent, not after it.`;
 }
 
 module.exports = { IPC_PROMPT, buildIpcPrompt, DEFAULT_COMPACT_CONTINUATION, spillGrammarLine };

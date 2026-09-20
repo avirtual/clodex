@@ -63,8 +63,9 @@ class InjectQueue {
   // ready(): a BOOT gate, not a liveness gate — the caller latches it.
   // readyMaxWaitMs / maxWaitMs: caps so a seat that never signals ready, or an
   // operator who walked away mid-draft, cannot strand a delivery.
-  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, hintHeld, speaking }) {
+  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, hintHeld, speaking, onSubmitted }) {
     this._write = write;
+    this._onSubmitted = typeof onSubmitted === 'function' ? onSubmitted : null;
     this._settleMsFor = settleMsFor;
     this._quietMs = quietMs;
     this._maxWaitMs = maxWaitMs;
@@ -174,6 +175,7 @@ class InjectQueue {
     await this._sleep(this._settleMsFor(text));
     if (this._isDead()) return;
     this._write('\r');                                 // Enter — closes the unit
+    if (this._onSubmitted) { try { this._onSubmitted(text); } catch {} }
   }
 }
 
