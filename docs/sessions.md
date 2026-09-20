@@ -468,7 +468,13 @@ destination), and anything behind a symlink inside a seat kind (the walk takes
 real files only). A file name outside `[A-Za-z0-9._-]` is not dropped but REFUSED,
 along with a `sessionId` that is not a uuid, before the pty is touched — the far
 staging judges both, and learning that after quiescing would cost a kill and a
-respawn. The account travels by LABEL, not by path.
+respawn. For the same reason the far cwd is PROBED before the pty is touched:
+`conn.importBegin` ships the record alone, and a begin refusal (parent folder
+missing on the peer, a file in the way, a path inside Clodex's own data) returns
+`{ok:false, error}` with NO `kept` key — nothing was killed, so the renderer
+shows the sentence inline and leaves the dialog open to correct the path. The
+staging that probe opened is aborted (`conn.importAbort`) on the quiesce-timeout
+arm, which ships nothing. The account travels by LABEL, not by path.
 Progress rides `session:move-progress`
 (`{name, phase, bytes, total, files, fileIndex}`, phases `begin` → `transcript` →
 `seat` → `commit`; `bytes`/`total` are bytes across the WHOLE shipment, `files`/
@@ -480,10 +486,15 @@ no eligible peer leaves the item present but disabled, so the feature is
 discoverable from a box that cannot yet use it. Codex rows do not get the item at
 all (the manager refuses them). Picking a peer opens the peer session dialog in
 MOVE mode: the name is locked to the travelling seat, the type row is hidden, the
-far cwd is prefilled with the seat's own and is the one editable field, and a note
+far cwd is prefilled and is the one editable field, and a note
 says what does not travel — transcript, memory, messages and reminders do; exec
 grants and privileged intents do not, and the account is matched by label on the
-far box. A refusal (nothing quiesced yet) stays inline in the dialog so the cwd can
+far box. The prefill is the seat's own cwd only when the peer runs the SAME OS
+(hello's `platform`, surfaced on `status()`); across platforms the local home
+prefix is swapped for a guess at the far one (`/home/<user>` on linux,
+`/Users/<user>` on darwin, `<user>` being the local username) and the note says
+the folder was guessed and should be checked — a default nobody doubted is what
+sent a mac path to a Linux box and left orphans there. A refusal (nothing quiesced yet) stays inline in the dialog so the cwd can
 be corrected and resubmitted; a `{ok:false, kept:true}` failure closes the dialog and
 splits on `respawned`: the far-refusal arm has already brought the seat back up here,
 so the row is rebuilt LIVE (terminal, sidebar, switch), while the two arms with nothing

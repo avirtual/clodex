@@ -818,14 +818,21 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
           addFailedSessionToSidebar(row);
         }
       }
+      const kept = res.installed
+        ? Object.keys(res.installed).filter((k) => res.installed[k])
+        : [];
+      const far = kept.length ? ` — the far box kept: ${kept.join(', ')}` : '';
       showToast(res.respawned
-        ? `Move to ${peerLabel} failed: ${res.error} — ${name} restarted here`
-        : `Move to ${peerLabel} failed: ${res.error} — ${name} kept here`,
+        ? `Move to ${peerLabel} failed: ${res.error} — ${name} restarted here${far}`
+        : `Move to ${peerLabel} failed: ${res.error} — ${name} kept here${far}`,
       { kind: 'error', duration: 10000, name });
     }
     return res;
   });
-  openPeerSessionDialog(peerId, peerLabel, { move: { name, cwd } });
+  const farStatus = peerStatuses.get(peerId);
+  openPeerSessionDialog(peerId, peerLabel, {
+    move: { name, cwd, farPlatform: (farStatus && farStatus.platform) || null },
+  });
 }
 
 async function moveSessionToPeerFromDialog(name, peerId, farCwd) {

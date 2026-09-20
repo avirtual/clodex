@@ -360,7 +360,7 @@ test('account mapping: a label hit rewrites the dir, a miss deletes the key and 
     const w = mkWiring({ accounts: row.accounts });
     const out = await w.opts.importCreate({
       name: 'ana',
-      record: record({ cwd: path.join(w.root, 'proj'), env: row.env, accountLabel: row.accountLabel }),
+      record: record({ cwd: path.join(w.home, 'proj'), env: row.env, accountLabel: row.accountLabel }),
       installed: {},
       dropped: ['account'],
     });
@@ -374,7 +374,7 @@ test('a source-box CLAUDE_CONFIG_DIR never survives when the record names no lab
   const w = mkWiring({ accounts: { opsguru: '/far/config/opsguru' } });
   const out = await w.opts.importCreate({
     name: 'ana',
-    record: record({ cwd: path.join(w.root, 'proj'), env: { CLAUDE_CONFIG_DIR: '/src/box/opsguru' } }),
+    record: record({ cwd: path.join(w.home, 'proj'), env: { CLAUDE_CONFIG_DIR: '/src/box/opsguru' } }),
     installed: {},
     dropped: ['account'],
   });
@@ -390,7 +390,7 @@ test('begin refuses a name that is live or persisted here, before any staging di
     else w.persisted.set('ana', { name: 'ana' });
     await withServer({ seatImport: w.opts.seatImport, importCreate: w.opts.importCreate }, async (s) => {
       const res = await call(s.port, 'POST', '/api/import/begin',
-        { body: { name: 'ana', record: record({ cwd: path.join(w.root, 'proj') }) } });
+        { body: { name: 'ana', record: record({ cwd: path.join(w.home, 'proj') }) } });
       assert.strictEqual(res.status, 400, `${seat}: refused`);
       assert.match(res.body.error, /name taken "ana"/);
     });
@@ -400,11 +400,48 @@ test('begin refuses a name that is live or persisted here, before any staging di
 });
 
 
+test('begin returns the far-cwd refusal as a 400 and stages nothing for it', async () => {
+  const w = mkWiring();
+  const missingParent = path.join(w.root, 'no-such-home', 'projects');
+  const rows = [
+    {
+      why: 'a path whose parent does not exist on this box',
+      cwd: path.join(missingParent, 'agentic-crypto'),
+      error: `far folder's parent does not exist: ${missingParent} — on testbox the project lives somewhere else`,
+    },
+    {
+      why: "a path inside this box's own registry",
+      cwd: path.join(w.root, 'sessions', 'ana'),
+      error: `far path is inside Clodex's own data: ${path.join(w.root, 'sessions', 'ana')}`,
+    },
+  ];
+  await withServer({
+    seatImport: w.opts.seatImport, importCreate: w.opts.importCreate, getSessions: () => [],
+  }, async (s) => {
+    for (const row of rows) {
+      const res = await call(s.port, 'POST', '/api/import/begin',
+        { body: { name: 'ana', record: record({ cwd: row.cwd }) } });
+      assert.strictEqual(res.status, 400, `${row.why}: ${res.raw}`);
+      assert.strictEqual(res.body.error, row.error, row.why);
+      assert.deepStrictEqual(
+        fs.existsSync(path.join(w.root, 'import')) ? fs.readdirSync(path.join(w.root, 'import')) : [],
+        [], `${row.why}: not one staging dir was opened`,
+      );
+    }
+    const ok = await call(s.port, 'POST', '/api/import/begin',
+      { body: { name: 'ana', record: record({ cwd: path.join(w.home, 'proj') }) } });
+    assert.strictEqual(ok.status, 200, `ENTER: a good cwd is accepted (${ok.raw})`);
+    assert.deepStrictEqual(fs.readdirSync(path.join(w.root, 'import')), [ok.body.id],
+      'ENTER: and THAT one does open a staging dir — so the empty readdir above means something');
+  });
+});
+
+
 const PARKED = JSON.stringify({ text: 'a message that rode with the seat', born: 1700000000000 });
 
 test('importSeat ships a 9 MiB transcript in three chunks and the far create is a RESTORE', async () => {
   const w = mkWiring();
-  const cwd = path.join(w.root, 'proj');
+  const cwd = path.join(w.home, 'proj');
   const src = mkTmpRoot('clodex-impwire-src-');
   const transcript = path.join(src, 'transcript.jsonl');
   const big = Buffer.alloc(9 * 1024 * 1024);
@@ -536,7 +573,7 @@ test('importSeat ships a 9 MiB transcript in three chunks and the far create is 
 
 test('a commit that installs but cannot create answers 500 naming what is on disk', async () => {
   const w = mkWiring({ createThrows: 'spawn exploded' });
-  const cwd = path.join(w.root, 'proj');
+  const cwd = path.join(w.home, 'proj');
   await withServer({
     seatImport: w.opts.seatImport, importCreate: w.opts.importCreate, getSessions: () => [],
   }, async (s) => {
@@ -569,7 +606,7 @@ test('abort removes the staging and the id it names cannot be committed after', 
     seatImport: w.opts.seatImport, importCreate: w.opts.importCreate, getSessions: () => [],
   }, async (s) => {
     const begun = await call(s.port, 'POST', '/api/import/begin',
-      { body: { name: 'ana', record: record({ cwd: path.join(w.root, 'proj') }) } });
+      { body: { name: 'ana', record: record({ cwd: path.join(w.home, 'proj') }) } });
     const id = begun.body.id;
     assert.ok(fs.existsSync(path.join(w.root, 'import', id)));
     const gone = await call(s.port, 'DELETE', `/api/import/${id}`);

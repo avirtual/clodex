@@ -55,6 +55,7 @@ function createRemoteWiring(deps) {
     // This box's wirescope, or null when it has none to forward to (t443).
     getWirescopeInfo,
     getNodeLogFile,
+    getUserDataPath,
   } = deps;
 
   let inboxWatched = false;
@@ -217,6 +218,12 @@ function createRemoteWiring(deps) {
         claudeProjects: path.join(os.homedir(), '.claude', 'projects'),
         reminders: getReminders ? getReminders() : null,
         log,
+        refuseUnder: [
+          REGISTRY_DIR,
+          path.join(os.homedir(), '.claude'),
+          getUserDataPath ? getUserDataPath() : null,
+        ].filter(Boolean),
+        hostLabel: SELF_LABEL,
       });
     }
     return seatImport;

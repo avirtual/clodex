@@ -73,3 +73,11 @@ write leaves a dir nothing else reaps, so an unreadable manifest falls back to
 the directory's `mtimeMs` rather than skipping it. NOT `birthtimeMs`: it is the
 one stat field `utimesSync` cannot move, so a backdated subject would pin this
 branch only on a filesystem that records a birthtime at all.
+
+## begin
+
+The far cwd's PARENT is what must exist, not the leaf: `importCreate` creates the
+leaf on purpose (`ensureDir`, exactly as a local spawn does), while a path from
+another box's home fails at the parent — which is the shape of the only move that
+has ever gone wrong here. `refuseUnder` is injected rather than computed so this
+module needs no knowledge of Electron's userData.

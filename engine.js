@@ -1871,6 +1871,7 @@ const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
   // CLODEX_WIRESCOPE=off) without the box restarting.
   getWirescopeInfo: () => wirescope.localReach(),
   getNodeLogFile: logFile ? () => logFile : undefined,
+  getUserDataPath: () => userDataPath,
 });
 
 

@@ -6,8 +6,9 @@ const { createSeatImport, IMPORT_MAX_BYTES } = require('../seat-import');
 const { claudeProjectSlug, seatPathFor, legacySeatPathFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-const CWD = '/Users/x/proj.app';
-const SLUG = '-Users-x-proj-app';
+const PROJECTS = mkTmpRoot('clodex-seatimp-proj-');
+const CWD = path.join(PROJECTS, 'proj.app');
+const SLUG = claudeProjectSlug(CWD);
 const SID = '11111111-2222-3333-4444-555555555555';
 
 function mkRoots() {
@@ -60,7 +61,55 @@ test('begin refuses an absolute cwd that path.resolve would still change', () =>
       /cwd must be resolved/,
       `${cwd}: the transcript slug is the cwd VERBATIM, the far spawn is its resolved form`);
   }
-  assert.strictEqual(imp.begin({ name: 'ana', record: record({ cwd: '/a/b' }) }).ok, true);
+  assert.strictEqual(imp.begin({ name: 'ana', record: record({ cwd: CWD }) }).ok, true);
+});
+
+test('begin judges the far cwd against this box: parent, file-in-the-way, and Clodex data roots', () => {
+  const home = mkTmpRoot('clodex-seatimp-home-');
+  const clodexHome = path.join(home, '.clodex');
+  const claudeHome = path.join(home, '.claude');
+  const userData = path.join(home, 'Application Support', 'Clodex');
+  for (const d of [clodexHome, claudeHome, userData]) fs.mkdirSync(d, { recursive: true });
+  fs.mkdirSync(path.join(clodexHome, 'projects'));
+
+  const projects = mkTmpRoot('clodex-seatimp-far-');
+  const existingDir = path.join(projects, 'already-there');
+  fs.mkdirSync(existingDir);
+  const aFile = path.join(projects, 'notes.txt');
+  fs.writeFileSync(aFile, 'x');
+
+  const { imp } = mkImport({
+    refuseUnder: [clodexHome, claudeHome, userData],
+    hostLabel: 'murmurfi',
+  });
+
+  const rows = [
+    {
+      cwd: path.join(projects, 'no-such-home', 'agentic-crypto'),
+      want: `far folder's parent does not exist: ${path.join(projects, 'no-such-home')} — on murmurfi the project lives somewhere else`,
+    },
+    { cwd: aFile, want: `far path is a file, not a folder: ${aFile}` },
+    {
+      cwd: path.join(clodexHome, 'projects', 'x'),
+      want: `far path is inside Clodex's own data: ${path.join(clodexHome, 'projects', 'x')}`,
+    },
+    {
+      cwd: path.join(claudeHome, 'projects'),
+      want: `far path is inside Clodex's own data: ${path.join(claudeHome, 'projects')}`,
+    },
+    {
+      cwd: path.join(userData, 'seat'),
+      want: `far path is inside Clodex's own data: ${path.join(userData, 'seat')}`,
+    },
+    { cwd: path.join(projects, 'not-yet'), want: null },
+    { cwd: existingDir, want: null },
+  ];
+
+  const got = rows.map((r, i) => {
+    const out = imp.begin({ name: `s${i}`, record: record({ cwd: r.cwd }) });
+    return out.ok ? null : out.error;
+  });
+  assert.deepStrictEqual(got, rows.map((r) => r.want));
 });
 
 test('begin refuses a bad name, a codex seat, a missing sessionId and a relative cwd', () => {

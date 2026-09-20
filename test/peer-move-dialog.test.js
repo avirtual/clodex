@@ -115,6 +115,29 @@ test('a move-mode open locks the name, hides the type row and shows the note', (
     'the note names what does NOT travel — the dialog is the only place it is said');
 });
 
+test('a same-platform peer prefills the cwd verbatim and adds no guess warning', () => {
+  const { ui, byId } = mkPeersUi();
+  ui.openPeerSessionDialog('p1', 'murmurfi', {
+    move: { name: 'crypto-hand', cwd: '/far/app', farPlatform: process.platform },
+  });
+  assert.strictEqual(byId('peer-input-cwd').value, '/far/app');
+  assert.doesNotMatch(byId('peer-session-note').textContent, /guessed from yours/,
+    'no cross-platform guess happened, so nothing warns about one');
+});
+
+test('a peer on another OS warns in the note that the folder was guessed', () => {
+  const foreign = process.platform === 'win32' ? 'linux' : 'win32';
+  const { ui, byId } = mkPeersUi();
+  ui.openPeerSessionDialog('p1', 'murmurfi', {
+    move: { name: 'crypto-hand', cwd: '/far/app', farPlatform: foreign },
+  });
+  const note = byId('peer-session-note').textContent;
+  assert.match(note, new RegExp(`The peer runs ${foreign}; the folder was guessed from yours`),
+    'the operator is told the path is a guess — the incident was a default nobody doubted');
+  assert.match(note, /Exec grants and privileged intents do not/,
+    'and the warning is APPENDED: the move note it sits beside still says what does not travel');
+});
+
 test('close itself restores the create shape, without waiting for the next open', () => {
   const { ui, byId } = mkPeersUi();
   ui.openPeerSessionDialog('p1', 'murmurfi', { move: { name: 'crypto-hand', cwd: '/far/app' } });

@@ -738,7 +738,7 @@ class PeerConnection {
     });
   }
 
-  async importSeat({ name, record, files = [], onProgress } = {}) {
+  async importBegin({ name, record } = {}) {
     if (!this._hasCap('import')) {
       return { ok: false, error: `${this.label} does not accept seat imports` };
     }
@@ -748,6 +748,20 @@ class PeerConnection {
     if (typeof id !== 'string' || !/^[0-9a-f]{16}$/.test(id)) {
       return { ok: false, error: `bad staging id '${id}'` };
     }
+    return { ok: true, id };
+  }
+
+  async importAbort(id) {
+    return this._ask('DELETE', `/api/import/${id}`, null);
+  }
+
+  async importSeat({ name, record, files = [], onProgress } = {}) {
+    const begun = await this.importBegin({ name, record });
+    if (!begun.ok) return begun;
+    return this.importShip({ id: begun.id, files, onProgress });
+  }
+
+  async importShip({ id, files = [], onProgress } = {}) {
     const bail = async (out) => {
       await this._ask('DELETE', `/api/import/${id}`, null);
       return out;
