@@ -19952,3 +19952,380 @@ test('scratch replay: an arrival with no usable timestamp drops the clock rather
   assert.strictEqual(scratchReplayLine({ nonce: 'n1' }, { at: 'yesterday', text: 'b' }).split('\n')[0],
     line.split('\n')[0], 'a timestamp that is not ISO-shaped is treated the same as an absent one');
 });
+
+function scratchNamed(f, tape, label) {
+  const t = new ScratchTape();
+  t.parent = tape.parent;
+  t.t = tape.t;
+  t.prompt(`[agent:exec status] run 7 finished — set mark ${label}`);
+  const offset = fsReal.statSync(f.target).size + Buffer.byteLength(t.text, 'utf8');
+  t.turn(`[agent:scratch mark ${label}]`);
+  f.append(t.text);
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'mark', label, replay: false, body: '' });
+  const ack = f.injected[f.injected.length - 1];
+  const a = new ScratchTape();
+  a.parent = t.parent;
+  a.t = t.t;
+  a.prompt(ack);
+  f.append(a.text);
+  tape.parent = a.parent;
+  tape.t = a.t;
+  return { ack, offset, mark: f.s._scratchMarks.get(label) };
+}
+
+function scratchRewind(f, session, label, body, { replay = false } = {}) {
+  session._flushTurnEnd = true;
+  f.m._handleScratchIntent(session, { type: 'scratch', sub: 'rewind', label, replay, body });
+  return new Promise((r) => setTimeout(r, 60));
+}
+
+test('scratch mark: the ack starts with ACK_PREFIX + nonce, names the label, and lands in _scratchMarks not _scratch', () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  const { ack, offset, mark } = scratchNamed(f, tape, 'a');
+  assert.ok(mark, 'the named store holds it');
+  assert.strictEqual(f.s._scratch, undefined, 'and the anonymous slot is untouched');
+  assert.ok(ack.startsWith(`${SCRATCH_ACK_PREFIX_T}${mark.nonce} · label a. Rewind to it later with \`[agent:scratch rewind a] <note>\``), ack.slice(0, 120));
+  assert.strictEqual(mark.label, 'a');
+  assert.deepStrictEqual(mark.notes, []);
+  assert.strictEqual(mark.operator, false);
+  assert.strictEqual(mark.sizeAtBegin, offset, 'the cut point is the first byte of the reply that carried mark');
+  assert.ok(!('label' in Object(f.s._scratch)), 'the anonymous shape never grows a label');
+});
+
+test('scratch rewind: to the OLDER of three marks — the younger is dropped, the older carried, the target re-armed with a NEW nonce and its ack AFTER the briefing', async () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  const a = scratchNamed(f, tape, 'a').mark;
+  scratchResearch(f, 'read one');
+  const b = scratchNamed(f, tape, 'b');
+  scratchResearch(f, 'read two');
+  const c = scratchNamed(f, tape, 'c').mark;
+  scratchResearch(f, 'read three');
+  const whole = f.read();
+
+  await scratchRewind(f, f.s, 'b', 'the answer is in b');
+
+  assert.strictEqual(f.read(), Buffer.from(whole, 'utf8').subarray(0, b.offset).toString('utf8'), 'the file is cut at b, not at the youngest mark');
+  const fresh = f.m.sessions.get('a');
+  assert.ok(fresh && fresh !== f.s, 'the seat respawned');
+  assert.strictEqual(fresh._scratchMarks.get('a'), a, 'a (older, acked below the cut) rides onto the fresh seat as the SAME object');
+  assert.strictEqual(fresh._scratchMarks.has('c'), false, 'c (younger than the cut) is gone');
+  assert.strictEqual(fresh._scratchMarks.size, 2, `only a and the re-armed b: ${[...fresh._scratchMarks.keys()]}`);
+  void c;
+  const b2 = fresh._scratchMarks.get('b');
+  assert.ok(b2 && b2 !== b.mark, 'b is re-armed as a NEW mark object');
+  assert.notStrictEqual(b2.nonce, b.mark.nonce, 'with a fresh nonce — the old ack is below the cut and would refuse ack-missing');
+  assert.strictEqual(b2.sizeAtBegin, b.offset, 'at the same point');
+  assert.strictEqual(b2.leafUuid, b.mark.leafUuid, 'on the same kept leaf');
+  assert.deepStrictEqual(b2.dispatched, [], 'with an empty dispatch ledger — the note that just validated named them');
+  assert.deepStrictEqual(b2.notes.map((n) => n.body), ['the answer is in b'], 'and the note is banked on the mark');
+
+  const briefing = f.injected[f.injected.length - 2];
+  const rearm = f.injected[f.injected.length - 1];
+  assert.match(briefing, new RegExp(`^Scratch rewind result · mark ${b.mark.nonce} · label b \\(delivered by Clodex\\)`));
+  assert.ok(briefing.endsWith('] the answer is in b'), briefing.slice(-80));
+  assert.ok(rearm.startsWith(`${SCRATCH_ACK_PREFIX_T}${b2.nonce} · label b re-armed here`),
+    `the re-arm ack is its OWN inject, after the briefing, and starts with ACK_PREFIX + the NEW nonce: ${rearm.slice(0, 80)}`);
+
+  const bakDir = pathReal.join(f.root, 'scratch', 'a');
+  const rows = fsReal.readFileSync(pathReal.join(bakDir, 'episodes.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].label, 'b');
+  assert.strictEqual(rows[0].nonce, b.mark.nonce, 'the row carries the PRE-re-arm nonce');
+  assert.strictEqual(rows[0].outcome, 'cut');
+});
+
+test('scratch rewind: a SECOND rewind to the re-armed mark validates and re-delivers every note left there', async () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  const b = scratchNamed(f, tape, 'b');
+  scratchResearch(f, 'read two');
+  await scratchRewind(f, f.s, 'b', 'first note');
+
+  const fresh = f.m.sessions.get('a');
+  const b2 = fresh._scratchMarks.get('b');
+  const landed = new ScratchTape();
+  landed.parent = tape.parent;
+  landed.prompt(f.injected[f.injected.length - 2]);
+  landed.prompt(f.injected[f.injected.length - 1]);
+  f.append(landed.text);
+  scratchResearch(f, 'read again');
+  const n = f.injected.length;
+
+  await scratchRewind(f, fresh, 'b', 'second note');
+  assert.strictEqual(fsReal.statSync(f.target).size, b.offset, 'cut at the same point again');
+  const fresh2 = f.m.sessions.get('a');
+  assert.ok(fresh2 !== fresh, 'respawned again');
+  assert.ok(f.injected.length >= n + 2, `briefing + re-arm landed: ${f.injected.slice(n).map((t) => t.slice(0, 60))}`);
+  const briefing = f.injected[f.injected.length - 2];
+  assert.match(briefing, new RegExp(`^Scratch rewind result · mark ${b2.nonce} · label b`));
+  assert.ok(briefing.includes('] first note') && briefing.endsWith('] second note'), briefing);
+  const b3 = fresh2._scratchMarks.get('b');
+  assert.notStrictEqual(b3.nonce, b2.nonce);
+  assert.deepStrictEqual(b3.notes.map((x) => x.body), ['first note', 'second note']);
+});
+
+test('scratch rewind: bare rewind targets the MOST RECENT mark', async () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  const a = scratchNamed(f, tape, 'a').mark;
+  scratchResearch(f, 'read one');
+  const b = scratchNamed(f, tape, 'b');
+  scratchResearch(f, 'read two');
+  const whole = f.read();
+  await scratchRewind(f, f.s, null, 'bare');
+  assert.strictEqual(f.read(), Buffer.from(whole, 'utf8').subarray(0, b.offset).toString('utf8'), 'the cut is at b — the youngest');
+  const fresh = f.m.sessions.get('a');
+  assert.strictEqual(fresh._scratchMarks.get('a'), a);
+  assert.match(f.injected[f.injected.length - 2], /^Scratch rewind result · mark \w+ · label b /);
+});
+
+test('scratch rewind: an EMPTY note cuts (negative result) while an empty `end` is still refused; the noteless briefing and a summaryBytes 0 row', async () => {
+  const f = mkScratch();
+  const { SCRATCH_NOTELESS_SENTENCE } = require('../scratch-mark');
+  const { tape } = scratchOpen(f);
+  const anon = f.s._scratch;
+  scratchResearch(f, 'read one');
+  const a = scratchNamed(f, tape, 'a');
+  scratchResearch(f, 'read two');
+  f.s._flushTurnEnd = true;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: '   ' });
+  assert.match(f.injected[f.injected.length - 1], /end refused: the summary body is empty/);
+  assert.deepStrictEqual(f.order, []);
+
+  const whole = f.read();
+  await scratchRewind(f, f.s, 'a', '');
+  assert.strictEqual(f.read(), Buffer.from(whole, 'utf8').subarray(0, a.offset).toString('utf8'), 'the noteless rewind DID cut');
+  const briefing = f.injected[f.injected.length - 2];
+  assert.ok(briefing.includes(SCRATCH_NOTELESS_SENTENCE), briefing);
+  const fresh = f.m.sessions.get('a');
+  assert.strictEqual(fresh._scratch, anon, 'the anonymous episode, older than the cut, rides onto the fresh seat');
+  assert.deepStrictEqual(fresh._scratchMarks.get('a').notes, [], 'no note is banked for a noteless rewind');
+  const rows = fsReal.readFileSync(pathReal.join(f.root, 'scratch', 'a', 'episodes.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepStrictEqual(rows.map((r) => [r.outcome, r.label, r.summaryBytes]), [['cut', 'a', 0]]);
+});
+
+test('scratch rewind: a dispatch lands on EVERY open mark, and a rewind to the older one refuses until the note names it', async () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  scratchNamed(f, tape, 'a');
+  scratchResearch(f, 'read one');
+  const b = scratchNamed(f, tape, 'b');
+  f.m._handleSpawnIntent = () => {};
+  await f.m._handleIntent('a', { type: 'spawn', name: 'scout-2' });
+  assert.deepStrictEqual(f.s._scratchMarks.get('a').dispatched.map((d) => d.token), ['scout-2']);
+  assert.deepStrictEqual(f.s._scratchMarks.get('b').dispatched.map((d) => d.token), ['scout-2']);
+  scratchResearch(f, 'read two');
+
+  await scratchRewind(f, f.s, 'a', 'I read the parser');
+  const last = f.injected[f.injected.length - 1];
+  assert.match(last, /^\[agent:scratch\] rewind refused: inside this episode you dispatched spawn scout-2/);
+  assert.deepStrictEqual(f.order, [], 'nothing was cut');
+  void b;
+
+  await scratchRewind(f, f.s, 'a', 'I read the parser; scout-2 surveys the rest');
+  assert.ok(f.order.includes('rename'), 'naming it unlocks the cut');
+});
+
+test('scratch: a clear voids BOTH stores, and `rewind <L>` bounces with the cleared tomb under the rewind verb', () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  scratchNamed(f, tape, 'a');
+  scratchResearch(f, 'read one');
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
+  assert.ok(f.s._scratch && f.s._scratchMarks.get('a'));
+  f.m._voidScratchMark(f.s,
+    'the conversation was cleared after the mark — every mark is gone and nothing can be cut. '
+    + 'Your summary is in your own turn above; carry on from it.');
+  assert.strictEqual(f.s._scratch, null);
+  assert.strictEqual(f.s._scratchMarks.size, 0);
+  assert.match(f.injected[f.injected.length - 1], /^\[agent:scratch\] the conversation was cleared after the mark — every mark is gone/);
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'rewind', label: 'a', replay: false, body: 'x' });
+  assert.match(f.injected[f.injected.length - 1], /^\[agent:scratch\] rewind refused: the conversation was cleared after the mark — every mark is gone/);
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'rewind', label: 'a', replay: false, body: 'x' });
+  assert.strictEqual(f.injected[f.injected.length - 1],
+    '[agent:scratch] rewind refused: no mark is set — set one with [agent:scratch mark <label>] as the last line of a reply. Nothing was cut.',
+    'the tomb is spent by the first bounce');
+});
+
+test('scratch: a compact voids named marks through the real void site, and its tomb no longer embeds a verb', () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  scratchNamed(f, tape, 'a');
+  f.m._stampSeatCost = () => {};
+  f.m.refreshPrompt = () => {};
+  f.m._releaseCompactGuard = () => {};
+  f.m._fireCompactContinuation(f.s);
+  assert.strictEqual(f.s._scratchMarks.size, 0);
+  assert.ok(!f.s._scratchVoid.startsWith('end refused'), f.s._scratchVoid);
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'rewind', label: null, replay: false, body: '' });
+  assert.match(f.injected[f.injected.length - 1], /^\[agent:scratch\] rewind refused: a compact landed inside the episode — every mark is gone/);
+});
+
+test('scratch mark: the same label twice REPLACES the mark and says so on line 2', () => {
+  const f = mkScratch();
+  scratchPrefix(f);
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'mark', label: 'a', replay: false, body: '' });
+  const first = f.s._scratchMarks.get('a').nonce;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'mark', label: 'a', replay: false, body: '' });
+  const second = f.s._scratchMarks.get('a').nonce;
+  assert.notStrictEqual(first, second);
+  assert.strictEqual(f.s._scratchMarks.size, 1);
+  const lines = f.injected[1].split('\n');
+  assert.ok(lines[0].startsWith(`${SCRATCH_ACK_PREFIX_T}${second} · label a`));
+  assert.strictEqual(lines[1], 'Label a re-set: the earlier point is dropped; what you read since it is ordinary history and will NOT be cut.');
+});
+
+test('scratch mark: two labels at ONE point are refused — the second is not marked', () => {
+  const f = mkScratch();
+  scratchPrefix(f);
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'mark', label: 'a', replay: false, body: '' });
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'mark', label: 'b', replay: false, body: '' });
+  assert.strictEqual(f.injected[1], '[agent:scratch] mark refused: "a" already marks this exact point — one label per point. Not marked.');
+  assert.strictEqual(f.s._scratchMarks.has('b'), false);
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
+  assert.ok(f.s._scratch && f.s._scratch.sizeAtBegin === f.s._scratchMarks.get('a').sizeAtBegin,
+    'begin at the same point is allowed — only named-vs-named is refused');
+});
+
+test('scratch cancel <label>: drops that mark ONLY, records a cancelled row with the label, and an unknown label bounces with the list', () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  const a = scratchNamed(f, tape, 'a').mark;
+  scratchResearch(f, 'read one');
+  const b = scratchNamed(f, tape, 'b').mark;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', label: 'a', replay: false, body: '' });
+  assert.strictEqual(f.injected[f.injected.length - 1],
+    `[agent:scratch] mark a dropped · mark ${a.nonce}. Nothing was cut; everything you read since it stays in your transcript as ordinary history.`);
+  assert.strictEqual(f.s._scratchMarks.has('a'), false);
+  assert.strictEqual(f.s._scratchMarks.get('b'), b, 'b is untouched');
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', label: 'zz', replay: false, body: '' });
+  assert.strictEqual(f.injected[f.injected.length - 1],
+    '[agent:scratch] cancel refused: no mark named "zz" is set — marks set: b (most recent first). Nothing was cut.');
+  const rows = fsReal.readFileSync(pathReal.join(f.root, 'scratch', 'a', 'episodes.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepStrictEqual(rows.map((r) => [r.outcome, r.label, r.nonce]), [['cancelled', 'a', a.nonce]]);
+  assert.deepStrictEqual(f.order, []);
+});
+
+test('scratch rewind: an unknown label lists the open marks most recent first; a bare rewind with nothing open says how to set one', () => {
+  const f = mkScratch();
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'rewind', label: null, replay: false, body: '' });
+  assert.strictEqual(f.injected[0],
+    '[agent:scratch] rewind refused: no mark is set — set one with [agent:scratch mark <label>] as the last line of a reply. Nothing was cut.');
+  const tape = scratchPrefix(f);
+  scratchNamed(f, tape, 'a');
+  scratchResearch(f, 'read one');
+  scratchNamed(f, tape, 'b');
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'rewind', label: 'zz', replay: false, body: 'x' });
+  assert.strictEqual(f.injected[f.injected.length - 1],
+    '[agent:scratch] rewind refused: no mark named "zz" is set — marks set: b, a (most recent first). Nothing was cut.');
+});
+
+test('scratch scratchMark (operator): marks at END OF FILE on an idle seat — not at the last reply — and a rewind to it drops nothing the operator saw', async () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  const size = fsReal.statSync(f.target).size;
+  const r = f.m.scratchMark('a', 'op');
+  assert.deepStrictEqual(r, { ok: true, nonce: f.s._scratchMarks.get('op').nonce, offset: size });
+  const mark = f.s._scratchMarks.get('op');
+  assert.strictEqual(mark.sizeAtBegin, size, 'end of file, NOT beginCutAt — the fallback would cut at the agent\'s last real reply');
+  assert.strictEqual(mark.operator, true);
+  assert.strictEqual(mark.leafUuid, tape.parent, 'the leaf is the turn_duration the file ends on');
+  const ack = f.injected[0];
+  assert.ok(ack.startsWith(`${SCRATCH_ACK_PREFIX_T}${mark.nonce} · label op, set by your operator at `), ack.slice(0, 100));
+  assert.match(ack, /set by your operator at \d\d:\d\d\. Rewind to it later with/);
+
+  const ackTape = new ScratchTape();
+  ackTape.parent = tape.parent;
+  ackTape.prompt(ack);
+  f.append(ackTape.text);
+  scratchResearch(f, 'read one');
+  await scratchRewind(f, f.s, 'op', 'operator point');
+  assert.strictEqual(fsReal.statSync(f.target).size, size, 'the cut lands exactly where the operator clicked');
+});
+
+test('scratch scratchMark (operator): a seat mid-turn or behind is REFUSED with {ok:false} — no wait arm, nothing injected, nothing pending', () => {
+  const f = mkScratch();
+  const tape = new ScratchTape();
+  tape.prompt('find the bug');
+  tape.toolUse('toolu_x1');
+  f.write(tape);
+  const r = f.m.scratchMark('a', 'op');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /^scratch mark op refused: mid-turn/);
+  assert.deepStrictEqual(f.injected, []);
+  assert.strictEqual(f.s._scratchMarks, undefined);
+  assert.strictEqual(f.s._scratchPendingBegin, undefined, 'no defer was armed');
+
+  const behind = scratchPrefix(f);
+  behind.prompt('now answer this');
+  f.write(behind);
+  f.s._flushTurnEnd = true;
+  assert.strictEqual(f.m.scratchMark('a', 'op').ok, false, 'behind is refused too');
+  assert.strictEqual(f.s._scratchPendingBegin, undefined);
+  assert.throws(() => f.m.scratchMark('a', 'bad label'), /invalid scratch label/);
+  assert.throws(() => f.m.scratchMark('nobody', 'op'), /not running/);
+});
+
+test('scratch cut: the .bak is written 0600 — copyFileSync inherits the transcript\'s mode, which is not', async () => {
+  const f = mkScratch();
+  fsReal.chmodSync(f.target, 0o644);
+  scratchOpen(f);
+  scratchResearch(f);
+  f.s._flushTurnEnd = true;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
+  await new Promise((r) => setTimeout(r, 60));
+  const bakDir = pathReal.join(f.root, 'scratch', 'a');
+  const baks = fsReal.readdirSync(bakDir).filter((n) => n.endsWith('.bak'));
+  assert.strictEqual(baks.length, 1);
+  assert.strictEqual(fsReal.statSync(pathReal.join(bakDir, baks[0])).mode & 0o777, 0o600);
+});
+
+test('scratch cut: a sibling .bak older than 7 days is removed by the next cut; a fresh one and the one just written are kept', async () => {
+  const f = mkScratch();
+  const bakDir = pathReal.join(f.root, 'scratch', 'a');
+  fsReal.mkdirSync(bakDir, { recursive: true });
+  const old = pathReal.join(bakDir, `${SCRATCH_SID}.old111.jsonl.bak`);
+  const young = pathReal.join(bakDir, `${SCRATCH_SID}.new222.jsonl.bak`);
+  fsReal.writeFileSync(old, 'stale');
+  fsReal.writeFileSync(young, 'recent');
+  const eightDays = (Date.now() - 8 * 24 * 3600 * 1000) / 1000;
+  fsReal.utimesSync(old, eightDays, eightDays);
+  scratchOpen(f);
+  scratchResearch(f);
+  f.s._flushTurnEnd = true;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
+  await new Promise((r) => setTimeout(r, 60));
+  const baks = fsReal.readdirSync(bakDir).filter((n) => n.endsWith('.bak')).sort();
+  assert.strictEqual(baks.length, 2, `old one gone, young + fresh kept: ${baks}`);
+  assert.ok(!fsReal.existsSync(old), 'the stale sibling was pruned');
+  assert.ok(fsReal.existsSync(young), 'the recent sibling was not');
+});
+
+test('scratch begin (wire): `mark a` then `begin` in ONE reply — the second request does not drop the first\'s watcher; both settle at the same point', async () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  tape.prompt('now open an episode');
+  f.write(tape);
+  f.s._flushTurnEnd = true;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'mark', label: 'a', replay: false, body: '' });
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepStrictEqual(f.injected, []);
+  assert.ok(f.s._scratchPendingBegin, 'one wait is armed');
+  assert.strictEqual(f.s._scratchPendingBegin.requests.length, 2, 'holding BOTH requests');
+
+  const late = new ScratchTape();
+  late.parent = tape.parent;
+  late.turn('[agent:scratch mark a]\n[agent:scratch begin]');
+  f.append(late.text);
+  await waitFor(() => f.injected.length >= 2);
+  const a = f.s._scratchMarks.get('a');
+  assert.ok(a && f.s._scratch, 'both marks opened');
+  assert.strictEqual(a.sizeAtBegin, f.s._scratch.sizeAtBegin, 'at the same point — named-vs-anonymous at one offset is allowed');
+  assert.strictEqual(a.sizeAtBegin, Buffer.byteLength(tape.text, 'utf8'));
+  assert.ok(f.injected[0].startsWith(`${SCRATCH_ACK_PREFIX_T}${a.nonce} · label a`), 'the mark request settles first');
+  assert.ok(f.injected[1].startsWith(`${SCRATCH_ACK_PREFIX_T}${f.s._scratch.nonce}. Research now.`));
+  assert.strictEqual(f.s._scratchPendingBegin, null);
+});
