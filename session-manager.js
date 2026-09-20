@@ -163,6 +163,7 @@ const SYSTEM_SENDERS = new Set(['team', 'clodex-team', 'reminder', 'memory', 're
 const SCRATCH_TAIL_SCAN = 64 * 1024;
 const SCRATCH_MARK_TAIL = 512;
 const SCRATCH_CLOSE_TIMEOUT = 120000;
+const SCRATCH_BAK_TTL_MS = 7 * 24 * 3600 * 1000;
 
 const SCRATCH_DISPATCH_TYPES = new Set(['task', 'spawn', 'team', 'team-create', 'team-review', 'review-done']);
 
@@ -191,10 +192,11 @@ const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = req
 const { SEAT_KINDS, seatPathFor, claudeProjectSlug, scratchDirFor } = require('./clodex-paths');
 const {
   ACK_PREFIX: SCRATCH_ACK_PREFIX, boundaryAt: scratchBoundaryAt, beginCutAt: scratchBeginCutAt,
-  parseTranscriptTail: scratchParseTail, validateScratchCut, scratchBriefing,
+  parseTranscriptTail: scratchParseTail, validateScratchCut, scratchBriefing, scratchReArmLine,
   nonce: scratchNonce, scratchReplayLine, arrivalClock: scratchArrivalClock,
 } = require('./scratch-mark');
 const { SCRATCH_COST_FILE, scratchCostRecord } = require('./team-cost');
+const { SCRATCH_LABEL_RE } = require('./intent-catalog');
 const { SEGMENT_RE: IMPORT_SEGMENT_RE, SESSION_ID_RE: IMPORT_SESSION_ID_RE } = require('./seat-import');
 const { effectiveModel } = require('./accounts');
 const { liveSnapshotFor, archivedSnapshotFor, stampConfigFlags } = require('./session-restore');
@@ -2218,8 +2220,8 @@ function createSessionManager(deps) {
           session._holdRearmed = false;
           try { arm.onContextReset(name); } catch { /* observer-grade */ }
           this._voidScratchMark(session,
-            'end refused: the conversation was cleared after the mark — the mark is gone and nothing can '
-            + 'be cut. Your summary is in your own turn above; carry on from it.');
+            'the conversation was cleared after the mark — every mark is gone and nothing can be cut. '
+            + 'Your summary is in your own turn above; carry on from it.');
           // BEFORE the continuation: a clear discarded the conversation, so the
           // prompt-file rewrite has no warm cache left to bust and the fresh
           // conversation should start on current bytes rather than inherit the
@@ -4500,8 +4502,8 @@ function createSessionManager(deps) {
     _fireCompactContinuation(session) {
       try { this._stampSeatCost(session, 'compact'); } catch {}
       this._voidScratchMark(session,
-        'end refused: a compact landed inside the episode — the mark is gone and nothing can be cut. Your '
-        + 'summary is in your own turn above; carry on from it.');
+        'a compact landed inside the episode — every mark is gone and nothing can be cut. Your summary '
+        + 'is in your own turn above; carry on from it.');
       // The live set resets to EMPTY — no attempt to model what the summarizer
       // kept. "Possibly evicted" resolving to "not loaded" is the correct
       // answer for a dedup consumer, and on the jsonl-intent path this fires for
@@ -5007,7 +5009,7 @@ function createSessionManager(deps) {
         return;
       }
 
-      const scratchWatched = !!(session && session._scratch && SCRATCH_DISPATCH_TYPES.has(intent.type));
+      const scratchWatched = !!(session && this._scratchOpenMarks(session).length && SCRATCH_DISPATCH_TYPES.has(intent.type));
       const scratchBefore = scratchWatched && intent.type === 'task' && intent.sub === 'add'
         ? this._scratchTicketIds(session) : new Set();
 
@@ -5373,8 +5375,8 @@ function createSessionManager(deps) {
       log.info('intent', `reboot by ${who}${reason ? `: ${reason}` : ''}`);
       reply('reboot queued — restarting once every session is idle; sessions resume on relaunch');
       this._voidScratchMark(session,
-        'end refused: you queued a reboot inside the episode, and a mark cannot survive the restart — '
-        + 'nothing can be cut. Your summary is in your own turn above; carry on from it.');
+        'you queued a reboot inside the episode, and no mark survives the restart — every mark is gone '
+        + 'and nothing can be cut. Your summary is in your own turn above; carry on from it.');
       try {
         // The host decides WHEN. Under Electron the restart waits for a sustained
         // all-idle window, so this seat's own turn finishes and flushes first —
@@ -6375,8 +6377,8 @@ function createSessionManager(deps) {
         }
         session._reloadInFlight = true;
         this._voidScratchMark(session,
-          'end refused: the conversation was reloaded after the mark — the mark is gone and nothing can be '
-          + 'cut. Your summary is in your own turn above; carry on from it.', { notify: false });
+          'the conversation was reloaded after the mark — every mark is gone and nothing can be cut. '
+          + 'Your summary is in your own turn above; carry on from it.', { notify: false });
         log.info('intent', `reload ${name} → cold respawn`);
         this._broadcast('ipc-message', {
           type: 'context', from: name, to: name, body: 'context reload → fresh restart',
@@ -6514,8 +6516,71 @@ function createSessionManager(deps) {
         return;
       }
       if (intent.sub === 'begin') { this._scratchBegin(session, reply); return; }
-      if (intent.sub === 'cancel') { this._scratchCancel(session, reply); return; }
-      if (intent.sub === 'end') { this._scratchEnd(session, intent, reply); return; }
+      if (intent.sub === 'mark') { this._scratchBegin(session, reply, { label: intent.label }); return; }
+      if (intent.sub === 'cancel') { this._scratchCancel(session, reply, intent); return; }
+      if (intent.sub === 'end' || intent.sub === 'rewind') { this._scratchEnd(session, intent, reply); return; }
+    }
+
+    scratchMark(name, label) {
+      const session = this.sessions.get(name);
+      if (!session || session._dead) throw new Error(`session ${name} is not running`);
+      if (session.agentType !== 'claude') throw new Error('scratch marks are for Claude seats only');
+      if (typeof label !== 'string' || !SCRATCH_LABEL_RE.test(label)) throw new Error(`invalid scratch label ${JSON.stringify(label)}`);
+      const v = this._scratchBeginTail(session);
+      const settled = this._scratchBeginSettled(session, v);
+      if (!settled || v.state !== 'ok' || session.activityState === 'thinking') {
+        const state = settled && v.state !== 'ok' ? v.state : 'mid-turn';
+        const error = `scratch mark ${label} refused: ${state} — re-try when the seat is idle`;
+        this._broadcast('ipc-message', { type: 'scratch', from: name, to: name, body: error });
+        return { ok: false, error };
+      }
+      const reply = (msg) => this._injectText(session, msg, { parkable: true });
+      const mark = this._scratchMark(session, v, reply, { label, operator: true, atEnd: true });
+      if (!mark) return { ok: false, error: `scratch mark ${label} refused: another label already marks this point` };
+      return { ok: true, nonce: mark.nonce, offset: mark.sizeAtBegin };
+    }
+
+    _scratchMarksOf(session) {
+      if (!(session._scratchMarks instanceof Map)) session._scratchMarks = new Map();
+      return session._scratchMarks;
+    }
+
+    _scratchOpenMarks(session) {
+      const named = session && session._scratchMarks instanceof Map ? [...session._scratchMarks.values()] : [];
+      return session && session._scratch ? [session._scratch, ...named] : named;
+    }
+
+    _scratchLabelsRecentFirst(session) {
+      return this._scratchOpenMarks(session)
+        .filter((m) => m.label)
+        .sort((a, b) => b.sizeAtBegin - a.sizeAtBegin)
+        .map((m) => m.label);
+    }
+
+    _scratchClosingMark(session) {
+      return this._scratchOpenMarks(session).find((m) => m.closing) || null;
+    }
+
+    _scratchRewindTarget(session, label) {
+      if (label) {
+        const marks = session._scratchMarks;
+        return (marks instanceof Map && marks.get(label)) || null;
+      }
+      let best = null;
+      for (const m of this._scratchOpenMarks(session)) {
+        if (!best || m.sizeAtBegin > best.sizeAtBegin || (m.sizeAtBegin === best.sizeAtBegin && m.label)) best = m;
+      }
+      return best;
+    }
+
+    _scratchNoMarkLine(session, verb, label) {
+      const labels = this._scratchLabelsRecentFirst(session);
+      if (label && labels.length) {
+        return `[agent:scratch] ${verb} refused: no mark named "${label}" is set — marks set: ${labels.join(', ')} `
+          + '(most recent first). Nothing was cut.';
+      }
+      return `[agent:scratch] ${verb} refused: no mark is set — set one with [agent:scratch mark <label>] as the `
+        + 'last line of a reply. Nothing was cut.';
     }
 
     _scratchTranscript(session) {
@@ -6562,18 +6627,19 @@ function createSessionManager(deps) {
       return { state: 'behind' };
     }
 
-    _scratchBeginRefuse(reply, state) {
+    _scratchBeginRefuse(reply, state, opts = {}) {
+      const verb = opts.label ? 'mark' : 'begin';
       if (state === 'no-transcript') {
-        reply('[agent:scratch] begin refused: this seat has no readable transcript file yet, so there is '
+        reply(`[agent:scratch] ${verb} refused: this seat has no readable transcript file yet, so there is `
           + 'nothing to mark. Not marked.');
         return;
       }
       if (state === 'unreadable') {
-        reply('[agent:scratch] begin refused: the transcript tail could not be read, so the cut point '
+        reply(`[agent:scratch] ${verb} refused: the transcript tail could not be read, so the cut point `
           + 'cannot be proven to be a turn boundary. Not marked.');
         return;
       }
-      reply('[agent:scratch] begin refused: it must be the last line of a reply (your reply went on to '
+      reply(`[agent:scratch] ${verb} refused: it must be the last line of a reply (your reply went on to `
         + 'call tools). Emit it alone and stop; the episode opens when Clodex acks it. Not marked.');
     }
 
@@ -6583,19 +6649,34 @@ function createSessionManager(deps) {
       return true;
     }
 
-    _scratchBegin(session, reply) {
-      this._scratchDropPendingBegin(session);
+    _scratchBegin(session, reply, opts = {}) {
+      if (session._scratchPendingBegin) { this._scratchDeferBegin(session, reply, opts); return; }
       const v = this._scratchBeginTail(session);
       if (!this._scratchBeginSettled(session, v)) {
-        this._scratchDeferBegin(session, reply);
+        this._scratchDeferBegin(session, reply, opts);
         return;
       }
-      if (v.state === 'ok') { this._scratchMark(session, v, reply); return; }
-      this._scratchBeginRefuse(reply, v.state);
+      if (v.state === 'ok') { this._scratchMark(session, v, reply, opts); return; }
+      this._scratchBeginRefuse(reply, v.state, opts);
     }
 
-    _scratchDeferBegin(session, reply) {
-      const pending = { reply, watcher: null, timer: null };
+    _scratchSettleRequests(session, v, requests) {
+      for (const r of requests) {
+        if (v.state === 'ok') this._scratchMark(session, v, r.reply, r.opts);
+        else this._scratchBeginRefuse(r.reply, v.state, r.opts);
+      }
+    }
+
+    _scratchDeferBegin(session, reply, opts = {}) {
+      const label = opts.label || null;
+      const held = session._scratchPendingBegin;
+      if (held) {
+        held.requests = held.requests.filter((r) => (r.opts.label || null) !== label);
+        held.requests.push({ reply, opts });
+        setImmediate(() => this._scratchWakePendingBegin(session, held));
+        return;
+      }
+      const pending = { requests: [{ reply, opts }], watcher: null, timer: null };
       session._scratchPendingBegin = pending;
       const wake = () => this._scratchWakePendingBegin(session, pending);
       const t = this._scratchTranscript(session);
@@ -6607,17 +6688,19 @@ function createSessionManager(deps) {
         pending.timer = null;
         if (session._scratchPendingBegin !== pending) return;
         this._scratchDropPendingBegin(session);
-        const v = this._scratchBeginTail(session);
-        if (v.state === 'ok') { this._scratchMark(session, v, reply); return; }
-        this._scratchBeginRefuse(reply, v.state);
+        this._scratchSettleRequests(session, this._scratchBeginTail(session), pending.requests);
       }, SCRATCH_CLOSE_TIMEOUT);
       setImmediate(wake);
-      log.info('intent', `scratch ${session.name}: begin waits for the transcript to reach the turn end`);
+      log.info('intent', `scratch ${session.name}: ${label ? `mark ${label}` : 'begin'} waits for the transcript to reach the turn end`);
     }
 
-    _scratchDropPendingBegin(session) {
+    _scratchDropPendingBegin(session, label) {
       const pending = session._scratchPendingBegin;
       if (!pending) return;
+      if (label !== undefined) {
+        pending.requests = pending.requests.filter((r) => (r.opts.label || null) !== label);
+        if (pending.requests.length) return;
+      }
       session._scratchPendingBegin = null;
       if (pending.timer) clearTimeout(pending.timer);
       if (pending.watcher) { try { pending.watcher.close(); } catch {} }
@@ -6629,21 +6712,29 @@ function createSessionManager(deps) {
       const v = this._scratchBeginTail(session);
       if (!this._scratchBeginSettled(session, v)) return;
       this._scratchDropPendingBegin(session);
-      if (v.state === 'ok') { this._scratchMark(session, v, pending.reply); return; }
-      this._scratchBeginRefuse(pending.reply, v.state);
+      this._scratchSettleRequests(session, v, pending.requests);
     }
 
-    _scratchMark(session, v, reply) {
+    _scratchMark(session, v, reply, opts = {}) {
       const { t, buf, records, boundary } = v;
-      const prior = session._scratch;
-      if (prior && prior._closeTimer) clearTimeout(prior._closeTimer);
+      const label = typeof opts.label === 'string' && opts.label ? opts.label : null;
+      const marks = label ? this._scratchMarksOf(session) : null;
+      const prior = label ? (marks.get(label) || null) : session._scratch;
       const n = scratchNonce();
-      const cut = scratchBeginCutAt(records);
+      const cut = opts.atEnd === true ? null : scratchBeginCutAt(records);
       const cutOffset = cut ? cut.offset : t.size;
       const leaf = cut ? cut.leaf : boundary.entry;
+      if (label) {
+        const taken = [...marks.values()].find((m) => m.label !== label && m.sizeAtBegin === cutOffset);
+        if (taken) {
+          reply(`[agent:scratch] mark refused: "${taken.label}" already marks this exact point — one label per point. Not marked.`);
+          return null;
+        }
+      }
+      if (prior && prior._closeTimer) clearTimeout(prior._closeTimer);
       const end = cutOffset - (t.size - buf.length);
       const tail = buf.subarray(Math.max(0, end - SCRATCH_MARK_TAIL), end);
-      session._scratch = {
+      const mark = {
         nonce: n,
         realpath: t.realpath,
         sessionId: session.sessionId || null,
@@ -6658,20 +6749,59 @@ function createSessionManager(deps) {
         _closeTimer: null,
       };
       session._scratchVoid = null;
-      let ack = `${SCRATCH_ACK_PREFIX}${n}. Research now. Close with \`[agent:scratch end] <summary>\` … `
-        + '`[agent:end]` as the last thing in a reply; `[agent:scratch cancel]` keeps everything.';
+      if (!label) {
+        session._scratch = mark;
+        let ack = `${SCRATCH_ACK_PREFIX}${n}. Research now. Close with \`[agent:scratch end] <summary>\` … `
+          + '`[agent:end]` as the last thing in a reply; `[agent:scratch cancel]` keeps everything.';
+        if (prior) {
+          ack += `\nEpisode re-opened: the earlier mark ${prior.nonce} is dropped; what you read since it is `
+            + 'now ordinary history and will NOT be cut.';
+        }
+        reply(ack);
+        log.info('intent', `scratch ${session.name}: mark ${n} opened at ${cutOffset}${prior ? ` (replaces ${prior.nonce})` : ''}`);
+        return mark;
+      }
+      mark.label = label;
+      mark.notes = [];
+      mark.operator = opts.operator === true;
+      marks.set(label, mark);
+      const by = mark.operator ? `, set by your operator at ${scratchArrivalClock(new Date(mark.beganAt).toISOString())}` : '';
+      let ack = `${SCRATCH_ACK_PREFIX}${n} · label ${label}${by}. Rewind to it later with `
+        + `\`[agent:scratch rewind ${label}] <note>\` … \`[agent:end]\`; a bare \`[agent:scratch rewind]\` targets the `
+        + 'most recent mark, and an empty note means "negative result".';
       if (prior) {
-        ack += `\nEpisode re-opened: the earlier mark ${prior.nonce} is dropped; what you read since it is `
-          + 'now ordinary history and will NOT be cut.';
+        ack += `\nLabel ${label} re-set: the earlier point is dropped; what you read since it is ordinary history `
+          + 'and will NOT be cut.';
       }
       reply(ack);
-      log.info('intent', `scratch ${session.name}: mark ${n} opened at ${cutOffset}${prior ? ` (replaces ${prior.nonce})` : ''}`);
+      if (mark.operator) {
+        this._broadcast('ipc-message', {
+          type: 'scratch', from: session.name, to: session.name,
+          body: `scratch mark ${label} set by operator at ${cutOffset}`,
+        });
+      }
+      log.info('intent', `scratch ${session.name}: mark ${n} (${label}) opened at ${cutOffset}${prior ? ` (replaces ${prior.nonce})` : ''}`);
+      return mark;
     }
 
-    _scratchCancel(session, reply) {
-      this._scratchDropPendingBegin(session);
-      const mark = session._scratch;
+    _scratchCancel(session, reply, intent = {}) {
+      const label = typeof intent.label === 'string' && intent.label ? intent.label : null;
+      this._scratchDropPendingBegin(session, label);
       session._scratchVoid = null;
+      if (label) {
+        const marks = session._scratchMarks;
+        const named = (marks instanceof Map && marks.get(label)) || null;
+        if (!named) { reply(this._scratchNoMarkLine(session, 'cancel', label)); return; }
+        if (named._closeTimer) clearTimeout(named._closeTimer);
+        marks.delete(label);
+        reply(`[agent:scratch] mark ${label} dropped · mark ${named.nonce}. Nothing was cut; everything you read `
+          + 'since it stays in your transcript as ordinary history.');
+        log.info('intent', `scratch ${session.name}: mark ${named.nonce} (${label}) cancelled`);
+        this._recordScratchEpisode(session, named, { body: '', replay: false },
+          { outcome: 'cancelled', reason: null, stats: null, replayed: null, recycleMs: null });
+        return;
+      }
+      const mark = session._scratch;
       if (!mark) {
         reply('[agent:scratch] cancel: no episode is open — nothing was cut.');
         return;
@@ -6686,40 +6816,44 @@ function createSessionManager(deps) {
     }
 
     _scratchEnd(session, intent, reply) {
-      const mark = session._scratch;
+      const verb = intent.sub === 'rewind' ? 'rewind' : 'end';
+      const label = typeof intent.label === 'string' && intent.label ? intent.label : null;
+      const mark = verb === 'end' ? session._scratch : this._scratchRewindTarget(session, label);
       if (!mark) {
         const tomb = session._scratchVoid;
         if (tomb) {
           session._scratchVoid = null;
-          reply(`[agent:scratch] end refused: ${tomb}`);
+          reply(`[agent:scratch] ${verb} refused: ${tomb}`);
           return;
         }
-        reply('[agent:scratch] end refused: no episode is open — nothing was cut.');
+        if (verb === 'end') { reply('[agent:scratch] end refused: no episode is open — nothing was cut.'); return; }
+        reply(this._scratchNoMarkLine(session, verb, label));
         return;
       }
       const body = String(intent.body == null ? '' : intent.body).trim();
-      if (!body) {
+      if (!body && verb === 'end') {
         reply('[agent:scratch] end refused: the summary body is empty — an empty summary is a rewind that '
           + 'loses the work. Re-emit [agent:scratch end] with the briefing (what you now know, what you '
           + `did), closed by [agent:end]. Nothing was cut; the mark ${mark.nonce} is still open.`);
         return;
       }
-      if (mark.closing) {
-        reply(`[agent:scratch] end already pending for mark ${mark.nonce} — waiting for your reply to `
-          + 'finish. Nothing was cut yet; the first end is the one that will fire.');
+      const busy = this._scratchClosingMark(session);
+      if (busy) {
+        reply(`[agent:scratch] ${busy.closing.verb} already pending for mark ${busy.nonce} — waiting for your reply to `
+          + `finish. Nothing was cut yet; the first ${busy.closing.verb} is the one that will fire.`);
         return;
       }
-      mark.closing = { body, replay: intent.replay === true };
+      mark.closing = { body, replay: intent.replay === true, verb };
       if (session._flushTurnEnd === true) {
         setImmediate(() => this._fireScratchClose(session));
         return;
       }
       mark._closeTimer = setTimeout(() => {
         mark._closeTimer = null;
-        if (session._scratch !== mark || !mark.closing) return;
+        if (!this._scratchOpenMarks(session).includes(mark) || !mark.closing) return;
         mark.closing = null;
         this._injectText(session,
-          `[agent:scratch] end deferred ${Math.round(SCRATCH_CLOSE_TIMEOUT / 1000)}s waiting for your reply `
+          `[agent:scratch] ${verb} deferred ${Math.round(SCRATCH_CLOSE_TIMEOUT / 1000)}s waiting for your reply `
           + `to finish; re-emit it as the last thing in a reply. Nothing was cut; the mark ${mark.nonce} is `
           + 'still open.', { parkable: true });
       }, SCRATCH_CLOSE_TIMEOUT);
@@ -6727,8 +6861,8 @@ function createSessionManager(deps) {
 
     _fireScratchClose(session) {
       if (!session || session._dead) return;
-      const mark = session._scratch;
-      if (!mark || !mark.closing) return;
+      const mark = this._scratchClosingMark(session);
+      if (!mark) return;
       const closing = mark.closing;
       mark.closing = null;
       if (mark._closeTimer) { clearTimeout(mark._closeTimer); mark._closeTimer = null; }
@@ -6741,17 +6875,17 @@ function createSessionManager(deps) {
       try { return fs.readFileSync(realpath); } catch { return null; }
     }
 
-    _scratchRefusalLine(mark, v) {
+    _scratchRefusalLine(mark, v, verb = 'end') {
       const tail = 'Your summary is in your own turn above; carry on from it.';
       switch (v.reason) {
         case 'cleared':
-          return `[agent:scratch] end refused: the conversation was cleared/reloaded after mark ${mark.nonce} `
+          return `[agent:scratch] ${verb} refused: the conversation was cleared/reloaded after mark ${mark.nonce} `
             + `— the mark is gone and nothing can be cut. ${tail}`;
         case 'compacted':
-          return `[agent:scratch] end refused: a compact landed inside the episode after mark ${mark.nonce} `
+          return `[agent:scratch] ${verb} refused: a compact landed inside the episode after mark ${mark.nonce} `
             + `— the mark is gone and nothing can be cut. ${tail}`;
         case 'ack-missing':
-          return '[agent:scratch] end refused: the episode never opened (the ack after begin never reached '
+          return `[agent:scratch] ${verb} refused: the episode never opened (the ack after begin never reached `
             + 'you). Nothing was cut; emit begin again when idle.';
         case 'arrivals': {
           const who = (v.arrivals || []).map((a) => {
@@ -6759,7 +6893,7 @@ function createSessionManager(deps) {
             const at = clock ? ` at ${clock}` : '';
             return `${previewLine(a.text, 60)}${at}`;
           }).join(', ');
-          return `[agent:scratch] end refused: ${(v.arrivals || []).length} message(s) arrived during the `
+          return `[agent:scratch] ${verb} refused: ${(v.arrivals || []).length} message(s) arrived during the `
             + `episode and would be cut with it — ${who}. Handle them now if you have not, then re-emit `
             + '`[agent:scratch end replay] <summary>` to cut AND have them re-delivered verbatim after your '
             + `summary, or \`[agent:scratch cancel]\` to keep everything. Nothing was cut; the mark ${mark.nonce} is still open.`;
@@ -6768,12 +6902,12 @@ function createSessionManager(deps) {
           const did = (mark.dispatched || [])
             .map((d) => `${d.type}${d.sub ? ` ${d.sub}` : ''} ${d.token}`)
             .join(' and ');
-          return `[agent:scratch] end refused: inside this episode you dispatched ${did}, and ${v.detail}. `
+          return `[agent:scratch] ${verb} refused: inside this episode you dispatched ${did}, and ${v.detail}. `
             + 'After the cut you will not remember doing it. Re-emit end with each dispatch under "what I '
             + `did" (id, who, what for), or cancel. Nothing was cut; the mark ${mark.nonce} is still open.`;
         }
         default:
-          return `[agent:scratch] end refused: ${v.detail || v.reason} (mark ${mark.nonce}). Nothing was cut; `
+          return `[agent:scratch] ${verb} refused: ${v.detail || v.reason} (mark ${mark.nonce}). Nothing was cut; `
             + 'the mark is still open.';
       }
     }
@@ -6873,6 +7007,7 @@ function createSessionManager(deps) {
         team: team && team.name ? team.name : null,
         sessionId: mark.sessionId || session.sessionId || null,
         nonce: mark.nonce,
+        label: mark.label || null,
         beganAt: mark.beganAt,
         endedAt: Date.now(),
         stats: e.stats,
@@ -6894,7 +7029,7 @@ function createSessionManager(deps) {
       }
       this._broadcast('ipc-message', {
         type: 'scratch', from: session.name, to: session.name,
-        body: `scratch ${mark.nonce} → ${this._scratchEpisodeLine(row)}`,
+        body: `scratch ${mark.nonce}${row.label ? ` · ${row.label}` : ''} → ${this._scratchEpisodeLine(row)}`,
       });
     }
 
@@ -6913,16 +7048,17 @@ function createSessionManager(deps) {
       const name = session.name;
       const reply = (msg) => this._injectText(session, msg, { parkable: true });
       const refused = (reason, stats = null) => ({ outcome: 'refused', reason, stats, replayed: null, recycleMs: null });
+      const verb = closing.verb || 'end';
       const entry = getPersistence().get(name);
       if (!entry) {
-        reply(`[agent:scratch] end refused: this seat has no persistence record, so it cannot be respawned `
+        reply(`[agent:scratch] ${verb} refused: this seat has no persistence record, so it cannot be respawned `
           + `on a cut transcript. Nothing was cut; the mark ${mark.nonce} is still open.`);
         return refused('no-record');
       }
 
       const live = this._readScratchFile(mark.realpath);
       if (!live) {
-        reply(`[agent:scratch] end refused: the marked transcript ${mark.realpath} could not be read. `
+        reply(`[agent:scratch] ${verb} refused: the marked transcript ${mark.realpath} could not be read. `
           + `Nothing was cut; the mark ${mark.nonce} is still open.`);
         return refused('unreadable');
       }
@@ -6930,10 +7066,10 @@ function createSessionManager(deps) {
       try { realpath = fs.realpathSync(pathFor(REGISTRY_DIR, name, 'transcript')); } catch { realpath = null; }
       const opts = { realpath: realpath === null ? undefined : realpath, body: closing.body, replay: closing.replay };
       const v1 = validateScratchCut(mark, live, opts);
-      if (!v1.ok) { reply(this._scratchRefusalLine(mark, v1)); return refused(v1.reason, v1.stats); }
+      if (!v1.ok) { reply(this._scratchRefusalLine(mark, v1, verb)); return refused(v1.reason, v1.stats); }
 
       if (this._movingNames.has(name)) {
-        reply('[agent:scratch] end refused: this seat is being moved or renamed right now, and cutting '
+        reply(`[agent:scratch] ${verb} refused: this seat is being moved or renamed right now, and cutting `
           + `across that would race two respawns under one name. Nothing was cut; the mark ${mark.nonce} `
           + 'is still open — re-emit end when the move is done.');
         return refused('moving', v1.stats);
@@ -6952,9 +7088,10 @@ function createSessionManager(deps) {
       try { if (this._holdKeeper && session.sessionId) this._holdKeeper.endSession(session.sessionId); } catch {}
       session._holdRearmed = false;
 
+      const verb = closing.verb || 'end';
       const recycleStart = Date.now();
       if (!await this._scratchRecycle(session, entry)) {
-        reply('[agent:scratch] end refused: the old process did not exit in time — nothing was cut. The '
+        reply(`[agent:scratch] ${verb} refused: the old process did not exit in time — nothing was cut. The `
           + `mark ${mark.nonce} is still open.`);
         return { outcome: 'refused', reason: 'exit-timeout', stats: null, replayed: null, recycleMs: null };
       }
@@ -6963,7 +7100,7 @@ function createSessionManager(deps) {
       const v2 = quiet ? validateScratchCut(mark, quiet, opts) : null;
       if (!v2 || !v2.ok) {
         const why = v2 ? (v2.detail || v2.reason) : `${mark.realpath} could not be re-read`;
-        const fresh = await this._scratchRespawnSafely(name, entry, mark, null);
+        const fresh = await this._scratchRespawnSafely(session, entry, mark, null);
         if (fresh) {
           await this._injectAfterBoot(fresh,
             `[agent:scratch] the cut was ABANDONED after your process was recycled: ${why}. The transcript `
@@ -6983,6 +7120,8 @@ function createSessionManager(deps) {
       try {
         ensureDir(dir);
         fs.copyFileSync(mark.realpath, bak);
+        fs.chmodSync(bak, 0o600);
+        this._scratchPruneBaks(dir, bak);
         fs.writeFileSync(tmp, quiet.subarray(0, v2.cutOffset));
         try {
           const fd = fs.openSync(tmp, 'r+');
@@ -6991,7 +7130,7 @@ function createSessionManager(deps) {
         fs.renameSync(tmp, mark.realpath);
       } catch (err) {
         try { fs.unlinkSync(tmp); } catch {}
-        const fresh = await this._scratchRespawnSafely(name, entry, mark, bak, { keepMark: true });
+        const fresh = await this._scratchRespawnSafely(session, entry, mark, bak, { keepMark: true });
         if (fresh) {
           await this._injectAfterBoot(fresh,
             `[agent:scratch] the cut FAILED while writing: ${err.message}. The transcript was restored from `
@@ -7026,13 +7165,82 @@ function createSessionManager(deps) {
       });
       const notInjected = () => ({ ...done(null), reason: 'summary-not-injected' });
       if (!fresh) return notInjected();
-      const landed = await this._injectAfterBoot(fresh, scratchBriefing(mark, v2.stats, closing.body), {
+      const kept = scratchParseTail(quiet.subarray(0, v2.cutOffset)).records;
+      this._scratchCarryMarks(session, fresh, mark, v2.cutOffset, kept);
+      const endedAt = Date.now();
+      const landed = await this._injectAfterBoot(fresh, scratchBriefing(mark, v2.stats, closing.body, { notes: mark.notes, endedAt }), {
         logPrefix: '[agent:scratch]',
         snapshot: false,
         dropBody: `scratch ${mark.nonce} → summary NOT injected (fresh CLI never signaled boot)`,
       });
       if (!landed) return notInjected();
+      if (mark.label) this._scratchReArm(fresh, mark, closing, v2.cutOffset, quiet, kept, endedAt);
       return done(this._replayScratchArrivals(fresh, mark, closing, v2.arrivals));
+    }
+
+    _scratchPruneBaks(dir, keep) {
+      const cutoff = Date.now() - SCRATCH_BAK_TTL_MS;
+      let names = [];
+      try { names = fs.readdirSync(dir); } catch { return; }
+      for (const n of names) {
+        if (!n.endsWith('.bak')) continue;
+        const p = path.join(dir, n);
+        if (p === keep) continue;
+        try {
+          if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p);
+        } catch {}
+      }
+    }
+
+    _scratchAckedIn(records, mark) {
+      const needle = SCRATCH_ACK_PREFIX + mark.nonce;
+      return records.some((e) => e.offset >= mark.sizeAtBegin && e.type === 'user'
+        && typeof (e.record.message || {}).content === 'string'
+        && e.record.message.content.startsWith(needle));
+    }
+
+    _scratchCarryMarks(session, fresh, mark, cutOffset, kept) {
+      const carried = new Map();
+      for (const m of this._scratchOpenMarks(session)) {
+        if (m === mark) continue;
+        const why = m.sizeAtBegin >= cutOffset ? 'younger than the cut'
+          : (this._scratchAckedIn(kept, m) ? null : 'its ack is not below the cut');
+        if (why) {
+          if (m._closeTimer) clearTimeout(m._closeTimer);
+          log.info('intent', `scratch ${session.name}: mark ${m.nonce}${m.label ? ` (${m.label})` : ''} dropped — ${why}`);
+          continue;
+        }
+        if (m.label) carried.set(m.label, m);
+        else if (mark.label) fresh._scratch = m;
+      }
+      fresh._scratchMarks = carried;
+    }
+
+    _scratchReArm(fresh, mark, closing, cutOffset, quiet, kept, endedAt) {
+      const tail = quiet.subarray(Math.max(0, cutOffset - SCRATCH_MARK_TAIL), cutOffset);
+      const notes = [...(mark.notes || [])];
+      if (closing.body) notes.push({ at: endedAt, body: closing.body });
+      const mark2 = {
+        ...mark,
+        nonce: scratchNonce(),
+        sizeAtBegin: cutOffset,
+        tailBytes: Buffer.from(tail),
+        beganAt: Date.now(),
+        arrivals: [],
+        dispatched: [],
+        usageAtBegin: this._scratchUsageAt(kept),
+        closing: null,
+        _closeTimer: null,
+        notes,
+      };
+      this._scratchMarksOf(fresh).set(mark.label, mark2);
+      try {
+        this._injectText(fresh, scratchReArmLine(mark2));
+      } catch (e) {
+        log.warn('intent', `scratch ${fresh.name}: the re-arm ack for ${mark.label} failed: ${e.message}`);
+      }
+      log.info('intent', `scratch ${fresh.name}: mark ${mark2.nonce} (${mark.label}) re-armed at ${cutOffset} (was ${mark.nonce})`);
+      return mark2;
     }
 
     _replayScratchArrivals(session, mark, closing, arrivals) {
@@ -7063,11 +7271,21 @@ function createSessionManager(deps) {
       }
     }
 
-    async _scratchRespawnSafely(name, entry, mark, bak, { keepMark = false } = {}) {
+    async _scratchRespawnSafely(session, entry, mark, bak, { keepMark = false } = {}) {
+      const name = session.name;
       this._scratchRestore(mark, bak);
       try {
         const fresh = await this._scratchRespawn(name, entry);
-        if (fresh && keepMark) { fresh._scratch = mark; mark.closing = null; }
+        if (fresh) {
+          mark.closing = null;
+          const named = new Map();
+          for (const m of this._scratchOpenMarks(session)) {
+            if (m === mark && !keepMark) continue;
+            if (m.label) named.set(m.label, m);
+            else fresh._scratch = m;
+          }
+          fresh._scratchMarks = named;
+        }
         return fresh;
       } catch (err) {
         log.error('intent', `scratch ${name}: respawn after an abandoned cut failed: ${err.message}`);
@@ -7077,12 +7295,15 @@ function createSessionManager(deps) {
     }
 
     _voidScratchMark(session, tail, { notify = true } = {}) {
-      const mark = session && session._scratch;
-      if (!mark) return;
-      if (mark._closeTimer) clearTimeout(mark._closeTimer);
+      const marks = this._scratchOpenMarks(session);
+      if (!marks.length) return;
+      for (const mark of marks) {
+        if (mark._closeTimer) clearTimeout(mark._closeTimer);
+        log.info('intent', `scratch ${session.name}: mark ${mark.nonce}${mark.label ? ` (${mark.label})` : ''} voided`);
+      }
       session._scratch = null;
+      session._scratchMarks = new Map();
       session._scratchVoid = tail;
-      log.info('intent', `scratch ${session.name}: mark ${mark.nonce} voided`);
       if (!notify) return;
       try { this._injectText(session, `[agent:scratch] ${tail}`, { parkable: true }); } catch {}
     }
@@ -7115,11 +7336,12 @@ function createSessionManager(deps) {
     }
 
     _recordScratchDispatch(session, intent, beforeIds) {
-      const mark = session && session._scratch;
-      if (!mark) return;
+      const marks = this._scratchOpenMarks(session);
+      if (!marks.length) return;
       const token = this._scratchDispatchToken(session, intent, beforeIds);
       if (!token) return;
-      mark.dispatched.push({ type: intent.type, sub: intent.sub || null, token, at: Date.now() });
+      const entry = { type: intent.type, sub: intent.sub || null, token, at: Date.now() };
+      for (const mark of marks) mark.dispatched.push(entry);
     }
 
     _executeCompact(session, cmd, continuation) {
