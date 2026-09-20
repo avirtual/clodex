@@ -500,7 +500,7 @@ function pluginGrammarLines(intentsList, plugins) {
 // parse nor catalog order, and its omission of `team` is a known gap left as-is.
 // `end` stays last.
 const CORE_VALID_INTENT_NAMES = [
-  'dm', 'resend', 'who', 'name', 'context', 'memory', 'spawn', 'file', 'exec',
+  'dm', 'resend', 'who', 'name', 'context', 'scratch', 'memory', 'spawn', 'file', 'exec',
   'remind', 'shout', 'team-review', 'review-done', 'task', 'term', 'reboot',
 ];
 

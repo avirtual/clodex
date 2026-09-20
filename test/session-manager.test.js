@@ -1504,7 +1504,7 @@ test('near-miss bounce: the WHOLE valid-intents string is pinned, byte for byte'
     // this seat was granted. Omitting a granted verb here is the defect that put
     // term in it — a seat that typos `[agent:term exex]` would be handed a list
     // missing the one verb it can actually use.
-    + 'Valid intents: dm, resend, who, name, context, memory, spawn, file, exec, remind, shout, team-review, review-done, task, term, reboot, end. '
+    + 'Valid intents: dm, resend, who, name, context, scratch, memory, spawn, file, exec, remind, shout, team-review, review-done, task, term, reboot, end. '
     + 'To quote an intent literally, put it in a ``` code fence or escape it as \\[agent:…].',
   );
 });

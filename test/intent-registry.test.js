@@ -752,9 +752,9 @@ test('t1037: the scratch row is gateable, ordinary, and parses a closed alternat
   assert.match(row.label, /Scratch episodes/, 'the checklist label comes from intent-catalog, not a copy here');
   assert.strictEqual(parseIntent('[agent:scratch resume]'), null,
     'an unknown sub-verb is not an intent — `end` CUTS the transcript, so a half-parsed typo is not a safe failure');
-  assert.ok(!registry.CORE_VALID_INTENT_NAMES.includes('scratch'),
-    'and it is absent from the near-miss bounce copy until T-D writes its prompt row — naming a verb '
-    + 'whose grammar no seat has been given advertises an emission nobody can get right');
+  assert.ok(registry.CORE_VALID_INTENT_NAMES.includes('scratch'),
+    't1039: the prompt row exists now, so the near-miss bounce names the verb — a seat that '
+    + 'mistypes a sub-verb is told scratch is real, which is only fair once its grammar is published');
 });
 
 test('bodyMode: a kv-only role-set/role-add head line takes no body', () => {

@@ -91,6 +91,39 @@ keystroke.
   `name`, `context <sub>`, `memory <sub>`, `file <view|open> <path>`,
   `spawn name:X cwd:Y` (optional `template:Z` — matched by name, supplies
   type/config; see sessions.md §5).
+- `scratch <begin|end|cancel>` (Claude seats only) — a closed alternation, so a
+  typo'd sub-verb is not an intent at all: `end` CUTS the transcript, and a
+  half-parsed one is not a safe failure. `begin` and `cancel` are bare; `end`
+  takes a greedy body and an optional `replay` modifier (`[agent:scratch end
+  replay]`). The cut itself is sessions.md §3a; what belongs here is that all
+  three are ordinary gateable intents whose bounces ride `_injectText`, parkable,
+  each naming the mark:
+  - `begin` off a turn boundary: *it must be the last line of a reply (your reply
+    went on to call tools). Emit it alone and stop; the episode opens when Clodex
+    acks it. Not marked.*
+  - a second `begin`: the mark is **replaced**, not stacked, and the ack says so —
+    what was read under the earlier mark becomes ordinary history and is not cut.
+    The re-open ack still opens with the same `ACK_PREFIX` line the validator
+    searches for; a differently-worded first line would make every re-opened
+    episode refuse `ack-missing`.
+  - bodyless `end`: *the summary body is empty — an empty summary is a rewind that
+    loses the work. Re-emit `[agent:scratch end]` with the briefing (what you now
+    know, what you did), closed by `[agent:end]`. Nothing was cut; the mark is
+    still open.*
+  - `end` with no mark: *no episode is open — nothing was cut.*
+  - `end` after a clear/reload: *the conversation was cleared/reloaded after the
+    mark — the mark is gone and nothing can be cut. Your summary is in your own
+    turn above; carry on from it.*
+  - `end` with arrivals: *N messages arrived during the episode and would be cut
+    with it* — each named with its sender and time. The escape is the modifier,
+    not a flag on the refusal: re-emitting as `[agent:scratch end replay]` cuts
+    AND re-delivers each arrival in order after the summary, each under
+    `Replayed from scratch episode <mark> (arrived HH:MM; you saw it inside the
+    episode and your summary says what you did about it — do not re-answer unless
+    it says otherwise):` followed by the content verbatim from the transcript.
+    `[agent:scratch cancel]` keeps everything.
+  - a Codex seat: *Claude seats only — a Codex transcript has a different shape
+    and no rewind has been proven for it.*
 - **Multi-line bodies** are captured in `_extractIntents`, not the scanner:
   a body runs from the intent line to the next column-1 real intent or end
   of turn (applies to dm, memory remember, remind, shout, context
