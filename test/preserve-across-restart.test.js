@@ -182,7 +182,8 @@ test('t491: every restart catch arm restores its snapshot through the tree guard
   // the arms in engine.js would fail this for a non-reason. A table that promises
   // nothing beats one that promises a check it performs badly, so these are what
   // the count's failure message names, nothing more.
-  const ARMS = ['restartSession', 'applySessionArgs', 'move', 'moveToPeer', '[agent:context reload]'];
+  const ARMS = ['restartSession', 'applySessionArgs', 'move', 'moveToPeer', '[agent:context reload]',
+    '[agent:scratch end] respawn-after-cut', '[agent:scratch end] respawn-after-abandon'];
   const seen = [];
   for (const file of ['engine.js', 'session-manager.js']) {
     const lines = fs.readFileSync(path.join(ROOT, file), 'utf8').split('\n');

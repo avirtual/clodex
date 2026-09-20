@@ -105,11 +105,24 @@ test('parseIntent: context sub-command + optional body', () => {
 
 test('parseIntent: scratch — three sub-verbs, only `end` carrying a body', () => {
   assert.deepStrictEqual(parseIntent('[agent:scratch begin]'),
-    { type: 'scratch', sub: 'begin', body: '' });
+    { type: 'scratch', sub: 'begin', replay: false, body: '' });
   assert.deepStrictEqual(parseIntent('[agent:scratch cancel]'),
-    { type: 'scratch', sub: 'cancel', body: '' });
+    { type: 'scratch', sub: 'cancel', replay: false, body: '' });
   assert.deepStrictEqual(parseIntent('[agent:scratch end] what I now know'),
-    { type: 'scratch', sub: 'end', body: 'what I now know' });
+    { type: 'scratch', sub: 'end', replay: false, body: 'what I now know' });
+});
+
+test('parseIntent: `replay` is an end-only modifier — begin/cancel do not take it', () => {
+  assert.deepStrictEqual(parseIntent('[agent:scratch end replay] the summary'),
+    { type: 'scratch', sub: 'end', replay: true, body: 'the summary' });
+  for (const line of ['[agent:scratch begin replay]', '[agent:scratch cancel replay]']) {
+    assert.strictEqual(parseIntent(line), null,
+      `${line} must not parse. replay only means anything at the cut — accepting it on begin would `
+      + 'dispatch a mark whose replay flag no later end ever reads, and the model would believe it '
+      + 'had opted into re-delivery it never gets');
+  }
+  assert.strictEqual(parseIntent('[agent:scratch end replayy] x'), null,
+    'the modifier is a closed word, not a prefix');
 });
 
 test('parseIntent: an UPPERCASE scratch sub-verb does not parse, unlike [agent:context CLEAR]', () => {
@@ -135,7 +148,7 @@ test('parseIntent: scratch is a CLOSED alternation — an unknown sub-verb is no
 
 test('parseIntent: a scratch end body spans multiple lines (s flag), and the escape still quotes it', () => {
   assert.deepStrictEqual(parseIntent('[agent:scratch end] line one\nline two'),
-    { type: 'scratch', sub: 'end', body: 'line one\nline two' });
+    { type: 'scratch', sub: 'end', replay: false, body: 'line one\nline two' });
   assert.deepStrictEqual(parseIntent('\\[agent:scratch begin]'),
     { type: 'escape', text: '[agent:scratch begin]' });
 });

@@ -46,7 +46,7 @@
 // script-RELOCATES-but-BODY-keeps-the-shared-spelling story, and all three MUST
 // outlive the run dir, which is rm -rf'd on every exit, or the resume and the
 // notice they exist to serve would find them gone,
-// fix/ (a deploy-fix session's scratch cwd — fixDirFor; outlives run/<name>/), spill/ (intent-body spill — spillDirFor, confined+resolved by intent-spill.js; content-addressed, outlives run/<name>/ AND the seat), agents/, skills/, library/, accounts/ + accounts.json (accounts.js is the authority),
+// fix/ (a deploy-fix session's scratch cwd — fixDirFor; outlives run/<name>/), spill/ (intent-body spill — spillDirFor, confined+resolved by intent-spill.js; content-addressed, outlives run/<name>/ AND the seat), scratch/ (a scratch episode's pre-cut transcript backup — scratchDirFor; outlives run/<name>/, which the respawn deletes, and sits outside ~/.claude/projects/ so the picker's *.jsonl glob never sees it), agents/, skills/, library/, accounts/ + accounts.json (accounts.js is the authority),
 // plugins/ (the BYO plugin root — plugins/plugin-sources.md §3; deliberately NOT a
 // KIND, since it is shared rather than per-agent, and constructed at the engine
 // bootstrap like every other entry in this list), clodex.log,
@@ -219,6 +219,10 @@ function spillDirFor(root, name) {
   return path.join(root, 'spill', name);
 }
 
+function scratchDirFor(root, name) {
+  return path.join(root, 'scratch', name);
+}
+
 // The per-PROJECT artifact dir: ~/.clodex/projects/<leaf>-<hash8>/. Task
 // artifacts (specs, journals, design notes) and the TICKET BOARD
 // (tickets.json — tickets-store.js) live here, NOT in the user's own repo —
@@ -273,7 +277,7 @@ function claudeProjectSlug(cwd) {
 }
 
 module.exports = {
-  KINDS, LEGACY_SUFFIXES, runDirFor, fixDirFor, spillDirFor, pathFor, legacyPathsFor, legacySuffixes,
+  KINDS, LEGACY_SUFFIXES, runDirFor, fixDirFor, spillDirFor, scratchDirFor, pathFor, legacyPathsFor, legacySuffixes,
   projectDirFor, taskDirFor, defaultClodexHome,
   SEAT_KINDS, seatDirFor, seatPathFor, legacySeatPathFor, claudeProjectSlug,
 };

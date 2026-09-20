@@ -37,8 +37,11 @@ function parseContext(cleaned) {
 }
 
 function parseScratch(cleaned) {
-  const m = cleaned.match(/^\[agent:scratch\s+(begin|end|cancel)\]\s*(.*)$/s);
-  return m ? { type: 'scratch', sub: m[1].toLowerCase(), body: m[2] } : null;
+  const m = cleaned.match(/^\[agent:scratch\s+(begin|end|cancel)(\s+replay)?\]\s*(.*)$/s);
+  if (!m) return null;
+  const sub = m[1].toLowerCase();
+  if (m[2] && sub !== 'end') return null;
+  return { type: 'scratch', sub, replay: !!m[2], body: m[3] };
 }
 
 function parseMemory(cleaned) {

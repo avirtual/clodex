@@ -160,6 +160,12 @@ const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } =
 // Keep in sync with the senderName literals at the _deliver* call sites.
 const SYSTEM_SENDERS = new Set(['team', 'clodex-team', 'reminder', 'memory', 'reboot', 'clodex', 'ticket-loop', 'user']);
 
+const SCRATCH_TAIL_SCAN = 64 * 1024;
+const SCRATCH_MARK_TAIL = 512;
+const SCRATCH_CLOSE_TIMEOUT = 120000;
+
+const SCRATCH_DISPATCH_TYPES = new Set(['task', 'spawn', 'team', 'team-create', 'team-review', 'review-done']);
+
 const ECHOED_DUP_TYPES = new Set(['task', 'remind', 'spawn', 'team']);
 
 function dupIdentity(intent) {
@@ -182,7 +188,12 @@ const { didGrow, parsePsRows, descendantPids } = require('./stall-evidence');
 const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
 const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
-const { SEAT_KINDS, seatPathFor, claudeProjectSlug } = require('./clodex-paths');
+const { SEAT_KINDS, seatPathFor, claudeProjectSlug, scratchDirFor } = require('./clodex-paths');
+const {
+  ACK_PREFIX: SCRATCH_ACK_PREFIX, boundaryAt: scratchBoundaryAt,
+  parseTranscriptTail: scratchParseTail, validateScratchCut, scratchBriefing,
+  nonce: scratchNonce,
+} = require('./scratch-mark');
 const { SEGMENT_RE: IMPORT_SEGMENT_RE, SESSION_ID_RE: IMPORT_SESSION_ID_RE } = require('./seat-import');
 const { effectiveModel } = require('./accounts');
 const { liveSnapshotFor, archivedSnapshotFor, stampConfigFlags } = require('./session-restore');
@@ -1001,6 +1012,7 @@ function createSessionManager(deps) {
           });
           const s = this.sessions.get(t.agent);
           if (s) s.lastMainStop = { isTurn: !!(t.stop && t.stop.is_turn), ts: Date.now() };
+          if (s) s._flushTurnEnd = !!(t.stop && t.stop.is_turn);
           // Already past the side-call / subagent filter above, so this is the
           // main line's own text. `stop.is_turn` is the wire's truthful
           // discriminator — the same one ActivityTracker trusts for its
@@ -1041,6 +1053,7 @@ function createSessionManager(deps) {
             }
             if (t.stop && t.stop.is_turn) {
               setImmediate(() => this._maybeFireCompactLatch(s));
+              setImmediate(() => this._fireScratchClose(s));
             }
             if (t.sessionId && s.sessionId !== t.sessionId) {
               this._onWireSessionRotated(s, t.agent, t.sessionId);
@@ -2202,6 +2215,9 @@ function createSessionManager(deps) {
           try { if (this._holdKeeper) this._holdKeeper.endSession(priorSid); } catch { /* observer-grade */ }
           session._holdRearmed = false;
           try { arm.onContextReset(name); } catch { /* observer-grade */ }
+          this._voidScratchMark(session,
+            'end refused: the conversation was cleared after the mark — the mark is gone and nothing can '
+            + 'be cut. Your summary is in your own turn above; carry on from it.');
           // BEFORE the continuation: a clear discarded the conversation, so the
           // prompt-file rewrite has no warm cache left to bust and the fresh
           // conversation should start on current bytes rather than inherit the
@@ -4480,6 +4496,9 @@ function createSessionManager(deps) {
 
     _fireCompactContinuation(session) {
       try { this._stampSeatCost(session, 'compact'); } catch {}
+      this._voidScratchMark(session,
+        'end refused: a compact landed inside the episode — the mark is gone and nothing can be cut. Your '
+        + 'summary is in your own turn above; carry on from it.');
       // The live set resets to EMPTY — no attempt to model what the summarizer
       // kept. "Possibly evicted" resolving to "not loaded" is the correct
       // answer for a dedup consumer, and on the jsonl-intent path this fires for
@@ -4821,6 +4840,7 @@ function createSessionManager(deps) {
 
     _scanJsonlText(text, senderName, touches, meta) {
       const s = this.sessions.get(senderName);
+      if (s) s._flushTurnEnd = !!(meta && meta.turnEnd);
       // Mirrors the publish gate directly below and for the same reason: a
       // wire-routed session with a live tee already spoke from turn.completed,
       // and speaking here too would say every reply twice. A tee-blind
@@ -4864,6 +4884,7 @@ function createSessionManager(deps) {
         }
         this._handleIntent(senderName, intent);
       }
+      if (s && meta && meta.turnEnd) setImmediate(() => this._fireScratchClose(s));
       if (proseVerdictNeedsNudge({ text, intents, session: s })) {
         s._verdictNudged = true;
         log.info('team', `reviewer ${senderName} wrote a verdict with no review-done intent — nudged once`);
@@ -4982,6 +5003,10 @@ function createSessionManager(deps) {
         }
         return;
       }
+
+      const scratchWatched = !!(session && session._scratch && SCRATCH_DISPATCH_TYPES.has(intent.type));
+      const scratchBefore = scratchWatched && intent.type === 'task' && intent.sub === 'add'
+        ? this._scratchTicketIds(session) : new Set();
 
       switch (intent.type) {
         case 'dm': {
@@ -5155,6 +5180,11 @@ function createSessionManager(deps) {
           this._handleContextIntent(session, intent.sub, intent.body || '');
           break;
         }
+        case 'scratch': {
+          if (!session || !session.agentType) break;
+          this._handleScratchIntent(session, intent);
+          break;
+        }
         case 'memory': {
           if (!session || !session.agentType) break;
           this._handleMemoryIntent(session, intent.sub, intent.body || '');
@@ -5225,6 +5255,8 @@ function createSessionManager(deps) {
           this._dispatchPluginIntent(session, intent);
           break;
       }
+
+      if (scratchWatched) this._recordScratchDispatch(session, intent, scratchBefore);
     }
 
     _dispatchPluginIntent(session, intent) {
@@ -5337,6 +5369,9 @@ function createSessionManager(deps) {
       this._broadcast('ipc-message', { type: 'reboot', from: who, to: 'clodex', body: `rebooting${reason ? `: ${reason}` : ''}` });
       log.info('intent', `reboot by ${who}${reason ? `: ${reason}` : ''}`);
       reply('reboot queued — restarting once every session is idle; sessions resume on relaunch');
+      this._voidScratchMark(session,
+        'end refused: you queued a reboot inside the episode, and a mark cannot survive the restart — '
+        + 'nothing can be cut. Your summary is in your own turn above; carry on from it.');
       try {
         // The host decides WHEN. Under Electron the restart waits for a sustained
         // all-idle window, so this seat's own turn finishes and flushes first —
@@ -6336,6 +6371,9 @@ function createSessionManager(deps) {
           return;
         }
         session._reloadInFlight = true;
+        this._voidScratchMark(session,
+          'end refused: the conversation was reloaded after the mark — the mark is gone and nothing can be '
+          + 'cut. Your summary is in your own turn above; carry on from it.', { notify: false });
         log.info('intent', `reload ${name} → cold respawn`);
         this._broadcast('ipc-message', {
           type: 'context', from: name, to: name, body: 'context reload → fresh restart',
@@ -6463,6 +6501,443 @@ function createSessionManager(deps) {
       });
     }
 
+
+    _handleScratchIntent(session, intent) {
+      const reply = (msg) => this._injectText(session, msg, { parkable: true });
+      if (session.agentType !== 'claude') {
+        reply('[agent:scratch] Claude seats only — a Codex transcript has a different shape and no rewind '
+          + 'has been proven for it.');
+        return;
+      }
+      if (intent.sub === 'begin') { this._scratchBegin(session, reply); return; }
+      if (intent.sub === 'cancel') { this._scratchCancel(session, reply); return; }
+      if (intent.sub === 'end') { this._scratchEnd(session, intent, reply); return; }
+    }
+
+    _scratchTranscript(session) {
+      try {
+        const realpath = fs.realpathSync(pathFor(REGISTRY_DIR, session.name, 'transcript'));
+        const size = fs.statSync(realpath).size;
+        return { realpath, size };
+      } catch { return null; }
+    }
+
+    _scratchUsageAt(records) {
+      for (let i = records.length - 1; i >= 0; i--) {
+        const e = records[i];
+        if (e.type !== 'assistant') continue;
+        const u = e.record && e.record.message && e.record.message.usage;
+        if (!u || typeof u !== 'object') continue;
+        return {
+          input: u.input_tokens,
+          cacheRead: u.cache_read_input_tokens,
+          cacheWrite: u.cache_creation_input_tokens,
+        };
+      }
+      return null;
+    }
+
+    _scratchBegin(session, reply) {
+      const t = this._scratchTranscript(session);
+      if (!t) {
+        reply('[agent:scratch] begin refused: this seat has no readable transcript file yet, so there is '
+          + 'nothing to mark. Not marked.');
+        return;
+      }
+      const from = Math.max(0, t.size - SCRATCH_TAIL_SCAN);
+      let buf;
+      try {
+        const fd = fs.openSync(t.realpath, 'r');
+        try {
+          buf = Buffer.alloc(t.size - from);
+          fs.readSync(fd, buf, 0, buf.length, from);
+        } finally { fs.closeSync(fd); }
+      } catch {
+        reply('[agent:scratch] begin refused: the transcript tail could not be read, so the cut point '
+          + 'cannot be proven to be a turn boundary. Not marked.');
+        return;
+      }
+      const { records } = scratchParseTail(buf, { baseOffset: from });
+      const boundary = scratchBoundaryAt(records);
+      if (!boundary.ok) {
+        reply('[agent:scratch] begin refused: it must be the last line of a reply (your reply went on to '
+          + 'call tools). Emit it alone and stop; the episode opens when Clodex acks it. Not marked.');
+        return;
+      }
+      const prior = session._scratch;
+      if (prior && prior._closeTimer) clearTimeout(prior._closeTimer);
+      const n = scratchNonce();
+      const tail = buf.subarray(Math.max(0, buf.length - SCRATCH_MARK_TAIL));
+      session._scratch = {
+        nonce: n,
+        realpath: t.realpath,
+        sessionId: session.sessionId || null,
+        sizeAtBegin: t.size,
+        tailBytes: Buffer.from(tail),
+        leafUuid: (boundary.entry.record && boundary.entry.record.uuid) || null,
+        beganAt: Date.now(),
+        arrivals: [],
+        dispatched: [],
+        usageAtBegin: this._scratchUsageAt(records),
+        closing: null,
+        _closeTimer: null,
+      };
+      session._scratchVoid = null;
+      let ack = `${SCRATCH_ACK_PREFIX}${n}. Research now. Close with \`[agent:scratch end] <summary>\` … `
+        + '`[agent:end]` as the last thing in a reply; `[agent:scratch cancel]` keeps everything.';
+      if (prior) {
+        ack += `\nEpisode re-opened: the earlier mark ${prior.nonce} is dropped; what you read since it is `
+          + 'now ordinary history and will NOT be cut.';
+      }
+      reply(ack);
+      log.info('intent', `scratch ${session.name}: mark ${n} opened at ${t.size}${prior ? ` (replaces ${prior.nonce})` : ''}`);
+    }
+
+    _scratchCancel(session, reply) {
+      const mark = session._scratch;
+      session._scratchVoid = null;
+      if (!mark) {
+        reply('[agent:scratch] cancel: no episode is open — nothing was cut.');
+        return;
+      }
+      if (mark._closeTimer) clearTimeout(mark._closeTimer);
+      session._scratch = null;
+      reply(`[agent:scratch] episode cancelled · mark ${mark.nonce} is dropped. Nothing was cut; everything `
+        + 'you read since begin stays in your transcript as ordinary history.');
+      log.info('intent', `scratch ${session.name}: mark ${mark.nonce} cancelled`);
+    }
+
+    _scratchEnd(session, intent, reply) {
+      const mark = session._scratch;
+      if (!mark) {
+        const tomb = session._scratchVoid;
+        if (tomb) {
+          session._scratchVoid = null;
+          reply(`[agent:scratch] end refused: ${tomb}`);
+          return;
+        }
+        reply('[agent:scratch] end refused: no episode is open — nothing was cut.');
+        return;
+      }
+      const body = String(intent.body == null ? '' : intent.body).trim();
+      if (!body) {
+        reply('[agent:scratch] end refused: the summary body is empty — an empty summary is a rewind that '
+          + 'loses the work. Re-emit [agent:scratch end] with the briefing (what you now know, what you '
+          + `did), closed by [agent:end]. Nothing was cut; the mark ${mark.nonce} is still open.`);
+        return;
+      }
+      if (mark.closing) return;
+      mark.closing = { body, replay: intent.replay === true };
+      if (session._flushTurnEnd === true) {
+        setImmediate(() => this._fireScratchClose(session));
+        return;
+      }
+      mark._closeTimer = setTimeout(() => {
+        mark._closeTimer = null;
+        if (session._scratch !== mark || !mark.closing) return;
+        mark.closing = null;
+        this._injectText(session,
+          `[agent:scratch] end deferred ${Math.round(SCRATCH_CLOSE_TIMEOUT / 1000)}s waiting for your reply `
+          + `to finish; re-emit it as the last thing in a reply. Nothing was cut; the mark ${mark.nonce} is `
+          + 'still open.', { parkable: true });
+      }, SCRATCH_CLOSE_TIMEOUT);
+    }
+
+    _fireScratchClose(session) {
+      if (!session || session._dead) return;
+      const mark = session._scratch;
+      if (!mark || !mark.closing) return;
+      const closing = mark.closing;
+      mark.closing = null;
+      if (mark._closeTimer) { clearTimeout(mark._closeTimer); mark._closeTimer = null; }
+      this._runScratchCut(session, mark, closing).catch((e) => {
+        log.error('intent', `scratch ${session.name}: cut failed: ${e.message}`);
+      });
+    }
+
+    _readScratchFile(realpath) {
+      try { return fs.readFileSync(realpath); } catch { return null; }
+    }
+
+    _scratchRefusalLine(mark, v) {
+      const tail = 'Your summary is in your own turn above; carry on from it.';
+      switch (v.reason) {
+        case 'cleared':
+          return `[agent:scratch] end refused: the conversation was cleared/reloaded after mark ${mark.nonce} `
+            + `— the mark is gone and nothing can be cut. ${tail}`;
+        case 'compacted':
+          return `[agent:scratch] end refused: a compact landed inside the episode after mark ${mark.nonce} `
+            + `— the mark is gone and nothing can be cut. ${tail}`;
+        case 'ack-missing':
+          return '[agent:scratch] end refused: the episode never opened (the ack after begin never reached '
+            + 'you). Nothing was cut; emit begin again when idle.';
+        case 'arrivals': {
+          const who = (v.arrivals || []).map((a) => {
+            const at = a.at ? ` at ${String(a.at).slice(11, 16)}` : '';
+            return `${previewLine(a.text, 60)}${at}`;
+          }).join(', ');
+          return `[agent:scratch] end refused: ${(v.arrivals || []).length} message(s) arrived during the `
+            + `episode and would be cut with it — ${who}. Handle them now if you have not, then re-emit `
+            + '`[agent:scratch end replay] <summary>` to cut AND have them re-delivered verbatim after your '
+            + `summary, or \`[agent:scratch cancel]\` to keep everything. Nothing was cut; the mark ${mark.nonce} is still open.`;
+        }
+        case 'dispatch-unmentioned': {
+          const did = (mark.dispatched || [])
+            .map((d) => `${d.type}${d.sub ? ` ${d.sub}` : ''} ${d.token}`)
+            .join(' and ');
+          return `[agent:scratch] end refused: inside this episode you dispatched ${did}, and ${v.detail}. `
+            + 'After the cut you will not remember doing it. Re-emit end with each dispatch under "what I '
+            + `did" (id, who, what for), or cancel. Nothing was cut; the mark ${mark.nonce} is still open.`;
+        }
+        default:
+          return `[agent:scratch] end refused: ${v.detail || v.reason} (mark ${mark.nonce}). Nothing was cut; `
+            + 'the mark is still open.';
+      }
+    }
+
+    _parkHeldInjects(session) {
+      const queue = session._injectQueue;
+      if (!Array.isArray(queue) || !queue.length) return 0;
+      const kept = [];
+      let parked = 0;
+      for (const e of queue) {
+        if (!e || typeof e.produce === 'function') { if (e) kept.push(e); continue; }
+        const text = typeof e === 'string' ? e : String(e);
+        if (!text) continue;
+        try {
+          parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), null, false, null, null);
+          parked++;
+        } catch (err) {
+          log.warn('intent', `scratch ${session.name}: parking a held inject failed: ${err.message}`);
+          kept.push(e);
+        }
+      }
+      session._injectQueue = kept;
+      return parked;
+    }
+
+    async _scratchRecycle(session, entry) {
+      const name = session.name;
+      session._moving = true;
+      const pid = session.pty && session.pty.pid;
+      try { session.pty.kill(); } catch {}
+      if (pid) setTimeout(() => { sigkillPid(pid, name, log); }, 5000);
+      if (!await this._waitForExit(name)) {
+        session._moving = false;
+        return false;
+      }
+      return true;
+    }
+
+    async _scratchRespawn(name, entry) {
+      const cwd = this.resumeCwdOf(entry);
+      await this.create(
+        name, entry.type, cwd, entry.extraArgs || [], entry.sessionId || null,
+        entry.workspaceId || DEFAULT_WORKSPACE_ID,
+        entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
+        entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
+        entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
+        Array.isArray(entry.execCommands) ? entry.execCommands : [],
+        Array.isArray(entry.intents) ? entry.intents : null,
+        (entry.env && typeof entry.env === 'object') ? entry.env : null,
+        false,
+        entry.noWire === true,
+        Array.isArray(entry.plugins) ? entry.plugins : null,
+        Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
+        typeof entry.fixFor === 'string' ? entry.fixFor : null,
+      );
+      const fresh = this.sessions.get(name);
+      const lvl = stripLevelOf(entry);
+      if (lvl >= 1) getPersistence().setStripLevel(name, lvl);
+      if (entry.label) getPersistence().setLabel(name, entry.label);
+      this._sendToSession(name, 'session:context-action', {
+        action: 'reattach', name, type: entry.type, cwd,
+        backend: (fresh || {}).backend || null, noWire: !!(fresh || {}).noWire,
+      });
+      return fresh || null;
+    }
+
+    async _runScratchCut(session, mark, closing) {
+      const name = session.name;
+      const reply = (msg) => this._injectText(session, msg, { parkable: true });
+      const entry = getPersistence().get(name);
+      if (!entry) {
+        reply(`[agent:scratch] end refused: this seat has no persistence record, so it cannot be respawned `
+          + `on a cut transcript. Nothing was cut; the mark ${mark.nonce} is still open.`);
+        return;
+      }
+
+      const live = this._readScratchFile(mark.realpath);
+      if (!live) {
+        reply(`[agent:scratch] end refused: the marked transcript ${mark.realpath} could not be read. `
+          + `Nothing was cut; the mark ${mark.nonce} is still open.`);
+        return;
+      }
+      let realpath = null;
+      try { realpath = fs.realpathSync(pathFor(REGISTRY_DIR, name, 'transcript')); } catch { realpath = null; }
+      const opts = { realpath: realpath === null ? undefined : realpath, body: closing.body, replay: closing.replay };
+      const v1 = validateScratchCut(mark, live, opts);
+      if (!v1.ok) { reply(this._scratchRefusalLine(mark, v1)); return; }
+      if (closing.replay && (v1.arrivals || []).length) {
+        reply(`[agent:scratch] end refused: \`replay\` is parsed but the re-delivery of the `
+          + `${v1.arrivals.length} message(s) that arrived inside the episode is not implemented yet, and `
+          + 'cutting them away without it would lose them. Answer them, then close with a plain '
+          + `\`[agent:scratch end]\`. Nothing was cut; the mark ${mark.nonce} is still open.`);
+        return;
+      }
+
+      this._parkHeldInjects(session);
+      try { if (this._holdKeeper && session.sessionId) this._holdKeeper.endSession(session.sessionId); } catch {}
+      session._holdRearmed = false;
+
+      if (!await this._scratchRecycle(session, entry)) {
+        reply('[agent:scratch] end refused: the old process did not exit in time — nothing was cut. The '
+          + `mark ${mark.nonce} is still open.`);
+        return;
+      }
+
+      const quiet = this._readScratchFile(mark.realpath);
+      const v2 = quiet ? validateScratchCut(mark, quiet, opts) : null;
+      if (!v2 || !v2.ok) {
+        const why = v2 ? (v2.detail || v2.reason) : `${mark.realpath} could not be re-read`;
+        const fresh = await this._scratchRespawnSafely(name, entry, mark, null);
+        if (fresh) {
+          await this._injectAfterBoot(fresh,
+            `[agent:scratch] the cut was ABANDONED after your process was recycled: ${why}. The transcript `
+            + 'was NOT cut and your seat came back on it whole; the mark is dropped. Your summary is in your '
+            + 'own turn above; carry on from it.',
+            { logPrefix: '[agent:scratch]', dropBody: 'scratch → abandon notice NOT injected' });
+        }
+        return;
+      }
+
+      const dir = scratchDirFor(REGISTRY_DIR, name);
+      const bak = path.join(dir, `${mark.sessionId || 'session'}.${mark.nonce}.jsonl.bak`);
+      const tmp = path.join(path.dirname(mark.realpath), `.${mark.sessionId || 'session'}.${mark.nonce}.tmp`);
+      try {
+        ensureDir(dir);
+        fs.copyFileSync(mark.realpath, bak);
+        fs.writeFileSync(tmp, quiet.subarray(0, v2.cutOffset));
+        try {
+          const fd = fs.openSync(tmp, 'r+');
+          try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+        } catch {}
+        fs.renameSync(tmp, mark.realpath);
+      } catch (err) {
+        try { fs.unlinkSync(tmp); } catch {}
+        const fresh = await this._scratchRespawnSafely(name, entry, mark, bak, { keepMark: true });
+        if (fresh) {
+          await this._injectAfterBoot(fresh,
+            `[agent:scratch] the cut FAILED while writing: ${err.message}. The transcript was restored from `
+            + `backup and your seat respawned WITHOUT cutting; the mark ${mark.nonce} is still open, so you `
+            + 'can re-emit end. Your summary is in your own turn above.',
+            { logPrefix: '[agent:scratch]', dropBody: 'scratch → write-failure notice NOT injected' });
+        }
+        return;
+      }
+
+      let fresh = null;
+      try {
+        fresh = await this._scratchRespawn(name, entry);
+      } catch (err) {
+        log.error('intent', `scratch ${name}: respawn after the cut failed: ${err.message}`);
+        this._scratchRestore(mark, bak);
+        getPersistence().upsert(this._stripClaimedTree(entry));
+        this._broadcast('ipc-message', {
+          type: 'scratch', from: name, to: name,
+          body: `scratch → respawn FAILED, transcript restored (${err.message})`,
+        });
+        return;
+      }
+
+      log.info('intent', `scratch ${name}: mark ${mark.nonce} cut ${v2.stats.bytes.dropped} bytes `
+        + `(${v2.stats.records.dropped} records) at ${v2.cutOffset}; backup ${bak}`);
+      this._broadcast('ipc-message', {
+        type: 'scratch', from: name, to: name,
+        body: `scratch ${mark.nonce} → cut ${v2.stats.bytes.dropped} bytes, respawned`,
+      });
+      if (!fresh) return;
+      await this._injectAfterBoot(fresh, scratchBriefing(mark, v2.stats, closing.body), {
+        logPrefix: '[agent:scratch]',
+        dropBody: `scratch ${mark.nonce} → summary NOT injected (fresh CLI never signaled boot)`,
+      });
+    }
+
+    _scratchRestore(mark, bak) {
+      if (!bak) return false;
+      try {
+        if (!fs.existsSync(bak)) return false;
+        fs.copyFileSync(bak, mark.realpath);
+        return true;
+      } catch (e) {
+        log.error('intent', `scratch: restoring ${mark.realpath} from ${bak} failed: ${e.message}`);
+        return false;
+      }
+    }
+
+    async _scratchRespawnSafely(name, entry, mark, bak, { keepMark = false } = {}) {
+      this._scratchRestore(mark, bak);
+      try {
+        const fresh = await this._scratchRespawn(name, entry);
+        if (fresh && keepMark) { fresh._scratch = mark; mark.closing = null; }
+        return fresh;
+      } catch (err) {
+        log.error('intent', `scratch ${name}: respawn after an abandoned cut failed: ${err.message}`);
+        getPersistence().upsert(this._stripClaimedTree(entry));
+        this._broadcast('ipc-message', {
+          type: 'scratch', from: name, to: name,
+          body: `scratch → respawn FAILED after an abandoned cut (${err.message})`,
+        });
+        return null;
+      }
+    }
+
+    _voidScratchMark(session, tail, { notify = true } = {}) {
+      const mark = session && session._scratch;
+      if (!mark) return;
+      if (mark._closeTimer) clearTimeout(mark._closeTimer);
+      session._scratch = null;
+      session._scratchVoid = tail;
+      log.info('intent', `scratch ${session.name}: mark ${mark.nonce} voided`);
+      if (!notify) return;
+      try { this._injectText(session, `[agent:scratch] ${tail}`, { parkable: true }); } catch {}
+    }
+
+    _scratchTicketIds(session) {
+      try {
+        let team = null;
+        try { team = resolveTeam(session.cwd); } catch { team = null; }
+        if (!team) team = this._soloContext(session);
+        if (!team || !team.root) return new Set();
+        return new Set((ticketsStore.load(team.root) || []).map((t) => t && t.id).filter(Boolean));
+      } catch { return new Set(); }
+    }
+
+    _scratchDispatchToken(session, intent, beforeIds) {
+      switch (intent.type) {
+        case 'task': {
+          if (intent.sub === 'list') return null;
+          if (intent.sub !== 'add') return intent.id || null;
+          const fresh = [...this._scratchTicketIds(session)].filter((id) => !beforeIds.has(id));
+          return fresh.length === 1 ? fresh[0] : null;
+        }
+        case 'spawn': return intent.name || null;
+        case 'team-create': return intent.name || null;
+        case 'team': return intent.name || intent.stem || null;
+        case 'team-review':
+        case 'review-done': return session.reviewTicket || null;
+        default: return null;
+      }
+    }
+
+    _recordScratchDispatch(session, intent, beforeIds) {
+      const mark = session && session._scratch;
+      if (!mark) return;
+      const token = this._scratchDispatchToken(session, intent, beforeIds);
+      if (!token) return;
+      mark.dispatched.push({ type: intent.type, sub: intent.sub || null, token, at: Date.now() });
+    }
+
     _executeCompact(session, cmd, continuation) {
       session._compactContinuation = continuation;
       if (session.sentinel) session.sentinel.armCompact(() => this._fireCompactContinuation(session));
@@ -6489,35 +6964,45 @@ function createSessionManager(deps) {
       }
     }
 
-    // Inject a reloaded session's mandatory handoff body as turn-one, once the
-    // FRESH process is actually listening. Same-process restart, so the body rides
-    // a closure variable across kill→create. Readiness gate: the SessionStart hook
-    // repoints run/<name>/transcript.jsonl at CLI boot, and kill()'s cleanup
-    // unlinked the old link before we respawned — so link-present = fresh CLI
-    // booted. Probe with readlinkSync, NOT session.sessionId: the watcher only
-    // sets sessionId once the transcript FILE exists, and Claude creates it lazily
-    // on the first user turn — gating turn-one injection on it deadlocks and the
+    async _injectReloadHandoff(session, handoff, timeoutMs = 30000) {
+      await this._injectAfterBoot(session, handoff, {
+        logPrefix: '[agent:context reload]',
+        dropBody: 'context reload → handoff NOT injected (fresh CLI never signaled boot)',
+        timeoutMs,
+      });
+    }
+
+    // Inject a respawned session's turn-one text (the reload handoff, the scratch
+    // summary) once the FRESH process is listening. Readiness gate: SessionStart
+    // repoints run/<name>/transcript.jsonl at CLI boot and the kill's cleanup
+    // unlinked the old link — so link-present = fresh CLI booted. Probe with
+    // readlinkSync, NOT session.sessionId: the watcher only sets sessionId once
+    // the transcript FILE exists, and Claude creates it lazily on the first user
+    // turn — gating turn-one injection on it deadlocks and the
     // timeout eats the handoff. Then a settle delay so the input loop is up, then
     // inject. If the session dies or the link never appears, bail rather than
-    // inject blind into a half-dead PTY — but surface the drop in the IPC log.
-    async _injectReloadHandoff(session, handoff, timeoutMs = 30000) {
+    // inject blind into a half-dead PTY — surfacing the drop in the IPC log.
+    async _injectAfterBoot(session, text, opts = {}) {
+      const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 30000;
       const linkPath = pathFor(REGISTRY_DIR, session.name, 'transcript');
       const start = Date.now();
       for (;;) {
-        if (session._dead) return;
+        if (session._dead) return false;
         try { fs.readlinkSync(linkPath); break; } catch {}
         if (Date.now() - start > timeoutMs) {
-          console.error(`[agent:context reload] ${session.name}: fresh CLI never signaled boot (no transcript symlink); handoff not injected`);
+          console.error(`${opts.logPrefix || '[agent:inject]'} ${session.name}: fresh CLI never signaled boot (no transcript symlink); handoff not injected`);
           this._broadcast('ipc-message', {
             type: 'context', from: session.name, to: session.name,
-            body: 'context reload → handoff NOT injected (fresh CLI never signaled boot)',
+            body: opts.dropBody || 'handoff NOT injected (fresh CLI never signaled boot)',
           });
-          return;
+          return false;
         }
         await new Promise(r => setTimeout(r, 100));
       }
       await new Promise(r => setTimeout(r, RELOAD_CONTINUATION_DELAY));
-      if (!session._dead) this._injectText(session, this._handoffText(session, handoff));
+      if (session._dead) return false;
+      this._injectText(session, this._handoffText(session, text));
+      return true;
     }
 
     _resumeSnapshot(session, now = Date.now()) {
