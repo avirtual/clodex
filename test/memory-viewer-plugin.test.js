@@ -34,7 +34,7 @@ const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
 const viewerEngine = require('../plugins/memory-viewer/engine');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { migrateSeatLayout } = require('../seat-layout');
+const { migrateSeatLayout, renameSeat } = require('../seat-layout');
 
 // The plugin derives MEMORY_ROOT at require time (it is deliberately not
 // injectable — see its header). Point HOME at a temp dir and re-require so the
@@ -527,6 +527,28 @@ test('memory-viewer: a MIGRATED seat still lists and renders its units', async (
     const units = await host.dispatch('memory-viewer', 'units', ['clodex'], 'desktop');
     assert.deepEqual(units.units.map((u) => u.body), ['survives the move'],
       `and the units read through the link — ${why}`);
+  } finally { cleanup(); }
+});
+
+test('memory-viewer: a RENAMED migrated seat lists and renders under its new name', async () => {
+  const why = 'rename used to move the LINK, leaving library/memory/<new> -> sessions/<old>/memory '
+    + '— a shape resolveAgentDir refuses for BOTH names, so the viewer went dark for a seat whose '
+    + 'memories are intact on disk. renameSeat re-mints the link at the new seat spelling';
+  const { host, root, cleanup } = boot();
+  const clodexHome = path.resolve(root, '..', '..');
+  try {
+    writeUnit(root, 'ana', 'mem-1-aaaaaa', { body: 'survives the rename' });
+    migrateSeatLayout({ root: clodexHome, names: ['ana'], fs });
+    assert.ok(fs.lstatSync(path.join(root, 'ana')).isSymbolicLink(),
+      'ENTER: the seat must be migrated, or this subject is about a plain dir');
+
+    renameSeat({ root: clodexHome, oldName: 'ana', newName: 'bea', fs });
+
+    const agents = await host.dispatch('memory-viewer', 'agents', [], 'desktop');
+    assert.deepEqual(agents.agents.map((a) => a.agent), ['bea'], `listed under the new name — ${why}`);
+    const units = await host.dispatch('memory-viewer', 'units', ['bea'], 'desktop');
+    assert.deepEqual(units.units.map((u) => u.body), ['survives the rename'],
+      `and its units read through the re-minted link — ${why}`);
   } finally { cleanup(); }
 });
 

@@ -9,9 +9,11 @@
 //
 // What rename can silently get wrong that move cannot:
 //
-//   the five shared dirs  messages/, pending/, promptcache/, notices/ and
-//                         library/memory/ are keyed by SEAT NAME at the
-//                         ~/.clodex ROOT and outlive run/<name>/.
+//   the seat's state     messages/, promptcache/, notices/ and library/memory/
+//                         are keyed by SEAT NAME and outlive run/<name>/. Since
+//                         L-B2 they live under sessions/<seat>/ with links at
+//                         those spellings; rename moves the one home
+//                         (renameSeat) and pending/ moves on its own.
 //                         A rename that forgets one leaves the seat's DMs,
 //                         parked messages, frozen prompt or memory behind under
 //                         a name nothing answers to — silent, because the seat
@@ -33,16 +35,19 @@ const { createSessionManager } = require('../session-manager');
 const { createRemindScheduler } = require('../remind-scheduler');
 const { initStores } = require('../stores');
 const { createTeamManifest, matchSeatRole } = require('../team-manifest');
-const { projectDirFor } = require('../clodex-paths');
+const { projectDirFor, seatPathFor, legacySeatPathFor, SEAT_KINDS } = require('../clodex-paths');
 const { enqueueNotice, parseNotices } = require('../notice-queue');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { migrateSeatLayout, renameSeat } = require('../seat-layout');
+const { createMemoryStore } = require('../memory-store');
 
 // ------------------------------------------------------------- the fixture
 
-// The five per-SEAT paths, as absolute src/dest pairs under `root`. Written out
-// here as literals rather than by calling the manager's own `_renameDirs`: a
-// test that asked the subject where its dirs are would agree with itself about
-// a dir the subject forgot.
+// The per-SEAT paths, as absolute src/dest pairs under `root`. Written out here
+// as literals rather than by calling the manager's own `_renameDirs`: a test
+// that asked the subject where its dirs are would agree with itself about a dir
+// the subject forgot. Since L-B2 four are LEGACY spellings, links on a migrated
+// box; these literals are the pre-migration shape most subjects here seed.
 //
 // library/exec/ is deliberately NOT here. It is the exec COMMAND registry keyed
 // by command id (clodex-monitor.json, clodex-check-syntax.json, …), shared by
@@ -473,25 +478,123 @@ test('rename refuses when the new name is PERSISTED but not live', async () => {
   assertUntouched(root, 'seat', 'newseat');
 });
 
-// One case per dir: the collision check must cover ALL five, and a check that
-// looked at only messages/ would pass every other row here while renaming a
-// seat straight on top of a stranger's memory.
-for (const key of ['messages', 'pending', 'promptcache', 'notices', 'memory']) {
+test('rename on a MIGRATED seat leaves memory reachable at library/memory/<new> through a link', async () => {
+  const why = 'the ONLY subject here driving the real rename() against a MIGRATED root. Every '
+    + 'other one seeds plain dirs — the pre-migration world, where the legacy spellings are real '
+    + 'and moving them is indistinguishable from moving the home. Only here is the state reachable '
+    + 'ONLY through a link, which is where rename went wrong before L-B2: it moved the LINKS, '
+    + 'leaving library/memory/<new> -> sessions/<old>/memory, a shape every L-B1 reader refuses '
+    + 'and the message sweep unlinks';
+  const root = mkTmpRoot('clodex-rename-');
+  const memStore = createMemoryStore(pathReal.join(root, 'library', 'memory'));
+  memStore.remember('seat', { scope: 'proj', text: 'The seat layout moved.' });
+  seedDirs(root, 'seat');
+  migrateSeatLayout({ root, names: ['seat'], fs: fsReal });
+  assert.ok(fsReal.lstatSync(legacySeatPathFor(root, 'seat', 'memory')).isSymbolicLink(),
+    'ENTER: the seat must be migrated, or this is the plain-dir world every other subject covers');
+
+  const { m, store } = mkRename({ root, entries: [BASE] });
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.strictEqual(store[0].name, 'newseat');
+
+  assert.strictEqual(fsReal.existsSync(pathReal.join(root, 'sessions', 'seat')), false,
+    'the one home moved, rather than being copied');
+  const migratedKinds = Object.keys(SEAT_KINDS)
+    .filter((k) => k !== 'run' && fsReal.existsSync(seatPathFor(root, 'newseat', k)));
+  assert.deepStrictEqual(migratedKinds.sort(), ['memory', 'messages', 'notices', 'promptcache'],
+    'ENTER: exactly the kinds seedDirs seeded moved — spill/ and monitors/ are absent here, and a '
+    + 'link minted for a kind with no dir would dangle');
+  for (const kind of migratedKinds) {
+    const link = legacySeatPathFor(root, 'newseat', kind);
+    assert.ok(fsReal.lstatSync(link).isSymbolicLink(), `${kind}: the new legacy spelling is a link`);
+    assert.strictEqual(fsReal.realpathSync(link), fsReal.realpathSync(seatPathFor(root, 'newseat', kind)),
+      `${kind}: pointing at the RENAMED seat's own dir, which is the only shape the readers accept`);
+  }
+  assert.deepStrictEqual(memStore.agents(), ['newseat'],
+    `and memory-store.agents() lists the seat under its new name, so the viewer is not dark — ${why}`);
+  assert.strictEqual(memStore.list('newseat').length, 1, 'with its units readable through the link');
+});
+
+for (const key of ['messages', 'pending', 'promptcache', 'notices', 'memory', 'seat']) {
   test(`rename refuses when ${key} already exists under the new name`, async () => {
     const root = mkTmpRoot('clodex-rename-');
     seedDirs(root, 'seat');
-    const dest = dirsUnder(root, 'newseat')[key];
+    const dest = key === 'seat'
+      ? pathReal.join(root, 'sessions', 'newseat')
+      : dirsUnder(root, 'newseat')[key];
     fsReal.mkdirSync(dest, { recursive: true });
     const { m, store, created } = mkRename({ root, entries: [BASE] });
     const r = await m.rename('seat', 'newseat');
     assert.strictEqual(r.ok, false, `expected a refusal on a colliding ${key}`);
     assert.match(r.error, /already owns/);
+    assert.match(r.error, new RegExp(dest.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      'and it names the path to clear — the operator has to find it by hand');
     assert.strictEqual(store[0].name, 'seat', 'the record was not rewritten');
     assert.deepStrictEqual(created, []);
     const from = dirsUnder(root, 'seat');
     for (const k of Object.keys(from)) {
       assert.ok(fsReal.existsSync(from[k]), `${k} still under the old name`);
     }
+  });
+}
+
+test('an ordinary rename on a MIGRATED root is not refused by the legacy pre-check', async () => {
+  const why = 'the pre-check reads the NEW name\'s spellings, which no ordinary rename has yet — '
+    + 'renameSeat mints them AFTER it. This is the control for the six refusal subjects above: '
+    + 'without it, a pre-check that refused everything would satisfy all six';
+  const root = mkTmpRoot('clodex-rename-');
+  seedDirs(root, 'seat');
+  migrateSeatLayout({ root, names: ['seat'], fs: fsReal });
+  assert.ok(fsReal.lstatSync(legacySeatPathFor(root, 'seat', 'memory')).isSymbolicLink(),
+    'ENTER: the OLD name\'s spellings really are links now, which is the state the deleted '
+    + 'pre-check was wrongly believed to refuse');
+
+  const { m, store } = mkRename({ root, entries: [BASE] });
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, true, `${why} (got: ${r.error})`);
+  assert.strictEqual(store[0].name, 'newseat');
+});
+
+test('rename refuses a DANGLING sessions/<new> link rather than half-renaming', async () => {
+  const why = 'existsSync FOLLOWS the link and answers false for a dangling one, so the seat would '
+    + 'pass the pre-check and renameSeat would then throw AFTER persistence.rename had run — a '
+    + 'half-rename reported only by a log.warn. The pre-check is lstat-based for exactly this';
+  const root = mkTmpRoot('clodex-rename-');
+  seedDirs(root, 'seat');
+  fsReal.mkdirSync(pathReal.join(root, 'sessions'), { recursive: true });
+  fsReal.symlinkSync(pathReal.join(root, 'sessions', 'nowhere'), pathReal.join(root, 'sessions', 'newseat'));
+  assert.strictEqual(fsReal.existsSync(pathReal.join(root, 'sessions', 'newseat')), false,
+    'ENTER: the link really is dangling — existsSync says absent, which is the trap');
+
+  const { m, store, created } = mkRename({ root, entries: [BASE] });
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, false, `${why} (got ok)`);
+  assert.match(r.error, /already owns/);
+  assert.strictEqual(store[0].name, 'seat', 'the record was NOT rewritten — no half-rename');
+  assert.deepStrictEqual(created, []);
+});
+
+for (const key of ['messages', 'promptcache', 'notices', 'memory']) {
+  test(`a stranger's ${key} at the new name survives even if the pre-check is bypassed`, async () => {
+    const why = 'the pre-check above is the refusal an operator sees; this is the floor UNDER it, '
+      + 'on renameSeat called directly. A silent overwrite here would hand the renamed seat a '
+      + "stranger's dir as its own, which is the harm the refusal exists to prevent";
+    const root = mkTmpRoot('clodex-rename-');
+    seedDirs(root, 'seat');
+    const dest = dirsUnder(root, 'newseat')[key];
+    fsReal.mkdirSync(dest, { recursive: true });
+    fsReal.writeFileSync(pathReal.join(dest, 'stranger.txt'), 'not yours');
+
+    const res = renameSeat({ root, oldName: 'seat', newName: 'newseat', fs: fsReal });
+
+    assert.strictEqual(fsReal.readFileSync(pathReal.join(dest, 'stranger.txt'), 'utf8'), 'not yours',
+      `${key}/newseat is byte-intact — ${why}`);
+    assert.ok(!res.moved.includes(key), `and ${key} is NOT reported as moved`);
+    const reported = res.failed.find((f) => f.kind === key);
+    assert.ok(reported, `the collision is REPORTED in failed, never silent — silence is what `
+      + "session-manager's warn loop would print nothing for");
+    assert.match(reported.error, /already exists/, 'and the message names the collision');
   });
 }
 

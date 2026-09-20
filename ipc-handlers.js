@@ -2,7 +2,7 @@
 // every native-GUI touch ride injected seams (handle/on, popupMenu, dialogs,
 // shell/app calls) supplied by the host.
 
-const { pathFor, fixDirFor } = require('./clodex-paths');
+const { pathFor, fixDirFor, seatDirFor } = require('./clodex-paths');
 const { nameConflict } = require('./session-manager');
 // The SAME predicate the inject queue gates deliveries on. Required directly
 // rather than injected so there is one draft notion: a focus decision computed
@@ -1953,6 +1953,12 @@ function registerIpcHandlers(deps) {
   on('session:context-menu', (e, { name, cwd }) => {
     const entry = persistence.get(name) || {};
     const isAgent = entry.type === 'claude' || entry.type === 'codex';
+    let seatDir = null;
+    let seatDirExists = false;
+    try {
+      seatDir = seatDirFor(REGISTRY_DIR, name);
+      seatDirExists = fs.existsSync(seatDir);
+    } catch { seatDirExists = false; }
     const sysPrompts = promptLibrary.list('system');
     const appendPrompts = promptLibrary.list('append');
     const curSys = entry.systemPromptFile || null;
@@ -2004,6 +2010,11 @@ function registerIpcHandlers(deps) {
         label: 'Reveal Working Directory in Finder',
         enabled: !!cwd,
         click: () => { if (cwd) showItemInFolder(cwd); },
+      },
+      {
+        label: 'Reveal Seat Folder in Finder',
+        enabled: isAgent && seatDirExists,
+        click: () => showItemInFolder(seatDir),
       },
       {
         label: 'Open in Terminal',

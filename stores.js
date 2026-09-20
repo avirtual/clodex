@@ -25,6 +25,8 @@ const {
   CLAUDE_TOOLS, DEFAULT_TOOL_DENY_FLOOR, DEFAULT_SKILL_DENY_FLOOR, DEFAULT_BUILTIN_DENY_FLOOR,
 } = require('./catalogs');
 const { deferredSkillDeny, isSkillDenyDirective } = require('./skills-off');
+const { seatDirFor } = require('./clodex-paths');
+const { seatLayoutActive } = require('./seat-layout');
 
 const PROMPT_KINDS = ['system', 'append'];
 const PROMPT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/; // mirrors session/agent name rule
@@ -452,7 +454,7 @@ function initStores(userDataPath, {
       if (changed) this._save(all);
       return all;
     },
-    _save(entries) {
+    _save(entries, touched = null) {
       try {
         if (!launchBakTaken) {
           launchBakTaken = true;
@@ -466,6 +468,7 @@ function initStores(userDataPath, {
       } catch (e) {
         console.error('persistence save failed:', e);
       }
+      if (touched) this._writeSeatJson(touched, entries.find((s) => s && s.name === touched) || null);
     },
     list() {
       return this._load();
@@ -473,12 +476,27 @@ function initStores(userDataPath, {
     listForWorkspace(workspaceId) {
       return this._load().filter(s => s.workspaceId === workspaceId);
     },
+    _writeSeatJson(name, entry) {
+      if (!entry || !registryDir || !seatLayoutActive(registryDir, fs)) return false;
+      const dir = seatDirFor(registryDir, name);
+      if (!fs.existsSync(dir)) return false;
+      try {
+        atomicWriteFileSync(path.join(dir, 'seat.json'), `${JSON.stringify(entry, null, 2)}\n`);
+        return true;
+      } catch (e) {
+        if (log && log.warn) log.warn('stores', `seat.json not written for ${name} (${e.message})`);
+        return false;
+      }
+    },
+    snapshotSeat(name) {
+      return this._writeSeatJson(name, this.get(name));
+    },
     upsert(entry) {
       const all = this._load();
       const idx = all.findIndex(s => s.name === entry.name);
       if (idx >= 0) all[idx] = { ...all[idx], ...entry };
       else all.push(entry);
-      this._save(all);
+      this._save(all, entry.name);
     },
     remove(name) {
       this._save(this._load().filter(s => s.name !== name));
@@ -491,7 +509,7 @@ function initStores(userDataPath, {
         const hist = (Array.isArray(entry.sessionIds) ? entry.sessionIds : []).filter((id) => id !== sessionId);
         hist.push(sessionId);
         entry.sessionIds = hist;
-        this._save(all);
+        this._save(all, name);
       }
     },
     setHoldUntil(name, holdUntil) {
@@ -500,7 +518,7 @@ function initStores(userDataPath, {
       if (!entry) return;
       if (holdUntil && holdUntil > 0) entry.holdUntil = holdUntil;
       else delete entry.holdUntil;
-      this._save(all);
+      this._save(all, name);
     },
     // Perpetual keep-warm is a SEAT property, not a duration: it is stored as its
     // own boolean rather than a very large holdUntil, because rearmPlan and the
@@ -512,14 +530,14 @@ function initStores(userDataPath, {
       if (!entry) return;
       if (on) entry.keepWarmAlways = true;
       else delete entry.keepWarmAlways;
-      this._save(all);
+      this._save(all, name);
     },
     setLabel(name, label) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
       if (entry) {
         entry.label = label;
-        this._save(all);
+        this._save(all, name);
       }
     },
     rename(name, newName) {
@@ -529,7 +547,7 @@ function initStores(userDataPath, {
       if (!entry) return false;
       entry.name = newName;
       delete entry.label;
-      this._save(all);
+      this._save(all, newName);
       return true;
     },
     setWorktree(name, worktree) {
@@ -538,7 +556,7 @@ function initStores(userDataPath, {
       if (!entry) return;
       if (worktree && worktree.path) entry.worktree = worktree;
       else delete entry.worktree;
-      this._save(all);
+      this._save(all, name);
     },
     setArchived(name, archived) {
       const all = this._load();
@@ -546,14 +564,14 @@ function initStores(userDataPath, {
       if (!entry) return;
       if (archived) entry.archivedAt = Date.now();
       else delete entry.archivedAt;
-      this._save(all);
+      this._save(all, name);
     },
     setExtraArgs(name, extraArgs) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
       if (entry) {
         entry.extraArgs = extraArgs;
-        this._save(all);
+        this._save(all, name);
       }
     },
     setRosterSent(name) {
@@ -561,14 +579,14 @@ function initStores(userDataPath, {
       const entry = all.find(s => s.name === name);
       if (!entry) return;
       entry.rosterSentAt = Date.now();
-      this._save(all);
+      this._save(all, name);
     },
     setProxy(name, proxy) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
       if (entry) {
         entry.proxy = proxy;
-        this._save(all);
+        this._save(all, name);
       }
     },
     setSystemPrompt(name, body) {
@@ -576,7 +594,7 @@ function initStores(userDataPath, {
       const entry = all.find(s => s.name === name);
       if (entry) {
         entry.systemPrompt = body || null;
-        this._save(all);
+        this._save(all, name);
       }
     },
     setPromptRefs(name, systemPromptFile, appendPromptFiles) {
@@ -585,7 +603,7 @@ function initStores(userDataPath, {
       if (entry) {
         entry.systemPromptFile = systemPromptFile || null;
         entry.appendPromptFiles = Array.isArray(appendPromptFiles) ? appendPromptFiles : [];
-        this._save(all);
+        this._save(all, name);
       }
     },
     setAgents(name, agents, denyBuiltins) {
@@ -594,7 +612,7 @@ function initStores(userDataPath, {
       if (entry) {
         entry.agents = Array.isArray(agents) ? agents : [];
         entry.denyBuiltins = Array.isArray(denyBuiltins) ? denyBuiltins : [];
-        this._save(all);
+        this._save(all, name);
       }
     },
     setDisabledTools(name, disabledTools) {
@@ -602,7 +620,7 @@ function initStores(userDataPath, {
       const entry = all.find(s => s.name === name);
       if (entry) {
         entry.disabledTools = Array.isArray(disabledTools) ? disabledTools : [];
-        this._save(all);
+        this._save(all, name);
       }
     },
     setDisabledSkills(name, disabledSkills) {
@@ -610,7 +628,7 @@ function initStores(userDataPath, {
       const entry = all.find(s => s.name === name);
       if (entry) {
         entry.disabledSkills = Array.isArray(disabledSkills) ? disabledSkills : [];
-        this._save(all);
+        this._save(all, name);
       }
     },
     setInjectSkills(name, injectSkills) {
@@ -618,7 +636,7 @@ function initStores(userDataPath, {
       const entry = all.find(s => s.name === name);
       if (entry) {
         entry.injectSkills = Array.isArray(injectSkills) ? injectSkills : [];
-        this._save(all);
+        this._save(all, name);
       }
     },
     // Per-session intent-gate allowlist (send-side; see intent-catalog). Like
@@ -632,7 +650,7 @@ function initStores(userDataPath, {
       if (entry) {
         if (Array.isArray(intents)) entry.intents = intents.map(String);
         else delete entry.intents;
-        this._save(all);
+        this._save(all, name);
       }
     },
     // Per-session plugin capability grants (t190) — `<pluginId>:<capability>`
@@ -650,7 +668,7 @@ function initStores(userDataPath, {
       if (entry) {
         if (Array.isArray(grants) && grants.length) entry.pluginGrants = grants.map(String);
         else delete entry.pluginGrants;
-        this._save(all);
+        this._save(all, name);
       }
     },
     // Unlike setPluginGrants above, an EMPTY array is a real value and persists:
@@ -661,7 +679,7 @@ function initStores(userDataPath, {
       if (entry) {
         if (Array.isArray(plugins)) entry.plugins = plugins.map(String);
         else delete entry.plugins;
-        this._save(all);
+        this._save(all, name);
       }
     },
     setCwd(name, cwd) {
@@ -669,7 +687,7 @@ function initStores(userDataPath, {
       const entry = all.find(s => s.name === name);
       if (entry && typeof cwd === 'string' && cwd) {
         entry.cwd = cwd;
-        this._save(all);
+        this._save(all, name);
       }
     },
     setExecCommands(name, execCommands) {
@@ -678,7 +696,7 @@ function initStores(userDataPath, {
       if (entry) {
         if (Array.isArray(execCommands) && execCommands.length) entry.execCommands = execCommands.map(String);
         else delete entry.execCommands;
-        this._save(all);
+        this._save(all, name);
       }
     },
     setEnv(name, env) {
@@ -687,7 +705,7 @@ function initStores(userDataPath, {
       if (entry) {
         if (env && typeof env === 'object' && Object.keys(env).length) entry.env = { ...env };
         else delete entry.env;
-        this._save(all);
+        this._save(all, name);
       }
     },
     // Per-session wirescope strip-aggressiveness LEVEL (a cumulative ladder, not
@@ -702,7 +720,7 @@ function initStores(userDataPath, {
         const lvl = (level === 1 || level === 2) ? level : 0;
         if (lvl > 0) entry.stripLevel = lvl; else delete entry.stripLevel;
         delete entry.stripThinking; // migrate off the old boolean field
-        this._save(all);
+        this._save(all, name);
       }
     },
     // Auto-compact-before-cold is default ON, so only the opt-OUT is stored
@@ -713,7 +731,7 @@ function initStores(userDataPath, {
       const entry = all.find(s => s.name === name);
       if (entry) {
         if (on === false) entry.autoCompact = false; else delete entry.autoCompact;
-        this._save(all);
+        this._save(all, name);
       }
     },
     markDigested(name, sessionId) {
@@ -724,7 +742,7 @@ function initStores(userDataPath, {
       const d = (Array.isArray(entry.digested) ? entry.digested : []).filter((id) => id !== sessionId);
       d.push(sessionId);
       entry.digested = d.slice(-50);
-      this._save(all);
+      this._save(all, name);
     },
     get(name) {
       return this._load().find(s => s.name === name) || null;

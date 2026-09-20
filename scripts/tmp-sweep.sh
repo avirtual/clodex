@@ -126,6 +126,7 @@ clodex-loop-ud-
 clodex-mem-
 clodex-mem-outside-
 clodex-menu-
+clodex-menu-seat-
 clodex-merge-
 clodex-merge-repo-
 clodex-merge-seed-

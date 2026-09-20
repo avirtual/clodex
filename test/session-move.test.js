@@ -936,7 +936,7 @@ test('a move on a NOT-LIVE seat arms no backstop — there is no process to kill
 
 // The real session:context-menu handler, with popupMenu capturing the template.
 // Only the deps that path touches are wired; the rest are never reached.
-function mkMenu(entry) {
+function mkMenuTemplate(entry, { REGISTRY_DIR = null, revealed = [] } = {}) {
   let template = null;
   const handlers = new Map();
   registerIpcHandlers({
@@ -946,12 +946,26 @@ function mkMenu(entry) {
     persistence: { get: () => entry },
     promptLibrary: { list: () => [] },
     popupMenu: (tpl) => { template = tpl; },
+    REGISTRY_DIR,
+    fs: fsReal,
+    showItemInFolder: (p) => revealed.push(p),
   });
   handlers.get('session:context-menu')({ sender: { send: () => {} } }, { name: entry.name, cwd: entry.cwd });
+  return template;
+}
+
+function mkMenu(entry, opts) {
   const labels = [];
   const walk = (items) => { for (const i of items || []) { if (i.label) labels.push(i.label); if (i.submenu) walk(i.submenu); } };
-  walk(template);
+  walk(mkMenuTemplate(entry, opts));
   return labels;
+}
+
+function menuItem(template, label) {
+  let found = null;
+  const walk = (items) => { for (const i of items || []) { if (i.label === label) found = i; if (i.submenu) walk(i.submenu); } };
+  walk(template);
+  return found;
 }
 
 test('the menu offers Move Session… for a local claude seat', () => {
@@ -969,6 +983,39 @@ test('the menu does NOT offer Move Session… for a bash row', () => {
   // ENTER: the menu really was built — without this the assertion above is true
   // of an empty template, and would stay true if the handler stopped running.
   assert.ok(labels.includes('Restart Session'), 'the menu was built for this row');
+});
+
+test('the menu offers Reveal Seat Folder for an agent whose seat dir exists, and reveals THAT path', () => {
+  const root = mkTmpRoot('clodex-menu-seat-');
+  const seatDir = pathReal.join(root, 'sessions', 'a');
+  fsReal.mkdirSync(seatDir, { recursive: true });
+  const revealed = [];
+  const tpl = mkMenuTemplate({ name: 'a', type: 'claude', cwd: '/x' }, { REGISTRY_DIR: root, revealed });
+
+  const item = menuItem(tpl, 'Reveal Seat Folder in Finder');
+  assert.ok(item, 'ENTER: the item is in the template at all');
+  assert.strictEqual(item.enabled, true,
+    'enabled for an agent with a home dir: `enabled` is computed at MENU-BUILD time off an '
+    + 'existsSync, this being the one place in the UI that names ~/.clodex/sessions/<seat>/ at all');
+  item.click();
+  assert.deepStrictEqual(revealed, [seatDir],
+    'it reveals the seat home, not the cwd — the whole point is the one place the seat lives');
+});
+
+test('Reveal Seat Folder is disabled for an agent with no seat dir, and for a bash row', () => {
+  const root = mkTmpRoot('clodex-menu-seat-');
+  const noHome = menuItem(mkMenuTemplate({ name: 'a', type: 'claude', cwd: '/x' }, { REGISTRY_DIR: root }),
+    'Reveal Seat Folder in Finder');
+  assert.strictEqual(noHome.enabled, false,
+    'a seat that predates the migration, or whose migration failed, has no home dir — and '
+    + 'showItemInFolder on a missing path opens the wrong window silently');
+
+  const bashSeatDir = pathReal.join(root, 'sessions', 'b');
+  fsReal.mkdirSync(bashSeatDir, { recursive: true });
+  const bash = menuItem(mkMenuTemplate({ name: 'b', type: 'bash', cwd: '/x' }, { REGISTRY_DIR: root }),
+    'Reveal Seat Folder in Finder');
+  assert.strictEqual(bash.enabled, false,
+    'and a bash row is not a seat — the dir here is a decoy, so this is the isAgent gate and not the existsSync');
 });
 
 test('peer and sandbox rows never reach this menu at all', () => {
