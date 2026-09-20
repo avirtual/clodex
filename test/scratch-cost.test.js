@@ -3,8 +3,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 const tc = require('../team-cost');
 
 const STATS = {
@@ -143,7 +143,7 @@ test('scratchCostRecord: every field is JSON round-trippable — this row is wri
 });
 
 test('scratch-cost.jsonl is APPENDED — a second episode never rewrites the first', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-cost-'));
+  const dir = mkTmpRoot('scratch-cost-');
   const file = path.join(dir, tc.SCRATCH_COST_FILE);
   const first = cutRow({ nonce: 'aaa111', outcome: 'refused', reason: 'arrivals', stats: null });
   const second = cutRow({ nonce: 'bbb222' });
@@ -157,7 +157,6 @@ test('scratch-cost.jsonl is APPENDED — a second episode never rewrites the fir
     + 'a whole-file rewrite silently lost');
   assert.strictEqual(rows[0].outcome, 'refused');
   assert.strictEqual(rows[1].outcome, 'cut');
-  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('SCRATCH_COST_FILE sits beside the team ledger, not inside a per-ticket task dir', () => {
