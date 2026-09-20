@@ -36,6 +36,11 @@ function parseContext(cleaned) {
   return m ? { type: 'context', sub: m[1].toLowerCase(), body: m[2] } : null;
 }
 
+function parseScratch(cleaned) {
+  const m = cleaned.match(/^\[agent:scratch\s+(begin|end|cancel)\]\s*(.*)$/s);
+  return m ? { type: 'scratch', sub: m[1].toLowerCase(), body: m[2] } : null;
+}
+
 function parseMemory(cleaned) {
   const m = cleaned.match(/^\[agent:memory\s+(\S+)\]\s*(.*)/s);
   return m ? { type: 'memory', sub: m[1].toLowerCase(), body: m[2] } : null;
@@ -233,6 +238,7 @@ const CORE_ROWS = [
   { type: 'who', parse: parseWho, bodyMode: NONE },
   { type: 'name', parse: parseName, bodyMode: NONE },
   { type: 'context', parse: parseContext, bodyMode: (i) => (i.sub === 'compact' || i.sub === 'reload' || i.sub === 'clear' ? 'greedy' : 'none') },
+  { type: 'scratch', parse: parseScratch, bodyMode: (i) => (i.sub === 'end' ? 'greedy' : 'none') },
   { type: 'memory', parse: parseMemory, bodyMode: (i) => (i.sub === 'remember' ? 'greedy' : 'none') },
   { type: 'file', parse: parseFile, bodyMode: NONE },
   // Line-scoped, unlike every other body-carrying row here: the command is

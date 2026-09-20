@@ -103,6 +103,43 @@ test('parseIntent: context sub-command + optional body', () => {
   assert.deepStrictEqual(r, { type: 'context', sub: 'compact', body: 'keep going on task X' });
 });
 
+test('parseIntent: scratch — three sub-verbs, only `end` carrying a body', () => {
+  assert.deepStrictEqual(parseIntent('[agent:scratch begin]'),
+    { type: 'scratch', sub: 'begin', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:scratch cancel]'),
+    { type: 'scratch', sub: 'cancel', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:scratch end] what I now know'),
+    { type: 'scratch', sub: 'end', body: 'what I now know' });
+});
+
+test('parseIntent: an UPPERCASE scratch sub-verb does not parse, unlike [agent:context CLEAR]', () => {
+  assert.strictEqual(parseIntent('[agent:scratch END] shouty'), null,
+    'context/memory capture `(\\S+)` and normalise it with .toLowerCase(), which is what makes '
+    + '[agent:context CLEAR] fire. scratch pins its sub-verbs in the alternation itself, and the alternation '
+    + 'is case-SENSITIVE — so an uppercase spelling does not parse at all and reaches the near-miss bounce. '
+    + 'Pinned because the two rows sit next to each other and read as if they behaved the same way');
+  assert.strictEqual(parseIntent('[agent:scratch Begin]'), null);
+  assert.deepStrictEqual(parseIntent('[agent:context CLEAR]'), { type: 'context', sub: 'clear', body: '' },
+    'ENTER: the neighbour really does normalise, so the nulls above are scratch-specific and not a broken scanner');
+});
+
+test('parseIntent: scratch is a CLOSED alternation — an unknown sub-verb is not an intent', () => {
+  for (const line of ['[agent:scratch]', '[agent:scratch resume]', '[agent:scratch begins]', '[agent:scratch  ]']) {
+    assert.strictEqual(parseIntent(line), null,
+      `${line} must not parse. Unlike context/memory, which capture \`(\\S+)\`, a mistyped scratch verb has to `
+      + `reach the near-miss bounce rather than dispatch as sub:'resume' and be silently ignored by a switch `
+      + `with no arm for it — \`end\` is the verb that CUTS the transcript, so a typo that half-parses is not `
+      + `a safe failure`);
+  }
+});
+
+test('parseIntent: a scratch end body spans multiple lines (s flag), and the escape still quotes it', () => {
+  assert.deepStrictEqual(parseIntent('[agent:scratch end] line one\nline two'),
+    { type: 'scratch', sub: 'end', body: 'line one\nline two' });
+  assert.deepStrictEqual(parseIntent('\\[agent:scratch begin]'),
+    { type: 'escape', text: '[agent:scratch begin]' });
+});
+
 test('parseIntent: memory sub-command carries body', () => {
   assert.deepStrictEqual(parseIntent('[agent:memory list]'),
     { type: 'memory', sub: 'list', body: '' });

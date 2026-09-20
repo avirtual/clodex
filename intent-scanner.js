@@ -1,8 +1,8 @@
 // Intent Scanner (port of wb-wrap/scanner.py). Turns one line of assistant
 // output into a structured `[agent:…]` intent (or null). Pure string work — no
-// Electron, no main.js state — so the grammar (dm/who/name/context/memory/
-// spawn/file/resend/exec/remind/shout/team-review/review-done/task/reboot
-// + the `\[agent:` escape) is unit-testable in isolation.
+// Electron, no main.js state — so the grammar (dm/who/name/context/scratch/
+// memory/spawn/file/resend/exec/remind/shout/team-review/review-done/task/
+// reboot + the `\[agent:` escape) is unit-testable in isolation.
 // Seam: plain named functions on raw strings; the caller owns column-1
 // anchoring by feeding it a single line at a time.
 // Gotcha: cleanLine strips a leading run of DECORATOR glyphs (bullets, box

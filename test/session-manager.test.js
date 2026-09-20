@@ -1208,13 +1208,13 @@ test('t222 a seat with no terminal of its own is refused before any exec is atte
 test('t170 every bodiless gateable verb is structurally unspillable', () => {
   const { GATEABLE_INTENTS } = require('../intent-catalog');
   const { bodyModeFor } = require('../intent-registry');
-  // Probed across subs, not called bare: `context`, `memory` and `term` answer
-  // 'none' for a MISSING sub and 'greedy' for compact/remember/exec, so a single
-  // bare call would misfile all three as bodiless and this test would then certify
-  // a spill path it never exercised. Bodiless means bodiless for every sub the verb
-  // can carry — so a verb whose body hides behind ONE sub needs that sub in this
-  // list, or the ratchet below silently stops guarding it.
-  const SUBS = [null, 'compact', 'clear', 'reload', 'remember', 'recall', 'add', 'done', 'list', 'exec'];
+  // Probed across subs, not called bare: context/memory/term/scratch all answer
+  // 'none' for a MISSING sub and 'greedy' for one of their real ones, so a single
+  // bare call would misfile every one of them as bodiless and this test would then
+  // certify a spill path it never exercised. Bodiless means bodiless for every sub
+  // the verb can carry — so a verb whose body hides behind ONE sub needs that sub
+  // in this list, or the ratchet below silently stops guarding it.
+  const SUBS = [null, 'compact', 'clear', 'reload', 'remember', 'recall', 'add', 'done', 'list', 'exec', 'begin', 'end', 'cancel'];
   const bodiless = GATEABLE_INTENTS
     .map((i) => i.type)
     .filter((t) => SUBS.every((sub) => bodyModeFor({ type: t, sub }) === 'none'));
@@ -12765,6 +12765,24 @@ test('[agent:end]: closes a task done report body — the shape the grammar line
   assert.strictEqual(out[0].sub, 'done');
   assert.strictEqual(out[0].id, 't42');
   assert.strictEqual(out[0].body, 'the report\nsecond line');
+});
+
+test('[agent:end]: closes a scratch end summary; begin and cancel capture no body at all', () => {
+  const m = mkExtract();
+  const out = m._extractIntents(
+    '[agent:scratch end] what I now know\nand what I did\n[agent:end]\nNow I talk to my operator.');
+  assert.deepStrictEqual(out.map((x) => x.type), ['scratch']);
+  assert.strictEqual(out[0].sub, 'end');
+  assert.strictEqual(out[0].body, 'what I now know\nand what I did',
+    'a scratch summary is the ONLY thing that survives the cut, so a body that swallowed the prose after it '
+    + 'would carry text the model wrote for its operator into the post-rewind briefing as if it were a '
+    + 'conclusion, and a body that closed early would lose part of the only surviving record');
+
+  for (const sub of ['begin', 'cancel']) {
+    const bare = m._extractIntents(`[agent:scratch ${sub}]\nPlain prose under the intent.`);
+    assert.deepStrictEqual(bare.map((x) => x.type), ['scratch'], `${sub} emits one intent`);
+    assert.strictEqual(bare[0].body, '', `${sub} is bodiless — the prose below it is not swallowed`);
+  }
 });
 
 // The contrast that makes the terminator worth documenting on the line at all.

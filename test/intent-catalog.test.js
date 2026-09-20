@@ -10,10 +10,10 @@ const ALL_TYPES = GATEABLE_INTENTS.map((i) => i.type);
 // what collapses back to null when every one is checked.
 const NONPRIV_TYPES = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).map((i) => i.type);
 
-test('catalog: the 13 gateable types in grammar order (privileged last), name excluded', () => {
+test('catalog: the 14 gateable types in grammar order (privileged last), name excluded', () => {
   assert.deepStrictEqual(
     GATEABLE_INTENTS.map((i) => i.type),
-    ['dm', 'who', 'context', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout', 'term', 'reboot', 'team-create'],
+    ['dm', 'who', 'context', 'scratch', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout', 'term', 'reboot', 'team-create'],
   );
   // The privileged set, and the reason it is worth naming all three: `term`
   // runs arbitrary shell in the operator's own login shell, so a seat
@@ -59,6 +59,25 @@ test('intentEnabled: a privileged intent fires only when explicitly listed', () 
   assert.strictEqual(intentEnabled('reboot', ['dm', 'reboot']), true);
   assert.strictEqual(intentEnabled('reboot', ['dm', 'who']), false); // granted others, not reboot
   assert.strictEqual(intentEnabled('reboot', []), false);
+});
+
+test('t1037: scratch is gateable and ORDINARY — it rides the all-enabled default like context', () => {
+  assert.strictEqual(GATEABLE_TYPES.has('scratch'), true);
+  assert.strictEqual(PRIVILEGED_INTENTS.has('scratch'), false,
+    'scratch recycles the seat\'s own process and truncates its transcript, which READS like a privileged '
+    + 'capability. It is deliberately not one, for the same reason context reload is not: the blast radius is '
+    + 'this seat\'s own context, and privileged means "an agent could otherwise mint it for a PEER it spawns". '
+    + 'Asserted here rather than left to the ordered list above, which is edited in bulk — a scratch quietly '
+    + 'added to PRIVILEGED_INTENTS would turn the verb off for every existing seat with no signal');
+  assert.strictEqual(intentEnabled('scratch', null), true, 'a seat with no allowlist has it, exactly as it has context');
+  assert.strictEqual(intentEnabled('scratch', []), false, '"everything gated" gates it too');
+  assert.strictEqual(intentEnabled('scratch', ['scratch']), true);
+  assert.strictEqual(intentEnabled('scratch', ['dm', 'context']), false, 'granting context does not grant it');
+  assert.deepStrictEqual(withoutPrivilegedIntents(['dm', 'scratch']), ['dm', 'scratch'],
+    'so a spawn template or a peer may grant it — that is what ordinary means here');
+  const idx = GATEABLE_INTENTS.findIndex((i) => i.type === 'scratch');
+  assert.strictEqual(GATEABLE_INTENTS[idx - 1].type, 'context',
+    'it sits after context: catalog order is checklist order, and the two verbs that recycle a seat belong together');
 });
 
 test('withoutPrivilegedIntents: strips privileged from an array, passes non-arrays through', () => {

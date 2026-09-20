@@ -43,6 +43,9 @@ function parseIntentLegacy(rawLine) {
   const ctxMatch = cleaned.match(/^\[agent:context\s+(\S+)\]\s*(.*)/s);
   if (ctxMatch) return { type: 'context', sub: ctxMatch[1].toLowerCase(), body: ctxMatch[2] };
 
+  const scratchMatch = cleaned.match(/^\[agent:scratch\s+(begin|end|cancel)\]\s*(.*)$/s);
+  if (scratchMatch) return { type: 'scratch', sub: scratchMatch[1].toLowerCase(), body: scratchMatch[2] };
+
   const memMatch = cleaned.match(/^\[agent:memory\s+(\S+)\]\s*(.*)/s);
   if (memMatch) return { type: 'memory', sub: memMatch[1].toLowerCase(), body: memMatch[2] };
 
@@ -329,6 +332,11 @@ const ADVERSARIAL = [
   '[agent:context compact]', '[agent:context compact] pickup note',
   '[agent:context CLEAR]', '[agent:context reload]', '[agent:context]',
   '[agent:context two words]',
+  '[agent:scratch begin]', '[agent:scratch begin] trailing',
+  '[agent:scratch end] a summary', '[agent:scratch end]',
+  '[agent:scratch end] line one\nline two', '[agent:scratch END] shouty',
+  '[agent:scratch cancel]', '[agent:scratch cancel] trailing',
+  '[agent:scratch]', '[agent:scratch resume]', '[agent:scratch  begin]',
   '[agent:memory list]', '[agent:memory remember] text', '[agent:memory RECALL] q',
   '[agent:memory]',
   '[agent:file view /a/b.txt]', '[agent:file open /a b/c.txt]',
@@ -458,13 +466,13 @@ function subVerbsFromSource(family) {
 // bracket regex. Verbs like context/memory/file/term capture `(\S+)` instead:
 // they have no list to drift out of sync with, so there is nothing for a
 // coverage guard to enumerate.
-const CLOSED_SUB_VERB_FAMILIES = ['task', 'team'];
+const CLOSED_SUB_VERB_FAMILIES = ['task', 'team', 'scratch'];
 
 // Per-family anti-vacuity floor. Each is the count the family HAD when it was
 // pinned, so shrinking the grammar trips this rather than quietly shrinking
 // what the loop below iterates. A single shared floor would have to be the
-// smaller of the two and would stop measuring the larger family.
-const MIN_SUBS = { task: 9, team: 11 };
+// smallest family's and would stop measuring every larger one.
+const MIN_SUBS = { task: 9, team: 11, scratch: 3 };
 
 function corpusCovers(family, sub) {
   return CORPUS.some((line) => {
@@ -730,6 +738,23 @@ test('bodyMode per sub-verb for team / memory / context', () => {
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:context compact]')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:context reload]')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:context clear]')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:scratch end] summary')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:scratch begin]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:scratch cancel]')), 'none');
+});
+
+test('t1037: the scratch row is gateable, ordinary, and parses a closed alternation', () => {
+  const row = registry.rowFor('scratch');
+  assert.ok(row, 'the verb is in the table the scanner, the extractor and the switch all read');
+  assert.strictEqual(row.gateable, true);
+  assert.strictEqual(row.privileged, false);
+  assert.strictEqual(row.source, 'core');
+  assert.match(row.label, /Scratch episodes/, 'the checklist label comes from intent-catalog, not a copy here');
+  assert.strictEqual(parseIntent('[agent:scratch resume]'), null,
+    'an unknown sub-verb is not an intent — `end` CUTS the transcript, so a half-parsed typo is not a safe failure');
+  assert.ok(!registry.CORE_VALID_INTENT_NAMES.includes('scratch'),
+    'and it is absent from the near-miss bounce copy until T-D writes its prompt row — naming a verb '
+    + 'whose grammar no seat has been given advertises an emission nobody can get right');
 });
 
 test('bodyMode: a kv-only role-set/role-add head line takes no body', () => {
@@ -793,7 +818,8 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   // prompts/append/team-project.md.
   const newSinceLegacy = (i) => (i.type === 'task' && (i.sub === 'accept' || i.sub === 'respec'))
     || (i.type === 'team' && (i.sub === 'template-save' || i.sub === 'prompt-save'))
-    || i.type === 'team-create';
+    || i.type === 'team-create'
+    || (i.type === 'scratch' && i.sub === 'end');
   const deliberatelyNarrowed = (i) => i.type === 'team'
     && (i.sub === 'role-add' || i.sub === 'role-set')
     && ['prompt', 'template', 'dispatch', 'cwd', 'model', 'account'].some((k) => i[k] != null)
@@ -817,6 +843,10 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   // reverted and the loop would still pass over an empty term set.
   assert.ok(sawTerm >= 4, `ENTER: the corpus still carries term rows (saw ${sawTerm})`);
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:exec c] {}')), 'json');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:scratch end] summary')), 'greedy',
+    'the newSinceLegacy arm above has to be argued for per verb, like every other member: scratch end is '
+    + 'post-legacy, and greedy because its body is the summary that REPLACES the episode — a truncated one '
+    + 'is the only surviving record of work whose evidence the cut has already destroyed');
 });
 
 // ── t341: the differential above iterates the CORPUS, so a bodyMode widening on
@@ -854,7 +884,7 @@ function bodyModeSubsFromSource(row) {
 
 // The pair count the predicates named when this was pinned. An arm deleted from a
 // predicate shrinks the loop below rather than failing it, so the count is floored.
-const MIN_BODYMODE_SUBS = 13;
+const MIN_BODYMODE_SUBS = 14;
 
 test('t341: every sub-verb a bodyMode predicate names is reachable in the corpus', () => {
   let pairs = 0;

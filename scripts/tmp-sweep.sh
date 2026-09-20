@@ -613,6 +613,7 @@ rolecwd-lnk-
 rolecwd-out-
 rolecwd-real-
 runner-root-
+scratch-mark-
 shadow-ret-
 sm-nogit-
 sm-wt-
