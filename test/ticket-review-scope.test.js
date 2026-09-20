@@ -79,7 +79,7 @@ test('scope names the base sha and the baseSha..HEAD range', () => {
 test('scope points at the materialized diff path', () => {
   const s = buildReviewScope({ ticket: ticket(), diffPath: '/home/u/tasks/widget/review-t42.diff' });
   assert.ok(s.includes('/home/u/tasks/widget/review-t42.diff'),
-    'the diff path must appear so the reviewer can read it');
+    'the diff path must appear: it is what the attachment on the first turn is the same bytes as');
 });
 
 test('the DIFF line states the hunk context, so a re-read around a hunk is not made', () => {
