@@ -148,6 +148,8 @@ function usageTotal(record) {
 function markUsageTotal(mark) {
   const usage = mark && mark.usageAtBegin;
   if (!usage || typeof usage !== 'object') return null;
+  const fields = [usage.input, usage.cacheRead, usage.cacheWrite];
+  if (!fields.some((v) => Number.isFinite(v))) return null;
   const n = (v) => (Number.isFinite(v) ? v : 0);
   return n(usage.input) + n(usage.cacheRead) + n(usage.cacheWrite);
 }
