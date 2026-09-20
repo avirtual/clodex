@@ -452,6 +452,16 @@ test('recovery (3a): a receipt naming a missing file bounces like a typed pointe
   assert.match(h.errors[0], /names no spill file Clodex wrote \(missing\)/);
 });
 
+test('recovery (3a): two unresolved receipts in one turn carry distinct dedupe keys, so the second bounces too', () => {
+  const h = mkH();
+  const a = spillPathFor(h.root, 'lead', '0123456789abcdef');
+  const b = spillPathFor(h.root, 'lead', 'fedcba9876543210');
+  const intents = h.m._extractIntents(`${receiptLine('dm bob', BIG, a)}\n${receiptLine('dm bob', BIG, b)}\n`, { receiptsFor: 'lead' });
+  assert.strictEqual(intents.length, 2);
+  assert.notStrictEqual(shadowIntentKey('lead', intents[0]), shadowIntentKey('lead', intents[1]),
+    'the empty body alone would collapse both to `lead|dm||` and the scan would swallow the second as an intra-turn dup');
+});
+
 test('recovery (3a): a receipt naming a non-spill verb, or sitting in a fence, is prose', () => {
   const h = mkH();
   const id = writeSpill(h.root, 'lead', BIG);

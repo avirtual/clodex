@@ -881,9 +881,10 @@ accept teardown removes.
   back into the intent from the named file, after confining the path to the
   sender's own spill dir — a copied or typed receipt fails confinement or the
   file check and bounces with the same note as a typed pointer. The filter also
-  watches the RAW stream it is fed for a receipt-shaped line (`mimicKindOf`):
-  upstream of its own rewrite, such a line is model-authored by construction,
-  so it raises `spill-mimic` and the seat is told nothing was sent.
+  watches the RAW stream it is fed for a receipt-shaped line (`mimicKindOf`)
+  outside any intent body it holds or passes through: upstream of its own
+  rewrite, such a line is model-authored by construction, so it raises
+  `spill-mimic` and the seat is told nothing was sent.
   `id = sha256(body)[:16]`, path `<root>/spill/<agent>/<id>.md`,
   0700 dir / 0600 file, an existing file left alone. Pure leaf (`fs`, `path`,
   `crypto`, plus `path-confine` and `fs-util`). Every failure returns null or an

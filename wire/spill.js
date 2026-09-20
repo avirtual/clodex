@@ -75,9 +75,31 @@ class SpillFilter {
     if (kind) this._notify(this.onMimic, { kind });
   }
 
+  _shadow(partial) {
+    if (!this.onMimic || this.lineSkip) return;
+    const s = this.lineBuf + partial;
+    if (s.length > MIMIC_LINE_CAP) { this.lineSkip = true; this.lineBuf = ''; return; }
+    this.lineBuf = s;
+  }
+
+  _mimicLine(line) {
+    if (this.onMimic && !this.lineSkip && !this.holding && !this.foreignBody) this._mimic(this.lineBuf + line);
+    this.lineBuf = '';
+    this.lineSkip = false;
+  }
+
+  _latch(rest) {
+    this.lineBuf = '';
+    this.lineSkip = rest.length > 0 && !rest.endsWith('\n');
+    this.pending = '';
+    this.passthru = true;
+  }
+
   feed(text) {
-    this._observe(text);
-    if (this.passthru) return text;
+    if (this.passthru) {
+      this._observe(text);
+      return text;
+    }
     const out = [];
     this.pending += text;
     for (;;) {
@@ -86,8 +108,7 @@ class SpillFilter {
         out.push(this.originalHeld());
         out.push(this.pending);
         this._clear();
-        this.pending = '';
-        this.passthru = true;
+        this._latch(this.pending);
         const capped = this.verb;
         this.verb = null;
         this._notify(this.onBail, { reason: 'cap', verb: capped });
@@ -99,8 +120,7 @@ class SpillFilter {
         out.push(this.tail);
         out.push(this.pending);
         this.tail = '';
-        this.pending = '';
-        this.passthru = true;
+        this._latch(this.pending);
         this._notify(this.onBail, { reason: 'cap', verb: null });
         return out.join('');
       }
@@ -111,8 +131,7 @@ class SpillFilter {
           out.push(this.tail);
           this.tail = '';
           out.push(this.pending);
-          this.pending = '';
-          this.passthru = true;
+          this._latch(this.pending);
           this._notify(this.onBail, { reason: 'cap', verb: null });
           return out.join('');
         }
@@ -120,14 +139,16 @@ class SpillFilter {
       }
       const line = this.pending.slice(0, nl);
       this.pending = this.pending.slice(nl + 1);
+      this._mimicLine(line);
       out.push(this._line(line));
       if (this.passthru) {
         out.push(this.pending);
-        this.pending = '';
+        this._latch(this.pending);
         return out.join('');
       }
     }
     if (this.pending && !this.holding && !this.proseSpill && !couldBeHead(this.pending)) {
+      this._shadow(this.pending);
       out.push(this.pending);
       this.pending = '';
     }
@@ -191,6 +212,8 @@ class SpillFilter {
       this.tail += `${line}\n`;
       return '';
     }
+    const cleaned = cleanLine(line).trim();
+    if (cleaned.startsWith(OPEN)) this.foreignBody = cleaned !== TERMINATOR;
     return line + '\n';
   }
 
@@ -262,6 +285,7 @@ class SpillFilter {
 
   endBlock() {
     let out = '';
+    if (!this.holding && this.pending) this._shadow(this.pending);
     if (this.holding && this.pending.trim() === TERMINATOR && this.pending.indexOf('\n') === -1) {
       const last = this.pending;
       this.pending = '';
@@ -285,8 +309,7 @@ class SpillFilter {
 
   close() {
     let out = '';
-    if (this.lineBuf && !this.lineSkip) this._mimic(this.lineBuf);
-    this.lineBuf = '';
+    this._mimicLine(this.pending);
     if (this.holding && this.pending.trim() === TERMINATOR && this.pending.indexOf('\n') === -1) {
       const last = this.pending;
       this.pending = '';

@@ -1,16 +1,16 @@
 # wire/spill notes
 
 Format spec `proxy-lab/SPILL.md`; arbiter `proxy-lab/test_spill.py`, ported into
-`test/wire-spill-filter.test.js`. Both compute the same sha over the same
-delimited bytes, so a drift here is a drift against a consumer this repo cannot see.
+`test/wire-spill-filter.test.js`: same sha over the same delimited bytes, so a
+drift here is a drift against a consumer this repo cannot see.
 
 ## SpillFilter
 
 Ported from spill.py's `_SpillFilter`, with deliberate deviations, all in one
 direction: what this filter writes to a spill file must be BYTE-EQUAL to what
 `_extractIntents` would have delimited from the same text — recovery substitutes
-the file for the body, so a one-byte divergence dispatches a different spec.
-`test/wire-spill-sse.test.js` pins it by running the real scanner, not a literal.
+the file for the body, so a one-byte divergence dispatches a different spec
+(`test/wire-spill-sse.test.js` pins it by running the real scanner).
 
 1. A line clodex's scanner would treat as an intent line makes the filter bail
    rather than swallow it. spill.py delimits on the terminator only;
@@ -38,10 +38,11 @@ the closing `[agent:end]` swallowed: the placeholder is the model's own prior
 output and became a few-shot example — 19 fabricated pointers in 12 h on two
 lead seats, 18 copying the ellipsis title shape byte-for-byte, none before a
 seat's first real rewrite. `wire/proxy.js` feeds the intent tee the ORIGINAL
-chunk, never this output, so dispatch never depends on the placeholder. And the
+chunk, never this output, so dispatch never depends on the placeholder. The
 filter never feeds itself, so a `RECEIPT_RE`/`TAIL_RECEIPT_RE` line in its INPUT
-is model-authored: `onMimic` reports it, bytes untouched, and the seat is told
-nothing was sent.
+is model-authored: `onMimic` reports it, bytes untouched. Only a line it is NOT
+holding is judged: a held or unlisted-verb body (`foreignBody`) may quote a real
+receipt the tee delivered, and the advisory would then be false.
 
 ## passthru
 
@@ -57,13 +58,13 @@ never held, and a later in-cap intent forwards whole.
 ## maxBytes
 
 Enforced on HELD bytes before a line is consumed, never per completed line: a ticket
-spec is very often ONE long line, so a per-line check would fire only once that
-line was fully buffered, and the oversized body would spill anyway.
+spec is often ONE long line, so a per-line check would fire only once that line
+was fully buffered, and the oversized body would spill anyway.
 
 The same cap bounds the UNTERMINATED head line, before `holding` is set — a long
 `[agent:dm …]` line can never spill, and `couldBeHead(pending)` with no newline
 would buffer without limit — plus the `proseSpill` tail and `SpillTee.buf` at the
-SSE frame level: a 200 `text/event-stream` that never sends `\n\n` would buffer all.
+SSE frame level (a 200 `text/event-stream` that never sends `\n\n`).
 
 ## SpillTee
 
@@ -103,14 +104,13 @@ line FLUSHES it — prose BETWEEN intents stays on the wire.
 
 `foreignBody` covers the verb the filter does NOT hold: a `remind` body is
 ordinary text to the line scanner, so without it the reminder would land in `tail`
-and fire carrying a receipt. `couldBeHead(pending)` guards a block end likewise:
-an unterminated head line is an intent, not a tail. The floor is SHARED with the
-body path; the tail's receipt names no verb, since nothing dispatches it.
+and fire carrying a receipt; it fences `onMimic` too. `couldBeHead(pending)` guards
+a block end likewise: an unterminated head line is an intent, not a tail. The floor
+is SHARED with the body path; the tail's receipt names no verb, nothing dispatches it.
 
 An operator dm is the ONE injection that leaves the bit CLEAR: `_deliverMessage`
-passes `human` for sender `user` and the queue carries it to `onSubmitted` — the
-panel is the two of them TALKING, the same input as typing. The bit is read ONCE
-per request; a throwing `turnInjected` reads as not-injected.
+passes `human` for sender `user` and the queue carries it to `onSubmitted` — the two
+of them TALKING. Read ONCE per request; a throwing `turnInjected` is not-injected.
 
 The tail CROSSES block boundaries: `endBlock()` is `close()` without the tail
 decision, and only `close()` — the stream end — resolves one. A non-text

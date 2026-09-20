@@ -21,8 +21,8 @@ const ID_RE = /^[0-9a-f]{16}$/;
 const AGENT_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const POINTER_RE = /^\s*@spill:([0-9a-f]{16})\s*$/;
 const TITLED_POINTER_RE = /^([^\n]{0,79}[^\s\n]) @spill:([0-9a-f]{16})\s*$/;
-const RECEIPT_RE = /^\(I sent (\S+(?: \S+)*?)(?: — "[^"]*")? in full, \d+ B; Clodex kept my text at (\/\S+\.md)\.\)$/;
-const TAIL_RECEIPT_RE = /^\(I wrote \d+ B of prose after my last intent; it reached the operator's log and Clodex kept it at \/\S+\.md\.\)$/;
+const RECEIPT_RE = /^\(I sent (\S+(?: \S+)*?)(?: — "[^"]*")? in full, \d+ B; Clodex kept my text at (\/.+?\.md)\.\)$/;
+const TAIL_RECEIPT_RE = /^\(I wrote \d+ B of prose after my last intent; it reached the operator's log and Clodex kept it at \/.+?\.md\.\)$/;
 
 function verbKeyOf(intent) {
   if (!intent || typeof intent.type !== 'string') return null;

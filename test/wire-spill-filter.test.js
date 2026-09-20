@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { SpillFilter } = require('../wire/spill');
 const { parseIntent, looksLikeIntent } = require('../intent-scanner');
-const { receiptOf } = require('../intent-spill');
+const { receiptOf, mimicKindOf } = require("../intent-spill");
 
 const BIG = 'z'.repeat(900);
 const SMALL = 'y'.repeat(50);
@@ -653,4 +653,53 @@ test("onMimic: the filter's own receipt is never reported — it never feeds its
   const prose = runProse(PROSE, { onMimic: (i) => seen.push(i) });
   assert.ok(prose.out.startsWith('(I wrote '), 'ENTER: the tail really spilled');
   assert.deepStrictEqual(seen, []);
+});
+
+test('onMimic: a receipt-shaped line INSIDE a held body is that body\'s text — it spills whole and is NOT reported', () => {
+  for (const cs of SIZES) {
+    const seen = [];
+    const body = `quoting my transcript:\n${MIMIC}\n${MIMIC_TAIL}\n${BIG}`;
+    const r = run(`[agent:dm bob]\n${body}\n[agent:end]\n`, { cs, onMimic: (i) => seen.push(i) });
+    assert.ok(r.out.startsWith('(I sent dm bob'), `@cs=${cs}: ENTER: the dm really spilled`);
+    assert.equal(diskOf(r.out).body, body, `@cs=${cs}: the quoted lines are on disk with the rest of the body`);
+    assert.deepStrictEqual(seen, [], `@cs=${cs}: a line the filter HOLDS is never judged — the tee delivered it`);
+    seen.length = 0;
+    const small = run(`[agent:dm bob]\n${MIMIC}\n[agent:end]\nafter.\n`, { cs, onMimic: (i) => seen.push(i) });
+    assert.equal(small.out, `[agent:dm bob]\n${MIMIC}\n[agent:end]\nafter.\n`, `@cs=${cs}: an unspilled body is forwarded intact`);
+    assert.deepStrictEqual(seen, [], `@cs=${cs}: and not reported either`);
+  }
+});
+
+test('onMimic: an UNLISTED verb\'s body is not judged, but the line after its terminator is', () => {
+  for (const proseSpill of [false, true]) {
+    for (const cs of SIZES) {
+      const seen = [];
+      const T = `[agent:remind in 1m] continue\n${MIMIC}\n[agent:end]\n${MIMIC_TAIL}\n`;
+      const r = run(T, { cs, proseSpill, onMimic: (i) => seen.push(i) });
+      assert.equal(r.out, T, `proseSpill=${proseSpill} @cs=${cs}: bytes untouched`);
+      assert.deepStrictEqual(seen, [{ kind: 'prose' }],
+        `proseSpill=${proseSpill} @cs=${cs}: only the line the filter could not be holding is reported`);
+    }
+  }
+});
+
+test('onMimic: a latched filter still reports, and skips the fragment it latched on', () => {
+  const seen = [];
+  const f = new SpillFilter({ agent: 'wirescope', root: root(), verbs: VERBS, maxBytes: 100, onMimic: (i) => seen.push(i) });
+  let out = f.feed(`[agent:dm bob]\n${'x'.repeat(120)}`);
+  assert.equal(f.latched, true, 'ENTER: the cap latched it mid-line');
+  out += f.feed(`${MIMIC}\n${MIMIC}\n`);
+  out += f.close();
+  assert.equal(out, `[agent:dm bob]\n${'x'.repeat(120)}${MIMIC}\n${MIMIC}\n`);
+  assert.deepStrictEqual(seen, [{ kind: 'intent' }],
+    'the first receipt is the tail of a line whose head passed unjudged; only the whole second line is reported');
+});
+
+test('receiptOf reads a path with whitespace in it — the root is configurable and the path is confined on read', () => {
+  const p = '/Users/first last/.clodex/spill/wirescope/0123456789abcdef.md';
+  const rc = receiptOf(`(I sent dm bob — "a title" in full, 900 B; Clodex kept my text at ${p}.)`);
+  assert.ok(rc);
+  assert.equal(rc.path, p);
+  assert.equal(rc.head, 'dm bob');
+  assert.equal(mimicKindOf(`(I wrote 900 B of prose after my last intent; it reached the operator's log and Clodex kept it at ${p}.)`), 'prose');
 });

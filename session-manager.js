@@ -4784,7 +4784,7 @@ function createSessionManager(deps) {
         if (!rc) { out.push(lines[i]); continue; }
         const r = resolveReceipt(REGISTRY_DIR, agent, rc.path);
         if (!r.ok) {
-          unresolved.push({ type: rc.type, sub: rc.sub, body: '', receipt: { path: rc.path, reason: r.reason } });
+          unresolved.push({ type: rc.type, sub: rc.sub, body: '', text: rc.path, receipt: { path: rc.path, reason: r.reason } });
           continue;
         }
         const bodyLines = r.body.split('\n');
