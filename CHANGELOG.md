@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.83.0 — 2026-09-20
+
 - Right-click ▸ "Move to Peer…" moves an agent to another peer: its transcript, memory, messages and reminders travel with it and it resumes there under the folder you choose. The original stays archived here as a backup, and the dialog names what does not travel (exec grants, privileged intents; the account is matched by label on the far box).
 
 ## 5.82.3 — 2026-09-20
