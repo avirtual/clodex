@@ -328,7 +328,10 @@ run that SUCCEEDED loses its report and keeps holding whatever lock it took.
 Before a closed ticket reaches a reviewer, the loop runs the branch's own test
 suite — a full run, in the ticket's worktree. Order is deliberate: a cold
 review is expensive, and paying it for a branch that fails its own suite is the
-most costly mistake the loop can make. A red verify run is measured a second
+most costly mistake the loop can make. The reviewer that follows carries its
+scope in its system prompt, and the branch's diff (with the round's delta, when
+there is one) rides its first turn as an attachment rather than as a path it
+has to spend a read on. A red verify run is measured a second
 time before it rejects — a green re-run proceeds to review and the record names
 the first run, while a second red rejects carrying both runs' failing names.
 A rework is never handed to a ticket seat whose context is already past the

@@ -132,14 +132,14 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
   }
 
   if (diffPath) {
-    out.push(`DIFF: the full diff of that range is materialized at ${diffPath}. `
-      + 'Read it first; it is the authoritative statement of what changed. '
+    out.push(`DIFF: the full diff of that range is attached to your first turn (and materialized at ${diffPath} — the same bytes; a Read of it repeats what you already have). `
+      + 'It is the authoritative statement of what changed. '
       + 'Each hunk carries 20 lines of context on both sides; a re-read to see the code immediately around a hunk is already answered by the diff.');
     out.push('');
     const delta = text(deltaPath);
     if (delta) {
       const prior = Number(t.reviewRound) || 0;
-      out.push(`DELTA: what changed since round ${prior}'s review is at ${delta}. `
+      out.push(`DELTA: what changed since round ${prior}'s review is attached to your first turn as well (and at ${delta} — the same bytes). `
         + 'Read the delta first for the fixes; the cumulative diff above stays authoritative for everything else.');
       out.push('');
     }
@@ -152,7 +152,7 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
 
   const spec = text(t.spec);
   if (spec) {
-    out.push('SPEC — what this ticket was asked to do:');
+    out.push('SPEC — what this ticket was asked to do (this is the whole spec; it is not in a file):');
     out.push('');
     out.push(spec);
     out.push('');
@@ -277,4 +277,13 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
   return out.join('\n');
 }
 
-module.exports = { buildReviewScope, VERDICT_GRAMMAR, budgetEntries, REWORK_BLOCK_BUDGET };
+function reviewBeginLine(agentType, attach = []) {
+  const paths = Array.isArray(attach) ? attach.filter((p) => typeof p === 'string' && p) : [];
+  const head = 'Your review scope is in your system prompt. ';
+  if (agentType !== 'claude' || !paths.length) return `${head}Begin.`;
+  return `${head}Attached: ${paths.map((p) => `@${p} `).join('')}Begin.`;
+}
+
+module.exports = {
+  buildReviewScope, reviewBeginLine, VERDICT_GRAMMAR, budgetEntries, REWORK_BLOCK_BUDGET,
+};

@@ -4,11 +4,11 @@ WORK IN: /home/u/projects/repo-t42 (git worktree, branch t42-widget) — cd ther
 
 REVIEW RANGE: abc1234..HEAD on branch t42-widget. The base abc1234 is what the spec was written against — anything already in it is NOT yours to review.
 
-DIFF: the full diff of that range is materialized at /tmp/d.diff. Read it first; it is the authoritative statement of what changed. Each hunk carries 20 lines of context on both sides; a re-read to see the code immediately around a hunk is already answered by the diff.
+DIFF: the full diff of that range is attached to your first turn (and materialized at /tmp/d.diff — the same bytes; a Read of it repeats what you already have). It is the authoritative statement of what changed. Each hunk carries 20 lines of context on both sides; a re-read to see the code immediately around a hunk is already answered by the diff.
 
 TASK DIR: /home/u/.clodex/projects/p/tasks/widget
 
-SPEC — what this ticket was asked to do:
+SPEC — what this ticket was asked to do (this is the whole spec; it is not in a file):
 
 THE SPEC BODY: make the widget idempotent.
 

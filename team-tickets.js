@@ -14,7 +14,7 @@
 
 const { nextTicketId, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, branchSlug, appendReworkReason } = require('./tickets-store');
 const teamCost = require('./team-cost');
-const { buildReviewScope } = require('./ticket-review-scope');
+const { buildReviewScope, reviewBeginLine } = require('./ticket-review-scope');
 const { projectDirFor } = require('./clodex-paths');
 // Deliberately NOT named `path`: inside createTicketMethods that name is the
 // injected one, and shadowing it would swap a fixture's probe for the real
@@ -1010,6 +1010,7 @@ function createTicketMethods(deps, shared) {
       const reply = onReply || ((msg) => this._injectText(session, `[agent:team-review] ${msg}`, { parkable: true }));
       const reviewTicket = (opts && opts.ticketId) || null;
       const addDirs = (opts && Array.isArray(opts.addDirs)) ? opts.addDirs.filter((d) => typeof d === 'string' && d) : [];
+      const attach = (opts && Array.isArray(opts.attach)) ? opts.attach.filter((p) => typeof p === 'string' && p) : [];
       const scope = String(body == null ? '' : body).trim();
       if (!scope) { reply('error: a review scope is required — [agent:team-review] <what to review>'); return; }
 
@@ -1299,13 +1300,13 @@ function createTicketMethods(deps, shared) {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
             background: true,
           });
-          // Kept, and deliberately CONTENTLESS: the prompt above carries the scope,
-          // but a prompt alone never makes the CLI take a turn. This is the nudge
-          // that starts it. Losing this one to the boot re-render costs a start, not
-          // the scope — and the t194 fallback re-drains it; losing the scope with it
-          // was the failure. Do not re-inline the scope here: two copies would
-          // disagree the moment one is edited, and the dm copy is the losable one.
-          this._deliverParkedActive(name, session.name, 'Your review scope is in your system prompt. Begin.', 'dm');
+          // Kept, and carrying no copy of the scope: the prompt above has it, but a prompt alone
+          // never makes the CLI take a turn. This is the nudge that starts it. Losing this one to the
+          // boot re-render costs a start, not the scope — and the t194 fallback re-drains it; losing the
+          // scope with it was the failure. Do not re-inline the scope here: two copies would disagree the
+          // moment one is edited, and the dm copy is the losable one. An @-attach is not such a copy: it
+          // is a reference to a file the scope already names, and that file is the authoritative one.
+          this._deliverParkedActive(name, session.name, reviewBeginLine(type, attach), 'dm');
           // Armed AFTER the nudge, so the window measures the nudge's outcome and
           // not the spawn's. A reviewer is the one seat with no other traffic to
           // earn a turn from, so nothing else here would ever notice it not taking
@@ -4023,7 +4024,7 @@ function createTicketMethods(deps, shared) {
     // A reviewer seat that never takes its first turn, and nothing says so.
     //
     // The scope lives in the seat's system prompt and cannot be lost in delivery,
-    // so what goes missing is the contentless START nudge — and a reviewer with no
+    // so what goes missing is the START nudge — and a reviewer with no
     // nudge has no other traffic to earn a turn from. The park's two drain edges
     // (boot-ready rising edge, `_armParkedDrainFallback`) are the recovery; when
     // both miss, the seat is silent and permanent with nothing watching.
@@ -4039,10 +4040,10 @@ function createTicketMethods(deps, shared) {
     // A seat that took a turn cannot be idle-with-no-transcript — it reached idle
     // THROUGH thinking, which is what writes the file.
     //
-    // REDELIVERS ONCE, then escalates. The nudge at the spawn site is deliberately
-    // CONTENTLESS ('…scope is in your system prompt. Begin.'), so a second copy
-    // duplicates no content and can strand nothing — worst case a reviewer is told
-    // to begin twice. That is what makes this safe where a spec redelivery needs
+    // REDELIVERS ONCE, then escalates. The redelivery below restates no scope and
+    // re-attaches nothing, so it duplicates no content and can strand nothing —
+    // worst case a reviewer is told to begin twice and reads the diff at the path
+    // its scope names. That is what makes this safe where a spec redelivery needs
     // _checkSpecConfirm's whole latch argument to be.
     //
     // Measured 3/3 against the real CLI (scripts/t381-injection-repro): a seat
@@ -4099,8 +4100,8 @@ function createTicketMethods(deps, shared) {
           ts: Date.now(), from: 'clodex', to: session.name, kind: 'review-renudged',
           body: `${session.name} never started — re-sending the start nudge`,
         });
-        // Contentless for the spawn site's reason: the scope lives in the system
-        // prompt, and a second copy here would be the two-copies-disagree bug.
+        // Restates no scope, for the spawn site's reason: the scope lives in the
+        // system prompt, and a second copy here would be the two-copies-disagree bug.
         //
         // The trailing clause is not politeness. A nudge submitted at t=89.9s
         // leaves the seat idle-with-no-transcript when this fires at t=90s, so the
@@ -7793,6 +7794,7 @@ function createTicketMethods(deps, shared) {
       this._handleTeamReview(leadSession, scope, {
         ticketId,
         addDirs: [path.dirname(diffPath)],
+        attach: [diffPath, ...(deltaPath ? [deltaPath] : [])],
         template: ticket.reviewerTemplate || null,
         onReply: (msg) => {
           const m = String(msg == null ? '' : msg);
