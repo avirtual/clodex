@@ -9,7 +9,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 
 const {
-  buildReviewScope, VERDICT_GRAMMAR, budgetEntries, REWORK_BLOCK_BUDGET,
+  buildReviewScope, reviewBeginLine, VERDICT_GRAMMAR, budgetEntries, REWORK_BLOCK_BUDGET,
 } = require('../ticket-review-scope');
 const fsReal = require('node:fs');
 const pathReal = require('node:path');
@@ -103,7 +103,8 @@ test('a deltaPath renders a DELTA line under the DIFF line, opened by round numb
     ticket: ticket({ reviewRound: 1, verdict: 'REWORK', mustFix: '- x' }),
     diffPath: '/tmp/d.diff', deltaPath: '/tmp/d.delta.diff',
   });
-  assert.ok(s.includes("DELTA: what changed since round 1's review is at /tmp/d.delta.diff. "
+  assert.ok(s.includes("DELTA: what changed since round 1's review is attached to your first turn as well "
+    + '(and at /tmp/d.delta.diff — the same bytes). '
     + 'Read the delta first for the fixes; the cumulative diff above stays authoritative for everything else.'),
     'the DELTA line names the file and says how to read it');
   assert.ok(s.indexOf('DELTA:') > s.indexOf('DIFF:'),
@@ -499,4 +500,32 @@ test('a malformed rework entry degrades rather than leaking undefined into the s
   assert.ok(s.includes('the real one'), 'ENTER: the well-formed entry still renders');
   assert.ok(!/undefined/.test(s), 'no entry may leak "undefined" into the scope');
   assert.match(s, /Rework round 1 — from \(unattributed\):/, 'a missing author is stated as unknown, not blank');
+});
+
+test('reviewBeginLine with no attachments is the old sentence, byte for byte', () => {
+  assert.strictEqual(reviewBeginLine('claude', []),
+    'Your review scope is in your system prompt. Begin.');
+  assert.strictEqual(reviewBeginLine('claude'),
+    'Your review scope is in your system prompt. Begin.',
+    'an omitted list is the same non-event as an empty one');
+});
+
+test('reviewBeginLine attaches one path with the trailing space that closes the popup', () => {
+  assert.strictEqual(reviewBeginLine('claude', ['/a/x.diff']),
+    'Your review scope is in your system prompt. Attached: @/a/x.diff Begin.');
+});
+
+test('reviewBeginLine separates two paths by exactly one space', () => {
+  const s = reviewBeginLine('claude', ['/a/x.diff', '/a/y.delta.diff']);
+  assert.strictEqual(s,
+    'Your review scope is in your system prompt. Attached: @/a/x.diff @/a/y.delta.diff Begin.');
+  assert.ok(s.includes('.diff @/'),
+    'ENTER: one space between the paths — a doubled one is a different token stream to the CLI');
+  assert.ok(s.endsWith(' Begin.'),
+    'ENTER: the last path is closed by its own trailing space before the word');
+});
+
+test('a codex reviewer gets the unchanged sentence — there is no @-attach to give it', () => {
+  assert.strictEqual(reviewBeginLine('codex', ['/a/x.diff']),
+    'Your review scope is in your system prompt. Begin.');
 });

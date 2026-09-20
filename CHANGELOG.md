@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- A ticket's cold reviewer now receives the diff attached to its first turn instead of being told where to find it, so a review starts on the code rather than on two file reads.
 - Keepalive pings are no longer held back while the wire proxy waits to see whether a reply's last text block is really its last: a long server-side pause after a block boundary keeps the connection visibly alive, and a spill that fires exactly at a block boundary is forwarded there instead of behind it.
 
 ## 5.83.3 — 2026-09-20

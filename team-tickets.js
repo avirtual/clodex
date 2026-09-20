@@ -14,7 +14,7 @@
 
 const { nextTicketId, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, branchSlug, appendReworkReason } = require('./tickets-store');
 const teamCost = require('./team-cost');
-const { buildReviewScope } = require('./ticket-review-scope');
+const { buildReviewScope, reviewBeginLine } = require('./ticket-review-scope');
 const { projectDirFor } = require('./clodex-paths');
 // Deliberately NOT named `path`: inside createTicketMethods that name is the
 // injected one, and shadowing it would swap a fixture's probe for the real
@@ -1010,6 +1010,7 @@ function createTicketMethods(deps, shared) {
       const reply = onReply || ((msg) => this._injectText(session, `[agent:team-review] ${msg}`, { parkable: true }));
       const reviewTicket = (opts && opts.ticketId) || null;
       const addDirs = (opts && Array.isArray(opts.addDirs)) ? opts.addDirs.filter((d) => typeof d === 'string' && d) : [];
+      const attach = (opts && Array.isArray(opts.attach)) ? opts.attach.filter((p) => typeof p === 'string' && p) : [];
       const scope = String(body == null ? '' : body).trim();
       if (!scope) { reply('error: a review scope is required — [agent:team-review] <what to review>'); return; }
 
@@ -1299,13 +1300,13 @@ function createTicketMethods(deps, shared) {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
             background: true,
           });
-          // Kept, and deliberately CONTENTLESS: the prompt above carries the scope,
-          // but a prompt alone never makes the CLI take a turn. This is the nudge
-          // that starts it. Losing this one to the boot re-render costs a start, not
-          // the scope — and the t194 fallback re-drains it; losing the scope with it
-          // was the failure. Do not re-inline the scope here: two copies would
-          // disagree the moment one is edited, and the dm copy is the losable one.
-          this._deliverParkedActive(name, session.name, 'Your review scope is in your system prompt. Begin.', 'dm');
+          // Kept, and deliberately CONTENTLESS: the prompt above carries the scope, but a prompt alone
+          // never makes the CLI take a turn. This is the nudge that starts it. Losing this one to the
+          // boot re-render costs a start, not the scope — and the t194 fallback re-drains it; losing the
+          // scope with it was the failure. Do not re-inline the scope here: two copies would disagree the
+          // moment one is edited, and the dm copy is the losable one. An @-attach is not such a copy: it
+          // is a reference to a file the scope already names, and that file is the authoritative one.
+          this._deliverParkedActive(name, session.name, reviewBeginLine(type, attach), 'dm');
           // Armed AFTER the nudge, so the window measures the nudge's outcome and
           // not the spawn's. A reviewer is the one seat with no other traffic to
           // earn a turn from, so nothing else here would ever notice it not taking
@@ -7793,6 +7794,7 @@ function createTicketMethods(deps, shared) {
       this._handleTeamReview(leadSession, scope, {
         ticketId,
         addDirs: [path.dirname(diffPath)],
+        attach: [diffPath, ...(deltaPath ? [deltaPath] : [])],
         template: ticket.reviewerTemplate || null,
         onReply: (msg) => {
           const m = String(msg == null ? '' : msg);

@@ -460,6 +460,7 @@ function mkLoop({
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
   const created = [];
+  const nudges = [];
   m._injectText = (s, text, opts) => {
     const out = opts && typeof opts.produce === 'function' ? opts.produce() : text;
     if (out == null || out === '') return;
@@ -479,7 +480,7 @@ function mkLoop({
   };
   m._deliverMessage = () => {};
   m._deliverPassive = () => {};
-  m._deliverParkedActive = () => {};
+  m._deliverParkedActive = (target, sender, body, kind) => { nudges.push({ target, sender, body, kind }); };
   m.create = async (name, ...rest) => { created.push({ name, systemPrompt: rest[5] }); };
   m.kill = async (n) => { persistence.remove(n); };
   const seat = (name, cwd = repo.dir) => {
@@ -502,7 +503,7 @@ function mkLoop({
   tstore.save(team.root, [ticket]);
 
   return {
-    m, team, home, tstore, persistence, injected, gated, tags, urgents, broadcasts, created, seat, logs, deps,
+    m, team, home, tstore, persistence, injected, gated, tags, urgents, broadcasts, created, nudges, seat, logs, deps,
     reminders,
     one: (id = 't1') => tstore.load(team.root).find((t) => t.id === id),
     esc: () => gated.filter((g) => /ESCALATED/.test(g.body)),
@@ -661,7 +662,7 @@ test('round 2 writes a DELTA diff of prevHead..branch and names it in the scope'
   assert.strictEqual(r2.headSha, sha2, 'and round 2 stamps ITS head, so a round 3 can delta against it');
 
   const prompt = f.created[0].systemPrompt;
-  assert.ok(prompt.includes(`DELTA: what changed since round 1's review is at ${deltaPath}`),
+  assert.ok(prompt.includes(`DELTA: what changed since round 1's review is attached to your first turn as well (and at ${deltaPath}`),
     'the scope names the delta by absolute path, opened by round number');
   assert.ok(prompt.includes('Read the delta first for the fixes'), 'and says how to read it');
 });
@@ -752,6 +753,24 @@ test('the reviewer is spawned with the constructed scope, carrying the report ve
   assert.ok(prompt.includes(repo.baseSha + '..HEAD'), 'the review range is in the scope');
   assert.ok(prompt.includes('review-t1-r1.diff'), 'the diff path is in the scope');
   assert.ok(prompt.includes('VERDICT'), 'the verdict grammar is in the scope');
+});
+
+test('the reviewer nudge @-attaches the materialized diff', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r1', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const diffPath = f.diffFile().find((p) => p.endsWith('review-t1-r1.diff'));
+  assert.ok(diffPath, 'ENTER: the round wrote a diff file — there is nothing to attach otherwise');
+  const nudge = f.nudges.find((n) => n.kind === 'dm' && /Begin\.$/.test(String(n.body)));
+  assert.ok(nudge, 'ENTER: a start nudge was delivered to the reviewer seat');
+  assert.deepStrictEqual(nudge.body,
+    `Your review scope is in your system prompt. Attached: @${diffPath} Begin.`,
+    'the nudge carries the diff as an @-path, which is what puts its bytes in the first turn');
 });
 
 // SIBLING PIN: `--no-ext-diff`, another mandatory flag in this leaf's argv, is
