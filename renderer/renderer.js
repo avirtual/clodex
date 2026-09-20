@@ -765,6 +765,7 @@ const MiB = (n) => (Number(n || 0) / (1024 * 1024)).toFixed(1);
 
 function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
   if (movingToPeer.has(name)) return;
+  pendingPeerMove.clear();
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   const snapType = item ? item.dataset.type || null : null;
   const snapBackend = item ? item.dataset.backend || null : null;
@@ -774,7 +775,10 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
   const displayed = nameEl ? nameEl.textContent : name;
   const snapLabel = displayed && displayed !== name ? displayed : null;
   const snapCreatedAt = (sidebarMeta.get(name) || {}).createdAt || null;
+  const snapNoWire = item ? item.dataset.noWire === '1' : false;
+  const snapAccount = accountOfRow(name);
   pendingPeerMove.set(name, async (farCwd) => {
+    if (movingToPeer.has(name)) return { ok: false, error: 'move already in progress' };
     const toast = showToast(`Moving ${name} to ${peerLabel}…`, { sticky: true, name });
     movingToPeer.set(name, { toast, peerLabel });
     let res;
@@ -797,18 +801,27 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
       return res;
     }
     if (res && res.kept) {
-      const row = {
-        name, type: res.type || snapType, cwd: res.cwd,
-        error: res.error, team: res.team || null, backend: snapBackend,
-      };
-      if (sessions.has(name)) {
-        movingFailed.set(name, row);
+      if (res.respawned) {
+        createTerminal(name);
+        addSessionToSidebar(name, res.type || snapType, res.cwd, snapLabel,
+          snapBackend, res.team || null, snapNoWire, snapAccount);
+        switchSession(name);
       } else {
-        removeSession(name, { keepPersisted: true });
-        addFailedSessionToSidebar(row);
+        const row = {
+          name, type: res.type || snapType, cwd: res.cwd,
+          error: res.error, team: res.team || null, backend: snapBackend,
+        };
+        if (sessions.has(name)) {
+          movingFailed.set(name, row);
+        } else {
+          removeSession(name, { keepPersisted: true });
+          addFailedSessionToSidebar(row);
+        }
       }
-      showToast(`Move to ${peerLabel} failed: ${res.error} — ${name} restarted here`,
-        { kind: 'error', duration: 10000, name });
+      showToast(res.respawned
+        ? `Move to ${peerLabel} failed: ${res.error} — ${name} restarted here`
+        : `Move to ${peerLabel} failed: ${res.error} — ${name} kept here`,
+      { kind: 'error', duration: 10000, name });
     }
     return res;
   });

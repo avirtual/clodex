@@ -1989,9 +1989,12 @@ function registerIpcHandlers(deps) {
       })) : [{ label: '(no append prompts in library)', enabled: false }]),
     ];
     const movePeerItem = () => {
-      const pm = getPeerManager();
-      const eligible = (pm ? pm.statuses() : [])
-        .filter((st) => st.online && st.canImport && !st.needsUpgrade);
+      let eligible = [];
+      try {
+        const pm = getPeerManager();
+        eligible = (pm ? pm.statuses() : [])
+          .filter((st) => st.online && st.canImport && !st.needsUpgrade);
+      } catch { eligible = []; }
       if (!eligible.length) return { label: 'Move to Peer…', enabled: false };
       return {
         label: 'Move to Peer…',

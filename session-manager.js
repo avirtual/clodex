@@ -3403,7 +3403,7 @@ function createSessionManager(deps) {
           };
         }
         return {
-          ok: false, kept: true, error: farError,
+          ok: false, kept: true, respawned: true, error: farError,
           installed: (out && out.installed) || null,
           peer: peerLabel,
           type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),

@@ -696,8 +696,10 @@ function initPeersUi({
     if (move) {
       const res = await moveSessionToPeer(name, id, cwd);
       btn.disabled = false;
-      if ((res && res.ok) || (res && res.kept)) closePeerSessionDialog();
-      else showErr((res && res.error) || 'move failed — no response');
+      if ((res && res.ok) || (res && res.kept)) { closePeerSessionDialog(); return; }
+      const why = (res && res.error) || 'move failed — no response';
+      if (peerSessionDialogTarget) showErr(why);
+      else showToast(`Move of "${name}" to ${label} was refused: ${why}`, { kind: 'error', duration: 10000 });
       return;
     }
     const res = await window.api.peerCreateSession(id, { name, type, cwd });

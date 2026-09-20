@@ -317,6 +317,9 @@ test('a half-installed far commit reports what is already on the peer', async ()
   seedLive(m, 'seat');
   const out = await m.moveToPeer('seat', 'p1', {});
   assert.strictEqual(out.kept, true);
+  assert.strictEqual(out.respawned, true,
+    'the local seat came back up before the far refusal was known — the renderer reads this to '
+    + 'rebuild a LIVE row instead of a dead retry ghost over a running pty');
   assert.strictEqual(out.peer, 'murmurfi');
   assert.deepStrictEqual(out.installed, { transcript: '/far/t.jsonl', seatDir: '/far/seat' },
     'the far name is now taken, so the retry has to happen THERE — silence here sends the operator round the loop again');
@@ -490,6 +493,8 @@ test('a respawn that throws returns the kept ghost row', async () => {
   assert.strictEqual(out.error, 'spawn exploded — session kept; retry from the sidebar row, or forget it.');
   assert.strictEqual(out.cwd, SRC_CWD);
   assert.strictEqual(created.length, 1);
+  assert.notStrictEqual(out.respawned, true,
+    'the respawn THREW, so nothing is live — the renderer must draw the ghost row on this arm');
 });
 
 test('the exit-TIMEOUT arm mirrors move(): kept, at the OLD cwd, nothing shipped', async () => {
@@ -507,6 +512,7 @@ test('the exit-TIMEOUT arm mirrors move(): kept, at the OLD cwd, nothing shipped
   assert.deepStrictEqual(shipped, [],
     'the transcript is complete only once the CLI exits, so nothing ships');
   assert.deepStrictEqual(created, [], 'nothing was respawned');
+  assert.notStrictEqual(out.respawned, true, 'and the flag the renderer branches on says so');
   assert.deepStrictEqual(store[0].movedTo, BASE.movedTo, 'no stamp was written on the timeout arm');
 });
 

@@ -484,8 +484,12 @@ far cwd is prefilled with the seat's own and is the one editable field, and a no
 says what does not travel — transcript, memory, messages and reminders do; exec
 grants and privileged intents do not, and the account is matched by label on the
 far box. A refusal (nothing quiesced yet) stays inline in the dialog so the cwd can
-be corrected and resubmitted; a `{ok:false, kept:true}` failure closes the dialog
-and takes the ghost-row arm instead. A sticky toast tracks `session:move-progress`
+be corrected and resubmitted; a `{ok:false, kept:true}` failure closes the dialog and
+splits on `respawned`: the far-refusal arm has already brought the seat back up here,
+so the row is rebuilt LIVE (terminal, sidebar, switch), while the two arms with nothing
+running — the exit timeout and a respawn that threw — draw the ghost retry row. Drawing
+a ghost over a live pty is the bug that split invites: its retry throws "already exists"
+and its ✕ offers to forget a running seat. A sticky toast tracks `session:move-progress`
 while the shipment runs and is replaced on success by one naming the far peer and
 anything `dropped`. The success arm DRAWS the archived row itself: the quiesce kill
 already fired `session:exit`, which removed the live row, and no `session:list`
@@ -498,8 +502,10 @@ On success the source record is stamped `movedTo` and ARCHIVED, never deleted, a
 nothing it read is moved or removed: this box keeps the backup. The far copy is
 authoritative from then on, so clicking the archived row resumes a FORK — two
 conversations from one transcript, diverging. Any failure after quiescing respawns
-here from the untouched record and returns the same `{ok:false, kept:true}` ghost
-row a failed local Move does; the record is not modified on that arm. That result
+here from the untouched record and returns `{ok:false, kept:true}`; the record is not
+modified on that arm. Unlike local Move, whose two kept arms never leave a seat
+running, the far-refusal arm respawns FIRST and only then learns the peer said no, so
+it carries `respawned: true` to tell the renderer a live seat needs a real row. That result
 also carries `installed` — non-null when the far commit got far enough to leave
 the transcript and seat dirs in place. Every later move of that name is then
 refused by the far name collision, so the retry has to happen on the far box.

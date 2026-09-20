@@ -1035,6 +1035,16 @@ test('the peer move reuses the local move\'s kept arm, and the archived row says
   assert.ok(body.indexOf('removeSession(name') < body.indexOf('addFailedSessionToSidebar('),
     'live row torn down BEFORE the ghost, as in the local move');
 
+  assert.ok(/res\.respawned/.test(body),
+    'the kept arm splits on it: the far-refusal arm has ALREADY respawned the seat locally, so '
+    + 'the ghost row would be a dead "click to retry" over a live pty — retrySpawn then throws '
+    + '"already exists" and the row\'s ✕ offers to forget a running seat');
+  assert.ok(/addSessionToSidebar\(/.test(body),
+    'so that arm rebuilds a REAL row for the live seat');
+  assert.ok(/movingToPeer\.has\(name\)/.test(body),
+    'and the in-flight guard is inside the runner, not only at the dialog-opening door: the '
+    + 'dialog submits on Enter without checking btn.disabled, and a second entry would orphan '
+    + 'the first sticky toast with nothing left to dismiss it');
   assert.ok(/addArchivedSessionToSidebar\(/.test(body),
     'the success arm DRAWS the archived row: the pty exit already removed the live row and '
     + 'no session:list refresh follows a move, so a toast-only arm leaves the seat with no row at all');
