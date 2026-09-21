@@ -13,7 +13,7 @@
 const { esc } = require('./lib/format');
 const { MAX_EXPORT_LINES, ipcRowParts, formatIpcLine, buildExportText, exportFilename } = require('./lib/ipc-export');
 
-function createIpcLog({ host }) {
+function createIpcLog({ host, openFilePeek, showToast }) {
   let ipcLogBody = null;
   let ipcEmpty = null;
   let notify = () => {};
@@ -54,6 +54,21 @@ function createIpcLog({ host }) {
       </div>`;
     ipcLogBody = pane.querySelector('#ipc-log-body');
     ipcEmpty = pane.querySelector('#ipc-empty');
+    ipcLogBody.addEventListener('click', async (e) => {
+      const a = e.target.closest('a.ipc-path');
+      if (!a) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const filePath = a.dataset.path;
+      const session = a.dataset.session || null;
+      const res = await window.api.fileResolve(session, filePath, null)
+        .catch((err) => ({ ok: false, error: String(err) }));
+      if (!res || !res.ok) {
+        showToast((res && res.error) || `Can't find "${filePath}"`, { kind: 'warn', duration: 4000 });
+        return;
+      }
+      openFilePeek(session, res.path, 'file');
+    });
 
     // Glyphs, not words, matching the icons already beside them in the header
     // (clipboard, ⇕, ▲). The title is the whole affordance, so it must say what
@@ -77,6 +92,15 @@ function createIpcLog({ host }) {
     actions.appendChild(clearBtn);
   }
 
+  function bodyHtml(msg) {
+    const text = msg.body;
+    const p = msg.path;
+    const at = (typeof p === 'string' && p && typeof text === 'string') ? text.indexOf(p) : -1;
+    if (at < 0) return esc(text);
+    const link = `<a class="ipc-path" href="#" data-path="${esc(p)}" data-session="${esc(msg.to || '')}">${esc(p)}</a>`;
+    return `${esc(text.slice(0, at))}${link}${esc(text.slice(at + p.length))}`;
+  }
+
   function renderEntry(msg) {
     // Unmounted: the tab was declined by available(), so there is no pane to
     // render into. The export mirror above still records the line, and
@@ -95,7 +119,7 @@ function createIpcLog({ host }) {
     const targetBadge = to === null
       ? (session ? `<span class="ipc-session">${esc(session)}</span>` : '')
       : `<span class="ipc-to">${esc(to)}</span>`;
-    const body = `<span class="ipc-body">${esc(msg.body)}</span>`;
+    const body = `<span class="ipc-body">${bodyHtml(msg)}</span>`;
 
     entry.innerHTML = `<span class="ipc-time">${time}</span>${fromBadge}${arrow}${targetBadge}${body}`;
     ipcLogBody.appendChild(entry);

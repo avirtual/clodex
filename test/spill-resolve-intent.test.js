@@ -557,11 +557,68 @@ test('t1052: the wire spill event enqueues a Clodex-voiced ack in the USER role,
     'the queue carries both texts byte-for-byte, so the UserPromptSubmit drain hands the seat exactly these lines');
 
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
-  const arm = src.match(/wire\.on\('spill', \(ev\) => \{[\s\S]{0,900}?\n\s*\}\);/);
+  const arm = src.match(/wire\.on\('spill', \(ev\) => \{[\s\S]{0,1200}?wire-spill-ack-error[\s\S]{0,200}?\n\s*\}\);/);
   assert.ok(arm, 'the spill event has a consumer');
-  assert.match(arm[0], /enqueueNotice\(REGISTRY_DIR, ev\.agent, spillAckLine\(ev, spillPathFor\(REGISTRY_DIR, ev\.agent, ev\.id\)\)\)/,
+  assert.match(arm[0], /const filePath = spillPathFor\(REGISTRY_DIR, ev\.agent, ev\.id\);[\s\S]*enqueueNotice\(REGISTRY_DIR, ev\.agent, spillAckLine\(ev, filePath\)\)/,
     'the ack goes through notice-queue.js — the USER role, where nothing is imitated — never through _injectText into the pane');
   assert.ok(!/_injectText/.test(arm[0]));
+});
+
+test('t1059: a wire spill broadcasts one ipc-message row of type spill — head form — with the filed path on it', async () => {
+  const h = mkH({ getUserDataPath: () => h.root, shadowIntentKey });
+  const rig = await wireRig(h);
+  try {
+    rig.wire.emit('spill', { agent: 'a', verb: 'task', head: '[agent:task add hand]', id: 'deadbeef00000000', bytes: 1234 });
+    const rows = h.broadcasts.filter((b) => b.type === 'spill');
+    assert.strictEqual(rows.length, 1, 'ENTER: exactly one spill row');
+    const expectedPath = path.join(h.root, 'spill', 'a', 'deadbeef00000000.md');
+    assert.deepStrictEqual(rows[0], {
+      type: 'spill', from: 'clodex', to: 'a',
+      body: `[agent:task add hand] (1234 B) filed at ${expectedPath}`,
+      path: expectedPath,
+    });
+    assert.deepStrictEqual(h.errors, []);
+  } finally {
+    await rig.close();
+  }
+});
+
+test('t1059: a prose spill broadcasts the prose body form', async () => {
+  const h = mkH({ getUserDataPath: () => h.root, shadowIntentKey });
+  const rig = await wireRig(h);
+  try {
+    rig.wire.emit('spill', { agent: 'a', verb: 'prose', head: null, id: 'deadbeef00000000', bytes: 1234 });
+    const rows = h.broadcasts.filter((b) => b.type === 'spill');
+    assert.strictEqual(rows.length, 1, 'ENTER: exactly one spill row');
+    const expectedPath = path.join(h.root, 'spill', 'a', 'deadbeef00000000.md');
+    assert.deepStrictEqual(rows[0], {
+      type: 'spill', from: 'clodex', to: 'a',
+      body: `prose after your last intent (1234 B) filed at ${expectedPath}`,
+      path: expectedPath,
+    });
+  } finally {
+    await rig.close();
+  }
+});
+
+test('t1059: the spill row is broadcast even when the ack enqueue throws — the two are independent', async () => {
+  const shadow = [];
+  const h = mkH({
+    getUserDataPath: () => h.root, shadowIntentKey,
+    enqueueNotice: () => { throw new Error('queue on fire'); },
+  });
+  h.m._shadowLog = (row) => shadow.push(row);
+  const rig = await wireRig(h);
+  try {
+    rig.wire.emit('spill', { agent: 'a', verb: 'task', head: '[agent:task add hand]', id: 'deadbeef00000000', bytes: 1234 });
+    assert.deepStrictEqual(shadow.filter((r) => r.type === 'wire-spill-ack-error'),
+      [{ type: 'wire-spill-ack-error', agent: 'a', error: 'queue on fire' }], 'ENTER: the enqueue really threw');
+    const rows = h.broadcasts.filter((b) => b.type === 'spill');
+    assert.strictEqual(rows.length, 1, 'the row does not ride inside the ack try/catch');
+    assert.strictEqual(rows[0].path, path.join(h.root, 'spill', 'a', 'deadbeef00000000.md'));
+  } finally {
+    await rig.close();
+  }
 });
 
 async function wireRig(h) {

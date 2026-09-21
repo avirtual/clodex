@@ -4295,6 +4295,11 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
   flex-shrink: 0;
 }
 
+.ipc-body .ipc-path {
+  color: inherit;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
 .ipc-body {
   color: var(--text);
   white-space: pre-wrap;

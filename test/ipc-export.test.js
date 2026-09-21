@@ -45,6 +45,14 @@ test('ipcRowParts: an ordinary message keeps from -> to and grows no session bad
   );
 });
 
+test('t1059: a spill row is an ordinary clodex → agent row, and the export line carries the filed path verbatim', () => {
+  const row = { type: 'spill', from: 'clodex', to: 'wirescope', body: '[agent:task add hand] (1234 B) filed at /x/y.md', path: '/x/y.md' };
+  assert.deepStrictEqual(ipcRowParts(row), { name: 'clodex', session: null, to: 'wirescope' });
+  const line = formatIpcLine(row, new Date('2026-07-15T12:34:56.789Z'));
+  assert.strictEqual(line, '2026-07-15T12:34:56.789Z clodex -> wirescope [agent:task add hand] (1234 B) filed at /x/y.md');
+  assert.ok(line.includes('/x/y.md'));
+});
+
 test('ipcRowParts: a keepwarm row is one-sided — seat name, short id, no target', () => {
   assert.deepStrictEqual(
     ipcRowParts({ type: 'keepwarm', from: 'clodex', session: '445c6720-1111-2222-3333-c7d299dd39c0' }),
