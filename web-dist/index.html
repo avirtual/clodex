@@ -10036,6 +10036,7 @@ body.web-frontend #sidebar-header {
         { name: "onSessionMovedOut", kind: "on", channel: "session:moved-out" },
         { name: "onSessionMovedIn", kind: "on", channel: "session:moved-in" },
         { name: "renameSession", kind: "invoke", channel: "session:rename" },
+        { name: "scratchMark", kind: "invoke", channel: "session:scratch-mark", argmap: (name, label) => [{ name, label }] },
         { name: "setSessionTools", kind: "invoke", channel: "session:setTools" },
         { name: "setSessionSkills", kind: "invoke", channel: "session:setSkills" },
         { name: "setSessionAgents", kind: "invoke", channel: "session:setAgents" },
@@ -40664,6 +40665,23 @@ ${detail}` });
             break;
           case "moveToWorkspace":
             moveSessionToWorkspace(name, workspaceId, workspaceName);
+            break;
+          case "scratchMark":
+            promptText(`Scratch mark on "${name}" \u2014 label`, "").then((raw) => {
+              if (raw == null || !raw.trim()) return;
+              const label = raw.trim();
+              if (!/^(?!replay$)[A-Za-z0-9._-]{1,32}$/.test(label)) {
+                showToast('Label must be 1\u201332 chars: letters, digits, . _ - (not "replay")', { kind: "error", duration: 8e3, name });
+                return;
+              }
+              return window.api.scratchMark(name, label).then((res) => {
+                if (!res || !res.ok) {
+                  showToast(res && res.error || "Scratch mark failed", { kind: "error", duration: 1e4, name });
+                  return;
+                }
+                showToast(`Mark "${label}" set on ${name}`, { name });
+              });
+            });
             break;
           case "reattach":
             if (type) {
