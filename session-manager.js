@@ -1021,7 +1021,7 @@ function createSessionManager(deps) {
               if (isSubagentRole(t.role)) this._noteSubagentTurn(s, t);
             }
           }
-          if (t.sideCall || t.compact || isSubagentRole(t.role)) return; // intents: main line only
+          if (t.sideCall || t.compact || isSubagentRole(t.role)) return;
           // Plugin turn-text feed. Positioned INSIDE the main-line filter above
           // deliberately, and NOT gated on stop.is_turn: `turn.completed` fires
           // per REQUEST (~4.4 per user turn), and gating would drop the text of
