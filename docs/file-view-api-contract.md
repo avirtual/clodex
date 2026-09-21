@@ -103,6 +103,10 @@ POST /api/sessions/:name/query   {kind: "filePeek", args: {path, offset?, length
     since been removed (the ordinary case for a cleaned-up spill, not an edge).
   - `not-a-file` (400) — directory, symlink, device.
   - `unreadable` (500) — stat/read failed for another reason.
+- A `files` or `filePeek` for a name that is not a session answers HTTP 404
+  `{ok:false, error:"no such session"}` with NO `code` field, deliberately: a
+  client distinguishes 'no such session' from 'file not found' by the presence
+  of `code`. If this reply ever gains a code it will not be `not-found`.
 
 ### 3. Confinement
 

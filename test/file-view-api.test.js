@@ -217,7 +217,7 @@ test('peekFile: offset/length echo, clamp to PEEK_MAX_BYTES, truncated, and the 
   const root = mkTmpRoot('clx-fileview-');
   const p = writeAt(root, 'a.txt', 'hello world, this is text');
   const whole = peekFile(p);
-  assert.deepStrictEqual(whole, { ok: true, path: p, size: 25, mtime: fs.statSync(p).mtimeMs, offset: 0, length: 25, truncated: false, binary: false, content: 'hello world, this is text' });
+  assert.deepStrictEqual(whole, { ok: true, path: p, size: 25, mtime: Math.trunc(fs.statSync(p).mtimeMs), offset: 0, length: 25, truncated: false, binary: false, content: 'hello world, this is text' });
   const part = peekFile(p, { offset: 6, length: 5 });
   assert.deepStrictEqual([part.offset, part.length, part.truncated, part.content], [6, 5, true, 'world']);
   const tail = peekFile(p, { offset: 20, length: 100 });
@@ -276,7 +276,7 @@ test('peekFile: binary detection and every error code', () => {
   const root = mkTmpRoot('clx-fileview-');
   const bin = writeAt(root, 'b.bin', Buffer.concat([Buffer.from([0x41, 0x00, 0x42]), Buffer.alloc(100, 0x43)]));
   const b = peekFile(bin);
-  assert.deepStrictEqual(b, { ok: true, path: bin, size: 103, mtime: fs.statSync(bin).mtimeMs, offset: 0, length: 0, truncated: false, binary: true, content: null });
+  assert.deepStrictEqual(b, { ok: true, path: bin, size: 103, mtime: Math.trunc(fs.statSync(bin).mtimeMs), offset: 0, length: 0, truncated: false, binary: true, content: null });
   const ranged = peekFile(bin, { offset: 1, length: 4 });
   assert.deepStrictEqual([ranged.offset, ranged.length, ranged.truncated, ranged.binary, ranged.content, ranged.size], [0, 0, false, true, null, 103], 'a binary reply carries no range whatever was asked');
   const nf = peekFile(path.join(root, 'nope.txt'));
@@ -305,13 +305,13 @@ test('peekFile: binary detection and every error code', () => {
   assert.ok(typeof nf.error === 'string' && typeof dir.error === 'string');
 });
 
-function wiringFixture({ registry, cwd, session }) {
+function wiringFixture({ registry, cwd, session, fs: fsDep = fs }) {
   const manager = { sessions: new Map([[session.name, session]]) };
   const peeks = [];
   const diffs = [];
   let srv = null;
   const deps = {
-    path, fs, os,
+    path, fs: fsDep, os,
     log: { info() {}, error() {}, warn() {} },
     DEFAULT_WORKSPACE_ID: 'default',
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
@@ -394,12 +394,72 @@ test('confinement (remote query only): cwd, spill, messages and task dirs of the
   assert.strictEqual(f.query('seat', 'filePeek', { path: sweptMsg }).code, 'gone', 'a root swept whole still confines, so a listed file under it is gone, not outside');
   assert.strictEqual(f.query('seat', 'filePeek', { path: path.join(registry, 'messages', 'seat', 'other.txt') }).code, 'not-found');
   assert.strictEqual(f.query('seat', 'filePeek', { path: path.join(cwd, 'src') }).code, 'not-a-file', 'a directory inside cwd');
-  assert.strictEqual(f.query('seat', 'filePeek', { path: cwd }).code, 'outside', 'the root itself is not inside it');
+  assert.strictEqual(f.query('seat', 'filePeek', { path: cwd }).code, 'not-a-file', 'the root itself is a directory, not outside');
   assert.deepStrictEqual(f.query('seat', 'fileDiff', { path: out }), { ok: false, code: 'outside', error: 'path is outside what this seat may read over the phone-access server' });
   assert.strictEqual(f.query('seat', 'fileDiff', { path: inCwd }).ok, true);
   assert.deepStrictEqual(f.diffs, [['seat', inCwd]], 'fileDiff still receives the requested path');
   assert.ok(f.peeks.every(([p]) => path.isAbsolute(p)));
   assert.strictEqual(f.query('seat', 'files').ok, true);
+});
+
+test('mtime is integral on both filePeek shapes and on a seeded filed[].ts, whatever the filesystem holds', () => {
+  const root = mkTmpRoot('clx-fileview-');
+  const frac = 1790025439448.5999;
+  const text = writeAt(root, 'frac.txt', 'text', frac);
+  const bin = writeAt(root, 'frac.bin', Buffer.from([0x41, 0x00, 0x42]), frac);
+  assert.strictEqual(Number.isInteger(fs.statSync(text).mtimeMs), false, 'the fixture filesystem really keeps the fraction');
+  const t = peekFile(text);
+  const b = peekFile(bin);
+  assert.deepStrictEqual([t.binary, Number.isInteger(t.mtime), t.mtime], [false, true, 1790025439448]);
+  assert.deepStrictEqual([b.binary, Number.isInteger(b.mtime), b.mtime], [true, true, 1790025439448]);
+  const ring = createFiledRing();
+  assert.strictEqual(seedFiledRing(ring, [{ dir: root, kind: 'intent' }]), 2);
+  assert.ok(ring.list().every((e) => Number.isInteger(e.ts)), `filed[].ts: ${ring.list().map((e) => e.ts)}`);
+});
+
+test('confinement follow-up: a non-traversable ancestor is outside, a loop is unreadable; a root itself and a dangling link inside cwd are not-a-file', () => {
+  const registry = mkTmpRoot('clx-fileview-');
+  const cwd = mkTmpRoot('clx-fileview-');
+  const outsideRoot = mkTmpRoot('clx-fileview-');
+  const session = { name: 'seat', agentType: 'claude', cwd, filedRing: createFiledRing() };
+  const guarded = path.join(outsideRoot, 'guarded');
+  const sealed = path.join(outsideRoot, 'sealed');
+  const looped = path.join(outsideRoot, 'looped');
+  const fail = (code) => Object.assign(new Error(`${code}: fixture`), { code });
+  const throwsBelow = { [guarded]: 'EACCES', [sealed]: 'EPERM', [looped]: 'ELOOP' };
+  const seen = [];
+  const fakeFs = Object.create(fs, {
+    realpathSync: {
+      value: (p) => {
+        seen.push(String(p));
+        for (const [dir, code] of Object.entries(throwsBelow)) if (String(p) === dir || String(p).startsWith(dir + path.sep)) throw fail(code);
+        return fs.realpathSync(p);
+      },
+    },
+  });
+  const f = wiringFixture({ registry, cwd, session, fs: fakeFs });
+  const eacces = f.query('seat', 'filePeek', { path: path.join(guarded, 'deep', 'x.txt') });
+  assert.deepStrictEqual([eacces.ok, eacces.code], [false, 'outside'], 'EACCES walks up and lands in the roots check, not in unreadable');
+  assert.ok(seen.includes(outsideRoot), `walked up to ${outsideRoot}: ${seen}`);
+  const eperm = f.query('seat', 'filePeek', { path: path.join(sealed, 'x.txt') });
+  assert.deepStrictEqual([eperm.ok, eperm.code], [false, 'outside']);
+  const eloop = f.query('seat', 'filePeek', { path: path.join(looped, 'x.txt') });
+  assert.deepStrictEqual([eloop.ok, eloop.code], [false, 'unreadable'], 'ELOOP does not walk up');
+  assert.strictEqual(f.query('seat', 'filePeek', { path: cwd }).code, 'not-a-file', 'the cwd root itself');
+  const msgRoot = path.join(registry, 'messages', 'seat');
+  fs.mkdirSync(msgRoot, { recursive: true });
+  fs.mkdirSync(path.join(registry, 'messages', 'other'), { recursive: true });
+  assert.strictEqual(f.query('seat', 'filePeek', { path: msgRoot }).code, 'not-a-file', 'the messages root itself');
+  assert.strictEqual(f.query('seat', 'filePeek', { path: path.join(registry, 'messages', 'other') }).code, 'outside', 'a sibling of a root');
+  assert.strictEqual(f.query('seat', 'filePeek', { path: `${cwd}2` }).code, 'outside', 'a sibling sharing the root\'s prefix');
+  fs.symlinkSync(path.join(cwd, 'missing.txt'), path.join(cwd, 'dangling'));
+  const dangling = f.query('seat', 'filePeek', { path: path.join(cwd, 'dangling') });
+  assert.deepStrictEqual([dangling.ok, dangling.code], [false, 'not-a-file'], 'a dangling symlink inside cwd');
+  fs.symlinkSync(path.join(outsideRoot, 'missing.txt'), path.join(outsideRoot, 'dangling'));
+  const outLink = f.query('seat', 'filePeek', { path: path.join(outsideRoot, 'dangling') });
+  assert.deepStrictEqual([outLink.ok, outLink.code], [false, 'outside'], 'a dangling symlink outside every root is outside, never not-a-file');
+  assert.strictEqual(f.query('seat', 'filePeek', { path: path.join(cwd, 'nope.txt') }).code, 'not-found', 'a plain missing file inside cwd is still not-found');
+  assert.strictEqual(f.peeks.length, 2, 'only the two roots reached the peek');
 });
 
 test('fetchSessionFiles shape: filed rides beside files (engine source pin)', () => {
@@ -438,14 +498,20 @@ function collect(server, emit) {
   });
 }
 
-test('_handleQuery maps code to status; notifyFiled broadcasts filed {name}; hello advertises filed', async () => {
+test('_handleQuery maps code to status; no such session is codeless; notifyFiled broadcasts filed {name}; hello advertises filed', async () => {
+  const cwd = mkTmpRoot('clx-fileview-');
+  const wiring = wiringFixture({ registry: mkTmpRoot('clx-fileview-'), cwd, session: { name: 'seat', agentType: 'claude', cwd, filedRing: createFiledRing() } });
   const server = new RemoteServer({
     port: 0, host: '127.0.0.1', pagePath: PAGE,
     getSessions: () => [], getTranscript: () => ({ ok: true, messages: [] }), send: () => ({ ok: true }),
-    query: (name, kind, args) => (args.code ? { ok: false, code: args.code, error: 'e' } : { ok: true, name, kind }),
+    query: (name, kind, args) => (name !== 's' ? wiring.query(name, kind, args) : args.code ? { ok: false, code: args.code, error: 'e' } : { ok: true, name, kind }),
   });
   await server.start();
   try {
+    for (const kind of ['files', 'filePeek']) {
+      const none = await req(server, 'POST', '/api/sessions/nope/query', { kind, args: { path: path.join(cwd, 'a.txt') } });
+      assert.deepStrictEqual([none.status, none.json], [404, { ok: false, error: 'no such session' }], `${kind}: no such session is a 404 with NO code`);
+    }
     for (const [code, status] of [['outside', 403], ['not-found', 404], ['gone', 410], ['not-a-file', 400], ['unreadable', 500], ['whatever', 404]]) {
       const { status: got, json } = await req(server, 'POST', '/api/sessions/s/query', { kind: 'filePeek', args: { code } });
       assert.strictEqual(got, status, `code ${code} → ${status}`);
