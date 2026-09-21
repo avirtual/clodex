@@ -15,7 +15,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SID = '11111111-2222-3333-4444-555555555555';
 const DEFAULT_CAPS = [
-  'transcript', 'transcript-since', 'transcript-after', 'send', 'resources',
+  'transcript', 'transcript-since', 'transcript-after', 'send', 'filed', 'resources',
 ];
 
 function waitFor(pred, what, timeoutMs = 5000) {
@@ -96,7 +96,7 @@ test('hello carries the import cap only when a seatImport is injected', async ()
   await withServer({ seatImport: stubSeatImport(), importCreate: () => ({ ok: true }) }, async (wired) => {
     const on = await call(wired.port, 'GET', '/api/peer/hello');
     assert.deepStrictEqual(on.body.caps, [
-      'transcript', 'transcript-since', 'transcript-after', 'send', 'import', 'resources',
+      'transcript', 'transcript-since', 'transcript-after', 'send', 'filed', 'import', 'resources',
     ]);
   });
 });

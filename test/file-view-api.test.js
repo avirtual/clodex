@@ -29,7 +29,7 @@ function writeAt(dir, name, body, mtimeMs) {
 function sansTs(e) { const { ts, ...rest } = e; return rest; }
 
 test('filed ring: newest first, dedupe by path, cap, and list() drops entries whose file is gone', () => {
-  const root = mkTmpRoot('clx-filed-ring-');
+  const root = mkTmpRoot('clx-fileview-');
   const ring = createFiledRing(3);
   const a = writeAt(root, 'a.md', 'A');
   const b = writeAt(root, 'b.md', 'B');
@@ -52,7 +52,7 @@ test('filed ring: newest first, dedupe by path, cap, and list() drops entries wh
 });
 
 test('filed ring: seeding lists the spill dir (intent) and the messages dir (message) by mtime, newest first, capped', () => {
-  const root = mkTmpRoot('clx-filed-seed-');
+  const root = mkTmpRoot('clx-fileview-');
   const spill = path.join(root, 'spill', 'seat');
   const msgs = path.join(root, 'messages', 'seat');
   const s1 = writeAt(spill, '0000000000000001.md', 'Regenerate the prompt\nbody', 1000);
@@ -79,14 +79,14 @@ test('head is at most 120 UTF-8 bytes, cut back to a character boundary, never a
   assert.strictEqual(clipped, `${'é'.repeat(59)}`, '118 bytes of é, then 日 (3 bytes) would straddle 120 — dropped whole');
   assert.strictEqual(clipHead('one line\nsecond'), 'one line');
   const ring = createFiledRing();
-  const root = mkTmpRoot('clx-filed-head-');
+  const root = mkTmpRoot('clx-fileview-');
   const p = writeAt(root, 'x.md', 'x');
   ring.note({ path: p, kind: 'intent', head, bytes: 1, ts: 1 });
   assert.strictEqual(ring.list()[0].head, clipped, 'the ring applies the same cap on note()');
 });
 
 test('spillHead: intent head + first line of the file; prose spills say prose', () => {
-  const root = mkTmpRoot('clx-filed-spillhead-');
+  const root = mkTmpRoot('clx-fileview-');
   const p = writeAt(root, 'x.md', 'Regenerate the append prompt\nlong body');
   assert.strictEqual(spillHead(p, { verb: 'task.add', head: 'task add hand' }), '[agent:task add hand] Regenerate the append prompt');
   assert.strictEqual(spillHead(p, { verb: 'prose', head: null }), 'prose');
@@ -94,7 +94,7 @@ test('spillHead: intent head + first line of the file; prose spills say prose', 
 });
 
 function writerFixture() {
-  const root = mkTmpRoot('clx-filed-writers-');
+  const root = mkTmpRoot('clx-fileview-');
   const notified = [];
   const spilled = [];
   let n = 0;
@@ -214,7 +214,7 @@ test('create() seeds session.filedRing from the running host\'s REGISTRY_DIR (sp
 });
 
 test('peekFile: offset/length echo, clamp to PEEK_MAX_BYTES, truncated, and the default call keeps the old shape', () => {
-  const root = mkTmpRoot('clx-peek-');
+  const root = mkTmpRoot('clx-fileview-');
   const p = writeAt(root, 'a.txt', 'hello world, this is text');
   const whole = peekFile(p);
   assert.deepStrictEqual(whole, { ok: true, path: p, size: 25, mtime: fs.statSync(p).mtimeMs, offset: 0, length: 25, truncated: false, binary: false, content: 'hello world, this is text' });
@@ -233,7 +233,7 @@ test('peekFile: offset/length echo, clamp to PEEK_MAX_BYTES, truncated, and the 
 });
 
 test('peekFile: a cut inside a multibyte sequence trims back to the boundary and reports the trimmed length', () => {
-  const root = mkTmpRoot('clx-peek-utf8-');
+  const root = mkTmpRoot('clx-fileview-');
   const p = writeAt(root, 'u.txt', 'ab日本語cd');
   const r = peekFile(p, { offset: 0, length: 4 });
   assert.deepStrictEqual([r.length, r.content, r.truncated], [2, 'ab', true], '4 cuts 日 (bytes 2-4) in half: trimmed by 2');
@@ -250,7 +250,7 @@ test('peekFile: a cut inside a multibyte sequence trims back to the boundary and
 });
 
 test('peekFile: binary detection and every error code', () => {
-  const root = mkTmpRoot('clx-peek-codes-');
+  const root = mkTmpRoot('clx-fileview-');
   const bin = writeAt(root, 'b.bin', Buffer.from([0x41, 0x00, 0x42]));
   const b = peekFile(bin);
   assert.deepStrictEqual([b.ok, b.binary, b.content, b.size], [true, true, null, 3]);
@@ -315,9 +315,9 @@ function wiringFixture({ registry, cwd, session }) {
 }
 
 test('confinement (remote query only): cwd, spill, messages and task dirs of the RUNNING registry are readable; anything else is outside', () => {
-  const registry = mkTmpRoot('clx-confine-reg-');
-  const cwd = mkTmpRoot('clx-confine-cwd-');
-  const outsideRoot = mkTmpRoot('clx-confine-out-');
+  const registry = mkTmpRoot('clx-fileview-');
+  const cwd = mkTmpRoot('clx-fileview-');
+  const outsideRoot = mkTmpRoot('clx-fileview-');
   const session = { name: 'seat', agentType: 'claude', cwd, filedRing: createFiledRing() };
   const f = wiringFixture({ registry, cwd, session });
   const inCwd = writeAt(path.join(cwd, 'src'), 'a.js', 'const a = 1;');

@@ -9,7 +9,8 @@
         { "name": "messaging", "path": "docs/messaging.md" },
         { "name": "peering", "path": "docs/peering.md" },
         { "name": "teams", "path": "docs/teams.md" },
-        { "name": "telemetry", "path": "docs/telemetry.md" }
+        { "name": "telemetry", "path": "docs/telemetry.md" },
+        { "name": "file-view-api-contract", "path": "docs/file-view-api-contract.md" }
       ]
     },
     {
