@@ -760,8 +760,8 @@ OUTPUT="\${RUNDIR}/hook-output.json"
   // leaves it behind. SHARED pending/<name>/, codex-session-hook.sh and
   // sessions/<name>/ are deliberately untouched.
   function dropRunDir(name) {
-    try { fs.rmSync(seatPathFor(REGISTRY_DIR, name, 'run'), { recursive: true, force: true }); } catch {}
     try { fs.rmSync(runDirFor(REGISTRY_DIR, name), { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(seatPathFor(REGISTRY_DIR, name, 'run'), { recursive: true, force: true }); } catch {}
   }
 
   function cleanupClaudeHook(name) {

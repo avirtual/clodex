@@ -266,23 +266,25 @@ test('unregister: removes the record', () => {
   assert.ok(!fs.existsSync(regFile(REGISTRY_DIR, 'z')));
 });
 
-test('register mints run/<name> as a seat LINK, not a bare real dir', () => {
+test('register mints run/<name> as the REAL dir, with sessions/<n>/run linking to it', () => {
   const why = 'a seat spawned with a user --settings never runs setupClaudeHook, so register() is '
-    + 'the only thing that creates its run dir. Without the link mint that dir is REAL, and '
-    + 'ensureSeatLink refuses to adopt a real legacy dir afterwards: the seat is then permanently '
-    + 'exempt from the seat layout, with no symptom until something reads sessions/<n>/run';
+    + 'the only thing that creates its run dir; the socket it names must live under run/, the one '
+    + 'path a sandbox mounts as a socket-capable tmpfs, and the seat home must still reach it';
   const REGISTRY_DIR = tmp();
   migrateSeatLayout({ root: REGISTRY_DIR, names: [], fs });
   const { registry } = mk(REGISTRY_DIR);
 
   registry.register('settings-seat', path.join(REGISTRY_DIR, 'settings-seat.sock'));
 
-  const old = runDirFor(REGISTRY_DIR, 'settings-seat');
-  assert.ok(fs.lstatSync(old).isSymbolicLink(), `run/<name> must be the link, not the real dir — ${why}`);
+  const real = runDirFor(REGISTRY_DIR, 'settings-seat');
+  assert.ok(!fs.lstatSync(real).isSymbolicLink() && fs.lstatSync(real).isDirectory(),
+    `run/<name> must be the real dir, not a link — ${why}`);
+  assert.ok(fs.realpathSync(real).startsWith(fs.realpathSync(path.join(REGISTRY_DIR, 'run')) + path.sep),
+    'and its realpath stays under run/');
   assert.strictEqual(
-    fs.realpathSync(old),
     fs.realpathSync(seatPathFor(REGISTRY_DIR, 'settings-seat', 'run')),
-    'and it must resolve into the seat home');
-  assert.ok(fs.existsSync(path.join(seatPathFor(REGISTRY_DIR, 'settings-seat', 'run'), 'agent.json')),
-    'so the registry entry it just wrote lands in the REAL dir under sessions/<n>/');
+    fs.realpathSync(real),
+    'sessions/<n>/run resolves into it');
+  assert.ok(fs.existsSync(path.join(real, 'agent.json')),
+    'so the registry entry it just wrote lands in the REAL dir under run/');
 });

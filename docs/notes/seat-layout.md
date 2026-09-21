@@ -49,7 +49,9 @@ agents `~/.clodex/messages/<seat>/`.
 
 `run` is the one kind DELETED rather than moved. It is regenerated at every spawn
 and `rm -rf`'d at every exit, so it is residue; moving it would carry a dead
-socket and a stale registry entry into the home nothing cleans.
+socket and a stale registry entry into the home nothing cleans. The migration
+drops it at both spellings, including the OLD-direction shape (a link at
+`run/<seat>` over a real `sessions/<seat>/run`).
 
 The marker is PER-KIND, and that is what makes un-deferring a kind a real
 migration rather than a green suite. Under the original global one-shot marker, a
@@ -91,6 +93,16 @@ spawn writes through a dangling name.
 A legacy path that exists and is NOT a symlink is left alone — a seat created
 while the marker was absent, or a foreign directory, and replacing it would
 destroy state nothing has copied yet.
+
+`run` is the reversed kind (`ensureRunDir`): `run/<seat>` is the REAL dir and
+`sessions/<seat>/run` the link, because `sandbox.js` mounts `~/.clodex/run` as a
+tmpfs — the box's `~/.clodex` is a virtiofs bind that cannot host a unix socket,
+and a link from `run/` into the home put `agent.sock` on the bind (`EINVAL
+chmod`, then `listen ENOTSUP`, seat dead). A real `run/<seat>` is adopted, not
+refused; a `run/<seat>` that is a LINK (laid out by 9563c95f..b5239253) is
+unlinked and the home dir it pointed at removed before the real dir is made —
+`run/` is transient, so nothing is carried. A real `sessions/<seat>/run` gives
+way to the link; a link already naming `run/<seat>` is left as is.
 
 ## renameSeat
 

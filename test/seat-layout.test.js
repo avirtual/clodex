@@ -68,6 +68,22 @@ test('migration REMOVES run/<name> rather than moving it, and mints no link for 
   assert.strictEqual(fs.existsSync(path.join(root, 'sessions', 'ana', 'run')), false);
 });
 
+test('migration drops a run/<name> laid out the OLD way: the link at run/ and the real dir in the home', () => {
+  const root = tmp();
+  fs.mkdirSync(path.join(root, 'sessions', 'ana', 'run'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'sessions', 'ana', 'run', 'agent.sock'), '');
+  fs.mkdirSync(path.join(root, 'run'), { recursive: true });
+  fs.symlinkSync(path.join(root, 'sessions', 'ana', 'run'), runDirFor(root, 'ana'));
+  assert.ok(fs.lstatSync(runDirFor(root, 'ana')).isSymbolicLink(), 'ENTER: run/<name> is the link, the old direction');
+
+  migrateSeatLayout({ root, names: ['ana'], fs });
+
+  assert.throws(() => fs.lstatSync(runDirFor(root, 'ana')), /ENOENT/, 'the link at run/<name> is gone');
+  assert.throws(() => fs.lstatSync(path.join(root, 'sessions', 'ana', 'run')), /ENOENT/,
+    'and so is the real dir it pointed at: run/ is transient and re-minted at the next spawn');
+  assert.ok(fs.existsSync(path.join(root, 'sessions', 'ana')), 'the seat home survives');
+});
+
 test('already-migrated is a no-op: the target dir is not re-moved or re-created', () => {
   const root = tmp();
   seedAllSeven(root, 'ana');
@@ -352,49 +368,109 @@ test('DEFERRED_KINDS is empty: every kind that stayed a seat kind now has a link
   }
 });
 
-test('ensureSeatLink mints the link when the legacy path is absent', () => {
+test('agent.sock must stay under run/ because a sandbox mounts run/ as the only socket-capable fs', () => {
+  const why = 'sandbox.js mounts ~/.clodex/run as a tmpfs because the virtiofs bind under ~/.clodex '
+    + 'cannot host a unix socket: with run/<seat> a LINK into sessions/<seat>/run the socket inode '
+    + 'lands on the bind and listen() fails ENOTSUP, so the REAL dir has to be the one under run/';
   const root = tmp();
   migrateSeatLayout({ root, names: [], fs });
 
   assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'run', fs }), true);
-  const old = runDirFor(root, 'bo');
-  assert.ok(fs.lstatSync(old).isSymbolicLink());
-  assert.strictEqual(fs.realpathSync(old), fs.realpathSync(seatPathFor(root, 'bo', 'run')));
-  assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'run', fs }), true,
-    'idempotent: a second call over the link it just made changes nothing');
-  assert.ok(fs.lstatSync(old).isSymbolicLink());
+
+  const real = runDirFor(root, 'bo');
+  const link = seatPathFor(root, 'bo', 'run');
+  assert.ok(fs.lstatSync(real).isDirectory(), `run/<seat> is a real directory — ${why}`);
+  assert.ok(!fs.lstatSync(real).isSymbolicLink(), 'and not a symlink');
+  assert.ok(fs.realpathSync(real).startsWith(fs.realpathSync(path.join(root, 'run')) + path.sep),
+    'its realpath stays under run/, the mountable root');
+  assert.ok(fs.lstatSync(link).isSymbolicLink(), 'sessions/<seat>/run is the symlink');
+  assert.strictEqual(fs.realpathSync(link), fs.realpathSync(real), 'and it resolves to run/<seat>');
 });
 
-test('ensureSeatLink re-creates the TARGET of a link that survived its dir', () => {
+test('ensureSeatLink flips a run/<seat> link laid out the OLD way into a real dir', () => {
+  const why = 'a box laid out between 9563c95f and b5239253 has run/<seat> -> sessions/<seat>/run; '
+    + 'the next spawn must land the socket back on run/, and run/ is transient so nothing is carried';
+  const root = tmp();
+  migrateSeatLayout({ root, names: [], fs });
+  const real = runDirFor(root, 'bo');
+  const link = seatPathFor(root, 'bo', 'run');
+  fs.mkdirSync(link, { recursive: true });
+  fs.writeFileSync(path.join(link, 'agent.json'), '{"name":"bo"}');
+  fs.mkdirSync(path.dirname(real), { recursive: true });
+  fs.symlinkSync(link, real);
+  assert.ok(fs.lstatSync(real).isSymbolicLink(), 'ENTER: run/<seat> is the link here, the old direction');
+
+  assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'run', fs }), true);
+
+  assert.ok(fs.lstatSync(real).isDirectory() && !fs.lstatSync(real).isSymbolicLink(),
+    `run/<seat> is a real dir afterwards — ${why}`);
+  assert.ok(fs.lstatSync(link).isSymbolicLink(), 'sessions/<seat>/run is the link now');
+  assert.strictEqual(fs.realpathSync(link), fs.realpathSync(real));
+  assert.strictEqual(fs.existsSync(path.join(real, 'agent.json')), false,
+    'the old contents are gone: run/ is re-minted at every spawn, never migrated');
+});
+
+test('ensureSeatLink is idempotent over the run dir it just minted', () => {
   const root = tmp();
   migrateSeatLayout({ root, names: [], fs });
   ensureSeatLink({ root, name: 'bo', kind: 'run', fs });
-  fs.rmSync(seatPathFor(root, 'bo', 'run'), { recursive: true, force: true });
-  assert.throws(() => fs.statSync(runDirFor(root, 'bo')), /ENOENT/,
-    'ENTER: the link must be DANGLING here, or the repair below is about a healthy one');
+  const real = runDirFor(root, 'bo');
+  const link = seatPathFor(root, 'bo', 'run');
+  fs.writeFileSync(path.join(real, 'agent.json'), '{}');
+  const before = { real: fs.lstatSync(real).ino, link: fs.readlinkSync(link) };
 
   assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'run', fs }), true);
 
-  assert.ok(fs.statSync(runDirFor(root, 'bo')).isDirectory(),
-    'the link alone is not enough: cleanup drops the real dir at every exit and the next spawn '
-    + 'writes THROUGH the surviving link, so the target has to be re-made or every hook write ENOENTs');
+  assert.strictEqual(fs.lstatSync(real).ino, before.real, 'the real dir is the same inode');
+  assert.strictEqual(fs.readlinkSync(link), before.link, 'the link is untouched');
+  assert.strictEqual(fs.readFileSync(path.join(real, 'agent.json'), 'utf8'), '{}',
+    'and a second call over a live seat does not wipe its run dir');
 });
 
-test('ensureSeatLink leaves a REAL legacy dir alone rather than replacing it', () => {
-  const why = 'a seat created while the marker was absent, or a foreign dir: clobbering it would '
-    + 'destroy state nothing has copied yet';
+test('ensureSeatLink re-creates run/<seat> under a seat-home link that survived cleanup', () => {
   const root = tmp();
   migrateSeatLayout({ root, names: [], fs });
-  const old = runDirFor(root, 'bo');
-  fs.mkdirSync(old, { recursive: true });
-  fs.writeFileSync(path.join(old, 'keep'), 'k');
+  ensureSeatLink({ root, name: 'bo', kind: 'run', fs });
+  fs.rmSync(runDirFor(root, 'bo'), { recursive: true, force: true });
+  assert.throws(() => fs.statSync(seatPathFor(root, 'bo', 'run')), /ENOENT/,
+    'ENTER: the seat-home link must be DANGLING here, or the repair below is about a healthy one');
 
-  assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'run', fs }), false, why);
-  assert.ok(!fs.lstatSync(old).isSymbolicLink(), why);
-  assert.strictEqual(fs.readFileSync(path.join(old, 'keep'), 'utf8'), 'k', why);
-  assert.strictEqual(fs.existsSync(seatPathFor(root, 'bo', 'run')), false,
-    'and it mints no empty sessions/<n>/run either: the bail comes before both mkdirs, or every '
-    + 'exempt seat leaves an unused dir nothing ever writes to');
+  assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'run', fs }), true);
+
+  assert.ok(fs.lstatSync(runDirFor(root, 'bo')).isDirectory(),
+    'cleanup drops the real dir at every exit and the next spawn writes to run/<seat> again');
+  assert.strictEqual(fs.realpathSync(seatPathFor(root, 'bo', 'run')), fs.realpathSync(runDirFor(root, 'bo')),
+    'and the surviving link resolves once more');
+});
+
+test('ensureSeatLink ADOPTS a real run/<seat> dir rather than refusing it', () => {
+  const why = 'unlike the six durable kinds, run/<seat> IS the target now: a dir register() or a '
+    + 'pre-marker spawn made is the right shape already and only the seat-home link is missing';
+  const root = tmp();
+  migrateSeatLayout({ root, names: [], fs });
+  const real = runDirFor(root, 'bo');
+  fs.mkdirSync(real, { recursive: true });
+  fs.writeFileSync(path.join(real, 'keep'), 'k');
+
+  assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'run', fs }), true, why);
+  assert.ok(!fs.lstatSync(real).isSymbolicLink(), why);
+  assert.strictEqual(fs.readFileSync(path.join(real, 'keep'), 'utf8'), 'k', 'its contents survive');
+  assert.strictEqual(fs.realpathSync(seatPathFor(root, 'bo', 'run')), fs.realpathSync(real),
+    'and sessions/<seat>/run now links to it');
+});
+
+test('ensureSeatLink replaces a REAL sessions/<seat>/run dir with the link', () => {
+  const root = tmp();
+  migrateSeatLayout({ root, names: [], fs });
+  const link = seatPathFor(root, 'bo', 'run');
+  fs.mkdirSync(link, { recursive: true });
+  fs.writeFileSync(path.join(link, 'stale'), 's');
+
+  assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'run', fs }), true);
+
+  assert.ok(fs.lstatSync(link).isSymbolicLink(), 'the stale real dir gave way to the link');
+  assert.strictEqual(fs.existsSync(path.join(runDirFor(root, 'bo'), 'stale')), false,
+    'and nothing from it was carried into run/<seat>');
 });
 
 test('ensureSeatLink is inert before the marker exists', () => {
@@ -404,9 +480,9 @@ test('ensureSeatLink is inert before the marker exists', () => {
   assert.strictEqual(fs.existsSync(runDirFor(root, 'bo')), false);
 });
 
-test('cleanupClaudeHook through the link leaves neither path, and keeps the seat home', () => {
-  const why = 'a cleanup naming only the old spelling unlinks it and strands the real run dir '
-    + 'under sessions/<seat>/ forever — nothing else ever looks there';
+test('cleanupClaudeHook leaves neither run spelling, and keeps the seat home', () => {
+  const why = 'a cleanup naming only the seat-home spelling unlinks it and strands the real run dir '
+    + 'under run/ forever — the next spawn re-mints both, but nothing sweeps the orphan';
   const root = tmp();
   migrateSeatLayout({ root, names: [], fs });
   const hooks = createCliHooks({
@@ -417,17 +493,17 @@ test('cleanupClaudeHook through the link leaves neither path, and keeps the seat
   });
 
   hooks.setupClaudeHook('bo');
-  const old = runDirFor(root, 'bo');
-  const real = seatPathFor(root, 'bo', 'run');
-  assert.ok(fs.lstatSync(old).isSymbolicLink(),
-    'ENTER: setup must mint the run link before writing, or the cleanup below is a statement '
+  const real = runDirFor(root, 'bo');
+  const link = seatPathFor(root, 'bo', 'run');
+  assert.ok(fs.lstatSync(link).isSymbolicLink(),
+    'ENTER: setup must mint the seat-home link before writing, or the cleanup below is a statement '
     + 'about an ordinary directory');
-  assert.ok(fs.existsSync(path.join(real, 'hook.sh')), 'the hook bytes must land in the REAL dir');
+  assert.ok(fs.existsSync(path.join(real, 'hook.sh')), 'the hook bytes must land in the REAL dir under run/');
 
   hooks.cleanupClaudeHook('bo');
 
   assert.strictEqual(fs.existsSync(real), false, why);
-  assert.throws(() => fs.lstatSync(old), /ENOENT/, 'the link must be gone too');
+  assert.throws(() => fs.lstatSync(link), /ENOENT/, 'the seat-home link must be gone too');
   assert.ok(fs.statSync(path.join(root, 'sessions', 'bo')).isDirectory(), 'the seat home survives exit');
 });
 
@@ -541,16 +617,18 @@ test('renameSeat carries no run residue into the new home, and leaves no run lin
     + 'happens to overwrite each file';
   const root = tmp();
   migratedSeat(root, 'ana');
-  const oldRun = seatPathFor(root, 'ana', 'run');
-  fs.mkdirSync(oldRun, { recursive: true });
+  ensureSeatLink({ root, name: 'ana', kind: 'run', fs });
+  const oldRun = runDirFor(root, 'ana');
   fs.writeFileSync(path.join(oldRun, 'agent.json'), '{"name":"ana"}');
-  assert.ok(fs.existsSync(path.join(oldRun, 'agent.json')), 'ENTER: the old home really holds run residue');
+  assert.ok(fs.existsSync(path.join(seatPathFor(root, 'ana', 'run'), 'agent.json')),
+    'ENTER: the old home really reaches run residue through its link');
 
   renameSeat({ root, oldName: 'ana', newName: 'bea', fs });
 
-  assert.strictEqual(fs.existsSync(seatPathFor(root, 'bea', 'run')), false,
-    `sessions/<new>/run is gone — ${why}`);
-  assert.strictEqual(exists(legacySeatPathFor(root, 'bea', 'run')), false, 'and no run link was minted');
+  assert.strictEqual(exists(oldRun), false, `the real run/<old> is gone — ${why}`);
+  assert.strictEqual(exists(seatPathFor(root, 'bea', 'run')), false,
+    'and the link that moved with the home is gone, not left dangling at run/<old>');
+  assert.strictEqual(exists(runDirFor(root, 'bea')), false, 'and no run/<new> was minted');
 });
 
 test('renameSeat DELETES an unmigrated real run/<old> rather than moving it to run/<new>', () => {
