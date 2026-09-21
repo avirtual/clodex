@@ -881,11 +881,13 @@ accept teardown removes.
   prompt). The intent tee reads the UNSPILLED upstream bytes, so the wire path
   dispatches the full body and never a pointer; a pointer body that does arrive
   on the wire path was typed by the model and is bounced (`fromWire`), never
-  resolved. A non-wire scan (`_scanJsonlText`, sentinel recovery) resolves
-  pointers and still expands a receipt line that an older transcript holds back
-  into the intent from the named file, after confining the path to the sender's
-  own spill dir — a copied or typed receipt fails confinement or the file check
-  and bounces with the same note as a typed pointer. The filter also watches the
+  resolved. A non-wire scan (`_scanJsonlText`, sentinel recovery) expands the
+  tee's stub — and a receipt line that an older transcript holds — back into
+  the intent from the named file before the dedupe key is taken, so a
+  tee-failure replay of a turn the wire already dispatched is rejected as a
+  cross-path overlap rather than fired twice; the receipt path is confined to
+  the sender's own spill dir — a copied or typed receipt fails confinement or
+  the file check and bounces with the same note as a typed pointer. The filter also watches the
   RAW stream it is fed for a receipt-, filler- or pointer-shaped line
   (`mimicKindOf`) outside any intent body it holds or passes through: upstream of
   its own rewrite, such a line is model-authored by construction, so it raises

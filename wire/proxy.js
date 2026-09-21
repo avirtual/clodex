@@ -346,7 +346,7 @@ class WireProxy extends EventEmitter {
     for (const [k, v] of Object.entries(req.headers)) {
       if (!HOP_BY_HOP.has(k.toLowerCase())) fwdHeaders[k] = v;
     }
-    if (spillEligible) fwdHeaders['accept-encoding'] = 'identity';
+    if (spillEligible && !systemAdjacent) fwdHeaders['accept-encoding'] = 'identity';
     if (chatgptMode) {
       upstreamPath = rewriteChatgptRequest(upstreamPath, fwdHeaders);
     }

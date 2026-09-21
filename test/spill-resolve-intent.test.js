@@ -9,6 +9,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const { writeSpill, spillPathFor } = require('../intent-spill');
 const { shadowIntentKey, parseIntent, looksLikeIntent } = require('../intent-scanner');
 const { IntentDeduper } = require('../wire-intents');
+const { SpillFilter } = require('../wire/spill');
 
 const BIG = `spec line one\n${'z'.repeat(1200)}\nlast line`;
 
@@ -359,26 +360,55 @@ test('a seat with no live session still logs, notes and drops — nothing is typ
   assert.deepStrictEqual(h.injected, []);
 });
 
-test('the dedupe key is computed on the POINTER form at both dispatch sites, and resolution is what changes it', async () => {
+test('rework r1: the tee\'s stub, replayed by recovery, keys EQUAL to the original the wire claimed — so the cross-path claim rejects it', async () => {
   const h = mkH();
-  const id = writeSpill(h.root, 'lead', BIG);
-  const intent = { type: 'task', sub: 'add', body: `@spill:${id}` };
-  const before = shadowIntentKey('lead', intent);
+  const original = `Working.\n[agent:dm bob] ${BIG}\n[agent:end]\nDone.\n`;
+  const f = new SpillFilter({ agent: 'lead', root: h.root, verbs: ['dm'] });
+  const stub = f.feed(original) + f.close();
+  const id = /@spill:([0-9a-f]{16})/.exec(stub)[1];
+  assert.strictEqual(stub, `Working.\n[agent:dm bob] spec line one @spill:${id}\n[agent:end]\nDone.\n`, 'ENTER: the transcript carries the stub');
 
-  await h.m._handleIntent('lead', intent);
-
-  assert.notStrictEqual(shadowIntentKey('lead', intent), before,
-    'the chokepoint MUTATES the body, so the key is only stable if both sites take it before dispatch — '
-    + 'a key taken after would be the 1.2 KB body on one path and the pointer on the other, and one '
-    + 'emission recovered after a tee failure would fire twice');
+  const wire = h.m._extractIntents(original);
+  const replay = h.m._extractIntents(stub, { receiptsFor: 'lead' });
+  assert.strictEqual(replay.length, 1);
+  assert.strictEqual(replay[0].body, wire[0].body, 'the file is the body before anything keys it');
+  assert.deepStrictEqual(replay[0].spill, { id, path: spillPathFor(h.root, 'lead', id) });
+  const key = shadowIntentKey('lead', wire[0]);
+  assert.strictEqual(shadowIntentKey('lead', replay[0]), key,
+    'keyed on the pointer, the replay would be a fresh emission and the dm would go out twice');
+  assert.notStrictEqual(key, shadowIntentKey('lead', h.m._extractIntents(stub)[0]), 'the wire scan alone still sees the pointer');
 
   const d = new IntentDeduper();
-  assert.strictEqual(d.claim('lead', before, 'wire').ok, true);
-  const second = d.claim('lead', before, 'recovery');
-  assert.strictEqual(second.ok, false, 'the recovery replay of the same pointer turn is rejected');
-  assert.match(second.reason, /cross-path overlap/);
+  assert.strictEqual(d.claim('lead', key, 'wire').ok, true);
+  const second = d.claim('lead', shadowIntentKey('lead', replay[0]), 'recovery');
+  assert.strictEqual(second.ok, false, 'the recovery replay of the tee-stubbed turn is rejected');
+  assert.match(second.reason, /cross-path overlap \(wire→recovery\)/);
+
+  await h.m._handleIntent('lead', replay[0]);
+  assert.strictEqual(h.dms.length, 1);
+  assert.strictEqual(h.dms[0].body, BIG, 'and when recovery does dispatch (no wire claim), the body is whole');
 });
 
+test('rework r1: a stub whose file is gone stays a pointer for _handleIntent to bounce; a stub closed by the NEXT head, a titled task stub, and a fenced stub', async () => {
+  const h = mkH();
+  const id = writeSpill(h.root, 'lead', BIG);
+  const gone = '0123456789abcdef';
+  const text = `[agent:dm bob] @spill:${gone}\n[agent:end]\n[agent:task add hand start] spec line one @spill:${id}\n[agent:shout] fine\n[agent:end]\n`;
+  const intents = h.m._extractIntents(text, { receiptsFor: 'lead' });
+  assert.deepStrictEqual(intents.map((i) => [i.type, i.sub || null]), [['dm', null], ['task', 'add'], ['shout', null]]);
+  assert.strictEqual(intents[0].body, `@spill:${gone}`);
+  assert.strictEqual(intents[0].spill, undefined);
+  assert.strictEqual(intents[1].body, BIG, 'the title is discarded, the file is the body');
+  assert.strictEqual(intents[1].start, true);
+  assert.strictEqual(intents[1].who, 'hand');
+  assert.strictEqual(intents[2].body, 'fine', 'the reconstructed terminator does not swallow the head that closed the stub');
+
+  const fenced = `\`\`\`\n[agent:dm bob] @spill:${id}\n[agent:end]\n\`\`\`\n`;
+  assert.deepStrictEqual(h.m._extractIntents(fenced, { receiptsFor: 'lead' }), [], 'a fenced stub is a quote');
+  await h.m._handleIntent('lead', intents[0]);
+  assert.deepStrictEqual(h.dms, [], 'the missing file bounces as before');
+  assert.strictEqual(h.errors.length, 1);
+});
 
 function receiptLine(words, body, filePath, title) {
   const t = title === undefined ? '' : ` — "${title}"`;

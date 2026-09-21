@@ -180,7 +180,7 @@ const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
 const {
-  SPILL_VERBS, SPILL_MIN_BYTES, isSpillVerb, pointerOf, resolveSpill, spillPathFor, verbKeyOf, writeSpill,
+  SPILL_VERBS, SPILL_MIN_BYTES, HEAD_RE, isSpillVerb, pointerOf, resolveSpill, spillPathFor, verbKeyOf, writeSpill,
   receiptOf, resolveReceipt,
   capResumeSnapshot,
 } = require('./intent-spill');
@@ -4804,12 +4804,32 @@ function createSessionManager(deps) {
     }
 
 
+    _pointerStubOf(line) {
+      const intent = parseIntent(line);
+      if (!intent || !isSpillVerb(intent)) return null;
+      const id = pointerOf(intent.body);
+      if (!id) return null;
+      const m = HEAD_RE.exec(line.trim());
+      return m ? { id, head: m[0] } : null;
+    }
+
     _expandReceipts(lines, agent) {
       const fenced = fencedLines(lines);
       const out = [];
       const spillAt = new Map();
       const unresolved = [];
       for (let i = 0; i < lines.length; i++) {
+        const stub = fenced[i] ? null : this._pointerStubOf(lines[i]);
+        if (stub) {
+          const r = resolveSpill(REGISTRY_DIR, agent, stub.id);
+          if (!r.ok) { out.push(lines[i]); continue; }
+          const bodyLines = r.body.split('\n');
+          spillAt.set(out.length, { id: stub.id, path: r.path });
+          out.push(`${stub.head} ${bodyLines[0]}`, ...bodyLines.slice(1), '[agent:end]');
+          const next = i + 1 < lines.length ? parseIntent(lines[i + 1]) : null;
+          if (next && next.type === 'end') i += 1;
+          continue;
+        }
         const rc = fenced[i] ? null : receiptOf(lines[i]);
         if (!rc) { out.push(lines[i]); continue; }
         const r = resolveReceipt(REGISTRY_DIR, agent, rc.path);

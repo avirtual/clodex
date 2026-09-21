@@ -60,8 +60,11 @@ most 80 chars of title before it (`TITLED_POINTER_RE`) — the shape the tee
 writes, and the shape a resumed seat replays from a transcript already on disk.
 Resolved on the jsonl and recovery scans only: on the wire path the model never
 receives a stub (`wire/spill-cut.js`), so a pointer body there is typed from
-memory and `_handleIntent` bounces it under `fromWire`. Anything else is prose used
-verbatim. That is what makes a cross-seat read inexpressible: a peer's
+memory and `_handleIntent` bounces it under `fromWire`. On those scans the
+tee's stub is expanded by `_expandReceipts` BEFORE `shadowIntentKey` is taken,
+so a tee-failure replay keys equal to the wire's original claim and is dropped as
+a cross-path overlap; a stub whose file is gone is left for `_handleIntent` to
+bounce. Anything else is prose used verbatim. That is what makes a cross-seat read inexpressible: a peer's
 `@spill:<id>` copied mid-prose is never resolved, and a pointer resolved at all
 is resolved against the SENDER's own directory.
 
