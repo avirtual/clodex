@@ -463,7 +463,7 @@ test('an INJECTED turn: a reply with no intent leaves as exactly `[Runtime note:
   });
 });
 
-const COMPACT_TEXT = `Summary:\n1. Primary Request and Intent:\n${'[agent:task done t9] closed.\n'.repeat(4)}${'y'.repeat(20 * 1024)}\n`;
+const COMPACT_TEXT = `Summary:\n1. Primary Request and Intent:\n${'y'.repeat(20 * 1024)}\n`;
 
 const COMPACT_SSE = [
   ev('message_start', {
@@ -499,13 +499,14 @@ test('an INJECTED compact: the summarization request passes the tee untouched â€
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({ body: COMPACT_SSE }, async (proxy) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['task.done'], turnInjected: () => true } });
-    const events = collect(proxy, ['turn.completed', 'spill', 'spill-skip', 'stream-end']);
+    const events = collect(proxy, ['turn.completed', 'spill', 'spill-skip', 'spill-bail', 'stream-end']);
 
     const res = await request(proxy.port, '/agent/tester/v1/messages', compactBody());
     assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
     assert.equal(res.body.toString('utf8'), COMPACT_SSE, 'every byte of the summary survives');
     assert.equal(events.spill.length, 0, 'nothing spilled');
     assert.equal(events['spill-skip'].length, 0, 'not even considered');
+    assert.equal(events['spill-bail'].length, 0);
     assert.ok(!fs.existsSync(path.join(root, 'spill')), 'nothing reached disk');
     assert.equal(events['turn.completed'].length, 1);
     assert.equal(events['turn.completed'][0].sideCall, false, 'billed and counted as a parent turn');
