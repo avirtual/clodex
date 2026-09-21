@@ -69,7 +69,20 @@ anchor its worktree paths share),
 `srcDir` + `webHost` + `wirescope`), `GET /api/sessions/:name/attach` (per-session SSE: b64 scrollback replay
 + telemetry seed), `POST /api/sessions/:name/control|input|resize` (input+resize
 token-gated; resize clamped), `POST /api/sessions/:name/query` (pull-on-demand
-popover data; kind whitelist lives in the injected callback),
+popover data; kind whitelist lives in the injected callback — `files` answers
+`{ok, cwd, files, filed}` where `filed[]` is the seat's spilled intent bodies,
+handoffs and inbound message spills, newest first, capped at 50 independently of
+`files`, each `{path, kind, head, bytes, ts}` with `path` byte-identical to the
+transcript literal; `filePeek` takes `{path, offset?, length?}` in bytes,
+clamps `length` to `PEEK_MAX_BYTES`, echoes the range it returned with the cut
+pulled back to a UTF-8 boundary, and fails with `{ok:false, code, error}` —
+`outside` 403, `not-found` 404, `gone` 410 (listed in `filed` but since
+removed), `not-a-file` 400, `unreadable` 500; `filePeek` and `fileDiff` over
+this server read only the seat's resolved cwd, `<REGISTRY_DIR>/spill/<seat>/`,
+`<REGISTRY_DIR>/messages/<seat>/` and the project's
+`<REGISTRY_DIR>/projects/<leaf>-<hash>/tasks/`, checked on the real path so a
+symlink inside cwd cannot escape; the `filed` cap string advertises all of
+this),
 `POST /api/sessions/:name/dm` (operator message — the session is named by the
 PATH; a `name` key in the body is ignored), `POST /api/restart` (app relaunch —
 response written before the restart fires), `POST /api/sessions`,
@@ -154,7 +167,9 @@ refresh sessions, open the events feed, re-establish wanted attachments.
 `peer-state` emit even without an offline dip — an in-place update restarts
 the box faster than the 15s cadence can observe, and the renderer would
 otherwise keep a stale version forever. DM claims ride every hello tick
-plus the `dm-mail` doorbell.
+plus the `dm-mail` doorbell. `/api/events` also carries `filed {name}`, fired by
+every writer that files a spill for that seat (wire-tee intent spill, context
+handoff, inbound message spill): a payload-free refetch signal for `files`.
 
 `needsUpgrade` is the dialect flag on `status()`: true when the far side is
 online but too old to serve the sessions subresource wire. It is computed by

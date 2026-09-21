@@ -180,10 +180,11 @@ const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
 const {
-  SPILL_VERBS, SPILL_MIN_BYTES, HEAD_RE, isSpillVerb, pointerOf, pointerMatch, trailingPointerOf, resolveSpill, spillPathFor, verbKeyOf, writeSpill,
+  SPILL_VERBS, SPILL_MIN_BYTES, HEAD_RE, isSpillVerb, pointerOf, pointerMatch, trailingPointerOf, resolveSpill, spillDirFor, spillPathFor, verbKeyOf, writeSpill,
   receiptOf, resolveReceipt,
   capResumeSnapshot,
 } = require('./intent-spill');
+const { createFiledRing, seedFiledRing, filedEntry, spillHead } = require('./filed-ring');
 const { spillGrammarLine } = require('./ipc-prompt');
 const { readPromptSnapshotMemo, restageAtReset, clearCache } = require('./ipc-prompt-cache');
 
@@ -1012,6 +1013,7 @@ function createSessionManager(deps) {
         } catch (e) {
           this._shadowLog({ type: 'wire-spill-ack-error', agent: ev.agent, error: e.message });
         }
+        this._noteFiled(ev.agent, filedEntry(filePath, 'intent', spillHead(filePath, ev)));
       });
       wire.on('spill-bail', (ev) => this._shadowLog({ type: 'wire-spill-bail', ...ev }));
       wire.on('spill-mimic', (ev) => {
@@ -2135,6 +2137,7 @@ function createSessionManager(deps) {
         intentSource, wireRouted, backend, noWire: wireOff, sentinel: null,
         ...(fixHost ? { fixFor: fixHost } : {}),
         fileTouches: [],
+        filedRing: this._seedFiledRing(name),
         // Called defensively because this runs AFTER the agent socket is bound:
         // an observer dep that is merely absent must degrade to "no feed" (which
         // `_noteSubagentTurn` already handles), never throw out of create() and
@@ -6434,6 +6437,7 @@ function createSessionManager(deps) {
       if (!body) return '';
       try {
         const path_ = spillToFile(`${verb} (rejected)`, body, session.name);
+        this._noteFiled(session.name, filedEntry(path_, 'message', `From: ${verb} (rejected)`));
         return ` — your ${verb} body (${body.length} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
       } catch (e) {
         log.warn('intent', `spill of rejected ${verb} body for ${session.name} failed: ${e.message}`);
@@ -6472,6 +6476,7 @@ function createSessionManager(deps) {
         if (used < DENIED_SPILL_CAP) {
           try {
             const path_ = spillToFile(`${label} (denied)`, body, session.name);
+            this._noteFiled(session.name, filedEntry(path_, 'message', `From: ${label} (denied)`));
             session._deniedSpills.set(label, used + 1);
             return `${off}. Your ${label} body (${body.length} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
           } catch (e) {
@@ -7656,7 +7661,28 @@ function createSessionManager(deps) {
         log.warn('intent', `handoff spill for ${session.name} failed — typing the body`);
         return text;
       }
-      return `Continue from your handoff: @${spillPathFor(REGISTRY_DIR, session.name, id)} `;
+      const filePath = spillPathFor(REGISTRY_DIR, session.name, id);
+      this._noteFiled(session.name, filedEntry(filePath, 'handoff', 'handoff'));
+      return `Continue from your handoff: @${filePath} `;
+    }
+
+    _seedFiledRing(name) {
+      const ring = createFiledRing();
+      try {
+        seedFiledRing(ring, [
+          { dir: spillDirFor(REGISTRY_DIR, name), kind: 'intent' },
+          { dir: path.join(MSG_DIR, name), kind: 'message' },
+        ]);
+      } catch (e) {
+        log.warn('files', `filed seed for ${name} failed: ${e.message}`);
+      }
+      return ring;
+    }
+
+    _noteFiled(name, entry) {
+      const s = this.sessions.get(name);
+      if (s && s.filedRing) s.filedRing.note(entry);
+      if (getRemoteServer()) { try { getRemoteServer().notifyFiled(name); } catch {} }
     }
 
 
@@ -8195,6 +8221,7 @@ function createSessionManager(deps) {
 
       if (body.length > MSG_SPILL_THRESHOLD) {
         const filePath = spillToFile(senderName, body, target.name);
+        this._noteFiled(target.name, filedEntry(filePath, 'message', `From: ${senderName}`));
         const marked = `${prefix}${tag ? ` ${tag}` : ''}`;
         // @-mention makes Claude Code attach the file inline instead of
         // spending a turn on a Read call; Codex has no equivalent. The

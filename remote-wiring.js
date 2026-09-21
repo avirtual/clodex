@@ -4,7 +4,8 @@
 // remoteError are main.js singletons this module writes and other code reads,
 // hence get+set. No electron require here: this runs under a headless host.
 
-const { pathFor } = require('./clodex-paths');
+const { pathFor, projectDirFor } = require('./clodex-paths');
+const { spillDirFor } = require('./intent-spill');
 const { createTicketsStore } = require('./tickets-store');
 // Exec grants are LOCAL-ONLY — this pure leaf sanitizes them off the wire in both
 // directions (require-const, like pathFor above; no injected-seam needed).
@@ -30,10 +31,25 @@ function wirePromptBody(value) {
   return value;
 }
 
+function realOrNull(fs, p) {
+  try { return fs.realpathSync(p); } catch { return null; }
+}
+
+function remoteReadRoots({ fs, path, REGISTRY_DIR, MSG_DIR }, sess, name) {
+  const roots = [];
+  if (sess.cwd) {
+    roots.push(realOrNull(fs, sess.cwd));
+    roots.push(realOrNull(fs, path.join(projectDirFor(REGISTRY_DIR, sess.cwd), 'tasks')));
+  }
+  roots.push(realOrNull(fs, spillDirFor(REGISTRY_DIR, name)));
+  roots.push(realOrNull(fs, path.join(MSG_DIR, name)));
+  return roots.filter(Boolean);
+}
+
 function createRemoteWiring(deps) {
   const {
     path, fs, os, log,
-    DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, OUTBOX_DIR, SELF_LABEL,
+    DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, MSG_DIR, OUTBOX_DIR, SELF_LABEL,
     parseCtxFile, cachedMessages, sliceSince, ensureDir, homeRelativize,
     claimOutbox, listOutboxOrigins,
     manager, proxyPoller, loadManifest, listTeams, gitWorktree,
@@ -612,6 +628,27 @@ function createRemoteWiring(deps) {
         },
         query: (name, kind, args) => {
           const sess = manager.sessions.get(name);
+          const confineRemotePath = (target, requested) => {
+            const p = String(requested || '');
+            if (!p || !path.isAbsolute(p)) return { ok: false, code: 'outside', error: 'path must be absolute' };
+            let real;
+            try {
+              real = fs.realpathSync(p);
+            } catch (e) {
+              if (e && e.code === 'ENOENT') {
+                if (target.filedRing && target.filedRing.has(path.resolve(p))) {
+                  return { ok: false, code: 'gone', error: 'that file was filed for this seat but has since been removed' };
+                }
+                return { ok: false, code: 'not-found', error: 'no such file' };
+              }
+              return { ok: false, code: 'unreadable', error: e.message };
+            }
+            const roots = remoteReadRoots({ fs, path, REGISTRY_DIR, MSG_DIR }, target, name);
+            if (!roots.some((r) => real.startsWith(r + path.sep))) {
+              return { ok: false, code: 'outside', error: 'path is outside what this seat may read over the phone-access server' };
+            }
+            return { ok: true, path: path.resolve(p) };
+          };
           if (!sess || !sess.agentType || sess._dead) return { ok: false, error: 'no such session' };
           const a = args || {};
           switch (kind) {
@@ -623,8 +660,14 @@ function createRemoteWiring(deps) {
             case 'report': return fetchProxyReport(name, { detail: !!a.detail });
             case 'bust': return fetchProxyBust(name);
             case 'files': return fetchSessionFiles(name);
-            case 'filePeek': return fetchFilePeek(String(a.path || ''));
-            case 'fileDiff': return fetchFileDiff(name, String(a.path || ''));
+            case 'filePeek': {
+              const c = confineRemotePath(sess, a.path);
+              return c.ok ? fetchFilePeek(c.path, { offset: a.offset, length: a.length }) : c;
+            }
+            case 'fileDiff': {
+              const c = confineRemotePath(sess, a.path);
+              return c.ok ? fetchFileDiff(name, c.path) : c;
+            }
             default: return { ok: false, error: `unknown query kind: ${kind}` };
           }
         },

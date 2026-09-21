@@ -19,6 +19,7 @@ const { createSkillDelivery } = require('./skill-delivery');
 const { KINDS: PROMPT_KINDS, badStem, teamPromptFile, teamJsonFile, readTeamJson } = require('./team-prompt-dir');
 const { planGather, applyGather } = require('./team-gather');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
+const { peekFile } = require('./file-peek');
 const { resolveDisplayedPath } = require('./file-resolve');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
 const { migrateSeatLayout } = require('./seat-layout');
@@ -1455,27 +1456,11 @@ async function fetchProxyBust(name) {
 function fetchSessionFiles(name) {
   const s = manager.sessions.get(name);
   if (!s) return { ok: false, error: 'Session not running' };
-  return { ok: true, cwd: s.cwd || null, files: s.fileTouches || [] };
+  return { ok: true, cwd: s.cwd || null, files: s.fileTouches || [], filed: s.filedRing ? s.filedRing.list() : [] };
 }
 
-function fetchFilePeek(filePath) {
-  try {
-    const st = fs.statSync(filePath);
-    if (!st.isFile()) return { ok: false, error: 'Not a regular file' };
-    const fd = fs.openSync(filePath, 'r');
-    let buf;
-    try {
-      const n = Math.min(st.size, PEEK_MAX_BYTES);
-      buf = Buffer.alloc(n);
-      fs.readSync(fd, buf, 0, n, 0);
-    } finally { fs.closeSync(fd); }
-    const binary = buf.subarray(0, 8192).includes(0);
-    return {
-      ok: true, size: st.size, mtime: st.mtimeMs,
-      truncated: st.size > PEEK_MAX_BYTES, binary,
-      content: binary ? null : buf.toString('utf-8'),
-    };
-  } catch (e) { return { ok: false, error: e.message }; }
+function fetchFilePeek(filePath, opts = {}) {
+  return peekFile(filePath, opts);
 }
 
 // Resolve a path as DISPLAYED (in the terminal, or inside a peeked file) to one
@@ -1828,7 +1813,7 @@ const { createRemoteWiring } = require('./remote-wiring');
 const { readRemoteEnvToken, writeRemoteEnvToken, hasRemoteEnvToken, resolveRemoteToken } = require('./remote-token');
 const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
   path, fs, os, log,
-  DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, OUTBOX_DIR, SELF_LABEL,
+  DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, MSG_DIR, OUTBOX_DIR, SELF_LABEL,
   parseCtxFile, cachedMessages, sliceSince, ensureDir, homeRelativize,
   claimOutbox, listOutboxOrigins,
   manager, proxyPoller, loadManifest, listTeams, gitWorktree,

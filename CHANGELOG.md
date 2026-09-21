@@ -12,6 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+- Phone and web clients can now see the files an agent references: `files` lists a seat's spilled intent bodies, handoffs and inbound message spills as `filed[]`, `filePeek` takes a byte range and answers with machine-readable error codes, reads over the phone-access server are confined to the seat's cwd, its spill and message directories and the project's task artifacts, and a `filed` event on `/api/events` says when a new one lands.
 - `[agent:context compact|clear|reload]` handoff bodies are no longer spilled by the wire tee: the compact or clear discards them anyway, so the file, the transcript stub and the request-side cut bought nothing. The handoff itself still reaches the resumed agent as `Continue from your handoff: @<path>`, unchanged.
 - `[agent:context clear]` on a seat whose Clodex instructions changed since it booted now restarts the CLI on a fresh prompt instead of typing `/clear` and staging the change as a reminder: a clear busts the cache prefix either way (the `/clear` block moves the CLAUDE.md message), so the regenerated prompt costs cents and the seat stops carrying the diff. A seat with nothing pending still gets a plain `/clear`.
 - A compact whose seat has a pending instruction change now respawns the seat with `--resume` and a freshly generated prompt the moment the summary lands, instead of staging the change as a reminder: the first request after a compact is written cold either way, so the regeneration is nearly free and the seat runs the current prompt with its history intact.

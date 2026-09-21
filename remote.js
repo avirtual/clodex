@@ -138,6 +138,12 @@ function readLogTail(fs, file, limit) {
   }
 }
 
+const QUERY_ERROR_STATUS = { outside: 403, 'not-found': 404, gone: 410, 'not-a-file': 400, unreadable: 500 };
+
+function queryErrorStatus(out) {
+  return (out && QUERY_ERROR_STATUS[out.code]) || 404;
+}
+
 class RemoteServer {
   constructor({ port, host, basePath, warn, pagePath, getSessions, getSession, listWorkspaces, getTranscript, send, restartApp, restartUnavailable,
                 hostLabel, version, srcDir, voiceCapable, getWebInfo, getWirescopeInfo, getAttachInfo, sendInput, resizePty, onControlChange,
@@ -385,6 +391,10 @@ class RemoteServer {
 
   notifyDmMail(origin) {
     this._broadcast('dm-mail', { origin });
+  }
+
+  notifyFiled(name) {
+    this._broadcast('filed', { name });
   }
 
   pushOutput(name, chunk) {
@@ -681,7 +691,7 @@ class RemoteServer {
       try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
       Promise.resolve()
         .then(() => this._query(name, String(msg.kind || ''), msg.args || {}))
-        .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'query failed' }))
+        .then((out) => this._json(res, out && out.ok ? 200 : queryErrorStatus(out), out || { ok: false, error: 'query failed' }))
         .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
     });
   }
@@ -992,6 +1002,7 @@ class RemoteServer {
       if (this._getAttachInfo) caps.push('attach');
       if (this._sendInput) caps.push('control');
       if (this._query) caps.push('query');
+      caps.push('filed');
       if (this._createSession) {
         caps.push('create'); // covers create + kill + restart (ship together)
         // create2 = this box accepts the FULL-param create body + serves
