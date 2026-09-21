@@ -63,9 +63,9 @@
 // hook RE-FIRES with source=compact). The system prompt survives both, and it
 // holds session_ipc. Since last_ipc means "what this agent has been told BEYOND
 // its system prompt", after a reset that is exactly session_ipc — so the
-// SessionStart hook sets notified.md := session.md and lets the normal
-// stage/drain regenerate whatever is now missing. Re-delivering the LAST delta
-// would be wrong: the agent may be missing more than that one.
+// SessionStart hook sets notified.md := session.md and session-manager's
+// refreshPrompt re-stages (restageAtReset) whatever is now missing. Re-delivering
+// the LAST delta would be wrong: the agent may be missing more than that one.
 //
 // WHERE THE FILES LIVE, and why not under run/<name>/. cleanupClaudeHook rm -rf's
 // the whole run/<name>/ dir, and _cleanup calls it on EVERY exit path — natural
@@ -230,14 +230,82 @@ function stageDelta(root, name, lastIpc, realIpc) {
   return delta;
 }
 
+const SNAPSHOT_MARK = '"prompt_snapshot"';
+const SNAPSHOT_CHUNK = 1 << 20;
+
+function snapshotBlockText(block) {
+  if (typeof block === 'string') return block;
+  if (block && typeof block === 'object' && typeof block.text === 'string') return block.text;
+  return null;
+}
+
+function parseSnapshotRow(line) {
+  let row;
+  try { row = JSON.parse(line); } catch { return null; }
+  const att = row && row.attachment;
+  if (!att || att.type !== 'prompt_snapshot' || !Array.isArray(att.systemPrompt) || !att.systemPrompt.length) return null;
+  const clodexBlock = snapshotBlockText(att.systemPrompt[att.systemPrompt.length - 1]);
+  if (clodexBlock == null) return null;
+  return { clodexBlock, ts: typeof row.timestamp === 'string' ? row.timestamp : null };
+}
+
+function readPromptSnapshot(transcriptPath) {
+  if (!transcriptPath) return null;
+  let fd;
+  try { fd = fs.openSync(transcriptPath, 'r'); } catch { return null; }
+  try {
+    let end = fs.fstatSync(fd).size;
+    let pending = Buffer.alloc(0);
+    while (end > 0) {
+      const start = Math.max(0, end - SNAPSHOT_CHUNK);
+      const chunk = Buffer.alloc(end - start);
+      fs.readSync(fd, chunk, 0, chunk.length, start);
+      pending = Buffer.concat([chunk, pending]);
+      end = start;
+      const firstNl = pending.indexOf(0x0a);
+      const from = start === 0 ? 0 : (firstNl < 0 ? -1 : firstNl + 1);
+      if (from < 0) continue;
+      const lines = pending.subarray(from).toString('utf8').split('\n');
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (!lines[i].includes(SNAPSHOT_MARK)) continue;
+        const found = parseSnapshotRow(lines[i]);
+        if (found) return found;
+      }
+      pending = pending.subarray(0, from);
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    try { fs.closeSync(fd); } catch {}
+  }
+}
+
+function followSnapshot(root, name, snapshot) {
+  const session = readCache(root, name, 'session');
+  if (typeof snapshot !== 'string') return session;
+  if (session !== snapshot) {
+    writeCache(root, name, 'session', snapshot);
+    writeCache(root, name, 'notified', snapshot);
+  }
+  return snapshot;
+}
+
+function restageAtReset(root, name, realIpc, snapshot) {
+  const baseline = followSnapshot(root, name, snapshot);
+  if (baseline == null) return null;
+  if (readCache(root, name, 'notified') !== baseline) writeCache(root, name, 'notified', baseline);
+  return stageDelta(root, name, baseline, realIpc);
+}
+
 // Boundary side. `reuse` is true for a plain resume (the whole point of this
 // module) and false at a genuine conversation boundary — a fresh session,
 // [agent:context reload], or restartSession({fresh:true}) — where the CLI is
 // building a new conversation and regenerating costs nothing.
 //
 // Returns the blob to actually bake into append-prompt.md.
-function bakePrompt(root, name, realIpc, reuse) {
-  const baked = reuse ? readCache(root, name, 'session') : null;
+function bakePrompt(root, name, realIpc, reuse, opts = {}) {
+  const baked = reuse ? followSnapshot(root, name, opts.snapshot) : null;
   if (baked == null) {
     // A boundary (or a first run with no cache at all). session_ipc == last_ipc
     // == real_ipc by construction, so a fresh session can never be handed a
@@ -262,4 +330,5 @@ module.exports = {
   CACHE_FILES, DELTA_HEADER,
   promptCacheDir, cachePathFor, readCache, writeCache, clearCache,
   unifiedDiff, ipcDelta, stageDelta, bakePrompt,
+  readPromptSnapshot, restageAtReset,
 };

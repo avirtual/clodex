@@ -2301,13 +2301,9 @@ test('compose: an irrelevant hint is to be dropped SILENTLY, not narrated', () =
 // exactly how the recipe divergence once survived a green suite. The method's
 // BODY is covered against real deps in test/ipc-prompt-cache-rework.test.js;
 // do not let this file's green stand in for that.
-// The CLI watches append-prompt.md and busts its prompt cache when it changes —
-// that watch is the whole reason the three-file freeze exists. So the refresh is
-// pinned by WHERE it fires, not that it fires: at a clear and at a compact the
-// bust is already paid, and anywhere else it re-bills the context (111k-139k
-// measured). Both call sites are ordered BEFORE the continuation injection,
-// because that injection is the fresh conversation's first turn and a rewrite
-// after it would bust exactly what it seeded.
+// The refresh re-stages the prompt delta at a context reset, so it is pinned by
+// WHERE it fires: at a clear and at a compact, BEFORE the continuation
+// injection, so the re-staged gap rides the fresh conversation's first turn.
 test('write: the prompt refresh fires at a clear, before the continuation', async () => {
   const h = mkManager();
   await spawned(h, 'a');
@@ -2318,10 +2314,10 @@ test('write: the prompt refresh fires at a clear, before the continuation', asyn
     const w = h.watchers.find((x) => x.name === 'a');
     w.onSessionId('sid-1');
     assert.deepStrictEqual(order, [],
-      'the FIRST session id is an attach, not a clear — refreshing here would rewrite the prompt of a live conversation with a warm cache');
+      'the FIRST session id is an attach, not a clear — nothing was reset, so there is no gap to re-stage');
     w.onSessionId('sid-2');
     assert.deepStrictEqual(order, ['refresh:clear', 'continuation'],
-      'a changed session id is /clear: the prompt must be re-baked BEFORE the continuation, or the fresh conversation starts on the frozen bytes and the rewrite lands after its first turn');
+      'a changed session id is /clear: the delta must be re-staged BEFORE the continuation, or the fresh conversation\'s first turn drains nothing');
   } finally { h.stop('a'); }
 });
 
@@ -2337,7 +2333,7 @@ test('write: the prompt refresh fires at a compact, before the continuation', as
     h.m._fireCompactContinuation(s);
     await new Promise((r) => setTimeout(r, 60));
     assert.deepStrictEqual(order, ['refresh:compact', 'continuation'],
-      'the compact already discarded everything after the system block, so the rewrite is free HERE — and only here: after the continuation it re-bills the context that turn just built');
+      'the compact discarded every delivered delta, so the gap is re-staged HERE, before the continuation that drains it');
   } finally { h.stop('a'); }
 });
 

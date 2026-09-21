@@ -10,11 +10,9 @@
 // the existing tests for the refresh stub the method to assert call ORDER, so its
 // body never executed. Order tests are in test/hint-arm.test.js; BYTES are here.
 //
-// Divergence is not a transient wrong answer, it is permanent corruption:
-// refreshPrompt bakes with reuse=false, which WRITES its result into session.md.
-// If those bytes are not create()'s, every later spawn diffs recipe-against-
-// recipe and stages a delta describing a change that never happened — a phantom
-// the agent can never absorb, because nothing on either side is actually moving.
+// Divergence is a phantom delta at every reset: refreshPrompt diffs the frozen
+// prompt against ITS bytes, so if those are not create()'s, every compact hands
+// the agent a diff describing a change that never happened.
 //
 // Real deps throughout (real ipc-prompt, real argv-merge, real cache module, real
 // generated hook). A fake in the assembly path here would test the fake, and a
@@ -28,7 +26,7 @@ const path = require('path');
 const { createSessionManager } = require('../session-manager');
 const { createCliHooks } = require('../cli-hooks');
 const { pathFor, runDirFor } = require('../clodex-paths');
-const { bakePrompt, promptCacheDir, readCache, cachePathFor } = require('../ipc-prompt-cache');
+const { bakePrompt, promptCacheDir, readCache, cachePathFor, ipcDelta } = require('../ipc-prompt-cache');
 const { mergeSessionEnv } = require('../env-scopes');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -259,25 +257,76 @@ test('recipe: a seat spawned before the capture existed refuses to refresh', asy
 
 // --- the refresh actually WORKS when truth moved ---
 
-test('refresh: a changed team block re-bakes the prompt and advances both cache files', async () => {
+function plantSnapshot(root, name, block) {
+  const row = JSON.stringify({ type: 'attachment', timestamp: '2026-09-21T12:00:00.000Z',
+    attachment: { type: 'prompt_snapshot', systemPrompt: ['base', block] } });
+  fs.writeFileSync(pathFor(root, name, 'transcript'), `{"type":"user"}\n${row}\n`);
+}
+
+test('refresh: a changed team block stages the full gap and advances NEITHER cache file nor the prompt file', async () => {
   const root = tmp(), name = 'rx';
   const h = mkManager(root);
   try {
     await spawn(h, name);
     const born = bakedBytes(root, name);
-    // Move truth the way a real change does — the team block is re-resolved on
-    // every refresh precisely so a team.json edit lands at the next reset.
+    plantSnapshot(root, name, born);
     h.m._teamBlockFor = () => ({ teamBlock: 'NEW TEAM BLOCK', teamName: 't', resolvedTeam: null });
 
-    assert.strictEqual(h.m.refreshPrompt(name, 'clear'), true, 'a real change refreshes');
+    assert.strictEqual(h.m.refreshPrompt(name, 'clear'), true, 'a real change stages a delta');
 
-    const now = bakedBytes(root, name);
-    assert.notStrictEqual(now, born, 'the prompt file carries the new truth');
-    assert.ok(now.includes('NEW TEAM BLOCK'), 'specifically the changed bytes');
-    assert.strictEqual(readCache(root, name, 'session'), now,
-      'session.md must advance WITH the file, or the next spawn re-bakes the old bytes and stages a phantom delta');
-    assert.strictEqual(readCache(root, name, 'notified'), now,
-      'and notified.md with it, or the agent is handed a diff describing exactly what it is already reading');
+    assert.strictEqual(bakedBytes(root, name), born, 'the prompt file is NOT rewritten: the CLI does not re-read it at a clear or a compact (measured), so a rewrite only makes our files lie');
+    assert.strictEqual(readCache(root, name, 'session'), born, 'session.md stays on what the model runs');
+    assert.strictEqual(readCache(root, name, 'notified'), born, 'notified.md is reset to it: the reset destroyed every delta delivered so far');
+    const delta = readCache(root, name, 'delta');
+    assert.ok(delta && delta.includes('+NEW TEAM BLOCK'), 'and the staged delta carries the new truth for the next prompt');
+    assert.ok(readCache(root, name, 'next').includes('NEW TEAM BLOCK'));
+  } finally { h.stop(name); }
+});
+
+test('compact site: through _fireCompactContinuation, the seat comes out with its frozen prompt intact and the whole snapshot→realIpc gap staged', async () => {
+  const root = tmp(), name = 'rx';
+  const h = mkManager(root);
+  try {
+    await spawn(h, name);
+    const born = bakedBytes(root, name);
+    plantSnapshot(root, name, born);
+    h.m._teamBlockFor = () => ({ teamBlock: 'NEW TEAM BLOCK', teamName: 't', resolvedTeam: null });
+    const { realIpc } = h.m._realIpcFor(h.m.sessions.get(name).promptRecipe, 'NEW TEAM BLOCK', null);
+    const order = [];
+    h.m._injectText = () => { order.push('continuation'); };
+    const s = h.m.sessions.get(name);
+    s._compactContinuation = 'keep going';
+
+    h.m._fireCompactContinuation(s);
+    await new Promise((r) => setTimeout(r, 30));
+
+    assert.deepStrictEqual(order, ['continuation'], 'ENTER: the compact handler ran to its continuation');
+    assert.strictEqual(readCache(root, name, 'session'), born, 'session.md UNCHANGED');
+    assert.strictEqual(bakedBytes(root, name), born, 'append-prompt.md UNCHANGED');
+    assert.strictEqual(readCache(root, name, 'delta'), ipcDelta(born, realIpc), 'the staged delta is diff(snapshot, realIpc) — the full gap');
+    assert.strictEqual(readCache(root, name, 'next'), realIpc);
+  } finally { h.stop(name); }
+});
+
+test('compact site: a seat whose files had run ahead of the transcript is re-baselined on the snapshot, not on our bookkeeping', async () => {
+  const root = tmp(), name = 'rx';
+  const h = mkManager(root);
+  try {
+    await spawn(h, name);
+    const born = bakedBytes(root, name);
+    const snapshot = born.replace('[agent:dm TARGET]', '[agent:dm OLDTARGET]');
+    assert.notStrictEqual(snapshot, born, 'ENTER: the planted snapshot must differ from what the files claim');
+    plantSnapshot(root, name, snapshot);
+    const { realIpc } = h.m._realIpcFor(h.m.sessions.get(name).promptRecipe, null, null);
+    assert.strictEqual(realIpc, born, 'ENTER: truth has not moved — the only gap is the one our files hid');
+    h.m._injectText = () => {};
+    const s = h.m.sessions.get(name);
+
+    h.m._fireCompactContinuation(s);
+
+    assert.strictEqual(readCache(root, name, 'session'), snapshot, 'session.md follows the transcript');
+    assert.strictEqual(readCache(root, name, 'notified'), snapshot);
+    assert.strictEqual(readCache(root, name, 'delta'), ipcDelta(snapshot, born), 'the gap the seat was never told about is staged again');
   } finally { h.stop(name); }
 });
 
@@ -296,17 +345,18 @@ function runSessionStart(root, name, source) {
 // The two components observe the same context reset through different channels
 // (the CLI's SessionStart hook vs the watcher's session-id / compact-summary
 // callbacks) and there is no ordering between them. BOTH orders must leave the
-// seat with a session.md that matches its prompt file — the old code did not:
-// refresh-first early-returned at the no-op guard, then the hook's unlink landed,
-// and the seat ran on with NO session.md until its next resume re-baked under a
-// warm conversation.
+// seat with its frozen prompt untouched AND the full gap staged: the hook's
+// reset drops a staged pair only when notified.md had advanced past session.md,
+// which is exactly the pair the refresh does not produce.
 for (const order of ['hook-first', 'refresh-first']) {
   for (const source of ['clear', 'compact']) {
-    test(`MF3: ${order} at a ${source} leaves session.md consistent with the prompt file`, async () => {
+    test(`MF3: ${order} at a ${source} leaves the frozen prompt alone and the full gap staged`, async () => {
       const root = tmp(), name = 'rx';
       const h = mkManager(root);
       try {
         await spawn(h, name);
+        const born = bakedBytes(root, name);
+        plantSnapshot(root, name, born);
         h.m._teamBlockFor = () => ({ teamBlock: 'NEW TEAM BLOCK', teamName: 't', resolvedTeam: null });
 
         if (order === 'hook-first') {
@@ -317,13 +367,13 @@ for (const order of ['hook-first', 'refresh-first']) {
           runSessionStart(root, name, source);
         }
 
-        const onDisk = bakedBytes(root, name);
-        assert.ok(fs.existsSync(cachePathFor(root, name, 'session')),
-          `${order}: the seat must never be left WITHOUT a session.md — that is a deferred, unbounded re-bake of a live conversation, which is the 111k-139k bust the freeze exists to prevent`);
-        assert.strictEqual(readCache(root, name, 'session'), onDisk,
-          `${order}: session.md must equal what the CLI is actually reading, or the next spawn stages a delta against bytes nobody has`);
-        assert.ok(onDisk.includes('NEW TEAM BLOCK'),
-          `${order}: and the refresh must have landed regardless of who won — the whole point of the reset edge is that the seat comes back on current truth`);
+        assert.strictEqual(bakedBytes(root, name), born, `${order}: the prompt file is never rewritten under a live CLI`);
+        assert.strictEqual(readCache(root, name, 'session'), born,
+          `${order}: session.md must equal what the CLI is actually running, or the next spawn stages a delta against bytes nobody has`);
+        assert.strictEqual(readCache(root, name, 'notified'), born, `${order}: the baseline is reset to it`);
+        const delta = readCache(root, name, 'delta');
+        assert.ok(delta && delta.includes('+NEW TEAM BLOCK'),
+          `${order}: and the staged delta must survive regardless of who won — a pair the hook drops here is a gap the seat never hears about`);
       } finally { h.stop(name); }
     });
   }

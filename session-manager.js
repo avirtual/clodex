@@ -185,6 +185,7 @@ const {
   capResumeSnapshot,
 } = require('./intent-spill');
 const { spillGrammarLine } = require('./ipc-prompt');
+const { readPromptSnapshot, restageAtReset } = require('./ipc-prompt-cache');
 
 const SPILL_MIMIC_BOUNCE = '[agent] Not executed: that line was a receipt, filler or pointer, not an intent, and nothing was sent or filed. Emit the complete intent — head line, full body, [agent:end].';
 
@@ -1702,7 +1703,7 @@ function createSessionManager(deps) {
             spillArmed: spillVerbs.length > 0,
             // Captured at spawn, exactly like `intents` beside it — refreshPrompt
             // REPLAYS this object, so a member that re-read persistence would
-            // make clear/compact write different bytes than the spawn did. A
+            // make clear/compact stage a delta the spawn never baked. A
             // grant edited live therefore reaches the prompt on the seat's next
             // respawn, which is the same deal the intent checklist already
             // offers; the fire-time gate is what applies immediately.
@@ -1883,7 +1884,8 @@ function createSessionManager(deps) {
             warnings.push(`This session's own --settings replaces Clodex's hooks, so the IPC protocol-change channel isn't installed. Its system prompt will be regenerated on every resume instead of frozen — correct, but it re-reads the whole prompt each time.`);
           }
           const reuse = !!resumeId && !mint && hookInstalled;
-          const baked = bakePrompt(REGISTRY_DIR, name, realIpc, reuse);
+          const baked = bakePrompt(REGISTRY_DIR, name, realIpc, reuse,
+            { snapshot: reuse ? this._snapshotBlockFor(name, cwd, accountDir, resumeId) : null });
           // First producer on the notice queue (notice-queue.js). Gated on the
           // SAME `reuse` as the freeze above, for the same reasons.
           //
@@ -2263,11 +2265,11 @@ function createSessionManager(deps) {
           this._voidScratchMark(session,
             'the conversation was cleared after the mark — every mark is gone and nothing can be cut. '
             + 'Your summary is in your own turn above; carry on from it.');
-          // BEFORE the continuation: a clear discarded the conversation, so the
-          // prompt-file rewrite has no warm cache left to bust and the fresh
-          // conversation should start on current bytes rather than inherit the
-          // freeze. Ordering matters — the continuation is this conversation's
-          // first turn, and a rewrite after it would bust what it just seeded.
+          // BEFORE the continuation: the clear discarded every delivered delta,
+          // so the whole gap is re-staged for the fresh conversation's first turn.
+          // The CLI rebuilds the new conversation's system block from its own
+          // snapshot rather than re-reading the prompt file (measured), so the
+          // frozen prompt is left alone here too.
           try { this.refreshPrompt(name, 'clear'); } catch { /* never block the continuation on a refresh */ }
           this._firePostClearContinuation(session);
         }
@@ -3556,8 +3558,8 @@ function createSessionManager(deps) {
 
     // The team half of realIpc. Extracted from create() so refreshPrompt() can
     // rebuild the SAME bytes: a second copy of this assembly would drift, and the
-    // drift would show up as a permanent phantom delta (refresh bakes A, the next
-    // create() bakes B, every spawn diffs them forever).
+    // drift would stage a phantom delta at every reset (refresh diffs against A,
+    // the next create() bakes B).
     //
     // Deliberately NOT cached across calls. The re-resolution BUYS something: an
     // edit to team.json or to a role prompt lands at the seat's next context reset
@@ -3611,14 +3613,10 @@ function createSessionManager(deps) {
 
     // The bytes that BECOME run/<name>/append-prompt.md, from ONE recipe.
     //
-    // create() and refreshPrompt() must agree byte-for-byte, and a second copy of
-    // this assembly does not merely risk drift — it PERMANENTLY corrupts the
-    // cache. refreshPrompt bakes with reuse=false, which writes its result into
-    // session.md; if those bytes differ from what create() would build, every
-    // later spawn diffs recipe-against-recipe and stages a delta describing a
-    // change that never happened. It also disarms the `realIpc === session.md`
-    // no-op guard, so a --fork-session (mint ⇒ reuse=false, already fresh-baked,
-    // inheriting the parent's warm cache) eats a full rewrite instead of a no-op.
+    // create() and refreshPrompt() must agree byte-for-byte: a second copy of
+    // this assembly drifts, and refreshPrompt stages a diff of the frozen prompt
+    // against ITS bytes at every reset, so a drift is a delta describing a change
+    // that never happened, handed to every seat that compacts.
     //
     // The recipe is CAPTURED at create() onto the live session rather than
     // re-derived from the persistence entry: `extraArgs` and the resolved
@@ -3641,24 +3639,15 @@ function createSessionManager(deps) {
       return { cleaned, realIpc: teamBlock ? `${append}\n\n${teamBlock}\n` : append };
     }
 
-    // Rewrite a LIVE session's append-prompt.md from current truth, at a moment
-    // where doing so is free. The CLI watches this file and busts its prompt cache
-    // when it changes — which is the whole reason the three-file freeze exists — so
-    // this may ONLY be called where there is no warm cache left to lose:
-    //   * clear  — the conversation is gone; nothing to protect.
-    //   * compact — called AFTER the summary lands and BEFORE the continuation is
-    //               injected, so the rewrite rides the bust the compact already paid.
-    // Calling it anywhere else re-bills the whole context (measured 111k-139k).
-    //
-    // --fork-session reaches the clear site warm (a fork mints a sid), and is safe
-    // only because mint=true baked seconds earlier, so the no-op guard holds. That
-    // guard is load-bearing, not redundant.
-    //
-    // Writing the file is only half: session.md must advance with it or the next
-    // spawn re-bakes the OLD bytes and stages a phantom delta, and notified.md must
-    // advance too or the agent is handed a diff describing what it is already
-    // reading. bakePrompt(reuse=false) does all three in one atomic-enough step,
-    // which is why this reuses it rather than writing the file directly.
+    // Re-stage the prompt delta of a LIVE session at a context reset (clear or
+    // compact), from current truth, WITHOUT advancing the frozen prompt. The CLI
+    // does not re-read append-prompt.md at either edge: it rebuilds the system
+    // block from its own transcript `prompt_snapshot` row (measured, 2.1.278 — see
+    // docs/notes/ipc-prompt-cache.md), so a rewrite here would move session.md
+    // past what the model runs and the gap would never be delivered again. The
+    // reset itself destroyed every delta delivered so far, so the whole
+    // snapshot→realIpc gap is staged, baselined on the snapshot row when the
+    // transcript has one.
     refreshPrompt(name, why) {
       const session = this.sessions.get(name);
       if (!session || session._dead || session.agentType !== 'claude') return false;
@@ -3667,55 +3656,49 @@ function createSessionManager(deps) {
       // No captured recipe = this session predates the capture (spawned by an
       // older build and still live across an app upgrade). Refusing is the only
       // safe answer: rebuilding from the persistence entry is exactly the second
-      // recipe _realIpcFor exists to delete, and it would write divergent bytes
-      // into session.md permanently. The seat keeps its frozen prompt until its
-      // next respawn, which captures one.
+      // recipe _realIpcFor exists to delete, and it would stage a phantom delta
+      // at every reset. The seat keeps its frozen prompt until its next respawn,
+      // which captures one.
       if (!session.promptRecipe) {
         this._shadowLog({ type: 'prompt-refresh-skipped', agent: name, reason: 'no-recipe' });
         return false;
       }
       try {
-        const promptPath = pathFor(REGISTRY_DIR, name, 'appendPrompt');
-        if (!fs.existsSync(promptPath)) { // no baked prompt = nothing this seat reads
+        if (!fs.existsSync(pathFor(REGISTRY_DIR, name, 'appendPrompt'))) { // no baked prompt = nothing this seat reads
           this._shadowLog({ type: 'prompt-refresh-skipped', agent: name, reason: 'no-prompt-file' });
           return false;
         }
         // This path takes the finding too. Refresh RE-RESOLVES on every
         // clear/compact, so a prompt file deleted after the seat booted first
-        // bites here: the rebake drops the role prompt and the seat comes out of
+        // bites here: the re-stage drops the role prompt and the seat comes out of
         // its reset unbriefed. There is no reply channel at a clear, so it rides
         // the ipc-message the refresh already broadcasts.
-        //
-        // In practice this covers the APPEND arm only. Do not restructure the
-        // refresh to force a broadcast on the other arm: the `already current`
-        // guard is what keeps a clear/compact from re-baking identical bytes
-        // under a live CLI.
         const { teamBlock, resolvedTeam, missingPrompt } = this._teamBlockFor(name, entry.cwd, session.agentType, entry.systemPromptFile || null);
         const { realIpc } = this._realIpcFor(session.promptRecipe, teamBlock, resolvedTeam);
-        if (realIpc === readCache(REGISTRY_DIR, name, 'session')) return false; // already current
-        const baked = bakePrompt(REGISTRY_DIR, name, realIpc, false);
-        // tmp + rename: create() writes this path before the PTY exists, but here
-        // the CLI is live and watching it. A partial read bakes a truncated system
-        // prompt that no later refresh repairs (the guard above sees session.md
-        // already current).
-        const tmp = `${promptPath}.tmp.${process.pid}.${Date.now()}`;
-        try {
-          fs.writeFileSync(tmp, baked, { mode: 0o600 });
-          fs.renameSync(tmp, promptPath);
-        } catch (e) {
-          try { fs.unlinkSync(tmp); } catch {}
-          throw e;
-        }
-        log.info('prompt', `refreshed ${name} (${why}) — ${baked.length} bytes`);
+        const snapshot = this._snapshotBlockFor(name, entry.cwd, entry.env && entry.env.CLAUDE_CONFIG_DIR, entry.sessionId);
+        const delta = restageAtReset(REGISTRY_DIR, name, realIpc, snapshot);
+        if (!delta) return false;
+        log.info('prompt', `restaged ${name} (${why}) — ${delta.length} bytes of delta`);
         this._broadcast('ipc-message', {
           type: 'context', from: name, to: name,
-          body: `prompt refreshed (${why})${missingPrompt ? ` — ${missingPrompt}` : ''}`,
+          body: `prompt delta restaged (${why})${missingPrompt ? ` — ${missingPrompt}` : ''}`,
         });
         return true;
       } catch (e) {
         this._shadowLog({ type: 'prompt-refresh-error', agent: name, error: e.message });
         return false;
       }
+    }
+
+    _snapshotBlockFor(name, cwd, accountDir, sid) {
+      const candidates = [];
+      if (sid && cwd) candidates.push(path.join(accountDir || claudeHome(), 'projects', claudeProjectSlug(cwd), `${sid}.jsonl`));
+      candidates.push(pathFor(REGISTRY_DIR, name, 'transcript'));
+      for (const p of candidates) {
+        const found = readPromptSnapshot(p);
+        if (found) return found.clodexBlock;
+      }
+      return null;
     }
 
     teamNameFor(cwd) {
@@ -4557,15 +4540,10 @@ function createSessionManager(deps) {
       // offered" are separate questions on purpose, so they reset side by side
       // here rather than one reading the other.
       try { arm.onContextReset(session.name); } catch { /* observer-grade */ }
-      // The compact has landed and the continuation has NOT been injected yet:
-      // this is the one instant where rewriting the prompt file is CHEAP — not
-      // free, and the distinction bounds where this call may be copied to. The
-      // cache breakpoint sits BEFORE the system block, so the rewrite still turns
-      // a read hit on that whole segment into a write; it is ~10-20% of a
-      // mid-conversation bust, affordable only because the compaction already
-      // discarded everything after it. Later is not equivalent — the continuation
-      // is the new conversation's first turn, and rewriting after it re-bills the
-      // context it just built.
+      // The compact has landed and the continuation has NOT been injected yet.
+      // The summary dropped every prompt delta delivered so far, so the whole
+      // gap is re-staged here for the next prompt; the frozen prompt file is NOT
+      // rewritten (the CLI would not read it — see refreshPrompt).
       try { this.refreshPrompt(session.name, 'compact'); } catch { /* never block the continuation on a refresh */ }
       this._clearCompactValve(session);
       const sched = getRemindScheduler && getRemindScheduler();

@@ -95,10 +95,16 @@ const d = process.argv[2];
 // told. Reset the baseline to it and let the normal stage/drain regenerate.
 let session = null;
 try { session = fs.readFileSync(path.join(d, 'session.md'), 'utf8'); } catch (e) { process.exit(0); }
-// Invalidate the staged pair FIRST: it was computed against the OLD baseline, so
+let notified = null;
+try { notified = fs.readFileSync(path.join(d, 'notified.md'), 'utf8'); } catch (e) {}
+if (notified === session) process.exit(0);
+// A staged pair computed against an ADVANCED baseline is invalidated FIRST:
 // draining it after the reset would advance notified.md past a delta this reset
-// just made wrong. Unlink-then-write means a torn run leaves no pair and an old
-// baseline, which the next spawn simply re-stages.
+// just made wrong. A pair computed against session.md itself (notified.md equals
+// it — what session-manager's refreshPrompt stages at this same edge, through a
+// different channel and in either order) is the full gap and is kept.
+// Unlink-then-write means a torn run leaves no pair and an old baseline, which
+// the next spawn simply re-stages.
 try { fs.unlinkSync(path.join(d, 'delta.md')); } catch (e) {}
 try { fs.unlinkSync(path.join(d, 'next.md')); } catch (e) {}
 const tmp = path.join(d, 'notified.md.tmp.reset.' + process.pid + '.' + Date.now());
@@ -106,18 +112,12 @@ try {
   fs.writeFileSync(tmp, session, { mode: 0o600 });
   fs.renameSync(tmp, path.join(d, 'notified.md'));
 } catch (e) { try { fs.unlinkSync(tmp); } catch (e2) {} }
-// This hook does NOT touch session.md, and must not start. Regenerating the
-// frozen prompt at this same edge is session-manager's refreshPrompt, which is
-// the SOLE writer of that file: it re-bakes and rewrites append-prompt.md in one
-// step, while the seat is live and the reset has already destroyed the cache the
-// freeze protects. A second writer here cannot coordinate with it — this script
-// and the refresh observe the same reset through different channels and race.
-// Unlinking here lost that race in the common ordering: refresh runs first and
-// early-returns at its already-current guard, the unlink then lands, and the seat
-// carries on with NO session.md until its next ordinary resume re-bakes
-// append-prompt.md under a conversation 100k+ tokens deep — precisely the
-// 111k-139k bust ipc-prompt-cache.js exists to prevent, aimed at the longest-lived
-// seats, since those are the ones that compact.
+// This hook does NOT touch session.md, and must not start: the frozen prompt is
+// written by create() alone, and refreshPrompt only follows the CLI's own
+// transcript snapshot. Unlinking it here once stranded a live seat with NO
+// session.md until its next resume re-baked append-prompt.md under a
+// conversation 100k+ tokens deep — the 111k-139k bust ipc-prompt-cache.js
+// exists to prevent, aimed at the longest-lived seats, since those compact.
 RESETEOF
 fi
 # compact belongs with startup/clear: all three are context resets, and the
