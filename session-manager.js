@@ -1004,6 +1004,14 @@ function createSessionManager(deps) {
         if (s && s.agentType) this._injectText(s, SPILL_MIMIC_BOUNCE, { parkable: true });
       });
       wire.on('spill-skip', (ev) => this._shadowLog({ type: 'wire-spill-skip', ...ev }));
+      wire.on('spill-cut', (ev) => {
+        this._shadowLog({ type: 'wire-spill-cut', ...ev });
+        log.info('intent', `spill-cut ${ev.agent} lines=${ev.lines} blocks=${ev.blocks} messages=${ev.messages} skipped=${ev.skipped}`);
+      });
+      wire.on('spill-cut-skip', (ev) => {
+        this._shadowLog({ type: 'wire-spill-cut-skip', ...ev });
+        log.info('intent', `spill-cut-skip ${ev.agent} ${ev.reason} skipped=${ev.skipped}`);
+      });
       await wire.listen();
       this._shadow = new ShadowDiff((rec) => this._shadowLog(rec));
       wire.on('turn.completed', (t) => {

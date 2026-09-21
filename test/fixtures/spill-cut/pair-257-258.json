@@ -1,0 +1,83 @@
+{
+  "source": {
+    "session": "25ac4e04-52b2-44c1-accd-75c41edb19b3",
+    "response": 257,
+    "request": 258
+  },
+  "responseText": "I'll start by reading the diff — the authoritative statement of what changed — plus the specimen README that is the evidence base.",
+  "request": {
+    "model": "claude-opus-5",
+    "max_tokens": 64000,
+    "system": [
+      {
+        "type": "text",
+        "text": "fixture system prompt"
+      }
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "<system-reminder>\nAs you answer the user's questions, you can use the following context:\n# gitStatus\nThis is the git status at the start of the conversation. Note that this status is a snapshot in tim …[truncated for fixture]"
+          },
+          {
+            "type": "text",
+            "text": "\n\n<pasted_content id=\"cbca\">\n[agent:from team] Message (632 bytes) attached: @/home/clodex/.clodex/messages/avh-reviewer-4-r1/msg-7-16.txt \n\n[agent:from avh-lead] Your review scope is in your system prompt. Begin. (no reply path)\n</pasted_content id=\"cbca\">\n"
+          }
+        ]
+      },
+      {
+        "role": "system",
+        "content": "SessionStart hook additional context: You are the clodex agent named 'avh-reviewer-4-r1'.\n\n[team avh] roster (lead: avh-lead)\n- lead (session, tmpl lead) — team lead; holds durable context, dispatches specs, verifies and integrates the work. · live: avh-lead (idle <1m, warm)\n- hand (session, tmpl hand) — implementer; executes a spec to done, one distilled report per task. · no live seat — role definition only, not addressable\n- reviewer (lead-only) — reviewer; an independent verification pass, invoked on demand. · live: avh-reviewer-4-r1 (you)\nGround truth on demand: [agent:exec clodex-team] is NOT granted to this seat — Edit Session ▸ Exec commands, or respawn on a template that carries it (clodex-team-lead does)\n\nCalled the Read tool with the following input: {\"file_path\":\"/home/clodex/.clodex/messages/avh-reviewer-4-r1/msg-7-16.txt\"}\nResult of calling the Read tool:\n1\tFrom: team\n2\tTime: 11:54:07\n3\tSize: 632 bytes\n4\t\n5\t[team avh] roster (lead: avh-lead)\n6\t- lead (session, tmpl lead) — team lead; holds durable context, dispatches specs, verifies and integrates the work. · live: avh-lead (idle <1m, warm)\n7\t- hand (session, tmpl hand) — implementer; executes a spec to done, one distilled report per task. · no live seat — role definition only, not addressable\n8\t- reviewer (lead-only) — reviewer; an independent verification pass, invoked on demand. · live: avh-reviewer-4-r1 (you)\n9\tGround truth on demand: [agent:exec clodex-team] is NOT granted to this seat — Edit Session ▸ Exec commands, or respawn on a template that carries it (clodex-team-lead does)\n\n# Environment\nYou have been invoked in the following environment: \n - Primary working directory: /home/clodex/work-t4-correct-docs-revival-flash-audit-md-the\n - This is a git worktree — an isolated copy of the repository. Run all commands from this directory. Do NOT `cd` to the original repository root.\n - The git stash stack is shared with the main checkout and all other worktrees, and other Claude sessions may push or pop it concurrently. Never use bare `git stash` / `git stash pop` — you could pop another session's changes. Prefer a temporary WIP commit to set work aside; if you must stash, use `git stash push -u -m \"<unique-tag>\"`, immediately capture your entry's SHA via `git stash list --format='%H %gs'`, restore with `git stash apply <sha>` (not pop), and afterwards drop the entry, re-finding its current `stash@{n}` by tag first.\n - Is a git repository: true\n - Additional working directories:\n  - /home/clodex/.clodex/projects/work-9f85fe22/tasks/flash-audit-correction\n  - /home/clodex/.clodex/messages\n - Platform: linux\n - Shell: bash\n - OS Version: Linux 7.0.12-linuxkit\n - Scratchpad directory: /tmp/claude-1001/-home-clodex-work-t4-correct-docs-revival-flash-audit-md-the/25ac4e04-52b2-44c1-accd-75c41edb19b3/scratchpad — always use it for temporary files (intermediate results, scripts, outputs that don't belong in the project) instead of `/tmp` or other system temp directories; it is session-specific, isolated from the project, and can generally be used without permission prompts. Only use `/tmp` if the user explicitly asks.\n\nYou are powered by the model named Opus 5 (1M context). The exact model ID is claude-opus-5[1m]. Assistant knowledge cutoff is May 2026.\n\nToday's date is 2026-09-19."
+      },
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "I'll start by reading the diff — the authoritative statement of what changed — plus the specimen README that is the evidence base."
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_01JJ5tepbpCyxrwuE76S1YjJ",
+            "name": "Read",
+            "input": {
+              "file_path": "/home/clodex/.clodex/projects/work-9f85fe22/tasks/flash-audit-correction/review-t4-r1.diff"
+            }
+          },
+          {
+            "type": "tool_use",
+            "id": "toolu_018hZYqsg9nGVfA6VNusZheo",
+            "name": "Read",
+            "input": {
+              "file_path": "/home/clodex/.clodex/projects/work-9f85fe22/tasks/flash-audit-correction/specimen-README.md"
+            },
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ]
+      },
+      {
+        "role": "user",
+        "content": [
+          {
+            "tool_use_id": "toolu_01JJ5tepbpCyxrwuE76S1YjJ",
+            "type": "tool_result",
+            "content": "1\tdiff --git a/docs/revival/flash-audit.md b/docs/revival/flash-audit.md\n2\tindex 77dfab7..befeb0a 100644\n3\t--- a/docs/revival/flash-audit.md\n4\t+++ b/docs/revival/flash-audit.md\n5\t@@ -1,40 +1,50 @@\n6\t  …[truncated for fixture]"
+          },
+          {
+            "tool_use_id": "toolu_018hZYqsg9nGVfA6VNusZheo",
+            "type": "tool_result",
+            "content": "1\t# Reference specimen — recovered horse art\n2\t\n3\tOne complete horse folder copied 2026-09-19 from the operator's HDD on the router\n4\t(SMB //192.168.0.1/G, guest), path `avh/public/horse/animations/10 …[truncated for fixture]",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

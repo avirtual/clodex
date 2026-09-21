@@ -295,6 +295,7 @@ outcome (warm hit or cold re-cache, tokens, TTL slide), a failed ping,
 and the disarm — also broadcast a `keepwarm` ipc-message row into the IPC
 traffic tab. Skipped ticks get no row: the poll runs every 60s and
 declines most of them, so a row per tick would be noise, not signal.
+- **Spill-stub cut** (wire/spill-cut.js): shadow records `wire-spill-cut` (agent, reqId, lines/blocks/messages/skipped counts) and `wire-spill-cut-skip` (reason `system-adjacent`) per edited request; one `intent` line each in clodex.log, no PTY injection.
 
 ## 7. Wirescope window & settings
 
