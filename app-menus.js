@@ -590,7 +590,10 @@ function createAppMenus(deps) {
     if (!dir) return null;
     try {
       const rec = JSON.parse(fs.readFileSync(path.join(dir, 'sandbox.json'), 'utf-8'));
-      return (rec && typeof rec.webUrl === 'string' && rec.webUrl) || null;
+      const url = (rec && typeof rec.webUrl === 'string' && rec.webUrl) || null;
+      if (!url) return null;
+      const tok = rec && typeof rec.webToken === 'string' && rec.webToken;
+      return tok ? `${url}?token=${encodeURIComponent(tok)}` : url;
     } catch { return null; }
   }
 

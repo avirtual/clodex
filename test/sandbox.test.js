@@ -110,7 +110,9 @@ test('generateCompose: dev build variant with a named work volume', () => {
   // Wirescope public URL tracks the host port.
   assert.match(yaml, /CLODEX_WIRESCOPE_PUBLIC_URL: "\$\{CLODEX_WIRESCOPE_PUBLIC_URL:-http:\/\/localhost:7811\}"/);
   // Compose interpolations survive untouched (not eaten by JS).
-  assert.match(yaml, /CLODEX_WEB_TOKEN: "\$\{CLODEX_WEB_TOKEN:-\}"/);
+  assert.match(yaml, /CLODEX_WORKSPACES: "\$\{CLODEX_WORKSPACES:-default\}"/);
+  assert.doesNotMatch(yaml, /CLODEX_WEB_TOKEN/,
+    'the web token reaches the box through auth.env only — an environment: line would override env_file AND leak the host process\'s own token');
   // Fixed lifecycle bits mirrored from docker/web/compose.yaml.
   assert.match(yaml, /init: true/);
   assert.match(yaml, /restart: always/);
@@ -898,7 +900,7 @@ function recordingSpawn(calls, results = {}) {
     // args = ['compose','-p',<project>,'-f',<path>, <sub…>] for compose calls;
     // the subcommand is the token right after the `-f <path>` pair.
     const f = args.indexOf('-f');
-    const sub = f >= 0 ? args[f + 2] : args[0];
+    const sub = f >= 0 ? args[f + 2] : `docker ${args[0]}`;
     const behavior = results[sub] || { code: 0 };
     return fakeSpawn(behavior)();
   };
@@ -1269,7 +1271,7 @@ test('source shape: every factory call in this file injects a registryDir (never
 
 // ── factory: remote-wire token auto-provision (remote-auth chunk 4) ──────────
 
-test('up: auto-provisions CLODEX_REMOTE_TOKEN into auth.env, compose stays token-clean, peer carries the Bearer', async () => {
+test('up: auto-provisions CLODEX_REMOTE_TOKEN and CLODEX_WEB_TOKEN into auth.env, compose stays token-clean, peer carries the Bearer', async () => {
   const ud = freshUserData();
   const settings = fakeSettings();
   const sb = createSandbox({ registryDir: TMP_REGISTRY,
@@ -1285,8 +1287,13 @@ test('up: auto-provisions CLODEX_REMOTE_TOKEN into auth.env, compose stays token
   const authFile = path.join(ud, 'sandbox', 'auth.env');
   const authBody = fs.readFileSync(authFile, 'utf8');
   assert.match(authBody, /^CLODEX_REMOTE_TOKEN=[0-9a-f]{64}$/m);
+  assert.match(authBody, /^CLODEX_WEB_TOKEN=[0-9a-f]{64}$/m);
   assert.strictEqual(fs.statSync(authFile).mode & 0o777, 0o600);
   const token = authBody.match(/CLODEX_REMOTE_TOKEN=([0-9a-f]+)/)[1];
+  const web = authBody.match(/CLODEX_WEB_TOKEN=([0-9a-f]+)/)[1];
+  assert.notStrictEqual(web, token, 'two secrets, not one reused');
+  assert.strictEqual(sb.webToken(), web);
+  assert.strictEqual(sb.remoteToken(), token);
 
   // The compose bytes reference only the env_file — never the key name or value
   // (env_file injects it into the container env, so no compose `environment:` line
@@ -1294,7 +1301,9 @@ test('up: auto-provisions CLODEX_REMOTE_TOKEN into auth.env, compose stays token
   const yaml = fs.readFileSync(sb.composePath(), 'utf8');
   assert.ok(yaml.includes('env_file:'));
   assert.doesNotMatch(yaml, /CLODEX_REMOTE_TOKEN/);
+  assert.doesNotMatch(yaml, /CLODEX_WEB_TOKEN/);
   assert.ok(!yaml.includes(token), 'the secret value never appears in the compose bytes');
+  assert.ok(!yaml.includes(web), 'nor the web token value');
 
   // The desktop-side sandbox peer entry carries the same token as its Bearer.
   assert.strictEqual(settings._state().peers[0].id, SANDBOX_PEER_ID);
@@ -1869,4 +1878,104 @@ test('source shape: sandbox.js shells out to git nowhere — the calls live in g
   const src = fs.readFileSync(path.join(__dirname, '..', 'sandbox.js'), 'utf8');
   assert.ok(!src.includes("spawnSync('git'"), 'no spawnSync of git');
   assert.ok(!/['"`]git['"`]/.test(src), 'no bare git literal — that is git-worktree.js\'s job');
+});
+
+const OWNER_LABEL_ARGV = (project) => [
+  'ps', '-a',
+  '--filter', `label=com.docker.compose.project=${project}`,
+  '--format', '{{.Label "com.docker.compose.project.config_files"}}',
+];
+
+function ownerSpawn(calls, psBehavior) {
+  return (_cmd, args) => {
+    calls.push(args);
+    const behavior = args[0] === 'ps' ? psBehavior : { code: 0 };
+    return fakeSpawn(behavior)();
+  };
+}
+
+function ownedBox(calls, psBehavior, ud) {
+  const settings = fakeSettings();
+  const sb = createSandbox({ registryDir: TMP_REGISTRY, id: 'team-clodex', label: 'clodex',
+    spawn: ownerSpawn(calls, psBehavior),
+    getUiSettings: () => settings,
+    getUserDataPath: () => ud,
+    isPortInUse: () => Promise.resolve(false),
+  });
+  return { sb, settings };
+}
+
+test('up: a project whose config_files label names another instance\'s compose file is refused before compose or auth.env', async () => {
+  const ud = freshUserData();
+  const calls = [];
+  const other = '/Users/me/Library/Application Support/clodex-ios/sandbox-team-clodex/compose.yaml';
+  const { sb, settings } = ownedBox(calls, { code: 0, stdout: `${other}\n${other}\n` }, ud);
+  const r = await sb.up();
+  assert.deepStrictEqual(r, {
+    ok: false, code: 'foreign',
+    error: `box team-clodex belongs to another Clodex instance (${other})`,
+  });
+  assert.deepStrictEqual(calls, [OWNER_LABEL_ARGV('team-clodex')],
+    'the ownership probe is the ONLY docker call — no compose up, no compose anything');
+  assert.ok(!fs.existsSync(path.join(sb.sandboxDir(), 'auth.env')), 'no token was minted for a box we do not own');
+  assert.ok(!fs.existsSync(sb.composePath()), 'and no compose file was written');
+  assert.strictEqual(settings._state().peers.length, 0);
+});
+
+test('down: a foreign project is refused with code foreign and no compose down runs', async () => {
+  const ud = freshUserData();
+  const calls = [];
+  const other = '/elsewhere/clodex-ios/sandbox-team-clodex/compose.yaml';
+  const { sb } = ownedBox(calls, { code: 0, stdout: `${other}\n` }, ud);
+  const r = await sb.down();
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.code, 'foreign');
+  assert.match(r.error, /belongs to another Clodex instance/);
+  assert.deepStrictEqual(calls, [OWNER_LABEL_ARGV('team-clodex')]);
+});
+
+test('up: a project whose label matches OUR compose path proceeds', async () => {
+  const ud = freshUserData();
+  const calls = [];
+  const mine = path.join(ud, 'sandbox', 'compose.yaml');
+  const { sb, settings } = ownedBox(calls, { code: 0, stdout: `${mine}\n` }, ud);
+  assert.strictEqual(sb.composePath(), mine, 'ENTER: the fake label is spelled exactly as composePath()');
+  const r = await sb.up();
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(composeSubcommands(calls), [['up', '-d']]);
+  assert.strictEqual(settings._state().peers.length, 1);
+});
+
+test('up: a failed `docker ps` is unknown, not foreign — the box still comes up', async () => {
+  const ud = freshUserData();
+  const calls = [];
+  const { sb } = ownedBox(calls, { code: 1, stderr: 'Cannot connect to the Docker daemon' }, ud);
+  const r = await sb.up();
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(composeSubcommands(calls), [['up', '-d']]);
+});
+
+test('status: carries foreign:<owner path> for another instance\'s project, and no key for ours or an empty project', async () => {
+  const ud = freshUserData();
+  const other = '/elsewhere/clodex-ios/sandbox-team-clodex/compose.yaml';
+  const psJson = '[{"Service":"clodex","State":"running"}]';
+  const spawnFor = (ownerOut) => (_cmd, args) => {
+    const f = args.indexOf('-f');
+    if (f >= 0 && args[f + 2] === 'ps') return fakeSpawn({ code: 0, stdout: psJson })();
+    if (args[0] === 'ps') return fakeSpawn({ code: 0, stdout: ownerOut })();
+    return fakeSpawn({ code: 0 })();
+  };
+  const mk = (ownerOut) => createSandbox({ registryDir: TMP_REGISTRY, id: 'team-clodex', label: 'clodex',
+    spawn: spawnFor(ownerOut), getUiSettings: () => fakeSettings(), getUserDataPath: () => ud,
+    isPortInUse: () => Promise.resolve(false),
+  });
+  const foreign = await mk(`${other}\n`).status();
+  assert.strictEqual(foreign.state, 'running');
+  assert.strictEqual(foreign.foreign, other);
+  const ours = mk('');
+  const mineSt = await mk(`${ours.composePath()}\n`).status();
+  assert.strictEqual(mineSt.state, 'running');
+  assert.strictEqual('foreign' in mineSt, false);
+  const empty = await mk('').status();
+  assert.strictEqual('foreign' in empty, false);
 });

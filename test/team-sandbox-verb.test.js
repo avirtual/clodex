@@ -22,6 +22,7 @@ const { createTicketMethods } = require('../team-tickets');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const TOKEN = 'deadbeefcafe0000deadbeefcafe1111deadbeefcafe2222deadbeefcafe3333';
+const WEB_TOKEN = 'feedface0000feedface1111feedface2222feedface3333feedface4444feed';
 
 function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult, statusResult, downResult, setConfigResult, healthResult, config = {}, noStateDir = false, stateRoot = null } = {}) {
   const calls = { create: [], get: [], setConfig: [], up: 0, rebuild: 0, down: 0, status: 0, waitHealthy: 0, unregisterPeer: 0 };
@@ -51,6 +52,7 @@ function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult
       return statusResult || { state: 'running', ref: config.ref || null, sha: 'abcdef1234567890', ports };
     },
     remoteToken: () => TOKEN,
+    webToken: () => WEB_TOKEN,
     async waitHealthy() { calls.waitHealthy++; return healthResult || { ok: true, polls: 1, ms: 4000 }; },
     translateHostPath: () => ({ container: '/home/clodex/work' }),
     ...(noStateDir ? {} : { stateDir: () => stateRoot }),
@@ -192,7 +194,8 @@ test('up creates box team-<name>, sets ref + workDir, and writes sandbox.json', 
   assert.ok(exists(b.file), 'sandbox.json landed');
   const rec = JSON.parse(fs.readFileSync(b.file, 'utf-8'));
   assert.deepStrictEqual(Object.keys(rec).sort(),
-    ['boxId', 'ref', 'sha', 'startedAt', 'teamDir', 'token', 'webUrl', 'wireUrl'].sort());
+    ['boxId', 'ref', 'sha', 'startedAt', 'teamDir', 'token', 'webToken', 'webUrl', 'wireUrl'].sort());
+  assert.strictEqual(rec.webToken, WEB_TOKEN, 'the box\'s own web-console secret rides beside the peer-wire one');
   assert.strictEqual(rec.boxId, 'team-clodex');
   assert.strictEqual(rec.ref, 'master');
   assert.strictEqual(rec.sha, 'abcdef1234567890');
@@ -527,6 +530,7 @@ test('_bringUpTeamBox runs the whole box-side half with no intent, and passes th
     webUrl: 'http://127.0.0.1:7810',
     wireUrl: 'http://127.0.0.1:7820',
     token: TOKEN,
+    webToken: WEB_TOKEN,
     teamDir: b.shipped,
   });
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(b.file, 'utf-8')), out.record);

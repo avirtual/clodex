@@ -24640,6 +24640,11 @@ ${i3.join("\n")}
             return { kind: "idle", text: "Sandbox has not been created yet.", running: false };
         }
       }
+      function foreignNotice(status) {
+        const owner = status && typeof status.foreign === "string" ? status.foreign.trim() : "";
+        if (!owner) return null;
+        return { kind: "warn", text: `Owned by another Clodex instance (${owner}) \u2014 read-only here`, running: false };
+      }
       function refLineText(status) {
         const ref = status && typeof status.ref === "string" ? status.ref.trim() : "";
         if (!ref) return "";
@@ -24659,7 +24664,7 @@ ${i3.join("\n")}
         }
         return parts.join(" \xB7 ");
       }
-      module.exports = { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, refLineText, openUrl, portsLineText };
+      module.exports = { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText };
     }
   });
 
@@ -39838,7 +39843,7 @@ ${detail}` });
       var { filterSummary, setFilterFolded } = require_sidebar_filter_fold();
       var { createMicHandoff } = require_mic_handoff();
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
-      var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require_sandbox_view();
+      var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
       var { bumpDefaultName, teamNamePrefill } = require_name_suggest();
       var { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require_name_validity();
@@ -46183,6 +46188,7 @@ ${res.stderr}` : "");
       var sbBusy = false;
       var SB_GATE_UNKNOWN = { running: false, notice: { kind: "idle", text: "Checking Docker\u2026" }, reason: "Checking Docker\u2026" };
       var sbGate = SB_GATE_UNKNOWN;
+      var sbForeign = null;
       var sbEffectivePorts = null;
       var sbCurrentBox = "sandbox";
       var sbBoxes = [];
@@ -46218,11 +46224,12 @@ ${res.stderr}` : "");
       }
       function applyActionGate() {
         const t = sandboxGateTreatment(sbGate, sbRunning);
-        sbToggleBtn.disabled = sbBusy || t.startDisabled;
-        sbRebuildBtn.disabled = sbBusy || t.rebuildDisabled;
+        const foreign = sbForeign ? sbForeign.text : "";
+        sbToggleBtn.disabled = sbBusy || t.startDisabled || !!foreign;
+        sbRebuildBtn.disabled = sbBusy || t.rebuildDisabled || !!foreign;
         sbBoxCreate.disabled = t.boxCreateDisabled;
-        sbToggleBtn.title = t.startDisabled ? t.reason || "" : "";
-        sbRebuildBtn.title = t.rebuildDisabled ? t.reason || "" : "";
+        sbToggleBtn.title = foreign || (t.startDisabled ? t.reason || "" : "");
+        sbRebuildBtn.title = foreign || (t.rebuildDisabled ? t.reason || "" : "");
         sbBoxCreate.title = t.boxCreateDisabled ? t.reason || "" : "";
         sbToggleBtn.classList.toggle("sandbox-gated", t.dimStart);
         sbRebuildBtn.classList.toggle("sandbox-gated", t.dimRebuild);
@@ -46238,8 +46245,9 @@ ${res.stderr}` : "");
           sbGate = sandboxActionGate(detect);
           renderSandboxNotice(sbDockerRow, sbGate.notice);
           const sn = sandboxStatusNotice(status && status.state);
+          sbForeign = sandboxForeignNotice(status);
           const refLine = sandboxRefLineText(status);
-          renderSandboxNotice(sbStatusRow, refLine ? { ...sn, text: `${sn.text} ${refLine}` } : sn);
+          renderSandboxNotice(sbStatusRow, sbForeign || (refLine ? { ...sn, text: `${sn.text} ${refLine}` } : sn));
           if (!sbBusy) applySandboxRunning(sn.running, status && status.ports);
           applyActionGate();
           sbMountsRestart.classList.toggle("hidden", !(sbMountsDirty && sbRunning));
@@ -46250,14 +46258,15 @@ ${res.stderr}` : "");
             const tog = selRow.querySelector(".sandbox-box-toggle");
             if (tog && !sbBusy) {
               tog.textContent = sn.running ? "Stop" : "Start";
-              const rowGated = boxRowStartGated(sbGate.running, sn.running);
+              const rowGated = boxRowStartGated(sbGate.running, sn.running) || !!sbForeign;
               tog.disabled = rowGated;
               tog.classList.toggle("sandbox-gated", rowGated);
-              tog.title = rowGated ? sbGate.reason || "" : "";
+              tog.title = rowGated ? sbForeign && sbForeign.text || sbGate.reason || "" : "";
             }
           }
         } catch {
           sbGate = SB_GATE_UNKNOWN;
+          sbForeign = null;
           applyActionGate();
         }
       }

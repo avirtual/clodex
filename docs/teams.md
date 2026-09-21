@@ -517,12 +517,24 @@ After a successful `up` or `rebuild` the box's coordinates land in
 
 ```json
 { "boxId": "team-clodex", "ref": "master", "sha": "…", "webUrl": "http://127.0.0.1:7810",
-  "wireUrl": "http://127.0.0.1:7820", "token": "…", "startedAt": "…" }
+  "wireUrl": "http://127.0.0.1:7820", "token": "…", "webToken": "…", "startedAt": "…" }
 ```
 
-`token` is the box's peer-wire secret. It is in that file and nowhere else — not
-in the reply, not in the logs, not over IPC — so a seat that needs to reach the
-box reads the file. `down` deletes it; `status` never writes it.
+`token` is the box's peer-wire secret and `webToken` its web-console secret;
+both are minted into the box's `auth.env` on first `up` and reused after. They
+are in that file and nowhere else — not in the reply, not in the logs, not over
+IPC — so a seat that needs to reach the box reads the file. `down` deletes it;
+`status` never writes it. The Teams ▸ "<team> — sandboxed" menu row opens
+`webUrl` with `?token=<webToken>` appended, so the console opens authenticated.
+
+The docker compose project is named after the box id (`team-<name>`), and the
+box is OWNED by the Clodex instance whose compose file created it: docker's
+`com.docker.compose.project.config_files` label on the project's containers
+names that file, and `up`, `rebuild` and `down` refuse (`code: foreign`) when it
+belongs to a different instance's user-data directory. A second Clodex on the
+same machine whose registry carries a same-id box therefore sees it as inert —
+`status` reports `foreign` with the owner's path and the Sandboxes panel shows
+it read-only — and cannot stop or rebuild the live box from the wrong side.
 
 `ref` and `sha` are what the box REPORTS, not what you asked for: an `image`
 override set in the GUI wins over `ref:`, and the file then carries `null` for
