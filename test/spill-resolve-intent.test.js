@@ -568,13 +568,13 @@ test('t1059: a wire spill broadcasts one ipc-message row of type spill — head 
   const h = mkH({ getUserDataPath: () => h.root, shadowIntentKey });
   const rig = await wireRig(h);
   try {
-    rig.wire.emit('spill', { agent: 'a', verb: 'task', head: '[agent:task add hand]', id: 'deadbeef00000000', bytes: 1234 });
+    rig.wire.emit('spill', { agent: 'a', verb: 'task', head: 'task add hand', id: 'deadbeef00000000', bytes: 1234 });
     const rows = h.broadcasts.filter((b) => b.type === 'spill');
     assert.strictEqual(rows.length, 1, 'ENTER: exactly one spill row');
     const expectedPath = path.join(h.root, 'spill', 'a', 'deadbeef00000000.md');
     assert.deepStrictEqual(rows[0], {
       type: 'spill', from: 'clodex', to: 'a',
-      body: `[agent:task add hand] (1234 B) filed at ${expectedPath}`,
+      body: `task add hand (1234 B) filed at ${expectedPath}`,
       path: expectedPath,
     });
     assert.deepStrictEqual(h.errors, []);
@@ -610,7 +610,7 @@ test('t1059: the spill row is broadcast even when the ack enqueue throws — the
   h.m._shadowLog = (row) => shadow.push(row);
   const rig = await wireRig(h);
   try {
-    rig.wire.emit('spill', { agent: 'a', verb: 'task', head: '[agent:task add hand]', id: 'deadbeef00000000', bytes: 1234 });
+    rig.wire.emit('spill', { agent: 'a', verb: 'task', head: 'task add hand', id: 'deadbeef00000000', bytes: 1234 });
     assert.deepStrictEqual(shadow.filter((r) => r.type === 'wire-spill-ack-error'),
       [{ type: 'wire-spill-ack-error', agent: 'a', error: 'queue on fire' }], 'ENTER: the enqueue really threw');
     const rows = h.broadcasts.filter((b) => b.type === 'spill');

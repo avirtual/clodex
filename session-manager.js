@@ -185,7 +185,7 @@ const {
   capResumeSnapshot,
 } = require('./intent-spill');
 const { spillGrammarLine } = require('./ipc-prompt');
-const { readPromptSnapshotMemo, restageAtReset } = require('./ipc-prompt-cache');
+const { readPromptSnapshotMemo, restageAtReset, clearCache } = require('./ipc-prompt-cache');
 
 const SPILL_MIMIC_BOUNCE = '[agent] Not executed: that line was a receipt, filler or pointer, not an intent, and nothing was sent or filed. Emit the complete intent — head line, full body, [agent:end].';
 
@@ -7236,6 +7236,7 @@ function createSessionManager(deps) {
           try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
         } catch {}
         fs.renameSync(tmp, mark.realpath);
+        clearCache(REGISTRY_DIR, name, 'snapshot');
       } catch (err) {
         try { fs.unlinkSync(tmp); } catch {}
         const fresh = await this._scratchRespawnSafely(session, entry, mark, bak, { keepMark: true });

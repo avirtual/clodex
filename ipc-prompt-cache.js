@@ -84,7 +84,7 @@
 const fs = require('fs');
 const path = require('path');
 
-// The four texts, all under promptcache/<name>/. `next` is deliberately a
+// The files, all under promptcache/<name>/. `next` is deliberately a
 // separate file from `notified` rather than an in-place write: the drain's final
 // step has to be ATOMIC (rename) so a half-written last_ipc can't exist.
 const CACHE_FILES = {

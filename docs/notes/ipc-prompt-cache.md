@@ -28,7 +28,8 @@ this shipped.
 
 A resumed seat that never compacted has its only rows at the HEAD of the file, so a plain scan is a
 full backward read of the whole transcript on the main thread, per seat, at restore-on-launch and
-at every compact. Transcripts are append-only, so `promptcache/<name>/snapshot.json` remembers the
+at every compact. Transcripts are append-only except for the scratch cut, which truncates the file in
+place and clears this memo, so `promptcache/<name>/snapshot.json` remembers the
 real path, the offset of the last complete line and the block found; the next call scans only the
 bytes past that offset and falls back to the remembered block when nothing newer is there. A
 different real path (a `/clear` repoints the symlink to a new file) is scanned in full.
