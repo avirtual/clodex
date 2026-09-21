@@ -266,6 +266,7 @@ const API_CONTRACT = [
   { name: 'onWtermData', kind: 'on', channel: 'wterm:data' },
   { name: 'sandboxDetect', kind: 'invoke', channel: 'sandbox:detect' },
   { name: 'sandboxStatus', kind: 'invoke', channel: 'sandbox:status' },
+  { name: 'sandboxOpenWeb', kind: 'invoke', channel: 'sandbox:openWeb' },
   { name: 'sandboxGetConfig', kind: 'invoke', channel: 'sandbox:getConfig' },
   { name: 'sandboxSetConfig', kind: 'invoke', channel: 'sandbox:setConfig' },
   { name: 'sandboxTranslatePath', kind: 'invoke', channel: 'sandbox:translatePath' },

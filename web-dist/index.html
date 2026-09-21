@@ -9926,6 +9926,7 @@ body.web-frontend #sidebar-header {
         { name: "onWtermData", kind: "on", channel: "wterm:data" },
         { name: "sandboxDetect", kind: "invoke", channel: "sandbox:detect" },
         { name: "sandboxStatus", kind: "invoke", channel: "sandbox:status" },
+        { name: "sandboxOpenWeb", kind: "invoke", channel: "sandbox:openWeb" },
         { name: "sandboxGetConfig", kind: "invoke", channel: "sandbox:getConfig" },
         { name: "sandboxSetConfig", kind: "invoke", channel: "sandbox:setConfig" },
         { name: "sandboxTranslatePath", kind: "invoke", channel: "sandbox:translatePath" },
@@ -37809,7 +37810,6 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       var { esc, baseName } = require_format();
       var { wireBulkToggles } = require_checklists();
       var { nextVisibleWithName } = require_peer_visibility();
-      var { openUrl: sandboxOpenUrl } = require_sandbox_view();
       var { webViewAffordance } = require_peer_web_view();
       var { peerStateText, NEEDS_UPGRADE_TIP } = require_peer_state_text();
       var { isPeerExpanded, togglePeerExpanded } = require_peer_collapse();
@@ -37923,7 +37923,8 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             showToast(`${label} isn't serving a web UI yet \u2014 start it first.`, { kind: "warm" });
             return;
           }
-          window.api.openExternal(sandboxOpenUrl(port));
+          window.api.sandboxOpenWeb(id).catch(() => {
+          });
         }
         async function togglePeerWeb(id, label) {
           const a = webViewAffordance({
@@ -46320,7 +46321,7 @@ ${res.stderr}` : "");
         const boxes = sbBoxes;
         const [detect, notices] = await Promise.all([
           window.api.sandboxDetect(sbCurrentBox).catch(() => null),
-          Promise.all(boxes.map((b) => window.api.sandboxStatus(b.id).then((s) => sandboxStatusNotice(s && s.state)).catch(() => sandboxStatusNotice())))
+          Promise.all(boxes.map((b) => window.api.sandboxStatus(b.id).then((s) => ({ ...sandboxStatusNotice(s && s.state), foreign: sandboxForeignNotice(s) })).catch(() => ({ ...sandboxStatusNotice(), foreign: null }))))
         ]);
         sbGate = sandboxActionGate(detect);
         applyActionGate();
@@ -46346,10 +46347,10 @@ ${res.stderr}` : "");
           tog.type = "button";
           tog.className = "secondary sandbox-box-toggle";
           tog.textContent = sn.running ? "Stop" : "Start";
-          const rowStartGated = boxRowStartGated(sbGate.running, sn.running);
+          const rowStartGated = boxRowStartGated(sbGate.running, sn.running) || !!sn.foreign;
           tog.disabled = rowStartGated;
           tog.classList.toggle("sandbox-gated", rowStartGated);
-          if (rowStartGated) tog.title = sbGate.reason || "";
+          if (rowStartGated) tog.title = sn.foreign && sn.foreign.text || sbGate.reason || "";
           tog.addEventListener("click", (e) => {
             e.stopPropagation();
             toggleBox(b.id, sn.running);
@@ -46579,7 +46580,8 @@ ${res.stderr}` : "");
       });
       sbOpenLink.addEventListener("click", (e) => {
         e.preventDefault();
-        window.api.openExternal(sandboxOpenUrl(effectiveWebPort()));
+        window.api.sandboxOpenWeb(sbCurrentBox).catch(() => {
+        });
       });
       sbOpenLink.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") {

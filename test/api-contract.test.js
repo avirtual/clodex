@@ -147,7 +147,7 @@ const PINNED_NAMES = [
   'newWorkspace',
   // Managed Docker sandbox (sandbox-plan.md [internal design doc, not in this repo] M2) — appended deliberately as
   // the surface grew past the ffe1161 snapshot; the count below moved with it.
-  'sandboxDetect', 'sandboxStatus', 'sandboxGetConfig', 'sandboxSetConfig',
+  'sandboxDetect', 'sandboxStatus', 'sandboxOpenWeb', 'sandboxGetConfig', 'sandboxSetConfig',
   'sandboxTranslatePath',
   'sandboxUp', 'sandboxRebuild', 'sandboxDown', 'sandboxLogsTail', 'sandboxSetToken',
   'sandboxClearToken', 'sandboxListBoxes', 'sandboxCreateBox', 'sandboxDeleteBox',
@@ -251,8 +251,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 311-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 311, 'pinned list is the full 311-method surface');
+test('contract covers exactly the pinned 312-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 312, 'pinned list is the full 312-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -276,7 +276,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 311, 'window.api has exactly 311 methods');
+    assert.equal(generated.length, 312, 'window.api has exactly 312 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

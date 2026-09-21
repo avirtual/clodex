@@ -1972,10 +1972,48 @@ test('status: carries foreign:<owner path> for another instance\'s project, and 
   const foreign = await mk(`${other}\n`).status();
   assert.strictEqual(foreign.state, 'running');
   assert.strictEqual(foreign.foreign, other);
-  const ours = mk('');
-  const mineSt = await mk(`${ours.composePath()}\n`).status();
+  const mineSt = await mk(`${path.join(ud, 'sandbox', 'compose.yaml')}\n`).status();
   assert.strictEqual(mineSt.state, 'running');
   assert.strictEqual('foreign' in mineSt, false);
   const empty = await mk('').status();
   assert.strictEqual('foreign' in empty, false);
+});
+
+test('status: a project this instance never composed (compose ps fails on the missing -f file) still reports foreign', async () => {
+  const ud = freshUserData();
+  const other = '/elsewhere/clodex-ios/sandbox-team-clodex/compose.yaml';
+  const calls = [];
+  const spawn = (_cmd, args) => {
+    calls.push(args);
+    const f = args.indexOf('-f');
+    if (f >= 0 && args[f + 2] === 'ps') return fakeSpawn({ code: 1, stderr: `open ${args[f + 1]}: no such file or directory` })();
+    if (args[0] === 'ps') return fakeSpawn({ code: 0, stdout: `${other}\n` })();
+    return fakeSpawn({ code: 0 })();
+  };
+  const sb = createSandbox({ registryDir: TMP_REGISTRY, id: 'team-clodex', label: 'clodex',
+    spawn, getUiSettings: () => fakeSettings(), getUserDataPath: () => ud,
+    isPortInUse: () => Promise.resolve(false),
+  });
+  assert.ok(!fs.existsSync(sb.composePath()), 'ENTER: no compose file of ours exists for this box');
+  const st = await sb.status();
+  assert.strictEqual(st.state, 'absent');
+  assert.strictEqual(st.foreign, other, 'the panel must read the row as foreign, not as "never created"');
+  assert.deepStrictEqual(calls[0], OWNER_LABEL_ARGV('team-clodex'), 'the ownership probe runs before compose ps');
+});
+
+test('foreignOwner: a label spelled through a symlinked userData still reads as ours', async () => {
+  const real = freshUserData();
+  const link = `${real}-link`;
+  fs.symlinkSync(real, link);
+  const calls = [];
+  const viaLink = createSandbox({ registryDir: TMP_REGISTRY, id: 'team-clodex', label: 'clodex',
+    spawn: ownerSpawn(calls, { code: 0, stdout: `${path.join(real, 'sandbox', 'compose.yaml')}\n` }),
+    getUiSettings: () => fakeSettings(), getUserDataPath: () => link,
+    isPortInUse: () => Promise.resolve(false),
+  });
+  fs.mkdirSync(path.join(real, 'sandbox'), { recursive: true });
+  fs.writeFileSync(path.join(real, 'sandbox', 'compose.yaml'), '');
+  const r = await viaLink.up();
+  assert.strictEqual(r.ok, true, `own box behind a symlink must not read as foreign: ${r.error || ''}`);
+  assert.deepStrictEqual(composeSubcommands(calls), [['up', '-d']]);
 });

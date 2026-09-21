@@ -6904,7 +6904,9 @@ async function renderBoxList() {
   const [detect, notices] = await Promise.all([
     window.api.sandboxDetect(sbCurrentBox).catch(() => null),
     Promise.all(boxes.map((b) =>
-      window.api.sandboxStatus(b.id).then((s) => sandboxStatusNotice(s && s.state)).catch(() => sandboxStatusNotice()))),
+      window.api.sandboxStatus(b.id)
+        .then((s) => ({ ...sandboxStatusNotice(s && s.state), foreign: sandboxForeignNotice(s) }))
+        .catch(() => ({ ...sandboxStatusNotice(), foreign: null })))),
   ]);
   sbGate = sandboxActionGate(detect);
   applyActionGate();
@@ -6930,10 +6932,10 @@ async function renderBoxList() {
     tog.type = 'button';
     tog.className = 'secondary sandbox-box-toggle';
     tog.textContent = sn.running ? 'Stop' : 'Start';
-    const rowStartGated = boxRowStartGated(sbGate.running, sn.running);
+    const rowStartGated = boxRowStartGated(sbGate.running, sn.running) || !!sn.foreign;
     tog.disabled = rowStartGated;
     tog.classList.toggle('sandbox-gated', rowStartGated);
-    if (rowStartGated) tog.title = sbGate.reason || '';
+    if (rowStartGated) tog.title = (sn.foreign && sn.foreign.text) || sbGate.reason || '';
     tog.addEventListener('click', (e) => { e.stopPropagation(); toggleBox(b.id, sn.running); });
     row.append(dot, label, tog);
     row.addEventListener('click', () => selectBox(b.id));
@@ -7146,14 +7148,9 @@ sbDeleteBtn.addEventListener('click', async () => {
   }
 });
 
-// Route through openExternal, not a target="_blank" anchor: the desktop has no
-// setWindowOpenHandler, so _blank would open a chromeless BrowserWindow instead
-// of the user's browser. openExternal degrades correctly on web (open-external
-// fan → shim window.open) — and on web that fan is also the gate that refuses a
-// box-loopback url, which is why the anchor carries no href to click around it.
 sbOpenLink.addEventListener('click', (e) => {
   e.preventDefault();
-  window.api.openExternal(sandboxOpenUrl(effectiveWebPort()));
+  window.api.sandboxOpenWeb(sbCurrentBox).catch(() => {});
 });
 // An anchor with no href does not synthesize a click on Enter, and role="button"
 // promises Space as well — without this the control is announced as a button and

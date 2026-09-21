@@ -525,7 +525,9 @@ both are minted into the box's `auth.env` on first `up` and reused after. They
 are in that file and nowhere else — not in the reply, not in the logs, not over
 IPC — so a seat that needs to reach the box reads the file. `down` deletes it;
 `status` never writes it. The Teams ▸ "<team> — sandboxed" menu row opens
-`webUrl` with `?token=<webToken>` appended, so the console opens authenticated.
+`webUrl` with `?token=<webToken>` appended, so the console opens authenticated;
+the Sandboxes panel's Open link and the Peers list's open-box action build the
+same url in the main process, so the token never reaches the renderer.
 
 The docker compose project is named after the box id (`team-<name>`), and the
 box is OWNED by the Clodex instance whose compose file created it: docker's

@@ -672,11 +672,15 @@ function createSandbox(deps = {}) {
     });
   }
 
+  function canonicalPath(p) {
+    try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+  }
+
   async function foreignOwner() {
     const r = await composeOwner();
     if (!r.ok || !r.owners.length) return null;
-    const mine = composePath();
-    return r.owners.includes(mine) ? null : r.owners[0];
+    const mine = canonicalPath(composePath());
+    return r.owners.some((o) => canonicalPath(o) === mine) ? null : r.owners[0];
   }
 
   function foreignError(owner) {
@@ -750,13 +754,15 @@ function createSandbox(deps = {}) {
   async function status() {
     const statusConfig = getConfig();
     const trackedRef = (statusConfig.ref && !statusConfig.image) ? statusConfig.ref : null;
+    const owner = await foreignOwner();
     const r = await runCompose(['ps', '--format', 'json']);
     if (!r.ok && !r.stdout.trim()) {
-      return { state: 'absent', ref: trackedRef, sha: trackedRef ? await headSha(srcDir()) : null, error: r.stderr.trim() || undefined };
+      const absent = { state: 'absent', ref: trackedRef, sha: trackedRef ? await headSha(srcDir()) : null, error: r.stderr.trim() || undefined };
+      if (owner) absent.foreign = owner;
+      return absent;
     }
     const state = parseComposeState(r.stdout);
     const out = { state, ref: trackedRef, sha: trackedRef ? await headSha(srcDir()) : null };
-    const owner = await foreignOwner();
     if (owner) out.foreign = owner;
     // Only meaningful while running: the compose file persists after Stop, but its
     // ports then describe no live listener, and Start regenerates them.
