@@ -73,3 +73,11 @@ resets `notified.md := session.md` through a different channel, in either order.
 staged pair whose baseline is `session.md` itself (`notified.md` equal to it) and drops one staged
 against an advanced baseline; this function always resets `notified.md` to the baseline before
 staging, so both orders leave the full gap staged. The prompt file is never rewritten here.
+Its clear-site caller hands over the PRIOR conversation id: at a `/clear` the new `<sid>.jsonl` and
+the repointed symlink are row-less for 2-8 s, while the new session's rows carry the prior session's
+last block, so `_snapshotBlockFor` reads `<account>/projects/<slug>/<priorSid>.jsonl`. A
+`--fork-session` seat reaches the same edge on its first id (its `sessionId` starts as the
+parent's) and the parent's transcript is not what the child runs after a `mint`, so `session.forked`
+gates that one edge to the child's own id and is cleared there. The account dir comes from
+`session.accountDir` (create()'s merged env) before the persisted `entry.env`, which misses a
+template- or account-sourced `CLAUDE_CONFIG_DIR`.
