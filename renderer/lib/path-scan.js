@@ -68,24 +68,6 @@ function scanPaths(text) {
   return out;
 }
 
-const SPILL_RE = /@spill:([0-9a-f]{16})\b/g;
-
-function scanSpillPointers(text) {
-  if (typeof text !== 'string' || !text) return [];
-  const out = [];
-  SPILL_RE.lastIndex = 0;
-  for (let m = SPILL_RE.exec(text); m; m = SPILL_RE.exec(text)) {
-    out.push({
-      start: m.index,
-      end: m.index + m[0].length,
-      text: m[0],
-      path: m[0],
-      line: null,
-    });
-  }
-  return out;
-}
-
 // Returns the WHOLE text as an ordered, gapless, non-overlapping span list
 // covering [0, text.length): { kind: 'text' | 'url' | 'path', text, ... }, where
 // a `path` span also carries `path`/`line` as scanPaths yields them. The third
@@ -129,4 +111,4 @@ function scanLinks(text) {
   return out;
 }
 
-module.exports = { scanPaths, scanSpillPointers, scanLinks, PATH_RE, SPILL_RE, EXTENSIONS };
+module.exports = { scanPaths, scanLinks, PATH_RE, EXTENSIONS };
