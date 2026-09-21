@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const {
   RoleClassifier, isSubagentRole, billingIsSubagent, billingFingerprint,
-  isTitleCall, isProbeCall, isClassifierCall,
+  isTitleCall, isProbeCall, isClassifierCall, isCompactCall,
 } = require('../wire/role');
 
 const SID = '4a59af49-cc52-44b7-8b02-7f4196a4b486';
@@ -163,4 +163,46 @@ test('health-probe detection', () => {
   assert.equal(isProbeCall({ max_tokens: 1, messages: [{ role: 'user', content: 'quota' }] }), true);
   assert.equal(isProbeCall({ max_tokens: 4096, messages: [{ role: 'user', content: 'hi' }] }), false);
   assert.equal(isProbeCall(parentTurn()), false);
+});
+
+const COMPACT_INSTRUCTION = 'Your task is to create a detailed summary of the conversation so far, '
+  + 'paying close attention to the user\'s explicit requests and your previous actions.';
+
+function compactCall(lastContent) {
+  const t = parentTurn();
+  t.messages = [
+    { role: 'user', content: 'fix the bug in wire/spill.js' },
+    { role: 'assistant', content: [{ type: 'text', text: 'On it.' }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'ok' }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'Done; suite green.' }] },
+    { role: 'user', content: lastContent },
+  ];
+  return t;
+}
+
+test('compact-summarization detection: needle in the LAST user message, string or text block', () => {
+  assert.equal(isCompactCall(compactCall(COMPACT_INSTRUCTION)), true);
+  assert.equal(isCompactCall(compactCall([
+    { type: 'text', text: '<pasted_content>history</pasted_content>' },
+    { type: 'text', text: `\n\n${COMPACT_INSTRUCTION}\nREMINDER: Do NOT call any tools.` },
+  ])), true);
+  assert.equal(isCompactCall(parentTurn()), false);
+});
+
+test('compact-summarization detection: an EARLIER user message quoting the needle is not a compact', () => {
+  const t = compactCall('now run the tests');
+  t.messages[0] = { role: 'user', content: `what does "${COMPACT_INSTRUCTION}" do in scan.py?` };
+  assert.equal(isCompactCall(t), false);
+  const trailingAssistant = compactCall(COMPACT_INSTRUCTION);
+  trailingAssistant.messages.push({ role: 'assistant', content: [{ type: 'text', text: 'summary…' }] });
+  assert.equal(isCompactCall(trailingAssistant), false);
+});
+
+test('compact-summarization detection: side-calls are not compacts', () => {
+  assert.equal(isCompactCall({
+    system: 'Generate a concise, sentence-case title for this conversation.',
+    messages: [{ role: 'user', content: 'hi' }],
+  }), false);
+  assert.equal(isCompactCall({ max_tokens: 1, messages: [{ role: 'user', content: 'quota' }] }), false);
+  assert.equal(isCompactCall(classifierCall()), false);
 });
