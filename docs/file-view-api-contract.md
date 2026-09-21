@@ -87,7 +87,12 @@ POST /api/sessions/:name/query   {kind: "filePeek", args: {path, offset?, length
   `offset + length` therefore never re-reads or skips a byte. Never a
   replacement character.
 - `binary: true, content: null` for a file with a NUL in its first 8 KB; the
-  client renders "binary, N bytes" and offers nothing.
+  client renders "binary, N bytes" and offers nothing. On that reply `size` is
+  the real size and `offset`, `length` are `0`, `truncated` is `false`: there
+  is no range to advance, so a client must never offer "load more" on it.
+- `ok:false` NEVER rides a 2xx: the HTTP status and `ok` agree on every reply
+  (200 ⇔ `ok:true`). A client may trust either; a host answering
+  `200 {"ok":false,…}` is non-conforming.
 - Error codes (machine-readable `code`, human `error`):
   - `outside` (403) — path is outside what the client may read (see 3).
   - `not-found` (404) — nothing at that path. This is also the answer for a path
