@@ -14467,8 +14467,8 @@ test('T54 (fix) INVARIANT: a draft opening AFTER enqueue, BEFORE the producer fi
 //   object and the byte count — never about wall-clock not having elapsed. These use
 //   `drainAndArm`, whose poll for the armed timer is only sound here.
 //   SHORT (tens of ms) for anything asserting a nudge HAS happened, or that must
-//   change the seat's state before the window elapses. These use `drainOnly` and do
-//   that work in its `onDrained` callback, then wait for the FIRE. Polling for the
+//   change the seat's state before the window elapses. These use `drainOnly` (or
+//   `drainOnlyMocked`: same path on t.mock.timers, t1051) then wait for the FIRE. Polling for the
 //   arm would be the same defect one layer on: a reachable timer nulls itself when
 //   it fires, so the poll can miss it and time out on a mechanism that worked.
 // "Assert on observed state, never on 'not yet' against wall-clock."
@@ -14523,6 +14523,27 @@ async function drainOnly(p, name, onDrained = null) {
 async function drainAndArm(p, name) {
   const { s, writes } = await drainOnly(p, name);
   await waitFor(() => !!s._bootNudgeTimer);
+  return { s, writes };
+}
+
+async function tickFor(t, ms) {
+  for (let i = 0; i < ms; i++) {
+    t.mock.timers.tick(1);
+    await new Promise((r) => setImmediate(r));
+  }
+}
+
+async function tickUntil(t, pred, maxMs = 2000) {
+  for (let ms = 0; ms < maxMs && !pred(); ms++) await tickFor(t, 1);
+  if (!pred()) throw new Error('tickUntil ran out of mocked time');
+}
+
+async function drainOnlyMocked(t, p, name, onDrained = null) {
+  const { s, writes } = await nudgeSeat(p, name);
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: Date.now() });
+  p.fireData('\x1b[?2004h');
+  await tickUntil(t, () => writes.length >= 3);
+  if (onDrained) onDrained(s, writes);
   return { s, writes };
 }
 
@@ -14599,7 +14620,7 @@ test('t771: pty output at fire time RE-ARMS the nudge, which lands once the seat
   assert.deepStrictEqual(writes, [...DRAINED, '\r'], 'the nudge lands on the quiet seat');
 });
 
-test('t771: an OPEN DRAFT at fire time re-arms too, and the nudge waits for the operator', async () => {
+test('t771: an OPEN DRAFT at fire time re-arms too, and the nudge waits for the operator', async (t) => {
   // A partial line typed into the boot window and paused: the seat is quiet, so the
   // output gate alone would submit whatever he had half-written. The draft check is
   // what stops the nudge pressing Enter on his behalf, and it re-arms on the same
@@ -14608,18 +14629,18 @@ test('t771: an OPEN DRAFT at fire time re-arms too, and the nudge waits for the 
   // Draft opened the instant the drain lands, before any await, for the same reason
   // the paint is: it must be true when the first fire window elapses.
   const p = mkNudgeProbe({ bootNudgeMs: 30 });
-  const { s, writes } = await drainOnly(p, 'nudge-e', (sess) => {
+  const { s, writes } = await drainOnlyMocked(t, p, 'nudge-e', (sess) => {
     sess.lastUserInputTs = Date.now(); sess.lastUserSubmitTs = 0;   // isDraftOpen → true
   });
-  await new Promise((r) => setTimeout(r, 120));             // several fire windows
+  await tickFor(t, 120);                                    // several fire windows
   assert.deepStrictEqual(writes, DRAINED, 'his half-typed line was not submitted for him');
   assert.ok(s._bootNudgeTimer, 'and the nudge is still armed, not abandoned');
   s.lastUserSubmitTs = Date.now();                          // he submits → draft closed
-  await waitFor(() => writes.length >= 4);
+  await tickUntil(t, () => writes.length >= 4);
   assert.deepStrictEqual(writes, [...DRAINED, '\r'], 'the next fire writes it');
 });
 
-test('t771: a seat that NEVER goes quiet gives up silently at INJECT_BOOT_MAXWAIT', async () => {
+test('t771: a seat that NEVER goes quiet gives up silently at INJECT_BOOT_MAXWAIT', async (t) => {
   // The other end of the re-arm: an unbounded re-arm would nudge minutes later into
   // a seat that has plainly been alive the whole time. The cap is measured from the
   // WRITE, and expiry is silent — there is no fault to report, only a nudge that was
@@ -14627,10 +14648,10 @@ test('t771: a seat that NEVER goes quiet gives up silently at INJECT_BOOT_MAXWAI
   // null and stays null), so this asserts an outcome, never elapsed time.
   const p = mkNudgeProbe({ bootNudgeMs: 30, INJECT_BOOT_MAXWAIT: 200 });
   let paint = null;
-  const { s, writes } = await drainOnly(p, 'nudge-f', () => {
+  const { s, writes } = await drainOnlyMocked(t, p, 'nudge-f', () => {
     paint = setInterval(() => p.fireData('.'), 5);         // shut the quiet gate at once
   });
-  await waitFor(() => s._bootNudgeTimer === null, 4000);   // the give-up ran
+  await tickUntil(t, () => s._bootNudgeTimer === null, 4000);   // the give-up ran
   clearInterval(paint);
   assert.deepStrictEqual(writes, DRAINED, 'gave up without writing — the cap, not a nudge');
   assert.strictEqual(p.logged.some((l) => l.includes('boot-drain nudge for nudge-f')), false,
@@ -19509,7 +19530,7 @@ test('scratch end: the name is released even when the cut fails', async () => {
   scratchResearch(f);
   f.s._flushTurnEnd = true;
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
-  await new Promise((r) => setTimeout(r, 80));
+  await waitFor(() => f.injected.some((l) => /the cut FAILED while writing: EXDEV/.test(l)));
   assert.ok(!f.m._movingNames.has('a'),
     'a finally, not a happy-path delete: a name leaked into _movingNames refuses every later Move, '
     + 'Rename and scratch end on that seat for the lifetime of the app');
