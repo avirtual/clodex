@@ -79,6 +79,8 @@ the repointed symlink are row-less for 2-8 s, while the new session's rows carry
 last block, so `_snapshotBlockFor` reads `<account>/projects/<slug>/<priorSid>.jsonl`. A
 `--fork-session` seat reaches the same edge on its first id (its `sessionId` starts as the
 parent's) and the parent's transcript is not what the child runs after a `mint`, so `session.forked`
-gates that one edge to the child's own id and is cleared there. The account dir comes from
-`session.accountDir` (create()'s merged env) before the persisted `entry.env`, which misses a
+gates that one edge to the child's own id and is cleared there. That gate assumes the child's
+`<sid>.jsonl` carries no `prompt_snapshot` row copied from the parent at that instant; unverified — a
+corpus scan found no snapshot row's uuid in two files, but no fork straddling a parent snapshot row. The account dir
+comes from `session.accountDir` (create()'s merged env) before the persisted `entry.env`, which misses a
 template- or account-sourced `CLAUDE_CONFIG_DIR`.
