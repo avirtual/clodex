@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Phone-access file view: `filePeek` returns an integral `mtime` (a fractional value made strict JSON decoders reject the whole reply); a non-traversable ancestor answers `outside` (403) rather than `unreadable` (500); a confinement root itself and a dangling symlink inside cwd answer `not-a-file` (400); the codeless "no such session" 404 is now contractual.
 
 - Sandbox: agent seats start again in a team box — the per-seat `run/` dir (agent socket) is the real dir on the box's tmpfs once more, with `sessions/<seat>/run` linking to it; since 5.83.x it was a link the other way and the socket landed on the bind mount (`listen ENOTSUP`).
 - Phone and web clients can now see the files an agent references: `files` lists a seat's spilled intent bodies, handoffs and inbound message spills as `filed[]`, `filePeek` takes a byte range and answers with machine-readable error codes, reads over the phone-access server are confined to the seat's cwd, its spill and message directories and the project's task artifacts, and a `filed` event on `/api/events` says when a new one lands.

@@ -31,6 +31,8 @@ function wirePromptBody(value) {
   return value;
 }
 
+const WALK_UP_CODES = new Set(['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM']);
+
 function realpathNearest(fs, path, p) {
   const tail = [];
   let probe = path.resolve(p);
@@ -39,7 +41,7 @@ function realpathNearest(fs, path, p) {
       const real = fs.realpathSync(probe);
       return { ok: true, real: path.join(real, ...tail), exists: tail.length === 0 };
     } catch (e) {
-      if (!e || (e.code !== 'ENOENT' && e.code !== 'ENOTDIR')) return { ok: false, error: e && e.message ? e.message : String(e) };
+      if (!e || !WALK_UP_CODES.has(e.code)) return { ok: false, error: e && e.message ? e.message : String(e) };
       const parent = path.dirname(probe);
       if (parent === probe) return { ok: false, error: 'unresolvable path' };
       tail.unshift(path.basename(probe));
@@ -647,19 +649,19 @@ function createRemoteWiring(deps) {
             const r = realpathNearest(fs, path, p);
             if (!r.ok) return { ok: false, code: 'unreadable', error: r.error };
             const roots = remoteReadRoots({ fs, path, REGISTRY_DIR, MSG_DIR }, target, name);
-            if (!roots.some((root) => r.real.startsWith(root + path.sep))) {
+            if (!roots.some((root) => r.real === root || r.real.startsWith(root + path.sep))) {
               return { ok: false, code: 'outside', error: 'path is outside what this seat may read over the phone-access server' };
+            }
+            try {
+              if (fs.lstatSync(p).isSymbolicLink()) return { ok: false, code: 'not-a-file', error: 'Not a regular file' };
+            } catch (e) {
+              if (r.exists) return { ok: false, code: 'unreadable', error: e.message };
             }
             if (!r.exists) {
               if (target.filedRing && target.filedRing.has(path.resolve(p))) {
                 return { ok: false, code: 'gone', error: 'that file was filed for this seat but has since been removed' };
               }
               return { ok: false, code: 'not-found', error: 'no such file' };
-            }
-            try {
-              if (fs.lstatSync(p).isSymbolicLink()) return { ok: false, code: 'not-a-file', error: 'Not a regular file' };
-            } catch (e) {
-              return { ok: false, code: 'unreadable', error: e.message };
             }
             return { ok: true, real: r.real, path: path.resolve(p) };
           };

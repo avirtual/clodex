@@ -62,11 +62,11 @@ function peekFile(filePath, opts = {}) {
       }
     } finally { fs.closeSync(fd); }
     if (binary) {
-      return { ok: true, path: filePath, size: st.size, mtime: st.mtimeMs, offset: 0, length: 0, truncated: false, binary: true, content: null };
+      return { ok: true, path: filePath, size: st.size, mtime: Math.trunc(st.mtimeMs), offset: 0, length: 0, truncated: false, binary: true, content: null };
     }
     const got = offset + buf.length < st.size ? utf8CutAt(buf, buf.length) : buf.length;
     return {
-      ok: true, path: filePath, size: st.size, mtime: st.mtimeMs,
+      ok: true, path: filePath, size: st.size, mtime: Math.trunc(st.mtimeMs),
       offset, length: got, truncated: offset + got < st.size, binary: false,
       content: buf.subarray(0, got).toString('utf-8'),
     };
