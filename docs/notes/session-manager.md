@@ -118,7 +118,3 @@ the engine would reach them.
 ## _handleShoutIntent
 
 The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `archive()`: archive kills the pty, and the renderer rebuilds a row as archived only for a name already stamped into `archivingSessions`. Sent late or not at all, the row is REMOVED. Precedent: `team-tickets.js` retire.
-
-## _spillTyped
-
-On a non-spill verb the trailing `@spill:<id>` shape alone is proof of fabrication: the tee files only `SPILL_VERBS`, so no real pointer ever reaches `memory remember`, `context *` or `remind`, and the guard in `_handleIntent` neither resolves nor touches disk. `TRAILING_POINTER_RE` is looser than `pointerOf` on purpose — a fabricated title runs past the 79 chars `TITLED_POINTER_RE` allows.
