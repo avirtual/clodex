@@ -655,7 +655,7 @@ function createRemoteWiring(deps) {
             try {
               if (fs.lstatSync(p).isSymbolicLink()) return { ok: false, code: 'not-a-file', error: 'Not a regular file' };
             } catch (e) {
-              if (r.exists) return { ok: false, code: 'unreadable', error: e.message };
+              if (r.exists || !['ENOENT', 'ENOTDIR'].includes(e.code)) return { ok: false, code: 'unreadable', error: e.message };
             }
             if (!r.exists) {
               if (target.filedRing && target.filedRing.has(path.resolve(p))) {
