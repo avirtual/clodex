@@ -128,9 +128,11 @@ test('the grammar line is in the prompt with the setting OFF, so a flip changes 
     await spawn(on.m, 'seat');
     assert.ok(off.prompts[0].includes(GRAMMAR),
       'the prompt is captured at spawn and replayed on clear/compact, so it must not track the setting');
-    assert.ok(off.prompts[0].includes('your transcript keeps a one-line receipt naming the file, so a body is never lost and never needs re-sending'));
-    assert.ok(off.prompts[0].includes('Always write the body itself: a body you did not write does not exist, and a receipt is something Clodex writes after delivery, never something you write.'),
+    assert.ok(off.prompts[0].includes('the whole block is removed from your transcript, and a `[clodex] … filed at …` note on your next prompt confirms the filing, so a body is never lost and never needs re-sending'));
+    assert.ok(off.prompts[0].includes('Always write the body itself: a body you did not write does not exist, and the confirmation is something Clodex writes after delivery, never something you write.'),
       'the paragraph names no token and no form: the pointer shape it used to teach is what the seats copied');
+    assert.ok(!/receipt/.test(off.prompts[0]),
+      'the word is gone with the shape: the receipt sentence was the counter-example seats imitated');
     assert.ok(!off.prompts[0].includes('@spill'), 'no pointer token anywhere in the prompt');
     assert.ok(off.prompts[0].includes(
       'On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last '

@@ -187,6 +187,13 @@ const {
 const { spillGrammarLine } = require('./ipc-prompt');
 
 const SPILL_MIMIC_BOUNCE = '[agent] you wrote a receipt line yourself — nothing was sent or filed. Clodex writes a receipt only after it has delivered a body you wrote. If you meant to send something, emit the intent with its full text.';
+
+function spillAckLine(ev, filePath) {
+  if (ev.verb === 'prose') {
+    return `[clodex] the ${ev.bytes} B of prose after your last intent reached the operator's log and were filed at ${filePath}.`;
+  }
+  return `[clodex] your ${ev.head} (${ev.bytes} B) was read in full and filed at ${filePath}.`;
+}
 const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft } = require('./hint-arm');
@@ -983,6 +990,11 @@ function createSessionManager(deps) {
       wire.on('spill', (ev) => {
         this._shadowLog({ type: 'wire-spill', ...ev });
         log.info('intent', `spill ${ev.agent} ${ev.verb} @spill:${ev.id} (${ev.bytes} B)`);
+        try {
+          enqueueNotice(REGISTRY_DIR, ev.agent, spillAckLine(ev, spillPathFor(REGISTRY_DIR, ev.agent, ev.id)));
+        } catch (e) {
+          this._shadowLog({ type: 'wire-spill-ack-error', agent: ev.agent, error: e.message });
+        }
       });
       wire.on('spill-bail', (ev) => this._shadowLog({ type: 'wire-spill-bail', ...ev }));
       wire.on('spill-mimic', (ev) => {
@@ -8616,4 +8628,4 @@ function createSessionManager(deps) {
   return SessionManager;
 }
 
-module.exports = { createSessionManager, deniedBodyDisposition, exitDisposition, findPeerByOrigin, isStaleRegistration, missingToolOnExit, nameConflict, peerOriginSuffix, preseedClaudeOnboarding, ticketCloseLine, ticketTaskDirLine };
+module.exports = { createSessionManager, deniedBodyDisposition, exitDisposition, findPeerByOrigin, isStaleRegistration, missingToolOnExit, nameConflict, peerOriginSuffix, preseedClaudeOnboarding, spillAckLine, ticketCloseLine, ticketTaskDirLine };

@@ -1,10 +1,9 @@
 'use strict';
 
 const {
-  SPILL_MIN_BYTES, SPILL_MAX_BYTES, validAgent, writeSpill: defaultWriteSpill, spillPathFor, mimicKindOf,
+  SPILL_MIN_BYTES, SPILL_MAX_BYTES, SPILL_FILLER, validAgent, writeSpill: defaultWriteSpill, mimicKindOf,
 } = require('../intent-spill');
 const { cleanLine } = require('../intent-scanner');
-const { titleLine, ticketTitle } = require('../tickets-store');
 
 const HEAD_RE = /^\[agent:([a-z]+)(?:\s+([a-z-]+))?\b([^\]]*)\]/;
 const TERMINATOR = '[agent:end]';
@@ -238,10 +237,6 @@ class SpillFilter {
     this.bodyLen = 0;
   }
 
-  _keptAt(id) {
-    return spillPathFor(this.root, this.agent, id) || `spill/${this.agent}/${id}.md`;
-  }
-
   _resolve() {
     const bodyText = this._bodyText();
     const head = this.head;
@@ -254,15 +249,9 @@ class SpillFilter {
         this._clear();
         this.verb = null;
         this._fired += 1;
-        this._notify(this.onSpill, { verb, id, bytes });
-        const first = titleLine(bodyText);
-        const title = (first && first !== bodyText.trim())
-          ? ` — "${ticketTitle(bodyText).replace(/"/g, "'").replace(/…/g, '')}"` : '';
         const words = head.slice(OPEN.length, -1).trim().replace(/\s+/g, ' ');
-        return {
-          spilled: true,
-          text: `(I sent ${words}${title} in full, ${bytes} B; Clodex kept my text at ${this._keptAt(id)}.)\n`,
-        };
+        this._notify(this.onSpill, { verb, id, bytes, head: words });
+        return { spilled: true, text: '' };
       }
     }
     const held = this.originalHeld();
@@ -279,8 +268,8 @@ class SpillFilter {
     try { id = this._write(this.root, this.agent, text); } catch { id = null; }
     if (!id) return text;
     this._fired += 1;
-    this._notify(this.onSpill, { verb: 'prose', id, bytes });
-    return `(I wrote ${bytes} B of prose after my last intent; it reached the operator's log and Clodex kept it at ${this._keptAt(id)}.)\n`;
+    this._notify(this.onSpill, { verb: 'prose', id, bytes, head: null });
+    return '';
   }
 
   endBlock() {
@@ -368,6 +357,8 @@ class SpillTee {
     this.heldSrc = '';
     this.heldOut = '';
     this.heldStopAt = -1;
+    this.blockOut = '';
+    this.blockFired = 0;
   }
 
   get fired() { return this.filter.fired; }
@@ -383,11 +374,19 @@ class SpillTee {
     } else if (this.heldOut) {
       out.push(deltaEvent(this.index, this.heldOut));
     }
+    this.blockOut += this.heldOut;
+    if (this.heldStopAt !== -1) this._stopBlock(out);
     for (let i = cut; i < this.heldRaw.length; i += 1) out.push(this.heldRaw[i]);
     this.heldRaw = [];
     this.heldSrc = '';
     this.heldOut = '';
     this.heldStopAt = -1;
+  }
+
+  _stopBlock(out) {
+    if (this.filter.fired > this.blockFired && !this.blockOut.trim()) out.push(deltaEvent(this.index, SPILL_FILLER));
+    this.blockOut = '';
+    this.blockFired = this.filter.fired;
   }
 
   _panic(out, e) {
@@ -477,6 +476,7 @@ class SpillTee {
         if (d && d.type === 'content_block_stop') {
           this.heldOut += this.filter.close();
           this._flushHeld(out);
+          this._stopBlock(out);
         }
         out.push(raw);
       }
@@ -500,4 +500,4 @@ class SpillTee {
   }
 }
 
-module.exports = { SpillFilter, SpillTee, HEAD_RE };
+module.exports = { SpillFilter, SpillTee, HEAD_RE, SPILL_FILLER };

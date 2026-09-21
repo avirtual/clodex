@@ -10,6 +10,7 @@ const { atomicWriteFileSync } = require('./fs-util');
 const SPILL_MIN_BYTES = 800;
 const SPILL_MAX_BYTES = 262144;
 const SNAPSHOT_MAX_BYTES = 4096;
+const SPILL_FILLER = '(sent)';
 
 const SPILL_VERBS = new Set([
   'task.add', 'task.respec', 'task.reject', 'task.done',
@@ -122,6 +123,7 @@ function mimicKindOf(line) {
   const t = line.trim();
   if (RECEIPT_RE.test(t)) return 'intent';
   if (TAIL_RECEIPT_RE.test(t)) return 'prose';
+  if (t === SPILL_FILLER) return 'filler';
   return null;
 }
 
@@ -163,6 +165,7 @@ module.exports = {
   SPILL_MIN_BYTES,
   SPILL_MAX_BYTES,
   SNAPSHOT_MAX_BYTES,
+  SPILL_FILLER,
   SPILL_VERBS,
   ID_RE,
   AGENT_RE,

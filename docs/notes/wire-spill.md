@@ -33,16 +33,35 @@ FORWARDED is the original bytes, what is SPILLED is the scanner's delimitation.
 
 ## _resolve
 
-First-person parenthesised past tense, no `[agent:`, no `@spill:`, no `…`, and
-the closing `[agent:end]` swallowed: the placeholder is the model's own prior
-output and became a few-shot example — 19 fabricated pointers in 12 h on two
-lead seats, 18 copying the ellipsis title shape byte-for-byte, none before a
-seat's first real rewrite. `wire/proxy.js` feeds the intent tee the ORIGINAL
-chunk, never this output, so dispatch never depends on the placeholder. The
-filter never feeds itself, so a `RECEIPT_RE`/`TAIL_RECEIPT_RE` line in its INPUT
-is model-authored: `onMimic` reports it, bytes untouched. Only a line it is NOT
-holding is judged: a held or unlisted-verb body (`foreignBody`) may quote a real
-receipt the tee delivered, and the advisory would then be false.
+A spilled block resolves to the EMPTY string — head line, body and the closing
+`[agent:end]` all gone, nothing in their place. Two placeholders preceded this
+and both were imitated: a `@spill:<id>` pointer (19 fabrications in 12 h, 18
+copying the ellipsis title shape), then a first-person receipt sentence (6
+fabricated receipts in 15 long bodies, the last on a fresh context holding ONE
+prior receipt). Rewording the prompt rule did not move it because the
+counter-example was the seat's own transcript: anything the tee authors in the
+ASSISTANT role with a copyable shape gets copied. The confirmation now rides
+`onSpill` (`head` = the head words, `null` for the tail) into the notice queue,
+i.e. the USER role. `wire/proxy.js` feeds the intent tee the ORIGINAL chunk,
+never this output, so dispatch never depends on the record. The filter never
+feeds itself, so a `RECEIPT_RE`/`TAIL_RECEIPT_RE`/`SPILL_FILLER` line in its
+INPUT is model-authored: `onMimic` reports it, bytes untouched. Only a line it
+is NOT holding is judged: a held or unlisted-verb body (`foreignBody`) may quote
+a real receipt the tee once delivered, and the advisory would then be false.
+
+## _stopBlock
+
+Anthropic rejects, on the NEXT request, an assistant `text` block whose text is
+empty or whitespace-only; a turn that is one long dispatch and nothing else is
+the common shape, so the stripped record would be exactly that. At each text
+block's stop the tee checks whether the filter fired during the block and
+whether everything it FORWARDED for the block is whitespace, and only then
+emits one `SPILL_FILLER` delta (`(sent)`) on the block's index before the stop.
+Gating on a fire, not on emptiness alone, is what leaves the text→text boundary
+untouched: there the first block's bytes live on in the filter tail (see
+`_panic`), not in a spill, and padding it would put `(sent)` beside prose that
+arrives one block later. Whether the CLI itself would reject the empty block
+before the API does was not measured; the guard is kept either way.
 
 ## passthru
 
