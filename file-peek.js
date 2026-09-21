@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const { PEEK_MAX_BYTES } = require('./file-edit');
 
 function utf8CutAt(buf, n) {
-  if (n >= buf.length) return buf.length;
+  if (n > buf.length) return buf.length;
   if (n <= 0) return 0;
   for (let i = n - 1; i >= 0 && i >= n - 4; i -= 1) {
     const b = buf[i];
