@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Spill pointers, receipts and runtime notes that earlier versions wrote into an agent's transcript are now removed from every API request before it leaves the box, so the model never sees its own stand-in again; the transcript on disk and the terminal are unchanged.
+
 - Compact summaries are no longer spilled: an automatic or Clodex-triggered `/compact` counted as a non-human turn, so the tee filed the CLI's whole summary as end-of-turn prose and left the transcript's summary slot holding only a runtime note. The summarization request is now recognised and passes through the tee untouched.
 - A long intent body is now removed from the agent's transcript entirely instead of being replaced by a receipt sentence, and Clodex confirms the filing in a note on the agent's next prompt; agents were copying the receipt shape and emitting it instead of the body. Intents are read from the unspilled stream, so the removal never changes what was delivered.
 - Scratch episodes gain NAMED rewind points: `[agent:scratch mark <label>]` sets one, `[agent:scratch rewind [<label>]] <note>` cuts back to it (bare = most recent; an empty note records a negative result), `[agent:scratch cancel <label>]` drops one. Marks below a cut survive it and the rewound label is re-armed at the cut, so a seat can return to the same point repeatedly; each rewind's cost row carries the label. The operator can set one too: right-click a Claude row ▸ "Scratch mark…" and give it a label — the seat is told in its own transcript and can rewind to it like one of its own.
