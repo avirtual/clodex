@@ -855,8 +855,10 @@ accept teardown removes.
   mints one at first use). A kind runs over all known names once and is then
   stamped, so a kind un-deferred later still migrates on a box that already
   launched; a bare-timestamp marker is read as L-A's five kinds. Pure leaf,
-  `fs`/`log` injected; `run/` is deleted rather than moved and stays the socket
-  bind path, and `DEFERRED_KINDS` is empty — every reader over a shared parent
+  `fs`/`log` injected; `run/` is deleted rather than moved and stays the REAL
+  socket dir — `sessions/<seat>/run` links to it, not the reverse, because a
+  sandbox mounts `run/` as the box's only socket-capable tmpfs — and
+  `DEFERRED_KINDS` is empty — every reader over a shared parent
   is link-aware, and `pending` is not a seat kind at all.
 - **seat-import.js** — the owner-side fs half of Move-to-peer: stages a shipped
   seat under `~/.clodex/import/<id>/` and installs it atomically (transcript,

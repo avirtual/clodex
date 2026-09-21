@@ -49,7 +49,8 @@ agents `~/.clodex/messages/<seat>/`.
 
 `run` is the one kind DELETED rather than moved. It is regenerated at every spawn
 and `rm -rf`'d at every exit, so it is residue; moving it would carry a dead
-socket and a stale registry entry into the home nothing cleans.
+socket and a stale registry entry into the home nothing cleans; the migration
+drops it at BOTH spellings, in either link direction (see seat-layout-run.md).
 
 The marker is PER-KIND, and that is what makes un-deferring a kind a real
 migration rather than a green suite. Under the original global one-shot marker, a
@@ -89,8 +90,7 @@ every exit while the link survives, so the target must be re-made or the next
 spawn writes through a dangling name.
 
 A legacy path that exists and is NOT a symlink is left alone — a seat created
-while the marker was absent, or a foreign directory, and replacing it would
-destroy state nothing has copied yet.
+while the marker was absent, or a foreign dir. `run` is reversed: seat-layout-run.md.
 
 ## renameSeat
 

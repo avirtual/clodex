@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Sandbox: agent seats start again in a team box — the per-seat `run/` dir (agent socket) is the real dir on the box's tmpfs once more, with `sessions/<seat>/run` linking to it; since 5.83.x it was a link the other way and the socket landed on the bind mount (`listen ENOTSUP`).
 - Phone and web clients can now see the files an agent references: `files` lists a seat's spilled intent bodies, handoffs and inbound message spills as `filed[]`, `filePeek` takes a byte range and answers with machine-readable error codes, reads over the phone-access server are confined to the seat's cwd, its spill and message directories and the project's task artifacts, and a `filed` event on `/api/events` says when a new one lands.
 
 ## 5.84.0 — 2026-09-21 — Spill: the transcript keeps a receipt, the model never sees it

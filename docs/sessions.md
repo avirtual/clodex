@@ -241,17 +241,21 @@ files — shared files can't be misattributed — plus a log-only orphan pass.
 
 One seat's durable state has ONE home, `~/.clodex/sessions/<seat>/`
 (`seatDirFor` / `SEAT_KINDS`), holding `messages/ notices/ promptcache/ memory/
-spill/ monitors/ run/`. That dir is the real one and each old spelling
-(`~/.clodex/{messages,notices,promptcache,spill,monitors}/<seat>`,
-`library/memory/<seat>`, `run/<seat>`) becomes a SYMLINK into it, because
-byte-pinned hook bodies and every transcript carry the old spelling. All 7 kinds
-move; every reader over a shared parent dir is link-aware. `seat-layout.js`
-migrates existing seats at launch, gated by a PER-KIND record in
-`sessions/.migrated` (`{"kinds":{"<kind>":"<iso>"}}`) — a kind runs over all
-known names once and is then stamped, so a kind added later still migrates on a
-box that already launched. `run/<seat>` is deleted rather than moved (stale
-residue) and re-minted as a link at spawn, which keeps `agent.sock` at the
-shorter path.
+spill/ monitors/ run/`. For the 6 durable kinds that dir is the real one and
+each old spelling (`~/.clodex/{messages,notices,promptcache,spill,monitors}/<seat>`,
+`library/memory/<seat>`) becomes a SYMLINK into it, because byte-pinned hook
+bodies and every transcript carry the old spelling. `run` goes the OTHER way:
+`run/<seat>` stays the real dir and `sessions/<seat>/run` is the link into it,
+because a sandbox box mounts `~/.clodex/run` as a tmpfs — the only fs under the
+box's `~/.clodex` that can host `agent.sock` (the rest is a virtiofs bind, where
+a socket fails `listen ENOTSUP`). Every reader over a shared parent dir is
+link-aware. `seat-layout.js` migrates existing seats at launch, gated by a
+PER-KIND record in `sessions/.migrated` (`{"kinds":{"<kind>":"<iso>"}}`) — a
+kind runs over all known names once and is then stamped, so a kind added later
+still migrates on a box that already launched. `run/<seat>` is deleted rather
+than moved (stale residue) and re-minted as a real dir at spawn with the
+seat-home link beside it; `ensureSeatLink` also flips a `run/<seat>` that an
+earlier release minted as a link into the home.
 
 `pending/<seat>` is deliberately NOT a seat kind and never moves: it is a
 transient delivery queue with two rename-claiming drainers, one of them a
@@ -280,10 +284,12 @@ and for a move to carry.
 Right-click a session ▸ "Reveal Seat Folder in Finder" opens `sessions/<seat>/`.
 Agents only, and disabled when the seat has no home dir yet.
 
-Of the 7, only `run/` is minted for a BRAND-NEW seat — the other 6 stay at their
-old spelling until each first-use site calls `ensureSeatLink`. A seat absent from
+Of the 7, only `run/` is minted for a BRAND-NEW seat (the real `run/<seat>` plus
+its `sessions/<seat>/run` link) — the other 6 stay at their old spelling until
+each first-use site calls `ensureSeatLink`. A seat absent from
 `persistence.list()` when its kind was stamped is never migrated and
-`ensureSeatLink` will not adopt its real dir afterwards, so a mixed tree is
+`ensureSeatLink` will not adopt its real dir afterwards (`run` excepted: a real
+`run/<seat>` is the target and is adopted), so a mixed tree is
 still the expected steady state and a reader of one seat's dir must not assume
 otherwise.
 
