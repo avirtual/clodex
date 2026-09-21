@@ -462,6 +462,46 @@ test('confinement follow-up: a non-traversable ancestor is outside, a loop is un
   assert.strictEqual(f.peeks.length, 2, 'only the two roots reached the peek');
 });
 
+test('confinement: a non-traversable ancestor INSIDE a root answers unreadable (500), never not-found or gone; a vanished ancestor is still not-found', async () => {
+  const registry = mkTmpRoot('clx-fileview-');
+  const cwd = mkTmpRoot('clx-fileview-');
+  const ring = createFiledRing();
+  const session = { name: 'seat', agentType: 'claude', cwd, filedRing: ring };
+  const locked = path.join(cwd, 'locked');
+  const vanished = path.join(cwd, 'vanished');
+  const fail = (code) => Object.assign(new Error(`${code}: fixture`), { code });
+  const throwsBelow = { [locked]: 'EACCES', [vanished]: 'ENOENT' };
+  const codeFor = (p) => { for (const [dir, code] of Object.entries(throwsBelow)) if (String(p) === dir || String(p).startsWith(dir + path.sep)) return code; return null; };
+  const seen = [];
+  const fakeFs = Object.create(fs, {
+    realpathSync: { value: (p) => { seen.push(String(p)); const c = codeFor(p); if (c) throw fail(c); return fs.realpathSync(p); } },
+    lstatSync: { value: (p, ...rest) => { const c = codeFor(p); if (c) throw fail(c); return fs.lstatSync(p, ...rest); } },
+  });
+  const f = wiringFixture({ registry, cwd, session, fs: fakeFs });
+  const lockedFile = path.join(locked, 'x.txt');
+  const eacces = f.query('seat', 'filePeek', { path: lockedFile });
+  assert.deepStrictEqual([eacces.ok, eacces.code], [false, 'unreadable'], 'EACCES from lstat after an EACCES walk-up inside cwd is unreadable, not not-found');
+  assert.ok(seen.includes(cwd), `walked up to ${cwd}: ${seen}`);
+  ring.note({ path: lockedFile, kind: 'intent', head: 'h', bytes: 1, ts: 1 });
+  const listed = f.query('seat', 'filePeek', { path: lockedFile });
+  assert.deepStrictEqual([listed.ok, listed.code], [false, 'unreadable'], 'a ring entry does not turn EACCES into gone');
+  const enoent = f.query('seat', 'filePeek', { path: path.join(vanished, 'x.txt') });
+  assert.deepStrictEqual([enoent.ok, enoent.code], [false, 'not-found'], 'ENOENT from lstat after an ENOENT walk-up is still not-found');
+  assert.strictEqual(f.peeks.length, 0);
+  const server = new RemoteServer({
+    port: 0, host: '127.0.0.1', pagePath: PAGE,
+    getSessions: () => [], getTranscript: () => ({ ok: true, messages: [] }), send: () => ({ ok: true }),
+    query: f.query,
+  });
+  await server.start();
+  try {
+    const { status, json } = await req(server, 'POST', '/api/sessions/seat/query', { kind: 'filePeek', args: { path: lockedFile } });
+    assert.deepStrictEqual([status, json.ok, json.code], [500, false, 'unreadable']);
+    const nf = await req(server, 'POST', '/api/sessions/seat/query', { kind: 'filePeek', args: { path: path.join(vanished, 'x.txt') } });
+    assert.deepStrictEqual([nf.status, nf.json.code], [404, 'not-found']);
+  } finally { server.stop(); }
+});
+
 test('fetchSessionFiles shape: filed rides beside files (engine source pin)', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
   assert.match(src, /files: s\.fileTouches \|\| \[\], filed: s\.filedRing \? s\.filedRing\.list\(\) : \[\] \}/);

@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Phone-access `filePeek`: a file behind a non-traversable directory inside the seat's tree answers `unreadable` (500), not `not-found`.
 - Phone-access file view: `filePeek` returns an integral `mtime` (a fractional value made strict JSON decoders reject the whole reply); a non-traversable ancestor answers `outside` (403) rather than `unreadable` (500); a confinement root itself and a dangling symlink inside cwd answer `not-a-file` (400); the codeless "no such session" 404 is now contractual.
 
 - Sandbox: agent seats start again in a team box — the per-seat `run/` dir (agent socket) is the real dir on the box's tmpfs once more, with `sessions/<seat>/run` linking to it; since 5.83.x it was a link the other way and the socket landed on the bind mount (`listen ENOTSUP`).
