@@ -14,7 +14,6 @@ const SPILL_FILLER = '[Runtime note: action text omitted from retained history.]
 
 const SPILL_VERBS = new Set([
   'task.add', 'task.respec', 'task.reject', 'task.done',
-  'context.compact', 'context.clear', 'context.reload',
   'shout', 'dm',
 ]);
 

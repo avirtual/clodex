@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- `[agent:context compact|clear|reload]` handoff bodies are no longer spilled by the wire tee: the compact or clear discards them anyway, so the file, the transcript stub and the request-side cut bought nothing. The handoff itself still reaches the resumed agent as `Continue from your handoff: @<path>`, unchanged.
 
 - An agent whose Clodex instructions changed while it was running is told the full change again after a compact instead of never: the frozen prompt is now baselined on what the CLI is actually running (its own transcript snapshot), and a compact no longer marks the seat as up to date.
 

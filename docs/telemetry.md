@@ -295,7 +295,7 @@ outcome (warm hit or cold re-cache, tokens, TTL slide), a failed ping,
 and the disarm — also broadcast a `keepwarm` ipc-message row into the IPC
 traffic tab. Skipped ticks get no row: the poll runs every 60s and
 declines most of them, so a row per tick would be noise, not signal.
-- **Spill filing** (wire/spill.js → session-manager `wire.on('spill')`): shadow records `wire-spill` per filed body, the agent gets a `[clodex] … filed at …` notice on its next prompt, and the filing also lands as a `spill` ipc-message row in the IPC traffic tab (`clodex → <agent>`, with the file path clickable) so the operator sees every spill without reading the shadow log.
+- **Spill filing** (wire/spill.js → session-manager `wire.on('spill')`): shadow records `wire-spill` per filed body, the agent gets a `[clodex] … filed at …` notice on its next prompt, and the filing also lands as a `spill` ipc-message row in the IPC traffic tab (`clodex → <agent>`, with the file path clickable) so the operator sees every spill without reading the shadow log. The tee holds `task add/respec/reject/done`, `dm` and `shout`; a `context compact|clear|reload` handoff is never spilled, because a body the triggering action discards is never carried forward, so there is nothing to save.
 - **Spill-stub cut** (wire/spill-cut.js): shadow records `wire-spill-cut` (agent, reqId, lines/blocks/messages/skipped counts) and `wire-spill-cut-skip` (reason `system-adjacent`) per edited request, plus `wire-spill-cut-error` (agent, reqId, error) when the editor throws and the request is forwarded uncut; one `intent` line each in clodex.log, no PTY injection.
 
 ## 7. Wirescope window & settings

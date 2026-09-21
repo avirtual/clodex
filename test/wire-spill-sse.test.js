@@ -23,7 +23,7 @@ function scannerBody(text) {
 }
 
 const BIG = 'z'.repeat(900);
-const VERBS = ['task.add', 'task.respec', 'context.compact'];
+const VERBS = ['task.add', 'task.respec', 'shout'];
 
 let ROOT = null;
 function root() {
@@ -356,7 +356,7 @@ test('scanner equivalence holds for the body shapes the delimiter treats special
     ['no rest on the head line', 'task add t1', `\n${BIG}\nlast`],
     ['blank lines inside the body', 'task add t2', `one\n\n\n${BIG}\ntwo`],
     ['trailing blank lines the scanner pops', 'task add t3', `one\n${BIG}\n\n  \n`],
-    ['CRLF-free indented continuation', 'context compact', `  keep going\n${BIG}\n   deeper  `],
+    ['CRLF-free indented continuation', 'shout', `  keep going\n${BIG}\n   deeper  `],
   ];
   for (const [label, headArgs, body] of cases) {
     const original = `[agent:${headArgs}] ${body}\n[agent:end]\n`;

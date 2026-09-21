@@ -100,6 +100,13 @@ tee tries the one-word key before the two-word form. `proxylab/spill.py`'s
 `_verb_key` does NOT: it would key that head `dm.bob` and hold nothing, so the
 ordering is a deviation the next vendor port has to keep.
 
+`context.compact`, `context.clear` and `context.reload` are OUT: a body the
+triggering action discards is never carried forward, so there is nothing to
+save — the compact summary replaces it and a clear or reload wipes the
+conversation. The handoff still reaches the fresh context through
+`_handoffText`, which files it once and injects `Continue from your handoff:
+@<path>`. `proxylab/spill.py` still lists the three; wirescope owns that file.
+
 The operator-inbox key is `shout`. The vendored conformance suite
 (`proxylab/spill.py`) still gives `'notify-user'` as its one-word-verb example —
 that spelling was retired here with no alias, so the next vendor port must not

@@ -184,17 +184,14 @@ test('a file the tee already spilled is never rewritten — the handoff writes i
   assert.strictEqual(after.ino, before.ino, 'and not replaced by a fresh inode either');
 });
 
-test('a clear whose body arrived as a TITLED pointer hands off the FILE body, not the pointer line', async () => {
+test('a clear body over the floor arrives as plain text through _handleIntent and still hands off as a file pointer', async () => {
   const h = mkH();
   const s = seat(h);
-  const id = writeSpill(h.root, 'a', BIG);
-  assert.ok(id, 'ENTER: the tee-written file exists, or the resolve below proves nothing');
+  assert.ok(Buffer.byteLength(BIG, 'utf8') > SPILL_MIN_BYTES, 'ENTER: the body is over the floor');
 
-  await h.m._handleIntent('a', {
-    type: 'context', sub: 'clear', body: `pick up the thread: @spill:${id}`,
-  });
+  await h.m._handleIntent('a', { type: 'context', sub: 'clear', body: BIG });
   assert.strictEqual(s._postClearContinuation, BIG,
-    'the chokepoint resolved before the continuation was stored — nothing downstream re-reads a pointer');
+    'context is not a spill verb: the body the tee left inline is stored as it came, no pointer to resolve');
 
   h.m._firePostClearContinuation(s);
   await tick();
