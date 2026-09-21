@@ -1015,6 +1015,10 @@ function createSessionManager(deps) {
         this._shadowLog({ type: 'wire-spill-cut-skip', ...ev });
         log.info('intent', `spill-cut-skip ${ev.agent} ${ev.reason} skipped=${ev.skipped}`);
       });
+      wire.on('spill-cut-error', (ev) => {
+        this._shadowLog({ type: 'wire-spill-cut-error', ...ev });
+        log.warn('intent', `spill-cut-error ${ev.agent} forwarded uncut: ${ev.error}`);
+      });
       await wire.listen();
       this._shadow = new ShadowDiff((rec) => this._shadowLog(rec));
       wire.on('turn.completed', (t) => {

@@ -297,12 +297,17 @@ class WireProxy extends EventEmitter {
       try {
         const obj = JSON.parse(body.toString('utf8'));
         if (provider === 'anthropic' && Array.isArray(obj.messages) && this.spillCut()) {
-          const r = cutSpillStubs(obj);
-          if (r.cut) {
+          let r = null;
+          try {
+            r = cutSpillStubs(obj);
+          } catch (e) {
+            this.emit('spill-cut-error', { agent, reqId, error: e.message });
+          }
+          if (r && r.cut) {
             body = Buffer.from(JSON.stringify(obj), 'utf8');
             this.emit('spill-cut', { agent, reqId, ...r });
           }
-          if (r.skipped) this.emit('spill-cut-skip', { agent, reqId, reason: 'system-adjacent', skipped: r.skipped });
+          if (r && r.skipped) this.emit('spill-cut-skip', { agent, reqId, reason: 'system-adjacent', skipped: r.skipped });
         }
         bodyObj = obj;
         sessionId = sessionIdFrom(obj);
@@ -720,7 +725,7 @@ module.exports = { WireProxy, extractSessionId, detectSse };
 
 if (require.main === module) {
   const proxy = new WireProxy({ port: Number(process.argv[2]) || 9777 });
-  for (const ev of ['request', 'response', 'stream-start', 'stream-end', 'turn.completed', 'session', 'usage', 'proxy-error', 'tee-failure', 'spill', 'spill-bail', 'spill-skip', 'spill-mimic', 'spill-cut', 'spill-cut-skip']) {
+  for (const ev of ['request', 'response', 'stream-start', 'stream-end', 'turn.completed', 'session', 'usage', 'proxy-error', 'tee-failure', 'spill', 'spill-bail', 'spill-skip', 'spill-mimic', 'spill-cut', 'spill-cut-skip', 'spill-cut-error']) {
     proxy.on(ev, (payload) => console.log(`[${ev}]`, JSON.stringify(payload)));
   }
   proxy.listen().then((port) => {

@@ -413,7 +413,7 @@ test('T4 source pin: the cut precedes bodyObj and every classifier in _forward',
   assert.ok(cut < classify, 'before this._roles.classify(');
   assert.ok(cut < sessionId, 'before sessionIdFrom');
   assert.ok(src.indexOf('let body = ctx.body;', fwd) > fwd && src.indexOf('let body = ctx.body;', fwd) < cut);
-  assert.ok(/'spill-cut', 'spill-cut-skip'\]/.test(src), 'both events are on the standalone re-emit list');
+  assert.ok(/'spill-cut', 'spill-cut-skip', 'spill-cut-error'\]/.test(src), 'all three events are on the standalone re-emit list');
 });
 
 test('T3 no-op identity: a stub-free body reaches upstream as the exact original bytes, no event', async () => {
@@ -518,6 +518,57 @@ test('Q4 on the wire: a system-adjacent stub-only message is forwarded uncut wit
     assert.equal(events['spill-cut'].length, 0);
     assert.ok(up.seen[0].body.equals(raw), 'nothing else to cut, so the original bytes go through');
   });
+});
+
+test('T10 editor throw: the original bytes go upstream, spill-cut-error fires once, the turn still completes', async () => {
+  const { stub } = stubOf();
+  assert.throws(() => cutSpillStubs({ messages: [
+    { role: 'assistant', content: [null, { type: 'text', text: stub, cache_control: { type: 'ephemeral' } }] },
+  ] }), /cache_control/, 'ENTER: this shape makes the real editor throw');
+  await withProxy({}, async (proxy, up) => {
+    const events = collect(proxy, ['spill-cut', 'spill-cut-skip', 'spill-cut-error', 'turn.started', 'turn.completed']);
+    const raw = Buffer.from(JSON.stringify(proxyBody([
+      { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', content: [null, { type: 'text', text: stub, cache_control: { type: 'ephemeral' } }] },
+      { role: 'user', content: [{ type: 'text', text: 'next' }] },
+    ])), 'utf8');
+    const res = await request(proxy.port, '/agent/tester/v1/messages', raw);
+    assert.equal(res.status, 200);
+    assert.ok(await whenEvent(events, 'turn.completed'));
+    assert.equal(events['spill-cut-error'].length, 1, 'ENTER: spill-cut-error fired once');
+    assert.equal(events['spill-cut-error'][0].agent, 'tester');
+    assert.match(events['spill-cut-error'][0].error, /cache_control/);
+    assert.ok(typeof events['spill-cut-error'][0].reqId === 'string' || typeof events['spill-cut-error'][0].reqId === 'number');
+    assert.equal(up.seen.length, 1, 'the request still went out');
+    assert.ok(up.seen[0].body.equals(raw), 'upstream received the ORIGINAL bytes');
+    assert.equal(events['turn.started'].length, 1);
+    assert.equal(events['turn.completed'].length, 1);
+    assert.equal(events['spill-cut'].length, 0);
+    assert.equal(events['spill-cut-skip'].length, 0);
+  });
+});
+
+test('T10 source pin: the cutSpillStubs call site sits in its own try whose catch emits spill-cut-error', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'wire', 'proxy.js'), 'utf8');
+  const fwd = src.indexOf('_forward(req, res, ctx) {');
+  const cut = src.indexOf('cutSpillStubs(obj)', fwd);
+  assert.ok(fwd > 0 && cut > fwd, 'ENTER: the call site was found inside _forward');
+  const tryAt = src.lastIndexOf('try {', cut);
+  const outerTry = src.lastIndexOf('try {', src.indexOf('JSON.parse(body.toString', fwd));
+  assert.ok(tryAt > outerTry, 'the call has its own try, inside the parse block');
+  const catchAt = src.indexOf('} catch (e) {', cut);
+  const emit = src.indexOf("this.emit('spill-cut-error', { agent, reqId, error: e.message })", catchAt);
+  assert.ok(catchAt > cut && emit > catchAt && emit - catchAt < 120, 'its catch emits spill-cut-error');
+  assert.ok(src.indexOf("this.emit('spill-cut',", emit) > emit, 'the cut/skip emits come after the guarded call');
+});
+
+test('session-manager: spill-cut-error lands in the shadow log as wire-spill-cut-error, warns, no PTY injection', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
+  const at = src.indexOf("wire.on('spill-cut-error', ");
+  assert.ok(at > 0, 'ENTER: handler present');
+  assert.ok(src.indexOf("_shadowLog({ type: 'wire-spill-cut-error', ...ev })", at) > at);
+  assert.ok(src.indexOf("log.warn('intent', `spill-cut-error ${ev.agent}", at) > at);
+  assert.ok(!/_injectText/.test(src.slice(at, at + 400)), 'no PTY injection, no notice');
 });
 
 test('session-manager: both events land in the shadow log under their wire-* record types', () => {
