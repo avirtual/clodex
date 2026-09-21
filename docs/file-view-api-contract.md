@@ -60,7 +60,9 @@ POST /api/sessions/:name/query   {kind: "files"}
 
 `filed` is newest first, capped at 50 entries INDEPENDENTLY of `files` (one list
 cannot push the other out). Entries whose file no longer exists at list time are
-dropped. Source: a per-seat in-memory ring appended at each writer (`writeSpill`
+dropped BEST-EFFORT: the drop is a stat at list time, so a file removed between
+the list and the tap answers `gone`, and that is the ordinary path to `gone`,
+not a race the client may ignore. Source: a per-seat in-memory ring appended at each writer (`writeSpill`
 callers via the `wire.on('spill')` listener and `_handoffText`; `spillToFile`
 call sites), seeded on `create()`/resume by listing both directories by mtime so
 a restarted host still lists earlier filings.
@@ -77,14 +79,21 @@ POST /api/sessions/:name/query   {kind: "filePeek", args: {path, offset?, length
   are BYTES. The server clamps `length` and echoes the range it actually
   returned, so the client needs no arithmetic; `truncated` is
   `offset + length < size`.
-- `content` is always valid UTF-8: if the cut lands inside a multibyte sequence
-  the server trims back to a boundary and reports the trimmed `length`. Never a
+- `content` is always valid UTF-8, at BOTH ends. An `offset` that lands inside
+  a multibyte sequence is moved FORWARD to the next character boundary and the
+  moved value is echoed as `offset` (ten `é`, `offset 5 length 5` → echoed
+  `offset 6 length 4`); a cut that lands inside one trims the END back to a
+  boundary and reports the trimmed `length`. A client resuming from the echoed
+  `offset + length` therefore never re-reads or skips a byte. Never a
   replacement character.
 - `binary: true, content: null` for a file with a NUL in its first 8 KB; the
   client renders "binary, N bytes" and offers nothing.
 - Error codes (machine-readable `code`, human `error`):
   - `outside` (403) — path is outside what the client may read (see 3).
-  - `not-found` (404) — nothing at that path.
+  - `not-found` (404) — nothing at that path. This is also the answer for a path
+    INSIDE the confinement roots that was never listed in `filed` (a guessed
+    path): confinement decides `outside`, existence decides `not-found`, and the
+    ring decides `gone` — in that order.
   - `gone` (410) — path was listed in `filed` for this seat but the file has
     since been removed (the ordinary case for a cleaned-up spill, not an edge).
   - `not-a-file` (400) — directory, symlink, device.
