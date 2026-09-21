@@ -67,6 +67,14 @@ Hence on a resume the baseline for `session.md` is the transcript's last snapsho
 differs, both `session.md` and `notified.md` are reset to it and the whole snapshot→realIpc gap is
 staged. Without a snapshot row (older CLI, transcript missing) the behaviour is the pre-existing one.
 
+A `/clear` is a cold prefix anyway (wirescope, 3 clears, opus-5, 2026-09-21): the CLI keeps the
+CLAUDE.md bundle in `messages[0]` and the `/clear` command block moves it, so everything past the
+system block (~30 KB) is written cold on the first real request after every clear. Regenerating the
+prompt at that moment costs +$0.04–0.06 (regen: read 7,505 / write 37,071 vs Bogdan's manual reset
+5 min later: read 17,985 / write 30,238). The tools-less title side-call is not the request to
+sample. Hence `_promptDeltaPending` at `[agent:context clear]` takes the reload path — a fresh
+process is the only way to re-read `--append-system-prompt-file` — and `reuse=false` here re-bakes.
+
 ## restageAtReset
 
 Runs from `refreshPrompt` at a compact or clear, in the same instant the CLI's SessionStart hook
