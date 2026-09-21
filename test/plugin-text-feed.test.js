@@ -888,7 +888,7 @@ test('the wire junction hands the feed truncated + isTurnEnd + reads, ungated on
   // never reaches a subscriber) and BEFORE the intent extraction it must not be
   // gated behind. `turn.completed` fires per REQUEST — ~4.4 per user turn — so
   // gating on stop.is_turn would silently drop every tool-loop hop's text.
-  const mainLineGuard = src.indexOf("if (t.sideCall || isSubagentRole(t.role)) return;");
+  const mainLineGuard = src.indexOf("if (t.sideCall || t.compact || isSubagentRole(t.role)) return;");
   const publishAt = src.indexOf('this._publishAgentText({', mainLineGuard);
   const extractAt = src.indexOf('const intents = this._extractIntents(t.text);', mainLineGuard);
   assert.ok(mainLineGuard > 0 && publishAt > mainLineGuard,

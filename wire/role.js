@@ -83,6 +83,20 @@ function isProbeCall(obj) {
   return Array.isArray(obj.messages) && obj.messages.length <= 1;
 }
 
+const COMPACT_NEEDLE = 'Your task is to create a detailed summary of the conversation so far';
+
+function isCompactCall(obj) {
+  const msgs = obj && obj.messages;
+  if (!Array.isArray(msgs) || !msgs.length) return false;
+  const last = msgs[msgs.length - 1];
+  if (!last || last.role !== 'user') return false;
+  const c = last.content;
+  if (typeof c === 'string') return c.includes(COMPACT_NEEDLE);
+  if (!Array.isArray(c)) return false;
+  return c.some((b) => b && typeof b === 'object' && b.type === 'text'
+    && typeof b.text === 'string' && b.text.includes(COMPACT_NEEDLE));
+}
+
 class RoleClassifier {
   constructor() {
     // sessionId → the main line's cc_version content fingerprint. Written
@@ -132,4 +146,5 @@ class RoleClassifier {
 module.exports = {
   RoleClassifier, SUBAGENT_ROLES, isSubagentRole,
   sysText, billingIsSubagent, billingFingerprint, isTitleCall, isProbeCall, isClassifierCall,
+  isCompactCall,
 };

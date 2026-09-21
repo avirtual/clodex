@@ -18,7 +18,7 @@ const { URL } = require('url');
 const { parseAgentPath, inferProvider } = require('./route');
 const { SSEFramer, anthropicDelta, openaiDelta, UsageCollector, OpenAIUsageCollector, FileToolCollector } = require('./sse');
 const { Decompressor } = require('./decompress');
-const { RoleClassifier, isSubagentRole, isTitleCall, isProbeCall, isClassifierCall } = require('./role');
+const { RoleClassifier, isSubagentRole, isTitleCall, isProbeCall, isClassifierCall, isCompactCall } = require('./role');
 const { billing, billingOpenai, Ledger } = require('./billing');
 const { SpillTee } = require('./spill');
 
@@ -277,6 +277,7 @@ class WireProxy extends EventEmitter {
     let sessionId = null;
     let role = null;
     let sideCall = false;
+    let compactCall = false;
     let model = null;
     let bodyObj = null; // held for the warmth stamp at tee close
     // Hoisted out of the parse block: the subagent feed keys on this, and it
@@ -297,6 +298,7 @@ class WireProxy extends EventEmitter {
           const rawAgentId = req.headers['x-claude-code-agent-id'];
           agentId = typeof rawAgentId === 'string' && rawAgentId ? rawAgentId : null;
           sideCall = isTitleCall(obj) || isProbeCall(obj) || isClassifierCall(obj);
+          compactCall = isCompactCall(obj);
           role = this._roles.classify(obj, sessionId, agentId);
           if (!sideCall && !isSubagentRole(role)) {
             this._roles.noteMainFingerprint(sessionId, obj);
@@ -315,7 +317,7 @@ class WireProxy extends EventEmitter {
 
     const spillCfg = this._agentSpill.get(agent) || null;
     const spillEligible = !!spillCfg && provider === 'anthropic' && req.method === 'POST'
-      && isMessages && !sideCall && !isSubagentRole(role) && this.spillEnabled();
+      && isMessages && !sideCall && !compactCall && !isSubagentRole(role) && this.spillEnabled();
     let proseSpill = false;
     if (spillEligible && typeof spillCfg.turnInjected === 'function') {
       try { proseSpill = spillCfg.turnInjected() === true; } catch { proseSpill = false; }
@@ -384,7 +386,7 @@ class WireProxy extends EventEmitter {
         this.on('stream-end', onEnd);
         try {
           tee = this._buildTee(
-            { agent, provider, reqId, sessionId, role, sideCall, model, bodyObj, agentId,
+            { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId,
               requestId: upRes.headers['request-id'] || null,
               status: upRes.statusCode },
             upRes.headers['content-encoding']);
@@ -495,7 +497,7 @@ class WireProxy extends EventEmitter {
   // Emission order on close: 'usage' → 'turn.completed' → 'stream-end', all
   // strictly after the client's final byte.
   _buildTee(turnCtx, contentEncoding) {
-    const { agent, provider, reqId, sessionId, role, sideCall, model, bodyObj, agentId, requestId, status } = turnCtx;
+    const { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestId, status } = turnCtx;
     const usage = provider === 'anthropic' ? new UsageCollector() : new OpenAIUsageCollector();
     const extract = provider === 'anthropic' ? anthropicDelta : openaiDelta;
     const ftools = provider === 'anthropic' ? new FileToolCollector() : null;
@@ -603,7 +605,7 @@ class WireProxy extends EventEmitter {
                 }, (!sideCall && !isSubagentRole(role)) ? sessionId : null);
               }
               this.emit('turn.completed', {
-                agent, provider, reqId, sessionId, role, sideCall, text,
+                agent, provider, reqId, sessionId, role, sideCall, compact: compactCall === true, text,
                 usage: usageRecord, truncated, model, status, billing: bill,
                 stop, sessionTotals, warmth: warmthRec,
                 files: ftools ? ftools.files : [],

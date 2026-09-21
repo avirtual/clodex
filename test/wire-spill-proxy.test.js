@@ -463,6 +463,65 @@ test('an INJECTED turn: a reply with no intent leaves as exactly `[Runtime note:
   });
 });
 
+const COMPACT_TEXT = `Summary:\n1. Primary Request and Intent:\n${'[agent:task done t9] closed.\n'.repeat(4)}${'y'.repeat(20 * 1024)}\n`;
+
+const COMPACT_SSE = [
+  ev('message_start', {
+    type: 'message_start',
+    message: { id: 'msg_compact', usage: { input_tokens: 10, cache_read_input_tokens: 5 } },
+  }),
+  ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+  td(0, COMPACT_TEXT.slice(0, 5000)),
+  td(0, COMPACT_TEXT.slice(5000, 12000)),
+  td(0, COMPACT_TEXT.slice(12000)),
+  ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
+  ev('message_delta', {
+    type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 42 },
+  }),
+  ev('message_stop', { type: 'message_stop' }),
+].join('');
+
+function compactBody() {
+  return makeBody({
+    messages: [
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+      { role: 'user', content: [
+        { type: 'text', text: '<pasted_content>…</pasted_content>' },
+        { type: 'text', text: '\n\nYour task is to create a detailed summary of the conversation so far, '
+          + 'paying close attention to the user\'s explicit requests and your previous actions.' },
+      ] },
+    ],
+  });
+}
+
+test('an INJECTED compact: the summarization request passes the tee untouched — byte-identical, no spill, nothing on disk, still a parent turn', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({ body: COMPACT_SSE }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.done'], turnInjected: () => true } });
+    const events = collect(proxy, ['turn.completed', 'spill', 'spill-skip', 'stream-end']);
+
+    const res = await request(proxy.port, '/agent/tester/v1/messages', compactBody());
+    assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
+    assert.equal(res.body.toString('utf8'), COMPACT_SSE, 'every byte of the summary survives');
+    assert.equal(events.spill.length, 0, 'nothing spilled');
+    assert.equal(events['spill-skip'].length, 0, 'not even considered');
+    assert.ok(!fs.existsSync(path.join(root, 'spill')), 'nothing reached disk');
+    assert.equal(events['turn.completed'].length, 1);
+    assert.equal(events['turn.completed'][0].sideCall, false, 'billed and counted as a parent turn');
+    assert.equal(events['turn.completed'][0].role, 'parent');
+    assert.equal(events['turn.completed'][0].compact, true, 'flagged so the dispatcher skips its intents');
+  });
+});
+
+test('the wire dispatcher skips a compact turn: a quoted `[agent:…]` line in the summary is never an intent', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
+  const guard = src.indexOf('if (t.sideCall || t.compact || isSubagentRole(t.role)) return;');
+  const extractAt = src.indexOf('const intents = this._extractIntents(t.text);', guard);
+  assert.ok(guard > 0, 'the main-line guard reads the compact flag the proxy sets');
+  assert.ok(extractAt > guard, 'and the intent extraction sits behind it');
+});
+
 test('turnInjected is evaluated ONCE per request: a flip mid-response cannot take effect', async () => {
   const root = mkTmpRoot('clodex-spill-');
   let flag = false;
