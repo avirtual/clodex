@@ -96,8 +96,8 @@ they are written at spawn, so they go at that seat's **next start**.
 A prompt REF does not degrade that gently. A seat whose persisted
 `systemPromptFile` or `appendPromptFiles` names a prompt from a plugin that is no
 longer loaded is **refused at its next start** — the spawn fails with "not
-loaded" rather than booting without the prompt — and a clear or compact rebake
-logs `prompt-refresh-error` and leaves the old prompt in place. To recover,
+loaded" rather than booting without the prompt — and the delta re-staged at a
+clear or compact logs `prompt-refresh-error` and stages nothing. To recover,
 re-enable the plugin for that seat, or save the seat once (Edit Session) after
 the plugin is removed — the save drops the refs the seat can no longer resolve.
 

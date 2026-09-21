@@ -228,6 +228,7 @@ clodex-seatlayout-outside-
 clodex-sinfo-
 clodex-sinfo-overlay-
 clodex-sm-
+clodex-snapshot-
 clodex-solo-home-
 clodex-solo-repo-
 clodex-spill-

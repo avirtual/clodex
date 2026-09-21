@@ -411,21 +411,19 @@ test('MF1: the reset does NOT re-deliver the last delta — it resets the baseli
     'and it must carry both changes — the one summarized away AND the one staged when the compact fired. Re-delivering only the last staged delta would silently drop the first');
 });
 
-// session.md has EXACTLY ONE WRITER, and this hook is not it.
+// session.md is written by bakePrompt alone, and this hook is not it.
 //
-// The regenerate-at-a-reset property is real and load-bearing: bakePrompt's
-// `baked == null` branch is that one writer, so a session that keeps the file is
-// served its first-ever bake forever — every ordinary restart passes a resumeId
-// (reuse=true), which reads it and hands it back unchanged. A live seat ran six
-// days on a frozen prompt this way. But the regeneration is session-manager's
-// refreshPrompt, which re-bakes AND rewrites append-prompt.md in one step while
-// the seat is live. Dropping the file here instead raced that refresh and lost:
-// the refresh commonly runs first, early-returns at its already-current guard,
-// and then this unlink lands — leaving a LIVE seat with no session.md until its
-// next ordinary resume re-bakes under a conversation 100k+ tokens deep, which is
-// the exact bust the module exists to prevent.
+// A session that keeps the file is served its first-ever bake for as long as the
+// conversation lives — every ordinary restart passes a resumeId (reuse=true),
+// which reads it back. The CLI does not re-read the prompt file at a reset
+// (measured — see docs/notes/ipc-prompt-cache.md), so the seat's changes travel
+// as the delta session-manager's refreshPrompt re-stages at this same edge.
+// Dropping the file here once raced that refresh and lost, leaving a LIVE seat
+// with no session.md until its next ordinary resume re-baked under a
+// conversation 100k+ tokens deep, which is the exact bust the module exists to
+// prevent.
 for (const source of ['clear', 'compact']) {
-  test(`MF1: source=${source} does NOT touch session.md — refreshPrompt is its sole writer`, () => {
+  test(`MF1: source=${source} does NOT touch session.md — create() is its sole writer`, () => {
     const root = tmp(), name = `rebake-${source}`;
     const born = stagedSession(root, name);
     assert.strictEqual(readCache(root, name, 'session'), born,
@@ -434,7 +432,7 @@ for (const source of ['clear', 'compact']) {
     runSessionStart(root, name, source);
 
     assert.strictEqual(readCache(root, name, 'session'), born,
-      `a ${source} hook must leave session.md exactly as it found it. Unlinking it here cannot be coordinated with the in-process refresh that fires at the same edge, and the losing ordering strands a live seat with no frozen prompt at all — a deferred, unbounded rewrite of a warm conversation`);
+      `a ${source} hook must leave session.md exactly as it found it: unlinking it strands a live seat with no frozen prompt at all — a deferred, unbounded rewrite of a warm conversation`);
     assert.strictEqual(readCache(root, name, 'notified'), born,
       'the baseline IS reset to it though — that half is this hook\'s job and needs no coordination: after a context reset, what the agent has been told is exactly what its surviving system prompt says');
   });
@@ -449,7 +447,7 @@ test('MF1: the SessionStart reset never unlinks session.md', () => {
   const reset = body.slice(body.indexOf('RESETEOF'), body.lastIndexOf('RESETEOF'));
   assert.ok(reset.length > 0, 'ENTER: the reset block must be found, or the assertion below is vacuous');
   assert.ok(!/unlinkSync\([^)]*session\.md/.test(reset),
-    'the reset must not unlink session.md: a second writer racing refreshPrompt is how a live seat ends up with none');
+    'the reset must not unlink session.md: that is how a live seat ends up with none');
 });
 
 for (const source of ['startup', 'resume']) {
