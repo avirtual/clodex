@@ -64,7 +64,7 @@ test('T1 fixture: the CLI re-sends the response text as one byte-exact block', (
   assert.equal(texts[0].text, FIXTURE.responseText);
   assert.equal(Buffer.byteLength(texts[0].text), Buffer.byteLength(FIXTURE.responseText));
   const r = cutSpillStubs(obj);
-  assert.deepStrictEqual(r, { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0 }, 'ENTER: the captured pair carries no stub');
+  assert.deepStrictEqual(r, { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0 }, 'ENTER: the captured pair carries no stub');
 });
 
 test('T1 stub after prose: the two stub lines go, every other byte of the block stays', () => {
@@ -75,7 +75,7 @@ test('T1 stub after prose: the two stub lines go, every other byte of the block 
   withStub(obj, `${FIXTURE.responseText}\n\n${stub}`, obj.messages[i].content.slice(1));
   const r = cutSpillStubs(obj);
   assert.equal(r.cut, true, 'ENTER');
-  assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0 });
+  assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0 });
   const msg = obj.messages[i];
   assert.deepStrictEqual(msg.content.map((b) => b.type), before, 'block layout unchanged');
   assert.equal(msg.content[0].text, `${FIXTURE.responseText}\n\n`, 'prose bytes minus exactly the two lines');
@@ -88,7 +88,7 @@ test('T1 the old @spill: stub is still cut: a transcript written before the rend
   const i = assistantIndex(obj);
   withStub(obj, `${FIXTURE.responseText}\n\n[agent:dm hand] first line of the body @spill:${id}\n[agent:end]\n`, obj.messages[i].content.slice(1));
   const r = cutSpillStubs(obj);
-  assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0 });
+  assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0 });
   assert.equal(obj.messages[i].content[0].text, `${FIXTURE.responseText}\n\n`);
 });
 
@@ -119,7 +119,7 @@ test('T1 stub-only message after a user turn: the whole message goes', () => {
   withStub(obj, stub);
   const r = cutSpillStubs(obj);
   assert.equal(r.cut, true, 'ENTER');
-  assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 1, messages: 1, skipped: 0 });
+  assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 1, messages: 1, skipped: 0, placeholders: 0 });
   assert.equal(obj.messages.length, n - 1);
   assert.ok(obj.messages.every((m) => m.role !== 'assistant'));
   assert.equal(obj.messages[i - 1].role, 'user');
@@ -135,7 +135,7 @@ test('T1 stub + tool_use: the text block goes, the tool_use blocks and the messa
   withStub(obj, stub, tools);
   const r = cutSpillStubs(obj);
   assert.equal(r.cut, true, 'ENTER');
-  assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 1, messages: 0, skipped: 0 });
+  assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 1, messages: 0, skipped: 0, placeholders: 0 });
   const msg = obj.messages[i];
   assert.deepStrictEqual(msg.content, tools);
   assert.equal(obj.messages[i + 1].content[0].tool_use_id, tools[0].id, 'tool_result pairing intact');
@@ -194,7 +194,7 @@ test('T3 idempotence: cut(cut(x)) deep-equals cut(x), and a second pass reports 
   withStub(once, `${FIXTURE.responseText}\n\n${stub}`, once.messages[i].content.slice(1));
   assert.equal(cutSpillStubs(once).cut, true, 'ENTER');
   const twice = JSON.parse(JSON.stringify(once));
-  assert.deepStrictEqual(cutSpillStubs(twice), { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0 });
+  assert.deepStrictEqual(cutSpillStubs(twice), { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0 });
   assert.deepStrictEqual(twice, once);
 });
 
@@ -267,7 +267,7 @@ test('T8 drop rules: a thinking+stub message goes whole; user/system/tool_result
   const users = obj.messages.filter((m) => m.role !== 'assistant').map((m) => JSON.stringify(m));
   const r = cutSpillStubs(obj);
   assert.equal(r.cut, true, 'ENTER');
-  assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 1, messages: 1, skipped: 0 });
+  assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 1, messages: 1, skipped: 0, placeholders: 0 });
   assert.ok(obj.messages.every((m) => m.role !== 'assistant'), 'thinking left with its message');
   assert.deepStrictEqual(obj.messages.map((m) => JSON.stringify(m)), users);
 
@@ -281,22 +281,41 @@ test('T8 drop rules: a thinking+stub message goes whole; user/system/tool_result
   assert.ok(kept.messages[0].content[0].text.startsWith('[agent:dm hand]'), 'the user block still carries the pointer');
 });
 
-test('Q4 system-adjacent: a stub-only assistant message after a role:"system" message is kept uncut and counted as skipped', () => {
+test('Q4 system-adjacent: a stub-only assistant message after a role:"system" message is kept as a head-line placeholder', () => {
   const { stub } = stubOf();
   const obj = fixtureRequest();
   const i = assistantIndex(obj);
+  const n = obj.messages.length;
   assert.equal(obj.messages[i - 1].role, 'system', 'the captured pair has the shape the live probe rejected');
-  withStub(obj, stub);
-  const before = JSON.stringify(obj);
+  const thinking = { type: 'thinking', thinking: 'plan', signature: 'sig' };
+  withStub(obj, stub, [thinking]);
+  obj.messages[i].content.unshift(obj.messages[i].content.pop());
   const r = cutSpillStubs(obj);
-  assert.deepStrictEqual(r, { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 1 }, 'ENTER');
-  assert.equal(JSON.stringify(obj), before, 'byte-identical');
+  assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 1, messages: 1, skipped: 0, placeholders: 1 }, 'ENTER');
+  assert.equal(obj.messages.length, n, 'kept, not dropped');
+  assert.deepStrictEqual(obj.messages[i].content, [thinking, { type: 'text', text: '[agent:dm hand] first line of the body' }],
+    'thinking blocks, then ONE text block carrying the head line without the filed-at tail');
+  assert.deepStrictEqual(obj.messages.slice(i - 1, i + 2).map((m) => m.role), ['system', 'assistant', 'user'], 'system → assistant → user survives');
+  assert.ok(!JSON.stringify(obj).includes(' filed at /'), 'no pointer reaches the model');
+  assert.deepStrictEqual(cutSpillStubs(obj), { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0 }, 'the placeholder is not itself a stub');
 
   const reduced = fixtureRequest();
   withStub(reduced, `${FIXTURE.responseText}\n${stub}`, reduced.messages[i].content.slice(1));
   const rr = cutSpillStubs(reduced);
-  assert.deepStrictEqual(rr, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0 }, 'a cut that keeps the message needs no exemption');
+  assert.deepStrictEqual(rr, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0 }, 'prose beside the stub: the message is kept and the stub lines are cut');
   assert.equal(reduced.messages[i].content[0].text, `${FIXTURE.responseText}\n`);
+});
+
+test('Q4 placeholder: a bare @spill: pointer behind a system row leaves no head to recover, so the text block is [agent]', () => {
+  const { bare } = stubOf();
+  const obj = fixtureRequest();
+  const i = assistantIndex(obj);
+  withStub(obj, bare);
+  obj.messages[i].content[0].cache_control = { type: 'ephemeral' };
+  const r = cutSpillStubs(obj);
+  assert.equal(r.placeholders, 1, 'ENTER');
+  assert.deepStrictEqual(obj.messages[i].content, [{ type: 'text', text: '[agent]', cache_control: { type: 'ephemeral' } }],
+    'one-token placeholder, and the orphaned cache_control rides on it');
 });
 
 function billing(sub) {
@@ -413,7 +432,7 @@ test('T4 ordering, behaviourally: the upstream bytes, the hold entry and the war
     assert.equal(res.status, 200);
     assert.ok(await whenEvent(events, 'turn.completed'));
     assert.equal(events['spill-cut'].length, 1, 'ENTER');
-    assert.deepStrictEqual(events['spill-cut'][0], { agent: 'tester', reqId: events['spill-cut'][0].reqId, cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0 });
+    assert.deepStrictEqual(events['spill-cut'][0], { agent: 'tester', reqId: events['spill-cut'][0].reqId, cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0 });
 
     const sent = up.seen[0].body.toString('utf8');
     assert.ok(!sent.includes('filed at'), 'upstream never sees the stub');
@@ -533,7 +552,7 @@ test('T9 pref-independence: spillEnabled false still cuts; spillCut false stops 
   }
 });
 
-test('Q4 on the wire: a system-adjacent stub-only message is forwarded uncut with a spill-cut-skip event', async () => {
+test('Q4 on the wire: a system-adjacent stub-only message reaches upstream as a head-line placeholder, no spill-cut-skip', async () => {
   const { stub } = stubOf();
   await withProxy({}, async (proxy, up) => {
     const events = collect(proxy, ['spill-cut', 'spill-cut-skip', 'turn.completed']);
@@ -545,11 +564,14 @@ test('Q4 on the wire: a system-adjacent stub-only message is forwarded uncut wit
     ])), 'utf8');
     await request(proxy.port, '/agent/tester/v1/messages', raw);
     assert.ok(await whenEvent(events, 'turn.completed'));
-    assert.equal(events['spill-cut-skip'].length, 1, 'ENTER');
-    assert.equal(events['spill-cut-skip'][0].reason, 'system-adjacent');
-    assert.equal(events['spill-cut-skip'][0].skipped, 1);
-    assert.equal(events['spill-cut'].length, 0);
-    assert.ok(up.seen[0].body.equals(raw), 'nothing else to cut, so the original bytes go through');
+    assert.equal(events['spill-cut'].length, 1, 'ENTER');
+    assert.equal(events['spill-cut'][0].placeholders, 1);
+    assert.equal(events['spill-cut'][0].messages, 1);
+    assert.equal(events['spill-cut-skip'].length, 0);
+    const upstream = JSON.parse(up.seen[0].body.toString('utf8'));
+    assert.deepStrictEqual(upstream.messages.map((m) => m.role), ['user', 'system', 'assistant', 'user']);
+    assert.deepStrictEqual(upstream.messages[2].content, [{ type: 'text', text: '[agent:dm hand] first line of the body' }]);
+    assert.ok(!up.seen[0].body.toString('utf8').includes(' filed at /'));
   });
 });
 

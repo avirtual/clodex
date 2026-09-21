@@ -894,10 +894,9 @@ accept teardown removes.
   RAW stream it is fed for a receipt-, filler- or pointer-shaped line
   (`mimicKindOf`) outside any intent body it holds or passes through: upstream of
   its own rewrite, such a line is model-authored by construction, so it raises
-  `spill-mimic` and the seat is told nothing was executed. The tee is not armed
-  for a request whose last message is `role:"system"` (`spill-skip`
-  `system-adjacent`): the editor cannot drop a stub there without producing the
-  `system → user` shape the API rejects.
+  `spill-mimic` and the seat is told nothing was executed. A stub-only assistant
+  message behind a `role:"system"` row is kept by the editor as a head-line
+  placeholder rather than dropped, since `system → user` is a shape the API rejects.
   `id = sha256(body)[:16]`, path `<root>/spill/<agent>/<id>.md`,
   0700 dir / 0600 file, an existing file left alone. Pure leaf (`fs`, `path`,
   `crypto`, plus `path-confine` and `fs-util`). Every failure returns null or an

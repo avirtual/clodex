@@ -66,11 +66,9 @@ SSE frame level (a 200 `text/event-stream` that never sends `\n\n`).
 
 ## SpillTee
 
-Not built when the request's LAST message is `role:"system"` (`spill-skip`
-`system-adjacent`): the API rejects `system → user`, so the request editor keeps a
-stub-only assistant message uncut behind a system message, and a stub written on
-that turn would reach the model on every later request. One turn's body stays in
-context instead.
+Built whenever `spillEligible` holds, a system-row-last request included: the API
+rejects `system → user`, so `cutSpillStubs` keeps a head-line placeholder where a
+stub-only assistant message sits behind a `role:"system"` row instead of dropping it.
 
 An unchanged delta is forwarded as its ORIGINAL bytes, never re-serialised:
 Anthropic's SSE pads events with trailing spaces, so a re-encode changes 100% of
