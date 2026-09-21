@@ -19280,6 +19280,30 @@ test('scratch end: the §3 steps run in ORDER — park, keeper, kill, bak, tmp, 
   assert.ok(after.endsWith('\n'), 'the cut lands on a record boundary, never mid-line');
 });
 
+test('scratch end: the cut drops the prompt-snapshot memo — the transcript it indexed just got SHORTER', async () => {
+  const { readPromptSnapshotMemo, cachePathFor } = require('../ipc-prompt-cache');
+  const f = mkScratch();
+  scratchOpen(f);
+  f.append(`${JSON.stringify({
+    type: 'attachment', uuid: 'u-snap', timestamp: '2026-09-21T03:00:00.000Z',
+    attachment: { type: 'prompt_snapshot', systemPrompt: ['base', 'CLODEX — research block'] },
+  })}\n`);
+  scratchResearch(f);
+  const found = readPromptSnapshotMemo(f.root, 'a', f.target);
+  assert.strictEqual(found && found.clodexBlock, 'CLODEX — research block', 'ENTER: the memoised read saw the row planted inside the episode');
+  const memoPath = cachePathFor(f.root, 'a', 'snapshot');
+  const memo = JSON.parse(fsReal.readFileSync(memoPath, 'utf8'));
+  assert.ok(memo.offset > 0, 'ENTER: the memo indexes past the head');
+
+  f.s._flushTurnEnd = true;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'what I now know' });
+  await new Promise((r) => setTimeout(r, 60));
+
+  assert.ok(f.order.includes('rename'), 'ENTER: the cut ran');
+  assert.ok(fsReal.statSync(f.target).size < memo.offset, 'ENTER: the rewritten file ends BELOW the memoised offset');
+  assert.ok(!fsReal.existsSync(memoPath), 'the memo is gone with the bytes it indexed — the next read scans from 0 instead of trusting a floor past the end');
+});
+
 test('scratch end: the RE-VALIDATE after the kill catches what the exiting CLI wrote, and abandons the cut', async () => {
   const f = mkScratch();
   scratchOpen(f);
