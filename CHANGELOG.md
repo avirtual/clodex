@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Phone and web clients can now see the files an agent references: `files` lists a seat's spilled intent bodies, handoffs and inbound message spills as `filed[]`, `filePeek` takes a byte range and answers with machine-readable error codes, reads over the phone-access server are confined to the seat's cwd, its spill and message directories and the project's task artifacts, and a `filed` event on `/api/events` says when a new one lands.
+
 ## 5.84.0 — 2026-09-21 — Spill: the transcript keeps a receipt, the model never sees it
 - **Fixes a 5.83.x regression**: with the spill option on, an agent could imitate the `@spill:<id>` pointer it saw in its own history and type it as a body, so specs, dms and memory saves were silently lost. The pointer is now removed from every API request (the model never sees one), a typed pointer is refused on every verb with a bounce naming the action that did not happen, and the terminal stub is a plain `filed at <path>` line.
 - `[agent:context compact|clear|reload]` handoff bodies are no longer spilled by the wire tee: the compact or clear discards them anyway, so the file, the transcript stub and the request-side cut bought nothing. The handoff itself still reaches the resumed agent as `Continue from your handoff: @<path>`, unchanged.

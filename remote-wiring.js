@@ -4,7 +4,8 @@
 // remoteError are main.js singletons this module writes and other code reads,
 // hence get+set. No electron require here: this runs under a headless host.
 
-const { pathFor } = require('./clodex-paths');
+const { pathFor, projectDirFor } = require('./clodex-paths');
+const { spillDirFor } = require('./intent-spill');
 const { createTicketsStore } = require('./tickets-store');
 // Exec grants are LOCAL-ONLY — this pure leaf sanitizes them off the wire in both
 // directions (require-const, like pathFor above; no injected-seam needed).
@@ -30,10 +31,38 @@ function wirePromptBody(value) {
   return value;
 }
 
+function realpathNearest(fs, path, p) {
+  const tail = [];
+  let probe = path.resolve(p);
+  for (;;) {
+    try {
+      const real = fs.realpathSync(probe);
+      return { ok: true, real: path.join(real, ...tail), exists: tail.length === 0 };
+    } catch (e) {
+      if (!e || (e.code !== 'ENOENT' && e.code !== 'ENOTDIR')) return { ok: false, error: e && e.message ? e.message : String(e) };
+      const parent = path.dirname(probe);
+      if (parent === probe) return { ok: false, error: 'unresolvable path' };
+      tail.unshift(path.basename(probe));
+      probe = parent;
+    }
+  }
+}
+
+function remoteReadRoots({ fs, path, REGISTRY_DIR, MSG_DIR }, sess, name) {
+  const dirs = [];
+  if (sess.cwd) {
+    dirs.push(sess.cwd);
+    dirs.push(path.join(projectDirFor(REGISTRY_DIR, sess.cwd), 'tasks'));
+  }
+  dirs.push(spillDirFor(REGISTRY_DIR, name));
+  dirs.push(path.join(MSG_DIR, name));
+  return dirs.filter(Boolean).map((d) => realpathNearest(fs, path, d)).filter((r) => r.ok).map((r) => r.real);
+}
+
 function createRemoteWiring(deps) {
   const {
     path, fs, os, log,
-    DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, OUTBOX_DIR, SELF_LABEL,
+    DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, MSG_DIR, OUTBOX_DIR, SELF_LABEL,
     parseCtxFile, cachedMessages, sliceSince, ensureDir, homeRelativize,
     claimOutbox, listOutboxOrigins,
     manager, proxyPoller, loadManifest, listTeams, gitWorktree,
@@ -612,6 +641,28 @@ function createRemoteWiring(deps) {
         },
         query: (name, kind, args) => {
           const sess = manager.sessions.get(name);
+          const confineRemotePath = (target, requested) => {
+            const p = String(requested || '');
+            if (!p || !path.isAbsolute(p)) return { ok: false, code: 'outside', error: 'path must be absolute' };
+            const r = realpathNearest(fs, path, p);
+            if (!r.ok) return { ok: false, code: 'unreadable', error: r.error };
+            const roots = remoteReadRoots({ fs, path, REGISTRY_DIR, MSG_DIR }, target, name);
+            if (!roots.some((root) => r.real.startsWith(root + path.sep))) {
+              return { ok: false, code: 'outside', error: 'path is outside what this seat may read over the phone-access server' };
+            }
+            if (!r.exists) {
+              if (target.filedRing && target.filedRing.has(path.resolve(p))) {
+                return { ok: false, code: 'gone', error: 'that file was filed for this seat but has since been removed' };
+              }
+              return { ok: false, code: 'not-found', error: 'no such file' };
+            }
+            try {
+              if (fs.lstatSync(p).isSymbolicLink()) return { ok: false, code: 'not-a-file', error: 'Not a regular file' };
+            } catch (e) {
+              return { ok: false, code: 'unreadable', error: e.message };
+            }
+            return { ok: true, real: r.real, path: path.resolve(p) };
+          };
           if (!sess || !sess.agentType || sess._dead) return { ok: false, error: 'no such session' };
           const a = args || {};
           switch (kind) {
@@ -623,8 +674,16 @@ function createRemoteWiring(deps) {
             case 'report': return fetchProxyReport(name, { detail: !!a.detail });
             case 'bust': return fetchProxyBust(name);
             case 'files': return fetchSessionFiles(name);
-            case 'filePeek': return fetchFilePeek(String(a.path || ''));
-            case 'fileDiff': return fetchFileDiff(name, String(a.path || ''));
+            case 'filePeek': {
+              const c = confineRemotePath(sess, a.path);
+              if (!c.ok) return c;
+              const out = fetchFilePeek(c.real, { offset: a.offset, length: a.length });
+              return out && out.ok ? { ...out, path: c.path } : out;
+            }
+            case 'fileDiff': {
+              const c = confineRemotePath(sess, a.path);
+              return c.ok ? fetchFileDiff(name, c.path) : c;
+            }
             default: return { ok: false, error: `unknown query kind: ${kind}` };
           }
         },

@@ -186,7 +186,12 @@ guard. A failed preview disables Clear alone, and the age `change` re-runs it.
 **`popoverApi(name)`** is the local-vs-peer data seam: local sessions call
 the direct IPC (getProxyContext/Report/Bust, sessionFiles, filePeek,
 fileDiff); peer sessions route the same kinds through `peerQuery`, with
-identical response shapes so render code is shared. `peerProxyView` is
+identical response shapes so render code is shared. `sessionFiles` carries
+`filed[]` (the seat's spilled intent bodies, handoffs and message spills, from
+`session.filedRing`) beside `files`; `filePeek` answers `{path, size, mtime,
+offset, length, truncated, binary, content}` and, on failure,
+`{ok:false, code, error}`. Confinement of `filePeek`/`fileDiff` lives in the
+remote query path only, so the direct IPC and the peer drawer are unchanged. `peerProxyView` is
 the owner-side trim: no base/capabilities/sessionId crosses
 the wire (no reach-back), plus a computed `queries[]` advertising which
 popovers the owner will answer.

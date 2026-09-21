@@ -27,6 +27,7 @@
         { "name": "architecture", "path": "docs/architecture.md" },
         { "name": "exec-tools", "path": "docs/exec-tools.md" },
         { "name": "renderer-events", "path": "docs/renderer-events.md" },
+        { "name": "file-view-api-contract", "path": "docs/file-view-api-contract.md" },
         { "name": "cli", "path": "cli/README.md" },
         { "name": "plugin-api", "path": "plugins/plugin-api.md" },
         { "name": "plugin-sources", "path": "plugins/plugin-sources.md" },

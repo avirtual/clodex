@@ -384,6 +384,7 @@ clx-basket-
 clx-bundle-
 clx-cdelta-
 clx-cf-
+clx-fileview-
 clx-clearcont-
 clx-common-
 clx-commonmeta-

@@ -126,7 +126,7 @@ const FIXTURE_TWO = '# Two\n\n## Gamma\n\nalpha shows up on the second page too.
 test('manifest: every page path exists, names are unique and legal, each page has one H1', () => {
   assert.strictEqual(manifest.version, 1);
   assert.deepStrictEqual(manifest.sections.map((s) => s.title), ['Using Clodex', 'Recipes', 'Reference']);
-  assert.strictEqual(PAGES.length, 17, `manifest lists ${PAGES.length} pages`);
+  assert.strictEqual(PAGES.length, 18, `manifest lists ${PAGES.length} pages`);
   assert.ok(BY_NAME.has('how-to'), 'ENTER: how-to did not survive the manifest read');
   assert.strictEqual(BY_NAME.size, PAGES.length, 'manifest page names are not unique');
 
@@ -369,7 +369,7 @@ test('two roots do not share a cache', () => {
 test('the real corpus loads and exposes nothing outside the manifest', () => {
   const corpus = loadHelpCorpus(ROOT);
   const listed = corpus.list();
-  assert.strictEqual(listed.length, 17);
+  assert.strictEqual(listed.length, 18);
   assert.deepStrictEqual(listed.map((p) => p.name), PAGES.map((p) => p.name));
   assert.ok(listed.some((p) => p.name === 'how-to'), 'ENTER: how-to did not survive the corpus load');
   for (const page of listed) assert.ok(page.title, `${page.name} has no title`);
