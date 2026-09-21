@@ -9,6 +9,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const { writeSpill, spillPathFor } = require('../intent-spill');
 const { shadowIntentKey, parseIntent, looksLikeIntent } = require('../intent-scanner');
 const { IntentDeduper } = require('../wire-intents');
+const { SpillFilter } = require('../wire/spill');
 
 const BIG = `spec line one\n${'z'.repeat(1200)}\nlast line`;
 
@@ -359,26 +360,55 @@ test('a seat with no live session still logs, notes and drops — nothing is typ
   assert.deepStrictEqual(h.injected, []);
 });
 
-test('the dedupe key is computed on the POINTER form at both dispatch sites, and resolution is what changes it', async () => {
+test('rework r1: the tee\'s stub, replayed by recovery, keys EQUAL to the original the wire claimed — so the cross-path claim rejects it', async () => {
   const h = mkH();
-  const id = writeSpill(h.root, 'lead', BIG);
-  const intent = { type: 'task', sub: 'add', body: `@spill:${id}` };
-  const before = shadowIntentKey('lead', intent);
+  const original = `Working.\n[agent:dm bob] ${BIG}\n[agent:end]\nDone.\n`;
+  const f = new SpillFilter({ agent: 'lead', root: h.root, verbs: ['dm'] });
+  const stub = f.feed(original) + f.close();
+  const id = /@spill:([0-9a-f]{16})/.exec(stub)[1];
+  assert.strictEqual(stub, `Working.\n[agent:dm bob] spec line one @spill:${id}\n[agent:end]\nDone.\n`, 'ENTER: the transcript carries the stub');
 
-  await h.m._handleIntent('lead', intent);
-
-  assert.notStrictEqual(shadowIntentKey('lead', intent), before,
-    'the chokepoint MUTATES the body, so the key is only stable if both sites take it before dispatch — '
-    + 'a key taken after would be the 1.2 KB body on one path and the pointer on the other, and one '
-    + 'emission recovered after a tee failure would fire twice');
+  const wire = h.m._extractIntents(original);
+  const replay = h.m._extractIntents(stub, { receiptsFor: 'lead' });
+  assert.strictEqual(replay.length, 1);
+  assert.strictEqual(replay[0].body, wire[0].body, 'the file is the body before anything keys it');
+  assert.deepStrictEqual(replay[0].spill, { id, path: spillPathFor(h.root, 'lead', id) });
+  const key = shadowIntentKey('lead', wire[0]);
+  assert.strictEqual(shadowIntentKey('lead', replay[0]), key,
+    'keyed on the pointer, the replay would be a fresh emission and the dm would go out twice');
+  assert.notStrictEqual(key, shadowIntentKey('lead', h.m._extractIntents(stub)[0]), 'the wire scan alone still sees the pointer');
 
   const d = new IntentDeduper();
-  assert.strictEqual(d.claim('lead', before, 'wire').ok, true);
-  const second = d.claim('lead', before, 'recovery');
-  assert.strictEqual(second.ok, false, 'the recovery replay of the same pointer turn is rejected');
-  assert.match(second.reason, /cross-path overlap/);
+  assert.strictEqual(d.claim('lead', key, 'wire').ok, true);
+  const second = d.claim('lead', shadowIntentKey('lead', replay[0]), 'recovery');
+  assert.strictEqual(second.ok, false, 'the recovery replay of the tee-stubbed turn is rejected');
+  assert.match(second.reason, /cross-path overlap \(wire→recovery\)/);
+
+  await h.m._handleIntent('lead', replay[0]);
+  assert.strictEqual(h.dms.length, 1);
+  assert.strictEqual(h.dms[0].body, BIG, 'and when recovery does dispatch (no wire claim), the body is whole');
 });
 
+test('rework r1: a stub whose file is gone stays a pointer for _handleIntent to bounce; a stub closed by the NEXT head, a titled task stub, and a fenced stub', async () => {
+  const h = mkH();
+  const id = writeSpill(h.root, 'lead', BIG);
+  const gone = '0123456789abcdef';
+  const text = `[agent:dm bob] @spill:${gone}\n[agent:end]\n[agent:task add hand start] spec line one @spill:${id}\n[agent:shout] fine\n[agent:end]\n`;
+  const intents = h.m._extractIntents(text, { receiptsFor: 'lead' });
+  assert.deepStrictEqual(intents.map((i) => [i.type, i.sub || null]), [['dm', null], ['task', 'add'], ['shout', null]]);
+  assert.strictEqual(intents[0].body, `@spill:${gone}`);
+  assert.strictEqual(intents[0].spill, undefined);
+  assert.strictEqual(intents[1].body, BIG, 'the title is discarded, the file is the body');
+  assert.strictEqual(intents[1].start, true);
+  assert.strictEqual(intents[1].who, 'hand');
+  assert.strictEqual(intents[2].body, 'fine', 'the reconstructed terminator does not swallow the head that closed the stub');
+
+  const fenced = `\`\`\`\n[agent:dm bob] @spill:${id}\n[agent:end]\n\`\`\`\n`;
+  assert.deepStrictEqual(h.m._extractIntents(fenced, { receiptsFor: 'lead' }), [], 'a fenced stub is a quote');
+  await h.m._handleIntent('lead', intents[0]);
+  assert.deepStrictEqual(h.dms, [], 'the missing file bounces as before');
+  assert.strictEqual(h.errors.length, 1);
+});
 
 function receiptLine(words, body, filePath, title) {
   const t = title === undefined ? '' : ` — "${title}"`;
@@ -483,8 +513,9 @@ test('spill-mimic (item 8): the wire event is answered with a wire-spill-mimic r
   const bounce = src.match(/const SPILL_MIMIC_BOUNCE = '([^']+)';/);
   assert.ok(bounce, 'the advisory is one constant');
   assert.strictEqual(bounce[1],
-    '[agent] Not executed: that line was a receipt or filler, not an intent, and nothing was sent or filed. '
+    '[agent] Not executed: that line was a receipt, filler or pointer, not an intent, and nothing was sent or filed. '
     + 'Emit the complete intent — head line, full body, [agent:end].');
+  assert.ok(!bounce[1].includes('@spill:'), 'the bounce never spells the pointer shape either');
   assert.ok(!bounce[1].includes('[Runtime note: action text omitted from retained history.]'),
     'the bounce never echoes the filler: an echo is one more copyable line in the record');
 });
@@ -531,4 +562,88 @@ test('t1052: the wire spill event enqueues a Clodex-voiced ack in the USER role,
   assert.match(arm[0], /enqueueNotice\(REGISTRY_DIR, ev\.agent, spillAckLine\(ev, spillPathFor\(REGISTRY_DIR, ev\.agent, ev\.id\)\)\)/,
     'the ack goes through notice-queue.js — the USER role, where nothing is imitated — never through _injectText into the pane');
   assert.ok(!/_injectText/.test(arm[0]));
+});
+
+async function wireRig(h) {
+  h.m._publishAgentText = () => {};
+  h.m._maybeSpeak = () => {};
+  h.m._maybeDeliverDigest = () => {};
+  h.m._maybeRearmHold = () => {};
+  h.m._maybeFireCompactLatch = () => {};
+  h.m._fireScratchClose = () => {};
+  const wire = await h.m._ensureWire();
+  h.m.sessions.set('lead', { name: 'lead', agentType: 'claude', workspaceId: 'ws1', intentSource: 'wire', sessionId: 'sid-1' });
+  const settle = async () => { for (let i = 0; i < 4; i += 1) await new Promise((r) => setImmediate(r)); };
+  const turn = async (text, reqId) => {
+    wire.emit('turn.completed', { agent: 'lead', text, reqId, sessionId: 'sid-1', stop: { is_turn: true } });
+    await settle();
+  };
+  const close = async () => { await wire.close(); if (h.m._holdKeeper) h.m._holdKeeper.stop(); };
+  return { wire, turn, settle, close };
+}
+
+const MIMIC_BOUNCE = '[agent] Not executed: that line was a receipt, filler or pointer, not an intent, and nothing was sent or filed. '
+  + 'Emit the complete intent — head line, full body, [agent:end].';
+
+test('T11: a pointer body on the WIRE path is bounced as typed and never resolved, even when it names a real file; the jsonl path still resolves it', async () => {
+  const h = mkH({ getUserDataPath: () => h.root, shadowIntentKey });
+  const id = writeSpill(h.root, 'lead', BIG);
+  assert.ok(id, 'ENTER: a real file exists, so a resolver that ran WOULD succeed');
+  const rig = await wireRig(h);
+  try {
+    await rig.turn(`[agent:task add t] @spill:${id}\n[agent:end]\n`, 'r1');
+    assert.deepStrictEqual(h.tasks, [], 'the model never receives a real stub, so a pointer it emits is typed from memory: dropped, not resolved');
+    assert.deepStrictEqual(h.injected.map((i) => i.text), [MIMIC_BOUNCE], 'one advisory, the same one the mimic detector uses');
+    assert.deepStrictEqual(h.injected[0].opts, { parkable: true });
+    assert.ok(h.broadcasts.some((b) => b.type === 'intent' && /task\.add dropped: its body was a pointer/.test(b.body)), 'surfaced in the IPC log');
+    assert.deepStrictEqual(h.notes, [], 'no operator note: a typed pointer is a model slip, not an incident');
+    assert.deepStrictEqual(h.errors, []);
+
+    await h.m._handleIntent('lead', { type: 'task', sub: 'add', body: `@spill:${id}` });
+    assert.strictEqual(h.tasks.length, 1, 'the jsonl / recovery path carries no fromWire flag and still resolves');
+    assert.strictEqual(h.tasks[0].body, BIG, 'a sentinel replay of the transcript tail recovers the real body from Clodex\'s own stub');
+    assert.strictEqual(h.injected.length, 1, 'and bounces nothing');
+  } finally {
+    await rig.close();
+  }
+});
+
+test('T11: a titled pointer and a dm pointer bounce on the wire path too; a pointer INSIDE a longer body is prose and dispatches', async () => {
+  const h = mkH({ getUserDataPath: () => h.root, shadowIntentKey });
+  const id = writeSpill(h.root, 'lead', BIG);
+  const rig = await wireRig(h);
+  try {
+    await rig.turn(`[agent:task add t] spec line one @spill:${id}\n[agent:end]\n`, 'r1');
+    await rig.turn(`[agent:dm bob] @spill:${id}\n[agent:end]\n`, 'r2');
+    assert.deepStrictEqual(h.tasks, []);
+    assert.deepStrictEqual(h.dms, []);
+    assert.deepStrictEqual(h.injected.map((i) => i.text), [MIMIC_BOUNCE, MIMIC_BOUNCE], 'one bounce per turn');
+    await rig.turn(`[agent:dm bob] see @spill:${id} for the body\n[agent:end]\n`, 'r3');
+    assert.strictEqual(h.dms.length, 1, 'not a pointer body, so the dm goes out as written');
+    assert.strictEqual(h.dms[0].body, `see @spill:${id} for the body`);
+  } finally {
+    await rig.close();
+  }
+});
+
+test('T12: the intent-shaped pointer is bounced ONCE per turn — the mimic detector\'s bounce and the intent path\'s bounce collapse on the reqId', async () => {
+  const h = mkH({ getUserDataPath: () => h.root, shadowIntentKey });
+  const id = writeSpill(h.root, 'lead', BIG);
+  const rig = await wireRig(h);
+  try {
+    rig.wire.emit('spill-mimic', { agent: 'lead', reqId: 'r1', kind: 'pointer' });
+    await rig.settle();
+    assert.deepStrictEqual(h.injected.map((i) => i.text), [MIMIC_BOUNCE], 'ENTER: the detector bounced the head line during the stream');
+    await rig.turn(`[agent:task add t] @spill:${id}\n[agent:end]\n`, 'r1');
+    assert.deepStrictEqual(h.tasks, [], 'still dropped');
+    assert.strictEqual(h.injected.length, 1, 'the intent path saw the same reqId already bounced and stayed silent');
+
+    await rig.turn(`[agent:task add t] @spill:${id}\n[agent:end]\n`, 'r2');
+    assert.strictEqual(h.injected.length, 2, 'a later turn with no detector bounce (the tee unarmed, the pref off) is bounced by the intent path');
+    rig.wire.emit('spill-mimic', { agent: 'lead', reqId: 'r3', kind: 'pointer' });
+    await rig.settle();
+    assert.strictEqual(h.injected.length, 3, 'and the detector is not silenced by the intent path\'s earlier bounce');
+  } finally {
+    await rig.close();
+  }
 });

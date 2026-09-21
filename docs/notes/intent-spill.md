@@ -57,24 +57,29 @@ one outcome worse than a stall.
 
 The body must be the pointer alone, or ONE line ending in ` @spill:<id>` with at
 most 80 chars of title before it (`TITLED_POINTER_RE`) — the shape the tee
-emitted before the receipt, kept because a resumed seat can replay a transcript
-already on disk. Anything else is prose used
-verbatim. That is what makes a cross-seat read inexpressible: a peer's
+writes, and the shape a resumed seat replays from a transcript already on disk.
+Resolved on the jsonl and recovery scans only: on the wire path the model never
+receives a stub (`wire/spill-cut.js`), so a pointer body there is typed from
+memory and `_handleIntent` bounces it under `fromWire`. On those scans the
+tee's stub is expanded by `_expandReceipts` BEFORE `shadowIntentKey` is taken,
+so a tee-failure replay keys equal to the wire's original claim and is dropped as
+a cross-path overlap; a stub whose file is gone is left for `_handleIntent` to
+bounce. Anything else is prose used verbatim. That is what makes a cross-seat read inexpressible: a peer's
 `@spill:<id>` copied mid-prose is never resolved, and a pointer resolved at all
 is resolved against the SENDER's own directory.
 
 ## RECEIPT_RE
 
-The tee's FORMER placeholder, `(I sent <words> — "<title>" in full, N B;
-Clodex kept my text at <path>.)`; since t1052 the tee writes nothing into the
-record, but live seats still carry these lines in history and can still copy
-them, so recognition stays. Recognised only on the non-wire scans (the
-sentinel's recovery replay, `_scanJsonlText`): the wire tee reads the unspilled
-stream, so a receipt in wire text can only have been typed, and `mimicKindOf`
-is what the spill filter runs on its input to catch exactly that — it also
-reports a lone `SPILL_FILLER` line (the tee's empty-block runtime note) as kind
-`filler`; the bounce never echoes it. The verb words must name a `SPILL_VERBS` key or the line is
-prose.
+The tee's FORMER placeholder (t1047–t1052), `(I sent <words> — "<title>" in
+full, N B; Clodex kept my text at <path>.)`; `SPILL_FILLER` is the t1052-era
+empty-block note. The tee writes neither any more; both stay recognised because
+`wire/spill-cut.js` still cuts them out of older transcripts and live seats can
+still copy them. Receipts are expanded only on the non-wire scans (the
+sentinel's recovery replay, `_scanJsonlText`). `mimicKindOf` is what the spill
+filter runs on its input: a receipt, a lone filler line, or a bare / titled /
+intent-headed `@spill:<id>` line (kind `pointer`) can only have been typed
+there; the bounce never echoes any of the shapes. The verb words must name a
+`SPILL_VERBS` key or a receipt line is prose.
 
 ## resolveReceipt
 

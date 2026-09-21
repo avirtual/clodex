@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { mk } = require('./lib/session-fixtures');
-const { SpillTee, SPILL_FILLER } = require('../wire/spill');
+const { SpillTee } = require('../wire/spill');
 const { UsageCollector, SSEFramer } = require('../wire/sse');
 
 const SCANNER = mk({
@@ -36,8 +36,12 @@ function keptPath(id, r = root()) {
 }
 
 function idOf(spills) {
-  assert.equal(spills.length, 1, 'exactly one spill names the file — the record no longer does');
+  assert.equal(spills.length, 1, 'exactly one spill names the file');
   return spills[0].id;
+}
+
+function stub(head, spills, title = '') {
+  return `[agent:${head}] ${title}@spill:${idOf(spills)}\n[agent:end]\n`;
 }
 
 function ev(type, data) {
@@ -98,9 +102,9 @@ const THINKING_STREAM = Buffer.concat([
 
 test('a thinking block carrying an intent is never touched; the text block beside it spills', () => {
   for (const cs of [1, 13, 997, THINKING_STREAM.length]) {
-    const { out, tee } = drive(THINKING_STREAM, cs);
+    const { out, tee, spills } = drive(THINKING_STREAM, cs);
     assert.ok(textOf(out, 'thinking_delta', 'thinking').includes(BIG), `thinking intact @cs=${cs}`);
-    assert.equal(textOf(out), 'Here you go.\nDone.\n', `text rewritten: the block is gone whole @cs=${cs}`);
+    assert.equal(textOf(out), `Here you go.\n${stub('task add t42', spills)}Done.\n`, `text rewritten to the stub @cs=${cs}`);
     assert.equal(out.toString('utf8').match(/event: content_block_start/g).length, 2);
     assert.equal(out.toString('utf8').match(/event: content_block_stop/g).length, 2);
     assert.equal(out.toString('utf8').match(/event: message_stop/g).length, 1);
@@ -175,7 +179,7 @@ test('a dm body spills through the tee, and the same stream with dm unlisted is 
     const { out, tee, spills } = drive(DM_STREAM, cs, { verbs: [...VERBS, 'dm'] });
     const seen = textOf(out);
     const id = idOf(spills);
-    assert.equal(seen, 'On it.\n', `@cs=${cs}: the dm block leaves whole; no receipt, no filler — prose survives`);
+    assert.equal(seen, `On it.\n[agent:dm bob] @spill:${id}\n[agent:end]\n`, `@cs=${cs}: the dm block becomes its stub; prose survives`);
     assert.deepEqual(spills, [{ verb: 'dm', id, bytes: 900, head: 'dm bob' }], `@cs=${cs}`);
     assert.equal(fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${id}.md`), 'utf8'), BIG,
       `@cs=${cs}: the recipient's copy is on disk in full`);
@@ -205,11 +209,11 @@ test('pings keep flowing while a body is held, in order, and usage bytes are unt
     usage,
     ev('message_stop', { type: 'message_stop' }),
   ]);
-  const { out } = drive(stream, 13);
+  const { out, spills } = drive(stream, 13);
   const s = out.toString('utf8');
   assert.equal(s.match(/event: ping/g).length, 2, 'both pings forwarded');
-  assert.equal(textOf(out), SPILL_FILLER, 'the whole block was the reply, so the emptied block gets the filler');
-  assert.ok(s.indexOf('event: ping') < s.indexOf('[Runtime note: action text omitted from retained history.]'), 'pings arrive before the filler');
+  assert.equal(textOf(out), stub('task add t', spills), 'the whole block was the reply, so the stub is the whole record');
+  assert.ok(s.lastIndexOf('event: ping') < s.indexOf('@spill:'), 'pings arrive before the stub');
   assert.ok(s.includes(usage.toString('utf8')), 'usage event byte-identical');
   assert.ok(!s.includes(BIG));
 });
@@ -223,8 +227,8 @@ test('content_block_stop flushes a held, unterminated body BEFORE the stop event
   ]);
   const { out, tee } = drive(stream, 29);
   const s = out.toString('utf8');
-  assert.equal(textOf(out), `[agent:task add t] ${BIG}`, 'the held original is emitted, and no filler pads a block that never spilled');
-  assert.ok(!s.includes('[Runtime note: action text omitted from retained history.]'));
+  assert.equal(textOf(out), `[agent:task add t] ${BIG}`, 'the held original is emitted');
+  assert.ok(!s.includes('@spill:'));
   assert.equal(tee.fired, 0);
   assert.ok(s.indexOf(BIG.slice(0, 40)) < s.indexOf('event: content_block_stop'),
     'flushed before the stop');
@@ -276,7 +280,7 @@ test('an onSpill listener that throws cannot cost the client its text', () => {
     });
     const out = Buffer.concat([tee.feed(stream), tee.close()]);
     const seen = textOf(out);
-    assert.equal(seen, 'After.\n', `@cs=${cs}: the spill still happened and the prose after the body survives`);
+    assert.match(seen, /^\[agent:task add t\] @spill:[0-9a-f]{16}\n\[agent:end\]\nAfter\.\n$/, `@cs=${cs}: the spill still happened and the prose after the body survives`);
     assert.equal(tee.fired, 1, `@cs=${cs}`);
     assert.equal(tee.latched, false,
       `@cs=${cs}: a throwing listener must not drive the tee into the panic path at all`);
@@ -338,12 +342,12 @@ test('the spilled file equals the body the REAL intent scanner would have produc
     assert.equal(onDisk, scannerBody(original),
       `@cs=${cs}: S-B substitutes this file for the body the UNSPILLED path would have carried, so `
       + 'a one-byte divergence from the repo\'s own delimiter silently dispatches a different spec');
-    assert.equal(seen, 'Here you go.\nDone.\n',
-      `@cs=${cs}: the client sees the prose around the block and nothing of the block — not its first line, `
-      + 'not the head line, not the terminator');
-    assert.deepEqual(SCANNER._extractIntents(seen), [],
-      `@cs=${cs}: and the REWRITTEN text re-parses to NO intent — the transcript carries nothing `
-      + 'the seat could copy as an emission');
+    assert.equal(seen, `Here you go.\n[agent:task add t42 start] first line of the spec @spill:${id}\n[agent:end]\nDone.\n`,
+      `@cs=${cs}: the client sees the prose around the block and the titled stub, terminator kept`);
+    const re = SCANNER._extractIntents(seen);
+    assert.equal(re.length, 1, `@cs=${cs}: the REWRITTEN text re-parses to exactly one intent`);
+    assert.equal(re[0].body, `first line of the spec @spill:${id}`,
+      `@cs=${cs}: the kept terminator closes the body at the pointer instead of swallowing the prose after it`);
   }
 });
 
@@ -362,8 +366,8 @@ test('scanner equivalence holds for the body shapes the delimiter treats special
       ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
     ]);
     const { out, spills } = drive(stream, 43);
-    assert.equal(textOf(out), SPILL_FILLER, `${label}: the block was the whole reply`);
     const id = idOf(spills);
+    assert.match(textOf(out), new RegExp(`^\\[agent:${headArgs}\\] (?:[^\\n]* )?@spill:${id}\\n\\[agent:end\\]\\n$`), `${label}: the block was the whole reply, and the stub is its record`);
     const onDisk = fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${id}.md`), 'utf8');
     assert.equal(onDisk, scannerBody(original), label);
   }
@@ -376,7 +380,7 @@ test('an invalid agent streams verbatim end to end', () => {
 });
 
 
-test('proseSpill: the filler delta precedes content_block_stop, and the stop is byte-identical', () => {
+test('proseSpill: the pointer delta precedes content_block_stop, and the stop is byte-identical', () => {
   const stop = ev('content_block_stop', { type: 'content_block_stop', index: 0 });
   const stream = Buffer.concat([
     ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
@@ -391,10 +395,10 @@ test('proseSpill: the filler delta precedes content_block_stop, and the stop is 
 
   assert.equal(tee.fired, 1);
   assert.ok(!s.includes(BIG), 'the prose is off the wire');
-  assert.ok(s.indexOf('[Runtime note: action text omitted from retained history.]') < s.indexOf('event: content_block_stop'),
-    'held text cannot outlive its block — the filler is emitted before the stop');
+  assert.ok(s.indexOf('@spill:') < s.indexOf('event: content_block_stop'),
+    'held text cannot outlive its block — the pointer is emitted before the stop');
   assert.ok(s.includes(stop.toString('utf8')), 'the stop frame is byte-identical');
-  assert.equal(textOf(out), '[Runtime note: action text omitted from retained history.]', 'and the block carries exactly the filler');
+  assert.equal(textOf(out), `@spill:${idOf(spills)}\n`, 'and the block carries exactly the bare pointer');
   assert.equal(fs.readFileSync(keptPath(idOf(spills)), 'utf8'), `Acknowledged.\n${BIG}\n`);
 });
 
@@ -493,10 +497,10 @@ test('proseSpill: only the text AFTER the last non-text block is the tail', () =
     const { out, tee, spills } = drive(TWO_FAT_BLOCKS, cs, { proseSpill: true });
     const s = out.toString('utf8');
     assert.equal(tee.fired, 1, `@cs=${cs}`);
-    assert.equal(textOf(out), `${NARRATION}\n[Runtime note: action text omitted from retained history.]`,
-      `@cs=${cs}: the first text block is narration and survives verbatim; the second is emptied and gets the filler`);
-    assert.ok(!s.includes(BIG), `@cs=${cs}: the second is the sign-off and goes to disk`);
     const id = idOf(spills);
+    assert.equal(textOf(out), `${NARRATION}\n@spill:${id}\n`,
+      `@cs=${cs}: the first text block is narration and survives verbatim; the second becomes the bare pointer`);
+    assert.ok(!s.includes(BIG), `@cs=${cs}: the second is the sign-off and goes to disk`);
     assert.equal(fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${id}.md`), 'utf8'),
       `${BIG}\n`, `@cs=${cs}: and the file holds exactly those 900 bytes`);
     assert.deepEqual(typesOf(out), [
@@ -504,18 +508,18 @@ test('proseSpill: only the text AFTER the last non-text block is the tail', () =
       'content_block_start', 'content_block_stop',
       'content_block_start', 'content_block_delta', 'content_block_stop',
       'message_delta', 'message_stop',
-    ], `@cs=${cs}: the filler delta lands INSIDE the last text block — the held stop frame and `
+    ], `@cs=${cs}: the pointer delta lands INSIDE the last text block — the held stop frame and `
       + 'everything after it are released in their original order');
   }
 });
 
-test('proseSpill: a lone text block still spills, with the stop frames after the filler', () => {
+test('proseSpill: a lone text block still spills, with the stop frames after the pointer', () => {
   for (const cs of [1, 23, LONE_TEXT.length]) {
     const { out, tee, spills } = drive(LONE_TEXT, cs, { proseSpill: true });
     assert.equal(tee.fired, 1, `@cs=${cs}`);
     const id = idOf(spills);
     assert.equal(fs.readFileSync(keptPath(id), 'utf8'), `${BIG}\n`, `@cs=${cs}`);
-    assert.equal(textOf(out), '[Runtime note: action text omitted from retained history.]', `@cs=${cs}`);
+    assert.equal(textOf(out), `@spill:${id}\n`, `@cs=${cs}`);
     assert.deepEqual(typesOf(out),
       ['content_block_start', 'content_block_delta', 'content_block_stop', 'message_stop'],
       `@cs=${cs}: holding the stop must not reorder or drop it`);
@@ -528,9 +532,9 @@ test('proseSpill: a thinking block PRECEDES rather than follows, so the text aft
     assert.equal(tee.fired, 1,
       `@cs=${cs}: a non-text block flushes only a tail already standing, and there was none`);
     assert.equal(fs.readFileSync(keptPath(idOf(spills)), 'utf8'), `${BIG}\n`, `@cs=${cs}`);
-    assert.equal(textOf(out), '[Runtime note: action text omitted from retained history.]', `@cs=${cs}`);
-    assert.ok(out.toString('utf8').includes(td(1, '[Runtime note: action text omitted from retained history.]').toString('utf8')),
-      `@cs=${cs}: the filler carries the TEXT block's index, not the thinking block's`);
+    assert.equal(textOf(out), `@spill:${idOf(spills)}\n`, `@cs=${cs}`);
+    assert.ok(out.toString('utf8').includes(td(1, `@spill:${idOf(spills)}\n`).toString('utf8')),
+      `@cs=${cs}: the pointer carries the TEXT block's index, not the thinking block's`);
   }
 });
 
@@ -606,7 +610,7 @@ test('proseSpill: pings pass a held stop, so a pause after a block boundary is n
   }
 });
 
-test('proseSpill: a ping passes the held stop; message_delta stays behind the filler', () => {
+test('proseSpill: a ping passes the held stop; message_delta stays behind the pointer', () => {
   const usage = ev('message_delta', {
     type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 42 },
   });
@@ -620,8 +624,8 @@ test('proseSpill: a ping passes the held stop; message_delta stays behind the fi
     assert.deepEqual(typesOf(out), [
       'content_block_start', 'content_block_delta', 'content_block_stop',
       'message_delta', 'message_stop',
-    ], `@cs=${cs}: message_delta must follow the filler delta — it closes the message the `
-      + 'filler is part of');
+    ], `@cs=${cs}: message_delta must follow the pointer delta — it closes the message the `
+      + 'pointer is part of');
   }
   for (const cs of [1, 23, 997, pinged.length]) {
     const { out, tee } = drive(pinged, cs, { proseSpill: true });
@@ -631,7 +635,7 @@ test('proseSpill: a ping passes the held stop; message_delta stays behind the fi
       'content_block_start', 'ping', 'content_block_delta', 'content_block_stop',
       'message_delta', 'message_stop',
     ], `@cs=${cs}: only the ping is let past the hold`);
-    assert.ok(s.indexOf('event: ping') < s.indexOf('[Runtime note: action text omitted from retained history.]'), `@cs=${cs}`);
+    assert.ok(s.indexOf('event: ping') < s.indexOf('@spill:'), `@cs=${cs}`);
   }
 });
 
@@ -650,12 +654,12 @@ test('proseSpill: a fire AT the stop is flushed there, not left behind the hold'
     + 'and the stop branch flushes on that fire the way the delta branch does');
   assert.deepEqual(typesOf(first),
     ['content_block_start', 'content_block_delta', 'content_block_stop'],
-    'the filler is forwarded at the stop, ahead of every later frame');
-  assert.equal(textOf(first), '[Runtime note: action text omitted from retained history.]');
+    'the stub is forwarded at the stop, ahead of every later frame');
+  assert.equal(textOf(first), `[agent:task add t] @spill:${spills[0].id}\n[agent:end]`);
   assert.equal(tee.fired, 1);
 
   const second = tee.feed(Buffer.concat([start(1, 'tool_use'), stopAt(1)]));
-  assert.ok(!second.toString('utf8').includes('[Runtime note: action text omitted from retained history.]'), 'no second filler at the next block: nothing spilled there');
+  assert.ok(!second.toString('utf8').includes('@spill:'), 'no second stub at the next block: nothing spilled there');
   const rest = Buffer.concat([second, tee.feed(ev('message_stop', { type: 'message_stop' })), tee.close()]);
   assert.deepEqual(typesOf(rest),
     ['content_block_start', 'content_block_stop', 'message_stop']);
@@ -708,61 +712,48 @@ function textBlock(index, text, before = [], after = []) {
   ]);
 }
 
-test('empty-record guard: a reply that is ONLY the spilled block gets exactly `[Runtime note: action text omitted from retained history.]` before its stop, in both modes', () => {
-  assert.equal(SPILL_FILLER, '[Runtime note: action text omitted from retained history.]', 'the literal the mimic detector matches and the CLI records');
+test('T10: a reply that is ONLY the spilled block gets exactly the stub before its stop, in both modes — the block is never empty', () => {
   const stream = textBlock(0, ONLY_BLOCK);
   for (const proseSpill of [false, true]) {
     for (const cs of [1, 17, 997, stream.length]) {
-      const { out, tee } = drive(stream, cs, { proseSpill });
+      const { out, tee, spills } = drive(stream, cs, { proseSpill });
       assert.equal(tee.fired, 1, `proseSpill=${proseSpill} @cs=${cs}`);
-      assert.equal(textOf(out), '[Runtime note: action text omitted from retained history.]',
-        `proseSpill=${proseSpill} @cs=${cs}: Anthropic rejects a text block with no non-whitespace text on the NEXT `
-        + 'request, and an assistant turn that is one long dispatch is the common shape');
+      assert.equal(textOf(out), stub('task add t', spills),
+        `proseSpill=${proseSpill} @cs=${cs}: head line, bare pointer, terminator — nothing else, and no filler`);
       assert.deepEqual(typesOf(out),
         ['content_block_start', 'content_block_delta', 'content_block_stop', 'message_stop'],
-        `proseSpill=${proseSpill} @cs=${cs}: one filler delta, inside the block, before its stop`);
-      assert.ok(out.toString('utf8').includes(td(0, '[Runtime note: action text omitted from retained history.]').toString('utf8')),
-        `proseSpill=${proseSpill} @cs=${cs}: the filler is a plain text_delta on the block's index`);
+        `proseSpill=${proseSpill} @cs=${cs}: one stub delta, inside the block, before its stop`);
+      assert.ok(!out.toString('utf8').includes('Runtime note'), `proseSpill=${proseSpill} @cs=${cs}`);
     }
   }
 });
 
-test('empty-record guard: any surviving non-whitespace prose suppresses the filler; whitespace alone does not', () => {
-  for (const proseSpill of [false, true]) {
-    const withProse = drive(textBlock(0, `On it.\n${ONLY_BLOCK}`), 13, { proseSpill });
-    assert.equal(withProse.tee.fired, 1, `proseSpill=${proseSpill}`);
-    assert.equal(textOf(withProse.out), 'On it.\n', `proseSpill=${proseSpill}: a reply with any other prose gets nothing inserted`);
-
-    const wsOnly = drive(textBlock(0, `\n${ONLY_BLOCK}\n`), 13, { proseSpill });
-    assert.equal(wsOnly.tee.fired, 1, `proseSpill=${proseSpill}`);
-    assert.equal(textOf(wsOnly.out), '\n\n[Runtime note: action text omitted from retained history.]',
-      `proseSpill=${proseSpill}: newlines around the block are forwarded as they were, and the filler still lands — whitespace-only is what the API rejects`);
-  }
-});
-
-test('empty-record guard: a block that spilled nothing is never padded, and a filler never lands in a non-text block', () => {
-  const short = textBlock(0, 'Fifty bytes of follow-up, well under the floor.\n');
-  for (const proseSpill of [false, true]) {
-    const { out, tee } = drive(short, 13, { proseSpill });
-    assert.equal(tee.fired, 0);
-    assert.ok(!out.toString('utf8').includes('[Runtime note: action text omitted from retained history.]'), `proseSpill=${proseSpill}: nothing spilled, nothing padded`);
-  }
-  const { out, tee } = drive(NARRATE_THEN_TOOL, 13, { proseSpill: true });
-  assert.equal(tee.fired, 0);
-  assert.deepEqual(out, NARRATE_THEN_TOOL, 'the tool_use block passes its stop with no delta of any kind');
-});
-
-test('empty-record guard: after a thinking block, the filler lands in the TEXT block and the thinking block is untouched', () => {
+test('T10: after a thinking block, the stub lands in the TEXT block and the thinking block is untouched', () => {
   const stream = textBlock(1, ONLY_BLOCK, [
     start(0, 'thinking'),
     ev('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'weighing it' } }),
     stopAt(0),
   ]);
   for (const proseSpill of [false, true]) {
-    const { out, tee } = drive(stream, 29, { proseSpill });
+    const { out, tee, spills } = drive(stream, 29, { proseSpill });
     assert.equal(tee.fired, 1, `proseSpill=${proseSpill}`);
-    assert.equal(textOf(out), '[Runtime note: action text omitted from retained history.]', `proseSpill=${proseSpill}`);
-    assert.ok(out.toString('utf8').includes(td(1, '[Runtime note: action text omitted from retained history.]').toString('utf8')), `proseSpill=${proseSpill}: index 1, the text block`);
+    assert.equal(textOf(out), stub('task add t', spills), `proseSpill=${proseSpill}`);
+    assert.ok(out.toString('utf8').includes(td(1, stub('task add t', spills)).toString('utf8')), `proseSpill=${proseSpill}: index 1, the text block`);
     assert.equal(textOf(out, 'thinking_delta', 'thinking'), 'weighing it', `proseSpill=${proseSpill}`);
+  }
+});
+
+test('T10: the filler literal and _stopBlock are gone from the tee; `Runtime note` survives only as the legacy cut / mimic literal', () => {
+  const tee = fs.readFileSync(path.join(__dirname, '..', 'wire', 'spill.js'), 'utf8');
+  assert.ok(!tee.includes('SPILL_FILLER') && !tee.includes('_stopBlock') && !tee.includes('Runtime note'),
+    'a stub block is never whitespace-only, so the tee has no filler to insert');
+  assert.ok(!/r\.spilled/.test(tee), 'the `r.spilled ? … : …` branches went with it: the terminator is KEPT after the stub');
+  const holders = ['intent-spill.js', 'wire/spill-cut.js'];
+  for (const rel of holders) {
+    assert.ok(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').includes('Runtime note'), `${rel} still knows the legacy literal`);
+  }
+  const src = ['session-manager.js', 'wire/proxy.js', 'ipc-prompt.js', 'renderer/index.html'];
+  for (const rel of src) {
+    assert.ok(!fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').includes('Runtime note'), `${rel} no longer describes the filler`);
   }
 });

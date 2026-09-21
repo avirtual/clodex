@@ -9,6 +9,7 @@ const zlib = require('zlib');
 
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { WireProxy } = require('../wire/proxy');
+const { mimicKindOf } = require('../intent-spill');
 
 const SESSION_ID = '4a59af49-cc52-44b7-8b02-7f4196a4b486';
 const BIG = 'z'.repeat(900);
@@ -79,7 +80,7 @@ function startFakeUpstream(body = SPILL_SSE, opts = {}) {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
-      seen.requests.push({ method: req.method, url: req.url, headers: req.headers });
+      seen.requests.push({ method: req.method, url: req.url, headers: req.headers, body: Buffer.concat(chunks) });
       res.writeHead(opts.status || 200, opts.headers
         || { 'content-type': 'text/event-stream', 'x-upstream': 'fake' });
       const payload = Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf8');
@@ -167,7 +168,7 @@ async function withProxy(upOpts, fn) {
   }
 }
 
-test('an armed seat: the client receives the reply with the block REMOVED, and the intent tee reads the UNSPILLED body', async () => {
+test('an armed seat: the client receives the reply with the block replaced by its stub, and the intent tee reads the UNSPILLED body', async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({}, async (proxy, up) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'] } });
@@ -180,9 +181,8 @@ test('an armed seat: the client receives the reply with the block REMOVED, and t
     const seen = textOf(res.body);
     assert.equal(events.spill.length, 1);
     const id = events.spill[0].id;
-    assert.equal(seen, 'On it.\ndone.\n',
-      'the body is off the wire and nothing stands in for it: no `(I sent`, no path, no head line, no `[Runtime note: action text omitted from retained history.]` while prose survives');
-    assert.ok(!seen.includes('[agent:') && !seen.includes('@spill:') && !seen.includes('(I sent'), 'nothing intent-shaped or receipt-shaped is left in the transcript');
+    assert.equal(seen, `On it.\n[agent:task add hand] @spill:${id}\n[agent:end]\ndone.\n`,
+      'the body is off the wire; the head line, a clickable pointer and the terminator stand in for it while prose survives');
     assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${id}.md`), 'utf8'), BIG);
 
     assert.equal(events.spill[0].agent, 'tester');
@@ -193,7 +193,7 @@ test('an armed seat: the client receives the reply with the block REMOVED, and t
     assert.equal(events['turn.completed'][0].text, `On it.\n[agent:task add hand] ${BIG}\n[agent:end]\ndone.\n`,
       'the intent tee is fed the upstream chunk, not the rewritten one: the dispatch carries the '
       + 'full body and never depends on the transcript placeholder resolving');
-    assert.ok(!events['turn.completed'][0].text.includes('[Runtime note: action text omitted from retained history.]'), 'and never sees anything the tee authored');
+    assert.ok(!events['turn.completed'][0].text.includes('@spill:'), 'and never sees anything the tee authored');
 
     assert.equal(up.seen.requests[0].headers['accept-encoding'], 'identity',
       'the filter needs bytes it can read, so the CLI-sent accept-encoding is overwritten');
@@ -224,7 +224,7 @@ test('an armed run bills exactly what an unarmed one bills', async () => {
   assert.deepEqual(armed.warmth, plain.warmth,
     'warmth rides the same cache-read counters billing does, never text_delta');
   assert.equal(armed.stop, plain.stop);
-  assert.equal(armed.client, 'On it.\ndone.\n', 'the armed run really spilled');
+  assert.match(armed.client, /^On it\.\n\[agent:task add hand\] @spill:[0-9a-f]{16}\n\[agent:end\]\ndone\.\n$/, 'the armed run really spilled');
   assert.ok(plain.client.includes(BIG), 'the unarmed run really did not');
   assert.equal(plain.raw, SPILL_SSE, 'and the unarmed run is byte-identical to upstream');
 });
@@ -274,8 +274,8 @@ test('the gate flipped on between two requests applies to the second, same regis
     const second = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
     assert.ok(await whenEvent(events, 'stream-end', 2));
     const seen = textOf(second.body);
-    assert.equal(seen, 'On it.\ndone.\n', 'gate on: the body is off the wire without a respawn');
     assert.equal(events.spill.length, 1);
+    assert.equal(seen, `On it.\n[agent:task add hand] @spill:${events.spill[0].id}\n[agent:end]\ndone.\n`, 'gate on: the body is off the wire without a respawn');
     assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${events.spill[0].id}.md`), 'utf8'), BIG);
   });
 });
@@ -438,7 +438,7 @@ test('a TYPED turn is byte-identical: turnInjected false never touches the strea
   });
 });
 
-test('an INJECTED turn: a reply with no intent leaves as exactly `[Runtime note: action text omitted from retained history.]`', async () => {
+test('an INJECTED turn: a reply with no intent leaves as exactly the bare pointer', async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({ body: PROSE_SSE }, async (proxy) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'], turnInjected: () => true } });
@@ -450,8 +450,8 @@ test('an INJECTED turn: a reply with no intent leaves as exactly `[Runtime note:
     const seen = textOf(res.body);
     assert.equal(events.spill.length, 1);
     const id = events.spill[0].id;
-    assert.equal(seen, '[Runtime note: action text omitted from retained history.]',
-      'the whole reply is removed, and the block would be empty — the filler is what keeps the NEXT request valid');
+    assert.equal(seen, `@spill:${id}\n`,
+      'the whole reply is removed; the bare pointer is the block, so it is never empty and no filler is needed');
     assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${id}.md`), 'utf8'), PROSE_TEXT,
       'and the prose is on disk, recoverable — a forgotten task done is never silently emptied');
 
@@ -678,15 +678,120 @@ const BLOCK_ONLY_SSE = [
   ev('message_stop', { type: 'message_stop' }),
 ].join('');
 
-test("the tee's own filler never trips the mimic detector: it runs on the input side only", async () => {
+test("the tee's own stub never trips the mimic detector: it runs on the input side only", async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({ body: BLOCK_ONLY_SSE }, async (proxy) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'] } });
     const events = collect(proxy, ['spill', 'spill-mimic', 'stream-end']);
     const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
     assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
-    assert.equal(textOf(res.body), '[Runtime note: action text omitted from retained history.]', 'ENTER: this run really produced the filler, end to end through the proxy');
     assert.equal(events.spill.length, 1);
+    const stubText = `[agent:task add hand] @spill:${events.spill[0].id}\n[agent:end]\n`;
+    assert.equal(textOf(res.body), stubText, 'ENTER: this run really produced the stub, end to end through the proxy');
+    assert.equal(mimicKindOf(stubText.split('\n')[0]), 'pointer', 'ENTER: the stub line IS the shape the detector reports when the model types it');
     assert.equal(events['spill-mimic'].length, 0);
+  });
+});
+
+const POINTER_SSE = [
+  ev('message_start', {
+    type: 'message_start',
+    message: { id: 'msg_pointer', usage: { input_tokens: 10, cache_read_input_tokens: 5 } },
+  }),
+  ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+  td(0, 'Filed.\n'),
+  td(0, '@spill:0123456789abcdef\n'),
+  ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
+  ev('message_stop', { type: 'message_stop' }),
+].join('');
+
+test('T12: a model-typed bare pointer line raises spill-mimic with kind pointer, bytes unchanged', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({ body: POINTER_SSE }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.add', 'dm'] } });
+    const events = collect(proxy, ['spill', 'spill-mimic', 'stream-end']);
+    const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
+    assert.equal(res.body.toString('utf8'), POINTER_SSE, 'byte-identical: the detector never rewrites');
+    assert.equal(events.spill.length, 0, 'nothing was filed');
+    assert.deepEqual(events['spill-mimic'], [{ agent: 'tester', reqId: events['spill-mimic'][0].reqId, kind: 'pointer' }],
+      'the model never receives a real stub, so a pointer in its output is typed from memory');
+  });
+});
+
+const DM_SSE = [
+  ev('message_start', {
+    type: 'message_start',
+    message: { id: 'msg_dm', usage: { input_tokens: 10, cache_read_input_tokens: 5 } },
+  }),
+  ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+  td(0, '[agent:dm bob]\n'),
+  td(0, `${BIG}\n`),
+  td(0, '[agent:end]\n'),
+  ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
+  ev('message_stop', { type: 'message_stop' }),
+].join('');
+
+test('the two halves compose: the stub the tee writes is what cutSpillStubs drops from the NEXT request', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({ body: DM_SSE }, async (proxy, up) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
+    const events = collect(proxy, ['spill', 'spill-cut', 'stream-end']);
+    const first = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end', 1));
+    assert.equal(events.spill.length, 1);
+    const id = events.spill[0].id;
+    const recorded = textOf(first.body);
+    assert.equal(recorded, `[agent:dm bob] @spill:${id}\n[agent:end]\n`, 'transcript side: head, pointer, terminator');
+    assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${id}.md`), 'utf8'), BIG);
+
+    const next = makeBody({
+      messages: [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: [{ type: 'text', text: recorded }] },
+        { role: 'user', content: [{ type: 'text', text: '[clodex] dm bob filed at x.md' }] },
+      ],
+    });
+    await request(proxy.port, '/agent/tester/v1/messages', next);
+    assert.ok(await whenEvent(events, 'stream-end', 2));
+    assert.equal(events['spill-cut'].length, 1, 'the editor ran on the request built from the record');
+    assert.equal(events['spill-cut'][0].messages, 1, 'and dropped the stub message whole');
+    const upstream = JSON.parse(up.seen.requests[1].body.toString('utf8'));
+    assert.deepEqual(upstream.messages.map((m) => m.role), ['user', 'user'], 'the model never sees the stub');
+    assert.ok(!up.seen.requests[1].body.toString('utf8').includes('@spill:'));
+  });
+});
+
+test('system-adjacent: a request whose LAST message is role:system is forwarded byte-identical, spill-skip system-adjacent, nothing filed', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({ body: DM_SSE }, async (proxy, up) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['dm'], turnInjected: () => true } });
+    const events = collect(proxy, ['spill', 'spill-skip', 'stream-end']);
+    const adjacent = makeBody({
+      messages: [
+        { role: 'user', content: 'hi' },
+        { role: 'system', content: [{ type: 'text', text: 'hook context' }] },
+      ],
+    });
+    const res = await request(proxy.port, '/agent/tester/v1/messages', adjacent);
+    assert.ok(await whenEvent(events, 'stream-end', 1));
+    assert.equal(res.body.toString('utf8'), DM_SSE, 'the block is forwarded unchanged: a stub here would sit uncut behind the system message on every later request');
+    assert.equal(events.spill.length, 0, 'nothing filed');
+    assert.deepEqual(events['spill-skip'], [{ agent: 'tester', reqId: events['spill-skip'][0].reqId, reason: 'system-adjacent' }]);
+    assert.ok(!fs.existsSync(path.join(root, 'spill', 'tester')) || fs.readdirSync(path.join(root, 'spill', 'tester')).length === 0);
+    assert.equal(up.seen.requests[0].headers['accept-encoding'], 'gzip, br', 'no tee, so the CLI-sent accept-encoding is left alone');
+
+    const notAdjacent = makeBody({
+      messages: [
+        { role: 'system', content: [{ type: 'text', text: 'hook context' }] },
+        { role: 'user', content: 'hi' },
+      ],
+    });
+    const second = await request(proxy.port, '/agent/tester/v1/messages', notAdjacent);
+    assert.ok(await whenEvent(events, 'stream-end', 2));
+    assert.equal(events.spill.length, 1, 'a system message anywhere but LAST leaves the tee armed');
+    assert.equal(textOf(second.body), `[agent:dm bob] @spill:${events.spill[0].id}\n[agent:end]\n`);
+    assert.equal(events['spill-skip'].length, 1);
+    assert.equal(up.seen.requests[1].headers['accept-encoding'], 'identity');
   });
 });

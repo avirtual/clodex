@@ -56,9 +56,10 @@ function cutMessage(msg) {
     droppedBlocks++;
     if (b.cache_control) orphanCache = b.cache_control;
   }
-  if (orphanCache && blocks.length) {
-    const last = blocks[blocks.length - 1];
-    if (!last.cache_control) blocks[blocks.length - 1] = { ...last, cache_control: orphanCache };
+  if (orphanCache) {
+    let at = blocks.length - 1;
+    while (at >= 0 && isThinking(blocks[at])) at -= 1;
+    if (at >= 0 && !blocks[at].cache_control) blocks[at] = { ...blocks[at], cache_control: orphanCache };
   }
   return { blocks, lines, droppedBlocks };
 }

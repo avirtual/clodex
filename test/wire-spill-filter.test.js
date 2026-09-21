@@ -7,9 +7,9 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { SpillFilter, SPILL_FILLER } = require('../wire/spill');
-const { parseIntent, looksLikeIntent } = require('../intent-scanner');
-const { receiptOf, mimicKindOf } = require("../intent-spill");
+const { SpillFilter } = require('../wire/spill');
+const { parseIntent } = require('../intent-scanner');
+const { receiptOf, mimicKindOf, pointerOf, SPILL_FILLER } = require("../intent-spill");
 
 const BIG = 'z'.repeat(900);
 const SMALL = 'y'.repeat(50);
@@ -54,6 +54,11 @@ function diskOf(spills, agent = 'wirescope') {
   return { id, body: fs.readFileSync(keptPath(id, agent), 'utf8') };
 }
 
+function stub(head, spills, title = '') {
+  const { id } = diskOf(spills);
+  return `[agent:${head}] ${title}@spill:${id}\n[agent:end]\n`;
+}
+
 test('row 1-3: traffic that does not spill is byte-identical at every chunk size', () => {
   const cases = {
     'plain prose': 'Hello world.\nNo intents here.\n',
@@ -75,10 +80,8 @@ test('row 4: the spill fires, identically, at every chunk size', () => {
   assert.ok(rs.every((r) => r.spills.length === 1), 'fires at every chunk size');
   assert.equal(new Set(outs).size, 1, 'output independent of chunking');
   assert.ok(outs.every((o) => !o.includes(BIG)), 'body is off the wire');
-  assert.ok(outs.every((o) => o === 'before\nafter\n'),
-    'the block leaves WHOLE — no head line, no terminator, no receipt, no pointer — and the prose around it closes up');
-  assert.ok(outs.every((o) => !o.includes('[agent:') && !o.includes('(I sent') && !o.includes('@spill:')),
-    'nothing the tee authored sits in the record: a well-formed placeholder there became a few-shot example');
+  assert.equal(outs[0], `before\n${stub('task add t42 start', rs[0].spills)}after\n`,
+    'head line byte-for-byte, modifiers included; the bare pointer stands in for the body; the terminator is KEPT after it');
   assert.deepStrictEqual(rs.map((r) => r.spills[0].head), SIZES.map(() => 'task add t42 start'),
     'the head words ride the onSpill payload instead, modifiers included');
 });
@@ -87,8 +90,8 @@ test('a terminator that ends the stream with no newline after it still spills', 
   const T = `before\n[agent:task add t42 start] ${BIG}\n[agent:end]`;
   const rs = SIZES.map((cs) => run(T, { cs }));
   assert.ok(rs.every((r) => r.spills.length === 1), 'fires without the trailing newline');
-  assert.ok(rs.every((r) => r.out === 'before\n'),
-    'the stream ends on the prose before the block; the terminator that closed a body no longer in the transcript is swallowed with it');
+  assert.ok(rs.every((r) => r.out === `before\n[agent:task add t42 start] @spill:${r.spills[0].id}\n[agent:end]`),
+    'the stream still ends on the terminator, byte-exact');
   const { body } = diskOf(rs[0].spills);
   assert.equal(body, BIG);
   const held = run(`[agent:task add t42 start] ${BIG}\n[agent:end]  x`);
@@ -99,46 +102,50 @@ test('a terminator that ends the stream with no newline after it still spills', 
 test('row 5: the file is the body exactly, and the id is its sha', () => {
   const body = `line one\n\n  indented  \n${BIG}\nlast`;
   const { out, spills } = run(`[agent:task add t7] ${body}\n[agent:end]\n`);
-  assert.equal(out, '');
   const { id, body: disk } = diskOf(spills);
+  assert.equal(out, `[agent:task add t7] line one @spill:${id}\n[agent:end]\n`);
   assert.equal(disk, body, 'no normalisation: blank lines and trailing spaces survive');
   assert.equal(id, crypto.createHash('sha256').update(Buffer.from(body, 'utf8')).digest('hex').slice(0, 16));
   assert.match(id, /^[0-9a-f]{16}$/);
 });
 
-test('a titled body leaves NOTHING in the record — not its first line, not a title, not a byte count', () => {
+test('the pointer line keeps the body\'s first line, so the transcript still says which spec it was', () => {
   const body = `S-E intent-spill: shout joins the spilled verbs\n${BIG}\nlast`;
   const T = `before\n[agent:task add t42 start] ${body}\n[agent:end]\nafter\n`;
   const rs = SIZES.map((cs) => run(T, { cs }));
   assert.equal(new Set(rs.map((r) => r.out)).size, 1, 'the record does not depend on chunking');
   const { id, body: disk } = diskOf(rs[0].spills);
-  assert.equal(rs[0].out, 'before\nafter\n',
-    'the old receipt quoted the first line as a title; 6 of 15 long bodies were then emitted AS a receipt, so no shape survives');
-  assert.ok(!rs[0].out.includes('S-E intent-spill'), 'the first line is quoted nowhere');
-  assert.equal(disk, body, 'the FILE is the whole body, first line included');
+  assert.equal(rs[0].out,
+    `before\n[agent:task add t42 start] S-E intent-spill: shout joins the spilled verbs @spill:${id}\n`
+    + '[agent:end]\nafter\n');
+  assert.ok(!rs[0].out.includes(BIG), 'the rest of the body is off the wire');
+  assert.equal(disk, body, 'the FILE is the whole body, title included, so the id is unchanged by the emission');
   assert.equal(id, crypto.createHash('sha256').update(Buffer.from(body, 'utf8')).digest('hex').slice(0, 16),
     'content-addressed on the body, never on what the transcript shows');
 });
 
-test('single-line, blank-led and over-80-char first lines all leave the same EMPTY record', () => {
+test('single-line, blank-led and over-80-char first lines: bare pointer, title from the first non-blank line, 77 + ellipsis', () => {
   const one = 'q'.repeat(900);
   const single = run(`[agent:task add t] ${one}\n[agent:end]\n`);
-  assert.equal(single.out, '');
+  assert.equal(single.out, stub('task add t', single.spills),
+    'a title equal to the body says nothing, so a single-line body emits the BARE pointer');
   assert.equal(diskOf(single.spills).body, one);
 
   const held = `\n   the real first line   \n${BIG}`;
   const blankLed = run(`[agent:task add t] \n${held}\n[agent:end]\n`);
-  assert.equal(blankLed.out, '');
+  assert.equal(blankLed.out, stub('task add t', blankLed.spills, 'the real first line '),
+    'titleLine trims and skips blanks, exactly as a ticket title does');
   assert.equal(diskOf(blankLed.spills).body, held,
-    'the file keeps the blank line — the file is the body, and nothing else is display');
+    'the file keeps the blank line the title skipped — the title is display, the file is the body');
 
   const first = 'w'.repeat(81);
   const long = run(`[agent:task add t] ${first}\n${BIG}\n[agent:end]\n`);
-  assert.equal(long.out, '', 'no title, so no cut and no ellipsis — the shape 18 of 19 fabricated pointers copied');
+  assert.equal(long.out, stub('task add t', long.spills, `${'w'.repeat(77)}… `),
+    'the cap is on characters, and the ellipsis is one of them, as ticketTitle cuts one');
   assert.ok(diskOf(long.spills).body.startsWith(first), 'the file holds the untruncated line');
 });
 
-test('the record after a spill re-parses to NO intent and holds no line receiptOf can read; the head words ride onSpill', () => {
+test('the stub re-parses as the SAME intent with a pointer body the resolver recognises; the head words ride onSpill', () => {
   const cases = [
     ['task add t42 start', `plain first line\n${BIG}`],
     ['task add t9', `a title with a ] bracket in it\n${BIG}`],
@@ -149,32 +156,35 @@ test('the record after a spill re-parses to NO intent and holds no line receiptO
   ];
   for (const [headArgs, body] of cases) {
     const { out, spills } = run(`before\n[agent:${headArgs}] ${body}\n[agent:end]\nafter\n`);
-    assert.equal(out, 'before\nafter\n', headArgs);
-    for (const line of out.split('\n')) {
-      assert.equal(parseIntent(line), null, `${headArgs}: nothing fires when the record is replayed`);
-      assert.equal(looksLikeIntent(line), null, `${headArgs}: nor bounces as a near-miss`);
-      assert.equal(receiptOf(line), null,
-        `${headArgs}: no receipt-shaped line for the recovery scan to expand — the record holds nothing the tee authored`);
-    }
-    const bare = parseIntent(`[agent:${headArgs}] x`);
     assert.equal(spills.length, 1, headArgs);
+    const line = out.split('\n')[1];
+    const parsed = parseIntent(line);
+    assert.ok(parsed, `${headArgs}: the titled head line still parses`);
+    const bare = parseIntent(`[agent:${headArgs}] x`);
+    assert.equal(parsed.type, bare.type, headArgs);
+    assert.equal(parsed.sub, bare.sub, headArgs);
+    assert.equal(pointerOf(parsed.body), spills[0].id,
+      `${headArgs}: the scanner hands _handleIntent a body the resolver still recognises — `
+      + 'a title parseIntent mangled would dispatch the pointer text as the spec');
+    assert.equal(out.split('\n')[2], '[agent:end]', `${headArgs}: the terminator closes the stub for the jsonl scanner`);
+    for (const l of out.split('\n')) assert.equal(receiptOf(l), null, `${headArgs}: no receipt-shaped line`);
     assert.equal(spills[0].head, headArgs, `${headArgs}: the head words are the intent's own, verbatim, on the payload`);
     assert.equal(spills[0].verb, VERBS.includes(bare.type) ? bare.type : `${bare.type}.${bare.sub}`, headArgs);
     assert.equal(diskOf(spills).body, body, headArgs);
   }
 });
 
-test('a 64 KB body leaves an EMPTY record — nothing under any byte budget, nothing with an emittable shape', () => {
+test('a 64 KB body leaves the same short stub as a 900-byte one', () => {
   const big = 'z'.repeat(65536);
   for (const head of ['dm bob', 'task add hand start', 'shout']) {
     const { out, spills } = run(`[agent:${head}]\n${big}\n[agent:end]\n`);
-    assert.equal(out, '', `${head}: no intent opener, no pointer, no ellipsis, no first-person note — a receipt under 200 B was still copied 6 times in 15 bodies`);
+    assert.equal(out, stub(head, spills), head);
     assert.equal(diskOf(spills).body, big, head);
     assert.equal(spills[0].head, head);
   }
 });
 
-test('the terminator is swallowed only for a spilled block; an under-floor body keeps it', () => {
+test('the terminator is KEPT after a stub, and after an under-floor body', () => {
   const small = `[agent:task add t] ${SMALL}\n[agent:end]`;
   const f = proseFilter();
   assert.equal(f.feed(small), '');
@@ -185,8 +195,8 @@ test('the terminator is swallowed only for a spilled block; an under-floor body 
   const h = proseFilter();
   assert.equal(h.feed(`${small}\n`), `${small}\n`, 'a newline-terminated terminator is re-emitted as received');
   const spilled = proseFilter();
-  assert.equal(spilled.feed(`[agent:task add t] ${BIG}\n[agent:end]\n`), '',
-    'the spilled block is NOTHING: no line stands in for it, and the terminator goes with the body it closed');
+  assert.equal(spilled.feed(`[agent:task add t] ${BIG}\n[agent:end]\n`), stub('task add t', spilled.spills),
+    'the stub closes on the terminator so `_extractIntents` delimits the pointer body there');
   assert.equal(spilled.fired, 1);
 });
 
@@ -194,7 +204,7 @@ test('shout spills like a spec: an operator note is read in the inbox and can ru
   const body = `DEPLOY blocked on the signing cert\n${BIG}`;
   const { out, spills } = run(`[agent:shout] ${body}\n[agent:end]\n`);
   assert.equal(spills.length, 1, 'the verb is listed');
-  assert.equal(out, '', 'the note is off the wire, and its first line is not quoted back');
+  assert.equal(out, stub('shout', spills, 'DEPLOY blocked on the signing cert '), 'the note is off the wire; its first line titles the stub');
   assert.equal(diskOf(spills).body, body);
   assert.equal(spills[0].head, 'shout');
 });
@@ -206,11 +216,11 @@ test('memory remember, remind and team role-add stay unlisted, so the seat keeps
   }
 });
 
-test('a dm body spills: the whole block leaves the transcript and the target rides onSpill', () => {
+test('a dm body spills: the stub keeps the target on its head line and the target rides onSpill', () => {
   const T = `[agent:dm bob]\n${BIG}\n[agent:end]\n`;
   const { out, filter, spills } = run(T);
   const { id, body } = diskOf(spills);
-  assert.equal(out, '');
+  assert.equal(out, `[agent:dm bob] @spill:${id}\n[agent:end]\n`);
   assert.equal(body, BIG, 'the file holds the 900 bytes the recipient still gets in full');
   assert.equal(filter.fired, 1);
   assert.deepStrictEqual(spills, [{ verb: 'dm', id, bytes: 900, head: 'dm bob' }],
@@ -221,7 +231,7 @@ test('a dm head\'s TARGET and urgent flag ride the onSpill payload, never the sp
   for (const head of ['dm clodex-hand-1029 urgent', 'dm bob@peer', 'dm bob urgent']) {
     const { out, spills } = run(`[agent:${head}]\n${BIG}\n[agent:end]\n`);
     const { id, body } = diskOf(spills);
-    assert.equal(out, '', head);
+    assert.equal(out, `[agent:${head}] @spill:${id}\n[agent:end]\n`, head);
     assert.equal(body, BIG, head);
     assert.deepStrictEqual(spills, [{ verb: 'dm', id, bytes: 900, head }],
       `${head}: head words verbatim — a lost target or flag misroutes a recovered message — and keyed as plain dm, not dm.<second token>`);
@@ -238,13 +248,13 @@ test('a dm body under the floor streams verbatim, flag and all', () => {
 test('a task done report spills, keyed task.done — the two-word form still wins for task', () => {
   const { out, filter, spills } = run(`[agent:task done t42]\n${BIG}\n[agent:end]\n`);
   const { id, body } = diskOf(spills);
-  assert.equal(out, '');
+  assert.equal(out, `[agent:task done t42] @spill:${id}\n[agent:end]\n`);
   assert.equal(body, BIG);
   assert.equal(filter.fired, 1);
   assert.deepStrictEqual(spills, [{ verb: 'task.done', id, bytes: 900, head: 'task done t42' }],
     '`task` alone is not in the set, so the fallback derives the two-word key');
   const add = run(`[agent:task add hand start]\n${BIG}\n[agent:end]\n`);
-  assert.equal(add.out, '', 'task.add unchanged');
+  assert.equal(add.out, stub('task add hand start', add.spills), 'task.add unchanged');
   assert.equal(add.spills[0].head, 'task add hand start', 'the head words keep the modifiers');
 });
 
@@ -258,9 +268,9 @@ test('an unheld verb still goes out through foreignBody, not the new one-word ke
 test('proseSpill on: an under-floor dm body and a 900-byte tail are two separate decisions', () => {
   const T = `[agent:dm bob] ${SMALL}\n[agent:end]\n${'p'.repeat(899)}\n`;
   const { out, filter, spills } = run(T, { proseSpill: true });
-  const { body } = diskOf(spills);
-  assert.equal(out, `[agent:dm bob] ${SMALL}\n[agent:end]\n`,
-    'the held body streams as written because it is under the floor; the tail is what spills, and nothing stands in for it');
+  const { id, body } = diskOf(spills);
+  assert.equal(out, `[agent:dm bob] ${SMALL}\n[agent:end]\n@spill:${id}\n`,
+    'the held body streams as written because it is under the floor; the tail is what spills, and a bare pointer stands in for it');
   assert.equal(body, `${'p'.repeat(899)}\n`);
   assert.equal(filter.fired, 1, 'one fire: the two mechanisms do not merge into one file');
 });
@@ -377,12 +387,12 @@ test('row 14: a fenced example inside a held body bails — the documented cost'
 test('row 15-16: an escaped intent and a mid-line mention are body text, and still spill', () => {
   const esc = `[agent:task add a] ${BIG}\n\\[agent:dm x] hi\n[agent:end]\n`;
   const escRun = run(esc);
-  assert.equal(escRun.out, '');
+  assert.equal(escRun.out, stub('task add a', escRun.spills, `${'z'.repeat(77)}… `));
   assert.ok(diskOf(escRun.spills).body.includes('\\[agent:dm x] hi'));
 
   const mid = `[agent:task add a] ${BIG}\nclose with \`[agent:task done t1]\`\n[agent:end]\n`;
   const midRun = run(mid);
-  assert.equal(midRun.out, '');
+  assert.equal(midRun.out, stub('task add a', midRun.spills, `${'z'.repeat(77)}… `));
   assert.ok(diskOf(midRun.spills).body.includes('close with `[agent:task done t1]`'));
 });
 
@@ -421,19 +431,19 @@ test('proseSpill off is the default: a 900-byte trailing tail streams verbatim',
   for (const cs of SIZES) assert.equal(run(T, { cs }).out, T, `@cs=${cs}`);
 });
 
-test('proseSpill on: trailing prose after a body is REMOVED, the body untouched', () => {
+test('proseSpill on: trailing prose after a body is replaced by a bare pointer, the body untouched', () => {
   const T = `[agent:task add t1] ${SMALL}\n[agent:end]\n${PROSE}`;
   const rs = SIZES.map((cs) => runProse(T, { cs }));
   assert.equal(new Set(rs.map((r) => r.out)).size, 1, 'output independent of chunking');
-  assert.equal(rs[0].out, `[agent:task add t1] ${SMALL}\n[agent:end]\n`,
-    'the under-floor intent body streams as written; the tail leaves and nothing — no `(I wrote`, no path — stands in for it');
+  assert.equal(rs[0].out, `[agent:task add t1] ${SMALL}\n[agent:end]\n@spill:${rs[0].spills[0].id}\n`,
+    'the under-floor intent body streams as written; the tail leaves and a bare `@spill:` line stands in for it');
   assert.equal(diskOf(rs[0].spills).body, PROSE, 'the file holds the tail byte-for-byte');
 });
 
-test('proseSpill on: a reply with no intent at all leaves an EMPTY record', () => {
+test('proseSpill on: a reply with no intent at all leaves the bare pointer as its whole record', () => {
   const rs = SIZES.map((cs) => runProse(PROSE, { cs }));
   assert.equal(new Set(rs.map((r) => r.out)).size, 1);
-  assert.equal(rs[0].out, '', 'the tee, not the filter, is what puts a filler into an empty block');
+  assert.equal(rs[0].out, `@spill:${rs[0].spills[0].id}\n`, 'the block is never empty, so no filler is needed');
   assert.equal(diskOf(rs[0].spills).body, PROSE);
 });
 
@@ -487,7 +497,8 @@ test('proseSpill on: a listed body still spills, and its own tail spills separat
   const T = `[agent:task add t] ${BIG}\n[agent:end]\n${PROSE}`;
   const { out, filter, spills } = runProse(T);
   assert.equal(filter.fired, 2, 'the body and the tail are two fires');
-  assert.equal(out, '', 'neither is on the wire, and neither leaves a line behind');
+  assert.equal(out, `[agent:task add t] @spill:${spills[0].id}\n[agent:end]\n@spill:${spills[1].id}\n`,
+    'neither is on the wire; each leaves its own pointer');
   assert.deepStrictEqual(spills.map((i) => [i.verb, i.head]), [['task.add', 'task add t'], ['prose', null]]);
 });
 
@@ -512,8 +523,8 @@ test('proseSpill on: an unterminated HEAD LINE is not swallowed as prose', () =>
 test('proseSpill on: a bare terminator and an escaped intent are not prose', () => {
   const T = `[agent:end]\n\\[agent:task add x] example\n${'m'.repeat(899)}\n`;
   const { out, spills } = runProse(T);
-  assert.equal(out, '[agent:end]\n\\[agent:task add x] example\n',
-    'both lines forward where they were written; only the prose after them spills, and it leaves nothing');
+  assert.equal(out, `[agent:end]\n\\[agent:task add x] example\n@spill:${spills[0].id}\n`,
+    'both lines forward where they were written; only the prose after them spills');
   assert.equal(diskOf(spills).body, `${'m'.repeat(899)}\n`);
 });
 
@@ -539,7 +550,7 @@ test('endBlock KEEPS the tail; only close() resolves it', () => {
     'a block boundary is not the end of the response: the tee cannot know at a stop frame '
     + 'whether another block follows, so the tail crosses it intact');
   assert.equal(f.feed(''), '');
-  assert.equal(f.close(), '', 'and the stream end is what resolves it — into nothing');
+  assert.equal(f.close(), `@spill:${f.spills[0].id}\n`, 'and the stream end is what resolves it');
   assert.equal(f.fired, 1);
   assert.equal(diskOf(f.spills).body, PROSE, 'the file holds the tail from before the boundary');
 });
@@ -549,7 +560,7 @@ test('a tail spanning two blocks spills as ONE file, in order', () => {
   f.feed('first half of the sign-off\n');
   f.endBlock();
   f.feed(PROSE);
-  assert.equal(f.close(), '');
+  assert.equal(f.close(), `@spill:${f.spills[0].id}\n`);
   assert.equal(diskOf(f.spills).body, `first half of the sign-off\n${PROSE}`,
     'the boundary is invisible to the tail — it is one run of prose to the response');
 });
@@ -569,12 +580,12 @@ test('endBlock resolves a held body whose terminator is the block\'s last unterm
   const f = proseFilter();
   assert.equal(f.feed(`[agent:task add t] ${BIG}\n[agent:end]`), '');
   const before = f.fired;
-  assert.equal(f.endBlock(), '',
+  assert.equal(f.endBlock(), `[agent:task add t] @spill:${f.spills[0].id}\n[agent:end]`,
     'endBlock takes close()\'s terminator-in-pending branch, so a body the block ends on still '
-    + 'spills rather than forwarding whole — and the terminator is swallowed with the body it closed');
+    + 'spills rather than forwarding whole — and the unterminated terminator is re-emitted as received');
   assert.equal(f.fired, before + 1,
     'the tee reads exactly this increment across endBlock() to decide whether a content_block_stop '
-    + 'has to flush there instead of parking behind the held stop, and whether the block needs its filler');
+    + 'has to flush there instead of parking behind the held stop');
 });
 
 test('bail() forwards a held tail as the ORIGINAL, which is the only thing that does', () => {
@@ -593,10 +604,11 @@ test('bail() forwards a held tail as the ORIGINAL, which is the only thing that 
 const MIMIC = "(I sent dm bob in full, 900 B; Clodex kept my text at /Users/x/.clodex/spill/wirescope/0123456789abcdef.md.)";
 const MIMIC_TAIL = "(I wrote 900 B of prose after my last intent; it reached the operator's log and Clodex kept it at /Users/x/.clodex/spill/wirescope/0123456789abcdef.md.)";
 
-test('onMimic: a receipt-shaped or filler line in the INPUT is model-authored and is reported, bytes untouched', () => {
+test('onMimic: a receipt, filler or pointer line in the INPUT is model-authored and is reported, bytes untouched', () => {
   assert.equal(SPILL_FILLER, '[Runtime note: action text omitted from retained history.]',
-    'the tee\'s filler is the one shape a stripped record can still show, so it is the one left to copy — third-person, asserting nothing');
-  for (const [line, kind] of [[MIMIC, 'intent'], [MIMIC_TAIL, 'prose'], [SPILL_FILLER, 'filler'], ['  [Runtime note: action text omitted from retained history.]  ', 'filler']]) {
+    'the t1052 filler literal survives for the request editor\'s legacy cut and for this detector');
+  for (const [line, kind] of [[MIMIC, 'intent'], [MIMIC_TAIL, 'prose'], [SPILL_FILLER, 'filler'], ['  [Runtime note: action text omitted from retained history.]  ', 'filler'],
+    ['@spill:0123456789abcdef', 'pointer'], ['the spec title @spill:0123456789abcdef', 'pointer'], ['[agent:dm bob] @spill:0123456789abcdef', 'pointer'], ['[agent:remind in 5m] a title @spill:0123456789abcdef', 'pointer']]) {
     const seen = [];
     const T = `Sent.\n${line}\nmore.\n`;
     for (const cs of SIZES) {
@@ -622,11 +634,12 @@ test('onMimic: the filler with anything else on its line is prose, not the fille
   }
 });
 
-test("onMimic: a spill leaves nothing in the record for the detector to see, and the filter never feeds itself", () => {
+test("onMimic: the filter never feeds itself — its own stub is not judged, so any pointer it SEES is model-typed", () => {
   const seen = [];
   const r = run(`[agent:dm bob]\n${BIG}\n[agent:end]\n`, { onMimic: (i) => seen.push(i) });
   assert.equal(r.spills.length, 1, 'ENTER: this run really spilled');
-  assert.equal(r.out, '');
+  assert.equal(r.out, `[agent:dm bob] @spill:${r.spills[0].id}\n[agent:end]\n`);
+  assert.equal(mimicKindOf(r.out.split('\n')[0]), 'pointer', 'ENTER: the stub line IS the shape the detector reports');
   assert.deepStrictEqual(seen, []);
   const prose = runProse(PROSE, { onMimic: (i) => seen.push(i) });
   assert.equal(prose.spills.length, 1, 'ENTER: the tail really spilled');
@@ -682,4 +695,7 @@ test('receiptOf reads a path with whitespace in it — the root is configurable 
   assert.equal(mimicKindOf(`(I wrote 900 B of prose after my last intent; it reached the operator's log and Clodex kept it at ${p}.)`), 'prose');
   assert.equal(mimicKindOf('[Runtime note: action text omitted from retained history.]'), 'filler');
   assert.equal(mimicKindOf('(sent) ok'), null);
+  assert.equal(mimicKindOf('@spill:0123456789abcde'), null, 'fifteen hex digits is not a pointer');
+  assert.equal(mimicKindOf('[agent:end]'), null);
+  assert.equal(mimicKindOf('[agent:dm bob] see @spill:0123456789abcdef for the body'), null, 'a pointer mid-body is prose');
 });

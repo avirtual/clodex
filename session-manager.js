@@ -180,13 +180,13 @@ const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
 const {
-  SPILL_VERBS, SPILL_MIN_BYTES, isSpillVerb, pointerOf, resolveSpill, spillPathFor, verbKeyOf, writeSpill,
+  SPILL_VERBS, SPILL_MIN_BYTES, HEAD_RE, isSpillVerb, pointerOf, resolveSpill, spillPathFor, verbKeyOf, writeSpill,
   receiptOf, resolveReceipt,
   capResumeSnapshot,
 } = require('./intent-spill');
 const { spillGrammarLine } = require('./ipc-prompt');
 
-const SPILL_MIMIC_BOUNCE = '[agent] Not executed: that line was a receipt or filler, not an intent, and nothing was sent or filed. Emit the complete intent — head line, full body, [agent:end].';
+const SPILL_MIMIC_BOUNCE = '[agent] Not executed: that line was a receipt, filler or pointer, not an intent, and nothing was sent or filed. Emit the complete intent — head line, full body, [agent:end].';
 
 function spillAckLine(ev, filePath) {
   if (ev.verb === 'prose') {
@@ -1001,7 +1001,10 @@ function createSessionManager(deps) {
         this._shadowLog({ type: 'wire-spill-mimic', ...ev });
         log.warn('intent', `${ev.agent} wrote a ${ev.kind} line itself — nothing was sent or filed`);
         const s = this.sessions.get(ev.agent);
-        if (s && s.agentType) this._injectText(s, SPILL_MIMIC_BOUNCE, { parkable: true });
+        if (s && s.agentType) {
+          s.spillMimicReq = ev.reqId;
+          this._injectText(s, SPILL_MIMIC_BOUNCE, { parkable: true });
+        }
       });
       wire.on('spill-skip', (ev) => this._shadowLog({ type: 'wire-spill-skip', ...ev }));
       wire.on('spill-cut', (ev) => {
@@ -1085,6 +1088,8 @@ function createSessionManager(deps) {
                 continue;
               }
               fired.add(bkey);
+              intent.fromWire = true;
+              intent.reqId = t.reqId;
               setImmediate(() => this._handleIntent(t.agent, intent));
             }
             if (t.stop && t.stop.is_turn) {
@@ -4799,12 +4804,32 @@ function createSessionManager(deps) {
     }
 
 
+    _pointerStubOf(line) {
+      const intent = parseIntent(line);
+      if (!intent || !isSpillVerb(intent)) return null;
+      const id = pointerOf(intent.body);
+      if (!id) return null;
+      const m = HEAD_RE.exec(line.trim());
+      return m ? { id, head: m[0] } : null;
+    }
+
     _expandReceipts(lines, agent) {
       const fenced = fencedLines(lines);
       const out = [];
       const spillAt = new Map();
       const unresolved = [];
       for (let i = 0; i < lines.length; i++) {
+        const stub = fenced[i] ? null : this._pointerStubOf(lines[i]);
+        if (stub) {
+          const r = resolveSpill(REGISTRY_DIR, agent, stub.id);
+          if (!r.ok) { out.push(lines[i]); continue; }
+          const bodyLines = r.body.split('\n');
+          spillAt.set(out.length, { id: stub.id, path: r.path });
+          out.push(`${stub.head} ${bodyLines[0]}`, ...bodyLines.slice(1), '[agent:end]');
+          const next = i + 1 < lines.length ? parseIntent(lines[i + 1]) : null;
+          if (next && next.type === 'end') i += 1;
+          continue;
+        }
         const rc = fenced[i] ? null : receiptOf(lines[i]);
         if (!rc) { out.push(lines[i]); continue; }
         const r = resolveReceipt(REGISTRY_DIR, agent, rc.path);
@@ -5056,6 +5081,10 @@ function createSessionManager(deps) {
           return;
         }
         const spillId = pointerOf(intent.body);
+        if (spillId && intent.fromWire) {
+          this._spillTyped(session, senderName, intent, `@spill:${spillId}`);
+          return;
+        }
         if (spillId) {
           const r = resolveSpill(REGISTRY_DIR, senderName, spillId);
           if (!r.ok) { this._spillUnresolved(session, senderName, intent, `@spill:${spillId}`, r); return; }
@@ -5374,6 +5403,20 @@ function createSessionManager(deps) {
         });
         log.info('session', `fix session ${who} archived after DEPLOY OK`);
       }
+    }
+
+    _spillTyped(session, senderName, intent, pointer) {
+      const verb = verbKeyOf(intent);
+      log.warn('intent', `${verb} ${senderName}: body pointer ${pointer} typed on the wire path — intent dropped`);
+      this._shadowLog({ type: 'spill-typed', agent: senderName, intentType: intent.type, pointer, reqId: intent.reqId || null });
+      this._broadcast('ipc-message', {
+        type: 'intent', from: senderName, to: senderName,
+        body: `${verb} dropped: its body was a pointer (${pointer}) — the agent typed it`,
+      });
+      if (!session || !session.agentType) return;
+      if (intent.reqId && session.spillMimicReq === intent.reqId) return;
+      session.spillMimicReq = intent.reqId || null;
+      this._injectText(session, SPILL_MIMIC_BOUNCE, { parkable: true });
     }
 
     _spillUnresolved(session, senderName, intent, pointer, r) {
