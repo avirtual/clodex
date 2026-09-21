@@ -999,7 +999,7 @@ function createSessionManager(deps) {
       wire.on('spill-bail', (ev) => this._shadowLog({ type: 'wire-spill-bail', ...ev }));
       wire.on('spill-mimic', (ev) => {
         this._shadowLog({ type: 'wire-spill-mimic', ...ev });
-        log.warn('intent', `${ev.agent} wrote a ${ev.kind} receipt line itself — nothing was sent or filed`);
+        log.warn('intent', `${ev.agent} wrote a ${ev.kind} line itself — nothing was sent or filed`);
         const s = this.sessions.get(ev.agent);
         if (s && s.agentType) this._injectText(s, SPILL_MIMIC_BOUNCE, { parkable: true });
       });
