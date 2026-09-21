@@ -30,7 +30,7 @@ function assistantIndex(obj) {
 let stubCache = null;
 function stubOf() {
   if (stubCache) return stubCache;
-  const root = mkTmpRoot('clodex-spill-cut-');
+  const root = mkTmpRoot('clodex-spill-');
   const spills = [];
   const f = new SpillFilter({ agent: 'tester', root, verbs: ['dm'], onSpill: (i) => spills.push(i) });
   const wire = `[agent:dm hand] first line of the body\n${BIG}\n[agent:end]\n`;
@@ -423,7 +423,7 @@ test('T5 keepwarm replay: HoldKeeper.ping re-sends the post-cut body — no @spi
 });
 
 test('T6 compact request: the summarization body is cut like any other, and the tee still skips it', async () => {
-  const root = mkTmpRoot('clodex-spill-cut-');
+  const root = mkTmpRoot('clodex-spill-');
   await withProxy({}, async (proxy, up) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['task.done'], turnInjected: () => true } });
     const events = collect(proxy, ['spill-cut', 'spill', 'spill-skip', 'turn.completed']);
