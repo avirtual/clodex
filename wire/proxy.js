@@ -95,13 +95,6 @@ function detectSse(contentType, chatgptMode, method, upstreamPath) {
   return false;
 }
 
-function lastRoleIs(obj, role) {
-  const msgs = obj && Array.isArray(obj.messages) ? obj.messages : null;
-  if (!msgs || !msgs.length) return false;
-  const last = msgs[msgs.length - 1];
-  return !!last && last.role === role;
-}
-
 // Claude Code ships session identity in metadata.user_id — currently a
 // JSON-encoded string with a session_id field; older builds used
 // "..._session_<uuid>". Handle both; null when absent.
@@ -307,7 +300,6 @@ class WireProxy extends EventEmitter {
             body = Buffer.from(JSON.stringify(obj), 'utf8');
             this.emit('spill-cut', { agent, reqId, ...r });
           }
-          if (r && r.skipped) this.emit('spill-cut-skip', { agent, reqId, reason: 'system-adjacent', skipped: r.skipped });
         }
         bodyObj = obj;
         sessionId = sessionIdFrom(obj);
@@ -341,7 +333,6 @@ class WireProxy extends EventEmitter {
     const spillCfg = this._agentSpill.get(agent) || null;
     const spillEligible = !!spillCfg && provider === 'anthropic' && req.method === 'POST'
       && isMessages && !sideCall && !compactCall && !isSubagentRole(role) && this.spillEnabled();
-    const systemAdjacent = spillEligible && lastRoleIs(bodyObj, 'system');
     let proseSpill = false;
     if (spillEligible && typeof spillCfg.turnInjected === 'function') {
       try { proseSpill = spillCfg.turnInjected() === true; } catch { proseSpill = false; }
@@ -351,7 +342,7 @@ class WireProxy extends EventEmitter {
     for (const [k, v] of Object.entries(req.headers)) {
       if (!HOP_BY_HOP.has(k.toLowerCase())) fwdHeaders[k] = v;
     }
-    if (spillEligible && !systemAdjacent) fwdHeaders['accept-encoding'] = 'identity';
+    if (spillEligible) fwdHeaders['accept-encoding'] = 'identity';
     if (chatgptMode) {
       upstreamPath = rewriteChatgptRequest(upstreamPath, fwdHeaders);
     }
@@ -430,9 +421,7 @@ class WireProxy extends EventEmitter {
       }
 
       let spill = null;
-      if (systemAdjacent) {
-        this.emit('spill-skip', { agent, reqId, reason: 'system-adjacent' });
-      } else if (spillEligible) {
+      if (spillEligible) {
         const enc = (upRes.headers['content-encoding'] || '').toLowerCase().trim();
         if (sse && upRes.statusCode === 200 && (enc === '' || enc === 'identity')) {
           spill = new SpillTee({

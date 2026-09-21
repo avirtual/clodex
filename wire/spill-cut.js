@@ -1,11 +1,12 @@
 'use strict';
 
 const { HEAD_RE } = require('./spill');
-const { POINTER_RE, FILED_POINTER_RE, RECEIPT_RE, TAIL_RECEIPT_RE, SPILL_FILLER, pointerOf } = require('../intent-spill');
+const { POINTER_RE, FILED_POINTER_RE, RECEIPT_RE, TAIL_RECEIPT_RE, SPILL_FILLER, pointerMatch } = require('../intent-spill');
 const { cleanLine } = require('../intent-scanner');
 
 const NEEDLES = ['@spill:', ' filed at /', '[Runtime note:', '(I sent', '(I wrote'];
 const END_LINE = '[agent:end]';
+const PLACEHOLDER = '[agent]';
 
 function hasNeedle(msg) {
   if (!Array.isArray(msg.content)) return false;
@@ -16,28 +17,42 @@ function hasNeedle(msg) {
   return false;
 }
 
-function isStubLine(line) {
-  const t = cleanLine(line).trim();
-  if (!t) return 0;
-  if (t === SPILL_FILLER || POINTER_RE.test(t) || RECEIPT_RE.test(t) || TAIL_RECEIPT_RE.test(t)) return 1;
-  const f = FILED_POINTER_RE.exec(t);
-  if (f && !f[1]) return 1;
+function headOf(t) {
   const m = HEAD_RE.exec(t);
-  if (m && pointerOf(t.slice(m[0].length).trim()) !== null) return 2;
-  return 0;
+  if (!m) return null;
+  const body = t.slice(m[0].length).trim();
+  const p = pointerMatch(body);
+  if (!p) return null;
+  const title = body.endsWith(p.pointer) ? body.slice(0, body.length - p.pointer.length).replace(/\s*—\s*$/, '').trim() : '';
+  return title ? `${m[0]} ${title}` : m[0];
+}
+
+function classifyLine(line) {
+  const t = cleanLine(line).trim();
+  if (!t) return { kind: 0 };
+  if (t === SPILL_FILLER || POINTER_RE.test(t) || RECEIPT_RE.test(t) || TAIL_RECEIPT_RE.test(t)) return { kind: 1 };
+  const f = FILED_POINTER_RE.exec(t);
+  if (f && !f[1]) return { kind: 1 };
+  const head = headOf(t);
+  if (head !== null) return { kind: 2, head };
+  return { kind: 0 };
 }
 
 function cutText(text) {
   const lines = text.split('\n');
   const kept = [];
+  const heads = [];
   let cut = 0;
   for (let i = 0; i < lines.length; i++) {
-    const kind = isStubLine(lines[i]);
-    if (kind === 0) { kept.push(lines[i]); continue; }
+    const c = classifyLine(lines[i]);
+    if (c.kind === 0) { kept.push(lines[i]); continue; }
     cut++;
-    if (kind === 2 && i + 1 < lines.length && cleanLine(lines[i + 1]).trim() === END_LINE) { cut++; i++; }
+    if (c.kind === 2) {
+      heads.push(c.head);
+      if (i + 1 < lines.length && cleanLine(lines[i + 1]).trim() === END_LINE) { cut++; i++; }
+    }
   }
-  return { text: cut ? kept.join('\n') : text, cut };
+  return { text: cut ? kept.join('\n') : text, cut, heads };
 }
 
 function isThinking(b) {
@@ -46,6 +61,7 @@ function isThinking(b) {
 
 function cutMessage(msg) {
   const blocks = [];
+  const heads = [];
   let lines = 0;
   let droppedBlocks = 0;
   let orphanCache = null;
@@ -54,6 +70,7 @@ function cutMessage(msg) {
     const r = cutText(b.text);
     if (!r.cut) { blocks.push(b); continue; }
     lines += r.cut;
+    heads.push(...r.heads);
     if (r.text.trim()) { blocks.push({ ...b, text: r.text }); continue; }
     droppedBlocks++;
     if (b.cache_control) orphanCache = b.cache_control;
@@ -61,13 +78,22 @@ function cutMessage(msg) {
   if (orphanCache) {
     let at = blocks.length - 1;
     while (at >= 0 && isThinking(blocks[at])) at -= 1;
-    if (at >= 0 && !blocks[at].cache_control) blocks[at] = { ...blocks[at], cache_control: orphanCache };
+    if (at >= 0) {
+      if (!blocks[at].cache_control) blocks[at] = { ...blocks[at], cache_control: orphanCache };
+      orphanCache = null;
+    }
   }
-  return { blocks, lines, droppedBlocks };
+  return { blocks, lines, droppedBlocks, heads, orphanCache };
+}
+
+function placeholderOf(r) {
+  const text = { type: 'text', text: r.heads.length ? r.heads.join('\n') : PLACEHOLDER };
+  if (r.orphanCache) text.cache_control = r.orphanCache;
+  return [...r.blocks.filter(isThinking), text];
 }
 
 function cutSpillStubs(obj) {
-  const report = { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0 };
+  const report = { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0 };
   if (!obj || !Array.isArray(obj.messages)) return report;
   const out = [];
   let changed = false;
@@ -77,8 +103,11 @@ function cutSpillStubs(obj) {
     if (!r.lines) { out.push(msg); continue; }
     if (!r.blocks.some((b) => !isThinking(b))) {
       const prev = out.length ? out[out.length - 1] : null;
-      if (prev && prev.role === 'system') { report.skipped++; out.push(msg); continue; }
       report.messages++;
+      if (prev && prev.role === 'system') {
+        report.placeholders++;
+        out.push({ ...msg, content: placeholderOf(r) });
+      }
     } else {
       out.push({ ...msg, content: r.blocks });
     }
@@ -90,4 +119,4 @@ function cutSpillStubs(obj) {
   return report;
 }
 
-module.exports = { cutSpillStubs, NEEDLES };
+module.exports = { cutSpillStubs, NEEDLES, PLACEHOLDER };

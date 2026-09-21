@@ -766,7 +766,7 @@ test('the two halves compose: the stub the tee writes is what cutSpillStubs drop
   });
 });
 
-test('system-adjacent: a request whose LAST message is role:system is forwarded byte-identical, spill-skip system-adjacent, nothing filed', async () => {
+test('system-adjacent: a request whose LAST message is role:system still arms the tee — the body spills, spill-skip never says system-adjacent', async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({ body: DM_SSE }, async (proxy, up) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['dm'], turnInjected: () => true } });
@@ -779,11 +779,11 @@ test('system-adjacent: a request whose LAST message is role:system is forwarded 
     });
     const res = await request(proxy.port, '/agent/tester/v1/messages', adjacent);
     assert.ok(await whenEvent(events, 'stream-end', 1));
-    assert.equal(res.body.toString('utf8'), DM_SSE, 'the block is forwarded unchanged: a stub here would sit uncut behind the system message on every later request');
-    assert.equal(events.spill.length, 0, 'nothing filed');
-    assert.deepEqual(events['spill-skip'], [{ agent: 'tester', reqId: events['spill-skip'][0].reqId, reason: 'system-adjacent' }]);
-    assert.ok(!fs.existsSync(path.join(root, 'spill', 'tester')) || fs.readdirSync(path.join(root, 'spill', 'tester')).length === 0);
-    assert.equal(up.seen.requests[0].headers['accept-encoding'], 'gzip, br', 'no tee, so the CLI-sent accept-encoding is left alone');
+    assert.equal(events.spill.length, 1, 'ENTER: the reply to an injected turn spills like any other');
+    assert.equal(textOf(res.body), `[agent:dm bob] ${filed(root, events.spill[0])}\n[agent:end]\n`);
+    assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${events.spill[0].id}.md`), 'utf8'), BIG);
+    assert.deepEqual(events['spill-skip'], [], 'no spill-skip at all, and never one with reason system-adjacent');
+    assert.equal(up.seen.requests[0].headers['accept-encoding'], 'identity', 'the tee is armed, so the upstream is asked for identity');
 
     const notAdjacent = makeBody({
       messages: [
@@ -793,9 +793,9 @@ test('system-adjacent: a request whose LAST message is role:system is forwarded 
     });
     const second = await request(proxy.port, '/agent/tester/v1/messages', notAdjacent);
     assert.ok(await whenEvent(events, 'stream-end', 2));
-    assert.equal(events.spill.length, 1, 'a system message anywhere but LAST leaves the tee armed');
-    assert.equal(textOf(second.body), `[agent:dm bob] ${filed(root, events.spill[0])}\n[agent:end]\n`);
-    assert.equal(events['spill-skip'].length, 1);
+    assert.equal(events.spill.length, 2, 'a system message anywhere leaves the tee armed');
+    assert.equal(textOf(second.body), `[agent:dm bob] ${filed(root, events.spill[1])}\n[agent:end]\n`);
+    assert.deepEqual(events['spill-skip'], []);
     assert.equal(up.seen.requests[1].headers['accept-encoding'], 'identity');
   });
 });
