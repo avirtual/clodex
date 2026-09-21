@@ -11,7 +11,8 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Spill: the transcript keeps a receipt, the model never sees it
+- **Fixes a 5.83.x regression**: with the spill option on, an agent could imitate the `@spill:<id>` pointer it saw in its own history and type it as a body, so specs, dms and memory saves were silently lost. The pointer is now removed from every API request (the model never sees one), a typed pointer is refused on every verb with a bounce naming the action that did not happen, and the terminal stub is a plain `filed at <path>` line.
 - `[agent:context compact|clear|reload]` handoff bodies are no longer spilled by the wire tee: the compact or clear discards them anyway, so the file, the transcript stub and the request-side cut bought nothing. The handoff itself still reaches the resumed agent as `Continue from your handoff: @<path>`, unchanged.
 - `[agent:context clear]` on a seat whose Clodex instructions changed since it booted now restarts the CLI on a fresh prompt instead of typing `/clear` and staging the change as a reminder: a clear busts the cache prefix either way (the `/clear` block moves the CLAUDE.md message), so the regenerated prompt costs cents and the seat stops carrying the diff. A seat with nothing pending still gets a plain `/clear`.
 - A compact whose seat has a pending instruction change now respawns the seat with `--resume` and a freshly generated prompt the moment the summary lands, instead of staging the change as a reminder: the first request after a compact is written cold either way, so the regeneration is nearly free and the seat runs the current prompt with its history intact.
