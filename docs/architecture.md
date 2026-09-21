@@ -942,9 +942,13 @@ accept teardown removes.
   here, pure, with fs injected.
 - **file-peek.js** — the read side of the file peek: `peekFile(path, {offset,
   length})` reads a byte range clamped to `PEEK_MAX_BYTES`, pulls the cut back
-  to a UTF-8 boundary (`utf8CutAt`) and answers `{ok:false, code}` with
-  `not-found`, `not-a-file` (lstat: symlink, dir, device) or `unreadable`.
+  to a UTF-8 boundary at both ends (`utf8CutAt`, `utf8ForwardFrom`), sniffs
+  the file's first 8 KB for a NUL whatever the range, and answers
+  `{ok:false, code}` with `not-found`, `not-a-file` (stat: dir, device — a
+  symlinked file is followed, as the desktop viewer always did) or `unreadable`.
   Pure leaf over node fs; `engine.js` `fetchFilePeek` is the seam that calls it.
+  The remote query arm (`remote-wiring.js` `confineRemotePath`) is where a
+  symlink is refused and where confinement decides before existence.
 - **filed-ring.js** — the per-seat ring of files a seat's transcript points at
   (`session.filedRing`): spilled intent bodies, handoffs, message spills. Newest
   first, deduped by path, capped at 50, `list()` drops entries whose file is
@@ -966,7 +970,7 @@ accept teardown removes.
   subset the shipped docs were measured to use and treats everything else as
   literal text, which is what lets Help ship with no markdown dependency.
 - **help-corpus.js** — the Help window's corpus reader: `loadHelpCorpus(root)` →
-  `{ list, get, section, search, index }` over the 17 pages named in
+  `{ list, get, section, search, index }` over the 18 pages named in
   `docs/help.json`, titles taken from each page's single H1 through `doc-parse`.
   fs + path + `doc-parse.js` only, no Electron; pages are read and parsed once
   per `root` and cached in the returned object, so two roots are two corpora. A

@@ -73,11 +73,15 @@ popover data; kind whitelist lives in the injected callback — `files` answers
 `{ok, cwd, files, filed}` where `filed[]` is the seat's spilled intent bodies,
 handoffs and inbound message spills, newest first, capped at 50 independently of
 `files`, each `{path, kind, head, bytes, ts}` with `path` byte-identical to the
-transcript literal; `filePeek` takes `{path, offset?, length?}` in bytes,
+transcript literal (entries seeded from disk after a restart carry kind
+`intent` for every spill-dir file, a handoff being indistinguishable there); `filePeek` takes `{path, offset?, length?}` in bytes,
 clamps `length` to `PEEK_MAX_BYTES`, echoes the range it returned with the cut
 pulled back to a UTF-8 boundary, and fails with `{ok:false, code, error}` —
 `outside` 403, `not-found` 404, `gone` 410 (listed in `filed` but since
-removed), `not-a-file` 400, `unreadable` 500; `filePeek` and `fileDiff` over
+removed), `not-a-file` 400 (dir, device, or a symlink — refused over this
+server only), `unreadable` 500 — confinement decides `outside` before
+existence is consulted, so a missing path outside the roots is `outside`, never
+`not-found`; `filePeek` and `fileDiff` over
 this server read only the seat's resolved cwd, `<REGISTRY_DIR>/spill/<seat>/`,
 `<REGISTRY_DIR>/messages/<seat>/` and the project's
 `<REGISTRY_DIR>/projects/<leaf>-<hash>/tasks/`, checked on the real path so a
