@@ -573,6 +573,8 @@ test('a sandboxed team is listed as "name — sandboxed" and opens its box web U
   write('boxed', { root: '/proj/boxed', lead: 'boss', sandboxed: true, roles: { lead: {} } },
     { boxId: 'team-boxed', webUrl: 'http://127.0.0.1:7812' });
   write('cold', { root: '/proj/cold', lead: 'boss', sandboxed: true, roles: { lead: {} } });
+  write('keyed', { root: '/proj/keyed', lead: 'boss', sandboxed: true, roles: { lead: {} } },
+    { boxId: 'team-keyed', webUrl: 'http://127.0.0.1:7813', webToken: 'ab cd&ef' });
   write('local', { root: '/proj/local', lead: 'boss', roles: { lead: {} } });
   const tm = createTeamManifest({ fs, clodexHome: home });
   const opened = [];
@@ -582,8 +584,8 @@ test('a sandboxed team is listed as "name — sandboxed" and opens its box web U
 
   const rows = menus.buildTeamsMenu().submenu.filter((i) => i.type !== 'separator');
   assert.deepStrictEqual(rows.map((r) => r.label),
-    ['boxed — sandboxed', 'cold — sandboxed', 'local', 'Create Team…', 'Delete Team…'],
-    'ENTER: all three teams reached the menu — one that listTeams stopped reaching would make the per-row assertions below vacuous');
+    ['boxed — sandboxed', 'cold — sandboxed', 'keyed — sandboxed', 'local', 'Create Team…', 'Delete Team…'],
+    'ENTER: all four teams reached the menu — one that listTeams stopped reaching would make the per-row assertions below vacuous');
 
   rows[0].click();
   assert.deepStrictEqual(opened, ['http://127.0.0.1:7812'],
@@ -595,6 +597,10 @@ test('a sandboxed team is listed as "name — sandboxed" and opens its box web U
   assert.strictEqual(typeof rows[1].click, 'undefined');
 
   rows[2].click();
+  assert.deepStrictEqual(opened, ['http://127.0.0.1:7812', 'http://127.0.0.1:7813?token=ab%20cd%26ef'],
+    'a record carrying the box\'s webToken opens the console authenticated — ?token= is what auth-token.js reads first — and the value is URL-encoded');
+
+  rows[3].click();
   assert.deepStrictEqual(sent, [['request-open-team-roles', 'local']],
     'an ordinary team is untouched by any of this');
 });

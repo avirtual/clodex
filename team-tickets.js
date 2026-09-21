@@ -3164,6 +3164,7 @@ function createTicketMethods(deps, shared) {
         webUrl: ports.web ? `http://127.0.0.1:${ports.web}` : null,
         wireUrl: ports.wire ? `http://127.0.0.1:${ports.wire}` : null,
         token,
+        webToken: box.webToken(),
         teamDir: shipped.dir,
         startedAt: new Date().toISOString(),
       };

@@ -7,7 +7,6 @@ const { SEV_LINE } = require('./lib/constants');
 const { esc, baseName } = require('./lib/format');
 const { wireBulkToggles } = require('./lib/checklists');
 const { nextVisibleWithName } = require('./lib/peer-visibility');
-const { openUrl: sandboxOpenUrl } = require('./lib/sandbox-view');
 const { webViewAffordance } = require('./lib/peer-web-view');
 const { peerStateText, NEEDS_UPGRADE_TIP } = require('./lib/peer-state-text');
 const { isPeerExpanded, togglePeerExpanded } = require('./lib/peer-collapse');
@@ -114,7 +113,7 @@ function initPeersUi({
       showToast(`${label} isn't serving a web UI yet — start it first.`, { kind: 'warm' });
       return;
     }
-    window.api.openExternal(sandboxOpenUrl(port));
+    window.api.sandboxOpenWeb(id).catch(() => {});
   }
 
   async function togglePeerWeb(id, label) {

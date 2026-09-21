@@ -101,6 +101,12 @@ function statusNotice(state) {
   }
 }
 
+function foreignNotice(status) {
+  const owner = status && typeof status.foreign === 'string' ? status.foreign.trim() : '';
+  if (!owner) return null;
+  return { kind: 'warn', text: `Owned by another Clodex instance (${owner}) — read-only here`, running: false };
+}
+
 function refLineText(status) {
   const ref = status && typeof status.ref === 'string' ? status.ref.trim() : '';
   if (!ref) return '';
@@ -131,4 +137,4 @@ function portsLineText(effective) {
   return parts.join(' · ');
 }
 
-module.exports = { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, refLineText, openUrl, portsLineText };
+module.exports = { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText };

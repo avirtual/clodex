@@ -231,6 +231,7 @@ function mkFakeManager({ ports = { web: 7810, wire: 7820 }, healthResult, hasTok
     async down() { return { ok: true }; },
     async status() { return { state: 'running', ref: config.ref || null, sha: 'abcdef1234567890', ports }; },
     remoteToken: () => TOKEN,
+    webToken: () => null,
     hasAuthToken: () => owned,
     setAuthToken: (tok) => { calls.setAuthToken.push(tok); owned = true; return { ok: true, hasToken: true }; },
     async waitHealthy() { calls.waitHealthy += 1; return healthResult || { ok: true, polls: 3, ms: 4000 }; },

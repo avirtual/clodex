@@ -1907,6 +1907,15 @@ function registerIpcHandlers(deps) {
     return mgr.detect();
   });
   handle('sandbox:status', (_e, boxId) => withBox(boxId, (s) => s.status()));
+  handle('sandbox:openWeb', (_e, boxId) => withBox(boxId, async (s) => {
+    const st = await s.status();
+    const port = st && st.ports && st.ports.web;
+    if (!port) return { ok: false, error: 'box is not serving a web UI' };
+    const tok = s.webToken();
+    const url = `http://localhost:${port}` + (tok ? `?token=${encodeURIComponent(tok)}` : '');
+    openExternal(url);
+    return { ok: true };
+  }));
   handle('sandbox:getConfig', (_e, boxId) => withBox(boxId, (s) => s.getConfig()));
   handle('sandbox:setConfig', (_e, partial, boxId) => withBox(boxId, (s) => s.setConfig(partial || {})));
   handle('sandbox:translatePath', (_e, hostPath, boxId) => withBox(boxId, (s) => s.translateHostPath(hostPath)));

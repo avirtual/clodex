@@ -5,7 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, refLineText, openUrl, portsLineText } = require('../renderer/lib/sandbox-view');
+const { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText } = require('../renderer/lib/sandbox-view');
 
 test('detectNotice: docker not installed → error + install remedy', () => {
   const n = detectNotice({ present: false, running: false });
@@ -199,4 +199,13 @@ test('portsLineText: a role missing from a partial parse is skipped', () => {
 test('portsLineText: a non-numeric port value is skipped', () => {
   assert.strictEqual(portsLineText({ web: NaN, wirescope: 7813 }), 'Wirescope 7813');
   assert.strictEqual(portsLineText({}), '');
+});
+
+test('foreignNotice: status.foreign → a warn notice naming the owner, read-only; absent otherwise', () => {
+  const owner = '/Users/me/Library/Application Support/clodex-ios/sandbox-team-x/compose.yaml';
+  assert.deepStrictEqual(foreignNotice({ state: 'running', foreign: owner }),
+    { kind: 'warn', text: `Owned by another Clodex instance (${owner}) — read-only here`, running: false });
+  assert.strictEqual(foreignNotice({ state: 'running' }), null);
+  assert.strictEqual(foreignNotice({ state: 'absent', foreign: '' }), null);
+  assert.strictEqual(foreignNotice(null), null);
 });

@@ -161,6 +161,9 @@ function normalizeMounts(rawMounts) {
   return { mounts: out };
 }
 
+const COMPOSE_PROJECT_LABEL = 'com.docker.compose.project';
+const COMPOSE_CONFIG_FILES_LABEL = 'com.docker.compose.project.config_files';
+
 // Passed explicitly via -p so each box's volume/network namespace keys off the
 // box id rather than the compose file's parent-dir basename, which docker
 // would otherwise derive.
@@ -253,7 +256,6 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   L.push('    environment:');
   // Compose ${VAR:-default} interpolations — single-quoted here so JS never
   // touches them; the wirescope public URL tracks the (possibly bumped) host port.
-  L.push('      CLODEX_WEB_TOKEN: "${CLODEX_WEB_TOKEN:-}"');
   L.push('      CLODEX_WORKSPACES: "${CLODEX_WORKSPACES:-default}"');
   L.push(`      CLODEX_WIRESCOPE_PUBLIC_URL: "\${CLODEX_WIRESCOPE_PUBLIC_URL:-http://localhost:${ports.wirescope}}"`);
   if (authEnvFile) {
@@ -574,14 +576,19 @@ function createSandbox(deps = {}) {
   function remoteToken() {
     try { return readAuthEnv().CLODEX_REMOTE_TOKEN || null; } catch { return null; }
   }
-  function ensureRemoteToken() {
-    const existing = remoteToken();
-    if (existing) return existing;
+  function webToken() {
+    try { return readAuthEnv().CLODEX_WEB_TOKEN || null; } catch { return null; }
+  }
+  function ensureBoxTokens() {
     const env = readAuthEnv();
-    const tok = crypto.randomBytes(32).toString('hex');
-    env.CLODEX_REMOTE_TOKEN = tok;   // preserves any CLAUDE_CODE_OAUTH_TOKEN line
-    writeAuthEnv(env);
-    return tok;
+    let changed = false;
+    for (const key of ['CLODEX_REMOTE_TOKEN', 'CLODEX_WEB_TOKEN']) {
+      if (env[key]) continue;
+      env[key] = crypto.randomBytes(32).toString('hex');
+      changed = true;
+    }
+    if (changed) writeAuthEnv(env);
+    return { remote: env.CLODEX_REMOTE_TOKEN, web: env.CLODEX_WEB_TOKEN };
   }
 
   async function buildBusySet(config, ownPorts) {
@@ -640,13 +647,53 @@ function createSandbox(deps = {}) {
     });
   }
 
+  function composeOwner() {
+    return new Promise((resolve) => {
+      let child;
+      try {
+        child = spawn('docker', [
+          'ps', '-a',
+          '--filter', `label=${COMPOSE_PROJECT_LABEL}=${composeProjectName(id)}`,
+          '--format', `{{.Label "${COMPOSE_CONFIG_FILES_LABEL}"}}`,
+        ], { stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch {
+        resolve({ ok: false, owners: [] });
+        return;
+      }
+      let stdout = '';
+      if (child.stdout) child.stdout.on('data', (d) => { stdout += d; });
+      if (child.stderr) child.stderr.on('data', () => {});
+      child.on('error', () => resolve({ ok: false, owners: [] }));
+      child.on('exit', (code) => {
+        if (code !== 0) { resolve({ ok: false, owners: [] }); return; }
+        const owners = [...new Set(stdout.split('\n').map((l) => l.trim()).filter(Boolean))];
+        resolve({ ok: true, owners });
+      });
+    });
+  }
+
+  function canonicalPath(p) {
+    try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+  }
+
+  async function foreignOwner() {
+    const r = await composeOwner();
+    if (!r.ok || !r.owners.length) return null;
+    const mine = canonicalPath(composePath());
+    return r.owners.some((o) => canonicalPath(o) === mine) ? null : r.owners[0];
+  }
+
+  function foreignError(owner) {
+    return { ok: false, code: 'foreign', error: `box ${id} belongs to another Clodex instance (${owner})` };
+  }
+
   function bringUp(runSteps, label) {
     // serialize() chains this across every box the manager owns (default: inline),
     // so the port probe + compose regen can't race when two boxes come up at once.
     return serialize(async () => {
-      // Provision the peer-wire token BEFORE composing: it must land in auth.env so
-      // writeComposeFile references the env_file, and so registerPeer can read it.
-      try { ensureRemoteToken(); } catch (e) {
+      const owner = await foreignOwner();
+      if (owner) return foreignError(owner);
+      try { ensureBoxTokens(); } catch (e) {
         return { ok: false, error: `token provision failed: ${(e && e.message) || e}` };
       }
       const config = getConfig();
@@ -686,6 +733,8 @@ function createSandbox(deps = {}) {
   // Stop the sandbox. The peer row STAYS (goes offline) — it's the affordance to
   // start it again later, so down never touches the peers list.
   async function down() {
+    const owner = await foreignOwner();
+    if (owner) return foreignError(owner);
     const r = await runCompose(['down']);
     if (!r.ok) {
       const gone = dockerUnavailableError(r.stderr);
@@ -705,12 +754,16 @@ function createSandbox(deps = {}) {
   async function status() {
     const statusConfig = getConfig();
     const trackedRef = (statusConfig.ref && !statusConfig.image) ? statusConfig.ref : null;
+    const owner = await foreignOwner();
     const r = await runCompose(['ps', '--format', 'json']);
     if (!r.ok && !r.stdout.trim()) {
-      return { state: 'absent', ref: trackedRef, sha: trackedRef ? await headSha(srcDir()) : null, error: r.stderr.trim() || undefined };
+      const absent = { state: 'absent', ref: trackedRef, sha: trackedRef ? await headSha(srcDir()) : null, error: r.stderr.trim() || undefined };
+      if (owner) absent.foreign = owner;
+      return absent;
     }
     const state = parseComposeState(r.stdout);
     const out = { state, ref: trackedRef, sha: trackedRef ? await headSha(srcDir()) : null };
+    if (owner) out.foreign = owner;
     // Only meaningful while running: the compose file persists after Stop, but its
     // ports then describe no live listener, and Start regenerates them.
     if (state === 'running') {
@@ -765,7 +818,7 @@ function createSandbox(deps = {}) {
     up, rebuild, down, status, logsTail, registerPeer, unregisterPeer,
     waitHealthy: boxWaitHealthy,
     hasAuthToken, authToken, setAuthToken, clearAuthToken,
-    remoteToken,
+    remoteToken, webToken,
     composePath, sandboxDir, srcDir, stateDir,
   };
 }

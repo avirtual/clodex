@@ -28,7 +28,7 @@ const { createMirrorLatch } = require('./lib/mirror-latch');
 const { filterSummary, setFilterFolded } = require('./lib/sidebar-filter-fold');
 const { createMicHandoff } = require('./lib/mic-handoff');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
-const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
+const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
 const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require('./lib/name-validity');
@@ -6750,6 +6750,7 @@ let sbBusy = false;
 // Rebuild. The probe's catch{} falls back here, never to a stale good gate.
 const SB_GATE_UNKNOWN = { running: false, notice: { kind: 'idle', text: 'Checking Docker…' }, reason: 'Checking Docker…' };
 let sbGate = SB_GATE_UNKNOWN;
+let sbForeign = null;
 let sbEffectivePorts = null;
 let sbCurrentBox = 'sandbox';
 let sbBoxes = [];
@@ -6795,11 +6796,12 @@ function applySandboxRunning(running, ports = null) {
 
 function applyActionGate() {
   const t = sandboxGateTreatment(sbGate, sbRunning);
-  sbToggleBtn.disabled = sbBusy || t.startDisabled;
-  sbRebuildBtn.disabled = sbBusy || t.rebuildDisabled;
+  const foreign = sbForeign ? sbForeign.text : '';
+  sbToggleBtn.disabled = sbBusy || t.startDisabled || !!foreign;
+  sbRebuildBtn.disabled = sbBusy || t.rebuildDisabled || !!foreign;
   sbBoxCreate.disabled = t.boxCreateDisabled;
-  sbToggleBtn.title = t.startDisabled ? (t.reason || '') : '';
-  sbRebuildBtn.title = t.rebuildDisabled ? (t.reason || '') : '';
+  sbToggleBtn.title = foreign || (t.startDisabled ? (t.reason || '') : '');
+  sbRebuildBtn.title = foreign || (t.rebuildDisabled ? (t.reason || '') : '');
   sbBoxCreate.title = t.boxCreateDisabled ? (t.reason || '') : '';
   sbToggleBtn.classList.toggle('sandbox-gated', t.dimStart);
   sbRebuildBtn.classList.toggle('sandbox-gated', t.dimRebuild);
@@ -6816,8 +6818,9 @@ async function refreshSandboxStatus() {
     sbGate = sandboxActionGate(detect);
     renderSandboxNotice(sbDockerRow, sbGate.notice);
     const sn = sandboxStatusNotice(status && status.state);
+    sbForeign = sandboxForeignNotice(status);
     const refLine = sandboxRefLineText(status);
-    renderSandboxNotice(sbStatusRow, refLine ? { ...sn, text: `${sn.text} ${refLine}` } : sn);
+    renderSandboxNotice(sbStatusRow, sbForeign || (refLine ? { ...sn, text: `${sn.text} ${refLine}` } : sn));
     // Update sbRunning BEFORE applyActionGate — the gate's Start-vs-Stop decision
     // reads sbRunning, and applying the gate on a stale value would mis-gate the
     // toggle right after a state flip (defect #1).
@@ -6831,14 +6834,15 @@ async function refreshSandboxStatus() {
       const tog = selRow.querySelector('.sandbox-box-toggle');
       if (tog && !sbBusy) {
         tog.textContent = sn.running ? 'Stop' : 'Start';
-        const rowGated = boxRowStartGated(sbGate.running, sn.running);
+        const rowGated = boxRowStartGated(sbGate.running, sn.running) || !!sbForeign;
         tog.disabled = rowGated;
         tog.classList.toggle('sandbox-gated', rowGated);
-        tog.title = rowGated ? (sbGate.reason || '') : '';
+        tog.title = rowGated ? ((sbForeign && sbForeign.text) || sbGate.reason || '') : '';
       }
     }
   } catch {
     sbGate = SB_GATE_UNKNOWN;
+    sbForeign = null;
     applyActionGate();
   }
 }
@@ -6900,7 +6904,9 @@ async function renderBoxList() {
   const [detect, notices] = await Promise.all([
     window.api.sandboxDetect(sbCurrentBox).catch(() => null),
     Promise.all(boxes.map((b) =>
-      window.api.sandboxStatus(b.id).then((s) => sandboxStatusNotice(s && s.state)).catch(() => sandboxStatusNotice()))),
+      window.api.sandboxStatus(b.id)
+        .then((s) => ({ ...sandboxStatusNotice(s && s.state), foreign: sandboxForeignNotice(s) }))
+        .catch(() => ({ ...sandboxStatusNotice(), foreign: null })))),
   ]);
   sbGate = sandboxActionGate(detect);
   applyActionGate();
@@ -6926,10 +6932,10 @@ async function renderBoxList() {
     tog.type = 'button';
     tog.className = 'secondary sandbox-box-toggle';
     tog.textContent = sn.running ? 'Stop' : 'Start';
-    const rowStartGated = boxRowStartGated(sbGate.running, sn.running);
+    const rowStartGated = boxRowStartGated(sbGate.running, sn.running) || !!sn.foreign;
     tog.disabled = rowStartGated;
     tog.classList.toggle('sandbox-gated', rowStartGated);
-    if (rowStartGated) tog.title = sbGate.reason || '';
+    if (rowStartGated) tog.title = (sn.foreign && sn.foreign.text) || sbGate.reason || '';
     tog.addEventListener('click', (e) => { e.stopPropagation(); toggleBox(b.id, sn.running); });
     row.append(dot, label, tog);
     row.addEventListener('click', () => selectBox(b.id));
@@ -7142,14 +7148,9 @@ sbDeleteBtn.addEventListener('click', async () => {
   }
 });
 
-// Route through openExternal, not a target="_blank" anchor: the desktop has no
-// setWindowOpenHandler, so _blank would open a chromeless BrowserWindow instead
-// of the user's browser. openExternal degrades correctly on web (open-external
-// fan → shim window.open) — and on web that fan is also the gate that refuses a
-// box-loopback url, which is why the anchor carries no href to click around it.
 sbOpenLink.addEventListener('click', (e) => {
   e.preventDefault();
-  window.api.openExternal(sandboxOpenUrl(effectiveWebPort()));
+  window.api.sandboxOpenWeb(sbCurrentBox).catch(() => {});
 });
 // An anchor with no href does not synthesize a click on Enter, and role="button"
 // promises Space as well — without this the control is announced as a button and
