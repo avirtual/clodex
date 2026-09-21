@@ -21,6 +21,9 @@ const ID_RE = /^[0-9a-f]{16}$/;
 const AGENT_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const POINTER_RE = /^\s*@spill:([0-9a-f]{16})\s*$/;
 const TITLED_POINTER_RE = /^([^\n]{0,79}[^\s\n]) @spill:([0-9a-f]{16})\s*$/;
+const FILED_SRC = String.raw`((?:\d+ B|\d+\.\d KB)(?: of prose)? filed at (\/[^\n]*\/spill\/[^\/\n]+\/([0-9a-f]{16})\.md))`;
+const FILED_POINTER_RE = new RegExp(String.raw`^\s*(?:([^\n]{0,79}[^\s\n]) — )?${FILED_SRC}\s*$`);
+const TRAILING_POINTER_RE = new RegExp(String.raw`(?:(@spill:([0-9a-f]{16}))|${FILED_SRC})\s*$`);
 const HEAD_RE = /^\[agent:([a-z]+)(?:\s+([a-z-]+))?\b([^\]]*)\]/;
 const RECEIPT_RE = /^\(I sent (\S+(?: \S+)*?)(?: — "[^"]*")? in full, \d+ B; Clodex kept my text at (\/.+?\.md)\.\)$/;
 const TAIL_RECEIPT_RE = /^\(I wrote \d+ B of prose after my last intent; it reached the operator's log and Clodex kept it at \/.+?\.md\.\)$/;
@@ -106,16 +109,34 @@ function resolveSpill(root, agent, id) {
   return { ok: true, body: buf.toString('utf8'), path: p };
 }
 
-function pointerOf(body) {
+function pointerMatch(body) {
   if (typeof body !== 'string') return null;
   const m = POINTER_RE.exec(body);
-  if (m) return m[1];
+  if (m) return { id: m[1], pointer: `@spill:${m[1]}` };
   const t = TITLED_POINTER_RE.exec(body);
-  return t ? t[2] : null;
+  if (t) return { id: t[2], pointer: `@spill:${t[2]}` };
+  const f = FILED_POINTER_RE.exec(body);
+  return f ? { id: f[4], pointer: f[2] } : null;
 }
 
-function pointerText(id) {
-  return `@spill:${id}`;
+function pointerOf(body) {
+  const m = pointerMatch(body);
+  return m ? m.id : null;
+}
+
+function trailingPointerOf(text) {
+  if (typeof text !== 'string') return null;
+  const m = TRAILING_POINTER_RE.exec(text);
+  if (!m) return null;
+  return m[1] ? { id: m[2], pointer: m[1] } : { id: m[5], pointer: m[3] };
+}
+
+function spillSize(bytes) {
+  return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+function pointerText(id, { root, agent, bytes, prose = false }) {
+  return `${spillSize(bytes)}${prose ? ' of prose' : ''} filed at ${spillPathFor(root, agent, id)}`;
 }
 
 function mimicKindOf(line) {
@@ -174,6 +195,8 @@ module.exports = {
   AGENT_RE,
   POINTER_RE,
   TITLED_POINTER_RE,
+  FILED_POINTER_RE,
+  TRAILING_POINTER_RE,
   HEAD_RE,
   RECEIPT_RE,
   TAIL_RECEIPT_RE,
@@ -186,7 +209,10 @@ module.exports = {
   spillIdOf,
   writeSpill,
   resolveSpill,
+  pointerMatch,
   pointerOf,
+  trailingPointerOf,
+  spillSize,
   pointerText,
   mimicKindOf,
   receiptOf,

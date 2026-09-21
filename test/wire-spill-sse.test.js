@@ -9,6 +9,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const { mk } = require('./lib/session-fixtures');
 const { SpillTee } = require('../wire/spill');
 const { UsageCollector, SSEFramer } = require('../wire/sse');
+const { spillSize } = require('../intent-spill');
 
 const SCANNER = mk({
   parseIntent: require('../intent-scanner').parseIntent,
@@ -40,8 +41,13 @@ function idOf(spills) {
   return spills[0].id;
 }
 
+function filed(spill, r = root()) {
+  return `${spillSize(spill.bytes)}${spill.verb === 'prose' ? ' of prose' : ''} filed at ${keptPath(spill.id, r)}`;
+}
+
 function stub(head, spills, title = '') {
-  return `[agent:${head}] ${title}@spill:${idOf(spills)}\n[agent:end]\n`;
+  idOf(spills);
+  return `[agent:${head}] ${title}${filed(spills[0])}\n[agent:end]\n`;
 }
 
 function ev(type, data) {
@@ -179,7 +185,7 @@ test('a dm body spills through the tee, and the same stream with dm unlisted is 
     const { out, tee, spills } = drive(DM_STREAM, cs, { verbs: [...VERBS, 'dm'] });
     const seen = textOf(out);
     const id = idOf(spills);
-    assert.equal(seen, `On it.\n[agent:dm bob] @spill:${id}\n[agent:end]\n`, `@cs=${cs}: the dm block becomes its stub; prose survives`);
+    assert.equal(seen, `On it.\n[agent:dm bob] ${filed(spills[0])}\n[agent:end]\n`, `@cs=${cs}: the dm block becomes its stub; prose survives`);
     assert.deepEqual(spills, [{ verb: 'dm', id, bytes: 900, head: 'dm bob' }], `@cs=${cs}`);
     assert.equal(fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${id}.md`), 'utf8'), BIG,
       `@cs=${cs}: the recipient's copy is on disk in full`);
@@ -213,7 +219,7 @@ test('pings keep flowing while a body is held, in order, and usage bytes are unt
   const s = out.toString('utf8');
   assert.equal(s.match(/event: ping/g).length, 2, 'both pings forwarded');
   assert.equal(textOf(out), stub('task add t', spills), 'the whole block was the reply, so the stub is the whole record');
-  assert.ok(s.lastIndexOf('event: ping') < s.indexOf('@spill:'), 'pings arrive before the stub');
+  assert.ok(s.lastIndexOf('event: ping') < s.indexOf('filed at'), 'pings arrive before the stub');
   assert.ok(s.includes(usage.toString('utf8')), 'usage event byte-identical');
   assert.ok(!s.includes(BIG));
 });
@@ -228,7 +234,7 @@ test('content_block_stop flushes a held, unterminated body BEFORE the stop event
   const { out, tee } = drive(stream, 29);
   const s = out.toString('utf8');
   assert.equal(textOf(out), `[agent:task add t] ${BIG}`, 'the held original is emitted');
-  assert.ok(!s.includes('@spill:'));
+  assert.ok(!s.includes('filed at'));
   assert.equal(tee.fired, 0);
   assert.ok(s.indexOf(BIG.slice(0, 40)) < s.indexOf('event: content_block_stop'),
     'flushed before the stop');
@@ -280,7 +286,7 @@ test('an onSpill listener that throws cannot cost the client its text', () => {
     });
     const out = Buffer.concat([tee.feed(stream), tee.close()]);
     const seen = textOf(out);
-    assert.match(seen, /^\[agent:task add t\] @spill:[0-9a-f]{16}\n\[agent:end\]\nAfter\.\n$/, `@cs=${cs}: the spill still happened and the prose after the body survives`);
+    assert.match(seen, /^\[agent:task add t\] 900 B filed at \/.*\/spill\/wirescope\/[0-9a-f]{16}\.md\n\[agent:end\]\nAfter\.\n$/, `@cs=${cs}: the spill still happened and the prose after the body survives`);
     assert.equal(tee.fired, 1, `@cs=${cs}`);
     assert.equal(tee.latched, false,
       `@cs=${cs}: a throwing listener must not drive the tee into the panic path at all`);
@@ -342,11 +348,11 @@ test('the spilled file equals the body the REAL intent scanner would have produc
     assert.equal(onDisk, scannerBody(original),
       `@cs=${cs}: S-B substitutes this file for the body the UNSPILLED path would have carried, so `
       + 'a one-byte divergence from the repo\'s own delimiter silently dispatches a different spec');
-    assert.equal(seen, `Here you go.\n[agent:task add t42 start] first line of the spec @spill:${id}\n[agent:end]\nDone.\n`,
+    assert.equal(seen, `Here you go.\n[agent:task add t42 start] first line of the spec — ${filed(spills[0])}\n[agent:end]\nDone.\n`,
       `@cs=${cs}: the client sees the prose around the block and the titled stub, terminator kept`);
     const re = SCANNER._extractIntents(seen);
     assert.equal(re.length, 1, `@cs=${cs}: the REWRITTEN text re-parses to exactly one intent`);
-    assert.equal(re[0].body, `first line of the spec @spill:${id}`,
+    assert.equal(re[0].body, `first line of the spec — ${filed(spills[0])}`,
       `@cs=${cs}: the kept terminator closes the body at the pointer instead of swallowing the prose after it`);
   }
 });
@@ -367,7 +373,7 @@ test('scanner equivalence holds for the body shapes the delimiter treats special
     ]);
     const { out, spills } = drive(stream, 43);
     const id = idOf(spills);
-    assert.match(textOf(out), new RegExp(`^\\[agent:${headArgs}\\] (?:[^\\n]* )?@spill:${id}\\n\\[agent:end\\]\\n$`), `${label}: the block was the whole reply, and the stub is its record`);
+    assert.match(textOf(out), new RegExp(`^\\[agent:${headArgs}\\] (?:[^\\n]* — )?\\d+ B filed at ${keptPath(id).replace(/[.\\/]/g, '\\$&')}\\n\\[agent:end\\]\\n$`), `${label}: the block was the whole reply, and the stub is its record`);
     const onDisk = fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${id}.md`), 'utf8');
     assert.equal(onDisk, scannerBody(original), label);
   }
@@ -395,10 +401,10 @@ test('proseSpill: the pointer delta precedes content_block_stop, and the stop is
 
   assert.equal(tee.fired, 1);
   assert.ok(!s.includes(BIG), 'the prose is off the wire');
-  assert.ok(s.indexOf('@spill:') < s.indexOf('event: content_block_stop'),
+  assert.ok(s.indexOf('filed at') < s.indexOf('event: content_block_stop'),
     'held text cannot outlive its block — the pointer is emitted before the stop');
   assert.ok(s.includes(stop.toString('utf8')), 'the stop frame is byte-identical');
-  assert.equal(textOf(out), `@spill:${idOf(spills)}\n`, 'and the block carries exactly the bare pointer');
+  assert.equal(textOf(out), `${filed(spills[0])}\n`, 'and the block carries exactly the bare pointer');
   assert.equal(fs.readFileSync(keptPath(idOf(spills)), 'utf8'), `Acknowledged.\n${BIG}\n`);
 });
 
@@ -498,7 +504,7 @@ test('proseSpill: only the text AFTER the last non-text block is the tail', () =
     const s = out.toString('utf8');
     assert.equal(tee.fired, 1, `@cs=${cs}`);
     const id = idOf(spills);
-    assert.equal(textOf(out), `${NARRATION}\n@spill:${id}\n`,
+    assert.equal(textOf(out), `${NARRATION}\n${filed(spills[0])}\n`,
       `@cs=${cs}: the first text block is narration and survives verbatim; the second becomes the bare pointer`);
     assert.ok(!s.includes(BIG), `@cs=${cs}: the second is the sign-off and goes to disk`);
     assert.equal(fs.readFileSync(path.join(root(), 'spill', 'wirescope', `${id}.md`), 'utf8'),
@@ -519,7 +525,7 @@ test('proseSpill: a lone text block still spills, with the stop frames after the
     assert.equal(tee.fired, 1, `@cs=${cs}`);
     const id = idOf(spills);
     assert.equal(fs.readFileSync(keptPath(id), 'utf8'), `${BIG}\n`, `@cs=${cs}`);
-    assert.equal(textOf(out), `@spill:${id}\n`, `@cs=${cs}`);
+    assert.equal(textOf(out), `${filed(spills[0])}\n`, `@cs=${cs}`);
     assert.deepEqual(typesOf(out),
       ['content_block_start', 'content_block_delta', 'content_block_stop', 'message_stop'],
       `@cs=${cs}: holding the stop must not reorder or drop it`);
@@ -532,8 +538,8 @@ test('proseSpill: a thinking block PRECEDES rather than follows, so the text aft
     assert.equal(tee.fired, 1,
       `@cs=${cs}: a non-text block flushes only a tail already standing, and there was none`);
     assert.equal(fs.readFileSync(keptPath(idOf(spills)), 'utf8'), `${BIG}\n`, `@cs=${cs}`);
-    assert.equal(textOf(out), `@spill:${idOf(spills)}\n`, `@cs=${cs}`);
-    assert.ok(out.toString('utf8').includes(td(1, `@spill:${idOf(spills)}\n`).toString('utf8')),
+    assert.equal(textOf(out), `${filed(spills[0])}\n`, `@cs=${cs}`);
+    assert.ok(out.toString('utf8').includes(td(1, `${filed(spills[0])}\n`).toString('utf8')),
       `@cs=${cs}: the pointer carries the TEXT block's index, not the thinking block's`);
   }
 });
@@ -635,7 +641,7 @@ test('proseSpill: a ping passes the held stop; message_delta stays behind the po
       'content_block_start', 'ping', 'content_block_delta', 'content_block_stop',
       'message_delta', 'message_stop',
     ], `@cs=${cs}: only the ping is let past the hold`);
-    assert.ok(s.indexOf('event: ping') < s.indexOf('@spill:'), `@cs=${cs}`);
+    assert.ok(s.indexOf('event: ping') < s.indexOf('filed at'), `@cs=${cs}`);
   }
 });
 
@@ -655,11 +661,11 @@ test('proseSpill: a fire AT the stop is flushed there, not left behind the hold'
   assert.deepEqual(typesOf(first),
     ['content_block_start', 'content_block_delta', 'content_block_stop'],
     'the stub is forwarded at the stop, ahead of every later frame');
-  assert.equal(textOf(first), `[agent:task add t] @spill:${spills[0].id}\n[agent:end]`);
+  assert.equal(textOf(first), `[agent:task add t] ${filed(spills[0], freshRoot)}\n[agent:end]`);
   assert.equal(tee.fired, 1);
 
   const second = tee.feed(Buffer.concat([start(1, 'tool_use'), stopAt(1)]));
-  assert.ok(!second.toString('utf8').includes('@spill:'), 'no second stub at the next block: nothing spilled there');
+  assert.ok(!second.toString('utf8').includes('filed at'), 'no second stub at the next block: nothing spilled there');
   const rest = Buffer.concat([second, tee.feed(ev('message_stop', { type: 'message_stop' })), tee.close()]);
   assert.deepEqual(typesOf(rest),
     ['content_block_start', 'content_block_stop', 'message_stop']);

@@ -9,7 +9,8 @@ const crypto = require('node:crypto');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
   SPILL_MAX_BYTES, SPILL_VERBS, spillIdOf, spillDirFor, spillPathFor,
-  writeSpill, resolveSpill, pointerOf, pointerText, isSpillVerb, verbKeyOf, validAgent,
+  writeSpill, resolveSpill, pointerOf, pointerMatch, trailingPointerOf, pointerText, spillSize,
+  isSpillVerb, verbKeyOf, validAgent,
 } = require('../intent-spill');
 
 function root() {
@@ -130,7 +131,7 @@ test('spillDirFor confines: a traversal name resolves to no directory at all', (
 
 test('pointerOf: the body is the pointer alone, or ONE line whose tail is the pointer', () => {
   const id = 'a'.repeat(16);
-  assert.equal(pointerOf(pointerText(id)), id);
+  assert.equal(pointerOf(`@spill:${id}`), id);
   assert.equal(pointerOf(` @spill:${id}\n`), id);
   assert.equal(pointerOf(`@spill:${id} plus`), null);
   assert.equal(pointerOf(`@spill:${'a'.repeat(15)}`), null);
@@ -153,6 +154,66 @@ test('pointerOf: a title before the pointer is accepted and contributes nothing 
     'a pointer on a LATER line is prose: the spilled body is one line, never a paragraph');
   assert.equal(pointerOf(`title @spill:${id}\nmore`), null);
   assert.equal(pointerOf(`title @spill:${id}\n`), id, 'a consumer that kept the newline still resolves');
+});
+
+test('spillSize: bytes under 1024 read as B, from 1024 as one-decimal KB', () => {
+  assert.equal(spillSize(858), '858 B');
+  assert.equal(spillSize(1023), '1023 B');
+  assert.equal(spillSize(1024), '1.0 KB');
+  assert.equal(spillSize(5281), '5.2 KB');
+  assert.equal(spillSize(262144), '256.0 KB');
+});
+
+test('pointerText: the untitled stand-in is `<size> filed at <absolute spill path>`', () => {
+  const r = root();
+  const id = 'a'.repeat(16);
+  const p = path.join(r, 'spill', 'clodex', `${id}.md`);
+  assert.ok(path.isAbsolute(p), 'ENTER: the tmp root is absolute, so the pin below is about an absolute path');
+  assert.equal(pointerText(id, { root: r, agent: 'clodex', bytes: 858 }), `858 B filed at ${p}`);
+  assert.equal(pointerText(id, { root: r, agent: 'clodex', bytes: 5281 }), `5.2 KB filed at ${p}`);
+  assert.equal(pointerText(id, { root: r, agent: 'clodex', bytes: 858, prose: true }), `858 B of prose filed at ${p}`);
+});
+
+test('pointerOf reads the id from the filed-at tail, titled or bare, and still from the old token', () => {
+  const r = root();
+  const id = 'b'.repeat(16);
+  const other = 'c'.repeat(16);
+  const p = path.join(r, 'spill', 'clodex', `${id}.md`);
+  const tail = `5.2 KB filed at ${p}`;
+  assert.equal(pointerOf(tail), id);
+  assert.equal(pointerOf(`858 B filed at ${p}`), id);
+  assert.equal(pointerOf(`858 B of prose filed at ${p}`), id);
+  assert.equal(pointerOf(`S-E intent-spill: shout joins — ${tail}`), id, 'a title before the tail');
+  assert.equal(pointerOf(`${'t'.repeat(80)} — ${tail}`), id, '80 chars of title is the cap');
+  assert.equal(pointerOf(`${'t'.repeat(81)} — ${tail}`), null, 'past the cap it is a spec that mentions a path');
+  assert.equal(pointerOf(` ${tail}\n`), id, 'surrounding whitespace, as a consumer that kept the newline sees it');
+  assert.deepStrictEqual(pointerMatch(`title — ${tail}`), { id, pointer: tail },
+    'the pointer text a bounce names is the tail, never the title');
+  assert.deepStrictEqual(pointerMatch(`@spill:${other}`), { id: other, pointer: `@spill:${other}` });
+  assert.equal(pointerOf(`filed at ${p}`), null, 'the tee always writes the size; without it this is prose');
+  assert.equal(pointerOf(`5.2 KB filed at ${p} and more`), null, 'nothing after the path');
+  assert.equal(pointerOf(`5.2 KB filed at ${path.join(r, 'notes', 'clodex', `${id}.md`)}`), null,
+    'a path outside spill/<seat>/ is a file the agent may legitimately name');
+  assert.equal(pointerOf(`5.2 KB filed at ${path.join(r, 'spill', 'clodex', 'JOURNAL.md')}`), null,
+    'a basename that is not 16 hex is not a spill file');
+  assert.equal(pointerOf(`5.2 KB filed at ${path.join(r, 'spill', 'clodex', `${id.toUpperCase()}.md`)}`), null);
+  assert.equal(pointerOf(`first\ntitle — ${tail}`), null, 'a tail on a LATER line is prose');
+  assert.equal(pointerOf(`title — ${tail}\nmore`), null);
+  assert.equal(pointerOf(`5.2 KB filed at ~/.clodex/spill/clodex/${id}.md`), null, 'the tee writes the absolute path, never ~');
+});
+
+test('trailingPointerOf: any text ending in either token, with the token as the pointer', () => {
+  const r = root();
+  const id = 'd'.repeat(16);
+  const p = path.join(r, 'spill', 'clodex', `${id}.md`);
+  assert.deepStrictEqual(trailingPointerOf(`scope=clodex a long memory that ends in @spill:${id}`), { id, pointer: `@spill:${id}` });
+  assert.deepStrictEqual(trailingPointerOf(`scope=clodex a long memory that ends in — 5.2 KB filed at ${p}\n`),
+    { id, pointer: `5.2 KB filed at ${p}` });
+  assert.deepStrictEqual(trailingPointerOf(`858 B of prose filed at ${p}`), { id, pointer: `858 B of prose filed at ${p}` });
+  assert.equal(trailingPointerOf(`see @spill:${id} in the log`), null);
+  assert.equal(trailingPointerOf(`the spec is filed at ${p}`), null, 'no size, no stub: the agent named a file');
+  assert.equal(trailingPointerOf(`5.2 KB filed at ${path.join(r, 'notes', `${id}.md`)}`), null);
+  assert.equal(trailingPointerOf(null), null);
 });
 
 test('the verb set is the dotted key, and only the six listed verbs', () => {

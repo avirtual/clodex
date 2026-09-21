@@ -9,7 +9,11 @@ const zlib = require('zlib');
 
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { WireProxy } = require('../wire/proxy');
-const { mimicKindOf } = require('../intent-spill');
+const { mimicKindOf, spillSize } = require('../intent-spill');
+
+function filed(root, spill) {
+  return `${spillSize(spill.bytes)}${spill.verb === 'prose' ? ' of prose' : ''} filed at ${path.join(root, 'spill', 'tester', `${spill.id}.md`)}`;
+}
 
 const SESSION_ID = '4a59af49-cc52-44b7-8b02-7f4196a4b486';
 const BIG = 'z'.repeat(900);
@@ -181,8 +185,8 @@ test('an armed seat: the client receives the reply with the block replaced by it
     const seen = textOf(res.body);
     assert.equal(events.spill.length, 1);
     const id = events.spill[0].id;
-    assert.equal(seen, `On it.\n[agent:task add hand] @spill:${id}\n[agent:end]\ndone.\n`,
-      'the body is off the wire; the head line, a clickable pointer and the terminator stand in for it while prose survives');
+    assert.equal(seen, `On it.\n[agent:task add hand] ${filed(root, events.spill[0])}\n[agent:end]\ndone.\n`,
+      'the body is off the wire; the head line, a clickable path and the terminator stand in for it while prose survives');
     assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${id}.md`), 'utf8'), BIG);
 
     assert.equal(events.spill[0].agent, 'tester');
@@ -193,7 +197,7 @@ test('an armed seat: the client receives the reply with the block replaced by it
     assert.equal(events['turn.completed'][0].text, `On it.\n[agent:task add hand] ${BIG}\n[agent:end]\ndone.\n`,
       'the intent tee is fed the upstream chunk, not the rewritten one: the dispatch carries the '
       + 'full body and never depends on the transcript placeholder resolving');
-    assert.ok(!events['turn.completed'][0].text.includes('@spill:'), 'and never sees anything the tee authored');
+    assert.ok(!events['turn.completed'][0].text.includes('filed at'), 'and never sees anything the tee authored');
 
     assert.equal(up.seen.requests[0].headers['accept-encoding'], 'identity',
       'the filter needs bytes it can read, so the CLI-sent accept-encoding is overwritten');
@@ -224,7 +228,7 @@ test('an armed run bills exactly what an unarmed one bills', async () => {
   assert.deepEqual(armed.warmth, plain.warmth,
     'warmth rides the same cache-read counters billing does, never text_delta');
   assert.equal(armed.stop, plain.stop);
-  assert.match(armed.client, /^On it\.\n\[agent:task add hand\] @spill:[0-9a-f]{16}\n\[agent:end\]\ndone\.\n$/, 'the armed run really spilled');
+  assert.match(armed.client, /^On it\.\n\[agent:task add hand\] 900 B filed at \/.*\/spill\/tester\/[0-9a-f]{16}\.md\n\[agent:end\]\ndone\.\n$/, 'the armed run really spilled');
   assert.ok(plain.client.includes(BIG), 'the unarmed run really did not');
   assert.equal(plain.raw, SPILL_SSE, 'and the unarmed run is byte-identical to upstream');
 });
@@ -275,7 +279,7 @@ test('the gate flipped on between two requests applies to the second, same regis
     assert.ok(await whenEvent(events, 'stream-end', 2));
     const seen = textOf(second.body);
     assert.equal(events.spill.length, 1);
-    assert.equal(seen, `On it.\n[agent:task add hand] @spill:${events.spill[0].id}\n[agent:end]\ndone.\n`, 'gate on: the body is off the wire without a respawn');
+    assert.equal(seen, `On it.\n[agent:task add hand] ${filed(root, events.spill[0])}\n[agent:end]\ndone.\n`, 'gate on: the body is off the wire without a respawn');
     assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${events.spill[0].id}.md`), 'utf8'), BIG);
   });
 });
@@ -450,8 +454,8 @@ test('an INJECTED turn: a reply with no intent leaves as exactly the bare pointe
     const seen = textOf(res.body);
     assert.equal(events.spill.length, 1);
     const id = events.spill[0].id;
-    assert.equal(seen, `@spill:${id}\n`,
-      'the whole reply is removed; the bare pointer is the block, so it is never empty and no filler is needed');
+    assert.equal(seen, `${filed(root, events.spill[0])}\n`,
+      'the whole reply is removed; the bare stand-in is the block, so it is never empty and no filler is needed');
     assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${id}.md`), 'utf8'), PROSE_TEXT,
       'and the prose is on disk, recoverable — a forgotten task done is never silently emptied');
 
@@ -686,7 +690,7 @@ test("the tee's own stub never trips the mimic detector: it runs on the input si
     const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
     assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
     assert.equal(events.spill.length, 1);
-    const stubText = `[agent:task add hand] @spill:${events.spill[0].id}\n[agent:end]\n`;
+    const stubText = `[agent:task add hand] ${filed(root, events.spill[0])}\n[agent:end]\n`;
     assert.equal(textOf(res.body), stubText, 'ENTER: this run really produced the stub, end to end through the proxy');
     assert.equal(mimicKindOf(stubText.split('\n')[0]), 'pointer', 'ENTER: the stub line IS the shape the detector reports when the model types it');
     assert.equal(events['spill-mimic'].length, 0);
@@ -742,7 +746,7 @@ test('the two halves compose: the stub the tee writes is what cutSpillStubs drop
     assert.equal(events.spill.length, 1);
     const id = events.spill[0].id;
     const recorded = textOf(first.body);
-    assert.equal(recorded, `[agent:dm bob] @spill:${id}\n[agent:end]\n`, 'transcript side: head, pointer, terminator');
+    assert.equal(recorded, `[agent:dm bob] ${filed(root, events.spill[0])}\n[agent:end]\n`, 'transcript side: head, stand-in, terminator');
     assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${id}.md`), 'utf8'), BIG);
 
     const next = makeBody({
@@ -790,7 +794,7 @@ test('system-adjacent: a request whose LAST message is role:system is forwarded 
     const second = await request(proxy.port, '/agent/tester/v1/messages', notAdjacent);
     assert.ok(await whenEvent(events, 'stream-end', 2));
     assert.equal(events.spill.length, 1, 'a system message anywhere but LAST leaves the tee armed');
-    assert.equal(textOf(second.body), `[agent:dm bob] @spill:${events.spill[0].id}\n[agent:end]\n`);
+    assert.equal(textOf(second.body), `[agent:dm bob] ${filed(root, events.spill[0])}\n[agent:end]\n`);
     assert.equal(events['spill-skip'].length, 1);
     assert.equal(up.seen.requests[1].headers['accept-encoding'], 'identity');
   });

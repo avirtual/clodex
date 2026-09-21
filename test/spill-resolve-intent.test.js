@@ -228,6 +228,50 @@ test('t1062: a pointer MENTIONED mid-body is prose — the refusal is on a trail
   assert.deepStrictEqual(h.injected, []);
 });
 
+test('t1065: a non-spill verb ending in the filed-at tail is refused with the verb-naming bounce, the tail as the pointer', async () => {
+  const h = mkH({ shadowIntentKey });
+  const memos = [];
+  h.m._handleMemoryIntent = (s, sub, body) => memos.push({ sub, body });
+  const rows = [];
+  h.m._shadowLog = (row) => rows.push(row);
+  const id = writeSpill(h.root, 'lead', BIG);
+  const tail = `1.2 KB filed at ${spillPathFor(h.root, 'lead', id)}`;
+  const body = `scope=clodex The mid-turn strip's cost is ONE extra read of th… — ${tail}`;
+  await h.m._handleIntent('lead', { type: 'memory', sub: 'remember', body });
+  assert.deepStrictEqual(memos, [], 'a real file behind the tail changes nothing: the verb is not one the tee files, so the agent typed it');
+  assert.deepStrictEqual(h.injected.map((i) => i.text), [
+    `[agent] Not executed: your \`memory remember\` ended in a pointer (${tail}) that you typed yourself — nothing was saved, sent or filed. `
+    + 'A body you did not write does not exist; emit the complete intent with the full text and [agent:end].']);
+  assert.deepStrictEqual(rows.filter((r) => r.type === 'spill-typed').map((r) => [r.verb, r.pointer]), [['memory.remember', tail]]);
+
+  await h.m._handleIntent('lead', { type: 'context', sub: 'clear', body: `858 B of prose filed at ${spillPathFor(h.root, 'lead', id)}` });
+  assert.deepStrictEqual(h.contexts, [], 'the clear did not happen');
+  assert.ok(h.injected[1].text.startsWith('[agent] Not executed: your `context clear` ended in a pointer (858 B of prose filed at '));
+
+  const named = `scope=clodex the spec is filed at ${spillPathFor(h.root, 'lead', id)}`;
+  await h.m._handleIntent('lead', { type: 'memory', sub: 'remember', body: named });
+  assert.deepStrictEqual(memos, [{ sub: 'remember', body: named }], 'a path named without the size the tee writes is saved as written');
+  assert.strictEqual(h.injected.length, 2);
+});
+
+test('t1065: a spill verb whose body is the new stub resolves from the terminal scan and is refused from the wire', async () => {
+  const h = mkH();
+  const id = writeSpill(h.root, 'lead', BIG);
+  const tail = `1.2 KB filed at ${spillPathFor(h.root, 'lead', id)}`;
+  await h.m._handleIntent('lead', { type: 'task', sub: 'add', body: `spec line one — ${tail}` });
+  assert.strictEqual(h.tasks.length, 1);
+  assert.strictEqual(h.tasks[0].body, BIG, 'the file is the body');
+  assert.deepStrictEqual(h.tasks[0].spill, { id, path: spillPathFor(h.root, 'lead', id) });
+  await h.m._handleIntent('lead', { type: 'dm', target: 'bob', body: tail, fromWire: true });
+  assert.deepStrictEqual(h.dms, []);
+  assert.strictEqual(h.injected.length, 1);
+  assert.ok(h.injected[0].text.startsWith('[agent] Not executed: that line was a receipt, filler or pointer'));
+  const gone = `858 B filed at ${spillPathFor(h.root, 'lead', '0123456789abcdef')}`;
+  await h.m._handleIntent('lead', { type: 'shout', body: gone });
+  assert.strictEqual(h.errors.length, 1);
+  assert.match(h.errors[0], /body pointer 858 B filed at \/.*\/0123456789abcdef\.md names no spill file Clodex wrote \(missing\)/);
+});
+
 test('a dm resolves BEFORE routing, so the recipient is injected the full message', async () => {
   const h = mkH({ shouldHoldDm: require('../proxy-util').shouldHoldDm });
   delete h.m._gatedDeliver;
@@ -420,8 +464,9 @@ test('rework r1: the tee\'s stub, replayed by recovery, keys EQUAL to the origin
   const original = `Working.\n[agent:dm bob] ${BIG}\n[agent:end]\nDone.\n`;
   const f = new SpillFilter({ agent: 'lead', root: h.root, verbs: ['dm'] });
   const stub = f.feed(original) + f.close();
-  const id = /@spill:([0-9a-f]{16})/.exec(stub)[1];
-  assert.strictEqual(stub, `Working.\n[agent:dm bob] spec line one @spill:${id}\n[agent:end]\nDone.\n`, 'ENTER: the transcript carries the stub');
+  const id = /\/([0-9a-f]{16})\.md\n/.exec(stub)[1];
+  assert.strictEqual(Buffer.byteLength(BIG, 'utf8'), 1224, 'ENTER: the fixture is the KB branch');
+  assert.strictEqual(stub, `Working.\n[agent:dm bob] spec line one — 1.2 KB filed at ${spillPathFor(h.root, 'lead', id)}\n[agent:end]\nDone.\n`, 'ENTER: the transcript carries the stub');
 
   const wire = h.m._extractIntents(original);
   const replay = h.m._extractIntents(stub, { receiptsFor: 'lead' });

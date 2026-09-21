@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  SPILL_MIN_BYTES, SPILL_MAX_BYTES, HEAD_RE, validAgent, writeSpill: defaultWriteSpill, mimicKindOf,
+  SPILL_MIN_BYTES, SPILL_MAX_BYTES, HEAD_RE, validAgent, writeSpill: defaultWriteSpill, mimicKindOf, pointerText,
 } = require('../intent-spill');
 const { cleanLine } = require('../intent-scanner');
 const { titleLine, ticketTitle } = require('../tickets-store');
@@ -249,8 +249,8 @@ class SpillFilter {
         const words = head.slice(OPEN.length, -1).trim().replace(/\s+/g, ' ');
         this._notify(this.onSpill, { verb, id, bytes, head: words });
         const first = titleLine(bodyText);
-        const title = (first && first !== bodyText.trim()) ? `${ticketTitle(bodyText)} ` : '';
-        return `${head} ${title}@spill:${id}\n`;
+        const title = (first && first !== bodyText.trim()) ? `${ticketTitle(bodyText)} — ` : '';
+        return `${head} ${title}${pointerText(id, { root: this.root, agent: this.agent, bytes })}\n`;
       }
     }
     const held = this.originalHeld();
@@ -268,7 +268,7 @@ class SpillFilter {
     if (!id) return text;
     this._fired += 1;
     this._notify(this.onSpill, { verb: 'prose', id, bytes, head: null });
-    return `@spill:${id}\n`;
+    return `${pointerText(id, { root: this.root, agent: this.agent, bytes, prose: true })}\n`;
   }
 
   endBlock() {

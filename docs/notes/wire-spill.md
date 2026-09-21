@@ -31,10 +31,11 @@ scanner's delimitation.
 
 ## _resolve
 
-A spilled block resolves to `<head> [<title> ]@spill:<id>` with the `[agent:end]`
-line KEPT after it, so the jsonl scanner closes the pointer body at the terminator
-instead of swallowing the prose after it; a spilled tail resolves to a bare
-`@spill:<id>` line. The stub is for the operator (clickable in the terminal) and
+A spilled block resolves to `<head> [<title> — ]<size> filed at <abs path>` with
+the `[agent:end]` line KEPT after it, so the jsonl scanner closes the stub body at
+the terminator instead of swallowing the prose after it; a spilled tail resolves
+to a bare `<size> of prose filed at <abs path>` line (`intent-spill.js`
+`pointerText`). The stub is for the operator (the path links in the terminal) and
 for recovery; the model never sees it: `wire/spill-cut.js` removes every stub from
 every outgoing request. Two stand-ins written into the record while the model
 could still see them — a first-person receipt, then a whitespace-only block padded

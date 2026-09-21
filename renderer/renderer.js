@@ -13,7 +13,7 @@ const { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, f
 const { renderDiffHtml, costStackBlock, bustRow } = require('./lib/render-html');
 const { renderMarkdown } = require('./lib/render-markdown');
 const { placeAboveAnchor } = require('./lib/popover-place');
-const { scanPaths, scanSpillPointers } = require('./lib/path-scan');
+const { scanPaths } = require('./lib/path-scan');
 const { matchGutterRow, findGutterFile } = require('./lib/gutter-scan');
 
 // How far above a gutter row to look for its `Update(file)` header. The search
@@ -1466,7 +1466,7 @@ function createTerminal(name, peer = null) {
       const line = terminal.buffer.active.getLine(y - 1);
       if (!line) return cb(undefined);
       const raw = line.translateToString(true);
-      const hits = scanPaths(raw).concat(scanSpillPointers(raw));
+      const hits = scanPaths(raw);
 
       // A gutter number, linked to the file its tool-call header names. Only on
       // an unwrapped row: a continuation row's leading digits are content.

@@ -5,16 +5,17 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { scanPaths, scanSpillPointers } = require('../renderer/lib/path-scan');
+const { scanPaths } = require('../renderer/lib/path-scan');
 const { matchGutterRow, findGutterFile } = require('../renderer/lib/gutter-scan');
 
 const ROOT = path.join(__dirname, '..');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
 
 const ID = '0123456789abcdef';
+const SPILL = `/reg/spill/hand-one/${ID}.md`;
 
 const FREE = [
-  'terminal', 'scanPaths', 'scanSpillPointers', 'matchGutterRow', 'findGutterFile',
+  'terminal', 'scanPaths', 'matchGutterRow', 'findGutterFile',
   'GUTTER_HEADER_SCAN', 'isWrapped', 'rowText', 'window', 'showToast', 'openFilePeek', 'name',
 ];
 
@@ -28,7 +29,6 @@ function mkProvider(rowStr, resolve) {
   const env = {
     terminal,
     scanPaths,
-    scanSpillPointers,
     matchGutterRow,
     findGutterFile,
     GUTTER_HEADER_SCAN: 400,
@@ -55,65 +55,46 @@ function linksOf(provider) {
   return out;
 }
 
-test('a spill pointer in the row becomes a link over exactly its own cells', () => {
-  const row = `body: @spill:${ID}`;
-  const { provider } = mkProvider(row, { ok: true, path: '/tmp/x.md' });
+test('the spill stub\'s path becomes a link over exactly its own cells, and nothing else on the row links', () => {
+  const row = `[agent:task add t42] S-E intent-spill: shout joins — 5.2 KB filed at ${SPILL}`;
+  const { provider } = mkProvider(row, { ok: true, path: SPILL });
   const links = linksOf(provider);
   assert.ok(links && links.length === 1, 'expected exactly one link');
-  assert.strictEqual(links[0].text, `@spill:${ID}`);
+  assert.strictEqual(links[0].text, SPILL);
   assert.deepStrictEqual(links[0].range, {
-    start: { x: row.indexOf('@spill:') + 1, y: 1 },
+    start: { x: row.indexOf(SPILL) + 1, y: 1 },
     end: { x: row.length, y: 1 },
   });
 });
 
-test('clicking a pointer resolves the POINTER and peeks the path that came back', async () => {
-  const { provider, calls } = mkProvider(`@spill:${ID}`, { ok: true, path: '/reg/spill/hand-one/x.md' });
+test('clicking the path resolves it as a displayed path and peeks what came back', async () => {
+  const { provider, calls } = mkProvider(`[agent:dm wirescope] 858 B filed at ${SPILL}`, { ok: true, path: SPILL });
   await linksOf(provider)[0].activate();
-
-  assert.deepStrictEqual(calls.resolve, [['hand-one', `@spill:${ID}`, null]],
-    'the pane\'s own session name is what confines the lookup main-side');
-  assert.deepStrictEqual(calls.peek, [['hand-one', '/reg/spill/hand-one/x.md', 'file', null]],
-    'the peek must open the resolved path, never a path spelled in the pointer');
+  assert.deepStrictEqual(calls.resolve, [['hand-one', SPILL, null]],
+    'the absolute path is what main is asked about — there is no pointer grammar left to resolve');
+  assert.deepStrictEqual(calls.peek, [['hand-one', SPILL, 'file', null]]);
   assert.deepStrictEqual(calls.toast, []);
 });
 
-test('a pointer with no file behind it toasts the error instead of opening a peek', async () => {
-  const { provider, calls } = mkProvider(`@spill:${ID}`, { ok: false, error: 'spill file not found' });
+test('a path with no file behind it toasts the error instead of opening a peek', async () => {
+  const { provider, calls } = mkProvider(`858 B of prose filed at ${SPILL}`, { ok: false, error: 'File not found' });
   await linksOf(provider)[0].activate();
   assert.deepStrictEqual(calls.peek, [], 'nothing to peek');
-  assert.deepStrictEqual(calls.toast, ['spill file not found']);
+  assert.deepStrictEqual(calls.toast, ['File not found']);
 });
 
-test('paths and pointers on one row both link, so adding the scan drops neither', () => {
-  const { provider } = mkProvider(`see renderer.js:71 and @spill:${ID}`, { ok: true, path: '/x' });
-  assert.deepStrictEqual(linksOf(provider).map((l) => l.text),
-    ['renderer.js:71', `@spill:${ID}`]);
+test('a source path and the stub path on one row both link', () => {
+  const { provider } = mkProvider(`see renderer.js:71 and 858 B filed at ${SPILL}`, { ok: true, path: '/x' });
+  assert.deepStrictEqual(linksOf(provider).map((l) => l.text), ['renderer.js:71', SPILL]);
 });
 
-test('a pointer at the end of a TITLED head line links over the pointer alone', async () => {
-  const row = `[agent:task add t42] S-E intent-spill: shout joins @spill:${ID}`;
-  const { provider, calls } = mkProvider(row, { ok: true, path: '/reg/spill/hand-one/x.md' });
-  const links = linksOf(provider);
-  assert.strictEqual(links.length, 1, 'the title itself is not a link');
-  assert.deepStrictEqual(links[0].range, {
-    start: { x: row.indexOf('@spill:') + 1, y: 1 },
-    end: { x: row.length, y: 1 },
-  });
-
-  await links[0].activate();
-  assert.deepStrictEqual(calls.resolve, [['hand-one', `@spill:${ID}`, null]],
-    'the title rides in the transcript only — main is asked about the pointer, as before the title existed');
-  assert.deepStrictEqual(calls.peek, [['hand-one', '/reg/spill/hand-one/x.md', 'file', null]]);
+test('the old @spill: token no longer links: the dedicated provider is gone with the shape', () => {
+  const { provider } = mkProvider(`[agent:dm bob] @spill:${ID}`, { ok: true, path: '/x' });
+  assert.strictEqual(linksOf(provider), undefined);
+  assert.ok(!rendererSrc.includes('scanSpillPointers'), 'and the renderer does not name the removed scan');
 });
 
-test('a row with neither a path nor a pointer still offers no links', () => {
+test('a row with no path still offers no links', () => {
   const { provider } = mkProvider('just ordinary output', { ok: true, path: '/x' });
   assert.strictEqual(linksOf(provider), undefined);
-});
-
-test('a row whose ONLY hit is a pointer offers a link — the early bail must count it', () => {
-  const { provider } = mkProvider(`@spill:${ID}`, { ok: true, path: '/x' });
-  const links = linksOf(provider);
-  assert.ok(links && links.length === 1);
 });

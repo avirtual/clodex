@@ -867,14 +867,16 @@ accept teardown removes.
 - **intent-spill.js** — the FORMAT of intent-body spill (`proxy-lab/SPILL.md`;
   `proxy-lab/test_spill.py` is the conformance suite): constants, verb set,
   id/agent charsets, the content-addressed writer, the confined resolver, the
-  receipt grammar (`RECEIPT_RE`, `receiptOf`, `resolveReceipt`) and the legacy
-  `@spill:<id>` pointer parser, so the tee, the resolver and the injection half
+  receipt grammar (`RECEIPT_RE`, `receiptOf`, `resolveReceipt`) and the stub
+  parser (`pointerOf`: the `… filed at <path>` line, plus the legacy
+  `@spill:<id>` token), so the tee, the resolver and the injection half
   cannot drift. The listed verbs are task add/respec/reject/done, dm and shout —
   not context compact/clear/reload, whose body the triggering action discards,
-  so nothing is saved by filing it; the transcript keeps the head line with a
-  `[<title> ]@spill:<id>` pointer in place of the body, `[agent:end]` after it,
-  and a bare `@spill:<id>` line for a spilled prose tail — clickable in the
-  terminal, resolvable by recovery. The model never sees it: `wire/spill-cut.js`
+  so nothing is saved by filing it; the transcript keeps the head line with
+  `[<title> — ]<size> filed at <abs path>` in place of the body, `[agent:end]`
+  after it, and a bare `<size> of prose filed at <abs path>` line for a spilled
+  prose tail — the path links in the terminal, and recovery resolves the id
+  from its basename. The model never sees it: `wire/spill-cut.js`
   removes every stub (and the receipt and filler stand-ins earlier versions
   wrote) from every outgoing request. Clodex confirms the filing in the USER
   role: the `spill` wire event enqueues a `[clodex] your <head> (N B) was read in
@@ -1425,13 +1427,10 @@ and are not, which is why the judgement worth testing is pushed down here.
 - **path-scan.js** — find path-like tokens (with an optional `:line`) in a line
   of plain text, as offsets. Answers "what LOOKS like a path here" and nothing
   about existence — resolution is main-side (`file-resolve.js`), because only
-  main can stat. `scanSpillPointers` is the second scan over the same line: a
-  `@spill:<id>` a legacy transcript carries in place of a long intent body
-  (`intent-spill.js`; a current transcript holds no pointer, the path rides the
-  `[clodex] … filed at …` prompt note instead). The terminal's link provider merges both hit lists; the
-  inbox drawer and the files popover scan paths ONLY, because a `@spill:` inside
-  a dm body is the SENDER's pointer and resolves in no reader's seat dir. Which
-  seat a pointer is read against is engine's `resolveFilePath`, never the text.
+  main can stat. A spill stub (`intent-spill.js`) carries the file's absolute
+  path, so it is an ordinary path hit here and in the IPC log; the legacy
+  `@spill:<id>` token has no scan any more (t1065 removed `scanSpillPointers`
+  and the resolver branch behind it).
 - **gutter-scan.js** — recognize the line-number gutter the CLI prints under a
   file-editing tool call, so those numbers become clickable. Offsets only.
 - **drop-paths.js** — the string typed at the prompt when files are dropped on a

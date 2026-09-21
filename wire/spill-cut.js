@@ -1,10 +1,10 @@
 'use strict';
 
 const { HEAD_RE } = require('./spill');
-const { POINTER_RE, RECEIPT_RE, TAIL_RECEIPT_RE, SPILL_FILLER, pointerOf } = require('../intent-spill');
+const { POINTER_RE, FILED_POINTER_RE, RECEIPT_RE, TAIL_RECEIPT_RE, SPILL_FILLER, pointerOf } = require('../intent-spill');
 const { cleanLine } = require('../intent-scanner');
 
-const NEEDLES = ['@spill:', '[Runtime note:', '(I sent', '(I wrote'];
+const NEEDLES = ['@spill:', ' filed at /', '[Runtime note:', '(I sent', '(I wrote'];
 const END_LINE = '[agent:end]';
 
 function hasNeedle(msg) {
@@ -20,6 +20,8 @@ function isStubLine(line) {
   const t = cleanLine(line).trim();
   if (!t) return 0;
   if (t === SPILL_FILLER || POINTER_RE.test(t) || RECEIPT_RE.test(t) || TAIL_RECEIPT_RE.test(t)) return 1;
+  const f = FILED_POINTER_RE.exec(t);
+  if (f && !f[1]) return 1;
   const m = HEAD_RE.exec(t);
   if (m && pointerOf(t.slice(m[0].length).trim()) !== null) return 2;
   return 0;
