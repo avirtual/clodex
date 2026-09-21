@@ -249,11 +249,36 @@ test('peekFile: a cut inside a multibyte sequence trims back to the boundary and
   assert.strictEqual(peekFile(four).content, 'x😀y', 'no trim at EOF');
 });
 
+test('peekFile: an offset inside a multibyte sequence moves FORWARD to the next boundary and the moved offset is echoed', () => {
+  const root = mkTmpRoot('clx-fileview-');
+  const p = writeAt(root, 'e.txt', 'é'.repeat(10));
+  const r = peekFile(p, { offset: 5, length: 5 });
+  assert.deepStrictEqual([r.offset, r.length, r.content, r.truncated], [6, 4, 'éé', true], 'the contract example: offset 5 length 5 → offset 6 length 4');
+  const r2 = peekFile(p, { offset: 19, length: 5 });
+  assert.deepStrictEqual([r2.offset, r2.length, r2.content, r2.truncated], [20, 0, '', false], 'a trailing continuation byte moves to EOF');
+  const mixed = writeAt(root, 'm.txt', 'a日b😀cé日😀z');
+  const bytes = fs.readFileSync(mixed);
+  const parts = [];
+  let at = 0;
+  for (let i = 0; i < 64; i += 1) {
+    const step = peekFile(mixed, { offset: at, length: 5 });
+    assert.ok(step.ok && !step.content.includes('\uFFFD'), `step ${i} clean`);
+    assert.strictEqual(step.offset, at, 'a client resuming from echoed offset + length always lands on a boundary');
+    parts.push(step.content);
+    at = step.offset + step.length;
+    if (!step.truncated) break;
+  }
+  assert.strictEqual(Buffer.concat(parts.map((c) => Buffer.from(c, 'utf8'))).equals(bytes), true, 'the resume loop reassembles the file byte-identically');
+  assert.strictEqual(at, bytes.length);
+});
+
 test('peekFile: binary detection and every error code', () => {
   const root = mkTmpRoot('clx-fileview-');
-  const bin = writeAt(root, 'b.bin', Buffer.from([0x41, 0x00, 0x42]));
+  const bin = writeAt(root, 'b.bin', Buffer.concat([Buffer.from([0x41, 0x00, 0x42]), Buffer.alloc(100, 0x43)]));
   const b = peekFile(bin);
-  assert.deepStrictEqual([b.ok, b.binary, b.content, b.size], [true, true, null, 3]);
+  assert.deepStrictEqual(b, { ok: true, path: bin, size: 103, mtime: fs.statSync(bin).mtimeMs, offset: 0, length: 0, truncated: false, binary: true, content: null });
+  const ranged = peekFile(bin, { offset: 1, length: 4 });
+  assert.deepStrictEqual([ranged.offset, ranged.length, ranged.truncated, ranged.binary, ranged.content, ranged.size], [0, 0, false, true, null, 103], 'a binary reply carries no range whatever was asked');
   const nf = peekFile(path.join(root, 'nope.txt'));
   assert.deepStrictEqual([nf.ok, nf.code], [false, 'not-found']);
   const dir = peekFile(root);
@@ -404,9 +429,11 @@ test('_handleQuery maps code to status; notifyFiled broadcasts filed {name}; hel
       const { status: got, json } = await req(server, 'POST', '/api/sessions/s/query', { kind: 'filePeek', args: { code } });
       assert.strictEqual(got, status, `code ${code} → ${status}`);
       assert.strictEqual(json.ok, false);
+      assert.strictEqual(got === 200, json.ok, 'ok:false never rides a 2xx');
     }
     const ok = await req(server, 'POST', '/api/sessions/s/query', { kind: 'files', args: {} });
     assert.deepStrictEqual([ok.status, ok.json], [200, { ok: true, name: 's', kind: 'files' }]);
+    assert.strictEqual(ok.status === 200, ok.json.ok);
     const frames = await collect(server, () => server.notifyFiled('seat-1'));
     assert.strictEqual(frames, 'event: filed\ndata: {"name":"seat-1"}\n\n');
     const hello = await req(server, 'GET', '/api/peer/hello');
