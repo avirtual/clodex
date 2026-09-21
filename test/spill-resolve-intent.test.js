@@ -483,6 +483,52 @@ test('spill-mimic (item 8): the wire event is answered with a wire-spill-mimic r
   const bounce = src.match(/const SPILL_MIMIC_BOUNCE = '([^']+)';/);
   assert.ok(bounce, 'the advisory is one constant');
   assert.strictEqual(bounce[1],
-    '[agent] you wrote a receipt line yourself — nothing was sent or filed. Clodex writes a receipt only after '
-    + 'it has delivered a body you wrote. If you meant to send something, emit the intent with its full text.');
+    '[agent] Not executed: that line was a receipt or filler, not an intent, and nothing was sent or filed. '
+    + 'Emit the complete intent — head line, full body, [agent:end].');
+  assert.ok(!bounce[1].includes('[Runtime note: action text omitted from retained history.]'),
+    'the bounce never echoes the filler: an echo is one more copyable line in the record');
+});
+
+test('t1052: a copied `[Runtime note: action text omitted from retained history.]` is mimic kind filler, and the spill-mimic arm bounces every kind — no kind filter', () => {
+  const { mimicKindOf } = require('../intent-spill');
+  assert.strictEqual(mimicKindOf('[Runtime note: action text omitted from retained history.]'), 'filler');
+  assert.strictEqual(mimicKindOf('   [Runtime note: action text omitted from retained history.]'), 'filler');
+  assert.strictEqual(mimicKindOf('[Runtime note: action text omitted from retained history.] — the dm went out'), null, 'only a lone filler line is the copied shape');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
+  const arm = src.match(/wire\.on\('spill-mimic', \(ev\) => \{[\s\S]{0,700}?\n\s*\}\);/);
+  assert.ok(arm);
+  assert.ok(!/ev\.kind\s*[!=]=/.test(arm[0]),
+    'the bounce is not gated on kind: a filler copied from the record costs one bounce and fabricates nothing');
+});
+
+test('t1052: the wire spill event enqueues a Clodex-voiced ack in the USER role, exact texts, "filed" never "delivered"', () => {
+  const { spillAckLine } = require('../session-manager');
+  const { enqueueNotice, parseNotices } = require('../notice-queue');
+  const root = mkTmpRoot('clodex-spill-');
+  const intentPath = spillPathFor(root, 'lead', '0123456789abcdef');
+  const prosePath = spillPathFor(root, 'lead', 'fedcba9876543210');
+
+  const dm = spillAckLine({ verb: 'dm', head: 'dm nobody', bytes: 901, id: '0123456789abcdef' }, intentPath);
+  assert.strictEqual(dm, `[clodex] your dm nobody (901 B) was read in full and filed at ${intentPath}.`);
+  const add = spillAckLine({ verb: 'task.add', head: 'task add hand start', bytes: 6664 }, intentPath);
+  assert.strictEqual(add, `[clodex] your task add hand start (6664 B) was read in full and filed at ${intentPath}.`);
+  const prose = spillAckLine({ verb: 'prose', head: null, bytes: 1200, id: 'fedcba9876543210' }, prosePath);
+  assert.strictEqual(prose,
+    `[clodex] the 1200 B of prose after your last intent reached the operator's log and were filed at ${prosePath}.`);
+  for (const line of [dm, add, prose]) {
+    assert.ok(!/deliver/.test(line), 'delivery failures have their own bounces; the ack says filed');
+    assert.ok(!/\(I sent|@spill:|\[agent:/.test(line), 'the ack carries no copyable emission shape');
+  }
+
+  assert.strictEqual(enqueueNotice(root, 'lead', dm), true);
+  assert.strictEqual(enqueueNotice(root, 'lead', prose), true);
+  assert.deepStrictEqual(parseNotices(root, 'lead').map((n) => n.text), [dm, prose],
+    'the queue carries both texts byte-for-byte, so the UserPromptSubmit drain hands the seat exactly these lines');
+
+  const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
+  const arm = src.match(/wire\.on\('spill', \(ev\) => \{[\s\S]{0,900}?\n\s*\}\);/);
+  assert.ok(arm, 'the spill event has a consumer');
+  assert.match(arm[0], /enqueueNotice\(REGISTRY_DIR, ev\.agent, spillAckLine\(ev, spillPathFor\(REGISTRY_DIR, ev\.agent, ev\.id\)\)\)/,
+    'the ack goes through notice-queue.js — the USER role, where nothing is imitated — never through _injectText into the pane');
+  assert.ok(!/_injectText/.test(arm[0]));
 });
