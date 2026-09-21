@@ -34,12 +34,13 @@ function stubOf() {
   const spills = [];
   const f = new SpillFilter({ agent: 'tester', root, verbs: ['dm'], onSpill: (i) => spills.push(i) });
   const wire = `[agent:dm hand] first line of the body\n${BIG}\n[agent:end]\n`;
-  f.feed(wire);
-  f.close();
+  const record = f.feed(wire) + f.close();
   assert.equal(spills.length, 1, 'the synthetic intent spilled');
   const { id } = spills[0];
   assert.ok(fs.existsSync(path.join(root, 'spill', 'tester', `${id}.md`)));
-  stubCache = { id, stub: `[agent:dm hand] first line of the body @spill:${id}\n[agent:end]\n`, bare: `@spill:${id}\n` };
+  assert.equal(record, `[agent:dm hand] first line of the body @spill:${id}\n[agent:end]\n`,
+    'the stub under test is the one the tee really writes, not a synthesis');
+  stubCache = { id, stub: record, bare: `@spill:${id}\n` };
   return stubCache;
 }
 
@@ -192,6 +193,38 @@ test('T7 cache_control on the removed block migrates to the last surviving block
   assert.ok(gone.messages.every((m) => m.role !== 'assistant'), 'dropped with its message');
 });
 
+test('T7 cache_control migration skips trailing thinking blocks: the marker lands on the last non-thinking block, else is dropped', () => {
+  const { stub } = stubOf();
+  const obj = fixtureRequest();
+  const i = assistantIndex(obj);
+  const tool = { ...obj.messages[i].content[1] };
+  delete tool.cache_control;
+  obj.messages[i].content = [
+    tool,
+    { type: 'text', text: stub, cache_control: { type: 'ephemeral' } },
+    { type: 'thinking', thinking: 'trailing', signature: 'sig' },
+    { type: 'redacted_thinking', data: 'opaque' },
+  ];
+  assert.equal(cutSpillStubs(obj).cut, true, 'ENTER');
+  const c = obj.messages[i].content;
+  assert.equal(c.length, 3);
+  assert.deepStrictEqual(c[0].cache_control, { type: 'ephemeral' }, 'walked back past both thinking shapes to the tool_use');
+  assert.equal(c[1].cache_control, undefined, 'a thinking block never takes a marker');
+  assert.equal(c[2].cache_control, undefined);
+
+  const only = fixtureRequest();
+  const k = assistantIndex(only);
+  only.messages[k].content = [
+    { type: 'thinking', thinking: 'plan', signature: 'sig' },
+    { type: 'text', text: 'prose\n' },
+    { type: 'text', text: stub, cache_control: { type: 'ephemeral' } },
+    { type: 'thinking', thinking: 'after', signature: 'sig2' },
+  ];
+  assert.equal(cutSpillStubs(only).cut, true);
+  assert.deepStrictEqual(only.messages[k].content.map((b) => [b.type, b.cache_control || null]),
+    [['thinking', null], ['text', { type: 'ephemeral' }], ['thinking', null]]);
+});
+
 test('T8 drop rules: a thinking+stub message goes whole; user/system/tool_result content is never touched', () => {
   const { stub } = stubOf();
   const obj = fixtureRequest();
@@ -202,7 +235,7 @@ test('T8 drop rules: a thinking+stub message goes whole; user/system/tool_result
   const r = cutSpillStubs(obj);
   assert.equal(r.cut, true, 'ENTER');
   assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 1, messages: 1, skipped: 0 });
-  assert.ok(!JSON.stringify(obj).includes('thinking'), 'thinking left with its message');
+  assert.ok(obj.messages.every((m) => m.role !== 'assistant'), 'thinking left with its message');
   assert.deepStrictEqual(obj.messages.map((m) => JSON.stringify(m)), users);
 
   const kept = fixtureRequest();

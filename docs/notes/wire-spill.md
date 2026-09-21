@@ -31,27 +31,19 @@ scanner's delimitation.
 
 ## _resolve
 
-A spilled block resolves to the EMPTY string — head, body and `[agent:end]`
-gone. Two placeholders preceded this and both were imitated: a `@spill:<id>`
-pointer (19 fabrications in 12 h), then a first-person receipt (6 in 15 long
-bodies, one on a fresh context with a single prior receipt): anything the tee
-authors in the ASSISTANT role with a copyable shape gets copied. The confirmation
-rides `onSpill` (`head` = head words, `null` for the tail) into the notice queue,
-the USER role. `wire/proxy.js` feeds the intent tee the ORIGINAL chunk, so dispatch
-never depends on the record. The filter never feeds itself, so a
-`RECEIPT_RE`/`TAIL_RECEIPT_RE`/`SPILL_FILLER` line in its INPUT is model-authored:
+A spilled block resolves to `<head> [<title> ]@spill:<id>` with the `[agent:end]`
+line KEPT after it, so the jsonl scanner closes the pointer body at the terminator
+instead of swallowing the prose after it; a spilled tail resolves to a bare
+`@spill:<id>` line. The stub is for the operator (clickable in the terminal) and
+for recovery; the model never sees it: `wire/spill-cut.js` removes every stub from
+every outgoing request. Two stand-ins written into the record while the model
+could still see them — a first-person receipt, then a whitespace-only block padded
+by a filler — were each imitated; the request-side cut is what makes the pointer
+safe to keep. The confirmation rides `onSpill` (`head` = head words, `null` for
+the tail) into the notice queue, the USER role. `wire/proxy.js` feeds the intent
+tee the ORIGINAL chunk, so dispatch never depends on the record. The filter never
+feeds itself, so a receipt, filler or pointer line in its INPUT is model-authored:
 `onMimic` reports it, bytes untouched, judging only lines it is NOT holding.
-
-## _stopBlock
-
-Anthropic rejects, on the NEXT request, an assistant `text` block whose text is
-whitespace-only, and a turn that is one long dispatch is the common shape. At a
-text block's stop the tee emits one `SPILL_FILLER` delta on the block's index
-before the stop, only if the filter fired during the block AND all it forwarded
-is whitespace. The filler is a third-person runtime note asserting nothing;
-`(sent)` was a success claim of the shape the strip removes. Gating on a fire
-leaves the text→text boundary alone: the first block's bytes live on in the
-filter tail (see `_panic`).
 
 ## passthru
 
@@ -72,6 +64,12 @@ would buffer without limit — plus the `proseSpill` tail and `SpillTee.buf` at 
 SSE frame level (a 200 `text/event-stream` that never sends `\n\n`).
 
 ## SpillTee
+
+Not built when the request's LAST message is `role:"system"` (`spill-skip`
+`system-adjacent`): the API rejects `system → user`, so the request editor keeps a
+stub-only assistant message uncut behind a system message, and a stub written on
+that turn would reach the model on every later request. One turn's body stays in
+context instead.
 
 An unchanged delta is forwarded as its ORIGINAL bytes, never re-serialised:
 Anthropic's SSE pads events with trailing spaces, so a re-encode changes 100% of

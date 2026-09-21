@@ -870,25 +870,29 @@ accept teardown removes.
   receipt grammar (`RECEIPT_RE`, `receiptOf`, `resolveReceipt`) and the legacy
   `@spill:<id>` pointer parser, so the tee, the resolver and the injection half
   cannot drift. The listed verbs are task add/respec/reject/done, dm, shout and
-  context compact/clear/reload; the whole block — head line, body and its
-  closing `[agent:end]` — is removed from the transcript, so nothing the tee
-  authored with a copyable shape is left in the agent's own prior output (a
-  `@spill:<id>` pointer and then a first-person receipt each preceded this, and
-  each was imitated). Clodex confirms the filing in the USER role: the `spill`
-  wire event enqueues a `[clodex] your <head> (N B) was read in full and filed
-  at <path>.` note (`notice-queue.js`, drained into the next prompt). When the
-  strip would leave a text block whitespace-only, the tee appends one
-  third-person filler line (`SPILL_FILLER`) so the next request stays valid. The
-  intent tee reads the UNSPILLED upstream bytes, so the wire path dispatches the
-  full body and never a pointer. A non-wire scan (`_scanJsonlText`, sentinel
-  recovery) still expands a receipt line that an older transcript holds back
+  context compact/clear/reload; the transcript keeps the head line with a
+  `[<title> ]@spill:<id>` pointer in place of the body, `[agent:end]` after it,
+  and a bare `@spill:<id>` line for a spilled prose tail — clickable in the
+  terminal, resolvable by recovery. The model never sees it: `wire/spill-cut.js`
+  removes every stub (and the receipt and filler stand-ins earlier versions
+  wrote) from every outgoing request. Clodex confirms the filing in the USER
+  role: the `spill` wire event enqueues a `[clodex] your <head> (N B) was read in
+  full and filed at <path>.` note (`notice-queue.js`, drained into the next
+  prompt). The intent tee reads the UNSPILLED upstream bytes, so the wire path
+  dispatches the full body and never a pointer; a pointer body that does arrive
+  on the wire path was typed by the model and is bounced (`fromWire`), never
+  resolved. A non-wire scan (`_scanJsonlText`, sentinel recovery) resolves
+  pointers and still expands a receipt line that an older transcript holds back
   into the intent from the named file, after confining the path to the sender's
   own spill dir — a copied or typed receipt fails confinement or the file check
   and bounces with the same note as a typed pointer. The filter also watches the
-  RAW stream it is fed for a receipt- or filler-shaped line (`mimicKindOf`)
-  outside any intent body it holds or passes through: upstream of its own
-  rewrite, such a line is model-authored by construction, so it raises
-  `spill-mimic` and the seat is told nothing was executed.
+  RAW stream it is fed for a receipt-, filler- or pointer-shaped line
+  (`mimicKindOf`) outside any intent body it holds or passes through: upstream of
+  its own rewrite, such a line is model-authored by construction, so it raises
+  `spill-mimic` and the seat is told nothing was executed. The tee is not armed
+  for a request whose last message is `role:"system"` (`spill-skip`
+  `system-adjacent`): the editor cannot drop a stub there without producing the
+  `system → user` shape the API rejects.
   `id = sha256(body)[:16]`, path `<root>/spill/<agent>/<id>.md`,
   0700 dir / 0600 file, an existing file left alone. Pure leaf (`fs`, `path`,
   `crypto`, plus `path-confine` and `fs-util`). Every failure returns null or an

@@ -1,7 +1,5 @@
 # wire/spill-cut notes
 
-## cutSpillStubs
-
 Line-level, no whitespace normalisation: across 272 captured response/request pairs
 (team-avh wirescope logs, Sept 2026) the CLI re-sent every response text block byte-exact
 as one block — 0 merges, 0 splits, 0 whitespace diffs — so uncut bytes are forwarded as is.

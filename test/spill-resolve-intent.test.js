@@ -483,8 +483,9 @@ test('spill-mimic (item 8): the wire event is answered with a wire-spill-mimic r
   const bounce = src.match(/const SPILL_MIMIC_BOUNCE = '([^']+)';/);
   assert.ok(bounce, 'the advisory is one constant');
   assert.strictEqual(bounce[1],
-    '[agent] Not executed: that line was a receipt or filler, not an intent, and nothing was sent or filed. '
+    '[agent] Not executed: that line was a receipt, filler or pointer, not an intent, and nothing was sent or filed. '
     + 'Emit the complete intent — head line, full body, [agent:end].');
+  assert.ok(!bounce[1].includes('@spill:'), 'the bounce never spells the pointer shape either');
   assert.ok(!bounce[1].includes('[Runtime note: action text omitted from retained history.]'),
     'the bounce never echoes the filler: an echo is one more copyable line in the record');
 });
@@ -531,4 +532,88 @@ test('t1052: the wire spill event enqueues a Clodex-voiced ack in the USER role,
   assert.match(arm[0], /enqueueNotice\(REGISTRY_DIR, ev\.agent, spillAckLine\(ev, spillPathFor\(REGISTRY_DIR, ev\.agent, ev\.id\)\)\)/,
     'the ack goes through notice-queue.js — the USER role, where nothing is imitated — never through _injectText into the pane');
   assert.ok(!/_injectText/.test(arm[0]));
+});
+
+async function wireRig(h) {
+  h.m._publishAgentText = () => {};
+  h.m._maybeSpeak = () => {};
+  h.m._maybeDeliverDigest = () => {};
+  h.m._maybeRearmHold = () => {};
+  h.m._maybeFireCompactLatch = () => {};
+  h.m._fireScratchClose = () => {};
+  const wire = await h.m._ensureWire();
+  h.m.sessions.set('lead', { name: 'lead', agentType: 'claude', workspaceId: 'ws1', intentSource: 'wire', sessionId: 'sid-1' });
+  const settle = async () => { for (let i = 0; i < 4; i += 1) await new Promise((r) => setImmediate(r)); };
+  const turn = async (text, reqId) => {
+    wire.emit('turn.completed', { agent: 'lead', text, reqId, sessionId: 'sid-1', stop: { is_turn: true } });
+    await settle();
+  };
+  const close = async () => { await wire.close(); if (h.m._holdKeeper) h.m._holdKeeper.stop(); };
+  return { wire, turn, settle, close };
+}
+
+const MIMIC_BOUNCE = '[agent] Not executed: that line was a receipt, filler or pointer, not an intent, and nothing was sent or filed. '
+  + 'Emit the complete intent — head line, full body, [agent:end].';
+
+test('T11: a pointer body on the WIRE path is bounced as typed and never resolved, even when it names a real file; the jsonl path still resolves it', async () => {
+  const h = mkH({ getUserDataPath: () => h.root, shadowIntentKey });
+  const id = writeSpill(h.root, 'lead', BIG);
+  assert.ok(id, 'ENTER: a real file exists, so a resolver that ran WOULD succeed');
+  const rig = await wireRig(h);
+  try {
+    await rig.turn(`[agent:task add t] @spill:${id}\n[agent:end]\n`, 'r1');
+    assert.deepStrictEqual(h.tasks, [], 'the model never receives a real stub, so a pointer it emits is typed from memory: dropped, not resolved');
+    assert.deepStrictEqual(h.injected.map((i) => i.text), [MIMIC_BOUNCE], 'one advisory, the same one the mimic detector uses');
+    assert.deepStrictEqual(h.injected[0].opts, { parkable: true });
+    assert.ok(h.broadcasts.some((b) => b.type === 'intent' && /task\.add dropped: its body was a pointer/.test(b.body)), 'surfaced in the IPC log');
+    assert.deepStrictEqual(h.notes, [], 'no operator note: a typed pointer is a model slip, not an incident');
+    assert.deepStrictEqual(h.errors, []);
+
+    await h.m._handleIntent('lead', { type: 'task', sub: 'add', body: `@spill:${id}` });
+    assert.strictEqual(h.tasks.length, 1, 'the jsonl / recovery path carries no fromWire flag and still resolves');
+    assert.strictEqual(h.tasks[0].body, BIG, 'a sentinel replay of the transcript tail recovers the real body from Clodex\'s own stub');
+    assert.strictEqual(h.injected.length, 1, 'and bounces nothing');
+  } finally {
+    await rig.close();
+  }
+});
+
+test('T11: a titled pointer and a dm pointer bounce on the wire path too; a pointer INSIDE a longer body is prose and dispatches', async () => {
+  const h = mkH({ getUserDataPath: () => h.root, shadowIntentKey });
+  const id = writeSpill(h.root, 'lead', BIG);
+  const rig = await wireRig(h);
+  try {
+    await rig.turn(`[agent:task add t] spec line one @spill:${id}\n[agent:end]\n`, 'r1');
+    await rig.turn(`[agent:dm bob] @spill:${id}\n[agent:end]\n`, 'r2');
+    assert.deepStrictEqual(h.tasks, []);
+    assert.deepStrictEqual(h.dms, []);
+    assert.deepStrictEqual(h.injected.map((i) => i.text), [MIMIC_BOUNCE, MIMIC_BOUNCE], 'one bounce per turn');
+    await rig.turn(`[agent:dm bob] see @spill:${id} for the body\n[agent:end]\n`, 'r3');
+    assert.strictEqual(h.dms.length, 1, 'not a pointer body, so the dm goes out as written');
+    assert.strictEqual(h.dms[0].body, `see @spill:${id} for the body`);
+  } finally {
+    await rig.close();
+  }
+});
+
+test('T12: the intent-shaped pointer is bounced ONCE per turn — the mimic detector\'s bounce and the intent path\'s bounce collapse on the reqId', async () => {
+  const h = mkH({ getUserDataPath: () => h.root, shadowIntentKey });
+  const id = writeSpill(h.root, 'lead', BIG);
+  const rig = await wireRig(h);
+  try {
+    rig.wire.emit('spill-mimic', { agent: 'lead', reqId: 'r1', kind: 'pointer' });
+    await rig.settle();
+    assert.deepStrictEqual(h.injected.map((i) => i.text), [MIMIC_BOUNCE], 'ENTER: the detector bounced the head line during the stream');
+    await rig.turn(`[agent:task add t] @spill:${id}\n[agent:end]\n`, 'r1');
+    assert.deepStrictEqual(h.tasks, [], 'still dropped');
+    assert.strictEqual(h.injected.length, 1, 'the intent path saw the same reqId already bounced and stayed silent');
+
+    await rig.turn(`[agent:task add t] @spill:${id}\n[agent:end]\n`, 'r2');
+    assert.strictEqual(h.injected.length, 2, 'a later turn with no detector bounce (the tee unarmed, the pref off) is bounced by the intent path');
+    rig.wire.emit('spill-mimic', { agent: 'lead', reqId: 'r3', kind: 'pointer' });
+    await rig.settle();
+    assert.strictEqual(h.injected.length, 3, 'and the detector is not silenced by the intent path\'s earlier bounce');
+  } finally {
+    await rig.close();
+  }
 });

@@ -1,11 +1,11 @@
 'use strict';
 
 const {
-  SPILL_MIN_BYTES, SPILL_MAX_BYTES, SPILL_FILLER, validAgent, writeSpill: defaultWriteSpill, mimicKindOf,
+  SPILL_MIN_BYTES, SPILL_MAX_BYTES, HEAD_RE, validAgent, writeSpill: defaultWriteSpill, mimicKindOf,
 } = require('../intent-spill');
 const { cleanLine } = require('../intent-scanner');
+const { titleLine, ticketTitle } = require('../tickets-store');
 
-const HEAD_RE = /^\[agent:([a-z]+)(?:\s+([a-z-]+))?\b([^\]]*)\]/;
 const TERMINATOR = '[agent:end]';
 const OPEN = '[agent:';
 const MIMIC_LINE_CAP = 1024;
@@ -162,10 +162,7 @@ class SpillFilter {
 
   _line(line) {
     if (this.holding) {
-      if (line.trim() === TERMINATOR) {
-        const r = this._resolve();
-        return r.spilled ? r.text : r.text + line + '\n';
-      }
+      if (line.trim() === TERMINATOR) return this._resolve() + line + '\n';
       if (cleanLine(line).startsWith(OPEN)) {
         const held = this.originalHeld();
         this._clear();
@@ -251,13 +248,15 @@ class SpillFilter {
         this._fired += 1;
         const words = head.slice(OPEN.length, -1).trim().replace(/\s+/g, ' ');
         this._notify(this.onSpill, { verb, id, bytes, head: words });
-        return { spilled: true, text: '' };
+        const first = titleLine(bodyText);
+        const title = (first && first !== bodyText.trim()) ? `${ticketTitle(bodyText)} ` : '';
+        return `${head} ${title}@spill:${id}\n`;
       }
     }
     const held = this.originalHeld();
     this._clear();
     this.verb = null;
-    return { spilled: false, text: held };
+    return held;
   }
 
   _resolveTail() {
@@ -269,7 +268,7 @@ class SpillFilter {
     if (!id) return text;
     this._fired += 1;
     this._notify(this.onSpill, { verb: 'prose', id, bytes, head: null });
-    return '';
+    return `@spill:${id}\n`;
   }
 
   endBlock() {
@@ -278,8 +277,7 @@ class SpillFilter {
     if (this.holding && this.pending.trim() === TERMINATOR && this.pending.indexOf('\n') === -1) {
       const last = this.pending;
       this.pending = '';
-      const r = this._resolve();
-      out += r.spilled ? r.text : r.text + last;
+      out += this._resolve() + last;
     }
     if (this.holding) {
       out += this.originalHeld();
@@ -302,8 +300,7 @@ class SpillFilter {
     if (this.holding && this.pending.trim() === TERMINATOR && this.pending.indexOf('\n') === -1) {
       const last = this.pending;
       this.pending = '';
-      const r = this._resolve();
-      out += r.spilled ? r.text : r.text + last;
+      out += this._resolve() + last;
     }
     if (this.holding) {
       out += this.originalHeld();
@@ -357,8 +354,6 @@ class SpillTee {
     this.heldSrc = '';
     this.heldOut = '';
     this.heldStopAt = -1;
-    this.blockOut = '';
-    this.blockFired = 0;
   }
 
   get fired() { return this.filter.fired; }
@@ -374,19 +369,11 @@ class SpillTee {
     } else if (this.heldOut) {
       out.push(deltaEvent(this.index, this.heldOut));
     }
-    this.blockOut += this.heldOut;
-    if (this.heldStopAt !== -1) this._stopBlock(out);
     for (let i = cut; i < this.heldRaw.length; i += 1) out.push(this.heldRaw[i]);
     this.heldRaw = [];
     this.heldSrc = '';
     this.heldOut = '';
     this.heldStopAt = -1;
-  }
-
-  _stopBlock(out) {
-    if (this.filter.fired > this.blockFired && !this.blockOut.trim()) out.push(deltaEvent(this.index, SPILL_FILLER));
-    this.blockOut = '';
-    this.blockFired = this.filter.fired;
   }
 
   _panic(out, e) {
@@ -476,7 +463,6 @@ class SpillTee {
         if (d && d.type === 'content_block_stop') {
           this.heldOut += this.filter.close();
           this._flushHeld(out);
-          this._stopBlock(out);
         }
         out.push(raw);
       }
@@ -500,4 +486,4 @@ class SpillTee {
   }
 }
 
-module.exports = { SpillFilter, SpillTee, HEAD_RE, SPILL_FILLER };
+module.exports = { SpillFilter, SpillTee, HEAD_RE };
