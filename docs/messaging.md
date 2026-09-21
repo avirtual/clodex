@@ -63,7 +63,9 @@ wedge. **Non-wire sessions (codex, jsonl-fallback Claude) keep the immediate
 inject** — no wire terminal-stop receipt exists to fire a latch off, so a mid-turn
 compact there can still be dropped by the CLI (documented degradation).
 
-**Clear continuation.** `[agent:context clear] <body>` stores the body on
+**Clear continuation.** (Plain-`/clear` arm; a claude seat with a pending
+prompt delta cold-respawns instead — see docs/sessions.md `_promptDeltaPending`.)
+`[agent:context clear] <body>` stores the body on
 `session._postClearContinuation` and arms `_armPostClearValve` (same 5-min
 timeout as compact's); the `/clear` itself injects immediately as before, and a
 BODYLESS clear stores nothing and behaves exactly as it always did. The
