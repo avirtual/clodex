@@ -33,6 +33,9 @@ the app side in ClodexKit. Both sides build against this file.
   stream — this one — and polls the transcript; it never holds a per-session
   attach stream, so anything emitted only on `/attach` does not reach it.
 
+`~/.clodex` above is this host's default; every path in this document is really
+`<REGISTRY_DIR>/…` — see the confinement section.
+
 ## Changes to the host
 
 ### 1. `files` gains `filed`
@@ -49,7 +52,8 @@ POST /api/sessions/:name/query   {kind: "files"}
   row, so this is the invariant the whole feature rests on.
 - `kind` — `"intent"` (wire-tee spill), `"handoff"` (context handoff),
   `"message"` (inbound message spill, incl. rejected/denied bodies).
-- `head` — one line, ≤ 120 chars: the intent head + title for `intent`
+- `head` — one line, ≤ 120 UTF-8 BYTES, cut back to a character boundary
+  (never a replacement character): the intent head + title for `intent`
   (`[agent:task add hand] Regenerate the append prompt…`), `handoff` for
   handoffs, `From: <sender>` for messages.
 - `bytes` — body size on disk. `ts` — ms epoch of the filing.
@@ -90,9 +94,16 @@ POST /api/sessions/:name/query   {kind: "filePeek", args: {path, offset?, length
 
 A `filePeek` (and `fileDiff`) arriving over the phone-access server may read only:
 - the seat's `cwd` tree (resolved; symlinks inside must not escape),
-- `~/.clodex/spill/<seat>/`,
-- `~/.clodex/messages/<seat>/`,
-- the project's task-artifact dir `~/.clodex/projects/<leaf>-<hash>/tasks/`.
+- `<REGISTRY_DIR>/spill/<seat>/`,
+- `<REGISTRY_DIR>/messages/<seat>/`,
+- the project's task-artifact dir `<REGISTRY_DIR>/projects/<leaf>-<hash>/tasks/`.
+
+`<REGISTRY_DIR>` is the RUNNING host's registry root (`engine.js` builds
+`MSG_DIR` from it), never a literal `~/.clodex` and never `os.homedir()` +
+`.clodex`: a second Clodex on the same Mac (clodex-ios runs one at
+`~/.clodex-ios`) would otherwise answer `outside` for every one of its own
+filings. The same root drives the directory listing that seeds `filed` on
+resume (section 1).
 
 Anything else is `outside`. The check runs on the resolved real path, so a
 symlink planted inside cwd pointing at `~/.ssh` is refused. Desktop peer
@@ -108,7 +119,11 @@ re-scans the visible transcript for the new literal.
 
 ### Capability flag
 
-`/api/peer/hello` `caps` gains the string `"filed"`. A host without it serves the
+`/api/peer/hello` `caps` gains the string `"filed"`. `query` is a subresource
+route only (`/api/sessions/:name/query`), so a host advertising `filed` serves
+subresource routes by construction; no host will advertise `filed` while serving
+legacy top-level routes, and the client may treat the flag as the only
+discriminator. A host without it serves the
 old `files` reply (no `filed` array) and an unconfined, rangeless `filePeek`;
 the client must treat a missing `filed` as an empty list, not an error.
 
