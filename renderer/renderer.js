@@ -4296,7 +4296,7 @@ const { openSelectionPopover, refreshSelectionBadge: doRefreshSelectionBadge } =
   getActiveSession: () => activeSession,
 });
 refreshSelectionBadge = doRefreshSelectionBadge;
-const { appendIpcEntry } = createIpcLog({ host: drawerHost });
+const { appendIpcEntry } = createIpcLog({ host: drawerHost, openFilePeek, showToast });
 // Registered after the log, so the log stays the boot-active tab (drawer-host
 // activates the first registration); the strip's ORDER is the host's frozen id
 // list, not this. The three handles are called from event handlers only, so

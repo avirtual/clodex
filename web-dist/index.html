@@ -5862,6 +5862,11 @@ input.env-locked {
   color: var(--text-dim);
   flex-shrink: 0;
 }
+.ipc-body .ipc-path {
+  color: inherit;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
 .ipc-body {
   color: var(--text);
   white-space: pre-wrap;
@@ -27062,7 +27067,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
     "renderer/ipc-log.js"(exports, module) {
       var { esc } = require_format();
       var { MAX_EXPORT_LINES, ipcRowParts, formatIpcLine, buildExportText, exportFilename } = require_ipc_export();
-      function createIpcLog({ host }) {
+      function createIpcLog({ host, openFilePeek, showToast }) {
         let ipcLogBody = null;
         let ipcEmpty = null;
         let notify = () => {
@@ -27095,6 +27100,20 @@ ${m[2].replace(/^\r?\n/, "")}`;
       </div>`;
           ipcLogBody = pane.querySelector("#ipc-log-body");
           ipcEmpty = pane.querySelector("#ipc-empty");
+          ipcLogBody.addEventListener("click", async (e) => {
+            const a = e.target.closest("a.ipc-path");
+            if (!a) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const filePath = a.dataset.path;
+            const session = a.dataset.session || null;
+            const res = await window.api.fileResolve(session, filePath, null).catch((err) => ({ ok: false, error: String(err) }));
+            if (!res || !res.ok) {
+              showToast(res && res.error || `Can't find "${filePath}"`, { kind: "warn", duration: 4e3 });
+              return;
+            }
+            openFilePeek(session, res.path, "file");
+          });
           const exportBtn = document.createElement("button");
           exportBtn.type = "button";
           exportBtn.id = "ipc-export";
@@ -27118,6 +27137,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
           actions.appendChild(exportBtn);
           actions.appendChild(clearBtn);
         }
+        function bodyHtml(msg) {
+          const text = msg.body;
+          const p = msg.path;
+          const at = typeof p === "string" && p && typeof text === "string" ? text.indexOf(p) : -1;
+          if (at < 0) return esc(text);
+          const link = `<a class="ipc-path" href="#" data-path="${esc(p)}" data-session="${esc(msg.to || "")}">${esc(p)}</a>`;
+          return `${esc(text.slice(0, at))}${link}${esc(text.slice(at + p.length))}`;
+        }
         function renderEntry(msg) {
           if (!ipcLogBody) return;
           if (ipcMessageCount === 0 && ipcEmpty.parentNode === ipcLogBody) ipcEmpty.remove();
@@ -27129,7 +27156,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           const fromBadge = `<span class="ipc-from">${esc(name)}</span>`;
           const arrow = to === null ? "" : `<span class="ipc-arrow">\u2192</span>`;
           const targetBadge = to === null ? session ? `<span class="ipc-session">${esc(session)}</span>` : "" : `<span class="ipc-to">${esc(to)}</span>`;
-          const body = `<span class="ipc-body">${esc(msg.body)}</span>`;
+          const body = `<span class="ipc-body">${bodyHtml(msg)}</span>`;
           entry.innerHTML = `<span class="ipc-time">${time}</span>${fromBadge}${arrow}${targetBadge}${body}`;
           ipcLogBody.appendChild(entry);
           const nearBottom = ipcLogBody.scrollHeight - ipcLogBody.scrollTop - ipcLogBody.clientHeight < 40;
@@ -43766,7 +43793,7 @@ Click for live activity`;
         getActiveSession: () => activeSession
       });
       refreshSelectionBadge = doRefreshSelectionBadge;
-      var { appendIpcEntry } = createIpcLog({ host: drawerHost });
+      var { appendIpcEntry } = createIpcLog({ host: drawerHost, openFilePeek, showToast });
       var {
         openActivityFeed,
         refreshChips: refreshActivityChips,
