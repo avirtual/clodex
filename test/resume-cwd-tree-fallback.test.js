@@ -195,11 +195,11 @@ const RESUME_SITES = [
   },
   {
     file: 'session-manager.js',
-    anchor: '_coldRespawn(name, entry, session, handoff, why) {',
+    anchor: '_coldRespawn(name, entry, session, handoff, why, opts = {}) {',
     call: 'this.create',
     cwdArg: 'cwd',
     bind: 'const cwd = this.resumeCwdOf(entry);',
-    label: '_coldRespawn — the cold respawn a seat asks for itself ([agent:context reload], and a clear with a pending prompt delta)',
+    label: '_coldRespawn — the respawn a seat asks for itself ([agent:context reload], a clear with a pending prompt delta, and the resume a compact takes for one)',
   },
   {
     file: 'session-manager.js',
