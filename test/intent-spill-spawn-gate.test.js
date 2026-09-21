@@ -11,7 +11,7 @@ const { buildIpcPrompt } = require('../ipc-prompt');
 const { intentEnabled } = require('../intent-catalog');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-const GRAMMAR = 'A long intent body (dm, shout, task add/respec/reject/done, context compact/clear/reload — over 800 bytes) is delivered in full and then filed under';
+const GRAMMAR = 'A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under';
 
 function mkManager({ intentSpill = 'off', backend = null } = {}) {
   const root = mkTmpRoot('clx-spillgate-');
@@ -115,8 +115,7 @@ test('a Claude seat spawned with the setting OFF still registers spill on the wi
     assert.ok(spill, 'the registration is no longer gated on the setting — the proxy gates per request');
     assert.equal(spill.root, h.root);
     assert.deepEqual([...spill.verbs].sort(),
-      ['context.clear', 'context.compact', 'context.reload', 'dm', 'shout',
-        'task.add', 'task.done', 'task.reject', 'task.respec']);
+      ['dm', 'shout', 'task.add', 'task.done', 'task.reject', 'task.respec']);
   } finally { h.stop('seat'); }
 });
 

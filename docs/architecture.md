@@ -869,8 +869,9 @@ accept teardown removes.
   id/agent charsets, the content-addressed writer, the confined resolver, the
   receipt grammar (`RECEIPT_RE`, `receiptOf`, `resolveReceipt`) and the legacy
   `@spill:<id>` pointer parser, so the tee, the resolver and the injection half
-  cannot drift. The listed verbs are task add/respec/reject/done, dm, shout and
-  context compact/clear/reload; the transcript keeps the head line with a
+  cannot drift. The listed verbs are task add/respec/reject/done, dm and shout —
+  not context compact/clear/reload, whose body the triggering action discards,
+  so nothing is saved by filing it; the transcript keeps the head line with a
   `[<title> ]@spill:<id>` pointer in place of the body, `[agent:end]` after it,
   and a bare `@spill:<id>` line for a spilled prose tail — clickable in the
   terminal, resolvable by recovery. The model never sees it: `wire/spill-cut.js`

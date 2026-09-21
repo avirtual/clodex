@@ -155,13 +155,11 @@ test('pointerOf: a title before the pointer is accepted and contributes nothing 
   assert.equal(pointerOf(`title @spill:${id}\n`), id, 'a consumer that kept the newline still resolves');
 });
 
-test('the verb set is the dotted key, and only the nine listed verbs', () => {
+test('the verb set is the dotted key, and only the six listed verbs', () => {
   assert.equal(verbKeyOf({ type: 'task', sub: 'add' }), 'task.add');
   assert.equal(verbKeyOf({ type: 'shout' }), 'shout');
   for (const v of [{ type: 'task', sub: 'add' }, { type: 'task', sub: 'respec' },
     { type: 'task', sub: 'reject' }, { type: 'task', sub: 'done' },
-    { type: 'context', sub: 'compact' },
-    { type: 'context', sub: 'clear' }, { type: 'context', sub: 'reload' },
     { type: 'shout' }, { type: 'dm', target: 'bob' }]) {
     assert.equal(isSpillVerb(v), true, JSON.stringify(v));
   }
@@ -170,8 +168,12 @@ test('the verb set is the dotted key, and only the nine listed verbs', () => {
   assert.equal(isSpillVerb({ type: 'dm', target: 'bob', sub: 'whatever' }), false,
     'KEY_FIELDS gives a dm a target, never a sub, so the plain `dm` key is what the '
     + 'receiving side sees');
-  assert.deepEqual([...SPILL_VERBS].sort(), ['context.clear', 'context.compact', 'context.reload',
-    'dm', 'shout', 'task.add', 'task.done', 'task.reject', 'task.respec']);
+  for (const sub of ['compact', 'clear', 'reload']) {
+    assert.equal(isSpillVerb({ type: 'context', sub }), false,
+      `context ${sub} is out: the action it triggers discards the body, so no later request carries it`);
+  }
+  assert.deepStrictEqual([...SPILL_VERBS].sort(),
+    ['dm', 'shout', 'task.add', 'task.done', 'task.reject', 'task.respec']);
   assert.equal(validAgent('t42.fix'), true);
   assert.equal(validAgent('..'), false);
 });

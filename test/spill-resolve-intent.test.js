@@ -127,7 +127,7 @@ test('shout is a spill verb: the operator inbox gets the FILE body, never the po
     'nothing bounced back at the seat: the body was there, it just arrived as a pointer');
 });
 
-test('every spill verb resolves: task add/respec/reject/done, dm, shout and context compact/clear/reload', async () => {
+test('every spill verb resolves: task add/respec/reject/done, dm, shout; a context handoff is not one', async () => {
   for (const [type, sub] of [['task', 'add'], ['task', 'respec'], ['task', 'reject'], ['task', 'done']]) {
     const h = mkH();
     const id = writeSpill(h.root, 'lead', BIG);
@@ -139,7 +139,8 @@ test('every spill verb resolves: task add/respec/reject/done, dm, shout and cont
     const h = mkH();
     const id = writeSpill(h.root, 'lead', BIG);
     await h.m._handleIntent('lead', { type: 'context', sub, body: `@spill:${id}` });
-    assert.deepStrictEqual(h.contexts, [{ sub, body: BIG }], `context ${sub} resolved`);
+    assert.deepStrictEqual(h.contexts, [{ sub, body: `@spill:${id}` }],
+      `context ${sub} is not a spill verb: the tee never files its body, so a pointer there is the text it is`);
   }
   const h = mkH();
   const id = writeSpill(h.root, 'lead', BIG);
@@ -250,15 +251,13 @@ test('a DENIED spill verb with a broken pointer is told its BODY is gone, which 
   const id = writeSpill(h.root, 'lead', BIG);
   fs.rmSync(spillPathFor(h.root, 'lead', id));
 
-  await h.m._handleIntent('lead', { type: 'context', sub: 'compact', body: `@spill:${id}` });
+  await h.m._handleIntent('lead', { type: 'shout', body: `@spill:${id}` });
 
-  assert.deepStrictEqual(h.contexts, [], 'the denied verb still did not run');
+  assert.deepStrictEqual(h.inbox, [], 'the denied verb still did not run');
   assert.strictEqual(h.injected.length, 1, 'exactly one bounce, not one of each');
   assert.match(h.injected[0].text, /your body arrived as a pointer that Clodex never wrote/, h.injected[0].text);
   assert.ok(!/is disabled for this session/.test(h.injected[0].text),
-    'the disabled bounce is what the seat gets BELOW the gate, and it hides the lost body. '
-    + "(_deniedIntentPayload's byte-size sentence cannot be the subject here: `task` is not a gateable "
-    + "type and `context`'s denied disposition is deliberately 'none'.)");
+    'the disabled bounce is what the seat gets BELOW the gate, and it hides the lost body');
   assert.strictEqual(h.errors.length, 1);
   assert.strictEqual(h.notes.length, 1);
 });
@@ -267,11 +266,11 @@ test('a denied spill verb with a GOOD pointer resolves first, then is refused by
   const h = mkH({ entry: { name: 'lead', intents: ['dm'] } });
   const id = writeSpill(h.root, 'lead', BIG);
 
-  await h.m._handleIntent('lead', { type: 'context', sub: 'compact', body: `@spill:${id}` });
+  await h.m._handleIntent('lead', { type: 'shout', body: `@spill:${id}` });
 
-  assert.deepStrictEqual(h.contexts, [], 'the gate still refuses it');
+  assert.deepStrictEqual(h.inbox, [], 'the gate still refuses it');
   assert.strictEqual(h.injected.length, 1);
-  assert.match(h.injected[0].text, /the context intent is disabled for this session/);
+  assert.match(h.injected[0].text, /the shout intent is disabled for this session/);
   assert.deepStrictEqual(h.errors, [], 'and a readable file is not reported as a failure');
 });
 

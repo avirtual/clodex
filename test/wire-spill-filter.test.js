@@ -9,11 +9,11 @@ const crypto = require('node:crypto');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { SpillFilter } = require('../wire/spill');
 const { parseIntent } = require('../intent-scanner');
-const { receiptOf, mimicKindOf, pointerOf, SPILL_FILLER } = require("../intent-spill");
+const { receiptOf, mimicKindOf, pointerOf, SPILL_FILLER, SPILL_VERBS, SPILL_MIN_BYTES } = require('../intent-spill');
 
 const BIG = 'z'.repeat(900);
 const SMALL = 'y'.repeat(50);
-const VERBS = ['task.add', 'task.respec', 'context.compact', 'shout', 'dm', 'task.done'];
+const VERBS = ['task.add', 'task.respec', 'task.reject', 'shout', 'dm', 'task.done'];
 const SIZES = [1, 3, 7, 17, 64, 1e6];
 
 let ROOT = null;
@@ -28,7 +28,7 @@ function run(text, opts = {}) {
   const f = new SpillFilter({
     agent: opts.agent === undefined ? 'wirescope' : opts.agent,
     root: opts.root || root(),
-    verbs: VERBS,
+    verbs: opts.verbs || VERBS,
     minBytes: opts.minBytes,
     maxBytes: opts.maxBytes,
     onSpill: (i) => { spills.push(i); if (opts.onSpill) opts.onSpill(i); },
@@ -84,6 +84,23 @@ test('row 4: the spill fires, identically, at every chunk size', () => {
     'head line byte-for-byte, modifiers included; the bare pointer stands in for the body; the terminator is KEPT after it');
   assert.deepStrictEqual(rs.map((r) => r.spills[0].head), SIZES.map(() => 'task add t42 start'),
     'the head words ride the onSpill payload instead, modifiers included');
+});
+
+test('a context compact/clear/reload handoff passes the PRODUCTION verb set untouched: no file, no stub, no spill event', () => {
+  const dir = path.join(root(), 'spill', 'wirescope');
+  const before = fs.existsSync(dir) ? fs.readdirSync(dir).length : 0;
+  for (const head of ['context compact', 'context clear', 'context reload']) {
+    const T = `before\n[agent:${head}] pick up at t1061 part 2\n${BIG}\n[agent:end]\nafter\n`;
+    assert.ok(Buffer.byteLength(T, 'utf8') > SPILL_MIN_BYTES, `ENTER: ${head} body is over the floor, or a short body would pass this for free`);
+    const control = run(T.replace(`[agent:${head}]`, '[agent:task add t1]'), { verbs: [...SPILL_VERBS] });
+    assert.equal(control.spills.length, 1, `ENTER: the same body under task add spills through the same rig`);
+    for (const cs of SIZES) {
+      const r = run(T, { cs, verbs: [...SPILL_VERBS] });
+      assert.equal(r.out, T, `${head} @cs=${cs}: byte-identical to the model's output`);
+      assert.deepStrictEqual(r.spills, [], `${head} @cs=${cs}: no spill event`);
+    }
+  }
+  assert.equal(fs.readdirSync(dir).length, before + 1, 'exactly the control wrote a file; the three handoffs wrote none');
 });
 
 test('a terminator that ends the stream with no newline after it still spills', () => {
@@ -151,7 +168,7 @@ test('the stub re-parses as the SAME intent with a pointer body the resolver rec
     ['task add t9', `a title with a ] bracket in it\n${BIG}`],
     ['task add t9', `a title with a " quote and a ] bracket in it\n${BIG}`],
     ['shout', `DEPLOY blocked: the cert expired\n${BIG}`],
-    ['context compact', `pick up at t1015 part 2\n${BIG}`],
+    ['task reject t7', `pick up at t1015 part 2\n${BIG}`],
     ['dm bob urgent', `first line of the note\n${BIG}`],
   ];
   for (const [headArgs, body] of cases) {
