@@ -338,6 +338,17 @@ telemetry. Claude side-channels ride `fs.watch` on the registry dir:
 `{name}-ctx` (statusline-written context numbers → `session-ctx` + ctxwarn
 reminder file) and `{name}-attn.jsonl` (Notification hook → attention state).
 
+A `[agent:context clear]` on a claude seat whose prompt delta is pending
+(`_promptDeltaPending`: the freshly assembled realIpc differs from the running
+prompt `ipc-prompt-cache` records, or a `delta.md` is staged) does NOT type
+`/clear`: it takes reload's `_coldRespawn` (kill, `_preserveAcrossRestart`,
+`create()` without `--resume`, `reattach`, the body as the reload handoff — none
+when the clear is body-less), so the fresh process boots on a regenerated
+prompt and `bakePrompt(reuse=false)` re-baselines the cache. The typed `/clear`
+edge (`refreshPrompt(name,'clear')` + the post-clear continuation) never fires
+on that arm. Shadow row `prompt-regen-at-clear` {agent, bytes}. Nothing
+pending, or a codex seat: the plain `/clear` path, unchanged.
+
 The handoff body a compact, clear or reload resumes from goes through
 `_handoffText`. A Claude body over `SPILL_MIN_BYTES` is written to a spill file
 and the seat is handed a one-line `@`-pointer to it; that file now ends with a
@@ -759,7 +770,8 @@ removes the tree, an operator can remove one by hand, team-retire with archive o
 a dirty or uninspectable tree keeps a record whose pointer outlives the checkout,
 and so does the merge gate's not-merged arm followed by a later accept. Every
 respawn-from-record path that can meet one (retrySpawn, restore-on-launch,
-`restartSession`, `applySessionArgs`, the `[agent:context reload]` intent)
+`restartSession`, `applySessionArgs`, the `[agent:context reload]` intent and
+the `[agent:context clear]` that takes its `_coldRespawn` arm)
 resolves its cwd through the ONE helper
 `SessionManager.resumeCwdOf(entry)`: the `cwd` when it is on disk, else
 `worktree.main` when THAT is on disk — logging one line and REWRITING the record

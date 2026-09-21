@@ -6466,6 +6466,103 @@ function createSessionManager(deps) {
       codex: { compact: '/compact', clear: '/clear' },
     };
 
+    _promptDeltaPending(name, out = {}) {
+      const session = this.sessions.get(name);
+      if (!session || session._dead || session.agentType !== 'claude' || !session.promptRecipe) return false;
+      const entry = getPersistence().get(name);
+      if (!entry) return false;
+      try {
+        const { teamBlock, resolvedTeam } = this._teamBlockFor(name, entry.cwd, session.agentType, entry.systemPromptFile || null);
+        const { realIpc } = this._realIpcFor(session.promptRecipe, teamBlock, resolvedTeam);
+        out.bytes = Buffer.byteLength(realIpc, 'utf8');
+        if (readCache(REGISTRY_DIR, name, 'delta') != null) return true;
+        const baked = readCache(REGISTRY_DIR, name, 'session');
+        if (baked == null) return false;
+        const accountDir = session.accountDir || (entry.env && entry.env.CLAUDE_CONFIG_DIR);
+        const snapshot = this._snapshotBlockFor(name, entry.cwd, accountDir, entry.sessionId);
+        const running = (typeof snapshot === 'string' && snapshot && baked !== '') ? snapshot : baked;
+        return running !== realIpc;
+      } catch (e) {
+        this._shadowLog({ type: 'prompt-refresh-error', agent: name, error: e.message });
+        return false;
+      }
+    }
+
+    _coldRespawn(name, entry, session, handoff, why) {
+      if (session._reloadInFlight) {
+        this._broadcast('ipc-message', {
+          type: 'context', from: name, to: name, body: `context ${why} → dropped (already in flight)`,
+        });
+        log.warn('intent', `${why} ${name} dropped — already in flight`);
+        return false;
+      }
+      session._reloadInFlight = true;
+      // Defer off the JsonlWatcher scan callback that triggered us: reload kills
+      // the very watcher mid-emit, and tearing it down from inside its own
+      // callback risks a closed-fd reentrancy crash (same defer discipline as
+      // _injectText's deferred Enter). setImmediate lets the scan unwind first.
+      const waitExit = async (nm, timeoutMs = 8000) => {
+        const start = Date.now();
+        while (this.sessions.has(nm)) {
+          if (Date.now() - start > timeoutMs) return false;
+          await new Promise(r => setTimeout(r, 50));
+        }
+        return true;
+      };
+      setImmediate(async () => {
+        try {
+          if (this.sessions.has(name)) {
+            await this.kill(name);
+            if (!await waitExit(name)) throw new Error('old process did not exit in time');
+          }
+          // Same field set as engine.js's restartSession/applySessionArgs — a
+          // reload is a kill()+create() like theirs, and `ephemeral` is what
+          // tells `task accept` whether the loop minted this seat. Dropped
+          // here, a reloaded ticket seat reads as the operator's standing seat
+          // at accept: no teardown, a leaked worktree, and a reply claiming it
+          // is not a one-shot ticket seat.
+          this._preserveAcrossRestart(name, entry, ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt', 'reviewerTemplate']);
+          const cwd = this.resumeCwdOf(entry);
+          await this.create(
+            name, entry.type, cwd, entry.extraArgs || [], null, entry.workspaceId,
+            entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
+            entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
+            entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
+            Array.isArray(entry.execCommands) ? entry.execCommands : [],
+            Array.isArray(entry.intents) ? entry.intents : null,
+            // Session env, same expression as the other two kill()-based
+            // respawns (engine.js restartSession, session-restore.js). Omitting
+            // it defaults sessionEnv to null and the reloaded seat spawns with
+            // NO session env at all — silently, since create() then re-persists
+            // the entry without it, so every later --resume is wrong too.
+            (entry.env && typeof entry.env === 'object') ? entry.env : null,
+            false,           // mint — a reload respawns an existing record
+            entry.noWire === true,
+            Array.isArray(entry.plugins) ? entry.plugins : null,
+            Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
+            typeof entry.fixFor === 'string' ? entry.fixFor : null,
+          );
+          const lvl = stripLevelOf(entry);
+          if (lvl >= 1) getPersistence().setStripLevel(name, lvl);
+          if (entry.label) getPersistence().setLabel(name, entry.label);
+          this._sendToSession(name, 'session:context-action', {
+            action: 'reattach', name, type: entry.type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
+          });
+          const fresh = this.sessions.get(name);
+          if (fresh && session._scratchVoid) fresh._scratchVoid = session._scratchVoid;
+          if (fresh && handoff) this._injectReloadHandoff(fresh, handoff);
+        } catch (err) {
+          console.error(`[agent:context ${why}] ${name} failed:`, err.message);
+          // Never let a failed respawn eat the entry — but not its `worktree` if
+          // another live seat took the checkout while this reload was in flight.
+          // Re-upserting the whole pre-kill snapshot is how a failure path puts
+          // a second record on one tree; see _stripClaimedTree.
+          getPersistence().upsert(this._stripClaimedTree(entry));
+        }
+      });
+      return true;
+    }
+
     _handleContextIntent(session, sub, body = '') {
       if (sub === 'reload') {
         const name = session.name;
@@ -6486,83 +6583,13 @@ function createSessionManager(deps) {
             + 'this session is untouched.', { parkable: true });
           return;
         }
-        if (session._reloadInFlight) {
-          this._broadcast('ipc-message', {
-            type: 'context', from: name, to: name, body: 'context reload → dropped (already in flight)',
-          });
-          log.warn('intent', `reload ${name} dropped — already in flight`);
-          return;
-        }
-        session._reloadInFlight = true;
+        if (!this._coldRespawn(name, entry, session, handoff, 'reload')) return;
         this._voidScratchMark(session,
           'the conversation was reloaded after the mark — every mark is gone and nothing can be cut. '
           + 'Your summary is in your own turn above; carry on from it.', { notify: false });
         log.info('intent', `reload ${name} → cold respawn`);
         this._broadcast('ipc-message', {
           type: 'context', from: name, to: name, body: 'context reload → fresh restart',
-        });
-        // Defer off the JsonlWatcher scan callback that triggered us: reload kills
-        // the very watcher mid-emit, and tearing it down from inside its own
-        // callback risks a closed-fd reentrancy crash (same defer discipline as
-        // _injectText's deferred Enter). setImmediate lets the scan unwind first.
-        const waitExit = async (nm, timeoutMs = 8000) => {
-          const start = Date.now();
-          while (this.sessions.has(nm)) {
-            if (Date.now() - start > timeoutMs) return false;
-            await new Promise(r => setTimeout(r, 50));
-          }
-          return true;
-        };
-        setImmediate(async () => {
-          try {
-            if (this.sessions.has(name)) {
-              await this.kill(name);
-              if (!await waitExit(name)) throw new Error('old process did not exit in time');
-            }
-            // Same field set as engine.js's restartSession/applySessionArgs — a
-            // reload is a kill()+create() like theirs, and `ephemeral` is what
-            // tells `task accept` whether the loop minted this seat. Dropped
-            // here, a reloaded ticket seat reads as the operator's standing seat
-            // at accept: no teardown, a leaked worktree, and a reply claiming it
-            // is not a one-shot ticket seat.
-            this._preserveAcrossRestart(name, entry, ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt', 'reviewerTemplate']);
-            const cwd = this.resumeCwdOf(entry);
-            await this.create(
-              name, entry.type, cwd, entry.extraArgs || [], null, entry.workspaceId,
-              entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
-              entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
-              entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
-              Array.isArray(entry.execCommands) ? entry.execCommands : [],
-              Array.isArray(entry.intents) ? entry.intents : null,
-              // Session env, same expression as the other two kill()-based
-              // respawns (engine.js restartSession, session-restore.js). Omitting
-              // it defaults sessionEnv to null and the reloaded seat spawns with
-              // NO session env at all — silently, since create() then re-persists
-              // the entry without it, so every later --resume is wrong too.
-              (entry.env && typeof entry.env === 'object') ? entry.env : null,
-              false,           // mint — a reload respawns an existing record
-              entry.noWire === true,
-              Array.isArray(entry.plugins) ? entry.plugins : null,
-              Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
-              typeof entry.fixFor === 'string' ? entry.fixFor : null,
-            );
-            const lvl = stripLevelOf(entry);
-            if (lvl >= 1) getPersistence().setStripLevel(name, lvl);
-            if (entry.label) getPersistence().setLabel(name, entry.label);
-            this._sendToSession(name, 'session:context-action', {
-              action: 'reattach', name, type: entry.type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
-            });
-            const fresh = this.sessions.get(name);
-            if (fresh && session._scratchVoid) fresh._scratchVoid = session._scratchVoid;
-            if (fresh) this._injectReloadHandoff(fresh, handoff);
-          } catch (err) {
-            console.error(`[agent:context reload] ${name} failed:`, err.message);
-            // Never let a failed respawn eat the entry — but not its `worktree` if
-            // another live seat took the checkout while this reload was in flight.
-            // Re-upserting the whole pre-kill snapshot is how a failure path puts
-            // a second record on one tree; see _stripClaimedTree.
-            getPersistence().upsert(this._stripClaimedTree(entry));
-          }
         });
         return;
       }
@@ -6603,6 +6630,21 @@ function createSessionManager(deps) {
           body: 'context clear → dropped (already in flight)',
         });
         log.warn('intent', `clear ${session.name} dropped — already in flight`);
+        return;
+      }
+      const regen = {};
+      if (sub === 'clear' && this._promptDeltaPending(session.name, regen)) {
+        const name = session.name;
+        const entry = getPersistence().get(name);
+        if (!this._coldRespawn(name, entry, session, (body || '').trim(), 'clear')) return;
+        this._voidScratchMark(session,
+          'the conversation was cleared after the mark — every mark is gone and nothing can be cut. '
+          + 'Your summary is in your own turn above; carry on from it.', { notify: false });
+        log.info('intent', `clear ${name} → cold respawn (prompt regenerated, ${regen.bytes} bytes)`);
+        this._broadcast('ipc-message', {
+          type: 'context', from: name, to: name, body: 'context clear → cold respawn (prompt regenerated)',
+        });
+        this._shadowLog({ type: 'prompt-regen-at-clear', agent: name, bytes: regen.bytes });
         return;
       }
       // Non-compact context command (clear): inject immediately — no guard, no

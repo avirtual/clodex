@@ -190,6 +190,7 @@ clodex-rcost-ud-
 clodex-readme-
 clodex-refresh-
 clodex-reg-
+clodex-regen-
 clodex-release-die-
 clodex-release-log-
 clodex-remind-pending-

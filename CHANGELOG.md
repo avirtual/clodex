@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 - `[agent:context compact|clear|reload]` handoff bodies are no longer spilled by the wire tee: the compact or clear discards them anyway, so the file, the transcript stub and the request-side cut bought nothing. The handoff itself still reaches the resumed agent as `Continue from your handoff: @<path>`, unchanged.
+- `[agent:context clear]` on a seat whose Clodex instructions changed since it booted now restarts the CLI on a fresh prompt instead of typing `/clear` and staging the change as a reminder: a clear busts the cache prefix either way (the `/clear` block moves the CLAUDE.md message), so the regenerated prompt costs cents and the seat stops carrying the diff. A seat with nothing pending still gets a plain `/clear`.
 - An agent that types a `@spill:<id>` pointer as the body of ANY intent — a memory save, a context handoff, a ticket accept — is now told that action was NOT performed and asked for the full text, instead of the pointer being stored or acted on verbatim. Before, only the verbs whose bodies Clodex spills checked for this, and a memory unit saved as a dangling pointer was delivered to every later session as if it were the fact.
 
 - An agent whose Clodex instructions changed while it was running is told the full change again after a compact instead of never: the frozen prompt is now baselined on what the CLI is actually running (its own transcript snapshot), and a compact no longer marks the seat as up to date.
