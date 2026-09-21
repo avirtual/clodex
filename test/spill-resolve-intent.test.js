@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { mk } = require('./lib/session-fixtures');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { writeSpill, spillPathFor } = require('../intent-spill');
+const { writeSpill, spillPathFor, pointerOf } = require('../intent-spill');
 const { shadowIntentKey, parseIntent, looksLikeIntent } = require('../intent-scanner');
 const { IntentDeduper } = require('../wire-intents');
 const { SpillFilter } = require('../wire/spill');
@@ -127,7 +127,7 @@ test('shout is a spill verb: the operator inbox gets the FILE body, never the po
     'nothing bounced back at the seat: the body was there, it just arrived as a pointer');
 });
 
-test('every spill verb resolves: task add/respec/reject/done, dm, shout; a context handoff is not one', async () => {
+test('every spill verb resolves: task add/respec/reject/done, dm, shout; a context handoff is not one, so a pointer there is refused as typed', async () => {
   for (const [type, sub] of [['task', 'add'], ['task', 'respec'], ['task', 'reject'], ['task', 'done']]) {
     const h = mkH();
     const id = writeSpill(h.root, 'lead', BIG);
@@ -139,8 +139,10 @@ test('every spill verb resolves: task add/respec/reject/done, dm, shout; a conte
     const h = mkH();
     const id = writeSpill(h.root, 'lead', BIG);
     await h.m._handleIntent('lead', { type: 'context', sub, body: `@spill:${id}` });
-    assert.deepStrictEqual(h.contexts, [{ sub, body: `@spill:${id}` }],
-      `context ${sub} is not a spill verb: the tee never files its body, so a pointer there is the text it is`);
+    assert.deepStrictEqual(h.contexts, [],
+      `context ${sub} is not a spill verb: the tee never files its body, so a pointer there can only have been typed`);
+    assert.strictEqual(h.injected.length, 1);
+    assert.ok(h.injected[0].text.startsWith(`[agent] Not executed: your \`context ${sub}\` ended in a pointer (@spill:${id})`));
   }
   const h = mkH();
   const id = writeSpill(h.root, 'lead', BIG);
@@ -153,23 +155,77 @@ test('every spill verb resolves: task add/respec/reject/done, dm, shout; a conte
   assert.deepStrictEqual(d.dms, [{ to: 'bob', from: 'lead', body: BIG }], 'dm resolved');
 });
 
-test('memory remember is not a spill verb, so a pointer in one is the text it is', async () => {
+test('memory remember is not a spill verb, so a pointer in one is never resolved — even one naming a real file is refused as typed', async () => {
   const h = mkH();
   const memos = [];
   h.m._handleMemoryIntent = (s, sub, body) => memos.push({ sub, body });
   const id = writeSpill(h.root, 'lead', BIG);
   await h.m._handleIntent('lead', { type: 'memory', sub: 'remember', body: `@spill:${id}` });
-  assert.strictEqual(memos[0].body, `@spill:${id}`,
-    'a memo the seat cannot see is a memo it did not make');
+  assert.deepStrictEqual(memos, [], 'a memo the seat cannot see is a memo it did not make, and a pointer is not a memo');
+  assert.strictEqual(h.injected.length, 1);
+  assert.ok(h.injected[0].text.startsWith('[agent] Not executed: your `memory remember` ended in a pointer'));
 });
 
-test('a non-spill verb is never inspected, which is what makes a cross-seat read inexpressible', async () => {
+test('a non-spill verb never resolves, which is what makes a cross-seat read inexpressible; the shape alone is refused', async () => {
   const h = mkH();
   const id = writeSpill(h.root, 'lead', BIG);
   await h.m._handleIntent('lead', { type: 'remind', spec: 'in 5m', body: `@spill:${id}` });
-  assert.deepStrictEqual(h.reminds, [{ spec: 'in 5m', body: `@spill:${id}` }],
-    "a peer's pointer pasted into an unheld verb is used as the text it is; the receiver copying it "
-    + "into its OWN intent would resolve against the RECEIVER's directory and miss");
+  assert.deepStrictEqual(h.reminds, [],
+    "a peer's pointer pasted into an unheld verb is not read from disk at all — the receiver copying it "
+    + "into its OWN intent would resolve against the RECEIVER's directory — and the tee never files this verb, so it was typed");
+  assert.strictEqual(h.injected.length, 1);
+  assert.ok(h.injected[0].text.startsWith('[agent] Not executed: your `remind` ended in a pointer'));
+});
+
+const TYPED = (label, id) => `[agent] Not executed: your \`${label}\` ended in a pointer (@spill:${id}) that you typed yourself — nothing was saved, sent or filed. `
+  + 'A body you did not write does not exist; emit the complete intent with the full text and [agent:end].';
+
+test('t1062: memory remember ending in a typed pointer is NOT saved, and the bounce names the verb and what did not happen', async () => {
+  const h = mkH({ shadowIntentKey });
+  const memos = [];
+  h.m._handleMemoryIntent = (s, sub, body) => memos.push({ sub, body });
+  const rows = [];
+  h.m._shadowLog = (row) => rows.push(row);
+  const body = 'scope=clodex The mid-turn strip\'s cost is ONE extra read of th… @spill:e1b9f4d5c3a27b08';
+  await h.m._handleIntent('lead', { type: 'memory', sub: 'remember', body });
+  assert.deepStrictEqual(memos, [], 'a dangling pointer is not a fact; the store is never written');
+  assert.deepStrictEqual(h.injected.map((i) => i.text), [TYPED('memory remember', 'e1b9f4d5c3a27b08')]);
+  assert.deepStrictEqual(h.injected[0].opts, { parkable: true });
+  assert.deepStrictEqual(rows.filter((r) => r.type === 'spill-typed').map((r) => [r.verb, r.pointer]),
+    [['memory.remember', '@spill:e1b9f4d5c3a27b08']]);
+  assert.ok(h.broadcasts.some((b) => b.type === 'intent' && /memory\.remember dropped: its body was a pointer/.test(b.body)));
+  assert.deepStrictEqual(h.notes, []);
+  assert.deepStrictEqual(h.errors, []);
+});
+
+test('t1062: a fabricated title longer than 79 chars — past what pointerOf reads as titled — is still refused on a non-spill verb', async () => {
+  const h = mkH();
+  const memos = [];
+  h.m._handleMemoryIntent = (s, sub, body) => memos.push({ sub, body });
+  const body = 'scope=clodex The mid-turn thinking strip\'s cost is ONE extra uncached read of the whole context on every turn that carries it, measured at 41k @spill:e1b9f4d5c3a27b08';
+  assert.ok(body.indexOf(' @spill:') > 79, 'ENTER: the title alone overruns TITLED_POINTER_RE');
+  assert.strictEqual(pointerOf(body), null, 'ENTER: pointerOf does not see it, which is why the guard reads the tail itself');
+  await h.m._handleIntent('lead', { type: 'memory', sub: 'remember', body });
+  assert.deepStrictEqual(memos, []);
+  assert.strictEqual(h.injected.length, 1);
+  assert.ok(h.injected[0].text.startsWith('[agent] Not executed: your `memory remember` ended in a pointer (@spill:e1b9f4d5c3a27b08)'));
+});
+
+test('t1062: a context compact whose handoff is a typed pointer does not run, and the bounce names `context compact`', async () => {
+  const h = mkH();
+  await h.m._handleIntent('lead', { type: 'context', sub: 'compact', body: '@spill:0123456789abcdef' });
+  assert.deepStrictEqual(h.contexts, [], 'the compact did not happen');
+  assert.deepStrictEqual(h.injected.map((i) => i.text), [TYPED('context compact', '0123456789abcdef')]);
+});
+
+test('t1062: a pointer MENTIONED mid-body is prose — the refusal is on a trailing token only', async () => {
+  const h = mkH();
+  const memos = [];
+  h.m._handleMemoryIntent = (s, sub, body) => memos.push({ sub, body });
+  const body = 'scope=clodex the tee writes one file per body; see @spill:0123456789abcdef in the log for the shape, then the ack line';
+  await h.m._handleIntent('lead', { type: 'memory', sub: 'remember', body });
+  assert.deepStrictEqual(memos, [{ sub: 'remember', body }], 'saved as written');
+  assert.deepStrictEqual(h.injected, []);
 });
 
 test('a dm resolves BEFORE routing, so the recipient is injected the full message', async () => {
