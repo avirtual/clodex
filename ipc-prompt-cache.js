@@ -92,6 +92,7 @@ const CACHE_FILES = {
   notified: 'notified.md',
   delta: 'delta.md',
   next: 'next.md',
+  snapshot: 'snapshot.json',
 };
 
 // One line of framing, and deliberately no more. The channel is dumb: diff in,
@@ -249,31 +250,39 @@ function parseSnapshotRow(line) {
   return { clodexBlock, ts: typeof row.timestamp === 'string' ? row.timestamp : null };
 }
 
-function readPromptSnapshot(transcriptPath) {
-  if (!transcriptPath) return null;
+function scanSnapshot(transcriptPath, floor) {
   let fd;
   try { fd = fs.openSync(transcriptPath, 'r'); } catch { return null; }
   try {
-    let end = fs.fstatSync(fd).size;
+    const size = fs.fstatSync(fd).size;
+    if (floor > size) floor = 0;
+    let end = size;
+    let offset = floor;
     let pending = Buffer.alloc(0);
-    while (end > 0) {
-      const start = Math.max(0, end - SNAPSHOT_CHUNK);
+    let tail = true;
+    while (end > floor) {
+      const start = Math.max(floor, end - SNAPSHOT_CHUNK);
       const chunk = Buffer.alloc(end - start);
       fs.readSync(fd, chunk, 0, chunk.length, start);
+      if (tail) {
+        const lastNl = chunk.lastIndexOf(0x0a);
+        if (lastNl >= 0) offset = start + lastNl + 1;
+        tail = false;
+      }
       pending = Buffer.concat([chunk, pending]);
       end = start;
       const firstNl = pending.indexOf(0x0a);
-      const from = start === 0 ? 0 : (firstNl < 0 ? -1 : firstNl + 1);
+      const from = start === floor ? 0 : (firstNl < 0 ? -1 : firstNl + 1);
       if (from < 0) continue;
       const lines = pending.subarray(from).toString('utf8').split('\n');
       for (let i = lines.length - 1; i >= 0; i--) {
         if (!lines[i].includes(SNAPSHOT_MARK)) continue;
         const found = parseSnapshotRow(lines[i]);
-        if (found) return found;
+        if (found) return { found, offset };
       }
       pending = pending.subarray(0, from);
     }
-    return null;
+    return { found: null, offset };
   } catch {
     return null;
   } finally {
@@ -281,9 +290,40 @@ function readPromptSnapshot(transcriptPath) {
   }
 }
 
-function followSnapshot(root, name, snapshot) {
+function readPromptSnapshot(transcriptPath) {
+  if (!transcriptPath) return null;
+  const r = scanSnapshot(transcriptPath, 0);
+  return r ? r.found : null;
+}
+
+function readSnapshotMemo(root, name) {
+  try {
+    const memo = JSON.parse(readCache(root, name, 'snapshot'));
+    if (memo && typeof memo.path === 'string' && typeof memo.offset === 'number'
+      && typeof memo.clodexBlock === 'string') return memo;
+  } catch {}
+  return null;
+}
+
+function readPromptSnapshotMemo(root, name, transcriptPath) {
+  if (!transcriptPath) return null;
+  let real;
+  try { real = fs.realpathSync(transcriptPath); } catch { return null; }
+  const memo = readSnapshotMemo(root, name);
+  const floor = memo && memo.path === real ? memo.offset : 0;
+  const r = scanSnapshot(real, floor);
+  if (!r) return null;
+  const found = r.found || (floor > 0 ? { clodexBlock: memo.clodexBlock, ts: memo.ts } : null);
+  if (!found) return null;
+  if (!memo || memo.path !== real || memo.offset !== r.offset || memo.clodexBlock !== found.clodexBlock) {
+    writeCache(root, name, 'snapshot', JSON.stringify({ path: real, offset: r.offset, clodexBlock: found.clodexBlock, ts: found.ts }));
+  }
+  return found;
+}
+
+function followSnapshot(root, name, snapshot, realIpc) {
   const session = readCache(root, name, 'session');
-  if (typeof snapshot !== 'string') return session;
+  if (typeof snapshot !== 'string' || !snapshot || session === '' || (session == null && !realIpc)) return session;
   if (session !== snapshot) {
     writeCache(root, name, 'session', snapshot);
     writeCache(root, name, 'notified', snapshot);
@@ -292,7 +332,7 @@ function followSnapshot(root, name, snapshot) {
 }
 
 function restageAtReset(root, name, realIpc, snapshot) {
-  const baseline = followSnapshot(root, name, snapshot);
+  const baseline = followSnapshot(root, name, snapshot, realIpc);
   if (baseline == null) return null;
   if (readCache(root, name, 'notified') !== baseline) writeCache(root, name, 'notified', baseline);
   return stageDelta(root, name, baseline, realIpc);
@@ -305,7 +345,7 @@ function restageAtReset(root, name, realIpc, snapshot) {
 //
 // Returns the blob to actually bake into append-prompt.md.
 function bakePrompt(root, name, realIpc, reuse, opts = {}) {
-  const baked = reuse ? followSnapshot(root, name, opts.snapshot) : null;
+  const baked = reuse ? followSnapshot(root, name, opts.snapshot, realIpc) : null;
   if (baked == null) {
     // A boundary (or a first run with no cache at all). session_ipc == last_ipc
     // == real_ipc by construction, so a fresh session can never be handed a
@@ -330,5 +370,5 @@ module.exports = {
   CACHE_FILES, DELTA_HEADER,
   promptCacheDir, cachePathFor, readCache, writeCache, clearCache,
   unifiedDiff, ipcDelta, stageDelta, bakePrompt,
-  readPromptSnapshot, restageAtReset,
+  readPromptSnapshot, readPromptSnapshotMemo, restageAtReset,
 };

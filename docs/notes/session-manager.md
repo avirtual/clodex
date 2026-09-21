@@ -118,3 +118,16 @@ the engine would reach them.
 ## _handleShoutIntent
 
 The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `archive()`: archive kills the pty, and the renderer rebuilds a row as archived only for a name already stamped into `archivingSessions`. Sent late or not at all, the row is REMOVED. Precedent: `team-tickets.js` retire.
+
+## refreshPrompt
+
+At a `/clear` the CLI has already minted the new conversation id, and both the new
+`<sid>.jsonl` and the repointed `run/<name>/transcript.jsonl` are row-less for the next 2-8 s
+(`prompt_snapshot` rows land after the intent — docs/notes/ipc-prompt-cache.md), while the new
+session's rows carry the PRIOR session's last block. So the clear site hands `refreshPrompt` the
+prior id (`opts.sid`), and `_snapshotBlockFor` reads `<account>/projects/<slug>/<priorSid>.jsonl`.
+A `--fork-session` seat reaches the same edge on its first id (its `sessionId` starts as the
+parent's), and the parent's transcript is not what the child runs after a `mint`, so `session.forked`
+gates that one edge to the child's own id and is cleared there. The account dir comes from
+`session.accountDir` (the merged env create() resolved) before the persisted `entry.env`, which
+misses a template- or account-sourced `CLAUDE_CONFIG_DIR`.

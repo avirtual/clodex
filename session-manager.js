@@ -185,7 +185,7 @@ const {
   capResumeSnapshot,
 } = require('./intent-spill');
 const { spillGrammarLine } = require('./ipc-prompt');
-const { readPromptSnapshot, restageAtReset } = require('./ipc-prompt-cache');
+const { readPromptSnapshotMemo, restageAtReset } = require('./ipc-prompt-cache');
 
 const SPILL_MIMIC_BOUNCE = '[agent] Not executed: that line was a receipt, filler or pointer, not an intent, and nothing was sent or filed. Emit the complete intent — head line, full body, [agent:end].';
 
@@ -2085,6 +2085,8 @@ function createSessionManager(deps) {
         createdAt,
         agentType, lineBuffer: '', watcher: null,
         sessionId: resumeId || null,
+        accountDir: accountDir || null,
+        forked: !!fork,
         workspaceId,
         proxyAgent, proxyBase,
         // Recorded from the POST actually made, not re-read in kill(): the env
@@ -2270,7 +2272,9 @@ function createSessionManager(deps) {
           // The CLI rebuilds the new conversation's system block from its own
           // snapshot rather than re-reading the prompt file (measured), so the
           // frozen prompt is left alone here too.
-          try { this.refreshPrompt(name, 'clear'); } catch { /* never block the continuation on a refresh */ }
+          const snapshotSid = session.forked ? sessionId : priorSid;
+          session.forked = false;
+          try { this.refreshPrompt(name, 'clear', { sid: snapshotSid }); } catch { /* never block the continuation on a refresh */ }
           this._firePostClearContinuation(session);
         }
         // /clear mints a new conversation id, which is how the transcript
@@ -3648,7 +3652,7 @@ function createSessionManager(deps) {
     // reset itself destroyed every delta delivered so far, so the whole
     // snapshot→realIpc gap is staged, baselined on the snapshot row when the
     // transcript has one.
-    refreshPrompt(name, why) {
+    refreshPrompt(name, why, opts = {}) {
       const session = this.sessions.get(name);
       if (!session || session._dead || session.agentType !== 'claude') return false;
       const entry = getPersistence().get(name);
@@ -3675,7 +3679,8 @@ function createSessionManager(deps) {
         // the ipc-message the refresh already broadcasts.
         const { teamBlock, resolvedTeam, missingPrompt } = this._teamBlockFor(name, entry.cwd, session.agentType, entry.systemPromptFile || null);
         const { realIpc } = this._realIpcFor(session.promptRecipe, teamBlock, resolvedTeam);
-        const snapshot = this._snapshotBlockFor(name, entry.cwd, entry.env && entry.env.CLAUDE_CONFIG_DIR, entry.sessionId);
+        const accountDir = session.accountDir || (entry.env && entry.env.CLAUDE_CONFIG_DIR);
+        const snapshot = this._snapshotBlockFor(name, entry.cwd, accountDir, opts.sid || entry.sessionId);
         const delta = restageAtReset(REGISTRY_DIR, name, realIpc, snapshot);
         if (!delta) return false;
         log.info('prompt', `restaged ${name} (${why}) — ${delta.length} bytes of delta`);
@@ -3695,7 +3700,7 @@ function createSessionManager(deps) {
       if (sid && cwd) candidates.push(path.join(accountDir || claudeHome(), 'projects', claudeProjectSlug(cwd), `${sid}.jsonl`));
       candidates.push(pathFor(REGISTRY_DIR, name, 'transcript'));
       for (const p of candidates) {
-        const found = readPromptSnapshot(p);
+        const found = readPromptSnapshotMemo(REGISTRY_DIR, name, p);
         if (found) return found.clodexBlock;
       }
       return null;

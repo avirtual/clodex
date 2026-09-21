@@ -15,6 +15,33 @@ The rows of a cold boot can differ from each other by a few bytes (one seat's fi
 Files reach tens of MB, so the scan reads 1 MiB chunks from the tail, decodes complete lines only,
 and `JSON.parse`s a line only when it contains the literal `"prompt_snapshot"`.
 
+Two hypotheses fit every measurement above and the code does not distinguish them: H1 — a
+`--resume` boot re-reads the append file and a compact does not (clodex's 20:45:28Z resume boot,
+whose later compact rows carry the file's text); H2 — a compact re-reads the file at the moment the
+`/compact` is issued, before `refreshPrompt` used to rewrite it, and a resume does not (wirescope's
+12:30:13Z compact whose 12:31:50Z rows predate nothing but the rewrite). Under either, once the file
+is never rewritten under a live CLI and a resume bakes the snapshot block, `session.md`, the file and
+the snapshot converge; the only divergence is a one-time over-delivery on a seat damaged before
+this shipped.
+
+## readPromptSnapshotMemo
+
+A resumed seat that never compacted has its only rows at the HEAD of the file, so a plain scan is a
+full backward read of the whole transcript on the main thread, per seat, at restore-on-launch and
+at every compact. Transcripts are append-only, so `promptcache/<name>/snapshot.json` remembers the
+real path, the offset of the last complete line and the block found; the next call scans only the
+bytes past that offset and falls back to the remembered block when nothing newer is there. A
+different real path (a `/clear` repoints the symlink to a new file) is scanned in full.
+
+## followSnapshot
+
+The "last systemPrompt block is ours" invariant holds only when a non-empty block was baked. A lean
+seat (`CLODEX_DISABLE_IPC_PROMPT=1`, no appends, no team block — the shipped reviewer templates)
+bakes an empty file; if the CLI skips an empty append, that seat's last block is a CLI block, and
+following it would duplicate that block into `append-prompt.md` and tell the agent its CLAUDE.md
+was "removed", with no self-heal. So an empty snapshot, an empty `session.md`, or no cache at all
+with nothing to bake, refuses to follow.
+
 ## bakePrompt
 
 Measured on 2026-09-21: the CLI does NOT re-read `--append-system-prompt-file` at a compact or a

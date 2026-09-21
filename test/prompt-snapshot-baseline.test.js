@@ -7,7 +7,7 @@ const path = require('path');
 const { createCliHooks } = require('../cli-hooks');
 const { pathFor } = require('../clodex-paths');
 const {
-  bakePrompt, readPromptSnapshot, restageAtReset, readCache, writeCache, cachePathFor, ipcDelta,
+  bakePrompt, readPromptSnapshot, readPromptSnapshotMemo, restageAtReset, readCache, writeCache, cachePathFor, ipcDelta,
 } = require('../ipc-prompt-cache');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -84,6 +84,44 @@ test('readPromptSnapshot: a row that straddles the 1MB tail chunk, with multi-by
   assert.strictEqual(found.clodexBlock, block, 'and decoded from complete lines only, so no multi-byte character is torn');
 });
 
+test('readPromptSnapshotMemo: a second call scans only the bytes appended since the first, and a repointed path is scanned in full', () => {
+  const root = tmp(), name = 'seat';
+  const b = snapshotRow(['base', 'CLODEX B — second'], '2026-09-21T02:00:00.000Z');
+  const p = writeTranscript(root, [NOISE[0], b, NOISE[1]]);
+  assert.deepStrictEqual(readPromptSnapshotMemo(root, name, p), { clodexBlock: 'CLODEX B — second', ts: '2026-09-21T02:00:00.000Z' });
+  const memo = JSON.parse(readCache(root, name, 'snapshot'));
+  assert.deepStrictEqual(memo, { path: fs.realpathSync(p), offset: fs.statSync(p).size, clodexBlock: 'CLODEX B — second', ts: '2026-09-21T02:00:00.000Z' },
+    'the memo remembers the file, where its last complete line ended, and the block');
+
+  const text = fs.readFileSync(p, 'utf8');
+  const forged = text.replace('CLODEX B — second', 'CLODEX Z — second');
+  assert.strictEqual(Buffer.byteLength(forged), Buffer.byteLength(text), 'ENTER: the in-place forgery keeps every byte offset');
+  fs.writeFileSync(p, forged);
+  fs.appendFileSync(p, NOISE[2] + '\n');
+  assert.strictEqual(readPromptSnapshot(p).clodexBlock, 'CLODEX Z — second', 'ENTER: a full scan sees the forged head');
+  assert.strictEqual(readPromptSnapshotMemo(root, name, p).clodexBlock, 'CLODEX B — second',
+    'the memoised read never went back past its offset: only the appended noise row was scanned');
+  assert.strictEqual(JSON.parse(readCache(root, name, 'snapshot')).offset, fs.statSync(p).size, 'and the offset advanced over it');
+
+  const c = snapshotRow(['base', 'CLODEX C — appended'], '2026-09-21T03:00:00.000Z');
+  fs.appendFileSync(p, c + '\n{"type":"user","torn":"');
+  assert.deepStrictEqual(readPromptSnapshotMemo(root, name, p), { clodexBlock: 'CLODEX C — appended', ts: '2026-09-21T03:00:00.000Z' },
+    'a row appended past the offset is found');
+  assert.strictEqual(JSON.parse(readCache(root, name, 'snapshot')).offset, fs.statSync(p).size - '{"type":"user","torn":"'.length,
+    'a torn tail line is left in front of the offset so the next scan reads it whole');
+
+  const other = writeTranscript(root, [NOISE[0], snapshotRow(['base', 'CLODEX O — other file'], '2026-09-21T04:00:00.000Z')], 'other.jsonl');
+  assert.strictEqual(readPromptSnapshotMemo(root, name, other).clodexBlock, 'CLODEX O — other file', 'a different file is scanned in full');
+  const link = path.join(root, 'transcript-link.jsonl');
+  fs.symlinkSync(other, link);
+  fs.writeFileSync(other, fs.readFileSync(other, 'utf8').replace('CLODEX O', 'CLODEX X'));
+  assert.strictEqual(readPromptSnapshotMemo(root, name, link).clodexBlock, 'CLODEX O — other file',
+    'a symlink to the memoised file is the same memo: matched on the real path');
+
+  assert.strictEqual(readPromptSnapshotMemo(root, name, path.join(root, 'absent.jsonl')), null);
+  assert.strictEqual(readPromptSnapshotMemo(root, name, writeTranscript(root, NOISE, 'none.jsonl')), null, 'no row and no memo for that file: null');
+});
+
 const BORN = 'IPC v1\n[agent:dm TARGET] body\n';
 const REAL = 'IPC v1\n[agent:dm TARGET] body\n[agent:newverb] shipped since\n';
 const SNAP = 'IPC v0\n[agent:dm TARGET] body\n';
@@ -135,6 +173,19 @@ for (const [label, snapshot] of [['snapshot == session.md', BORN], ['no snapshot
       'ENTER: notified.md had advanced past session.md going in, so "untouched" is a real claim');
   });
 }
+
+test('bakePrompt(reuse=true) on a LEAN seat (empty baked prompt) refuses to follow the snapshot: the last block is not ours to claim', () => {
+  const root = tmp(), name = 'lean';
+  seatWith(root, name, { session: '', notified: '' });
+  assert.strictEqual(bakePrompt(root, name, '', true, { snapshot: 'FOREIGN CLI BLOCK' }), '', 'baked stays empty');
+  assert.deepStrictEqual(cacheState(root, name), { session: '', notified: '', delta: null, next: null }, 'cache state unchanged, no delta');
+
+  const bare = tmp();
+  assert.strictEqual(restageAtReset(bare, name, '', 'FOREIGN CLI BLOCK'), null, 'no cache and nothing to bake: the snapshot is not adopted either');
+  assert.strictEqual(readCache(bare, name, 'session'), null);
+  assert.strictEqual(bakePrompt(root, name, REAL, true, { snapshot: '' }), '', 'an empty snapshot is never a baseline');
+  assert.strictEqual(readCache(root, name, 'delta'), ipcDelta('', REAL), 'the lean seat that gains a prompt is told about it against its own empty baseline');
+});
 
 test('bakePrompt(reuse=false) ignores the snapshot: a boundary regenerates', () => {
   const root = tmp(), name = 'seat';
@@ -211,8 +262,8 @@ test('source pin: both reset sites call refreshPrompt, and its body neither bake
   const compactSite = src.slice(src.indexOf('_fireCompactContinuation(session) {'));
   assert.ok(compactSite.slice(0, compactSite.indexOf('_compactContinuation')).includes("this.refreshPrompt(session.name, 'compact')"),
     'ENTER: the compact handler must still call refreshPrompt before it hands over the continuation');
-  assert.ok(src.includes("this.refreshPrompt(name, 'clear')"), 'ENTER: and the clear site too');
-  const start = src.indexOf('    refreshPrompt(name, why) {');
+  assert.ok(src.includes("this.refreshPrompt(name, 'clear', { sid: snapshotSid })"), 'ENTER: and the clear site too, handing over the PRIOR conversation id');
+  const start = src.indexOf('    refreshPrompt(name, why, opts = {}) {');
   assert.ok(start > 0, 'ENTER: refreshPrompt must be found');
   const body = src.slice(start, src.indexOf('\n    }\n', start));
   assert.ok(body.includes('restageAtReset('), 'the reset path re-stages the delta');

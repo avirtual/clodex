@@ -25,7 +25,7 @@ const os = require('os');
 const path = require('path');
 const { createSessionManager } = require('../session-manager');
 const { createCliHooks } = require('../cli-hooks');
-const { pathFor, runDirFor } = require('../clodex-paths');
+const { pathFor, runDirFor, claudeProjectSlug } = require('../clodex-paths');
 const { bakePrompt, promptCacheDir, readCache, cachePathFor, ipcDelta } = require('../ipc-prompt-cache');
 const { mergeSessionEnv } = require('../env-scopes');
 const { mkTmpRoot } = require('./lib/tmp-roots');
@@ -378,3 +378,65 @@ for (const order of ['hook-first', 'refresh-first']) {
     });
   }
 }
+
+// --- clear site: the PRIOR conversation's transcript is the one with rows ---
+
+function plantAccountTranscript(accountDir, cwd, sid, block) {
+  const dir = path.join(accountDir, 'projects', claudeProjectSlug(cwd));
+  fs.mkdirSync(dir, { recursive: true });
+  const row = JSON.stringify({ type: 'attachment', timestamp: '2026-09-21T12:00:00.000Z',
+    attachment: { type: 'prompt_snapshot', systemPrompt: ['base', block] } });
+  fs.writeFileSync(path.join(dir, `${sid}.jsonl`), `{"type":"user"}\n${row}\n`);
+}
+
+test('clear site: through onSessionId, the snapshot is read from the PRIOR conversation\'s transcript in the seat\'s account dir', async () => {
+  const root = tmp(), name = 'rx';
+  const accountDir = path.join(root, 'account');
+  fs.mkdirSync(accountDir, { recursive: true });
+  const h = mkManager(root);
+  try {
+    await spawn(h, name, [], { CLAUDE_CONFIG_DIR: accountDir });
+    const born = bakedBytes(root, name);
+    const snapshot = born.replace('[agent:dm TARGET]', '[agent:dm OLDTARGET]');
+    assert.notStrictEqual(snapshot, born, 'ENTER: the planted snapshot must differ from what the files claim');
+    plantAccountTranscript(accountDir, os.tmpdir(), 'conv-1', snapshot);
+    assert.ok(!fs.existsSync(pathFor(root, name, 'transcript')), 'ENTER: no symlink — only the account-dir candidate can find the row');
+    h.m._injectText = () => {};
+    const w = h.watchers.find((x) => x.name === name);
+    assert.ok(w && w.onSessionId, 'ENTER: create() handed the watcher a session-id callback');
+
+    w.onSessionId('conv-1');
+    assert.strictEqual(readCache(root, name, 'delta'), null, 'ENTER: the first id is an adopt, not a clear');
+    w.onSessionId('conv-2');
+
+    assert.strictEqual(h.m.sessions.get(name).sessionId, 'conv-2');
+    assert.strictEqual(readCache(root, name, 'session'), snapshot, 'session.md follows the prior conversation\'s snapshot');
+    assert.strictEqual(readCache(root, name, 'delta'), ipcDelta(snapshot, born), 'the gap the seat was never told about is staged for the fresh conversation');
+    assert.strictEqual(bakedBytes(root, name), born, 'append-prompt.md UNCHANGED');
+  } finally { h.stop(name); }
+});
+
+test('clear site: a --fork-session seat\'s first id edge does not adopt the PARENT\'s snapshot', async () => {
+  const root = tmp(), name = 'rx';
+  const accountDir = path.join(root, 'account');
+  fs.mkdirSync(accountDir, { recursive: true });
+  const h = mkManager(root);
+  try {
+    await h.m.create(name, 'claude', os.tmpdir(), [], 'parent-1', 'ws',
+      null, true, null, [], [], [], [], [], null, [], [], null, { CLAUDE_CONFIG_DIR: accountDir }, true);
+    const s = h.m.sessions.get(name);
+    assert.strictEqual(s.sessionId, 'parent-1', 'ENTER: a fork starts under the parent\'s id');
+    assert.strictEqual(s.forked, true);
+    const born = bakedBytes(root, name);
+    const parentBlock = born.replace('[agent:dm TARGET]', '[agent:dm PARENTTARGET]');
+    plantAccountTranscript(accountDir, os.tmpdir(), 'parent-1', parentBlock);
+    h.m._injectText = () => {};
+    const w = h.watchers.find((x) => x.name === name);
+
+    w.onSessionId('child-1');
+
+    assert.strictEqual(readCache(root, name, 'session'), born, 'the fresh bake stands: the parent\'s block is not what this seat runs');
+    assert.strictEqual(readCache(root, name, 'delta'), null);
+    assert.strictEqual(s.forked, false, 'and the gate is one-shot: a later /clear is an ordinary one');
+  } finally { h.stop(name); }
+});
