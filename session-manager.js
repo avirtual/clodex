@@ -990,8 +990,16 @@ function createSessionManager(deps) {
       wire.on('spill', (ev) => {
         this._shadowLog({ type: 'wire-spill', ...ev });
         log.info('intent', `spill ${ev.agent} ${ev.verb} @spill:${ev.id} (${ev.bytes} B)`);
+        const filePath = spillPathFor(REGISTRY_DIR, ev.agent, ev.id);
+        this._broadcast('ipc-message', {
+          type: 'spill', from: 'clodex', to: ev.agent,
+          body: ev.verb === 'prose'
+            ? `prose after your last intent (${ev.bytes} B) filed at ${filePath}`
+            : `${ev.head} (${ev.bytes} B) filed at ${filePath}`,
+          path: filePath,
+        });
         try {
-          enqueueNotice(REGISTRY_DIR, ev.agent, spillAckLine(ev, spillPathFor(REGISTRY_DIR, ev.agent, ev.id)));
+          enqueueNotice(REGISTRY_DIR, ev.agent, spillAckLine(ev, filePath));
         } catch (e) {
           this._shadowLog({ type: 'wire-spill-ack-error', agent: ev.agent, error: e.message });
         }
