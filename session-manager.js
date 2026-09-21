@@ -608,6 +608,7 @@ function createSessionManager(deps) {
     bakePrompt,
     promptCacheDir,
     readCache,
+    ipcDelta,
     enqueueNotice,
     versionNoticeFor,
     clearNotices,
@@ -812,6 +813,7 @@ function createSessionManager(deps) {
   class SessionManager {
     constructor() {
       this.sessions = new Map();
+      this._freshBakeOnce = new Set();
       this.windows = new Map(); // workspaceId -> BrowserWindow
       // The seat the operator is LOOKING at, as last reported by a renderer.
       // Global rather than per-window on purpose: the external tap has to pick
@@ -1539,6 +1541,7 @@ function createSessionManager(deps) {
       if (this.sessions.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
+      const freshBake = this._freshBakeOnce.delete(name);
       if (cwd) {
         let st = null;
         try { st = fs.statSync(cwd); } catch { /* missing — handled below */ }
@@ -1898,10 +1901,10 @@ function createSessionManager(deps) {
             warnings.push(`This session's own --settings replaces Clodex's hooks, so the IPC protocol-change channel isn't installed. Its system prompt will be regenerated on every resume instead of frozen — correct, but it re-reads the whole prompt each time.`);
           }
           const reuse = !!resumeId && !mint && hookInstalled;
-          const baked = bakePrompt(REGISTRY_DIR, name, realIpc, reuse,
-            { snapshot: reuse ? this._snapshotBlockFor(name, cwd, accountDir, resumeId) : null });
-          // First producer on the notice queue (notice-queue.js). Gated on the
-          // SAME `reuse` as the freeze above, for the same reasons.
+          const freeze = reuse && !freshBake;
+          const baked = bakePrompt(REGISTRY_DIR, name, realIpc, freeze,
+            { snapshot: freeze ? this._snapshotBlockFor(name, cwd, accountDir, resumeId) : null });
+          // First producer on the notice queue (notice-queue.js).
           //
           // Per-session HERE rather than a fan-out at app startup: a fan-out
           // only reaches sessions that exist when it runs, so a seat archived
@@ -4559,13 +4562,14 @@ function createSessionManager(deps) {
       // offered" are separate questions on purpose, so they reset side by side
       // here rather than one reading the other.
       try { arm.onContextReset(session.name); } catch { /* observer-grade */ }
+      const sched = getRemindScheduler && getRemindScheduler();
+      if (this._compactRegen(session, sched)) return;
       // The compact has landed and the continuation has NOT been injected yet.
       // The summary dropped every prompt delta delivered so far, so the whole
       // gap is re-staged here for the next prompt; the frozen prompt file is NOT
       // rewritten (the CLI would not read it — see refreshPrompt).
       try { this.refreshPrompt(session.name, 'compact'); } catch { /* never block the continuation on a refresh */ }
       this._clearCompactValve(session);
-      const sched = getRemindScheduler && getRemindScheduler();
       if (sched) { try { sched.fireCompactFor(session.name); } catch {} }
       const cont = session._compactContinuation;
       if (cont) {
@@ -4580,6 +4584,26 @@ function createSessionManager(deps) {
       } else {
         this._releaseCompactGuard(session);
       }
+    }
+
+    _compactRegen(session, sched) {
+      const name = session.name;
+      const cont = session._compactContinuation;
+      if (!cont) return false;
+      const entry = getPersistence().get(name);
+      if (!entry || !entry.sessionId) return false;
+      const regen = {};
+      if (!this._promptDeltaPending(name, regen)) return false;
+      session._compactContinuation = null;
+      this._clearCompactValve(session);
+      const onKilled = () => { if (sched) { try { sched.fireCompactFor(name); } catch {} } };
+      if (!this._coldRespawn(name, entry, session, cont, 'compact', { resume: true, onKilled })) return true;
+      log.info('intent', `compact ${name} → resumed with a regenerated prompt (${regen.bytes} bytes)`);
+      this._broadcast('ipc-message', {
+        type: 'context', from: name, to: name, body: 'context compact → resumed with a regenerated prompt',
+      });
+      this._shadowLog({ type: 'prompt-regen-at-compact', agent: name, bytes: regen.bytes });
+      return true;
     }
 
     _injectHoldReason(session) {
@@ -6474,20 +6498,19 @@ function createSessionManager(deps) {
         const { teamBlock, resolvedTeam } = this._teamBlockFor(name, entry.cwd, session.agentType, entry.systemPromptFile || null);
         const { realIpc } = this._realIpcFor(session.promptRecipe, teamBlock, resolvedTeam);
         out.bytes = Buffer.byteLength(realIpc, 'utf8');
-        if (readCache(REGISTRY_DIR, name, 'delta') != null) return true;
         const baked = readCache(REGISTRY_DIR, name, 'session');
         if (baked == null) return false;
         const accountDir = session.accountDir || (entry.env && entry.env.CLAUDE_CONFIG_DIR);
         const snapshot = this._snapshotBlockFor(name, entry.cwd, accountDir, entry.sessionId);
         const running = (typeof snapshot === 'string' && snapshot && baked !== '') ? snapshot : baked;
-        return running !== realIpc;
+        return ipcDelta(running, realIpc) != null;
       } catch (e) {
         this._shadowLog({ type: 'prompt-refresh-error', agent: name, error: e.message });
         return false;
       }
     }
 
-    _coldRespawn(name, entry, session, handoff, why) {
+    _coldRespawn(name, entry, session, handoff, why, opts = {}) {
       if (session._reloadInFlight) {
         this._broadcast('ipc-message', {
           type: 'context', from: name, to: name, body: `context ${why} → dropped (already in flight)`,
@@ -6514,6 +6537,9 @@ function createSessionManager(deps) {
             await this.kill(name);
             if (!await waitExit(name)) throw new Error('old process did not exit in time');
           }
+          if (typeof opts.onKilled === 'function') { try { opts.onKilled(); } catch {} }
+          const resumeId = opts.resume === true ? (entry.sessionId || null) : null;
+          if (resumeId) this._freshBakeOnce.add(name);
           // Same field set as engine.js's restartSession/applySessionArgs — a
           // reload is a kill()+create() like theirs, and `ephemeral` is what
           // tells `task accept` whether the loop minted this seat. Dropped
@@ -6523,7 +6549,7 @@ function createSessionManager(deps) {
           this._preserveAcrossRestart(name, entry, ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt', 'reviewerTemplate']);
           const cwd = this.resumeCwdOf(entry);
           await this.create(
-            name, entry.type, cwd, entry.extraArgs || [], null, entry.workspaceId,
+            name, entry.type, cwd, entry.extraArgs || [], resumeId, entry.workspaceId,
             entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
             entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
             entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
@@ -6549,8 +6575,9 @@ function createSessionManager(deps) {
           });
           const fresh = this.sessions.get(name);
           if (fresh && session._scratchVoid) fresh._scratchVoid = session._scratchVoid;
-          if (fresh && handoff) this._injectReloadHandoff(fresh, handoff);
+          if (fresh && handoff) this._injectReloadHandoff(fresh, handoff, undefined, why);
         } catch (err) {
+          this._freshBakeOnce.delete(name);
           console.error(`[agent:context ${why}] ${name} failed:`, err.message);
           // Never let a failed respawn eat the entry — but not its `worktree` if
           // another live seat took the checkout while this reload was in flight.
@@ -6590,6 +6617,13 @@ function createSessionManager(deps) {
         this._broadcast('ipc-message', {
           type: 'context', from: name, to: name, body: 'context reload → fresh restart',
         });
+        return;
+      }
+      if (session._reloadInFlight) {
+        this._broadcast('ipc-message', {
+          type: 'context', from: session.name, to: session.name, body: `context ${sub} → dropped (already in flight)`,
+        });
+        log.warn('intent', `${sub} ${session.name} dropped — already in flight`);
         return;
       }
       const map = SessionManager.CONTEXT_COMMANDS[session.type];
@@ -7544,10 +7578,10 @@ function createSessionManager(deps) {
       }
     }
 
-    async _injectReloadHandoff(session, handoff, timeoutMs = 30000) {
+    async _injectReloadHandoff(session, handoff, timeoutMs = 30000, why = 'reload') {
       await this._injectAfterBoot(session, handoff, {
-        logPrefix: '[agent:context reload]',
-        dropBody: 'context reload → handoff NOT injected (fresh CLI never signaled boot)',
+        logPrefix: `[agent:context ${why}]`,
+        dropBody: `context ${why} → handoff NOT injected (fresh CLI never signaled boot)`,
         timeoutMs,
       });
     }

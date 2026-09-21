@@ -895,7 +895,7 @@ function randBase36(len) {
   return s.slice(0, len);
 }
 const { ctxReminderFor, ctxThresholdsFor, CTX_THRESHOLD_MIN } = require('./ctx-reminder');
-const { bakePrompt, promptCacheDir, readCache } = require('./ipc-prompt-cache');
+const { bakePrompt, promptCacheDir, readCache, ipcDelta } = require('./ipc-prompt-cache');
 const { enqueueNotice, versionNoticeFor, clearNotices } = require('./notice-queue');
 const { buildSkillPlugin, skillMd, parseSkillFrontmatter, unresolvedSubagentRefs } = require('./skills-util');
 const { classifySkillRoster, emptyRoster, listedRosterNames } = require('./skill-roster');
@@ -1234,6 +1234,7 @@ const SessionManager = createSessionManager({
     bakePrompt,
     promptCacheDir,
     readCache,
+    ipcDelta,
     enqueueNotice,
     versionNoticeFor,
     clearNotices,

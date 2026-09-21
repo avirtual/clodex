@@ -348,6 +348,15 @@ prompt and `bakePrompt(reuse=false)` re-baselines the cache. The typed `/clear`
 edge (`refreshPrompt(name,'clear')` + the post-clear continuation) never fires
 on that arm. Shadow row `prompt-regen-at-clear` {agent, bytes}. Nothing
 pending, or a codex seat: the plain `/clear` path, unchanged.
+A Clodex-driven compact whose summary lands on such a seat (`_compactRegen`,
+from `_fireCompactContinuation`) takes the same `_coldRespawn` with
+`resume: true`: `create()` runs with `--resume <the compact's own sessionId>`
+and a fresh bake (`_freshBakeOnce`), the notice queue is kept, the compact
+continuation becomes the fresh process's turn one through the reload handoff,
+and `refreshPrompt(name,'compact')` never fires. Shadow row
+`prompt-regen-at-compact` {agent, bytes}; ipc-message `context compact →
+resumed with a regenerated prompt`. A compact with no continuation (the CLI's
+own auto-compact, a typed `/compact`) keeps today's staging path.
 
 The handoff body a compact, clear or reload resumes from goes through
 `_handoffText`. A Claude body over `SPILL_MIN_BYTES` is written to a spill file
