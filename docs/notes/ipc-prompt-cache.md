@@ -74,6 +74,10 @@ prompt at that moment costs +$0.04–0.06 (regen: read 7,505 / write 37,071 vs B
 5 min later: read 17,985 / write 30,238). The tools-less title side-call is not the request to
 sample. Hence `_promptDeltaPending` at `[agent:context clear]` takes the reload path — a fresh
 process is the only way to re-read `--append-system-prompt-file` — and `reuse=false` here re-bakes.
+A mid-session compact is the same cold write (wirescope, 5 mid-session compacts, 2026-09-21): the summary
+block replaces the history in `messages[0]`, and the first real request after it writes a median 28,704 /
+reads 7,621. Hence `_compactRegen` respawns a pending seat with `--resume` and a fresh bake the moment the
+summary lands (`_freshBakeOnce` makes that one `create()` bake with `reuse` false while keeping the notice queue).
 
 ## restageAtReset
 
