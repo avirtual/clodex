@@ -116,5 +116,5 @@ one true delete (docs/sessions.md lifecycle table); before this it took `run/`
 only, and the messages, promptcache, notices and memory left behind are what
 rename's "already owns … a leftover" refusal exists to catch. `pending/<name>`
 is untouched, per DEFERRED_KINDS. `spill/<name>` IS taken — a trade against
-`clodex-paths.js`'s "outlives the seat": a transcript's `@spill:<id>` into a
+`clodex-paths.js`'s "outlives the seat": a transcript's spill stub into a
 deleted seat renders one missing body, while exempting it leaks a dir per delete.

@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { scanPaths, scanSpillPointers, scanLinks } = require('../renderer/lib/path-scan');
+const { scanPaths, scanLinks } = require('../renderer/lib/path-scan');
 
 // Offsets are what both callers convert into a range (xterm cells, HTML
 // fragments), so every assertion here checks the WHOLE hit, not just its text —
@@ -223,41 +223,12 @@ test('scanLinks on empty and non-string input returns no spans rather than throw
 
 const ID = '0123456789abcdef';
 
-test('scanSpillPointers finds a pointer with the whole-hit offsets the link range needs', () => {
-  assert.deepStrictEqual(scanSpillPointers(`spec @spill:${ID} follows`), [
-    { start: 5, end: 28, text: `@spill:${ID}`, path: `@spill:${ID}`, line: null },
+test('the spill stub\'s absolute path is a plain path hit, so the ordinary link provider covers it', () => {
+  const p = `/Users/bogdan/.clodex/spill/clodex/${ID}.md`;
+  const row = `[agent:task add hand] S-E intent-spill: shout joins — 5.2 KB filed at ${p}`;
+  assert.deepStrictEqual(scanPaths(row), [
+    { start: row.indexOf(p), end: row.length, text: p, path: p, line: null },
   ]);
-});
-
-test('scanSpillPointers finds several pointers on one line, in order', () => {
-  const other = 'fedcba9876543210';
-  const r = scanSpillPointers(`@spill:${ID} and @spill:${other}`);
-  assert.deepStrictEqual(r.map((h) => h.path), [`@spill:${ID}`, `@spill:${other}`]);
-  assert.strictEqual(r.length, 2, 'ENTER: two hits, or the ordering assertion above says nothing');
-  assert.ok(r[0].end <= r[1].start, 'hits must not overlap');
-});
-
-test('scanSpillPointers rejects an id that is not exactly 16 lowercase hex', () => {
-  for (const bad of ['@spill:', '@spill:zzzz', '@spill:0123456789abcde', '@spill:0123456789ABCDEF']) {
-    assert.deepStrictEqual(scanSpillPointers(`see ${bad} here`), [], `${bad} must not link`);
-  }
-});
-
-test('scanSpillPointers rejects an id longer than 16 hex rather than linking its prefix', () => {
-  assert.deepStrictEqual(scanSpillPointers(`@spill:${ID}0`), [],
-    'a 17-hex token is not a pointer; linking its first 16 would peek a different body');
-});
-
-test('scanPaths leaves a spill pointer alone, so the two scans cannot double-claim it', () => {
-  assert.deepStrictEqual(scanPaths(`@spill:${ID}`), []);
-});
-
-test('scanSpillPointers on empty and non-string input returns no hits rather than throwing', () => {
-  for (const v of ['', null, undefined, 42, {}]) assert.deepStrictEqual(scanSpillPointers(v), []);
-});
-
-test('scanSpillPointers is re-entrant: the shared regex does not carry lastIndex between calls', () => {
-  const line = `a @spill:${ID} b`;
-  assert.deepStrictEqual(scanSpillPointers(line), scanSpillPointers(line),
-    'a stateful lastIndex would make every second scan of the same line miss');
+  assert.deepStrictEqual(scanPaths(`858 B of prose filed at ${p}`).map((h) => h.path), [p]);
+  assert.deepStrictEqual(scanPaths(`@spill:${ID}`), [], 'the old token was never a path, and no scan links it any more');
 });

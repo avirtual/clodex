@@ -40,8 +40,8 @@ test('the checkbox exists in the prefs markup with the wording the ticket fixed'
     'no checkbox means the store key stays unreachable, which is the state before this ticket');
   assert.match(html, /<span>Spill long intent bodies to files<\/span>/);
   assert.match(html, /Claude seats only; on by default, and a change applies to every running seat from its next turn\./);
-  assert.match(html, /its transcript keeps a short clickable <code>@spill:<\/code> pointer in place of the body, the model is never sent it, and a <code>\[clodex\] … filed at …<\/code> note on its next prompt names the file/,
-    'the transcript keeps a clickable pointer the model never sees, and the hint must say exactly that');
+  assert.match(html, /its transcript keeps a one-line <code>… filed at &lt;path&gt;<\/code> note in place of the body \(the path is clickable\), the model is never sent it, and a <code>\[clodex\] … filed at …<\/code> note on its next prompt names the file/,
+    'the transcript keeps a one-line note with a clickable path the model never sees, and the hint must say exactly that');
   assert.ok(!/receipt|Runtime note|filler/.test(html.slice(html.indexOf('prefs-intent-spill') - 1200, html.indexOf('prefs-intent-spill') + 400)),
     'the receipt and the filler no longer exist, so the hint must not describe either');
   assert.match(html, /Ticket specs and reports, messages between seats, operator notes and context handoffs over 800 bytes/,
@@ -91,7 +91,7 @@ test('saving the spill box does not disturb the pref it was modelled on', () => 
 test('the web bundle carries the same three halves as the renderer source', () => {
   const bundle = fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8');
   assert.ok(bundle.includes('id="prefs-intent-spill"'));
-  assert.match(bundle, /its transcript keeps a short clickable <code>@spill:<\/code> pointer in place of the body, the model is never sent it, and a <code>\[clodex\] … filed at …<\/code> note on its next prompt names the file/,
+  assert.match(bundle, /its transcript keeps a one-line <code>… filed at &lt;path&gt;<\/code> note in place of the body \(the path is clickable\), the model is never sent it, and a <code>\[clodex\] … filed at …<\/code> note on its next prompt names the file/,
     'a rebuild is owed whenever the hint text moves, or the web operator reads the old promise');
   assert.match(bundle, /prefsIntentSpill = document\.getElementById\("prefs-intent-spill"\)/);
   assert.match(bundle, /intentSpill: prefsIntentSpill/);

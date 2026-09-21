@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { SpillFilter } = require('../wire/spill');
 const { parseIntent } = require('../intent-scanner');
-const { receiptOf, mimicKindOf, pointerOf, SPILL_FILLER, SPILL_VERBS, SPILL_MIN_BYTES } = require('../intent-spill');
+const { receiptOf, mimicKindOf, pointerOf, spillSize, SPILL_FILLER, SPILL_VERBS, SPILL_MIN_BYTES } = require('../intent-spill');
 
 const BIG = 'z'.repeat(900);
 const SMALL = 'y'.repeat(50);
@@ -54,9 +54,13 @@ function diskOf(spills, agent = 'wirescope') {
   return { id, body: fs.readFileSync(keptPath(id, agent), 'utf8') };
 }
 
+function filed(spill, agent = 'wirescope') {
+  return `${spillSize(spill.bytes)}${spill.verb === 'prose' ? ' of prose' : ''} filed at ${keptPath(spill.id, agent)}`;
+}
+
 function stub(head, spills, title = '') {
-  const { id } = diskOf(spills);
-  return `[agent:${head}] ${title}@spill:${id}\n[agent:end]\n`;
+  diskOf(spills);
+  return `[agent:${head}] ${title}${filed(spills[spills.length - 1])}\n[agent:end]\n`;
 }
 
 test('row 1-3: traffic that does not spill is byte-identical at every chunk size', () => {
@@ -71,6 +75,29 @@ test('row 1-3: traffic that does not spill is byte-identical at every chunk size
   for (const [name, t] of Object.entries(cases)) {
     for (const cs of SIZES) assert.equal(run(t, { cs }).out, t, `${name} @cs=${cs}`);
   }
+});
+
+test('the stub is `<head> [<first line> — ]<size> filed at <absolute path>`, byte-pinned in both size branches', () => {
+  const small = 'x'.repeat(858);
+  const large = `Spec title\n${'y'.repeat(5270)}`;
+  assert.equal(Buffer.byteLength(large, 'utf8'), 5281, 'ENTER: 5281 B is the KB-branch fixture');
+  const untitled = run(`[agent:dm wirescope]\n${small}\n[agent:end]\n`);
+  const { id: sid } = diskOf(untitled.spills);
+  assert.equal(untitled.out, `[agent:dm wirescope] 858 B filed at ${path.join(root(), 'spill', 'wirescope', `${sid}.md`)}\n[agent:end]\n`);
+  const titled = run(`[agent:task add hand] ${large}\n[agent:end]\n`);
+  const { id: lid } = diskOf(titled.spills);
+  assert.equal(titled.out, `[agent:task add hand] Spec title — 5.2 KB filed at ${path.join(root(), 'spill', 'wirescope', `${lid}.md`)}\n[agent:end]\n`);
+  const prose = run(`${small}\n`, { proseSpill: true });
+  const { id: pid } = diskOf(prose.spills);
+  assert.equal(prose.out, `859 B of prose filed at ${path.join(root(), 'spill', 'wirescope', `${pid}.md`)}\n`,
+    'the tail keeps its newline, so it is one byte longer than the dm body');
+  const seat = run(`[agent:shout]\n${small}\n[agent:end]\n`, { agent: 'clodex-hand-1065' });
+  const { id: hid } = diskOf(seat.spills, 'clodex-hand-1065');
+  assert.equal(seat.out, `[agent:shout] 858 B filed at ${path.join(root(), 'spill', 'clodex-hand-1065', `${hid}.md`)}\n[agent:end]\n`,
+    'the path is the seat\'s own spill dir, absolute, never ~');
+  for (const o of [untitled, titled, prose, seat]) assert.ok(!o.out.includes('@spill:'), 'the old token is gone from the record');
+  assert.equal(pointerOf(titled.out.split('\n')[0].slice('[agent:task add hand] '.length)), lid,
+    'the resolver reads the id back out of the titled line');
 });
 
 test('row 4: the spill fires, identically, at every chunk size', () => {
@@ -107,7 +134,7 @@ test('a terminator that ends the stream with no newline after it still spills', 
   const T = `before\n[agent:task add t42 start] ${BIG}\n[agent:end]`;
   const rs = SIZES.map((cs) => run(T, { cs }));
   assert.ok(rs.every((r) => r.spills.length === 1), 'fires without the trailing newline');
-  assert.ok(rs.every((r) => r.out === `before\n[agent:task add t42 start] @spill:${r.spills[0].id}\n[agent:end]`),
+  assert.ok(rs.every((r) => r.out === `before\n[agent:task add t42 start] ${filed(r.spills[0])}\n[agent:end]`),
     'the stream still ends on the terminator, byte-exact');
   const { body } = diskOf(rs[0].spills);
   assert.equal(body, BIG);
@@ -120,7 +147,7 @@ test('row 5: the file is the body exactly, and the id is its sha', () => {
   const body = `line one\n\n  indented  \n${BIG}\nlast`;
   const { out, spills } = run(`[agent:task add t7] ${body}\n[agent:end]\n`);
   const { id, body: disk } = diskOf(spills);
-  assert.equal(out, `[agent:task add t7] line one @spill:${id}\n[agent:end]\n`);
+  assert.equal(out, `[agent:task add t7] line one — ${filed(spills[0])}\n[agent:end]\n`);
   assert.equal(disk, body, 'no normalisation: blank lines and trailing spaces survive');
   assert.equal(id, crypto.createHash('sha256').update(Buffer.from(body, 'utf8')).digest('hex').slice(0, 16));
   assert.match(id, /^[0-9a-f]{16}$/);
@@ -133,7 +160,7 @@ test('the pointer line keeps the body\'s first line, so the transcript still say
   assert.equal(new Set(rs.map((r) => r.out)).size, 1, 'the record does not depend on chunking');
   const { id, body: disk } = diskOf(rs[0].spills);
   assert.equal(rs[0].out,
-    `before\n[agent:task add t42 start] S-E intent-spill: shout joins the spilled verbs @spill:${id}\n`
+    `before\n[agent:task add t42 start] S-E intent-spill: shout joins the spilled verbs — ${filed(rs[0].spills[0])}\n`
     + '[agent:end]\nafter\n');
   assert.ok(!rs[0].out.includes(BIG), 'the rest of the body is off the wire');
   assert.equal(disk, body, 'the FILE is the whole body, title included, so the id is unchanged by the emission');
@@ -150,14 +177,14 @@ test('single-line, blank-led and over-80-char first lines: bare pointer, title f
 
   const held = `\n   the real first line   \n${BIG}`;
   const blankLed = run(`[agent:task add t] \n${held}\n[agent:end]\n`);
-  assert.equal(blankLed.out, stub('task add t', blankLed.spills, 'the real first line '),
+  assert.equal(blankLed.out, stub('task add t', blankLed.spills, 'the real first line — '),
     'titleLine trims and skips blanks, exactly as a ticket title does');
   assert.equal(diskOf(blankLed.spills).body, held,
     'the file keeps the blank line the title skipped — the title is display, the file is the body');
 
   const first = 'w'.repeat(81);
   const long = run(`[agent:task add t] ${first}\n${BIG}\n[agent:end]\n`);
-  assert.equal(long.out, stub('task add t', long.spills, `${'w'.repeat(77)}… `),
+  assert.equal(long.out, stub('task add t', long.spills, `${'w'.repeat(77)}… — `),
     'the cap is on characters, and the ellipsis is one of them, as ticketTitle cuts one');
   assert.ok(diskOf(long.spills).body.startsWith(first), 'the file holds the untruncated line');
 });
@@ -221,7 +248,7 @@ test('shout spills like a spec: an operator note is read in the inbox and can ru
   const body = `DEPLOY blocked on the signing cert\n${BIG}`;
   const { out, spills } = run(`[agent:shout] ${body}\n[agent:end]\n`);
   assert.equal(spills.length, 1, 'the verb is listed');
-  assert.equal(out, stub('shout', spills, 'DEPLOY blocked on the signing cert '), 'the note is off the wire; its first line titles the stub');
+  assert.equal(out, stub('shout', spills, 'DEPLOY blocked on the signing cert — '), 'the note is off the wire; its first line titles the stub');
   assert.equal(diskOf(spills).body, body);
   assert.equal(spills[0].head, 'shout');
 });
@@ -237,7 +264,7 @@ test('a dm body spills: the stub keeps the target on its head line and the targe
   const T = `[agent:dm bob]\n${BIG}\n[agent:end]\n`;
   const { out, filter, spills } = run(T);
   const { id, body } = diskOf(spills);
-  assert.equal(out, `[agent:dm bob] @spill:${id}\n[agent:end]\n`);
+  assert.equal(out, `[agent:dm bob] ${filed(spills[0])}\n[agent:end]\n`);
   assert.equal(body, BIG, 'the file holds the 900 bytes the recipient still gets in full');
   assert.equal(filter.fired, 1);
   assert.deepStrictEqual(spills, [{ verb: 'dm', id, bytes: 900, head: 'dm bob' }],
@@ -248,7 +275,7 @@ test('a dm head\'s TARGET and urgent flag ride the onSpill payload, never the sp
   for (const head of ['dm clodex-hand-1029 urgent', 'dm bob@peer', 'dm bob urgent']) {
     const { out, spills } = run(`[agent:${head}]\n${BIG}\n[agent:end]\n`);
     const { id, body } = diskOf(spills);
-    assert.equal(out, `[agent:${head}] @spill:${id}\n[agent:end]\n`, head);
+    assert.equal(out, `[agent:${head}] ${filed(spills[0])}\n[agent:end]\n`, head);
     assert.equal(body, BIG, head);
     assert.deepStrictEqual(spills, [{ verb: 'dm', id, bytes: 900, head }],
       `${head}: head words verbatim — a lost target or flag misroutes a recovered message — and keyed as plain dm, not dm.<second token>`);
@@ -265,7 +292,7 @@ test('a dm body under the floor streams verbatim, flag and all', () => {
 test('a task done report spills, keyed task.done — the two-word form still wins for task', () => {
   const { out, filter, spills } = run(`[agent:task done t42]\n${BIG}\n[agent:end]\n`);
   const { id, body } = diskOf(spills);
-  assert.equal(out, `[agent:task done t42] @spill:${id}\n[agent:end]\n`);
+  assert.equal(out, `[agent:task done t42] ${filed(spills[0])}\n[agent:end]\n`);
   assert.equal(body, BIG);
   assert.equal(filter.fired, 1);
   assert.deepStrictEqual(spills, [{ verb: 'task.done', id, bytes: 900, head: 'task done t42' }],
@@ -286,7 +313,7 @@ test('proseSpill on: an under-floor dm body and a 900-byte tail are two separate
   const T = `[agent:dm bob] ${SMALL}\n[agent:end]\n${'p'.repeat(899)}\n`;
   const { out, filter, spills } = run(T, { proseSpill: true });
   const { id, body } = diskOf(spills);
-  assert.equal(out, `[agent:dm bob] ${SMALL}\n[agent:end]\n@spill:${id}\n`,
+  assert.equal(out, `[agent:dm bob] ${SMALL}\n[agent:end]\n${filed(spills[0])}\n`,
     'the held body streams as written because it is under the floor; the tail is what spills, and a bare pointer stands in for it');
   assert.equal(body, `${'p'.repeat(899)}\n`);
   assert.equal(filter.fired, 1, 'one fire: the two mechanisms do not merge into one file');
@@ -404,12 +431,12 @@ test('row 14: a fenced example inside a held body bails — the documented cost'
 test('row 15-16: an escaped intent and a mid-line mention are body text, and still spill', () => {
   const esc = `[agent:task add a] ${BIG}\n\\[agent:dm x] hi\n[agent:end]\n`;
   const escRun = run(esc);
-  assert.equal(escRun.out, stub('task add a', escRun.spills, `${'z'.repeat(77)}… `));
+  assert.equal(escRun.out, stub('task add a', escRun.spills, `${'z'.repeat(77)}… — `));
   assert.ok(diskOf(escRun.spills).body.includes('\\[agent:dm x] hi'));
 
   const mid = `[agent:task add a] ${BIG}\nclose with \`[agent:task done t1]\`\n[agent:end]\n`;
   const midRun = run(mid);
-  assert.equal(midRun.out, stub('task add a', midRun.spills, `${'z'.repeat(77)}… `));
+  assert.equal(midRun.out, stub('task add a', midRun.spills, `${'z'.repeat(77)}… — `));
   assert.ok(diskOf(midRun.spills).body.includes('close with `[agent:task done t1]`'));
 });
 
@@ -452,15 +479,15 @@ test('proseSpill on: trailing prose after a body is replaced by a bare pointer, 
   const T = `[agent:task add t1] ${SMALL}\n[agent:end]\n${PROSE}`;
   const rs = SIZES.map((cs) => runProse(T, { cs }));
   assert.equal(new Set(rs.map((r) => r.out)).size, 1, 'output independent of chunking');
-  assert.equal(rs[0].out, `[agent:task add t1] ${SMALL}\n[agent:end]\n@spill:${rs[0].spills[0].id}\n`,
-    'the under-floor intent body streams as written; the tail leaves and a bare `@spill:` line stands in for it');
+  assert.equal(rs[0].out, `[agent:task add t1] ${SMALL}\n[agent:end]\n${filed(rs[0].spills[0])}\n`,
+    'the under-floor intent body streams as written; the tail leaves and a bare `… of prose filed at` line stands in for it');
   assert.equal(diskOf(rs[0].spills).body, PROSE, 'the file holds the tail byte-for-byte');
 });
 
 test('proseSpill on: a reply with no intent at all leaves the bare pointer as its whole record', () => {
   const rs = SIZES.map((cs) => runProse(PROSE, { cs }));
   assert.equal(new Set(rs.map((r) => r.out)).size, 1);
-  assert.equal(rs[0].out, `@spill:${rs[0].spills[0].id}\n`, 'the block is never empty, so no filler is needed');
+  assert.equal(rs[0].out, `${filed(rs[0].spills[0])}\n`, 'the block is never empty, so no filler is needed');
   assert.equal(diskOf(rs[0].spills).body, PROSE);
 });
 
@@ -514,7 +541,7 @@ test('proseSpill on: a listed body still spills, and its own tail spills separat
   const T = `[agent:task add t] ${BIG}\n[agent:end]\n${PROSE}`;
   const { out, filter, spills } = runProse(T);
   assert.equal(filter.fired, 2, 'the body and the tail are two fires');
-  assert.equal(out, `[agent:task add t] @spill:${spills[0].id}\n[agent:end]\n@spill:${spills[1].id}\n`,
+  assert.equal(out, `[agent:task add t] ${filed(spills[0])}\n[agent:end]\n${filed(spills[1])}\n`,
     'neither is on the wire; each leaves its own pointer');
   assert.deepStrictEqual(spills.map((i) => [i.verb, i.head]), [['task.add', 'task add t'], ['prose', null]]);
 });
@@ -540,7 +567,7 @@ test('proseSpill on: an unterminated HEAD LINE is not swallowed as prose', () =>
 test('proseSpill on: a bare terminator and an escaped intent are not prose', () => {
   const T = `[agent:end]\n\\[agent:task add x] example\n${'m'.repeat(899)}\n`;
   const { out, spills } = runProse(T);
-  assert.equal(out, `[agent:end]\n\\[agent:task add x] example\n@spill:${spills[0].id}\n`,
+  assert.equal(out, `[agent:end]\n\\[agent:task add x] example\n${filed(spills[0])}\n`,
     'both lines forward where they were written; only the prose after them spills');
   assert.equal(diskOf(spills).body, `${'m'.repeat(899)}\n`);
 });
@@ -567,7 +594,7 @@ test('endBlock KEEPS the tail; only close() resolves it', () => {
     'a block boundary is not the end of the response: the tee cannot know at a stop frame '
     + 'whether another block follows, so the tail crosses it intact');
   assert.equal(f.feed(''), '');
-  assert.equal(f.close(), `@spill:${f.spills[0].id}\n`, 'and the stream end is what resolves it');
+  assert.equal(f.close(), `${filed(f.spills[0])}\n`, 'and the stream end is what resolves it');
   assert.equal(f.fired, 1);
   assert.equal(diskOf(f.spills).body, PROSE, 'the file holds the tail from before the boundary');
 });
@@ -577,7 +604,7 @@ test('a tail spanning two blocks spills as ONE file, in order', () => {
   f.feed('first half of the sign-off\n');
   f.endBlock();
   f.feed(PROSE);
-  assert.equal(f.close(), `@spill:${f.spills[0].id}\n`);
+  assert.equal(f.close(), `${filed(f.spills[0])}\n`);
   assert.equal(diskOf(f.spills).body, `first half of the sign-off\n${PROSE}`,
     'the boundary is invisible to the tail — it is one run of prose to the response');
 });
@@ -597,7 +624,7 @@ test('endBlock resolves a held body whose terminator is the block\'s last unterm
   const f = proseFilter();
   assert.equal(f.feed(`[agent:task add t] ${BIG}\n[agent:end]`), '');
   const before = f.fired;
-  assert.equal(f.endBlock(), `[agent:task add t] @spill:${f.spills[0].id}\n[agent:end]`,
+  assert.equal(f.endBlock(), `[agent:task add t] ${filed(f.spills[0])}\n[agent:end]`,
     'endBlock takes close()\'s terminator-in-pending branch, so a body the block ends on still '
     + 'spills rather than forwarding whole — and the unterminated terminator is re-emitted as received');
   assert.equal(f.fired, before + 1,
@@ -625,7 +652,10 @@ test('onMimic: a receipt, filler or pointer line in the INPUT is model-authored 
   assert.equal(SPILL_FILLER, '[Runtime note: action text omitted from retained history.]',
     'the t1052 filler literal survives for the request editor\'s legacy cut and for this detector');
   for (const [line, kind] of [[MIMIC, 'intent'], [MIMIC_TAIL, 'prose'], [SPILL_FILLER, 'filler'], ['  [Runtime note: action text omitted from retained history.]  ', 'filler'],
-    ['@spill:0123456789abcdef', 'pointer'], ['the spec title @spill:0123456789abcdef', 'pointer'], ['[agent:dm bob] @spill:0123456789abcdef', 'pointer'], ['[agent:remind in 5m] a title @spill:0123456789abcdef', 'pointer']]) {
+    ['@spill:0123456789abcdef', 'pointer'], ['the spec title @spill:0123456789abcdef', 'pointer'], ['[agent:dm bob] @spill:0123456789abcdef', 'pointer'], ['[agent:remind in 5m] a title @spill:0123456789abcdef', 'pointer'],
+    ['858 B filed at /Users/x/.clodex/spill/wirescope/0123456789abcdef.md', 'pointer'], ['858 B of prose filed at /Users/x/.clodex/spill/wirescope/0123456789abcdef.md', 'pointer'],
+    ['the spec title — 5.2 KB filed at /Users/x/.clodex/spill/wirescope/0123456789abcdef.md', 'pointer'], ['[agent:dm bob] 858 B filed at /Users/x/.clodex/spill/wirescope/0123456789abcdef.md', 'pointer'],
+    ['[agent:task add hand] the spec title — 5.2 KB filed at /Users/x/.clodex/spill/wirescope/0123456789abcdef.md', 'pointer']]) {
     const seen = [];
     const T = `Sent.\n${line}\nmore.\n`;
     for (const cs of SIZES) {
@@ -655,7 +685,7 @@ test("onMimic: the filter never feeds itself — its own stub is not judged, so 
   const seen = [];
   const r = run(`[agent:dm bob]\n${BIG}\n[agent:end]\n`, { onMimic: (i) => seen.push(i) });
   assert.equal(r.spills.length, 1, 'ENTER: this run really spilled');
-  assert.equal(r.out, `[agent:dm bob] @spill:${r.spills[0].id}\n[agent:end]\n`);
+  assert.equal(r.out, `[agent:dm bob] ${filed(r.spills[0])}\n[agent:end]\n`);
   assert.equal(mimicKindOf(r.out.split('\n')[0]), 'pointer', 'ENTER: the stub line IS the shape the detector reports');
   assert.deepStrictEqual(seen, []);
   const prose = runProse(PROSE, { onMimic: (i) => seen.push(i) });
@@ -715,4 +745,7 @@ test('receiptOf reads a path with whitespace in it — the root is configurable 
   assert.equal(mimicKindOf('@spill:0123456789abcde'), null, 'fifteen hex digits is not a pointer');
   assert.equal(mimicKindOf('[agent:end]'), null);
   assert.equal(mimicKindOf('[agent:dm bob] see @spill:0123456789abcdef for the body'), null, 'a pointer mid-body is prose');
+  assert.equal(mimicKindOf('[agent:dm bob] the spec is filed at /Users/x/.clodex/spill/wirescope/0123456789abcdef.md'), null,
+    'a path named without the size the tee writes is the agent pointing a peer at a file');
+  assert.equal(mimicKindOf('[agent:dm bob] 858 B filed at /Users/x/.clodex/notes/wirescope/0123456789abcdef.md'), null, 'not a spill path');
 });

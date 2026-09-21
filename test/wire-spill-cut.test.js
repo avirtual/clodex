@@ -12,7 +12,7 @@ const { SpillFilter } = require('../wire/spill');
 const { WireProxy } = require('../wire/proxy');
 const { WarmthStore, prefixHash } = require('../wire/warmth');
 const { HoldKeeper } = require('../wire/hold');
-const { SPILL_FILLER } = require('../intent-spill');
+const { SPILL_FILLER, spillSize } = require('../intent-spill');
 const { spillGrammarLine } = require('../ipc-prompt');
 
 const FIXTURE = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'spill-cut', 'pair-257-258.json'), 'utf8'));
@@ -36,11 +36,16 @@ function stubOf() {
   const wire = `[agent:dm hand] first line of the body\n${BIG}\n[agent:end]\n`;
   const record = f.feed(wire) + f.close();
   assert.equal(spills.length, 1, 'the synthetic intent spilled');
-  const { id } = spills[0];
-  assert.ok(fs.existsSync(path.join(root, 'spill', 'tester', `${id}.md`)));
-  assert.equal(record, `[agent:dm hand] first line of the body @spill:${id}\n[agent:end]\n`,
+  const { id, bytes } = spills[0];
+  const file = path.join(root, 'spill', 'tester', `${id}.md`);
+  assert.ok(fs.existsSync(file));
+  assert.equal(record, `[agent:dm hand] first line of the body — ${spillSize(bytes)} filed at ${file}\n[agent:end]\n`,
     'the stub under test is the one the tee really writes, not a synthesis');
-  stubCache = { id, stub: record, bare: `@spill:${id}\n` };
+  const pf = new SpillFilter({ agent: 'tester', root, verbs: ['dm'], proseSpill: true, onSpill: (i) => spills.push(i) });
+  const tail = pf.feed(`${BIG}\n`) + pf.close();
+  assert.equal(spills.length, 2, 'the prose tail spilled');
+  assert.equal(tail, `${spillSize(spills[1].bytes)} of prose filed at ${path.join(root, 'spill', 'tester', `${spills[1].id}.md`)}\n`);
+  stubCache = { id, stub: record, tail, bare: `@spill:${id}\n`, file };
   return stubCache;
 }
 
@@ -74,7 +79,34 @@ test('T1 stub after prose: the two stub lines go, every other byte of the block 
   const msg = obj.messages[i];
   assert.deepStrictEqual(msg.content.map((b) => b.type), before, 'block layout unchanged');
   assert.equal(msg.content[0].text, `${FIXTURE.responseText}\n\n`, 'prose bytes minus exactly the two lines');
-  assert.ok(!JSON.stringify(obj).includes('@spill:'));
+  assert.ok(!JSON.stringify(obj).includes('filed at'));
+});
+
+test('T1 the old @spill: stub is still cut: a transcript written before the rendering changed', () => {
+  const { id } = stubOf();
+  const obj = fixtureRequest();
+  const i = assistantIndex(obj);
+  withStub(obj, `${FIXTURE.responseText}\n\n[agent:dm hand] first line of the body @spill:${id}\n[agent:end]\n`, obj.messages[i].content.slice(1));
+  const r = cutSpillStubs(obj);
+  assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0 });
+  assert.equal(obj.messages[i].content[0].text, `${FIXTURE.responseText}\n\n`);
+});
+
+test('T1 a titled stub past the title cap, a sized path outside spill/, and a bare titled line are NOT stubs', () => {
+  const { file } = stubOf();
+  for (const line of [
+    `[agent:dm hand] ${'t'.repeat(81)} — 900 B filed at ${file}\n`,
+    `[agent:dm hand] 900 B filed at ${file.replace('/spill/', '/notes/')}\n`,
+    `[agent:dm hand] the body is filed at ${file}\n`,
+    `first line of the body — 900 B filed at ${file}\n`,
+  ]) {
+    const obj = fixtureRequest();
+    const i = assistantIndex(obj);
+    withStub(obj, `keep me\n${line}and me\n`, obj.messages[i].content.slice(1));
+    const r = cutSpillStubs(obj);
+    assert.equal(r.cut, false, line);
+    assert.equal(obj.messages[i].content[0].text, `keep me\n${line}and me\n`, line);
+  }
 });
 
 test('T1 stub-only message after a user turn: the whole message goes', () => {
@@ -109,9 +141,10 @@ test('T1 stub + tool_use: the text block goes, the tool_use blocks and the messa
   assert.equal(obj.messages[i + 1].content[0].tool_use_id, tools[0].id, 'tool_result pairing intact');
 });
 
-test('T1 legacy stand-ins: a bare pointer, the filler and both receipts are cut like a stub', () => {
-  const { bare } = stubOf();
+test('T1 legacy stand-ins: a prose tail, a bare pointer, the filler and both receipts are cut like a stub', () => {
+  const { bare, tail } = stubOf();
   const legacy = [
+    tail,
     bare,
     `${SPILL_FILLER}\n`,
     '(I sent task add hand — "title" in full, 1234 B; Clodex kept my text at /r/spill/x/0123456789abcdef.md.)\n',
@@ -383,7 +416,7 @@ test('T4 ordering, behaviourally: the upstream bytes, the hold entry and the war
     assert.deepStrictEqual(events['spill-cut'][0], { agent: 'tester', reqId: events['spill-cut'][0].reqId, cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0 });
 
     const sent = up.seen[0].body.toString('utf8');
-    assert.ok(!sent.includes('@spill:'), 'upstream never sees the stub');
+    assert.ok(!sent.includes('filed at'), 'upstream never sees the stub');
     assert.ok(!sent.includes('[agent:end]'));
     const edited = JSON.parse(sent);
     assert.equal(edited.messages[1].content[0].text, 'On it.\n\n');
@@ -391,7 +424,7 @@ test('T4 ordering, behaviourally: the upstream bytes, the hold entry and the war
 
     const entry = hold.entry(SESSION_ID);
     assert.ok(entry, 'hold cached the request');
-    assert.ok(!JSON.stringify(entry.obj).includes('@spill:'), 'the hold entry is the post-cut object');
+    assert.ok(!JSON.stringify(entry.obj).includes('filed at'), 'the hold entry is the post-cut object');
     assert.deepStrictEqual(entry.obj.messages, edited.messages);
 
     const q = warmth.query({ session: SESSION_ID });
@@ -450,7 +483,7 @@ test('T5 keepwarm replay: HoldKeeper.ping re-sends the post-cut body — no @spi
     const r = await hold.ping(SESSION_ID, { force: true });
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.equal(pings.length, 1, 'ENTER');
-    assert.ok(!pings[0].includes('@spill:'), 'the replay carries no pointer');
+    assert.ok(!pings[0].includes('filed at'), 'the replay carries no pointer');
     assert.ok(!pings[0].includes('[agent:end]'));
   });
 });
@@ -465,7 +498,7 @@ test('T6 compact request: the summarization body is cut like any other, and the 
     await request(proxy.port, '/agent/tester/v1/messages', JSON.stringify(proxyBody(msgs)));
     assert.ok(await whenEvent(events, 'turn.completed'));
     assert.equal(events['spill-cut'].length, 1, 'ENTER');
-    assert.ok(!up.seen[0].body.toString('utf8').includes('@spill:'));
+    assert.ok(!up.seen[0].body.toString('utf8').includes('filed at'));
     assert.equal(events['turn.completed'][0].compact, true);
     assert.equal(events.spill.length, 0);
     assert.equal(events['spill-skip'].length, 0, 'not even considered by the tee');
@@ -479,7 +512,7 @@ test('T9 pref-independence: spillEnabled false still cuts; spillCut false stops 
     await request(proxy.port, '/agent/tester/v1/messages', JSON.stringify(proxyBody(stubMessages())));
     assert.ok(await whenEvent(events, 'turn.completed'));
     assert.equal(events['spill-cut'].length, 1, 'ENTER');
-    assert.ok(!up.seen[0].body.toString('utf8').includes('@spill:'));
+    assert.ok(!up.seen[0].body.toString('utf8').includes('filed at'));
   });
   await withProxy({ spillCut: () => false }, async (proxy, up) => {
     const events = collect(proxy, ['spill-cut', 'turn.completed']);

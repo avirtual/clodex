@@ -24,7 +24,7 @@ Any failure at all returns null, and every caller forwards the original body on
 null. A truncated task spec is far worse than a spammy transcript.
 
 Nothing sweeps what this writes. Files are capped at 256 KiB and a handful a day
-per lead; a compact summary can carry `@spill:<id>` as prose indefinitely, and
+per lead; a compact summary can carry a stub's path as prose indefinitely, and
 the CLI's own transcript retention is not something Clodex tracks. `spill/` sits
 at the ~/.clodex root precisely so it survives the `rm -rf` of `run/<name>/` on
 exit, and it is deliberately NOT removed by forget/delete/team-delete — a
@@ -53,20 +53,21 @@ join is a direct child.
 An empty file is a refusal (`empty`), never `''`: an empty ticket spec is the
 one outcome worse than a stall.
 
-## POINTER_RE
+## FILED_POINTER_RE
 
-The body must be the pointer alone, or ONE line ending in ` @spill:<id>` with at
-most 80 chars of title before it (`TITLED_POINTER_RE`) — the shape the tee
-writes, and the shape a resumed seat replays from a transcript already on disk.
-Resolved on the jsonl and recovery scans only: on the wire path the model never
-receives a stub (`wire/spill-cut.js`), so a pointer body there is typed from
-memory and `_handleIntent` bounces it under `fromWire`. On those scans the
-tee's stub is expanded by `_expandReceipts` BEFORE `shadowIntentKey` is taken,
-so a tee-failure replay keys equal to the wire's original claim and is dropped as
-a cross-path overlap; a stub whose file is gone is left for `_handleIntent` to
-bounce. Anything else is prose used verbatim. That is what makes a cross-seat read inexpressible: a peer's
-`@spill:<id>` copied mid-prose is never resolved, and a pointer resolved at all
-is resolved against the SENDER's own directory.
+ONE line, `[<title> — ]<size>[ of prose] filed at <abs path>`: ≤80 chars of
+title, the path under `spill/<seat>/`, basename the 16-hex id (`pointerText`
+writes it; `spillSize`: `858 B` under 1024, else `5.2 KB`). The size is
+REQUIRED: a body that merely names a spill file is an agent pointing a peer at
+it. `POINTER_RE`/`TITLED_POINTER_RE` keep the pre-t1065 `@spill:<id>` shape
+readable from transcripts on disk; `trailingPointerOf` is the t1062 guard's view
+(either token ending any text, non-spill verbs). Resolved on the jsonl and
+recovery scans only: the wire never carries a stub to the model
+(`wire/spill-cut.js`), so one there is typed and `_handleIntent` bounces it
+under `fromWire`. On those scans `_expandReceipts` expands the stub BEFORE
+`shadowIntentKey` is taken, so a tee-failure replay keys equal to the wire's
+claim and drops as a cross-path overlap; a stub whose file is gone is left for
+`_handleIntent` to bounce. A stub resolves only against the SENDER's directory.
 
 ## RECEIPT_RE
 
@@ -77,7 +78,7 @@ empty-block note. The tee writes neither any more; both stay recognised because
 still copy them. Receipts are expanded only on the non-wire scans (the
 sentinel's recovery replay, `_scanJsonlText`). `mimicKindOf` is what the spill
 filter runs on its input: a receipt, a lone filler line, or a bare / titled /
-intent-headed `@spill:<id>` line (kind `pointer`) can only have been typed
+intent-headed stub line, old or new shape (kind `pointer`), can only have been typed
 there; the bounce never echoes any of the shapes. The verb words must name a
 `SPILL_VERBS` key or a receipt line is prose.
 

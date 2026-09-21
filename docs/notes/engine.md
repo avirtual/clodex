@@ -94,9 +94,7 @@ report. Pinned by `test/deploy-visible.test.js`.
 
 ## resolveFilePath
 
-The `@spill:<id>` branch is the ONLY confinement on a spilled intent body:
-`fetchFilePeek` takes a bare path with no session, so whatever this returns is
-read. The clicked pane's session name is therefore the agent whose spill dir is
-consulted, and the id is the only thing taken from the pointer text — a
-resolver that searched every seat's dir would still satisfy the own-seat case.
-Pinned by `test/engine-spill-resolve.test.js`.
+No spill branch since t1065: the stub carries the file's absolute path, which
+`resolveDisplayedPath` opens like any other, so a click reads the file from any
+pane (reading is unconfined by design, `file-resolve.js`). The old `@spill:<id>`
+token is an ordinary path miss. Pinned by `test/engine-spill-resolve.test.js`.
