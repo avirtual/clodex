@@ -483,15 +483,17 @@ test('spill-mimic (item 8): the wire event is answered with a wire-spill-mimic r
   const bounce = src.match(/const SPILL_MIMIC_BOUNCE = '([^']+)';/);
   assert.ok(bounce, 'the advisory is one constant');
   assert.strictEqual(bounce[1],
-    '[agent] you wrote a receipt line yourself — nothing was sent or filed. Clodex writes a receipt only after '
-    + 'it has delivered a body you wrote. If you meant to send something, emit the intent with its full text.');
+    '[agent] Not executed: that line was a receipt or filler, not an intent, and nothing was sent or filed. '
+    + 'Emit the complete intent — head line, full body, [agent:end].');
+  assert.ok(!bounce[1].includes('[Runtime note: action text omitted from retained history.]'),
+    'the bounce never echoes the filler: an echo is one more copyable line in the record');
 });
 
-test('t1052: a copied `(sent)` is mimic kind filler, and the spill-mimic arm bounces every kind — no kind filter', () => {
+test('t1052: a copied `[Runtime note: action text omitted from retained history.]` is mimic kind filler, and the spill-mimic arm bounces every kind — no kind filter', () => {
   const { mimicKindOf } = require('../intent-spill');
-  assert.strictEqual(mimicKindOf('(sent)'), 'filler');
-  assert.strictEqual(mimicKindOf('   (sent)'), 'filler');
-  assert.strictEqual(mimicKindOf('(sent) — the dm went out'), null, 'only a lone filler line is the copied shape');
+  assert.strictEqual(mimicKindOf('[Runtime note: action text omitted from retained history.]'), 'filler');
+  assert.strictEqual(mimicKindOf('   [Runtime note: action text omitted from retained history.]'), 'filler');
+  assert.strictEqual(mimicKindOf('[Runtime note: action text omitted from retained history.] — the dm went out'), null, 'only a lone filler line is the copied shape');
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
   const arm = src.match(/wire\.on\('spill-mimic', \(ev\) => \{[\s\S]{0,700}?\n\s*\}\);/);
   assert.ok(arm);

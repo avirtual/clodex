@@ -40,8 +40,10 @@ test('the checkbox exists in the prefs markup with the wording the ticket fixed'
     'no checkbox means the store key stays unreachable, which is the state before this ticket');
   assert.match(html, /<span>Spill long intent bodies to files<\/span>/);
   assert.match(html, /Claude seats only; on by default, and a change applies to every running seat from its next turn\./);
-  assert.match(html, /keeps a one-line receipt naming the file in their place/,
-    'the operator reading the terminal sees a receipt with the path, and the hint must say so');
+  assert.match(html, /the block is removed from its transcript, with a <code>\[clodex\] … filed at …<\/code> note on its next prompt naming the file/,
+    'the transcript keeps nothing in the block\'s place, and the hint must say so');
+  assert.ok(!/receipt/.test(html.slice(html.indexOf('prefs-intent-spill'), html.indexOf('prefs-intent-spill') + 1200)),
+    'the receipt no longer exists, so the hint must not promise one');
   assert.ok(!/@spill:/.test(html), 'the pointer token is no longer a shape the hint teaches');
   assert.match(html, /Ticket specs and reports, messages between seats, operator notes and context handoffs over 800 bytes/,
     'the hint ENUMERATES what spills, so leaving a verb out of it is a false promise about that channel');
@@ -90,7 +92,7 @@ test('saving the spill box does not disturb the pref it was modelled on', () => 
 test('the web bundle carries the same three halves as the renderer source', () => {
   const bundle = fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8');
   assert.ok(bundle.includes('id="prefs-intent-spill"'));
-  assert.match(bundle, /keeps a one-line receipt naming the file in their place/,
+  assert.match(bundle, /the block is removed from its transcript, with a <code>\[clodex\] … filed at …<\/code> note on its next prompt naming the file/,
     'a rebuild is owed whenever the hint text moves, or the web operator reads the old promise');
   assert.match(bundle, /prefsIntentSpill = document\.getElementById\("prefs-intent-spill"\)/);
   assert.match(bundle, /intentSpill: prefsIntentSpill/);

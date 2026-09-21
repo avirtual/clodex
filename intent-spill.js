@@ -10,7 +10,7 @@ const { atomicWriteFileSync } = require('./fs-util');
 const SPILL_MIN_BYTES = 800;
 const SPILL_MAX_BYTES = 262144;
 const SNAPSHOT_MAX_BYTES = 4096;
-const SPILL_FILLER = '(sent)';
+const SPILL_FILLER = '[Runtime note: action text omitted from retained history.]';
 
 const SPILL_VERBS = new Set([
   'task.add', 'task.respec', 'task.reject', 'task.done',

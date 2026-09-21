@@ -181,7 +181,7 @@ test('an armed seat: the client receives the reply with the block REMOVED, and t
     assert.equal(events.spill.length, 1);
     const id = events.spill[0].id;
     assert.equal(seen, 'On it.\ndone.\n',
-      'the body is off the wire and nothing stands in for it: no `(I sent`, no path, no head line, no `(sent)` while prose survives');
+      'the body is off the wire and nothing stands in for it: no `(I sent`, no path, no head line, no `[Runtime note: action text omitted from retained history.]` while prose survives');
     assert.ok(!seen.includes('[agent:') && !seen.includes('@spill:') && !seen.includes('(I sent'), 'nothing intent-shaped or receipt-shaped is left in the transcript');
     assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${id}.md`), 'utf8'), BIG);
 
@@ -193,7 +193,7 @@ test('an armed seat: the client receives the reply with the block REMOVED, and t
     assert.equal(events['turn.completed'][0].text, `On it.\n[agent:task add hand] ${BIG}\n[agent:end]\ndone.\n`,
       'the intent tee is fed the upstream chunk, not the rewritten one: the dispatch carries the '
       + 'full body and never depends on the transcript placeholder resolving');
-    assert.ok(!events['turn.completed'][0].text.includes('(sent)'), 'and never sees anything the tee authored');
+    assert.ok(!events['turn.completed'][0].text.includes('[Runtime note: action text omitted from retained history.]'), 'and never sees anything the tee authored');
 
     assert.equal(up.seen.requests[0].headers['accept-encoding'], 'identity',
       'the filter needs bytes it can read, so the CLI-sent accept-encoding is overwritten');
@@ -438,7 +438,7 @@ test('a TYPED turn is byte-identical: turnInjected false never touches the strea
   });
 });
 
-test('an INJECTED turn: a reply with no intent leaves as exactly `(sent)`', async () => {
+test('an INJECTED turn: a reply with no intent leaves as exactly `[Runtime note: action text omitted from retained history.]`', async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({ body: PROSE_SSE }, async (proxy) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['task.add'], turnInjected: () => true } });
@@ -450,7 +450,7 @@ test('an INJECTED turn: a reply with no intent leaves as exactly `(sent)`', asyn
     const seen = textOf(res.body);
     assert.equal(events.spill.length, 1);
     const id = events.spill[0].id;
-    assert.equal(seen, '(sent)',
+    assert.equal(seen, '[Runtime note: action text omitted from retained history.]',
       'the whole reply is removed, and the block would be empty — the filler is what keeps the NEXT request valid');
     assert.equal(fs.readFileSync(path.join(root, 'spill', 'tester', `${id}.md`), 'utf8'), PROSE_TEXT,
       'and the prose is on disk, recoverable — a forgotten task done is never silently emptied');
@@ -588,12 +588,12 @@ const FILLER_SSE = [
   }),
   ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
   td(0, 'Sent.\n'),
-  td(0, '(sent)\n'),
+  td(0, '[Runtime note: action text omitted from retained history.]\n'),
   ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
   ev('message_stop', { type: 'message_stop' }),
 ].join('');
 
-test('a model-authored `(sent)` line raises spill-mimic with kind filler, bytes unchanged', async () => {
+test('a model-authored `[Runtime note: action text omitted from retained history.]` line raises spill-mimic with kind filler, bytes unchanged', async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({ body: FILLER_SSE }, async (proxy) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['task.add', 'dm'] } });
@@ -625,7 +625,7 @@ test("the tee's own filler never trips the mimic detector: it runs on the input 
     const events = collect(proxy, ['spill', 'spill-mimic', 'stream-end']);
     const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
     assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
-    assert.equal(textOf(res.body), '(sent)', 'ENTER: this run really produced the filler, end to end through the proxy');
+    assert.equal(textOf(res.body), '[Runtime note: action text omitted from retained history.]', 'ENTER: this run really produced the filler, end to end through the proxy');
     assert.equal(events.spill.length, 1);
     assert.equal(events['spill-mimic'].length, 0);
   });

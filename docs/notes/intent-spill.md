@@ -72,8 +72,8 @@ them, so recognition stays. Recognised only on the non-wire scans (the
 sentinel's recovery replay, `_scanJsonlText`): the wire tee reads the unspilled
 stream, so a receipt in wire text can only have been typed, and `mimicKindOf`
 is what the spill filter runs on its input to catch exactly that — it also
-reports a lone `SPILL_FILLER` line (`(sent)`, the tee's empty-block filler) as
-kind `filler`. The verb words must name a `SPILL_VERBS` key or the line is
+reports a lone `SPILL_FILLER` line (the tee's empty-block runtime note) as kind
+`filler`; the bounce never echoes it. The verb words must name a `SPILL_VERBS` key or the line is
 prose.
 
 ## resolveReceipt

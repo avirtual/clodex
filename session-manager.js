@@ -186,7 +186,7 @@ const {
 } = require('./intent-spill');
 const { spillGrammarLine } = require('./ipc-prompt');
 
-const SPILL_MIMIC_BOUNCE = '[agent] you wrote a receipt line yourself — nothing was sent or filed. Clodex writes a receipt only after it has delivered a body you wrote. If you meant to send something, emit the intent with its full text.';
+const SPILL_MIMIC_BOUNCE = '[agent] Not executed: that line was a receipt or filler, not an intent, and nothing was sent or filed. Emit the complete intent — head line, full body, [agent:end].';
 
 function spillAckLine(ev, filePath) {
   if (ev.verb === 'prose') {

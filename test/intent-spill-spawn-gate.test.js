@@ -131,6 +131,8 @@ test('the grammar line is in the prompt with the setting OFF, so a flip changes 
     assert.ok(off.prompts[0].includes('the whole block is removed from your transcript, and a `[clodex] … filed at …` note on your next prompt confirms the filing, so a body is never lost and never needs re-sending'));
     assert.ok(off.prompts[0].includes('Always write the body itself: a body you did not write does not exist, and the confirmation is something Clodex writes after delivery, never something you write.'),
       'the paragraph names no token and no form: the pointer shape it used to teach is what the seats copied');
+    assert.ok(off.prompts[0].includes('Actions happen only by emitting the complete intent — head line, full body, terminator; describing, promising or referring to an action in prose performs nothing. Clodex may omit executed intent text from your retained history and report outcomes separately; those history edits are not a request form and never something you write.'),
+      'the two anchors: prose performs nothing, and a history edit is never a request form');
     assert.ok(!/receipt/.test(off.prompts[0]),
       'the word is gone with the shape: the receipt sentence was the counter-example seats imitated');
     assert.ok(!off.prompts[0].includes('@spill'), 'no pointer token anywhere in the prompt');

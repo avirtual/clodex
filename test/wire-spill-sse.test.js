@@ -209,7 +209,7 @@ test('pings keep flowing while a body is held, in order, and usage bytes are unt
   const s = out.toString('utf8');
   assert.equal(s.match(/event: ping/g).length, 2, 'both pings forwarded');
   assert.equal(textOf(out), SPILL_FILLER, 'the whole block was the reply, so the emptied block gets the filler');
-  assert.ok(s.indexOf('event: ping') < s.indexOf('(sent)'), 'pings arrive before the filler');
+  assert.ok(s.indexOf('event: ping') < s.indexOf('[Runtime note: action text omitted from retained history.]'), 'pings arrive before the filler');
   assert.ok(s.includes(usage.toString('utf8')), 'usage event byte-identical');
   assert.ok(!s.includes(BIG));
 });
@@ -224,7 +224,7 @@ test('content_block_stop flushes a held, unterminated body BEFORE the stop event
   const { out, tee } = drive(stream, 29);
   const s = out.toString('utf8');
   assert.equal(textOf(out), `[agent:task add t] ${BIG}`, 'the held original is emitted, and no filler pads a block that never spilled');
-  assert.ok(!s.includes('(sent)'));
+  assert.ok(!s.includes('[Runtime note: action text omitted from retained history.]'));
   assert.equal(tee.fired, 0);
   assert.ok(s.indexOf(BIG.slice(0, 40)) < s.indexOf('event: content_block_stop'),
     'flushed before the stop');
@@ -391,10 +391,10 @@ test('proseSpill: the filler delta precedes content_block_stop, and the stop is 
 
   assert.equal(tee.fired, 1);
   assert.ok(!s.includes(BIG), 'the prose is off the wire');
-  assert.ok(s.indexOf('(sent)') < s.indexOf('event: content_block_stop'),
+  assert.ok(s.indexOf('[Runtime note: action text omitted from retained history.]') < s.indexOf('event: content_block_stop'),
     'held text cannot outlive its block — the filler is emitted before the stop');
   assert.ok(s.includes(stop.toString('utf8')), 'the stop frame is byte-identical');
-  assert.equal(textOf(out), '(sent)', 'and the block carries exactly the filler');
+  assert.equal(textOf(out), '[Runtime note: action text omitted from retained history.]', 'and the block carries exactly the filler');
   assert.equal(fs.readFileSync(keptPath(idOf(spills)), 'utf8'), `Acknowledged.\n${BIG}\n`);
 });
 
@@ -493,7 +493,7 @@ test('proseSpill: only the text AFTER the last non-text block is the tail', () =
     const { out, tee, spills } = drive(TWO_FAT_BLOCKS, cs, { proseSpill: true });
     const s = out.toString('utf8');
     assert.equal(tee.fired, 1, `@cs=${cs}`);
-    assert.equal(textOf(out), `${NARRATION}\n(sent)`,
+    assert.equal(textOf(out), `${NARRATION}\n[Runtime note: action text omitted from retained history.]`,
       `@cs=${cs}: the first text block is narration and survives verbatim; the second is emptied and gets the filler`);
     assert.ok(!s.includes(BIG), `@cs=${cs}: the second is the sign-off and goes to disk`);
     const id = idOf(spills);
@@ -515,7 +515,7 @@ test('proseSpill: a lone text block still spills, with the stop frames after the
     assert.equal(tee.fired, 1, `@cs=${cs}`);
     const id = idOf(spills);
     assert.equal(fs.readFileSync(keptPath(id), 'utf8'), `${BIG}\n`, `@cs=${cs}`);
-    assert.equal(textOf(out), '(sent)', `@cs=${cs}`);
+    assert.equal(textOf(out), '[Runtime note: action text omitted from retained history.]', `@cs=${cs}`);
     assert.deepEqual(typesOf(out),
       ['content_block_start', 'content_block_delta', 'content_block_stop', 'message_stop'],
       `@cs=${cs}: holding the stop must not reorder or drop it`);
@@ -528,8 +528,8 @@ test('proseSpill: a thinking block PRECEDES rather than follows, so the text aft
     assert.equal(tee.fired, 1,
       `@cs=${cs}: a non-text block flushes only a tail already standing, and there was none`);
     assert.equal(fs.readFileSync(keptPath(idOf(spills)), 'utf8'), `${BIG}\n`, `@cs=${cs}`);
-    assert.equal(textOf(out), '(sent)', `@cs=${cs}`);
-    assert.ok(out.toString('utf8').includes(td(1, '(sent)').toString('utf8')),
+    assert.equal(textOf(out), '[Runtime note: action text omitted from retained history.]', `@cs=${cs}`);
+    assert.ok(out.toString('utf8').includes(td(1, '[Runtime note: action text omitted from retained history.]').toString('utf8')),
       `@cs=${cs}: the filler carries the TEXT block's index, not the thinking block's`);
   }
 });
@@ -631,7 +631,7 @@ test('proseSpill: a ping passes the held stop; message_delta stays behind the fi
       'content_block_start', 'ping', 'content_block_delta', 'content_block_stop',
       'message_delta', 'message_stop',
     ], `@cs=${cs}: only the ping is let past the hold`);
-    assert.ok(s.indexOf('event: ping') < s.indexOf('(sent)'), `@cs=${cs}`);
+    assert.ok(s.indexOf('event: ping') < s.indexOf('[Runtime note: action text omitted from retained history.]'), `@cs=${cs}`);
   }
 });
 
@@ -651,11 +651,11 @@ test('proseSpill: a fire AT the stop is flushed there, not left behind the hold'
   assert.deepEqual(typesOf(first),
     ['content_block_start', 'content_block_delta', 'content_block_stop'],
     'the filler is forwarded at the stop, ahead of every later frame');
-  assert.equal(textOf(first), '(sent)');
+  assert.equal(textOf(first), '[Runtime note: action text omitted from retained history.]');
   assert.equal(tee.fired, 1);
 
   const second = tee.feed(Buffer.concat([start(1, 'tool_use'), stopAt(1)]));
-  assert.ok(!second.toString('utf8').includes('(sent)'), 'no second filler at the next block: nothing spilled there');
+  assert.ok(!second.toString('utf8').includes('[Runtime note: action text omitted from retained history.]'), 'no second filler at the next block: nothing spilled there');
   const rest = Buffer.concat([second, tee.feed(ev('message_stop', { type: 'message_stop' })), tee.close()]);
   assert.deepEqual(typesOf(rest),
     ['content_block_start', 'content_block_stop', 'message_stop']);
@@ -708,20 +708,20 @@ function textBlock(index, text, before = [], after = []) {
   ]);
 }
 
-test('empty-record guard: a reply that is ONLY the spilled block gets exactly `(sent)` before its stop, in both modes', () => {
-  assert.equal(SPILL_FILLER, '(sent)', 'the literal the mimic detector matches and the CLI records');
+test('empty-record guard: a reply that is ONLY the spilled block gets exactly `[Runtime note: action text omitted from retained history.]` before its stop, in both modes', () => {
+  assert.equal(SPILL_FILLER, '[Runtime note: action text omitted from retained history.]', 'the literal the mimic detector matches and the CLI records');
   const stream = textBlock(0, ONLY_BLOCK);
   for (const proseSpill of [false, true]) {
     for (const cs of [1, 17, 997, stream.length]) {
       const { out, tee } = drive(stream, cs, { proseSpill });
       assert.equal(tee.fired, 1, `proseSpill=${proseSpill} @cs=${cs}`);
-      assert.equal(textOf(out), '(sent)',
+      assert.equal(textOf(out), '[Runtime note: action text omitted from retained history.]',
         `proseSpill=${proseSpill} @cs=${cs}: Anthropic rejects a text block with no non-whitespace text on the NEXT `
         + 'request, and an assistant turn that is one long dispatch is the common shape');
       assert.deepEqual(typesOf(out),
         ['content_block_start', 'content_block_delta', 'content_block_stop', 'message_stop'],
         `proseSpill=${proseSpill} @cs=${cs}: one filler delta, inside the block, before its stop`);
-      assert.ok(out.toString('utf8').includes(td(0, '(sent)').toString('utf8')),
+      assert.ok(out.toString('utf8').includes(td(0, '[Runtime note: action text omitted from retained history.]').toString('utf8')),
         `proseSpill=${proseSpill} @cs=${cs}: the filler is a plain text_delta on the block's index`);
     }
   }
@@ -735,7 +735,7 @@ test('empty-record guard: any surviving non-whitespace prose suppresses the fill
 
     const wsOnly = drive(textBlock(0, `\n${ONLY_BLOCK}\n`), 13, { proseSpill });
     assert.equal(wsOnly.tee.fired, 1, `proseSpill=${proseSpill}`);
-    assert.equal(textOf(wsOnly.out), '\n\n(sent)',
+    assert.equal(textOf(wsOnly.out), '\n\n[Runtime note: action text omitted from retained history.]',
       `proseSpill=${proseSpill}: newlines around the block are forwarded as they were, and the filler still lands — whitespace-only is what the API rejects`);
   }
 });
@@ -745,7 +745,7 @@ test('empty-record guard: a block that spilled nothing is never padded, and a fi
   for (const proseSpill of [false, true]) {
     const { out, tee } = drive(short, 13, { proseSpill });
     assert.equal(tee.fired, 0);
-    assert.ok(!out.toString('utf8').includes('(sent)'), `proseSpill=${proseSpill}: nothing spilled, nothing padded`);
+    assert.ok(!out.toString('utf8').includes('[Runtime note: action text omitted from retained history.]'), `proseSpill=${proseSpill}: nothing spilled, nothing padded`);
   }
   const { out, tee } = drive(NARRATE_THEN_TOOL, 13, { proseSpill: true });
   assert.equal(tee.fired, 0);
@@ -761,8 +761,8 @@ test('empty-record guard: after a thinking block, the filler lands in the TEXT b
   for (const proseSpill of [false, true]) {
     const { out, tee } = drive(stream, 29, { proseSpill });
     assert.equal(tee.fired, 1, `proseSpill=${proseSpill}`);
-    assert.equal(textOf(out), '(sent)', `proseSpill=${proseSpill}`);
-    assert.ok(out.toString('utf8').includes(td(1, '(sent)').toString('utf8')), `proseSpill=${proseSpill}: index 1, the text block`);
+    assert.equal(textOf(out), '[Runtime note: action text omitted from retained history.]', `proseSpill=${proseSpill}`);
+    assert.ok(out.toString('utf8').includes(td(1, '[Runtime note: action text omitted from retained history.]').toString('utf8')), `proseSpill=${proseSpill}: index 1, the text block`);
     assert.equal(textOf(out, 'thinking_delta', 'thinking'), 'weighing it', `proseSpill=${proseSpill}`);
   }
 });

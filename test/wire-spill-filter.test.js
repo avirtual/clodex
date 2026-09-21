@@ -594,8 +594,9 @@ const MIMIC = "(I sent dm bob in full, 900 B; Clodex kept my text at /Users/x/.c
 const MIMIC_TAIL = "(I wrote 900 B of prose after my last intent; it reached the operator's log and Clodex kept it at /Users/x/.clodex/spill/wirescope/0123456789abcdef.md.)";
 
 test('onMimic: a receipt-shaped or filler line in the INPUT is model-authored and is reported, bytes untouched', () => {
-  assert.equal(SPILL_FILLER, '(sent)', 'the tee\'s filler is the one shape a stripped record can still show, so it is the one left to copy');
-  for (const [line, kind] of [[MIMIC, 'intent'], [MIMIC_TAIL, 'prose'], [SPILL_FILLER, 'filler'], ['  (sent)  ', 'filler']]) {
+  assert.equal(SPILL_FILLER, '[Runtime note: action text omitted from retained history.]',
+    'the tee\'s filler is the one shape a stripped record can still show, so it is the one left to copy — third-person, asserting nothing');
+  for (const [line, kind] of [[MIMIC, 'intent'], [MIMIC_TAIL, 'prose'], [SPILL_FILLER, 'filler'], ['  [Runtime note: action text omitted from retained history.]  ', 'filler']]) {
     const seen = [];
     const T = `Sent.\n${line}\nmore.\n`;
     for (const cs of SIZES) {
@@ -612,8 +613,8 @@ test('onMimic: a receipt-shaped or filler line in the INPUT is model-authored an
   }
 });
 
-test('onMimic: `(sent)` with anything else on its line is prose, not the filler', () => {
-  for (const line of ['(sent) the dm', 'I have (sent)', '(sent).', '(Sent)']) {
+test('onMimic: the filler with anything else on its line is prose, not the filler', () => {
+  for (const line of ['[Runtime note: action text omitted from retained history.] the dm', 'I have [Runtime note: action text omitted from retained history.]', '[Runtime note: action text omitted from retained history.].', '[runtime note: action text omitted from retained history.]', '(sent)']) {
     const seen = [];
     const r = run(`${line}\n`, { onMimic: (i) => seen.push(i) });
     assert.equal(r.out, `${line}\n`);
@@ -679,6 +680,6 @@ test('receiptOf reads a path with whitespace in it — the root is configurable 
   assert.equal(rc.path, p);
   assert.equal(rc.head, 'dm bob');
   assert.equal(mimicKindOf(`(I wrote 900 B of prose after my last intent; it reached the operator's log and Clodex kept it at ${p}.)`), 'prose');
-  assert.equal(mimicKindOf('(sent)'), 'filler');
+  assert.equal(mimicKindOf('[Runtime note: action text omitted from retained history.]'), 'filler');
   assert.equal(mimicKindOf('(sent) ok'), null);
 });

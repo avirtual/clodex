@@ -21,8 +21,7 @@ the file for the body, so a one-byte divergence dispatches a different spec
    them; the head-line fragment (`firstBody`) never is.
 
 The nested-intent bail is over-broad on purpose — the filter cannot know fences
-without reimplementing `fencedLines`, so it errs SAFE: a fenced example in a held
-body bails, costing the saving, never a spec.
+without `fencedLines`, so it errs SAFE: a fenced example in a held body bails.
 
 `originalHeld` reconstructs the head line as RECEIVED rather than spill.py's
 `head + " " + body_text` (source newline dropped, space added): byte-identity on
@@ -35,11 +34,11 @@ scanner's delimitation.
 A spilled block resolves to the EMPTY string — head, body and `[agent:end]`
 gone. Two placeholders preceded this and both were imitated: a `@spill:<id>`
 pointer (19 fabrications in 12 h), then a first-person receipt (6 in 15 long
-bodies, one on a fresh context holding a single prior receipt): anything the tee
+bodies, one on a fresh context with a single prior receipt): anything the tee
 authors in the ASSISTANT role with a copyable shape gets copied. The confirmation
 rides `onSpill` (`head` = head words, `null` for the tail) into the notice queue,
-the USER role. `wire/proxy.js` feeds the intent tee the ORIGINAL chunk, so
-dispatch never depends on the record. The filter never feeds itself, so a
+the USER role. `wire/proxy.js` feeds the intent tee the ORIGINAL chunk, so dispatch
+never depends on the record. The filter never feeds itself, so a
 `RECEIPT_RE`/`TAIL_RECEIPT_RE`/`SPILL_FILLER` line in its INPUT is model-authored:
 `onMimic` reports it, bytes untouched, judging only lines it is NOT holding.
 
@@ -47,10 +46,12 @@ dispatch never depends on the record. The filter never feeds itself, so a
 
 Anthropic rejects, on the NEXT request, an assistant `text` block whose text is
 whitespace-only, and a turn that is one long dispatch is the common shape. At a
-text block's stop the tee emits one `SPILL_FILLER` delta (`(sent)`) on the
-block's index before the stop, only if the filter fired during the block AND all
-it forwarded is whitespace. Gating on a fire leaves the text→text boundary
-alone: the first block's bytes live on in the filter tail (see `_panic`).
+text block's stop the tee emits one `SPILL_FILLER` delta on the block's index
+before the stop, only if the filter fired during the block AND all it forwarded
+is whitespace. The filler is a third-person runtime note asserting nothing;
+`(sent)` was a success claim of the shape the strip removes. Gating on a fire
+leaves the text→text boundary alone: the first block's bytes live on in the
+filter tail (see `_panic`).
 
 ## passthru
 
@@ -59,8 +60,7 @@ emitted bytes its line scanner never consumed, and resynchronising against them 
 what split `[agent:end]` across two deltas into `[ag\nent:end]`; it takes hold
 MID-BUFFER, since the rest of the current buffer is where that desync reappears.
 `bail()` also clears `proseSpill`, so a latched filter never holds a tail it will
-not resolve. Set in the constructor for an agent name that fails `validAgent`: a
-stream that could never produce a path is never held.
+not resolve. Set in the constructor for an agent name that fails `validAgent`.
 
 ## maxBytes
 
@@ -99,9 +99,9 @@ while never dispatching the intent.
 
 ## proseSpill
 
-Off, the filter is byte-for-byte pre-S-G2, so every older subject runs against the
-default. On, text outside a held body accumulates in `tail`, and any intent head
-line FLUSHES it — prose BETWEEN intents stays on the wire.
+Off, the filter is byte-for-byte pre-S-G2. On, text outside a held body
+accumulates in `tail`, and any intent head line FLUSHES it — prose BETWEEN intents
+stays on the wire.
 
 `foreignBody` covers the verb the filter does NOT hold: a `remind` body is
 ordinary text to the line scanner, so without it the reminder would land in `tail`
