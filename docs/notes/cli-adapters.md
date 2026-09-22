@@ -31,11 +31,6 @@ Convert a guard the day a second platform gets that artifact. The two
 exception and flip to `caps.transcript` when a Codex reviewer can exercise
 them live.
 
-## seatType
-
-The ticket seat's `type` comes from the role's template; the opener's type fills
-it only when the role names no template.
-
 ### Not in the leak lists
 
 The module is a pure leaf — no `require`, no fs, no coordinator name — so
@@ -43,3 +38,8 @@ it is not listed in `test/free-identifier-leaks.test.js`, for the same
 reason `clodex-paths.js` is not: there is no deps object whose identifiers
 could leak. The renderer requires it directly and esbuild inlines it into
 `web-dist`.
+
+## seatType
+
+The ticket seat's `type` comes from the role's template; the opener's type fills
+it only when the role names no template.

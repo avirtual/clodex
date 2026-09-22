@@ -37,7 +37,7 @@ const {
   teamPromptFile,
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate } = require('./team-template-derive');
-const { seatType, adapterFor, DEFAULT_TYPE } = require('./cli-adapters');
+const { seatType, adapterFor, DEFAULT_TYPE, PLATFORMS } = require('./cli-adapters');
 const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
@@ -459,6 +459,21 @@ function standingSeat(entry) {
 
 // A cwd not inside `root` yields the tree ROOT: joining an escape would put the
 // seat outside the tree, which is the isolation this dispatch exists for.
+function ignoreCodexDir(fs, seatCwd) {
+  const dir = nodePath.join(seatCwd, '.codex');
+  const file = nodePath.join(dir, '.gitignore');
+  try {
+    let cur = null;
+    try { cur = fs.readFileSync(file, 'utf8'); } catch { cur = null; }
+    if (cur === '*\n') return null;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, '*\n');
+    return null;
+  } catch (e) {
+    return `could not write ${file} (${e.message}); the hand's tree will show .codex/ as untracked`;
+  }
+}
+
 function seatCwdInTree(root, seatCwd, treePath) {
   if (!treePath) return seatCwd;
   if (!root || !seatCwd) return treePath;
@@ -3217,9 +3232,11 @@ function createTicketMethods(deps, shared) {
       }
       if (!base) return { ok: false, error: `no template "${stem}" to derive from` };
       const baseType = base.type || DEFAULT_TYPE;
+      const adapter = adapterFor(baseType);
+      if (!adapter) return { ok: false, error: `template "${stem}" names type "${base.type}" — known: ${PLATFORMS.join(', ')}` };
       const id = resolveModelId(baseType, intent.model);
       if (!id) {
-        const aliases = Object.keys(adapterFor(baseType).model.aliases);
+        const aliases = Object.keys(adapter.model.aliases);
         return { ok: false, error: aliases.length
           ? `model "${intent.model}" is not a model id or alias (${aliases.join(', ')})`
           : `model "${intent.model}" is not a model id — Codex takes no aliases` };
@@ -5504,10 +5521,14 @@ function createTicketMethods(deps, shared) {
           if (shape.accountMissing) {
             throw new Error(accountMissingError(roleKey, shape.accountMissing));
           }
-          if (shape.type === 'codex' && wt && wt.path) await gitWorktree.excludeInTree(wt.path, '.codex/');
           // Not inside resolveSeatShape: the tree is minted above, after the shape
           // is built, and the review path shares that resolver with no tree at all.
           const seatCwd = seatCwdInTree(team.root, shape.cwd, wt && wt.path);
+          let codexWarn = '';
+          if (shape.type === 'codex' && wt && wt.path) {
+            const e = ignoreCodexDir(fs, seatCwd);
+            if (e) codexWarn = ` — NOTE: ${e}`;
+          }
           const spawned = await this.create(
             seat.name, shape.type, seatCwd,
             shape.extraArgs, null,
@@ -5572,7 +5593,7 @@ function createTicketMethods(deps, shared) {
           const cwdWarn = shape.cwdFallback ? ` — NOTE: ${shape.cwdFallback}` : '';
           reply(isSpawn
             ? `ticket ${ticket.id} → ${seat.name} in the shared checkout ${shape.cwd} (no branch, no worktree)${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}`
-            : `ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}${linkWarn}`);
+            : `ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}${linkWarn}${codexWarn}`);
         } catch (err) {
           const live = this.sessions.has(seat.name);
           if (!live) getPersistence().remove(seat.name);
@@ -10408,4 +10429,4 @@ function createTicketMethods(deps, shared) {
   };
 }
 
-module.exports = { createTicketMethods, ticketCloseLine, ticketCloseVerb, ticketTaskDirLine };
+module.exports = { createTicketMethods, ticketCloseLine, ticketCloseVerb, ticketTaskDirLine, ignoreCodexDir };

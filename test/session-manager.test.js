@@ -10840,6 +10840,9 @@ test('t1076: model: on a CODEX template takes a model id verbatim and refuses an
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'gpt-5-codex', template: 'hc', body: '' });
   assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'gpt-5-codex', '-v'], '-m is stripped on codex; the id passes through');
   assert.strictEqual(f.readTpl('hand').type, 'codex');
+  fsReal.writeFileSync(f.tplFile('sh'), JSON.stringify({ name: 'sh', type: 'sh', cwd: '${TEAM_ROOT}' }));
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'gpt-5-codex', template: 'sh', body: '' });
+  assert.match(f.last(), /error: template "sh" names type "sh" — known: claude, codex/);
 });
 
 test('t767: role-add worker model:haiku with no template derives from the shipped clodex-team-hand', () => {

@@ -644,6 +644,13 @@ test('t1076 ticket arm: a Claude lead with the Claude bypass flag dispatching a 
   assert.deepStrictEqual(claude.extraArgs, ['--dangerously-skip-permissions']);
 });
 
+test('t1076 review arm: a CODEX lead with the Codex bypass flag gives its claude reviewer the CLAUDE bypass flag', () => {
+  const m = managerWith([], { leadArgs: ['--dangerously-bypass-approvals-and-sandbox'] });
+  const shape = m.resolveSeatShape(teamWith({ reviewer: {} }), 'reviewer', 'review', { ...LEAD, type: 'codex' });
+  assert.strictEqual(shape.type, 'claude');
+  assert.deepStrictEqual(shape.extraArgs, ['--dangerously-skip-permissions']);
+});
+
 test('t1076: a Codex-template hand naming an account is refused with reason platform', () => {
   const m = managerWith([{ name: 'hc', type: 'codex', cwd: '/repo' }]);
   const shape = m.resolveSeatShape(teamWith({ hand: { worktree: true, template: 'hc', account: 'work' } }), 'hand', 'ticket', LEAD);
