@@ -1739,7 +1739,8 @@ body {
   padding: 0 4px;
 }
 .team-role-platform {
-  margin-left: 4px;
+  align-self: flex-start;
+  margin-top: 2px;
   white-space: nowrap;
 }
 .team-role-ro-meta {
@@ -35232,7 +35233,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
       }
       function templatePlatform(rows, team, value) {
         const row = templateRowFor(rows, team, value);
-        return row ? row.type || DEFAULT_TYPE : null;
+        return row && !row.unreadable ? row.type || DEFAULT_TYPE : null;
       }
       function storedPromptNote(prompt2, opts = {}) {
         const { offered = [], all = [], teamOwned = [], listingOk = true, team = "" } = opts;
@@ -42140,7 +42141,7 @@ ${detail}` });
         newSessionSkillsDrawn = [];
       }
       async function refreshNewSessionSkills(disabledSet = /* @__PURE__ */ new Set(), { forTemplate = false } = {}) {
-        if (inputType.value !== "claude") return;
+        if (!capsFor(inputType.value).skillRoster) return;
         resetNewSessionSkillCollector(disabledSet);
         const cwd = expandPath(inputCwd.value.trim()) || homeDir;
         const res = await window.api.getSkillCatalogFor(cwd);
@@ -42178,7 +42179,7 @@ ${detail}` });
         return deferredSkillDeny([...keptRows, ...keptUndrawn]);
       }
       async function refreshNewSessionTools(disabledSet = null, { forTemplate = false } = {}) {
-        if (inputType.value !== "claude") return;
+        if (!capsFor(inputType.value).tools) return;
         const cwd = expandPath(inputCwd.value.trim()) || homeDir;
         const res = await window.api.getToolCatalogFor(cwd);
         const disabled = disabledSet || new Set(getDefaultToolDenyCache());

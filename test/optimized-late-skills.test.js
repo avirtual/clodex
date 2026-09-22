@@ -18,6 +18,7 @@ const { intentEnabled } = require('../intent-catalog');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { capsFor } = require('../cli-adapters');
 
 const ROOT = path.join(__dirname, '..');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
@@ -120,6 +121,7 @@ async function dialogDisabledSkills(engine, mode, {
     const env = {
       inputMode: { value: mode },
       inputType: { value: 'claude' },
+      capsFor,
       inputCwd: { value: '/tmp/proj' },
       inputSkillsList,
       expandPath: (p) => p,

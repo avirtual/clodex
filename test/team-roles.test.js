@@ -1503,8 +1503,9 @@ test('t1077: templatePlatform names the platform of the row the picker resolves,
     [[], 'x', null],
     [null, 'x', null],
     [[{ name: 'x', type: 'codex' }], '', null],
+    [[{ name: 'x', unreadable: true }], 'x', null],
   ];
-  assert.strictEqual(table.length, 7, 'ENTER: every row below ran');
+  assert.strictEqual(table.length, 8, 'ENTER: every row below ran');
   for (const [rows, value, want] of table) {
     assert.strictEqual(templatePlatform(rows, 'shop', value), want, `rows=${JSON.stringify(rows)} value=${JSON.stringify(value)}`);
   }

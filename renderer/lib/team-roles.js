@@ -156,7 +156,7 @@ function templateRowFor(rows, team, value) {
 
 function templatePlatform(rows, team, value) {
   const row = templateRowFor(rows, team, value);
-  return row ? (row.type || DEFAULT_TYPE) : null;
+  return row && !row.unreadable ? (row.type || DEFAULT_TYPE) : null;
 }
 
 // The branch ORDER is the meaning: a team-owned stem is on disk and resolves first,

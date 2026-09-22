@@ -1424,7 +1424,7 @@ html, body {
   border-radius: 3px;
   padding: 0 4px;
 }
-.team-role-platform { margin-left: 4px; white-space: nowrap; }
+.team-role-platform { align-self: flex-start; margin-top: 2px; white-space: nowrap; }
 .team-role-ro-meta { font-size: 11px; color: var(--text-dim); }
 /* What a role uses, one line per piece, with an ownership badge. `library` is
    deliberately the bare .team-role-badge look: borrowing is the normal state and

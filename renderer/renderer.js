@@ -2370,7 +2370,7 @@ function resetNewSessionSkillCollector(disabledSet) {
   newSessionSkillsDrawn = [];
 }
 async function refreshNewSessionSkills(disabledSet = new Set(), { forTemplate = false } = {}) {
-  if (inputType.value !== 'claude') return;
+  if (!capsFor(inputType.value).skillRoster) return;
   resetNewSessionSkillCollector(disabledSet);
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
   const res = await window.api.getSkillCatalogFor(cwd);
@@ -2401,7 +2401,7 @@ function newSessionSkillDenyList() {
   return deferredSkillDeny([...keptRows, ...keptUndrawn]);
 }
 async function refreshNewSessionTools(disabledSet = null, { forTemplate = false } = {}) {
-  if (inputType.value !== 'claude') return;
+  if (!capsFor(inputType.value).tools) return;
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
   const res = await window.api.getToolCatalogFor(cwd);
   const disabled = disabledSet || new Set(getDefaultToolDenyCache());

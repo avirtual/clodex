@@ -705,6 +705,7 @@ async function drawSkillsForTemplate(disabledSkills) {
     const inputSkillsList = el('div');
     const env = {
       inputType: { value: 'claude' },
+      capsFor,
       inputCwd: { value: '/tmp/proj' },
       expandPath: (p) => p,
       homeDir: '/home/x',
