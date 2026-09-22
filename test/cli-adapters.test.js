@@ -1,4 +1,4 @@
-// provider-caps.test.js — the per-CLI capability table the two session dialogs
+// cli-adapters.test.js — the per-CLI adapter table; its `ui` rows are what the two session dialogs
 // gate on (t749). Whole-object assertions: a partial match would read around a
 // key a new row forgot, and an absent key is `undefined`, which every gate here
 // treats as "hide" without a word.
@@ -8,7 +8,9 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 
-const { PROVIDER_CAPS, CAP_KEYS, capsFor } = require('../renderer/lib/provider-caps');
+const {
+  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, adapterFor, seatType, stripModelArgs,
+} = require('../cli-adapters');
 const { createSkillDelivery } = require('../skill-delivery');
 
 test('t749: claude is the full row', () => {
@@ -47,7 +49,8 @@ test('t749: an unlisted type gets an all-false row, not undefined', () => {
 });
 
 test('t749: every row carries every key', () => {
-  for (const [type, row] of Object.entries(PROVIDER_CAPS)) {
+  for (const [type, entry] of Object.entries(ADAPTERS)) {
+    const row = entry.ui;
     assert.deepStrictEqual(Object.keys(row).sort(), [...CAP_KEYS].sort(),
       `${type} must declare the whole key set`);
     for (const k of CAP_KEYS) {
@@ -57,10 +60,53 @@ test('t749: every row carries every key', () => {
 });
 
 test('t749: the dialog may not offer skills to a provider main cannot deliver to', () => {
-  const offered = Object.keys(PROVIDER_CAPS).filter((k) => PROVIDER_CAPS[k].injectSkills);
+  const offered = Object.keys(ADAPTERS).filter((k) => ADAPTERS[k].ui.injectSkills);
   assert.ok(offered.length, 'ENTER: at least one provider is offered the Custom skills row');
   const deliverable = createSkillDelivery({}).providers();
   assert.deepStrictEqual(offered.sort(), [...deliverable].sort());
+});
+
+const ENTRY_KEYS = ['id', 'label', 'cmd', 'model', 'posture', 'account', 'readOnlyCap', 'instructions', 'caps', 'ui'];
+
+test('every adapter entry carries the whole entry key set', () => {
+  for (const [type, entry] of Object.entries(ADAPTERS)) {
+    assert.deepStrictEqual(Object.keys(entry), ENTRY_KEYS, `${type} must declare every entry key, in order`);
+    assert.strictEqual(entry.id, type);
+    assert.deepStrictEqual(Object.keys(entry.model), ['flags', 'aliases', 'idRe']);
+    assert.deepStrictEqual(Object.keys(entry.caps), ['park', 'transcript']);
+  }
+});
+
+test('the adapter table names exactly the providers skill-delivery can deliver to', () => {
+  assert.deepStrictEqual(Object.keys(ADAPTERS), createSkillDelivery({}).providers());
+});
+
+test('PLATFORMS is the table order', () => {
+  assert.deepStrictEqual(PLATFORMS, ['claude', 'codex']);
+});
+
+test('adapterFor answers null for anything the table does not name', () => {
+  assert.strictEqual(adapterFor('sh'), null);
+  assert.strictEqual(adapterFor(undefined), null);
+  assert.strictEqual(adapterFor(null), null);
+  assert.strictEqual(adapterFor('toString'), null);
+  assert.strictEqual(adapterFor('claude'), ADAPTERS.claude);
+});
+
+test('seatType: the template decides when present, the opener only when there is none', () => {
+  assert.strictEqual(seatType(null, { type: 'codex' }), 'codex');
+  assert.strictEqual(seatType({}, { type: 'codex' }), 'claude');
+  assert.strictEqual(seatType({ type: 'codex' }, { type: 'claude' }), 'codex');
+  assert.strictEqual(seatType(null, null), 'claude');
+  assert.throws(() => seatType({ type: 'sh' }, null), /unknown seat type "sh".*claude, codex/);
+  assert.throws(() => seatType(null, { type: 'sh' }), /unknown seat type "sh"/);
+});
+
+test('stripModelArgs strips every model flag the adapter declares, and only those', () => {
+  assert.deepStrictEqual(stripModelArgs('codex', ['-m', 'o3', '--model=x', '--foo']), ['--foo']);
+  assert.deepStrictEqual(stripModelArgs('claude', ['-m', 'o3']), ['-m', 'o3']);
+  assert.deepStrictEqual(stripModelArgs('claude', ['--model', 'opus', '--model=x', '-v']), ['-v']);
+  assert.deepStrictEqual(stripModelArgs('sh', ['--model', 'x']), ['--model', 'x']);
 });
 
 test('t749: the caps table is the only thing the dialogs gate these sections on', () => {

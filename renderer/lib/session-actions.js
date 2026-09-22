@@ -11,7 +11,7 @@
 // (tools/skills/agents/intents/plugins/edit/history/reload) so the menu reuses
 // the exact opener wiring the standalone buttons used.
 
-const { capsFor } = require('./provider-caps');
+const { capsFor } = require('../../cli-adapters');
 
 // Tool and agent gating is Claude-only. Intents, plugins and skills are NOT:
 // a codex seat carries all three, so pinning one to claude leaves that seat with

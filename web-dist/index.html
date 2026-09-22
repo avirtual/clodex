@@ -24341,40 +24341,121 @@ ${i3.join("\n")}
     }
   });
 
-  // renderer/lib/provider-caps.js
-  var require_provider_caps = __commonJS({
-    "renderer/lib/provider-caps.js"(exports, module) {
+  // cli-adapters.js
+  var require_cli_adapters = __commonJS({
+    "cli-adapters.js"(exports, module) {
       "use strict";
+      var MODEL_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9.-]{0,63}(?:\[[a-z0-9]{1,8}\])?$/;
       var CAP_KEYS = ["injectSkills", "skillRoster", "plugins", "agents", "tools", "strip", "autoCompact", "noWire", "accounts"];
-      var PROVIDER_CAPS = {
+      var ADAPTERS = {
         claude: {
-          injectSkills: true,
-          skillRoster: true,
-          plugins: true,
-          agents: true,
-          tools: true,
-          strip: true,
-          autoCompact: true,
-          noWire: true,
-          accounts: true
+          id: "claude",
+          label: "Claude Code",
+          cmd: "claude",
+          model: {
+            flags: ["--model"],
+            aliases: {
+              opus: "claude-opus-5[1m]",
+              sonnet: "claude-sonnet-5[1m]",
+              haiku: "claude-haiku-4-5-20251001",
+              fable: "claude-fable-5-1[1m]"
+            },
+            idRe: MODEL_ID_RE
+          },
+          posture: { bypassFlag: "--dangerously-skip-permissions" },
+          account: { envKey: "CLAUDE_CONFIG_DIR", bootstrap: null },
+          readOnlyCap: { enforce: "tool-denylist" },
+          instructions: "append-system-prompt-file",
+          caps: { park: true, transcript: true },
+          ui: {
+            injectSkills: true,
+            skillRoster: true,
+            plugins: true,
+            agents: true,
+            tools: true,
+            strip: true,
+            autoCompact: true,
+            noWire: true,
+            accounts: true
+          }
         },
         codex: {
-          injectSkills: true,
-          skillRoster: false,
-          plugins: true,
-          agents: false,
-          tools: false,
-          strip: false,
-          autoCompact: false,
-          noWire: false,
-          accounts: false
+          id: "codex",
+          label: "Codex",
+          cmd: "codex",
+          model: { flags: ["--model", "-m"], aliases: {}, idRe: MODEL_ID_RE },
+          posture: { bypassFlag: "--dangerously-bypass-approvals-and-sandbox" },
+          account: { envKey: "CODEX_HOME", bootstrap: "codex-home" },
+          readOnlyCap: null,
+          instructions: "model-instructions-file",
+          caps: { park: false, transcript: true },
+          ui: {
+            injectSkills: true,
+            skillRoster: false,
+            plugins: true,
+            agents: false,
+            tools: false,
+            strip: false,
+            autoCompact: false,
+            noWire: false,
+            accounts: false
+          }
         }
       };
+      var PLATFORMS = Object.keys(ADAPTERS);
+      var DEFAULT_TYPE = "claude";
       var NO_CAPS = Object.freeze(Object.fromEntries(CAP_KEYS.map((k) => [k, false])));
-      function capsFor(type) {
-        return PROVIDER_CAPS[type] || NO_CAPS;
+      function adapterFor(type) {
+        if (typeof type !== "string") return null;
+        return Object.prototype.hasOwnProperty.call(ADAPTERS, type) ? ADAPTERS[type] : null;
       }
-      module.exports = { PROVIDER_CAPS, CAP_KEYS, capsFor };
+      function isAgentType(type) {
+        return adapterFor(type) !== null;
+      }
+      function capsFor(type) {
+        const a = adapterFor(type);
+        return a ? a.ui : NO_CAPS;
+      }
+      function seatType(tpl, opener) {
+        const t = tpl ? tpl.type || DEFAULT_TYPE : opener && opener.type || DEFAULT_TYPE;
+        if (!adapterFor(t)) throw new Error(`unknown seat type "${String(t)}" (known: ${PLATFORMS.join(", ")})`);
+        return t;
+      }
+      function resolveModelId(type, v) {
+        const a = adapterFor(type);
+        if (!a) return null;
+        if (typeof v !== "string" || !v) return null;
+        if (Object.prototype.hasOwnProperty.call(a.model.aliases, v)) return a.model.aliases[v];
+        return a.model.idRe.test(v) ? v : null;
+      }
+      function stripModelArgs(type, extraArgs) {
+        const a = adapterFor(type);
+        const flags = a ? a.model.flags : [];
+        const rest = [];
+        const src = Array.isArray(extraArgs) ? extraArgs : [];
+        for (let i = 0; i < src.length; i += 1) {
+          const tok = src[i];
+          if (flags.includes(tok)) {
+            i += 1;
+            continue;
+          }
+          if (typeof tok === "string" && flags.some((f) => f.startsWith("--") && tok.startsWith(f + "="))) continue;
+          rest.push(tok);
+        }
+        return rest;
+      }
+      module.exports = {
+        ADAPTERS,
+        PLATFORMS,
+        DEFAULT_TYPE,
+        CAP_KEYS,
+        adapterFor,
+        isAgentType,
+        capsFor,
+        seatType,
+        resolveModelId,
+        stripModelArgs
+      };
     }
   });
 
@@ -34493,7 +34574,7 @@ Opening it here and saving would overwrite the file with what this editor could 
       var { skillOffSetFor } = require_skills_off();
       var { parseSkillFrontmatter } = require_skills_util();
       var { esc } = require_format();
-      var { capsFor } = require_provider_caps();
+      var { capsFor } = require_cli_adapters();
       var { makeDraggable, resetDrag } = require_popover_drag();
       var { placeAboveAnchor } = require_popover_place();
       var BAR_ANCHOR = '#proxy-bar [data-act="session-menu"]';
@@ -36894,7 +36975,7 @@ You can add it back from this popover.` : "";
   // renderer/lib/session-actions.js
   var require_session_actions = __commonJS({
     "renderer/lib/session-actions.js"(exports, module) {
-      var { capsFor } = require_provider_caps();
+      var { capsFor } = require_cli_adapters();
       var TOOLS_ENTRY = { act: "tools", label: "\u{1F6E0} Tools\u2026" };
       var AGENTS_ENTRY = { act: "agents", label: "\u{1F916} Agents\u2026" };
       var SKILLS_ENTRY = { act: "skills", label: "\u{1F9E9} Skills\u2026" };
@@ -39837,7 +39918,7 @@ ${detail}` });
       var { matchGutterRow, findGutterFile } = require_gutter_scan();
       var GUTTER_HEADER_SCAN = 400;
       var { splitModelArg, withModelArg } = require_args_model();
-      var { capsFor } = require_provider_caps();
+      var { capsFor } = require_cli_adapters();
       var { expandTeamRoot, usesTeamRoot } = require_team_root_expand();
       var { altChordAction } = require_web_shortcuts();
       var { createMirrorLatch } = require_mirror_latch();

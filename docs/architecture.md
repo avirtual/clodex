@@ -1405,7 +1405,7 @@ and are not, which is why the judgement worth testing is pushed down here.
   `{ok:false}` create reply closes the dialog; it never closes on a refusal, so
   a configured form survives one),
   **tool-gate.js** (whether Create is allowed given the tools:check report, the
-  inline notice, and the missing-CLI overlay plan), **provider-caps.js** (which
+  inline notice, and the missing-CLI overlay plan), **cli-adapters.js** (a root leaf, shared with main; its `ui` rows say which
   Advanced sections a CLI's seat may be shown, in the new-session dialog and in
   Edit Session alike — `capsFor(type)` answers a whole-object row and an unlisted
   type reads all-false; a third CLI is a row, not a new gate. Its `injectSkills`

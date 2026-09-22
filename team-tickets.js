@@ -37,6 +37,7 @@ const {
   teamPromptFile,
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate } = require('./team-template-derive');
+const { seatType, adapterFor } = require('./cli-adapters');
 const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
@@ -677,7 +678,8 @@ function createTicketMethods(deps, shared) {
         reply('error: worktree: needs a branch name — [agent:spawn name:X cwd:Y worktree:<branch>]');
         return;
       }
-      const type = tpl ? (tpl.type || 'claude') : (spawner.type || 'claude');
+      let type;
+      try { type = seatType(tpl, spawner); } catch (e) { reply('error: spawn: ' + e.message); return; }
       const workspaceId = spawner.workspaceId || DEFAULT_WORKSPACE_ID;
 
       const spawnerArgs = (getPersistence().get(spawner.name)?.extraArgs) || [];
@@ -5049,7 +5051,7 @@ function createTicketMethods(deps, shared) {
       const accountMissing = acct.ok ? null : { label: acct.label, reason: acct.reason };
       const withAccount = (env) => {
         if (!accountDir) return env;
-        return { ...(env || {}), CLAUDE_CONFIG_DIR: accountDir };
+        return { ...(env || {}), [adapterFor('claude').account.envKey]: accountDir };
       };
 
       if (!review) {
