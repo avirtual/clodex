@@ -6763,11 +6763,18 @@ body:not(.sessions-restored) [data-peer-ui] {
   border-left-color: var(--warn);
   background: rgba(229, 192, 123, .13);
 }
+.intent-mark-filed {
+  border-left-color: var(--ok);
+  background: rgba(152, 195, 121, .13);
+}
 [data-theme=claude] .intent-mark-fire {
   background: rgba(217, 119, 87, .14);
 }
 [data-theme=claude] .intent-mark-inert {
   background: rgba(217, 165, 91, .16);
+}
+[data-theme=claude] .intent-mark-filed {
+  background: rgba(163, 177, 138, .16);
 }
 [data-theme=paper] .intent-mark-fire {
   background: rgba(193, 95, 60, .12);
@@ -6775,11 +6782,17 @@ body:not(.sessions-restored) [data-peer-ui] {
 [data-theme=paper] .intent-mark-inert {
   background: rgba(133, 90, 20, .14);
 }
+[data-theme=paper] .intent-mark-filed {
+  background: rgba(70, 112, 47, .12);
+}
 [data-theme=light] .intent-mark-fire {
   background: rgba(193, 95, 60, .12);
 }
 [data-theme=light] .intent-mark-inert {
   background: rgba(154, 107, 30, .14);
+}
+[data-theme=light] .intent-mark-filed {
+  background: rgba(79, 122, 58, .12);
 }
 .check-group {
   margin: 10px 0 4px;
@@ -28214,11 +28227,22 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // spill-grammar.js
+  var require_spill_grammar = __commonJS({
+    "spill-grammar.js"(exports, module) {
+      "use strict";
+      var FILED_SRC = String.raw`((?:\d+ B|\d+\.\d KB)(?: of prose)? filed at (\/[^\n]*\/spill\/[^\/\n]+\/([0-9a-f]{16})\.md))`;
+      var FILED_POINTER_RE = new RegExp(String.raw`^\s*(?:([^\n]{0,79}[^\s\n]) — )?${FILED_SRC}\s*$`);
+      module.exports = { FILED_SRC, FILED_POINTER_RE };
+    }
+  });
+
   // renderer/lib/intent-marks.js
   var require_intent_marks = __commonJS({
     "renderer/lib/intent-marks.js"(exports, module) {
       "use strict";
       var { cleanLine, parseIntent, fencedLines, looksLikeIntent } = require_intent_scanner();
+      var { FILED_POINTER_RE } = require_spill_grammar();
       var SCAN_ROWS = 2e3;
       function logicalLines(rows) {
         const out = [];
@@ -28234,6 +28258,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return out;
       }
       function classifyText(raw) {
+        if (FILED_POINTER_RE.test(cleanLine(raw))) return "filed";
         if (!looksLikeIntent(raw)) return null;
         return parseIntent(raw) ? "fire" : "inert";
       }
@@ -28242,6 +28267,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (at < 0) return null;
         const close = text.indexOf("]", at);
         return { offset: at, length: (close < 0 ? text.length : close + 1) - at };
+      }
+      function filedSpan(text) {
+        const trimmed = text.trim();
+        return trimmed ? { offset: text.length - text.trimStart().length, length: trimmed.length } : null;
       }
       function classifyRows(rows) {
         const lines = logicalLines(rows);
@@ -28252,7 +28281,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           const kind = classifyText(lines[i].text);
           if (!kind) continue;
           const { start, end } = lines[i];
-          marks.push({ start, end, kind, span: intentSpan(rows[start].text) });
+          marks.push({ start, end, kind, span: (kind === "filed" ? filedSpan : intentSpan)(rows[start].text) });
         }
         return marks;
       }
@@ -28265,7 +28294,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
     "renderer/intent-highlight.js"(exports, module) {
       var { classifyRows, SCAN_ROWS } = require_intent_marks();
       var DEBOUNCE_MS = 80;
-      var RULER_VAR = { fire: "--accent", inert: "--warn" };
+      var RULER_VAR = { fire: "--accent", inert: "--warn", filed: "--ok" };
       function createIntentHighlight(terminal, { getVar } = {}) {
         let shown = [];
         let timer = null;
