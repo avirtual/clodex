@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const {
-  parseSkillsList, resolveOffSkills, activationBlock, activationSettings, createSkillLister, skillDirName,
+  parseSkillsList, resolveOffSkills, activationBlock, activationSettings, createSkillLister, skillDirName, skillAliases,
 } = require('../muse-skills');
 const { ADAPTERS } = require('../cli-adapters');
 
@@ -185,13 +185,33 @@ test('t1094: the warn carries the command\'s stderr, trimmed and capped at 200 c
   const noisy = Object.assign(new Error('Command failed: muse skills list --json'), { stderr: '  boom: no config\n' });
   const long = Object.assign(new Error('Command failed: muse skills list --json'), { stderr: 'x'.repeat(500) });
   const quiet = Object.assign(new Error('Command failed: muse skills list --json'), { stderr: '' });
-  const { lister, warns } = mkLister({ failures: [noisy, long, quiet] });
-  lister.list(ADAPTERS.muse, { configDir: '/acct' });
-  lister.list(ADAPTERS.muse, { configDir: '/acct' });
-  lister.list(ADAPTERS.muse, { configDir: '/acct' });
+  const shaped = Object.assign(new Error('Command failed: muse skills list --json\nboom: no config'), { stderr: 'boom: no config\n' });
+  const enoent = Object.assign(new Error('spawn muse ENOENT'), { stderr: '' });
+  const { lister, warns } = mkLister({ failures: [noisy, long, quiet, shaped, enoent] });
+  for (let i = 0; i < 5; i++) lister.list(ADAPTERS.muse, { configDir: '/acct' });
   assert.deepStrictEqual(warns, [
     'muse skills list --json failed for /acct: Command failed: muse skills list --json: boom: no config',
     `muse skills list --json failed for /acct: Command failed: muse skills list --json: ${'x'.repeat(200)}`,
     'muse skills list --json failed for /acct: Command failed: muse skills list --json',
+    'muse skills list --json failed for /acct: Command failed: muse skills list --json: boom: no config',
+    'muse skills list --json failed for /acct: spawn muse ENOENT',
   ]);
+  assert.strictEqual(warns[3].split('boom: no config').length, 2, 'a Node-shaped error carries its stderr once');
+  assert.ok(!warns[3].includes('\n'), 'one line');
 });
+
+test('t1094: skillAliases maps each SKILL.md directory name to its roster id, and the resolved off set is what the checklist compares against', () => {
+  const { applySkillAliases, skillOffSetFor } = require('../skills-off');
+  const aliases = skillAliases(ROSTER);
+  assert.strictEqual(aliases.git, 'bundled:git');
+  assert.strictEqual(aliases.threejs, 'plugin:threejs:threejs');
+  assert.ok(!('bundled:git' in aliases), 'ids are not aliases of themselves');
+  assert.deepStrictEqual(skillAliases([]), {});
+  const names = ROSTER.map((s) => s.id).sort();
+  assert.deepStrictEqual(applySkillAliases(['git', '*', '!threejs', 'nope'], aliases), ['bundled:git', '*', '!plugin:threejs:threejs', 'nope']);
+  assert.deepStrictEqual(applySkillAliases(new Set(['git']), undefined), ['git']);
+  assert.ok(skillOffSetFor(names, applySkillAliases(['git'], aliases)).has('bundled:git'));
+  assert.ok(!skillOffSetFor(names, applySkillAliases(['*', '!git'], aliases)).has('bundled:git'));
+  assert.ok(skillOffSetFor(names, applySkillAliases(['*', '!git'], aliases)).has('plugin:threejs:threejs'));
+});
+

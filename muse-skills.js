@@ -40,11 +40,14 @@ function matchKeys(skill) {
   return keys;
 }
 
-function resolveSkillId(skills, name) {
+function skillAliases(skills) {
+  const aliases = {};
   for (const skill of Array.isArray(skills) ? skills : []) {
-    if (matchKeys(skill).has(name)) return skill.id;
+    for (const key of matchKeys(skill)) {
+      if (key !== skill.id && !(key in aliases)) aliases[key] = skill.id;
+    }
   }
-  return name;
+  return aliases;
 }
 
 function nameSet(list) {
@@ -114,7 +117,8 @@ function createSkillLister({ execFileSync, scratchDir, env = {}, log = null }) {
     } catch (e) {
       if (log && typeof log.warn === 'function') {
         const stderr = e && typeof e.stderr === 'string' ? e.stderr.trim().slice(0, STDERR_CAP) : '';
-        const cause = `${(e && e.message) || e}${stderr ? `: ${stderr}` : ''}`;
+        const head = String((e && e.message) || e).split('\n')[0];
+        const cause = `${head}${stderr ? `: ${stderr}` : ''}`;
         log.warn('skills', `${adapter.cmd} ${spec.args.join(' ')} failed for ${configDir}: ${cause}`);
       }
       return [];
@@ -124,6 +128,6 @@ function createSkillLister({ execFileSync, scratchDir, env = {}, log = null }) {
 }
 
 module.exports = {
-  parseSkillsList, resolveOffSkills, resolveSkillId, activationBlock, activationSettings, createSkillLister,
+  parseSkillsList, resolveOffSkills, skillAliases, activationBlock, activationSettings, createSkillLister,
   skillDirName, EMITTED_SCOPES, LIST_TIMEOUT_MS,
 };

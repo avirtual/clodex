@@ -231,7 +231,8 @@ test('t1090: a type whose adapter lists skills answers the roster ids, from ~/.c
   const box = mkBox({ seats: [ROSTER_SEAT], skillLister: lister });
   const res = box.defaults(null, 'muse');
   assert.deepStrictEqual(res, {
-    ok: true, names: ['bundled:git', 'plugin:threejs:threejs'], effective: {}, skillsLocked: false, canReenable: res.canReenable,
+    ok: true, names: ['bundled:git', 'plugin:threejs:threejs'], aliases: { git: 'bundled:git', threejs: 'plugin:threejs:threejs' },
+    effective: {}, skillsLocked: false, canReenable: res.canReenable,
   });
   assert.deepStrictEqual(calls, [{ id: 'muse', configDir: path.join(os.homedir(), '.config') }]);
   assert.ok(!box.defaults(null, 'claude').names.includes('bundled:git'), 'the claude catalog is untouched');
@@ -266,4 +267,12 @@ test('t1094: a directory-named entry in disabledSkills resolves to its roster id
   const res = box.seat('muse-dir');
   assert.deepStrictEqual(res.names, ['bundled:git', 'nope', 'plugin:threejs:threejs']);
   assert.deepStrictEqual(res.disabledSkills, ['git', 'nope'], 'the stored list is untouched');
+  assert.deepStrictEqual(res.aliases, { git: 'bundled:git', threejs: 'plugin:threejs:threejs' }, 'the seat reply carries the alias map');
+});
+
+test('t1094: the template editor\'s name-less muse reply carries the alias map the checklist resolves the stored list through', () => {
+  const { lister } = fakeLister();
+  const box = mkBox({ seats: [ROSTER_SEAT], skillLister: lister });
+  assert.strictEqual(box.defaults(null, 'muse').aliases.git, 'bundled:git');
+  assert.strictEqual(box.defaults(null, 'claude').aliases, undefined, 'the claude catalog has no alias map');
 });

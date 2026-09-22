@@ -51,7 +51,7 @@ function withDom(fn) {
 }
 
 const { renderSkillChecklist, collectSkillChecklist } = withDom(() => require('../renderer/lib/checklists'));
-const { skillOffSetFor } = require('../skills-off');
+const { skillOffSetFor, applySkillAliases } = require('../skills-off');
 
 // The measured shape: the roster plus the app/-scoped names, as readSkillCatalog
 // now unions and marks them.
@@ -198,6 +198,7 @@ function drawPeerRoster(sc) {
       // Real, not a stub: the off set this block draws from must be the one the
       // spawn resolves, and that agreement is the point of the shared module.
       skillOffSetFor,
+      applySkillAliases,
     };
     const names = Object.keys(env);
     new Function(...names, peerSkillBlock())(...names.map((n) => env[n]));
@@ -220,4 +221,15 @@ test('t769: a peer seat with an ordinary off-list is unaffected', () => withDom(
   const c = drawPeerRoster({ ok: true, names: [...NAMES], effective: {}, disabledSkills: ['loop'] });
   assert.deepStrictEqual(rowsOf(c).filter((r) => !r.checked).map((r) => r.name), ['loop']);
   assert.deepStrictEqual(collectSkillChecklist(c), ['loop']);
+}));
+
+test('t1094: a muse seat whose stored list names a skill by directory draws the id row unchecked, and a keep entry by directory survives the sweep', () => withDom(() => {
+  const names = ['bundled:git', 'plugin:threejs:threejs'];
+  const aliases = { git: 'bundled:git', threejs: 'plugin:threejs:threejs' };
+  const c = drawPeerRoster({ ok: true, names, effective: {}, allOff: false, disabledSkills: ['git'], aliases });
+  assert.deepStrictEqual(rowsOf(c).map((r) => [r.name, r.checked]), [['bundled:git', false], ['plugin:threejs:threejs', true]]);
+  assert.deepStrictEqual(collectSkillChecklist(c), ['bundled:git'], 'a save keeps the skill off under its id');
+
+  const swept = drawPeerRoster({ ok: true, names, effective: {}, allOff: true, disabledSkills: ['*', '!git'], aliases });
+  assert.deepStrictEqual(rowsOf(swept).map((r) => [r.name, r.checked]), [['bundled:git', true], ['plugin:threejs:threejs', false]]);
 }));
