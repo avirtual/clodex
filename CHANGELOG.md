@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Muse seats: a prompt is one request instead of three — the seat overlay turns off the workflow trigger and the reminder roster, and drops the workflow tools from the catalog.
 - Scratch episodes and seat restarts: a message still being delivered when the seat's process is recycled — a ticket-loop MERGED notice landing on the turn end that closes an episode, a dm mid-write — is parked again and reaches the respawned seat, instead of dying with the process.
 
 - Sandbox and peer-box images, the peer deploy script and the New Session tool check now install or offer the Muse CLI alongside Claude and Codex; Muse credentials persist across box recreation like the other two.

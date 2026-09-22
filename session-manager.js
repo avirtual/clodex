@@ -1608,11 +1608,14 @@ function createSessionManager(deps) {
             : [];
           skillsMerge = activationSettings(adapterSkills, roster, disabledSkills, { injectSkills });
         }
+        const seatSettings = adapterFor(type).seatSettings || null;
         const profileMerge = adapterFor(type).readOnlyCap?.settings || null;
         bootstrapSeatConfig({ fs, path }, {
           source: sourceConfig,
           seatDir: seatConfigDir,
-          settingsMerge: (profileMerge || skillsMerge) ? deepMerge(profileMerge || {}, skillsMerge || {}) : null,
+          settingsMerge: (seatSettings || profileMerge || skillsMerge)
+            ? deepMerge(deepMerge(seatSettings || {}, profileMerge || {}), skillsMerge || {})
+            : null,
         });
         mergedEnv.XDG_CONFIG_HOME = seatConfigDir;
       }
