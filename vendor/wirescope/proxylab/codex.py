@@ -97,6 +97,24 @@ def _is_openai_body(obj):
             and ("input" in obj or "instructions" in obj))
 
 
+def _item_content_blocks(item):
+    """The content of one Responses-API message item as a block list, both
+    dialects: codex ships `[{type:input_text|output_text, text}]`, muse a
+    BARE STRING (live 2026-09-22, every user/assistant item). Anything that
+    iterates `item["content"]` as a list silently sees an empty message on
+    the muse wire — the /_session view rendered nothing for user/assistant
+    items and the turn predicate below counted zero turns."""
+    c = (item or {}).get("content") if isinstance(item, dict) else None
+    if isinstance(c, str):
+        return [{"type": "input_text", "text": c}]
+    return [b for b in (c or []) if isinstance(b, dict)]
+
+
+def _item_texts(item):
+    """Text strings of one input item, either content dialect."""
+    return [b.get("text") or "" for b in _item_content_blocks(item)]
+
+
 def _is_prompt_item_openai(item):
     """Prompt-bearing user input item (the openai-wire analogue of
     _is_prompt_msg): a user message with real text — codex wraps machine
@@ -104,9 +122,8 @@ def _is_prompt_item_openai(item):
     if not (isinstance(item, dict) and item.get("type") == "message"
             and item.get("role") == "user"):
         return False
-    return any((c.get("text") or "").lstrip()
-               and not (c.get("text") or "").lstrip().startswith("<")
-               for c in (item.get("content") or []) if isinstance(c, dict))
+    return any(t.lstrip() and not t.lstrip().startswith("<")
+               for t in _item_texts(item))
 
 
 def _read_codex_auth(path=None):

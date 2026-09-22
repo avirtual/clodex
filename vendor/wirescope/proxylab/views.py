@@ -1357,9 +1357,7 @@ def _render_session_openai_body(entry, resp=None):
                         f'</div>')
         if t == "message":
             role = it.get("role", "?")
-            for c in (it.get("content") or []):
-                if not isinstance(c, dict):
-                    continue
+            for c in codex_mod._item_content_blocks(it):
                 txt = c.get("text") or ""
                 machine = (' <span class="warn">[context]</span>'
                            if txt.lstrip().startswith("<") else "")

@@ -902,10 +902,13 @@ def _composition(obj, total_tokens=None):
     this is a READ-only endpoint computation, never on the forward path. When a
     real receipt `total_tokens` is given (main line), categories are scaled to
     sum to it (basis 'receipt') so the breakdown agrees with the wire-measured
-    window total; otherwise raw char-estimate (basis 'estimate'). None for an
-    openai/codex body or an empty one."""
-    if not isinstance(obj, dict) or codex_mod._is_openai_body(obj):
+    window total; otherwise raw char-estimate (basis 'estimate'). A
+    Responses-API body (codex/muse) goes through _composition_openai — same
+    output shape, that wire's item vocabulary. None for an empty body."""
+    if not isinstance(obj, dict):
         return None
+    if codex_mod._is_openai_body(obj):
+        return _composition_openai(obj, total_tokens)
     chars = collections.defaultdict(int)
     sysf = obj.get("system")
     if isinstance(sysf, list):
@@ -995,6 +998,61 @@ def _composition(obj, total_tokens=None):
     if sea:
         out["strip_prior_edit_acks"] = sea
     return out
+
+
+def _composition_openai(obj, total_tokens=None):
+    """_composition for the Responses-API wire (codex, muse). Same output
+    shape and the same char->tok divisors, mapped onto that wire's items:
+    `instructions` -> system; a `developer` message -> developer (codex's
+    permissions block, muse's `Workspace root:` framing); user / assistant
+    messages by role (either content dialect — muse ships bare strings);
+    `reasoning` items -> reasoning (the encrypted payload ships back on the
+    wire every turn, so it is counted at its shipped length); `function_call`
+    -> tool_calls; `function_call_output` -> tool_results; `tools[]` -> tools
+    (muse's one namespace wrapper counted whole: that IS the schema shipped).
+    Was None for this wire until 2026-09-22, which left /_context with no
+    'what is taking up the window' view for a muse seat."""
+    chars = collections.defaultdict(int)
+    instr = obj.get("instructions")
+    if isinstance(instr, str):
+        chars["system"] += len(instr)
+    for t in (obj.get("tools") or []):
+        if isinstance(t, dict):
+            chars["tools"] += len(json.dumps(t, ensure_ascii=False))
+    for it in (obj.get("input") or []):
+        if not isinstance(it, dict):
+            continue
+        t = it.get("type")
+        if t == "message":
+            role = it.get("role")
+            cat = ("developer" if role == "developer"
+                   else "assistant" if role == "assistant" else "user")
+            chars[cat] += sum(len(x) for x in codex_mod._item_texts(it))
+        elif t == "reasoning":
+            chars["reasoning"] += len(json.dumps(it, ensure_ascii=False))
+        elif t == "function_call":
+            chars["tool_calls"] += len(json.dumps(it, ensure_ascii=False))
+        elif t == "function_call_output":
+            out = it.get("output")
+            chars["tool_results"] += (len(out) if isinstance(out, str)
+                                      else len(json.dumps(out, ensure_ascii=False))
+                                      if out is not None else 0)
+    raw = {k: (int(v / _SCHEMA_CHARS_PER_TOK) if k == "tools" else v // _CHARS_PER_TOK)
+           for k, v in chars.items() if v > 0}
+    raw_total = sum(raw.values())
+    if not raw_total:
+        return None
+    if total_tokens and total_tokens > 0:
+        basis, total = "receipt", total_tokens
+        scale = total_tokens / raw_total
+        cats = [{"category": k, "tokens": round(v * scale)} for k, v in raw.items()]
+    else:
+        basis, total = "estimate", raw_total
+        cats = [{"category": k, "tokens": v} for k, v in raw.items()]
+    for c in cats:
+        c["pct"] = round(100.0 * c["tokens"] / total, 1) if total else 0.0
+    cats.sort(key=lambda x: x["tokens"], reverse=True)
+    return {"total_tokens": total, "basis": basis, "by_category": cats}
 
 
 def _strip_thinking_panel(obj, scale, total):
