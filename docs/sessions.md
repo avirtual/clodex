@@ -60,28 +60,34 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   *subcommand* placed after top-level flags (clap). Proxy rides
   `openai_base_url`. Selected skills arrive as a `# Clodex skills` catalog
   appended to the merged instructions, above the team block.
-- **muse** — mint → link → resume. Before the switch, `bootstrapSeatConfig`
+- **muse** — spawn → registry → link. Before the spawn, `bootstrapSeatConfig`
   (seat-config.js) rebuilds `run/<name>/xdg` as an overlay of `~/.config` (or
   the seat's `XDG_CONFIG_HOME`) and the seat's env gets `XDG_CONFIG_HOME` pointed
   at it; the Clodex prompt — `You are the clodex agent named '<name>'.`, then
   `mergeInstructionBodies` (system + IPC + appends + inline), the skills catalog,
   the team block — is written to `<xdg>/muse/AGENTS.md`, which Muse loads as its
-  USER-scope rules file. Nothing is written into the repo. A fresh seat first
-  runs `muse exec --provider meta … --session-id <uuidv7> "Clodex seat … initialized."`
-  (one real Meta turn, history turn #1: an `echo` mint cannot be resumed under
-  `meta`, measured), then `run/<name>/transcript.jsonl` is symlinked to the
-  session's `session.jsonl` found by globbing the date tree, and only then is
-  `muse … --trust-workspace --provider meta [--base-url <proxy>/agent/<id>/meta] resume <sid>`
-  spawned; a restore skips the mint and resumes the persisted id, and `fork`
-  is a warning (Muse has none). `--base-url` rides only when wirescope's probe
-  reports `capabilities.muse`; otherwise the seat talks to Meta directly and
-  `warnings` says so. A 2 s backstop reads Muse's runtime registry by pid and
-  repoints the link if the CLI rotated the id. Caveats: Muse's rules preamble
+  USER-scope rules file. Nothing is written into the repo. A fresh seat spawns
+  `muse … --trust-workspace --provider meta [--base-url <proxy>/agent/<id>/meta]`
+  at once — no mint turn, no `--session-id` (interactive `muse` takes none), and
+  `sessionId: null` in its record — and a poller (250 ms, 60 s deadline, both
+  `unref`'d) reads Muse's runtime registry by pty pid; once that record's
+  `session.jsonl` exists, `run/<name>/transcript.jsonl` is symlinked to it and
+  the transcript watcher's retarget sets `sessionId`. Interactive Muse writes
+  both at boot with nothing typed (measured, Muse Code 1.3.0: `session.jsonl`
+  ~0.25 s after spawn, the registry record ~0.1 s later), so the link lands
+  within about half a second. A restore resumes the persisted id — the link is
+  written before the spawn and argv ends `resume <sid>` — and a seat killed
+  before its id landed has `sessionId: null`, so it restores as a fresh seat.
+  `fork` is a warning (Muse has none). `--base-url` rides only when wirescope's
+  probe reports `capabilities.muse`; otherwise the seat talks to Meta directly
+  and `warnings` says so. The same poller repoints the link when the registry
+  id differs from the seat's, and a deadline miss is one warning, never a throw
+  (the PTY is already live). Caveats: Muse's rules preamble
   says PROJECT rules win over user rules on conflict, so a repo `AGENTS.md`
   outranks the protocol prompt; the file is regenerated on every `create()`
   like Codex's — no freeze, no delta, `refreshPrompt` stays Claude-only.
   `kill()` drops `run/<name>/` (`cleanupMuseSeat`) like every other kind, and the
-  name is reserved for the whole async `create()` (mint included), so a second
+  name is reserved for the whole async `create()` (proxy probe included), so a second
   `create()` of it in that window is refused rather than rebuilding the overlay.
 
 **Skill delivery is per provider (skill-delivery.js, t747).** One
