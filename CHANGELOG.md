@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- The team reviewer can be a Muse seat: it runs under a `:read-only`-derived permission profile with approvals off (`clodex-team-reviewer-muse` ships).
 - Muse Code (Meta's `muse` CLI) is a third seat platform: New Session ▸ muse, `clodex-team-hand-muse` / `clodex-team-lead-muse` ship, the Clodex prompt rides the seat's own config dir (no repo write), routing through wirescope when the proxy reports `capabilities.muse`.
 - Internal: the adapter table (`cli-adapters.js`) now declares posture as an argv array, a transcript reader id, the config dir a CLI writes into its cwd, and a warmth capability; restore and the worktree gitignore resolve the seat platform through the table. No behaviour change, except that a Codex seat whose env names a `CODEX_HOME` that does not exist is now refused at spawn, like a missing Claude account dir.
 - Terminal: a spill receipt row (`N KB of prose filed at …`) is painted green with its own scrollbar tick, so a body Clodex filed on the agent's behalf is visible without reading; the path stays a click-to-peek link.

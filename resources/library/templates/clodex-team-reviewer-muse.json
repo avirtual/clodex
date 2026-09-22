@@ -1,0 +1,10 @@
+{
+  "name": "clodex-team-reviewer-muse",
+  "type": "muse",
+  "systemPromptFile": "clodex-team-reviewer",
+  "intents": [],
+  "env": {
+    "CLODEX_DISABLE_IPC_PROMPT": "1",
+    "CLODEX_SPAWNER_HINT": "off"
+  }
+}

@@ -66,3 +66,51 @@ no entry was written; `--add-dir` under `read-only` is NOT writable (`touch`:
 Operation not permitted), the cwd is not either, and outbound network is off
 (DNS fails). `exec` rejects `--ask-for-approval`; the TUI the seat boots takes
 it.
+
+`enforce: 'settings-profile'` (Muse) is a settings file plus a flag: `settings`
+is deep-merged into every Muse seat's settings.json by `bootstrapSeatConfig`
+(inert until selected) and `args` selects it. It carries NO posture args:
+`--permission-profile` is mutually exclusive with `--approval-mode`, `--yolo`
+AND `--sandbox-network` (all measured on Muse Code 1.3.0). The profile's
+`network: { mode: 'enabled' }` member is the only headless way to reach
+loopback: under the bare `:read-only` profile the sandbox commits
+`local_command_network.mode: restricted` and `curl 127.0.0.1:7800` is refused
+(connection refused, measured); `restricted` + `targets` is "contradictory
+authority: network rules outside proxy_only"; `proxy_only` (+targets) "requires
+prompting approval with human fallback", which a headless reviewer cannot give;
+`local_command_network` is not a profile field. With `network.mode: enabled`
+the same curl returned wirescope's `_identity` (measured, 1 request, 4.0 s). A
+file under `~/.clodex/messages` (a spilled spec) IS readable under the profile
+(measured: `cat` returned the header), and the transcript carries
+`runtime.session.permission_profile_committed` with `source.kind: "user_named"`,
+`id: "reviewer"` inside a `session_permission_transaction` frame.
+
+A Muse seat's transcript is non-empty BEFORE its PTY spawns (the m2 mint turn),
+and the resume APPENDS at boot with nothing typed (measured, echo provider, Muse
+Code 1.3.0: 82,821 bytes / 66 records before `resume`, 89,710 / 72 six seconds
+after boot — five boot records totalling 6,165 bytes: `route_facts`,
+`workspace_branch.observed`, `session.opened.observed`, `session.resumed`, the
+`session_permission_transaction` frame — plus `session.end` from the SIGTERM;
+every boot record classifies inert under the muse reader). So
+`_checkReviewStarted` counts TURNS, not bytes: `_seatTurnSince` reads the
+transcript from the offset stamped at the first arm through the seat's
+`transcript.reader` and takes any `turnStart`/`isReply`/`turnEnd` record as
+started. A TUI-spawned Codex seat could not be measured the same way: in a
+fresh scratch project `codex --enable hooks` chains a directory-trust dialog and
+then a "Hooks need review" dialog (measured, 0.155.1 — trust is per project, so
+even the loop's own trusted hook script is "new" there), and the SessionStart
+hook runs only past both; persisting hook trust for a throwaway project in the
+operator's config was declined. A Codex `session_meta` written at boot, before
+or after the arm, classifies as no turn, so the same probe covers it.
+
+The committed snapshot under the widened profile (run 2) keeps the filesystem
+read-only: `filesystem.mode: managed`, rules `:minimal` / `:root` /
+`:workspace_roots` all `access: read`, `protected_metadata: true`, beside
+`local_command_network.mode: enabled`, `approval: allow_all`, `reviewer: none`.
+
+Gap, follow-up: the reviewer's MINT turn (the `muse exec` at create) runs
+uncapped — `--approval-mode never --disable-sandbox`, cwd the review worktree,
+the reviewer AGENTS.md already written, steps unbounded; only the resume
+carries `--permission-profile reviewer`. The two flag sets are mutually
+exclusive, so the fix is a swap: a seat whose extraArgs carry a cap mints under
+the cap args in place of the bypass pair.

@@ -378,6 +378,7 @@ test('the review arm of resolveSeatShape names no platform literal', () => {
   assert.ok(/readOnlyCap/.test(body), 'ENTER: the arm branches on the adapter cap');
   assert.doesNotMatch(body, /===\s*'codex'|===\s*"codex"|!==\s*'codex'/);
   assert.doesNotMatch(body, /===\s*'claude'|===\s*"claude"|!==\s*'claude'/);
+  assert.doesNotMatch(body, /'muse'|"muse"/);
 });
 
 test('the review arm spells --model with the seat adapter\'s first model flag', () => {
@@ -1532,4 +1533,67 @@ test('t891: the SHIPPED reviewer template really is what the stock role now name
   const tpl = JSON.parse(fs.readFileSync(path.join(tplDir, `${STOCK_ROLE_DEFS.reviewer.template}.json`), 'utf-8'));
   assert.strictEqual(tpl.name, STOCK_ROLE_DEFS.reviewer.template,
     'a template `name` that is not its stem names a file nothing resolves');
+});
+
+const MUSE_CAP = ['--permission-profile', 'reviewer'];
+const MUSE_CAP_NOTE = 'permission profile "reviewer" (:read-only, approvals allowed, writes denied)';
+const CODEX_CAP_NOTE = 'read-only sandbox (OS-enforced), approvals: never';
+const MUSE_REVIEWER_TPL = JSON.parse(fs.readFileSync(
+  path.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-reviewer-muse.json'), 'utf-8'));
+
+test('m3: reviewer:clodex-team-reviewer-muse resolves type muse under the profile cap, no posture even with a bypass lead', () => {
+  const leadArgs = ['--dangerously-skip-permissions'];
+  assert.ok(ADAPTERS.claude && require('../cli-adapters').hasBypass(ADAPTERS.claude, leadArgs), 'ENTER: hasBypass(lead) is true');
+  const m = managerWith([MUSE_REVIEWER_TPL], { leadArgs });
+  const shape = m.resolveSeatShape(teamWith({ reviewer: { template: 'clodex-team-reviewer-muse' } }), 'reviewer', 'review', LEAD);
+  assert.strictEqual(shape.type, 'muse');
+  assert.deepStrictEqual(shape.extraArgs, ['--permission-profile', 'reviewer']);
+  assert.strictEqual(shape.shellDeny, null);
+  assert.deepStrictEqual(shape.disabledTools, []);
+  assert.deepStrictEqual(shape.effectiveTools, []);
+  assert.deepStrictEqual(shape.beyondCap, []);
+  assert.strictEqual(shape.requestedTools, null);
+  assert.strictEqual(shape.toolsMalformed, false);
+  assert.strictEqual(shape.toolsIgnored, false);
+  assert.strictEqual(shape.capNote, MUSE_CAP_NOTE);
+  assert.deepStrictEqual(shape.env, { CLODEX_DISABLE_IPC_PROMPT: '1', CLODEX_SPAWNER_HINT: 'off' });
+  assert.strictEqual(shape.systemPromptFile, 'clodex-team-reviewer');
+});
+
+test('m3: a muse reviewer template with a --model puts the model ahead of the profile cap and nothing else in the argv', () => {
+  const m = managerWith(
+    [{ name: 'rv', type: 'muse', cwd: '/repo', extraArgs: ['--yolo', '--model', 'muse-x'] }],
+    { leadArgs: ['--dangerously-skip-permissions'] },
+  );
+  const shape = m.resolveSeatShape(teamWith({ reviewer: { template: 'rv' } }), 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(shape.extraArgs, ['--model', 'muse-x', '--permission-profile', 'reviewer']);
+});
+
+test('m3: a tools array on a profile-capped muse reviewer template is reported ignored, not refused', () => {
+  const m = managerWith([{ name: 'rv', type: 'muse', cwd: '/repo', tools: ['Read', 'Edit'] }]);
+  const shape = m.resolveSeatShape(teamWith({ reviewer: { template: 'rv' } }), 'reviewer', 'review', LEAD);
+  assert.strictEqual(shape.toolsIgnored, true);
+  assert.strictEqual(shape.requestedTools, null);
+  assert.deepStrictEqual(shape.beyondCap, []);
+  assert.deepStrictEqual(shape.effectiveTools, []);
+  assert.strictEqual(shape.toolsMalformed, false);
+});
+
+test('m3: the three reviewer kinds side by side — extraArgs and capNote per row', () => {
+  const m = managerWith([
+    { name: 'rc', type: 'claude', cwd: '/repo', extraArgs: ['--model', 'sonnet'] },
+    { name: 'rx', type: 'codex', cwd: '/repo', extraArgs: ['--model', 'gpt-x'] },
+    { name: 'rm', type: 'muse', cwd: '/repo', extraArgs: ['--model', 'muse-x'] },
+  ], { leadArgs: ['--dangerously-skip-permissions'] });
+  const rows = ['rc', 'rx', 'rm'].map((t) => m.resolveSeatShape(teamWith({ reviewer: { template: t } }), 'reviewer', 'review', LEAD));
+  assert.deepStrictEqual(rows.map((r) => [r.type, r.extraArgs, r.capNote]), [
+    ['claude', ['--dangerously-skip-permissions', '--model', 'sonnet'], null],
+    ['codex', ['--model', 'gpt-x', ...CODEX_CAP], CODEX_CAP_NOTE],
+    ['muse', ['--model', 'muse-x', ...MUSE_CAP], MUSE_CAP_NOTE],
+  ]);
+});
+
+test('m3: _reviewerTemplateNames admits the shipped muse reviewer template', () => {
+  const m = managerWith([], { listAllTemplates: () => [MUSE_REVIEWER_TPL] });
+  assert.deepStrictEqual(m._reviewerTemplateNames(), ['clodex-team-reviewer-muse']);
 });

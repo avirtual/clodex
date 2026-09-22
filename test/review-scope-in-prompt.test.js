@@ -26,6 +26,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
+const { adapterFor } = require('../cli-adapters');
 const pendingStore = require('../pending-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -301,7 +302,7 @@ test('t377: a reviewer with no transcript is reported to the lead as never start
     // reason, and one against a busy seat would decline for the right one.
     assert.ok(s && !s._dead, 'ENTER: the reviewer seat is alive');
     assert.strictEqual(s.activityState, 'idle', 'ENTER: and idle — it has taken no turn');
-    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+    assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') <= 0,
       'ENTER: and has produced no transcript, which is the signal itself');
     // ENTER: the arm really happened at spawn. Without this the test would pass
     // against a detector that is never wired to anything.
@@ -347,7 +348,7 @@ test('t377: a reviewer that HAS written a transcript is never reported', async (
     const s = reviewerSeat(app, { transcript: '{"type":"assistant"}\n' });
     assert.strictEqual(s.activityState, 'idle',
       'ENTER: idle, so only the transcript can distinguish it from the silent seat above');
-    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), true,
+    assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') > 0,
       'ENTER: and its transcript really is readable');
 
     app.alarms.length = 0;
@@ -372,7 +373,7 @@ test('t377: a reviewer blocked on a permission dialog re-arms instead of alarmin
     await settled(app, 'crew-reviewer-1');
     const s = reviewerSeat(app, { transcript: null });
     s.needsAttention = { kind: 'permission' };
-    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+    assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') <= 0,
       'ENTER: no transcript — so the dialog check is the only thing that can hold the alarm');
 
     app.alarms.length = 0;
@@ -454,7 +455,7 @@ test('t381: a silent reviewer gets its start nudge RE-SENT before the lead is ev
     // could pass against a check that declines for an unrelated reason.
     assert.ok(s && !s._dead, 'ENTER: the reviewer seat is alive');
     assert.strictEqual(s.activityState, 'idle', 'ENTER: and idle — it has taken no turn');
-    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+    assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') <= 0,
       'ENTER: and has produced no transcript');
     const before = nudgeCount(app, 'crew-reviewer-1');
     assert.ok(before >= 1, 'ENTER: the spawn parked a first nudge — the redelivery below must be a SECOND one');
@@ -531,7 +532,7 @@ test('t381: a reviewer that starts BECAUSE of the re-sent nudge is never escalat
     app.m._handleTeamReview(lead, SCOPE);
     await settled(app, 'crew-reviewer-1');
     const s = reviewerSeat(app, { transcript: null });
-    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+    assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') <= 0,
       'ENTER: silent at the first window — the state the redelivery exists for');
 
     app.alarms.length = 0;
@@ -541,7 +542,7 @@ test('t381: a reviewer that starts BECAUSE of the re-sent nudge is never escalat
 
     // The nudge lands and the seat starts — the measured single-modal recovery.
     reviewerSeat(app, { transcript: '{"type":"assistant"}\n' });
-    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), true,
+    assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') > 0,
       'ENTER: the seat has now CROSSED the boundary — it took a turn after the re-send');
 
     app.m._checkReviewStarted(s, 'lead');          // window 2: sees the turn
@@ -576,7 +577,7 @@ test('t381: a reviewer still silent after the re-send IS escalated, and the pros
     app.alarms.length = 0;
     app.m._checkReviewStarted(s, 'lead');
     assert.deepStrictEqual(app.alarms, [], 'ENTER: window 1 redelivered rather than alarming');
-    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+    assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') <= 0,
       'ENTER: and the seat is STILL silent — the redelivery did not take');
 
     app.m._checkReviewStarted(s, 'lead');
@@ -620,7 +621,7 @@ test('t381: a reviewer on a permission dialog is re-armed, never re-nudged', asy
     const s = reviewerSeat(app, { transcript: null });
     s.needsAttention = { kind: 'permission' };
     const before = nudgeCount(app, 'crew-reviewer-1');
-    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+    assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') <= 0,
       'ENTER: no transcript, so only the dialog check can hold the redelivery');
 
     app.alarms.length = 0;
@@ -637,14 +638,7 @@ test('t381: a reviewer on a permission dialog is re-armed, never re-nudged', asy
   } finally { app.stop(); }
 });
 
-test('t384: an EMPTY transcript file is still "no transcript" — the boundary is > 0', () => {
-  // t384 re-expressed `_seatHasTranscript` on top of a size probe, which makes
-  // this boundary newly mutable: `>= 0` passes every test t377 wrote, because
-  // those fixtures have NO FILE AT ALL (the probe throws) rather than an empty
-  // one. The hook creates the link at spawn and its target only when the CLI
-  // first writes, so an existing-but-empty transcript is exactly the
-  // never-started seat the detector is for — and under `>= 0` it reads as
-  // started and is never escalated.
+test('t384: an EMPTY transcript file probes to 0 — a size that was READ, not the throwing path', () => {
   const app = boot();
   try {
     const link = pathFor(app.root, 'crew-reviewer-1', 'transcript');
@@ -657,7 +651,7 @@ test('t384: an EMPTY transcript file is still "no transcript" — the boundary i
     assert.strictEqual(fs.statSync(target).size, 0, 'ENTER: the file really exists and is empty');
     assert.strictEqual(app.m._seatTranscriptSize('crew-reviewer-1'), 0,
       'ENTER: the probe READ it — this is not the throwing path t377 pinned');
-    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+    assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') <= 0,
       'zero bytes is a seat that has taken no turn');
   } finally { app.stop(); }
 });
@@ -674,7 +668,110 @@ test('t384: an UNREADABLE transcript probes to -1, which is not a byte count', (
   try {
     assert.strictEqual(app.m._seatTranscriptSize('crew-reviewer-1'), -1,
       'no link at all is unreadable, and says so distinctly from "empty"');
-    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), false,
+    assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') <= 0,
       'and it still answers the t377 question the same way');
+  } finally { app.stop(); }
+});
+
+function armFresh(app, s) {
+  clearTimeout(s._reviewStartTimer);
+  s._reviewStartTimer = null;
+  s._reviewStartArmedAt = null;
+  s._reviewStartSize = undefined;
+  app.m._armReviewStartCheck('crew-reviewer-1', 'lead');
+  clearTimeout(s._reviewStartTimer);
+  s._reviewStartTimer = null;
+}
+
+function checkOnce(app, s) {
+  app.m._checkReviewStarted(s, 'lead');
+  clearTimeout(s._reviewStartTimer);
+  s._reviewStartTimer = null;
+}
+
+const MUSE_MINT = [
+  '{"payload_type":"session.opened.observed","payload":{"kind":"session_opened"}}',
+  '{"payload_type":"runtime.user_intent.accepted","payload":{"refill_blocks":[{"text":"Clodex seat \"crew-reviewer-1\" initialized."}]}}',
+  '{"payload_type":"runtime.session","payload":{"kind":"run","event":{"kind":"started"}}}',
+  '{"payload_type":"runtime.session","payload":{"kind":"run","event":{"kind":"assistant_message_committed","text":"Ready","message_id":"m1"}}}',
+  '{"payload_type":"runtime.session","payload":{"kind":"run","event":{"kind":"terminal","terminal":"completed"}}}',
+  '{"payload_type":"session.end","payload":{"kind":"session_end"}}',
+].join('\n') + '\n';
+
+const MUSE_RESUME_BOOT = [
+  '{"payload_type":"session.opened.observed","payload":{"kind":"session_opened"}}',
+  '{"payload_type":"runtime.session","payload":{"kind":"security_mode"}}',
+  '{"payload_type":"session.resumed","payload":{"kind":"session_resumed","record":{"prior_turn_count":1}}}',
+  JSON.stringify({ retained_frame: 'session_permission_transaction', children: [
+    { child_index: 0, record_json: JSON.stringify({ payload_type: 'runtime.session.permission_profile_committed', payload: { source: { kind: 'user_named', id: 'reviewer' } } }) },
+    { child_index: 1, record_json: JSON.stringify({ payload_type: 'runtime.session.permission_command_settled', payload: {} }) },
+  ] }),
+].join('\n') + '\n';
+
+const MUSE_TURN_END = '{"payload_type":"runtime.session","payload":{"kind":"run","event":{"kind":"terminal","terminal":"completed"}}}\n';
+
+test('m3: the start check baselines the transcript at the first arm — 0 for a hook-linked seat; a boot-written session_meta past it is no turn, an assistant record is', async () => {
+  const app = boot();
+  try {
+    app.setPending('lead');
+    await app.m.create('lead', 'claude', app.root, [], null, 'ws');
+    const lead = app.m.sessions.get('lead');
+    app.setPending('crew-reviewer-1');
+    app.m._handleTeamReview(lead, SCOPE);
+    await settled(app, 'crew-reviewer-1');
+    const s = reviewerSeat(app, { transcript: null });
+    assert.strictEqual(s._reviewStartSize, 0, 'ENTER: the spawn arm stamped a 0 baseline — nothing was written before the seat booted');
+    clearTimeout(s._reviewStartTimer);
+    s._reviewStartTimer = null;
+
+    const bootRecord = '{"type":"session_meta","payload":{"id":"x"}}\n';
+    reviewerSeat(app, { transcript: bootRecord });
+    assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') > 0, 'ENTER: the transcript GREW past the baseline without a turn');
+    const before = nudgeCount(app, 'crew-reviewer-1');
+    app.alarms.length = 0;
+    checkOnce(app, s);
+    assert.strictEqual(nudgeCount(app, 'crew-reviewer-1'), before + 1, 'bytes that are not a turn record: the seat has not started, so the nudge is re-sent');
+    assert.ok(s._reviewNudgeRetried);
+    assert.deepStrictEqual(app.alarms, []);
+
+    reviewerSeat(app, { transcript: `${bootRecord}{"type":"assistant"}\n` });
+    checkOnce(app, s);
+    assert.strictEqual(nudgeCount(app, 'crew-reviewer-1'), before + 1, 'an assistant record past the baseline is a started seat: nothing more is sent');
+    assert.deepStrictEqual(app.alarms, [], 'and nothing is escalated');
+  } finally { app.stop(); }
+});
+
+test('m3: a seat whose transcript holds a mint turn at arm is re-nudged when only its resume boot lands after the arm, and owed nothing once a turn ends', async () => {
+  const app = boot();
+  try {
+    app.setPending('lead');
+    await app.m.create('lead', 'claude', app.root, [], null, 'ws');
+    const lead = app.m.sessions.get('lead');
+    app.setPending('crew-reviewer-1');
+    app.m._handleTeamReview(lead, SCOPE);
+    await settled(app, 'crew-reviewer-1');
+    const s = reviewerSeat(app, { transcript: MUSE_MINT });
+    assert.strictEqual(adapterFor('muse').transcript.reader, 'muse', 'ENTER: the muse platform reads its transcript through the muse reader');
+    s.agentType = 'muse';
+    armFresh(app, s);
+    assert.strictEqual(s._reviewStartSize, MUSE_MINT.length, 'ENTER: the first arm stamped the mint turn as the baseline');
+    assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') > 0, 'ENTER: a size > 0 probe already reads this seat as started');
+
+    reviewerSeat(app, { transcript: `${MUSE_MINT}${MUSE_RESUME_BOOT}` });
+    assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') > s._reviewStartSize, 'ENTER: the resume boot GREW the transcript past the baseline — a byte comparison reads it as started');
+    const sent = [];
+    app.m._deliverMessage = (target, sender, body) => { sent.push({ target, sender, body }); };
+    app.alarms.length = 0;
+    checkOnce(app, s);
+    assert.strictEqual(sent.length, 1, 'session.resumed and the permission transaction are inert: the seat has not started, so the nudge is re-sent');
+    assert.strictEqual(sent[0].target, 'crew-reviewer-1');
+    assert.strictEqual(sent[0].sender, 'lead');
+    assert.ok(s._reviewNudgeRetried);
+    assert.deepStrictEqual(app.alarms, []);
+
+    reviewerSeat(app, { transcript: `${MUSE_MINT}${MUSE_RESUME_BOOT}${MUSE_TURN_END}` });
+    checkOnce(app, s);
+    assert.strictEqual(sent.length, 1, 'a run terminal frame past the baseline is a turn: nothing more is sent');
+    assert.deepStrictEqual(app.alarms, [], 'and nothing is escalated');
   } finally { app.stop(); }
 });

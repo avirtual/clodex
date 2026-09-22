@@ -96,7 +96,7 @@ test('m0: the table rows declare posture, cwdDir, transcript and warmth literall
   assert.deepStrictEqual(ADAPTERS.muse.caps, { park: false, transcript: true, warmth: false });
 });
 
-test('m2: the muse row — Meta\'s CLI, XDG overlay bootstrap, user-scope AGENTS.md, no read-only cap yet', () => {
+test('m2: the muse row — Meta\'s CLI, XDG overlay bootstrap, user-scope AGENTS.md, settings-profile read-only cap', () => {
   assert.deepStrictEqual(ADAPTERS.muse, {
     id: 'muse',
     label: 'Muse Code',
@@ -105,7 +105,16 @@ test('m2: the muse row — Meta\'s CLI, XDG overlay bootstrap, user-scope AGENTS
     posture: { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'] },
     account: { envKey: 'XDG_CONFIG_HOME', bootstrap: 'xdg-overlay' },
     cwdDir: null,
-    readOnlyCap: null,
+    readOnlyCap: {
+      enforce: 'settings-profile',
+      args: ['--permission-profile', 'reviewer'],
+      settings: {
+        permissions: {
+          schema_version: 1,
+          profiles: { reviewer: { extends: ':read-only', approval: 'allow_all', reviewer: 'none', network: { mode: 'enabled' } } },
+        },
+      },
+    },
     instructions: 'user-agents-md',
     transcript: { reader: 'muse', link: 'clodex' },
     caps: { park: false, transcript: true, warmth: false },
@@ -149,14 +158,24 @@ test('the adapter table names exactly the providers skill-delivery can deliver t
   assert.deepStrictEqual(Object.keys(ADAPTERS), createSkillDelivery({}).providers());
 });
 
-test('readOnlyCap: claude is a tool denylist, codex is the argv sandbox pair', () => {
+test('readOnlyCap: claude is a tool denylist, codex is the argv sandbox pair, muse is the settings profile', () => {
   assert.deepStrictEqual(ADAPTERS.claude.readOnlyCap, { enforce: 'tool-denylist' });
   assert.deepStrictEqual(ADAPTERS.codex.readOnlyCap, {
     enforce: 'argv',
     args: ['--sandbox', 'read-only', '--ask-for-approval', 'never'],
   });
+  assert.deepStrictEqual(ADAPTERS.muse.readOnlyCap, {
+    enforce: 'settings-profile',
+    args: ['--permission-profile', 'reviewer'],
+    settings: {
+      permissions: {
+        schema_version: 1,
+        profiles: { reviewer: { extends: ':read-only', approval: 'allow_all', reviewer: 'none', network: { mode: 'enabled' } } },
+      },
+    },
+  });
   for (const entry of Object.values(ADAPTERS)) {
-    assert.ok(entry.readOnlyCap === null || ['tool-denylist', 'argv'].includes(entry.readOnlyCap.enforce),
+    assert.ok(entry.readOnlyCap === null || ['tool-denylist', 'argv', 'settings-profile'].includes(entry.readOnlyCap.enforce),
       `${entry.id}: readOnlyCap.enforce names a mode the review arm branches on`);
   }
 });
