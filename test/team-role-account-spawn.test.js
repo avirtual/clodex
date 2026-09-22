@@ -277,6 +277,16 @@ test('t830: a registry that cannot be READ refuses with its own reason, not a de
     `the reason is the registry, not the label, got: ${JSON.stringify(f.injected)}`);
 });
 
+test('t1076: a hand role on a CODEX template naming an account fails the ticket spawn with the platform reason', async () => {
+  const f = mkFixture({ handRole: { account: 'work' }, templates: [{ ...HAND_TEMPLATE, type: 'codex' }, SHIPPED_REVIEWER_TEMPLATE] });
+  await dispatchTicket(f);
+
+  assert.strictEqual(f.created.length, 0, 'no ticket seat spawned');
+  assert.ok(f.injected.some((t) => /failed to spawn/.test(t)
+    && /role hand: account "work" is a Claude config dir; Codex roles take no account yet/.test(t)),
+  `the spawn-failure reply names the platform, not the label, got: ${JSON.stringify(f.injected)}`);
+});
+
 test('t830: a hand role naming a deleted account fails the ticket spawn and says why', async () => {
   const f = mkFixture({ handRole: { account: 'gone' } });
   await dispatchTicket(f);

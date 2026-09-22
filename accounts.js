@@ -77,6 +77,9 @@ function resolveAccountLabel(store, label) {
 }
 
 function accountMissingError(roleKey, miss) {
+  if (miss && miss.reason === 'platform') {
+    return `role ${roleKey}: account "${miss.label}" is a Claude config dir; Codex roles take no account yet`;
+  }
   const why = (miss && miss.reason === 'unreadable')
     ? 'but the accounts registry could not be read'
     : 'which is not in the accounts registry';

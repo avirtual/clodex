@@ -37,7 +37,7 @@ const {
   teamPromptFile,
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate } = require('./team-template-derive');
-const { seatType, adapterFor } = require('./cli-adapters');
+const { seatType, adapterFor, DEFAULT_TYPE, PLATFORMS } = require('./cli-adapters');
 const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
@@ -468,6 +468,21 @@ function seatCwdInTree(root, seatCwd, treePath) {
   return nodePath.join(treePath, rel);
 }
 
+function ignoreCodexDir(fs, seatCwd) {
+  const dir = nodePath.join(seatCwd, '.codex');
+  const file = nodePath.join(dir, '.gitignore');
+  try {
+    let cur = null;
+    try { cur = fs.readFileSync(file, 'utf8'); } catch { cur = null; }
+    if (cur === '*\n') return null;
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, '*\n');
+    return null;
+  } catch (e) {
+    return `could not write ${file} (${e.message}); the hand's tree will show .codex/ as untracked`;
+  }
+}
+
 function createTicketMethods(deps, shared) {
   const {
     AGENT_NAME_RE,
@@ -683,8 +698,8 @@ function createTicketMethods(deps, shared) {
       const workspaceId = spawner.workspaceId || DEFAULT_WORKSPACE_ID;
 
       const spawnerArgs = (getPersistence().get(spawner.name)?.extraArgs) || [];
-      const postureArgs = spawnerArgs.includes('--dangerously-skip-permissions')
-        ? ['--dangerously-skip-permissions'] : [];
+      const postureArgs = spawnerArgs.includes((adapterFor(spawner.type) || adapterFor(DEFAULT_TYPE)).posture.bypassFlag)
+        ? [adapterFor(type).posture.bypassFlag] : [];
 
       const proxy = tpl ? (tpl.proxy ?? null) : (spawner.proxy ?? null);
       const childArgs = (tpl && Array.isArray(tpl.extraArgs) && tpl.extraArgs.length)
@@ -3203,8 +3218,6 @@ function createTicketMethods(deps, shared) {
     },
 
     _deriveRoleModelTemplate(team, name, intent) {
-      const id = resolveModelId(intent.model);
-      if (!id) return { ok: false, error: `model "${intent.model}" is not a model id or alias (opus, sonnet, haiku, fable)` };
       const roles = (team && team.roles && typeof team.roles === 'object') ? team.roles : {};
       if (!ROLE_RE.test(name)) return { ok: false, error: `role name "${name}" must match ${ROLE_RE} (${team.file})` };
       if (RESERVED_ROLE_KEYS.has(name)) return { ok: false, error: `the "${name}" role is operator-owned topology; ${intent.sub === 'role-add' ? 'add' : 'edit'} it via the app, not an intent/mutator (${team.file})` };
@@ -3218,6 +3231,16 @@ function createTicketMethods(deps, shared) {
         catch { base = null; }
       }
       if (!base) return { ok: false, error: `no template "${stem}" to derive from` };
+      const baseType = base.type || DEFAULT_TYPE;
+      const adapter = adapterFor(baseType);
+      if (!adapter) return { ok: false, error: `template "${stem}" names type "${base.type}" — known: ${PLATFORMS.join(', ')}` };
+      const id = resolveModelId(baseType, intent.model);
+      if (!id) {
+        const aliases = Object.keys(adapter.model.aliases);
+        return { ok: false, error: aliases.length
+          ? `model "${intent.model}" is not a model id or alias (${aliases.join(', ')})`
+          : `model "${intent.model}" is not a model id — Codex takes no aliases` };
+      }
       const deps = this._teamFileDeps();
       const target = teamTemplatePath(deps, team.name, name);
       let prior = null;
@@ -5017,8 +5040,8 @@ function createTicketMethods(deps, shared) {
     // else resolves identically for both.
     //
     // `opener` is the session doing the spawning (the lead). It is not derivable
-    // from (team, roleKey): `type` and `workspaceId` are inherited from it, and so
-    // is the permission posture.
+    // from (team, roleKey): `workspaceId` is inherited from it, and so is the
+    // permission posture.
     resolveSeatShape(team, roleKey, purpose, opener, templateOverride = null) {
       // Explicit, because the switch below is otherwise FAIL-OPEN: `!review`
       // takes the ticket arm, so a typo'd 'reviewer' at a future call site would
@@ -5037,30 +5060,30 @@ function createTicketMethods(deps, shared) {
         team,
       );
       const tpl = (shape && shape.tpl) || null;
+      const ticketType = review ? null : seatType(tpl, opener);
+      const openerAdapter = adapterFor(opener.type) || adapterFor(DEFAULT_TYPE);
+      const seatAdapter = adapterFor(ticketType || DEFAULT_TYPE);
       const leadArgs = (getPersistence().get(opener.name)?.extraArgs) || [];
-      const postureArgs = leadArgs.includes('--dangerously-skip-permissions')
-        ? ['--dangerously-skip-permissions'] : [];
+      const postureArgs = leadArgs.includes(openerAdapter.posture.bypassFlag)
+        ? [seatAdapter.posture.bypassFlag] : [];
       const workspaceId = opener.workspaceId || DEFAULT_WORKSPACE_ID;
       // Resolved ONCE for both arms: a role cwd is not a reviewer concept or a
       // ticket concept, and two copies of this call are exactly the divergence
       // this resolver exists to prevent.
       const roleCwd = this._resolveRoleCwd(team, def);
       const accountLabel = (def && typeof def.account === 'string' && def.account) ? def.account : null;
-      const acct = accountLabel ? resolveAccount(accountLabel) : { ok: true, configDir: null };
+      const acct = !accountLabel ? { ok: true, configDir: null }
+        : (seatAdapter.account.bootstrap ? { ok: false, label: accountLabel, reason: 'platform' } : resolveAccount(accountLabel));
       const accountDir = acct.ok ? (acct.configDir || null) : null;
       const accountMissing = acct.ok ? null : { label: acct.label, reason: acct.reason };
       const withAccount = (env) => {
         if (!accountDir) return env;
-        return { ...(env || {}), [adapterFor('claude').account.envKey]: accountDir };
+        return { ...(env || {}), [seatAdapter.account.envKey]: accountDir };
       };
 
       if (!review) {
         return {
-          // The seat's type comes from the opener, not from the role: a role that
-          // wants codex hands names a codex TEMPLATE. The role field that used to
-          // sit here was honored verbatim on this path and overridden with a
-          // warning on the review path.
-          type: opener.type || 'claude',
+          type: ticketType,
           // Resolved against the MAIN checkout, and it must stay so: _resolveRoleCwd
           // stats the directory and refuses one a nested team.json owns, neither of
           // which is answerable about a tree that does not exist yet. A worktree
@@ -5501,6 +5524,11 @@ function createTicketMethods(deps, shared) {
           // Not inside resolveSeatShape: the tree is minted above, after the shape
           // is built, and the review path shares that resolver with no tree at all.
           const seatCwd = seatCwdInTree(team.root, shape.cwd, wt && wt.path);
+          let codexWarn = '';
+          if (shape.type === 'codex' && wt && wt.path) {
+            const e = ignoreCodexDir(fs, seatCwd);
+            if (e) codexWarn = ` — NOTE: ${e}`;
+          }
           const spawned = await this.create(
             seat.name, shape.type, seatCwd,
             shape.extraArgs, null,
@@ -5565,7 +5593,7 @@ function createTicketMethods(deps, shared) {
           const cwdWarn = shape.cwdFallback ? ` — NOTE: ${shape.cwdFallback}` : '';
           reply(isSpawn
             ? `ticket ${ticket.id} → ${seat.name} in the shared checkout ${shape.cwd} (no branch, no worktree)${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}`
-            : `ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}${linkWarn}`);
+            : `ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}${linkWarn}${codexWarn}`);
         } catch (err) {
           const live = this.sessions.has(seat.name);
           if (!live) getPersistence().remove(seat.name);
@@ -10401,4 +10429,4 @@ function createTicketMethods(deps, shared) {
   };
 }
 
-module.exports = { createTicketMethods, ticketCloseLine, ticketCloseVerb, ticketTaskDirLine };
+module.exports = { createTicketMethods, ticketCloseLine, ticketCloseVerb, ticketTaskDirLine, ignoreCodexDir };

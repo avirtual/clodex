@@ -1,0 +1,30 @@
+{
+  "name": "clodex-team-hand-codex",
+  "spawnerHint": "off",
+  "type": "codex",
+  "cwd": "${TEAM_ROOT}",
+  "proxy": null,
+  "plugins": [],
+  "execCommands": [
+    "clodex-team",
+    "clodex-monitor",
+    "clodex-run-tests"
+  ],
+  "intents": [
+    "dm",
+    "who",
+    "context",
+    "memory",
+    "file",
+    "resend",
+    "exec",
+    "remind",
+    "shout"
+  ],
+  "extraArgs": [],
+  "systemPromptFile": null,
+  "appendPromptFiles": [
+    "team-project"
+  ],
+  "env": {}
+}

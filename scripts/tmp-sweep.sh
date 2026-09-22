@@ -632,6 +632,7 @@ svcport-
 sysdeps-apt-
 sysdeps-apt-noensurepip-
 sysdeps-apt-novenv-
+t1076-exclude-
 t415-reg-
 t415-ud-
 t748-bad-

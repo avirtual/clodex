@@ -52,15 +52,15 @@ test('deriveModelTemplate strips the listing decoration, not just id', () => {
 });
 
 test('t890: the three aliases the operator named resolve to their 1M ids, haiku does not', () => {
-  assert.strictEqual(resolveModelId('opus'), 'claude-opus-5[1m]');
-  assert.strictEqual(resolveModelId('sonnet'), 'claude-sonnet-5[1m]');
-  assert.strictEqual(resolveModelId('fable'), 'claude-fable-5-1[1m]');
-  assert.strictEqual(resolveModelId('haiku'), 'claude-haiku-4-5-20251001');
+  assert.strictEqual(resolveModelId('claude', 'opus'), 'claude-opus-5[1m]');
+  assert.strictEqual(resolveModelId('claude', 'sonnet'), 'claude-sonnet-5[1m]');
+  assert.strictEqual(resolveModelId('claude', 'fable'), 'claude-fable-5-1[1m]');
+  assert.strictEqual(resolveModelId('claude', 'haiku'), 'claude-haiku-4-5-20251001');
 });
 
 test('t890: a plain id and a trailing-bracketed id both pass through', () => {
-  assert.strictEqual(resolveModelId('claude-sonnet-5'), 'claude-sonnet-5');
-  assert.strictEqual(resolveModelId('claude-opus-5[1m]'), 'claude-opus-5[1m]');
+  assert.strictEqual(resolveModelId('claude', 'claude-sonnet-5'), 'claude-sonnet-5');
+  assert.strictEqual(resolveModelId('claude', 'claude-opus-5[1m]'), 'claude-opus-5[1m]');
 });
 
 test('t890: the widened pattern stays fail-closed, and the suffix is lowercase-only', () => {
@@ -69,8 +69,22 @@ test('t890: the widened pattern stays fail-closed, and the suffix is lowercase-o
     'a[1m];rm -rf /', 'a[1 m]', 'a\n[1m]', 'a[1m]\n', 'claude-opus-5[1m] --foo',
     'claude-opus-5[1M]', 'CLAUDE-OPUS-5[1M]',
   ]) {
-    assert.strictEqual(resolveModelId(bad), null, `must refuse ${JSON.stringify(bad)}`);
+    assert.strictEqual(resolveModelId('claude', bad), null, `must refuse ${JSON.stringify(bad)}`);
   }
-  assert.strictEqual(resolveModelId(''), null);
-  assert.strictEqual(resolveModelId(null), null);
+  assert.strictEqual(resolveModelId('claude', ''), null);
+  assert.strictEqual(resolveModelId('claude', null), null);
+});
+
+test('t1076: codex model ids pass through and aliases are refused', () => {
+  assert.strictEqual(resolveModelId('codex', 'gpt-5-codex'), 'gpt-5-codex');
+  assert.strictEqual(resolveModelId('codex', 'opus'), null);
+  assert.strictEqual(resolveModelId('codex', 'fable'), null);
+  assert.strictEqual(resolveModelId('claude', 'opus'), 'claude-opus-5[1m]', 'the alias still resolves on claude');
+});
+
+test('t1076: deriveModelTemplate strips -m on codex and keeps it on claude', () => {
+  const codex = deriveModelTemplate({ type: 'codex', extraArgs: ['-m', 'old', '--model', 'older', '-v'] }, 'hand', 'gpt-5-codex');
+  assert.deepStrictEqual(codex.extraArgs, ['--model', 'gpt-5-codex', '-v']);
+  const claude = deriveModelTemplate({ type: 'claude', extraArgs: ['-m', 'kept', '--model', 'old'] }, 'hand', 'claude-opus-5');
+  assert.deepStrictEqual(claude.extraArgs, ['--model', 'claude-opus-5', '-m', 'kept']);
 });

@@ -2389,6 +2389,23 @@ test('spawn template: empty template.extraArgs falls back to spawner permission 
   assert.deepStrictEqual(created[0][3], ['--dangerously-skip-permissions']);
 });
 
+test('t1076 spawn arm: a Claude spawner with the Claude bypass flag spawning a Codex template gets the CODEX bypass flag', async () => {
+  const codexTpl = { id: 'tpl-c', name: 'codex-seat', type: 'codex', cwd: '/proj/desk', extraArgs: [] };
+  const claudeTpl = { id: 'tpl-k', name: 'claude-seat', type: 'claude', cwd: '/proj/desk', extraArgs: [] };
+  const { m, created, spawner } = mkSpawn([codexTpl, claudeTpl], {
+    clodex: { extraArgs: ['--dangerously-skip-permissions'] },
+  });
+  m._handleSpawnIntent(spawner, { name: 'c1', cwd: null, template: 'codex-seat' });
+  m._handleSpawnIntent(spawner, { name: 'k1', cwd: null, template: 'claude-seat' });
+  await tick();
+  assert.strictEqual(created.length, 2, 'ENTER: both seats reached create()');
+  assert.strictEqual(created[0][1], 'codex');
+  assert.deepStrictEqual(created[0][3], ['--dangerously-bypass-approvals-and-sandbox']);
+  assert.ok(!created[0][3].includes('--dangerously-skip-permissions'), 'the Claude flag must not reach a Codex seat');
+  assert.strictEqual(created[1][1], 'claude');
+  assert.deepStrictEqual(created[1][3], ['--dangerously-skip-permissions']);
+});
+
 test('spawn template: prompt refs thread into create() params 15/16', async () => {
   // A template carrying library-file prompt refs (system replaces, appends
   // compose) reproduces a seat's prompts — the refs, never inline bodies.
@@ -5289,9 +5306,9 @@ test('team-review: two reviews in one lead turn mint DISTINCT names (no -1 colli
 
 // C2 (T29 Slice 2), and the half of it that SURVIVES t292: a cold reviewer always
 // spawns as claude, because only create()'s claude arm consumes disabledTools —
-// codex ignores the denylist, so a codex reviewer would spawn uncapped. That is
-// CODE now, not a manifest field being overridden. A `type` still on disk in a
-// version-1 team.json is dropped at load, so it cannot even ask.
+// codex ignores the denylist, so a codex reviewer would spawn uncapped. A role
+// DEF `type: codex` is dropped at manifest load and the role names no template,
+// so nothing in this pair can ask for codex: both yield claude for that reason.
 test('team-review C2: a role def still carrying `type: codex` spawns as CLAUDE + capped', async () => {
   const { m, created } = mkReview({
     reviewerRole: { prompt: 'clodex-team-reviewer', brief: 'the reviewer',
@@ -10811,6 +10828,21 @@ test('t767: role-set hand model:opus derives templates/hand.json from the librar
   assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5[1m]'],
     're-deriving from the own copy leaves exactly one --model pair, not two');
   assert.ok(/derived from hand with --model claude-sonnet-5\[1m\]/.test(f.last()), f.last());
+});
+
+test('t1076: model: on a CODEX template takes a model id verbatim and refuses an alias', () => {
+  const f = mkTeamModel();
+  fsReal.mkdirSync(pathReal.dirname(f.tplFile('hc')), { recursive: true });
+  fsReal.writeFileSync(f.tplFile('hc'), JSON.stringify({ name: 'hc', type: 'codex', cwd: '${TEAM_ROOT}', extraArgs: ['-m', 'old', '-v'] }));
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'opus', template: 'hc', body: '' });
+  assert.match(f.last(), /error: model "opus" is not a model id — Codex takes no aliases/);
+  assert.strictEqual(fsReal.existsSync(f.tplFile('hand')), false, 'a refusal writes nothing');
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'gpt-5-codex', template: 'hc', body: '' });
+  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'gpt-5-codex', '-v'], '-m is stripped on codex; the id passes through');
+  assert.strictEqual(f.readTpl('hand').type, 'codex');
+  fsReal.writeFileSync(f.tplFile('sh'), JSON.stringify({ name: 'sh', type: 'sh', cwd: '${TEAM_ROOT}' }));
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'gpt-5-codex', template: 'sh', body: '' });
+  assert.match(f.last(), /error: template "sh" names type "sh" — known: claude, codex/);
 });
 
 test('t767: role-add worker model:haiku with no template derives from the shipped clodex-team-hand', () => {

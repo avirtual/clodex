@@ -609,18 +609,56 @@ test('the STOCK team and templates resolve to exactly the stems they did before 
   assert.strictEqual(m.resolveSeatShape(wiredTeam, 'reviewer', 'review', LEAD).systemPromptFile, 'clodex-team-reviewer');
 });
 
-test('the ticket seat type comes from the OPENER, not the role', () => {
-  // The role and the opener must DISAGREE or this asserts nothing: with both
-  // saying codex, a resolver reading either source passes. The role field was
-  // honored verbatim on this path and overridden with a warning on the review
-  // path — that split is the divergence, so the role must lose here.
-  const m = managerWith([]);
-  const team = teamWith({ hand: { worktree: true, type: 'codex' } });
-  assert.strictEqual(m.resolveSeatShape(team, 'hand', 'ticket', LEAD).type, 'claude');
-  // ...and the opener really is the source, not a hardcoded 'claude'.
-  assert.strictEqual(
-    m.resolveSeatShape(team, 'hand', 'ticket', { ...LEAD, type: 'codex' }).type, 'codex',
+test('t1076: the ticket seat type comes from the TEMPLATE; the opener fills only when there is none', () => {
+  const CODEX_LEAD = { ...LEAD, type: 'codex' };
+  const rows = [
+    ['no template + claude opener', [], { worktree: true }, LEAD, 'claude'],
+    ['no template + codex opener', [], { worktree: true }, CODEX_LEAD, 'codex'],
+    ['template type codex + claude opener', [{ name: 'hc', type: 'codex', cwd: '/repo' }], { worktree: true, template: 'hc' }, LEAD, 'codex'],
+    ['template WITHOUT type + codex opener', [{ name: 'ht', cwd: '/repo' }], { worktree: true, template: 'ht' }, CODEX_LEAD, 'claude'],
+  ];
+  let ran = 0;
+  for (const [label, templates, hand, opener, want] of rows) {
+    ran += 1;
+    const m = managerWith(templates);
+    assert.strictEqual(m.resolveSeatShape(teamWith({ hand }), 'hand', 'ticket', opener).type, want, label);
+  }
+  assert.strictEqual(ran, rows.length, 'ENTER: every row ran');
+  const m = managerWith([{ name: 'sh', type: 'sh', cwd: '/repo' }]);
+  assert.throws(
+    () => m.resolveSeatShape(teamWith({ hand: { worktree: true, template: 'sh' } }), 'hand', 'ticket', LEAD),
+    /claude, codex/,
+    'a template naming a type Clodex cannot spawn is refused, and the message names the platforms',
   );
+});
+
+test('t1076 ticket arm: a Claude lead with the Claude bypass flag dispatching a Codex-template hand gets the CODEX bypass flag', () => {
+  const m = managerWith(
+    [{ name: 'hc', type: 'codex', cwd: '/repo' }, { name: 'ht', type: 'claude', cwd: '/repo' }],
+    { leadArgs: ['--dangerously-skip-permissions'] },
+  );
+  const codex = m.resolveSeatShape(teamWith({ hand: { worktree: true, template: 'hc' } }), 'hand', 'ticket', LEAD);
+  assert.deepStrictEqual(codex.extraArgs, ['--dangerously-bypass-approvals-and-sandbox']);
+  assert.ok(!codex.extraArgs.includes('--dangerously-skip-permissions'), 'the Claude flag must not reach a Codex seat');
+  const claude = m.resolveSeatShape(teamWith({ hand: { worktree: true, template: 'ht' } }), 'hand', 'ticket', LEAD);
+  assert.deepStrictEqual(claude.extraArgs, ['--dangerously-skip-permissions']);
+});
+
+test('t1076 review arm: a CODEX lead with the Codex bypass flag gives its claude reviewer the CLAUDE bypass flag', () => {
+  const m = managerWith([], { leadArgs: ['--dangerously-bypass-approvals-and-sandbox'] });
+  const shape = m.resolveSeatShape(teamWith({ reviewer: {} }), 'reviewer', 'review', { ...LEAD, type: 'codex' });
+  assert.strictEqual(shape.type, 'claude');
+  assert.deepStrictEqual(shape.extraArgs, ['--dangerously-skip-permissions']);
+});
+
+test('t1076: a Codex-template hand naming an account is refused with reason platform', () => {
+  const m = managerWith([{ name: 'hc', type: 'codex', cwd: '/repo' }]);
+  const shape = m.resolveSeatShape(teamWith({ hand: { worktree: true, template: 'hc', account: 'work' } }), 'hand', 'ticket', LEAD);
+  assert.deepStrictEqual(shape.accountMissing, { label: 'work', reason: 'platform' });
+  assert.deepStrictEqual(Object.keys(shape.env || {}), [], 'no CLAUDE_CONFIG_DIR and no CODEX_HOME reaches the seat env');
+  const { accountMissingError } = require('../accounts');
+  assert.strictEqual(accountMissingError('hand', shape.accountMissing),
+    'role hand: account "work" is a Claude config dir; Codex roles take no account yet');
 });
 
 test('a template extraArgs REPLACES the inherited permission posture on the ticket path', () => {
