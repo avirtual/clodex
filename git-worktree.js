@@ -37,6 +37,18 @@ async function repoToplevel(cwd) {
   return top || null;
 }
 
+async function excludeInTree(dir, pattern) {
+  const r = await git(dir, ['rev-parse', '--git-path', 'info/exclude']);
+  if (!r.ok) return { ok: false, error: r.stderr.trim() };
+  const file = path.resolve(dir, r.stdout.trim());
+  let cur = '';
+  try { cur = fs.readFileSync(file, 'utf8'); } catch { cur = ''; }
+  if (cur.split('\n').includes(pattern)) return { ok: true, added: false };
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, cur + (cur && !cur.endsWith('\n') ? '\n' : '') + pattern + '\n');
+  return { ok: true, added: true };
+}
+
 async function hasCommit(dir) {
   if (!dir) return false;
   const r = await git(dir, ['rev-parse', '--verify', '--quiet', 'HEAD']);
@@ -696,5 +708,5 @@ module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
   defaultBranch, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch,
   diffText, diffNames, fileAt, currentBranch, mergeNoFf, revertCommit, initRepo, hasCommit,
-  checkoutDetached, headSha, headShaSync, headLogSync,
+  checkoutDetached, headSha, headShaSync, headLogSync, excludeInTree,
 };

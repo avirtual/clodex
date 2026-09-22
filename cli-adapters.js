@@ -90,6 +90,9 @@ function resolveModelId(type, v) {
   if (!a) return null;
   if (typeof v !== 'string' || !v) return null;
   if (Object.prototype.hasOwnProperty.call(a.model.aliases, v)) return a.model.aliases[v];
+  for (const other of Object.values(ADAPTERS)) {
+    if (other !== a && Object.prototype.hasOwnProperty.call(other.model.aliases, v)) return null;
+  }
   return a.model.idRe.test(v) ? v : null;
 }
 

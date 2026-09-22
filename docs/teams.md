@@ -272,7 +272,9 @@ whole grants list.
 lean on purpose: the first team stood up from the bootstrap skill came up with
 Fable-class hands carrying every installed skill, and was stopped on cost.
 `[agent:team role-set hand model:<alias>]` changes the model (`opus`, `sonnet`,
-`haiku`, `fable`).
+`haiku`, `fable`). On a Codex template (`clodex-team-hand-codex`,
+`clodex-team-lead-codex`) `model:` takes a model id and no aliases. `account:`
+is refused on a Codex role for now: the registry holds Claude config dirs.
 
 The stock hand and lead templates keep eight tools — Read, Edit, Write, Glob,
 Grep, Bash, Agent, SendMessage — and deny the rest of the catalog; the list is

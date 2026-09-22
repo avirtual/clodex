@@ -38,6 +38,11 @@ caller; the reaping is still the review path's.)
 `ticket.reviewerTemplate` is written above BOTH save arms — the one-shot arm
 returns before the second save, so a write below it survives only on the standing-seat path.
 
+## resolveSeatShape
+
+The ticket seat's `type` comes from the role's template; the opener's type fills
+it only when the role names no template.
+
 ## _seatMintPending
 
 `createdAt` is the discriminator because `create()` writes it unconditionally

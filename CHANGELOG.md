@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 - Internal: one adapter table (`cli-adapters.js`) now declares what differs between Claude Code and Codex seats — model aliases, account env, parking, the dialog's field set. No behaviour change, except that a seat template naming a type Clodex does not know (anything but claude/codex) is now refused at `[agent:spawn … template:]` instead of being run as a command.
 - Keep-warm: after a declined ping (429/5xx/transport) the keeper retries every 15s instead of 60s until the ping lands or the prefix goes cold, so a multi-minute upstream outage inside the 5-minute margin no longer exhausts the attempts and lets a large prefix expire.
+- Teams: a role whose template is a Codex template now gets Codex seats on every dispatch (the type used to come from the lead's session); `clodex-team-hand-codex` and `clodex-team-lead-codex` ship in the library; `model:` on a Codex template takes a model id (no aliases); `account:` is refused on a Codex role for now.
 - Phone-access `filePeek`: a file behind a non-traversable directory inside the seat's tree answers `unreadable` (500), not `not-found`.
 - Phone-access file view: `filePeek` returns an integral `mtime` (a fractional value made strict JSON decoders reject the whole reply); a non-traversable ancestor answers `outside` (403) rather than `unreadable` (500); a confinement root itself and a dangling symlink inside cwd answer `not-a-file` (400); the codeless "no such session" 404 is now contractual.
 
