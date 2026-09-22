@@ -176,7 +176,9 @@ def _parse_response_meta(raw_bytes):
 # Matched by LONGEST model-name prefix (so "claude-opus-4-8" beats the legacy
 # bare "claude-opus-4" entry). est_usd is a DERIVED estimate; the authoritative
 # billing signal is the token breakdown itself. Write premiums: 5m=1.25x,
-# 1h=2x; reads=0.10x of input. Verified against the API reference 2026-06-09.
+# 1h=2x; reads=0.10x of input EXCEPT fable/mythos-5.1 (0.025x) and opus-5.5
+# (0.05x) — a read rate is a per-row fact now, never derive it from `in`.
+# Verified against the API reference 2026-06-09; opus-5.5 rows 2026-09-22.
 # NOTE: opus REPRICED at 4.5 — $15/$75 is 4.0/4.1 ONLY; 4.5+ is $5/$25. Until
 # this split, all opus-4.5+ captures (logs_opus) were over-priced ~3x.
 PRICES = {
@@ -192,6 +194,14 @@ PRICES = {
     "claude-mythos-5-1": {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5,  "cache_write_1h": 20.0, "cache_read": 0.25},
     "claude-mythos-5": {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5,  "cache_write_1h": 20.0, "cache_read": 1.00},
     "claude-fable-5":  {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5,  "cache_write_1h": 20.0, "cache_read": 1.00},
+    # opus-5.5 (2026-09-22, id `claude-opus-5-5`): $4/$20, and the read is
+    # 0.05x base ($0.20/MTok) — the second model to break the universal 0.1x,
+    # after fable-5.1's 0.025x. SAME TRAP AS FABLE: "claude-opus-5" IS a prefix
+    # of "claude-opus-5-5", so without this row 5.5 traffic silently prices at
+    # opus-5's $5/$25/$0.50 (1.25x in/out, 2.5x on reads) with no unpriced
+    # warning. Read off platform.claude.com/docs/en/about-claude/pricing +
+    # models/overview (id), not inferred.
+    "claude-opus-5-5": {"in": 4.0,  "out": 20.0, "cache_write_5m": 5.0,   "cache_write_1h": 8.0,  "cache_read": 0.20},
     # opus-5 (2026-07-24): SAME rates as 4.8, but it needs its OWN entry —
     # longest-PREFIX matching means "claude-opus-5" does NOT match the legacy
     # "claude-opus-4" row (the "-4" is in the prefix), so without this line it
@@ -293,6 +303,13 @@ _UNPRICED_WARNED = set()
 # both cases usage.speed says "standard" and standard rates are what's charged).
 # Absent field (every non-beta request) => standard, the base PRICES row.
 PRICES_SPEED_FAST = {
+    # opus-5.5 fast = $8/$40 published; the cache columns are DERIVED from the
+    # documented stacking rule ("prompt caching multipliers apply on top of
+    # fast mode pricing") with 5.5's own 0.05x read — the page prints no fast
+    # cache figures, so verify against a fast-mode receipt when one lands.
+    # Same prefix trap: without this row a fast 5.5 turn prices at opus-5's
+    # fast row ($10/$50/$1.00).
+    "claude-opus-5-5": {"in": 8.0,  "out": 40.0, "cache_write_5m": 10.0, "cache_write_1h": 16.0, "cache_read": 0.40},
     "claude-opus-5":   {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5, "cache_write_1h": 20.0, "cache_read": 1.00},
     "claude-opus-4-8": {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5, "cache_write_1h": 20.0, "cache_read": 1.00},
 }
