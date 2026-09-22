@@ -52,7 +52,7 @@ test('deriveModelTemplate strips the listing decoration, not just id', () => {
 });
 
 test('t890: the three aliases the operator named resolve to their 1M ids, haiku does not', () => {
-  assert.strictEqual(resolveModelId('claude', 'opus'), 'claude-opus-5[1m]');
+  assert.strictEqual(resolveModelId('claude', 'opus'), 'claude-opus-5-5[1m]');
   assert.strictEqual(resolveModelId('claude', 'sonnet'), 'claude-sonnet-5[1m]');
   assert.strictEqual(resolveModelId('claude', 'fable'), 'claude-fable-5-1[1m]');
   assert.strictEqual(resolveModelId('claude', 'haiku'), 'claude-haiku-4-5-20251001');
@@ -79,7 +79,7 @@ test('t1076: codex model ids pass through and aliases are refused', () => {
   assert.strictEqual(resolveModelId('codex', 'gpt-5-codex'), 'gpt-5-codex');
   assert.strictEqual(resolveModelId('codex', 'opus'), null);
   assert.strictEqual(resolveModelId('codex', 'fable'), null);
-  assert.strictEqual(resolveModelId('claude', 'opus'), 'claude-opus-5[1m]', 'the alias still resolves on claude');
+  assert.strictEqual(resolveModelId('claude', 'opus'), 'claude-opus-5-5[1m]', 'the alias still resolves on claude');
 });
 
 test('t1076: deriveModelTemplate strips -m on codex and keeps it on claude', () => {

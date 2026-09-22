@@ -12,7 +12,7 @@ const ADAPTERS = {
     model: {
       flags: ['--model'],
       aliases: {
-        opus: 'claude-opus-5[1m]',
+        opus: 'claude-opus-5-5[1m]',
         sonnet: 'claude-sonnet-5[1m]',
         haiku: 'claude-haiku-4-5-20251001',
         fable: 'claude-fable-5-1[1m]',
