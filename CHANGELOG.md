@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Keep-warm: after a declined ping (429/5xx/transport) the keeper retries every 15s instead of 60s until the ping lands or the prefix goes cold, so a multi-minute upstream outage inside the 5-minute margin no longer exhausts the attempts and lets a large prefix expire.
 - Phone-access `filePeek`: a file behind a non-traversable directory inside the seat's tree answers `unreadable` (500), not `not-found`.
 - Phone-access file view: `filePeek` returns an integral `mtime` (a fractional value made strict JSON decoders reject the whole reply); a non-traversable ancestor answers `outside` (403) rather than `unreadable` (500); a confinement root itself and a dangling symlink inside cwd answer `not-a-file` (400); the codeless "no such session" 404 is now contractual.
 

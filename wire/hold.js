@@ -65,6 +65,7 @@ const DEFAULTS = {
   intervalSeconds: 60, // tick cadence           (WARMTH_HOLD_INTERVAL)
   maxPings: 24, // ping budget per anchor  (WARMTH_HOLD_MAX_PINGS)
   maxFailures: 2, // consecutive FAILURES (not declines) -> disarm
+  urgentIntervalSeconds: 15,
 };
 
 // One tick's verdict for an armed session — PURE (offline-testable).
@@ -184,7 +185,7 @@ class HoldKeeper extends EventEmitter {
   //             default) the keeper is exactly as in-memory as it was: no
   //             file is written and no restart survival exists. Only a host
   //             that has a durable userData dir supplies one.
-  //   maxEntries/maxHours/marginSeconds/intervalSeconds/maxPings/maxFailures
+  //   maxEntries/maxHours/marginSeconds/intervalSeconds/maxPings/maxFailures/urgentIntervalSeconds
   //             cap overrides, defaults above
   constructor(opts = {}) {
     super();
@@ -197,8 +198,9 @@ class HoldKeeper extends EventEmitter {
     this._entryStore = opts.entryStore || null;
     for (const k of Object.keys(DEFAULTS)) this[k] = opts[k] ?? DEFAULTS[k];
     this._entries = new Map(); // sessionId → { obj, headers, url, ts }
-    this._holds = new Map(); // sessionId → { until, armedAt, hours, pings, failures, lastPingTs, lastResult }
+    this._holds = new Map(); // sessionId → { until, armedAt, hours, pings, failures, lastPingTs, lastResult, urgent }
     this._timer = null;
+    this._running = false;
     this._inTick = false;
   }
 
@@ -508,16 +510,31 @@ class HoldKeeper extends EventEmitter {
     return out;
   }
 
-  start() {
-    if (this._timer) return;
-    this._timer = setInterval(() => {
-      this.tick().catch((e) => this.emit('hold', { session: null, event: 'tick-error', error: e.message }));
-    }, Math.max(5, this.intervalSeconds) * 1000);
+  nextDelaySeconds() {
+    for (const h of this._holds.values()) if (h.urgent === true) return this.urgentIntervalSeconds;
+    return this.intervalSeconds;
+  }
+
+  _schedule() {
+    if (!this._running) return;
+    this._timer = setTimeout(() => {
+      this._timer = null;
+      this.tick()
+        .catch((e) => this.emit('hold', { session: null, event: 'tick-error', error: e.message }))
+        .then(() => this._schedule());
+    }, Math.max(5, this.nextDelaySeconds()) * 1000);
     if (this._timer.unref) this._timer.unref();
   }
 
+  start() {
+    if (this._running) return;
+    this._running = true;
+    this._schedule();
+  }
+
   stop() {
-    if (this._timer) clearInterval(this._timer);
+    this._running = false;
+    if (this._timer) clearTimeout(this._timer);
     this._timer = null;
   }
 
@@ -539,6 +556,7 @@ class HoldKeeper extends EventEmitter {
           } catch { wq = null; }
         }
         const [action, reason, cause] = holdDecision(hold, !!entry, wq, now, this);
+        if (action !== 'ping') hold.urgent = false;
         if (action === 'disarm') {
           this._holds.delete(sid);
           // This path deletes from _holds directly rather than via disarm(), so
@@ -555,6 +573,7 @@ class HoldKeeper extends EventEmitter {
             cur.lastPingTs = now;
             const [kind, label] = pingOutcome(res);
             cur.lastResult = label;
+            cur.urgent = kind === 'decline';
             // A decline neither spends a strike nor clears the count: it is not
             // evidence either way about the credential.
             if (kind === 'warmed') cur.failures = 0;

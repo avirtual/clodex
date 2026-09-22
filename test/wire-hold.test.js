@@ -821,3 +821,127 @@ test('keychainServiceFor derives the CLI\'s suffixed item name', () => {
       { accessToken: null, expiresAt: null });
   }
 });
+
+function armDue(margin, ttl1h = false) {
+  const r = rig({ marginSeconds: margin });
+  const obj = ttl1h
+    ? makeObj({ system: [{ type: 'text', text: 'You are a test.', cache_control: { type: 'ephemeral', ttl: '1h' } }] })
+    : makeObj();
+  r.keeper.noteRequest(SID, obj, {}, 'http://up/v1/messages');
+  stampWarm(r.store, obj);
+  r.keeper.arm(SID, 0, { always: true });
+  return { ...r, obj };
+}
+
+test('tick: a declined ping makes the keeper urgent: nextDelaySeconds is 15', async () => {
+  const { keeper, clock, sent, responder } = armDue(100);
+  assert.equal(keeper.nextDelaySeconds(), 60);
+  clock.t += 210;
+  responder.status = 529;
+  await keeper.tick();
+  assert.equal(sent.length, 1, 'ENTER: the ping reached the wire');
+  assert.equal(keeper.holds()[SID].urgent, true);
+  assert.equal(keeper.nextDelaySeconds(), 15);
+});
+
+test('tick: a warmed ping clears urgency', async () => {
+  const { keeper, clock, sent, responder } = armDue(100);
+  clock.t += 210;
+  responder.status = 529;
+  await keeper.tick();
+  assert.equal(keeper.nextDelaySeconds(), 15, 'ENTER: urgent after the decline');
+  responder.status = 200;
+  await keeper.tick();
+  assert.equal(sent.length, 2, 'ENTER: the second ping reached the wire');
+  assert.equal(keeper.holds()[SID].urgent, false);
+  assert.equal(keeper.nextDelaySeconds(), 60);
+});
+
+test('tick: a prefix that went cold clears urgency', async () => {
+  const { keeper, clock, sent, responder } = armDue(100);
+  clock.t += 210;
+  responder.status = 529;
+  await keeper.tick();
+  assert.equal(keeper.nextDelaySeconds(), 15, 'ENTER: urgent after the decline');
+  clock.t += 100;
+  await keeper.tick();
+  assert.equal(sent.length, 1, 'ENTER: the cold tick skipped short of the wire');
+  assert.ok(keeper.holds()[SID], 'ENTER: cold only skips, never disarms');
+  assert.equal(keeper.holds()[SID].urgent, false);
+  assert.equal(keeper.nextDelaySeconds(), 60);
+});
+
+test('tick: a failure (401) does not make the keeper urgent', async () => {
+  const { keeper, clock, sent, responder } = armDue(100);
+  clock.t += 210;
+  responder.status = 401;
+  await keeper.tick();
+  assert.equal(sent.length, 1, 'ENTER: the ping reached the wire');
+  const h = keeper.holds()[SID];
+  assert.equal(h.failures, 1);
+  assert.equal(h.urgent, false);
+  assert.equal(keeper.nextDelaySeconds(), 60);
+});
+
+test('tick: twenty declines across a 300s margin at 15s cadence never disarm', async () => {
+  const { keeper, clock, store, sent, responder } = armDue(300, true);
+  clock.t += 3301;
+  assert.equal(store.query({ session: SID }).remaining_s, 299, 'ENTER: inside the margin, far from cold');
+  responder.status = 529;
+  let last = null;
+  while (store.query({ session: SID }).remaining_s > 0) {
+    await keeper.tick();
+    last = keeper.holds()[SID];
+    assert.ok(last, `disarmed after ${sent.length} pings`);
+    assert.equal(last.failures, 0);
+    assert.equal(last.urgent, true);
+    clock.t += keeper.nextDelaySeconds();
+  }
+  assert.ok(sent.length >= 19, `only ${sent.length} attempts across the margin`);
+  assert.ok(last.pings < keeper.maxPings, 'the margin window fits inside the per-anchor ping budget');
+  await keeper.tick();
+  assert.ok(keeper.holds()[SID], 'ENTER: cold only skips');
+  assert.equal(keeper.holds()[SID].urgent, false);
+  assert.equal(keeper.nextDelaySeconds(), 60);
+});
+
+test('start() reschedules at the urgent cadence and stop() cancels a pending reschedule', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const flush = () => new Promise((r) => setImmediate(r));
+  const { keeper, clock, sent, responder } = armDue(100);
+  clock.t += 210;
+  responder.status = 529;
+  keeper.start();
+  keeper.start();
+  t.mock.timers.tick(59999);
+  assert.equal(sent.length, 0, 'ENTER: the first tick is on the 60s cadence');
+  t.mock.timers.tick(1);
+  await flush();
+  assert.equal(sent.length, 1, 'ENTER: the scheduled tick pinged');
+  assert.equal(keeper.holds()[SID].urgent, true, 'ENTER: the decline made it urgent');
+
+  t.mock.timers.tick(14999);
+  await flush();
+  assert.equal(sent.length, 1, 'nothing before 15s');
+  t.mock.timers.tick(1);
+  await flush();
+  assert.equal(sent.length, 2, 'the next tick was armed at 15000ms');
+
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  keeper._request = async (url, headers, body) => {
+    sent.push({ url, headers, body: JSON.parse(body.toString('utf8')) });
+    await gate;
+    return { status: 529, headers: {}, body: Buffer.from('{}') };
+  };
+  t.mock.timers.tick(15000);
+  await flush();
+  assert.equal(sent.length, 3, 'ENTER: the third tick is in flight');
+  keeper.stop();
+  release();
+  await flush();
+  assert.equal(keeper._timer, null, 'a stop mid-tick must not be re-armed by the tick landing');
+  t.mock.timers.tick(120000);
+  await flush();
+  assert.equal(sent.length, 3, 'no tick after stop()');
+});

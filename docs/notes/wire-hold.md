@@ -14,3 +14,11 @@ The dir this resolver returns reaches `readClaudeAuth` in wire/claude-auth.js, w
 `keychainServiceFor` names the Keychain item `Claude Code-credentials-<first 8 hex of
 sha256 over CLAUDE_CONFIG_DIR as given>` when that env is set and the plain
 `Claude Code-credentials` otherwise; measured against CLI 2.1.269 on 2026-09-12.
+
+## tick
+
+Measured 2026-09-22 local: five 529 declines 03:52:34–03:56:32, upstream clear at
+03:56:39, TTL expiry 03:56:47 — the 60s cadence gave at most five attempts in the
+300s margin, and a 15s cadence confined to the last minute would have been a coin
+flip, so `urgent` is set on the first decline anywhere in the margin. A `failure`
+(401-class) never sets it: the two-strike `maxFailures` disarm keeps its ~2-minute bound.
