@@ -459,6 +459,15 @@ function standingSeat(entry) {
 
 // A cwd not inside `root` yields the tree ROOT: joining an escape would put the
 // seat outside the tree, which is the isolation this dispatch exists for.
+function seatCwdInTree(root, seatCwd, treePath) {
+  if (!treePath) return seatCwd;
+  if (!root || !seatCwd) return treePath;
+  const rel = nodePath.relative(nodePath.resolve(root), nodePath.resolve(seatCwd));
+  if (!rel) return treePath;
+  if (rel.startsWith('..') || nodePath.isAbsolute(rel)) return treePath;
+  return nodePath.join(treePath, rel);
+}
+
 function ignoreCodexDir(fs, seatCwd) {
   const dir = nodePath.join(seatCwd, '.codex');
   const file = nodePath.join(dir, '.gitignore');
@@ -472,15 +481,6 @@ function ignoreCodexDir(fs, seatCwd) {
   } catch (e) {
     return `could not write ${file} (${e.message}); the hand's tree will show .codex/ as untracked`;
   }
-}
-
-function seatCwdInTree(root, seatCwd, treePath) {
-  if (!treePath) return seatCwd;
-  if (!root || !seatCwd) return treePath;
-  const rel = nodePath.relative(nodePath.resolve(root), nodePath.resolve(seatCwd));
-  if (!rel) return treePath;
-  if (rel.startsWith('..') || nodePath.isAbsolute(rel)) return treePath;
-  return nodePath.join(treePath, rel);
 }
 
 function createTicketMethods(deps, shared) {
