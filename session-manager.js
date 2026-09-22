@@ -146,9 +146,9 @@ const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
 
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { readerFor } = require('./transcript-readers');
-const { uuidv7, bootstrapSeatConfig, museDataHome, findMuseTranscript, museRegistryFor, linkTranscript } = require('./seat-config');
-const MUSE_MINT_TIMEOUT_MS = 120000;
-const MUSE_BACKSTOP_MS = 2000;
+const { bootstrapSeatConfig, museDataHome, findMuseTranscript, museRegistryFor, linkTranscript } = require('./seat-config');
+const MUSE_LINK_POLL_MS = 250;
+const MUSE_LINK_DEADLINE_MS = 60000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX } = require('./proxy-util');
 const {
@@ -1594,6 +1594,7 @@ function createSessionManager(deps) {
       }
       let seatConfigDir = null;
       let museSid = null;
+      let museData = null;
       if (adapterFor(type)?.account.bootstrap === 'xdg-overlay') {
         seatConfigDir = pathFor(REGISTRY_DIR, name, 'seatConfig');
         bootstrapSeatConfig({ fs, path }, {
@@ -2029,7 +2030,7 @@ function createSessionManager(deps) {
             : museMerged;
           fs.writeFileSync(path.join(seatConfigDir, 'muse', 'AGENTS.md'),
             `You are the clodex agent named '${name}'.\n\n${teamBlock ? `${museBody}\n\n${teamBlock}\n` : museBody}`, { mode: 0o600 });
-          museSid = resumeId || uuidv7(crypto);
+          museSid = resumeId || null;
           let museProbe = null;
           if (proxyBase) { try { museProbe = await ProxyClient.probe(proxyBase); } catch {} }
           const museRouted = !!(proxyBase && museProbe && museProbe.capabilities && museProbe.capabilities.muse);
@@ -2038,28 +2039,21 @@ function createSessionManager(deps) {
           }
           const museBaseUrl = museRouted ? ['--base-url', `${proxyBase}/agent/${proxyAgent || name}/meta`] : [];
           const museEnv = { ...mergedEnv, CLODEX_HOME: REGISTRY_DIR, MUSE_NO_AUTO_UPDATE: '1' };
-          const museData = museDataHome({ env: museEnv, os, path });
-          if (!resumeId) {
-            try {
-              await new Promise((resolve, reject) => childProcess.execFile('muse', [
-                'exec', '--provider', 'meta', '--approval-mode', 'never', '--disable-sandbox', '--trust-workspace',
-                ...museBaseUrl, '--session-id', museSid, `Clodex seat "${name}" initialized.`,
-              ], { cwd: cwd || process.env.HOME || os.homedir(), env: museEnv, timeout: MUSE_MINT_TIMEOUT_MS },
-              (err) => (err ? reject(err) : resolve())));
-            } catch (e) {
+          museData = museDataHome({ env: museEnv, os, path });
+          if (museSid) {
+            const museTranscript = findMuseTranscript({ fs, path }, museData, museSid);
+            if (!museTranscript) {
               abandonHint();
-              throw new Error(`muse mint failed for ${name}: ${(e && e.message) || e}`);
+              throw new Error(`muse session ${museSid} has no transcript under ${museData}`);
             }
+            ensureDir(runDirFor(REGISTRY_DIR, name));
+            linkTranscript({ fs }, pathFor(REGISTRY_DIR, name, 'transcript'), museTranscript);
+            if (fork) warnings.push(`muse has no fork: resuming session ${museSid} instead.`);
+            args = [...extraArgs, '--trust-workspace', '--provider', 'meta', ...museBaseUrl, 'resume', museSid];
+          } else {
+            ensureDir(runDirFor(REGISTRY_DIR, name));
+            args = [...extraArgs, '--trust-workspace', '--provider', 'meta', ...museBaseUrl];
           }
-          const museTranscript = findMuseTranscript({ fs, path }, museData, museSid);
-          if (!museTranscript) {
-            abandonHint();
-            throw new Error(`muse session ${museSid} has no transcript under ${museData}`);
-          }
-          ensureDir(runDirFor(REGISTRY_DIR, name));
-          linkTranscript({ fs }, pathFor(REGISTRY_DIR, name, 'transcript'), museTranscript);
-          if (fork) warnings.push(`muse has no fork: resuming session ${museSid} instead.`);
-          args = [...extraArgs, '--trust-workspace', '--provider', 'meta', ...museBaseUrl, 'resume', museSid];
           break;
         }
         case 'bash':
@@ -2190,7 +2184,7 @@ function createSessionManager(deps) {
         spawnedAt: Date.now(),
         createdAt,
         agentType, lineBuffer: '', watcher: null,
-        sessionId: museSid || resumeId || null,
+        sessionId: museSid || null,
         accountDir: seatConfigDir || accountDir || null,
         forked: !!fork,
         workspaceId,
@@ -2414,17 +2408,27 @@ function createSessionManager(deps) {
         session.watcher.start();
       }
 
-      if (type === 'muse' && ptyProc && ptyProc.pid) {
-        const backstop = setTimeout(() => {
-          if (this.sessions.get(name) !== session) return;
-          const museData = museDataHome({ env, os, path });
+      if (type === 'muse' && ptyProc && ptyProc.pid && museData) {
+        let linkDone = null;
+        session._museLinkDone = new Promise((resolve) => { linkDone = resolve; });
+        const stop = (outcome) => { clearInterval(poll); clearTimeout(deadline); linkDone(outcome); };
+        const poll = setInterval(() => {
+          if (this.sessions.get(name) !== session) { stop('gone'); return; }
           const rec = museRegistryFor({ fs, path }, museData, ptyProc.pid);
-          if (!rec || typeof rec.session_id !== 'string' || rec.session_id === session.sessionId) return;
-          const target = findMuseTranscript({ fs, path }, museData, rec.session_id);
+          const sid = rec && typeof rec.session_id === 'string' ? rec.session_id : null;
+          if (!sid) return;
+          if (sid === session.sessionId) { stop('agreed'); return; }
+          const target = findMuseTranscript({ fs, path }, museData, sid);
           if (!target) return;
           try { linkTranscript({ fs }, pathFor(REGISTRY_DIR, name, 'transcript'), target); } catch {}
-        }, this._museBackstopMs ?? MUSE_BACKSTOP_MS);
-        if (backstop.unref) backstop.unref();
+          stop('linked');
+        }, this._museLinkPollMs ?? MUSE_LINK_POLL_MS);
+        const deadline = setTimeout(() => {
+          stop('deadline');
+          log.warn('muse', `${name}: no session registered for pid ${ptyProc.pid} within ${MUSE_LINK_DEADLINE_MS} ms — transcript link pending`);
+        }, MUSE_LINK_DEADLINE_MS);
+        if (poll.unref) poll.unref();
+        if (deadline.unref) deadline.unref();
       }
 
       if (agentType === 'claude') {
