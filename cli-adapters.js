@@ -23,6 +23,7 @@ const ADAPTERS = {
     account: { envKey: 'CLAUDE_CONFIG_DIR', bootstrap: null },
     cwdDir: null,
     readOnlyCap: { enforce: 'tool-denylist' },
+    seatSettings: null,
     skills: null,
     instructions: 'append-system-prompt-file',
     transcript: { reader: 'claude', link: 'hook' },
@@ -48,6 +49,7 @@ const ADAPTERS = {
     account: { envKey: 'CODEX_HOME', bootstrap: 'codex-home' },
     cwdDir: '.codex',
     readOnlyCap: { enforce: 'argv', args: ['--sandbox', 'read-only', '--ask-for-approval', 'never'] },
+    seatSettings: null,
     skills: null,
     instructions: 'model-instructions-file',
     transcript: { reader: 'codex', link: 'hook' },
@@ -80,6 +82,13 @@ const ADAPTERS = {
           schema_version: 1,
           profiles: { reviewer: { extends: ':read-only', approval: 'allow_all', reviewer: 'none', network: { mode: 'enabled' } } },
         },
+      },
+    },
+    seatSettings: {
+      run: {
+        workflow_trigger_mode: 'off',
+        reminder_roster: { agents: [] },
+        context_slimming: { excluded_tool_names: ['workflow', 'request_user_input'] },
       },
     },
     skills: {

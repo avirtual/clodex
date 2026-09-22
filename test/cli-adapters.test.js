@@ -66,7 +66,7 @@ test('t749: the dialog may not offer skills to a provider main cannot deliver to
   assert.deepStrictEqual(offered.sort(), [...deliverable].sort());
 });
 
-const ENTRY_KEYS = ['id', 'label', 'cmd', 'model', 'posture', 'account', 'cwdDir', 'readOnlyCap', 'skills', 'instructions', 'transcript', 'caps', 'ui'];
+const ENTRY_KEYS = ['id', 'label', 'cmd', 'model', 'posture', 'account', 'cwdDir', 'readOnlyCap', 'seatSettings', 'skills', 'instructions', 'transcript', 'caps', 'ui'];
 
 test('every adapter entry carries the whole entry key set', () => {
   for (const [type, entry] of Object.entries(ADAPTERS)) {
@@ -113,6 +113,13 @@ test('m2: the muse row — Meta\'s CLI, XDG overlay bootstrap, user-scope AGENTS
           schema_version: 1,
           profiles: { reviewer: { extends: ':read-only', approval: 'allow_all', reviewer: 'none', network: { mode: 'enabled' } } },
         },
+      },
+    },
+    seatSettings: {
+      run: {
+        workflow_trigger_mode: 'off',
+        reminder_roster: { agents: [] },
+        context_slimming: { excluded_tool_names: ['workflow', 'request_user_input'] },
       },
     },
     skills: {

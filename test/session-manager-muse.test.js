@@ -207,6 +207,11 @@ test('m2: a fresh muse seat spawns at once; the registry poller links its transc
         schema_version: 1,
         profiles: { reviewer: { extends: ':read-only', approval: 'allow_all', reviewer: 'none', network: { mode: 'enabled' } } },
       },
+      run: {
+        workflow_trigger_mode: 'off',
+        reminder_roster: { agents: [] },
+        context_slimming: { excluded_tool_names: ['workflow', 'request_user_input'] },
+      },
     }, 'the readOnlyCap profile DEFINITION is merged into every muse seat, inert until --permission-profile selects it');
 
     const s = f.m.sessions.get('seat');
@@ -542,6 +547,26 @@ test('m3: the profile merge is a deepMerge — a permissions.profiles.other entr
           reviewer: { extends: ':read-only', approval: 'allow_all', reviewer: 'none', network: { mode: 'enabled' } },
         },
       },
+      run: {
+        workflow_trigger_mode: 'off',
+        reminder_roster: { agents: [] },
+        context_slimming: { excluded_tool_names: ['workflow', 'request_user_input'] },
+      },
+    });
+  } finally { await f.stop('seat'); }
+});
+
+test('t1100: the adapter seatSettings win per leaf over the source run block — the operator\'s roster is emptied, its sibling key survives', async () => {
+  const f = mkMuse({ settings: '{"schema_version":1,"provider":"meta","run":{"reminder_roster":{"agents":["keep"]},"other":1}}\n' });
+  await f.create('seat');
+  try {
+    const seatDir = pathForReal(f.root, 'seat', 'seatConfig');
+    const written = JSON.parse(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'settings.json'), 'utf-8'));
+    assert.deepStrictEqual(written.run, {
+      reminder_roster: { agents: [] },
+      other: 1,
+      workflow_trigger_mode: 'off',
+      context_slimming: { excluded_tool_names: ['workflow', 'request_user_input'] },
     });
   } finally { await f.stop('seat'); }
 });
@@ -567,6 +592,11 @@ test('t1090: disabledSkills becomes skills.activation in the overlay, beside the
       permissions: {
         schema_version: 1,
         profiles: { reviewer: { extends: ':read-only', approval: 'allow_all', reviewer: 'none', network: { mode: 'enabled' } } },
+      },
+      run: {
+        workflow_trigger_mode: 'off',
+        reminder_roster: { agents: [] },
+        context_slimming: { excluded_tool_names: ['workflow', 'request_user_input'] },
       },
       skills: {
         activation: {
@@ -594,6 +624,11 @@ test('t1090: "*" sweeps every listed skill except the injected ones; the source 
         schema_version: 1,
         profiles: { reviewer: { extends: ':read-only', approval: 'allow_all', reviewer: 'none', network: { mode: 'enabled' } } },
       },
+      run: {
+        workflow_trigger_mode: 'off',
+        reminder_roster: { agents: [] },
+        context_slimming: { excluded_tool_names: ['workflow', 'request_user_input'] },
+      },
       skills: {
         activation: {
           bundled: {
@@ -614,7 +649,7 @@ test('t1090: disabledSkills [] writes no skills key at all, and never asks for t
   try {
     const seatDir = pathForReal(f.root, 'seat', 'seatConfig');
     const parsed = JSON.parse(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'settings.json'), 'utf-8'));
-    assert.deepStrictEqual(Object.keys(parsed).sort(), ['permissions', 'provider', 'schema_version']);
+    assert.deepStrictEqual(Object.keys(parsed).sort(), ['permissions', 'provider', 'run', 'schema_version']);
     assert.deepStrictEqual(f.rosterCalls, []);
   } finally { await f.stop('seat'); }
 });
