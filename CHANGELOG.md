@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Terminal: a spill receipt row (`N KB of prose filed at …`) is painted green with its own scrollbar tick, so a body Clodex filed on the agent's behalf is visible without reading; the path stays a click-to-peek link.
 - Template editor: the platform list comes from the adapter table (`cli-adapters.js`), and the dialog's per-platform fields are gated by that table rather than by literal type checks; Team roles shows the platform of the template each role names.
 - Internal: one adapter table (`cli-adapters.js`) now declares what differs between Claude Code and Codex seats — model aliases, account env, parking, the dialog's field set. No behaviour change, except that a seat template naming a type Clodex does not know (anything but claude/codex) is now refused at `[agent:spawn … template:]` instead of being run as a command.
 - Keep-warm: after a declined ping (429/5xx/transport) the keeper retries every 15s instead of 60s until the ping lands or the prefix goes cold, so a multi-minute upstream outage inside the 5-minute margin no longer exhausts the attempts and lets a large prefix expire.
