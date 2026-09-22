@@ -19432,8 +19432,7 @@ test('scratch end: a teamless seat appends its measurement row to scratch/<name>
   scratchOpen(f);
   scratchResearch(f);
   f.s._flushTurnEnd = true;
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
-  await new Promise((r) => setTimeout(r, 80));
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
 
   const file = pathReal.join(f.root, 'scratch', 'a', 'episodes.jsonl');
   const rows = fsReal.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -19474,8 +19473,7 @@ test('scratch: a second episode APPENDS — it never rewrites the first seat`s r
   scratchOpen(f);
   scratchResearch(f);
   f.s._flushTurnEnd = true;
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'first summary' });
-  await new Promise((r) => setTimeout(r, 80));
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'first summary' });
 
   const fresh = f.m.sessions.get('a');
   fresh._injectQueue = [];
@@ -19498,8 +19496,7 @@ test('scratch end: the ipc-message row shows the episode in the activity tab', a
   scratchOpen(f);
   scratchResearch(f);
   f.s._flushTurnEnd = true;
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
-  await new Promise((r) => setTimeout(r, 80));
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
 
   const scratchRows = rows.filter(([c, m]) => c === 'ipc-message' && m.type === 'scratch');
   assert.strictEqual(scratchRows.length, 1, 'exactly ONE row per episode — the activity tab is a log, '
@@ -19570,8 +19567,7 @@ test('scratch end: the cut HOLDS the name for its whole span, so a Move during i
   const realCreate = f.m.create.bind(f.m);
   f.m.create = async (...args) => { heldAt.push(f.m._movingNames.has(args[0])); return realCreate(...args); };
 
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
-  await new Promise((r) => setTimeout(r, 80));
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
 
   assert.deepStrictEqual(heldAt, [true, true],
     'the name is registered across the exit wait AND the create — the span a Move would race');
@@ -19740,8 +19736,7 @@ test('scratch: Rule B — an end whose summary omits a recorded dispatch is refu
   f.s._flushTurnEnd = true;
   const n = f.s._scratch.nonce;
 
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'I read the parser' });
-  await new Promise((r) => setTimeout(r, 40));
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'I read the parser' });
   const last = f.injected[f.injected.length - 1];
   assert.match(last, /inside this episode you dispatched spawn scout-2/);
   assert.match(last, new RegExp(`the mark ${n} is still open`));
@@ -19761,8 +19756,7 @@ test('scratch end: an arrival inside the episode refuses the cut and names the r
   f.append(dm.text);
   f.s._flushTurnEnd = true;
 
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
-  await new Promise((r) => setTimeout(r, 40));
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
   const last = f.injected[f.injected.length - 1];
   assert.match(last, /1 message\(s\) arrived during the episode and would be cut with it/);
   assert.match(last, /\[agent:from Codex\] can you look at the build\?/, 'the operator sees WHICH message');
@@ -19795,8 +19789,7 @@ test('scratch end: BOTH arrivals are named in the plain-end refusal, in the orde
   scratchTwoArrivals(f);
   f.s._flushTurnEnd = true;
 
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
-  await new Promise((r) => setTimeout(r, 40));
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
   const last = f.injected[f.injected.length - 1];
   assert.match(last, /2 message\(s\) arrived during the episode and would be cut with it/);
   const dmAt = last.indexOf('[agent:from Codex] can you look at the build?');
@@ -19815,8 +19808,7 @@ test('scratch end replay: the cut proceeds, the summary lands FIRST, then both a
   scratchTwoArrivals(f);
   f.s._flushTurnEnd = true;
 
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: true, body: 'the parser lives in scratch-mark.js' });
-  await new Promise((r) => setTimeout(r, 80));
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: true, body: 'the parser lives in scratch-mark.js' });
 
   assert.ok(f.order.includes('rename'), 'the cut proceeded — `replay` is the escape, not a second refusal');
   const tail = f.injected.slice(-3);
@@ -19849,8 +19841,7 @@ test('scratch end replay: an arrival is replayed ONLY if the summary actually la
   f.s._flushTurnEnd = true;
   f.m._injectAfterBoot = async () => false;
 
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: true, body: 'a summary' });
-  await new Promise((r) => setTimeout(r, 80));
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: true, body: 'a summary' });
 
   assert.ok(f.order.includes('rename'), 'the cut still happened — the transcript is already truncated');
   assert.ok(!f.injected.some((t) => t.startsWith('Replayed from scratch episode')),
@@ -19863,8 +19854,7 @@ test('scratch end replay: with no arrivals it is equivalent to a plain end and r
   scratchOpen(f);
   scratchResearch(f);
   f.s._flushTurnEnd = true;
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: true, body: 'a summary' });
-  await new Promise((r) => setTimeout(r, 80));
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: true, body: 'a summary' });
   assert.ok(f.order.includes('rename'));
   assert.ok(!f.injected.some((t) => t.startsWith('Replayed from scratch episode')));
 });
@@ -19879,8 +19869,7 @@ test('scratch end: WITHOUT replay an arrival still refuses — the modifier is t
   f.append(dm.text);
   f.s._flushTurnEnd = true;
 
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
-  await new Promise((r) => setTimeout(r, 40));
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
   assert.match(f.injected[f.injected.length - 1], /1 message\(s\) arrived during the episode/);
   assert.deepStrictEqual(f.order, [], 'nothing was cut');
   assert.ok(f.s._scratch, 'and the mark is still open');
@@ -19899,8 +19888,7 @@ test('scratch end replay: an arrival over SPILL_MIN_BYTES is still injected inli
   f.append(dm.text);
   f.s._flushTurnEnd = true;
 
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: true, body: 'a summary' });
-  await new Promise((r) => setTimeout(r, 80));
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: true, body: 'a summary' });
 
   const replayed = f.injected.filter((t) => t.startsWith('Replayed from scratch episode'));
   assert.strictEqual(replayed.length, 1, 'the long arrival was replayed once, and it is the text that starts with the header');
@@ -19919,8 +19907,7 @@ test('scratch end: a summary that never reached a seat records replayed=null wit
   f.s._flushTurnEnd = true;
   f.m._injectAfterBoot = async () => false;
 
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: true, body: 'a summary' });
-  await new Promise((r) => setTimeout(r, 80));
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: true, body: 'a summary' });
 
   const file = pathReal.join(f.root, 'scratch', 'a', 'episodes.jsonl');
   const rows = fsReal.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -19961,8 +19948,7 @@ test('scratch end: a seat ON a team appends its row to <teamsDir>/<team>/scratch
   scratchOpen(f);
   scratchResearch(f);
   f.s._flushTurnEnd = true;
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
-  await new Promise((r) => setTimeout(r, 80));
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
 
   const file = pathReal.join(teamsDir, 't', 'scratch-cost.jsonl');
   assert.ok(fsReal.existsSync(file), 'the row lands in the team dir, next to cost.jsonl');
@@ -19982,8 +19968,7 @@ test('scratch end: a respawn failure after the cut still yields exactly ONE scra
   scratchOpen(f);
   scratchResearch(f);
   f.s._flushTurnEnd = true;
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
-  await new Promise((r) => setTimeout(r, 80));
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
 
   assert.ok(f.order.includes('restore'), 'the transcript was restored from the .bak');
   const scratchRows = rows.filter(([c, m]) => c === 'ipc-message' && m.type === 'scratch');
