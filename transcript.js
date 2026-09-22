@@ -3,30 +3,15 @@
 // list served to both the phone page and the `clodex` CLI
 // (jsonlToMessages, user/assistant text only). Both read the JSONL the CLI
 // writes regardless of which observation path is live, so the remote view
-// never depends on the intent machinery. extractText pulls the
-// assistant-visible text from ONE parsed entry — the JsonlWatcher's per-line
-// hook (that class stays in main.js this phase).
+// never depends on the intent machinery. Role and text per entry come from the
+// platform reader in transcript-readers.js, sniffed per record.
 // Seam: plain functions over a path/string/object; only Node `fs` for the two
-// file readers — no main.js state, no Electron. Handles BOTH the Claude
-// (type:"user"/"assistant") and Codex (event_msg / response_item) shapes.
+// file readers — no main.js state, no Electron.
 
 const fs = require('fs');
-
-const CODEX_TEXT_BLOCK_TYPES = ['output_text', 'input_text'];
-
-function codexResponseMessage(obj) {
-  if ((obj.type || '') !== 'response_item') return null;
-  const payload = obj.payload || {};
-  if (payload.type !== 'message') return null;
-  const role = payload.role;
-  if (role !== 'assistant' && role !== 'user') return null;
-  if (!Array.isArray(payload.content)) return null;
-  const text = payload.content
-    .filter(b => b && CODEX_TEXT_BLOCK_TYPES.includes(b.type) && b.text)
-    .map(b => String(b.text))
-    .join('\n');
-  return text ? { role, text } : null;
-}
+const {
+  sniffReader, extractText, isTurnEndEntry, isInterruptEntry, isCodexReply,
+} = require('./transcript-readers');
 
 // Panel/phone sends carry the operator delivery label; every consumer of
 // jsonlToMessages renders the operator's own chat, so drop it (peer labels like
@@ -35,11 +20,6 @@ function codexResponseMessage(obj) {
 // go first. Applied to every user text whatever entry shape produced it.
 function cleanUserText(text) {
   return text.replace(/^[\x00-\x1f]+/, '').replace(/^\[agent:from user\]\s*/, '');
-}
-
-function isCodexReply(obj) {
-  const msg = codexResponseMessage(obj);
-  return !!msg && msg.role === 'assistant';
 }
 
 function jsonlToMarkdown(jsonlPath, agentType, sessionName) {
@@ -57,45 +37,17 @@ function jsonlToMarkdown(jsonlPath, agentType, sessionName) {
   for (const line of lines) {
     let obj;
     try { obj = JSON.parse(line); } catch { continue; }
-    const type = obj.type || '';
-
-    // --- Claude format ---
-    if (type === 'user') {
-      const content = (obj.message || {}).content;
-      const text = typeof content === 'string' ? content : extractClaudeBlocks(content);
-      if (text && text.trim()) {
-        if (lastRole !== 'user') parts.push('\n## 👤 User\n');
-        parts.push(text.trim());
-        lastRole = 'user';
-      }
-    } else if (type === 'assistant') {
-      const content = (obj.message || {}).content;
-      const text = extractClaudeBlocks(content);
-      if (text && text.trim()) {
-        if (lastRole !== 'assistant') parts.push('\n## 🤖 Assistant\n');
-        parts.push(text.trim());
-        lastRole = 'assistant';
-      }
-    }
-    // --- Codex format ---
-    else if (type === 'event_msg') {
-      const payload = obj.payload || {};
-      if (payload.type === 'agent_message' && payload.message) {
-        if (lastRole !== 'assistant') parts.push('\n## 🤖 Assistant\n');
-        parts.push(String(payload.message).trim());
-        lastRole = 'assistant';
-      } else if (payload.type === 'user_message' && payload.message) {
-        if (lastRole !== 'user') parts.push('\n## 👤 User\n');
-        parts.push(String(payload.message).trim());
-        lastRole = 'user';
-      }
-    } else {
-      const msg = codexResponseMessage(obj);
-      if (msg && msg.text.trim()) {
-        if (lastRole !== msg.role) parts.push(msg.role === 'assistant' ? '\n## 🤖 Assistant\n' : '\n## 👤 User\n');
-        parts.push(msg.text.trim());
-        lastRole = msg.role;
-      }
+    for (const rec of sniffReader(obj).expand(obj)) {
+      const reader = sniffReader(rec);
+      const c = reader.classify(rec);
+      const full = reader.id === 'claude' ? extractClaudeBlocks((rec.message || {}).content) : '';
+      let role = null, text = '';
+      if (c.isReply) { role = 'assistant'; text = full || c.text; }
+      else if (c.prompt || full) { role = 'user'; text = full || c.prompt; }
+      if (!role || !text.trim()) continue;
+      if (lastRole !== role) parts.push(role === 'assistant' ? '\n## 🤖 Assistant\n' : '\n## 👤 User\n');
+      parts.push(text.trim());
+      lastRole = role;
     }
   }
 
@@ -139,44 +91,24 @@ function jsonlToMessages(jsonlPath, limit = 100) {
     let obj;
     try { obj = JSON.parse(line); } catch { continue; }
     if (obj.isSidechain || obj.isMeta) continue;
-    const type = obj.type || '';
-    let role = null, text = '';
-
-    if (type === 'user') {
-      const content = (obj.message || {}).content;
-      role = 'user';
-      if (typeof content === 'string') text = content;
-      else if (Array.isArray(content)) {
-        // text blocks only — a tool_result-carrying user entry is tool
-        // traffic, not something the operator typed
-        text = content.filter(b => b && b.type === 'text' && b.text).map(b => b.text).join('\n');
+    for (const rec of sniffReader(obj).expand(obj)) {
+      const c = sniffReader(rec).classify(rec);
+      let role = null, text = '';
+      if (c.isReply) { role = 'assistant'; text = c.text; }
+      else if (c.prompt) {
+        role = 'user';
+        // local slash-command echoes and injected context aren't conversation
+        text = c.prompt.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
+          .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, '').trim();
+        if (text.startsWith('<command-name>') || text.startsWith('<local-command-stdout>')) text = '';
+        text = cleanUserText(text);
       }
-      // local slash-command echoes and injected context aren't conversation
-      text = text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
-        .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, '').trim();
-      if (text.startsWith('<command-name>') || text.startsWith('<local-command-stdout>')) text = '';
-    } else if (type === 'assistant') {
-      role = 'assistant';
-      const content = (obj.message || {}).content;
-      if (Array.isArray(content)) {
-        text = content.filter(b => b && b.type === 'text' && b.text).map(b => b.text).join('\n');
+      if (!role || !text.trim()) {
+        if (c.turnEnd) records.push({ role: null, text: '', ts: null, turnEnd: true });
+        continue;
       }
-    } else if (type === 'event_msg') {
-      const payload = obj.payload || {};
-      if (payload.type === 'agent_message' && payload.message) { role = 'assistant'; text = String(payload.message); }
-      else if (payload.type === 'user_message' && payload.message) { role = 'user'; text = String(payload.message); }
-    } else {
-      const msg = codexResponseMessage(obj);
-      if (msg) { role = msg.role; text = msg.text; }
+      records.push({ role, text: text.trim(), ts: rec.timestamp || null, turnEnd: c.turnEnd });
     }
-    if (role === 'user') text = cleanUserText(text);
-
-    const turnEnd = isTurnEndEntry(obj);
-    if (!role || !text.trim()) {
-      if (turnEnd) records.push({ role: null, text: '', ts: null, turnEnd: true });
-      continue;
-    }
-    records.push({ role, text: text.trim(), ts: obj.timestamp || null, turnEnd });
   }
 
   const turns = [];
@@ -239,66 +171,6 @@ function sliceSince(all, since, limit, after = null) {
   if (Number.isFinite(floor)) rows = rows.filter((m) => keepAfter(m, floor));
   const page = rows.slice(-limit);
   return { messages: page, cursor, complete: true };
-}
-
-// Does THIS entry end the agent's main-line turn? The discriminator the
-// renderer activity seam cannot give you: session-manager passes
-// `state === 'idle'` for the jsonl watcher, so its `turnEnd` is true on every
-// inter-tool flush. Read the transcript instead, which carries the model's own
-// stop reason.
-//
-// Measured over 60 real transcripts: assistant stop_reason is `tool_use` 1768
-// times against `end_turn` 107 — the ratio is the whole point, since speaking
-// on the wrong one narrates after every tool call.
-//
-// A sidechain entry is a SUBAGENT's turn ending, not the seat's, and it lands
-// in the same transcript. Excluded here rather than at the call site so no
-// second consumer has to rediscover it.
-function isTurnEndEntry(obj) {
-  if (!obj || obj.isSidechain === true || obj.isMeta === true) return false;
-  if ((obj.type || '') === 'assistant') {
-    return ((obj.message || {}).stop_reason || '') === 'end_turn';
-  }
-  // Codex closes a turn with its own event; `agent_message` is per-chunk and
-  // says nothing about the turn being over.
-  return (obj.type || '') === 'event_msg' && (obj.payload || {}).type === 'task_complete';
-}
-
-function isInterruptEntry(obj) {
-  if (!obj || obj.isSidechain === true || obj.isMeta === true) return false;
-  if ((obj.type || '') !== 'user') return false;
-  const content = (obj.message || {}).content;
-  if (!Array.isArray(content)) return false;
-  const text = content
-    .filter(b => b && b.type === 'text' && typeof b.text === 'string')
-    .map(b => b.text)
-    .join('\n')
-    .trim();
-  return text === '[Request interrupted by user]'
-    || text === '[Request interrupted by user for tool use]';
-}
-
-function extractText(obj) {
-  const type = obj.type || '';
-  // Claude format
-  if (type === 'assistant') {
-    const content = (obj.message || {}).content || [];
-    if (!Array.isArray(content)) return '';
-    return content
-      .filter(b => b && b.type === 'text' && b.text)
-      .map(b => b.text)
-      .join('\n');
-  }
-  // Codex format
-  const payload = obj.payload || {};
-  if (type === 'event_msg' && payload.type === 'agent_message') {
-    return String(payload.message || '');
-  }
-  if (type === 'response_item' && payload.type === 'function_call_output') {
-    return String(payload.output || '');
-  }
-  const msg = codexResponseMessage(obj);
-  return msg && msg.role === 'assistant' ? msg.text : '';
 }
 
 module.exports = { jsonlToMarkdown, extractClaudeBlocks, jsonlToMessages, cachedMessages, sliceSince, extractText, isTurnEndEntry, isInterruptEntry, isCodexReply };

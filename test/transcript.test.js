@@ -532,3 +532,26 @@ test('sliceSince: `after` composes with the seq cursor, and an unparseable insta
     sliceSince(AFTER_ROWS, null, 100).messages.map(m => m.seq), [0, 1, 2, 3, 4],
     'the default (no `after`) is the pre-t958 behaviour');
 });
+
+test('jsonlToMessages + jsonlToMarkdown: a Muse Code session renders its prompt and reply', () => {
+  const run = (event) => ({ payload_type: 'runtime.session', payload: { kind: 'run', run_id: 'r', event } });
+  const p = writeJsonl([
+    { retained_frame: 'session_permission_transaction', children: [{ child_index: 0, record_json: JSON.stringify({ payload_type: 'runtime.session', payload: { kind: 'security_mode' } }) }] },
+    { payload_type: 'runtime.user_intent.accepted', payload: { refill_blocks: [{ kind: 'text', text: '[agent:from user] say hello' }] } },
+    run({ kind: 'started', prompt: 'say hello' }),
+    run({ kind: 'assistant_message_committed', message_id: 'm1', text: 'echo: say hello' }),
+    run({ kind: 'goal_usage_attribution' }),
+    run({ kind: 'terminal', terminal: 'completed', reason: 'done' }),
+    { retained_marker: 'omitted_live_only', omitted_record: { payload_kind: 'task' } },
+    { payload_type: 'session.end', payload: { kind: 'session_end' } },
+  ]);
+  try {
+    const msgs = jsonlToMessages(p).map(m => [m.role, m.text, m.interim]);
+    assert.deepStrictEqual(msgs, [['user', 'say hello', false], ['assistant', 'echo: say hello', false]]);
+    const md = jsonlToMarkdown(p, 'muse', 'sess3');
+    assert.ok(md.includes('## 👤 User'));
+    assert.ok(md.includes('## 🤖 Assistant'));
+    assert.ok(md.includes('echo: say hello'));
+    assert.ok(!md.includes('security_mode'));
+  } finally { fs.unlinkSync(p); }
+});
