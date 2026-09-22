@@ -1947,7 +1947,10 @@ function createSessionManager(deps) {
             ? readSystemPromptBody(systemPromptFile, seatPlugins, resolvedTeam)
             : (systemPromptFile ? getPromptLibrary().raw('system', systemPromptFile) : null);
           const codexAppendBodies = readAppendBodies(appendPromptFiles, seatPlugins, resolvedTeam);
-          const { cleaned, merged } = mergeCodexInstructions(extraArgs, buildIpcPrompt(intents, this._resolveExecDefs(execCommands, resolvedTeam), pluginGrammarLines(intents, Array.isArray(plugins) ? plugins : null)), {
+          const codexIpc = mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1'
+            ? null
+            : buildIpcPrompt(intents, this._resolveExecDefs(execCommands, resolvedTeam), pluginGrammarLines(intents, Array.isArray(plugins) ? plugins : null));
+          const { cleaned, merged } = mergeCodexInstructions(extraArgs, codexIpc, {
             systemBody: codexSystemBody, appendBodies: codexAppendBodies, inlineBody: systemPromptBody || null,
           });
           args = [...cleaned];

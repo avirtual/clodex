@@ -9,7 +9,8 @@ binary), `model` (`flags` the CLI takes a model on, `aliases` short names →
 ids, `idRe` the id shape), `posture` (`bypassFlag`, the permission-bypass
 argv token), `account` (`envKey` the config-dir env var; `bootstrap` names
 the mechanism the call site with fs runs, `null` when none), `readOnlyCap`
-(`null` until the platform has a reviewer cap), `instructions` (how a
+(how the platform expresses the reviewer's read-only cap, `null` when it has
+none and so cannot seat a reviewer), `instructions` (how a
 system prompt reaches the CLI), `caps` (`park`: a held delivery can be
 parked for this seat; `transcript`: the hook writes `transcript.jsonl`),
 `ui` (the t749 dialog-field row `capsFor` returns). `Object.keys(ADAPTERS)`
@@ -27,9 +28,9 @@ policy. A boolean on the adapter would be true for exactly one platform and
 would read as a promise that a second platform gains the artifact by
 flipping it, which is false: each artifact needs its own mechanism written.
 Convert a guard the day a second platform gets that artifact. The two
-`transcript` guards on the review watchdog and the stall wake are the
-exception and flip to `caps.transcript` when a Codex reviewer can exercise
-them live.
+`transcript` guards on the review watchdog and the stall wake read
+`caps.transcript` since t1078, which measured the Codex hook landing the
+symlink live (see `readOnlyCap` below).
 
 ### Not in the leak lists
 
@@ -43,3 +44,18 @@ could leak. The renderer requires it directly and esbuild inlines it into
 
 The ticket seat's `type` comes from the role's template; the opener's type fills
 it only when the role names no template.
+
+## readOnlyCap
+
+`enforce: 'tool-denylist'` (Claude) inverts `REVIEWER_TOOL_CAP` into a settings
+denylist; `enforce: 'argv'` (Codex) appends `args` to the seat's argv and the
+review arm carries no posture flag and no template argv ahead of it. Measured
+against codex-cli 0.155.1 (`codex exec --enable hooks -s read-only -c
+approval_policy="never" --add-dir <dir>` in a scratch dir carrying the loop's
+`.codex/hooks.json`, `WB_WRAP_NAME` set): the SessionStart hook fired and
+`run/<name>/transcript.jsonl` landed although `hooks.state` in `config.toml`
+held no entry for that path — trust followed the already-trusted hook hash, and
+no entry was written; `--add-dir` under `read-only` is NOT writable (`touch`:
+Operation not permitted), the cwd is not either, and outbound network is off
+(DNS fails). `exec` rejects `--ask-for-approval`; the TUI the seat boots takes
+it.

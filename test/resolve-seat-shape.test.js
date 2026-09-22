@@ -21,6 +21,7 @@ const fs = require('node:fs');
 
 const { createSessionManager } = require('../session-manager');
 const { CLAUDE_TOOLS } = require('../catalogs');
+const { ADAPTERS } = require('../cli-adapters');
 const { STOCK_ROLE_DEFS } = require('../team-manifest');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -97,6 +98,8 @@ test('ticket purpose: the whole shape, with no template', () => {
     envDropped: [],
     envBadType: [],
     beyondCap: [],
+    capNote: null,
+    toolsIgnored: false,
     promptEscaped: null,
     workspaceId: 'ws-7',
     ephemeral: true,
@@ -141,6 +144,8 @@ test('review purpose: the whole shape, with no template', () => {
     envDropped: [],
     envBadType: [],
     beyondCap: [],
+    capNote: null,
+    toolsIgnored: false,
     promptEscaped: null,
     workspaceId: 'ws-7',
     ephemeral: true,
@@ -209,6 +214,8 @@ test('review purpose: the whole shape, WITH a template (the production config)',
     envDropped: [],
     envBadType: [],
     beyondCap: [],
+    capNote: null,
+    toolsIgnored: false,
     promptEscaped: null,
     workspaceId: 'ws-7',
     ephemeral: true,
@@ -255,6 +262,8 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     shellDeny: null,
     modelRefused: null,
     beyondCap: [],
+    capNote: null,
+    toolsIgnored: false,
     promptEscaped: null,
     systemPromptFile: 'tpl-brief',
     appendPromptFiles: ['ap'],
@@ -274,31 +283,125 @@ test('ticket purpose: the whole shape, WITH a template', () => {
 
 // --- the reviewer's three hard rules, now properties of the resolver ---
 
-test('a reviewer template naming type codex still resolves claude', () => {
-  // Only create()'s claude arm consumes disabledTools, so a codex reviewer
-  // spawns UNCAPPED — the forced type is what makes the tool cap real.
-  const m = managerWith([{ name: 'rv', type: 'codex', cwd: '/repo' }]);
+const CODEX_CAP = ['--sandbox', 'read-only', '--ask-for-approval', 'never'];
+
+test('a reviewer template naming type codex resolves codex with the argv cap', () => {
+  const m = managerWith(
+    [{ name: 'rv', type: 'codex', cwd: '/repo', extraArgs: ['--model', 'gpt-x'] }],
+    { leadArgs: ['--dangerously-skip-permissions'] },
+  );
   const team = teamWith({ reviewer: { template: 'rv' } });
-  assert.strictEqual(m.resolveSeatShape(team, 'reviewer', 'review', LEAD).type, 'claude');
+  const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.strictEqual(shape.type, 'codex');
+  assert.deepStrictEqual(shape.extraArgs, ['--model', 'gpt-x', ...CODEX_CAP], 'the cap pair ends the argv');
+  assert.ok(!shape.extraArgs.includes('--dangerously-skip-permissions')
+    && !shape.extraArgs.includes('--dangerously-bypass-approvals-and-sandbox'), 'no posture flag on the argv cap');
+  assert.deepStrictEqual(shape.effectiveTools, []);
+  assert.deepStrictEqual(shape.disabledTools, []);
+  assert.strictEqual(shape.shellDeny, null);
+  assert.deepStrictEqual(shape.beyondCap, []);
+  assert.strictEqual(shape.requestedTools, null);
+  assert.strictEqual(shape.toolsMalformed, false);
+  assert.strictEqual(shape.toolsIgnored, false);
+  assert.strictEqual(shape.capNote, 'read-only sandbox (OS-enforced), approvals: never');
+});
+
+test('a tools array on an argv-capped reviewer template is reported ignored, not refused', () => {
+  const m = managerWith([{ name: 'rv', type: 'codex', cwd: '/repo', tools: ['Read', 'Edit'] }]);
+  const shape = m.resolveSeatShape(teamWith({ reviewer: { template: 'rv' } }), 'reviewer', 'review', LEAD);
+  assert.strictEqual(shape.toolsIgnored, true);
+  assert.strictEqual(shape.requestedTools, null, 'nothing for the caller to refuse');
+  assert.deepStrictEqual(shape.beyondCap, []);
+  assert.deepStrictEqual(shape.effectiveTools, []);
+  const m2 = managerWith([{ name: 'rv', type: 'codex', cwd: '/repo', tools: 'Read' }]);
+  const s2 = m2.resolveSeatShape(teamWith({ reviewer: { template: 'rv' } }), 'reviewer', 'review', LEAD);
+  assert.strictEqual(s2.toolsIgnored, true);
+  assert.strictEqual(s2.toolsMalformed, false, 'malformed tools have no meaning either on an argv cap');
+});
+
+test('the claude reviewer shape carries capNote null and toolsIgnored false', () => {
+  const m = managerWith([{ name: 'rv', type: 'claude', cwd: '/repo', tools: ['Read'] }]);
+  const shape = m.resolveSeatShape(teamWith({ reviewer: { template: 'rv' } }), 'reviewer', 'review', LEAD);
+  assert.strictEqual(shape.capNote, null);
+  assert.strictEqual(shape.toolsIgnored, false);
+  assert.deepStrictEqual(shape.effectiveTools, ['Read']);
 });
 
 test('a CODEX lead still gets a claude reviewer', () => {
-  // The opener is the other way the type could leak in, and LEAD is claude — so
-  // the assertion above passes against a review arm written `opener.type ||
-  // 'claude'`, which is the expression the ticket arm 40 lines up actually uses.
-  // A codex lead is the case that separates them, and it is the whole C2 rule:
-  // the reviewer's cap is a denylist only create()'s claude arm reads.
   const m = managerWith([]);
   const team = teamWith({ reviewer: {} });
   assert.strictEqual(
     m.resolveSeatShape(team, 'reviewer', 'review', { ...LEAD, type: 'codex' }).type, 'claude',
   );
-  // ...and with a codex template on top of a codex lead, so neither source wins.
   const m2 = managerWith([{ name: 'rv', type: 'codex', cwd: '/repo' }]);
   assert.strictEqual(
     m2.resolveSeatShape(teamWith({ reviewer: { template: 'rv' } }), 'reviewer', 'review',
-      { ...LEAD, type: 'codex' }).type, 'claude',
+      { ...LEAD, type: 'codex' }).type, 'codex',
   );
+});
+
+test('a reviewer template of an unknown platform throws naming the platform list', () => {
+  const m = managerWith([{ name: 'rv', type: 'sh', cwd: '/repo' }]);
+  assert.throws(
+    () => m.resolveSeatShape(teamWith({ reviewer: { template: 'rv' } }), 'reviewer', 'review', LEAD),
+    /unknown seat type "sh".*claude, codex/,
+  );
+});
+
+test('a reviewer template whose adapter declares no read-only cap throws before any shape exists', () => {
+  const m = managerWith([{ name: 'rv', type: 'codex', cwd: '/repo' }]);
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  const saved = ADAPTERS.codex.readOnlyCap;
+  try {
+    ADAPTERS.codex.readOnlyCap = null;
+    assert.throws(
+      () => m.resolveSeatShape(team, 'reviewer', 'review', LEAD),
+      /reviewer template "rv" is type "codex", which cannot be capped read-only in this build/,
+    );
+    ADAPTERS.codex.readOnlyCap = { enforce: 'wishful', args: [] };
+    assert.throws(
+      () => m.resolveSeatShape(team, 'reviewer', 'review', LEAD),
+      /reviewer template "rv" is type "codex", whose read-only cap "wishful" cannot be enforced in this build/,
+    );
+  } finally {
+    ADAPTERS.codex.readOnlyCap = saved;
+  }
+  assert.strictEqual(m.resolveSeatShape(team, 'reviewer', 'review', LEAD).type, 'codex', 'restored');
+});
+
+test('the review arm of resolveSeatShape names no platform literal', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'team-tickets.js'), 'utf-8');
+  const start = src.indexOf('    resolveSeatShape(team, roleKey, purpose, opener, templateOverride = null) {');
+  assert.ok(start >= 0, 'ENTER: resolveSeatShape is declared with the expected signature');
+  const end = src.indexOf('\n    },\n', start);
+  const body = src.slice(start, end);
+  assert.ok(/readOnlyCap/.test(body), 'ENTER: the arm branches on the adapter cap');
+  assert.doesNotMatch(body, /===\s*'codex'|===\s*"codex"|!==\s*'codex'/);
+  assert.doesNotMatch(body, /===\s*'claude'|===\s*"claude"|!==\s*'claude'/);
+});
+
+test('the review arm spells --model with the seat adapter\'s first model flag', () => {
+  const m = managerWith([{ name: 'rv', type: 'codex', cwd: '/repo', extraArgs: ['-m', 'gpt-x'] }]);
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  const saved = ADAPTERS.codex.model.flags;
+  try {
+    ADAPTERS.codex.model.flags = ['-m', '--model'];
+    assert.deepStrictEqual(m.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs, ['-m', 'gpt-x', ...CODEX_CAP]);
+  } finally {
+    ADAPTERS.codex.model.flags = saved;
+  }
+  assert.deepStrictEqual(m.resolveSeatShape(team, 'reviewer', 'review', LEAD).extraArgs, ['--model', 'gpt-x', ...CODEX_CAP]);
+});
+
+test('the review arm never carries template argv ahead of the cap', () => {
+  const m = managerWith(
+    [{ name: 'rv', type: 'codex', cwd: '/repo',
+      extraArgs: ['-s', 'workspace-write', '--dangerously-bypass-approvals-and-sandbox', '--model', 'gpt-x'] }],
+    { leadArgs: ['--dangerously-skip-permissions'] },
+  );
+  const shape = m.resolveSeatShape(teamWith({ reviewer: { template: 'rv' } }), 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(shape.extraArgs, ['--model', 'gpt-x', ...CODEX_CAP]);
+  assert.deepStrictEqual(shape.extraArgs.slice(-4), CODEX_CAP, 'the cap pair is last');
 });
 
 // The exemplar was Bash until t673 admitted it beside REVIEWER_SHELL_DENY. Edit
@@ -962,6 +1065,8 @@ test('role cwd: the ticket arm resolves the role subdirectory of the main checko
     envDropped: [],
     envBadType: [],
     beyondCap: [],
+    capNote: null,
+    toolsIgnored: false,
     promptEscaped: null,
     workspaceId: 'ws-7',
     ephemeral: true,
@@ -1001,6 +1106,8 @@ test('role cwd: a role WITHOUT one still resolves to the team root — whole sha
     envDropped: [],
     envBadType: [],
     beyondCap: [],
+    capNote: null,
+    toolsIgnored: false,
     promptEscaped: null,
     workspaceId: 'ws-7',
     ephemeral: true,
@@ -1049,6 +1156,8 @@ test('role cwd: the REVIEW arm honors it too (D4) — whole shape', () => {
     envDropped: [],
     envBadType: [],
     beyondCap: [],
+    capNote: null,
+    toolsIgnored: false,
     promptEscaped: null,
     workspaceId: 'ws-7',
     ephemeral: true,
