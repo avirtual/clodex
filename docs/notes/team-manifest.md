@@ -38,3 +38,9 @@ refusing a non-empty directory. That refusal is load-bearing in a way the templa
 unwind never faces: the kickstart create puts the team brief at
 `prompts/append/team-project.md`, so `prompts/` holds a file these copies do not
 own. That same cleanup unwinds these over `team.promptsCopied`.
+
+## removeRole
+
+`removedRoleAccounts` is a per-role stash on the manifest, written here and
+consumed by the next `addRole` of that name; it exists because the stock
+definition a re-add mints has no account.
