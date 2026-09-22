@@ -51,12 +51,13 @@ docker exec -u clodex clodex-peer \
 
 ### 1. Authenticate the agent CLIs (once)
 
-The peer server runs without it, but agents need a logged-in `claude` / `codex`.
+The peer server runs without it, but agents need a logged-in `claude` / `codex` / `muse`.
 Do this once — it persists (see *Credentials persist*):
 
 ```bash
 docker exec -it -u clodex clodex-peer bash -lc 'claude'       # then OAuth in browser
 docker exec -it -u clodex clodex-peer bash -lc 'codex login'  # optional
+docker exec -it -u clodex clodex-peer bash -lc 'muse'         # optional, device login
 ```
 
 ### 2. Peer to it from the Mac
@@ -107,8 +108,9 @@ image mirrors what `peering/clodex-deploy.sh` would do over SSH — apt deps, cl
 SUID `chrome-sandbox` fix, `ui-settings.json`, the systemd unit — but does it at
 **build time** so a running peer is one command away.
 
-**Credentials persist.** `~/.claude` and `~/.codex` are **named Docker volumes**
-(`clodex-peer-claude`, `clodex-peer-codex`), so your one-time OAuth survives
+**Credentials persist.** `~/.claude`, `~/.codex` and `~/.config/muse` are **named
+Docker volumes** (`clodex-peer-claude`, `clodex-peer-codex`, `clodex-peer-muse`),
+so your one-time OAuth survives
 `up`/`down`/rebuild. Only `reset` (or `docker volume rm`) clears them.
 
 **Host keys.** Every rebuild regenerates the container's SSH host keys. `up`

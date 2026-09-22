@@ -20,11 +20,9 @@ function installDescriptor(tool, cmd) {
   return { tool, command: cmd, sessionName: installSessionName(tool), label: `Install ${tool}…` };
 }
 
-// The two agent CLIs the app can spawn sessions with; both the gate and the
-// prominence overlay reason over exactly this set.
-const AGENT_TOOLS = ['claude', 'codex'];
+const AGENT_TOOLS = ['claude', 'codex', 'muse'];
 
-// type: the New Session selector value ('claude' | 'codex' | 'bash').
+// type: the New Session selector value ('claude' | 'codex' | 'muse' | 'bash').
 // check: the tools:check IPC payload —
 //   { byTool: { <tool>: { present, notice, install } } } (or null pre-probe).
 // Returns { ok, disabled, notice, install } — notice is null when ok; install is
@@ -32,7 +30,7 @@ const AGENT_TOOLS = ['claude', 'codex'];
 // missing AND the spec carries an install remedy, else null (Task 14).
 function newSessionToolGate(type, check) {
   // Only the CLI-backed types are gated; bash (and any unknown type) is free.
-  if (type !== 'claude' && type !== 'codex') {
+  if (!AGENT_TOOLS.includes(type)) {
     return { ok: true, disabled: false, notice: null, install: null };
   }
   const rep = check && check.byTool && check.byTool[type];
@@ -66,13 +64,11 @@ function toolMissing(check, tool) {
 // Returns { show, headline, tools:[{tool,install}] } — install is the descriptor
 // or null when the spec carries no remedy. NEVER shows when: type isn't an agent
 // type (bash/template), check is null/unknown, or the SELECTED type is present.
-// When both agent CLIs are missing the headline + buttons cover both (a can't-do-
-// anything state); otherwise just the selected one.
 function newSessionOverlayPlan(type, check) {
   const none = { show: false, headline: '', tools: [] };
-  if (type !== 'claude' && type !== 'codex') return none;
+  if (!AGENT_TOOLS.includes(type)) return none;
   if (!toolMissing(check, type)) return none; // present, or unknown/null → never show
-  const both = toolMissing(check, 'claude') && toolMissing(check, 'codex');
+  const both = AGENT_TOOLS.every((t) => toolMissing(check, t));
   const entryFor = (t) => {
     const rep = check.byTool[t];
     return { tool: t, install: (rep && rep.install) ? installDescriptor(t, rep.install) : null };
@@ -80,7 +76,7 @@ function newSessionOverlayPlan(type, check) {
   if (both) {
     return {
       show: true,
-      headline: "No agent CLI is installed — Clodex can't start claude or codex sessions",
+      headline: `No agent CLI is installed — Clodex can't start ${AGENT_TOOLS.join(', ')} sessions`,
       tools: AGENT_TOOLS.map(entryFor),
     };
   }

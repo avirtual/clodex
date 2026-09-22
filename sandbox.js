@@ -45,7 +45,7 @@ function normalizeRef(raw) {
 
 const RUN_TMPFS_TARGET = '/home/clodex/.clodex/run';
 const RUN_TMPFS_OPTIONS = 'exec,mode=1777';
-const RESERVED_MOUNT_TARGETS = ['/data', '/home/clodex/work', '/home/clodex/.clodex', RUN_TMPFS_TARGET, '/home/clodex/.claude'];
+const RESERVED_MOUNT_TARGETS = ['/data', '/home/clodex/work', '/home/clodex/.clodex', RUN_TMPFS_TARGET, '/home/clodex/.claude', '/home/clodex/.config/muse'];
 const MOUNT_TARGET_ROOT = '/home/clodex';
 const WORK_CONTAINER_DIR = '/home/clodex/work';
 
@@ -273,6 +273,7 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
     }
   }
   L.push(`      - ${yamlQuote(`${path.join(stateDir, 'claude')}:/home/clodex/.claude`)}`);
+  L.push(`      - ${yamlQuote(`${path.join(stateDir, 'muse')}:/home/clodex/.config/muse`)}`);
   if (workDir) {
     // Quoted via yamlQuote, not by hand: a host path with YAML-special chars
     // (`#` truncates, leading specials can change the node type) survives
@@ -614,7 +615,7 @@ function createSandbox(deps = {}) {
       if (d.startsWith('library/')) continue;
       try { fs.mkdirSync(path.join(registryDir, d), { recursive: true }); } catch {}
     }
-    for (const d of ['data', 'dot', 'claude']) {
+    for (const d of ['data', 'dot', 'claude', 'muse']) {
       fs.mkdirSync(path.join(stateDir(), d), { recursive: true, mode: 0o700 });
     }
     const yaml = generateCompose({

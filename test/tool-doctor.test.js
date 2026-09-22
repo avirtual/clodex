@@ -46,6 +46,10 @@ test('specs: claude/codex carry an install remedy; python3 is future, NOT probed
   assert.match(specFor('claude').install, /claude\.ai\/install\.sh/, 'native installer, not npm (fresh machines often lack npm too)');
   assert.match(specFor('codex').install, /chatgpt\.com\/codex\/install\.sh/, 'native installer, not npm (fresh machines often lack npm too)');
   assert.doesNotMatch(specFor('codex').install, /npm i -g/, 'npm remedy fails without npm');
+  assert.match(specFor('muse').install, /curl -fsSL https:\/\/api\.meta\.ai\/muse-launcher\.sh -o ~\/\.local\/bin\/muse/, 'launcher script, not npm');
+  assert.match(specFor('muse').install, /MUSE_LAUNCHER_INSTALL=1 ~\/\.local\/bin\/muse$/, 'runs the launcher once to fetch the binary');
+  assert.doesNotMatch(specFor('muse').install, /MUSE_LOGIN=0/, 'the desktop install session may sign in');
+  assert.strictEqual(specFor('muse').neededFor, 'Muse sessions');
   assert.strictEqual(specFor('python3'), null, 'python3 is not a probed spec');
   assert.ok(FUTURE_TOOLS.includes('python3'), 'python3 is listed as future');
 });

@@ -48,6 +48,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # The agent CLIs, globally. Pin nothing — agents self-update.
 RUN npm i -g @anthropic-ai/claude-code @openai/codex
+RUN mkdir -p /opt/muse \
+ && curl -fsSL https://api.meta.ai/muse-launcher.sh -o /opt/muse/muse \
+ && chmod +x /opt/muse/muse \
+ && MUSE_LAUNCHER_INSTALL=1 MUSE_LOGIN=0 /opt/muse/muse \
+ && ln -s /opt/muse/muse /usr/local/bin/muse
 
 # Non-root user with a real home: agent-transport creates ~/.clodex 0700 and
 # fixPathFromLoginShell runs `$SHELL -ilc`, so HOME + SHELL must be real.
@@ -57,7 +62,8 @@ RUN npm i -g @anthropic-ai/claude-code @openai/codex
 # the clodex user already; the host library mounts stay ro either way.
 RUN useradd --create-home --shell /bin/bash clodex \
  && printf 'clodex ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/clodex \
- && chmod 0440 /etc/sudoers.d/clodex
+ && chmod 0440 /etc/sudoers.d/clodex \
+ && chown -R clodex:clodex /opt/muse
 
 WORKDIR /app
 
@@ -86,7 +92,7 @@ COPY --from=builder /build/web-dist ./web-dist
 # the "trust this folder?" dialog is pure friction on every new session. The
 # file sits OUTSIDE the volumes on purpose — it's derived state, and baking it
 # means every recreate starts onboarded + trusted.
-RUN mkdir -p /data /home/clodex/.clodex /home/clodex/.claude /home/clodex/work \
+RUN mkdir -p /data /home/clodex/.clodex /home/clodex/.claude /home/clodex/.config/muse /home/clodex/work \
  && printf '{"hasCompletedOnboarding": true, "projects": {"/": {"hasTrustDialogAccepted": true}}}' > /home/clodex/.claude.json \
  && printf '[safe]\n\tdirectory = *\n' > /home/clodex/.gitconfig \
  && chown -R clodex:clodex /app /data /home/clodex

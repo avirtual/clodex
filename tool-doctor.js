@@ -24,6 +24,7 @@ const TOOL_SPECS = [
   // ~/.local/bin, no Node needed, auto-updates).
   { name: 'claude', bins: ['claude'], neededFor: 'Claude sessions', install: 'curl -fsSL https://claude.ai/install.sh | bash' },
   { name: 'codex',  bins: ['codex'],  neededFor: 'Codex sessions',  install: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh' },
+  { name: 'muse',   bins: ['muse'],   neededFor: 'Muse sessions',   install: 'mkdir -p ~/.local/bin && curl -fsSL https://api.meta.ai/muse-launcher.sh -o ~/.local/bin/muse && chmod +x ~/.local/bin/muse && MUSE_LAUNCHER_INSTALL=1 ~/.local/bin/muse' },
   { name: 'git',    bins: ['git'],    neededFor: 'worktrees & version control' },
   { name: 'gh',     bins: ['gh'],     neededFor: 'GitHub releases',  install: 'brew install gh' },
   { name: 'docker', bins: ['docker'], neededFor: 'sandboxes' },

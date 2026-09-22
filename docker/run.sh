@@ -89,12 +89,13 @@ case "$cmd" in
       -v "$PUBKEY:/authorized_keys:ro" \
       -v "${NAME}-claude:/home/clodex/.claude" \
       -v "${NAME}-codex:/home/clodex/.codex" \
+      -v "${NAME}-muse:/home/clodex/.config/muse" \
       "$IMAGE"
     echo "up: ssh -p $SSH_PORT clodex@localhost   (run 'docker/run.sh host' for an ssh-config block)"
     ;;
   down)  docker rm -f "$NAME" >/dev/null 2>&1 && echo "removed $NAME (auth volumes kept; 'reset' to wipe)" || echo "not running" ;;
   reset) docker rm -f "$NAME" >/dev/null 2>&1 || true
-         docker volume rm "${NAME}-claude" "${NAME}-codex" >/dev/null 2>&1 \
+         docker volume rm "${NAME}-claude" "${NAME}-codex" "${NAME}-muse" >/dev/null 2>&1 \
            && echo "removed $NAME + auth volumes (next 'up' needs fresh OAuth)" \
            || echo "no auth volumes to remove" ;;
   logs)  docker logs -f "$NAME" ;;

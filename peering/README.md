@@ -207,7 +207,8 @@ echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.profile
 ```
 Then authenticate once: run `claude` in a plain shell and complete the OAuth.
 Credentials persist to `~/.claude/.credentials.json` and every spawned session
-picks them up.
+picks them up. `clodex-deploy.sh` also installs `codex` and `muse` (launcher into
+`~/.local/bin`, credentials at `~/.config/muse/auth.json`) the same best-effort way.
 
 ### 3. Clone + build Clodex
 ```bash
@@ -310,7 +311,7 @@ persists) and restarts.
 
 ```bash
 # add / update a session, then restart (existing agents --resume untouched)
-~/clodex-seed.sh <name> [claude|codex] [cwd]
+~/clodex-seed.sh <name> [claude|codex|muse] [cwd]
 
 # remove a session: drop the entry, restart (kills it), wipe its runtime files
 ~/clodex-seed.sh remove <name>
