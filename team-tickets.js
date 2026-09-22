@@ -700,7 +700,7 @@ function createTicketMethods(deps, shared) {
 
       const spawnerArgs = (getPersistence().get(spawner.name)?.extraArgs) || [];
       const spawnerAdapter = adapterFor(spawner.type) || adapterFor(DEFAULT_TYPE);
-      const postureArgs = hasBypass(spawnerAdapter, spawnerArgs) ? adapterFor(type).posture.bypassArgs : [];
+      const postureArgs = hasBypass(spawnerAdapter, spawnerArgs) ? [...adapterFor(type).posture.bypassArgs] : [];
 
       const proxy = tpl ? (tpl.proxy ?? null) : (spawner.proxy ?? null);
       const childArgs = (tpl && Array.isArray(tpl.extraArgs) && tpl.extraArgs.length)
@@ -5072,7 +5072,7 @@ function createTicketMethods(deps, shared) {
       }
       const argvCap = !!cap && cap.enforce === 'argv';
       const leadArgs = (getPersistence().get(opener.name)?.extraArgs) || [];
-      const postureArgs = hasBypass(openerAdapter, leadArgs) ? seatAdapter.posture.bypassArgs : [];
+      const postureArgs = hasBypass(openerAdapter, leadArgs) ? [...seatAdapter.posture.bypassArgs] : [];
       const workspaceId = opener.workspaceId || DEFAULT_WORKSPACE_ID;
       // Resolved ONCE for both arms: a role cwd is not a reviewer concept or a
       // ticket concept, and two copies of this call are exactly the divergence
@@ -5520,11 +5520,11 @@ function createTicketMethods(deps, shared) {
           // Not inside resolveSeatShape: the tree is minted above, after the shape
           // is built, and the review path shares that resolver with no tree at all.
           const seatCwd = seatCwdInTree(team.root, shape.cwd, wt && wt.path);
-          let codexWarn = '';
+          let cwdDirWarn = '';
           const cwdDir = adapterFor(shape.type).cwdDir;
           if (cwdDir && wt && wt.path) {
             const e = ignoreCwdDir(fs, seatCwd, cwdDir);
-            if (e) codexWarn = ` — NOTE: ${e}`;
+            if (e) cwdDirWarn = ` — NOTE: ${e}`;
           }
           const spawned = await this.create(
             seat.name, shape.type, seatCwd,
@@ -5590,7 +5590,7 @@ function createTicketMethods(deps, shared) {
           const cwdWarn = shape.cwdFallback ? ` — NOTE: ${shape.cwdFallback}` : '';
           reply(isSpawn
             ? `ticket ${ticket.id} → ${seat.name} in the shared checkout ${shape.cwd} (no branch, no worktree)${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}`
-            : `ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}${linkWarn}${codexWarn}`);
+            : `ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}${linkWarn}${cwdDirWarn}`);
         } catch (err) {
           const live = this.sessions.has(seat.name);
           if (!live) getPersistence().remove(seat.name);

@@ -190,7 +190,7 @@ test('list(): a bash seat has no model, and a store without the resolver degrade
 
 // --- 2. create() refuses a missing account dir -------------------------------
 
-function mkManager() {
+function mkManager(extraDeps = {}) {
   const root = mkTmpRoot('clx-accounts-create-');
   const userData = mkTmpRoot('clx-accounts-ud-');
   const store = new Map();
@@ -244,6 +244,7 @@ function mkManager() {
     mergeCodexInstructions: (a) => ({ cleaned: [...a], merged: '' }),
     deliverSkills: () => null,
     codexStatusLineArg: () => '',
+    ...extraDeps,
   });
   const m = new SessionManager();
   mgr = m;
@@ -376,8 +377,25 @@ test('m0: a CODEX seat with no CODEX_HOME spawns, and a CLAUDE_CONFIG_DIR that i
   try {
     await create(m, 'cdx', { CLAUDE_CONFIG_DIR: missing }, 'codex');
     assert.strictEqual(spawns.length, 1, 'the adapter names CODEX_HOME, so CLAUDE_CONFIG_DIR is not this seat\'s account dir');
-    assert.strictEqual('CODEX_HOME' in spawns[0].env, false);
   } finally { stop('cdx'); }
+});
+
+test('m0: a CODEX seat with an EXISTING CODEX_HOME spawns and is NOT registered as a proxy account', async () => {
+  const registered = [];
+  const ProxyClient = {
+    probe: async () => ({ capabilities: { accounts: true } }),
+    registerAccount: async (_base, dir) => { registered.push(dir); },
+  };
+  const { m, root, spawns, stop } = mkManager({ resolveProxyBase: () => 'http://127.0.0.1:1', ProxyClient });
+  const home = path.join(root, 'codex-home');
+  fs.mkdirSync(home, { recursive: true });
+  try {
+    await create(m, 'cdx-home', { CODEX_HOME: home }, 'codex');
+    assert.strictEqual(spawns.length, 1, 'an existing CODEX_HOME passes the guard');
+    assert.strictEqual(spawns[0].env.CODEX_HOME, home);
+    await new Promise((r) => setImmediate(r));
+    assert.deepStrictEqual(registered, [], 'the account registry is a Claude artifact; a platform with its own bootstrap never reaches it');
+  } finally { stop('cdx-home'); }
 });
 
 test('create(): a BASH seat on a missing account dir SPAWNS — that is how /login mints it', () => {

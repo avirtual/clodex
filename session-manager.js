@@ -1587,7 +1587,7 @@ function createSessionManager(deps) {
       if (wireOff) proxyBase = null;
       const fixHost = (typeof fixFor === 'string' && fixFor) ? fixFor : null;
 
-      if (accountDir && proxyBase && accountDir !== claudeHome()) {
+      if (accountDir && proxyBase && !adapterFor(type).account.bootstrap && accountDir !== claudeHome()) {
         Promise.resolve().then(() => ProxyClient.probe(proxyBase)).then((probe) => {
           if (!probe || !probe.capabilities || !probe.capabilities.accounts) return;
           return ProxyClient.registerAccount(proxyBase, accountDir);
