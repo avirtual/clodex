@@ -96,6 +96,7 @@ clodex-gone-
 clodex-guard-
 clodex-hc-
 clodex-hint-
+clodex-muse-
 clodex-home-
 clodex-hooks-
 clodex-hs-
@@ -502,6 +503,7 @@ clx-t738-home-
 clx-t738-repo-
 clx-t738-ud-
 clx-t747-
+clx-seatcfg-
 clx-t772-
 clx-t826-
 clx-t840-registry-

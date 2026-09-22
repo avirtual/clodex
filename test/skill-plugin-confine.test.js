@@ -68,7 +68,7 @@ function bodyOf(fn, file = 'engine.js') {
 // agent and bundle halves stayed: a row's file is as load-bearing as its root.
 const CONFINED = [
   ['skill-delivery.js', 'deliverClaude', 'SKILL_PLUGINS_DIR'],
-  ['skill-delivery.js', 'deliverCodex', 'SKILL_PLUGINS_DIR'],
+  ['skill-delivery.js', 'deliverCatalog', 'SKILL_PLUGINS_DIR'],
   ['skill-delivery.js', 'cleanupSeatDir', 'SKILL_PLUGINS_DIR'],
   ['engine.js', 'writeAgentPlugin', 'AGENT_PLUGINS_DIR'],
   ['engine.js', 'cleanupAgentPlugin', 'AGENT_PLUGINS_DIR'],
@@ -148,7 +148,7 @@ test('t672: a bundle dir is confined TWICE, and has no cleanup of its own', () =
 test('the write/cleanup call sites fail DIFFERENTLY, and deliberately so', () => {
   // The write path throws: a spawn under a name that cannot be confined must
   // abort rather than continue with a half-built plugin dir.
-  for (const [file, fn] of [['skill-delivery.js', 'deliverClaude'], ['skill-delivery.js', 'deliverCodex'], ['engine.js', 'writeAgentPlugin']]) {
+  for (const [file, fn] of [['skill-delivery.js', 'deliverClaude'], ['skill-delivery.js', 'deliverCatalog'], ['engine.js', 'writeAgentPlugin']]) {
     assert.match(bodyOf(fn, file), /throw new Error\(`invalid session name/,
       `${fn} aborts the spawn on a refused name`);
   }
