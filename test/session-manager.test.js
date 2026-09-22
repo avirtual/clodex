@@ -2330,7 +2330,7 @@ test('t1075: spawn template: a type the adapter table does not name is refused, 
   m._handleSpawnIntent(spawner, { name: 't2', cwd: null, template: 'shell-seat' });
   await tick();
   assert.strictEqual(replies.length, 1, 'ENTER: the template was read and answered once');
-  assert.match(replies[0], /^error: spawn: unknown seat type "sh"/);
+  assert.match(replies[0], /^\[agent:spawn\] error: spawn: unknown seat type "sh"/);
   assert.strictEqual(created.length, 0, 'create() must not run for an unknown type');
 });
 
