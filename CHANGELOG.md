@@ -12,6 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+## 5.85.0 — 2026-09-23
 - Muse seats: when the CLI never registers its session (a data home it refuses, e.g. under /private/tmp), Clodex links the newest transcript written after spawn instead of leaving the seat unscanned.
 - Muse seats: a fresh seat no longer pays a Meta request at spawn — create is immediate; the transcript links within about half a second once the CLI registers its session.
 - Muse seats honour a template's `disabledSkills`: the list (or `"*"`) becomes `skills.activation` in the seat's own config overlay, and the New Session dialog / template editor list Muse's skills from `muse skills list`.
