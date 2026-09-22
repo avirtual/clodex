@@ -1,12 +1,13 @@
 // jsonl-watcher.js — the JsonlWatcher class. Polls the run/<name>/transcript.jsonl
 // transcript symlink (created by the SessionStart hook) every 250ms, follows it
-// through /clear + /compact, extracts assistant text (Claude type:"assistant";
-// Codex event_msg/agent_message and response_item message), buffers it, and
-// flushes on a new requestId (or ANY text entry carrying no id, which cannot be
-// grouped by one) / a non-telemetry textless entry / 1s silence — emitting
-// onText (intent scan, with a per-flush { turnEnd, interrupted } — the turn ended
-// on the agent's own REPLY; a user interrupt triggered the flush), onSessionId
-// (persistence), onActivity (UI), onCompactSummary, onFileTouches.
+// through /clear + /compact, and drives one state machine over the platform
+// reader's classification of each record (transcript-readers.js: Claude, Codex,
+// Muse). Text is buffered and flushed on a new rid (or ANY text entry carrying
+// no id, which cannot be grouped by one) / a textless non-inert record / 1s
+// silence — emitting onText (intent scan, with a per-flush { turnEnd,
+// interrupted } — the turn ended on the agent's own REPLY; a user interrupt
+// triggered the flush), onSessionId (persistence), onActivity (UI),
+// onCompactSummary, onFileTouches.
 //
 // The flush rule is stated precisely because a header that mis-states it is
 // what made a silent text-loss bug hard to see: grouping by an id that a text
@@ -14,14 +15,13 @@
 //
 // FACTORY (M3 DI): the class reads one main.js global, REGISTRY_DIR (to resolve
 // the run/<name>/transcript.jsonl symlink via clodex-paths.pathFor), injected as
-// a factory param. Text/file-touch extraction is delegated to transcript.js and
-// file-touch.js. The 250ms fs polling loop needs a live filesystem, so the class
-// itself is left to integration; extractText/extractFileTouches have their own
-// unit tests in their home modules.
+// a factory param. The 250ms fs polling loop needs a live filesystem, so the
+// class itself is left to integration; the readers and extractFileTouches have
+// their own unit tests in their home modules.
 
 const fs = require('fs');
 const path = require('path');
-const { extractText, isTurnEndEntry, isInterruptEntry, isCodexReply } = require('./transcript');
+const { readerFor } = require('./transcript-readers');
 const { extractFileTouches } = require('./file-touch');
 const { pathFor } = require('./clodex-paths');
 
@@ -30,25 +30,11 @@ const { pathFor } = require('./clodex-paths');
 const POLL_INTERVAL = 250; // ms
 const TURN_COMPLETE_TIMEOUT = 1000; // ms
 
-// Entry types that never end a pending turn: more of the same turn is still
-// coming.
-const NON_FLUSHING_TYPES = ['assistant', 'response_item'];
-
-// Codex emits two usage records between the reply and `task_complete`: a
-// top-level `token_usage_record`, then an `event_msg` `token_count`. Both are
-// textless, so either one flushes the pending text BEFORE `task_complete` can
-// mark it as ending the turn — exempting BOTH is what lets the real terminator
-// do that job. Either one alone leaves every reply unspoken.
-function isTelemetryOnly(obj) {
-  const type = obj.type || '';
-  return type === 'token_usage_record'
-    || (type === 'event_msg' && (obj.payload || {}).type === 'token_count');
-}
-
 function createJsonlWatcher({ REGISTRY_DIR }) {
   class JsonlWatcher {
-    constructor(name, onText, onSessionId, onActivity, onCompactSummary, onFileTouches) {
+    constructor(name, onText, onSessionId, onActivity, onCompactSummary, onFileTouches, opts = {}) {
       this._name = name;
+      this._reader = (opts && opts.reader) || readerFor(null);
       this._onText = onText;
       this._onSessionId = onSessionId || (() => {});
       this._onActivity = onActivity || (() => {});
@@ -173,63 +159,63 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
         let obj;
         try { obj = JSON.parse(trimmed); } catch { continue; }
 
-        // Compact boundary: Claude writes a user entry with isCompactSummary:true
-        // when /compact finishes (in-place, same sessionId, appended to this same
-        // transcript). It's the clean trigger for the compact-continuation nudge —
-        // by the time it lands the summarized conversation is back and the CLI is
-        // ready for input. Flush any pending turn first, then signal.
-        if (obj.isCompactSummary === true) {
-          if (this._pendingText) this._flushPending();
-          try { this._onCompactSummary(); } catch {}
-          continue;
-        }
-
-        // Touched-files tap for the legacy path (wire-routed sessions get these
-        // off turn.completed instead — this watcher isn't running steady-state
-        // there, and sentinel-made watchers pass no callback).
-        const touches = extractFileTouches(obj);
-        if (touches.length) {
-          try { this._onFileTouches(touches); } catch {}
-          this._pendingTouches.push(...touches);
-        }
-
-        const text = extractText(obj);
-        if (text) {
-          const rid = obj.requestId || (obj.payload || {}).id || '';
-          // AN EMPTY RID IS ITS OWN FLUSH UNIT, never a match. A Codex
-          // function_call_output (the tool-output shape extractText reads)
-          // carries neither requestId nor payload.id, so its `rid` is '' and an
-          // equality test reads two unrelated text entries as the same turn —
-          // the second OVERWRITES the first. What that silently discards is the
-          // intent scan's input: an [agent:dm ...] emitted in a commentary
-          // message followed by a quick tool call would never be seen. The usage
-          // records used to be the accidental separator; exempting them removed
-          // the only thing between them, so state the separation here instead.
-          if ((rid !== this._pendingRid || !rid) && this._pendingText) {
-            this._flushPending();
+        for (const rec of this._reader.expand(obj)) {
+          const c = this._reader.classify(rec);
+          // Compact boundary: Claude writes a user entry with isCompactSummary:true
+          // when /compact finishes (in-place, same sessionId, appended to this same
+          // transcript). It's the clean trigger for the compact-continuation nudge —
+          // by the time it lands the summarized conversation is back and the CLI is
+          // ready for input. Flush any pending turn first, then signal.
+          if (c.compactSummary) {
+            if (this._pendingText) this._flushPending();
+            try { this._onCompactSummary(); } catch {}
+            continue;
           }
-          this._pendingRid = rid;
-          this._pendingText = text;
-          this._pendingTime = Date.now();
-          // WHERE the pending text came from, not just what it says. A turn can
-          // end on a tool output (an interrupted Codex turn closes right after
-          // one), and a terminator that flagged whatever happened to be pending
-          // would mark a command dump as the reply — which is the one scope rule
-          // the operator stated twice: never tool output.
-          this._pendingIsReply = (obj.type || '') === 'assistant'
-            || ((obj.payload || {}).type === 'agent_message')
-            || isCodexReply(obj);
-          this._pendingTurnEnd = isTurnEndEntry(obj);
-          this._setActivity('thinking');
-        } else if (!NON_FLUSHING_TYPES.includes(obj.type || '') && !isTelemetryOnly(obj)) {
-          // A textless entry ends the pending turn. Codex closes with
-          // `task_complete`, which carries no text and so never reaches the
-          // branch above — read the flag off THIS entry before flushing, or the
-          // flag that ships is the one computed at the reply, which is false by
-          // construction and leaves a Codex reply permanently unspoken.
-          if (this._pendingIsReply && isTurnEndEntry(obj)) this._pendingTurnEnd = true;
-          if (this._pendingText && isInterruptEntry(obj)) this._pendingInterrupted = true;
-          if (this._pendingText) this._flushPending();
+
+          // Touched-files tap for the legacy path (wire-routed sessions get these
+          // off turn.completed instead — this watcher isn't running steady-state
+          // there, and sentinel-made watchers pass no callback).
+          const touches = extractFileTouches(rec);
+          if (touches.length) {
+            try { this._onFileTouches(touches); } catch {}
+            this._pendingTouches.push(...touches);
+          }
+
+          if (c.inert) continue;
+          if (c.turnStart) this._setActivity('thinking');
+          if (c.text) {
+            // AN EMPTY RID IS ITS OWN FLUSH UNIT, never a match. A Codex
+            // function_call_output (the tool-output shape the reader reads text
+            // from) carries neither requestId nor payload.id, so its `rid` is ''
+            // and an equality test reads two unrelated text entries as the same
+            // turn — the second OVERWRITES the first. What that silently discards
+            // is the intent scan's input: an [agent:dm ...] emitted in a
+            // commentary message followed by a quick tool call would never be
+            // seen.
+            if ((c.rid !== this._pendingRid || !c.rid) && this._pendingText) {
+              this._flushPending();
+            }
+            this._pendingRid = c.rid;
+            this._pendingText = c.text;
+            this._pendingTime = Date.now();
+            // WHERE the pending text came from, not just what it says. A turn can
+            // end on a tool output (an interrupted Codex turn closes right after
+            // one), and a terminator that flagged whatever happened to be pending
+            // would mark a command dump as the reply — which is the one scope rule
+            // the operator stated twice: never tool output.
+            this._pendingIsReply = c.isReply;
+            this._pendingTurnEnd = c.turnEnd;
+            this._setActivity('thinking');
+          } else {
+            // A textless record ends the pending turn. Codex closes with
+            // `task_complete` and Muse with `terminal`, neither carrying text, so
+            // the flag is read off THIS record before flushing, or the flag that
+            // ships is the one computed at the reply, which is false by
+            // construction and leaves the reply permanently unspoken.
+            if (this._pendingIsReply && c.turnEnd) this._pendingTurnEnd = true;
+            if (this._pendingText && c.interrupted) this._pendingInterrupted = true;
+            if (this._pendingText) this._flushPending();
+          }
         }
       }
     }

@@ -293,10 +293,16 @@ bundle), whose packaged form is the Docker image under
   worktree:<branch>]`, and the delete flow's awaited `removeWorktree`.
   `execFile`, never a shell; in SCANNED_MODULES. Its ticket-seat consumers are
   under *Teams and tickets*.
-- **transcript.js** — JSONL transcript → markdown/messages rendering, plus
-  `isTurnEndEntry`: whether one entry ENDS the main-line turn, read off the
-  model's own `stop_reason` (Claude) or `task_complete` (Codex). The renderer
-  activity seam cannot answer that — it reports `state === 'idle'`, true on every
+- **transcript-readers.js** — one transcript reader per platform (Claude,
+  Codex, Muse Code): `readerFor(id)` → `{ expand, classify }`, `sniffReader(obj)`
+  for the per-record consumers. The watcher and transcript.js both consume its
+  classification instead of sniffing the JSONL shapes inline. Pure leaf (no
+  `require`, no I/O, like clodex-paths.js); NOT in the leak-scanner lists.
+- **transcript.js** — JSONL transcript → markdown/messages rendering over the
+  readers above; re-exports `isTurnEndEntry` (whether one entry ENDS the
+  main-line turn, read off the model's own `stop_reason` (Claude) or
+  `task_complete` (Codex)) for its existing consumers. The renderer activity
+  seam cannot answer that — it reports `state === 'idle'`, true on every
   inter-tool flush.
 - **speakable.js** — an agent's reply → the text worth reading aloud, or ''.
   Strips fences, tables, intent bodies, paths and URLs, and bounds the

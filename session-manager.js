@@ -145,6 +145,7 @@ const VOICE_MODE_SETTLE_MS = 1500;
 const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
 
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
+const { readerFor } = require('./transcript-readers');
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX } = require('./proxy-util');
 const {
@@ -2314,7 +2315,8 @@ function createSessionManager(deps) {
           linkPath: pathFor(REGISTRY_DIR, name, 'transcript'),
           onSessionId,
           makeWatcher: ({ onText, onCompactSummary }) => new JsonlWatcher(
-            name, onText || (() => {}), () => {}, () => {}, onCompactSummary || (() => {})),
+            name, onText || (() => {}), () => {}, () => {}, onCompactSummary || (() => {}),
+            undefined, { reader: readerFor(agentType) }),
         });
         session.sentinel.start();
       } else if (agentType) {
@@ -2325,6 +2327,7 @@ function createSessionManager(deps) {
           (state, turnEnd) => this._emitActivity(name, state, state === 'idle' && !!turnEnd),
           () => this._fireCompactContinuation(session),
           (touches) => this._noteFileTouches(session, touches),
+          { reader: readerFor(agentType) },
         );
         session.watcher.start();
       }
