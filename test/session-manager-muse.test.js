@@ -235,8 +235,10 @@ test('m2: CLODEX_DISABLE_IPC_PROMPT=1 drops the IPC block; skills catalog and te
   await f.create('seat', { sessionEnv: { ...f.env, CLODEX_DISABLE_IPC_PROMPT: '1' } });
   try {
     const seatDir = pathForReal(f.root, 'seat', 'seatConfig');
-    assert.strictEqual(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'AGENTS.md'), 'utf-8'),
-      'You are the clodex agent named \'seat\'.\n\nAPPEND\n\n# Clodex skills\n\n- a: x — /p\n\nTEAM\n');
+    const body = fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'AGENTS.md'), 'utf-8');
+    assert.match(body, /^You are the clodex agent named 'seat'\.\n\nAPPEND\n\n# Clodex skills\n\n- a: x — \/p\n\n# Team\nYou are on team team \(root \/t\)\./,
+      'header, appends, catalog, then the real team block — formatTeamBlock is not a seam');
+    assert.ok(body.endsWith('\n'), 'the team block is the last paragraph and closes with a newline, as codex writes it');
   } finally { f.stop('seat'); }
 });
 
