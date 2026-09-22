@@ -82,6 +82,28 @@ function findMuseTranscript(deps, dataHome, sid) {
   return null;
 }
 
+function newestMuseTranscript(deps, dataHome, sinceMs, excludePaths) {
+  const { fs, path } = deps;
+  const root = path.join(dataHome, 'muse', 'sessions');
+  const skip = new Set(excludePaths || []);
+  let best = null;
+  for (const y of listDir(fs, root)) {
+    for (const m of listDir(fs, path.join(root, y))) {
+      for (const d of listDir(fs, path.join(root, y, m))) {
+        for (const sid of listDir(fs, path.join(root, y, m, d))) {
+          const p = path.join(root, y, m, d, sid, 'session.jsonl');
+          if (skip.has(p)) continue;
+          let st;
+          try { st = fs.statSync(p); } catch { continue; }
+          if (!st.isFile() || st.mtimeMs < sinceMs) continue;
+          if (!best || st.mtimeMs > best.mtimeMs) best = { path: p, mtimeMs: st.mtimeMs };
+        }
+      }
+    }
+  }
+  return best ? best.path : null;
+}
+
 function museRegistryFor(deps, dataHome, pid) {
   const { fs, path } = deps;
   const dir = path.join(dataHome, 'muse', 'runtime', 'muse', 'sessions');
@@ -107,6 +129,6 @@ function linkTranscript(deps, linkPath, target) {
 }
 
 module.exports = {
-  uuidv7, deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, museRegistryFor, linkTranscript,
+  uuidv7, deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, newestMuseTranscript, museRegistryFor, linkTranscript,
   REQUIRED_MUSE_FILES, DEFAULT_MUSE_SETTINGS,
 };

@@ -57,10 +57,16 @@ function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true 
   const spawns = [];
   const watchers = [];
   const warns = [];
+  const infos = [];
   const rosterCalls = [];
+  const linkFail = { n: 0 };
   const fs = {
     ...fsReal,
-    renameSync: (a, b) => { order.push('link'); return fsReal.renameSync(a, b); },
+    renameSync: (a, b) => {
+      if (linkFail.n > 0) { linkFail.n -= 1; throw Object.assign(new Error('EACCES: stub'), { code: 'EACCES' }); }
+      order.push('link');
+      return fsReal.renameSync(a, b);
+    },
   };
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
@@ -142,7 +148,7 @@ function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true 
     whichBin: () => null,
     diagWarning: () => '',
     diagSummary: () => '',
-    log: { info() {}, warn: (scope, msg) => warns.push(msg), error() {} },
+    log: { info: (scope, msg) => infos.push(msg), warn: (scope, msg) => warns.push(msg), error() {} },
     DEFAULT_WORKSPACE_ID: 'default',
   });
   const m = new SessionManager();
@@ -158,6 +164,8 @@ function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true 
     clearTimeout(s._bootDrainTimer);
     clearTimeout(s._bootSettleTimer);
     clearTimeout(s._bootNudgeTimer);
+    m.sessions.delete(name);
+    return s._museLinkDone;
   };
   const env = { XDG_CONFIG_HOME: source, XDG_DATA_HOME: dataHome };
   const create = (name, { extraArgs = [], resumeId = null, fork = false, sessionEnv = env, disabledSkills = [], injectSkills = [] } = {}) => m.create(
@@ -165,7 +173,7 @@ function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true 
     [], [], [], disabledSkills, injectSkills, null, [], [], null, sessionEnv,
   );
   const link = (name) => pathForReal(root, name, 'transcript');
-  return { m, root, source, dataHome, env, order, execs, spawns, watchers, warns, rosterCalls, create, stop, link };
+  return { m, root, source, dataHome, env, order, execs, spawns, watchers, warns, infos, linkFail, rosterCalls, create, stop, link };
 }
 
 test('m2: a fresh muse seat spawns at once; the registry poller links its transcript — whole-array argv, AGENTS.md bytes, overlay, env', async () => {
@@ -219,7 +227,7 @@ test('m2: a fresh muse seat spawns at once; the registry poller links its transc
     assert.strictEqual(fsReal.readlinkSync(f.link('seat')), target);
     assert.deepStrictEqual(f.order, ['spawn', 'link']);
     assert.strictEqual(s.sessionId, null, 'the id is the watcher retarget\'s to report, not the poller\'s');
-  } finally { f.stop('seat'); }
+  } finally { await f.stop('seat'); }
 });
 
 test('m2: no capabilities.muse on the proxy → direct to Meta, no --base-url, one warning', async () => {
@@ -231,7 +239,7 @@ test('m2: no capabilities.muse on the proxy → direct to Meta, no --base-url, o
     assert.deepStrictEqual(res.warnings, [
       `muse: wirescope at ${PROXY} does not report capabilities.muse — this seat talks to Meta directly, unrouted.`,
     ]);
-  } finally { f.stop('seat'); }
+  } finally { await f.stop('seat'); }
 });
 
 test('m2: no proxy at all → direct, and no warning either', async () => {
@@ -240,7 +248,7 @@ test('m2: no proxy at all → direct, and no warning either', async () => {
   try {
     assert.deepStrictEqual(f.spawns[0].args, ['--trust-workspace', '--provider', 'meta']);
     assert.strictEqual(res.warnings, undefined);
-  } finally { f.stop('seat'); }
+  } finally { await f.stop('seat'); }
 });
 
 test('m2: CLODEX_DISABLE_IPC_PROMPT=1 drops the IPC block; skills catalog and team block append in codex order', async () => {
@@ -252,7 +260,7 @@ test('m2: CLODEX_DISABLE_IPC_PROMPT=1 drops the IPC block; skills catalog and te
     assert.match(body, /^You are the clodex agent named 'seat'\.\n\nAPPEND\n\n# Clodex skills\n\n- a: x — \/p\n\n# Team\nYou are on team team \(root \/t\)\./,
       'header, appends, catalog, then the real team block — formatTeamBlock is not a seam');
     assert.ok(body.endsWith('\n'), 'the team block is the last paragraph and closes with a newline, as codex writes it');
-  } finally { f.stop('seat'); }
+  } finally { await f.stop('seat'); }
 });
 
 test('m2: a restore links before the spawn and resumes the persisted id; fork is a warning, not a subcommand', async () => {
@@ -268,7 +276,7 @@ test('m2: a restore links before the spawn and resumes the persisted id; fork is
     assert.strictEqual(fsReal.readlinkSync(f.link('seat')), target);
     assert.strictEqual(f.m.sessions.get('seat').sessionId, SID);
     assert.deepStrictEqual(res.warnings, [`muse has no fork: resuming session ${SID} instead.`]);
-  } finally { f.stop('seat'); }
+  } finally { await f.stop('seat'); }
 });
 
 test('m2: a restore whose transcript is gone throws before any PTY, like a missing account dir', async () => {
@@ -292,12 +300,11 @@ test('m2: a second create() of the same name rebuilds the overlay from scratch',
   await f.create('seat');
   const seatDir = pathForReal(f.root, 'seat', 'seatConfig');
   fsReal.writeFileSync(pathReal.join(seatDir, 'stale'), 'left over');
-  f.stop('seat');
-  f.m.sessions.delete('seat');
+  await f.stop('seat');
   await f.create('seat');
   try {
     assert.deepStrictEqual(fsReal.readdirSync(seatDir).sort(), ['gh', 'muse']);
-  } finally { f.stop('seat'); }
+  } finally { await f.stop('seat'); }
 });
 
 test('m2: kill() drops run/<name>/ — the overlay, the transcript link and the AGENTS.md copy do not outlive the seat', async (t) => {
@@ -308,7 +315,6 @@ test('m2: kill() drops run/<name>/ — the overlay, the transcript link and the 
   const seatDir = pathForReal(f.root, 'seat', 'seatConfig');
   assert.ok(fsReal.existsSync(pathReal.join(seatDir, 'muse', 'auth.json')), 'ENTER: the 0600 auth copy is on disk before the kill');
   assert.ok(fsReal.lstatSync(f.link('seat')).isSymbolicLink(), 'ENTER: the link is on disk before the kill');
-  f.stop('seat');
   await f.m.kill('seat');
   assert.ok(!f.m.sessions.has('seat'), 'ENTER: the pty exit reached _cleanup');
   assert.ok(!fsReal.existsSync(seatDir), `run/seat/xdg survived kill(): ${seatDir}`);
@@ -326,7 +332,7 @@ test('m2: a second create() of the same name while the first is still probing th
   try {
     assert.strictEqual(f.spawns.length, 1, 'the refused create never spawned');
     assert.deepStrictEqual(f.spawns[0].args, ['--trust-workspace', '--provider', 'meta', '--base-url', `${PROXY}/agent/clodex-seat-rt/meta`]);
-  } finally { f.stop('seat'); }
+  } finally { await f.stop('seat'); }
 });
 
 test('m2 poller: a registry record for the pty pid carrying a different id repoints a resumed link', async () => {
@@ -340,7 +346,7 @@ test('m2 poller: a registry record for the pty pid carrying a different id repoi
     assert.strictEqual(await s._museLinkDone, 'linked');
     assert.strictEqual(fsReal.readlinkSync(f.link('seat')), rotatedPath);
     assert.deepStrictEqual(f.order, ['link', 'spawn', 'link'], 'the resume link first, the repoint after the PTY');
-  } finally { f.stop('seat'); }
+  } finally { await f.stop('seat'); }
 });
 
 test('m2 poller: a registry record that agrees with the resumed id leaves the link alone', async () => {
@@ -353,7 +359,7 @@ test('m2 poller: a registry record that agrees with the resumed id leaves the li
     assert.strictEqual(await s._museLinkDone, 'agreed');
     assert.strictEqual(fsReal.readlinkSync(f.link('seat')), target);
     assert.deepStrictEqual(f.order, ['link', 'spawn'], 'no second link write');
-  } finally { f.stop('seat'); }
+  } finally { await f.stop('seat'); }
 });
 
 test('m2 poller: a record for another pid is not this seat\'s', async () => {
@@ -365,7 +371,7 @@ test('m2 poller: a record for another pid is not this seat\'s', async () => {
     await new Promise((r) => setTimeout(r, 10));
     assert.throws(() => fsReal.lstatSync(f.link('seat')), /ENOENT/);
     assert.deepStrictEqual(f.order, ['spawn']);
-  } finally { f.stop('seat'); }
+  } finally { await f.stop('seat'); }
 });
 
 test('m2 poller: a deadline miss warns once, keeps the PTY, and links nothing that lands later', async (t) => {
@@ -385,20 +391,119 @@ test('m2 poller: a deadline miss warns once, keeps the PTY, and links nothing th
     t.mock.timers.tick(5000);
     assert.throws(() => fsReal.lstatSync(f.link('seat')), /ENOENT/, 'the poller stopped at the deadline');
     assert.deepStrictEqual(f.order, ['spawn']);
-  } finally { f.stop('seat'); }
+  } finally { await f.stop('seat'); }
 });
 
 test('m2 poller: stops when the seat leaves the session map before its id lands', async () => {
   const f = mkMuse();
   await f.create('seat');
   const s = f.m.sessions.get('seat');
-  f.stop('seat');
-  f.m.sessions.delete('seat');
+  await f.stop('seat');
   writeRegistry(f.dataHome, SID);
   writeTranscript(f.dataHome, SID);
   assert.strictEqual(await s._museLinkDone, 'gone');
   assert.throws(() => fsReal.lstatSync(f.link('seat')), /ENOENT/, 'a dead seat is never linked');
   assert.deepStrictEqual(f.order, ['spawn']);
+});
+
+const setMtime = (p, ms) => { fsReal.utimesSync(p, ms / 1000, ms / 1000); return p; };
+
+test('t1095: fallback — no registry record ever lands; the deadline links the newest post-spawn session.jsonl and resolves fallback', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const f = mkMuse();
+  f.m._museLinkPollMs = 250;
+  await f.create('seat');
+  try {
+    const s = f.m.sessions.get('seat');
+    const older = setMtime(writeTranscript(f.dataHome, ROTATED), s.spawnedAt + 1000);
+    const newest = setMtime(writeTranscript(f.dataHome, SID), s.spawnedAt + 2000);
+    t.mock.timers.tick(59999);
+    assert.throws(() => fsReal.lstatSync(f.link('seat')), /ENOENT/, 'ENTER: nothing linked before the deadline');
+    t.mock.timers.tick(1);
+    assert.strictEqual(await s._museLinkDone, 'fallback');
+    assert.strictEqual(fsReal.readlinkSync(f.link('seat')), newest);
+    assert.notStrictEqual(fsReal.readlinkSync(f.link('seat')), older);
+    assert.deepStrictEqual(f.order, ['spawn', 'link']);
+    assert.deepStrictEqual(f.warns, [], 'a fallback link is info, not a warn');
+    assert.deepStrictEqual(f.infos.filter((m) => m.includes('linked newest transcript')),
+      [`seat: no session registered for pid 999 within 60000 ms — linked newest transcript ${newest}`]);
+    assert.strictEqual(s.sessionId, null, 'the id is the watcher retarget\'s to report, not the fallback\'s');
+  } finally { await f.stop('seat'); }
+});
+
+test('t1095: fallback skips a session.jsonl another live muse seat already links', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const f = mkMuse();
+  f.m._museLinkPollMs = 250;
+  const linkedByA = writeTranscript(f.dataHome, SID);
+  await f.create('a', { resumeId: SID });
+  await f.create('b');
+  try {
+    const a = f.m.sessions.get('a');
+    const b = f.m.sessions.get('b');
+    setMtime(linkedByA, b.spawnedAt + 2000);
+    const free = setMtime(writeTranscript(f.dataHome, ROTATED), b.spawnedAt + 1000);
+    assert.strictEqual(fsReal.readlinkSync(f.link('a')), linkedByA, 'ENTER: a already links the newest file');
+    t.mock.timers.tick(60000);
+    assert.strictEqual(await a._museLinkDone, 'deadline');
+    assert.strictEqual(await b._museLinkDone, 'fallback');
+    assert.strictEqual(fsReal.readlinkSync(f.link('b')), free, 'the newest file is a\'s; b takes the next newest');
+    assert.strictEqual(fsReal.readlinkSync(f.link('a')), linkedByA);
+    assert.deepStrictEqual(f.warns, []);
+  } finally { await f.stop('a'); await f.stop('b'); }
+});
+
+test('t1095: fallback — a session.jsonl older than the spawn is no candidate; the deadline warns and links nothing', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const f = mkMuse();
+  f.m._museLinkPollMs = 250;
+  await f.create('seat');
+  try {
+    const s = f.m.sessions.get('seat');
+    const stale = setMtime(writeTranscript(f.dataHome, SID), s.spawnedAt - 5000);
+    assert.ok(fsReal.statSync(stale).mtimeMs < s.spawnedAt, 'ENTER: the only file predates the spawn');
+    t.mock.timers.tick(60000);
+    assert.strictEqual(await s._museLinkDone, 'deadline');
+    assert.throws(() => fsReal.lstatSync(f.link('seat')), /ENOENT/);
+    assert.deepStrictEqual(f.warns, ['seat: no session registered for pid 999 within 60000 ms — transcript link pending']);
+    assert.deepStrictEqual(f.infos.filter((m) => m.includes('linked newest transcript')), []);
+    assert.deepStrictEqual(f.order, ['spawn']);
+  } finally { await f.stop('seat'); }
+});
+
+test('t1095: a linkTranscript throw on one tick is retried on the next — linked, no warn', async () => {
+  const f = mkMuse();
+  f.linkFail.n = 1;
+  writeRegistry(f.dataHome, SID);
+  const target = writeTranscript(f.dataHome, SID);
+  await f.create('seat');
+  try {
+    const s = f.m.sessions.get('seat');
+    assert.strictEqual(await s._museLinkDone, 'linked');
+    assert.strictEqual(f.linkFail.n, 0, 'ENTER: the first rename threw');
+    assert.strictEqual(fsReal.readlinkSync(f.link('seat')), target);
+    assert.deepStrictEqual(f.order, ['spawn', 'link']);
+    assert.deepStrictEqual(f.warns, []);
+  } finally { await f.stop('seat'); }
+});
+
+test('t1095: restore-path deadline — the link already exists, so the miss is one info naming the sid, never a warn', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const f = mkMuse();
+  f.m._museLinkPollMs = 250;
+  const target = writeTranscript(f.dataHome, SID);
+  await f.create('seat', { resumeId: SID });
+  try {
+    const s = f.m.sessions.get('seat');
+    assert.strictEqual(s.sessionId, SID, 'ENTER: a restore carries its id');
+    t.mock.timers.tick(60000);
+    assert.strictEqual(await s._museLinkDone, 'deadline');
+    assert.strictEqual(fsReal.readlinkSync(f.link('seat')), target, 'the resume link stands');
+    assert.deepStrictEqual(f.warns, []);
+    assert.deepStrictEqual(f.infos.filter((m) => m.includes('registry never confirmed')),
+      [`seat: registry never confirmed ${SID} for pid 999 within 60000 ms`]);
+    assert.deepStrictEqual(f.order, ['link', 'spawn']);
+  } finally { await f.stop('seat'); }
 });
 
 test('m2: the muse adapter row is what the arm reads — envKey XDG_CONFIG_HOME, bootstrap xdg-overlay', () => {
@@ -421,7 +526,7 @@ test('m3: the profile merge is a deepMerge — a permissions.profiles.other entr
         },
       },
     });
-  } finally { f.stop('seat'); }
+  } finally { await f.stop('seat'); }
 });
 
 const MUSE_ROSTER = [
@@ -454,7 +559,7 @@ test('t1090: disabledSkills becomes skills.activation in the overlay, beside the
         },
       },
     });
-  } finally { f.stop('seat'); }
+  } finally { await f.stop('seat'); }
 });
 
 test('t1090: "*" sweeps every listed skill except the injected ones; the source file\'s own activation entries survive the merge', async () => {
@@ -483,7 +588,7 @@ test('t1090: "*" sweeps every listed skill except the injected ones; the source 
         },
       },
     });
-  } finally { f.stop('seat'); }
+  } finally { await f.stop('seat'); }
 });
 
 test('t1090: disabledSkills [] writes no skills key at all, and never asks for the roster', async () => {
@@ -494,5 +599,5 @@ test('t1090: disabledSkills [] writes no skills key at all, and never asks for t
     const parsed = JSON.parse(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'settings.json'), 'utf-8'));
     assert.deepStrictEqual(Object.keys(parsed).sort(), ['permissions', 'provider', 'schema_version']);
     assert.deepStrictEqual(f.rosterCalls, []);
-  } finally { f.stop('seat'); }
+  } finally { await f.stop('seat'); }
 });
