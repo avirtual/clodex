@@ -356,6 +356,24 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return raw;
   }
 
+  function stashOf(raw) {
+    const s = raw && raw.removedRoleAccounts;
+    return (s && typeof s === 'object' && !Array.isArray(s)) ? s : {};
+  }
+
+  function dropStash(raw, roleName) {
+    const s = stashOf(raw);
+    delete s[roleName];
+    if (Object.keys(s).length) raw.removedRoleAccounts = s;
+    else delete raw.removedRoleAccounts;
+  }
+
+  function carryAccount(raw, roleName) {
+    const label = stashOf(raw)[roleName];
+    dropStash(raw, roleName);
+    return (typeof label === 'string' && label.trim()) ? label.trim() : null;
+  }
+
   function listTeams() {
     let entries;
     try {
@@ -718,6 +736,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       const rawMint = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
       rawMint.roles = rawMint.roles || {};
       rawMint.roles[roleName] = pickRoleKeys({ ...stock });
+      const accountCarried = carryAccount(rawMint, roleName);
+      if (accountCarried) rawMint.roles[roleName].account = accountCarried;
       // Inert while the stock defs carry only prompt/brief, but this is the one
       // write path that would not otherwise refuse a reserved role paired with
       // `dispatch: "worktree"`.
@@ -738,7 +758,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         unwindPromptCopies(teamName, mintPrompts);
         throw err;
       }
-      return { ...loadManifest(teamName), templatesCopied: mintCopied, promptsCopied: mintPrompts };
+      return {
+        ...loadManifest(teamName), templatesCopied: mintCopied, promptsCopied: mintPrompts,
+        minted: kitDef ? `kit:${teamKit.name}` : 'stock', accountCarried,
+      };
     }
     // Read on the load path, but must never enter through a WRITE: pickRoleKeys
     // drops it and emits no `dispatch`, so an addRole carrying `worktree: true`
@@ -772,6 +795,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
     raw.roles[roleName] = pickRoleKeys(def);
+    const stashed = carryAccount(raw, roleName);
+    const ownAccount = raw.roles[roleName].account;
+    const accountCarried = (typeof ownAccount === 'string' && ownAccount.trim()) ? null : stashed;
+    if (accountCarried) raw.roles[roleName].account = accountCarried;
     const templatesCopied = copyRoleTemplates(teamName, { [roleName]: raw.roles[roleName] }, { kitDir });
     let promptsCopied;
     try {
@@ -787,7 +814,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       unwindPromptCopies(teamName, promptsCopied);
       throw err;
     }
-    return { ...loadManifest(teamName), templatesCopied, promptsCopied };
+    return { ...loadManifest(teamName), templatesCopied, promptsCopied, accountCarried };
   }
 
   function setRole(teamName, roleName, patch) {
@@ -867,6 +894,12 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       throw new Error(`role "${roleName}" not found on team "${teamName}" (${team.file})`);
     }
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
+    const label = team.roles[roleName].account;
+    if (typeof label === 'string' && label.trim()) {
+      raw.removedRoleAccounts = { ...stashOf(raw), [roleName]: label.trim() };
+    } else {
+      dropStash(raw, roleName);
+    }
     if (raw.roles) delete raw.roles[roleName];
     atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
     return loadManifest(teamName);

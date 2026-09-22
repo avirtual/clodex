@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 - Muse seats: a fresh seat no longer pays a Meta request at spawn — create is immediate; the transcript links within about half a second once the CLI registers its session.
+- Teams: removing and re-adding a built-in role (lead, reviewer) keeps the account it had, and every role save / remove / re-add from the Teams popover writes one line to clodex.log naming the role and the fields it changed.
 - `opus` now means Claude Opus 5.5 (`claude-opus-5-5[1m]`): the `[agent:team role-set model:opus]` alias and every shipped team template (`clodex-team-hand`, `clodex-team-lead`, `clodex-team-reviewer`, the default-kit `hand`/`lead`) pin the new id. A library template you edited by hand keeps its pin; re-derive it with `role-set model:opus` to move it.
 - Spill tee: where a filed turn behind a system row leaves no intent head to keep, the request now carries a one-line third-person note instead of a bare `[agent]` token, which one model had copied back as an empty reply.
 - Billing: Opus 5.5 (`claude-opus-5-5`) is priced at its own rates (standard and fast) instead of falling back to Opus 5's by prefix.

@@ -237,11 +237,18 @@ function registerIpcHandlers(deps) {
     return res.ok ? null : res.error;
   };
 
+  const fmtPatch = (patch) => Object.entries(patch && typeof patch === 'object' ? patch : {}).map(([k, v]) => {
+    let s = typeof v === 'string' ? v.trim() : String(v);
+    if ((k === 'prompt' || k === 'brief') && s.length > 40) s = `${s.slice(0, 40)}…`;
+    return `${k}=${s}`;
+  }).join(', ');
   handle('team:setRole', (_e, team, role, patch) => {
     try {
       const bad = accountPatchError(patch);
       if (bad) return { ok: false, error: bad };
-      return { ok: true, team: setRole(team, role, patch) };
+      const saved = setRole(team, role, patch);
+      log.info('team', `role "${role}" on team "${team}" saved: ${fmtPatch(patch)}`);
+      return { ok: true, team: saved };
     } catch (err) { return { ok: false, error: err.message }; }
   });
 
@@ -252,11 +259,15 @@ function registerIpcHandlers(deps) {
   // unchanged: a reviewer with a live seat or an open ticket is not removable.
   handle('team:removeRole', (_e, team, role) => {
     try {
-      const blocked = manager._roleInUse(loadManifest(team), role);
+      const before = loadManifest(team);
+      const blocked = manager._roleInUse(before, role);
       if (blocked.seats.length || blocked.tickets.length) {
         return { ok: false, error: `role "${role}" is in use`, blockedBy: blocked };
       }
-      return { ok: true, team: removeRole(team, role, { operator: true }) };
+      const was = before.roles && before.roles[role] && before.roles[role].account;
+      const removed = removeRole(team, role, { operator: true });
+      log.info('team', `role "${role}" removed from team "${team}" (account was ${was || 'none'})`);
+      return { ok: true, team: removed };
     } catch (err) { return { ok: false, error: err.message }; }
   });
 
@@ -441,10 +452,16 @@ function registerIpcHandlers(deps) {
     try {
       let absent = false;
       try { absent = !loadManifest(team).roles[role]; } catch { absent = false; }
-      const d = absent && isEmptyDef(def) && STOCK_ROLE_DEFS[role] ? { ...STOCK_ROLE_DEFS[role] } : def;
+      const substituted = absent && isEmptyDef(def) && !!STOCK_ROLE_DEFS[role];
+      const d = substituted ? { ...STOCK_ROLE_DEFS[role] } : def;
       const bad = accountPatchError(d);
       if (bad) return { ok: false, error: bad };
-      return { ok: true, team: addRole(team, role, d, { operator: true }) };
+      const added = addRole(team, role, d, { operator: true });
+      const written = (added && added.roles && added.roles[role]) || {};
+      const source = added && added.minted ? added.minted : (substituted ? 'stock' : 'caller def');
+      const carried = added && added.accountCarried ? ', carried forward' : '';
+      log.info('team', `role "${role}" added to team "${team}" (${source}; account ${written.account || 'none'}${carried})`);
+      return { ok: true, team: added };
     } catch (err) { return { ok: false, error: err.message }; }
   });
 
