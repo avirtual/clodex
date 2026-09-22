@@ -2037,11 +2037,9 @@ function createSessionManager(deps) {
             systemBody: museSystemBody, appendBodies: museAppendBodies, inlineBody: systemPromptBody || null,
           });
           const museSkills = deliverSkills('muse', name, [...librarySkills, ...bundleSkills(seatBundles())]);
-          const museBody = museSkills && museSkills.instructions
-            ? `${museMerged}\n\n${museSkills.instructions}`
-            : museMerged;
+          if (museSkills?.skillsDir) fs.symlinkSync(museSkills.skillsDir, path.join(seatConfigDir, 'muse', 'skills'));
           fs.writeFileSync(path.join(seatConfigDir, 'muse', 'AGENTS.md'),
-            `You are the clodex agent named '${name}'.\n\n${teamBlock ? `${museBody}\n\n${teamBlock}\n` : museBody}`, { mode: 0o600 });
+            `You are the clodex agent named '${name}'.\n\n${teamBlock ? `${museMerged}\n\n${teamBlock}\n` : museMerged}`, { mode: 0o600 });
           museSid = resumeId || null;
           let museProbe = null;
           if (proxyBase) { try { museProbe = await ProxyClient.probe(proxyBase); } catch {} }
