@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Internal: the adapter table (`cli-adapters.js`) now declares posture as an argv array, a transcript reader id, the config dir a CLI writes into its cwd, and a warmth capability; restore and the worktree gitignore resolve the seat platform through the table. No behaviour change, except that a Codex seat whose env names a `CODEX_HOME` that does not exist is now refused at spawn, like a missing Claude account dir.
 - Terminal: a spill receipt row (`N KB of prose filed at …`) is painted green with its own scrollbar tick, so a body Clodex filed on the agent's behalf is visible without reading; the path stays a click-to-peek link.
 
 - Teams: the cold reviewer can run on any platform whose adapter declares a read-only cap — point the reviewer role at a template of that platform. Codex reviewers run under Codex's OS-enforced read-only sandbox with approvals off (`clodex-team-reviewer-codex` ships in the library); Claude reviewers are unchanged; a platform without a cap is refused before a seat is minted.

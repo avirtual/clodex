@@ -37,7 +37,7 @@ const {
   teamPromptFile,
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate } = require('./team-template-derive');
-const { seatType, adapterFor, DEFAULT_TYPE, PLATFORMS } = require('./cli-adapters');
+const { seatType, adapterFor, DEFAULT_TYPE, PLATFORMS, hasBypass } = require('./cli-adapters');
 const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
@@ -469,8 +469,8 @@ function seatCwdInTree(root, seatCwd, treePath) {
   return nodePath.join(treePath, rel);
 }
 
-function ignoreCodexDir(fs, seatCwd) {
-  const dir = nodePath.join(seatCwd, '.codex');
+function ignoreCwdDir(fs, seatCwd, cwdDir) {
+  const dir = nodePath.join(seatCwd, cwdDir);
   const file = nodePath.join(dir, '.gitignore');
   try {
     let cur = null;
@@ -480,7 +480,7 @@ function ignoreCodexDir(fs, seatCwd) {
     fs.writeFileSync(file, '*\n');
     return null;
   } catch (e) {
-    return `could not write ${file} (${e.message}); the hand's tree will show .codex/ as untracked`;
+    return `could not write ${file} (${e.message}); the hand's tree will show ${cwdDir}/ as untracked`;
   }
 }
 
@@ -699,8 +699,8 @@ function createTicketMethods(deps, shared) {
       const workspaceId = spawner.workspaceId || DEFAULT_WORKSPACE_ID;
 
       const spawnerArgs = (getPersistence().get(spawner.name)?.extraArgs) || [];
-      const postureArgs = spawnerArgs.includes((adapterFor(spawner.type) || adapterFor(DEFAULT_TYPE)).posture.bypassFlag)
-        ? [adapterFor(type).posture.bypassFlag] : [];
+      const spawnerAdapter = adapterFor(spawner.type) || adapterFor(DEFAULT_TYPE);
+      const postureArgs = hasBypass(spawnerAdapter, spawnerArgs) ? [...adapterFor(type).posture.bypassArgs] : [];
 
       const proxy = tpl ? (tpl.proxy ?? null) : (spawner.proxy ?? null);
       const childArgs = (tpl && Array.isArray(tpl.extraArgs) && tpl.extraArgs.length)
@@ -5072,8 +5072,7 @@ function createTicketMethods(deps, shared) {
       }
       const argvCap = !!cap && cap.enforce === 'argv';
       const leadArgs = (getPersistence().get(opener.name)?.extraArgs) || [];
-      const postureArgs = leadArgs.includes(openerAdapter.posture.bypassFlag)
-        ? [seatAdapter.posture.bypassFlag] : [];
+      const postureArgs = hasBypass(openerAdapter, leadArgs) ? [...seatAdapter.posture.bypassArgs] : [];
       const workspaceId = opener.workspaceId || DEFAULT_WORKSPACE_ID;
       // Resolved ONCE for both arms: a role cwd is not a reviewer concept or a
       // ticket concept, and two copies of this call are exactly the divergence
@@ -5521,10 +5520,11 @@ function createTicketMethods(deps, shared) {
           // Not inside resolveSeatShape: the tree is minted above, after the shape
           // is built, and the review path shares that resolver with no tree at all.
           const seatCwd = seatCwdInTree(team.root, shape.cwd, wt && wt.path);
-          let codexWarn = '';
-          if (shape.type === 'codex' && wt && wt.path) {
-            const e = ignoreCodexDir(fs, seatCwd);
-            if (e) codexWarn = ` — NOTE: ${e}`;
+          let cwdDirWarn = '';
+          const cwdDir = adapterFor(shape.type).cwdDir;
+          if (cwdDir && wt && wt.path) {
+            const e = ignoreCwdDir(fs, seatCwd, cwdDir);
+            if (e) cwdDirWarn = ` — NOTE: ${e}`;
           }
           const spawned = await this.create(
             seat.name, shape.type, seatCwd,
@@ -5590,7 +5590,7 @@ function createTicketMethods(deps, shared) {
           const cwdWarn = shape.cwdFallback ? ` — NOTE: ${shape.cwdFallback}` : '';
           reply(isSpawn
             ? `ticket ${ticket.id} → ${seat.name} in the shared checkout ${shape.cwd} (no branch, no worktree)${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}`
-            : `ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}${linkWarn}${codexWarn}`);
+            : `ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}${linkWarn}${cwdDirWarn}`);
         } catch (err) {
           const live = this.sessions.has(seat.name);
           if (!live) getPersistence().remove(seat.name);
@@ -10421,4 +10421,4 @@ function createTicketMethods(deps, shared) {
   };
 }
 
-module.exports = { createTicketMethods, ticketCloseLine, ticketCloseVerb, ticketTaskDirLine, ignoreCodexDir };
+module.exports = { createTicketMethods, ticketCloseLine, ticketCloseVerb, ticketTaskDirLine, ignoreCwdDir };

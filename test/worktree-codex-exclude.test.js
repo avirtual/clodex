@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const { ignoreCodexDir } = require('../team-tickets');
+const { ignoreCwdDir } = require('../team-tickets');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
@@ -26,11 +26,11 @@ function mkRepoWithWorktree() {
   return { repo, wt };
 }
 
-test('t1076: ignoreCodexDir hides .codex/ from git status in the worktree and leaves the shared info/exclude alone', () => {
+test('t1076: ignoreCwdDir hides .codex/ from git status in the worktree and leaves the shared info/exclude alone', () => {
   const { repo, wt } = mkRepoWithWorktree();
   const excludeFile = path.join(repo, '.git', 'info', 'exclude');
   const excludeBefore = fs.existsSync(excludeFile) ? fs.readFileSync(excludeFile, 'utf8') : null;
-  assert.strictEqual(ignoreCodexDir(fs, wt), null);
+  assert.strictEqual(ignoreCwdDir(fs, wt, '.codex'), null);
   fs.mkdirSync(path.join(wt, '.codex'), { recursive: true });
   fs.writeFileSync(path.join(wt, '.codex', 'hooks.json'), '{}');
   assert.strictEqual(git(wt, 'status', '--porcelain'), '', 'the hook file and the marker are invisible to git');
@@ -45,10 +45,10 @@ test('t1076: ignoreCodexDir hides .codex/ from git status in the worktree and le
 
 test('t1076: a second call leaves one byte-identical marker', () => {
   const { wt } = mkRepoWithWorktree();
-  ignoreCodexDir(fs, wt);
+  ignoreCwdDir(fs, wt, '.codex');
   const file = path.join(wt, '.codex', '.gitignore');
   const stat = fs.statSync(file);
-  assert.strictEqual(ignoreCodexDir(fs, wt), null);
+  assert.strictEqual(ignoreCwdDir(fs, wt, '.codex'), null);
   assert.strictEqual(fs.readFileSync(file, 'utf8'), '*\n');
   assert.strictEqual(fs.statSync(file).mtimeMs, stat.mtimeMs, 'not rewritten');
   assert.deepStrictEqual(fs.readdirSync(path.join(wt, '.codex')), ['.gitignore']);
@@ -57,7 +57,7 @@ test('t1076: a second call leaves one byte-identical marker', () => {
 test('t1076: a failure is returned as a sentence, never thrown', () => {
   const { wt } = mkRepoWithWorktree();
   fs.writeFileSync(path.join(wt, '.codex'), 'a file where the directory should be');
-  const e = ignoreCodexDir(fs, wt);
+  const e = ignoreCwdDir(fs, wt, '.codex');
   assert.match(e, /could not write .*\.codex\/\.gitignore/);
   assert.match(e, /will show \.codex\/ as untracked/);
 });

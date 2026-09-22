@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, adapterFor, seatType, stripModelArgs,
+  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, adapterFor, seatType, stripModelArgs, hasBypass,
 } = require('../cli-adapters');
 const { createSkillDelivery } = require('../skill-delivery');
 
@@ -66,14 +66,51 @@ test('t749: the dialog may not offer skills to a provider main cannot deliver to
   assert.deepStrictEqual(offered.sort(), [...deliverable].sort());
 });
 
-const ENTRY_KEYS = ['id', 'label', 'cmd', 'model', 'posture', 'account', 'readOnlyCap', 'instructions', 'caps', 'ui'];
+const ENTRY_KEYS = ['id', 'label', 'cmd', 'model', 'posture', 'account', 'cwdDir', 'readOnlyCap', 'instructions', 'transcript', 'caps', 'ui'];
 
 test('every adapter entry carries the whole entry key set', () => {
   for (const [type, entry] of Object.entries(ADAPTERS)) {
     assert.deepStrictEqual(Object.keys(entry), ENTRY_KEYS, `${type} must declare every entry key, in order`);
     assert.strictEqual(entry.id, type);
     assert.deepStrictEqual(Object.keys(entry.model), ['flags', 'aliases', 'idRe']);
-    assert.deepStrictEqual(Object.keys(entry.caps), ['park', 'transcript']);
+    assert.deepStrictEqual(Object.keys(entry.caps), ['park', 'transcript', 'warmth']);
+    assert.deepStrictEqual(Object.keys(entry.transcript), ['reader', 'link']);
+    assert.deepStrictEqual(Object.keys(entry.posture), ['bypassArgs']);
+    assert.ok(Array.isArray(entry.posture.bypassArgs) && entry.posture.bypassArgs.length > 0
+      && entry.posture.bypassArgs.every((t) => typeof t === 'string'), `${type}: bypassArgs is a non-empty string array`);
+  }
+});
+
+test('m0: the table rows declare posture, cwdDir, transcript and warmth literally', () => {
+  assert.deepStrictEqual(ADAPTERS.claude.posture, { bypassArgs: ['--dangerously-skip-permissions'] });
+  assert.deepStrictEqual(ADAPTERS.codex.posture, { bypassArgs: ['--dangerously-bypass-approvals-and-sandbox'] });
+  assert.strictEqual(ADAPTERS.claude.cwdDir, null);
+  assert.strictEqual(ADAPTERS.codex.cwdDir, '.codex');
+  assert.deepStrictEqual(ADAPTERS.claude.transcript, { reader: 'claude', link: 'hook' });
+  assert.deepStrictEqual(ADAPTERS.codex.transcript, { reader: 'codex', link: 'hook' });
+  assert.deepStrictEqual(ADAPTERS.claude.caps, { park: true, transcript: true, warmth: true });
+  assert.deepStrictEqual(ADAPTERS.codex.caps, { park: false, transcript: true, warmth: false });
+});
+
+test('m0: hasBypass is a contiguous-subsequence match on posture.bypassArgs', () => {
+  const claude = ADAPTERS.claude;
+  const two = { posture: { bypassArgs: ['--a', '--b'] } };
+  const rows = [
+    [claude, [], false],
+    [claude, ['--dangerously-skip-permissions'], true],
+    [claude, ['--model', 'x', '--dangerously-skip-permissions', '--foo'], true],
+    [claude, ['--dangerously-bypass-approvals-and-sandbox'], false],
+    [two, ['--a', '--x', '--b'], false],
+    [two, ['--y', '--a', '--b'], true],
+    [two, ['--a'], false],
+    [two, ['--b', '--a'], false],
+    [claude, undefined, false],
+    [claude, null, false],
+    [claude, '--dangerously-skip-permissions', false],
+    [null, ['--dangerously-skip-permissions'], false],
+  ];
+  for (const [adapter, argv, want] of rows) {
+    assert.strictEqual(hasBypass(adapter, argv), want, `hasBypass(${adapter && JSON.stringify(adapter.posture)}, ${JSON.stringify(argv)})`);
   }
 });
 

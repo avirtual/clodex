@@ -6,14 +6,21 @@ One entry per CLI Clodex can wrap, keyed by the seat `type` that `create()`
 switches on. Every entry carries the same keys, pinned whole-object by
 `test/cli-adapters.test.js`: `id` (the key), `label` (UI name), `cmd` (the
 binary), `model` (`flags` the CLI takes a model on, `aliases` short names →
-ids, `idRe` the id shape), `posture` (`bypassFlag`, the permission-bypass
-argv token), `account` (`envKey` the config-dir env var; `bootstrap` names
-the mechanism the call site with fs runs, `null` when none), `readOnlyCap`
-(how the platform expresses the reviewer's read-only cap, `null` when it has
-none and so cannot seat a reviewer), `instructions` (how a
-system prompt reaches the CLI), `caps` (`park`: a held delivery can be
-parked for this seat; `transcript`: the hook writes `transcript.jsonl`),
-`ui` (the t749 dialog-field row `capsFor` returns). `Object.keys(ADAPTERS)`
+ids, `idRe` the id shape), `posture` (`bypassArgs`, the permission-bypass
+argv tokens as an array; `hasBypass(adapter, argv)` is true only when that
+array occurs contiguously in `argv`), `account` (`envKey` the config-dir env
+var, which `create()` resolves the account dir through for every type that
+names one; `bootstrap` names the mechanism the call site with fs runs, `null`
+when none), `cwdDir` (the directory the CLI writes into the seat's cwd, which
+a worktree seat gitignores via `ignoreCwdDir`; `null` when it writes none),
+`readOnlyCap` (how the platform expresses the reviewer's read-only cap,
+`null` when it has none and so cannot seat a reviewer), `instructions` (how a
+system prompt reaches the CLI), `transcript` (`reader`: the transcript reader
+id; `link`: `hook` = the CLI's hook writes the transcript symlink, `clodex` =
+`create()` writes it before spawn — reserved, no reader yet), `caps` (`park`:
+a held delivery can be parked for this seat; `transcript`: the hook writes
+`transcript.jsonl`; `warmth`: the renderer shows the prompt-cache warmth
+segment), `ui` (the t749 dialog-field row `capsFor` returns). `Object.keys(ADAPTERS)`
 must equal `skill-delivery.js`'s `providers()`, so a new platform is one
 entry here plus one delivery function there and the suite names the missing
 half.
