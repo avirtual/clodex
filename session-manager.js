@@ -2184,7 +2184,7 @@ function createSessionManager(deps) {
         spawnedAt: Date.now(),
         createdAt,
         agentType, lineBuffer: '', watcher: null,
-        sessionId: museSid || null,
+        sessionId: resumeId || null,
         accountDir: seatConfigDir || accountDir || null,
         forked: !!fork,
         workspaceId,
