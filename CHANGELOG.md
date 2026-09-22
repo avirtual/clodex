@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Sandbox and peer-box images, the peer deploy script and the New Session tool check now install or offer the Muse CLI alongside Claude and Codex; Muse credentials persist across box recreation like the other two.
 - Muse seats: skills a template injects (library skills and plugin bundle skills) now appear in `muse skills list` and the TUI's skill roster as user-scope skills, instead of only being catalogued in AGENTS.md.
 
 ## 5.85.0 — 2026-09-23

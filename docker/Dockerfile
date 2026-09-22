@@ -131,8 +131,8 @@ WORKDIR /home/clodex
 # unless we bake them in. PATH is set here and in peering/clodex.service so both
 # a login shell and the systemd unit find them. You still authenticate ONCE
 # inside the container after first boot (see the header).
-ENV PATH=/home/clodex/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-# Install the two CLIs in SEPARATE steps and VERIFY the bin shims resolve. A
+ENV PATH=/home/clodex/.npm-global/bin:/home/clodex/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Install the CLIs in SEPARATE steps and VERIFY the bin shims resolve. A
 # single `npm install -g pkgA pkgB` was observed to leave claude's bin symlink as
 # a dangling staging name (~/.npm-global/bin/.claude-<hash> instead of `claude`)
 # — npm creates the shim under a temp name and renames it last, and that rename
@@ -140,20 +140,26 @@ ENV PATH=/home/clodex/.npm-global/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/
 # One package per RUN avoids the race, and the `command -v` guards turn any future
 # recurrence into a BUILD failure instead of a broken image.
 RUN npm config set prefix /home/clodex/.npm-global \
- && echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> /home/clodex/.bashrc \
- && echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> /home/clodex/.profile
+ && echo 'export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"' >> /home/clodex/.bashrc \
+ && echo 'export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"' >> /home/clodex/.profile
 RUN npm install -g @anthropic-ai/claude-code --no-audit --no-fund --loglevel=error \
  && command -v claude
 RUN npm install -g @openai/codex --no-audit --no-fund --loglevel=error \
  && command -v codex
+RUN mkdir -p /home/clodex/.local/bin \
+ && curl -fsSL https://api.meta.ai/muse-launcher.sh -o /home/clodex/.local/bin/muse \
+ && chmod +x /home/clodex/.local/bin/muse \
+ && MUSE_LAUNCHER_INSTALL=1 MUSE_LOGIN=0 /home/clodex/.local/bin/muse \
+ && command -v muse
 
 # Pre-create the CLIs' auth dirs so run.sh can mount PERSISTENT named volumes over
-# them (claude -> ~/.claude/.credentials.json, codex -> ~/.codex/auth.json). A
+# them (claude -> ~/.claude/.credentials.json, codex -> ~/.codex/auth.json,
+# muse -> ~/.config/muse/auth.json). A
 # fresh named volume inherits the mount path's ownership FROM THE IMAGE — if the
 # dir didn't exist here it'd mount root-owned and the CLIs (uid 1001) couldn't
 # write their tokens, so you'd re-auth on every container recreation. Creating
 # them as clodex is what lets the one-time OAuth survive up/down/rebuild.
-RUN mkdir -p /home/clodex/.claude /home/clodex/.codex
+RUN mkdir -p /home/clodex/.claude /home/clodex/.codex /home/clodex/.config/muse
 
 # Bake Clodex itself: clone + npm install + electron binary + electron-rebuild.
 # This is the slow part of a cold deploy (npm install + the ~100MB Electron

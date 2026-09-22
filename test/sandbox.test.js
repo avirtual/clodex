@@ -172,7 +172,7 @@ test('generateCompose: read-only host library binds layered on clodex-dot (M5 De
   assert.match(yaml, /- "\/Users\/me\/\.clodex\/skills:\/home\/clodex\/\.clodex\/skills:ro"/);
   assert.match(yaml, /- "\/Users\/me\/\.clodex\/agents:\/home\/clodex\/\.clodex\/agents:ro"/);
   assert.doesNotMatch(yaml, /- "[^"]*\/library:\/home\/clodex\/\.clodex\/library:ro"/);
-  assert.match(yaml, /- "\/h\/\.clodex\/boxes\/x\/dot:\/home\/clodex\/\.clodex"\n( +- "[^\n]*:ro"\n){2} +- "\/h\/\.clodex\/boxes\/x\/claude:\/home\/clodex\/\.claude"/);
+  assert.match(yaml, /- "\/h\/\.clodex\/boxes\/x\/dot:\/home\/clodex\/\.clodex"\n( +- "[^\n]*:ro"\n){2} +- "\/h\/\.clodex\/boxes\/x\/claude:\/home\/clodex\/\.claude"\n +- "\/h\/\.clodex\/boxes\/x\/muse:\/home\/clodex\/\.config\/muse"/);
   assert.ok(yaml.includes('- "/h/.clodex/boxes/x/data:/data"'));
   assert.doesNotMatch(yaml, /^ {2}(clodex-data|clodex-dot|claude-auth):$/m);
   assert.match(yaml, /^ {2}clodex-work:$/m);
@@ -378,7 +378,7 @@ test('generateCompose: a mount shadowing a reserved path THROWS (no broken box)'
 test('generateCompose: no mount binds when the list is empty or absent', () => {
   const empty = generateCompose({ image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null, mounts: [] });
   const absent = generateCompose({ image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null });
-  assert.doesNotMatch(empty, /\/home\/clodex\/(?!work|\.clodex|\.claude)/);
+  assert.doesNotMatch(empty, /\/home\/clodex\/(?!work|\.clodex|\.claude|\.config\/muse)/);
   assert.strictEqual(empty, absent);   // omitting mounts === passing []
 });
 
@@ -1226,6 +1226,11 @@ test('generateCompose: the per-agent run dir is an exec,mode=1777 tmpfs on the s
   assert.ok(vols >= 0 && last - vols > 6, `the volumes block did not form: ${last - vols} lines`);
   assert.strictEqual(lines[last], '    tmpfs:', 'the tmpfs key must follow the last volumes entry');
   assert.strictEqual(lines[last + 1], '      - /home/clodex/.clodex/run:exec,mode=1777');
+});
+
+test('generateCompose: the muse auth dir is a reserved mount target (a user mount there is refused)', () => {
+  assert.ok(RESERVED_MOUNT_TARGETS.includes('/home/clodex/.config/muse'), 'the muse auth dir is not in the reserved set');
+  assert.match(normalizeMounts([{ host: '/h', container: '/home/clodex/.config/muse' }]).error || '', /shadow/);
 });
 
 test('generateCompose: a user mount at the run tmpfs target, or under it, is refused', () => {

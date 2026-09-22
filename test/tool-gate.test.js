@@ -57,13 +57,26 @@ test('a report with no notice still blocks with a sensible fallback', () => {
 });
 
 // ── Install button (Task 14) ─────────────────────────────────────────────────
+const museCmd = 'mkdir -p ~/.local/bin && curl -fsSL https://api.meta.ai/muse-launcher.sh -o ~/.local/bin/muse && chmod +x ~/.local/bin/muse && MUSE_LAUNCHER_INSTALL=1 ~/.local/bin/muse';
 const installCheck = {
   byTool: {
     claude: { present: false, notice: { kind: 'error', text: 'claude CLI not found on PATH — install: …' }, install: 'curl -fsSL https://claude.ai/install.sh | bash' },
     codex: { present: true, notice: { kind: 'ok', text: 'codex found' }, install: 'npm i -g @openai/codex' },
+    muse: { present: false, notice: { kind: 'error', text: 'muse CLI not found on PATH — install: …' }, install: museCmd },
     git: { present: false, notice: { kind: 'error', text: 'git CLI not found on PATH' }, install: null },
   },
 };
+
+test('muse missing → gated, disabled, carries the install button (third agent CLI)', () => {
+  const g = newSessionToolGate('muse', installCheck);
+  assert.strictEqual(g.ok, false);
+  assert.strictEqual(g.disabled, true);
+  assert.match(g.notice.text, /muse CLI not found on PATH/);
+  assert.strictEqual(g.install.tool, 'muse');
+  assert.strictEqual(g.install.sessionName, 'install-muse');
+  assert.match(g.install.command, /muse-launcher\.sh/);
+  assert.strictEqual(newSessionToolGate('muse', { byTool: { muse: { present: true } } }).disabled, false);
+});
 
 test('missing tool WITH an install remedy → gate carries an install button descriptor', () => {
   const g = newSessionToolGate('claude', installCheck);
@@ -80,7 +93,7 @@ test('present tool → no install button (nothing to install)', () => {
 
 test('missing tool WITHOUT an install line → no button, notice only', () => {
   const g = newSessionToolGate('git', installCheck);
-  // git isn't a gated type (only claude/codex), so it's never disabled — but even
+  // git isn't a gated type (only the agent CLIs), so it's never disabled — but even
   // a gated type with install:null yields no button. Assert the null-install case
   // directly for a gated type:
   assert.strictEqual(newSessionToolGate('claude', { byTool: { claude: { present: false, install: null } } }).install, null);
@@ -113,12 +126,14 @@ const bothMissing = {
   byTool: {
     claude: { present: false, install: claudeCmd },
     codex: { present: false, install: codexCmd },
+    muse: { present: false, install: museCmd },
   },
 };
 const onlyClaudeMissing = {
   byTool: {
     claude: { present: false, install: claudeCmd },
     codex: { present: true, install: codexCmd },
+    muse: { present: true, install: museCmd },
   },
 };
 
@@ -136,10 +151,19 @@ test('overlay: BOTH missing → show, both tools, both-missing headline', () => 
   const p = newSessionOverlayPlan('claude', bothMissing);
   assert.strictEqual(p.show, true);
   assert.match(p.headline, /No agent CLI is installed/);
-  assert.deepStrictEqual(p.tools.map((t) => t.tool), ['claude', 'codex']);
+  assert.deepStrictEqual(p.tools.map((t) => t.tool), ['claude', 'codex', 'muse']);
   assert.ok(p.tools.every((t) => t.install));
   // Same both-missing overlay regardless of which missing type is selected.
-  assert.deepStrictEqual(newSessionOverlayPlan('codex', bothMissing).tools.map((t) => t.tool), ['claude', 'codex']);
+  assert.deepStrictEqual(newSessionOverlayPlan('codex', bothMissing).tools.map((t) => t.tool), ['claude', 'codex', 'muse']);
+  assert.deepStrictEqual(newSessionOverlayPlan('muse', bothMissing).tools.map((t) => t.tool), ['claude', 'codex', 'muse']);
+});
+
+test('overlay: only muse missing → show, single muse tool with its launcher install', () => {
+  const p = newSessionOverlayPlan('muse', { byTool: { claude: { present: true }, codex: { present: true }, muse: { present: false, install: museCmd } } });
+  assert.strictEqual(p.show, true);
+  assert.match(p.headline, /muse CLI isn't installed/);
+  assert.deepStrictEqual(p.tools.map((t) => t.tool), ['muse']);
+  assert.strictEqual(p.tools[0].install.sessionName, 'install-muse');
 });
 
 test('overlay: selected type PRESENT → never show (even if the other is missing)', () => {
@@ -176,10 +200,10 @@ test('shouldRaiseOverlay: never raises a non-showing plan, or a null plan', () =
 });
 
 // ── Diag banner install buttons (Task 18) ────────────────────────────────────
-test('agentInstallButtons: both missing → both descriptors, in claude/codex order', () => {
+test('agentInstallButtons: all missing → one descriptor each, in claude/codex/muse order', () => {
   const btns = agentInstallButtons(bothMissing);
-  assert.deepStrictEqual(btns.map((b) => b.tool), ['claude', 'codex']);
-  assert.deepStrictEqual(btns.map((b) => b.sessionName), ['install-claude', 'install-codex']);
+  assert.deepStrictEqual(btns.map((b) => b.tool), ['claude', 'codex', 'muse']);
+  assert.deepStrictEqual(btns.map((b) => b.sessionName), ['install-claude', 'install-codex', 'install-muse']);
 });
 test('agentInstallButtons: only the missing agent CLI (present one excluded)', () => {
   assert.deepStrictEqual(agentInstallButtons(onlyClaudeMissing).map((b) => b.tool), ['claude']);

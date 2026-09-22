@@ -282,7 +282,7 @@ fs.renameSync(tmp, p);
 ' "$SETTINGS" "$PORT" >&2 || fail settings "ui-settings-merge-failed"
 ok settings
 
-# --- agent-clis: the claude/codex CLIs a spawn will exec ---------------------
+# --- agent-clis: the claude/codex/muse CLIs a spawn will exec ---------------------
 # The engine spawns `claude`/`codex` as child PTYs; without the binaries on PATH
 # the child dies on execvp with a bare code-1 (the exact silent-death this step
 # prevents). Install them the SETTLED native way — the same one-liners the GUI's
@@ -311,6 +311,17 @@ else
     curl -fsSL https://chatgpt.com/codex/install.sh | sh >&2 \
       && log "codex installed" \
       || log "codex install failed (best-effort) — a Codex spawn will fail until it is installed"
+  fi
+  if command -v muse >/dev/null 2>&1; then
+    log "muse already present — skipping"
+  else
+    log "installing muse CLI (launcher → ~/.local/bin)…"
+    mkdir -p "$HOME/.local/bin" \
+      && curl -fsSL https://api.meta.ai/muse-launcher.sh -o "$HOME/.local/bin/muse" \
+      && chmod +x "$HOME/.local/bin/muse" \
+      && MUSE_LAUNCHER_INSTALL=1 MUSE_LOGIN=0 "$HOME/.local/bin/muse" >&2 \
+      && log "muse installed" \
+      || log "muse install failed (best-effort) — a Muse spawn will fail until it is installed"
   fi
   # Onboarding pre-seed (T42): a fresh claude shows a first-run wizard (theme/ANSI
   # prompt) before it is usable, which blinds a headless spawn. Seed ~/.claude.json

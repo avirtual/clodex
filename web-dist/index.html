@@ -24869,6 +24869,7 @@ ${i3.join("\n")}
         // ~/.local/bin, no Node needed, auto-updates).
         { name: "claude", bins: ["claude"], neededFor: "Claude sessions", install: "curl -fsSL https://claude.ai/install.sh | bash" },
         { name: "codex", bins: ["codex"], neededFor: "Codex sessions", install: "curl -fsSL https://chatgpt.com/codex/install.sh | sh" },
+        { name: "muse", bins: ["muse"], neededFor: "Muse sessions", install: "mkdir -p ~/.local/bin && curl -fsSL https://api.meta.ai/muse-launcher.sh -o ~/.local/bin/muse && chmod +x ~/.local/bin/muse && MUSE_LAUNCHER_INSTALL=1 ~/.local/bin/muse" },
         { name: "git", bins: ["git"], neededFor: "worktrees & version control" },
         { name: "gh", bins: ["gh"], neededFor: "GitHub releases", install: "brew install gh" },
         { name: "docker", bins: ["docker"], neededFor: "sandboxes" },
@@ -24939,9 +24940,9 @@ ${i3.join("\n")}
       function installDescriptor(tool, cmd) {
         return { tool, command: cmd, sessionName: installSessionName(tool), label: `Install ${tool}\u2026` };
       }
-      var AGENT_TOOLS = ["claude", "codex"];
+      var AGENT_TOOLS = ["claude", "codex", "muse"];
       function newSessionToolGate(type, check) {
-        if (type !== "claude" && type !== "codex") {
+        if (!AGENT_TOOLS.includes(type)) {
           return { ok: true, disabled: false, notice: null, install: null };
         }
         const rep = check && check.byTool && check.byTool[type];
@@ -24961,9 +24962,9 @@ ${i3.join("\n")}
       }
       function newSessionOverlayPlan(type, check) {
         const none = { show: false, headline: "", tools: [] };
-        if (type !== "claude" && type !== "codex") return none;
+        if (!AGENT_TOOLS.includes(type)) return none;
         if (!toolMissing(check, type)) return none;
-        const both = toolMissing(check, "claude") && toolMissing(check, "codex");
+        const both = AGENT_TOOLS.every((t) => toolMissing(check, t));
         const entryFor = (t) => {
           const rep = check.byTool[t];
           return { tool: t, install: rep && rep.install ? installDescriptor(t, rep.install) : null };
@@ -24971,7 +24972,7 @@ ${i3.join("\n")}
         if (both) {
           return {
             show: true,
-            headline: "No agent CLI is installed \u2014 Clodex can't start claude or codex sessions",
+            headline: `No agent CLI is installed \u2014 Clodex can't start ${AGENT_TOOLS.join(", ")} sessions`,
             tools: AGENT_TOOLS.map(entryFor)
           };
         }
