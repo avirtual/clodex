@@ -20641,3 +20641,26 @@ test('t1099 _scratchCutAfterGuard: the pty queue is quiesced BEFORE the recycle 
     'the in-flight unit drains (re-parking if the seat is marked recycling) before the kill can strand it');
   assert.strictEqual(recyclingAtKill, true, '_recycling is set when the process is killed');
 });
+
+test('t1099 onUndelivered: a unit whose seat DIES mid-settle is re-parked stamped with the dead seat\'s createdAt, not unstamped', async () => {
+  const { InjectQueue } = require('../inject-queue');
+  const { m, PENDING_DIR } = mkPark({ InjectQueue, SHORT_TEXT_DELAY: 1, LONG_TEXT_DELAY: 1, LONG_TEXT_THRESHOLD: 1000 });
+  delete m._injectText;
+  const session = {
+    name: 'a', agentType: 'claude', createdAt: 1_700_000_000_000, _bootReadySeen: true,
+    pty: { write: () => {} },
+  };
+  m.sessions.set('a', session);
+  parkDelivery(PENDING_DIR, 'a', '[agent:from x] hi', m._nextParkSeq(), null, false, session.createdAt);
+  m._drainPendingAtIdle(session);
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(hasPending(PENDING_DIR, 'a'), false, 'claimed: the queue holds the only copy');
+  session._dead = true;
+  m.sessions.delete('a');
+  await session._injectPtyQueue.settled();
+  const files = fsReal.readdirSync(pathReal.join(PENDING_DIR, 'a')).filter((f) => f.endsWith('.json'));
+  assert.strictEqual(files.length, 1);
+  const entry = JSON.parse(fsReal.readFileSync(pathReal.join(PENDING_DIR, 'a', files[0]), 'utf8'));
+  assert.strictEqual(entry.born, session.createdAt,
+    'stamped from the closure\'s own session: after _cleanup neither the map nor persistence knows the name, and an unstamped entry would reach the next seat of that name');
+});

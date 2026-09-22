@@ -8704,7 +8704,8 @@ function createSessionManager(deps) {
           isDead: () => !!(session._dead || session._recycling),
           onUndelivered: (t) => {
             try {
-              parkDelivery(PENDING_DIR, session.name, t, this._nextParkSeq(), null, false, this._bornFor(session.name), null);
+              const born = typeof session.createdAt === 'number' ? session.createdAt : null;
+              parkDelivery(PENDING_DIR, session.name, t, this._nextParkSeq(), null, false, born, null);
               log.info('inject', `re-parked an undelivered inject for ${session.name} (${session._recycling ? 'recycling' : 'dead'}, ${t.length} chars)`);
             } catch (e) {
               log.error('inject', `re-park failed for ${session.name}: ${e.message} — ${t.length} chars dropped`);

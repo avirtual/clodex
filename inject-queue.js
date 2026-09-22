@@ -130,7 +130,7 @@ class InjectQueue {
       readyDeferred = true;
       await this._sleep(Math.min(this._readyMaxWaitMs, this._readyPollMs));
     }
-    if (this._isDead()) return;
+    if (this._isDead()) { if (divert && !produce && text) this._undelivered(text); return; }
     if (readyDeferred && !this._ready() && this._onReadyCapFire) {
       try { this._onReadyCapFire(text); } catch {}
     }
@@ -147,7 +147,7 @@ class InjectQueue {
       deferred = true;
       await this._sleep(Math.min(this._quietMs, 500));
     }
-    if (this._isDead()) return;
+    if (this._isDead()) { if (divert && !produce && text) this._undelivered(text); return; }
     // Must run after the gates: the producer's claim is destructive, so a delivery
     // that can't land yet is never claimed off disk.
     if (produce) {

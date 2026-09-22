@@ -755,3 +755,20 @@ test('InjectQueue.settled(): resolves once every enqueued unit has drained', asy
   assert.strictEqual(q.length, 0);
   assert.deepStrictEqual(writes, ['\x15', 'A', '\r', '\x15', 'B', '\r']);
 });
+
+test('InjectQueue: a plain unit dying at the gates is re-parked only when it carries a divert (a parkable delivery), never a bare self-inject', async () => {
+  for (const [divert, expected] of [[() => false, ['X']], [null, []]]) {
+    const undelivered = [];
+    const q = new InjectQueue({
+      write: () => {},
+      settleMsFor: () => 5,
+      quietMs: 0, maxWaitMs: 0,
+      lastHumanInputAt: () => 0,
+      isDead: () => true,
+      onUndelivered: (t) => undelivered.push(t),
+      sleep: () => Promise.resolve(),
+    });
+    await q.enqueue('X', divert ? { divert } : undefined);
+    assert.deepStrictEqual(undelivered, expected, divert ? 'parkable text re-parked' : 'bare text dropped');
+  }
+});
