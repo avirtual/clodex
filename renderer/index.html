@@ -555,11 +555,7 @@
         <span class="hint-text" id="name-hint"></span>
       </label>
       <label>Type
-        <select id="input-type">
-          <option value="claude">claude</option>
-          <option value="codex">codex</option>
-          <option value="bash">bash</option>
-        </select>
+        <select id="input-type"></select>
       </label>
       <label>Working directory
         <div class="dir-picker">
@@ -694,8 +690,8 @@
           </label>
         </details>
         <label id="model-row">Model
-          <input type="text" id="input-model" placeholder="(CLI default) — e.g. opus, sonnet" spellcheck="false">
-          <span class="hint-text">The model Clodex launches (and relaunches) this session with. An in-CLI <code>/model</code> change is runtime-only and isn't saved here.</span>
+          <input type="text" id="input-model" placeholder="(CLI default)" spellcheck="false">
+          <span class="hint-text"><span id="model-hint"></span> The model Clodex launches (and relaunches) this session with. An in-CLI <code>/model</code> change is runtime-only and isn't saved here.</span>
         </label>
         <label>Extra CLI args
           <input type="text" id="input-args" placeholder="(none)">

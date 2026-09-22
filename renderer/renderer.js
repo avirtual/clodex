@@ -21,7 +21,7 @@ const { matchGutterRow, findGutterFile } = require('./lib/gutter-scan');
 // on a pathological run, not the usual cost.
 const GUTTER_HEADER_SCAN = 400;
 const { splitModelArg, withModelArg } = require('./lib/args-model');
-const { capsFor } = require('../cli-adapters');
+const { PLATFORMS, adapterFor, isAgentType, capsFor } = require('../cli-adapters');
 const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { createMirrorLatch } = require('./lib/mirror-latch');
@@ -220,6 +220,7 @@ if (inputEnv) inputEnv.addEventListener('input', refreshEnvHint);
 bindAccountSelect(inputAccount, inputEnv, () => dialogAccounts);
 const inputModel = document.getElementById('input-model');
 const modelRow = document.getElementById('model-row');
+const modelHint = document.getElementById('model-hint');
 const argsHint = document.getElementById('args-hint');
 const inputTemplate = document.getElementById('input-template');
 const templateRow = document.getElementById('template-row');
@@ -375,8 +376,30 @@ const ARGS_HINTS = {
   bash: '',
 };
 
+function platformSelectValues() {
+  return [...PLATFORMS, 'bash'];
+}
+
+function fillPlatformSelect(select) {
+  select.innerHTML = '';
+  for (const id of platformSelectValues()) {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = id;
+    select.appendChild(opt);
+  }
+}
+
+function modelAliasHint(type) {
+  const adapter = adapterFor(type);
+  if (!adapter) return '';
+  const names = Object.keys(adapter.model.aliases);
+  return names.length ? `${names.join(', ')} or a model id.` : 'A model id (no aliases).';
+}
+
 const homeDir = require('os').homedir();
 inputCwd.value = homeDir;
+fillPlatformSelect(inputType);
 
 
 const sidebarHeader = document.getElementById('sidebar-header');
@@ -1830,8 +1853,9 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   if (!skipAsyncRefresh) inputArgs.value = DEFAULT_ARGS[type] || '';
   argsHint.textContent = ARGS_HINTS[type] || '';
   const authoring = dialogMode === 'template';
-  const agentType = type === 'claude' || type === 'codex';
+  const agentType = isAgentType(type);
   if (modelRow) modelRow.style.display = agentType ? '' : 'none';
+  if (modelHint) modelHint.textContent = modelAliasHint(type);
   if (!skipAsyncRefresh) inputModel.value = '';
   systemPromptRow.style.display = agentType ? '' : 'none';
   if (appendPromptsRow) appendPromptsRow.style.display = agentType ? '' : 'none';
@@ -2286,7 +2310,7 @@ async function refreshNewSessionInjectSkills(enabledSet = new Set()) {
 }
 
 function newSessionIsAgent() {
-  return inputType.value === 'claude' || inputType.value === 'codex';
+  return isAgentType(inputType.value);
 }
 
 function newSessionPluginTicks() {
@@ -2346,7 +2370,7 @@ function resetNewSessionSkillCollector(disabledSet) {
   newSessionSkillsDrawn = [];
 }
 async function refreshNewSessionSkills(disabledSet = new Set(), { forTemplate = false } = {}) {
-  if (inputType.value !== 'claude') return;
+  if (!capsFor(inputType.value).skillRoster) return;
   resetNewSessionSkillCollector(disabledSet);
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
   const res = await window.api.getSkillCatalogFor(cwd);
@@ -2377,7 +2401,7 @@ function newSessionSkillDenyList() {
   return deferredSkillDeny([...keptRows, ...keptUndrawn]);
 }
 async function refreshNewSessionTools(disabledSet = null, { forTemplate = false } = {}) {
-  if (inputType.value !== 'claude') return;
+  if (!capsFor(inputType.value).tools) return;
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
   const res = await window.api.getToolCatalogFor(cwd);
   const disabled = disabledSet || new Set(getDefaultToolDenyCache());
@@ -2441,7 +2465,7 @@ async function refreshTeamForCwd() {
   if (!teamRow) return;
   const authoring = dialogMode === 'template';
   const type = inputType.value;
-  const agentType = type === 'claude' || type === 'codex';
+  const agentType = isAgentType(type);
   const hide = () => {
     teamRow.style.display = 'none';
     if (teamToggle) teamToggle.checked = false;
@@ -2724,7 +2748,7 @@ inputTemplate.addEventListener('change', async () => {
   }
   argsHint.textContent = ARGS_HINTS[t.type] || '';
   applyTypeDefaults({ skipAsyncRefresh: true });
-  const agentType = t.type === 'claude' || t.type === 'codex';
+  const agentType = isAgentType(t.type);
   if (agentType) {
     await refreshNewSessionExecCommands(new Set(t.execCommands || []));
     await refreshNewSessionPlugins(t.plugins);
@@ -2736,15 +2760,15 @@ inputTemplate.addEventListener('change', async () => {
     fillSystemPromptSelect(inputSystemPrompt, t.systemPromptFile || '', newSessionSeat());
     renderAppendChecklist(inputAppendList, new Set(t.appendPromptFiles || []), newSessionSeat());
   }
-  if (t.type === 'claude') {
+  if (tplCaps.agents) {
     renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
     renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
-    await refreshNewSessionTools(new Set(t.disabledTools || []));
-    await refreshNewSessionSkills(new Set(t.disabledSkills || []));
-    if (inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
-    if (inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
-    if (inputNoWire) inputNoWire.checked = t.noWire === true;
   }
+  if (tplCaps.tools) await refreshNewSessionTools(new Set(t.disabledTools || []));
+  if (tplCaps.skillRoster) await refreshNewSessionSkills(new Set(t.disabledSkills || []));
+  if (tplCaps.strip && inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
+  if (tplCaps.autoCompact && inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
+  if (tplCaps.noWire && inputNoWire) inputNoWire.checked = t.noWire === true;
   if (agentType) {
     setProxyControls(inputProxyMode, inputProxyUrl, t.proxy ?? null, inputProxyUrl.value);
   }
@@ -2806,7 +2830,7 @@ function collectAppendPromptFiles() {
 
 function collectFormConfig() {
   const type = inputType.value;
-  const agentType = type === 'claude' || type === 'codex';
+  const agentType = isAgentType(type);
   const caps = capsFor(type);
   const intents = agentType ? collectIntentChecklist(inputIntentList) : null;
   // Written for EVERY type (see the EDITOR_OWNED note below), and a type with no
@@ -2815,11 +2839,11 @@ function collectFormConfig() {
     ? mergePlugins(collectPluginChecklist(inputPluginList),
       pluginsForUnlistedPlugins(newSessionPluginsPersisted, newSessionPluginsRendered))
     : defaultPluginTicks();
-  const toolsAllow = (dialogMode === 'template' && type === 'claude')
+  const toolsAllow = (dialogMode === 'template' && caps.tools)
     ? collectToolAllowChecklist(inputToolsAllowList)
     : [];
-  const autoCompactOff = type === 'claude' && inputAutoCompact && !inputAutoCompact.checked;
-  const noWireOn = type === 'claude' && inputNoWire && inputNoWire.checked;
+  const autoCompactOff = caps.autoCompact && inputAutoCompact && !inputAutoCompact.checked;
+  const noWireOn = caps.noWire && inputNoWire && inputNoWire.checked;
   // NOTE (maintained-list coupling): the keys this returns are the EDITOR_OWNED
   // set in stores.js `save()` — the dialog fully controls them, so an OMITTED
   // owned key on save means "removed", not "preserve the stored value". Keep the
@@ -2830,18 +2854,18 @@ function collectFormConfig() {
     cwd: expandPath(inputCwd.value.trim()) || homeDir,
     extraArgs: withModelArg(parseArgs(inputArgs.value || ''), inputModel.value),
     proxy: agentType ? proxyValueFromControls(inputProxyMode, inputProxyUrl) : null,
-    agents: type === 'claude' ? collectAgentChecklist(inputAgentsList) : [],
+    agents: caps.agents ? collectAgentChecklist(inputAgentsList) : [],
     execCommands: agentType ? collectExecChecklist(inputExecList) : [],
     ...(Array.isArray(intents) ? { intents } : {}),
     plugins,
     ...(autoCompactOff ? { autoCompact: false } : {}),
     ...(noWireOn ? { noWire: true } : {}),
     ...(toolsAllow.length ? { tools: toolsAllow } : {}),
-    denyBuiltins: type === 'claude' ? collectBuiltinChecklist(inputBuiltinsList) : [],
-    disabledTools: type === 'claude' ? collectToolChecklist(inputToolsList) : [],
-    disabledSkills: type === 'claude' ? newSessionSkillDenyList() : [],
+    denyBuiltins: caps.agents ? collectBuiltinChecklist(inputBuiltinsList) : [],
+    disabledTools: caps.tools ? collectToolChecklist(inputToolsList) : [],
+    disabledSkills: caps.skillRoster ? newSessionSkillDenyList() : [],
     injectSkills: caps.injectSkills ? collectInjectChecklist(inputInjectSkillsList) : [],
-    stripLevel: type === 'claude' ? (Number(inputStripLevel && inputStripLevel.value) || 0) : 0,
+    stripLevel: caps.strip ? (Number(inputStripLevel && inputStripLevel.value) || 0) : 0,
     systemPromptFile: agentType ? (inputSystemPrompt.value || null) : null,
     appendPromptFiles: agentType ? collectAppendPromptFiles() : [],
   };
@@ -2860,7 +2884,7 @@ async function doCreate() {
           systemPromptFile, appendPromptFiles, intents, noWire, plugins } = cfg;
   const env = collectDialogEnv();
 
-  const supportsPrompts = type === 'claude' || type === 'codex';
+  const supportsPrompts = isAgentType(type);
   const systemPromptBody = null;
 
   if (!refreshNameValidity().ok) return;
@@ -3064,7 +3088,8 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
   setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
   setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
   setAgentLibCache((await window.api.listAgents()) || []);
-  const agentType = inputType.value === 'claude' || inputType.value === 'codex';
+  const agentType = isAgentType(inputType.value);
+  const tplCaps = capsFor(inputType.value);
   if (agentType) await loadPromptLib();
   // ABOVE the guard, like refreshNewSessionPlugins' own fetch and for the same
   // reason: a non-claude template draws no checklist but collectFormConfig still
@@ -3081,14 +3106,16 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
     await refreshNewSessionExecCommands(new Set((tpl && tpl.execCommands) || []));
     await refreshNewSessionIntents(tpl && tpl.intents);
   }
-  if (inputType.value === 'claude') {
+  if (tplCaps.agents) {
     renderAgentChecklist(inputAgentsList, new Set((tpl && tpl.agents) || []), null, newSessionSeat());
     renderBuiltinChecklist(inputBuiltinsList, new Set((tpl && tpl.denyBuiltins) || []));
+  }
+  if (tplCaps.tools) {
     renderToolAllowChecklist(inputToolsAllowList, new Set(Array.isArray(tpl && tpl.tools) ? tpl.tools : []));
     await refreshNewSessionTools(new Set((tpl && tpl.disabledTools) || []), { forTemplate: true });
-    await refreshNewSessionSkills(new Set((tpl && tpl.disabledSkills) || []), { forTemplate: true });
-    await refreshNewSessionInjectSkills(new Set((tpl && tpl.injectSkills) || []));
   }
+  if (tplCaps.skillRoster) await refreshNewSessionSkills(new Set((tpl && tpl.disabledSkills) || []), { forTemplate: true });
+  if (tplCaps.injectSkills) await refreshNewSessionInjectSkills(new Set((tpl && tpl.injectSkills) || []));
   setProxyControls(inputProxyMode, inputProxyUrl, (tpl && tpl.proxy) ?? null, settings?.lastCustomProxyUrl || settings?.proxyUrl);
   labelProxyDefault(inputProxyMode, settings);
   inputName.style.borderColor = '';
@@ -3325,7 +3352,7 @@ function sessionTypeOf(name) {
 }
 function activeIsAgent() {
   const t = activeSession ? sessionTypeOf(activeSession) : null;
-  return t === 'claude' || t === 'codex';
+  return isAgentType(t);
 }
 function sideChannelSegs(name) {
   const segs = [];
@@ -3363,7 +3390,7 @@ function activePeerConfigurable() {
   const st = peerStatuses.get(entry.peer.id);
   if (!st || !st.online || !Array.isArray(st.caps) || !st.caps.includes('args')) return false;
   const type = (st.sessions || []).find((s) => s.name === entry.peer.name)?.type;
-  return !type || type === 'claude' || type === 'codex';
+  return !type || isAgentType(type);
 }
 
 // Answered off sidebarMeta's per-row read, not off the active session: the
@@ -3463,7 +3490,7 @@ function renderSessionActions(holdHtml = '') {
   if (!el) return;
   const type = activeSession ? sessionTypeOf(activeSession) : null;
   const btns = [];
-  if (type === 'claude' || type === 'codex') {
+  if (isAgentType(type)) {
     const nFiles = (filesState.get(activeSession) || []).length;
     if (type === 'claude' || nFiles > 0) {
       const label = nFiles > 0 ? `📄 ${nFiles} file${nFiles === 1 ? '' : 's'}` : '📄 files';
@@ -7651,7 +7678,7 @@ async function openArgsDialog(name, argsSource = null) {
     argsModel.value = model;
     argsInput.value = rest.map(a => /\s/.test(a) ? `"${a}"` : a).join(' ');
   }
-  const isAgent = res.type === 'claude' || res.type === 'codex';
+  const isAgent = isAgentType(res.type);
   if (argsModelRow) argsModelRow.style.display = isAgent ? '' : 'none';
   argsProxyRow.style.display = isAgent ? '' : 'none';
   setProxyControls(argsProxyMode, argsProxyUrl, res.proxy, settings?.lastCustomProxyUrl || settings?.proxyUrl);
@@ -7659,11 +7686,10 @@ async function openArgsDialog(name, argsSource = null) {
   argsPromptRow.style.display = isAgent ? '' : 'none';
   argsAppendRow.style.display = isAgent ? '' : 'none';
   argsAppendSection.style.display = isAgent ? '' : 'none';
-  const isClaude = res.type === 'claude';
   const caps = capsFor(res.type);
   argsAccountRow.style.display = caps.accounts ? '' : 'none';
   argsAgentsRow.style.display = caps.agents ? '' : 'none';
-  argsOtherSection.style.display = isClaude ? '' : 'none';
+  argsOtherSection.style.display = caps.agents ? '' : 'none';
   // Hidden on a PEER row as exec is: the peer save omits `plugins`, so a section
   // drawn there takes an untick and silently discards it.
   const isPluginsEditable = caps.plugins && !argsSource;

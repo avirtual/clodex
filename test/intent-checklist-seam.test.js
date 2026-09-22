@@ -291,7 +291,7 @@ test('t717: collectFormConfig collects intents and exec grants for both agent ty
   const body = src.slice(src.indexOf('function collectFormConfig()'));
   const end = body.indexOf('\nfunction ');
   const fn = body.slice(0, end === -1 ? body.length : end);
-  assert.match(fn, /const agentType = type === 'claude' \|\| type === 'codex';/,
+  assert.match(fn, /const agentType = isAgentType\(type\);/,
     'ENTER: the agentType predicate the two keys are gated on');
 
   assert.match(fn, /const intents = agentType \? collectIntentChecklist\(inputIntentList\)/,
@@ -303,12 +303,12 @@ test('t717: collectFormConfig collects intents and exec grants for both agent ty
 
   // The CLI-roster settings stay claude-only: codex consumes none of them, and
   // widening them would pretend to enforce something.
-  for (const claudeOnly of ['collectAgentChecklist', 'collectBuiltinChecklist', 'collectToolChecklist',
-    'newSessionSkillDenyList']) {
-    assert.ok(new RegExp(`type === 'claude' \\? ${claudeOnly}\\(`).test(fn),
-      `${claudeOnly} must stay gated on claude alone`);
+  for (const [claudeOnly, cap] of [['collectAgentChecklist', 'agents'], ['collectBuiltinChecklist', 'agents'],
+    ['collectToolChecklist', 'tools'], ['newSessionSkillDenyList', 'skillRoster']]) {
+    assert.ok(new RegExp(`caps\\.${cap} \\? ${claudeOnly}\\(`).test(fn),
+      `${claudeOnly} must stay gated on the ${cap} cap, which only claude carries`);
   }
-  assert.match(fn, /stripLevel: type === 'claude' \?/, 'wire stripping stays claude-only');
+  assert.match(fn, /stripLevel: caps\.strip \?/, 'wire stripping stays behind the strip cap');
 
   // t749: the two codex HONOURS — its spawn arm already reads both, so a
   // claude-only save was a silent default (every shipped plugin, no skills).
@@ -325,7 +325,7 @@ test('t717: the Edit dialog draws the intents and exec sections for a codex seat
   const at = src.indexOf('async function openArgsDialog(');
   assert.ok(at > 0, 'ENTER: openArgsDialog was located');
   const body = src.slice(at, src.indexOf('\nfunction closeArgsDialog', at));
-  assert.match(body, /const isAgent = res\.type === 'claude' \|\| res\.type === 'codex';/,
+  assert.match(body, /const isAgent = isAgentType\(res\.type\);/,
     'ENTER: the isAgent predicate both widenings use');
 
   assert.match(body, /argsIntentsSection\.style\.display = isAgent \? '' : 'none'/,

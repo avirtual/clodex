@@ -38,3 +38,7 @@ them names a file no seat boots on.
 Formats in the VIEWER's timezone, from `Date`'s local getters. Fixtures must
 build their epochs with `new Date(y, m, d, …)` for that reason — a UTC epoch
 literal renders differently per machine and pins nothing.
+
+## templatePlatform
+
+`null` means no badge: the picker's `(missing)` option already says the template is absent, so a badge there would say it twice.

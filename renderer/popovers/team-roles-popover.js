@@ -30,7 +30,7 @@ const {
   teamStage, roleSummaries, ticketLine, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,
   reconcileReveal, clearableFields,
   reservedRemovalWarning, REMOVABLE_RESERVED_ROLE_KEYS, usesByRole,
-  promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor, accountOptions,
+  promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor, templatePlatform, accountOptions,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
 
@@ -322,6 +322,18 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     return group;
   }
 
+  function platformBadge() {
+    const span = document.createElement('span');
+    span.className = 'team-role-badge team-role-platform';
+    return span;
+  }
+
+  function paintPlatformBadge(span, value) {
+    const platform = templatePlatform(templateRows, teamName(), value);
+    span.textContent = platform || '';
+    span.hidden = !platform;
+  }
+
   function buildTemplateControl(stored) {
     const select = document.createElement('select');
     select.dataset.f = 'template';
@@ -347,9 +359,11 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     open.className = 'secondary team-role-template-open';
     open.textContent = 'Open';
     open.title = 'Edit this template — its model, tools and prompts — in the template editor.';
+    const platform = platformBadge();
     const rowFor = () => templateRowFor(templateRows, teamName(), select.value);
     const syncOpen = () => {
       open.disabled = !rowFor();
+      paintPlatformBadge(platform, select.value);
     };
     syncOpen();
     select.addEventListener('change', syncOpen);
@@ -359,7 +373,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       closeTeamRolesPopover();
       if (typeof openTemplate === 'function') openTemplate(row);
     });
-    return { select, open };
+    return { select, open, platform };
   }
 
   // B3/R4: the cwd + template fields, in whatever state fieldReveal says. Built
@@ -385,8 +399,9 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       const stored = (values && values[f]) || '';
       let input;
       let open = null;
+      let platform = null;
       if (f === 'template') {
-        ({ select: input, open } = buildTemplateControl(stored));
+        ({ select: input, open, platform } = buildTemplateControl(stored));
       } else {
         input = document.createElement('input');
         input.type = 'text';
@@ -397,6 +412,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       field.appendChild(label);
       field.appendChild(input);
       if (open) field.appendChild(open);
+      if (platform) field.appendChild(platform);
       if (state === 'stale') {
         // The R4 case: a value IS stored but the role dispatches standing, so
         // nothing consumes it. It must stay VISIBLE — buildSavePatch always sends
@@ -734,6 +750,9 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
           val.className = 'ro-val';
           val.textContent = name || '—';
           holder.appendChild(val);
+          const platform = platformBadge();
+          paintPlatformBadge(platform, name);
+          holder.appendChild(platform);
           const tplRow = name ? templateRowFor(templateRows, teamName(), name) : null;
           const open = document.createElement('button');
           open.type = 'button';
