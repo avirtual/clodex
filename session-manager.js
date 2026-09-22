@@ -4883,10 +4883,9 @@ function createSessionManager(deps) {
     // and fire-and-forgot the inject, which is a silent loss whenever the write does
     // not happen: _drain returns without writing on every isDead() check, and the
     // parkable divert can re-park, so a seat dying between the claim and the write
-    // dropped the messages with the files already deleted. The producer runs inside
-    // the queue's critical section, so claim and write are the same instant.
+    // dropped the messages with the files already deleted.
     _drainPendingAtIdle(session) {
-      if (!session || session.agentType !== 'claude' || session._dead) return;
+      if (!session || session.agentType !== 'claude' || session._dead || session._recycling) return;
       // Dictated as well as typed: with only the typed check here, a dictated
       // draft passed the guard, drainPending CLAIMED the files destructively, and
       // the divert then re-parked the joined text as ONE ACTIVE entry. No message
@@ -4898,7 +4897,7 @@ function createSessionManager(deps) {
       this._injectText(session, '', {
         parkable: true,
         produce: () => {
-          if (session._dead) return null;
+          if (session._dead || session._recycling) return null;
           if (this._anyDraftOpen(session)) return null;
           let texts = [];
           try { texts = drainPending(PENDING_DIR, session.name, `idle.${process.pid}`, this._bornFor(session.name)); } catch { return null; }
@@ -4920,7 +4919,7 @@ function createSessionManager(deps) {
     // atomic dir-rename the hook + idle drains use, so whoever fires first owns the
     // messages.
     _drainPendingAtBootReady(session) {
-      if (!session || session.agentType !== 'claude' || session._dead) return;
+      if (!session || session.agentType !== 'claude' || session._dead || session._recycling) return;
       session._bootDrainAt = Date.now();
       if (this._anyDraftOpen(session)) return;                     // don't splice an open draft
       if (!hasActivePending(PENDING_DIR, session.name)) return;    // nothing active — leave passives parked
@@ -4929,7 +4928,7 @@ function createSessionManager(deps) {
       // between "deferred" and "someone else took it", and the silence over both is
       // why a lost boot-window delivery left no evidence across seven reboots.
       const produce = () => {
-        if (session._dead) return null;
+        if (session._dead || session._recycling) return null;
         if (this._anyDraftOpen(session)) return null;
         let texts = [];
         try { texts = drainPending(PENDING_DIR, session.name, `boot.${process.pid}`, this._bornFor(session.name)); } catch { return null; }
@@ -7273,6 +7272,13 @@ function createSessionManager(deps) {
       return parked;
     }
 
+    async _quiesceInjects(session) {
+      session._recycling = true;
+      const q = session._injectPtyQueue;
+      if (q && typeof q.settled === 'function') { try { await q.settled(); } catch {} }
+      return this._parkHeldInjects(session);
+    }
+
     async _scratchRecycle(session, entry) {
       const name = session.name;
       session._moving = true;
@@ -7424,13 +7430,14 @@ function createSessionManager(deps) {
 
     async _scratchCutAfterGuard(session, mark, closing, entry, opts, reply) {
       const name = session.name;
-      this._parkHeldInjects(session);
+      await this._quiesceInjects(session);
       try { if (this._holdKeeper && session.sessionId) this._holdKeeper.endSession(session.sessionId); } catch {}
       session._holdRearmed = false;
 
       const verb = closing.verb || 'end';
       const recycleStart = Date.now();
       if (!await this._scratchRecycle(session, entry)) {
+        session._recycling = false;
         reply(`[agent:scratch] ${verb} refused: the old process did not exit in time — nothing was cut. The `
           + `mark ${mark.nonce} is still open.`);
         return { outcome: 'refused', reason: 'exit-timeout', stats: null, replayed: null, recycleMs: null };
@@ -8482,12 +8489,11 @@ function createSessionManager(deps) {
     _maybeParkDelivery(target, finalText, key = null) {
       if (!target || target.agentType !== 'claude' || target._dead) return false;
       const typing = Date.now() - (target.lastUserInputTs || 0) < INJECT_QUIET_MS;
-      // "Busy" = mid-turn ('thinking' from either the wire tracker or the JSONL
-      // watcher). Parking a busy DM lets the out-of-process PostToolUse hook
+      // Parking a busy DM lets the out-of-process PostToolUse hook
       // deliver it mid-loop (an external script can't see the in-memory queue).
       // The idle-edge Node drain is the fallback for a turn that ends with no tool
       // call (pure-text reply).
-      const busy = target.activityState === 'thinking';
+      const busy = target.activityState === 'thinking' || !!target._recycling;
       if (!typing && !busy) return false;
       try {
         parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), null, false, this._bornFor(target.name), key);
@@ -8508,7 +8514,7 @@ function createSessionManager(deps) {
     }
 
     _flushParkedNow(target, tag, kind = 'park-flush') {
-      if (target._dead) return { ok: true, count: 0 };
+      if (target._dead || target._recycling) return { ok: true, count: 0 };
       // Any forced flush ends the notice's deferral chain, not just the operator's
       // (flushPending). The chain otherwise dies only on a real turn or its own
       // flush, so a pane kept warm past the 300s park cap left it alive after the
@@ -8551,7 +8557,7 @@ function createSessionManager(deps) {
       // sees the same combined shape whichever drainer won.
       this._injectText(target, '', {
         produce: () => {
-          if (target._dead) return null;
+          if (target._dead || target._recycling) return null;
           let texts = [];
           try { texts = drainPending(PENDING_DIR, target.name, tag, this._bornFor(target.name)); } catch { return null; }
           return texts.length ? texts.join('\n\n') : null;   // another drainer won the claim
@@ -8695,7 +8701,16 @@ function createSessionManager(deps) {
           // not "make these consistent": aligning them breaks whichever one is
           // aligned to the other.
           speaking: () => Date.now() - (session.lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS,
-          isDead: () => !!session._dead,
+          isDead: () => !!(session._dead || session._recycling),
+          onUndelivered: (t) => {
+            try {
+              const born = typeof session.createdAt === 'number' ? session.createdAt : null;
+              parkDelivery(PENDING_DIR, session.name, t, this._nextParkSeq(), null, false, born, null);
+              log.info('inject', `re-parked an undelivered inject for ${session.name} (${session._recycling ? 'recycling' : 'dead'}, ${t.length} chars)`);
+            } catch (e) {
+              log.error('inject', `re-park failed for ${session.name}: ${e.message} — ${t.length} chars dropped`);
+            }
+          },
           bracketedPaste: () => !!session._pasteModeOn,
           onSubmitted: (_t, meta) => { session.lastSubmitInjected = !(meta && meta.human); },
           ready: isClaude ? () => !!session._bootReadySeen : undefined,

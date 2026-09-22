@@ -35,7 +35,9 @@ Move's shape, not `kill()` and not reload. `kill()` removes the persistence
 record, fires `_notifyComposition(s, 'retired')` — peers would be told the lead
 retired — and stamps a `kill` cost; `exitDisposition({ moving: true })` marks
 the exit expected and the renderer keeps the tab. Measured span kill→boot is
-about 5 s, which is the number `recycleMs` records per episode.
+about 5 s, which is the number `recycleMs` records per episode. Measured: a
+MERGED notice delivered 21:49:20 was claimed by the idle drain at the turn end
+that fired the cut; seat exit 21:49:34; text in neither backup nor transcript.
 
 `--resume <id>` is not confined to the transcript's project dir (see the `move`
 note), so the respawn reaches the same conversation with `entry.sessionId`

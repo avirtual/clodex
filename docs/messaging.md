@@ -328,7 +328,16 @@ for the operator. The nudge is cleared by the turn edge and by kill, gives up at
   with the target's own next turn; the busy/draft park arms a non-destructive
   5min cap (`_armParkCap`) that drains through the inject queue. Cost/dialog
   hold-parks do NOT arm the cap — they wait for the target's next turn or an
-  explicit resend.
+  explicit resend. A unit whose text is already claimed when the seat dies or
+  is marked `_recycling` (`_quiesceInjects`, before a scratch cut kills the
+  pty) is re-parked through the queue's `onUndelivered` with the seat's `born`,
+  so these drains deliver it to the respawned process. On that seat the
+  boot-ready drain (`_bootReadySeen` edge + `BOOT_DRAIN_SETTLE_MS`) and the
+  briefing (`_injectAfterBoot`: transcript symlink + `RELOAD_CONTINUATION_DELAY`)
+  share one queue, so enqueue order decides: at the defaults (750 ms and
+  2500 ms) the drain enqueues first unless the symlink lands more than ≈1.75 s
+  before the mode-2004 edge, so the re-parked delivery normally precedes the
+  briefing.
 - **Operator flush** (`countPending` + `flushPending` / `_flushParkedNow`) — a
   parked-DM count badge (`✉N`) on the sidebar session row, fed by a 1s
   `pending-count` poll (deltas only) over live Claude sessions plus a seed from
@@ -341,8 +350,6 @@ for the operator. The nudge is cleared by the turn edge and by kill, gives up at
   files into the volatile in-memory queue behind the dialog). **Operator-only**
   via the `session:flushPending` ipcMain.handle — there is deliberately no
   agent-facing flush verb (agents keep `[agent:resend]` for id'd cost-holds).
-- Parked deliveries are deleted only on explicit user-kill (`_cleanup` gates
-  the rmrf on `_userKilled`); restarts and quits keep them.
 
 ## 4. DM federation (`name@origin`)
 

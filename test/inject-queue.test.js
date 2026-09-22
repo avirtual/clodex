@@ -689,3 +689,86 @@ test('InjectQueue: onSubmitted absent leaves the drained bytes exactly as before
   await q.enqueue('line1\nline2');
   assert.deepStrictEqual(writes, ['\x15', 'line1\rline2', '\r']);
 });
+
+test('InjectQueue: a death mid-drain re-parks the claimed text through onUndelivered exactly when a write was skipped', async () => {
+  const rows = [
+    { at: 'before produce', deadFromStart: true, writes: [], undelivered: [], produceCalls: 0 },
+    { at: 'after produce', dieInProduce: true, writes: [], undelivered: ['X'], produceCalls: 1 },
+    { at: 'after Ctrl-U', dieAtSleep: 1, writes: ['\x15'], undelivered: ['X'], produceCalls: 1 },
+    { at: 'after text', dieAtSleep: 2, writes: ['\x15', 'X'], undelivered: ['X'], produceCalls: 1 },
+    { at: 'after Enter', writes: ['\x15', 'X', '\r'], undelivered: [], produceCalls: 1 },
+  ];
+  for (const row of rows) {
+    const writes = [];
+    const undelivered = [];
+    let dead = !!row.deadFromStart;
+    let sleeps = 0;
+    let produceCalls = 0;
+    const q = new InjectQueue({
+      write: (bytes) => writes.push(bytes),
+      settleMsFor: () => 5,
+      quietMs: 0, maxWaitMs: 0,
+      lastHumanInputAt: () => 0,
+      isDead: () => dead,
+      onUndelivered: (t) => undelivered.push(t),
+      sleep: () => { if (++sleeps === row.dieAtSleep) dead = true; return Promise.resolve(); },
+    });
+    await q.enqueue('', { produce: () => { produceCalls++; if (row.dieInProduce) dead = true; return 'X'; } });
+    assert.deepStrictEqual(writes, row.writes, `${row.at}: writes`);
+    assert.deepStrictEqual(undelivered, row.undelivered, `${row.at}: onUndelivered`);
+    assert.strictEqual(produceCalls, row.produceCalls, `${row.at}: produce calls`);
+  }
+});
+
+test('InjectQueue: a throwing onUndelivered is swallowed and the queue keeps draining', async () => {
+  const writes = [];
+  let dead = false;
+  let sleeps = 0;
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 5,
+    quietMs: 0, maxWaitMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => dead,
+    onUndelivered: () => { throw new Error('park failed'); },
+    sleep: () => { if (++sleeps === 1) dead = true; return Promise.resolve(); },
+  });
+  await q.enqueue('X');
+  dead = false;
+  await q.enqueue('Y');
+  assert.deepStrictEqual(writes, ['\x15', '\x15', 'Y', '\r']);
+});
+
+test('InjectQueue.settled(): resolves once every enqueued unit has drained', async () => {
+  const writes = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 5,
+    quietMs: 0, maxWaitMs: 0,
+    lastHumanInputAt: () => 0,
+    sleep: () => Promise.resolve(),
+  });
+  q.enqueue('A');
+  q.enqueue('B');
+  assert.strictEqual(q.length, 2);
+  await q.settled();
+  assert.strictEqual(q.length, 0);
+  assert.deepStrictEqual(writes, ['\x15', 'A', '\r', '\x15', 'B', '\r']);
+});
+
+test('InjectQueue: a plain unit dying at the gates is re-parked only when it carries a divert (a parkable delivery), never a bare self-inject', async () => {
+  for (const [divert, expected] of [[() => false, ['X']], [null, []]]) {
+    const undelivered = [];
+    const q = new InjectQueue({
+      write: () => {},
+      settleMsFor: () => 5,
+      quietMs: 0, maxWaitMs: 0,
+      lastHumanInputAt: () => 0,
+      isDead: () => true,
+      onUndelivered: (t) => undelivered.push(t),
+      sleep: () => Promise.resolve(),
+    });
+    await q.enqueue('X', divert ? { divert } : undefined);
+    assert.deepStrictEqual(undelivered, expected, divert ? 'parkable text re-parked' : 'bare text dropped');
+  }
+});
