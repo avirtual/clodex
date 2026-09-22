@@ -4883,8 +4883,7 @@ function createSessionManager(deps) {
     // and fire-and-forgot the inject, which is a silent loss whenever the write does
     // not happen: _drain returns without writing on every isDead() check, and the
     // parkable divert can re-park, so a seat dying between the claim and the write
-    // dropped the messages with the files already deleted. The producer runs inside
-    // the queue's critical section, so claim and write are the same instant.
+    // dropped the messages with the files already deleted.
     _drainPendingAtIdle(session) {
       if (!session || session.agentType !== 'claude' || session._dead || session._recycling) return;
       // Dictated as well as typed: with only the typed check here, a dictated

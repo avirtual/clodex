@@ -20620,9 +20620,10 @@ test('t1099 _quiesceInjects: a delivery claimed mid-drain at the recycle is re-p
   assert.strictEqual(entry.born, session.createdAt, 'stamped for the seat create() re-mints with the same createdAt');
   assert.strictEqual(session._injectPtyQueue.length, 0, 'the queue is settled');
   m._drainPendingAtIdle(session);
+  assert.strictEqual(session._injectPtyQueue.length, 0, 'a drain arriving while recycling enqueues nothing');
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(files.length, fsReal.readdirSync(pathReal.join(PENDING_DIR, 'a')).length,
-    'a drain arriving while recycling neither claims nor injects');
+    'and neither claims nor injects');
 });
 
 test('t1099 _scratchCutAfterGuard: the pty queue is quiesced BEFORE the recycle kills the process', async () => {
