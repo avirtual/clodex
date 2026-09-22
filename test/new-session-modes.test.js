@@ -23,7 +23,7 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const { capsFor } = require('../cli-adapters');
-const { skillOffSetFor, skillDenyIsDeferred } = require('../skills-off');
+const { skillOffSetFor, applySkillAliases, skillDenyIsDeferred } = require('../skills-off');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
 const htmlSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
 
@@ -713,7 +713,7 @@ async function drawSkillsForTemplate(disabledSkills) {
       renderSkillChecklist: checklists.renderSkillChecklist,
       advisoryEffective: (e) => e || {},
       // Real, not stubs: what the rows draw must be what the spawn resolves.
-      skillOffSetFor, skillDenyIsDeferred,
+      skillOffSetFor, applySkillAliases, skillDenyIsDeferred,
       newSessionSkillsDeferred: false,
       newSessionSkillsDrawn: [],
       newSessionSkillsAsked: [],

@@ -33,7 +33,7 @@ const {
 const { BUILTIN_AGENTS } = require('../agents-util');
 const { initStores } = require('../stores');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { skillOffSetFor, skillDenyIsDeferred, expandSkillsOff } = require('../skills-off');
+const { skillOffSetFor, applySkillAliases, skillDenyIsDeferred, expandSkillsOff } = require('../skills-off');
 
 // --- the minimum DOM the render functions touch ---------------------------
 
@@ -148,7 +148,7 @@ async function runDialog(settings, { type = 'claude', openIn, switchTo } = {}) {
       },
       advisoryEffective: (e) => e || {},
       // Real module, so the rows draw from what `!name` resolves to at spawn.
-      skillOffSetFor, skillDenyIsDeferred,
+      skillOffSetFor, applySkillAliases, skillDenyIsDeferred,
       newSessionSkillsDeferred: false,
       newSessionSkillsDrawn: [],
       newSessionSkillsAsked: [],

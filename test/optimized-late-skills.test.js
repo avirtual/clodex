@@ -117,7 +117,7 @@ async function dialogDisabledSkills(engine, mode, {
   try {
     const inputSkillsList = el('div');
     const noop = () => {};
-    const { skillOffSetFor, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList } = require('../skills-off');
+    const { skillOffSetFor, applySkillAliases, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList } = require('../skills-off');
     const env = {
       inputMode: { value: mode },
       inputType: { value: 'claude' },
@@ -130,7 +130,7 @@ async function dialogDisabledSkills(engine, mode, {
       renderSkillChecklist: checklists.renderSkillChecklist,
       collectSkillChecklist: checklists.collectSkillChecklist,
       advisoryEffective: (e) => e || {},
-      skillOffSetFor, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList,
+      skillOffSetFor, applySkillAliases, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList,
       newSessionSkillsDeferred: false,
       newSessionSkillsDrawn: [],
       newSessionSkillsAsked: [],
