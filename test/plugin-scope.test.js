@@ -1542,7 +1542,7 @@ test('t655: pruneForPlugins keeps grants for a plugin with NO registered row, an
 // `collectFormConfig`'s non-claude arm then returned `defaultPluginTicks() ===
 // []` and `saveTemplateFromForm` wrote a closed list into the template file.
 // Same fix and same pin shape as refreshNewSessionPlugins' own hoist.
-test('t655: openTemplateEditor fetches the plugin catalog ABOVE its claude guard', () => {
+test('t655: openTemplateEditor fetches the plugin catalog ABOVE its agents-cap guard', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   const at = src.indexOf('async function openTemplateEditor');
   assert.ok(at > 0, 'ENTER: openTemplateEditor was found');
@@ -1554,9 +1554,9 @@ test('t655: openTemplateEditor fetches the plugin catalog ABOVE its claude guard
   assert.ok(body.length < 4000, 'ENTER: the slice is one function, not the rest of the file');
 
   const fetchAt = body.indexOf('await refreshNewSessionPlugins(');
-  const guardAt = body.indexOf("if (inputType.value === 'claude')");
+  const guardAt = body.indexOf('if (tplCaps.agents)');
   assert.ok(fetchAt > 0, 'the plugin fetch is in the function');
-  assert.ok(guardAt > 0, 'ENTER: and the claude guard is still there to be above');
+  assert.ok(guardAt > 0, 'ENTER: and the agents-cap guard is still there to be above');
   assert.ok(fetchAt < guardAt,
     'the fetch runs BEFORE the guard — below it, a non-claude template save writes plugins: [] '
     + 'from an empty cache and closes that template to every plugin');
