@@ -16,7 +16,7 @@ const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
 const { pathFor, runDirFor, defaultClodexHome, seatPathFor, claudeProjectSlug } = require('./clodex-paths');
 const { confine } = require('./path-confine');
 const { createSkillDelivery } = require('./skill-delivery');
-const { createSkillLister } = require('./muse-skills');
+const { createSkillLister, resolveSkillId } = require('./muse-skills');
 const { adapterFor: adapterRowFor } = require('./cli-adapters');
 const { KINDS: PROMPT_KINDS, badStem, teamPromptFile, teamJsonFile, readTeamJson } = require('./team-prompt-dir');
 const { planGather, applyGather } = require('./team-gather');
@@ -1789,8 +1789,10 @@ function readSkillCatalog({ name = null, cwd = null, type = null } = {}) {
     const envKey = adapter.account.envKey;
     const configDir = (entry && entry.env && typeof entry.env[envKey] === 'string' && entry.env[envKey])
       || path.join(os.homedir(), '.config');
-    const listed = platformSkills(adapter, { configDir }).map((s) => s.id);
-    const names = [...new Set([...listed, ...disabled])].filter((n) => !isSkillDenyDirective(n)).sort();
+    const roster = platformSkills(adapter, { configDir });
+    const listed = roster.map((s) => s.id);
+    const off = disabled.map((n) => resolveSkillId(roster, n));
+    const names = [...new Set([...listed, ...off])].filter((n) => !isSkillDenyDirective(n)).sort();
     const base = { ok: true, names, effective: {}, skillsLocked: false, canReenable: SKILL_REENABLE_CONFIRMED };
     if (!name) return base;
     return {

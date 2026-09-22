@@ -5,6 +5,7 @@ const { isSkillDenyDirective, skillDenyKeepList } = require('./skills-off');
 const EMITTED_SCOPES = ['bundled', 'plugin', 'user'];
 const LIST_TIMEOUT_MS = 30000;
 const LIST_MAX_BUFFER = 16 * 1024 * 1024;
+const STDERR_CAP = 200;
 
 function parseSkillsList(json) {
   let doc = json;
@@ -37,6 +38,13 @@ function matchKeys(skill) {
   const dir = skillDirName(skill.path);
   if (dir) keys.add(dir);
   return keys;
+}
+
+function resolveSkillId(skills, name) {
+  for (const skill of Array.isArray(skills) ? skills : []) {
+    if (matchKeys(skill).has(name)) return skill.id;
+  }
+  return name;
 }
 
 function nameSet(list) {
@@ -93,28 +101,29 @@ function createSkillLister({ execFileSync, scratchDir, env = {}, log = null }) {
     if (!spec || !configDir) return [];
     const key = `${adapter.id}\0${configDir}`;
     if (cache.has(key)) return cache.get(key);
-    let skills = [];
     try {
       const runEnv = { ...env, ...(spec.extraEnv || {}), [spec.env]: configDir };
       if (spec.scratchEnv && scratchDir) runEnv[spec.scratchEnv] = scratchDir;
       const out = execFileSync(adapter.cmd, spec.args, {
         env: runEnv, encoding: 'utf8', timeout: LIST_TIMEOUT_MS, maxBuffer: LIST_MAX_BUFFER,
-        stdio: ['ignore', 'pipe', 'ignore'],
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
-      skills = parseSkillsList(out);
+      const skills = parseSkillsList(out);
+      cache.set(key, skills);
+      return skills;
     } catch (e) {
-      skills = [];
       if (log && typeof log.warn === 'function') {
-        log.warn('skills', `${adapter.cmd} ${spec.args.join(' ')} failed for ${configDir}: ${(e && e.message) || e}`);
+        const stderr = e && typeof e.stderr === 'string' ? e.stderr.trim().slice(0, STDERR_CAP) : '';
+        const cause = `${(e && e.message) || e}${stderr ? `: ${stderr}` : ''}`;
+        log.warn('skills', `${adapter.cmd} ${spec.args.join(' ')} failed for ${configDir}: ${cause}`);
       }
+      return [];
     }
-    cache.set(key, skills);
-    return skills;
   }
   return { list, clear: () => cache.clear() };
 }
 
 module.exports = {
-  parseSkillsList, resolveOffSkills, activationBlock, activationSettings, createSkillLister,
+  parseSkillsList, resolveOffSkills, resolveSkillId, activationBlock, activationSettings, createSkillLister,
   skillDirName, EMITTED_SCOPES, LIST_TIMEOUT_MS,
 };

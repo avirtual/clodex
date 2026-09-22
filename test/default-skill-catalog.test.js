@@ -255,3 +255,15 @@ test('t1090: a muse seat\'s catalog reads the account dir its record carries, an
   assert.deepStrictEqual(res.outOfScope, []);
   assert.deepStrictEqual(res.effective, {});
 });
+
+test('t1094: a directory-named entry in disabledSkills resolves to its roster id, so names carries `bundled:git` once and no bare `git`', () => {
+  const { lister } = fakeLister();
+  const box = mkBox({ skillLister: lister });
+  box.engine.stores.persistence.upsert({
+    name: 'muse-dir', type: 'muse', cwd: box.tmp, workspaceId: 'default',
+    disabledSkills: ['git', 'nope'], env: { XDG_CONFIG_HOME: '/acct/xdg' },
+  });
+  const res = box.seat('muse-dir');
+  assert.deepStrictEqual(res.names, ['bundled:git', 'nope', 'plugin:threejs:threejs']);
+  assert.deepStrictEqual(res.disabledSkills, ['git', 'nope'], 'the stored list is untouched');
+});
