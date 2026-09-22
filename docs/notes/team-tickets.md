@@ -118,11 +118,3 @@ line is never slowOnly: that is a real defect the hand must clear.
 Ownership is read out of GIT (`diffNames` + `fileAt` against the branch), not off
 the worktree: the merge arm asks after the branch has landed, and a torn-down
 tree would answer "nothing owned" for a branch that owns everything.
-
-## _checkReviewStarted
-
-"Started" is transcript growth ABOVE the size stamped by `_armReviewStartCheck`
-on its first arm (`_reviewStartSize`), not size > 0: a Muse seat's mint turn is
-in `session.jsonl` before the PTY spawns, so `> 0` read every Muse reviewer as
-started and never re-nudged one that never took a turn. Claude and Codex seats
-have no transcript at arm, so their baseline is 0 and nothing changes for them.
