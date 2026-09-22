@@ -2,10 +2,12 @@
 // Slice 3). The popover's DOM wiring is imperative + untested (like the checklist
 // popovers), so every decision worth a unit test is split out to here.
 //
-// Pure leaf: no DOM, no window, no requires. Mirrors renderer/lib/checklists.js's
+// Pure leaf: no DOM, no window. Mirrors renderer/lib/checklists.js's
 // testable-split convention.
 
 'use strict';
+
+const { DEFAULT_TYPE } = require('../../cli-adapters');
 
 // Operator-owned topology (T29 C1) — the popover shows these rows but offers no
 // edit/rename/remove controls (the mutators would bounce them anyway). Kept in
@@ -150,6 +152,11 @@ function templateRowFor(rows, team, value) {
   return list.find((t) => t && t.team === team && t.name === value)
     || list.find((t) => t && !t.team && !t.plugin && t.name === value)
     || null;
+}
+
+function templatePlatform(rows, team, value) {
+  const row = templateRowFor(rows, team, value);
+  return row ? (row.type || DEFAULT_TYPE) : null;
 }
 
 // The branch ORDER is the meaning: a team-owned stem is on disk and resolves first,
@@ -692,7 +699,7 @@ function usesByRole(planItems, roleKeys) {
 
 module.exports = {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, reservedRoleTemplate, preflightByRole, usesByRole,
-  promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor, accountOptions,
+  promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor, templatePlatform, accountOptions,
   reservedRemovalWarning,
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,

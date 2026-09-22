@@ -1738,6 +1738,10 @@ body {
   border-radius: 3px;
   padding: 0 4px;
 }
+.team-role-platform {
+  margin-left: 4px;
+  white-space: nowrap;
+}
 .team-role-ro-meta {
   font-size: 11px;
   color: var(--text-dim);
@@ -8771,11 +8775,7 @@ body.web-frontend #sidebar-header {
         <span class="hint-text" id="name-hint"></span>
       </label>
       <label>Type
-        <select id="input-type">
-          <option value="claude">claude</option>
-          <option value="codex">codex</option>
-          <option value="bash">bash</option>
-        </select>
+        <select id="input-type"></select>
       </label>
       <label>Working directory
         <div class="dir-picker">
@@ -8910,8 +8910,8 @@ body.web-frontend #sidebar-header {
           </label>
         </details>
         <label id="model-row">Model
-          <input type="text" id="input-model" placeholder="(CLI default) — e.g. opus, sonnet" spellcheck="false">
-          <span class="hint-text">The model Clodex launches (and relaunches) this session with. An in-CLI <code>/model</code> change is runtime-only and isn't saved here.</span>
+          <input type="text" id="input-model" placeholder="(CLI default)" spellcheck="false">
+          <span class="hint-text"><span id="model-hint"></span> The model Clodex launches (and relaunches) this session with. An in-CLI <code>/model</code> change is runtime-only and isn't saved here.</span>
         </label>
         <label>Extra CLI args
           <input type="text" id="input-args" placeholder="(none)">
@@ -35140,6 +35140,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
   var require_team_roles = __commonJS({
     "renderer/lib/team-roles.js"(exports, module) {
       "use strict";
+      var { DEFAULT_TYPE } = require_cli_adapters();
       var RESERVED_ROLE_KEYS = /* @__PURE__ */ new Set(["lead", "reviewer"]);
       var REMOVABLE_RESERVED_ROLE_KEYS = /* @__PURE__ */ new Set(["reviewer"]);
       var ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
@@ -35228,6 +35229,10 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         if (!value) return null;
         const list = Array.isArray(rows) ? rows : [];
         return list.find((t) => t && t.team === team && t.name === value) || list.find((t) => t && !t.team && !t.plugin && t.name === value) || null;
+      }
+      function templatePlatform(rows, team, value) {
+        const row = templateRowFor(rows, team, value);
+        return row ? row.type || DEFAULT_TYPE : null;
       }
       function storedPromptNote(prompt2, opts = {}) {
         const { offered = [], all = [], teamOwned = [], listingOk = true, team = "" } = opts;
@@ -35531,6 +35536,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         storedPromptNote,
         templateOptionGroups,
         templateRowFor,
+        templatePlatform,
         accountOptions,
         reservedRemovalWarning,
         parseDuration,
@@ -35590,6 +35596,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         storedPromptNote,
         templateOptionGroups,
         templateRowFor,
+        templatePlatform,
         accountOptions
       } = require_team_roles();
       var { anchorRect, makeDraggable, resetDrag } = require_popover_drag();
@@ -35813,6 +35820,16 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           return group;
         }
+        function platformBadge() {
+          const span = document.createElement("span");
+          span.className = "team-role-badge team-role-platform";
+          return span;
+        }
+        function paintPlatformBadge(span, value) {
+          const platform = templatePlatform(templateRows, teamName(), value);
+          span.textContent = platform || "";
+          span.hidden = !platform;
+        }
         function buildTemplateControl(stored) {
           const select = document.createElement("select");
           select.dataset.f = "template";
@@ -35838,9 +35855,11 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           open.className = "secondary team-role-template-open";
           open.textContent = "Open";
           open.title = "Edit this template \u2014 its model, tools and prompts \u2014 in the template editor.";
+          const platform = platformBadge();
           const rowFor = () => templateRowFor(templateRows, teamName(), select.value);
           const syncOpen = () => {
             open.disabled = !rowFor();
+            paintPlatformBadge(platform, select.value);
           };
           syncOpen();
           select.addEventListener("change", syncOpen);
@@ -35850,7 +35869,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             closeTeamRolesPopover();
             if (typeof openTemplate === "function") openTemplate(row);
           });
-          return { select, open };
+          return { select, open, platform };
         }
         function renderRevealedFields(box, reveal, values, onClear) {
           box.innerHTML = "";
@@ -35865,8 +35884,9 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             const stored = values && values[f] || "";
             let input;
             let open = null;
+            let platform = null;
             if (f === "template") {
-              ({ select: input, open } = buildTemplateControl(stored));
+              ({ select: input, open, platform } = buildTemplateControl(stored));
             } else {
               input = document.createElement("input");
               input.type = "text";
@@ -35877,6 +35897,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             field.appendChild(label);
             field.appendChild(input);
             if (open) field.appendChild(open);
+            if (platform) field.appendChild(platform);
             if (state === "stale") {
               input.disabled = true;
               const why = document.createElement("span");
@@ -36103,6 +36124,9 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 val.className = "ro-val";
                 val.textContent = name || "\u2014";
                 holder.appendChild(val);
+                const platform = platformBadge();
+                paintPlatformBadge(platform, name);
+                holder.appendChild(platform);
                 const tplRow = name ? templateRowFor(templateRows, teamName(), name) : null;
                 const open = document.createElement("button");
                 open.type = "button";
@@ -39918,7 +39942,7 @@ ${detail}` });
       var { matchGutterRow, findGutterFile } = require_gutter_scan();
       var GUTTER_HEADER_SCAN = 400;
       var { splitModelArg, withModelArg } = require_args_model();
-      var { capsFor } = require_cli_adapters();
+      var { PLATFORMS, adapterFor, isAgentType, capsFor } = require_cli_adapters();
       var { expandTeamRoot, usesTeamRoot } = require_team_root_expand();
       var { altChordAction } = require_web_shortcuts();
       var { createMirrorLatch } = require_mirror_latch();
@@ -40141,6 +40165,7 @@ ${detail}` });
       bindAccountSelect(inputAccount, inputEnv, () => dialogAccounts);
       var inputModel = document.getElementById("input-model");
       var modelRow = document.getElementById("model-row");
+      var modelHint = document.getElementById("model-hint");
       var argsHint = document.getElementById("args-hint");
       var inputTemplate = document.getElementById("input-template");
       var templateRow = document.getElementById("template-row");
@@ -40294,8 +40319,27 @@ ${detail}` });
         codex: "Skips approval prompts and sandboxing. Clear for safer defaults.",
         bash: ""
       };
+      function platformSelectValues() {
+        return [...PLATFORMS, "bash"];
+      }
+      function fillPlatformSelect(select) {
+        select.innerHTML = "";
+        for (const id of platformSelectValues()) {
+          const opt = document.createElement("option");
+          opt.value = id;
+          opt.textContent = id;
+          select.appendChild(opt);
+        }
+      }
+      function modelAliasHint(type) {
+        const adapter = adapterFor(type);
+        if (!adapter) return "";
+        const names = Object.keys(adapter.model.aliases);
+        return names.length ? `${names.join(", ")} or a model id.` : "A model id (no aliases).";
+      }
       var homeDir = require_os_shim().homedir();
       inputCwd.value = homeDir;
+      fillPlatformSelect(inputType);
       var sidebarHeader = document.getElementById("sidebar-header");
       var currentWorkspaceId = null;
       var currentWorkspaceName = "Workspace";
@@ -41587,8 +41631,9 @@ ${detail}` });
         if (!skipAsyncRefresh) inputArgs.value = DEFAULT_ARGS[type] || "";
         argsHint.textContent = ARGS_HINTS[type] || "";
         const authoring = dialogMode === "template";
-        const agentType = type === "claude" || type === "codex";
+        const agentType = isAgentType(type);
         if (modelRow) modelRow.style.display = agentType ? "" : "none";
+        if (modelHint) modelHint.textContent = modelAliasHint(type);
         if (!skipAsyncRefresh) inputModel.value = "";
         systemPromptRow.style.display = agentType ? "" : "none";
         if (appendPromptsRow) appendPromptsRow.style.display = agentType ? "" : "none";
@@ -42042,7 +42087,7 @@ ${detail}` });
         renderInjectChecklist(inputInjectSkillsList, enabledSet, null, newSessionSeat());
       }
       function newSessionIsAgent() {
-        return inputType.value === "claude" || inputType.value === "codex";
+        return isAgentType(inputType.value);
       }
       function newSessionPluginTicks() {
         return capsFor(inputType.value).plugins ? collectPluginChecklist(inputPluginList) : defaultPluginTicks();
@@ -42194,7 +42239,7 @@ ${detail}` });
         if (!teamRow) return;
         const authoring = dialogMode === "template";
         const type = inputType.value;
-        const agentType = type === "claude" || type === "codex";
+        const agentType = isAgentType(type);
         const hide = () => {
           teamRow.style.display = "none";
           if (teamToggle) teamToggle.checked = false;
@@ -42460,7 +42505,7 @@ ${detail}` });
         }
         argsHint.textContent = ARGS_HINTS[t.type] || "";
         applyTypeDefaults({ skipAsyncRefresh: true });
-        const agentType = t.type === "claude" || t.type === "codex";
+        const agentType = isAgentType(t.type);
         if (agentType) {
           await refreshNewSessionExecCommands(new Set(t.execCommands || []));
           await refreshNewSessionPlugins(t.plugins);
@@ -42472,15 +42517,15 @@ ${detail}` });
           fillSystemPromptSelect(inputSystemPrompt, t.systemPromptFile || "", newSessionSeat());
           renderAppendChecklist(inputAppendList, new Set(t.appendPromptFiles || []), newSessionSeat());
         }
-        if (t.type === "claude") {
+        if (tplCaps.agents) {
           renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
           renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
-          await refreshNewSessionTools(new Set(t.disabledTools || []));
-          await refreshNewSessionSkills(new Set(t.disabledSkills || []));
-          if (inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
-          if (inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
-          if (inputNoWire) inputNoWire.checked = t.noWire === true;
         }
+        if (tplCaps.tools) await refreshNewSessionTools(new Set(t.disabledTools || []));
+        if (tplCaps.skillRoster) await refreshNewSessionSkills(new Set(t.disabledSkills || []));
+        if (tplCaps.strip && inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
+        if (tplCaps.autoCompact && inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
+        if (tplCaps.noWire && inputNoWire) inputNoWire.checked = t.noWire === true;
         if (agentType) {
           setProxyControls(inputProxyMode, inputProxyUrl, t.proxy ?? null, inputProxyUrl.value);
         }
@@ -42535,33 +42580,33 @@ ${detail}` });
       }
       function collectFormConfig() {
         const type = inputType.value;
-        const agentType = type === "claude" || type === "codex";
+        const agentType = isAgentType(type);
         const caps = capsFor(type);
         const intents = agentType ? collectIntentChecklist(inputIntentList) : null;
         const plugins = caps.plugins ? mergePlugins(
           collectPluginChecklist(inputPluginList),
           pluginsForUnlistedPlugins(newSessionPluginsPersisted, newSessionPluginsRendered)
         ) : defaultPluginTicks();
-        const toolsAllow = dialogMode === "template" && type === "claude" ? collectToolAllowChecklist(inputToolsAllowList) : [];
-        const autoCompactOff = type === "claude" && inputAutoCompact && !inputAutoCompact.checked;
-        const noWireOn = type === "claude" && inputNoWire && inputNoWire.checked;
+        const toolsAllow = dialogMode === "template" && caps.tools ? collectToolAllowChecklist(inputToolsAllowList) : [];
+        const autoCompactOff = caps.autoCompact && inputAutoCompact && !inputAutoCompact.checked;
+        const noWireOn = caps.noWire && inputNoWire && inputNoWire.checked;
         return {
           type,
           cwd: expandPath(inputCwd.value.trim()) || homeDir,
           extraArgs: withModelArg(parseArgs(inputArgs.value || ""), inputModel.value),
           proxy: agentType ? proxyValueFromControls(inputProxyMode, inputProxyUrl) : null,
-          agents: type === "claude" ? collectAgentChecklist(inputAgentsList) : [],
+          agents: caps.agents ? collectAgentChecklist(inputAgentsList) : [],
           execCommands: agentType ? collectExecChecklist(inputExecList) : [],
           ...Array.isArray(intents) ? { intents } : {},
           plugins,
           ...autoCompactOff ? { autoCompact: false } : {},
           ...noWireOn ? { noWire: true } : {},
           ...toolsAllow.length ? { tools: toolsAllow } : {},
-          denyBuiltins: type === "claude" ? collectBuiltinChecklist(inputBuiltinsList) : [],
-          disabledTools: type === "claude" ? collectToolChecklist(inputToolsList) : [],
-          disabledSkills: type === "claude" ? newSessionSkillDenyList() : [],
+          denyBuiltins: caps.agents ? collectBuiltinChecklist(inputBuiltinsList) : [],
+          disabledTools: caps.tools ? collectToolChecklist(inputToolsList) : [],
+          disabledSkills: caps.skillRoster ? newSessionSkillDenyList() : [],
           injectSkills: caps.injectSkills ? collectInjectChecklist(inputInjectSkillsList) : [],
-          stripLevel: type === "claude" ? Number(inputStripLevel && inputStripLevel.value) || 0 : 0,
+          stripLevel: caps.strip ? Number(inputStripLevel && inputStripLevel.value) || 0 : 0,
           systemPromptFile: agentType ? inputSystemPrompt.value || null : null,
           appendPromptFiles: agentType ? collectAppendPromptFiles() : []
         };
@@ -42592,7 +42637,7 @@ ${detail}` });
           plugins
         } = cfg;
         const env = collectDialogEnv();
-        const supportsPrompts = type === "claude" || type === "codex";
+        const supportsPrompts = isAgentType(type);
         const systemPromptBody = null;
         if (!refreshNameValidity().ok) return;
         if (createInFlight) return;
@@ -42780,7 +42825,8 @@ ${detail}` });
         setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
         setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
         setAgentLibCache(await window.api.listAgents() || []);
-        const agentType = inputType.value === "claude" || inputType.value === "codex";
+        const agentType = isAgentType(inputType.value);
+        const tplCaps = capsFor(inputType.value);
         if (agentType) await loadPromptLib();
         await refreshNewSessionPlugins(tpl && tpl.plugins);
         if (agentType) {
@@ -42790,14 +42836,16 @@ ${detail}` });
           await refreshNewSessionExecCommands(new Set(tpl && tpl.execCommands || []));
           await refreshNewSessionIntents(tpl && tpl.intents);
         }
-        if (inputType.value === "claude") {
+        if (tplCaps.agents) {
           renderAgentChecklist(inputAgentsList, new Set(tpl && tpl.agents || []), null, newSessionSeat());
           renderBuiltinChecklist(inputBuiltinsList, new Set(tpl && tpl.denyBuiltins || []));
+        }
+        if (tplCaps.tools) {
           renderToolAllowChecklist(inputToolsAllowList, new Set(Array.isArray(tpl && tpl.tools) ? tpl.tools : []));
           await refreshNewSessionTools(new Set(tpl && tpl.disabledTools || []), { forTemplate: true });
-          await refreshNewSessionSkills(new Set(tpl && tpl.disabledSkills || []), { forTemplate: true });
-          await refreshNewSessionInjectSkills(new Set(tpl && tpl.injectSkills || []));
         }
+        if (tplCaps.skillRoster) await refreshNewSessionSkills(new Set(tpl && tpl.disabledSkills || []), { forTemplate: true });
+        if (tplCaps.injectSkills) await refreshNewSessionInjectSkills(new Set(tpl && tpl.injectSkills || []));
         setProxyControls(inputProxyMode, inputProxyUrl, (tpl && tpl.proxy) ?? null, settings?.lastCustomProxyUrl || settings?.proxyUrl);
         labelProxyDefault(inputProxyMode, settings);
         inputName.style.borderColor = "";
@@ -43010,7 +43058,7 @@ ${detail}` });
       }
       function activeIsAgent() {
         const t = activeSession ? sessionTypeOf(activeSession) : null;
-        return t === "claude" || t === "codex";
+        return isAgentType(t);
       }
       function sideChannelSegs(name) {
         const segs = [];
@@ -43048,7 +43096,7 @@ ${detail}` });
         const st = peerStatuses.get(entry.peer.id);
         if (!st || !st.online || !Array.isArray(st.caps) || !st.caps.includes("args")) return false;
         const type = (st.sessions || []).find((s) => s.name === entry.peer.name)?.type;
-        return !type || type === "claude" || type === "codex";
+        return !type || isAgentType(type);
       }
       function pluginReachesSession(pluginId, sessionName) {
         const rec = getPluginCatalogCache().find((p) => String(p.id) === String(pluginId));
@@ -43145,7 +43193,7 @@ ${detail}` });
         if (!el) return;
         const type = activeSession ? sessionTypeOf(activeSession) : null;
         const btns = [];
-        if (type === "claude" || type === "codex") {
+        if (isAgentType(type)) {
           const nFiles = (filesState.get(activeSession) || []).length;
           if (type === "claude" || nFiles > 0) {
             const label = nFiles > 0 ? `\u{1F4C4} ${nFiles} file${nFiles === 1 ? "" : "s"}` : "\u{1F4C4} files";
@@ -47129,7 +47177,7 @@ ${res.stderr}` : "");
           argsModel.value = model;
           argsInput.value = rest.map((a) => /\s/.test(a) ? `"${a}"` : a).join(" ");
         }
-        const isAgent = res.type === "claude" || res.type === "codex";
+        const isAgent = isAgentType(res.type);
         if (argsModelRow) argsModelRow.style.display = isAgent ? "" : "none";
         argsProxyRow.style.display = isAgent ? "" : "none";
         setProxyControls(argsProxyMode, argsProxyUrl, res.proxy, settings?.lastCustomProxyUrl || settings?.proxyUrl);
@@ -47137,11 +47185,10 @@ ${res.stderr}` : "");
         argsPromptRow.style.display = isAgent ? "" : "none";
         argsAppendRow.style.display = isAgent ? "" : "none";
         argsAppendSection.style.display = isAgent ? "" : "none";
-        const isClaude = res.type === "claude";
         const caps = capsFor(res.type);
         argsAccountRow.style.display = caps.accounts ? "" : "none";
         argsAgentsRow.style.display = caps.agents ? "" : "none";
-        argsOtherSection.style.display = isClaude ? "" : "none";
+        argsOtherSection.style.display = caps.agents ? "" : "none";
         const isPluginsEditable = caps.plugins && !argsSource;
         argsPluginsSection.style.display = isPluginsEditable ? "" : "none";
         setPluginCatalogCache(await window.api.pluginCatalog() || []);

@@ -27,6 +27,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { capsFor } = require('../cli-adapters');
 
 const RENDERER = path.join(__dirname, '..', 'renderer', 'renderer.js');
 const rendererSrc = fs.readFileSync(RENDERER, 'utf8');
@@ -108,8 +109,8 @@ function boxes(container) {
 // Runs the SHIPPED collect statement and the SHIPPED spread, and returns the
 // object a save would carry — the spread is what decides key presence.
 function save(inputToolsAllowList, { dialogMode = 'template', type = 'claude' } = {}) {
-  const names = ['dialogMode', 'type', 'collectToolAllowChecklist', 'inputToolsAllowList'];
-  const vals = [dialogMode, type, collectToolAllowChecklist, inputToolsAllowList];
+  const names = ['dialogMode', 'caps', 'collectToolAllowChecklist', 'inputToolsAllowList'];
+  const vals = [dialogMode, capsFor(type), collectToolAllowChecklist, inputToolsAllowList];
   return new Function(...names, `${COLLECT_STMT}\nreturn { name: 'rv', ${SPREAD_EXPR} };`)(...vals);
 }
 

@@ -1491,6 +1491,60 @@ test('templateRowFor: a plugin row is never the Open target', () => {
   assert.strictEqual(templateRowFor(null, 'shop', 'anything'), null, 'as does a failed one');
 });
 
+test('t1077: templatePlatform names the platform of the row the picker resolves, defaulting to claude', () => {
+  const { templatePlatform } = require('../renderer/lib/team-roles');
+  const { DEFAULT_TYPE } = require('../cli-adapters');
+  assert.strictEqual(DEFAULT_TYPE, 'claude', 'ENTER: the default the table below spells is the adapter table\'s');
+  const table = [
+    [[{ name: 'x', type: 'codex' }], 'x', 'codex'],
+    [[{ name: 'x' }], 'x', 'claude'],
+    [[{ name: 'x', type: '' }], 'x', 'claude'],
+    [[{ name: 'x', type: 'codex' }], 'y', null],
+    [[], 'x', null],
+    [null, 'x', null],
+    [[{ name: 'x', type: 'codex' }], '', null],
+  ];
+  assert.strictEqual(table.length, 7, 'ENTER: every row below ran');
+  for (const [rows, value, want] of table) {
+    assert.strictEqual(templatePlatform(rows, 'shop', value), want, `rows=${JSON.stringify(rows)} value=${JSON.stringify(value)}`);
+  }
+  assert.strictEqual(templatePlatform([{ name: 'x', team: 'shop', type: 'codex' }, { name: 'x' }], 'shop', 'x'), 'codex',
+    'the team-owned row wins over the library copy, as templateRowFor resolves it');
+  assert.strictEqual(templatePlatform([{ name: 'x', team: 'other', type: 'codex' }], 'shop', 'x'), null,
+    'another team\'s row is not this team\'s template');
+});
+
+test('t1077 wiring: the template picker and the reserved row carry a platform badge painted by templatePlatform', () => {
+  const pop = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'popovers', 'team-roles-popover.js'), 'utf-8');
+  const strip = (s) => s.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  const paint = /function paintPlatformBadge\([\s\S]*?\n  \}/.exec(pop);
+  assert.ok(paint, 'ENTER: found paintPlatformBadge');
+  assert.match(paint[0], /templatePlatform\(templateRows, teamName\(\), value\)/,
+    'the badge text is the helper\'s answer over THIS team\'s listing');
+  assert.match(paint[0], /span\.textContent = platform \|\| '';/, 'the platform lands as textContent');
+  assert.match(paint[0], /span\.hidden = !platform;/, 'and a null answer hides the badge rather than leaving a blank chip');
+  const badge = /function platformBadge\([\s\S]*?\n  \}/.exec(pop);
+  assert.ok(badge, 'ENTER: found platformBadge');
+  assert.match(badge[0], /span\.className = 'team-role-badge team-role-platform';/);
+
+  const fn = strip(/function buildTemplateControl\([\s\S]*?\n  \}/.exec(pop)[0]);
+  assert.match(fn, /const platform = platformBadge\(\);/);
+  assert.match(fn, /open\.disabled = !rowFor\(\);\n\s*paintPlatformBadge\(platform, select\.value\);/,
+    'repainted in the same sync the change listener runs — a stale badge would name the previous choice');
+  assert.match(fn, /return \{ select, open, platform \};/);
+  assert.match(strip(pop), /if \(open\) field\.appendChild\(open\);\n\s*if \(platform\) field\.appendChild\(platform\);/,
+    'the badge is appended after the Open button');
+
+  const armAt = pop.indexOf('holder.appendChild(val);');
+  assert.ok(armAt > 0, 'ENTER: found the reserved-row template field');
+  const after = strip(pop.slice(armAt, armAt + 400));
+  assert.match(after, /const platform = platformBadge\(\);\n\s*paintPlatformBadge\(platform, name\);\n\s*holder\.appendChild\(platform\);/,
+    'the reserved row shows the same badge after its ro-val, painted from the resolved stem');
+
+  const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf-8');
+  assert.match(css, /^\.team-role-platform \{/m, 'the badge has its own rule beside .team-role-badge');
+});
+
 test('t792 wiring: the row template field is a select the save path reads, and an Open beside it', () => {
   // The popover is DOM-bound and has no unit tests (its header says so), so this
   // pins the wire by shape. Each fact below, missing, leaves templateOptionGroups

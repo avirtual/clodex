@@ -500,25 +500,26 @@ test('no New Session path draws the skill or built-in checklist with a bare defa
 // t750: the codex spawn arm reads systemPromptFile and appendPromptFiles
 // (session-manager's readSystemPromptBody / readAppendBodies), so a template
 // carrying either must fill those two fields for a codex seat as well —
-// otherwise the seat spawns without prompts the template author chose. The rest
-// of the claude block (agents, builtins, tools, the skill roster, strip,
-// autoCompact) stays claude-only, so the pin is the ABSENCE of these two calls
-// from that block plus their presence in the handler around it.
-test('t750: template load fills the prompt fields outside the claude-only block', () => {
+// otherwise the seat spawns without prompts the template author chose. The
+// agents/builtins writes are gated on `caps.agents`, so the pin is the ABSENCE
+// of these two calls from that block plus their presence in the handler around it.
+test('t750: template load fills the prompt fields outside the agents-gated block', () => {
   const handler = slice("inputTemplate.addEventListener('change'",
     '\nbtnTemplateDelete.addEventListener', 'the template picker');
-  const claudeAt = handler.indexOf("if (t.type === 'claude') {");
-  assert.ok(claudeAt > 0, 'ENTER: the claude-only block is still in the template handler');
-  const close = handler.indexOf('\n  }\n', claudeAt);
-  assert.ok(close > claudeAt, 'ENTER: the claude-only block closes');
-  const claudeBlock = handler.slice(claudeAt, close);
-  assert.match(claudeBlock, /renderAgentChecklist\(inputAgentsList/,
-    'ENTER: the slice really is the claude-only block — it still holds a claude-only write');
+  const gateAt = handler.indexOf('if (tplCaps.agents) {');
+  assert.ok(gateAt > 0, 'ENTER: the agents-gated block is still in the template handler');
+  const close = handler.indexOf('\n  }\n', gateAt);
+  assert.ok(close > gateAt, 'ENTER: the agents-gated block closes');
+  const gatedBlock = handler.slice(gateAt, close);
+  assert.match(gatedBlock, /renderAgentChecklist\(inputAgentsList/,
+    'ENTER: the slice really is the agents-gated block — it still holds the agents write');
+  assert.ok(!/t\.type === 'claude'/.test(handler),
+    'no field in the template load is gated on the literal type — the adapter table decides');
 
   for (const call of ['fillSystemPromptSelect(inputSystemPrompt, t.systemPromptFile',
     'renderAppendChecklist(inputAppendList']) {
     assert.ok(handler.includes(call), `${call} must still run on a template load`);
-    assert.ok(!claudeBlock.includes(call), `${call} must not be gated on the claude-only block`);
+    assert.ok(!gatedBlock.includes(call), `${call} must not be gated on the agents block`);
   }
 });
 
@@ -747,4 +748,131 @@ test('t769: an ordinary template list still drives the ticks by name', async () 
   assert.deepStrictEqual(skillRowsOf(c),
     [{ name: 'alpha', checked: true }, { name: 'beta', checked: false }, { name: 'gamma', checked: true }]);
   assert.deepStrictEqual(checklists.collectSkillChecklist(c), ['beta']);
+});
+
+// --- t1077: the platform list and the caps-gated save ----------------------
+
+const { PLATFORMS, isAgentType, adapterFor } = require('../cli-adapters');
+const { withModelArg } = require('../renderer/lib/args-model');
+
+test('t1077: #input-type is filled from PLATFORMS, with bash last, and index.html ships no static option', () => {
+  assert.match(htmlSrc, /<select id="input-type"><\/select>/,
+    'the select is empty in the markup — a static option there would survive an adapter table that no longer lists it');
+  assert.match(rendererSrc, /^fillPlatformSelect\(inputType\);$/m,
+    'ENTER: the fill runs at dialog init, at top level');
+  const fns = [
+    extract(/\n(function platformSelectValues\([\s\S]*?\n\})\n/, 'platformSelectValues'),
+    extract(/\n(function fillPlatformSelect\([\s\S]*?\n\})\n/, 'fillPlatformSelect'),
+  ].join('\n');
+  const options = [];
+  const select = {
+    set innerHTML(v) { assert.strictEqual(v, '', 'ENTER: the fill starts from an empty select'); options.length = 0; },
+    appendChild(o) { options.push(o); },
+  };
+  const document = { createElement: (tag) => ({ tag }) };
+  new Function('PLATFORMS', 'document', 'select', `${fns}\nfillPlatformSelect(select);`)(PLATFORMS, document, select);
+  assert.deepStrictEqual(options.map((o) => o.value), [...PLATFORMS, 'bash']);
+  assert.deepStrictEqual(options.map((o) => o.value), ['claude', 'codex', 'bash'],
+    'and that is the literal list, in order — a reordered table shows here');
+  assert.deepStrictEqual(options.map((o) => o.textContent), options.map((o) => o.value), 'label = id, as before');
+  assert.ok(options.every((o) => o.tag === 'option'));
+});
+
+test('t1077: the model hint reads the adapter aliases', () => {
+  const fn = extract(/\n(function modelAliasHint\([\s\S]*?\n\})\n/, 'modelAliasHint');
+  const hint = (type) => new Function('adapterFor', `${fn}\nreturn modelAliasHint(${JSON.stringify(type)});`)(adapterFor);
+  assert.strictEqual(hint('claude'), 'opus, sonnet, haiku, fable or a model id.');
+  assert.strictEqual(hint('codex'), 'A model id (no aliases).');
+  assert.strictEqual(hint('bash'), '');
+});
+
+const COLLECT_FN = extract(/\n(function collectFormConfig\([\s\S]*?)\nfunction collectDialogEnv\(/, 'collectFormConfig');
+
+function collectFor(type) {
+  const env = {
+    inputType: { value: type },
+    dialogMode: 'template',
+    capsFor, isAgentType, withModelArg,
+    expandPath: (p) => p,
+    homeDir: '/home/x',
+    inputCwd: { value: '/tmp/proj' },
+    inputArgs: { value: '--flag' },
+    inputModel: { value: 'm1' },
+    parseArgs: (s) => s.split(' '),
+    proxyValueFromControls: () => ({ mode: 'off' }),
+    inputProxyMode: {}, inputProxyUrl: {},
+    inputIntentList: {}, collectIntentChecklist: () => ['dm'],
+    inputPluginList: {}, collectPluginChecklist: () => ['p1'],
+    mergePlugins: (a) => a,
+    pluginsForUnlistedPlugins: () => [],
+    newSessionPluginsPersisted: null, newSessionPluginsRendered: [],
+    defaultPluginTicks: () => ['default'],
+    inputToolsAllowList: {}, collectToolAllowChecklist: () => ['Read'],
+    inputAutoCompact: { checked: false },
+    inputNoWire: { checked: true },
+    inputAgentsList: {}, collectAgentChecklist: () => ['agent-a'],
+    inputExecList: {}, collectExecChecklist: () => ['exec-a'],
+    inputBuiltinsList: {}, collectBuiltinChecklist: () => ['Plan'],
+    inputToolsList: {}, collectToolChecklist: () => ['Bash'],
+    newSessionSkillDenyList: () => ['skill-a'],
+    inputInjectSkillsList: {}, collectInjectChecklist: () => ['inj-a'],
+    inputStripLevel: { value: '2' },
+    inputSystemPrompt: { value: 'sys' },
+    collectAppendPromptFiles: () => ['app-a'],
+  };
+  const names = Object.keys(env);
+  return new Function(...names, `${COLLECT_FN}\nreturn collectFormConfig();`)(...names.map((n) => env[n]));
+}
+
+test('t1077: a CLAUDE form collects every field the stubs offer (ENTER for the codex snapshot)', () => {
+  assert.deepStrictEqual(collectFor('claude'), {
+    type: 'claude',
+    cwd: '/tmp/proj',
+    extraArgs: ['--model', 'm1', '--flag'],
+    proxy: { mode: 'off' },
+    agents: ['agent-a'],
+    execCommands: ['exec-a'],
+    intents: ['dm'],
+    plugins: ['p1'],
+    autoCompact: false,
+    noWire: true,
+    tools: ['Read'],
+    denyBuiltins: ['Plan'],
+    disabledTools: ['Bash'],
+    disabledSkills: ['skill-a'],
+    injectSkills: ['inj-a'],
+    stripLevel: 2,
+    systemPromptFile: 'sys',
+    appendPromptFiles: ['app-a'],
+  });
+});
+
+test('t1077: a CODEX form emits every EDITOR_OWNED key its platform lacks WITH its empty value', () => {
+  assert.deepStrictEqual(collectFor('codex'), {
+    type: 'codex',
+    cwd: '/tmp/proj',
+    extraArgs: ['--model', 'm1', '--flag'],
+    proxy: { mode: 'off' },
+    agents: [],
+    execCommands: ['exec-a'],
+    intents: ['dm'],
+    plugins: ['p1'],
+    denyBuiltins: [],
+    disabledTools: [],
+    disabledSkills: [],
+    injectSkills: ['inj-a'],
+    stripLevel: 0,
+    systemPromptFile: 'sys',
+    appendPromptFiles: ['app-a'],
+  });
+});
+
+test('t1077: a BASH form is not an agent — no prompts, no intents, and the plugin default', () => {
+  const cfg = collectFor('bash');
+  assert.strictEqual(cfg.proxy, null);
+  assert.strictEqual(cfg.systemPromptFile, null);
+  assert.ok(!('intents' in cfg));
+  assert.deepStrictEqual(cfg.plugins, ['default']);
+  assert.deepStrictEqual(cfg.agents, []);
+  assert.strictEqual(cfg.stripLevel, 0);
 });
