@@ -87,25 +87,7 @@ file under `~/.clodex/messages` (a spilled spec) IS readable under the profile
 
 ## seatSettings
 
-Adapter-declared settings deep-merged into every seat's private overlay by
-`bootstrapSeatConfig`, below `readOnlyCap.settings` and the skills off-block in
-the merge order, all three over the copied source settings.json. deepMerge wins
-per leaf and deletes nothing: an operator `run.reminder_roster.agents: ['x']`
-in the source file becomes `[]` in the seat file while a sibling `run.other`
-survives; an array is a leaf, never concatenated. `null` for Claude and Codex,
-which have no overlay.
-
-Measured on Muse Code 1.3.0 headless (`muse exec --max-model-steps 1`, one
-prompt, wirescope proxy): the stock seat sends THREE requests per prompt — a
-skill-reminder, the main request, a verify-reminder — the main one carrying a
-5.6k-token `workflow` tool and ~4.3k chars of developer blocks. With
-`run.workflow_trigger_mode: 'off'`, `run.reminder_roster.agents: []` and
-`run.context_slimming.excluded_tool_names: ['workflow', 'request_user_input']`
-the same prompt is exactly ONE request. The TUI adds one idle tip-picker request
-that is not on the reminder roster and is not affected; `tui.away_recap_enabled`
-and `tui.prompt_hint_enabled` are untested. A `run.toolset` allowlist and
-`local_session_messaging.enabled: false` also reduced the request but are
-deliberately NOT shipped: their effect inside the TUI is untested.
+Adapter-declared settings deep-merged into every seat's private overlay by `bootstrapSeatConfig`, first in the merge order (then `readOnlyCap.settings`, then the skills off-block), all over the copied source settings.json; `null` for Claude and Codex, which have no overlay. deepMerge wins per leaf and deletes nothing: an operator `run.reminder_roster.agents: ['x']` in the source becomes `[]` in the seat file while a sibling `run.other` survives, and an array is a leaf, never concatenated. Measured on Muse Code 1.3.0 headless (`muse exec --max-model-steps 1`, one prompt, `MUSE_TRANSPORT_TRACE=1`): the stock seat sends THREE requests per prompt (skill-reminder, main, verify-reminder), the main one carrying a 5.6k-token `workflow` tool and ~4.3k chars of developer blocks; with `run.workflow_trigger_mode: 'off'`, `run.reminder_roster.agents: []` and `run.context_slimming.excluded_tool_names: ['workflow', 'request_user_input']` the same prompt is exactly ONE request and the tool catalog has no `workflow`. `muse config validate --plane defaults` accepts all three members (`user_overridable=true`); it has no mode for the user's flat settings.json. The TUI adds one idle tip-picker request that is not on the reminder roster and is out of scope; `tui.away_recap_enabled` and `tui.prompt_hint_enabled` are untested. A `run.toolset` allowlist and `local_session_messaging.enabled: false` also trim the request but are deliberately NOT shipped: their effect inside the TUI is untested.
 
 ## skills
 
