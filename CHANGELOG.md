@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Spill tee: where a filed turn behind a system row leaves no intent head to keep, the request now carries a one-line third-person note instead of a bare `[agent]` token, which one model had copied back as an empty reply.
 
 - The team reviewer can be a Muse seat: it runs under a `:read-only`-derived permission profile with approvals off (`clodex-team-reviewer-muse` ships).
 - Muse Code (Meta's `muse` CLI) is a third seat platform: New Session ▸ muse, `clodex-team-hand-muse` / `clodex-team-lead-muse` ship, the Clodex prompt rides the seat's own config dir (no repo write), routing through wirescope when the proxy reports `capabilities.muse`.

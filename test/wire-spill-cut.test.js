@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { cutSpillStubs } = require('../wire/spill-cut');
+const { cutSpillStubs, classifyLine, hasNeedle, PLACEHOLDER } = require('../wire/spill-cut');
 const { SpillFilter } = require('../wire/spill');
 const { WireProxy } = require('../wire/proxy');
 const { WarmthStore, prefixHash } = require('../wire/warmth');
@@ -306,7 +306,7 @@ test('Q4 system-adjacent: a stub-only assistant message after a role:"system" me
   assert.equal(reduced.messages[i].content[0].text, `${FIXTURE.responseText}\n`);
 });
 
-test('Q4 placeholder: a bare @spill: pointer behind a system row leaves no head to recover, so the text block is [agent]', () => {
+test('Q4 placeholder: a bare @spill: pointer behind a system row leaves no head to recover, so the text block is a third-person sentence no model would author', () => {
   const { bare } = stubOf();
   const obj = fixtureRequest();
   const i = assistantIndex(obj);
@@ -314,8 +314,12 @@ test('Q4 placeholder: a bare @spill: pointer behind a system row leaves no head 
   obj.messages[i].content[0].cache_control = { type: 'ephemeral' };
   const r = cutSpillStubs(obj);
   assert.equal(r.placeholders, 1, 'ENTER');
-  assert.deepStrictEqual(obj.messages[i].content, [{ type: 'text', text: '[agent]', cache_control: { type: 'ephemeral' } }],
-    'one-token placeholder, and the orphaned cache_control rides on it');
+  assert.deepStrictEqual(obj.messages[i].content, [{ type: 'text', text: "(This turn's text was delivered in full; Clodex keeps it out of the request.)", cache_control: { type: 'ephemeral' } }],
+    'one-line placeholder, and the orphaned cache_control rides on it');
+  assert.deepStrictEqual(classifyLine(PLACEHOLDER), { kind: 0 }, 'the placeholder is not a stub line');
+  assert.equal(hasNeedle({ content: [{ type: 'text', text: PLACEHOLDER }] }), false, 'the placeholder carries no needle');
+  assert.deepStrictEqual(cutSpillStubs(obj), { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0 },
+    'a second pass over the placeholder cuts nothing');
 });
 
 function billing(sub) {
