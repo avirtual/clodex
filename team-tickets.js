@@ -4125,9 +4125,7 @@ function createTicketMethods(deps, shared) {
       if (session.activityState !== 'idle') return;   // it started; nothing owed
       if (this._seatTranscriptSize(session.name) > (session._reviewStartSize || 0)) return;
 
-      // First window: re-send the nudge rather than waking the lead. The two
-      // guards above are what make this safe — a seat that started between the arm
-      // and here is either non-idle or has a transcript, so it is never poked.
+      // First window: re-send the nudge rather than waking the lead.
       if (!session._reviewNudgeRetried) {
         session._reviewNudgeRetried = true;
         log.warn('intent', `reviewer ${session.name} has taken no turn ${SPEC_CONFIRM_MS / 1000}s after spawn — re-sending the start nudge once`);
@@ -4157,7 +4155,7 @@ function createTicketMethods(deps, shared) {
       // Two nudges, no turn. Whatever is wrong is not a single lost write — a
       // chained modal, or something else entirely — and a third copy will not fix
       // it. Hand it to the lead, who can look at the seat.
-      log.error('intent', `reviewer ${session.name} produced no transcript after a re-sent nudge — it never took a first turn`);
+      log.error('intent', `reviewer ${session.name}'s transcript has not grown after a re-sent nudge — it never took a first turn`);
       this._broadcast('ipc-message', {
         ts: Date.now(), from: 'clodex', to: session.name, kind: 'review-unstarted',
         body: `${session.name} never started its review`,
@@ -4167,7 +4165,7 @@ function createTicketMethods(deps, shared) {
         // The `|| Date.now()` yields a visibly wrong 0s rather than `NaN s` for a
         // session that reaches here unarmed — a wrong number sends an operator to
         // look at the seat, NaN reads as a broken tool and sends them elsewhere.
-        `[review ${session.name}] spawned ${Math.round((Date.now() - (session._reviewStartArmedAt || Date.now())) / 1000)}s ago, was re-sent its start nudge, and has STILL taken no turn — no transcript exists, so it never started. `
+        `[review ${session.name}] spawned ${Math.round((Date.now() - (session._reviewStartArmedAt || Date.now())) / 1000)}s ago, was re-sent its start nudge, and has STILL taken no turn — its transcript has not grown since spawn, so it never started. `
         + 'Its scope is in its system prompt and is intact; what was lost is the nudge that starts it, and re-sending it did not help. '
         + `Recover with an urgent dm to ${session.name} re-sending the scope and telling it to ignore the message if it already has it — NOT a respawn, which mints a second seat and strands this one's mail.`,
         false, `[review ${session.name}] never started`);
