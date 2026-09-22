@@ -6717,7 +6717,7 @@ function createSessionManager(deps) {
       if (intent.sub === 'begin') { this._scratchBegin(session, reply); return; }
       if (intent.sub === 'mark') { this._scratchBegin(session, reply, { label: intent.label }); return; }
       if (intent.sub === 'cancel') { this._scratchCancel(session, reply, intent); return; }
-      if (intent.sub === 'end' || intent.sub === 'rewind') { this._scratchEnd(session, intent, reply); return; }
+      if (intent.sub === 'end' || intent.sub === 'rewind') return this._scratchEnd(session, intent, reply);
     }
 
     scratchMark(name, label) {
@@ -7049,8 +7049,7 @@ function createSessionManager(deps) {
       }
       mark.closing = { body, replay: intent.replay === true, verb };
       if (session._flushTurnEnd === true) {
-        setImmediate(() => this._fireScratchClose(session));
-        return;
+        return new Promise((resolve) => setImmediate(() => resolve(this._fireScratchClose(session))));
       }
       mark._closeTimer = setTimeout(() => {
         mark._closeTimer = null;
@@ -7070,7 +7069,7 @@ function createSessionManager(deps) {
       const closing = mark.closing;
       mark.closing = null;
       if (mark._closeTimer) { clearTimeout(mark._closeTimer); mark._closeTimer = null; }
-      this._runScratchCut(session, mark, closing).catch((e) => {
+      return this._runScratchCut(session, mark, closing).catch((e) => {
         log.error('intent', `scratch ${session.name}: cut failed: ${e.message}`);
       });
     }
