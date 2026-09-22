@@ -84,3 +84,14 @@ file under `~/.clodex/messages` (a spilled spec) IS readable under the profile
 (measured: `cat` returned the header), and the transcript carries
 `runtime.session.permission_profile_committed` with `source.kind: "user_named"`,
 `id: "reviewer"` inside a `session_permission_transaction` frame.
+
+A Muse seat's transcript is non-empty BEFORE its PTY spawns (the m2 mint turn),
+so `_checkReviewStarted` baselines the size at its first arm instead of testing
+`> 0`. A TUI-spawned Codex seat could not be measured the same way: in a fresh
+scratch project `codex --enable hooks` chains a directory-trust dialog and then a
+"Hooks need review" dialog (measured, 0.155.1 — trust is per project, so even
+the loop's own trusted hook script is "new" there), and the SessionStart hook
+runs only past both; persisting hook trust for a throwaway project in the
+operator's config was declined. The baseline covers Codex either way: whatever
+the link resolves to at arm — nothing, or a boot-written session_meta — is the
+size a turn must grow past.
