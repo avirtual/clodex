@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
-  uuidv7, bootstrapSeatConfig, museDataHome, findMuseTranscript, museRegistryFor, linkTranscript, deepMerge,
+  uuidv7, bootstrapSeatConfig, museDataHome, findMuseTranscript, newestMuseTranscript, museRegistryFor, linkTranscript, deepMerge,
 } = require('../seat-config');
 
 const deps = { fs, path, os };
@@ -132,6 +132,31 @@ test('findMuseTranscript: globs the date tree for <sid>/session.jsonl and never 
   assert.strictEqual(findMuseTranscript(deps, root, sid), path.join(dir, 'session.jsonl'));
   assert.strictEqual(findMuseTranscript(deps, root, 'ffffffff-0000-7000-8000-000000000000'), null);
   assert.strictEqual(findMuseTranscript(deps, path.join(root, 'nope'), sid), null);
+});
+
+test('t1095: newestMuseTranscript picks the newest session.jsonl by mtime at or after sinceMs, skips excluded paths and non-files, and never computes the date', () => {
+  const root = mkTmpRoot('clx-seatcfg-');
+  const at = (y, m, d, sid) => path.join(root, 'muse', 'sessions', y, m, d, sid, 'session.jsonl');
+  const write = (p, mtimeMs) => {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, '{"record_type":"session.opened.observed"}\n');
+    fs.utimesSync(p, mtimeMs / 1000, mtimeMs / 1000);
+    return p;
+  };
+  const since = 1_800_000_000_000;
+  const old = write(at('2031', '01', '30', 'old'), since - 5000);
+  const mid = write(at('2031', '01', '31', 'mid'), since + 1000);
+  const newest = write(at('2031', '02', '01', 'newest'), since + 2000);
+  const exact = write(at('2031', '02', '01', 'exact'), since);
+  fs.mkdirSync(path.join(root, 'muse', 'sessions', '2031', '02', '01', 'dirsid', 'session.jsonl'), { recursive: true });
+  fs.utimesSync(path.join(root, 'muse', 'sessions', '2031', '02', '01', 'dirsid', 'session.jsonl'), (since + 9000) / 1000, (since + 9000) / 1000);
+  assert.strictEqual(newestMuseTranscript(deps, root, since, []), newest);
+  assert.strictEqual(newestMuseTranscript(deps, root, since, [newest]), mid, 'an excluded path is skipped for the next newest');
+  assert.strictEqual(newestMuseTranscript(deps, root, since, [newest, mid]), exact, 'mtime equal to sinceMs qualifies');
+  assert.strictEqual(newestMuseTranscript(deps, root, since, [newest, mid, exact]), null, `${old} is older than sinceMs: no candidate`);
+  assert.strictEqual(newestMuseTranscript(deps, root, since - 10000, [newest, mid, exact]), old);
+  assert.strictEqual(newestMuseTranscript(deps, root, since), newest, 'excludePaths is optional');
+  assert.strictEqual(newestMuseTranscript(deps, path.join(root, 'nope'), 0, []), null);
 });
 
 test('museRegistryFor: the record whose process_generation_hint names the pid, else one whose pid field does, else null', () => {

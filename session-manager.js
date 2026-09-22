@@ -146,7 +146,7 @@ const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
 
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { readerFor } = require('./transcript-readers');
-const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, museRegistryFor, linkTranscript } = require('./seat-config');
+const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, newestMuseTranscript, museRegistryFor, linkTranscript } = require('./seat-config');
 const { activationSettings } = require('./muse-skills');
 const MUSE_LINK_POLL_MS = 250;
 const MUSE_LINK_DEADLINE_MS = 60000;
@@ -2432,10 +2432,30 @@ function createSessionManager(deps) {
           if (sid === session.sessionId) { stop('agreed'); return; }
           const target = findMuseTranscript({ fs, path }, museData, sid);
           if (!target) return;
-          try { linkTranscript({ fs }, pathFor(REGISTRY_DIR, name, 'transcript'), target); } catch {}
+          try { linkTranscript({ fs }, pathFor(REGISTRY_DIR, name, 'transcript'), target); } catch { return; }
           stop('linked');
         }, this._museLinkPollMs ?? MUSE_LINK_POLL_MS);
         const deadline = setTimeout(() => {
+          if (this.sessions.get(name) !== session) { stop('gone'); return; }
+          if (session.sessionId) {
+            stop('deadline');
+            log.info('muse', `${name}: registry never confirmed ${session.sessionId} for pid ${ptyProc.pid} within ${MUSE_LINK_DEADLINE_MS} ms`);
+            return;
+          }
+          const taken = [];
+          for (const [other, s] of this.sessions) {
+            if (other === name || s.agentType !== 'muse') continue;
+            try { taken.push(fs.readlinkSync(pathFor(REGISTRY_DIR, other, 'transcript'))); } catch {}
+          }
+          const fallback = newestMuseTranscript({ fs, path }, museData, session.spawnedAt, taken);
+          if (fallback) {
+            try {
+              linkTranscript({ fs }, pathFor(REGISTRY_DIR, name, 'transcript'), fallback);
+              stop('fallback');
+              log.info('muse', `${name}: no session registered for pid ${ptyProc.pid} within ${MUSE_LINK_DEADLINE_MS} ms — linked newest transcript ${fallback}`);
+              return;
+            } catch {}
+          }
           stop('deadline');
           log.warn('muse', `${name}: no session registered for pid ${ptyProc.pid} within ${MUSE_LINK_DEADLINE_MS} ms — transcript link pending`);
         }, MUSE_LINK_DEADLINE_MS);
