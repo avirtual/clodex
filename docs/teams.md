@@ -277,8 +277,11 @@ Fable-class hands carrying every installed skill, and was stopped on cost.
 is refused on a Codex role for now: the registry holds Claude config dirs.
 The reviewer role may name a template of any platform whose adapter declares a
 read-only cap — `clodex-team-reviewer-codex` is the shipped Codex option, and it
-runs under Codex's OS-enforced read-only sandbox with approvals off; a platform
-without a cap is refused before a seat is minted.
+runs under Codex's OS-enforced read-only sandbox with approvals off;
+`clodex-team-reviewer-muse` is the shipped Muse option, and it runs under a
+`:read-only`-derived permission profile (`reviewer`, written into the seat's own
+settings.json) with approvals off; a platform without a cap is refused before a
+seat is minted.
 
 The stock hand and lead templates keep eight tools — Read, Edit, Write, Glob,
 Grep, Bash, Agent, SendMessage — and deny the rest of the catalog; the list is

@@ -678,3 +678,64 @@ test('t384: an UNREADABLE transcript probes to -1, which is not a byte count', (
       'and it still answers the t377 question the same way');
   } finally { app.stop(); }
 });
+
+test('m3: the start check baselines the transcript size at the first arm — 0 for a hook-linked seat, and 1 byte counts as started', async () => {
+  const app = boot();
+  try {
+    app.setPending('lead');
+    await app.m.create('lead', 'claude', app.root, [], null, 'ws');
+    const lead = app.m.sessions.get('lead');
+    app.setPending('crew-reviewer-1');
+    app.m._handleTeamReview(lead, SCOPE);
+    await settled(app, 'crew-reviewer-1');
+    const s = reviewerSeat(app, { transcript: null });
+    assert.strictEqual(s._reviewStartSize, 0, 'ENTER: the spawn arm stamped a 0 baseline — nothing was written before the seat booted');
+    reviewerSeat(app, { transcript: '1' });
+    assert.strictEqual(app.m._seatTranscriptSize('crew-reviewer-1'), 1, 'ENTER: one byte');
+    const before = nudgeCount(app, 'crew-reviewer-1');
+    app.alarms.length = 0;
+    clearTimeout(s._reviewStartTimer);
+    s._reviewStartTimer = null;
+    app.m._checkReviewStarted(s, 'lead');
+    assert.strictEqual(nudgeCount(app, 'crew-reviewer-1'), before, 'growth above the baseline is a started seat: no re-nudge');
+    assert.deepStrictEqual(app.alarms, []);
+    assert.ok(!s._reviewNudgeRetried);
+  } finally { app.stop(); }
+});
+
+test('m3: a seat whose transcript already holds N bytes at arm (a mint turn) is re-nudged at N and owed nothing at N+1', async () => {
+  const app = boot();
+  try {
+    app.setPending('lead');
+    await app.m.create('lead', 'claude', app.root, [], null, 'ws');
+    const lead = app.m.sessions.get('lead');
+    app.setPending('crew-reviewer-1');
+    app.m._handleTeamReview(lead, SCOPE);
+    await settled(app, 'crew-reviewer-1');
+    const minted = '{"record_type":"session.opened.observed"}\n';
+    const s = reviewerSeat(app, { transcript: minted });
+    clearTimeout(s._reviewStartTimer);
+    s._reviewStartTimer = null;
+    s._reviewStartArmedAt = null;
+    s._reviewStartSize = undefined;
+    app.m._armReviewStartCheck('crew-reviewer-1', 'lead');
+    clearTimeout(s._reviewStartTimer);
+    s._reviewStartTimer = null;
+    assert.strictEqual(s._reviewStartSize, minted.length, 'ENTER: the first arm stamped the mint turn as the baseline');
+    assert.strictEqual(app.m._seatHasTranscript('crew-reviewer-1'), true, 'ENTER: the old > 0 probe already reads this seat as started');
+
+    const before = nudgeCount(app, 'crew-reviewer-1');
+    app.alarms.length = 0;
+    app.m._checkReviewStarted(s, 'lead');
+    assert.strictEqual(nudgeCount(app, 'crew-reviewer-1'), before + 1, 'size N at check: the seat has not started, so the nudge is re-sent');
+    assert.ok(s._reviewNudgeRetried);
+    assert.deepStrictEqual(app.alarms, []);
+    clearTimeout(s._reviewStartTimer);
+    s._reviewStartTimer = null;
+
+    reviewerSeat(app, { transcript: `${minted}x` });
+    app.m._checkReviewStarted(s, 'lead');
+    assert.strictEqual(nudgeCount(app, 'crew-reviewer-1'), before + 1, 'size N+1: started, nothing more is sent');
+    assert.deepStrictEqual(app.alarms, [], 'and nothing is escalated');
+  } finally { app.stop(); }
+});

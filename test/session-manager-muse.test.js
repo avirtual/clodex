@@ -17,14 +17,14 @@ const { createCliHooks } = require('../cli-hooks');
 const UUID7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const PROXY = 'http://127.0.0.1:7811';
 
-function writeConfigFixture(root, { withAuth = true } = {}) {
+function writeConfigFixture(root, { withAuth = true, settings = '{"schema_version":1,"provider":"meta"}\n' } = {}) {
   const source = pathReal.join(root, 'config');
   fsReal.mkdirSync(pathReal.join(source, 'gh'), { recursive: true });
   fsReal.writeFileSync(pathReal.join(source, 'gh', 'hosts.yml'), 'github.com: {}\n');
   fsReal.mkdirSync(pathReal.join(source, 'muse'), { recursive: true });
   if (withAuth) fsReal.writeFileSync(pathReal.join(source, 'muse', 'auth.json'), '{"schema_version":2}\n');
   fsReal.writeFileSync(pathReal.join(source, 'muse', 'trust.json'), '{"projects":{}}\n');
-  fsReal.writeFileSync(pathReal.join(source, 'muse', 'settings.json'), '{"schema_version":1,"provider":"meta"}\n');
+  fsReal.writeFileSync(pathReal.join(source, 'muse', 'settings.json'), settings);
   return source;
 }
 
@@ -39,9 +39,9 @@ function writeTranscript(dataHome, sid) {
   return p;
 }
 
-function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true } }, mintFails = false, skills = null, teamBlock = '' } = {}) {
+function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true } }, mintFails = false, skills = null, teamBlock = '', settings } = {}) {
   const root = mkTmpRoot('clodex-muse-');
-  const source = writeConfigFixture(root);
+  const source = writeConfigFixture(root, settings === undefined ? {} : { settings });
   const dataHome = pathReal.join(root, 'data');
   fsReal.mkdirSync(dataHome, { recursive: true });
   const order = [];
@@ -194,8 +194,14 @@ test('m2: a fresh muse seat mints, links, then spawns — whole-array argv, AGEN
     assert.strictEqual(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'AGENTS.md'), 'utf-8'),
       'You are the clodex agent named \'seat\'.\n\nIPC\n\n\nAPPEND');
     assert.strictEqual(fsReal.statSync(pathReal.join(seatDir, 'muse', 'AGENTS.md')).mode & 0o777, 0o600);
-    assert.deepStrictEqual(JSON.parse(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'settings.json'), 'utf-8')),
-      { schema_version: 1, provider: 'meta' }, 'readOnlyCap is null this round, so no profile is merged');
+    assert.deepStrictEqual(JSON.parse(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'settings.json'), 'utf-8')), {
+      schema_version: 1,
+      provider: 'meta',
+      permissions: {
+        schema_version: 1,
+        profiles: { reviewer: { extends: ':read-only', approval: 'allow_all', reviewer: 'none', network: { mode: 'enabled' } } },
+      },
+    }, 'the readOnlyCap profile DEFINITION is merged into every muse seat, inert until --permission-profile selects it');
 
     const link = pathForReal(f.root, 'seat', 'transcript');
     assert.strictEqual(fsReal.readlinkSync(link), transcriptPathFor(f.dataHome, sid));
@@ -358,4 +364,23 @@ test('m2 backstop: a registry record that agrees with the minted id leaves the l
 
 test('m2: the muse adapter row is what the arm reads — envKey XDG_CONFIG_HOME, bootstrap xdg-overlay', () => {
   assert.deepStrictEqual(adapterFor('muse').account, { envKey: 'XDG_CONFIG_HOME', bootstrap: 'xdg-overlay' });
+});
+
+test('m3: the profile merge is a deepMerge — a permissions.profiles.other entry in the source settings survives', async () => {
+  const f = mkMuse({ settings: '{"schema_version":1,"provider":"meta","permissions":{"schema_version":1,"profiles":{"other":{"extends":":read-only"}}}}\n' });
+  await f.create('seat');
+  try {
+    const seatDir = pathForReal(f.root, 'seat', 'seatConfig');
+    assert.deepStrictEqual(JSON.parse(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'settings.json'), 'utf-8')), {
+      schema_version: 1,
+      provider: 'meta',
+      permissions: {
+        schema_version: 1,
+        profiles: {
+          other: { extends: ':read-only' },
+          reviewer: { extends: ':read-only', approval: 'allow_all', reviewer: 'none', network: { mode: 'enabled' } },
+        },
+      },
+    });
+  } finally { f.stop('seat'); }
 });

@@ -167,6 +167,12 @@ const REVIEWER_SHELL_DENY = [
 ];
 const REVIEWER_SHELL_TOOL = 'Bash';
 
+const REVIEWER_CAP_MODES = {
+  'tool-denylist': { argv: false, note: null },
+  argv: { argv: true, note: 'read-only sandbox (OS-enforced), approvals: never' },
+  'settings-profile': { argv: true, note: 'permission profile "reviewer" (:read-only, approvals allowed, writes denied)' },
+};
+
 // The reviewer seat's env comes from a template, which — like team.json — is
 // agent-writable, and env is an AUTHORITY surface (ANTHROPIC_BASE_URL, proxy and
 // credential redirects, model overrides). This code-level allowlist is the
@@ -4089,7 +4095,10 @@ function createTicketMethods(deps, shared) {
       // windows have run — "spawned 90s ago" for a seat stuck on a dialog for an
       // hour is a false statement in the one sentence an operator reads to decide
       // whether to look now.
-      if (!s._reviewStartArmedAt) s._reviewStartArmedAt = Date.now();
+      if (!s._reviewStartArmedAt) {
+        s._reviewStartArmedAt = Date.now();
+        s._reviewStartSize = Math.max(0, this._seatTranscriptSize(seatName));
+      }
       s._reviewStartTimer = setTimeout(() => {
         s._reviewStartTimer = null;
         try { this._checkReviewStarted(s, leadName); }
@@ -4114,7 +4123,7 @@ function createTicketMethods(deps, shared) {
         return;
       }
       if (session.activityState !== 'idle') return;   // it started; nothing owed
-      if (this._seatHasTranscript(session.name)) return;
+      if (this._seatTranscriptSize(session.name) > (session._reviewStartSize || 0)) return;
 
       // First window: re-send the nudge rather than waking the lead. The two
       // guards above are what make this safe — a seat that started between the arm
@@ -5067,10 +5076,13 @@ function createTicketMethods(deps, shared) {
       if (review && !cap) {
         throw new Error(`reviewer template "${(tpl && tpl.name) || DEFAULT_REVIEWER_TEMPLATE}" is type "${type}", which cannot be capped read-only in this build`);
       }
-      if (review && cap.enforce !== 'tool-denylist' && cap.enforce !== 'argv') {
-        throw new Error(`reviewer template "${(tpl && tpl.name) || DEFAULT_REVIEWER_TEMPLATE}" is type "${type}", whose read-only cap "${cap.enforce}" cannot be enforced in this build`);
+      const capKind = cap ? cap.enforce : null;
+      const capMode = (capKind !== null && Object.prototype.hasOwnProperty.call(REVIEWER_CAP_MODES, capKind))
+        ? REVIEWER_CAP_MODES[capKind] : null;
+      if (review && !capMode) {
+        throw new Error(`reviewer template "${(tpl && tpl.name) || DEFAULT_REVIEWER_TEMPLATE}" is type "${type}", whose read-only cap "${capKind}" cannot be enforced in this build`);
       }
-      const argvCap = !!cap && cap.enforce === 'argv';
+      const capArgs = !!capMode && capMode.argv;
       const leadArgs = (getPersistence().get(opener.name)?.extraArgs) || [];
       const postureArgs = hasBypass(openerAdapter, leadArgs) ? [...seatAdapter.posture.bypassArgs] : [];
       const workspaceId = opener.workspaceId || DEFAULT_WORKSPACE_ID;
@@ -5224,30 +5236,30 @@ function createTicketMethods(deps, shared) {
         // Dropping the rest is an ADJUDICATED decision, not an omission: the
         // rationale is owned by the test 'a reviewer template CANNOT contribute
         // extraArgs'. Mirroring the ticket arm here reverts it.
-        extraArgs: argvCap ? [...modelArgs.args, ...cap.args] : [...postureArgs, ...modelArgs.args],
-        shellDeny: (!argvCap && wantsShell) ? REVIEWER_SHELL_DENY.slice() : null,
+        extraArgs: capArgs ? [...modelArgs.args, ...cap.args] : [...postureArgs, ...modelArgs.args],
+        shellDeny: (!capArgs && wantsShell) ? REVIEWER_SHELL_DENY.slice() : null,
         // A --model that was present and refused. Carried, not re-derived at the
         // call site: re-parsing would put a second copy of the allowlist there.
         modelRefused: modelArgs.refused,
         agents: [],
         denyBuiltins: [],
-        disabledTools: argvCap ? [] : CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t)),
+        disabledTools: capArgs ? [] : CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t)),
         disabledSkills: (tpl && Array.isArray(tpl.disabledSkills)) ? tpl.disabledSkills.slice() : ['*'],
         injectSkills: [],
         // Carried, not recomputed from disabledTools: the warning below prints it
         // in REVIEWER_TOOL_CAP order, and inverting the denylist would print it in
         // CLAUDE_TOOLS order instead — a silent change to operator-facing text.
-        effectiveTools: argvCap ? [] : effectiveTools,
+        effectiveTools: capArgs ? [] : effectiveTools,
         // Carried so the refusal can PRINT the exact list the template asked for
         // without borrowing beyondCap, whose meaning is "what you overreached for"
         // — identical content in the refusal state today, but a future edit to one
         // message would silently change the other.
-        requestedTools: argvCap ? null : requestedTools,
+        requestedTools: capArgs ? null : requestedTools,
         // A separate key, not inferable from requestedTools being null: null also
         // means "absent", which takes the full cap. The caller must refuse one and
         // not the other, and re-reading tpl.tools to tell them apart would put a
         // second copy of this type judgment at the call site.
-        toolsMalformed: argvCap ? false : toolsMalformed,
+        toolsMalformed: capArgs ? false : toolsMalformed,
         systemPromptFile,
         appendPromptFiles: [],
         execCommands: [],
@@ -5266,9 +5278,9 @@ function createTicketMethods(deps, shared) {
         accountMissing,
         envDropped: (shape && shape.envDropped) || [],
         envBadType: (shape && shape.envBadType) || [],
-        beyondCap: argvCap ? [] : beyondCap,
-        capNote: argvCap ? 'read-only sandbox (OS-enforced), approvals: never' : null,
-        toolsIgnored: argvCap && rawTools !== undefined,
+        beyondCap: capArgs ? [] : beyondCap,
+        capNote: capMode ? capMode.note : null,
+        toolsIgnored: capArgs && rawTools !== undefined,
         promptEscaped,
         workspaceId,
         ephemeral: true,

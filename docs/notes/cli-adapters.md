@@ -66,3 +66,21 @@ no entry was written; `--add-dir` under `read-only` is NOT writable (`touch`:
 Operation not permitted), the cwd is not either, and outbound network is off
 (DNS fails). `exec` rejects `--ask-for-approval`; the TUI the seat boots takes
 it.
+
+`enforce: 'settings-profile'` (Muse) is a settings file plus a flag: `settings`
+is deep-merged into every Muse seat's settings.json by `bootstrapSeatConfig`
+(inert until selected) and `args` selects it. It carries NO posture args:
+`--permission-profile` is mutually exclusive with `--approval-mode`, `--yolo`
+AND `--sandbox-network` (all measured on Muse Code 1.3.0). The profile's
+`network: { mode: 'enabled' }` member is the only headless way to reach
+loopback: under the bare `:read-only` profile the sandbox commits
+`local_command_network.mode: restricted` and `curl 127.0.0.1:7800` is refused
+(connection refused, measured); `restricted` + `targets` is "contradictory
+authority: network rules outside proxy_only"; `proxy_only` (+targets) "requires
+prompting approval with human fallback", which a headless reviewer cannot give;
+`local_command_network` is not a profile field. With `network.mode: enabled`
+the same curl returned wirescope's `_identity` (measured, 1 request, 4.0 s). A
+file under `~/.clodex/messages` (a spilled spec) IS readable under the profile
+(measured: `cat` returned the header), and the transcript carries
+`runtime.session.permission_profile_committed` with `source.kind: "user_named"`,
+`id: "reviewer"` inside a `session_permission_transaction` frame.

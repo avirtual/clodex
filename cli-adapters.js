@@ -70,7 +70,16 @@ const ADAPTERS = {
     posture: { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'] },
     account: { envKey: 'XDG_CONFIG_HOME', bootstrap: 'xdg-overlay' },
     cwdDir: null,
-    readOnlyCap: null,
+    readOnlyCap: {
+      enforce: 'settings-profile',
+      args: ['--permission-profile', 'reviewer'],
+      settings: {
+        permissions: {
+          schema_version: 1,
+          profiles: { reviewer: { extends: ':read-only', approval: 'allow_all', reviewer: 'none', network: { mode: 'enabled' } } },
+        },
+      },
+    },
     instructions: 'user-agents-md',
     transcript: { reader: 'muse', link: 'clodex' },
     caps: { park: false, transcript: true, warmth: false },
