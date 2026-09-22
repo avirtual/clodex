@@ -38,8 +38,9 @@ function applySkillAliases(disabledSkills, aliases) {
   const map = aliases && typeof aliases === 'object' ? aliases : {};
   return list.map((n) => {
     if (typeof n !== 'string' || n === '*') return n;
-    if (n.startsWith('!') && n.length > 1) return `!${map[n.slice(1)] || n.slice(1)}`;
-    return map[n] || n;
+    const key = n.startsWith('!') && n.length > 1 ? n.slice(1) : n;
+    const id = Object.hasOwn(map, key) ? map[key] : key;
+    return key === n ? id : `!${id}`;
   });
 }
 

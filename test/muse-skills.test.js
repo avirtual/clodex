@@ -214,4 +214,3 @@ test('t1094: skillAliases maps each SKILL.md directory name to its roster id, an
   assert.ok(!skillOffSetFor(names, applySkillAliases(['*', '!git'], aliases)).has('bundled:git'));
   assert.ok(skillOffSetFor(names, applySkillAliases(['*', '!git'], aliases)).has('plugin:threejs:threejs'));
 });
-

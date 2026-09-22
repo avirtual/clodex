@@ -23,7 +23,7 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const { capsFor } = require('../cli-adapters');
-const { skillOffSetFor, applySkillAliases, skillDenyIsDeferred } = require('../skills-off');
+const { skillOffSetFor, applySkillAliases, skillDenyIsDeferred, skillDenyKeepList, deferredSkillDeny } = require('../skills-off');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
 const htmlSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');
 
@@ -550,11 +550,14 @@ function el(tag) {
     querySelectorAll(sel) {
       // Spelled out, not pattern-matched: a stub answering every selector with
       // everything would make the collect assertion below vacuous.
-      assert.strictEqual(sel, 'input[type="checkbox"]:not(:checked):not(:disabled)');
+      const OFF = 'input[type="checkbox"]:not(:checked):not(:disabled)';
+      const TOGGLEABLE = 'input[type="checkbox"]:not(:disabled)';
+      assert.ok(sel === OFF || sel === TOGGLEABLE, `unexpected selector: ${sel}`);
       const flat = [];
       const walk = (n) => { for (const c of n.children) { flat.push(c); walk(c); } };
       walk(e);
-      return flat.filter((c) => c.tagName === 'input' && c.type === 'checkbox' && !c.checked && !c.disabled);
+      return flat.filter((c) => c.tagName === 'input' && c.type === 'checkbox' && !c.disabled
+        && (sel === TOGGLEABLE || !c.checked));
     },
   };
   let text = '';
@@ -693,12 +696,14 @@ test('a cwd redraw preserves the template rows the operator unticked', () => {
 const REFRESH_SKILLS_FN = [
   extract(/\n(function resetNewSessionSkillCollector\([\s\S]*?\n\})\n/, 'resetNewSessionSkillCollector'),
   extract(/\n(async function refreshNewSessionSkills\([\s\S]*?\n\})\n/, 'refreshNewSessionSkills'),
+  extract(/\n(function newSessionSkillDenyList\([\s\S]*?\n\})\n/, 'newSessionSkillDenyList'),
 ].join('\n');
 const SKILL_NAMES = ['alpha', 'beta', 'gamma'];
+const CLAUDE_CATALOG = { ok: true, names: [...SKILL_NAMES], effective: {} };
 
 // withDom cannot wrap this one: it restores `document` in a synchronous finally,
 // which fires before an async body has drawn a single row.
-async function drawSkillsForTemplate(disabledSkills) {
+async function drawSkillsForTemplate(disabledSkills, catalog = CLAUDE_CATALOG) {
   const had = global.document;
   global.document = { createElement: el, addEventListener() {} };
   try {
@@ -713,15 +718,17 @@ async function drawSkillsForTemplate(disabledSkills) {
       renderSkillChecklist: checklists.renderSkillChecklist,
       advisoryEffective: (e) => e || {},
       // Real, not stubs: what the rows draw must be what the spawn resolves.
-      skillOffSetFor, applySkillAliases, skillDenyIsDeferred,
+      skillOffSetFor, applySkillAliases, skillDenyIsDeferred, skillDenyKeepList, deferredSkillDeny,
+      collectSkillChecklist: checklists.collectSkillChecklist,
       newSessionSkillsDeferred: false,
       newSessionSkillsDrawn: [],
       newSessionSkillsAsked: [],
-      window: { api: { getSkillCatalogFor: async () => ({ ok: true, names: [...SKILL_NAMES], effective: {} }) } },
+      window: { api: { getSkillCatalogFor: async () => catalog } },
     };
     const names = Object.keys(env);
     const run = new Function(...names,
-      `${REFRESH_SKILLS_FN}\nreturn refreshNewSessionSkills(new Set(${JSON.stringify(disabledSkills)}), { forTemplate: true });`);
+      `${REFRESH_SKILLS_FN}\nreturn refreshNewSessionSkills(new Set(${JSON.stringify(disabledSkills)}), { forTemplate: true })`
+      + '.then(() => { inputSkillsList.deny = newSessionSkillDenyList; });');
     await run(...names.map((n) => env[n]));
     return inputSkillsList;
   } finally { global.document = had; }
@@ -749,6 +756,22 @@ test('t769: an ordinary template list still drives the ticks by name', async () 
   assert.deepStrictEqual(skillRowsOf(c),
     [{ name: 'alpha', checked: true }, { name: 'beta', checked: false }, { name: 'gamma', checked: true }]);
   assert.deepStrictEqual(checklists.collectSkillChecklist(c), ['beta']);
+});
+
+test('t1094: a muse template keeping skills by directory name round-trips its `*` sweep under ids when saved untouched', async () => {
+  const catalog = {
+    ok: true, names: ['bundled:git', 'plugin:threejs:threejs'],
+    aliases: { git: 'bundled:git', threejs: 'plugin:threejs:threejs' }, effective: {},
+  };
+  const c = await drawSkillsForTemplate(['*', '!git', '!threejs'], catalog);
+  assert.deepStrictEqual(skillRowsOf(c),
+    [{ name: 'bundled:git', checked: true }, { name: 'plugin:threejs:threejs', checked: true }],
+    'ENTER: both keeps drew ON under their ids');
+  assert.deepStrictEqual(c.deny(), ['*', '!bundled:git', '!plugin:threejs:threejs'],
+    'the sweep survives the save; `[]` would turn every skill back on');
+
+  const partial = await drawSkillsForTemplate(['*', '!git'], catalog);
+  assert.deepStrictEqual(partial.deny(), ['*', '!bundled:git'], 'one keep, once, under its id');
 });
 
 // --- t1077: the platform list and the caps-gated save ----------------------

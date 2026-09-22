@@ -2377,6 +2377,7 @@ async function refreshNewSessionSkills(disabledSet = new Set(), { forTemplate = 
   if (!res || !res.ok) { renderSkillChecklist(inputSkillsList, [], disabledSet); return; }
   const names = res.names || [];
   newSessionSkillsDrawn = [...names];
+  newSessionSkillsAsked = applySkillAliases(newSessionSkillsAsked, res.aliases);
   const offSet = skillOffSetFor(names, applySkillAliases(disabledSet, res.aliases));
   renderSkillChecklist(inputSkillsList, names, offSet,
     advisoryEffective(res.effective, forTemplate),

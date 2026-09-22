@@ -1792,7 +1792,7 @@ function readSkillCatalog({ name = null, cwd = null, type = null } = {}) {
     const roster = platformSkills(adapter, { configDir });
     const listed = roster.map((s) => s.id);
     const aliases = skillAliases(roster);
-    const off = disabled.map((n) => aliases[n] || n);
+    const off = disabled.map((n) => (Object.hasOwn(aliases, n) ? aliases[n] : n));
     const names = [...new Set([...listed, ...off])].filter((n) => !isSkillDenyDirective(n)).sort();
     const base = { ok: true, names, aliases, effective: {}, skillsLocked: false, canReenable: SKILL_REENABLE_CONFIRMED };
     if (!name) return base;

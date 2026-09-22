@@ -44,7 +44,7 @@ function skillAliases(skills) {
   const aliases = {};
   for (const skill of Array.isArray(skills) ? skills : []) {
     for (const key of matchKeys(skill)) {
-      if (key !== skill.id && !(key in aliases)) aliases[key] = skill.id;
+      if (key !== skill.id && !Object.hasOwn(aliases, key)) aliases[key] = skill.id;
     }
   }
   return aliases;
