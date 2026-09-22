@@ -88,3 +88,33 @@ file under `~/.clodex/messages` (a spilled spec) IS readable under the profile
 ## skills
 
 `null` where the platform has no listable roster (Claude sweeps transcripts; Codex has none); `{ list, activation }` where it has: `list.args` after `cmd` prints the roster as JSON, `list.env` names the variable pointed at the SOURCE config (`account.envKey`, never the seat overlay the list is about to shape), `list.scratchEnv` a data-home variable pointed at a scratch dir, `activation.key`/`activation.off` the settings path and value the off-block is written under. Measured facts live in docs/notes/muse-skills.md.
+
+A Muse seat's transcript is non-empty BEFORE its PTY spawns (the m2 mint turn),
+and the resume APPENDS at boot with nothing typed (measured, echo provider, Muse
+Code 1.3.0: 82,821 bytes / 66 records before `resume`, 89,710 / 72 six seconds
+after boot — five boot records totalling 6,165 bytes: `route_facts`,
+`workspace_branch.observed`, `session.opened.observed`, `session.resumed`, the
+`session_permission_transaction` frame — plus `session.end` from the SIGTERM;
+every boot record classifies inert under the muse reader). So
+`_checkReviewStarted` counts TURNS, not bytes: `_seatTurnSince` reads the
+transcript from the offset stamped at the first arm through the seat's
+`transcript.reader` and takes any `turnStart`/`isReply`/`turnEnd` record as
+started. A TUI-spawned Codex seat could not be measured the same way: in a
+fresh scratch project `codex --enable hooks` chains a directory-trust dialog and
+then a "Hooks need review" dialog (measured, 0.155.1 — trust is per project, so
+even the loop's own trusted hook script is "new" there), and the SessionStart
+hook runs only past both; persisting hook trust for a throwaway project in the
+operator's config was declined. A Codex `session_meta` written at boot, before
+or after the arm, classifies as no turn, so the same probe covers it.
+
+The committed snapshot under the widened profile (run 2) keeps the filesystem
+read-only: `filesystem.mode: managed`, rules `:minimal` / `:root` /
+`:workspace_roots` all `access: read`, `protected_metadata: true`, beside
+`local_command_network.mode: enabled`, `approval: allow_all`, `reviewer: none`.
+
+Gap, follow-up: the reviewer's MINT turn (the `muse exec` at create) runs
+uncapped — `--approval-mode never --disable-sandbox`, cwd the review worktree,
+the reviewer AGENTS.md already written, steps unbounded; only the resume
+carries `--permission-profile reviewer`. The two flag sets are mutually
+exclusive, so the fix is a swap: a seat whose extraArgs carry a cap mints under
+the cap args in place of the bypass pair.
