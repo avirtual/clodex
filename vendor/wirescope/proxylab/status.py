@@ -296,7 +296,11 @@ def _status_snapshot(session=None, all_sessions=False, limit=None,
     with pinger_mod._LAST_REQUEST_LOCK:
         last_real = {sid: (e["ts"], bool(e.get("needs_auth")),
                            codex_mod._is_openai_body(e.get("obj")),
-                           e.get("account"))
+                           e.get("account"),
+                           # codex "openai" / muse "meta"; anthropic entries
+                           # carry no provider
+                           e.get("provider") if codex_mod._is_openai_body(e.get("obj"))
+                           else None)
                      for sid, e in pinger_mod._LAST_REQUEST.items()}
     # account_uuid -> email, one pass over the (tiny) store registry per call
     acct_labels = {s["account_uuid"]: s["email"] for s in accounts_mod.stores()
@@ -416,6 +420,14 @@ def _status_snapshot(session=None, all_sessions=False, limit=None,
             # account's credential store, not the box default.
             "account": ({"uuid": lr[3], "email": acct_labels.get(lr[3])}
                         if lr and lr[3] else None),
+            # which wire the session's last request spoke: anthropic (the
+            # default, and every restored/cold row), openai (codex) or meta
+            # (muse). The two Responses-API wires cache SERVER-SIDE with no
+            # TTL, so their warmth block is structurally absent — a consumer
+            # deciding "is this session alive" on that wire must key on
+            # last_seen, not on warmth.state (`/_admin` files them warm while
+            # active in the last hour).
+            "wire": (lr[4] or "openai") if lr and lr[2] else "anthropic",
             "warmth": {"state": ("warm" if wq.get("warm")
                                  else "cold" if wq.get("found") else "absent"),
                        "remaining_s": wq.get("remaining_s"),

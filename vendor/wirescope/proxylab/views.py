@@ -233,6 +233,22 @@ def _render_filter_bar(p, show, by):
             f'<p class="kv filters"><span class="dim">order</span>{"".join(order)}</p>')
 
 
+# A session on a server-side-cached wire (codex, muse) counts as "warm" on
+# /_admin while it turned within this window — there is no TTL to read, and
+# the seat's real cache lifetime upstream is unknown; an hour is the operator's
+# "recently active" horizon, not a cache claim.
+_SERVER_CACHE_ACTIVE_S = 3600
+
+
+def _server_cached(s):
+    return (s.get("wire") or "anthropic") != "anthropic"
+
+
+def _server_cache_active(s, now):
+    ls = s.get("last_seen")
+    return bool(ls) and (now - ls) <= _SERVER_CACHE_ACTIVE_S
+
+
 def _render_admin_html(snap, host="", show=60, by="state"):
     e = html.escape
     p = snap["proxy"]
@@ -270,7 +286,17 @@ def _render_admin_html(snap, host="", show=60, by="state"):
         w = s["warmth"]
         segs = w.get("segments") or {}
         # head warmth -> two columns: time-left (how long until cold) and ttl.
-        if w["state"] == "warm":
+        if _server_cached(s):
+            # codex/muse: the cache is upstream's and has no TTL to count
+            # down, so "cold" would misreport a seat that turned a minute ago
+            # (Bogdan, 2026-09-22). Recency is the only liveness signal.
+            act = "active" if _server_cache_active(s, now) else "idle"
+            timeleft = (f'<span class="{"warm" if act == "active" else "cold"}" '
+                        f'title="{e(s.get("wire") or "openai")} wire: cached '
+                        f'server-side, no TTL — placed by last activity">'
+                        f'&#9729;&#65039; server · {act}</span>')
+            ttlc = '<span class="dim">&mdash;</span>'
+        elif w["state"] == "warm":
             timeleft = (f'<span class="warm">&#128293; '
                         f'{e(_fmt_dur(w["remaining_s"]))}</span>')
             ttlc = f'<span class="dim">{e(_fmt_dur(w["ttl_s"]))}</span>'
@@ -395,8 +421,16 @@ def _render_admin_html(snap, host="", show=60, by="state"):
     # order reads as arbitrary. `by=recent` is the finding view: one table,
     # strictly last_seen-descending, warmth still legible in the time-left/ttl
     # columns. `state` stays the default so nothing moves underfoot.
-    warm_s = [s for s in snap["sessions"] if s["warmth"]["state"] == "warm"]
-    cold_s = [s for s in snap["sessions"] if s["warmth"]["state"] != "warm"]
+    # The Responses-API wires (codex, muse) have no warmth row at all — the
+    # cache is server-side with no TTL — so on state alone every one of them
+    # filed under "cold / expired" seconds after a turn. For those, recency IS
+    # the state: active in the last hour -> the warm table.
+    def _is_warm_row(s):
+        if _server_cached(s):
+            return _server_cache_active(s, now)
+        return s["warmth"]["state"] == "warm"
+    warm_s = [s for s in snap["sessions"] if _is_warm_row(s)]
+    cold_s = [s for s in snap["sessions"] if not _is_warm_row(s)]
     _hdr = ('<tr><th>time left</th><th>ttl</th><th>tools</th><th>prompt</th>'
             '<th>session</th><th>last seen</th>'
             '<th>hold</th><th>pingable</th><th>cost</th><th>ref</th></tr>')
