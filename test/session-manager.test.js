@@ -5306,11 +5306,9 @@ test('team-review: two reviews in one lead turn mint DISTINCT names (no -1 colli
 
 // C2 (T29 Slice 2), and the half of it that SURVIVES t292: a cold reviewer always
 // spawns as claude, because only create()'s claude arm consumes disabledTools —
-// codex ignores the denylist, so a codex reviewer would spawn uncapped. That is
-// CODE now, not a manifest field being overridden. A role DEF `type: codex` is
-// dropped at manifest load and the role names no template, so nothing here can
-// ask for codex: both seats yield claude for that reason, not because of the
-// template rule the ticket arm applies.
+// codex ignores the denylist, so a codex reviewer would spawn uncapped. A role
+// DEF `type: codex` is dropped at manifest load and the role names no template,
+// so nothing in this pair can ask for codex: both yield claude for that reason.
 test('team-review C2: a role def still carrying `type: codex` spawns as CLAUDE + capped', async () => {
   const { m, created } = mkReview({
     reviewerRole: { prompt: 'clodex-team-reviewer', brief: 'the reviewer',
