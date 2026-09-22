@@ -5,8 +5,11 @@ The review-start half of team-tickets.js — split out of
 
 ## _checkReviewStarted
 
-"Started" is transcript growth ABOVE the size stamped by `_armReviewStartCheck`
-on its first arm (`_reviewStartSize`), not size > 0: a Muse seat's mint turn is
-in `session.jsonl` before the PTY spawns, so `> 0` read every Muse reviewer as
-started and never re-nudged one that never took a turn. Claude and Codex seats
-have no transcript at arm, so their baseline is 0 and nothing changes for them.
+"Started" is a turn-bearing record — `turnStart`/`isReply`/`turnEnd` under the
+seat's `transcript.reader` — past the byte offset `_armReviewStartCheck` stamps
+on its first arm (`_reviewStartSize`), never a byte count: a Muse seat's mint
+turn is in `session.jsonl` before the PTY spawns, and the resume appends ~6 KB
+of inert boot records (`session.resumed`, the permission transaction) AFTER the
+arm, so `> 0` and `size > baseline` both read a reviewer that never took a turn
+as started. Claude and Codex seats have no transcript at arm; a boot-written
+`session_meta` classifies as no turn either way.

@@ -38,6 +38,7 @@ const {
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate } = require('./team-template-derive');
 const { seatType, adapterFor, DEFAULT_TYPE, PLATFORMS, hasBypass } = require('./cli-adapters');
+const { readerFor } = require('./transcript-readers');
 const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
@@ -4065,16 +4066,9 @@ function createTicketMethods(deps, shared) {
     // (boot-ready rising edge, `_armParkedDrainFallback`) are the recovery; when
     // both miss, the seat is silent and permanent with nothing watching.
     //
-    // The tell is the TRANSCRIPT, not the clock: the hook creates
-    // `run/<name>/transcript.jsonl` as a symlink at spawn and its target file only
-    // appears once the CLI writes a turn. So absence of the target is not a proxy
-    // for "no first turn", it is the same event.
-    //
     // `activityState` is required as well, and it is the conservative term: a seat
     // whose hook never installed would have no transcript however hard it works,
     // and alarming there would report the detector's own blind spot as a wedge.
-    // A seat that took a turn cannot be idle-with-no-transcript — it reached idle
-    // THROUGH thinking, which is what writes the file.
     //
     // REDELIVERS ONCE, then escalates. The redelivery below restates no scope and
     // re-attaches nothing, so it duplicates no content and can strand nothing —
@@ -4123,7 +4117,7 @@ function createTicketMethods(deps, shared) {
         return;
       }
       if (session.activityState !== 'idle') return;   // it started; nothing owed
-      if (this._seatTranscriptSize(session.name) > (session._reviewStartSize || 0)) return;
+      if (this._seatTurnSince(session.name, session._reviewStartSize || 0) === true) return;
 
       // First window: re-send the nudge rather than waking the lead.
       if (!session._reviewNudgeRetried) {
@@ -4165,27 +4159,15 @@ function createTicketMethods(deps, shared) {
         // The `|| Date.now()` yields a visibly wrong 0s rather than `NaN s` for a
         // session that reaches here unarmed — a wrong number sends an operator to
         // look at the seat, NaN reads as a broken tool and sends them elsewhere.
-        `[review ${session.name}] spawned ${Math.round((Date.now() - (session._reviewStartArmedAt || Date.now())) / 1000)}s ago, was re-sent its start nudge, and has STILL taken no turn — its transcript has not grown since spawn, so it never started. `
+        `[review ${session.name}] spawned ${Math.round((Date.now() - (session._reviewStartArmedAt || Date.now())) / 1000)}s ago, was re-sent its start nudge, and has STILL taken no turn — its transcript holds no turn record since spawn, so it never started. `
         + 'Its scope is in its system prompt and is intact; what was lost is the nudge that starts it, and re-sending it did not help. '
         + `Recover with an urgent dm to ${session.name} re-sending the scope and telling it to ignore the message if it already has it — NOT a respawn, which mints a second seat and strands this one's mail.`,
         false, `[review ${session.name}] never started`);
     },
 
-    // Has this seat ever written a turn? The link is created at spawn and its
-    // target only when the CLI writes — so a link that resolves to nothing is a
-    // seat that has produced nothing, and an unreadable/absent link is the same
-    // answer for a weaker reason. Every failure reads as "no transcript", which is
-    // the direction that ALARMS, so a broken probe is loud rather than silent —
-    // the opposite of `_stallEvidence`'s policy, and deliberately: there an absent
-    // field degrades an alarm that fires anyway, here it IS the alarm.
-    _seatHasTranscript(name) {
-      return this._seatTranscriptSize(name) > 0;
-    },
-
-    // The same probe, read as a NUMBER instead of a boolean. Split out rather
-    // than duplicated: the liveness test needs growth between two sweeps, and
-    // a second resolver would be free to disagree with this one about where a
-    // seat's transcript is — silently, and in the direction that alarms.
+    // Split out rather than duplicated: the liveness test needs growth between
+    // two sweeps, and a second resolver would be free to disagree with this one
+    // about where a seat's transcript is — silently, and in the direction that alarms.
     //
     // -1, not 0, for an unreadable link. 0 is a real size (a seat that has
     // written nothing), and collapsing the two makes an fs error look like a
@@ -4227,26 +4209,47 @@ function createTicketMethods(deps, shared) {
     // transcript, unreadable link), where the caller must fall back to trusting the
     // turn rather than manufacture a redelivery out of a blind spot.
     _seatTranscriptHas(name, ticketId, from = 0, tailBytes = 1 << 20) {
+      const tail = this._seatTranscriptTail(name, from, tailBytes);
+      if (tail === null) return null;
+      return tail.includes(`[ticket ${ticketId}]`) || tail.includes(`[ticket ${ticketId} `);
+    },
+
+    // Readable, and nothing appended since the write: that is a definite NO,
+    // not an unknown. The seat cannot have consumed a write that produced no
+    // transcript bytes, and answering "cannot say" here would surrender the
+    // two shapes this mechanism is for — a fresh seat (anchored at 0, empty
+    // transcript) and a wire-routed edge that beat the CLI's append.
+    _seatTranscriptTail(name, from = 0, tailBytes = 1 << 20) {
       let fd;
       try {
         const link = pathFor(REGISTRY_DIR, name, 'transcript');
         const target = fs.realpathSync(link);
         const size = fs.statSync(target).size;
-        // Readable, and nothing appended since the write: that is a definite NO,
-        // not an unknown. The seat cannot have consumed a write that produced no
-        // transcript bytes, and answering "cannot say" here would surrender the
-        // two shapes this mechanism is for — a fresh seat (anchored at 0, empty
-        // transcript) and a wire-routed edge that beat the CLI's append.
-        if (size <= from) return false;
+        if (size <= from) return '';
         const start = Math.max(from, size - tailBytes);
         const len = size - start;
         const buf = Buffer.alloc(len);
         fd = fs.openSync(target, 'r');
         fs.readSync(fd, buf, 0, len, start);
-        const tail = buf.toString('utf8');
-        return tail.includes(`[ticket ${ticketId}]`) || tail.includes(`[ticket ${ticketId} `);
+        return buf.toString('utf8');
       } catch { return null; }
       finally { if (fd !== undefined) { try { fs.closeSync(fd); } catch {} } }
+    },
+
+    _seatTurnSince(name, from = 0, tailBytes = 1 << 20) {
+      const tail = this._seatTranscriptTail(name, from, tailBytes);
+      if (tail === null) return null;
+      const s = this.sessions.get(name);
+      const reader = readerFor((((s && adapterFor(s.agentType)) || {}).transcript || {}).reader);
+      for (const line of tail.split('\n')) {
+        let obj;
+        try { obj = JSON.parse(line); } catch { continue; }
+        for (const rec of reader.expand(obj)) {
+          const c = reader.classify(rec);
+          if (c.turnStart || c.isReply || c.turnEnd) return true;
+        }
+      }
+      return false;
     },
 
     // Cleared by a non-idle edge that is ATTRIBUTABLE to this write (see
