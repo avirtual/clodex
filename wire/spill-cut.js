@@ -6,7 +6,7 @@ const { cleanLine } = require('../intent-scanner');
 
 const NEEDLES = ['@spill:', ' filed at /', '[Runtime note:', '(I sent', '(I wrote'];
 const END_LINE = '[agent:end]';
-const PLACEHOLDER = '[agent]';
+const PLACEHOLDER = "(This turn's text was delivered in full; Clodex keeps it out of the request.)";
 
 function hasNeedle(msg) {
   if (!Array.isArray(msg.content)) return false;
@@ -119,4 +119,4 @@ function cutSpillStubs(obj) {
   return report;
 }
 
-module.exports = { cutSpillStubs, NEEDLES, PLACEHOLDER };
+module.exports = { cutSpillStubs, classifyLine, hasNeedle, NEEDLES, PLACEHOLDER };
