@@ -26,6 +26,7 @@ from proxylab import core as core_mod
 from proxylab import hints as hints_mod
 from proxylab import hints_native as hints_native_mod
 from proxylab import meta as meta_mod
+from proxylab import muse as muse_mod
 from proxylab import quota as quota_mod
 from proxylab import subs as subs_mod
 from proxylab import warmth as warmth_mod
@@ -202,38 +203,56 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
 
 
 def openai(blob, *, n, ts, agent, model, session_id, session_key,
-           out_dir, stem, status_code, resp_headers, tee_text=None):
+           out_dir, stem, status_code, resp_headers, tee_text=None,
+           provider="openai", sidecall=None):
     """Finalize a codex/openai-wire /responses receipt. Same convergence as
     anthropic(): stats, view state, API-equivalent pricing (PRICES_OPENAI;
     plan traffic is never dollar-billed) into the same global/session ledger,
     capture, subscriber receipt, console line. Turn heuristic: a completed
     response WITH text ends a turn; tool-loop hops come back text-less
-    (reasoning+calls only)."""
+    (reasoning+calls only).
+
+    provider="meta" (muse): same receipt off PRICES_META; `sidecall` names a
+    reminder-observer call filed under its parent session — priced apart in
+    the session totals (`sidecalls.<kind>` + its own by_line bucket), never a
+    turn, never the session's view state, and its turn.completed carries
+    `sidecall` so a consumer can drop it from the conversation feed."""
     meta = codex_mod._parse_openai_response(blob)
     u = meta.get("usage") or {}
     cached = (u.get("input_tokens_details") or {}).get("cached_tokens", 0)
     reason = (u.get("output_tokens_details") or {}).get("reasoning_tokens", 0)
-    codex_mod._CODEX_STATS["responses"] += 1
-    codex_mod._CODEX_STATS["input_tokens"] += u.get("input_tokens") or 0
-    codex_mod._CODEX_STATS["cached_tokens"] += cached or 0
-    codex_mod._CODEX_STATS["output_tokens"] += u.get("output_tokens") or 0
-    codex_mod._CODEX_STATS["reasoning_tokens"] += reason or 0
+    stats = muse_mod._MUSE_STATS if provider == "meta" else codex_mod._CODEX_STATS
+    stats["responses"] += 1
+    stats["input_tokens"] += u.get("input_tokens") or 0
+    stats["cached_tokens"] += cached or 0
+    stats["output_tokens"] += u.get("output_tokens") or 0
+    stats["reasoning_tokens"] += reason or 0
     if status_code >= 400 or meta.get("error"):
-        codex_mod._CODEX_STATS["errors"] += 1
-    bill = billing_mod._billing_openai(meta.get("resolved_model") or model, u)
-    if session_id:
+        stats["errors"] += 1
+    bill = billing_mod._billing_openai(meta.get("resolved_model") or model, u,
+                                       provider=provider)
+    subscription = (muse_mod._subscription_usage(blob) if provider == "meta"
+                    else None)
+    if session_id and not sidecall:
         _stash_view_state(
             session_id, text=meta.get("text"),
             truncated=len(meta.get("text") or "") >= billing_mod._META_TEXT_CAP,
             stop_reason=meta.get("status"), bill=bill)
     stop = {"stop_reason": meta.get("status"),
             "is_turn": (meta.get("status") == "completed"
-                        and bool(meta.get("text")))}
-    cum = billing_mod._accumulate(bill, session_key, stop)
+                        and bool(meta.get("text")) and not sidecall),
+            "sidecall": sidecall}
+    # by_line: the conversation line is "main" (same key the anthropic
+    # receipt uses, so cost_by_line works on this wire too); a side-call
+    # kind is its own line
+    cum = billing_mod._accumulate(bill, session_key, stop,
+                                  line=sidecall or "main")
     writer_mod._enqueue_json(out_dir / f"{stem}.response.json",
-        {"seq": n, "agent": agent, "provider": "openai",
+        {"seq": n, "agent": agent, "provider": provider,
          "model": model, "session_id": session_id,
          "endpoint": "responses", "status_code": status_code,
+         **({"sidecall": sidecall} if sidecall else {}),
+         **({"subscription": subscription} if subscription else {}),
          "response_headers": core_mod._safe_headers(resp_headers),
          "billing": bill, "cumulative": cum,
          "usage": u, "meta": meta})
@@ -242,8 +261,11 @@ def openai(blob, *, n, ts, agent, model, session_id, session_key,
         status_code=status_code,
         text=(tee_text if tee_text is not None else meta.get("text")),
         bill=bill,
-        session_totals=billing_mod._SESSION_TOTALS.get(session_key))
-    print(f"[codex] #{n} {agent} {meta.get('resolved_model') or model} "
+        session_totals=billing_mod._SESSION_TOTALS.get(session_key),
+        provider=provider, sidecall=sidecall, subscription=subscription)
+    print(f"[{'muse' if provider == 'meta' else 'codex'}] #{n} {agent} "
+          f"{meta.get('resolved_model') or model} "
+          f"{'sidecall=' + sidecall + ' ' if sidecall else ''}"
           f"-> {status_code} in={u.get('input_tokens')} "
           f"cached={cached} out={u.get('output_tokens')} "
           f"think={reason} status={meta.get('status')}"

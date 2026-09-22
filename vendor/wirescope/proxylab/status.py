@@ -8,6 +8,7 @@ import time
 from proxylab import accounts as accounts_mod
 from proxylab import billing as billing_mod
 from proxylab import codex as codex_mod
+from proxylab import muse as muse_mod
 from proxylab import core as core_mod
 from proxylab import hints as hints_mod
 from proxylab import hints_native as hints_native_mod
@@ -135,6 +136,11 @@ def _identity():
                                "default_level": transforms_mod._global_strip_level()},
             "codex": True,                # /agent/<name>/openai HTTP routing
             "codex_websocket": codex_mod._websocket_available(),
+            # Meta's muse CLI: /agent/<name>/meta routing + root /muse-code/*
+            # product passthrough (catalog-learned prices, reminder side-calls
+            # priced apart). Same Responses-API wire as codex, `wire:"meta"`
+            # on /_context and `provider:"meta"` on receipts.
+            "muse": True,
             # wirescope directives (WIRESCOPE.md): agent-name always honored,
             # omit/replace gated by WS_OMIT, keep always honored; `spawn` =
             # whether spawn-position (messages[0] head) directives are read at
@@ -475,12 +481,14 @@ def _status_snapshot(session=None, all_sessions=False, limit=None,
     res = {"proxy": {"version": core_mod.VERSION,
                      "log_dir": str(core_mod.LOG_DIR), "upstream": core_mod.UPSTREAM,
                      "upstream_openai": codex_mod.UPSTREAM_OPENAI,
+                     "upstream_meta": muse_mod.UPSTREAM_META,
                      "uptime_s": round(now - core_mod._START_TS, 1),
                      "flags": {"hold": hold_mod.WARMTH_HOLD, "pinger": pinger_mod.WARMTH_PINGER,
                                "ledger": warmth_mod.WARMTH_LEDGER,
                                "block_cold_ping": warmth_mod.WARMTH_BLOCK_COLD_PING},
                      "subscribers": subs_mod._stats(),
                      "codex": dict(codex_mod._CODEX_STATS),
+                     "muse": dict(muse_mod._MUSE_STATS),
                      "hold_config": {"margin_s": hold_mod.WARMTH_HOLD_MARGIN,
                                      "interval_s": hold_mod.WARMTH_HOLD_INTERVAL,
                                      "max_hours": hold_mod.WARMTH_HOLD_MAX_HOURS,
@@ -685,16 +693,30 @@ _CHARS_PER_TOK = 4
 _SCHEMA_CHARS_PER_TOK = 2.8
 
 
+def _wire_of(obj):
+    """/_context `wire` vocabulary: anthropic | openai (codex) | meta (muse)."""
+    if muse_mod._is_muse_body(obj):
+        return "meta"
+    return "openai" if codex_mod._is_openai_body(obj) else "anthropic"
+
+
 def _tool_roster(obj):
     """The tool composition of ONE forwarded request body (the post-transform
     obj — i.e. what actually reached the model, reflecting any wirescope
     tool-trim/sort). Returns {count, names, total_schema_chars, est_tokens,
     per_tool:[{name, schema_chars, est_tokens}]} with per_tool biggest-first
-    (the 'what to trim' view). None for an openai/codex body (different wire,
-    server-side caching, no anthropic tools[]) or when there are no tools."""
-    if not isinstance(obj, dict) or codex_mod._is_openai_body(obj):
+    (the 'what to trim' view). None for a codex body (different wire,
+    server-side caching, no anthropic tools[]) or when there are no tools.
+    A muse body IS rostered: its one namespace wrapper is unwrapped to the
+    nested function list (the lever there is the CLI's own tool config)."""
+    if not isinstance(obj, dict):
         return None
-    tools = obj.get("tools")
+    if muse_mod._is_muse_body(obj):
+        tools = muse_mod._flatten_namespace_tools(obj.get("tools"))
+    elif codex_mod._is_openai_body(obj):
+        return None
+    else:
+        tools = obj.get("tools")
     if not isinstance(tools, list) or not tools:
         return None
     per = []
@@ -1577,7 +1599,7 @@ def _context_snapshot(session, utilization=False):
             "line": "main", "role": "parent", "agent_id": None,
             "display_name": None,
             "model": (obj or {}).get("model") if isinstance(obj, dict) else None,
-            "wire": "openai" if codex_mod._is_openai_body(obj) else "anthropic",
+            "wire": _wire_of(obj),
             "last_seen": main.get("ts"),
             "tools": roster,
             "skills": _skill_roster(obj),
@@ -1595,7 +1617,7 @@ def _context_snapshot(session, utilization=False):
             "line": "subagent", "role": s.get("role"),
             "agent_id": s.get("agent_id"), "display_name": s.get("display_name"),
             "model": s.get("model"),
-            "wire": "openai" if codex_mod._is_openai_body(obj) else "anthropic",
+            "wire": _wire_of(obj),
             "last_seen": s.get("last_seen"),
             "tools": roster,
             "skills": _skill_roster(obj),

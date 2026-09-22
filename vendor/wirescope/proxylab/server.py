@@ -23,6 +23,7 @@ from proxylab import hints as hints_mod
 from proxylab import hints_native as hints_native_mod
 from proxylab import hold as hold_mod
 from proxylab import meta as meta_mod
+from proxylab import muse as muse_mod
 from proxylab import pinger as pinger_mod
 from proxylab import prune as prune_mod
 from proxylab import receipts as receipts_mod
@@ -47,8 +48,16 @@ class _SkipMeta(Exception):
     nothing to do — distinct from a real crash, which is counted + printed."""
 
 
+def _openai_item_texts(item):
+    """Text of one Responses-API input item, either content dialect."""
+    c = item.get("content")
+    if isinstance(c, str):
+        return [c]
+    return [b.get("text") or "" for b in (c or []) if isinstance(b, dict)]
+
+
 def _record_openai_context(obj, *, session_id, base_path, upstream_path,
-                           agent, model):
+                           agent, model, provider="openai"):
     """Record Codex request metadata used by /_status, /_admin, and /_session.
 
     Shared by the HTTP/SSE and WebSocket transports so the provider-specific
@@ -60,21 +69,22 @@ def _record_openai_context(obj, *, session_id, base_path, upstream_path,
         return
     pinger_mod._clear_session_ended(session_id)   # live turn = resume
     # /_session context view (NOT replayable — pinger declines openai)
-    pinger_mod._cache_last_request_openai(session_id, obj, upstream_path)
+    pinger_mod._cache_last_request_openai(session_id, obj, upstream_path,
+                                          provider=provider)
     fields = {"model": model, "agent": agent}
     try:
         inp = obj.get("input") or []
-        texts = [c.get("text") or "" for it in inp if isinstance(it, dict)
-                 for c in (it.get("content") or [])
-                 if isinstance(c, dict)]
+        # codex ships content as a list of blocks, muse as a bare string
+        texts = [tx for it in inp if isinstance(it, dict)
+                 for tx in _openai_item_texts(it)]
         joined = "\n".join(texts)
-        mcwd = re.search(r"<cwd>([^<]+)</cwd>", joined)
+        mcwd = (re.search(r"<cwd>([^<]+)</cwd>", joined)
+                or re.search(r"(?m)^Workspace root: (\S+)", joined))
         if mcwd:
             fields["cwd"] = mcwd.group(1)
         prompts = [tx for it in inp if isinstance(it, dict)
                    and it.get("role") == "user"
-                   for c in (it.get("content") or []) if isinstance(c, dict)
-                   for tx in [c.get("text") or ""]
+                   for tx in _openai_item_texts(it)
                    if tx and not tx.lstrip().startswith("<")]
         if prompts:
             fields["title"] = prompts[0].strip().splitlines()[0][:80]
@@ -83,14 +93,25 @@ def _record_openai_context(obj, *, session_id, base_path, upstream_path,
     writer_mod._enqueue_meta(session_id, **fields)
 
 
-async def _handle_openai(request: Request, n, raw, agent, upstream_path, ts):
+async def _handle_openai(request: Request, n, raw, agent, upstream_path, ts,
+                         provider="openai"):
     """The /agent/<name>/openai/... path: forward to UPSTREAM_OPENAI with the
     chatgpt-backend rewrite, capture request+response, tee subscribers, price
     the receipts (API-equivalent). Deliberately NO transform/warmth/canary
-    machinery — see the OPENAI/CODEX PROVIDER block up top."""
+    machinery — see the OPENAI/CODEX PROVIDER block up top.
+
+    provider="meta" is the same Responses-API wire spoken by Meta's muse CLI
+    (/agent/<name>/meta/...): different upstream, price table, session-id
+    header and stem tag, no chatgpt rewrite/models stub, plus the CLI's
+    reminder-observer side-calls filed under their parent session — see
+    proxylab/muse.py. One handler, a provider switch: the wire IS the same."""
     base_path = upstream_path.split("?")[0]
-    chatgpt_mode = codex_mod._is_chatgpt_backend(codex_mod.UPSTREAM_OPENAI)
-    codex_mod._CODEX_STATS["requests"] += 1
+    meta_wire = provider == "meta"
+    upstream = muse_mod.UPSTREAM_META if meta_wire else codex_mod.UPSTREAM_OPENAI
+    stats = muse_mod._MUSE_STATS if meta_wire else codex_mod._CODEX_STATS
+    tag = "muse" if meta_wire else "codex"
+    chatgpt_mode = (not meta_wire) and codex_mod._is_chatgpt_backend(upstream)
+    stats["requests"] += 1
 
     # ---- observer-side decode + parse (forward the ORIGINAL bytes) ----
     body_bytes, dec_err = codex_mod._content_decode(
@@ -102,16 +123,23 @@ async def _handle_openai(request: Request, n, raw, agent, upstream_path, ts):
         pass
     model = (obj or {}).get("model")
     # codex carries session identity in HEADERS (plus prompt_cache_key in-body)
-    session_id = (request.headers.get("session-id")
-                  or request.headers.get("thread-id")
-                  or (obj or {}).get("prompt_cache_key"))
+    sidecall = parent_prefix = None
+    if meta_wire:
+        session_id, sidecall, parent_prefix = muse_mod._session_identity(
+            request.headers, obj)
+        if sidecall:
+            stats["sidecalls"] += 1
+    else:
+        session_id = (request.headers.get("session-id")
+                      or request.headers.get("thread-id")
+                      or (obj or {}).get("prompt_cache_key"))
     session_key = session_id or writer_mod.NO_SESSION
     out_dir = core_mod._session_dir(session_key)
-    stem = f"{n:03d}-{agent}-codex-{writer_mod._short_model(model)}-{ts}"
+    stem = f"{n:03d}-{agent}-{tag}-{writer_mod._short_model(model)}-{ts}"
 
     client = request.client
     record = {"seq": n, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-              "agent": agent, "provider": "openai",
+              "agent": agent, "provider": provider,
               "method": request.method, "path": upstream_path,
               "client": {"host": client.host, "port": client.port} if client else None,
               "request_headers": core_mod._safe_headers(request.headers)}
@@ -132,12 +160,22 @@ async def _handle_openai(request: Request, n, raw, agent, upstream_path, ts):
             "prompt_cache_key": obj.get("prompt_cache_key"),
             "store": obj.get("store"), "stream": obj.get("stream"),
         }
-        _record_openai_context(obj, session_id=session_id, base_path=base_path,
-                               upstream_path=upstream_path, agent=agent,
-                               model=model)
+        if meta_wire:
+            record["summary"]["sidecall"] = sidecall
+            record["summary"]["n_functions"] = len(
+                muse_mod._flatten_namespace_tools(obj.get("tools")))
+        # a side-call never owns the session's cwd/title/last-request view
+        if not sidecall:
+            _record_openai_context(obj, session_id=session_id, base_path=base_path,
+                                   upstream_path=upstream_path, agent=agent,
+                                   model=model, provider=provider)
     elif raw:
         record["body_raw"] = body_bytes.decode("utf-8", "replace")[:4000]
-    writer_mod._enqueue_json(out_dir / f"{stem}.request.json", record)
+    # an orphan side-call (parent main call not seen YET — it fires before
+    # the main call of the same prompt) files its request capture at receipt
+    # time, once the parent has had the stream's duration to show up
+    if parent_prefix is None:
+        writer_mod._enqueue_json(out_dir / f"{stem}.request.json", record)
 
     # ---- /v1/models stub (chatgpt backend has no platform model list) ----
     if chatgpt_mode and base_path.rstrip("/").endswith("/models"):
@@ -158,7 +196,7 @@ async def _handle_openai(request: Request, n, raw, agent, upstream_path, ts):
     up_path = upstream_path
     if chatgpt_mode:
         up_path, fwd_headers = codex_mod._rewrite_chatgpt_request(up_path, fwd_headers)
-    req = core_mod._client.build_request(request.method, codex_mod.UPSTREAM_OPENAI + up_path,
+    req = core_mod._client.build_request(request.method, upstream + up_path,
                                 headers=fwd_headers, content=raw)
     up = await core_mod._client.send(req, stream=True)
     resp_headers = {k: v for k, v in up.headers.items()
@@ -173,7 +211,7 @@ async def _handle_openai(request: Request, n, raw, agent, upstream_path, ts):
     chunks = []
     # Generic subscriber tee (SUBSCRIBERS.md); every request here is /agent/-
     # routed by construction, so the agent identity gate is the route itself.
-    sub_tee = (subs_mod._tee_for(agent, session_id, f"{n}-{ts}", wire="openai")
+    sub_tee = (subs_mod._tee_for(agent, session_id, f"{n}-{ts}", wire=provider)
                if is_model_call else None)
 
     async def body_iter():
@@ -188,21 +226,74 @@ async def _handle_openai(request: Request, n, raw, agent, upstream_path, ts):
             if sub_tee is not None:
                 sub_tee.close()
             await up.aclose()
+            sid, skey, odir = session_id, session_key, out_dir
+            if parent_prefix is not None:
+                parent = muse_mod._resolve_parent(parent_prefix)
+                if parent:
+                    sid, skey, odir = parent, parent, core_mod._session_dir(parent)
+                    record["summary"]["session_id"] = parent
+                    record["summary"]["deferred_parent"] = True
+                    stats["sidecalls_deferred"] += 1
+                writer_mod._enqueue_json(odir / f"{stem}.request.json", record)
             if is_model_call and chunks:
                 blob = b"".join(chunks)
-                writer_mod._enqueue_bytes(out_dir / f"{stem}.response.sse", blob)
+                writer_mod._enqueue_bytes(odir / f"{stem}.response.sse", blob)
                 # everything derived from the finished response — billing,
                 # view state, capture, subscriber receipt — lives in receipts
                 receipts_mod.openai(
                     blob, n=n, ts=ts, agent=agent, model=model,
-                    session_id=session_id, session_key=session_key,
-                    out_dir=out_dir, stem=stem, status_code=up.status_code,
+                    session_id=sid, session_key=skey,
+                    out_dir=odir, stem=stem, status_code=up.status_code,
                     resp_headers=dict(up.headers),
-                    tee_text=(sub_tee.text if sub_tee is not None else None))
+                    tee_text=(sub_tee.text if sub_tee is not None else None),
+                    provider=provider, sidecall=sidecall)
 
     return StreamingResponse(body_iter(), status_code=up.status_code,
                              headers=resp_headers,
                              media_type=up.headers.get("content-type"))
+
+
+async def _handle_meta_product(request: Request, n, raw, ts):
+    """Root /muse-code/* (model catalog, config, telemetry, feedback…): muse
+    requests these at the ORIGIN with the --base-url path prefix dropped, and a
+    4xx on the catalog aborts the run, so they pass through to the meta origin
+    unrouted (agent "ext", no session). The catalog response is the price
+    source: its per-model cost rows are learned into PRICES_META."""
+    muse_mod._MUSE_STATS["product_requests"] += 1
+    path = request.url.path
+    if request.url.query:
+        path += "?" + request.url.query
+    fwd_headers = {k: v for k, v in request.headers.items()
+                   if k.lower() not in core_mod._HOP}
+    fwd_headers["accept-encoding"] = "identity"
+    req = core_mod._client.build_request(request.method,
+                                         muse_mod.UPSTREAM_META_ORIGIN + path,
+                                         headers=fwd_headers, content=raw)
+    up = await core_mod._client.send(req)
+    body = up.content
+    is_catalog = request.url.path.rstrip("/").endswith("/muse-code/models")
+    if is_catalog:
+        out_dir = core_mod._session_dir(writer_mod.NO_SESSION)
+        rec = {"seq": n, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+               "agent": "ext", "provider": "meta", "endpoint": "catalog",
+               "method": request.method, "path": path,
+               "status_code": up.status_code,
+               "request_headers": core_mod._safe_headers(request.headers),
+               "response_headers": core_mod._safe_headers(up.headers)}
+        try:
+            rec["body"] = json.loads(body)
+        except Exception:
+            rec["body_raw"] = body.decode("utf-8", "replace")[:4000]
+        if up.status_code < 400:
+            rec["catalog_learned"] = muse_mod.learn_catalog(rec.get("body"))
+        writer_mod._enqueue_json(out_dir / f"{n:03d}-ext-muse-catalog-{ts}.response.json", rec)
+        print(f"[muse] #{n} catalog -> {up.status_code} "
+              f"learned={rec.get('catalog_learned')}", flush=True)
+    resp_headers = {k: v for k, v in up.headers.items()
+                    if k.lower() not in {"connection", "transfer-encoding",
+                                         "content-length", "keep-alive",
+                                         "content-encoding"}}
+    return Response(body, status_code=up.status_code, headers=resp_headers)
 
 
 def _upstream_websocket_url(base_url, upstream_path):
@@ -1276,12 +1367,17 @@ async def handler(request: Request) -> Response:
         upstream_path = m.group("rest") or "/"
     else:
         mo = codex_mod._ROUTE_OPENAI.match(path)
-        if mo:
-            up_rest = mo.group("rest") or "/"
+        mm = None if mo else muse_mod._ROUTE_META.match(path)
+        if mo or mm:
+            hit = mo or mm
+            up_rest = hit.group("rest") or "/"
             if request.url.query:
                 up_rest += "?" + request.url.query
             return await _handle_openai(request, n, raw,
-                                        mo.group("name"), up_rest, ts)
+                                        hit.group("name"), up_rest, ts,
+                                        provider="meta" if mm else "openai")
+        if muse_mod._ROUTE_META_PRODUCT.match(path):
+            return await _handle_meta_product(request, n, raw, ts)
         agent = "ext"
         upstream_path = path
     if request.url.query:
@@ -1939,7 +2035,7 @@ async def handler(request: Request) -> Response:
     sub_tee = (subs_mod._tee_for(agent, session_id, f"{n}-{ts}")
                if m is not None and is_messages else None)
 
-    # Intent-body spill (scratchpad/SPILL-WIRE-FORMAT.md): rewrite an oversized
+    # Intent-body spill (SPILL.md): rewrite an oversized
     # greedy intent body to a content-addressed pointer. ROUTED traffic only —
     # unrouted requests carry the literal agent name "ext", which is not a seat
     # and has no resolver, so they must never write a spill file. Unlike

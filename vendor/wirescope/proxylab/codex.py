@@ -145,7 +145,7 @@ def _rewrite_chatgpt_request(upstream_path, headers, auth_path=None):
 
 def _sse_text_delta(obj, wire):
     """Assistant text out of one decoded SSE data object, per wire dialect."""
-    if wire == "openai":
+    if wire in ("openai", "meta"):                              # same Responses wire
         if obj.get("type") == "response.output_text.delta":      # Responses API
             d = obj.get("delta")
             return d if isinstance(d, str) and d else None

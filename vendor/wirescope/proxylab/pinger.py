@@ -118,7 +118,7 @@ def _cache_last_request(session_id, obj, fwd_headers, upstream_path,
         writer_mod._enqueue_last_request_delete(evicted)
 
 
-def _cache_last_request_openai(session_id, obj, upstream_path):
+def _cache_last_request_openai(session_id, obj, upstream_path, provider="openai"):
     """Codex flavor of _cache_last_request: stored for the /_session context
     view (+ restart parity via the same mirror table), NOT for replay — the
     pinger declines openai bodies (caching is server-side; there is no
@@ -130,7 +130,7 @@ def _cache_last_request_openai(session_id, obj, upstream_path):
     with _LAST_REQUEST_LOCK:
         _LAST_REQUEST[session_id] = {"obj": obj, "headers": {},
                                      "path": upstream_path, "ts": ts,
-                                     "account": None, "provider": "openai",
+                                     "account": None, "provider": provider,
                                      "needs_auth": False}
         if len(_LAST_REQUEST) > _LAST_REQUEST_MAX:
             evicted = min(_LAST_REQUEST.items(), key=lambda kv: kv[1]["ts"])[0]

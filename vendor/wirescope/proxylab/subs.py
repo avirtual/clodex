@@ -313,7 +313,7 @@ class _SubTee:
         self.session_id = session_id
         self.request_id = request_id
         self.wire = wire
-        self.provider = "openai" if wire == "openai" else "anthropic"
+        self.provider = wire if wire in ("openai", "meta") else "anthropic"
         self.buf = bytearray()      # undecoded SSE bytes
         self.text = ""              # accumulated assistant text (full turn)
         self.sent_offset = 0
@@ -446,7 +446,8 @@ def emit_turn_completed_anthropic(agent, session_id, request_id, *, meta, bill,
 
 def emit_turn_completed_openai(agent, session_id, request_id, *, meta,
                                status_code, text, bill=None,
-                               session_totals=None):
+                               session_totals=None, provider="openai",
+                               sidecall=None, subscription=None):
     subs = _match(agent, "turn.completed")
     if not subs:
         return 0
@@ -461,9 +462,14 @@ def emit_turn_completed_openai(agent, session_id, request_id, *, meta,
                   ("requests", "turns", "refusals", "input_tokens",
                    "output_tokens", "cache_read_tokens", "cache_write_tokens",
                    "est_usd")}
-    data = {"provider": "openai",
+    data = {"provider": provider,
             "model": meta.get("resolved_model"),
             "status_code": status_code,
+            # muse reminder-observer side-call kind (goal-reminder /
+            # skill-reminder / verify-reminder), filed under the parent
+            # session; null for the conversation line. Consumers rendering
+            # a transcript drop non-null ones.
+            "sidecall": sidecall,
             "response_id": meta.get("response_id"),
             "status": meta.get("status"),
             "text": text or "",
@@ -474,7 +480,12 @@ def emit_turn_completed_openai(agent, session_id, request_id, *, meta,
                       "unpriced": bool(bill.get("unpriced"))}
                      if bill else None),
             "session_totals": totals, "context": None,
-            "warmth": None}
+            "warmth": None,
+            # muse only: the plan quota the stream itself reported
+            # ({tier, weekly:{resets_at,used_percent}, window:{resets_at,
+            # used_percent,window_duration_mins}, at}); account-scoped like
+            # the anthropic `quota`, null on codex
+            "subscription": subscription}
     return dispatch("turn.completed", agent, session_id, request_id, data,
                     subs=subs)
 

@@ -3,6 +3,7 @@ import time
 
 from proxylab import billing as billing_mod
 from proxylab import codex as codex_mod
+from proxylab import muse as muse_mod
 from proxylab import core as core_mod
 from proxylab import hold as hold_mod
 from proxylab import meta as meta_mod
@@ -80,7 +81,8 @@ def _restore_last_requests(now=None):
             entry = {"obj": bobj, "headers": json.loads(hdrs),
                      "path": path, "ts": ts, "account": acct,
                      "needs_auth": not oai,
-                     **({"provider": "openai"} if oai else {})}
+                     **({"provider": "meta" if muse_mod._is_muse_body(bobj)
+                         else "openai"} if oai else {})}
             age, ttl = pinger_mod._prefix_age_ttl(entry, now)
         except Exception:
             stale.append(sid)

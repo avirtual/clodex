@@ -1,9 +1,19 @@
 """Intent-body spill: replace a large greedy intent body on the wire with a
 content-addressed pointer, and write the body to a file the consumer resolves.
 
-Wire format contract: scratchpad/SPILL-WIRE-FORMAT.md (agreed with clodex
-2026-09-19). The consumer builds the `@spill:<id>` resolver; we build this,
-the response-side buffer.
+Wire format contract: SPILL.md (agreed with clodex 2026-09-19). The consumer
+builds the `@spill:<id>` resolver; we build this, the response-side buffer.
+
+STATUS: DARK EVERYWHERE WE DEPLOY, AND DELIBERATELY KEPT — read SPILL.md's header
+before proposing a deletion. clodex moved the rewrite into its own in-process wire
+tee, implementing SPILL.md verbatim, and Bogdan ruled on principle that no clodex
+intent grammar lives in this proxy (the same ruling that retired WB_INTENT_DISPATCH
+in 2026-06). So the four WIRESCOPE_SPILL_* knobs stay unset and nothing depends on
+this module. It is kept because test_spill.py is the CONFORMANCE SUITE for a format
+that now has two implementations, and because a box running wirescope WITHOUT that
+tee (headless nodes) has no other owner for the rewrite. `enabled()` requires all
+four knobs and `SpillTee.feed` returns its chunk before parsing when unarmed, so an
+unconfigured box pays one boolean per chunk.
 
 WHY THIS IS A RESPONSE TRANSFORM. A clodex intent body is emitted by the model
 into its ANSWER TEXT, and response text mutation is durable — it persists into
@@ -121,6 +131,21 @@ class _SpillFilter:
     HOLD: a listed verb's head line was seen; the body accumulates until the
     `[agent:end]` line. On close we emit `<head>] @spill:<id>` — or, on any
     failure or overflow, the original bytes.
+
+    ⚠ THE EMITTED SHAPE IS THE LIVE ONE AND IS ONLY HALF THE OBLIGATION (2026-09-21).
+    `<head> @spill:<id>` lands in the model's OWN transcript, so every successful
+    spill becomes a worked example, in the model's own voice, of how to write a long
+    intent body — and models copy it: measured 19 fabricated pointers, 19/19
+    dangling, 18/19 reproducing this exact shape, across two lead seats that were
+    both holding a "never type it" rule. clodex tried two harder-to-forge renderings
+    (t1047 receipt, t1052 filler) and seats forged both; the all-shapes recount is
+    41.9% / 12.5% / 40.0%, pooled Fisher p=0.31 — the behaviour MIGRATED, so do not
+    treat a rendering change as the cure. What fixed it was removing the line from
+    the REQUEST (clodex `wire/spill-cut.js`), not making it harder to copy.
+    This module is DARK everywhere, so nothing here harms anything today — but
+    ARMING it on a headless node, where there is no clodex tee, reproduces the 41.9%
+    configuration exactly unless the same node also cuts the stand-in line out of
+    every forwarded request. See SPILL.md's header for the pair and its wire cost.
     """
 
     def __init__(self, agent):

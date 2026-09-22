@@ -403,12 +403,15 @@ def _billing(kind, model_resolved=None, usage_final=None, usage_start=None, coun
             "price_basis": basis}
 
 
-def _billing_openai(model_resolved, usage):
+def _billing_openai(model_resolved, usage, provider="openai"):
     """Bill an openai /responses receipt in the same shape _bump consumes.
     OpenAI's input_tokens INCLUDES the cached portion — split it out so the
     shared totals keep anthropic semantics (input = uncached at full rate,
     cache_read = cached at the discounted rate). reasoning_tokens are part of
-    output_tokens on their wire, surfaced as thinking_tokens."""
+    output_tokens on their wire, surfaced as thinking_tokens.
+
+    provider="meta" prices the same wire shape off muse's PRICES_META (learned
+    from the /muse-code/models catalog, seed = published list price)."""
     u = usage or {}
     total_in = u.get("input_tokens") or 0
     cached = (u.get("input_tokens_details") or {}).get("cached_tokens") or 0
@@ -421,17 +424,27 @@ def _billing_openai(model_resolved, usage):
         "thinking_tokens": (u.get("output_tokens_details") or {}).get("reasoning_tokens"),
         "service_tier": None,
     }
-    p = _price_for(model_resolved, table=PRICES_OPENAI)
+    if provider == "meta":
+        from proxylab import muse as muse_mod     # lazy: muse imports core only
+        table, table_name = muse_mod.PRICES_META, "PRICES_META"
+        basis = ("published Muse Spark list price USD/1M (the live catalog "
+                 "carries no cost rows); a Meta plan seat is API-equivalent, "
+                 "never dollar-billed; edit muse.PRICES_META")
+    else:
+        table, table_name = PRICES_OPENAI, "PRICES_OPENAI"
+        basis = ("API-equivalent USD/1M (chatgpt-plan traffic is never "
+                 "dollar-billed); edit PRICES_OPENAI")
+    p = _price_for(model_resolved, table=table)
     est, unpriced = None, False
-    basis = ("API-equivalent USD/1M (chatgpt-plan traffic is never "
-             "dollar-billed); edit PRICES_OPENAI")
     if p:
         est = round(_usd(tokens["input_tokens"], p["in"])
                     + _usd(cached, p["cached_in"])
                     + _usd(tokens["output_tokens"], p["out"]), 6)
+        if p.get("source") == "catalog":
+            basis = "USD/1M as published by the /muse-code/models catalog"
     elif model_resolved:
         unpriced = True
-        _warn_unpriced(model_resolved, "PRICES_OPENAI")
+        _warn_unpriced(model_resolved, table_name)
     return {"endpoint": "responses", "billable": True, "model": model_resolved,
             "tokens": tokens, "est_usd": est, "unpriced": unpriced,
             "price_basis": basis}
@@ -481,6 +494,18 @@ def _bump(totals, bill, stop=None):
             cl["cache_read_tokens"] += t.get("cache_read_input_tokens") or 0
             cl["input_tokens"] += t.get("input_tokens") or 0
             cl["write_tokens"] += w or (t.get("cache_write_flat_tokens") or 0)
+        elif stop and stop.get("sidecall"):
+            # any other named side-call kind (muse's goal-/skill-/verify-
+            # reminder observers) is priced apart under `sidecalls.<kind>`,
+            # same decomposition rule: INSIDE requests/est_usd, never a
+            # second count.
+            sc = totals.setdefault("sidecalls", {})
+            b = sc.setdefault(stop["sidecall"], _new_totals()["classifier"])
+            b["requests"] += 1
+            b["est_usd"] = round(b["est_usd"] + (bill.get("est_usd") or 0), 6)
+            b["cache_read_tokens"] += t.get("cache_read_input_tokens") or 0
+            b["input_tokens"] += t.get("input_tokens") or 0
+            b["write_tokens"] += w or (t.get("cache_write_flat_tokens") or 0)
         if bill.get("unpriced"):
             totals["unpriced_requests"] = totals.get("unpriced_requests", 0) + 1
             m = bill.get("model")
