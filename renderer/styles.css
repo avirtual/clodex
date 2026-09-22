@@ -5081,9 +5081,7 @@ body:not(.sessions-restored) [data-peer-ui] { display: none; }
 
 /* Emitted [agent:…] intents. The wash sits on xterm's BOTTOM decoration layer,
    so the row's own colours and its selection survive; the left rule is what
-   the eye actually catches when scanning, the wash alone reads as noise.
-   The scrollbar tick is drawn on canvas and cannot come from here — the island
-   reads --accent/--warn for it. */
+   the eye actually catches when scanning, the wash alone reads as noise. */
 .intent-mark {
   border-left: 2px solid var(--accent);
   pointer-events: none; /* the row's file links stay clickable through it */
@@ -5094,15 +5092,19 @@ body:not(.sessions-restored) [data-peer-ui] { display: none; }
    being surfaced. A line that merely mentions an intent mid-prose gets no mark
    at all: it was never going to fire, and marking those buried the real ones. */
 .intent-mark-inert { border-left-color: var(--warn); background: rgba(229, 192, 123, .13); }
+.intent-mark-filed { border-left-color: var(--ok); background: rgba(152, 195, 121, .13); }
 
 /* Paper and light are LIGHT grounds: a wash tuned on the dark default turns
    muddy or invisible there, so each theme states its own. */
 [data-theme="claude"] .intent-mark-fire { background: rgba(217, 119, 87, .14); }
 [data-theme="claude"] .intent-mark-inert { background: rgba(217, 165, 91, .16); }
+[data-theme="claude"] .intent-mark-filed { background: rgba(163, 177, 138, .16); }
 [data-theme="paper"] .intent-mark-fire { background: rgba(193, 95, 60, .12); }
 [data-theme="paper"] .intent-mark-inert { background: rgba(133, 90, 20, .14); }
+[data-theme="paper"] .intent-mark-filed { background: rgba(70, 112, 47, .12); }
 [data-theme="light"] .intent-mark-fire { background: rgba(193, 95, 60, .12); }
 [data-theme="light"] .intent-mark-inert { background: rgba(154, 107, 30, .14); }
+[data-theme="light"] .intent-mark-filed { background: rgba(79, 122, 58, .12); }
 
 .check-group {
   margin: 10px 0 4px;

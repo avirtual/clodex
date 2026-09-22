@@ -12,7 +12,7 @@ const { classifyRows, SCAN_ROWS } = require('./lib/intent-marks');
 // is invisible against a mark whose whole purpose is to be found later.
 const DEBOUNCE_MS = 80;
 
-const RULER_VAR = { fire: '--accent', inert: '--warn' };
+const RULER_VAR = { fire: '--accent', inert: '--warn', filed: '--ok' };
 
 function createIntentHighlight(terminal, { getVar } = {}) {
   // marker.line, NOT the line captured at paint time: scrollback trim shifts

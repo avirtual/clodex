@@ -866,6 +866,10 @@ accept teardown removes.
   Pure fs leaf, no HTTP — M-A2 owns the routes. See `docs/notes/seat-import.md`.
 - **project-root.js** — the git-repository root for a cwd, for keying a PROJECT
   ticket board when no team owns that cwd. Pure leaf; `fs` injectable.
+- **spill-grammar.js** — the `… filed at <abs>/spill/<agent>/<hex16>.md` receipt
+  regex (`FILED_SRC`, `FILED_POINTER_RE`), a pure leaf with no `fs` so the
+  renderer's intent marks and the tee's stub parser match ONE source;
+  `intent-spill.js` re-exports it.
 - **intent-spill.js** — the FORMAT of intent-body spill (`proxy-lab/SPILL.md`;
   `proxy-lab/test_spill.py` is the conformance suite): constants, verb set,
   id/agent charsets, the content-addressed writer, the confined resolver, the

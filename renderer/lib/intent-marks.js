@@ -8,6 +8,7 @@
 // regex free to drift from the real scan is worse than no mark at all.
 
 const { cleanLine, parseIntent, fencedLines, looksLikeIntent } = require('../../intent-scanner');
+const { FILED_POINTER_RE } = require('../../spill-grammar');
 
 // Bounded rescan window, against re-deriving the whole scrollback per write.
 // It exceeds the configured scrollback, so the window starts at row 0; raising
@@ -33,7 +34,7 @@ function logicalLines(rows) {
   return out;
 }
 
-// 'fire' | 'inert' | null. null = leave it alone: an escape is deliberate
+// null = leave it alone: an escape is deliberate
 // QUOTING, and marking what someone wrote ABOUT an intent defeats finding the
 // one that fired.
 //
@@ -45,6 +46,7 @@ function logicalLines(rows) {
 // substring test brings that back, and also starts marking `\[agent:…]`, whose
 // backslash survives cleanLine and is what keeps the escape unmarked here.
 function classifyText(raw) {
+  if (FILED_POINTER_RE.test(cleanLine(raw))) return 'filed';
   if (!looksLikeIntent(raw)) return null;
   // No second copy of the near-miss rule: parseIntent returning null IS the
   // near miss, and a private guard would be free to disagree with the scan
@@ -72,6 +74,11 @@ function intentSpan(text) {
   return { offset: at, length: (close < 0 ? text.length : close + 1) - at };
 }
 
+function filedSpan(text) {
+  const trimmed = text.trim();
+  return trimmed ? { offset: text.length - text.trimStart().length, length: trimmed.length } : null;
+}
+
 // rows: [{ text, isWrapped }] in buffer order. Returns marks anchored to the
 // HEAD row of each logical line, as offsets into `rows`.
 function classifyRows(rows) {
@@ -83,7 +90,7 @@ function classifyRows(rows) {
     const kind = classifyText(lines[i].text);
     if (!kind) continue;
     const { start, end } = lines[i];
-    marks.push({ start, end, kind, span: intentSpan(rows[start].text) });
+    marks.push({ start, end, kind, span: (kind === 'filed' ? filedSpan : intentSpan)(rows[start].text) });
   }
   return marks;
 }

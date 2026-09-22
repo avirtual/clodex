@@ -162,3 +162,14 @@ test('prose that merely mentions an intent paints nothing', async () => {
   assert.strictEqual(h.terminal.buffer.active.getLine(2).translateToString(true), '[agent:who]');
   h.highlight.dispose();
 });
+
+test('a spill receipt row is painted filed across the whole trimmed line', async () => {
+  const receipt = '⏺ 1.1 KB of prose filed at /s/spill/clodex/dde60eea12b4cea9.md';
+  const h = await paintOnce(`${receipt}\r\n[agent:who]\r\n`, { cols: 80 });
+  assert.strictEqual(h.highlight.count(), 2);
+  const filed = h.painted.find((p) => p.width === receipt.length);
+  assert.ok(filed, 'the receipt row is painted');
+  assert.deepStrictEqual({ x: filed.x, width: filed.width }, { x: 0, width: receipt.length });
+  assert.strictEqual(filed.overviewRulerOptions.color, RULER);
+  h.highlight.dispose();
+});

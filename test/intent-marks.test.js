@@ -258,3 +258,38 @@ test('escaped and fenced rows survive as unmarked among marked ones', () => {
   const marks = classifyRows(rows('\\[agent:who]', '[agent:who]', '```', '[agent:name]', '```'));
   assert.deepStrictEqual(marks, [{ start: 1, end: 1, kind: 'fire', span: { offset: 0, length: 11 } }]);
 });
+
+const SPILL_PATH = '/Users/b/.clodex/spill/clodex/dde60eea12b4cea9.md';
+
+test('classifyText: a spill receipt row is filed, and the green wins over the intent head', () => {
+  const table = [
+    [`1.1 KB of prose filed at ${SPILL_PATH}`, 'filed'],
+    [`⏺ 858 B filed at ${SPILL_PATH}`, 'filed'],
+    [`report for t42 — 858 B filed at ${SPILL_PATH}`, 'filed'],
+    [`[agent:dm bob] the design — 858 B filed at ${SPILL_PATH}`, 'filed'],
+    [`[agent:task done t42] report — 5.2 KB filed at ${SPILL_PATH}`, 'filed'],
+    ['the spec is filed at the usual place, go read it', null],
+    [`858 B filed at /Users/b/.clodex/spill/clodex/dde60eea12b4cea.md`, null],
+    [`858 B filed at ${SPILL_PATH} and more`, null],
+  ];
+  for (const [text, want] of table) assert.strictEqual(classifyText(text), want, text);
+});
+
+test('classifyRows: a filed row spans the whole trimmed line on its head row', () => {
+  const marks = classifyRows(rows(`  ⏺ 858 B filed at ${SPILL_PATH}  `, '[agent:who]'));
+  assert.deepStrictEqual(marks, [
+    { start: 0, end: 0, kind: 'filed', span: { offset: 2, length: `⏺ 858 B filed at ${SPILL_PATH}`.length } },
+    { start: 1, end: 1, kind: 'fire', span: { offset: 0, length: 11 } },
+  ]);
+});
+
+test('the receipt grammar has ONE source: intent-marks carries no copy of it', () => {
+  const marks = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'lib', 'intent-marks.js'), 'utf8');
+  const grammar = fs.readFileSync(path.join(__dirname, '..', 'spill-grammar.js'), 'utf8');
+  const spill = fs.readFileSync(path.join(__dirname, '..', 'intent-spill.js'), 'utf8');
+  assert.ok(!marks.includes('filed at ('), 'intent-marks.js must match FILED_POINTER_RE from spill-grammar, never a private regex');
+  assert.ok(!spill.includes('filed at ('), 'intent-spill.js re-exports the grammar rather than restating it');
+  assert.ok(grammar.includes('filed at ('), 'spill-grammar.js is where the literal lives');
+  assert.ok(marks.includes("require('../../spill-grammar')"));
+  assert.strictEqual(require('../intent-spill').FILED_POINTER_RE, require('../spill-grammar').FILED_POINTER_RE);
+});
