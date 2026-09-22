@@ -36,8 +36,8 @@ const {
   readTeamJson, teamTemplatePath, teamTemplateSave, teamTemplateRemove, teamPromptSave, teamPromptRemove,
   teamPromptFile,
 } = require('./team-prompt-dir');
-const { deriveModelTemplate } = require('./team-template-derive');
-const { seatType, adapterFor, resolveModelId, DEFAULT_TYPE } = require('./cli-adapters');
+const { resolveModelId, deriveModelTemplate } = require('./team-template-derive');
+const { seatType, adapterFor, DEFAULT_TYPE } = require('./cli-adapters');
 const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');

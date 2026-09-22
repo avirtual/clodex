@@ -17,7 +17,7 @@ must equal `skill-delivery.js`'s `providers()`, so a new platform is one
 entry here plus one delivery function there and the suite names the missing
 half.
 
-## Guards that stay literal
+### Guards that stay literal
 
 The ~55 `agentType === 'claude'` guards left in `session-manager.js` and
 `team-tickets.js` stay literal on purpose. They gate Claude ARTIFACTS —
@@ -31,7 +31,12 @@ Convert a guard the day a second platform gets that artifact. The two
 exception and flip to `caps.transcript` when a Codex reviewer can exercise
 them live.
 
-## Not in the leak lists
+## seatType
+
+The ticket seat's `type` comes from the role's template; the opener's type fills
+it only when the role names no template.
+
+### Not in the leak lists
 
 The module is a pure leaf — no `require`, no fs, no coordinator name — so
 it is not listed in `test/free-identifier-leaks.test.js`, for the same

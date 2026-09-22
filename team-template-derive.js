@@ -2,7 +2,17 @@
 
 const adapters = require('./cli-adapters');
 
-const { resolveModelId, stripModelArgs, DEFAULT_TYPE } = adapters;
+const { stripModelArgs, DEFAULT_TYPE, ADAPTERS, adapterFor } = adapters;
+
+function resolveModelId(type, v) {
+  const a = adapterFor(type);
+  if (a && typeof v === 'string' && !Object.prototype.hasOwnProperty.call(a.model.aliases, v)) {
+    for (const other of Object.values(ADAPTERS)) {
+      if (other !== a && Object.prototype.hasOwnProperty.call(other.model.aliases, v)) return null;
+    }
+  }
+  return adapters.resolveModelId(type, v);
+}
 
 const LISTING_KEYS = ['id', 'shadowedBy', 'plugin', 'pluginName'];
 
