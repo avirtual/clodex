@@ -9,7 +9,8 @@
 
 ## findMuseTranscript
 - Session logs live at `<XDG_DATA_HOME|~/.local/share>/muse/sessions/<yyyy>/<mm>/<dd>/<sid>/session.jsonl`. Whether the date is local or UTC is unmeasured, so the finder globs the three date levels and never computes a date.
-- The mint must run under `--provider meta`: a session minted under `echo` is refused on `resume` with `--provider meta` ("was created with provider echo; refusing to resume with provider meta"). A meta mint is one real request (~30 s measured), hence the 120 s mint timeout in session-manager.js. `--max-model-steps 1` on the mint fails ("model did not reach a terminal state within 1 step(s)"), so the mint is unbounded in steps.
 
 ## museRegistryFor
 - A live TUI writes `<data>/muse/runtime/muse/sessions/<sid>.json`: `{schema_version, session_id, session_name, endpoint_hint, workspace_label, target_eligibility, process_generation_hint: "pid=<pid>"}` — no top-level `pid` field on 1.3.0, so the hint is matched first and a `pid` field second.
+- A fresh interactive `muse` writes `session.jsonl` at boot with nothing typed (measured, 1.3.0, echo provider: ~0.25 s after spawn, ~4.4 KB of boot records) and the registry record ~0.1 s after that; the poller in session-manager.js still waits for the FILE, not the record.
+- Muse validates the registry root and skips the record silently when it fails: a data home under `/private/tmp` (macOS `$TMPDIR`, the test scratchpad) gets `session.jsonl` but never a record. Measure under `$HOME` with a mode-0700 `XDG_DATA_HOME`.

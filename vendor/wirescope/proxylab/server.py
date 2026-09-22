@@ -50,10 +50,7 @@ class _SkipMeta(Exception):
 
 def _openai_item_texts(item):
     """Text of one Responses-API input item, either content dialect."""
-    c = item.get("content")
-    if isinstance(c, str):
-        return [c]
-    return [b.get("text") or "" for b in (c or []) if isinstance(b, dict)]
+    return codex_mod._item_texts(item)
 
 
 def _record_openai_context(obj, *, session_id, base_path, upstream_path,

@@ -207,8 +207,7 @@ def _codex_framing_key(item):
     if not (isinstance(item, dict) and item.get("type") == "message"):
         return None
     role = item.get("role")
-    joined = "".join(c.get("text") or "" for c in (item.get("content") or [])
-                     if isinstance(c, dict))
+    joined = "".join(codex_mod._item_texts(item))
     if role == "developer" or joined.lstrip().startswith("<"):
         return (role, joined)
     return None

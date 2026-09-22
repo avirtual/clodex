@@ -27,6 +27,7 @@ function registerWith(overrides = {}) {
   const stub = () => () => {};
   const deps = new Proxy({
     ...capture,
+    log: { info() {}, warn() {}, error() {} },
     ...(overrides.templates && !overrides.listAllTemplates ? { listAllTemplates: () => overrides.templates.list() } : {}),
     ...overrides,
   }, {
@@ -568,4 +569,68 @@ test('team:preflight: a command with NO def file still reports install, through 
       message: 'role "hand": template "hand-seat" grants exec command "ghost", which has no def installed under teams/shop/exec or library/exec',
     }], 'the no-def message must survive byte for byte — nothing already asserted may move');
   });
+});
+
+function fakeLog() {
+  const lines = [];
+  return { lines, log: { info: (cat, msg) => lines.push([cat, msg]), warn() {}, error() {} } };
+}
+
+test('t1092: team:setRole logs one line naming only the patched keys, prose truncated to 40 chars', () => {
+  const { lines, log } = fakeLog();
+  const handlers = registerWith({
+    log,
+    setRole: (t, r) => ({ name: t, roles: { [r]: {} } }),
+    accounts: { list: () => [{ label: 'work', configDir: '/w' }], configDirFor: (l) => (l === 'work' ? '/w' : null) },
+  });
+  const brief = 'x'.repeat(41);
+  const ok = handlers['team:setRole']({}, 'shop', 'runner', { account: ' work ', brief });
+  assert.strictEqual(ok.ok, true, `expected ok (got: ${ok.error})`);
+  assert.deepStrictEqual(lines, [['team', `role "runner" on team "shop" saved: account=work, brief=${'x'.repeat(40)}…`]]);
+  lines.length = 0;
+  const refused = handlers['team:setRole']({}, 'shop', 'runner', { account: 'ghost' });
+  assert.strictEqual(refused.ok, false);
+  assert.deepStrictEqual(lines, [], 'a refused save logs nothing');
+});
+
+test('t1092: team:removeRole logs one line carrying the account the role had', () => {
+  const { lines, log } = fakeLog();
+  let roles = { reviewer: { account: 'work' } };
+  const handlers = registerWith({
+    log,
+    loadManifest: (t) => ({ name: t, roles }),
+    manager: { _roleInUse: () => ({ seats: [], tickets: [] }) },
+    removeRole: (t) => ({ name: t, roles: {} }),
+  });
+  assert.strictEqual(handlers['team:removeRole']({}, 'shop', 'reviewer').ok, true);
+  assert.deepStrictEqual(lines, [['team', 'role "reviewer" removed from team "shop" (account was work)']]);
+  lines.length = 0;
+  roles = { runner: { account: null } };
+  assert.strictEqual(handlers['team:removeRole']({}, 'shop', 'runner').ok, true);
+  assert.deepStrictEqual(lines, [['team', 'role "runner" removed from team "shop" (account was none)']]);
+});
+
+test('t1092: team:addRole logs one line naming the source, the account and a carry-forward', () => {
+  const { lines, log } = fakeLog();
+  let reply = { minted: 'stock', accountCarried: 'work', account: 'work' };
+  const handlers = registerWith({
+    log,
+    loadManifest: (t) => ({ name: t, roles: {} }),
+    accounts: { list: () => [{ label: 'other', configDir: '/o' }], configDirFor: (l) => (l === 'other' ? '/o' : null) },
+    addRole: (t, r) => ({ name: t, roles: { [r]: { account: reply.account } }, minted: reply.minted, accountCarried: reply.accountCarried }),
+  });
+  assert.strictEqual(handlers['team:addRole']({}, 'shop', 'reviewer', {}).ok, true);
+  assert.deepStrictEqual(lines, [['team', 'role "reviewer" added to team "shop" (stock; account work, carried forward)']]);
+  lines.length = 0;
+  reply = { minted: 'kit:acme', accountCarried: null, account: null };
+  assert.strictEqual(handlers['team:addRole']({}, 'shop', 'reviewer', {}).ok, true);
+  assert.deepStrictEqual(lines, [['team', 'role "reviewer" added to team "shop" (kit:acme; account none)']]);
+  lines.length = 0;
+  reply = { minted: undefined, accountCarried: null, account: 'other' };
+  assert.strictEqual(handlers['team:addRole']({}, 'shop', 'runner', { brief: 'r', account: 'other' }).ok, true);
+  assert.deepStrictEqual(lines, [['team', 'role "runner" added to team "shop" (caller def; account other)']]);
+  lines.length = 0;
+  assert.strictEqual(handlers['team:addRole']({}, 'shop', 'runner', {}).ok, true);
+  assert.deepStrictEqual(lines, [['team', 'role "runner" added to team "shop" (caller def; account other)']],
+    'an empty def on a role with no stock definition stays a caller def');
 });

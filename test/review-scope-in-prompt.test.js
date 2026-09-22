@@ -689,7 +689,7 @@ function checkOnce(app, s) {
   s._reviewStartTimer = null;
 }
 
-const MUSE_MINT = [
+const MUSE_PRIOR_TURN = [
   '{"payload_type":"session.opened.observed","payload":{"kind":"session_opened"}}',
   '{"payload_type":"runtime.user_intent.accepted","payload":{"refill_blocks":[{"text":"Clodex seat \"crew-reviewer-1\" initialized."}]}}',
   '{"payload_type":"runtime.session","payload":{"kind":"run","event":{"kind":"started"}}}',
@@ -741,7 +741,7 @@ test('m3: the start check baselines the transcript at the first arm — 0 for a 
   } finally { app.stop(); }
 });
 
-test('m3: a seat whose transcript holds a mint turn at arm is re-nudged when only its resume boot lands after the arm, and owed nothing once a turn ends', async () => {
+test('m3: a seat whose transcript holds a prior turn at arm is re-nudged when only its resume boot lands after the arm, and owed nothing once a turn ends', async () => {
   const app = boot();
   try {
     app.setPending('lead');
@@ -750,14 +750,14 @@ test('m3: a seat whose transcript holds a mint turn at arm is re-nudged when onl
     app.setPending('crew-reviewer-1');
     app.m._handleTeamReview(lead, SCOPE);
     await settled(app, 'crew-reviewer-1');
-    const s = reviewerSeat(app, { transcript: MUSE_MINT });
+    const s = reviewerSeat(app, { transcript: MUSE_PRIOR_TURN });
     assert.strictEqual(adapterFor('muse').transcript.reader, 'muse', 'ENTER: the muse platform reads its transcript through the muse reader');
     s.agentType = 'muse';
     armFresh(app, s);
-    assert.strictEqual(s._reviewStartSize, MUSE_MINT.length, 'ENTER: the first arm stamped the mint turn as the baseline');
+    assert.strictEqual(s._reviewStartSize, MUSE_PRIOR_TURN.length, 'ENTER: the first arm stamped the prior turn as the baseline');
     assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') > 0, 'ENTER: a size > 0 probe already reads this seat as started');
 
-    reviewerSeat(app, { transcript: `${MUSE_MINT}${MUSE_RESUME_BOOT}` });
+    reviewerSeat(app, { transcript: `${MUSE_PRIOR_TURN}${MUSE_RESUME_BOOT}` });
     assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') > s._reviewStartSize, 'ENTER: the resume boot GREW the transcript past the baseline — a byte comparison reads it as started');
     const sent = [];
     app.m._deliverMessage = (target, sender, body) => { sent.push({ target, sender, body }); };
@@ -769,7 +769,7 @@ test('m3: a seat whose transcript holds a mint turn at arm is re-nudged when onl
     assert.ok(s._reviewNudgeRetried);
     assert.deepStrictEqual(app.alarms, []);
 
-    reviewerSeat(app, { transcript: `${MUSE_MINT}${MUSE_RESUME_BOOT}${MUSE_TURN_END}` });
+    reviewerSeat(app, { transcript: `${MUSE_PRIOR_TURN}${MUSE_RESUME_BOOT}${MUSE_TURN_END}` });
     checkOnce(app, s);
     assert.strictEqual(sent.length, 1, 'a run terminal frame past the baseline is a turn: nothing more is sent');
     assert.deepStrictEqual(app.alarms, [], 'and nothing is escalated');

@@ -2283,3 +2283,93 @@ test('t857 resolveTeam: a sandboxed team never owns a desktop cwd, a plain one a
   assert.strictEqual(tm.findProjectRoot(path.join(boxedRoot, 'src')), null,
     'and the resolution every caller goes through agrees');
 });
+
+function stashOnDisk(home) {
+  return JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf-8')).removedRoleAccounts;
+}
+
+test('t1092: removing reviewer with an account and re-adding it carries the account onto the stock mint', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  tm.setRole('shop', 'reviewer', { account: 'work' });
+  assert.strictEqual(tm.loadManifest('shop').roles.reviewer.account, 'work', 'ENTER: the reviewer carries an account before removal');
+
+  tm.removeRole('shop', 'reviewer', { operator: true });
+  assert.deepStrictEqual(stashOnDisk(home), { reviewer: 'work' }, 'the removal stashed the label');
+
+  const team = tm.addRole('shop', 'reviewer', {}, { operator: true });
+  const stock = tm.loadManifest('shop');
+  assert.deepStrictEqual(team.roles.reviewer, {
+    template: STOCK_ROLE_DEFS.reviewer.template || null, prompt: STOCK_ROLE_DEFS.reviewer.prompt,
+    brief: STOCK_ROLE_DEFS.reviewer.brief || null, dispatch: 'standing', cwd: null, account: 'work',
+  });
+  assert.deepStrictEqual(stock.roles.reviewer, team.roles.reviewer, 'and the same on disk');
+  assert.strictEqual(team.accountCarried, 'work');
+  assert.strictEqual(stashOnDisk(home), undefined, 'the re-add consumed the stash');
+});
+
+test('t1092: removing a reviewer with no account and re-adding it leaves account null and no stash', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  tm.removeRole('shop', 'reviewer', { operator: true });
+  assert.strictEqual(stashOnDisk(home), undefined, 'nothing to stash');
+  const team = tm.addRole('shop', 'reviewer', {}, { operator: true });
+  assert.deepStrictEqual(team.roles.reviewer, {
+    template: STOCK_ROLE_DEFS.reviewer.template || null, prompt: STOCK_ROLE_DEFS.reviewer.prompt,
+    brief: STOCK_ROLE_DEFS.reviewer.brief || null, dispatch: 'standing', cwd: null, account: null,
+  });
+  assert.strictEqual(team.accountCarried, null);
+  assert.strictEqual(stashOnDisk(home), undefined);
+});
+
+test('t1092: an ordinary role removed with an account gets it back unless the re-add def carries its own', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  tm.addRole('shop', 'runner', { brief: 'r', account: 'work' });
+  tm.removeRole('shop', 'runner');
+  assert.deepStrictEqual(stashOnDisk(home), { runner: 'work' });
+
+  const back = tm.addRole('shop', 'runner', { brief: 'r' });
+  assert.deepStrictEqual(back.roles.runner, {
+    template: null, prompt: null, brief: 'r', dispatch: 'standing', cwd: null, account: 'work',
+  });
+  assert.strictEqual(back.accountCarried, 'work');
+  assert.strictEqual(stashOnDisk(home), undefined);
+
+  tm.removeRole('shop', 'runner');
+  assert.deepStrictEqual(stashOnDisk(home), { runner: 'work' });
+  const own = tm.addRole('shop', 'runner', { brief: 'r', account: 'other' });
+  assert.deepStrictEqual(own.roles.runner, {
+    template: null, prompt: null, brief: 'r', dispatch: 'standing', cwd: null, account: 'other',
+  });
+  assert.strictEqual(own.accountCarried, null);
+  assert.strictEqual(stashOnDisk(home), undefined, 'the stash entry is deleted even when the def brought its own account');
+});
+
+test('t1092: a stale stash key for a role never re-added survives loadManifest round-trips without a warning', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  tm.addRole('shop', 'runner', { brief: 'r', account: 'work' });
+  tm.removeRole('shop', 'runner');
+  const warns = [];
+  const origWarn = console.warn;
+  console.warn = (...args) => warns.push(args.join(' '));
+  try {
+    const team = tm.loadManifest('shop');
+    assert.deepStrictEqual(team.droppedFields, []);
+    tm.setRole('shop', 'hand', { brief: 'still here' });
+    assert.deepStrictEqual(stashOnDisk(home), { runner: 'work' }, 'another mutator write leaves the stash intact');
+    tm.loadManifest('shop');
+  } finally {
+    console.warn = origWarn;
+  }
+  assert.deepStrictEqual(warns, []);
+});

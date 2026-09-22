@@ -96,6 +96,56 @@ def _parse_cache_key(pck):
     return {"kind": m.group("kind"), "session": m.group("sess")}
 
 
+# The TUI's IDLE side-calls ride the MAIN cache key (`tbh:main:<session>`,
+# the session's own x-tbh-session-id) so nothing in the key vocabulary
+# separates them from the conversation. What does: they ship NO `tools` and
+# NO `instructions` (one live session, 27 main-key captures: the 21
+# conversation calls all carry both, the 6 idle calls carry neither), and
+# their last input item is a user
+# message opening with a fixed prompt. Openers are the exact bytes off the
+# captures (session 01a0ca63, 2026-09-22; seqs 045/076/084 byte-identical
+# for the tip-picker, seq 113 for the away-recap), never paraphrased:
+#   tip-picker  — after every turn, once the user is idle: picks one feature
+#                 tip from a candidate list or answers `NONE` (~5.3k in,
+#                 ~400 out of reasoning, per turn).
+#   away-recap  — when the user returns after stepping away: a two-line
+#                 Title:/Recap: of the current task.
+# Before this classifier they were filed as the main line: the idle call
+# became the session's last request (so /_context showed tools:null
+# whenever the seat was idle), counted as a turn, and priced under
+# `main_est_usd`. An unlisted call of the same SHAPE files as `idle` — a
+# name for the shape, so a new idle prompt still cannot clobber the
+# conversation's view state.
+_IDLE_SIDECALL_OPENERS = (
+    ("tip-picker", "You are picking one optional feature tip for a user who "
+                   "just finished a turn and is idle."),
+    ("away-recap", "The user stepped away and is coming back. Return exactly "
+                   "two plain-text lines."),
+)
+
+
+def _idle_sidecall_kind(obj):
+    """The idle side-call kind of a main-key body, or None for a conversation
+    call. Shape first (no tools, no instructions), then the opener."""
+    if not isinstance(obj, dict) or obj.get("tools") or obj.get("instructions"):
+        return None
+    inp = obj.get("input")
+    if not isinstance(inp, list) or not inp:
+        return None
+    last = inp[-1]
+    if not (isinstance(last, dict) and last.get("type") == "message"
+            and last.get("role") == "user"):
+        return None
+    c = last.get("content")
+    text = (c if isinstance(c, str)
+            else "".join(b.get("text") or "" for b in (c or []) if isinstance(b, dict)))
+    text = text.lstrip()
+    for kind, opener in _IDLE_SIDECALL_OPENERS:
+        if text.startswith(opener):
+            return kind
+    return "idle"
+
+
 def _session_identity(headers, obj):
     """(session_id, sidecall_kind, parent_prefix) for one muse request.
     Main line: the x-tbh-session-id header (== the cache key's uuid),
@@ -105,7 +155,10 @@ def _session_identity(headers, obj):
     keys on its own header id and parent_prefix is the fragment to retry —
     live-measured: the skill-reminder observer fires BEFORE the main call
     of the same prompt (seq 2 vs 3, same second), so a first-turn side-call
-    is always an orphan at request time and resolves by receipt time."""
+    is always an orphan at request time and resolves by receipt time.
+    A main-key body with the idle side-call shape (`_idle_sidecall_kind`)
+    is a side-call of that kind on the session itself — same treatment,
+    no prefix hop."""
     own = headers.get("x-tbh-session-id") or headers.get("x-meta-ai-gateway-session-id")
     ck = _parse_cache_key((obj or {}).get("prompt_cache_key")) if isinstance(obj, dict) else None
     if ck is None:
@@ -115,7 +168,7 @@ def _session_identity(headers, obj):
         _SESSION_BY_PREFIX[sid[:8]] = sid
         if len(_SESSION_BY_PREFIX) > _SESSION_BY_PREFIX_MAX:
             _SESSION_BY_PREFIX.pop(next(iter(_SESSION_BY_PREFIX)))
-        return sid, None, None
+        return sid, _idle_sidecall_kind(obj), None
     prefix = ck["session"][:8]
     parent = _SESSION_BY_PREFIX.get(prefix)
     if parent:
