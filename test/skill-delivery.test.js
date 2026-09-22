@@ -79,15 +79,22 @@ test('t747: the codex adapter writes each SKILL.md and catalogs it by absolute p
     'a skill is read by the seat, never executed');
 });
 
-test('m2: the muse adapter is the codex catalog materialisation, whole-object equal', () => {
+test('t1097: the muse adapter writes the skill tree and returns its root, no catalog — whole-object equal', () => {
   const { delivery, SKILL_PLUGINS_DIR } = mk();
-  const codex = delivery.deliver('codex', 'seat', [DEPLOY, BUNDLED, AUDIT, BARE]);
-  assert.ok(codex && codex.instructions, 'ENTER: the codex subject delivered');
-  const codexFiles = fs.readdirSync(path.join(SKILL_PLUGINS_DIR, 'seat', 'skills')).sort();
+  const skillsDir = path.join(SKILL_PLUGINS_DIR, 'seat', 'skills');
   const muse = delivery.deliver('muse', 'seat', [DEPLOY, BUNDLED, AUDIT, BARE]);
-  assert.deepStrictEqual(muse, codex);
-  assert.deepStrictEqual(fs.readdirSync(path.join(SKILL_PLUGINS_DIR, 'seat', 'skills')).sort(), codexFiles);
-  assert.strictEqual(delivery.deliver('muse', 'seat', []), null);
+  assert.deepStrictEqual(muse, { args: [], instructions: null, skillsDir },
+    'the seat links skillsDir into its overlay; muse discovers the files itself, so no catalog text');
+  assert.deepStrictEqual(fs.readdirSync(skillsDir).sort(), ['audit', 'bare', 'deploy', 'stocks:foo'],
+    'one dir per record, the bundle skill under its qualified name');
+  assert.strictEqual(fs.readFileSync(path.join(skillsDir, 'deploy', 'SKILL.md'), 'utf-8'),
+    '---\nname: deploy\ndescription: Ships the DMG.\n---\nRun the script.\n',
+    'muse takes the id from the frontmatter name, so the writer seeds it');
+  assert.match(fs.readFileSync(path.join(skillsDir, 'stocks:foo', 'SKILL.md'), 'utf-8'), /^---\nname: stocks:foo\n/);
+  assert.match(fs.readFileSync(path.join(skillsDir, 'bare', 'SKILL.md'), 'utf-8'), /^---\nname: bare\n/);
+  assert.strictEqual(fs.statSync(path.join(skillsDir, 'deploy', 'SKILL.md')).mode & 0o777, 0o600);
+  assert.strictEqual(delivery.deliver('muse', 'seat', []), null, 'no records: nothing to link');
+  assert.strictEqual(fs.existsSync(path.join(SKILL_PLUGINS_DIR, 'seat')), false, 'and the seat dir is gone');
 });
 
 test('t747: the codex adapter rebuilds from scratch, so a deselected skill is gone', () => {

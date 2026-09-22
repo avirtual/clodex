@@ -251,16 +251,33 @@ test('m2: no proxy at all → direct, and no warning either', async () => {
   } finally { await f.stop('seat'); }
 });
 
-test('m2: CLODEX_DISABLE_IPC_PROMPT=1 drops the IPC block; skills catalog and team block append in codex order', async () => {
-  const f = mkMuse({ skills: { args: [], instructions: '# Clodex skills\n\n- a: x — /p' }, teamBlock: 'TEAM' });
+test('t1097: delivered skills link into the overlay as muse/skills; AGENTS.md carries the team block and no catalog', async () => {
+  const skillsDir = pathReal.join(mkTmpRoot('clodex-muse-skills-'), 'skill-plugins', 'seat', 'skills');
+  fsReal.mkdirSync(pathReal.join(skillsDir, 'a'), { recursive: true });
+  fsReal.writeFileSync(pathReal.join(skillsDir, 'a', 'SKILL.md'), '---\nname: a\n---\nx\n');
+  const f = mkMuse({ skills: { args: [], instructions: null, skillsDir }, teamBlock: 'TEAM' });
   await f.create('seat', { sessionEnv: { ...f.env, CLODEX_DISABLE_IPC_PROMPT: '1' } });
   try {
     const seatDir = pathForReal(f.root, 'seat', 'seatConfig');
+    const link = pathReal.join(seatDir, 'muse', 'skills');
+    assert.ok(fsReal.lstatSync(link).isSymbolicLink(), 'muse/skills is a symlink, not a copy');
+    assert.strictEqual(fsReal.readlinkSync(link), skillsDir, 'pointing at the delivered tree');
+    assert.strictEqual(fsReal.readFileSync(pathReal.join(link, 'a', 'SKILL.md'), 'utf-8'), '---\nname: a\n---\nx\n',
+      'so $XDG_CONFIG_HOME/muse/skills/a/SKILL.md resolves to the delivered file');
     const body = fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'AGENTS.md'), 'utf-8');
-    assert.match(body, /^You are the clodex agent named 'seat'\.\n\nAPPEND\n\n# Clodex skills\n\n- a: x — \/p\n\n# Team\nYou are on team team \(root \/t\)\./,
-      'header, appends, catalog, then the real team block — formatTeamBlock is not a seam');
+    assert.match(body, /^You are the clodex agent named 'seat'\.\n\nAPPEND\n\n# Team\nYou are on team team \(root \/t\)\./,
+      'header, appends, then the real team block — formatTeamBlock is not a seam');
+    assert.doesNotMatch(body, /Clodex skills/, 'no catalog: the roster is the CLI\'s own');
     assert.ok(body.endsWith('\n'), 'the team block is the last paragraph and closes with a newline, as codex writes it');
   } finally { await f.stop('seat'); }
+
+  const g = mkMuse();
+  await g.create('seat');
+  try {
+    const museDir = pathReal.join(pathForReal(g.root, 'seat', 'seatConfig'), 'muse');
+    assert.deepStrictEqual(fsReal.readdirSync(museDir).sort(), ['AGENTS.md', 'auth.json', 'settings.json', 'trust.json'],
+      'nothing delivered: no skills entry at all, not a dangling link');
+  } finally { await g.stop('seat'); }
 });
 
 test('m2: a restore links before the spawn and resumes the persisted id; fork is a warning, not a subcommand', async () => {

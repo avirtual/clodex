@@ -30,26 +30,36 @@ function deliverClaude(deps, name, records) {
   return { args: ['--plugin-dir', dir], instructions: null };
 }
 
-function deliverCatalog(deps, name, records) {
-  const { fs, path, confine, ensureDir, SKILL_PLUGINS_DIR, skillMd, parseSkillFrontmatter } = deps;
+function writeSkillTree(deps, name, records) {
+  const { fs, path, confine, ensureDir, SKILL_PLUGINS_DIR, skillMd } = deps;
   const dir = confine(SKILL_PLUGINS_DIR, name);
   if (dir === null) throw new Error(`invalid session name: ${name}`);
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   const skillsRoot = path.join(dir, 'skills');
-  const lines = [];
+  const written = [];
   for (const rec of sortedRecords(records)) {
     const sdir = confine(skillsRoot, rec.name);
     if (sdir === null) continue;
     ensureDir(sdir);
     const file = path.join(sdir, 'SKILL.md');
     fs.writeFileSync(file, skillMd(rec.name, rec.content || ''), { mode: 0o600 });
-    const meta = parseSkillFrontmatter(rec.content || '').meta || {};
-    lines.push(`- ${rec.name}: ${meta.description || NO_DESCRIPTION} — ${file}`);
+    written.push({ rec, file });
   }
-  if (!lines.length) {
+  if (!written.length) {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
     return null;
   }
+  return { skillsRoot, written };
+}
+
+function deliverCatalog(deps, name, records) {
+  const { parseSkillFrontmatter } = deps;
+  const tree = writeSkillTree(deps, name, records);
+  if (!tree) return null;
+  const lines = tree.written.map(({ rec, file }) => {
+    const meta = parseSkillFrontmatter(rec.content || '').meta || {};
+    return `- ${rec.name}: ${meta.description || NO_DESCRIPTION} — ${file}`;
+  });
   return { args: [], instructions: `${CATALOG_HEADING}\n\n${CATALOG_INTRO}\n\n${lines.join('\n')}` };
 }
 
@@ -65,7 +75,9 @@ function deliverCodex(deps, name, records) {
 }
 
 function deliverMuse(deps, name, records) {
-  return deliverCatalog(deps, name, records);
+  const tree = writeSkillTree(deps, name, records);
+  if (!tree) return null;
+  return { args: [], instructions: null, skillsDir: tree.skillsRoot };
 }
 
 const ADAPTERS = { claude: deliverClaude, codex: deliverCodex, muse: deliverMuse };
