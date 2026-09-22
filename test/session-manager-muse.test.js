@@ -47,7 +47,7 @@ function writeRegistry(dataHome, sid, pid = 999) {
     JSON.stringify({ schema_version: 1, session_id: sid, process_generation_hint: `pid=${pid}` }));
 }
 
-function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true } }, skills = null, teamBlock = '', settings } = {}) {
+function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true } }, skills = null, teamBlock = '', settings, roster = null } = {}) {
   const root = mkTmpRoot('clodex-muse-');
   const source = writeConfigFixture(root, settings === undefined ? {} : { settings });
   const dataHome = pathReal.join(root, 'data');
@@ -57,12 +57,14 @@ function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true 
   const spawns = [];
   const watchers = [];
   const warns = [];
+  const rosterCalls = [];
   const fs = {
     ...fsReal,
     renameSync: (a, b) => { order.push('link'); return fsReal.renameSync(a, b); },
   };
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
+    platformSkills: (adapter, opts) => { rosterCalls.push({ id: adapter.id, ...opts }); return roster || []; },
     REGISTRY_DIR: root,
     MSG_DIR: pathReal.join(root, 'messages'),
     PENDING_DIR: pathReal.join(root, 'pending'),
@@ -158,12 +160,12 @@ function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true 
     clearTimeout(s._bootNudgeTimer);
   };
   const env = { XDG_CONFIG_HOME: source, XDG_DATA_HOME: dataHome };
-  const create = (name, { extraArgs = [], resumeId = null, fork = false, sessionEnv = env } = {}) => m.create(
+  const create = (name, { extraArgs = [], resumeId = null, fork = false, sessionEnv = env, disabledSkills = [], injectSkills = [] } = {}) => m.create(
     name, 'muse', osReal.tmpdir(), extraArgs, resumeId, 'ws', null, fork, null,
-    [], [], [], [], [], null, [], [], null, sessionEnv,
+    [], [], [], disabledSkills, injectSkills, null, [], [], null, sessionEnv,
   );
   const link = (name) => pathForReal(root, name, 'transcript');
-  return { m, root, source, dataHome, env, order, execs, spawns, watchers, warns, create, stop, link };
+  return { m, root, source, dataHome, env, order, execs, spawns, watchers, warns, rosterCalls, create, stop, link };
 }
 
 test('m2: a fresh muse seat spawns at once; the registry poller links its transcript — whole-array argv, AGENTS.md bytes, overlay, env', async () => {
@@ -419,5 +421,78 @@ test('m3: the profile merge is a deepMerge — a permissions.profiles.other entr
         },
       },
     });
+  } finally { f.stop('seat'); }
+});
+
+const MUSE_ROSTER = [
+  { id: 'bundled:git', scope: 'bundled', path: 'bundled://muse-core/skills/git/SKILL.md', activation: 'on' },
+  { id: 'bundled:workflow-authoring', scope: 'bundled', path: 'bundled://muse-core/skills/workflow-authoring/SKILL.md', activation: 'on' },
+  { id: 'plugin:threejs:threejs', scope: 'plugin', path: 'plugin://threejs/skills/threejs/SKILL.md', activation: 'on' },
+  { id: 'foo', scope: 'user', path: '$CONFIG_DIR/skills/foo/SKILL.md', activation: 'on' },
+  { id: 'bar', scope: 'project', path: '.agents/skills/bar/SKILL.md', activation: 'on' },
+];
+
+test('t1090: disabledSkills becomes skills.activation in the overlay, beside the reviewer profile — whole file', async () => {
+  const f = mkMuse({ roster: MUSE_ROSTER });
+  await f.create('seat', { disabledSkills: ['git', 'plugin:threejs:threejs', 'foo', 'bar', 'nope'] });
+  try {
+    const seatDir = pathForReal(f.root, 'seat', 'seatConfig');
+    assert.deepStrictEqual(f.rosterCalls, [{ id: 'muse', configDir: f.source }],
+      'the roster is read once, from the SOURCE config the seat copies, never the overlay');
+    assert.deepStrictEqual(JSON.parse(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'settings.json'), 'utf-8')), {
+      schema_version: 1,
+      provider: 'meta',
+      permissions: {
+        schema_version: 1,
+        profiles: { reviewer: { extends: ':read-only', approval: 'allow_all', reviewer: 'none', network: { mode: 'enabled' } } },
+      },
+      skills: {
+        activation: {
+          bundled: { 'bundled://muse-core/skills/git/SKILL.md': 'off' },
+          plugin: { 'plugin://threejs/skills/threejs/SKILL.md': 'off' },
+          user: { '$CONFIG_DIR/skills/foo/SKILL.md': 'off' },
+        },
+      },
+    });
+  } finally { f.stop('seat'); }
+});
+
+test('t1090: "*" sweeps every listed skill except the injected ones; the source file\'s own activation entries survive the merge', async () => {
+  const f = mkMuse({
+    roster: MUSE_ROSTER,
+    settings: '{"schema_version":1,"provider":"meta","skills":{"activation":{"bundled":{"bundled://muse-core/skills/plan/SKILL.md":"user-invocable-only"}}}}\n',
+  });
+  await f.create('seat', { disabledSkills: ['*'], injectSkills: ['foo'] });
+  try {
+    const seatDir = pathForReal(f.root, 'seat', 'seatConfig');
+    assert.deepStrictEqual(JSON.parse(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'settings.json'), 'utf-8')), {
+      schema_version: 1,
+      provider: 'meta',
+      permissions: {
+        schema_version: 1,
+        profiles: { reviewer: { extends: ':read-only', approval: 'allow_all', reviewer: 'none', network: { mode: 'enabled' } } },
+      },
+      skills: {
+        activation: {
+          bundled: {
+            'bundled://muse-core/skills/plan/SKILL.md': 'user-invocable-only',
+            'bundled://muse-core/skills/git/SKILL.md': 'off',
+            'bundled://muse-core/skills/workflow-authoring/SKILL.md': 'off',
+          },
+          plugin: { 'plugin://threejs/skills/threejs/SKILL.md': 'off' },
+        },
+      },
+    });
+  } finally { f.stop('seat'); }
+});
+
+test('t1090: disabledSkills [] writes no skills key at all, and never asks for the roster', async () => {
+  const f = mkMuse({ roster: MUSE_ROSTER });
+  await f.create('seat', { disabledSkills: [] });
+  try {
+    const seatDir = pathForReal(f.root, 'seat', 'seatConfig');
+    const parsed = JSON.parse(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'settings.json'), 'utf-8'));
+    assert.deepStrictEqual(Object.keys(parsed).sort(), ['permissions', 'provider', 'schema_version']);
+    assert.deepStrictEqual(f.rosterCalls, []);
   } finally { f.stop('seat'); }
 });

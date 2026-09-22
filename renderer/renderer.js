@@ -2373,7 +2373,7 @@ async function refreshNewSessionSkills(disabledSet = new Set(), { forTemplate = 
   if (!capsFor(inputType.value).skillRoster) return;
   resetNewSessionSkillCollector(disabledSet);
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
-  const res = await window.api.getSkillCatalogFor(cwd);
+  const res = await window.api.getSkillCatalogFor(cwd, inputType.value);
   if (!res || !res.ok) { renderSkillChecklist(inputSkillsList, [], disabledSet); return; }
   const names = res.names || [];
   newSessionSkillsDrawn = [...names];

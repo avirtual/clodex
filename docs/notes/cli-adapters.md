@@ -85,6 +85,10 @@ file under `~/.clodex/messages` (a spilled spec) IS readable under the profile
 `runtime.session.permission_profile_committed` with `source.kind: "user_named"`,
 `id: "reviewer"` inside a `session_permission_transaction` frame.
 
+## skills
+
+`null` where the platform has no listable roster (Claude sweeps transcripts; Codex has none); `{ list, activation }` where it has: `list.args` after `cmd` prints the roster as JSON, `list.env` names the variable pointed at the SOURCE config (`account.envKey`, never the seat overlay the list is about to shape), `list.scratchEnv` a data-home variable pointed at a scratch dir, `activation.key`/`activation.off` the settings path and value the off-block is written under. Measured facts live in docs/notes/muse-skills.md.
+
 A Muse seat's transcript is written by the CLI at boot with nothing typed: a
 fresh interactive `muse` opens `session.jsonl` ~0.25 s after spawn (measured,
 1.3.0: 4,461 bytes of boot records), and a resume APPENDS (measured, echo

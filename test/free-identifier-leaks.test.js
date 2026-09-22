@@ -268,6 +268,7 @@ const SCANNED_MODULES = [
   // or a coordinator const would quietly undo that.
   'team-measure.js',
   'seat-layout.js',
+  'muse-skills.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction
