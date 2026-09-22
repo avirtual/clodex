@@ -35,27 +35,15 @@ Move's shape, not `kill()` and not reload. `kill()` removes the persistence
 record, fires `_notifyComposition(s, 'retired')` — peers would be told the lead
 retired — and stamps a `kill` cost; `exitDisposition({ moving: true })` marks
 the exit expected and the renderer keeps the tab. Measured span kill→boot is
-about 5 s, which is the number `recycleMs` records per episode.
-
-Measured 21:49:20 → 21:49:34: a MERGED notice parked mid-turn was claimed by
-the idle-edge drain's producer at the same turn end that fired the cut, the
-seat exited 14 s later, and the text was in neither the cut backup nor the
-live transcript — hence `_quiesceInjects` before the kill.
+about 5 s, which is the number `recycleMs` records per episode. Measured once:
+a MERGED notice delivered 21:49:20 was claimed by the idle-edge drain at the
+turn end that fired the cut, the seat exited 21:49:34, and the text was in
+neither the cut backup nor the live transcript — hence `_quiesceInjects` first.
 
 `--resume <id>` is not confined to the transcript's project dir (see the `move`
 note), so the respawn reaches the same conversation with `entry.sessionId`
 unchanged and the watcher's `onSessionId` takes the adopt branch, never the
 clear branch that voids marks.
-
-## _quiesceInjects
-Marks the seat `_recycling` (read by the queue's `isDead`, by the idle,
-boot-ready and forced drains' guards and producers, and by `_maybeParkDelivery`
-as busy), awaits `InjectQueue.settled()`, then parks the hold queue. On the
-respawned seat the boot-ready drain (`_bootReadySeen` edge + `BOOT_DRAIN_SETTLE_MS`)
-and the briefing (`_injectAfterBoot`: transcript symlink + `RELOAD_CONTINUATION_DELAY`)
-share one queue, so enqueue order decides; the drain enqueues first unless the
-symlink lands more than 1.75 s before the mode-2004 edge, so the re-parked
-delivery normally precedes the briefing, not the other way round.
 
 ## _parkHeldInjects
 

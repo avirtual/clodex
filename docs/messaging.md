@@ -228,11 +228,7 @@ Codex gets a read-with-Read pointer.
    text it lands as a literal character (this was the historical
    mid-draft truncation bug). The quiet-gate defers firing while the
    operator typed within `INJECT_QUIET_MS` (2s), capped at
-   `INJECT_QUIET_MAXWAIT` (5min, logged as splice risk). A unit whose text is
-   already claimed when the seat dies or is marked `_recycling`
-   (`_quiesceInjects`, before a scratch cut kills the pty) is re-parked
-   through `onUndelivered` with the seat's `born`, so the drains above deliver
-   it to the respawned process instead of losing it with the old one.
+   `INJECT_QUIET_MAXWAIT` (5min, logged as splice risk).
 
 **Park-at-fire divert** — injects marked `parkable` re-check
 `_parkDivertFor` at the moment of writing: if the operator has a draft open,
@@ -332,7 +328,15 @@ for the operator. The nudge is cleared by the turn edge and by kill, gives up at
   with the target's own next turn; the busy/draft park arms a non-destructive
   5min cap (`_armParkCap`) that drains through the inject queue. Cost/dialog
   hold-parks do NOT arm the cap — they wait for the target's next turn or an
-  explicit resend.
+  explicit resend. A unit whose text is already claimed when the seat dies or
+  is marked `_recycling` (`_quiesceInjects`, before a scratch cut kills the
+  pty) is re-parked through the queue's `onUndelivered` with the seat's `born`,
+  so these drains deliver it to the respawned process. On that seat the
+  boot-ready drain (`_bootReadySeen` edge + `BOOT_DRAIN_SETTLE_MS`) and the
+  briefing (`_injectAfterBoot`: transcript symlink + `RELOAD_CONTINUATION_DELAY`)
+  share one queue, so enqueue order decides: the drain enqueues first unless
+  the symlink lands more than 1.75 s before the mode-2004 edge, so the
+  re-parked delivery normally precedes the briefing.
 - **Operator flush** (`countPending` + `flushPending` / `_flushParkedNow`) — a
   parked-DM count badge (`✉N`) on the sidebar session row, fed by a 1s
   `pending-count` poll (deltas only) over live Claude sessions plus a seed from
