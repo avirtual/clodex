@@ -45,6 +45,7 @@ const PRICES = {
   'claude-opus-4-6': { in: 5.0,  out: 25.0, cache_write_5m: 6.25,  cache_write_1h: 10.0, cache_read: 0.50 },
   'claude-opus-4-7': { in: 5.0,  out: 25.0, cache_write_5m: 6.25,  cache_write_1h: 10.0, cache_read: 0.50 },
   'claude-opus-4-8': { in: 5.0,  out: 25.0, cache_write_5m: 6.25,  cache_write_1h: 10.0, cache_read: 0.50 },
+  'claude-opus-5-5': { in: 4.0,  out: 20.0, cache_write_5m: 5.0,   cache_write_1h: 8.0,  cache_read: 0.20 },
   // opus-5 needs its OWN row: longest-prefix matching cannot reach it from any
   // "claude-opus-4*" entry, so without this it is UNPRICED — billing() returns
   // est_usd null and bump() adds zero while still ticking requests, which reads
@@ -79,6 +80,7 @@ const PRICES_OPENAI = {
 // Absent field (every non-beta request) => standard, the base PRICES row.
 // Mirrors proxylab billing.py PRICES_SPEED_FAST; keep the two in lock-step.
 const PRICES_SPEED_FAST = {
+  'claude-opus-5-5': { in: 8.0,  out: 40.0, cache_write_5m: 10.0, cache_write_1h: 16.0, cache_read: 0.40 },
   'claude-opus-5':   { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 },
   'claude-opus-4-8': { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 },
 };

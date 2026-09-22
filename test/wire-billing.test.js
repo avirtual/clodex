@@ -96,6 +96,33 @@ test('priceFor: fable-5-1 keeps its own read rate and is not swallowed by fable-
   assert.equal(priceFor('claude-fable-5-1').cache_write_1h, 20.0);
 });
 
+test('priceFor: opus-5-5 keeps its own rates and is not swallowed by opus-5', () => {
+  const std = priceFor('claude-opus-5-5');
+  assert.equal(std.in, 4.0);
+  assert.equal(std.out, 20.0);
+  assert.equal(std.cache_write_5m, 5.0);
+  assert.equal(std.cache_write_1h, 8.0);
+  assert.equal(std.cache_read, 0.20);
+  const dated = priceFor('claude-opus-5-5-20260922');
+  assert.equal(dated.in, 4.0);
+  assert.equal(dated.out, 20.0);
+  assert.equal(dated.cache_write_5m, 5.0);
+  assert.equal(dated.cache_write_1h, 8.0);
+  assert.equal(dated.cache_read, 0.20);
+  const five = priceFor('claude-opus-5');
+  assert.equal(five.in, 5.0);
+  assert.equal(five.out, 25.0);
+  assert.equal(five.cache_write_5m, 6.25);
+  assert.equal(five.cache_write_1h, 10.0);
+  assert.equal(five.cache_read, 0.50);
+  const fast = priceFor('claude-opus-5-5', { speed: 'fast' });
+  assert.equal(fast.in, 8.0);
+  assert.equal(fast.out, 40.0);
+  assert.equal(fast.cache_write_5m, 10.0);
+  assert.equal(fast.cache_write_1h, 16.0);
+  assert.equal(fast.cache_read, 0.40);
+});
+
 // The vendor's PRICES carries claude-mythos-5-1 and claude-mythos-5; ours ports
 // NEITHER, by decision — we never route mythos, and an unpriced model is loud
 // (est_usd null, unpriced_requests ticks, warnUnpriced fires) where a guessed
@@ -483,9 +510,11 @@ function shadowedRows(ourKeys, theirKeys) {
 // Pairs [overlayKey, pricesKey] where a PRICES key strictly extends an overlay
 // key, so traffic winning on the longer prefix never sees the overlay.
 function orphanedOverlayRows(priceKeys, overlayKeys) {
+  const overlay = new Set(overlayKeys);
   const out = [];
   for (const ok of overlayKeys) {
     for (const pk of priceKeys) {
+      if (overlay.has(pk)) continue;
       if (pk.length > ok.length && pk.startsWith(ok)) out.push([ok, pk]);
     }
   }
@@ -515,6 +544,8 @@ test('prefix-shadow audit: the detectors are red on a table that has the defect'
     orphanedOverlayRows(['claude-opus-5', 'claude-opus-5-1'], ['claude-opus-5']),
     [['claude-opus-5', 'claude-opus-5-1']]);
   assert.deepEqual(orphanedOverlayRows(['claude-opus-5'], ['claude-opus-5']), []);
+  assert.deepEqual(
+    orphanedOverlayRows(['claude-opus-5', 'claude-opus-5-5'], ['claude-opus-5', 'claude-opus-5-5']), []);
 
   // The parser must throw, not return [], when it cannot find its table.
   assert.throws(() => vendorTableKeys('PRICES = {\n    "a": 1,\n}\n', 'NOPE'), /not found/);
