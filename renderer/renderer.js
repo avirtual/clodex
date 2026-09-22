@@ -39,7 +39,7 @@ const {
 const { evalRendererModule } = require('./lib/plugin-module-eval');
 const { pluginOrigin } = require('./lib/plugin-origin');
 const { prefsGate } = require('./lib/prefs-gate');
-const { skillOffSetFor, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList, skillDenyForPeer } = require('../skills-off');
+const { skillOffSetFor, applySkillAliases, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList, skillDenyForPeer } = require('../skills-off');
 const { planNewSession } = require('./lib/focus-policy');
 const { anyOverlayOpen, openOverlayIds, performCloseChord } = require('./lib/chord-guard');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
@@ -2377,7 +2377,8 @@ async function refreshNewSessionSkills(disabledSet = new Set(), { forTemplate = 
   if (!res || !res.ok) { renderSkillChecklist(inputSkillsList, [], disabledSet); return; }
   const names = res.names || [];
   newSessionSkillsDrawn = [...names];
-  const offSet = skillOffSetFor(names, disabledSet);
+  newSessionSkillsAsked = applySkillAliases(newSessionSkillsAsked, res.aliases);
+  const offSet = skillOffSetFor(names, applySkillAliases(disabledSet, res.aliases));
   renderSkillChecklist(inputSkillsList, names, offSet,
     advisoryEffective(res.effective, forTemplate),
     { skillsLocked: res.skillsLocked, canReenable: res.canReenable });
@@ -7730,8 +7731,8 @@ async function openArgsDialog(name, argsSource = null) {
     const sc = skillCatalog;
     argsSkillsDisabledPersisted = sc.disabledSkills || [];
     if (caps.skillRoster) {
-      const offSet = skillOffSetFor(sc.names || [],
-        sc.allOff ? ['*', ...(sc.disabledSkills || [])] : (sc.disabledSkills || []));
+      const offSet = skillOffSetFor(sc.names || [], applySkillAliases(
+        sc.allOff ? ['*', ...(sc.disabledSkills || [])] : (sc.disabledSkills || []), sc.aliases));
       renderSkillChecklist(argsSkillsList, sc.names || [], offSet,
         sc.effective || {}, { skillsLocked: sc.skillsLocked, canReenable: sc.canReenable, outOfScope: sc.outOfScope });
     }

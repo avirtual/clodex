@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 const {
-  parseSkillsList, resolveOffSkills, activationBlock, activationSettings, createSkillLister, skillDirName,
+  parseSkillsList, resolveOffSkills, activationBlock, activationSettings, createSkillLister, skillDirName, skillAliases,
 } = require('../muse-skills');
 const { ADAPTERS } = require('../cli-adapters');
 
@@ -119,13 +119,15 @@ test('activationSettings nests the block under the adapter key and answers null 
   assert.strictEqual(activationSettings(ADAPTERS.claude.skills, ROSTER, ['git']), null);
 });
 
-function mkLister({ answer = JSON.stringify({ skills: [BUNDLED_GIT, PLUGIN_THREE], diagnostics: [] }), fail = false } = {}) {
+function mkLister({ answer = JSON.stringify({ skills: [BUNDLED_GIT, PLUGIN_THREE], diagnostics: [] }), fail = false, failures = [] } = {}) {
   const calls = [];
   const warns = [];
   const lister = createSkillLister({
     execFileSync: (cmd, args, opts) => {
       calls.push({ cmd, args, opts });
       if (fail) throw new Error('muse exited 1');
+      const failure = failures.shift();
+      if (failure) throw failure;
       return answer;
     },
     scratchDir: '/scratch/data',
@@ -149,19 +151,66 @@ test('the lister spawns the adapter command with the source config dir and a scr
   });
   assert.strictEqual(calls[0].opts.timeout, 30000);
   assert.strictEqual(calls[0].opts.encoding, 'utf8');
-  assert.deepStrictEqual(calls[0].opts.stdio, ['ignore', 'pipe', 'ignore']);
+  assert.deepStrictEqual(calls[0].opts.stdio, ['ignore', 'pipe', 'pipe']);
   assert.strictEqual(calls[1].opts.env.XDG_CONFIG_HOME, '/other');
   assert.deepStrictEqual(warns, []);
 });
 
-test('a failing list is an empty roster and one warn line, cached like a success; no spawn for an adapter without list or without a configDir', () => {
+test('a failing list is an empty roster and a warn line per call, never cached; no spawn for an adapter without list or without a configDir', () => {
   const { lister, calls, warns } = mkLister({ fail: true });
   assert.deepStrictEqual(lister.list(ADAPTERS.muse, { configDir: '/acct' }), []);
   assert.deepStrictEqual(lister.list(ADAPTERS.muse, { configDir: '/acct' }), []);
-  assert.strictEqual(calls.length, 1);
-  assert.deepStrictEqual(warns, ['muse skills list --json failed for /acct: muse exited 1']);
+  assert.strictEqual(calls.length, 2, 'a failure is re-run, not cached');
+  assert.deepStrictEqual(warns, [
+    'muse skills list --json failed for /acct: muse exited 1',
+    'muse skills list --json failed for /acct: muse exited 1',
+  ]);
   assert.deepStrictEqual(lister.list(ADAPTERS.claude, { configDir: '/acct' }), []);
   assert.deepStrictEqual(lister.list(ADAPTERS.muse, {}), []);
   assert.deepStrictEqual(lister.list(null, { configDir: '/acct' }), []);
-  assert.strictEqual(calls.length, 1, 'neither reached the spawn');
+  assert.strictEqual(calls.length, 2, 'neither reached the spawn');
+});
+
+test('t1094: a failed list is retried — the next call after a miss yields the roster and caches it', () => {
+  const { lister, calls, warns } = mkLister({ failures: [new Error('spawn muse ENOENT')] });
+  assert.deepStrictEqual(lister.list(ADAPTERS.muse, { configDir: '/acct' }), []);
+  assert.strictEqual(warns.length, 1, 'the miss warned');
+  assert.deepStrictEqual(lister.list(ADAPTERS.muse, { configDir: '/acct' }), [BUNDLED_GIT, PLUGIN_THREE]);
+  assert.deepStrictEqual(lister.list(ADAPTERS.muse, { configDir: '/acct' }), [BUNDLED_GIT, PLUGIN_THREE]);
+  assert.strictEqual(calls.length, 2, 'the success is cached');
+  assert.strictEqual(warns.length, 1);
+});
+
+test('t1094: the warn carries the command\'s stderr, trimmed and capped at 200 chars', () => {
+  const noisy = Object.assign(new Error('Command failed: muse skills list --json'), { stderr: '  boom: no config\n' });
+  const long = Object.assign(new Error('Command failed: muse skills list --json'), { stderr: 'x'.repeat(500) });
+  const quiet = Object.assign(new Error('Command failed: muse skills list --json'), { stderr: '' });
+  const shaped = Object.assign(new Error('Command failed: muse skills list --json\nboom: no config'), { stderr: 'boom: no config\n' });
+  const enoent = Object.assign(new Error('spawn muse ENOENT'), { stderr: '' });
+  const { lister, warns } = mkLister({ failures: [noisy, long, quiet, shaped, enoent] });
+  for (let i = 0; i < 5; i++) lister.list(ADAPTERS.muse, { configDir: '/acct' });
+  assert.deepStrictEqual(warns, [
+    'muse skills list --json failed for /acct: Command failed: muse skills list --json: boom: no config',
+    `muse skills list --json failed for /acct: Command failed: muse skills list --json: ${'x'.repeat(200)}`,
+    'muse skills list --json failed for /acct: Command failed: muse skills list --json',
+    'muse skills list --json failed for /acct: Command failed: muse skills list --json: boom: no config',
+    'muse skills list --json failed for /acct: spawn muse ENOENT',
+  ]);
+  assert.strictEqual(warns[3].split('boom: no config').length, 2, 'a Node-shaped error carries its stderr once');
+  assert.ok(!warns[3].includes('\n'), 'one line');
+});
+
+test('t1094: skillAliases maps each SKILL.md directory name to its roster id, and the resolved off set is what the checklist compares against', () => {
+  const { applySkillAliases, skillOffSetFor } = require('../skills-off');
+  const aliases = skillAliases(ROSTER);
+  assert.strictEqual(aliases.git, 'bundled:git');
+  assert.strictEqual(aliases.threejs, 'plugin:threejs:threejs');
+  assert.ok(!('bundled:git' in aliases), 'ids are not aliases of themselves');
+  assert.deepStrictEqual(skillAliases([]), {});
+  const names = ROSTER.map((s) => s.id).sort();
+  assert.deepStrictEqual(applySkillAliases(['git', '*', '!threejs', 'nope'], aliases), ['bundled:git', '*', '!plugin:threejs:threejs', 'nope']);
+  assert.deepStrictEqual(applySkillAliases(new Set(['git']), undefined), ['git']);
+  assert.ok(skillOffSetFor(names, applySkillAliases(['git'], aliases)).has('bundled:git'));
+  assert.ok(!skillOffSetFor(names, applySkillAliases(['*', '!git'], aliases)).has('bundled:git'));
+  assert.ok(skillOffSetFor(names, applySkillAliases(['*', '!git'], aliases)).has('plugin:threejs:threejs'));
 });

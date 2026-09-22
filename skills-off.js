@@ -33,6 +33,17 @@ function skillOffSetFor(names, disabledSkills) {
   return new Set((Array.isArray(names) ? names : []).filter((n) => !keep.has(n)));
 }
 
+function applySkillAliases(disabledSkills, aliases) {
+  const list = Array.isArray(disabledSkills) ? disabledSkills : [...(disabledSkills || [])];
+  const map = aliases && typeof aliases === 'object' ? aliases : {};
+  return list.map((n) => {
+    if (typeof n !== 'string' || n === '*') return n;
+    const key = n.startsWith('!') && n.length > 1 ? n.slice(1) : n;
+    const id = Object.hasOwn(map, key) ? map[key] : key;
+    return key === n ? id : `!${id}`;
+  });
+}
+
 function skillDenyForPeer(disabledSkills) {
   const list = Array.isArray(disabledSkills) ? disabledSkills : [];
   return list.some((n) => isSkillDenyDirective(n)) ? [] : list;
@@ -59,6 +70,6 @@ function expandSkillsOff(disabledSkills, { known = [], injectSkills = [] } = {})
 }
 
 module.exports = {
-  expandSkillsOff, deferredSkillDeny, skillOffSetFor,
+  expandSkillsOff, deferredSkillDeny, skillOffSetFor, applySkillAliases,
   skillDenyKeepList, skillDenyIsDeferred, isSkillDenyDirective, skillDenyForPeer,
 };

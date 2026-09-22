@@ -25343,6 +25343,16 @@ ${i3.join("\n")}
         const keep = new Set(skillDenyKeepList(list));
         return new Set((Array.isArray(names) ? names : []).filter((n) => !keep.has(n)));
       }
+      function applySkillAliases(disabledSkills, aliases) {
+        const list = Array.isArray(disabledSkills) ? disabledSkills : [...disabledSkills || []];
+        const map = aliases && typeof aliases === "object" ? aliases : {};
+        return list.map((n) => {
+          if (typeof n !== "string" || n === "*") return n;
+          const key = n.startsWith("!") && n.length > 1 ? n.slice(1) : n;
+          const id = Object.hasOwn(map, key) ? map[key] : key;
+          return key === n ? id : `!${id}`;
+        });
+      }
       function skillDenyForPeer(disabledSkills) {
         const list = Array.isArray(disabledSkills) ? disabledSkills : [];
         return list.some((n) => isSkillDenyDirective(n)) ? [] : list;
@@ -25370,6 +25380,7 @@ ${i3.join("\n")}
         expandSkillsOff,
         deferredSkillDeny,
         skillOffSetFor,
+        applySkillAliases,
         skillDenyKeepList,
         skillDenyIsDeferred,
         isSkillDenyDirective,
@@ -34659,7 +34670,7 @@ Opening it here and saving would overwrite the file with what this editor could 
         bundleSectionsOf
       } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
-      var { skillOffSetFor } = require_skills_off();
+      var { skillOffSetFor, applySkillAliases } = require_skills_off();
       var { parseSkillFrontmatter } = require_skills_util();
       var { esc } = require_format();
       var { capsFor } = require_cli_adapters();
@@ -34776,10 +34787,10 @@ Opening it here and saving would overwrite the file with what this editor could 
           const caps = capsFor(skillsTypeOf(name, source));
           skillsDisabledPersisted = res.disabledSkills || [];
           if (caps.skillRoster) {
-            const offSet = skillOffSetFor(
-              res.names || [],
-              res.allOff ? ["*", ...skillsDisabledPersisted] : skillsDisabledPersisted
-            );
+            const offSet = skillOffSetFor(res.names || [], applySkillAliases(
+              res.allOff ? ["*", ...skillsDisabledPersisted] : skillsDisabledPersisted,
+              res.aliases
+            ));
             renderSkillChecklist(
               popoverSkillsList,
               res.names || [],
@@ -40056,7 +40067,7 @@ ${detail}` });
       var { evalRendererModule } = require_plugin_module_eval();
       var { pluginOrigin } = require_plugin_origin();
       var { prefsGate } = require_prefs_gate();
-      var { skillOffSetFor, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList, skillDenyForPeer } = require_skills_off();
+      var { skillOffSetFor, applySkillAliases, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList, skillDenyForPeer } = require_skills_off();
       var { planNewSession } = require_focus_policy();
       var { anyOverlayOpen, openOverlayIds, performCloseChord } = require_chord_guard();
       var { parseEnvLines, formatEnvLines } = require_env_edit();
@@ -42238,7 +42249,8 @@ ${detail}` });
         }
         const names = res.names || [];
         newSessionSkillsDrawn = [...names];
-        const offSet = skillOffSetFor(names, disabledSet);
+        newSessionSkillsAsked = applySkillAliases(newSessionSkillsAsked, res.aliases);
+        const offSet = skillOffSetFor(names, applySkillAliases(disabledSet, res.aliases));
         renderSkillChecklist(
           inputSkillsList,
           names,
@@ -47314,10 +47326,10 @@ ${res.stderr}` : "");
           const sc = skillCatalog;
           argsSkillsDisabledPersisted = sc.disabledSkills || [];
           if (caps.skillRoster) {
-            const offSet = skillOffSetFor(
-              sc.names || [],
-              sc.allOff ? ["*", ...sc.disabledSkills || []] : sc.disabledSkills || []
-            );
+            const offSet = skillOffSetFor(sc.names || [], applySkillAliases(
+              sc.allOff ? ["*", ...sc.disabledSkills || []] : sc.disabledSkills || [],
+              sc.aliases
+            ));
             renderSkillChecklist(
               argsSkillsList,
               sc.names || [],

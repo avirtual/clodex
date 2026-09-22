@@ -15,6 +15,7 @@ blocks a release.
 - Muse seats: when the CLI never registers its session (a data home it refuses, e.g. under /private/tmp), Clodex links the newest transcript written after spawn instead of leaving the seat unscanned.
 - Muse seats: a fresh seat no longer pays a Meta request at spawn — create is immediate; the transcript links within about half a second once the CLI registers its session.
 - Muse seats honour a template's `disabledSkills`: the list (or `"*"`) becomes `skills.activation` in the seat's own config overlay, and the New Session dialog / template editor list Muse's skills from `muse skills list`.
+- Muse skills: a template naming a skill by directory name opens correctly in the template editor; a failed `muse skills list` is retried on the next seat instead of cached.
 - Teams: removing and re-adding a built-in role (lead, reviewer) keeps the account it had, and every role save / remove / re-add from the Teams popover writes one line to clodex.log naming the role and the fields it changed.
 - Teams: the sandbox copy of a manifest no longer carries removed-role account labels into the box.
 - `opus` now means Claude Opus 5.5 (`claude-opus-5-5[1m]`): the `[agent:team role-set model:opus]` alias and every shipped team template (`clodex-team-hand`, `clodex-team-lead`, `clodex-team-reviewer`, the default-kit `hand`/`lead`) pin the new id. A library template you edited by hand keeps its pin; re-derive it with `role-set model:opus` to move it.
