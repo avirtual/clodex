@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Scratch episodes and seat restarts: a message still being delivered when the seat's process is recycled — a ticket-loop MERGED notice landing on the turn end that closes an episode, a dm mid-write — is parked again and reaches the respawned seat, instead of dying with the process.
 
 - Muse seats: skills a template injects (library skills and plugin bundle skills) now appear in `muse skills list` and the TUI's skill roster as user-scope skills, instead of only being catalogued in AGENTS.md.
 

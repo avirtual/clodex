@@ -228,7 +228,11 @@ Codex gets a read-with-Read pointer.
    text it lands as a literal character (this was the historical
    mid-draft truncation bug). The quiet-gate defers firing while the
    operator typed within `INJECT_QUIET_MS` (2s), capped at
-   `INJECT_QUIET_MAXWAIT` (5min, logged as splice risk).
+   `INJECT_QUIET_MAXWAIT` (5min, logged as splice risk). A unit whose text is
+   already claimed when the seat dies or is marked `_recycling`
+   (`_quiesceInjects`, before a scratch cut kills the pty) is re-parked
+   through `onUndelivered` with the seat's `born`, so the drains above deliver
+   it to the respawned process instead of losing it with the old one.
 
 **Park-at-fire divert** — injects marked `parkable` re-check
 `_parkDivertFor` at the moment of writing: if the operator has a draft open,

@@ -20591,3 +20591,52 @@ test('t1078: the codex arm honours CLODEX_DISABLE_IPC_PROMPT', async () => {
   assert.deepStrictEqual(seen, ['IPC-BODY', null],
     'the protocol prompt reaches a codex seat by default and is withheld when the env disables it');
 });
+
+test('t1099 _quiesceInjects: a delivery claimed mid-drain at the recycle is re-parked with its born, not lost', async () => {
+  const { InjectQueue } = require('../inject-queue');
+  const { m, PENDING_DIR } = mkPark({ InjectQueue, SHORT_TEXT_DELAY: 1, LONG_TEXT_DELAY: 1, LONG_TEXT_THRESHOLD: 1000 });
+  delete m._injectText;
+  const writes = [];
+  const session = {
+    name: 'a', agentType: 'claude', createdAt: 1_700_000_000_000, _bootReadySeen: true,
+    pty: { write: (b) => writes.push(b) },
+  };
+  m.sessions.set('a', session);
+  const text = '[agent:from clodex-team] [ticket t1097] MERGED';
+  parkDelivery(PENDING_DIR, 'a', text, m._nextParkSeq(), null, false, session.createdAt);
+
+  m._drainPendingAtIdle(session);
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(writes, ['\x15'], 'the idle drain claimed the file and is mid-unit (Ctrl-U out, text not yet)');
+  assert.strictEqual(hasPending(PENDING_DIR, 'a'), false, 'the claim deleted the parked file: the queue holds the only copy');
+
+  await m._quiesceInjects(session);
+  assert.strictEqual(session._recycling, true);
+  assert.deepStrictEqual(writes, ['\x15'], 'neither the text nor the Enter went to the pty about to be killed');
+  const files = fsReal.readdirSync(pathReal.join(PENDING_DIR, 'a')).filter((f) => f.endsWith('.json'));
+  assert.strictEqual(files.length, 1, `exactly one re-parked entry, got ${JSON.stringify(files)}`);
+  const entry = JSON.parse(fsReal.readFileSync(pathReal.join(PENDING_DIR, 'a', files[0]), 'utf8'));
+  assert.strictEqual(entry.text, text, 'the same text, once');
+  assert.strictEqual(entry.born, session.createdAt, 'stamped for the seat create() re-mints with the same createdAt');
+  assert.strictEqual(session._injectPtyQueue.length, 0, 'the queue is settled');
+  m._drainPendingAtIdle(session);
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(files.length, fsReal.readdirSync(pathReal.join(PENDING_DIR, 'a')).length,
+    'a drain arriving while recycling neither claims nor injects');
+});
+
+test('t1099 _scratchCutAfterGuard: the pty queue is quiesced BEFORE the recycle kills the process', async () => {
+  const f = mkScratch();
+  scratchOpen(f);
+  scratchResearch(f);
+  f.s._flushTurnEnd = true;
+  let recyclingAtKill = null;
+  f.s.pty.kill = () => { recyclingAtKill = f.s._recycling; f.order.push('kill'); };
+  f.s._injectPtyQueue = { settled: async () => { f.order.push('settled'); }, length: 0 };
+
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'what I now know' });
+
+  assert.deepStrictEqual(f.order.slice(0, 3), ['settled', 'keeper-end', 'kill'],
+    'the in-flight unit drains (re-parking if the seat is marked recycling) before the kill can strand it');
+  assert.strictEqual(recyclingAtKill, true, '_recycling is set when the process is killed');
+});

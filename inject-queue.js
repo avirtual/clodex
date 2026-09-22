@@ -63,9 +63,10 @@ class InjectQueue {
   // ready(): a BOOT gate, not a liveness gate — the caller latches it.
   // readyMaxWaitMs / maxWaitMs: caps so a seat that never signals ready, or an
   // operator who walked away mid-draft, cannot strand a delivery.
-  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, hintHeld, speaking, onSubmitted }) {
+  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, hintHeld, speaking, onSubmitted, onUndelivered }) {
     this._write = write;
     this._onSubmitted = typeof onSubmitted === 'function' ? onSubmitted : null;
+    this._onUndelivered = typeof onUndelivered === 'function' ? onUndelivered : null;
     this._settleMsFor = settleMsFor;
     this._quietMs = quietMs;
     this._maxWaitMs = maxWaitMs;
@@ -87,6 +88,13 @@ class InjectQueue {
   }
 
   get length() { return this._length; }
+
+  settled() { return this._chain; }
+
+  _undelivered(text) {
+    if (!this._onUndelivered) return;
+    try { this._onUndelivered(text); } catch {}
+  }
 
   // A throwing hold must not block delivery — the hint is optional, the message is not.
   _held() { try { return !!this._hintHeld(); } catch { return false; } }
@@ -148,6 +156,7 @@ class InjectQueue {
       if (produced == null || produced === '') return;
       text = produced;
     }
+    if (this._isDead()) { this._undelivered(text); return; }
     if (divert) {
       let claimed = false;
       try { claimed = !!divert(text); } catch {}
@@ -161,7 +170,7 @@ class InjectQueue {
     }
     this._write('\x15');                               // clear-line key event
     await this._sleep(this._ctrlUSettleMs);
-    if (this._isDead()) return;
+    if (this._isDead()) { this._undelivered(text); return; }
     // \n→\r makes every interior newline an ENTER if node-pty splits this write
     // across reads — the body submits early and the remainder lands as a second
     // prompt. Wrapping in 200~/201~ makes interior \r literal, but only while the
@@ -174,7 +183,7 @@ class InjectQueue {
     }
     this._write(out);
     await this._sleep(this._settleMsFor(text));
-    if (this._isDead()) return;
+    if (this._isDead()) { this._undelivered(text); return; }
     this._write('\r');                                 // Enter — closes the unit
     if (this._onSubmitted) { try { this._onSubmitted(text, { human }); } catch {} }
   }
