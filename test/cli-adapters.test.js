@@ -81,6 +81,18 @@ test('the adapter table names exactly the providers skill-delivery can deliver t
   assert.deepStrictEqual(Object.keys(ADAPTERS), createSkillDelivery({}).providers());
 });
 
+test('readOnlyCap: claude is a tool denylist, codex is the argv sandbox pair', () => {
+  assert.deepStrictEqual(ADAPTERS.claude.readOnlyCap, { enforce: 'tool-denylist' });
+  assert.deepStrictEqual(ADAPTERS.codex.readOnlyCap, {
+    enforce: 'argv',
+    args: ['--sandbox', 'read-only', '--ask-for-approval', 'never'],
+  });
+  for (const entry of Object.values(ADAPTERS)) {
+    assert.ok(entry.readOnlyCap === null || ['tool-denylist', 'argv'].includes(entry.readOnlyCap.enforce),
+      `${entry.id}: readOnlyCap.enforce names a mode the review arm branches on`);
+  }
+});
+
 test('PLATFORMS is the table order', () => {
   assert.deepStrictEqual(PLATFORMS, ['claude', 'codex']);
 });

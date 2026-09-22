@@ -1,0 +1,11 @@
+{
+  "name": "clodex-team-reviewer-codex",
+  "type": "codex",
+  "systemPromptFile": "clodex-team-reviewer",
+  "intents": [],
+  "env": {
+    "FORCE_PROMPT_CACHING_5M": "1",
+    "CLODEX_DISABLE_IPC_PROMPT": "1",
+    "CLODEX_SPAWNER_HINT": "off"
+  }
+}

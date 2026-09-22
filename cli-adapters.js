@@ -43,7 +43,7 @@ const ADAPTERS = {
     model: { flags: ['--model', '-m'], aliases: {}, idRe: MODEL_ID_RE },
     posture: { bypassFlag: '--dangerously-bypass-approvals-and-sandbox' },
     account: { envKey: 'CODEX_HOME', bootstrap: 'codex-home' },
-    readOnlyCap: null,
+    readOnlyCap: { enforce: 'argv', args: ['--sandbox', 'read-only', '--ask-for-approval', 'never'] },
     instructions: 'model-instructions-file',
     caps: { park: false, transcript: true },
     ui: {

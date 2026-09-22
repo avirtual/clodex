@@ -5304,11 +5304,10 @@ test('team-review: two reviews in one lead turn mint DISTINCT names (no -1 colli
   assert.strictEqual(persistence.get('team-reviewer-2').reviewFor, 'lead');
 });
 
-// C2 (T29 Slice 2), and the half of it that SURVIVES t292: a cold reviewer always
-// spawns as claude, because only create()'s claude arm consumes disabledTools —
-// codex ignores the denylist, so a codex reviewer would spawn uncapped. A role
-// DEF `type: codex` is dropped at manifest load and the role names no template,
-// so nothing in this pair can ask for codex: both yield claude for that reason.
+// C2 (T29 Slice 2), the half of it that SURVIVES t1078: a role DEF `type: codex`
+// is dropped at manifest load and the role names no template, so nothing in
+// this pair asks for codex — the reviewer type comes from the TEMPLATE alone,
+// and with none the seat boots from REVIEWER_FALLBACK, which is claude.
 test('team-review C2: a role def still carrying `type: codex` spawns as CLAUDE + capped', async () => {
   const { m, created } = mkReview({
     reviewerRole: { prompt: 'clodex-team-reviewer', brief: 'the reviewer',
@@ -5319,14 +5318,14 @@ test('team-review C2: a role def still carrying `type: codex` spawns as CLAUDE +
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
   assert.strictEqual(created[0][1], 'claude',
-    'a stale type field cannot steer the seat off the one runtime that can enforce the cap');
+    'a stale role-def type field is not a template, and only a template picks the platform');
   const disabledTools = created[0][11];
   assert.ok(disabledTools.includes('Bash') && !disabledTools.includes('Read'),
     'the cap is live on the claude seat (Read/Grep/Glob kept, rest disabled)');
 });
 
-// The force is unconditional, so there is nothing left to warn ABOUT: the notice
-// existed only to say a manifest field had been ignored, and the field is gone.
+// There is nothing to warn ABOUT: the notice existed only to say a manifest
+// field had been ignored, and the field is gone.
 test('team-review C2: no force-claude notice is emitted any more', async () => {
   const { m, injected, created } = mkReview({
     reviewerRole: { prompt: 'clodex-team-reviewer', brief: 'the reviewer',
@@ -9970,8 +9969,8 @@ for (const [what, props, why] of [
     'Ctrl-U destroys whatever is sitting unsubmitted — the operator`s own text'],
   ['a seat mid-turn', { activityState: 'thinking' },
     'a write queues behind the turn and can only add noise'],
-  ['a codex seat', { agentType: 'codex' },
-    'the transcript probe is claude-only, so the wedge would rest on CPU alone'],
+  ['a seat whose platform has no transcript cap', { agentType: 'bash' },
+    'the transcript probe reads the hook symlink only a platform with caps.transcript writes, so the wedge would rest on CPU alone'],
 ]) {
   test(`t400 gate: ${what} refuses the wake, and the ALARM still fires`, async () => {
     const w = mkWake(props);
@@ -10098,7 +10097,7 @@ test('t400 a wake that does NOT take alarms at the confirm window, naming the wa
 test('t400 a PRIOR episode`s wake is not reported as evidence about THIS one', async () => {
   // Codex, so the wake gate refuses and the alarm is reached at the window while
   // a stale stamp sits on the record — the shape where the two readings diverge.
-  const w = mkWake({ agentType: 'codex' });
+  const w = mkWake({ agentType: 'bash' });
   const arr = w.f.load();
   arr[0].wakeAt = w.at(-60);          // an hour before this episode even began
   w.f.tstore.save(w.f.team.root, arr);
@@ -10314,10 +10313,7 @@ test('t400 the doubling ladder is UNCHANGED by a seat that gets woken', async ()
   const got = await ordinals(woken);
   assert.strictEqual(woken.wakes().length, 1,
     'ENTER: a wake really did fire in this episode, or the ladder was never at risk and this test is vacuous');
-  // The control differs in ONE way: a codex seat is refused by the gate, so no
-  // wake is ever attempted. Everything else — schedule, stall window, evidence —
-  // is identical.
-  const control = mkWake({ agentType: 'codex' });
+  const control = mkWake({ agentType: 'bash' });
   const want = await ordinals(control);
   assert.deepStrictEqual(control.wakes(), [], 'ENTER: the control was never woken — that is the only variable');
   assert.deepStrictEqual(got, want,
@@ -20567,4 +20563,54 @@ test('scratch begin (wire): `mark a` then `begin` in ONE reply — the second re
   assert.ok(f.injected[0].startsWith(`${SCRATCH_ACK_PREFIX_T}${a.nonce} · label a`), 'the mark request settles first');
   assert.ok(f.injected[1].startsWith(`${SCRATCH_ACK_PREFIX_T}${f.s._scratch.nonce}. Research now.`));
   assert.strictEqual(f.s._scratchPendingBegin, null);
+});
+
+test('t1078: a codex reviewer template spawns codex with the argv cap last and the confirm line says so', async () => {
+  const { m, injected, created } = mkReview({ reviewTemplate: { type: 'codex' } });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(created.length, 1, 'ENTER: the reviewer spawned');
+  assert.strictEqual(created[0][1], 'codex');
+  const args = created[0][3];
+  const capAt = args.indexOf('--sandbox');
+  assert.ok(capAt >= 0, 'the sandbox pair is on the argv');
+  assert.deepStrictEqual(args.slice(capAt, capAt + 4), ['--sandbox', 'read-only', '--ask-for-approval', 'never']);
+  assert.ok(!args.includes('--dangerously-skip-permissions') && !args.includes('--dangerously-bypass-approvals-and-sandbox'));
+  assert.deepStrictEqual(created[0][11], [], 'no denylist: the sandbox is the cap');
+  const confirm = injected.find((t) => /\] spawned /.test(t));
+  assert.ok(confirm, 'ENTER: a confirm line was replied');
+  assert.match(confirm, /read-only sandbox \(OS-enforced\), approvals: never \(template tools ignored\)/);
+});
+
+test('t1078: a reviewer template of a platform with no read-only cap is refused before a seat is minted', async () => {
+  const { m, injected, created, persistence } = mkReview({ reviewTemplate: { type: 'sh' } });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj', workspaceId: 'default' });
+  m._handleTeamReview(m.sessions.get('lead'), 'scope');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(created, [], 'no reviewer spawned');
+  assert.ok(injected.some((t) => /\] error: unknown seat type "sh" \(known: claude, codex\)/.test(t)), injected.join('\n'));
+  assert.deepStrictEqual(persistence.list().map((e) => e.name), [], 'no name reserved');
+});
+
+test('t1078: the codex arm honours CLODEX_DISABLE_IPC_PROMPT', async () => {
+  const seen = [];
+  const rootRef = {};
+  const rig = mkSkillsOffRig({
+    setupCodexHook: (n) => fs.mkdirSync(runDirForReal(rootRef.root, n), { recursive: true }),
+    mergeSessionEnv: ({ base, session }) => ({ ...base, ...(session || {}) }),
+    buildIpcPrompt: () => 'IPC-BODY',
+    mergeCodexInstructions: (args, ipc) => { seen.push(ipc); return { cleaned: [...args], merged: ipc || '' }; },
+  });
+  rootRef.root = rig.root;
+  const create = async (name, env) => {
+    try {
+      await rig.m.create(name, 'codex', os.tmpdir(), [], null, 'ws', null, false, null,
+        [], [], [], [], [], null, [], [], ['dm'], env);
+    } finally { rig.stop(name); }
+  };
+  await create('cx-on', null);
+  await create('cx-off', { CLODEX_DISABLE_IPC_PROMPT: '1' });
+  assert.deepStrictEqual(seen, ['IPC-BODY', null],
+    'the protocol prompt reaches a codex seat by default and is withheld when the env disables it');
 });

@@ -368,8 +368,9 @@ const REVIEWER_FALLBACK = {
 // honored, and the caller must surface it: a silent refusal reproduces this
 // function's own bug one layer in — the operator configured a model, did not get
 // it, and nothing said so.
-function reviewerModelArgs(extraArgs) {
+function reviewerModelArgs(extraArgs, adapter) {
   const a = Array.isArray(extraArgs) ? extraArgs : [];
+  const flag = (adapter || adapterFor(DEFAULT_TYPE)).model.flags[0];
   // A model NAME never begins with '-'. Refusing one that does keeps this
   // function fail-closed on its own terms: otherwise `['--model','--dangerously-
   // skip-permissions']` emits that flag into the reviewer's argv, and whether it
@@ -387,12 +388,12 @@ function reviewerModelArgs(extraArgs) {
       // A trailing flag with no value is dropped entirely rather than emitted
       // bare — a bare --model would consume whatever argv token followed it.
       const v = a[i + 1];
-      if (usable(v)) return { args: ['--model', v], refused: null };
+      if (usable(v)) return { args: [flag, v], refused: null };
       return { args: [], refused: typeof v === 'string' ? `${tok} ${v}` : tok };
     }
     if (tok.startsWith('--model=')) {
       const v = tok.slice('--model='.length);
-      return usable(v) ? { args: ['--model', v], refused: null } : { args: [], refused: tok };
+      return usable(v) ? { args: [flag, v], refused: null } : { args: [], refused: tok };
     }
   }
   return { args: [], refused: null };
@@ -1135,6 +1136,9 @@ function createTicketMethods(deps, shared) {
         + (shape.envBadType.length
           ? ` — reviewer template env keys [${shape.envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)`
           : '');
+      const capNote = shape.capNote
+        ? ` — ${shape.capNote}${shape.toolsIgnored ? ' (template tools ignored)' : ''}`
+        : '';
       const capWarn = shape.beyondCap.length
         ? ` — requested [${shape.beyondCap.join(', ')}] beyond the reviewer cap [${REVIEWER_TOOL_CAP.join(', ')}] — requires operator approval; spawned with [${shape.effectiveTools.join(', ')}]`
         : '';
@@ -1334,7 +1338,7 @@ function createTicketMethods(deps, shared) {
             type: 'team-review', from: session.name, to: name, body: `review → ${name} @ ${cwd}`,
           });
           log.info('intent', `team-review by ${session.name} → ${name} (${type}) @ ${cwd}`);
-          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capWarn}${envWarn}${argsWarn}${cwdWarn}${promptWarn}${spawnPromptWarn}${promptEscapeWarn}${tplWarn}`);
+          reply(`spawned ${name} — it'll report back with [agent:review-done]; watchdog it by name${capNote}${capWarn}${envWarn}${argsWarn}${cwdWarn}${promptWarn}${spawnPromptWarn}${promptEscapeWarn}${tplWarn}`);
         } catch (err) {
           if (!this.sessions.has(name)) getPersistence().remove(name);
           log.error('intent', `team-review by ${session.name} → ${name} failed: ${err.message}`);
@@ -4078,11 +4082,7 @@ function createTicketMethods(deps, shared) {
     // defeat it; that is a boot-time shape, not this one.
     _armReviewStartCheck(seatName, leadName) {
       const s = this.sessions.get(seatName);
-      // Claude-only, because the artifact is: `transcript.jsonl` is written by the
-      // Claude hook. A codex seat would read as permanently silent. The review path
-      // forces claude today (the C2 tool-cap constant), so this guard is about a
-      // future caller, not about a case that exists.
-      if (!s || s.agentType !== 'claude' || s._dead) return;
+      if (!s || !(adapterFor(s.agentType) || {}).caps?.transcript || s._dead) return;
       // Stamped on the FIRST arm only, and every later arm reuses it: the
       // redelivery arms a second window, and the permission-dialog branch re-arms
       // UNCAPPED, so a constant in the escalation prose is wrong by however many
@@ -5045,7 +5045,7 @@ function createTicketMethods(deps, shared) {
     resolveSeatShape(team, roleKey, purpose, opener, templateOverride = null) {
       // Explicit, because the switch below is otherwise FAIL-OPEN: `!review`
       // takes the ticket arm, so a typo'd 'reviewer' at a future call site would
-      // spawn a reviewer with no tool cap, no forced claude and no env fallback,
+      // spawn a reviewer with no tool cap and no env fallback,
       // and nothing would fail. This method is the choke point that makes the cap
       // real, so an unrecognized purpose must not resolve to the weaker seat.
       if (purpose !== 'ticket' && purpose !== 'review') {
@@ -5060,9 +5060,17 @@ function createTicketMethods(deps, shared) {
         team,
       );
       const tpl = (shape && shape.tpl) || null;
-      const ticketType = review ? null : seatType(tpl, opener);
+      const type = review ? seatType(tpl, null) : seatType(tpl, opener);
       const openerAdapter = adapterFor(opener.type) || adapterFor(DEFAULT_TYPE);
-      const seatAdapter = adapterFor(ticketType || DEFAULT_TYPE);
+      const seatAdapter = adapterFor(type);
+      const cap = review ? seatAdapter.readOnlyCap : null;
+      if (review && !cap) {
+        throw new Error(`reviewer template "${(tpl && tpl.name) || DEFAULT_REVIEWER_TEMPLATE}" is type "${type}", which cannot be capped read-only in this build`);
+      }
+      if (review && cap.enforce !== 'tool-denylist' && cap.enforce !== 'argv') {
+        throw new Error(`reviewer template "${(tpl && tpl.name) || DEFAULT_REVIEWER_TEMPLATE}" is type "${type}", whose read-only cap "${cap.enforce}" cannot be enforced in this build`);
+      }
+      const argvCap = !!cap && cap.enforce === 'argv';
       const leadArgs = (getPersistence().get(opener.name)?.extraArgs) || [];
       const postureArgs = leadArgs.includes(openerAdapter.posture.bypassFlag)
         ? [seatAdapter.posture.bypassFlag] : [];
@@ -5083,7 +5091,7 @@ function createTicketMethods(deps, shared) {
 
       if (!review) {
         return {
-          type: ticketType,
+          type,
           // Resolved against the MAIN checkout, and it must stay so: _resolveRoleCwd
           // stats the directory and refuses one a nested team.json owns, neither of
           // which is answerable about a tree that does not exist yet. A worktree
@@ -5130,18 +5138,13 @@ function createTicketMethods(deps, shared) {
           envDropped: (shape && shape.envDropped) || [],
           envBadType: (shape && shape.envBadType) || [],
           beyondCap: [],
+          capNote: null,
+          toolsIgnored: false,
           promptEscaped: null,
           workspaceId,
           ephemeral: true,
         };
       }
-
-      // C2 (T29 Slice 2): the cold reviewer ALWAYS spawns as claude. This is CODE,
-      // not a manifest field: only create()'s claude arm consumes disabledTools
-      // (via setupClaudeHook), so a codex reviewer would spawn UNCAPPED — codex
-      // ignores the denylist entirely, and the tools cap would silently evaporate.
-      // Forcing claude here is the choke point that makes the cap real.
-      const type = 'claude';
 
       // The reviewer TEMPLATE may narrow the cap; nothing widens it. The role def
       // used to be a second source here and it was inert on every other role,
@@ -5180,7 +5183,7 @@ function createTicketMethods(deps, shared) {
       // env and got none of it; the second never asked, and takes the default).
       const tplSuppliedEnv = !!(tpl && tpl.env && typeof tpl.env === 'object' && !Array.isArray(tpl.env));
 
-      const modelArgs = reviewerModelArgs(shape && shape.extraArgs);
+      const modelArgs = reviewerModelArgs(shape && shape.extraArgs, seatAdapter);
 
       // A stem EQUAL to the role key is the copy create seeded, not a naming — the
       // team's own `prompts/system/<role>.md` still outranks it (t791). A NAMED one
@@ -5217,43 +5220,35 @@ function createTicketMethods(deps, shared) {
         cwd: roleCwd.cwd,
         cwdFallback: roleCwd.fallback,
         tpl,
-        // MERGED onto postureArgs, never replacing them (that is the ticket
-        // arm's shape, and the reason a template can hand a ticket seat posture
-        // its opener does not hold). reviewerModelArgs is an allowlist of one
-        // flag — do not widen it to honor the template's array.
+        // reviewerModelArgs is an allowlist of one flag — do not widen it to
+        // honor the template's array.
         // Dropping the rest is an ADJUDICATED decision, not an omission: the
         // rationale is owned by the test 'a reviewer template CANNOT contribute
         // extraArgs'. Mirroring the ticket arm here reverts it.
-        extraArgs: [...postureArgs, ...modelArgs.args],
-        shellDeny: wantsShell ? REVIEWER_SHELL_DENY.slice() : null,
+        extraArgs: argvCap ? [...modelArgs.args, ...cap.args] : [...postureArgs, ...modelArgs.args],
+        shellDeny: (!argvCap && wantsShell) ? REVIEWER_SHELL_DENY.slice() : null,
         // A --model that was present and refused. Carried, not re-derived at the
         // call site: re-parsing would put a second copy of the allowlist there.
         modelRefused: modelArgs.refused,
         agents: [],
         denyBuiltins: [],
-        disabledTools: CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t)),
+        disabledTools: argvCap ? [] : CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t)),
         disabledSkills: (tpl && Array.isArray(tpl.disabledSkills)) ? tpl.disabledSkills.slice() : ['*'],
         injectSkills: [],
         // Carried, not recomputed from disabledTools: the warning below prints it
         // in REVIEWER_TOOL_CAP order, and inverting the denylist would print it in
         // CLAUDE_TOOLS order instead — a silent change to operator-facing text.
-        effectiveTools,
+        effectiveTools: argvCap ? [] : effectiveTools,
         // Carried so the refusal can PRINT the exact list the template asked for
         // without borrowing beyondCap, whose meaning is "what you overreached for"
         // — identical content in the refusal state today, but a future edit to one
-        // message would silently change the other. It also states the guard's
-        // precondition, which effectiveTools alone no longer carries: [] arises in
-        // three ways — a well-formed request that intersects the cap emptily, `[]`
-        // itself, and a malformed `tools` (fail-closed above) — but NEVER for an
-        // ABSENT `tools`, which takes the non-empty constant. So the guard
-        // below needs requestedTools truthy to mean "a real request emptied out";
-        // malformed carries requestedTools: null and is refused separately.
-        requestedTools,
+        // message would silently change the other.
+        requestedTools: argvCap ? null : requestedTools,
         // A separate key, not inferable from requestedTools being null: null also
         // means "absent", which takes the full cap. The caller must refuse one and
         // not the other, and re-reading tpl.tools to tell them apart would put a
         // second copy of this type judgment at the call site.
-        toolsMalformed,
+        toolsMalformed: argvCap ? false : toolsMalformed,
         systemPromptFile,
         appendPromptFiles: [],
         execCommands: [],
@@ -5272,7 +5267,9 @@ function createTicketMethods(deps, shared) {
         accountMissing,
         envDropped: (shape && shape.envDropped) || [],
         envBadType: (shape && shape.envBadType) || [],
-        beyondCap,
+        beyondCap: argvCap ? [] : beyondCap,
+        capNote: argvCap ? 'read-only sandbox (OS-enforced), approvals: never' : null,
+        toolsIgnored: argvCap && rawTools !== undefined,
         promptEscaped,
         workspaceId,
         ephemeral: true,
@@ -9731,14 +9728,9 @@ function createTicketMethods(deps, shared) {
       // ticket stops probing the moment it wakes, handing the second a readable
       // gap plus an already-true `_stallWedgedOnce`.
       if (seat._stallWakeAt && (now - seat._stallWakeAt) < stallMs) return false;
-      // Claude-only for the same reason `_armReviewStartCheck` is: the probe
-      // reads `transcript.jsonl`, which only the Claude hook writes, so a codex
-      // seat would classify wedged on a one-signal read of permanent silence.
-      if (seat.agentType !== 'claude') return false;
-      // Not a second copy of the claude test — that stands in for readability,
-      // this checks it. `didGrow` refuses -1 -> -1, so a broken symlink leaves the
-      // wedge verdict on CPU alone: the one-signal read that excludes codex,
-      // reached by another route.
+      if (!(adapterFor(seat.agentType) || {}).caps?.transcript) return false;
+      // `didGrow` refuses -1 -> -1, so a broken symlink leaves the wedge verdict
+      // on CPU alone.
       if (this._seatTranscriptSize(seat.name) < 0) return false;
       if (seat.activityState !== 'idle') return false;
       // Injection ends with Enter, which would ANSWER the dialog.

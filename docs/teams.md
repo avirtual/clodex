@@ -275,6 +275,10 @@ Fable-class hands carrying every installed skill, and was stopped on cost.
 `haiku`, `fable`). On a Codex template (`clodex-team-hand-codex`,
 `clodex-team-lead-codex`) `model:` takes a model id and no aliases. `account:`
 is refused on a Codex role for now: the registry holds Claude config dirs.
+The reviewer role may name a template of any platform whose adapter declares a
+read-only cap — `clodex-team-reviewer-codex` is the shipped Codex option, and it
+runs under Codex's OS-enforced read-only sandbox with approvals off; a platform
+without a cap is refused before a seat is minted.
 
 The stock hand and lead templates keep eight tools — Read, Edit, Write, Glob,
 Grep, Bash, Agent, SendMessage — and deny the rest of the catalog; the list is
