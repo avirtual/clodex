@@ -1103,7 +1103,7 @@ function registerIpcHandlers(deps) {
     };
   });
   handle('session:skillCatalog', (_e, name) => readSkillCatalog({ name }));
-  handle('settings:skillCatalogFor', (_e, cwd) => readSkillCatalog({ cwd: cwd || null }));
+  handle('settings:skillCatalogFor', (_e, cwd, type) => readSkillCatalog({ cwd: cwd || null, type: type || null }));
   // Box-wide, so it takes no session name: ~/.claude/settings.json is global and
   // every Claude session on this box shares it. Reading it MAIN-side is what lets
   // the browser frontend have this control at all — a renderer-side fs read would

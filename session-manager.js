@@ -146,7 +146,8 @@ const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
 
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { readerFor } = require('./transcript-readers');
-const { uuidv7, bootstrapSeatConfig, museDataHome, findMuseTranscript, museRegistryFor, linkTranscript } = require('./seat-config');
+const { uuidv7, deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, museRegistryFor, linkTranscript } = require('./seat-config');
+const { activationSettings } = require('./muse-skills');
 const MUSE_MINT_TIMEOUT_MS = 120000;
 const MUSE_BACKSTOP_MS = 2000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
@@ -646,6 +647,7 @@ function createSessionManager(deps) {
     intentEnabledFor,
     intentEnabledForSeat,
     knownSkillNames,
+    platformSkills,
     pluginGrammarLines,
     pluginRowFor,
     validIntentNames,
@@ -1596,10 +1598,20 @@ function createSessionManager(deps) {
       let museSid = null;
       if (adapterFor(type)?.account.bootstrap === 'xdg-overlay') {
         seatConfigDir = pathFor(REGISTRY_DIR, name, 'seatConfig');
+        const sourceConfig = accountDir || path.join(os.homedir(), '.config');
+        const adapterSkills = adapterFor(type).skills || null;
+        let skillsMerge = null;
+        if (adapterSkills && Array.isArray(disabledSkills) && disabledSkills.length) {
+          const roster = typeof platformSkills === 'function'
+            ? platformSkills(adapterFor(type), { configDir: sourceConfig })
+            : [];
+          skillsMerge = activationSettings(adapterSkills, roster, disabledSkills, { injectSkills });
+        }
+        const profileMerge = adapterFor(type).readOnlyCap?.settings || null;
         bootstrapSeatConfig({ fs, path }, {
-          source: accountDir || path.join(os.homedir(), '.config'),
+          source: sourceConfig,
           seatDir: seatConfigDir,
-          settingsMerge: adapterFor(type).readOnlyCap?.settings || null,
+          settingsMerge: (profileMerge || skillsMerge) ? deepMerge(profileMerge || {}, skillsMerge || {}) : null,
         });
         mergedEnv.XDG_CONFIG_HOME = seatConfigDir;
       }

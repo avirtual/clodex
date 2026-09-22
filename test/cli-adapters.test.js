@@ -66,7 +66,7 @@ test('t749: the dialog may not offer skills to a provider main cannot deliver to
   assert.deepStrictEqual(offered.sort(), [...deliverable].sort());
 });
 
-const ENTRY_KEYS = ['id', 'label', 'cmd', 'model', 'posture', 'account', 'cwdDir', 'readOnlyCap', 'instructions', 'transcript', 'caps', 'ui'];
+const ENTRY_KEYS = ['id', 'label', 'cmd', 'model', 'posture', 'account', 'cwdDir', 'readOnlyCap', 'skills', 'instructions', 'transcript', 'caps', 'ui'];
 
 test('every adapter entry carries the whole entry key set', () => {
   for (const [type, entry] of Object.entries(ADAPTERS)) {
@@ -115,21 +115,53 @@ test('m2: the muse row — Meta\'s CLI, XDG overlay bootstrap, user-scope AGENTS
         },
       },
     },
+    skills: {
+      list: {
+        args: ['skills', 'list', '--json'],
+        env: 'XDG_CONFIG_HOME',
+        scratchEnv: 'XDG_DATA_HOME',
+        extraEnv: { MUSE_NO_AUTO_UPDATE: '1' },
+      },
+      activation: { key: 'skills.activation', off: 'off' },
+    },
     instructions: 'user-agents-md',
     transcript: { reader: 'muse', link: 'clodex' },
     caps: { park: false, transcript: true, warmth: false },
     ui: {
-      injectSkills: true, skillRoster: false, plugins: true, agents: false, tools: false,
+      injectSkills: true, skillRoster: true, plugins: true, agents: false, tools: false,
       strip: false, autoCompact: false, noWire: false, accounts: false,
     },
   });
   assert.deepStrictEqual(capsFor('muse'), {
-    injectSkills: true, skillRoster: false, plugins: true, agents: false, tools: false,
+    injectSkills: true, skillRoster: true, plugins: true, agents: false, tools: false,
     strip: false, autoCompact: false, noWire: false, accounts: false,
   });
   assert.deepStrictEqual(stripModelArgs('muse', ['--model', 'x', 'y']), ['y']);
   assert.strictEqual(resolveModelId('muse', 'opus'), 'opus', 'no aliases: an alias word is not expanded, it passes through as an id');
   assert.strictEqual(resolveModelId('muse', 'not a model!'), null);
+});
+
+test('t1090: skills is null on claude and codex; muse declares the list command and the activation key', () => {
+  assert.strictEqual(ADAPTERS.claude.skills, null);
+  assert.strictEqual(ADAPTERS.codex.skills, null);
+  assert.deepStrictEqual(ADAPTERS.muse.skills, {
+    list: {
+      args: ['skills', 'list', '--json'],
+      env: 'XDG_CONFIG_HOME',
+      scratchEnv: 'XDG_DATA_HOME',
+      extraEnv: { MUSE_NO_AUTO_UPDATE: '1' },
+    },
+    activation: { key: 'skills.activation', off: 'off' },
+  });
+  for (const [type, entry] of Object.entries(ADAPTERS)) {
+    if (entry.skills === null) continue;
+    assert.deepStrictEqual(Object.keys(entry.skills), ['list', 'activation'], `${type}: skills is a list+activation pair`);
+    assert.ok(Array.isArray(entry.skills.list.args) && entry.skills.list.args.length > 0, `${type}: list.args is a non-empty argv`);
+    assert.strictEqual(entry.skills.list.env, entry.account.envKey, `${type}: the list reads the same config dir the seat is booked under`);
+    assert.strictEqual(typeof entry.skills.activation.key, 'string');
+    assert.strictEqual(typeof entry.skills.activation.off, 'string');
+    assert.strictEqual(entry.ui.skillRoster, true, `${type}: a platform that can list skills shows the roster`);
+  }
 });
 
 test('m0: hasBypass is a contiguous-subsequence match on posture.bypassArgs', () => {

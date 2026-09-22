@@ -4,6 +4,7 @@
 - Muse has no config-dir variable of its own (`strings muse` names only `XDG_CONFIG_HOME` and `MUSE_*` runtime flags), so a per-seat config can only ride `XDG_CONFIG_HOME` — which `gh` (`~/.config/gh`) and git (`~/.config/git`) also read. Hence the overlay: every other `~/.config` entry is symlinked into the seat dir, only `muse/` is real.
 - `auth.json` (schema_version 2, `storage: "keychain"`) and `trust.json` are required: without them the seat has no login and no trust decision, so their absence throws before anything is written. `settings.json` is optional and defaults to `{"schema_version":1}`; unknown top-level members are warned and ignored by Muse, a wrong-typed known member is fatal.
 - `$XDG_CONFIG_HOME/muse/AGENTS.md` is loaded as a USER-scope rules file (`<rules-file scope="user">` at `session_start`); `$XDG_CONFIG_HOME/muse/rules/*.md` is not read. Project rules win over user rules on conflict.
+- `settingsMerge` is the reviewer profile deep-merged with the `skills.activation` block `activationSettings` (muse-skills.js) builds from the seat's `disabledSkills`; an activation table the source settings already holds survives the merge, entry by entry, because both are nested objects and `deepMerge` recurses into them.
 - The seat dir is `run/<name>/xdg` (`KINDS.seatConfig`): dropped at kill like every other kind (`cleanupMuseSeat` → `dropRunDir`, the same `run/<name>/` removal Claude and Codex seats get), and rebuilt with `rm -rf` + mkdir on every `create()`.
 
 ## findMuseTranscript

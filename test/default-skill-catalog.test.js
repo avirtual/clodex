@@ -22,6 +22,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const { createEngine } = require('../engine');
 const { registerIpcHandlers } = require('../ipc-handlers');
 const { CLAUDE_SKILLS } = require('../catalogs');
@@ -59,14 +60,14 @@ function plantSeat(registryDir, name, { lines, padBytes = 0 }) {
   fs.symlinkSync(real, path.join(runDir, 'transcript.jsonl'));
 }
 
-function mkBox({ seats = [] } = {}) {
+function mkBox({ seats = [], skillLister = undefined } = {}) {
   const tmp = mkTmpRoot('clx-skill-catalog-');
   const registryDir = path.join(tmp, 'clodex-home');
   fs.mkdirSync(path.join(registryDir, 'run'), { recursive: true });
   for (const s of seats) plantSeat(registryDir, s.name, s);
   const engine = createEngine({
     userDataPath: tmp,
-    seams: { registryDir },
+    seams: { registryDir, skillLister },
     log: { info() {}, warn() {}, error() {} },
   });
   const handlers = new Map();
@@ -80,7 +81,7 @@ function mkBox({ seats = [] } = {}) {
     tmp,
     registryDir,
     engine,
-    defaults: (cwd = null) => handlers.get('settings:skillCatalogFor')(null, cwd),
+    defaults: (cwd = null, type = null) => handlers.get('settings:skillCatalogFor')(null, cwd, type),
     seat: (name) => handlers.get('session:skillCatalog')(null, name),
   };
 }
@@ -214,3 +215,43 @@ test('a seat with no transcript at all is skipped, not fatal', () => {
 // The engine leaves background timers running (proxy poll, pending poll); the
 // same force-exit every other createEngine file uses.
 test('done', () => { setImmediate(() => process.exit(0)); });
+
+const MUSE_ROSTER = [
+  { id: 'bundled:git', scope: 'bundled', path: 'bundled://muse-core/skills/git/SKILL.md', activation: 'on' },
+  { id: 'plugin:threejs:threejs', scope: 'plugin', path: 'plugin://threejs/skills/threejs/SKILL.md', activation: 'on' },
+];
+
+function fakeLister() {
+  const calls = [];
+  return { calls, lister: { list: (adapter, opts) => { calls.push({ id: adapter.id, ...opts }); return MUSE_ROSTER; } } };
+}
+
+test('t1090: a type whose adapter lists skills answers the roster ids, from ~/.config when no seat names an account', () => {
+  const { calls, lister } = fakeLister();
+  const box = mkBox({ seats: [ROSTER_SEAT], skillLister: lister });
+  const res = box.defaults(null, 'muse');
+  assert.deepStrictEqual(res, {
+    ok: true, names: ['bundled:git', 'plugin:threejs:threejs'], effective: {}, skillsLocked: false, canReenable: res.canReenable,
+  });
+  assert.deepStrictEqual(calls, [{ id: 'muse', configDir: path.join(os.homedir(), '.config') }]);
+  assert.ok(!box.defaults(null, 'claude').names.includes('bundled:git'), 'the claude catalog is untouched');
+  assert.ok(box.defaults().names.includes(DISCOVERED[0]), 'no type is still the claude catalog');
+  assert.strictEqual(calls.length, 1, 'the claude reads never spawn the lister');
+});
+
+test('t1090: a muse seat\'s catalog reads the account dir its record carries, and keeps its own off list in names', () => {
+  const { calls, lister } = fakeLister();
+  const box = mkBox({ skillLister: lister });
+  box.engine.stores.persistence.upsert({
+    name: 'muse-one', type: 'muse', cwd: box.tmp, workspaceId: 'default',
+    disabledSkills: ['*', '!git', 'nope'], injectSkills: ['foo'], env: { XDG_CONFIG_HOME: '/acct/xdg' },
+  });
+  const res = box.seat('muse-one');
+  assert.deepStrictEqual(calls, [{ id: 'muse', configDir: '/acct/xdg' }]);
+  assert.deepStrictEqual(res.names, ['bundled:git', 'nope', 'plugin:threejs:threejs']);
+  assert.strictEqual(res.allOff, true);
+  assert.deepStrictEqual(res.disabledSkills, ['*', '!git', 'nope']);
+  assert.deepStrictEqual(res.injectSkills, ['foo']);
+  assert.deepStrictEqual(res.outOfScope, []);
+  assert.deepStrictEqual(res.effective, {});
+});

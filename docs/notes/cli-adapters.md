@@ -85,6 +85,28 @@ file under `~/.clodex/messages` (a spilled spec) IS readable under the profile
 `runtime.session.permission_profile_committed` with `source.kind: "user_named"`,
 `id: "reviewer"` inside a `session_permission_transaction` frame.
 
+## skills
+
+`skills` is `null` where the platform has no listable roster (Claude reads its
+own through the transcript sweep; Codex has none) and a `{ list, activation }`
+pair where it has: `list.args` is the argv after `cmd` that prints the roster as
+JSON, `list.env` the variable that points it at the SOURCE config
+(`account.envKey` — never the seat overlay, which is what the list is about to
+shape), `list.scratchEnv` a data-home variable pointed at a scratch dir, and
+`activation.key`/`activation.off` the settings path and value the off-block is
+written under. Measured on Muse Code 1.3.0-R3401.1 (`muse skills list --json`
+under a scratch `XDG_CONFIG_HOME`, 2026-09-22): the activation vocabulary is
+exactly `on` | `off` | `user-invocable-only`, ANY other value reads as `off` with
+no diagnostic; there is no launch flag or env var for it, `settings.json` is the
+only lever; the ONLY shape honoured is `skills.activation.<scope>` tables keyed by
+the skill's `path` URI (`bundled://muse-core/skills/<dir>/SKILL.md`,
+`plugin://<plugin>/skills/<dir>/SKILL.md`, `$CONFIG_DIR/skills/<dir>/SKILL.md`
+stored literally, `projects.<abs ws>.<rel path>`) — bare ids or a `built-in`
+table are silently ignored. Without `--trust-workspace` the list skips project
+skills, which is what we want: a template never turns a seat's project skills
+off. Without `XDG_DATA_HOME` the list writes tracing under
+`~/.local/share/muse/local-tracing/bootstrap/`.
+
 A Muse seat's transcript is non-empty BEFORE its PTY spawns (the m2 mint turn),
 and the resume APPENDS at boot with nothing typed (measured, echo provider, Muse
 Code 1.3.0: 82,821 bytes / 66 records before `resume`, 89,710 / 72 six seconds

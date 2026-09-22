@@ -9,13 +9,15 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const net = require('net');
-const { execSync, spawn, execFile } = require('child_process');
+const { execSync, spawn, execFile, execFileSync } = require('child_process');
 const crypto = require('crypto');
 const pty = require('node-pty');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
 const { pathFor, runDirFor, defaultClodexHome, seatPathFor, claudeProjectSlug } = require('./clodex-paths');
 const { confine } = require('./path-confine');
 const { createSkillDelivery } = require('./skill-delivery');
+const { createSkillLister } = require('./muse-skills');
+const { adapterFor: adapterRowFor } = require('./cli-adapters');
 const { KINDS: PROMPT_KINDS, badStem, teamPromptFile, teamJsonFile, readTeamJson } = require('./team-prompt-dir');
 const { planGather, applyGather } = require('./team-gather');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
@@ -1179,6 +1181,17 @@ const knownSkillNames = () => [...new Set([
   ...Object.keys(readEffectiveSkillState(null).overrides),
 ])];
 
+const skillLister = seams.skillLister || createSkillLister({
+  execFileSync,
+  scratchDir: path.join(os.tmpdir(), 'clodex-skills-list'),
+  env: process.env,
+  log,
+});
+const platformSkills = (adapter, opts) => {
+  if (!seams.skillLister) { try { ensureDir(path.join(os.tmpdir(), 'clodex-skills-list')); } catch {} }
+  return skillLister.list(adapter, opts);
+};
+
 const SessionManager = createSessionManager({
     AGENT_NAME_RE,
     COMPACT_CONTINUATION_DELAY,
@@ -1273,6 +1286,7 @@ const SessionManager = createSessionManager({
     intentEnabledFor,
     intentEnabledForSeat,
     knownSkillNames,
+    platformSkills,
     pluginGrammarLines,
     pluginRowFor,
     validIntentNames,
@@ -1767,9 +1781,27 @@ function sweepDiscoveredSkills() {
   return [...out];
 }
 
-function readSkillCatalog({ name = null, cwd = null } = {}) {
+function readSkillCatalog({ name = null, cwd = null, type = null } = {}) {
   const entry = name ? persistence.get(name) : null;
   const disabled = entry && Array.isArray(entry.disabledSkills) ? entry.disabledSkills : [];
+  const adapter = adapterRowFor(name ? (entry ? entry.type : null) : type);
+  if (adapter && adapter.skills && adapter.skills.list) {
+    const envKey = adapter.account.envKey;
+    const configDir = (entry && entry.env && typeof entry.env[envKey] === 'string' && entry.env[envKey])
+      || path.join(os.homedir(), '.config');
+    const listed = platformSkills(adapter, { configDir }).map((s) => s.id);
+    const names = [...new Set([...listed, ...disabled])].filter((n) => !isSkillDenyDirective(n)).sort();
+    const base = { ok: true, names, effective: {}, skillsLocked: false, canReenable: SKILL_REENABLE_CONFIRMED };
+    if (!name) return base;
+    return {
+      ...base,
+      outOfScope: [],
+      disabledSkills: disabled,
+      allOff: disabled.includes('*'),
+      skillLib: skillLibrary.listFor(sessionScopeCtx(name)),
+      injectSkills: entry && Array.isArray(entry.injectSkills) ? entry.injectSkills : [],
+    };
+  }
   const eff = readEffectiveSkillState(name ? (entry ? entry.cwd : null) : cwd);
   const scan = name ? parseSkillRoster(name) : emptyRoster();
   let discovered;

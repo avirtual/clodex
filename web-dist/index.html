@@ -24380,6 +24380,7 @@ ${i3.join("\n")}
           account: { envKey: "CLAUDE_CONFIG_DIR", bootstrap: null },
           cwdDir: null,
           readOnlyCap: { enforce: "tool-denylist" },
+          skills: null,
           instructions: "append-system-prompt-file",
           transcript: { reader: "claude", link: "hook" },
           caps: { park: true, transcript: true, warmth: true },
@@ -24404,6 +24405,7 @@ ${i3.join("\n")}
           account: { envKey: "CODEX_HOME", bootstrap: "codex-home" },
           cwdDir: ".codex",
           readOnlyCap: { enforce: "argv", args: ["--sandbox", "read-only", "--ask-for-approval", "never"] },
+          skills: null,
           instructions: "model-instructions-file",
           transcript: { reader: "codex", link: "hook" },
           caps: { park: false, transcript: true, warmth: false },
@@ -24437,12 +24439,21 @@ ${i3.join("\n")}
               }
             }
           },
+          skills: {
+            list: {
+              args: ["skills", "list", "--json"],
+              env: "XDG_CONFIG_HOME",
+              scratchEnv: "XDG_DATA_HOME",
+              extraEnv: { MUSE_NO_AUTO_UPDATE: "1" }
+            },
+            activation: { key: "skills.activation", off: "off" }
+          },
           instructions: "user-agents-md",
           transcript: { reader: "muse", link: "clodex" },
           caps: { park: false, transcript: true, warmth: false },
           ui: {
             injectSkills: true,
-            skillRoster: false,
+            skillRoster: true,
             plugins: true,
             agents: false,
             tools: false,
@@ -42220,7 +42231,7 @@ ${detail}` });
         if (!capsFor(inputType.value).skillRoster) return;
         resetNewSessionSkillCollector(disabledSet);
         const cwd = expandPath(inputCwd.value.trim()) || homeDir;
-        const res = await window.api.getSkillCatalogFor(cwd);
+        const res = await window.api.getSkillCatalogFor(cwd, inputType.value);
         if (!res || !res.ok) {
           renderSkillChecklist(inputSkillsList, [], disabledSet);
           return;

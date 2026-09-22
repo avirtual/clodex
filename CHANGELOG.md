@@ -12,6 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+- Muse seats honour a template's `disabledSkills`: the list (or `"*"`) becomes `skills.activation` in the seat's own config overlay, and the New Session dialog / template editor list Muse's skills from `muse skills list`.
 - `opus` now means Claude Opus 5.5 (`claude-opus-5-5[1m]`): the `[agent:team role-set model:opus]` alias and every shipped team template (`clodex-team-hand`, `clodex-team-lead`, `clodex-team-reviewer`, the default-kit `hand`/`lead`) pin the new id. A library template you edited by hand keeps its pin; re-derive it with `role-set model:opus` to move it.
 - Spill tee: where a filed turn behind a system row leaves no intent head to keep, the request now carries a one-line third-person note instead of a bare `[agent]` token, which one model had copied back as an empty reply.
 - Billing: Opus 5.5 (`claude-opus-5-5`) is priced at its own rates (standard and fast) instead of falling back to Opus 5's by prefix.

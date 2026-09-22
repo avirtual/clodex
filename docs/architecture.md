@@ -1028,6 +1028,18 @@ accept teardown removes.
   wire guard: a create routed to a BOX gets `[]` rather than a directive list,
   because a peer older than this vocabulary reads `!x` as a skill name and would
   deny its whole roster.
+- **muse-skills.js** — the platform-listed skill roster and its off-block, for
+  adapters whose row carries a `skills` field (Muse): `parseSkillsList` reads
+  `<cmd> skills list --json` into `{id, scope, path, activation}` rows,
+  `resolveOffSkills` applies a template's `disabledSkills` (explicit names match
+  the id or the SKILL.md directory name; `*` sweeps every listed skill minus
+  `!keep` and injected names), `activationBlock` keys the off entries by path
+  URI under their scope table (`project` never emitted), and
+  `activationSettings` nests that under the adapter's `activation.key` for
+  `bootstrapSeatConfig`'s `settingsMerge`. `createSkillLister` owns the spawn
+  and a per-(platform, configDir) cache for the process lifetime; `execFileSync`
+  and the scratch dir arrive injected, so the catalog IPC and the spawn arm are
+  both assertable against a fake CLI.
 - **skill-roster.js** — `classifySkillRoster`: splits a transcript's
   `skill_listing` attachments into the session's roster (`isInitial: true`,
   last one wins) and the DIRECTORY-SCOPED sets (`isInitial: false`, keyed by
