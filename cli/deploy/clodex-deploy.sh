@@ -312,7 +312,7 @@ else
       && log "codex installed" \
       || log "codex install failed (best-effort) — a Codex spawn will fail until it is installed"
   fi
-  if command -v muse >/dev/null 2>&1; then
+  if command -v muse >/dev/null 2>&1 || [ -x "$HOME/.local/bin/muse" ]; then
     log "muse already present — skipping"
   else
     log "installing muse CLI (launcher → ~/.local/bin)…"

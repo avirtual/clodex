@@ -367,7 +367,7 @@ test('generateCompose: a newline in any interpolated path cannot split the docum
 });
 
 test('generateCompose: a mount shadowing a reserved path THROWS (no broken box)', () => {
-  for (const target of ['/home/clodex/work', '/home/clodex/.clodex', '/home/clodex/.clodex/run', '/home/clodex', '/data', '/home/clodex/.claude']) {
+  for (const target of ['/home/clodex/work', '/home/clodex/.clodex', '/home/clodex/.clodex/run', '/home/clodex', '/data', '/home/clodex/.claude', '/home/clodex/.config/muse']) {
     assert.throws(() => generateCompose({
       image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null,
       mounts: [{ host: '/Users/me/x', container: target }],
@@ -1197,7 +1197,7 @@ test('writeComposeFile: creates the box state dirs 0700 under <registryDir>/boxe
   await sb.writeComposeFile();
   const base = path.join(reg, 'boxes', SANDBOX_PEER_ID);
   assert.strictEqual(sb.stateDir(), base);
-  for (const d of ['data', 'dot', 'claude']) {
+  for (const d of ['data', 'dot', 'claude', 'muse']) {
     const dir = path.join(base, d);
     assert.ok(fs.existsSync(dir), `${d} created`);
     assert.strictEqual(fs.statSync(dir).mode & 0o777, 0o700, `${d} is 0700`);
