@@ -22,7 +22,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const { capsFor } = require('../renderer/lib/provider-caps');
+const { capsFor } = require('../cli-adapters');
 const { skillOffSetFor, skillDenyIsDeferred } = require('../skills-off');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
 const htmlSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'index.html'), 'utf8');

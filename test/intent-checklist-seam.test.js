@@ -336,7 +336,7 @@ test('t717: the Edit dialog draws the intents and exec sections for a codex seat
   assert.ok(!/const isExecEditable = isClaude &&/.test(body));
 
   // Unwidened, deliberately: codex reads none of these. Gated through the t749
-  // caps table, whose codex row pins both to false (test/provider-caps.test.js).
+  // caps table, whose codex row pins both to false (test/cli-adapters.test.js).
   assert.match(body, /argsToolsSection\.style\.display = caps\.tools \? '' : 'none'/);
   assert.match(body, /argsAgentsRow\.style\.display = caps\.agents \? '' : 'none'/);
 });

@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 
 const { sessionMenuEntries } = require('../renderer/lib/session-actions');
-const { PROVIDER_CAPS, capsFor } = require('../renderer/lib/provider-caps');
+const { ADAPTERS, capsFor } = require('../cli-adapters');
 
 test('claude: full config surface + conversation actions, in order', () => {
   const acts = sessionMenuEntries('claude').map((e) => e.act);
@@ -35,7 +35,7 @@ test('codex: the intent gate, the skills editor, and the shared entries', () => 
 // that it agrees with itself, and could not express an exception.
 test('t750: skills is offered exactly to the types with a skills capability', () => {
   const EXPECTED = { claude: true, codex: true };
-  assert.deepStrictEqual(Object.keys(PROVIDER_CAPS).sort(), Object.keys(EXPECTED).sort(),
+  assert.deepStrictEqual(Object.keys(ADAPTERS).sort(), Object.keys(EXPECTED).sort(),
     'ENTER: the caps table still holds exactly the rows this table names');
   for (const [type, want] of Object.entries(EXPECTED)) {
     const caps = capsFor(type);

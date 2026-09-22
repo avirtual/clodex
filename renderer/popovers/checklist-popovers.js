@@ -24,7 +24,7 @@ const { autoEnabledFor, reconcilePartialSelection } = require('../../scope-util'
 const { skillOffSetFor } = require('../../skills-off');
 const { parseSkillFrontmatter } = require('../../skills-util');
 const { esc } = require('../lib/format');
-const { capsFor } = require('../lib/provider-caps');
+const { capsFor } = require('../../cli-adapters');
 const { makeDraggable, resetDrag } = require('../lib/popover-drag');
 const { placeAboveAnchor } = require('../lib/popover-place');
 

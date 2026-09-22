@@ -2324,6 +2324,16 @@ test('spawn template: threads config into create() + post-create strip/autocompa
   assert.match(replies.at(-1), /ok: spawned "t2".*via template "trader-seat"/);
 });
 
+test('t1075: spawn template: a type the adapter table does not name is refused, not run as a command', async () => {
+  const SHELL_SEAT = { ...TRADER_SEAT, id: 'tpl-sh', name: 'shell-seat', type: 'sh' };
+  const { m, created, replies, spawner } = mkSpawn([SHELL_SEAT]);
+  m._handleSpawnIntent(spawner, { name: 't2', cwd: null, template: 'shell-seat' });
+  await tick();
+  assert.strictEqual(replies.length, 1, 'ENTER: the template was read and answered once');
+  assert.match(replies[0], /^error: spawn: unknown seat type "sh"/);
+  assert.strictEqual(created.length, 0, 'create() must not run for an unknown type');
+});
+
 test('spawn template: name match is case-insensitive', async () => {
   const { m, created, spawner } = mkSpawn([TRADER_SEAT]);
   m._handleSpawnIntent(spawner, { name: 't2', cwd: null, template: 'TRADER-SEAT' });

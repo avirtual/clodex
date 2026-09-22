@@ -1,31 +1,9 @@
 'use strict';
 
-const MODEL_ALIASES = {
-  opus: 'claude-opus-5[1m]',
-  sonnet: 'claude-sonnet-5[1m]',
-  haiku: 'claude-haiku-4-5-20251001',
-  fable: 'claude-fable-5-1[1m]',
-};
+const adapters = require('./cli-adapters');
 
-const MODEL_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9.-]{0,63}(?:\[[a-z0-9]{1,8}\])?$/;
-
-function resolveModelId(v) {
-  if (typeof v !== 'string' || !v) return null;
-  if (Object.prototype.hasOwnProperty.call(MODEL_ALIASES, v)) return MODEL_ALIASES[v];
-  return MODEL_ID_RE.test(v) ? v : null;
-}
-
-function stripModelArgs(extraArgs) {
-  const rest = [];
-  const src = Array.isArray(extraArgs) ? extraArgs : [];
-  for (let i = 0; i < src.length; i += 1) {
-    const tok = src[i];
-    if (tok === '--model') { i += 1; continue; }
-    if (typeof tok === 'string' && tok.startsWith('--model=')) continue;
-    rest.push(tok);
-  }
-  return rest;
-}
+const resolveModelId = (v) => adapters.resolveModelId('claude', v);
+const stripModelArgs = (extraArgs) => adapters.stripModelArgs('claude', extraArgs);
 
 const LISTING_KEYS = ['id', 'shadowedBy', 'plugin', 'pluginName'];
 

@@ -82,7 +82,7 @@ const {
   setPluginCatalogCache, getPluginCatalogCache,
 } = checklists;
 const { mergePlugins, pluginsForUnlistedPlugins } = require('../plugin-api');
-const { capsFor } = require('../renderer/lib/provider-caps');
+const { capsFor } = require('../cli-adapters');
 
 // One statement of shipped source, captured to its first statement terminator.
 function extract(re, what) {

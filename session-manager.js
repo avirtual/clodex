@@ -179,6 +179,7 @@ function dupIdentity(intent) {
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
+const { isAgentType, adapterFor } = require('./cli-adapters');
 const {
   SPILL_VERBS, SPILL_MIN_BYTES, HEAD_RE, isSpillVerb, pointerOf, pointerMatch, trailingPointerOf, resolveSpill, spillDirFor, spillPathFor, verbKeyOf, writeSpill,
   receiptOf, resolveReceipt,
@@ -1595,7 +1596,7 @@ function createSessionManager(deps) {
       let cmd, args;
       const shell = process.env.SHELL || '/bin/bash';
       const warnings = [];
-      const agentType = (type === 'claude') ? 'claude' : (type === 'codex') ? 'codex' : null;
+      const agentType = isAgentType(type) ? type : null;
       let intentSource = 'jsonl';
       let wireRouted = false;
       let spillArmedForRecord = false;
@@ -7701,7 +7702,7 @@ function createSessionManager(deps) {
         attention: target.needsAttention ? target.needsAttention.kind : null,
       });
       if (verdict.hold) {
-        const canPark = target.agentType === 'claude' && !target._dead;
+        const canPark = adapterFor(target.agentType)?.caps.park === true && !target._dead;
         const parkId = canPark
           ? this._parkHeldDelivery(target, this._buildDeliveryText(target, senderTag, body, 'dm', tag), key)
           : null;
