@@ -1567,7 +1567,8 @@ function createSessionManager(deps) {
         mergedEnv = { ...baseEnv };
       }
 
-      const accountDir = type === 'claude' ? mergedEnv.CLAUDE_CONFIG_DIR : null;
+      const accountEnvKey = adapterFor(type)?.account.envKey || null;
+      const accountDir = accountEnvKey ? mergedEnv[accountEnvKey] : null;
       if (accountDir) {
         let ok = false;
         try { ok = fs.statSync(accountDir).isDirectory(); } catch { ok = false; }
@@ -3286,7 +3287,7 @@ function createSessionManager(deps) {
         const teamChanged = this.teamNameFor(entry.cwd) !== this.teamNameFor(newCwd);
         const departing = s || {
           name,
-          agentType: (entry.type === 'claude' || entry.type === 'codex') ? entry.type : null,
+          agentType: isAgentType(entry.type) ? entry.type : null,
           cwd: entry.cwd,
         };
         getPersistence().setCwd(name, newCwd);
@@ -3511,7 +3512,7 @@ function createSessionManager(deps) {
           progress('commit', totalBytes, files.length);
           const departing = s || {
             name,
-            agentType: (entry.type === 'claude' || entry.type === 'codex') ? entry.type : null,
+            agentType: isAgentType(entry.type) ? entry.type : null,
             cwd: entry.cwd,
           };
           const movedTo = { peer: peerId, peerLabel, farCwd: destCwd, at: Date.now(), sessionId: entry.sessionId };
@@ -5290,7 +5291,7 @@ function createSessionManager(deps) {
             const suffix = peerOriginSuffix(st, AGENT_NAME_RE);
             if (!suffix) continue;
             for (const rs of (st.sessions || [])) {
-              if (rs && (rs.type === 'claude' || rs.type === 'codex')) {
+              if (rs && isAgentType(rs.type)) {
                 remoteNames.push({ name: `${rs.name}@${suffix}`, label: null });
               }
             }

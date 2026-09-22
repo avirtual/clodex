@@ -234,6 +234,16 @@ function mkManager() {
     stripLevelOf: () => 0,
     notifyOS: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {} },
+    resolveProxyAgentId: ({ name }) => name,
+    getPromptLibrary: () => ({ list: () => [], get: () => null, raw: () => null }),
+    setupCodexHook: (n) => fs.mkdirSync(runDirFor(root, n), { recursive: true }),
+    cleanupCodexHook: () => {},
+    buildIpcPrompt: () => '',
+    readAppendBodies: () => [],
+    pluginGrammarLines: () => [],
+    mergeCodexInstructions: (a) => ({ cleaned: [...a], merged: '' }),
+    deliverSkills: () => null,
+    codexStatusLineArg: () => '',
   });
   const m = new SessionManager();
   mgr = m;
@@ -252,11 +262,6 @@ function mkManager() {
   return { m, root, persistence, spawns, stop };
 }
 
-// `bash` by default because that is the only type this fixture can carry all
-// the way to a spawn — a claude seat reaches the proxy-registration path, which
-// wants deps this manager is not given. The guard under test is claude-only
-// (t812), so the tests that assert a THROW pass `'claude'` explicitly; they
-// reject before any of that wiring runs.
 const create = (m, name, sessionEnv, type = 'bash') => m.create(
   name, type, os.tmpdir(), [], null, 'ws', null, false, null,
   [], [], [], [], [], null, [], [], null, sessionEnv,
@@ -351,8 +356,32 @@ test('create(): no CLAUDE_CONFIG_DIR anywhere spawns exactly as before', async (
   } finally { stop('plain'); }
 });
 
+test('m0: a CODEX seat whose CODEX_HOME does not exist is refused BEFORE any spawn', async () => {
+  const { m, spawns, stop } = mkManager();
+  const missing = path.join(os.tmpdir(), 'clx-no-such-codex-home-m0');
+  assert.strictEqual(fs.existsSync(missing), false, 'ENTER: the path really is absent');
+  await assert.rejects(
+    () => create(m, 'doomed', { CODEX_HOME: missing }, 'codex'),
+    new RegExp(`^Error: account dir ${missing} does not exist$`),
+  );
+  assert.strictEqual(spawns.length, 0, 'nothing was spawned');
+  assert.strictEqual(m.sessions.has('doomed'), false);
+  stop('doomed');
+});
+
+test('m0: a CODEX seat with no CODEX_HOME spawns, and a CLAUDE_CONFIG_DIR that is missing does not gate it', async () => {
+  const { m, spawns, stop } = mkManager();
+  const missing = path.join(os.tmpdir(), 'clx-no-such-account-dir-m0-codex');
+  assert.strictEqual(fs.existsSync(missing), false, 'ENTER: the path really is absent');
+  try {
+    await create(m, 'cdx', { CLAUDE_CONFIG_DIR: missing }, 'codex');
+    assert.strictEqual(spawns.length, 1, 'the adapter names CODEX_HOME, so CLAUDE_CONFIG_DIR is not this seat\'s account dir');
+    assert.strictEqual('CODEX_HOME' in spawns[0].env, false);
+  } finally { stop('cdx'); }
+});
+
 test('create(): a BASH seat on a missing account dir SPAWNS — that is how /login mints it', () => {
-  // t812. The guard is claude-only: Preferences ▸ Accounts ▸ Log in opens a bash
+  // t812. Preferences ▸ Accounts ▸ Log in opens a bash
   // seat carrying the account's CLAUDE_CONFIG_DIR and writes `claude /login`
   // into it, and for a registered-but-never-logged-in account that dir may not
   // exist yet. Refusing the bash spawn would make an unminted dir unfixable from

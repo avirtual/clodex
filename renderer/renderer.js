@@ -3595,10 +3595,7 @@ function renderProxyBar() {
   if (tSeg) segs.push(`<span class="px-seg" data-tip="${esc(tSeg.tip)}">${esc(tSeg.text)}</span>`);
   const rSeg = reqSeg(p);
   if (rSeg) segs.push(`<span class="px-seg" data-tip="${esc(rSeg.tip)}">${esc(rSeg.text)}</span>`);
-  // Warmth is Claude-only signal (a prompt-cache pinger). We have none for Codex,
-  // so a codex tab used to show a permanent "❄️ cold" that is noise, not truth —
-  // drop the seg for codex rather than assert a warmth state we can't observe.
-  if (p.warmth && sessionTypeOf(activeSession) !== 'codex') {
+  if (p.warmth && adapterFor(sessionTypeOf(activeSession))?.caps.warmth) {
     let txt;
     if (dead) {
       txt = '🔥 ?';

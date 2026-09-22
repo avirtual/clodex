@@ -19,11 +19,13 @@ const ADAPTERS = {
       },
       idRe: MODEL_ID_RE,
     },
-    posture: { bypassFlag: '--dangerously-skip-permissions' },
+    posture: { bypassArgs: ['--dangerously-skip-permissions'] },
     account: { envKey: 'CLAUDE_CONFIG_DIR', bootstrap: null },
+    cwdDir: null,
     readOnlyCap: { enforce: 'tool-denylist' },
     instructions: 'append-system-prompt-file',
-    caps: { park: true, transcript: true },
+    transcript: { reader: 'claude', link: 'hook' },
+    caps: { park: true, transcript: true, warmth: true },
     ui: {
       injectSkills: true,
       skillRoster: true,
@@ -41,11 +43,13 @@ const ADAPTERS = {
     label: 'Codex',
     cmd: 'codex',
     model: { flags: ['--model', '-m'], aliases: {}, idRe: MODEL_ID_RE },
-    posture: { bypassFlag: '--dangerously-bypass-approvals-and-sandbox' },
+    posture: { bypassArgs: ['--dangerously-bypass-approvals-and-sandbox'] },
     account: { envKey: 'CODEX_HOME', bootstrap: 'codex-home' },
+    cwdDir: '.codex',
     readOnlyCap: { enforce: 'argv', args: ['--sandbox', 'read-only', '--ask-for-approval', 'never'] },
     instructions: 'model-instructions-file',
-    caps: { park: false, transcript: true },
+    transcript: { reader: 'codex', link: 'hook' },
+    caps: { park: false, transcript: true, warmth: false },
     ui: {
       injectSkills: true,
       skillRoster: false,
@@ -72,6 +76,16 @@ function adapterFor(type) {
 
 function isAgentType(type) {
   return adapterFor(type) !== null;
+}
+
+function hasBypass(adapter, argv) {
+  if (!adapter || !Array.isArray(argv)) return false;
+  const want = adapter.posture.bypassArgs;
+  if (!want.length || argv.length < want.length) return false;
+  for (let i = 0; i + want.length <= argv.length; i += 1) {
+    if (want.every((tok, j) => argv[i + j] === tok)) return true;
+  }
+  return false;
 }
 
 function capsFor(type) {
@@ -109,5 +123,5 @@ function stripModelArgs(type, extraArgs) {
 
 module.exports = {
   ADAPTERS, PLATFORMS, DEFAULT_TYPE, CAP_KEYS,
-  adapterFor, isAgentType, capsFor, seatType, resolveModelId, stripModelArgs,
+  adapterFor, isAgentType, capsFor, seatType, resolveModelId, stripModelArgs, hasBypass,
 };

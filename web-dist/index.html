@@ -24376,11 +24376,13 @@ ${i3.join("\n")}
             },
             idRe: MODEL_ID_RE
           },
-          posture: { bypassFlag: "--dangerously-skip-permissions" },
+          posture: { bypassArgs: ["--dangerously-skip-permissions"] },
           account: { envKey: "CLAUDE_CONFIG_DIR", bootstrap: null },
+          cwdDir: null,
           readOnlyCap: { enforce: "tool-denylist" },
           instructions: "append-system-prompt-file",
-          caps: { park: true, transcript: true },
+          transcript: { reader: "claude", link: "hook" },
+          caps: { park: true, transcript: true, warmth: true },
           ui: {
             injectSkills: true,
             skillRoster: true,
@@ -24398,11 +24400,13 @@ ${i3.join("\n")}
           label: "Codex",
           cmd: "codex",
           model: { flags: ["--model", "-m"], aliases: {}, idRe: MODEL_ID_RE },
-          posture: { bypassFlag: "--dangerously-bypass-approvals-and-sandbox" },
+          posture: { bypassArgs: ["--dangerously-bypass-approvals-and-sandbox"] },
           account: { envKey: "CODEX_HOME", bootstrap: "codex-home" },
+          cwdDir: ".codex",
           readOnlyCap: { enforce: "argv", args: ["--sandbox", "read-only", "--ask-for-approval", "never"] },
           instructions: "model-instructions-file",
-          caps: { park: false, transcript: true },
+          transcript: { reader: "codex", link: "hook" },
+          caps: { park: false, transcript: true, warmth: false },
           ui: {
             injectSkills: true,
             skillRoster: false,
@@ -24425,6 +24429,15 @@ ${i3.join("\n")}
       }
       function isAgentType(type) {
         return adapterFor(type) !== null;
+      }
+      function hasBypass(adapter, argv) {
+        if (!adapter || !Array.isArray(argv)) return false;
+        const want = adapter.posture.bypassArgs;
+        if (!want.length || argv.length < want.length) return false;
+        for (let i = 0; i + want.length <= argv.length; i += 1) {
+          if (want.every((tok, j) => argv[i + j] === tok)) return true;
+        }
+        return false;
       }
       function capsFor(type) {
         const a = adapterFor(type);
@@ -24468,7 +24481,8 @@ ${i3.join("\n")}
         capsFor,
         seatType,
         resolveModelId,
-        stripModelArgs
+        stripModelArgs,
+        hasBypass
       };
     }
   });
@@ -43306,7 +43320,7 @@ ${detail}` });
         if (tSeg) segs.push(`<span class="px-seg" data-tip="${esc(tSeg.tip)}">${esc(tSeg.text)}</span>`);
         const rSeg = reqSeg(p);
         if (rSeg) segs.push(`<span class="px-seg" data-tip="${esc(rSeg.tip)}">${esc(rSeg.text)}</span>`);
-        if (p.warmth && sessionTypeOf(activeSession) !== "codex") {
+        if (p.warmth && adapterFor(sessionTypeOf(activeSession))?.caps.warmth) {
           let txt;
           if (dead) {
             txt = "\u{1F525} ?";
