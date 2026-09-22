@@ -3116,6 +3116,7 @@ function createTicketMethods(deps, shared) {
       for (const role of Object.values(obj.roles || {})) {
         if (role && typeof role === 'object') delete role.account;
       }
+      delete obj.removedRoleAccounts;
       delete obj.sandboxed;
       atomicWriteFileSync(manifest, `${JSON.stringify(obj, null, 2)}\n`);
       return { dir: dest, line: `team ${team.name} shipped into the box (teams/${team.name})` };

@@ -238,7 +238,7 @@ function registerIpcHandlers(deps) {
   };
 
   const fmtPatch = (patch) => Object.entries(patch && typeof patch === 'object' ? patch : {}).map(([k, v]) => {
-    let s = typeof v === 'string' ? v.trim() : String(v);
+    let s = typeof v === 'string' ? v.trim() : (v === null ? 'none' : String(v));
     if ((k === 'prompt' || k === 'brief') && s.length > 40) s = `${s.slice(0, 40)}…`;
     return `${k}=${s}`;
   }).join(', ');
@@ -460,7 +460,7 @@ function registerIpcHandlers(deps) {
       const written = (added && added.roles && added.roles[role]) || {};
       const source = added && added.minted ? added.minted : (substituted ? 'stock' : 'caller def');
       const carried = added && added.accountCarried ? ', carried forward' : '';
-      log.info('team', `role "${role}" added to team "${team}" (${source}; account ${written.account || 'none'}${carried})`);
+      if (absent) log.info('team', `role "${role}" added to team "${team}" (${source}; account ${written.account || 'none'}${carried})`);
       return { ok: true, team: added };
     } catch (err) { return { ok: false, error: err.message }; }
   });

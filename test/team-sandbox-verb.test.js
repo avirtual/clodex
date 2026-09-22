@@ -552,3 +552,18 @@ test('_shipTeamIntoBox drops `sandboxed` — inside the box the team is real, no
   assert.strictEqual('sandboxed' in obj, false);
   assert.strictEqual(obj.name, 'clodex');
 });
+
+test('t1096: _shipTeamIntoBox drops `removedRoleAccounts` — a host label must not resurrect inside the box', async () => {
+  const b = mkBox({ boxes: ['team-clodex'] });
+  const src = JSON.parse(fs.readFileSync(b.team.file, 'utf-8'));
+  src.removedRoleAccounts = { reviewer: 'work' };
+  fs.writeFileSync(b.team.file, `${JSON.stringify(src, null, 2)}\n`);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(b.team.file, 'utf-8')).removedRoleAccounts, { reviewer: 'work' }, 'ENTER: the host manifest carries the stash');
+
+  b.m._shipTeamIntoBox(b.team, b.mgr.get('team-clodex'));
+
+  const obj = JSON.parse(fs.readFileSync(path.join(b.shipped, 'team.json'), 'utf-8'));
+  assert.strictEqual('removedRoleAccounts' in obj, false);
+  assert.strictEqual(obj.name, 'clodex');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(b.team.file, 'utf-8')).removedRoleAccounts, { reviewer: 'work' }, 'the host manifest still has it');
+});

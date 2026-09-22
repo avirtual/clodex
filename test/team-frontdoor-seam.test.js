@@ -634,3 +634,33 @@ test('t1092: team:addRole logs one line naming the source, the account and a car
   assert.deepStrictEqual(lines, [['team', 'role "runner" added to team "shop" (caller def; account other)']],
     'an empty def on a role with no stock definition stays a caller def');
 });
+
+test('t1096: team:addRole on a role already present with an identical def logs nothing', () => {
+  const { lines, log } = fakeLog();
+  let roles = {};
+  const handlers = registerWith({
+    log,
+    loadManifest: (t) => ({ name: t, roles }),
+    accounts: { list: () => [], configDirFor: () => null },
+    addRole: (t, r, d) => ({ name: t, roles: { ...roles, [r]: { ...d } } }),
+  });
+  assert.strictEqual(handlers['team:addRole']({}, 'shop', 'runner', { brief: 'r' }).ok, true);
+  assert.strictEqual(lines.length, 1, 'ENTER: the added-role case logs exactly once');
+  lines.length = 0;
+  roles = { runner: { brief: 'r' } };
+  assert.strictEqual(handlers['team:addRole']({}, 'shop', 'runner', { brief: 'r' }).ok, true);
+  assert.strictEqual(lines.length, 0, 'a no-op re-add is not reported as "added"');
+});
+
+test('t1096: team:addRole with an empty def on an absent stock role logs the stock source', () => {
+  const { lines, log } = fakeLog();
+  const handlers = registerWith({
+    log,
+    loadManifest: (t) => ({ name: t, roles: {} }),
+    accounts: { list: () => [], configDirFor: () => null },
+    addRole: (t, r, d) => ({ name: t, roles: { [r]: { ...d } } }),
+  });
+  assert.strictEqual(handlers['team:addRole']({}, 'shop', 'hand', {}).ok, true);
+  assert.strictEqual(lines.length, 1);
+  assert.match(lines[0][1], /^role "hand" added to team "shop" \(stock; /);
+});
