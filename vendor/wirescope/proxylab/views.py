@@ -1338,10 +1338,14 @@ def _render_session_openai_body(entry, resp=None):
     cache badges: caching is server-side (prompt_cache_key shown instead)."""
     e = html.escape
     obj = entry.get("obj") or {}
-    tools = obj.get("tools") or []
+    raw_tools = obj.get("tools") or []
+    # muse ships ONE `type:"namespace"` wrapper holding the real functions;
+    # count and list what the model can call, and size the wrapper as shipped
+    tools = muse_mod._flatten_namespace_tools(raw_tools)
+    n_ns = sum(1 for t in raw_tools if isinstance(t, dict) and t.get("type") == "namespace")
     instr = obj.get("instructions") or ""
     inp = [it for it in (obj.get("input") or []) if isinstance(it, dict)]
-    t_ch = len(json.dumps(tools)) if tools else 0
+    t_ch = len(json.dumps(raw_tools)) if raw_tools else 0
     i_ch = len(json.dumps(inp)) if inp else 0
     n_turns = sum(1 for it in inp if codex_mod._is_prompt_item_openai(it))
     pck = obj.get("prompt_cache_key") or ""
@@ -1363,7 +1367,9 @@ def _render_session_openai_body(entry, resp=None):
             f'<td class="dim">{len(json.dumps(t)):,} ch</td>'
             f'<td class="dim">{e((t.get("description") or "")[:120])}</td></tr>'
             for t in sorted(tools, key=lambda t: -len(json.dumps(t))))
-        tools_html = (f'<details><summary>tools · {len(tools)} · '
+        ns_note = (f' · in {n_ns} namespace wrapper{"s" if n_ns > 1 else ""}'
+                   if n_ns else "")
+        tools_html = (f'<details><summary>tools · {len(tools)}{ns_note} · '
                       f'&approx;{e(_fmt_tok(t_ch // 4))} tok</summary>'
                       f'<table>{trs}</table></details>')
     else:
