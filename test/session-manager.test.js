@@ -9982,6 +9982,13 @@ for (const [what, props, why] of [
   });
 }
 
+test('t400 gate positive half: a codex seat has caps.transcript, so the confirmed wedge wakes it exactly once', async () => {
+  const w = mkWake({ agentType: 'codex' });
+  for (const m of [30, 31, 32]) await w.sweep(m);
+  assert.strictEqual(w.wakes().length, 1, 'the bash row above is refused for lacking the cap; codex carries it and is woken');
+  assert.deepStrictEqual(w.alarms(), []);
+});
+
 // The lead is rung 3's RECIPIENT, so a self-assigned ticket has no rung above the
 // wake to catch a mistake. Its own row because the exclusion is by NAME, not by
 // seat state — every gate above would pass.
@@ -20559,7 +20566,7 @@ test('t1078: a reviewer template of a platform with no read-only cap is refused 
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
   await new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(created, [], 'no reviewer spawned');
-  assert.ok(injected.some((t) => /\] error: unknown seat type "sh" \(known: claude, codex\)/.test(t)), injected.join('\n'));
+  assert.ok(injected.some((t) => /\] error: unknown seat type "sh" \(known: claude, codex, muse\)/.test(t)), injected.join('\n'));
   assert.deepStrictEqual(persistence.list().map((e) => e.name), [], 'no name reserved');
 });
 

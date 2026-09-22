@@ -200,3 +200,43 @@ test('the watcher without a reader sniffs per record, so a Codex tape still ends
   ], undefined);
   assert.deepStrictEqual(seen.map((s) => [s.text, s.meta.turnEnd]), [['all done', true]]);
 });
+
+test('m2 nit: a turnStart landing on pending text flushes the reply FIRST, then reports thinking', () => {
+  const { seen, edges } = runWatcher([MUSE_MESSAGE, MUSE_STARTED], readerFor('muse'));
+  assert.deepStrictEqual(seen.map((s) => s.text), ['echo: say hello'], 'ENTER: the pending reply was flushed by the started record');
+  assert.deepStrictEqual(edges, [['thinking', false], ['idle', false], ['thinking', false]]);
+});
+
+test('m2 nit: a JSON line that parses to null or a number is skipped, and the tape after it is still read', () => {
+  const dir = mkTmpRoot('clodex-watcher-');
+  const file = path.join(dir, 'transcript.jsonl');
+  fs.writeFileSync(file, ['null', '42', JSON.stringify(MUSE_MESSAGE), JSON.stringify(MUSE_TERMINAL_COMPLETED)].join('\n') + '\n');
+  const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR: dir });
+  const seen = [];
+  const w = new JsonlWatcher('seat', (text) => seen.push(text), () => {}, () => {}, () => {}, () => {}, { reader: readerFor('muse') });
+  w._fd = fs.openSync(file, 'r');
+  w._position = 0;
+  assert.doesNotThrow(() => w._readLines());
+  w.stop();
+  assert.deepStrictEqual(seen, ['echo: say hello']);
+});
+
+test('m2: the muse reader names the session id from <sid>/session.jsonl, and the watcher reports THAT id, not "session"', () => {
+  const sid = '01a0c97b-13a9-7aab-ab19-6f4f701b254d';
+  assert.strictEqual(readerFor('muse').sessionIdOf(`/x/muse/sessions/2026/09/22/${sid}/session.jsonl`), sid);
+  assert.strictEqual(readerFor('muse').sessionIdOf('/x/abc.jsonl'), null);
+  assert.strictEqual(readerFor('codex').sessionIdOf, undefined);
+  const root = mkTmpRoot('clodex-watcher-');
+  const target = path.join(root, 'sessions', '2026', '09', '22', sid, 'session.jsonl');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, '');
+  const { pathFor } = require('../clodex-paths');
+  fs.mkdirSync(path.dirname(pathFor(root, 'seat', 'transcript')), { recursive: true });
+  fs.symlinkSync(target, pathFor(root, 'seat', 'transcript'));
+  const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR: root });
+  const ids = [];
+  const w = new JsonlWatcher('seat', () => {}, (id) => ids.push(id), () => {}, () => {}, () => {}, { reader: readerFor('muse') });
+  w._poll();
+  w.stop();
+  assert.deepStrictEqual(ids, [sid]);
+});

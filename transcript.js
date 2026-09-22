@@ -37,6 +37,7 @@ function jsonlToMarkdown(jsonlPath, agentType, sessionName) {
   for (const line of lines) {
     let obj;
     try { obj = JSON.parse(line); } catch { continue; }
+    if (!obj || typeof obj !== 'object') continue;
     for (const rec of sniffReader(obj).expand(obj)) {
       const reader = sniffReader(rec);
       const c = reader.classify(rec);
@@ -90,6 +91,7 @@ function jsonlToMessages(jsonlPath, limit = 100) {
     if (!line.trim()) continue;
     let obj;
     try { obj = JSON.parse(line); } catch { continue; }
+    if (!obj || typeof obj !== 'object') continue;
     if (obj.isSidechain || obj.isMeta) continue;
     for (const rec of sniffReader(obj).expand(obj)) {
       const c = sniffReader(rec).classify(rec);

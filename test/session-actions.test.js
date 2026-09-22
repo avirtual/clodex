@@ -34,7 +34,7 @@ test('codex: the intent gate, the skills editor, and the shared entries', () => 
 // re-applied: an expectation computed by the module's own rule would assert only
 // that it agrees with itself, and could not express an exception.
 test('t750: skills is offered exactly to the types with a skills capability', () => {
-  const EXPECTED = { claude: true, codex: true };
+  const EXPECTED = { claude: true, codex: true, muse: true };
   assert.deepStrictEqual(Object.keys(ADAPTERS).sort(), Object.keys(EXPECTED).sort(),
     'ENTER: the caps table still holds exactly the rows this table names');
   for (const [type, want] of Object.entries(EXPECTED)) {

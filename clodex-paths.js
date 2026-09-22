@@ -120,6 +120,7 @@ const KINDS = {
   // one dir per seat that goes with the seat. Renaming it shell-neutral would
   // strand every shim dir on disk: a migration bought for a nicer word.
   termShim: 'zsh',
+  seatConfig: 'xdg',
 };
 
 // The OLD flat-grammar suffixes, per kind — what the one-time legacy sweep
@@ -158,6 +159,7 @@ const LEGACY_SUFFIXES = {
   pollGuardScript: '-poll-guard.sh',
   pollState: '-poll-state',
   termShim: '-zsh',
+  seatConfig: '-xdg',
 };
 
 // The per-agent runtime dir: ~/.clodex/run/<name>/.

@@ -24418,6 +24418,30 @@ ${i3.join("\n")}
             noWire: false,
             accounts: false
           }
+        },
+        muse: {
+          id: "muse",
+          label: "Muse Code",
+          cmd: "muse",
+          model: { flags: ["--model"], aliases: {}, idRe: MODEL_ID_RE },
+          posture: { bypassArgs: ["--approval-mode", "never", "--disable-sandbox"] },
+          account: { envKey: "XDG_CONFIG_HOME", bootstrap: "xdg-overlay" },
+          cwdDir: null,
+          readOnlyCap: null,
+          instructions: "user-agents-md",
+          transcript: { reader: "muse", link: "clodex" },
+          caps: { park: false, transcript: true, warmth: false },
+          ui: {
+            injectSkills: true,
+            skillRoster: false,
+            plugins: true,
+            agents: false,
+            tools: false,
+            strip: false,
+            autoCompact: false,
+            noWire: false,
+            accounts: false
+          }
         }
       };
       var PLATFORMS = Object.keys(ADAPTERS);
@@ -37043,7 +37067,7 @@ You can add it back from this popover.` : "";
   // renderer/lib/session-actions.js
   var require_session_actions = __commonJS({
     "renderer/lib/session-actions.js"(exports, module) {
-      var { capsFor } = require_cli_adapters();
+      var { capsFor, isAgentType } = require_cli_adapters();
       var TOOLS_ENTRY = { act: "tools", label: "\u{1F6E0} Tools\u2026" };
       var AGENTS_ENTRY = { act: "agents", label: "\u{1F916} Agents\u2026" };
       var SKILLS_ENTRY = { act: "skills", label: "\u{1F9E9} Skills\u2026" };
@@ -37060,7 +37084,7 @@ You can add it back from this popover.` : "";
         const caps = capsFor(type);
         const skills = caps.injectSkills || caps.skillRoster ? [SKILLS_ENTRY] : [];
         if (type === "claude") return [TOOLS_ENTRY, ...skills, AGENTS_ENTRY, ...AGENT_ENTRIES, ...SHARED_ENTRIES];
-        if (type === "codex") return [...AGENT_ENTRIES, ...skills, ...SHARED_ENTRIES];
+        if (isAgentType(type)) return [...AGENT_ENTRIES, ...skills, ...SHARED_ENTRIES];
         return [];
       }
       module.exports = { sessionMenuEntries };

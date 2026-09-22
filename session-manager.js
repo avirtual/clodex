@@ -146,6 +146,9 @@ const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
 
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { readerFor } = require('./transcript-readers');
+const { uuidv7, bootstrapSeatConfig, museDataHome, findMuseTranscript, museRegistryFor, linkTranscript } = require('./seat-config');
+const MUSE_MINT_TIMEOUT_MS = 120000;
+const MUSE_BACKSTOP_MS = 2000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX } = require('./proxy-util');
 const {
@@ -596,6 +599,8 @@ function createSessionManager(deps) {
     classifyNotification,
     cleanupClaudeHook,
     cleanupCodexHook,
+    cleanupMuseSeat,
+    crypto,
     cleanupSkills,
     cleanupAgentPlugin,
     effectiveInjectedSkills,
@@ -666,6 +671,7 @@ function createSessionManager(deps) {
     voiceOriginArm: voiceOriginArmDep,
     mergeClaudeSystemPrompt,
     mergeCodexInstructions,
+    mergeInstructionBodies,
     normalizeProxyBase,
     noteFileTouches,
     createSubagentStore,
@@ -817,6 +823,7 @@ function createSessionManager(deps) {
     constructor() {
       this.sessions = new Map();
       this._freshBakeOnce = new Set();
+      this._creating = new Set();
       this.windows = new Map(); // workspaceId -> BrowserWindow
       // The seat the operator is LOOKING at, as last reported by a renderer.
       // Global rather than per-window on purpose: the external tap has to pick
@@ -1542,9 +1549,19 @@ function createSessionManager(deps) {
     }
 
     async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null) {
-      if (this.sessions.has(name)) {
+      if (this.sessions.has(name) || this._creating.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
+      const reserve = adapterFor(type)?.account.bootstrap === 'xdg-overlay';
+      if (reserve) this._creating.add(name);
+      try {
+        return await this._createReserved(...arguments);
+      } finally {
+        if (reserve) this._creating.delete(name);
+      }
+    }
+
+    async _createReserved(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null) {
       const freshBake = this._freshBakeOnce.delete(name);
       if (cwd) {
         let st = null;
@@ -1574,6 +1591,17 @@ function createSessionManager(deps) {
         let ok = false;
         try { ok = fs.statSync(accountDir).isDirectory(); } catch { ok = false; }
         if (!ok) throw new Error(`account dir ${accountDir} does not exist`);
+      }
+      let seatConfigDir = null;
+      let museSid = null;
+      if (adapterFor(type)?.account.bootstrap === 'xdg-overlay') {
+        seatConfigDir = pathFor(REGISTRY_DIR, name, 'seatConfig');
+        bootstrapSeatConfig({ fs, path }, {
+          source: accountDir || path.join(os.homedir(), '.config'),
+          seatDir: seatConfigDir,
+          settingsMerge: adapterFor(type).readOnlyCap?.settings || null,
+        });
+        mergedEnv.XDG_CONFIG_HOME = seatConfigDir;
       }
 
       let proxyBase = resolveProxyBase(proxy, getUiSettings());
@@ -1982,6 +2010,58 @@ function createSessionManager(deps) {
           }
           break;
         }
+        case 'muse': {
+          cmd = 'muse';
+          const seatPlugins = Array.isArray(plugins) ? plugins : null;
+          const museSystemBody = readSystemPromptBody
+            ? readSystemPromptBody(systemPromptFile, seatPlugins, resolvedTeam)
+            : (systemPromptFile ? getPromptLibrary().raw('system', systemPromptFile) : null);
+          const museAppendBodies = readAppendBodies(appendPromptFiles, seatPlugins, resolvedTeam);
+          const museIpc = mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1'
+            ? null
+            : buildIpcPrompt(intents, this._resolveExecDefs(execCommands, resolvedTeam), pluginGrammarLines(intents, seatPlugins));
+          const museMerged = mergeInstructionBodies(museIpc, {
+            systemBody: museSystemBody, appendBodies: museAppendBodies, inlineBody: systemPromptBody || null,
+          });
+          const museSkills = deliverSkills('muse', name, [...librarySkills, ...bundleSkills(seatBundles())]);
+          const museBody = museSkills && museSkills.instructions
+            ? `${museMerged}\n\n${museSkills.instructions}`
+            : museMerged;
+          fs.writeFileSync(path.join(seatConfigDir, 'muse', 'AGENTS.md'),
+            `You are the clodex agent named '${name}'.\n\n${teamBlock ? `${museBody}\n\n${teamBlock}\n` : museBody}`, { mode: 0o600 });
+          museSid = resumeId || uuidv7(crypto);
+          let museProbe = null;
+          if (proxyBase) { try { museProbe = await ProxyClient.probe(proxyBase); } catch {} }
+          const museRouted = !!(proxyBase && museProbe && museProbe.capabilities && museProbe.capabilities.muse);
+          if (proxyBase && !museRouted) {
+            warnings.push(`muse: wirescope at ${proxyBase} does not report capabilities.muse — this seat talks to Meta directly, unrouted.`);
+          }
+          const museBaseUrl = museRouted ? ['--base-url', `${proxyBase}/agent/${proxyAgent || name}/meta`] : [];
+          const museEnv = { ...mergedEnv, CLODEX_HOME: REGISTRY_DIR, MUSE_NO_AUTO_UPDATE: '1' };
+          const museData = museDataHome({ env: museEnv, os, path });
+          if (!resumeId) {
+            try {
+              await new Promise((resolve, reject) => childProcess.execFile('muse', [
+                'exec', '--provider', 'meta', '--approval-mode', 'never', '--disable-sandbox', '--trust-workspace',
+                ...museBaseUrl, '--session-id', museSid, `Clodex seat "${name}" initialized.`,
+              ], { cwd: cwd || process.env.HOME || os.homedir(), env: museEnv, timeout: MUSE_MINT_TIMEOUT_MS },
+              (err) => (err ? reject(err) : resolve())));
+            } catch (e) {
+              abandonHint();
+              throw new Error(`muse mint failed for ${name}: ${(e && e.message) || e}`);
+            }
+          }
+          const museTranscript = findMuseTranscript({ fs, path }, museData, museSid);
+          if (!museTranscript) {
+            abandonHint();
+            throw new Error(`muse session ${museSid} has no transcript under ${museData}`);
+          }
+          ensureDir(runDirFor(REGISTRY_DIR, name));
+          linkTranscript({ fs }, pathFor(REGISTRY_DIR, name, 'transcript'), museTranscript);
+          if (fork) warnings.push(`muse has no fork: resuming session ${museSid} instead.`);
+          args = [...extraArgs, '--trust-workspace', '--provider', 'meta', ...museBaseUrl, 'resume', museSid];
+          break;
+        }
         case 'bash':
           cmd = shell;
           args = [...extraArgs];
@@ -2005,6 +2085,7 @@ function createSessionManager(deps) {
       // precisely because the Claude CLI is not observed to emit OSC 8 either way.
       const env = withUtf8Charset({ ...mergedEnv, TERM: 'xterm-256color', CLODEX_HOME: REGISTRY_DIR, FORCE_HYPERLINK: '1' });
       if (type === 'codex') env.WB_WRAP_NAME = name;
+      if (type === 'muse') env.MUSE_NO_AUTO_UPDATE = '1';
 
       let ptyProc;
       try {
@@ -2109,8 +2190,8 @@ function createSessionManager(deps) {
         spawnedAt: Date.now(),
         createdAt,
         agentType, lineBuffer: '', watcher: null,
-        sessionId: resumeId || null,
-        accountDir: accountDir || null,
+        sessionId: museSid || resumeId || null,
+        accountDir: seatConfigDir || accountDir || null,
         forked: !!fork,
         workspaceId,
         proxyAgent, proxyBase,
@@ -2317,7 +2398,7 @@ function createSessionManager(deps) {
           onSessionId,
           makeWatcher: ({ onText, onCompactSummary }) => new JsonlWatcher(
             name, onText || (() => {}), () => {}, () => {}, onCompactSummary || (() => {}),
-            undefined, { reader: readerFor(agentType) }),
+            undefined, { reader: readerFor(adapterFor(agentType).transcript.reader) }),
         });
         session.sentinel.start();
       } else if (agentType) {
@@ -2328,9 +2409,22 @@ function createSessionManager(deps) {
           (state, turnEnd) => this._emitActivity(name, state, state === 'idle' && !!turnEnd),
           () => this._fireCompactContinuation(session),
           (touches) => this._noteFileTouches(session, touches),
-          { reader: readerFor(agentType) },
+          { reader: readerFor(adapterFor(agentType).transcript.reader) },
         );
         session.watcher.start();
+      }
+
+      if (type === 'muse' && ptyProc && ptyProc.pid) {
+        const backstop = setTimeout(() => {
+          if (this.sessions.get(name) !== session) return;
+          const museData = museDataHome({ env, os, path });
+          const rec = museRegistryFor({ fs, path }, museData, ptyProc.pid);
+          if (!rec || typeof rec.session_id !== 'string' || rec.session_id === session.sessionId) return;
+          const target = findMuseTranscript({ fs, path }, museData, rec.session_id);
+          if (!target) return;
+          try { linkTranscript({ fs }, pathFor(REGISTRY_DIR, name, 'transcript'), target); } catch {}
+        }, this._museBackstopMs ?? MUSE_BACKSTOP_MS);
+        if (backstop.unref) backstop.unref();
       }
 
       if (agentType === 'claude') {
@@ -4345,6 +4439,7 @@ function createSessionManager(deps) {
       if (s.agentType) registry.unregister(name);
       if (s.agentType === 'claude') { cleanupClaudeHook(name); cleanupAgentPlugin(name); }
       if (s.agentType === 'codex') cleanupCodexHook(name, s.cwd);
+      if (s.agentType === 'muse') cleanupMuseSeat(name);
       if (s.agentType) cleanupSkills(s.agentType, name);
       this.sessions.delete(name);
       const live = new Set(this.sessions.keys());

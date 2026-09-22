@@ -151,6 +151,7 @@ clodex-move-outrepo2-
 clodex-movepeer-
 clodex-movepeer-claude-
 clodex-msg-
+clodex-muse-
 clodex-mv-data-
 clodex-mv-decoyhome-
 clodex-mv-envroot-
@@ -440,6 +441,7 @@ clx-runstatus-
 clx-sandbox-
 clx-sbx-detect-
 clx-sbx-ud-
+clx-seatcfg-
 clx-shelldeny-
 clx-skill-catalog-
 clx-skillsoff-

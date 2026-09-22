@@ -11,7 +11,7 @@
 // (tools/skills/agents/intents/plugins/edit/history/reload) so the menu reuses
 // the exact opener wiring the standalone buttons used.
 
-const { capsFor } = require('../../cli-adapters');
+const { capsFor, isAgentType } = require('../../cli-adapters');
 
 // Tool and agent gating is Claude-only. Intents, plugins and skills are NOT:
 // a codex seat carries all three, so pinning one to claude leaves that seat with
@@ -36,7 +36,7 @@ function sessionMenuEntries(type) {
   const caps = capsFor(type);
   const skills = (caps.injectSkills || caps.skillRoster) ? [SKILLS_ENTRY] : [];
   if (type === 'claude') return [TOOLS_ENTRY, ...skills, AGENTS_ENTRY, ...AGENT_ENTRIES, ...SHARED_ENTRIES];
-  if (type === 'codex') return [...AGENT_ENTRIES, ...skills, ...SHARED_ENTRIES];
+  if (isAgentType(type)) return [...AGENT_ENTRIES, ...skills, ...SHARED_ENTRIES];
   return [];
 }
 

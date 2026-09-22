@@ -36,8 +36,8 @@ function mk() {
 
 const catalogLines = (block) => block.split('\n').filter((l) => l.startsWith('- '));
 
-test('t747: providers() names exactly the two CLIs that have an adapter', () => {
-  assert.deepStrictEqual(mk().delivery.providers(), ['claude', 'codex']);
+test('t747: providers() names exactly the CLIs that have an adapter', () => {
+  assert.deepStrictEqual(mk().delivery.providers(), ['claude', 'codex', 'muse']);
 });
 
 test('t747: a provider with no adapter delivers nothing and cleans up nothing', () => {
@@ -77,6 +77,17 @@ test('t747: the codex adapter writes each SKILL.md and catalogs it by absolute p
     'a body with no frontmatter is still wrapped into a valid SKILL.md');
   assert.strictEqual(fs.statSync(fileFor('deploy')).mode & 0o777, 0o600,
     'a skill is read by the seat, never executed');
+});
+
+test('m2: the muse adapter is the codex catalog materialisation, whole-object equal', () => {
+  const { delivery, SKILL_PLUGINS_DIR } = mk();
+  const codex = delivery.deliver('codex', 'seat', [DEPLOY, BUNDLED, AUDIT, BARE]);
+  assert.ok(codex && codex.instructions, 'ENTER: the codex subject delivered');
+  const codexFiles = fs.readdirSync(path.join(SKILL_PLUGINS_DIR, 'seat', 'skills')).sort();
+  const muse = delivery.deliver('muse', 'seat', [DEPLOY, BUNDLED, AUDIT, BARE]);
+  assert.deepStrictEqual(muse, codex);
+  assert.deepStrictEqual(fs.readdirSync(path.join(SKILL_PLUGINS_DIR, 'seat', 'skills')).sort(), codexFiles);
+  assert.strictEqual(delivery.deliver('muse', 'seat', []), null);
 });
 
 test('t747: the codex adapter rebuilds from scratch, so a deselected skill is gone', () => {
@@ -140,7 +151,7 @@ test('t747: a name that cannot be confined throws on deliver and is silent on cl
   const { delivery, SKILL_PLUGINS_DIR } = mk();
   // Well-formed roots, refused NAME: confine returns null before any rmSync, so
   // this exercises the refusal without ever putting a real delete at risk.
-  for (const provider of ['claude', 'codex']) {
+  for (const provider of ['claude', 'codex', 'muse']) {
     assert.throws(() => delivery.deliver(provider, '..', [DEPLOY]), /invalid session name/,
       `${provider} aborts the spawn rather than deleting the parent of the skills root`);
   }

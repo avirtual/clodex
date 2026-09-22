@@ -54,11 +54,7 @@ function mergeClaudeSystemPrompt(extraArgs, ipcPrompt, opts = {}) {
 // model_instructions_file inlined from extraArgs.
 //   opts: { systemBody: string|null, appendBodies: string[], inlineBody: string|null }
 function mergeCodexInstructions(extraArgs, ipcPrompt, opts = {}) {
-  const { systemBody = null, appendBodies = [], inlineBody = null } = opts;
-  const parts = [];
-  if (systemBody) parts.push(systemBody);
-  parts.push(ipcPrompt, ...appendBodies);
-  if (inlineBody) parts.push(inlineBody);
+  const parts = [mergeInstructionBodies(ipcPrompt, opts)];
   const cleaned = [];
   for (let i = 0; i < extraArgs.length; i++) {
     const a = extraArgs[i];
@@ -70,6 +66,15 @@ function mergeCodexInstructions(extraArgs, ipcPrompt, opts = {}) {
     cleaned.push(a);
   }
   return { cleaned, merged: parts.filter(Boolean).join('\n\n') };
+}
+
+function mergeInstructionBodies(ipcPrompt, opts = {}) {
+  const { systemBody = null, appendBodies = [], inlineBody = null } = opts;
+  const parts = [];
+  if (systemBody) parts.push(systemBody);
+  parts.push(ipcPrompt, ...appendBodies);
+  if (inlineBody) parts.push(inlineBody);
+  return parts.filter(Boolean).join('\n\n');
 }
 
 // Context-window sizes the CLI statusline under-reports. The bar's denominator
@@ -122,6 +127,6 @@ function parseCtxFile(raw) {
 }
 
 module.exports = {
-  mergeClaudeSystemPrompt, mergeCodexInstructions,
+  mergeClaudeSystemPrompt, mergeCodexInstructions, mergeInstructionBodies,
   MODEL_WINDOWS, effectiveWindowSize, parseCtxFile,
 };
