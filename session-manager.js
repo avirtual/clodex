@@ -599,6 +599,8 @@ function createSessionManager(deps) {
     classifyNotification,
     cleanupClaudeHook,
     cleanupCodexHook,
+    cleanupMuseSeat,
+    crypto,
     cleanupSkills,
     cleanupAgentPlugin,
     effectiveInjectedSkills,
@@ -821,6 +823,7 @@ function createSessionManager(deps) {
     constructor() {
       this.sessions = new Map();
       this._freshBakeOnce = new Set();
+      this._creating = new Set();
       this.windows = new Map(); // workspaceId -> BrowserWindow
       // The seat the operator is LOOKING at, as last reported by a renderer.
       // Global rather than per-window on purpose: the external tap has to pick
@@ -1545,10 +1548,19 @@ function createSessionManager(deps) {
       }
     }
 
-    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null) {
-      if (this.sessions.has(name)) {
+    async create(name, type, ...rest) {
+      if (this.sessions.has(name) || this._creating.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
+      this._creating.add(name);
+      try {
+        return await this._createReserved(name, type, ...rest);
+      } finally {
+        this._creating.delete(name);
+      }
+    }
+
+    async _createReserved(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null) {
       const freshBake = this._freshBakeOnce.delete(name);
       if (cwd) {
         let st = null;
@@ -2016,7 +2028,7 @@ function createSessionManager(deps) {
             : museMerged;
           fs.writeFileSync(path.join(seatConfigDir, 'muse', 'AGENTS.md'),
             `You are the clodex agent named '${name}'.\n\n${teamBlock ? `${museBody}\n\n${teamBlock}\n` : museBody}`, { mode: 0o600 });
-          museSid = resumeId || uuidv7(require('crypto'));
+          museSid = resumeId || uuidv7(crypto);
           let museProbe = null;
           if (proxyBase) { try { museProbe = await ProxyClient.probe(proxyBase); } catch {} }
           const museRouted = !!(proxyBase && museProbe && museProbe.capabilities && museProbe.capabilities.muse);
@@ -4426,6 +4438,7 @@ function createSessionManager(deps) {
       if (s.agentType) registry.unregister(name);
       if (s.agentType === 'claude') { cleanupClaudeHook(name); cleanupAgentPlugin(name); }
       if (s.agentType === 'codex') cleanupCodexHook(name, s.cwd);
+      if (s.agentType === 'muse') cleanupMuseSeat(name);
       if (s.agentType) cleanupSkills(s.agentType, name);
       this.sessions.delete(name);
       const live = new Set(this.sessions.keys());

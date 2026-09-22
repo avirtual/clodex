@@ -1069,7 +1069,7 @@ function readSessionMeta(file) {
 const { createCliHooks } = require('./cli-hooks');
 const {
   writeClaudeDigestFile, setupClaudeHook, setupCodexHook,
-  cleanupClaudeHook, cleanupCodexHook,
+  cleanupClaudeHook, cleanupCodexHook, cleanupMuseSeat,
 // composeRoster reaches the manager lazily and through a try: createCliHooks
 // runs long before the SessionManager is constructed, and `manager` is a const
 // declared below, so a bare reference during boot is a TDZ throw rather than
@@ -1220,6 +1220,8 @@ const SessionManager = createSessionManager({
     classifyNotification,
     cleanupClaudeHook,
     cleanupCodexHook,
+    cleanupMuseSeat,
+    crypto,
     cleanupSkills,
     cleanupAgentPlugin,
     effectiveInjectedSkills,

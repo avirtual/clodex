@@ -12,6 +12,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const { pathFor: pathForReal, runDirFor: runDirForReal } = require('../clodex-paths');
 const { mergeInstructionBodies } = require('../argv-merge');
 const { adapterFor } = require('../cli-adapters');
+const { createCliHooks } = require('../cli-hooks');
 
 const UUID7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const PROXY = 'http://127.0.0.1:7811';
@@ -79,6 +80,8 @@ function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true 
     writeAgentPlugin: () => null, effectiveInjectedAgents: () => [],
     deliverSkills: () => skills, skillDeliveryProviders: () => ['claude', 'codex', 'muse'],
     cleanupSkills: () => {}, cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupAgentPlugin: () => {},
+    cleanupMuseSeat: createCliHooks({ REGISTRY_DIR: root, memoryStore: { list: () => [] }, getUiSettings: () => ({ get: () => ({}) }), nodeInterp: process.execPath }).cleanupMuseSeat,
+    crypto: require('node:crypto'),
     effectiveInjectedSkills: () => [],
     getPersistence: () => ({ list: () => [], get: () => null, upsert: () => {}, setSessionId: () => {}, remove: () => {} }),
     getUiSettings: () => ({ get: () => ({}) }),
@@ -99,6 +102,7 @@ function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true 
     },
     childProcess: {
       execFile: (cmd, args, opts, cb) => {
+        if (cmd === 'ps') { cb(null, '', ''); return; }
         order.push('mint');
         mints.push({ cmd, args, opts });
         if (mintFails) { cb(new Error('muse exec exited 1')); return; }
@@ -122,7 +126,8 @@ function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true 
       spawn: (cmd, args, opts) => {
         order.push('spawn');
         spawns.push({ cmd, args, opts });
-        return { onData() {}, onExit() {}, pid: 999, kill() {} };
+        let exit = null;
+        return { onData() {}, onExit(fn) { exit = fn; }, pid: 999, kill() { if (exit) exit({ exitCode: 0, signal: null }); } };
       },
     },
     notifyOS: () => {},
@@ -289,6 +294,32 @@ test('m2: a second create() of the same name rebuilds the overlay from scratch',
   await f.create('seat');
   try {
     assert.deepStrictEqual(fsReal.readdirSync(seatDir).sort(), ['gh', 'muse']);
+  } finally { f.stop('seat'); }
+});
+
+test('m2: kill() drops run/<name>/ — the overlay, the transcript link and the AGENTS.md copy do not outlive the seat', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = mkMuse();
+  await f.create('seat');
+  const seatDir = pathForReal(f.root, 'seat', 'seatConfig');
+  const link = pathForReal(f.root, 'seat', 'transcript');
+  assert.ok(fsReal.existsSync(pathReal.join(seatDir, 'muse', 'auth.json')), 'ENTER: the 0600 auth copy is on disk before the kill');
+  assert.ok(fsReal.lstatSync(link).isSymbolicLink(), 'ENTER: the link is on disk before the kill');
+  f.stop('seat');
+  await f.m.kill('seat');
+  assert.ok(!f.m.sessions.has('seat'), 'ENTER: the pty exit reached _cleanup');
+  assert.ok(!fsReal.existsSync(seatDir), `run/seat/xdg survived kill(): ${seatDir}`);
+  assert.throws(() => fsReal.lstatSync(link), /ENOENT/, 'the transcript symlink survived kill()');
+  assert.ok(!fsReal.existsSync(runDirForReal(f.root, 'seat')), 'run/seat/ itself survived kill()');
+});
+
+test('m2: a second create() of the same name while the first is still minting is refused, not a second overlay', async () => {
+  const f = mkMuse();
+  const first = f.create('seat');
+  await assert.rejects(f.create('seat'), /Session "seat" already exists/);
+  await first;
+  try {
+    assert.strictEqual(f.mints.length, 1, 'the refused create never minted');
   } finally { f.stop('seat'); }
 });
 

@@ -80,6 +80,9 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   says PROJECT rules win over user rules on conflict, so a repo `AGENTS.md`
   outranks the protocol prompt; the file is regenerated on every `create()`
   like Codex's — no freeze, no delta, `refreshPrompt` stays Claude-only.
+  `kill()` drops `run/<name>/` (`cleanupMuseSeat`) like every other kind, and the
+  name is reserved for the whole async `create()` (mint included), so a second
+  `create()` of it in that window is refused rather than rebuilding the overlay.
 
 **Skill delivery is per provider (skill-delivery.js, t747).** One
 provider-keyed module owns both halves: `deliver(provider, name, records)`

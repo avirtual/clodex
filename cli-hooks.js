@@ -768,6 +768,10 @@ OUTPUT="\${RUNDIR}/hook-output.json"
     dropRunDir(name);
   }
 
+  function cleanupMuseSeat(name) {
+    dropRunDir(name);
+  }
+
   function cleanupCodexHook(name, cwd) {
     dropRunDir(name);
     const codexDir = path.join(cwd, '.codex');
@@ -795,7 +799,7 @@ OUTPUT="\${RUNDIR}/hook-output.json"
 
   return {
     writeClaudeDigestFile, setupClaudeHook, setupCodexHook,
-    cleanupClaudeHook, cleanupCodexHook,
+    cleanupClaudeHook, cleanupCodexHook, cleanupMuseSeat,
   };
 }
 

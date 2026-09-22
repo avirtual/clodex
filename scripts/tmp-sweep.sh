@@ -96,7 +96,6 @@ clodex-gone-
 clodex-guard-
 clodex-hc-
 clodex-hint-
-clodex-muse-
 clodex-home-
 clodex-hooks-
 clodex-hs-
@@ -152,6 +151,7 @@ clodex-move-outrepo2-
 clodex-movepeer-
 clodex-movepeer-claude-
 clodex-msg-
+clodex-muse-
 clodex-mv-data-
 clodex-mv-decoyhome-
 clodex-mv-envroot-
@@ -441,6 +441,7 @@ clx-runstatus-
 clx-sandbox-
 clx-sbx-detect-
 clx-sbx-ud-
+clx-seatcfg-
 clx-shelldeny-
 clx-skill-catalog-
 clx-skillsoff-
@@ -503,7 +504,6 @@ clx-t738-home-
 clx-t738-repo-
 clx-t738-ud-
 clx-t747-
-clx-seatcfg-
 clx-t772-
 clx-t826-
 clx-t840-registry-
