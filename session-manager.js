@@ -1548,15 +1548,16 @@ function createSessionManager(deps) {
       }
     }
 
-    async create(name, type, ...rest) {
+    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null) {
       if (this.sessions.has(name) || this._creating.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
-      this._creating.add(name);
+      const reserve = adapterFor(type)?.account.bootstrap === 'xdg-overlay';
+      if (reserve) this._creating.add(name);
       try {
-        return await this._createReserved(name, type, ...rest);
+        return await this._createReserved(...arguments);
       } finally {
-        this._creating.delete(name);
+        if (reserve) this._creating.delete(name);
       }
     }
 
