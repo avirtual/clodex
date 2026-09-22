@@ -9982,6 +9982,13 @@ for (const [what, props, why] of [
   });
 }
 
+test('t400 gate positive half: a codex seat has caps.transcript, so the confirmed wedge wakes it exactly once', async () => {
+  const w = mkWake({ agentType: 'codex' });
+  for (const m of [30, 31, 32]) await w.sweep(m);
+  assert.strictEqual(w.wakes().length, 1, 'the bash row above is refused for lacking the cap; codex carries it and is woken');
+  assert.deepStrictEqual(w.alarms(), []);
+});
+
 // The lead is rung 3's RECIPIENT, so a self-assigned ticket has no rung above the
 // wake to catch a mistake. Its own row because the exclusion is by NAME, not by
 // seat state — every gate above would pass.

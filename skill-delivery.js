@@ -30,7 +30,7 @@ function deliverClaude(deps, name, records) {
   return { args: ['--plugin-dir', dir], instructions: null };
 }
 
-function deliverCodex(deps, name, records) {
+function deliverCatalog(deps, name, records) {
   const { fs, path, confine, ensureDir, SKILL_PLUGINS_DIR, skillMd, parseSkillFrontmatter } = deps;
   const dir = confine(SKILL_PLUGINS_DIR, name);
   if (dir === null) throw new Error(`invalid session name: ${name}`);
@@ -60,7 +60,15 @@ function cleanupSeatDir(deps, name) {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 }
 
-const ADAPTERS = { claude: deliverClaude, codex: deliverCodex };
+function deliverCodex(deps, name, records) {
+  return deliverCatalog(deps, name, records);
+}
+
+function deliverMuse(deps, name, records) {
+  return deliverCatalog(deps, name, records);
+}
+
+const ADAPTERS = { claude: deliverClaude, codex: deliverCodex, muse: deliverMuse };
 
 function createSkillDelivery(deps) {
   return {

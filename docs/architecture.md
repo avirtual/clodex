@@ -835,6 +835,15 @@ accept teardown removes.
   (sessions/workspaces/templates/prompts/agent+skill libraries/defaults/
   ui-settings/reminders). Paths derive inside the factory, post-whenReady by
   construction; the return object is the list.
+- **seat-config.js** — the per-seat XDG overlay for platforms whose adapter row
+  says `account.bootstrap: 'xdg-overlay'` (Muse): `bootstrapSeatConfig` rebuilds
+  `run/<name>/xdg` on every `create()` (every `~/.config` entry symlinked, a real
+  `muse/` with `auth.json`/`trust.json`/`settings.json` copied 0600, the
+  reviewer profile deep-merged into settings), plus `uuidv7`, `findMuseTranscript`
+  (date-tree glob for `<sid>/session.jsonl`), `museRegistryFor(pid)` and
+  `linkTranscript` (tmp+rename symlink). Pure leaf: `fs`/`path`/`os`/`crypto`
+  arrive through a deps object, no top-level `require`; NOT in the leak-scanner
+  lists, like `clodex-paths.js`. Measured facts in `docs/notes/seat-config.md`.
 - **clodex-paths.js** — the per-agent runtime path grammar under the registry
   root (`~/.clodex`, or `CLODEX_HOME` when set — `defaultClodexHome()` here is
   the one fallback resolver `main.js`, `headless-main.js`, `sandbox.js` and

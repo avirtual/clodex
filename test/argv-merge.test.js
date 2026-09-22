@@ -8,7 +8,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const {
-  mergeClaudeSystemPrompt, mergeCodexInstructions,
+  mergeClaudeSystemPrompt, mergeCodexInstructions, mergeInstructionBodies,
   MODEL_WINDOWS, effectiveWindowSize, parseCtxFile,
 } = require('../argv-merge');
 
@@ -75,6 +75,14 @@ test('mergeCodexInstructions: system, ipc, appends, inline collapse in order', (
   });
   assert.deepStrictEqual(cleaned, []);
   assert.strictEqual(merged, 'SYS\n\nIPC\n\nA\n\nIN');
+});
+
+test('mergeInstructionBodies: system, ipc, appends, inline in order; a null ipc leaves no blank paragraph', () => {
+  assert.strictEqual(mergeInstructionBodies('IPC', { systemBody: 'SYS', appendBodies: ['A1', 'A2'], inlineBody: 'INL' }),
+    'SYS\n\nIPC\n\nA1\n\nA2\n\nINL');
+  assert.strictEqual(mergeInstructionBodies(null, { systemBody: 'SYS', appendBodies: ['A1', '', 'A2'], inlineBody: null }),
+    'SYS\n\nA1\n\nA2');
+  assert.strictEqual(mergeInstructionBodies(null), '');
 });
 
 test('mergeCodexInstructions: -c model_instructions_file is inlined and stripped', () => {

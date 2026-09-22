@@ -23,14 +23,19 @@ test('pathFor: every kind resolves to run/<name>/<basename>', () => {
   }
 });
 
+test('pathFor: seatConfig is the per-seat XDG overlay directory under run/<name>/', () => {
+  assert.strictEqual(pathFor(ROOT, 'a', 'seatConfig'), path.join(ROOT, 'run', 'a', 'xdg'));
+  assert.strictEqual(LEGACY_SUFFIXES.seatConfig, '-xdg');
+});
+
 test('pathFor: the three bare forms are unsuffixed', () => {
   assert.strictEqual(path.basename(pathFor(ROOT, 'a', 'transcript')), 'transcript.jsonl');
   assert.strictEqual(path.basename(pathFor(ROOT, 'a', 'registry')), 'agent.json');
   assert.strictEqual(path.basename(pathFor(ROOT, 'a', 'socket')), 'agent.sock');
 });
 
-test('pathFor: 30 per-agent kinds are defined', () => {
-  assert.strictEqual(Object.keys(KINDS).length, 30);
+test('pathFor: 31 per-agent kinds are defined', () => {
+  assert.strictEqual(Object.keys(KINDS).length, 31);
   // every kind has a matching legacy suffix (the sweep depends on the pairing) —
   // ipcdelta.sh has no flat ancestor but keeps a defensive suffix so the
   // invariant (every kind sweepable) holds.

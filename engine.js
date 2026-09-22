@@ -879,7 +879,7 @@ const { bodyModeFor, intentEnabledFor, intentEnabledForSeat, withoutPrivilegedIn
 const { isFilenameToken, parseAndValidate, clampReplyBody, DEFAULT_MAX_BYTES } = require('./exec-schema');
 const { parseRemindSpec } = require('./remind-schedule');
 const { createRemindScheduler } = require('./remind-scheduler');
-const { mergeClaudeSystemPrompt, mergeCodexInstructions, parseCtxFile } = require('./argv-merge');
+const { mergeClaudeSystemPrompt, mergeCodexInstructions, mergeInstructionBodies, parseCtxFile } = require('./argv-merge');
 const { renderClaudeStatusScript, codexStatusLineArg, normalizeProxyBase, resolveProxyBase } = require('./statusline');
 const { jsonlToMarkdown, cachedMessages, sliceSince, extractText } = require('./transcript');
 const { initStores } = require('./stores');
@@ -1294,6 +1294,7 @@ const SessionManager = createSessionManager({
     voiceOriginArm,
     mergeClaudeSystemPrompt,
     mergeCodexInstructions,
+    mergeInstructionBodies,
     normalizeProxyBase,
     noteFileTouches,
     createSubagentStore,

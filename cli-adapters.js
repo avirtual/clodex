@@ -62,6 +62,30 @@ const ADAPTERS = {
       accounts: false,
     },
   },
+  muse: {
+    id: 'muse',
+    label: 'Muse Code',
+    cmd: 'muse',
+    model: { flags: ['--model'], aliases: {}, idRe: MODEL_ID_RE },
+    posture: { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'] },
+    account: { envKey: 'XDG_CONFIG_HOME', bootstrap: 'xdg-overlay' },
+    cwdDir: null,
+    readOnlyCap: null,
+    instructions: 'user-agents-md',
+    transcript: { reader: 'muse', link: 'clodex' },
+    caps: { park: false, transcript: true, warmth: false },
+    ui: {
+      injectSkills: true,
+      skillRoster: false,
+      plugins: true,
+      agents: false,
+      tools: false,
+      strip: false,
+      autoCompact: false,
+      noWire: false,
+      accounts: false,
+    },
+  },
 };
 
 const PLATFORMS = Object.keys(ADAPTERS);

@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, adapterFor, seatType, stripModelArgs, hasBypass,
+  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, adapterFor, seatType, stripModelArgs, hasBypass, resolveModelId,
 } = require('../cli-adapters');
 const { createSkillDelivery } = require('../skill-delivery');
 
@@ -90,6 +90,37 @@ test('m0: the table rows declare posture, cwdDir, transcript and warmth literall
   assert.deepStrictEqual(ADAPTERS.codex.transcript, { reader: 'codex', link: 'hook' });
   assert.deepStrictEqual(ADAPTERS.claude.caps, { park: true, transcript: true, warmth: true });
   assert.deepStrictEqual(ADAPTERS.codex.caps, { park: false, transcript: true, warmth: false });
+  assert.deepStrictEqual(ADAPTERS.muse.posture, { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'] });
+  assert.strictEqual(ADAPTERS.muse.cwdDir, null);
+  assert.deepStrictEqual(ADAPTERS.muse.transcript, { reader: 'muse', link: 'clodex' });
+  assert.deepStrictEqual(ADAPTERS.muse.caps, { park: false, transcript: true, warmth: false });
+});
+
+test('m2: the muse row — Meta\'s CLI, XDG overlay bootstrap, user-scope AGENTS.md, no read-only cap yet', () => {
+  assert.deepStrictEqual(ADAPTERS.muse, {
+    id: 'muse',
+    label: 'Muse Code',
+    cmd: 'muse',
+    model: { flags: ['--model'], aliases: {}, idRe: ADAPTERS.claude.model.idRe },
+    posture: { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'] },
+    account: { envKey: 'XDG_CONFIG_HOME', bootstrap: 'xdg-overlay' },
+    cwdDir: null,
+    readOnlyCap: null,
+    instructions: 'user-agents-md',
+    transcript: { reader: 'muse', link: 'clodex' },
+    caps: { park: false, transcript: true, warmth: false },
+    ui: {
+      injectSkills: true, skillRoster: false, plugins: true, agents: false, tools: false,
+      strip: false, autoCompact: false, noWire: false, accounts: false,
+    },
+  });
+  assert.deepStrictEqual(capsFor('muse'), {
+    injectSkills: true, skillRoster: false, plugins: true, agents: false, tools: false,
+    strip: false, autoCompact: false, noWire: false, accounts: false,
+  });
+  assert.deepStrictEqual(stripModelArgs('muse', ['--model', 'x', 'y']), ['y']);
+  assert.strictEqual(resolveModelId('muse', 'opus'), 'opus', 'no aliases: an alias word is not expanded, it passes through as an id');
+  assert.strictEqual(resolveModelId('muse', 'not a model!'), null);
 });
 
 test('m0: hasBypass is a contiguous-subsequence match on posture.bypassArgs', () => {
@@ -131,7 +162,7 @@ test('readOnlyCap: claude is a tool denylist, codex is the argv sandbox pair', (
 });
 
 test('PLATFORMS is the table order', () => {
-  assert.deepStrictEqual(PLATFORMS, ['claude', 'codex']);
+  assert.deepStrictEqual(PLATFORMS, ['claude', 'codex', 'muse']);
 });
 
 test('adapterFor answers null for anything the table does not name', () => {

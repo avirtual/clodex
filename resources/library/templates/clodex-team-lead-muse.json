@@ -1,0 +1,31 @@
+{
+  "name": "clodex-team-lead-muse",
+  "spawnerHint": "on",
+  "type": "muse",
+  "cwd": "${TEAM_ROOT}",
+  "proxy": null,
+  "plugins": [],
+  "execCommands": [
+    "clodex-team",
+    "clodex-monitor",
+    "clodex-run-tests"
+  ],
+  "intents": [
+    "dm",
+    "who",
+    "context",
+    "memory",
+    "file",
+    "resend",
+    "exec",
+    "remind",
+    "shout",
+    "spawn"
+  ],
+  "extraArgs": [],
+  "systemPromptFile": null,
+  "appendPromptFiles": [
+    "team-project"
+  ],
+  "env": {}
+}

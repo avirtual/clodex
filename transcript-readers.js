@@ -164,10 +164,15 @@ function museClassify(obj) {
   return c;
 }
 
+function museSessionIdOf(target) {
+  const m = /([^/]+)\/session\.jsonl$/.exec(target);
+  return m ? m[1] : null;
+}
+
 const READERS = {
   claude: { id: 'claude', expand: identity, classify: classifyClaudeCodex },
   codex: { id: 'codex', expand: identity, classify: classifyClaudeCodex },
-  muse: { id: 'muse', expand: museExpand, classify: museClassify },
+  muse: { id: 'muse', expand: museExpand, classify: museClassify, sessionIdOf: museSessionIdOf },
 };
 
 function sniffReader(obj) {
@@ -185,7 +190,7 @@ const SNIFFING = {
 };
 
 function readerFor(id) {
-  return READERS[id] || SNIFFING;
+  return Object.hasOwn(READERS, id) ? READERS[id] : SNIFFING;
 }
 
 module.exports = {

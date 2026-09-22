@@ -773,7 +773,7 @@ test('t1077: #input-type is filled from PLATFORMS, with bash last, and index.htm
   const document = { createElement: (tag) => ({ tag }) };
   new Function('PLATFORMS', 'document', 'select', `${fns}\nfillPlatformSelect(select);`)(PLATFORMS, document, select);
   assert.deepStrictEqual(options.map((o) => o.value), [...PLATFORMS, 'bash']);
-  assert.deepStrictEqual(options.map((o) => o.value), ['claude', 'codex', 'bash'],
+  assert.deepStrictEqual(options.map((o) => o.value), ['claude', 'codex', 'muse', 'bash'],
     'and that is the literal list, in order — a reordered table shows here');
   assert.deepStrictEqual(options.map((o) => o.textContent), options.map((o) => o.value), 'label = id, as before');
   assert.ok(options.every((o) => o.tag === 'option'));

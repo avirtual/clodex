@@ -119,7 +119,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
           // appended from now on.
           try { this._position = fs.fstatSync(this._fd).size; }
           catch { this._position = 0; }
-          const sessionId = path.basename(target, '.jsonl');
+          const sessionId = (this._reader.sessionIdOf && this._reader.sessionIdOf(target)) || path.basename(target, '.jsonl');
           if (sessionId) {
             try { this._onSessionId(sessionId); } catch {}
           }
@@ -158,6 +158,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
         if (!trimmed) continue;
         let obj;
         try { obj = JSON.parse(trimmed); } catch { continue; }
+        if (!obj || typeof obj !== 'object') continue;
 
         for (const rec of this._reader.expand(obj)) {
           const c = this._reader.classify(rec);
@@ -182,7 +183,6 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
           }
 
           if (c.inert) continue;
-          if (c.turnStart) this._setActivity('thinking');
           if (c.text) {
             // AN EMPTY RID IS ITS OWN FLUSH UNIT, never a match. A Codex
             // function_call_output (the tool-output shape the reader reads text
@@ -216,6 +216,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
             if (this._pendingText && c.interrupted) this._pendingInterrupted = true;
             if (this._pendingText) this._flushPending();
           }
+          if (c.turnStart) this._setActivity('thinking');
         }
       }
     }
