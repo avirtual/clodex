@@ -31,6 +31,7 @@ test('t1076: ignoreCodexDir hides .codex/ from git status in the worktree and le
   const excludeFile = path.join(repo, '.git', 'info', 'exclude');
   const excludeBefore = fs.existsSync(excludeFile) ? fs.readFileSync(excludeFile, 'utf8') : null;
   assert.strictEqual(ignoreCodexDir(fs, wt), null);
+  fs.mkdirSync(path.join(wt, '.codex'), { recursive: true });
   fs.writeFileSync(path.join(wt, '.codex', 'hooks.json'), '{}');
   assert.strictEqual(git(wt, 'status', '--porcelain'), '', 'the hook file and the marker are invisible to git');
   git(wt, 'add', '-A');
