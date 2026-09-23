@@ -1208,6 +1208,7 @@ function registerIpcHandlers(deps) {
       discoverOnStartup: s.discoverOnStartup,
       theme: s.theme,
       terminalWebgl: s.terminalWebgl,
+      transcriptPane: s.transcriptPane,
       sidebarWidth: s.sidebarWidth,
       remoteEnabled: s.remoteEnabled,
       remotePort: s.remotePort,

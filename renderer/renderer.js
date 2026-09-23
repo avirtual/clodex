@@ -66,6 +66,7 @@ const { createVoiceSubmitWatcher } = require('./voice-submit-watcher');
 const {
   DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings, resolveTriggerKey,
 } = require('./lib/voice-submit');
+const { createLiveSplitView } = require('./live-split-view');
 const { initBanners } = require('./banners');
 const { initThemes } = require('./themes');
 const { createEchoRewriter } = require('./lib/prompt-echo');
@@ -98,8 +99,13 @@ const { initPluginHost } = require('./plugin-host');
 const sessions = new Map(); // name -> { terminal, fitAddon, wrapperEl }
 let activeSession = null;
 let terminalWebglEnabled = false;
+let transcriptPaneEnabled = false;
 const terminalWebglReady = window.api.getSettings()
-  .then((s) => { terminalWebglEnabled = !!(s && s.terminalWebgl === true); })
+  .then((s) => {
+    terminalWebglEnabled = !!(s && s.terminalWebgl === true);
+    transcriptPaneEnabled = !!(s && s.transcriptPane === true);
+    for (const entry of sessions.values()) if (entry.liveSplit) entry.liveSplit.refresh();
+  })
   .catch(() => {});
 
 const { currentXtermTheme, currentEchoPalette } = initThemes({ sessions });
@@ -1643,7 +1649,11 @@ function createTerminal(name, peer = null) {
   });
 
   const echoRewrite = peer ? (chunk) => chunk : createEchoRewriter(currentEchoPalette);
-  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, webgl, wrapperEl, peer, echoRewrite });
+  const liveSplit = peer || window.__CLODEX_WEB__ ? null : createLiveSplitView(terminal, wrapperEl, {
+    isEligible: () => transcriptPaneEnabled && sessionTypeOf(name) === 'claude',
+    pullTranscript: () => window.api.transcriptPull(name),
+  });
+  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, webgl, wrapperEl, peer, echoRewrite, liveSplit });
   updateWindowTitle();
   return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
 }
@@ -1812,6 +1822,7 @@ function removeSession(name, { keepPersisted = false } = {}) {
     // and disposing them afterwards throws on the marker lookup.
     if (s.intentHighlight) s.intentHighlight.dispose();
     if (s.voiceSubmit) s.voiceSubmit.dispose();
+    if (s.liveSplit) s.liveSplit.dispose();
     if (s.webgl) { try { s.webgl.dispose(); } catch {} }
     s.terminal.dispose();
     s.wrapperEl.remove();
@@ -4901,6 +4912,7 @@ const prefsCodexBox = document.getElementById('prefs-codex-components');
 const prefsProxyEnabled = document.getElementById('prefs-proxy-enabled');
 const prefsDisableDesignMcp = document.getElementById('prefs-disable-design-mcp');
 const prefsTerminalWebgl = document.getElementById('prefs-terminal-webgl');
+const prefsTranscriptPane = document.getElementById('prefs-transcript-pane');
 const prefsCompactOnResume = document.getElementById('prefs-compact-on-resume');
 const prefsContextHints = document.getElementById('prefs-context-hints');
 const prefsSemanticHints = document.getElementById('prefs-semantic-hints');
@@ -7366,6 +7378,7 @@ async function openPrefs() {
   prefsProxyEnabled.checked = !!s.proxyEnabled;
   prefsDisableDesignMcp.checked = s.disableClaudeDesignMcp !== false;
   if (prefsTerminalWebgl) prefsTerminalWebgl.checked = s.terminalWebgl === true;
+  if (prefsTranscriptPane) prefsTranscriptPane.checked = s.transcriptPane === true;
   prefsCompactOnResume.checked = !!s.compactOnResume;
   prefsContextHints.checked = !!s.contextHints;
   if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
@@ -7478,6 +7491,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     proxyEnabled: prefsProxyEnabled.checked,
     disableClaudeDesignMcp: prefsDisableDesignMcp.checked,
     terminalWebgl: prefsTerminalWebgl ? prefsTerminalWebgl.checked : false,
+    transcriptPane: prefsTranscriptPane ? prefsTranscriptPane.checked : false,
     compactOnResume: prefsCompactOnResume.checked,
     contextHints: prefsContextHints.checked,
     semanticHints: prefsSemanticHints ? prefsSemanticHints.checked : false,
@@ -7508,6 +7522,8 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
       : {}),
   });
   terminalWebglEnabled = prefsTerminalWebgl ? prefsTerminalWebgl.checked : false;
+  transcriptPaneEnabled = prefsTranscriptPane ? prefsTranscriptPane.checked : false;
+  for (const entry of sessions.values()) if (entry.liveSplit) entry.liveSplit.refresh();
   await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
   await window.api.setDefaultSkillDeny(collectPrefsSkillDefaults());
   await window.api.setDefaultBuiltinDeny(collectBuiltinChecklist(prefsAgentsList));
