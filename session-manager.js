@@ -2458,7 +2458,7 @@ function createSessionManager(deps) {
             try {
               linkTranscript({ fs }, pathFor(REGISTRY_DIR, name, 'transcript'), fallback);
               stop('fallback');
-              log.info('muse', `${name}: no session registered for pid ${ptyProc.pid} within ${MUSE_LINK_DEADLINE_MS} ms — linked newest transcript ${fallback}`);
+              log.info('muse', `${name}: no session registered for pid ${ptyProc.pid} within ${MUSE_LINK_DEADLINE_MS} ms — linked transcript ${fallback}`);
               return;
             } catch {}
           }

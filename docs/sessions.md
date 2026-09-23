@@ -84,7 +84,7 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   id differs from the seat's, and a deadline miss is one warning, never a throw
   (the PTY is already live). Before warning, a fresh seat's deadline falls back
   to the newest `session.jsonl` written after its spawn that no other live Muse
-  seat links (`newestMuseTranscript`), so a data home Muse refuses to register
+  seat links (`oldestMuseTranscript`), so a data home Muse refuses to register
   under still gets its transcript scanned; a restore's miss is one info line,
   its link already stands. Caveats: Muse's rules preamble
   says PROJECT rules win over user rules on conflict, so a repo `AGENTS.md`

@@ -454,8 +454,8 @@ test('t1095: fallback — no registry record ever lands; the deadline links the 
     assert.notStrictEqual(fsReal.readlinkSync(f.link('seat')), second);
     assert.deepStrictEqual(f.order, ['spawn', 'link']);
     assert.deepStrictEqual(f.warns, [], 'a fallback link is info, not a warn');
-    assert.deepStrictEqual(f.infos.filter((m) => m.includes('linked newest transcript')),
-      [`seat: no session registered for pid 999 within 60000 ms — linked newest transcript ${first}`]);
+    assert.deepStrictEqual(f.infos.filter((m) => m.includes('linked transcript')),
+      [`seat: no session registered for pid 999 within 60000 ms — linked transcript ${first}`]);
     assert.strictEqual(s.sessionId, null, 'the id is the watcher retarget\'s to report, not the fallback\'s');
   } finally { await f.stop('seat'); }
 });
@@ -528,9 +528,9 @@ test('t1105: two seats 2 s apart — the earlier seat kept writing after the lat
     assert.strictEqual(fsReal.readlinkSync(f.link('a')), own);
     assert.strictEqual(fsReal.readlinkSync(f.link('b')), theirs);
     assert.deepStrictEqual(f.warns, []);
-    assert.deepStrictEqual(f.infos.filter((m) => m.includes('linked newest transcript')), [
-      `a: no session registered for pid 999 within 60000 ms — linked newest transcript ${own}`,
-      `b: no session registered for pid 999 within 60000 ms — linked newest transcript ${theirs}`,
+    assert.deepStrictEqual(f.infos.filter((m) => m.includes('linked transcript')), [
+      `a: no session registered for pid 999 within 60000 ms — linked transcript ${own}`,
+      `b: no session registered for pid 999 within 60000 ms — linked transcript ${theirs}`,
     ]);
   } finally { await f.stop('a'); await f.stop('b'); }
 });
@@ -553,8 +553,8 @@ test('t1105: two seats spawned in the same millisecond — the one inserted late
     assert.throws(() => fsReal.lstatSync(f.link('a')), /ENOENT/, 'a links nothing: b, inserted after it, is the later seat');
     assert.strictEqual(fsReal.readlinkSync(f.link('b')), only);
     assert.deepStrictEqual(f.warns, ['a: no session registered for pid 999 within 60000 ms — transcript link pending']);
-    assert.deepStrictEqual(f.infos.filter((m) => m.includes('linked newest transcript')),
-      [`b: no session registered for pid 999 within 60000 ms — linked newest transcript ${only}`]);
+    assert.deepStrictEqual(f.infos.filter((m) => m.includes('linked transcript')),
+      [`b: no session registered for pid 999 within 60000 ms — linked transcript ${only}`]);
   } finally { await f.stop('a'); await f.stop('b'); }
 });
 
@@ -572,7 +572,7 @@ test('t1095: fallback — a session.jsonl older than the spawn is no candidate; 
     assert.strictEqual(await s._museLinkDone, 'deadline');
     assert.throws(() => fsReal.lstatSync(f.link('seat')), /ENOENT/);
     assert.deepStrictEqual(f.warns, ['seat: no session registered for pid 999 within 60000 ms — transcript link pending']);
-    assert.deepStrictEqual(f.infos.filter((m) => m.includes('linked newest transcript')), []);
+    assert.deepStrictEqual(f.infos.filter((m) => m.includes('linked transcript')), []);
     assert.deepStrictEqual(f.order, ['spawn']);
   } finally { await f.stop('seat'); }
 });

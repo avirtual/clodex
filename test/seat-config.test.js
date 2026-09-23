@@ -166,7 +166,7 @@ test('t1095: oldestMuseTranscript picks the oldest-born session.jsonl at or afte
   assert.strictEqual(oldestMuseTranscript(bdeps, root, since, [exact, mid, newest]), null, `${old} is older than sinceMs: no candidate`);
   assert.strictEqual(oldestMuseTranscript(bdeps, root, since - 10000, [exact, mid, newest]), old);
   assert.strictEqual(oldestMuseTranscript(bdeps, root, since), exact, 'excludePaths is optional');
-  assert.strictEqual(oldestMuseTranscript(bdeps, root, path.join(root, 'nope'), 0, []), null);
+  assert.strictEqual(oldestMuseTranscript(bdeps, path.join(root, 'nope'), 0, []), null);
   born.set(old, 0);
   fs.utimesSync(old, (since + 500) / 1000, (since + 500) / 1000);
   assert.strictEqual(oldestMuseTranscript(bdeps, root, since, [exact]), old, 'birthtimeMs 0 (no statx birthtime) falls back to mtime');
