@@ -1,0 +1,82 @@
+=== frame 0 t=565ms after [] D=10 collapsedBlocks=0 rowsFreed=0 verbose=false
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Fable 5.1 with high effort · Claude Max
+  ▘▘ ▝▝    ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/explore-screen-mirror/scratch
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────
+=== frame 1 t=595ms after [] D=10 collapsedBlocks=0 rowsFreed=0 verbose=false
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Fable 5.1 with high effort · Claude Max
+  ▘▘ ▝▝    ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/explore-screen-mirror/scratch
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents                                                 ● high · /effort
+=== frame 2 t=645ms after [] D=10 collapsedBlocks=0 rowsFreed=0 verbose=false
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Fable 5.1 with high effort · Claude Max
+  ▘▘ ▝▝    ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/explore-screen-mirror/scratch
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Fable 5.1 0%                                                                                        ● high · /effort
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+=== frame 3 t=2423ms after [key:"/"] D=22 collapsedBlocks=0 rowsFreed=0 verbose=false
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Fable 5.1 with high effort · Claude Max
+  ▘▘ ▝▝    ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/explore-screen-mirror/scratch
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  /add-dir                Add a new working directory
+  /advisor                Let Claude consult a stronger model at key moments
+  /artifacts              Browse your published and shared artifacts
+  /auto-mode-setup        Teach auto mode about your environment, plus optional rule tweaks
+  /autocompact            Set how full the context gets before auto-summarizing
+  /autofix-pr             Monitor and autofix any issues with the current PR
+  /background             Send this session to the background and free the terminal
+  /branch                 Create a branch of the current conversation at this point
+  /btw                    Ask a quick side question without interrupting the main conversation
+  /bug                    Report a bug or share your conversation
+  /cd                     Move this session to a new working directory
+  /chrome                 Open Claude in Chrome settings
+  /clear                  Start a new session with empty context; previous session stays on disk (resumable with
+                          /resume)
+  /color                  Set the prompt bar color for this session
+  /compact                Free up context by summarizing the conversation so far
+  /config                 Open settings
+  /context                Visualize current context usage as a colored grid
+  /copy                   Copy Claude's last response to clipboard (or /copy N for the Nth-latest)
+  /design-login           Authorize design-system access for /design-sync with your claude.ai account
+=== frame 4 t=4676ms after [key:"\u001b"] D=10 collapsedBlocks=0 rowsFreed=0 verbose=false
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Fable 5.1 with high effort · Claude Max
+  ▘▘ ▝▝    ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/explore-screen-mirror/scratch
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Fable 5.1 0%                                                                                        ● high · /effort
+  ⏵⏵ auto mode on (shift+tab to cycle)
+=== frame 5 t=7087ms after [sigterm] D=10 collapsedBlocks=0 rowsFreed=0 verbose=false
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Fable 5.1 with high effort · Claude Max
+  ▘▘ ▝▝    ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/explore-screen-mirror/scratch
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Fable 5.1 0%                                                                                        ● high · /effort
+  ⏵⏵ auto mode on (shift+tab to cycle)
+

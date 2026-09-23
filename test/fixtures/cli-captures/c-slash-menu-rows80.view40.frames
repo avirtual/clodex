@@ -1,0 +1,94 @@
+=== frame 0 t=592ms after [spawn:120x80] D=10 collapsedBlocks=0 rowsFreed=0 verbose=false
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Fable 5.1 with high effort · Claude Max
+  ▘▘ ▝▝    ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/explore-screen-mirror/scratch
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────
+=== frame 1 t=622ms after [spawn:120x80] D=10 collapsedBlocks=0 rowsFreed=0 verbose=false
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Fable 5.1 with high effort · Claude Max
+  ▘▘ ▝▝    ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/explore-screen-mirror/scratch
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents                                                 ● high · /effort
+=== frame 2 t=668ms after [spawn:120x80] D=10 collapsedBlocks=0 rowsFreed=0 verbose=false
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Fable 5.1 with high effort · Claude Max
+  ▘▘ ▝▝    ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/explore-screen-mirror/scratch
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Fable 5.1 0%                                                                                        ● high · /effort
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+=== frame 3 t=2449ms after [key:"/"] D=42 collapsedBlocks=0 rowsFreed=0 verbose=false
+  /add-dir                Add a new working directory
+  /advisor                Let Claude consult a stronger model at key moments
+  /artifacts              Browse your published and shared artifacts
+  /auto-mode-setup        Teach auto mode about your environment, plus optional rule tweaks
+  /autocompact            Set how full the context gets before auto-summarizing
+  /autofix-pr             Monitor and autofix any issues with the current PR
+  /background             Send this session to the background and free the terminal
+  /branch                 Create a branch of the current conversation at this point
+  /btw                    Ask a quick side question without interrupting the main conversation
+  /bug                    Report a bug or share your conversation
+  /cd                     Move this session to a new working directory
+  /chrome                 Open Claude in Chrome settings
+  /clear                  Start a new session with empty context; previous session stays on disk (resumable with
+                          /resume)
+  /color                  Set the prompt bar color for this session
+  /compact                Free up context by summarizing the conversation so far
+  /config                 Open settings
+  /context                Visualize current context usage as a colored grid
+  /copy                   Copy Claude's last response to clipboard (or /copy N for the Nth-latest)
+  /design-login           Authorize design-system access for /design-sync with your claude.ai account
+  /desktop                Continue the current session in Claude Desktop
+  /diff                   View uncommitted changes and per-turn diffs
+  /effort                 Set effort level for model usage
+  /exit                   Exit the CLI
+  /export                 Export the current conversation to a file or clipboard
+  /fast                   Toggle fast mode (Opus 5.5)
+  /feedback               Send feedback to Anthropic or report a bug
+  /focus                  Toggle focus view: just your prompt, summary, and response
+  /fork                   Copy this conversation into a new background session and keep working here
+  /goal                   Set a goal Claude checks before stopping
+  /help                   Show help and available commands
+  /hooks                  View hook configurations for tool events
+  /ide                    Manage IDE integrations and show status
+  /import                 Import config from another AI coding agent
+  /install-github-app     Set up Claude GitHub Actions for a repository
+  /install-slack-app      Install the Claude Slack app
+  /keybindings            Open your keyboard shortcuts file
+  /list-agents            List subagents, teammates, and other Claude sessions you can message
+  /login                  Sign in with your Anthropic account
+  /logout                 Sign out from your Anthropic account
+=== frame 4 t=4700ms after [key:"\u001b"] D=10 collapsedBlocks=0 rowsFreed=0 verbose=false
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Fable 5.1 with high effort · Claude Max
+  ▘▘ ▝▝    ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/explore-screen-mirror/scratch
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Fable 5.1 0%                                                                                        ● high · /effort
+  ⏵⏵ auto mode on (shift+tab to cycle)
+=== frame 5 t=7109ms after [sigterm] D=10 collapsedBlocks=0 rowsFreed=0 verbose=false
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Fable 5.1 with high effort · Claude Max
+  ▘▘ ▝▝    ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/explore-screen-mirror/scratch
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Fable 5.1 0%                                                                                        ● high · /effort
+  ⏵⏵ auto mode on (shift+tab to cycle)
+
