@@ -29,7 +29,7 @@ const DOOR_ACCOUNTS = [
   { label: 'work', configDir: '/home/u/.clodex/accounts/work' },
 ];
 
-function mkDoor(roles, { accounts = DOOR_ACCOUNTS } = {}) {
+function mkDoor(roles, { accounts = DOOR_ACCOUNTS, log = { info() {}, error() {}, warn() {} } } = {}) {
   const home = mkTmpRoot('ipc-team-home-');
   const root = mkTmpRoot('ipc-team-root-');
   const dir = path.join(home, 'teams', 't');
@@ -42,7 +42,7 @@ function mkDoor(roles, { accounts = DOOR_ACCOUNTS } = {}) {
   registerIpcHandlers({
     handle: (ch, fn) => handlers.set(ch, fn),
     on: (ch, fn) => handlers.set(ch, fn),
-    log: { info() {}, error() {}, warn() {} },
+    log,
     loadManifest: tm.loadManifest,
     addRole: tm.addRole,
     setRole: tm.setRole,
@@ -178,6 +178,19 @@ test('t830: team:addRole refuses an unknown account label and mints no role', ()
     assert.strictEqual(res.ok, false, `expected a refusal, got: ${JSON.stringify(res)}`);
     assert.match(res.error, /no account "wrok"/);
     assert.ok(!d.read().runner, 'and the role does not exist');
+  } finally { d.cleanup(); }
+});
+
+test('t1104: team:addRole with no account logs the role line with the literal "account none"', () => {
+  const infos = [];
+  const d = mkDoor({ ...LEAD_ONLY }, { log: { info: (scope, msg) => infos.push(msg), error() {}, warn() {} } });
+  try {
+    const res = d.addRole('runner', { brief: 'b' });
+    assert.strictEqual(res.ok, true, JSON.stringify(res));
+    assert.strictEqual(d.read().runner.account, undefined, 'ENTER: the written role carries no account');
+    const lines = infos.filter((m) => m.startsWith('role "runner" added to team "t" ('));
+    assert.strictEqual(lines.length, 1, JSON.stringify(infos));
+    assert.ok(lines[0].includes('account none'), lines[0]);
   } finally { d.cleanup(); }
 });
 
