@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- Restart: a queued relaunch (menu or `[agent:reboot]`) now also waits for the operator to be quiet, no terminal keystroke for 10 seconds, so it never drops the windows mid-sentence.
+- Restart: a queued relaunch (menu or `[agent:reboot]`) now also waits for the operator to be quiet: no terminal keystroke for 10 seconds, then the usual 10-second all-idle window, so it never drops the windows mid-sentence.
 - Bash guard: every Claude seat is now refused a pattern kill (pkill, killall, xargs kill, kill of a process group or -1) with the pid-first correction in its own context; kill by pid stays allowed.
 - Tests: the wirescope supervisor's adoption and restart rows no longer spawn listeners or shell out to lsof and ps; they drive canned output through an injected exec dep, and the one real-listener smoke test binds port 0.
 
