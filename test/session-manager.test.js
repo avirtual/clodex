@@ -3344,7 +3344,7 @@ test('team-retire: a discarded seat LIVING IN its tree is killed first, and the 
   m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: made.path });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
   m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
-  await new Promise((r) => setTimeout(r, 200));
+  await waitFor(() => order.length === 2 && !fsReal.existsSync(made.path));
 
   assert.deepStrictEqual(order, ['kill', 'remove'],
     'the seat is killed BEFORE the tree is removed — reversed, git is asked to remove a checkout a live pty holds');
@@ -3509,7 +3509,7 @@ test('team-retire: a tree that is GONE says so, and never claims uncommitted wor
   m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
   m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
-  await new Promise((r) => setTimeout(r, 100));
+  await waitFor(() => hasPending(PENDING_DIR, 'lead'));
 
   assert.deepStrictEqual(archived, ['team-runner'], 'behaviour is unchanged: still the conservative archive');
   assert.deepStrictEqual(killed, [], 'and never killed');
