@@ -1,0 +1,40 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Fable 5.1 with high effort · Claude Max
+  ▘▘ ▝▝    ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/explore-screen-mirror/scratch
+
+
+❯ /help 
+  ⎿  Help dialog dismissed
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Fable 5.1 0%                                                                                        ● high · /effort
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+
+Resume this session with:
+claude --resume 51d2c782-8b43-4360-88a9-16cd324f8f51
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
