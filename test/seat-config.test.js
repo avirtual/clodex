@@ -159,6 +159,31 @@ test('t1095: newestMuseTranscript picks the newest session.jsonl by mtime at or 
   assert.strictEqual(newestMuseTranscript(deps, path.join(root, 'nope'), 0, []), null);
 });
 
+test('t1104: newestMuseTranscript gives sinceMs 1 s of slack and treats untilMs as an exclusive upper bound', () => {
+  const root = mkTmpRoot('clx-seatcfg-');
+  const at = (sid) => path.join(root, 'muse', 'sessions', '2031', '02', '01', sid, 'session.jsonl');
+  const write = (p, mtimeMs) => {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, '{"record_type":"session.opened.observed"}\n');
+    fs.utimesSync(p, mtimeMs / 1000, mtimeMs / 1000);
+    return p;
+  };
+  const since = 1_800_000_000_000;
+  const slack = write(at('slack'), 1_799_999_999_500);
+  const tooOld = write(at('tooold'), 1_799_999_998_500);
+  assert.strictEqual(newestMuseTranscript(deps, root, since, []), slack, 'mtime 500 ms before sinceMs is a candidate');
+  assert.strictEqual(newestMuseTranscript(deps, root, since, [slack]), null, 'mtime 1500 ms before sinceMs is not');
+  const later = write(at('later'), since + 3000);
+  const atUntil = write(at('atuntil'), since + 2000);
+  const before = write(at('before'), since + 1999);
+  assert.strictEqual(newestMuseTranscript(deps, root, since, []), later, 'no untilMs: the newest wins');
+  assert.strictEqual(newestMuseTranscript(deps, root, since, [], since + 2000), before, 'mtime at or after untilMs is excluded');
+  assert.strictEqual(newestMuseTranscript(deps, root, since, [before], since + 2000), slack);
+  assert.strictEqual(newestMuseTranscript(deps, root, since, [], null), later, 'a null untilMs is no bound');
+  assert.notStrictEqual(newestMuseTranscript(deps, root, since, [], since + 2000), atUntil);
+  assert.strictEqual(newestMuseTranscript(deps, root, since, [before, slack], since + 2000), null, `${tooOld} is below the slack and ${atUntil} at the bound: nothing left`);
+});
+
 test('museRegistryFor: the record whose process_generation_hint names the pid, else one whose pid field does, else null', () => {
   const root = mkTmpRoot('clx-seatcfg-');
   const dir = path.join(root, 'muse', 'runtime', 'muse', 'sessions');

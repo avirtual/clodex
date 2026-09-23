@@ -475,6 +475,27 @@ test('t1095: fallback skips a session.jsonl another live muse seat already links
   } finally { await f.stop('a'); await f.stop('b'); }
 });
 
+test('t1104: two fresh seats — a file newer than the later seat\'s spawn is not the earlier seat\'s; a resolves deadline, b takes it', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const f = mkMuse();
+  f.m._museLinkPollMs = 250;
+  await f.create('a');
+  await f.create('b');
+  try {
+    const a = f.m.sessions.get('a');
+    const b = f.m.sessions.get('b');
+    b.spawnedAt = a.spawnedAt + 100;
+    const only = setMtime(writeTranscript(f.dataHome, SID), b.spawnedAt + 2000);
+    assert.ok(fsReal.statSync(only).mtimeMs > b.spawnedAt, 'ENTER: the only file postdates b\'s spawn');
+    t.mock.timers.tick(60000);
+    assert.strictEqual(await a._museLinkDone, 'deadline');
+    assert.strictEqual(await b._museLinkDone, 'fallback');
+    assert.throws(() => fsReal.lstatSync(f.link('a')), /ENOENT/, 'a links nothing: the file may be b\'s');
+    assert.strictEqual(fsReal.readlinkSync(f.link('b')), only);
+    assert.deepStrictEqual(f.warns, ['a: no session registered for pid 999 within 60000 ms — transcript link pending']);
+  } finally { await f.stop('a'); await f.stop('b'); }
+});
+
 test('t1095: fallback — a session.jsonl older than the spawn is no candidate; the deadline warns and links nothing', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   const f = mkMuse();

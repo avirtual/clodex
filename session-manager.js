@@ -2444,11 +2444,13 @@ function createSessionManager(deps) {
             return;
           }
           const taken = [];
+          let until = null;
           for (const [other, s] of this.sessions) {
             if (other === name || s.agentType !== 'muse') continue;
+            if (s.spawnedAt > session.spawnedAt && (until === null || s.spawnedAt < until)) until = s.spawnedAt;
             try { taken.push(fs.readlinkSync(pathFor(REGISTRY_DIR, other, 'transcript'))); } catch {}
           }
-          const fallback = newestMuseTranscript({ fs, path }, museData, session.spawnedAt, taken);
+          const fallback = newestMuseTranscript({ fs, path }, museData, session.spawnedAt, taken, until);
           if (fallback) {
             try {
               linkTranscript({ fs }, pathFor(REGISTRY_DIR, name, 'transcript'), fallback);

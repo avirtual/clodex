@@ -82,7 +82,7 @@ function findMuseTranscript(deps, dataHome, sid) {
   return null;
 }
 
-function newestMuseTranscript(deps, dataHome, sinceMs, excludePaths) {
+function newestMuseTranscript(deps, dataHome, sinceMs, excludePaths, untilMs) {
   const { fs, path } = deps;
   const root = path.join(dataHome, 'muse', 'sessions');
   const skip = new Set(excludePaths || []);
@@ -95,7 +95,8 @@ function newestMuseTranscript(deps, dataHome, sinceMs, excludePaths) {
           if (skip.has(p)) continue;
           let st;
           try { st = fs.statSync(p); } catch { continue; }
-          if (!st.isFile() || st.mtimeMs < sinceMs) continue;
+          if (!st.isFile() || st.mtimeMs < sinceMs - 1000) continue;
+          if (untilMs != null && st.mtimeMs >= untilMs) continue;
           if (!best || st.mtimeMs > best.mtimeMs) best = { path: p, mtimeMs: st.mtimeMs };
         }
       }

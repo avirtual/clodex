@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Muse seats: two seats spawned within a minute against a data home that refuses the registry no longer link each other's transcript at the deadline; the transcript-age filter tolerates 1-second filesystem timestamps.
 - Spill receipts: the note an agent gets after a long intent body is cut from its transcript now says the body it wrote was removed to save context, before saying where it was filed — so an agent's own history shows that an action was typed there, instead of a confirmation that appeared on its own.
 - Muse seats: a turn that ends without a reply (the agent stayed silent) now returns the seat to idle — before, it stayed 'working' for good, which parked every dm to it and blocked Restart When Idle and `[agent:reboot]` for the whole app.
 - Muse seats: a prompt is one request instead of three — the seat overlay turns off the workflow trigger and the reminder roster, and drops the workflow tools from the catalog.
