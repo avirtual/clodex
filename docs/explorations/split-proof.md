@@ -2,7 +2,7 @@
 
 This is the spike for ticket 1 of `transcript-view.md` §8. It answers the flip question on Claude Code **2.1.281**.
 
-**Answer: YES, the anchor is safe.** The anchor matched in all 27 captures where the CLI shows only the composer. It matched in none of the 19 captures where the CLI shows a dialog or a panel. In the live run, the strip never covered a dialog.
+**Answer: YES, the anchor is safe on the captured matrix** (see "Not exercised" for what was not captured). The anchor matched in all 25 captures where the CLI shows only the composer. It matched in none of the 21 captures where the CLI shows a dialog or a panel. In the live run, the strip never covered a dialog.
 
 One caveat for ticket 3. The row above the rule, which holds the spinner, the in-flight tool status and the API-retry notice, is hidden while the tab is split. The pane's working line has to carry it.
 
@@ -51,10 +51,10 @@ Each cell reads **anchor row / cursor-up excursion / highest row the cursor-up r
 | edit-diff (Edit permission) | none / 12 / 14 | none / 10 / 14 | none / 10 / 14 | full |
 | plan-approve (exit plan mode) | none / 13 / −70 | none / 11 / −36 | none / 9 / −13 | full |
 
-Fixture count: **15 per width at 60 and 200 columns, and 16 at 100** (api-retry). That is 46 in total, with 27 split and 19 full.
+Fixture count: **15 per width at 60 and 200 columns, and 16 at 100** (api-retry). That is 46 in total, with 25 split and 21 full.
 
 What the matrix shows:
-- **Every dialog removes the composer.** It does not draw beside it. Permission, Edit diff, plan approval, trust, `/help`, `/model` and Ctrl-O each draw their own full-width rule, followed by a title row (` Bash command`, ` Edit file`, ` Ready to code?`, `  Help`, `  Select model`, `  Showing detailed transcript`) or by nothing. No rule in any of the 19 is followed by a `❯` row. The trust prompt's `❯ No, exit` sits 14 rows below its rule, and the numbered options' `❯ 1. Yes` is indented by one space. Neither reaches the composer rule.
+- **Every dialog removes the composer.** It does not draw beside it. Permission, Edit diff, plan approval, trust, `/help`, `/model` and Ctrl-O each draw their own full-width rule, followed by a title row (` Bash command`, ` Edit file`, ` Ready to code?`, `  Help`, `  Select model`, `  Showing detailed transcript`) or by nothing. No rule in any of the 21 is followed by a `❯` row. The trust prompt's `❯ No, exit` sits 14 rows below its rule, and the numbered options' `❯ 1. Yes` is indented by one space. Neither reaches the composer rule.
 - **The composer row varies**, and the existing rules already accept every variant seen:
   - `❯` + U+00A0 when empty.
   - A placeholder `❯ Try "…"` on a fresh seat.
@@ -108,3 +108,4 @@ Run 2 prompt: `Run seq 1 30, then run seq 1 12, then run date, then use the Edit
 
 - The app's own wiring was not driven live. That covers the `createTerminal` call site, the preload/IPC path of `transcript:pull`, and the Preferences checkbox. It is covered by the api-contract, settings and free-identifier tests. The harness runs the same view module and reader, but not the app's window.
 - `@` file completion, AskUserQuestion, MCP elicitation, a multi-row draft, and the `/tui fullscreen` renderer were not captured. The fullscreen renderer is on the alternate buffer, and the view declines that by buffer type.
+- The spike leaks one `fs.watch` per Claude seat: `transcriptSpike` drops a watcher only when a pull finds the session gone or non-Claude, so a closed tab or a toggled-off pane keeps its watcher until the app quits.
