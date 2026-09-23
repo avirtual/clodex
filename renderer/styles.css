@@ -5875,3 +5875,29 @@ body.web-frontend #sidebar-header {
 .inbox-ago { font-size: var(--fs-xs); color: var(--text-tertiary); }
 .inbox-body { font-size: var(--fs-sm); color: var(--text-secondary); }
 .inbox-load-older { border-color: var(--border-strong); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--fs-sm); }
+
+.terminal-wrapper.live-split {
+  overflow: hidden;
+}
+
+.transcript-pane {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  right: 4px;
+  margin: 0;
+  padding: 6px 10px;
+  box-sizing: border-box;
+  overflow: auto;
+  z-index: 2;
+  background: var(--bg);
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  font: 12px/1.45 'SF Mono', 'Menlo', 'Monaco', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.transcript-pane[hidden] {
+  display: none;
+}

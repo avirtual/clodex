@@ -354,6 +354,7 @@ clodex-voicedang-
 clodex-voicesym-
 clodex-voicesymd-
 clodex-voicew-
+clodex-tspike-
 clodex-watcher-
 clodex-web-register-
 clodex-wl-

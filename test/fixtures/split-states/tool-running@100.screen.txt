@@ -1,0 +1,40 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Opus 5.5 (1M context) · Claude Max
+  ▘▘ ▝▝    /…/682adbd3-6bba-4cca-9ad8-d9e8ed7727db/scratchpad/cap/rest-100-SLtRo2
+
+
+❯ Run this exact bash command and nothing else: sleep 15                                            
+
+  Bash(sleep 15)
+  ⎿  Running…
+
+✳ Enchanting… (6s · ↓ 14 tokens)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · esc to interrupt · ← for agents                            ◐ medium · /effort
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

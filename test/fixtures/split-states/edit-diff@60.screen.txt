@@ -1,0 +1,40 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Opus 5.5 (1M context) · Claude Max
+  ▘▘ ▝▝    /…/scratchpad/cap/rest-60-nrARFS
+
+
+❯ Run this exact bash command and nothing else: sleep 15    
+
+⏺ Bash(sleep 15)
+  ⎿  (No output)
+
+⏺ I ran sleep 15. It exited normally and printed nothing.
+
+✻ Baked for 19s · done 1:47 AM
+
+❯ Use the Edit tool to replace the word alpha with beta in  
+  edit-me.txt                                               
+  
+  Read 1 file (ctrl+o to expand)
+
+⏺ Update(edit-me.txt)
+
+────────────────────────────────────────────────────────────
+ Edit file
+ edit-me.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ 1 -alpha                                                   
+ 1 +beta                                                    
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to make this edit to edit-me.txt?
+ ❯ 1. Yes
+   2. Yes, and switch to accept edits (auto-approve file
+      edits and common file commands) for this session
+      (shift+tab)
+   3. No
+
+ Esc to cancel · Tab to amend
+
+
+
+

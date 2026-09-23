@@ -1,0 +1,40 @@
+  improved lock design, and Leonardo da Vinci is often credited with the mitre gate, whose angled leaves press together under water pressure. In the seventeenth century France finished the Canal du
+  Midi, which crosses the southern hills to link the Atlantic with the Mediterranean. It needed reservoirs, tunnels, aqueducts and dozens of locks, and people saw it as a triumph of state planning and
+  engineering.
+
+  The great age of canals came with the Industrial Revolution in Britain. In 1761 the Duke of Bridgewater opened a canal to carry coal from his mines to Manchester, and the price of coal in the city
+  dropped sharply. Investors noticed, and a period called "canal mania" followed. Over the next decades a dense network spread across England, linking factories, mines, ports and towns. A horse
+  pulling a barge could move many times the load it could drag on a rough road. Canals therefore cut the cost of bulk goods such as coal, clay, iron and grain, and fed the rapid growth of industry.
+
+  The United States followed. The Erie Canal opened in 1825 and joined the Hudson River to the Great Lakes. It turned New York City into the country's main commercial port and opened the Midwest to
+  settlement and trade. Its success set off a wave of state-funded canals, although many never paid for themselves.
+
+  By the middle of the nineteenth century the railways were overtaking canals in speed and flexibility. Many smaller canals declined, were abandoned or were bought up by railway companies. Ship
+  canals, however, were only getting started. The Suez Canal opened in 1869 and greatly shortened the voyage between Europe and Asia. The Panama Canal opened in 1914 after a disastrous French attempt
+  and a huge American effort, and it linked the Atlantic and Pacific. Both reshaped world trade and became the focus of strategic and political struggles.
+
+  Today canals do many jobs. Some still carry heavy freight, especially in Europe and China. Others have become places for recreation, heritage and urban renewal: old towpaths are now walking trails,
+  and warehouses have been turned into homes. Their history shows how people have reshaped landscapes to overcome distance and connect economies.
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Ready to code?
+
+ Here is Claude's plan:
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ 1. Use the Write tool to create hello.txt in the working directory with the content hi.
+ 2. Verify by reading hello.txt back and confirming it contains hi.
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Claude has written up a plan and is ready to execute. Would you like to proceed?
+
+ ❯ 1. Yes, and use auto mode
+   2. Yes, manually approve edits
+   3. Tell Claude what to change
+      shift+tab to approve with this feedback
+
+ ctrl+g to edit in Vim · ~/.clodex/accounts/opsguru/plans/without-using-any-tools-deep-hippo.md
+

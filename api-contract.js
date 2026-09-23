@@ -136,6 +136,7 @@ const API_CONTRACT = [
   // The answer comes from the same main-side draft state the inject queue gates
   // on, so focus and delivery cannot disagree about who is typing.
   { name: 'draftOpen', kind: 'invoke', channel: 'session:draftOpen' },
+  { name: 'transcriptPull', kind: 'invoke', channel: 'transcript:pull' },
   { name: 'writeToSession', kind: 'send', channel: 'pty-input' },
   { name: 'selectDirectory', kind: 'invoke', channel: 'dialog:selectDirectory' },
   { name: 'confirmKill', kind: 'invoke', channel: 'dialog:confirmKill' },

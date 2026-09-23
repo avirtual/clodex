@@ -1,0 +1,40 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Opus 5.5 (1M context) · Claude Max
+  ▘▘ ▝▝    /private/tmp/claude-501/-Users-bogdan-projects-tmux-wb-wrap-ui-t1122-spike-composer-anchored-live-strip-over/682adbd3-6bba-4cca-9ad8-d9e8ed7727db/scratchpad/cap/rest-200-doGNj2
+
+
+❯ Run this exact bash command and nothing else: sleep 15                                                                                                                                                
+
+⏺ Bash(sleep 15)
+  ⎿  Running…
+
+✽ Stewing… (5s · ↓ 14 tokens)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · esc to interrupt · ← for agents                                                                                                                                ◐ medium · /effort
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

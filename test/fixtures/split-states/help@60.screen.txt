@@ -1,0 +1,40 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Opus 5.5 (1M context) · Claude Max
+  ▘▘ ▝▝    /…/scratchpad/cap/main-60-SB2TxB
+
+
+❯ /help                                                     
+
+────────────────────────────────────────────────────────────
+  Help  General   Commands   Custom commands
+
+  Claude understands your codebase, makes edits with your
+  permission, and executes commands — right from your
+  terminal.
+  Shortcuts
+  ! for shell      double tap esc to      ctrl + shift + _
+  mode             clear input            to undo
+  / for commands   shift + tab to         ctrl + z to
+  @ for file       auto-accept edits      suspend
+  paths            ctrl + o for verbose   ctrl + v to
+  /btw for side    output                 paste images
+  question         ctrl + t to toggle     opt + p to
+                   tasks                  switch model
+                   shift + ⏎ for newline  ctrl + s to
+                                          stash prompt
+                                          ctrl + g to edit
+                                          in $EDITOR
+                                          /keybindings to
+                                          customize
+
+  For more help: https://code.claude.com/docs/en/overview
+
+  Esc to cancel
+
+
+
+
+
+
+
+

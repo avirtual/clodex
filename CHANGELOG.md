@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Experimental: Preferences ▸ Appearance ▸ "Transcript pane" renders a Claude seat's conversation from its transcript above a live strip of the terminal from the composer down; off by default, desktop only.
 
 - Spill: ticket hands and cold reviewers get no expanded example bodies; every long intent body of a loop-minted seat renders as the stand-in, since those seats write their long bodies at the end of their life.
 - Terminal: Preferences ▸ Appearance gains a GPU-accelerated terminal (WebGL) option, off by default; a lost or refused WebGL context falls back to the DOM renderer silently.

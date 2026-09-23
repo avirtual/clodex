@@ -30,6 +30,7 @@ const { feedSince } = require('./subagent-ring');
 const peerImport = require('./peer-import');
 const { wireSeatFor } = require('./peer-shell');
 const { readBashConsole, RECORD_NAME_RE } = require('./bash-console');
+const { createTranscriptSpikeReader } = require('./transcript-spike');
 // The shipped thresholds, read from the module that DECIDES with them rather
 // than restated here: Preferences shows them as the values in force when the
 // operator has set nothing, and a second copy would show a number the reminder
@@ -798,6 +799,13 @@ function registerIpcHandlers(deps) {
     return { ok: true, open: !!s && !s._dead && isDraftOpen(s) };
   });
 
+  const transcriptSpike = createTranscriptSpikeReader({ linkPathFor: (name) => pathFor(REGISTRY_DIR, name, 'transcript') });
+  handle('transcript:pull', (_e, name) => {
+    const s = manager.sessions.get(name);
+    if (!s || s._dead || s.agentType !== 'claude') { transcriptSpike.drop(name); return { ok: false, reason: 'not-claude' }; }
+    return transcriptSpike.pull(name);
+  });
+
   handle('proxy:snapshot', (_e, name) => proxyPoller.snapshot(name));
 
   // The account plan quota a window can show before any turn is forwarded.
@@ -1200,6 +1208,7 @@ function registerIpcHandlers(deps) {
       discoverOnStartup: s.discoverOnStartup,
       theme: s.theme,
       terminalWebgl: s.terminalWebgl,
+      transcriptPane: s.transcriptPane,
       sidebarWidth: s.sidebarWidth,
       remoteEnabled: s.remoteEnabled,
       remotePort: s.remotePort,
