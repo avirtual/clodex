@@ -207,6 +207,18 @@ test('m2 nit: a turnStart landing on pending text flushes the reply FIRST, then 
   assert.deepStrictEqual(edges, [['thinking', false], ['idle', false], ['thinking', false]]);
 });
 
+test('a silent Muse turn: started then terminal completed with no reply returns the seat to idle', () => {
+  const { seen, edges } = runWatcher([MUSE_PROMPT, MUSE_STARTED, MUSE_TERMINAL_COMPLETED], readerFor('muse'));
+  assert.deepStrictEqual(seen, []);
+  assert.deepStrictEqual(edges, [['thinking', false], ['idle', true]]);
+});
+
+test('a Codex task_complete with no pending text emits no activity', () => {
+  const { seen, edges } = runWatcher([{ type: 'event_msg', payload: { type: 'task_complete' } }], readerFor('codex'));
+  assert.deepStrictEqual(seen, []);
+  assert.deepStrictEqual(edges, []);
+});
+
 test('m2 nit: a JSON line that parses to null or a number is skipped, and the tape after it is still read', () => {
   const dir = mkTmpRoot('clodex-watcher-');
   const file = path.join(dir, 'transcript.jsonl');

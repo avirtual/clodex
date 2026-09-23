@@ -30,6 +30,12 @@ message and its `terminal` sit ~10 textless run events
 `task_stream_linked`, …), which is why every run event other than the three
 named is `inert` — a Claude-style "textless flushes" rule would end every Muse
 turn with `turnEnd:false`.
+A Muse run may end with NO assistant text at all: measured 2026-09-23 on the
+live seat `muse` (1.3.0), runs 21:42:34→21:43:00 and 21:43:15→21:43:32 UTC each
+recorded `started` … `terminal completed` with no `assistant_message_committed`.
+Before the watcher's textless `turnEnd` returned a thinking seat to idle, such a
+run pinned the seat "working" for 3 h, parked every dm to it, and had three
+`[agent:reboot]` requests abandoned as "sessions never settled".
 
 ## museExpand
 

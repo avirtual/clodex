@@ -215,6 +215,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
             if (this._pendingIsReply && c.turnEnd) this._pendingTurnEnd = true;
             if (this._pendingText && c.interrupted) this._pendingInterrupted = true;
             if (this._pendingText) this._flushPending();
+            else if (c.turnEnd && this._activityState === 'thinking') this._setActivity('idle', true);
           }
           if (c.turnStart) this._setActivity('thinking');
         }
