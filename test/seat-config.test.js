@@ -215,13 +215,16 @@ test('t1105: oldestMuseTranscript keys on the real creation time, not the last w
   const newerSt = fs.statSync(newerBorn);
   if (!(olderSt.birthtimeMs > 0)) { t.skip('this filesystem reports no birthtime; the mtime fallback is pinned by the t1095 test'); return; }
   assert.ok(olderSt.birthtimeMs < newerSt.birthtimeMs, 'ENTER: the first file written was born first');
+  assert.ok(olderSt.mtimeMs < newerSt.mtimeMs, 'ENTER: and written first');
+  assert.strictEqual(oldestMuseTranscript(deps, root, since, []), olderBorn, 'the older-born file wins, not the newest-written one');
   fs.utimesSync(olderBorn, (newerSt.mtimeMs + 60000) / 1000, (newerSt.mtimeMs + 60000) / 1000);
   assert.ok(fs.statSync(olderBorn).mtimeMs > newerSt.mtimeMs, 'ENTER: the older-born file now has the newer mtime');
   assert.strictEqual(fs.statSync(olderBorn).birthtimeMs, olderSt.birthtimeMs, 'ENTER: a later mtime leaves the birthtime alone');
-  assert.strictEqual(oldestMuseTranscript(deps, root, since, []), olderBorn, 'the older-born file wins over the newer-written one');
+  assert.strictEqual(oldestMuseTranscript(deps, root, since, []), olderBorn, 'the older-born file still wins with the newer mtime');
   assert.strictEqual(oldestMuseTranscript(deps, root, since, [olderBorn]), newerBorn);
   assert.strictEqual(oldestMuseTranscript(deps, root, since, [olderBorn], newerSt.birthtimeMs + 500), null, 'born 500 ms before untilMs is not a candidate');
   assert.strictEqual(oldestMuseTranscript(deps, root, since, [olderBorn], newerSt.birthtimeMs + 1500), newerBorn, 'born 1500 ms before untilMs is');
+  assert.strictEqual(oldestMuseTranscript(deps, root, since, [], newerSt.birthtimeMs + 1500), olderBorn, 'the bound reads the creation time: a last write past untilMs does not exclude');
 });
 
 test('museRegistryFor: the record whose process_generation_hint names the pid, else one whose pid field does, else null', () => {
