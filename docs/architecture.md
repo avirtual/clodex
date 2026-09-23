@@ -1481,6 +1481,10 @@ and are not, which is why the judgement worth testing is pushed down here.
   injection from main (`session:draftOpen` → proxy-util's `isDraftOpen`) — the
   predicate the inject queue already gates on, never a renderer-local guess at
   who is typing.
+- **term-webgl.js** — `loadWebglIfEnabled`: the one loader for the opt-in
+  `@xterm/addon-webgl` renderer, shared by session terminals (renderer.js) and
+  the drawer Terminal tab (term-tab.js); a refused or lost context leaves the
+  DOM renderer in place.
 - **intent-marks.js** — classify rendered terminal rows as a `fire` intent, an
   `inert` one (intent-shaped, will not fire), or unmarked (escaped/fenced).
   Uses intent-scanner's own grammar, never a private regex: a mark is believed,

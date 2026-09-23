@@ -17,12 +17,12 @@ function openStores(dir) {
 }
 
 test('terminalWebgl defaults to false', () => {
-  const dir = mkTmpRoot('clodex-uisettings-webgl-');
+  const dir = mkTmpRoot('clodex-uisettings-');
   assert.strictEqual(openStores(dir).uiSettings.get().terminalWebgl, false);
 });
 
 test('terminalWebgl survives set() then get() and a reload from disk', () => {
-  const dir = mkTmpRoot('clodex-uisettings-webgl-');
+  const dir = mkTmpRoot('clodex-uisettings-');
   const ui = openStores(dir).uiSettings;
   ui.set({ terminalWebgl: true });
   assert.strictEqual(ui.get().terminalWebgl, true);
@@ -32,7 +32,7 @@ test('terminalWebgl survives set() then get() and a reload from disk', () => {
 });
 
 test('a non-boolean terminalWebgl on disk normalises to false', () => {
-  const dir = mkTmpRoot('clodex-uisettings-webgl-');
+  const dir = mkTmpRoot('clodex-uisettings-');
   fs.writeFileSync(path.join(dir, 'ui-settings.json'), JSON.stringify({ terminalWebgl: 'yes' }), { mode: 0o600 });
   assert.strictEqual(openStores(dir).uiSettings.get().terminalWebgl, false);
 });
