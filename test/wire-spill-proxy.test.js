@@ -9,7 +9,7 @@ const zlib = require('zlib');
 
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { WireProxy } = require('../wire/proxy');
-const { mimicKindOf, spillSize, SPILLED_BODY } = require('../intent-spill');
+const { mimicKindOf, spillSize, SPILLED_BODY, SPILLED_BODY_EPHEMERAL, writeSpill } = require('../intent-spill');
 
 function filed(root, spill) {
   return `${spillSize(spill.bytes)}${spill.verb === 'prose' ? ' of prose' : ''} filed at ${path.join(root, 'spill', 'tester', `${spill.id}.md`)}`;
@@ -765,6 +765,36 @@ test('the two halves compose: the stub the tee writes is what cutSpillStubs rend
     assert.deepEqual(upstream.messages[1].content, [{ type: 'text', text: `[agent:dm bob]\n${BIG}\n[agent:end]\n` }],
       'the oldest stub is carried as the intent as emitted — never the stub');
     assert.ok(!up.seen.requests[1].body.toString('utf8').includes('@spill:'));
+  });
+});
+
+test('t1119: a seat registered with examples: 0 gets the ephemeral stand-in for its oldest stub, the rest the short note, nothing expanded', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({}, async (proxy, up) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.done'], examples: 0 } });
+    assert.equal(proxy.spillOf('tester').examples, 0);
+    const events = collect(proxy, ['spill-cut', 'stream-end']);
+    const ids = ['one', 'two'].map((n) => ({ n, id: writeSpill(root, 'tester', `${n} ${BIG}`) }));
+    assert.equal(ids.every((x) => /^[0-9a-f]{16}$/.test(x.id)), true, 'ENTER: both bodies are filed');
+    const stubOf = (x) => `[agent:task done t1] ${filed(root, { id: x.id, bytes: Buffer.byteLength(`${x.n} ${BIG}`), verb: 'task.done' })}\n[agent:end]\n`;
+    const body = makeBody({
+      messages: [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: [{ type: 'text', text: stubOf(ids[0]) }] },
+        { role: 'user', content: 'next' },
+        { role: 'assistant', content: [{ type: 'text', text: stubOf(ids[1]) }] },
+        { role: 'user', content: 'again' },
+      ],
+    });
+    await request(proxy.port, '/agent/tester/v1/messages', body);
+    assert.ok(await whenEvent(events, 'stream-end', 1));
+    assert.equal(events['spill-cut'].length, 1, 'ENTER: the editor ran on the request');
+    const upstream = JSON.parse(up.seen.requests[0].body.toString('utf8'));
+    assert.deepEqual(upstream.messages[1].content, [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_BODY_EPHEMERAL}\n[agent:end]\n` }]);
+    assert.deepEqual(upstream.messages[3].content, [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_BODY}\n[agent:end]\n` }]);    for (const bad of [-1, 1.5, '0', null, undefined]) {
+      proxy.registerAgent('tester', { spill: { root, verbs: ['task.done'], examples: bad } });
+      assert.equal(proxy.spillOf('tester').examples, 2, `examples ${String(bad)} falls back to 2`);
+    }
   });
 });
 

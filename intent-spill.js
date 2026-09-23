@@ -14,6 +14,7 @@ const SNAPSHOT_MAX_BYTES = 4096;
 const SPILL_FILLER = '[Runtime note: action text omitted from retained history.]';
 const SPILLED_BODY = '[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]';
 const SPILLED_BODY_FIRST = '[Runtime note: Clodex carries your two oldest long intent bodies in full as examples and replaces later ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]';
+const SPILLED_BODY_EPHEMERAL = '[Runtime note: Clodex filed this body in full and carries none of your long intent bodies in the transcript; every new intent still needs its complete body; never write this note.]';
 
 const SPILL_VERBS = new Set([
   'task.add', 'task.respec', 'task.reject', 'task.done',
@@ -138,6 +139,7 @@ function spilledBodyOf(body) {
   const last = lines[lines.length - 1].trim();
   if (last === SPILLED_BODY) return SPILLED_BODY;
   if (last === SPILLED_BODY_FIRST) return SPILLED_BODY_FIRST;
+  if (last === SPILLED_BODY_EPHEMERAL) return SPILLED_BODY_EPHEMERAL;
   return null;
 }
 
@@ -155,7 +157,7 @@ function mimicKindOf(line) {
   if (RECEIPT_RE.test(t)) return 'intent';
   if (TAIL_RECEIPT_RE.test(t)) return 'prose';
   if (t === SPILL_FILLER) return 'filler';
-  if (t === SPILLED_BODY || t === SPILLED_BODY_FIRST) return 'spilled';
+  if (t === SPILLED_BODY || t === SPILLED_BODY_FIRST || t === SPILLED_BODY_EPHEMERAL) return 'spilled';
   if (pointerOf(t) !== null) return 'pointer';
   const m = HEAD_RE.exec(t);
   if (m && pointerOf(t.slice(m[0].length).trim()) !== null) return 'pointer';
@@ -232,6 +234,7 @@ module.exports = {
   SPILL_FILLER,
   SPILLED_BODY,
   SPILLED_BODY_FIRST,
+  SPILLED_BODY_EPHEMERAL,
   SPILL_VERBS,
   ID_RE,
   AGENT_RE,

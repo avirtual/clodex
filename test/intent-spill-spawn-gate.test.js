@@ -184,3 +184,36 @@ test('a seat that really gated the inbox note off keeps it off', async () => {
     assert.ok(!h.prompts[0].includes('[agent:shout] message'));
   } finally { h.stop('seat'); }
 });
+
+function spillShape(spill) {
+  return { ...spill, verbs: [...spill.verbs].sort(), turnInjected: typeof spill.turnInjected };
+}
+
+test('a loop-minted seat (persisted ephemeral: true) registers spill with examples: 0', async () => {
+  const h = mkManager({ intentSpill: 'on' });
+  try {
+    h.persistence.upsert({ name: 'seat', ephemeral: true });
+    await spawn(h.m, 'seat');
+    assert.equal(h.registered.length, 1, 'ENTER: the spawn reached the wire registration');
+    assert.deepStrictEqual(spillShape(h.registered[0].spill), {
+      root: h.root,
+      verbs: ['dm', 'shout', 'task.add', 'task.done', 'task.reject', 'task.respec'],
+      turnInjected: 'function',
+      examples: 0,
+    });
+  } finally { h.stop('seat'); }
+});
+
+test('a standing seat (no ephemeral record) registers spill with examples: 2', async () => {
+  const h = mkManager({ intentSpill: 'on' });
+  try {
+    await spawn(h.m, 'seat');
+    assert.equal(h.registered.length, 1, 'ENTER: the spawn reached the wire registration');
+    assert.deepStrictEqual(spillShape(h.registered[0].spill), {
+      root: h.root,
+      verbs: ['dm', 'shout', 'task.add', 'task.done', 'task.reject', 'task.respec'],
+      turnInjected: 'function',
+      examples: 2,
+    });
+  } finally { h.stop('seat'); }
+});

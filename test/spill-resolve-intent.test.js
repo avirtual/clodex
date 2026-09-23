@@ -929,6 +929,34 @@ test('t1111: the long runtime note typed as a body is bounced exactly like the s
   }
 });
 
+test('t1119: the ephemeral runtime note typed as a body is bounced exactly like the other two — one bounce, nothing dispatched', async () => {
+  const { SPILLED_BODY_EPHEMERAL, mimicKindOf, spilledBodyOf, spillMimicBounce } = require('../intent-spill');
+  assert.strictEqual(mimicKindOf(SPILLED_BODY_EPHEMERAL), 'spilled');
+  assert.strictEqual(spilledBodyOf(`Title\n${SPILLED_BODY_EPHEMERAL}\n`), SPILLED_BODY_EPHEMERAL);
+  assert.strictEqual(spillMimicBounce({ type: 'dm', target: 'bob', urgent: false, body: SPILLED_BODY_EPHEMERAL }, SPILLED_BODY_EPHEMERAL),
+    '[agent] Not executed: your `dm` carried, where the body belongs, this line you did not write:\n'
+    + '`[Runtime note: Clodex filed this body in full and carries none of your long intent bodies in the transcript; every new intent still needs its complete body; never write this note.]`\n'
+    + "That line is a runtime note, Clodex's transcript rendering of a body you wrote earlier (it replaces the text to save context). "
+    + 'It is never typed by you, and nothing was saved, sent or filed.\n'
+    + 'Emit the complete intent again with the body written out in full:\n'
+    + '\\[agent:dm bob]\n'
+    + '<the full body, written out>\n'
+    + '\\[agent:end]');
+  for (const note of [SPILLED_BODY_EPHEMERAL]) {
+    const h = mkH();
+    const rows = [];
+    h.m._shadowLog = (row) => rows.push(row);
+    await h.m._handleIntent('lead', { type: 'dm', target: 'bob', body: `Title\n${note}`, reqId: 'r1' });
+    await h.m._handleIntent('lead', { type: 'dm', target: 'bob', body: `Title\n${note}`, reqId: 'r1' });
+    assert.deepStrictEqual(h.dms, [], 'nothing delivered');
+    assert.deepStrictEqual(rows.filter((r) => r.type === 'spill-typed').map((r) => [r.verb, r.pointer]), [['dm', note], ['dm', note]]);
+    assert.strictEqual(h.injected.length, 1, 'one bounce per request, no second bounce');
+    assert.ok(h.injected[0].text.length > 0);
+    assert.deepStrictEqual(h.injected[0].opts, { parkable: true });
+    assert.deepStrictEqual(h.errors, []);
+  }
+});
+
 test('t1113: spillMimicBounce names the typed stand-in fenced, says Clodex wrote it, and shows the escaped intent with the SAME head', () => {
   const { spillMimicBounce, SPILLED_BODY, SPILLED_BODY_FIRST } = require('../intent-spill');
   assert.strictEqual(spillMimicBounce({ type: 'task', sub: 'add', who: 'hand', start: true, body: `Title\n${SPILLED_BODY}` }, SPILLED_BODY),
