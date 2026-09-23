@@ -40,7 +40,7 @@ test('only the last MAX_ENTRIES entries are kept', () => {
 });
 
 test('pull reads through the link, re-reads only after the watcher fires, and follows a repoint', () => {
-  const root = mkTmpRoot('transcript-spike-');
+  const root = mkTmpRoot('clodex-tspike-');
   const a = path.join(root, 'a.jsonl');
   const b = path.join(root, 'b.jsonl');
   const link = path.join(root, 'transcript.jsonl');
