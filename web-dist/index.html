@@ -9351,7 +9351,7 @@ body.web-frontend #sidebar-header {
         </label>
         <span id="prefs-compact-on-resume-why" class="prefs-dep-reason"></span>
         <h5>Long intent bodies</h5>
-        <p class="hint-text">Ticket specs and reports, messages between seats, operator notes and context handoffs over 800 bytes that an agent emits are stored under <code>~/.clodex/spill/&lt;seat&gt;/</code>; its transcript keeps a one-line <code>… filed at &lt;path&gt;</code> note in place of the body (the path is clickable), the model is never sent it, and a <code>[clodex] … filed at …</code> note on its next prompt names the file, so later turns stop re-reading them. The recipient still gets the whole text. Claude seats only; on by default, and a change applies to every running seat from its next turn.</p>
+        <p class="hint-text">Ticket specs and reports, messages between seats, operator notes and context handoffs over 800 bytes that an agent emits are stored under <code>~/.clodex/spill/&lt;seat&gt;/</code>; the first two long bodies of a session stay in its transcript in full; from the third on the transcript keeps the intent head, a bracketed runtime note and <code>[agent:end]</code>, the model sees only the ordinary confirmation, and the terminal shows the filed path (clickable), so later turns stop re-reading them. Prose after the last intent still gets a <code>[clodex] … filed at …</code> note. The recipient still gets the whole text. Claude seats only; on by default, and a change applies to every running seat from its next turn.</p>
         <label class="prefs-check">
           <input type="checkbox" id="prefs-intent-spill">
           <span>Spill long intent bodies to files</span>

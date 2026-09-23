@@ -21,3 +21,9 @@ confirmation that follows is the proof the action ran. Measured on the lead seat
 → `spilled`) and a typed body ending in it is refused (`spilledBodyOf`): copied
 back from the record it names no file, so the agent gets the pointer-mimic
 bounce rather than a silent cut.
+
+The first two over-limit intent bodies of a session are never spilled and ride
+in full; the counter is per session and resets on respawn. The counter is
+`intentSpills` (session-manager.js) and the long-form stand-in the third spill
+gets is `SPILLED_BODY_FIRST` (intent-spill.js); the measured facts live under
+`## SPILLED_BODY_FIRST` in docs/notes/wire-spill-cut.md.
