@@ -11,3 +11,8 @@ turns it on, is not what Clodex runs. Kill switch is an exported empty string
 
 A managed survivor predates this default, so it is restarted once on the
 `_upgradeTried` latch when it does not report the strip at `/_identity`.
+
+## _reclaimPidFile
+
+A 2 s `lsof`/`ps` timeout returns null, which reads as "not adopted", so under box load a negative
+test passes for the wrong reason; the tests drive canned output through the injected `exec` dep and use the real binaries only in the one smoke test.

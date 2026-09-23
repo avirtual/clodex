@@ -15,7 +15,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { spawn, execFileSync } = require('node:child_process');
 const { createWirescopeSupervisor, wirescopeEnvGate } = require('../wirescope-supervisor');
@@ -68,22 +67,30 @@ async function withEnv(patch, fn) {
 
 const ROUTED = { proxyEnabled: true, proxyUrl: 'http://127.0.0.1:7800', wirescopePort: 7800, wirescopeDir: '' };
 
-function makeSup(settings, { probe } = {}) {
+function makeSup(settings, { probe, exec, userData } = {}) {
   const probes = [];
   const logs = [];
-  const tmp = mkTmpRoot('ws-gate-');
-  const { WirescopeSupervisor } = createWirescopeSupervisor({
+  const tmp = userData || mkTmpRoot('ws-gate-');
+  const log = (m) => logs.push(m);
+  const ProxyClient = { probe: async (base) => { probes.push(base); if (probe) return probe(base); throw new Error('down'); } };
+  const getUiSettings = () => ({ get: () => settings });
+  const getUserDataPath = () => tmp;
+  const isPackaged = () => false;
+  const deps = {
     // A BARE fn, not a tagged logger. engine.js passes the tagged shape, so every
     // log.warn('wirescope', …) in the module works there and only ever fails here
     // — and both of its call sites sit inside a `catch {}` that swallows the
     // TypeError along with whatever followed the warn. Keeping this harness bare
     // is what makes that difference reachable.
-    log: (m) => logs.push(m),
-    ProxyClient: { probe: async (base) => { probes.push(base); if (probe) return probe(base); throw new Error('down'); } },
-    getUiSettings: () => ({ get: () => settings }),
-    getUserDataPath: () => tmp,
-    isPackaged: () => false,
-  });
+    log,
+    ProxyClient,
+    getUiSettings,
+    getUserDataPath,
+    isPackaged,
+    exec,
+  };
+  assert.deepStrictEqual(deps, { log, ProxyClient, getUiSettings, getUserDataPath, isPackaged, exec });
+  const { WirescopeSupervisor } = createWirescopeSupervisor(deps);
   return { sup: new WirescopeSupervisor(), probes, logs };
 }
 
@@ -256,48 +263,32 @@ test('pidfile: an ABSENT pid is neither warned about nor discarded', () => {
 
 // ── re-adopting a survivor whose record was lost ────────────────────────────
 
-// A listener that binds the port, with a controllable cwd and ENV — everything
-// _reclaimPidFile inspects, and nothing it does not (it never connects).
-function fakeListener({ cwd, port, env }) {
-  const child = spawn(process.execPath,
-    ['-e', `require('net').createServer().listen(${port},'127.0.0.1');setTimeout(()=>{},6e4)`],
-    { cwd, stdio: 'ignore', env: { ...process.env, ...env } });
-  const deadline = Date.now() + 5000;
-  for (;;) {
-    try {
-      const held = execFileSync('lsof', ['-w', '-nP', `-iTCP@127.0.0.1:${port}`, '-sTCP:LISTEN', '-t'],
-        { encoding: 'utf8' }).trim();
-      if (held) return child;
-    } catch { /* nothing listening yet */ }
-    if (Date.now() > deadline) { child.kill('SIGKILL'); throw new Error('listener never bound'); }
-    execFileSync('sleep', ['0.05']);
-  }
+function cannedExec({ lsof, ps }, userData) {
+  const calls = [];
+  const exec = (cmd, args, opts) => {
+    calls.push({ cmd, args, opts });
+    if (cmd === 'lsof') return lsof;
+    if (cmd === 'ps') {
+      const line = ps[args[args.length - 1]];
+      if (line === undefined) throw Object.assign(new Error(`ps: no such pid ${args[args.length - 1]}`), { status: 1 });
+      return line.split('$UD').join(userData);
+    }
+    throw new Error(`unexpected exec ${cmd}`);
+  };
+  return { exec, calls };
 }
 
-// Each case gets its own port: a leftover listener from a previous case would
-// otherwise be adopted by the next one and hide a rejection.
-let nextPort = 47800;
-function withListener({ cwd, env }, fn) {
-  const port = nextPort++;
-  const child = fakeListener({ cwd, port, env });
-  const kill = () => { try { child.kill('SIGKILL'); } catch {} };
-  // await-aware: a bare try/finally kills the listener the moment `fn` returns a
-  // PROMISE, so an async body ran against a dead port and read as no-adoption.
-  let out;
-  try { out = fn(port); } catch (e) { kill(); throw e; }
-  if (out && typeof out.then === 'function') return out.finally(kill);
-  kill();
-  return out;
-}
-
-// A source dir that _looksValid, and a supervisor pointed at it with no pidfile.
-function reclaimSup(port) {
+function reclaimSup(canned, { port = 7800, probe } = {}) {
   const src = mkTmpRoot('ws-src-');
   fs.writeFileSync(path.join(src, 'logproxy.py'), '# stub\n');
-  const { sup } = makeSup({ ...ROUTED, wirescopePort: port, wirescopeDir: src });
+  const userData = mkTmpRoot('ws-gate-');
+  const { exec, calls } = canned ? cannedExec(canned, userData) : {};
+  const { sup } = makeSup({ ...ROUTED, wirescopePort: port, wirescopeDir: src }, { probe, exec, userData });
   fs.mkdirSync(path.dirname(sup._pidFile()), { recursive: true });
-  return { sup, src };
+  return { sup, src, calls, userData };
 }
+
+const ME = String(process.pid);
 
 // The pidfile is Clodex's ONLY handle on a detached survivor, so losing it (a
 // pre-fix orphan, a wiped userData) stranded a proxy Clodex had itself started:
@@ -310,95 +301,132 @@ function reclaimSup(port) {
 // WARMTH_DB discriminates: proxylab/store.py defaults it into the source dir,
 // while _spawn always overrides it into this app's userData.
 test('reclaim: a survivor carrying _spawn\'s WARMTH_DB is re-adopted', () => {
-  const port = nextPort;
-  const { sup, src } = reclaimSup(port);
-  withListener({ cwd: src, env: { WARMTH_DB: sup._dirs().warmthDb } }, (p) => {
-    assert.strictEqual(sup._survivorPid(), null, 'precondition: no record to start from');
-    const pid = sup._reclaimPidFile(p);
-    assert.ok(pid, 'the listener carries our own warmth db and must be adopted');
-    assert.strictEqual(JSON.parse(fs.readFileSync(sup._pidFile(), 'utf8')).pid, pid);
-    assert.strictEqual(sup._survivorPid(), pid, 'and status/upgrade now see their own survivor');
+  const { sup, calls } = reclaimSup({
+    lsof: `${ME}\n`,
+    ps: { [ME]: 'python3 -m uvicorn logproxy:app WARMTH_DB=$UD/wirescope/warmth.sqlite LOG_DIR=$UD/wirescope/logs\n' },
   });
+  assert.strictEqual(sup._survivorPid(), null, 'precondition: no record to start from');
+  const pid = sup._reclaimPidFile(7800);
+  assert.strictEqual(pid, process.pid, 'the listener carries our own warmth db and must be adopted');
+  assert.strictEqual(JSON.parse(fs.readFileSync(sup._pidFile(), 'utf8')).pid, pid);
+  assert.strictEqual(sup._survivorPid(), pid, 'and status/upgrade now see their own survivor');
+  assert.deepStrictEqual(calls, [
+    { cmd: 'lsof', args: ['-w', '-nP', '-iTCP@127.0.0.1:7800', '-sTCP:LISTEN', '-t'], opts: { encoding: 'utf8', timeout: 2000 } },
+    { cmd: 'ps', args: ['-Eww', '-o', 'command=', '-p', ME], opts: { encoding: 'utf8', timeout: 2000 } },
+  ]);
 });
 
 // The security property, and the one the first version of this check got wrong:
 // a hand-started proxy satisfies cwd and argv perfectly. Adopting it would make
 // stop()/restart() SIGTERM a process the user owns.
 test('reclaim: a user-started proxy in the SAME dir is NOT adopted', () => {
-  const port = nextPort;
-  const { sup, src } = reclaimSup(port);
   // No WARMTH_DB: exactly what start_proxy.sh leaves, defaulted into the source dir.
-  withListener({ cwd: src, env: { WARMTH_DB: undefined } }, (p) => {
-    assert.strictEqual(sup._reclaimPidFile(p), null,
-      'cwd and argv are entailed by any working proxy — adopting on them kills the user\'s own process');
-    assert.ok(!fs.existsSync(sup._pidFile()), 'and must leave no record behind');
+  const { sup } = reclaimSup({
+    lsof: `${ME}\n`,
+    ps: { [ME]: 'python3 -m uvicorn logproxy:app LOG_DIR=$UD/wirescope/logs\n' },
   });
+  assert.strictEqual(sup._reclaimPidFile(7800), null,
+    'cwd and argv are entailed by any working proxy — adopting on them kills the user\'s own process');
+  assert.ok(!fs.existsSync(sup._pidFile()), 'and must leave no record behind');
 });
 
 test('reclaim: another Clodex install\'s survivor is NOT adopted', () => {
-  const port = nextPort;
-  const { sup, src } = reclaimSup(port);
   // Same shape, different userData (dev vs packaged on one machine).
-  withListener({ cwd: src, env: { WARMTH_DB: '/somewhere/else/warmth.sqlite' } }, (p) => {
-    assert.strictEqual(sup._reclaimPidFile(p), null);
-    assert.ok(!fs.existsSync(sup._pidFile()));
+  const { sup } = reclaimSup({
+    lsof: `${ME}\n`,
+    ps: { [ME]: 'python3 -m uvicorn logproxy:app WARMTH_DB=/somewhere/else/wirescope/warmth.sqlite\n' },
   });
+  assert.strictEqual(sup._reclaimPidFile(7800), null);
+  assert.ok(!fs.existsSync(sup._pidFile()));
 });
 
 // A foreign co-listener must not be able to block recovery forever by being
 // picked as "the" holder.
 test('reclaim: the real proxy is found even behind another listener on the port', () => {
-  const port = nextPort;
-  const { sup, src } = reclaimSup(port);
-  withListener({ cwd: os.tmpdir(), env: { WARMTH_DB: '/not/ours' } }, (p) => {
-    // SO_REUSEPORT is not in play, so a second bind on the same port fails —
-    // instead prove the iteration by asserting the scan does not stop at a
-    // non-matching first holder: it returns null rather than adopting it.
-    assert.strictEqual(sup._reclaimPidFile(p), null, 'a stranger is never adopted');
-    assert.ok(!fs.existsSync(sup._pidFile()));
+  const { sup } = reclaimSup({
+    lsof: `424242\n${ME}\n`,
+    ps: {
+      424242: 'node server.js WARMTH_DB=/not/ours/warmth.sqlite\n',
+      [ME]: 'python3 -m uvicorn logproxy:app WARMTH_DB=$UD/wirescope/warmth.sqlite\n',
+    },
   });
+  assert.strictEqual(sup._reclaimPidFile(7800), process.pid, 'the stranger is skipped, never adopted, and never ends the scan');
+  assert.strictEqual(JSON.parse(fs.readFileSync(sup._pidFile(), 'utf8')).pid, process.pid);
 });
 
 test('reclaim: a valid existing record is never overwritten', () => {
-  const port = nextPort;
-  const { sup, src } = reclaimSup(port);
-  withListener({ cwd: src, env: { WARMTH_DB: sup._dirs().warmthDb } }, (p) => {
-    // process.pid is alive and on the right port by construction, so it is a
-    // valid record — reclaim must not race a live child's own bookkeeping.
-    fs.writeFileSync(sup._pidFile(), JSON.stringify({ pid: process.pid, port: p }));
-    assert.strictEqual(sup._reclaimPidFile(p), null);
-    assert.strictEqual(JSON.parse(fs.readFileSync(sup._pidFile(), 'utf8')).pid, process.pid);
+  const { sup, calls } = reclaimSup({
+    lsof: '424242\n',
+    ps: { 424242: 'python3 -m uvicorn logproxy:app WARMTH_DB=$UD/wirescope/warmth.sqlite\n' },
   });
+  // process.pid is alive and on the right port by construction, so it is a
+  // valid record — reclaim must not race a live child's own bookkeeping.
+  fs.writeFileSync(sup._pidFile(), JSON.stringify({ pid: process.pid, port: 7800 }));
+  assert.strictEqual(sup._reclaimPidFile(7800), null);
+  assert.strictEqual(JSON.parse(fs.readFileSync(sup._pidFile(), 'utf8')).pid, process.pid);
+  assert.deepStrictEqual(calls, [], 'a valid record short-circuits before any lsof/ps');
 });
 
-test('reclaim: nothing on the port, or no source, is a silent null', () => {
-  const port = nextPort++;
-  const { sup } = reclaimSup(port);        // free port, no listener
+test('reclaim: nothing on the port, or no source, is a silent null', async () => {
+  const net = require('node:net');
+  const probe = net.createServer();
+  await new Promise((r) => probe.listen(0, '127.0.0.1', r));
+  const port = probe.address().port;
+  await new Promise((r) => probe.close(r));
+  const { sup } = reclaimSup(null, { port });
   assert.strictEqual(sup._reclaimPidFile(port), null);
+});
+
+// The one row on the real lsof/ps path. The listener binds port 0 and reports
+// the port it got, so no port is ever chosen by this file.
+function fakeListener(env) {
+  const child = spawn(process.execPath,
+    ['-e', "const s=require('net').createServer().listen(0,'127.0.0.1',()=>console.log(s.address().port));setTimeout(()=>{},6e4)"],
+    { stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, ...env } });
+  return new Promise((resolve, reject) => {
+    let out = '';
+    child.stdout.on('data', (d) => {
+      out += d;
+      const nl = out.indexOf('\n');
+      if (nl >= 0) resolve({ child, port: parseInt(out.slice(0, nl), 10) });
+    });
+    child.on('exit', (code) => reject(new Error(`listener exited ${code} before binding`)));
+  });
+}
+
+test('reclaim smoke: a real listener carrying our WARMTH_DB is adopted through the real lsof/ps', async () => {
+  const userData = mkTmpRoot('ws-gate-');
+  const { child, port } = await fakeListener({ WARMTH_DB: path.join(userData, 'wirescope', 'warmth.sqlite') });
+  try {
+    const src = mkTmpRoot('ws-src-');
+    fs.writeFileSync(path.join(src, 'logproxy.py'), '# stub\n');
+    const { sup } = makeSup({ ...ROUTED, wirescopePort: port, wirescopeDir: src }, { userData });
+    fs.mkdirSync(path.dirname(sup._pidFile()), { recursive: true });
+    assert.strictEqual(sup._reclaimPidFile(port), child.pid);
+    assert.strictEqual(sup._survivorPid(), child.pid);
+  } finally {
+    child.kill('SIGKILL');
+  }
 });
 
 // Behavioral, not a source grep: a source-text assertion passes for dead code.
 test('reclaim: start() adopts an orphan and reports `managed`, not `external`', async () => {
-  const port = nextPort;
-  const src = mkTmpRoot('ws-src-');
-  fs.writeFileSync(path.join(src, 'logproxy.py'), '# stub\n');
-  const { sup } = makeSup(
-    { ...ROUTED, wirescopePort: port, wirescopeDir: src },
+  const { sup } = reclaimSup({
+    lsof: `${ME}\n`,
+    ps: { [ME]: 'python3 -m uvicorn logproxy:app WARMTH_DB=$UD/wirescope/warmth.sqlite\n' },
+  }, {
     // Reports the claude_design strip so the ADOPTION path is what this
     // measures: a survivor that does not strip is restarted instead of returned
     // (pinned below), and start() would then answer with the restart's result.
-    { probe: async () => ({
+    probe: async () => ({
       product: 'wirescope', version: 'v9.9.9',
       capabilities: { strip_mcp: { available: true, servers: ['claude_design'] } },
-    }) },
-  );
-  fs.mkdirSync(path.dirname(sup._pidFile()), { recursive: true });
-  await withListener({ cwd: src, env: { WARMTH_DB: sup._dirs().warmthDb } }, async (p) => {
-    const res = await withEnv({}, () => sup.start());
-    assert.strictEqual(res.state, 'managed', 'an orphan Clodex started must come back as ITS OWN');
-    assert.strictEqual(res.adopted, false, 'and not be reported as someone else\'s');
-    assert.strictEqual(sup._survivorPid(), p && JSON.parse(fs.readFileSync(sup._pidFile(), 'utf8')).pid);
+    }),
   });
+  const res = await withEnv({}, () => sup.start());
+  assert.strictEqual(res.state, 'managed', 'an orphan Clodex started must come back as ITS OWN');
+  assert.strictEqual(res.adopted, false, 'and not be reported as someone else\'s');
+  assert.strictEqual(JSON.parse(fs.readFileSync(sup._pidFile(), 'utf8')).pid, process.pid);
 });
 
 // Every unlink of the pidfile must go through the guard. A new call site added
@@ -554,26 +582,22 @@ test('spawn env: STRIP_MCP_SERVERS defaults to claude_design, and an exported em
 // The restart runs on the SAME _upgradeTried latch as the version arm, which is
 // what bounds it — a proxy that comes back still not stripping (a user source
 // too old to read the variable) must not be restarted forever.
-function stripSup(port, servers, { version } = {}) {
-  const src = mkTmpRoot('ws-src-');
-  fs.writeFileSync(path.join(src, 'logproxy.py'), '# stub\n');
+function stripSup(servers, ps, { version } = {}) {
   // wirescopeDir set ⇒ origin 'user' ⇒ _sourceVersion is null ⇒ the VERSION arm
   // cannot fire. Without that the two arms are indistinguishable here and this
   // would pass on the version check alone.
-  const { sup } = makeSup(
-    { ...ROUTED, wirescopePort: port, wirescopeDir: src },
-    { probe: async () => ({
+  const { sup } = reclaimSup({ lsof: `${ME}\n`, ps: { [ME]: ps } }, {
+    probe: async () => ({
       product: 'wirescope',
       version: version || 'v9.9.9',
       capabilities: servers === undefined ? {} : { strip_mcp: { available: true, servers } },
-    }) },
-  );
-  fs.mkdirSync(path.dirname(sup._pidFile()), { recursive: true });
+    }),
+  });
   const restarts = [];
   // restart() itself is pinned next door; stubbing it keeps this about WHETHER
   // the arm fires and keeps a real SIGTERM + venv spawn out of the suite.
   sup.restart = async () => { restarts.push(1); return { ok: true, state: 'restarted' }; };
-  return { sup, src, restarts };
+  return { sup, restarts };
 }
 
 async function withStripEnv(value, fn) {
@@ -589,23 +613,25 @@ async function withStripEnv(value, fn) {
 // Each row carries its own literal expectation; the restart decision is never
 // recomputed here from the rule start() uses.
 const SURVIVOR_ROWS = [
-  { what: 'a pre-upgrade survivor reporting servers: []', servers: [], env: undefined, restarts: 1 },
-  { what: 'a survivor with no strip_mcp capability at all', servers: undefined, env: undefined, restarts: 1 },
-  { what: 'a survivor already stripping claude_design', servers: ['claude_design'], env: undefined, restarts: 0 },
-  { what: 'a survivor stripping claude_design among others', servers: ['other', 'claude_design'], env: undefined, restarts: 0 },
-  { what: 'servers: [] but the kill switch is exported', servers: [], env: '', restarts: 0 },
-  { what: 'servers: [] but the operator exported their own set', servers: [], env: 'other_server', restarts: 0 },
+  { what: 'a pre-upgrade survivor reporting servers: []', servers: [], env: undefined, restarts: 1,
+    ps: 'python3 -m uvicorn logproxy:app WARMTH_DB=$UD/wirescope/warmth.sqlite\n' },
+  { what: 'a survivor with no strip_mcp capability at all', servers: undefined, env: undefined, restarts: 1,
+    ps: 'python3 -m uvicorn logproxy:app WARMTH_DB=$UD/wirescope/warmth.sqlite\n' },
+  { what: 'a survivor already stripping claude_design', servers: ['claude_design'], env: undefined, restarts: 0,
+    ps: 'python3 -m uvicorn logproxy:app WARMTH_DB=$UD/wirescope/warmth.sqlite\n' },
+  { what: 'a survivor stripping claude_design among others', servers: ['other', 'claude_design'], env: undefined, restarts: 0,
+    ps: 'python3 -m uvicorn logproxy:app WARMTH_DB=$UD/wirescope/warmth.sqlite\n' },
+  { what: 'servers: [] but the kill switch is exported', servers: [], env: '', restarts: 0,
+    ps: 'python3 -m uvicorn logproxy:app WARMTH_DB=$UD/wirescope/warmth.sqlite\n' },
+  { what: 'servers: [] but the operator exported their own set', servers: [], env: 'other_server', restarts: 0,
+    ps: 'python3 -m uvicorn logproxy:app WARMTH_DB=$UD/wirescope/warmth.sqlite\n' },
 ];
 
 test('start: a managed survivor that does not strip claude_design is restarted once', async () => {
   for (const row of SURVIVOR_ROWS) {
-    // withListener consumes nextPort itself; the supervisor must be configured
-    // on the SAME port or `ours` is false and nothing is restarted for a reason
-    // that has nothing to do with the strip.
-    const { sup, src, restarts } = stripSup(nextPort, row.servers);
-    await withListener({ cwd: src, env: { WARMTH_DB: sup._dirs().warmthDb } }, async () => {
-      await withStripEnv(row.env, () => withEnv({}, () => sup.start()));
-    });
+    const { sup, restarts } = stripSup(row.servers, row.ps);
+    await withStripEnv(row.env, () => withEnv({}, () => sup.start()));
+    assert.strictEqual(sup._survivorPid(), process.pid, `${row.what}: the survivor must have been adopted as ours`);
     assert.strictEqual(restarts.length, row.restarts, `${row.what}: expected ${row.restarts} restart(s)`);
   }
 });
@@ -614,28 +640,24 @@ test('start: the strip restart rides the _upgradeTried latch — never twice in 
   // A user source too old to read STRIP_MCP_SERVERS comes back still reporting
   // `servers: []`, so an unlatched arm would restart it on every start() call
   // for the life of the app.
-  const { sup, src, restarts } = stripSup(nextPort, []);
-  await withListener({ cwd: src, env: { WARMTH_DB: sup._dirs().warmthDb } }, async () => {
-    await withStripEnv(undefined, () => withEnv({}, async () => {
-      await sup.start();
-      assert.strictEqual(restarts.length, 1, 'the first start must restart the non-stripping survivor');
-      await sup.start();
-      await sup.start();
-      assert.strictEqual(restarts.length, 1, 'the latch did not hold — this restart-loops');
-      assert.strictEqual(sup._upgradeTried, true);
-    }));
-  });
+  const { sup, restarts } = stripSup([], 'python3 -m uvicorn logproxy:app WARMTH_DB=$UD/wirescope/warmth.sqlite\n');
+  await withStripEnv(undefined, () => withEnv({}, async () => {
+    await sup.start();
+    assert.strictEqual(restarts.length, 1, 'the first start must restart the non-stripping survivor');
+    await sup.start();
+    await sup.start();
+    assert.strictEqual(restarts.length, 1, 'the latch did not hold — this restart-loops');
+    assert.strictEqual(sup._upgradeTried, true);
+  }));
 });
 
 test('start: an ADOPTED external proxy is never restarted for the strip', async () => {
   // Someone else's process on the port: not ours to kill, exactly as the version
   // arm treats it. `ours` is false with no pidfile and no reclaimable listener,
-  // which is what a foreign cwd produces.
-  const { sup, restarts } = stripSup(nextPort, []);
-  await withListener({ cwd: os.tmpdir(), env: { WARMTH_DB: '/not/ours' } }, async () => {
-    const res = await withStripEnv(undefined, () => withEnv({}, () => sup.start()));
-    assert.strictEqual(res.state, 'external');
-    assert.strictEqual(res.adopted, true);
-  });
+  // which is what a foreign WARMTH_DB produces.
+  const { sup, restarts } = stripSup([], 'python3 -m uvicorn logproxy:app WARMTH_DB=/not/ours/warmth.sqlite\n');
+  const res = await withStripEnv(undefined, () => withEnv({}, () => sup.start()));
+  assert.strictEqual(res.state, 'external');
+  assert.strictEqual(res.adopted, true);
   assert.deepStrictEqual(restarts, [], 'an external proxy was restarted');
 });
