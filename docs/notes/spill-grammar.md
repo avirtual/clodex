@@ -7,8 +7,8 @@ class, so neither is ever cut from the wire as if it were a stub:
 
 - the live prose receipt (`spillAckLine`, session-manager.js), which opens with
   "the N B of prose you wrote after your last intent were removed";
-- the runtime-note stand-in `SPILLED_BODY` (intent-spill.js) that the wire cut
-  renders where a spilled body stood.
+- the runtime-note stand-ins `SPILLED_BODY` and `SPILLED_BODY_FIRST`
+  (intent-spill.js) that the wire cut renders where a spilled body stood.
 
 A cut body renders as the agent's own intent around the runtime-note marker:
 head line with its title, `[Runtime note: Clodex filed this body in full; it is
@@ -19,11 +19,15 @@ confirmation that follows is the proof the action ran. Measured on the lead seat
 ×3, t1102 ×3) announced a ticket, bound a reminder to it, and typed no
 `[agent:task add]` line at all. The marker IS a mimic kind (`mimicKindOf`
 → `spilled`) and a typed body ending in it is refused (`spilledBodyOf`): copied
-back from the record it names no file, so the agent gets the pointer-mimic
-bounce rather than a silent cut.
+back from the record it names no file, so the agent gets `spillMimicBounce`
+(intent-spill.js) rather than a silent cut. That bounce quotes the typed token
+fenced in backticks and its example intent backslash-escaped, so the bounce
+text itself is outside this grammar and never fires.
 
 The first two over-limit intent bodies of a session are never spilled and ride
 in full; the counter is per session and resets on respawn. The counter is
-`intentSpills` (session-manager.js) and the long-form stand-in the third spill
-gets is `SPILLED_BODY_FIRST` (intent-spill.js); the measured facts live under
+`intentSpills` (session-manager.js). The long-form stand-in `SPILLED_BODY_FIRST`
+(intent-spill.js) is rendered once per REQUEST, on the first stub-bearing
+assistant message `cutSpillStubs` (wire/spill-cut.js) rewrites; every later stub
+in that request gets `SPILLED_BODY`. The measured facts live under
 `## SPILLED_BODY_FIRST` in docs/notes/wire-spill-cut.md.

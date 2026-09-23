@@ -13,6 +13,17 @@ const { SpillFilter } = require('../wire/spill');
 
 const BIG = `spec line one\n${'z'.repeat(1200)}\nlast line`;
 
+const BOUNCE = (label, head, token, noun) => [
+  `[agent] Not executed: your \`${label}\` carried, where the body belongs, this line you did not write:`,
+  `\`${token}\``,
+  `That line is a ${noun}, Clodex's transcript rendering of a body you wrote earlier (it replaces the text to save context). `
+    + 'It is never typed by you, and nothing was saved, sent or filed.',
+  'Emit the complete intent again with the body written out in full:',
+  `\\${head}`,
+  '<the full body, written out>',
+  '\\[agent:end]',
+].join('\n');
+
 function mkH(overrides = {}) {
   const root = mkTmpRoot('clodex-spill-');
   const injected = [];
@@ -142,7 +153,7 @@ test('every spill verb resolves: task add/respec/reject/done, dm, shout; a conte
     assert.deepStrictEqual(h.contexts, [],
       `context ${sub} is not a spill verb: the tee never files its body, so a pointer there can only have been typed`);
     assert.strictEqual(h.injected.length, 1);
-    assert.ok(h.injected[0].text.startsWith(`[agent] Not executed: your \`context ${sub}\` ended in a pointer (@spill:${id})`));
+    assert.strictEqual(h.injected[0].text, BOUNCE(`context ${sub}`, `[agent:context ${sub}]`, `@spill:${id}`, 'spill pointer'));
   }
   const h = mkH();
   const id = writeSpill(h.root, 'lead', BIG);
@@ -163,7 +174,7 @@ test('memory remember is not a spill verb, so a pointer in one is never resolved
   await h.m._handleIntent('lead', { type: 'memory', sub: 'remember', body: `@spill:${id}` });
   assert.deepStrictEqual(memos, [], 'a memo the seat cannot see is a memo it did not make, and a pointer is not a memo');
   assert.strictEqual(h.injected.length, 1);
-  assert.ok(h.injected[0].text.startsWith('[agent] Not executed: your `memory remember` ended in a pointer'));
+  assert.strictEqual(h.injected[0].text, BOUNCE('memory remember', '[agent:memory remember]', `@spill:${id}`, 'spill pointer'));
 });
 
 test('a non-spill verb never resolves, which is what makes a cross-seat read inexpressible; the shape alone is refused', async () => {
@@ -174,11 +185,10 @@ test('a non-spill verb never resolves, which is what makes a cross-seat read ine
     "a peer's pointer pasted into an unheld verb is not read from disk at all — the receiver copying it "
     + "into its OWN intent would resolve against the RECEIVER's directory — and the tee never files this verb, so it was typed");
   assert.strictEqual(h.injected.length, 1);
-  assert.ok(h.injected[0].text.startsWith('[agent] Not executed: your `remind` ended in a pointer'));
+  assert.strictEqual(h.injected[0].text, BOUNCE('remind', '[agent:remind in 5m]', `@spill:${id}`, 'spill pointer'));
 });
 
-const TYPED = (label, id) => `[agent] Not executed: your \`${label}\` ended in a pointer (@spill:${id}) that you typed yourself — nothing was saved, sent or filed. `
-  + 'A body you did not write does not exist; emit the complete intent with the full text and [agent:end].';
+const TYPED = (label, id) => BOUNCE(label, `[agent:${label}]`, `@spill:${id}`, 'spill pointer');
 
 test('t1062: memory remember ending in a typed pointer is NOT saved, and the bounce names the verb and what did not happen', async () => {
   const h = mkH({ shadowIntentKey });
@@ -208,7 +218,7 @@ test('t1062: a fabricated title longer than 79 chars — past what pointerOf rea
   await h.m._handleIntent('lead', { type: 'memory', sub: 'remember', body });
   assert.deepStrictEqual(memos, []);
   assert.strictEqual(h.injected.length, 1);
-  assert.ok(h.injected[0].text.startsWith('[agent] Not executed: your `memory remember` ended in a pointer (@spill:e1b9f4d5c3a27b08)'));
+  assert.strictEqual(h.injected[0].text, TYPED('memory remember', 'e1b9f4d5c3a27b08'));
 });
 
 test('t1062: a context compact whose handoff is a typed pointer does not run, and the bounce names `context compact`', async () => {
@@ -239,14 +249,12 @@ test('t1065: a non-spill verb ending in the filed-at tail is refused with the ve
   const body = `scope=clodex The mid-turn strip's cost is ONE extra read of th… — ${tail}`;
   await h.m._handleIntent('lead', { type: 'memory', sub: 'remember', body });
   assert.deepStrictEqual(memos, [], 'a real file behind the tail changes nothing: the verb is not one the tee files, so the agent typed it');
-  assert.deepStrictEqual(h.injected.map((i) => i.text), [
-    `[agent] Not executed: your \`memory remember\` ended in a pointer (${tail}) that you typed yourself — nothing was saved, sent or filed. `
-    + 'A body you did not write does not exist; emit the complete intent with the full text and [agent:end].']);
+  assert.deepStrictEqual(h.injected.map((i) => i.text), [BOUNCE('memory remember', '[agent:memory remember]', tail, 'spill pointer')]);
   assert.deepStrictEqual(rows.filter((r) => r.type === 'spill-typed').map((r) => [r.verb, r.pointer]), [['memory.remember', tail]]);
 
   await h.m._handleIntent('lead', { type: 'context', sub: 'clear', body: `858 B of prose filed at ${spillPathFor(h.root, 'lead', id)}` });
   assert.deepStrictEqual(h.contexts, [], 'the clear did not happen');
-  assert.ok(h.injected[1].text.startsWith('[agent] Not executed: your `context clear` ended in a pointer (858 B of prose filed at '));
+  assert.strictEqual(h.injected[1].text, BOUNCE('context clear', '[agent:context clear]', `858 B of prose filed at ${spillPathFor(h.root, 'lead', id)}`, 'spill pointer'));
 
   const named = `scope=clodex the spec is filed at ${spillPathFor(h.root, 'lead', id)}`;
   await h.m._handleIntent('lead', { type: 'memory', sub: 'remember', body: named });
@@ -265,7 +273,7 @@ test('t1065: a spill verb whose body is the new stub resolves from the terminal 
   await h.m._handleIntent('lead', { type: 'dm', target: 'bob', body: tail, fromWire: true });
   assert.deepStrictEqual(h.dms, []);
   assert.strictEqual(h.injected.length, 1);
-  assert.ok(h.injected[0].text.startsWith('[agent] Not executed: that line was a receipt, filler or pointer'));
+  assert.strictEqual(h.injected[0].text, BOUNCE('dm', '[agent:dm bob]', tail, 'spill pointer'));
   const gone = `858 B filed at ${spillPathFor(h.root, 'lead', '0123456789abcdef')}`;
   await h.m._handleIntent('lead', { type: 'shout', body: gone });
   assert.strictEqual(h.errors.length, 1);
@@ -608,16 +616,9 @@ test('spill-mimic (item 8): the wire event is answered with a wire-spill-mimic r
   const arm = src.match(/wire\.on\('spill-mimic', \(ev\) => \{[\s\S]{0,700}?\n\s*\}\);/);
   assert.ok(arm, 'the spill-mimic event has a consumer beside the spill/spill-bail rows');
   assert.match(arm[0], /this\._shadowLog\(\{ type: 'wire-spill-mimic', \.\.\.ev \}\)/, 'the diag row');
-  assert.match(arm[0], /this\._injectText\(s, SPILL_MIMIC_BOUNCE, \{ parkable: true \}\)/, 'parkable, like the other advisory bounces');
+  assert.match(arm[0], /this\._injectText\(s, spillMimicBounce\(intent, .+\), \{ parkable: true \}\);/, 'parkable, like the other advisory bounces, and built by the one builder');
   assert.match(arm[0], /if \(s && s\.agentType\)/, 'and only at a live session');
-  const bounce = src.match(/const SPILL_MIMIC_BOUNCE = '([^']+)';/);
-  assert.ok(bounce, 'the advisory is one constant');
-  assert.strictEqual(bounce[1],
-    '[agent] Not executed: that line was a receipt, filler or pointer, not an intent, and nothing was sent or filed. '
-    + 'Emit the complete intent — head line, full body, [agent:end].');
-  assert.ok(!bounce[1].includes('@spill:'), 'the bounce never spells the pointer shape either');
-  assert.ok(!bounce[1].includes('[Runtime note: action text omitted from retained history.]'),
-    'the bounce never echoes the filler: an echo is one more copyable line in the record');
+  assert.ok(!/SPILL_MIMIC_BOUNCE|typedPointerBounce/.test(src), 'no second bounce text survives beside the builder');
 });
 
 test('t1052: a copied `[Runtime note: action text omitted from retained history.]` is mimic kind filler, and the spill-mimic arm bounces every kind — no kind filter', () => {
@@ -754,8 +755,6 @@ async function wireRig(h) {
   return { wire, turn, settle, close };
 }
 
-const MIMIC_BOUNCE = '[agent] Not executed: that line was a receipt, filler or pointer, not an intent, and nothing was sent or filed. '
-  + 'Emit the complete intent — head line, full body, [agent:end].';
 
 test('T11: a pointer body on the WIRE path is bounced as typed and never resolved, even when it names a real file; the jsonl path still resolves it', async () => {
   const h = mkH({ getUserDataPath: () => h.root, shadowIntentKey });
@@ -765,7 +764,7 @@ test('T11: a pointer body on the WIRE path is bounced as typed and never resolve
   try {
     await rig.turn(`[agent:task add t] @spill:${id}\n[agent:end]\n`, 'r1');
     assert.deepStrictEqual(h.tasks, [], 'the model never receives a real stub, so a pointer it emits is typed from memory: dropped, not resolved');
-    assert.deepStrictEqual(h.injected.map((i) => i.text), [MIMIC_BOUNCE], 'one advisory, the same one the mimic detector uses');
+    assert.deepStrictEqual(h.injected.map((i) => i.text), [BOUNCE('task add', '[agent:task add t]', `@spill:${id}`, 'spill pointer')], 'one advisory, the same builder the mimic detector uses');
     assert.deepStrictEqual(h.injected[0].opts, { parkable: true });
     assert.ok(h.broadcasts.some((b) => b.type === 'intent' && /task\.add dropped: its body was a pointer/.test(b.body)), 'surfaced in the IPC log');
     assert.deepStrictEqual(h.notes, [], 'no operator note: a typed pointer is a model slip, not an incident');
@@ -789,7 +788,10 @@ test('T11: a titled pointer and a dm pointer bounce on the wire path too; a poin
     await rig.turn(`[agent:dm bob] @spill:${id}\n[agent:end]\n`, 'r2');
     assert.deepStrictEqual(h.tasks, []);
     assert.deepStrictEqual(h.dms, []);
-    assert.deepStrictEqual(h.injected.map((i) => i.text), [MIMIC_BOUNCE, MIMIC_BOUNCE], 'one bounce per turn');
+    assert.deepStrictEqual(h.injected.map((i) => i.text), [
+      BOUNCE('task add', '[agent:task add t]', `@spill:${id}`, 'spill pointer'),
+      BOUNCE('dm', '[agent:dm bob]', `@spill:${id}`, 'spill pointer'),
+    ], 'one bounce per turn');
     await rig.turn(`[agent:dm bob] see @spill:${id} for the body\n[agent:end]\n`, 'r3');
     assert.strictEqual(h.dms.length, 1, 'not a pointer body, so the dm goes out as written');
     assert.strictEqual(h.dms[0].body, `see @spill:${id} for the body`);
@@ -803,16 +805,17 @@ test('T12: the intent-shaped pointer is bounced ONCE per turn — the mimic dete
   const id = writeSpill(h.root, 'lead', BIG);
   const rig = await wireRig(h);
   try {
-    rig.wire.emit('spill-mimic', { agent: 'lead', reqId: 'r1', kind: 'pointer' });
+    rig.wire.emit('spill-mimic', { agent: 'lead', reqId: 'r1', kind: 'pointer', line: `[agent:task add t] @spill:${id}` });
     await rig.settle();
-    assert.deepStrictEqual(h.injected.map((i) => i.text), [MIMIC_BOUNCE], 'ENTER: the detector bounced the head line during the stream');
+    assert.deepStrictEqual(h.injected.map((i) => i.text), [BOUNCE('task add', '[agent:task add t]', `@spill:${id}`, 'spill pointer')],
+      'ENTER: the detector bounced the head line during the stream, naming the head it read off the line');
     await rig.turn(`[agent:task add t] @spill:${id}\n[agent:end]\n`, 'r1');
     assert.deepStrictEqual(h.tasks, [], 'still dropped');
     assert.strictEqual(h.injected.length, 1, 'the intent path saw the same reqId already bounced and stayed silent');
 
     await rig.turn(`[agent:task add t] @spill:${id}\n[agent:end]\n`, 'r2');
     assert.strictEqual(h.injected.length, 2, 'a later turn with no detector bounce (the tee unarmed, the pref off) is bounced by the intent path');
-    rig.wire.emit('spill-mimic', { agent: 'lead', reqId: 'r3', kind: 'pointer' });
+    rig.wire.emit('spill-mimic', { agent: 'lead', reqId: 'r3', kind: 'pointer', line: `@spill:${id}` });
     await rig.settle();
     assert.strictEqual(h.injected.length, 3, 'and the detector is not silenced by the intent path\'s earlier bounce');
   } finally {
@@ -887,15 +890,15 @@ test('t1108: a typed `[Runtime note: Clodex filed this body in full; …]` body 
   try {
     await rig.turn(`[agent:task add hand] Title\n${SPILLED_BODY}\n[agent:end]\n`, 'r1');
     assert.deepStrictEqual(h.tasks, [], 'the note is a stand-in Clodex rendered into the record; copied back, it is not a body');
-    assert.deepStrictEqual(h.injected.map((i) => i.text), [MIMIC_BOUNCE], 'the pointer-mimic bounce, not a second one');
+    assert.deepStrictEqual(h.injected.map((i) => i.text), [BOUNCE('task add', '[agent:task add hand]', SPILLED_BODY, 'runtime note')], 'the pointer-mimic bounce, not a second one');
     assert.deepStrictEqual(h.injected[0].opts, { parkable: true });
-    assert.ok(h.broadcasts.some((b) => b.type === 'intent' && b.body === `task.add dropped: its body was a pointer (${SPILLED_BODY}) — the agent typed it`), 'surfaced in the IPC log');
+    assert.ok(h.broadcasts.some((b) => b.type === 'intent' && b.body === `task.add dropped: its body was a runtime note (${SPILLED_BODY}) — the agent typed it`), 'surfaced in the IPC log');
     assert.deepStrictEqual(h.notes, [], 'a model slip, not an incident');
 
     await h.m._handleIntent('lead', { type: 'task', sub: 'add', body: `Title\n${SPILLED_BODY}` });
     assert.deepStrictEqual(h.tasks, [], 'the jsonl path has nothing to resolve either: the note names no file');
     assert.strictEqual(h.injected.length, 2);
-    assert.strictEqual(h.injected[1].text, MIMIC_BOUNCE);
+    assert.strictEqual(h.injected[1].text, BOUNCE('task add', '[agent:task add]', SPILLED_BODY, 'runtime note'));
 
     await h.m._handleIntent('lead', { type: 'dm', target: 'bob', body: `${SPILLED_BODY}`, fromWire: true, reqId: 'r9' });
     assert.deepStrictEqual(h.dms, [], 'a dm with the note as its body is not sent');
@@ -923,5 +926,68 @@ test('t1111: the long runtime note typed as a body is bounced exactly like the s
     assert.ok(h.injected[0].text.length > 0);
     assert.deepStrictEqual(h.injected[0].opts, { parkable: true });
     assert.deepStrictEqual(h.errors, []);
+  }
+});
+
+test('t1113: spillMimicBounce names the typed stand-in fenced, says Clodex wrote it, and shows the escaped intent with the SAME head', () => {
+  const { spillMimicBounce, SPILLED_BODY, SPILLED_BODY_FIRST } = require('../intent-spill');
+  assert.strictEqual(spillMimicBounce({ type: 'task', sub: 'add', who: 'hand', start: true, body: `Title\n${SPILLED_BODY}` }, SPILLED_BODY),
+    '[agent] Not executed: your `task add` carried, where the body belongs, this line you did not write:\n'
+    + '`[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]`\n'
+    + "That line is a runtime note, Clodex's transcript rendering of a body you wrote earlier (it replaces the text to save context). "
+    + 'It is never typed by you, and nothing was saved, sent or filed.\n'
+    + 'Emit the complete intent again with the body written out in full:\n'
+    + '\\[agent:task add hand start]\n'
+    + '<the full body, written out>\n'
+    + '\\[agent:end]');
+  assert.strictEqual(spillMimicBounce({ type: 'memory', sub: 'remember', body: 'scope=clodex a fact @spill:e1b9f4d5c3a27b08' }, '@spill:e1b9f4d5c3a27b08'),
+    '[agent] Not executed: your `memory remember` carried, where the body belongs, this line you did not write:\n'
+    + '`@spill:e1b9f4d5c3a27b08`\n'
+    + "That line is a spill pointer, Clodex's transcript rendering of a body you wrote earlier (it replaces the text to save context). "
+    + 'It is never typed by you, and nothing was saved, sent or filed.\n'
+    + 'Emit the complete intent again with the body written out in full:\n'
+    + '\\[agent:memory remember]\n'
+    + '<the full body, written out>\n'
+    + '\\[agent:end]');
+  assert.strictEqual(spillMimicBounce({ type: 'dm', target: 'bob', urgent: false, body: SPILLED_BODY_FIRST }, SPILLED_BODY_FIRST),
+    '[agent] Not executed: your `dm` carried, where the body belongs, this line you did not write:\n'
+    + '`[Runtime note: Clodex kept your first two long intent bodies in full as examples and files later ones; this body was delivered in full '
+    + 'and is not carried in the transcript. Every new intent still needs its complete body; never write this note.]`\n'
+    + "That line is a runtime note, Clodex's transcript rendering of a body you wrote earlier (it replaces the text to save context). "
+    + 'It is never typed by you, and nothing was saved, sent or filed.\n'
+    + 'Emit the complete intent again with the body written out in full:\n'
+    + '\\[agent:dm bob]\n'
+    + '<the full body, written out>\n'
+    + '\\[agent:end]');
+});
+
+test('t1113: the bounce text, scanned as a turn, yields no intent — the example is escaped and the typed token fenced', () => {
+  const { spillMimicBounce, SPILLED_BODY, SPILLED_BODY_FIRST } = require('../intent-spill');
+  const h = mkH();
+  for (const [intent, typed] of [
+    [{ type: 'task', sub: 'add', who: 'hand', start: true }, SPILLED_BODY],
+    [{ type: 'memory', sub: 'remember' }, '@spill:e1b9f4d5c3a27b08'],
+    [{ type: 'dm', target: 'bob' }, SPILLED_BODY_FIRST],
+    [null, '[agent:task add hand] @spill:e1b9f4d5c3a27b08'],
+  ]) {
+    const text = spillMimicBounce(intent, typed);
+    assert.deepStrictEqual(h.m._extractIntents(text), [], `no intent fires from: ${text}`);
+    assert.deepStrictEqual(h.m._extractIntents(`${text}\n`, { receiptsFor: 'lead' }), []);
+  }
+});
+
+test('t1113: the wire mimic arm bounces with the line the detector read — its head when it has one — and the broadcast names the runtime note as such', async () => {
+  const { SPILL_FILLER } = require('../intent-spill');
+  const h = mkH({ getUserDataPath: () => h.root, shadowIntentKey });
+  const rig = await wireRig(h);
+  try {
+    rig.wire.emit('spill-mimic', { agent: 'lead', reqId: 'r1', kind: 'filler', line: SPILL_FILLER });
+    await rig.settle();
+    assert.deepStrictEqual(h.injected.map((i) => i.text), [BOUNCE('reply', '[agent:<verb> …]', SPILL_FILLER, 'runtime note')]);
+    rig.wire.emit('spill-mimic', { agent: 'lead', reqId: 'r2', kind: 'pointer', line: '[agent:dm bob] @spill:e1b9f4d5c3a27b08' });
+    await rig.settle();
+    assert.strictEqual(h.injected[1].text, BOUNCE('dm', '[agent:dm bob]', '@spill:e1b9f4d5c3a27b08', 'spill pointer'));
+  } finally {
+    await rig.close();
   }
 });
