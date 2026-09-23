@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Spill: a seat's first two long intent bodies stay in its transcript in full as examples; from the third on, the stand-in carries a one-time explanation the first time it appears. The injected prompt no longer promises a filed-at note for intent bodies (only prose spills get one).
+
 - Spill receipts: a long intent body an agent typed is no longer reported to it as removed. On the wire the turn keeps the intent head and `[agent:end]` around a `[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]` marker, and only the ordinary confirmation follows — an agent copying that marker as a body is bounced like a typed pointer.
 - Muse seats: two seats spawned within a minute against a data home that refuses the registry each link their own transcript at the deadline (candidates are keyed on creation time, oldest first); the transcript-age filter tolerates 1-second filesystem timestamps.
 - Ticket hands: the spec injected into a freshly spawned seat no longer lands as pasted text with its Enter swallowed — the first inject waits the same settle the boot drain does, and a unit that produces no turn gets one Enter nudge within seconds instead of a duplicate spec after 90 s.

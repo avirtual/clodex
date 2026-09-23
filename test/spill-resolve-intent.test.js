@@ -822,7 +822,7 @@ test('T12: the intent-shaped pointer is bounced ONCE per turn — the mimic dete
 
 test('t1102/t1108: the prose receipt stays outside the emission grammar — not a pointer, a receipt or a mimic kind, the wire cut leaves it alone — and the path it ends with resolves the real spill file; the spilled-body note is outside the cut grammar too, and IS a mimic kind', () => {
   const { spillAckLine } = require('../session-manager');
-  const { FILED_POINTER_RE, RECEIPT_RE, SPILLED_BODY, mimicKindOf, pointerOf, trailingPointerOf, spilledBodyOf, resolveReceipt, writeSpill } = require('../intent-spill');
+  const { FILED_POINTER_RE, RECEIPT_RE, SPILLED_BODY, SPILLED_BODY_FIRST, mimicKindOf, pointerOf, trailingPointerOf, spilledBodyOf, resolveReceipt, writeSpill } = require('../intent-spill');
   const { classifyLine } = require('../wire/spill-cut');
   const root = mkTmpRoot('clodex-spill-');
   assert.strictEqual(FILED_POINTER_RE.test(SPILLED_BODY), false);
@@ -837,6 +837,13 @@ test('t1102/t1108: the prose receipt stays outside the emission grammar — not 
   assert.strictEqual(spilledBodyOf(`Title\n${SPILLED_BODY}\n`), SPILLED_BODY, 'a body ending in the note is the copied shape');
   assert.strictEqual(spilledBodyOf(`${SPILLED_BODY}\nreal text`), null);
   assert.strictEqual(spilledBodyOf(null), null);
+  assert.strictEqual(FILED_POINTER_RE.test(SPILLED_BODY_FIRST), false);
+  assert.strictEqual(pointerOf(SPILLED_BODY_FIRST), null);
+  assert.deepStrictEqual(classifyLine(SPILLED_BODY_FIRST), { kind: 0 });
+  assert.strictEqual(mimicKindOf(SPILLED_BODY_FIRST), 'spilled', 'the long form is the same mimic kind');
+  assert.strictEqual(mimicKindOf(`${SPILLED_BODY_FIRST} — sent`), null);
+  assert.strictEqual(spilledBodyOf(SPILLED_BODY_FIRST), SPILLED_BODY_FIRST);
+  assert.strictEqual(spilledBodyOf(`Title\n${SPILLED_BODY_FIRST}\n`), SPILLED_BODY_FIRST);
   const rows = [
     [{ verb: 'prose', head: null, bytes: 1200 }, 'the prose the seat wrote after its last intent'],
   ];
@@ -899,5 +906,22 @@ test('t1108: a typed `[Runtime note: Clodex filed this body in full; …]` body 
     assert.deepStrictEqual(h.errors, []);
   } finally {
     await rig.close();
+  }
+});
+
+test('t1111: the long runtime note typed as a body is bounced exactly like the short one — one bounce, nothing dispatched', async () => {
+  const { SPILLED_BODY, SPILLED_BODY_FIRST } = require('../intent-spill');
+  for (const note of [SPILLED_BODY_FIRST, SPILLED_BODY]) {
+    const h = mkH();
+    const rows = [];
+    h.m._shadowLog = (row) => rows.push(row);
+    await h.m._handleIntent('lead', { type: 'dm', target: 'bob', body: `Title\n${note}`, reqId: 'r1' });
+    await h.m._handleIntent('lead', { type: 'dm', target: 'bob', body: `Title\n${note}`, reqId: 'r1' });
+    assert.deepStrictEqual(h.dms, [], 'nothing delivered');
+    assert.deepStrictEqual(rows.filter((r) => r.type === 'spill-typed').map((r) => [r.verb, r.pointer]), [['dm', note], ['dm', note]]);
+    assert.strictEqual(h.injected.length, 1, 'one bounce per request, no second bounce');
+    assert.ok(h.injected[0].text.length > 0);
+    assert.deepStrictEqual(h.injected[0].opts, { parkable: true });
+    assert.deepStrictEqual(h.errors, []);
   }
 });

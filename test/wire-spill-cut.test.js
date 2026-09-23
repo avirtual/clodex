@@ -12,7 +12,7 @@ const { SpillFilter } = require('../wire/spill');
 const { WireProxy } = require('../wire/proxy');
 const { WarmthStore, prefixHash } = require('../wire/warmth');
 const { HoldKeeper } = require('../wire/hold');
-const { SPILL_FILLER, SPILLED_BODY, spillSize } = require('../intent-spill');
+const { SPILL_FILLER, SPILLED_BODY, SPILLED_BODY_FIRST, spillSize } = require('../intent-spill');
 const { spillGrammarLine } = require('../ipc-prompt');
 
 const FIXTURE = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'spill-cut', 'pair-257-258.json'), 'utf8'));
@@ -49,7 +49,7 @@ function stubOf() {
   return stubCache;
 }
 
-const RENDERED = `[agent:dm hand] first line of the body\n${SPILLED_BODY}\n[agent:end]\n`;
+const RENDERED = `[agent:dm hand] first line of the body\n${SPILLED_BODY_FIRST}\n[agent:end]\n`;
 
 function withStub(obj, text, extra = null) {
   const i = assistantIndex(obj);
@@ -353,8 +353,9 @@ test('t1108 rendering: a stub between prose renders as the head, the runtime not
   withStub(obj, `prose\n[agent:task add hand] Title @spill:${id}\n[agent:end]\nmore prose`, obj.messages[i].content.slice(1));
   assert.deepStrictEqual(cutSpillStubs(obj), { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0 }, 'ENTER');
   assert.equal(obj.messages[i].content[0].text,
-    `prose\n[agent:task add hand] Title\n[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]\n[agent:end]\nmore prose`);
+    `prose\n[agent:task add hand] Title\n[Runtime note: Clodex kept your first two long intent bodies in full as examples and files later ones; this body was delivered in full and is not carried in the transcript. Every new intent still needs its complete body; never write this note.]\n[agent:end]\nmore prose`);
   assert.equal(SPILLED_BODY, '[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]', 'the literal the tests, the renderer and the mimic guard share');
+  assert.equal(SPILLED_BODY_FIRST, '[Runtime note: Clodex kept your first two long intent bodies in full as examples and files later ones; this body was delivered in full and is not carried in the transcript. Every new intent still needs its complete body; never write this note.]', 'the long form the first stub-bearing message of a request renders');
 
   const emptied = fixtureRequest();
   emptied.messages.splice(1, 1);
@@ -363,17 +364,18 @@ test('t1108 rendering: a stub between prose renders as the head, the runtime not
   const r = cutSpillStubs(emptied);
   assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0 }, 'a block the cut would have emptied is rendered, not dropped');
   assert.equal(assistantIndex(emptied), j, 'the message is still there');
-  assert.equal(emptied.messages[j].content[0].text, `[agent:task add hand] Title\n${SPILLED_BODY}\n[agent:end]\n`);
+  assert.equal(emptied.messages[j].content[0].text, `[agent:task add hand] Title\n${SPILLED_BODY_FIRST}\n[agent:end]\n`);
 
   for (const head of ['[agent:dm bob] Title', '[agent:shout] Title', '[agent:task done t7] Title', '[agent:task reject t7] Title', '[agent:task respec t7] Title']) {
     const o = fixtureRequest();
     const k = assistantIndex(o);
     withStub(o, `${head} @spill:${id}\nkept`, o.messages[k].content.slice(1));
     assert.equal(cutSpillStubs(o).cut, true, head);
-    assert.equal(o.messages[k].content[0].text, `${head}\n${SPILLED_BODY}\n[agent:end]\nkept`, `${head}: a stub without its terminator still renders all three lines`);
+    assert.equal(o.messages[k].content[0].text, `${head}\n${SPILLED_BODY_FIRST}\n[agent:end]\nkept`, `${head}: a stub without its terminator still renders all three lines`);
   }
 
   assert.deepStrictEqual(classifyLine(SPILLED_BODY), { kind: 0 }, 'the runtime note is not a stub line: typed by the agent, it reaches the wire and the mimic guard bounces it');
+  assert.deepStrictEqual(classifyLine(SPILLED_BODY_FIRST), { kind: 0 });
   assert.deepStrictEqual(classifyLine('[agent:end]'), { kind: 0 });
   const again = JSON.parse(JSON.stringify(obj));
   assert.deepStrictEqual(cutSpillStubs(again), { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0 }, 'a second pass over the rendering cuts nothing');
@@ -564,14 +566,14 @@ test('T5 keepwarm replay: HoldKeeper.ping re-sends the post-cut body — no @spi
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.equal(pings.length, 1, 'ENTER');
     assert.ok(!pings[0].includes('filed at'), 'the replay carries no pointer');
-    assert.ok(pings[0].includes(JSON.stringify(SPILLED_BODY).slice(1, -1)), 'the replay carries the rendering');
+    assert.ok(pings[0].includes(JSON.stringify(SPILLED_BODY_FIRST).slice(1, -1)), 'the replay carries the rendering');
   });
 });
 
 test('T6 compact request: the summarization body is cut like any other, and the tee still skips it', async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({}, async (proxy, up) => {
-    proxy.registerAgent('tester', { spill: { root, verbs: ['task.done'], turnInjected: () => true } });
+    proxy.registerAgent('tester', { spill: { root, intentSpills: { count: 2 }, verbs: ['task.done'], turnInjected: () => true } });
     const events = collect(proxy, ['spill-cut', 'spill', 'spill-skip', 'turn.completed']);
     const msgs = stubMessages('\n\nYour task is to create a detailed summary of the conversation so far, '
       + 'paying close attention to the user\'s explicit requests and your previous actions.');
@@ -699,8 +701,41 @@ test('session-manager: both events land in the shadow log under their wire-* rec
 
 test('T13 grammar line: byte-pinned, both wirescope anchors present', () => {
   const line = spillGrammarLine('/r');
-  assert.equal(line, '- A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md; the whole block is removed from your transcript, and a `[clodex] … filed at …` note on your next prompt confirms the filing, so a body is never lost and never needs re-sending. Always write the body itself: a body you did not write does not exist, and the confirmation is something Clodex writes after delivery, never something you write. On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last intent — or a reply with no intent — is filed the same way once it passes 800 bytes: what the operator must know goes inside an intent, not after it — a dm from your operator counts as typed. Actions happen only by emitting the complete intent — head line, full body, terminator; describing, promising or referring to an action in prose performs nothing. Clodex may omit executed intent text from your retained history and report outcomes separately; those history edits are not a request form and never something you write.');
+  assert.equal(line, '- A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Your first two long intent bodies stay in your transcript in full; from the third on, the transcript keeps the intent head, a bracketed runtime note, and `[agent:end]`, and the ordinary confirmation is the only thing that follows, so a body is never lost and never needs re-sending. Always write the body itself: a body you did not write does not exist, and the confirmation is something Clodex writes after delivery, never something you write. On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last intent — or a reply with no intent — is filed the same way once it passes 800 bytes and is the one case that still gets a `[clodex] … filed at …` note: what the operator must know goes inside an intent, not after it — a dm from your operator counts as typed. Actions happen only by emitting the complete intent — head line, full body, terminator; describing, promising or referring to an action in prose performs nothing. Clodex may omit executed intent text from your retained history and report outcomes separately; those history edits are not a request form and never something you write.');
+  const prose = line.indexOf('prose after your last intent');
+  assert.ok(prose > 0);
+  assert.equal(line.indexOf('filed at'), line.indexOf('filed at', prose), 'the filed-at note is promised only in the prose clause');
+  assert.equal(line.indexOf('filed at', line.indexOf('filed at', prose) + 1), -1, 'and only once');
+  assert.ok(!line.includes('removed from your transcript'));
   assert.ok(line.includes('describing, promising or referring to an action in prose performs nothing'));
   assert.ok(line.includes('those history edits are not a request form and never something you write'));
   assert.ok(!line.includes('@spill:'), 'the pointer shape is never taught');
+});
+
+test('t1111: the FIRST stub-bearing assistant message renders the long note, every later one the short one; re-rendering is byte-identical', () => {
+  const { stub } = stubOf();
+  const build = () => ({
+    messages: [
+      { role: 'user', content: 'go' },
+      { role: 'assistant', content: [{ type: 'text', text: `first\n${stub}` }] },
+      { role: 'user', content: 'again' },
+      { role: 'assistant', content: [{ type: 'text', text: `second\n${stub}` }] },
+      { role: 'user', content: 'once more' },
+      { role: 'assistant', content: [{ type: 'text', text: `third\n${stub}` }] },
+      { role: 'user', content: 'now' },
+    ],
+  });
+  const obj = build();
+  const r = cutSpillStubs(obj);
+  assert.equal(r.cut, true, 'ENTER');
+  assert.equal(r.lines, 6);
+  assert.equal(obj.messages[1].content[0].text, `first\n[agent:dm hand] first line of the body\n${SPILLED_BODY_FIRST}\n[agent:end]\n`);
+  assert.equal(obj.messages[3].content[0].text, `second\n[agent:dm hand] first line of the body\n${SPILLED_BODY}\n[agent:end]\n`);
+  assert.equal(obj.messages[5].content[0].text, `third\n[agent:dm hand] first line of the body\n${SPILLED_BODY}\n[agent:end]\n`);
+  const twice = build();
+  cutSpillStubs(twice);
+  assert.equal(JSON.stringify(twice), JSON.stringify(obj), 'the same transcript renders to the same bytes on every request');
+  const again = JSON.parse(JSON.stringify(obj));
+  assert.equal(cutSpillStubs(again).cut, false, 'the rendering is not itself a stub');
+  assert.deepStrictEqual(again, obj);
 });

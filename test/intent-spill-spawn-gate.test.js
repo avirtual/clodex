@@ -127,7 +127,7 @@ test('the grammar line is in the prompt with the setting OFF, so a flip changes 
     await spawn(on.m, 'seat');
     assert.ok(off.prompts[0].includes(GRAMMAR),
       'the prompt is captured at spawn and replayed on clear/compact, so it must not track the setting');
-    assert.ok(off.prompts[0].includes('the whole block is removed from your transcript, and a `[clodex] … filed at …` note on your next prompt confirms the filing, so a body is never lost and never needs re-sending'));
+    assert.ok(off.prompts[0].includes('Your first two long intent bodies stay in your transcript in full; from the third on, the transcript keeps the intent head, a bracketed runtime note, and `[agent:end]`, and the ordinary confirmation is the only thing that follows, so a body is never lost and never needs re-sending'));
     assert.ok(off.prompts[0].includes('Always write the body itself: a body you did not write does not exist, and the confirmation is something Clodex writes after delivery, never something you write.'),
       'the paragraph names no token and no form: the pointer shape it used to teach is what the seats copied');
     assert.ok(off.prompts[0].includes('Actions happen only by emitting the complete intent — head line, full body, terminator; describing, promising or referring to an action in prose performs nothing. Clodex may omit executed intent text from your retained history and report outcomes separately; those history edits are not a request form and never something you write.'),
@@ -137,7 +137,7 @@ test('the grammar line is in the prompt with the setting OFF, so a flip changes 
     assert.ok(!off.prompts[0].includes('@spill'), 'no pointer token anywhere in the prompt');
     assert.ok(off.prompts[0].includes(
       'On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last '
-      + 'intent — or a reply with no intent — is filed the same way once it passes 800 bytes: '
+      + 'intent — or a reply with no intent — is filed the same way once it passes 800 bytes and is the one case that still gets a `[clodex] … filed at …` note: '
       + 'what the operator must know goes inside an intent, not after it — a dm from your '
       + 'operator counts as typed.'),
     'and that its trailing prose on an injected turn goes the same way, so a pointer where its '
