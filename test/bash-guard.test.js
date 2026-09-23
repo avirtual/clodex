@@ -128,6 +128,8 @@ const KILL_TABLE = [
   { cmd: 'sudo pkill -9 -f foo', want: 'deny' },
   { cmd: 'pgrep -f foo | xargs kill -9', want: 'deny' },
   { cmd: 'pgrep -f foo | xargs -n1 kill', want: 'deny' },
+  { cmd: 'pgrep -f foo | xargs -I{} kill -9 {}', want: 'deny' },
+  { cmd: 'pgrep -f foo | xargs -I {} kill {}', want: 'deny' },
   { cmd: 'kill -9 -1', want: 'deny' },
   { cmd: 'kill -TERM -- -1234', want: 'deny' },
   { cmd: 'kill 0', want: 'deny' },

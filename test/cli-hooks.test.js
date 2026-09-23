@@ -935,13 +935,12 @@ test('the live observer is registered for Bash only, ahead of the tool call', ()
   }], 'the matcher-less entry carries the poll guard alone');
 });
 
-// ─── The ticket-seat whole-tree `git add` guard ───────────────────────────
+// ─── The whole-tree `git add` guard ───────────────────────────
 // The SECOND PreToolUse Bash hook, and the one that is allowed to speak: it
 // returns a `permissionDecision: deny` for a whole-tree stage on a ticket seat.
 // Hands 811 and 812 each swept a red-proof subagent's in-flight revert into a
 // commit with `git add -A`; the hand prompt forbids it, this enforces it.
-// The runtime table lives in test/bash-guard.test.js — this pins the generated
-// bytes.
+// The runtime table lives in test/bash-guard.test.js.
 test('the guard is generated, runs on every seat, gates git-add on CLODEX_TICKET, and exits 0', () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);

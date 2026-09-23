@@ -205,6 +205,7 @@ try {
     }
     if (c === "'" || c === '"') { q = c; had = true; continue; }
     if (c === BS && i + 1 < cmd.length) { i++; tok += cmd.charAt(i); had = true; continue; }
+    if (c === "{" && cmd.charAt(i + 1) === "}") { i++; tok += "{}"; had = true; continue; }
     if (c === String.fromCharCode(10)) { push(); segs.push([]); continue; }
     if (c <= " ") { push(); continue; }
     if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")" || c === "{" || c === "}") { push(); segs.push([]); continue; }
