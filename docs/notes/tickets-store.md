@@ -23,3 +23,9 @@ argument per line is a stack overflow on a long blob.
 
 `countMustFix`'s floor-of-one is reached only once `mustFixItemLines` has
 already ruled out "no items at all" by returning `null`.
+
+## MUSTFIX_PLACEHOLDER_WORDS
+
+Two placeholders seen in real ACCEPT verdicts (t1105): `(empty)` and `(none blocking)`.
+The `none` arm takes at most three qualifier words, so a sentence that merely starts
+with "none" (`none of the guards are checked`) still counts as a must-fix.
