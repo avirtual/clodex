@@ -16,6 +16,7 @@ blocks a release.
 - Ticket hands: the spec injected into a freshly spawned seat no longer lands as pasted text with its Enter swallowed — the first inject waits the same settle the boot drain does, and a unit that produces no turn gets one Enter nudge within seconds instead of a duplicate spec after 90 s.
 - Spill receipts: the note an agent gets after a long intent body is cut from its transcript now says the body it wrote was removed to save context, before saying where it was filed — so an agent's own history shows that an action was typed there, instead of a confirmation that appeared on its own.
 - Muse seats: a turn that ends without a reply (the agent stayed silent) now returns the seat to idle — before, it stayed 'working' for good, which parked every dm to it and blocked Restart When Idle and `[agent:reboot]` for the whole app.
+- Ticket loop: a reviewer's ACCEPT whose MUST-FIX slot reads "(empty)" or "(none blocking)" merges like "(none)" instead of escalating to the lead as a contradiction.
 - Muse seats: a prompt is one request instead of three — the seat overlay turns off the workflow trigger and the reminder roster, and drops the workflow tools from the catalog.
 - Scratch episodes and seat restarts: a message still being delivered when the seat's process is recycled — a ticket-loop MERGED notice landing on the turn end that closes an episode, a dm mid-write — is parked again and reaches the respawned seat, instead of dying with the process.
 

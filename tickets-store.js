@@ -135,6 +135,9 @@ function sectionHeader(line) {
     : null;
 }
 
+const MUSTFIX_PLACEHOLDER_WORDS = 'none(?:[ \\t—-]+[a-z]+){0,3}|n\\/a|nothing|empty';
+const MUSTFIX_BARE_PLACEHOLDER_RE = new RegExp(`^(?:${MUSTFIX_PLACEHOLDER_WORDS}|-+|—)\\.?$`, 'i');
+
 function extractMustFix(verdictText) {
   const lines = String(verdictText == null ? '' : verdictText).split('\n');
   const body = [];
@@ -156,7 +159,7 @@ function extractMustFix(verdictText) {
   // so countMustFix's relative-depth count collapses a multi-item verdict to 1.
   const out = body.join('\n').replace(/^(?:[ \t]*\r?\n)+/, '').replace(/\s+$/, '');
   if (!out.trim()) return null;
-  return /^(?:none|n\/a|-+|—)\.?$/i.test(out.trim()) ? null : out;
+  return MUSTFIX_BARE_PLACEHOLDER_RE.test(out.trim()) ? null : out;
 }
 
 // Derived on read: a stored count would disagree with `mustFix` after any edit.
@@ -167,11 +170,11 @@ const MUSTFIX_ITEM_RE = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+\S/;
 // A markdown rule, which the item regex cannot tell from a list item.
 const THEMATIC_BREAK_RE = /^[ \t]*(?:[-*_][ \t]*){3,}$/;
 
-const MUSTFIX_PLACEHOLDER_RE = /^[\s(\[]*(?:none|n\/a|nothing|-+|—)[\s.)\]]*$/i;
+const MUSTFIX_PLACEHOLDER_RE = new RegExp(`^[\\s(\\[]*(?:${MUSTFIX_PLACEHOLDER_WORDS}|-+|—)[\\s.)\\]]*$`, 'i');
 
 // Drops the dash arms: a body OPENING with `---` is a rule above a real list, and
 // inheriting them would count `---\n- a\n- b` as zero.
-const MUSTFIX_PLACEHOLDER_WORD_RE = /^[\s(\[]*(?:none|n\/a|nothing)[\s.)\]]*$/i;
+const MUSTFIX_PLACEHOLDER_WORD_RE = new RegExp(`^[\\s(\\[]*(?:${MUSTFIX_PLACEHOLDER_WORDS})[\\s.)\\]]*$`, 'i');
 
 // Normalized off the line rather than added to the patterns' character classes.
 // Every half is anti-widening; dropping any of it silences the gate:

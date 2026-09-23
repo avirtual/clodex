@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { createTicketsStore, nextTicketId, titleLine, ticketTitle, extractTaskDir, branchSlug } = require('../tickets-store');
+const { createTicketsStore, nextTicketId, titleLine, ticketTitle, extractTaskDir, branchSlug, countMustFix, extractMustFix } = require('../tickets-store');
 const { projectDirFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -300,4 +300,28 @@ test('branchSlug: a title that is ONLY an id or a task dir slugs to empty, not t
   assert.strictEqual(branchSlug(''), '');
   assert.strictEqual(branchSlug(null), '');
   assert.strictEqual(branchSlug(undefined), '');
+});
+
+test('countMustFix: "(empty)" and a qualified "none" are placeholders; a sentence opening with "none" is not', () => {
+  const cases = [
+    ['(empty)', 0],
+    ['(none blocking)', 0],
+    ['none — blocking', 0],
+    ['**(empty)**', 0],
+    ['(none this round)', 0],
+    ['none of the guards are checked', 1],
+    ['- empty string is passed to X', 1],
+    ['nonexistent path is rejected', 1],
+  ];
+  for (const [input, expected] of cases) {
+    assert.strictEqual(countMustFix(input), expected,
+      `countMustFix(${JSON.stringify(input)}) must be ${expected}`);
+  }
+});
+
+test('extractMustFix: a bare "empty" or qualified "none" body is null; a sentence opening with "none" is kept', () => {
+  assert.strictEqual(extractMustFix('MUST-FIX: empty'), null);
+  assert.strictEqual(extractMustFix('MUST-FIX: none blocking'), null);
+  assert.strictEqual(extractMustFix('MUST-FIX: none — blocking'), null);
+  assert.strictEqual(extractMustFix('MUST-FIX: none of the guards are checked'), 'none of the guards are checked');
 });

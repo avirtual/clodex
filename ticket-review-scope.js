@@ -35,7 +35,7 @@ const VERDICT_GRAMMAR = [
   '- **VERDICT**: ACCEPT | REWORK — one line, unambiguous.',
   '- **MUST-FIX**: each blocking defect as its own item, with a `file:line` anchor',
   '  and why it is wrong (the failing interleaving / the unmet case / the broken',
-  '  invariant). Empty section if none.',
+  '  invariant). Empty section if none; write "(none)" when there are none.',
   '- **NITS**: non-blocking improvements, `file:line` where it helps. Empty if none.',
   '- **CHECKED**: what you actually verified (files read, tests traced, cases',
   '  reasoned through) — so the pass\'s real coverage is visible.',

@@ -1566,6 +1566,34 @@ test('a header that MISCOUNTS must-fixes does not block a merge whose body says 
   assert.notStrictEqual(f.masterHead(), before, 'the branch landed');
 });
 
+test('an ACCEPT whose MUST-FIX slot reads "(empty)" merges without escalating', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const before = f.masterHead();
+
+  await f.m._autoMergeTicket(f.team, 't1',
+    { verdict: 'ACCEPT', mustFix: null, reviewRound: 2 },
+    '- **VERDICT**: ACCEPT\n- **MUST-FIX**: (empty)\n- **NITS**:\n  - docs/x.md:1 — wording');
+
+  assert.deepStrictEqual(f.esc(), [], '(empty) declares no must-fixes');
+  assert.notStrictEqual(f.masterHead(), before, 'the branch landed');
+});
+
+test('an ACCEPT whose MUST-FIX slot reads "(none blocking)" merges without escalating', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const before = f.masterHead();
+
+  await f.m._autoMergeTicket(f.team, 't1',
+    { verdict: 'ACCEPT', mustFix: null, reviewRound: 1 },
+    '- **VERDICT**: ACCEPT\n- **MUST-FIX**: (none blocking)\n- **NITS**:\n  - docs/x.md:1 — wording');
+
+  assert.deepStrictEqual(f.esc(), [], '(none blocking) declares no must-fixes');
+  assert.notStrictEqual(f.masterHead(), before, 'the branch landed');
+});
+
 test('an ACCEPT that says "(none)" and then EXPLAINS ITSELF still merges', async () => {
   // The live failure (review-t354-r2): a clean ACCEPT whose must-fix section
   // read `(none)` and then justified each closed item in indented prose with
