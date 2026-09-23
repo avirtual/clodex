@@ -429,26 +429,33 @@ test('m2 poller: stops when the seat leaves the session map before its id lands'
 });
 
 const setMtime = (p, ms) => { fsReal.utimesSync(p, ms / 1000, ms / 1000); return p; };
+const bornOrSkip = (t, p, ms) => {
+  const born = setMtime(p, ms) && fsReal.statSync(p).birthtimeMs;
+  if (Math.abs(born - ms) <= 1) return true;
+  t.skip(`utimes to a past mtime left the birthtime at ${born}: not APFS`);
+  return false;
+};
 
-test('t1095: fallback — no registry record ever lands; the deadline links the newest post-spawn session.jsonl and resolves fallback', async (t) => {
+test('t1095: fallback — no registry record ever lands; the deadline links the oldest-born post-spawn session.jsonl and resolves fallback', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   const f = mkMuse();
   f.m._museLinkPollMs = 250;
   await f.create('seat');
   try {
     const s = f.m.sessions.get('seat');
-    const older = setMtime(writeTranscript(f.dataHome, ROTATED), s.spawnedAt + 1000);
-    const newest = setMtime(writeTranscript(f.dataHome, SID), s.spawnedAt + 2000);
+    const first = setMtime(writeTranscript(f.dataHome, SID), s.spawnedAt + 2000);
+    const second = setMtime(writeTranscript(f.dataHome, ROTATED), s.spawnedAt + 1000);
+    assert.ok(fsReal.statSync(first).birthtimeMs < fsReal.statSync(second).birthtimeMs, 'ENTER: the first file written was born first');
     t.mock.timers.tick(59999);
     assert.throws(() => fsReal.lstatSync(f.link('seat')), /ENOENT/, 'ENTER: nothing linked before the deadline');
     t.mock.timers.tick(1);
     assert.strictEqual(await s._museLinkDone, 'fallback');
-    assert.strictEqual(fsReal.readlinkSync(f.link('seat')), newest);
-    assert.notStrictEqual(fsReal.readlinkSync(f.link('seat')), older);
+    assert.strictEqual(fsReal.readlinkSync(f.link('seat')), first);
+    assert.notStrictEqual(fsReal.readlinkSync(f.link('seat')), second);
     assert.deepStrictEqual(f.order, ['spawn', 'link']);
     assert.deepStrictEqual(f.warns, [], 'a fallback link is info, not a warn');
     assert.deepStrictEqual(f.infos.filter((m) => m.includes('linked newest transcript')),
-      [`seat: no session registered for pid 999 within 60000 ms — linked newest transcript ${newest}`]);
+      [`seat: no session registered for pid 999 within 60000 ms — linked newest transcript ${first}`]);
     assert.strictEqual(s.sessionId, null, 'the id is the watcher retarget\'s to report, not the fallback\'s');
   } finally { await f.stop('seat'); }
 });
@@ -465,17 +472,17 @@ test('t1095: fallback skips a session.jsonl another live muse seat already links
     const b = f.m.sessions.get('b');
     setMtime(linkedByA, b.spawnedAt + 2000);
     const free = setMtime(writeTranscript(f.dataHome, ROTATED), b.spawnedAt + 1000);
-    assert.strictEqual(fsReal.readlinkSync(f.link('a')), linkedByA, 'ENTER: a already links the newest file');
+    assert.strictEqual(fsReal.readlinkSync(f.link('a')), linkedByA, 'ENTER: a already links the oldest-born file');
     t.mock.timers.tick(60000);
     assert.strictEqual(await a._museLinkDone, 'deadline');
     assert.strictEqual(await b._museLinkDone, 'fallback');
-    assert.strictEqual(fsReal.readlinkSync(f.link('b')), free, 'the newest file is a\'s; b takes the next newest');
+    assert.strictEqual(fsReal.readlinkSync(f.link('b')), free, 'the oldest-born file is a\'s; b takes the next oldest');
     assert.strictEqual(fsReal.readlinkSync(f.link('a')), linkedByA);
     assert.deepStrictEqual(f.warns, []);
   } finally { await f.stop('a'); await f.stop('b'); }
 });
 
-test('t1104: two fresh seats — a file newer than the later seat\'s spawn is not the earlier seat\'s; a resolves deadline, b takes it', async (t) => {
+test('t1104: two fresh seats — a file born within 1 s below the later seat\'s spawn is not the earlier seat\'s; a resolves deadline, b takes it', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   const f = mkMuse();
   f.m._museLinkPollMs = 250;
@@ -486,13 +493,68 @@ test('t1104: two fresh seats — a file newer than the later seat\'s spawn is no
     const b = f.m.sessions.get('b');
     b.spawnedAt = a.spawnedAt + 100;
     const only = setMtime(writeTranscript(f.dataHome, SID), b.spawnedAt + 2000);
-    assert.ok(fsReal.statSync(only).mtimeMs > b.spawnedAt, 'ENTER: the only file postdates b\'s spawn');
+    assert.ok(fsReal.statSync(only).birthtimeMs >= b.spawnedAt - 1000, 'ENTER: the only file was born within 1 s of b\'s spawn');
     t.mock.timers.tick(60000);
     assert.strictEqual(await a._museLinkDone, 'deadline');
     assert.strictEqual(await b._museLinkDone, 'fallback');
     assert.throws(() => fsReal.lstatSync(f.link('a')), /ENOENT/, 'a links nothing: the file may be b\'s');
     assert.strictEqual(fsReal.readlinkSync(f.link('b')), only);
     assert.deepStrictEqual(f.warns, ['a: no session registered for pid 999 within 60000 ms — transcript link pending']);
+  } finally { await f.stop('a'); await f.stop('b'); }
+});
+
+test('t1105: two seats 2 s apart — the earlier seat kept writing after the later one spawned; each links its own file by creation time', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const f = mkMuse();
+  f.m._museLinkPollMs = 250;
+  await f.create('a');
+  await f.create('b');
+  try {
+    const a = f.m.sessions.get('a');
+    const b = f.m.sessions.get('b');
+    const own = writeTranscript(f.dataHome, SID);
+    if (!bornOrSkip(t, own, Date.now() - 3000)) return;
+    const bornA = fsReal.statSync(own).birthtimeMs;
+    a.spawnedAt = bornA - 250;
+    b.spawnedAt = a.spawnedAt + 2000;
+    setMtime(own, b.spawnedAt + 5000);
+    assert.strictEqual(fsReal.statSync(own).birthtimeMs, bornA, 'ENTER: a later mtime leaves the birthtime alone');
+    assert.ok(fsReal.statSync(own).mtimeMs > b.spawnedAt, 'ENTER: a\'s file was last written after b spawned');
+    const theirs = writeTranscript(f.dataHome, ROTATED);
+    assert.ok(fsReal.statSync(theirs).birthtimeMs > b.spawnedAt, 'ENTER: b\'s file was born after b spawned');
+    t.mock.timers.tick(60000);
+    assert.strictEqual(await a._museLinkDone, 'fallback');
+    assert.strictEqual(await b._museLinkDone, 'fallback');
+    assert.strictEqual(fsReal.readlinkSync(f.link('a')), own);
+    assert.strictEqual(fsReal.readlinkSync(f.link('b')), theirs);
+    assert.deepStrictEqual(f.warns, []);
+    assert.deepStrictEqual(f.infos.filter((m) => m.includes('linked newest transcript')), [
+      `a: no session registered for pid 999 within 60000 ms — linked newest transcript ${own}`,
+      `b: no session registered for pid 999 within 60000 ms — linked newest transcript ${theirs}`,
+    ]);
+  } finally { await f.stop('a'); await f.stop('b'); }
+});
+
+test('t1105: two seats spawned in the same millisecond — the one inserted later bounds the earlier one; a resolves deadline, b takes the file', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const f = mkMuse();
+  f.m._museLinkPollMs = 250;
+  await f.create('a');
+  await f.create('b');
+  try {
+    const a = f.m.sessions.get('a');
+    const b = f.m.sessions.get('b');
+    b.spawnedAt = a.spawnedAt;
+    const only = writeTranscript(f.dataHome, SID);
+    assert.ok(fsReal.statSync(only).birthtimeMs >= a.spawnedAt, 'ENTER: the only file was born after both spawns');
+    t.mock.timers.tick(60000);
+    assert.strictEqual(await a._museLinkDone, 'deadline');
+    assert.strictEqual(await b._museLinkDone, 'fallback');
+    assert.throws(() => fsReal.lstatSync(f.link('a')), /ENOENT/, 'a links nothing: b, inserted after it, is the later seat');
+    assert.strictEqual(fsReal.readlinkSync(f.link('b')), only);
+    assert.deepStrictEqual(f.warns, ['a: no session registered for pid 999 within 60000 ms — transcript link pending']);
+    assert.deepStrictEqual(f.infos.filter((m) => m.includes('linked newest transcript')),
+      [`b: no session registered for pid 999 within 60000 ms — linked newest transcript ${only}`]);
   } finally { await f.stop('a'); await f.stop('b'); }
 });
 
@@ -503,8 +565,9 @@ test('t1095: fallback — a session.jsonl older than the spawn is no candidate; 
   await f.create('seat');
   try {
     const s = f.m.sessions.get('seat');
-    const stale = setMtime(writeTranscript(f.dataHome, SID), s.spawnedAt - 5000);
-    assert.ok(fsReal.statSync(stale).mtimeMs < s.spawnedAt, 'ENTER: the only file predates the spawn');
+    const stale = writeTranscript(f.dataHome, SID);
+    s.spawnedAt = fsReal.statSync(stale).birthtimeMs + 5000;
+    assert.ok(fsReal.statSync(stale).birthtimeMs < s.spawnedAt - 1000, 'ENTER: the only file was born before the spawn, beyond the slack');
     t.mock.timers.tick(60000);
     assert.strictEqual(await s._museLinkDone, 'deadline');
     assert.throws(() => fsReal.lstatSync(f.link('seat')), /ENOENT/);

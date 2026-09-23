@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
-  uuidv7, bootstrapSeatConfig, museDataHome, findMuseTranscript, newestMuseTranscript, museRegistryFor, linkTranscript, deepMerge,
+  uuidv7, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, museRegistryFor, linkTranscript, deepMerge,
 } = require('../seat-config');
 
 const deps = { fs, path, os };
@@ -134,13 +134,23 @@ test('findMuseTranscript: globs the date tree for <sid>/session.jsonl and never 
   assert.strictEqual(findMuseTranscript(deps, path.join(root, 'nope'), sid), null);
 });
 
-test('t1095: newestMuseTranscript picks the newest session.jsonl by mtime at or after sinceMs, skips excluded paths and non-files, and never computes the date', () => {
+const bornFs = (born) => ({
+  ...fs,
+  statSync: (p) => {
+    const st = fs.statSync(p);
+    return born.has(p) ? Object.create(st, { birthtimeMs: { value: born.get(p) } }) : st;
+  },
+});
+
+test('t1095: oldestMuseTranscript picks the oldest-born session.jsonl at or after sinceMs, skips excluded paths and non-files, and never computes the date', () => {
   const root = mkTmpRoot('clx-seatcfg-');
+  const born = new Map();
+  const bdeps = { fs: bornFs(born), path, os };
   const at = (y, m, d, sid) => path.join(root, 'muse', 'sessions', y, m, d, sid, 'session.jsonl');
-  const write = (p, mtimeMs) => {
+  const write = (p, bornMs) => {
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, '{"record_type":"session.opened.observed"}\n');
-    fs.utimesSync(p, mtimeMs / 1000, mtimeMs / 1000);
+    born.set(p, bornMs);
     return p;
   };
   const since = 1_800_000_000_000;
@@ -149,39 +159,69 @@ test('t1095: newestMuseTranscript picks the newest session.jsonl by mtime at or 
   const newest = write(at('2031', '02', '01', 'newest'), since + 2000);
   const exact = write(at('2031', '02', '01', 'exact'), since);
   fs.mkdirSync(path.join(root, 'muse', 'sessions', '2031', '02', '01', 'dirsid', 'session.jsonl'), { recursive: true });
-  fs.utimesSync(path.join(root, 'muse', 'sessions', '2031', '02', '01', 'dirsid', 'session.jsonl'), (since + 9000) / 1000, (since + 9000) / 1000);
-  assert.strictEqual(newestMuseTranscript(deps, root, since, []), newest);
-  assert.strictEqual(newestMuseTranscript(deps, root, since, [newest]), mid, 'an excluded path is skipped for the next newest');
-  assert.strictEqual(newestMuseTranscript(deps, root, since, [newest, mid]), exact, 'mtime equal to sinceMs qualifies');
-  assert.strictEqual(newestMuseTranscript(deps, root, since, [newest, mid, exact]), null, `${old} is older than sinceMs: no candidate`);
-  assert.strictEqual(newestMuseTranscript(deps, root, since - 10000, [newest, mid, exact]), old);
-  assert.strictEqual(newestMuseTranscript(deps, root, since), newest, 'excludePaths is optional');
-  assert.strictEqual(newestMuseTranscript(deps, path.join(root, 'nope'), 0, []), null);
+  born.set(path.join(root, 'muse', 'sessions', '2031', '02', '01', 'dirsid', 'session.jsonl'), since - 1);
+  assert.strictEqual(oldestMuseTranscript(bdeps, root, since, []), exact, 'born equal to sinceMs qualifies and is the oldest');
+  assert.strictEqual(oldestMuseTranscript(bdeps, root, since, [exact]), mid, 'an excluded path is skipped for the next oldest');
+  assert.strictEqual(oldestMuseTranscript(bdeps, root, since, [exact, mid]), newest);
+  assert.strictEqual(oldestMuseTranscript(bdeps, root, since, [exact, mid, newest]), null, `${old} is older than sinceMs: no candidate`);
+  assert.strictEqual(oldestMuseTranscript(bdeps, root, since - 10000, [exact, mid, newest]), old);
+  assert.strictEqual(oldestMuseTranscript(bdeps, root, since), exact, 'excludePaths is optional');
+  assert.strictEqual(oldestMuseTranscript(bdeps, root, path.join(root, 'nope'), 0, []), null);
+  born.set(old, 0);
+  fs.utimesSync(old, (since + 500) / 1000, (since + 500) / 1000);
+  assert.strictEqual(oldestMuseTranscript(bdeps, root, since, [exact]), old, 'birthtimeMs 0 (no statx birthtime) falls back to mtime');
 });
 
-test('t1104: newestMuseTranscript gives sinceMs 1 s of slack and treats untilMs as an exclusive upper bound', () => {
+test('t1104: oldestMuseTranscript gives sinceMs 1 s of slack and excludes everything born within 1 s below untilMs', () => {
   const root = mkTmpRoot('clx-seatcfg-');
+  const born = new Map();
+  const bdeps = { fs: bornFs(born), path, os };
   const at = (sid) => path.join(root, 'muse', 'sessions', '2031', '02', '01', sid, 'session.jsonl');
-  const write = (p, mtimeMs) => {
+  const write = (p, bornMs) => {
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, '{"record_type":"session.opened.observed"}\n');
-    fs.utimesSync(p, mtimeMs / 1000, mtimeMs / 1000);
+    born.set(p, bornMs);
     return p;
   };
   const since = 1_800_000_000_000;
   const slack = write(at('slack'), 1_799_999_999_500);
   const tooOld = write(at('tooold'), 1_799_999_998_500);
-  assert.strictEqual(newestMuseTranscript(deps, root, since, []), slack, 'mtime 500 ms before sinceMs is a candidate');
-  assert.strictEqual(newestMuseTranscript(deps, root, since, [slack]), null, 'mtime 1500 ms before sinceMs is not');
+  assert.strictEqual(oldestMuseTranscript(bdeps, root, since, []), slack, 'born 500 ms before sinceMs is a candidate');
+  assert.strictEqual(oldestMuseTranscript(bdeps, root, since, [slack]), null, 'born 1500 ms before sinceMs is not');
   const later = write(at('later'), since + 3000);
   const atUntil = write(at('atuntil'), since + 2000);
-  const before = write(at('before'), since + 1999);
-  assert.strictEqual(newestMuseTranscript(deps, root, since, []), later, 'no untilMs: the newest wins');
-  assert.strictEqual(newestMuseTranscript(deps, root, since, [], since + 2000), before, 'mtime at or after untilMs is excluded');
-  assert.strictEqual(newestMuseTranscript(deps, root, since, [before], since + 2000), slack);
-  assert.strictEqual(newestMuseTranscript(deps, root, since, [], null), later, 'a null untilMs is no bound');
-  assert.notStrictEqual(newestMuseTranscript(deps, root, since, [], since + 2000), atUntil);
-  assert.strictEqual(newestMuseTranscript(deps, root, since, [before, slack], since + 2000), null, `${tooOld} is below the slack and ${atUntil} at the bound: nothing left`);
+  const inSlack = write(at('inslack'), since + 1500);
+  const justBelow = write(at('justbelow'), since + 999);
+  assert.strictEqual(oldestMuseTranscript(bdeps, root, since, [slack]), justBelow, 'no untilMs: the oldest survivor wins');
+  assert.strictEqual(oldestMuseTranscript(bdeps, root, since, [slack], since + 2000), justBelow, 'born within 1 s below untilMs is excluded');
+  assert.strictEqual(oldestMuseTranscript(bdeps, root, since, [slack, justBelow], since + 2000), null, `${tooOld} is below the slack; ${inSlack}, ${atUntil} and ${later} are at or above untilMs - 1000: nothing left`);
+  assert.strictEqual(oldestMuseTranscript(bdeps, root, since, [slack, justBelow], since + 2501), inSlack, 'born 1001 ms below untilMs survives');
+  assert.strictEqual(oldestMuseTranscript(bdeps, root, since, [slack, justBelow], null), inSlack, 'a null untilMs is no bound');
+  assert.notStrictEqual(oldestMuseTranscript(bdeps, root, since, [], since + 2000), atUntil);
+});
+
+test('t1105: oldestMuseTranscript keys on the real creation time, not the last write, and the upper bound keeps 1 s of slack', (t) => {
+  const root = mkTmpRoot('clx-seatcfg-');
+  const at = (sid) => path.join(root, 'muse', 'sessions', '2031', '02', '01', sid, 'session.jsonl');
+  const write = (p) => {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, '{"record_type":"session.opened.observed"}\n');
+    return p;
+  };
+  const since = Date.now();
+  const olderBorn = write(at('olderborn'));
+  const newerBorn = write(at('newerborn'));
+  const olderSt = fs.statSync(olderBorn);
+  const newerSt = fs.statSync(newerBorn);
+  if (!(olderSt.birthtimeMs > 0)) { t.skip('this filesystem reports no birthtime; the mtime fallback is pinned by the t1095 test'); return; }
+  assert.ok(olderSt.birthtimeMs < newerSt.birthtimeMs, 'ENTER: the first file written was born first');
+  fs.utimesSync(olderBorn, (newerSt.mtimeMs + 60000) / 1000, (newerSt.mtimeMs + 60000) / 1000);
+  assert.ok(fs.statSync(olderBorn).mtimeMs > newerSt.mtimeMs, 'ENTER: the older-born file now has the newer mtime');
+  assert.strictEqual(fs.statSync(olderBorn).birthtimeMs, olderSt.birthtimeMs, 'ENTER: a later mtime leaves the birthtime alone');
+  assert.strictEqual(oldestMuseTranscript(deps, root, since, []), olderBorn, 'the older-born file wins over the newer-written one');
+  assert.strictEqual(oldestMuseTranscript(deps, root, since, [olderBorn]), newerBorn);
+  assert.strictEqual(oldestMuseTranscript(deps, root, since, [olderBorn], newerSt.birthtimeMs + 500), null, 'born 500 ms before untilMs is not a candidate');
+  assert.strictEqual(oldestMuseTranscript(deps, root, since, [olderBorn], newerSt.birthtimeMs + 1500), newerBorn, 'born 1500 ms before untilMs is');
 });
 
 test('museRegistryFor: the record whose process_generation_hint names the pid, else one whose pid field does, else null', () => {
