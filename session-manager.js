@@ -186,7 +186,7 @@ const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
 const { isAgentType, adapterFor } = require('./cli-adapters');
 const {
-  SPILL_VERBS, SPILL_MIN_BYTES, HEAD_RE, isSpillVerb, pointerOf, pointerMatch, trailingPointerOf, resolveSpill, spillDirFor, spillPathFor, verbKeyOf, writeSpill,
+  SPILL_VERBS, SPILL_MIN_BYTES, HEAD_RE, SPILLED_BODY, isSpillVerb, pointerOf, pointerMatch, trailingPointerOf, spilledBodyOf, resolveSpill, spillDirFor, spillPathFor, verbKeyOf, writeSpill,
   receiptOf, resolveReceipt,
   capResumeSnapshot,
 } = require('./intent-spill');
@@ -203,10 +203,8 @@ function typedPointerBounce(intent, pointer) {
 }
 
 function spillAckLine(ev, filePath) {
-  if (ev.verb === 'prose') {
-    return `[clodex] the ${ev.bytes} B of prose you wrote after your last intent were removed from your retained transcript to save context; they reached the operator's log and were filed at ${filePath}.`;
-  }
-  return `[clodex] your \`${ev.head}\` intent — the ${ev.bytes} B body you typed — was removed from your retained transcript to save context; it was read in full and filed at ${filePath}.`;
+  if (ev.verb !== 'prose') return null;
+  return `[clodex] the ${ev.bytes} B of prose you wrote after your last intent were removed from your retained transcript to save context; they reached the operator's log and were filed at ${filePath}.`;
 }
 const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
@@ -1016,10 +1014,13 @@ function createSessionManager(deps) {
             : `${ev.head} (${ev.bytes} B) filed at ${filePath}`,
           path: filePath,
         });
-        try {
-          enqueueNotice(REGISTRY_DIR, ev.agent, spillAckLine(ev, filePath));
-        } catch (e) {
-          this._shadowLog({ type: 'wire-spill-ack-error', agent: ev.agent, error: e.message });
+        const ack = spillAckLine(ev, filePath);
+        if (ack) {
+          try {
+            enqueueNotice(REGISTRY_DIR, ev.agent, ack);
+          } catch (e) {
+            this._shadowLog({ type: 'wire-spill-ack-error', agent: ev.agent, error: e.message });
+          }
         }
         this._noteFiled(ev.agent, filedEntry(filePath, 'intent', spillHead(filePath, ev)));
       });
@@ -5253,6 +5254,11 @@ function createSessionManager(deps) {
           type: 'intent', from: senderName, to: senderName,
           body: `unrecognized intent bounced: ${intent.text}`,
         });
+        return;
+      }
+
+      if (spilledBodyOf(intent.body) !== null) {
+        this._spillTyped(session, senderName, intent, SPILLED_BODY);
         return;
       }
 

@@ -67,10 +67,11 @@ SSE frame level (a 200 `text/event-stream` that never sends `\n\n`).
 ## SpillTee
 
 Built whenever `spillEligible` holds, a system-row-last request included: the API
-rejects `system → user`, so `cutSpillStubs` keeps a head-line placeholder where a
-stub-only assistant message sits behind a `role:"system"` row instead of dropping it.
-With no head to keep, the placeholder is a third-person sentence, not a bracketed
-token: a model copied the literal `[agent]` back as its empty reply (wirescope, 2026-09-22).
+rejects `system → user`, so `cutSpillStubs` keeps a placeholder where a pointer-only
+assistant message sits behind a `role:"system"` row instead of dropping it (a stub
+with a head is rendered in place and never empties its message). The placeholder
+is a third-person sentence, not a bracketed token: a model copied the literal
+`[agent]` back as its empty reply (wirescope, 2026-09-22).
 
 An unchanged delta is forwarded as its ORIGINAL bytes, never re-serialised:
 Anthropic's SSE pads events with trailing spaces, so a re-encode changes 100% of

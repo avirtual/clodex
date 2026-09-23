@@ -12,6 +12,7 @@ const SPILL_MIN_BYTES = 800;
 const SPILL_MAX_BYTES = 262144;
 const SNAPSHOT_MAX_BYTES = 4096;
 const SPILL_FILLER = '[Runtime note: action text omitted from retained history.]';
+const SPILLED_BODY = '[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]';
 
 const SPILL_VERBS = new Set([
   'task.add', 'task.respec', 'task.reject', 'task.done',
@@ -130,6 +131,12 @@ function trailingPointerOf(text) {
   return m[1] ? { id: m[2], pointer: m[1] } : { id: m[5], pointer: m[3] };
 }
 
+function spilledBodyOf(body) {
+  if (typeof body !== 'string') return null;
+  const lines = body.trim().split('\n');
+  return lines[lines.length - 1].trim() === SPILLED_BODY ? SPILLED_BODY : null;
+}
+
 function spillSize(bytes) {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
 }
@@ -144,6 +151,7 @@ function mimicKindOf(line) {
   if (RECEIPT_RE.test(t)) return 'intent';
   if (TAIL_RECEIPT_RE.test(t)) return 'prose';
   if (t === SPILL_FILLER) return 'filler';
+  if (t === SPILLED_BODY) return 'spilled';
   if (pointerOf(t) !== null) return 'pointer';
   const m = HEAD_RE.exec(t);
   if (m && pointerOf(t.slice(m[0].length).trim()) !== null) return 'pointer';
@@ -189,6 +197,7 @@ module.exports = {
   SPILL_MAX_BYTES,
   SNAPSHOT_MAX_BYTES,
   SPILL_FILLER,
+  SPILLED_BODY,
   SPILL_VERBS,
   ID_RE,
   AGENT_RE,
@@ -211,6 +220,7 @@ module.exports = {
   pointerMatch,
   pointerOf,
   trailingPointerOf,
+  spilledBodyOf,
   spillSize,
   pointerText,
   mimicKindOf,

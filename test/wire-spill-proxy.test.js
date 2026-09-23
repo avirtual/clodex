@@ -9,7 +9,7 @@ const zlib = require('zlib');
 
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { WireProxy } = require('../wire/proxy');
-const { mimicKindOf, spillSize } = require('../intent-spill');
+const { mimicKindOf, spillSize, SPILLED_BODY } = require('../intent-spill');
 
 function filed(root, spill) {
   return `${spillSize(spill.bytes)}${spill.verb === 'prose' ? ' of prose' : ''} filed at ${path.join(root, 'spill', 'tester', `${spill.id}.md`)}`;
@@ -736,7 +736,7 @@ const DM_SSE = [
   ev('message_stop', { type: 'message_stop' }),
 ].join('');
 
-test('the two halves compose: the stub the tee writes is what cutSpillStubs drops from the NEXT request', async () => {
+test('the two halves compose: the stub the tee writes is what cutSpillStubs renders in the NEXT request', async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({ body: DM_SSE }, async (proxy, up) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
@@ -759,9 +759,11 @@ test('the two halves compose: the stub the tee writes is what cutSpillStubs drop
     await request(proxy.port, '/agent/tester/v1/messages', next);
     assert.ok(await whenEvent(events, 'stream-end', 2));
     assert.equal(events['spill-cut'].length, 1, 'the editor ran on the request built from the record');
-    assert.equal(events['spill-cut'][0].messages, 1, 'and dropped the stub message whole');
+    assert.equal(events['spill-cut'][0].messages, 0, 'the stub message is kept, rendered');
     const upstream = JSON.parse(up.seen.requests[1].body.toString('utf8'));
-    assert.deepEqual(upstream.messages.map((m) => m.role), ['user', 'user'], 'the model never sees the stub');
+    assert.deepEqual(upstream.messages.map((m) => m.role), ['user', 'assistant', 'user'], 'the turn stays');
+    assert.deepEqual(upstream.messages[1].content, [{ type: 'text', text: `[agent:dm bob]\n${SPILLED_BODY}\n[agent:end]\n` }],
+      'the model sees its intent as emitted, around the runtime note — never the stub');
     assert.ok(!up.seen.requests[1].body.toString('utf8').includes('@spill:'));
   });
 });
