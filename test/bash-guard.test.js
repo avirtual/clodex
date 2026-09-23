@@ -115,6 +115,85 @@ test('the guard denies every whole-tree stage and passes everything else', () =>
   }
 });
 
+const KILL_REASON = 'kill by pid, never by pattern: run pgrep -lf <pattern> first, read the list,'
+  + ' then kill <pid>. On macOS pkill/killall stop parsing options at the first pattern, so flags'
+  + ' after it become more patterns and -f cat matches every /Applications binary; a group or -1'
+  + ' target kills the whole login. For a command that may hang, use timeout or a background run'
+  + ' instead of a kill afterwards.';
+
+const KILL_TABLE = [
+  { cmd: 'pkill -f "cat" -U 501 -x', want: 'deny' },
+  { cmd: 'pkill node', want: 'deny' },
+  { cmd: 'killall Electron', want: 'deny' },
+  { cmd: 'sudo pkill -9 -f foo', want: 'deny' },
+  { cmd: 'pgrep -f foo | xargs kill -9', want: 'deny' },
+  { cmd: 'pgrep -f foo | xargs -n1 kill', want: 'deny' },
+  { cmd: 'pgrep -f foo | xargs -I{} kill -9 {}', want: 'deny' },
+  { cmd: 'pgrep -f foo | xargs -I {} kill {}', want: 'deny' },
+  { cmd: 'kill -9 -1', want: 'deny' },
+  { cmd: 'kill -TERM -- -1234', want: 'deny' },
+  { cmd: 'kill 0', want: 'deny' },
+  { cmd: 'timeout 5 pkill foo', want: 'deny' },
+  { cmd: 'A=1 command pkill foo', want: 'deny' },
+
+  { cmd: 'kill 1234', want: 'pass' },
+  { cmd: 'kill -9 1234 5678', want: 'pass' },
+  { cmd: 'kill -s TERM 1234', want: 'pass' },
+  { cmd: 'kill -0 1234', want: 'pass' },
+  { cmd: 'kill -l', want: 'pass' },
+  { cmd: 'pgrep -lf cat', want: 'pass' },
+  { cmd: 'echo "run pkill later"', want: 'pass' },
+  { cmd: 'git log --grep pkill', want: 'pass' },
+  { cmd: 'ps aux | grep pkill', want: 'pass' },
+];
+
+function runUnticketed(script, command) {
+  const env = { ...process.env };
+  delete env.CLODEX_TICKET;
+  const r = cp.spawnSync('bash', [script], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } }),
+    encoding: 'utf-8', env,
+  });
+  assert.strictEqual(r.status, 0, `exit 0 on: ${command}`);
+  return r.stdout;
+}
+
+test('every seat, ticket or not, is refused a pattern kill and allowed a pid kill', () => {
+  const script = guardScript();
+  assert.ok(KILL_TABLE.some((r) => r.cmd === 'pkill -f "cat" -U 501 -x' && r.want === 'deny'));
+  assert.ok(KILL_TABLE.filter((r) => r.want === 'deny').length >= 11);
+
+  for (const { cmd, want } of KILL_TABLE) {
+    const out = runUnticketed(script, cmd);
+    if (want === 'pass') {
+      assert.strictEqual(out, '', `must PASS: ${cmd}`);
+      continue;
+    }
+    let parsed;
+    try { parsed = JSON.parse(out); } catch {
+      assert.fail(`must DENY with hook JSON: ${cmd} — got ${JSON.stringify(out)}`);
+    }
+    assert.deepStrictEqual(parsed, {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: KILL_REASON,
+      },
+    }, `deny shape for: ${cmd}`);
+  }
+});
+
+test('the kill reason carries the pgrep correction, names no ticket, and stays under 400 bytes', () => {
+  const script = guardScript();
+  const reason = JSON.parse(runUnticketed(script, 'pkill node')).hookSpecificOutput.permissionDecisionReason;
+  assert.match(reason, /pgrep -lf/);
+  assert.ok(!/ticket/.test(reason), 'the kill rule fires without a ticket, so its reason must not name one');
+  assert.ok(Buffer.byteLength(reason, 'utf-8') <= 400, `reason is ${Buffer.byteLength(reason, 'utf-8')} bytes`);
+
+  const ticketed = JSON.parse(run(script, 'pkill node', { CLODEX_TICKET: 't417' }));
+  assert.strictEqual(ticketed.hookSpecificOutput.permissionDecisionReason, reason);
+});
+
 test('the reason names the ticket that is being guarded', () => {
   // The id is interpolated from the seat's env, not baked at generation: one
   // script serves whatever ticket the seat currently holds, and a hand reading
@@ -124,7 +203,7 @@ test('the reason names the ticket that is being guarded', () => {
   assert.match(out.hookSpecificOutput.permissionDecisionReason, /^ticket t417: stage only the paths you edited/);
 });
 
-test('no ticket marker, no deny — every other seat is untouched', () => {
+test('no ticket marker, no git-add deny — the stage rule stays ticket-gated', () => {
   const script = guardScript();
   // Spawned with CLODEX_TICKET actively removed rather than emptied: an
   // inherited one from the seat running this suite would make the assertion

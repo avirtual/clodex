@@ -182,12 +182,10 @@ exit 0
 
     const guardScriptPath = pathFor(REGISTRY_DIR, name, 'bashGuardScript');
     fs.writeFileSync(guardScriptPath, `#!/bin/bash
-[ -n "$CLODEX_TICKET" ] || exit 0
 IN="$(cat)"
 ${INTERP} - "$CLODEX_TICKET" "$IN" <<'JSEOF' 2>/dev/null
 try {
   const ticket = process.argv[2];
-  if (!ticket) process.exit(0);
   let d = null;
   try { d = JSON.parse(process.argv[3]); } catch (e) { process.exit(0); }
   const cmd = d && d.tool_input && d.tool_input.command;
@@ -207,6 +205,7 @@ try {
     }
     if (c === "'" || c === '"') { q = c; had = true; continue; }
     if (c === BS && i + 1 < cmd.length) { i++; tok += cmd.charAt(i); had = true; continue; }
+    if (c === "{" && cmd.charAt(i + 1) === "}") { i++; tok += "{}"; had = true; continue; }
     if (c === String.fromCharCode(10)) { push(); segs.push([]); continue; }
     if (c <= " ") { push(); continue; }
     if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")" || c === "{" || c === "}") { push(); segs.push([]); continue; }
@@ -217,6 +216,60 @@ try {
   const ADD_PATHS = [".", "./", ":/", "*"];
   const TAKES_ARG = "mcCFt";
   const PREFIX = ["command", "exec", "env"];
+  const KPREFIX = ["command", "exec", "env", "nohup"];
+  const skipKill = (seg, i) => {
+    while (i < seg.length) {
+      const t = seg[i];
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t) || KPREFIX.indexOf(t) >= 0) { i++; continue; }
+      if (t.split("/").pop() === "sudo") {
+        i++;
+        while (i < seg.length && seg[i].charAt(0) === "-") { if (/^-[ugCDhprTU]$/.test(seg[i])) i++; i++; }
+        continue;
+      }
+      if (t.split("/").pop() === "timeout") {
+        i++;
+        while (i < seg.length && seg[i].charAt(0) === "-") { if (seg[i] === "-s" || seg[i] === "-k") i++; i++; }
+        i++;
+        continue;
+      }
+      break;
+    }
+    return i;
+  };
+  const killHit = (seg) => {
+    let i = skipKill(seg, 0);
+    let name = seg[i] && seg[i].split("/").pop();
+    if (name === "xargs") {
+      i++;
+      while (i < seg.length && seg[i].charAt(0) === "-") { if (/^-[nILPsEdJR]$/.test(seg[i])) i++; i++; }
+      i = skipKill(seg, i);
+      name = seg[i] && seg[i].split("/").pop();
+      if (name === "kill") return true;
+    }
+    if (name === "pkill" || name === "killall") return true;
+    if (name !== "kill") return false;
+    const args = seg.slice(i + 1);
+    let j = 0;
+    if (args[j] === "-l" || args[j] === "-L") return false;
+    if (args[j] === "-s" || args[j] === "-n") j += 2;
+    else if (args[j] && args[j] !== "--" && args[j].charAt(0) === "-") j++;
+    if (args[j] === "--") j++;
+    for (; j < args.length; j++) {
+      if (args[j] === "0" || /^-[0-9]+$/.test(args[j])) return true;
+    }
+    return false;
+  };
+  let kbad = false;
+  for (const seg of segs) {
+    if (killHit(seg)) { kbad = true; break; }
+  }
+  if (kbad) {
+    process.stdout.write(JSON.stringify({ hookSpecificOutput: {
+      hookEventName: "PreToolUse", permissionDecision: "deny",
+      permissionDecisionReason: "kill by pid, never by pattern: run pgrep -lf <pattern> first, read the list, then kill <pid>. On macOS pkill/killall stop parsing options at the first pattern, so flags after it become more patterns and -f cat matches every /Applications binary; a group or -1 target kills the whole login. For a command that may hang, use timeout or a background run instead of a kill afterwards." } }));
+    process.exit(0);
+  }
+  if (!ticket) process.exit(0);
   let bad = false;
   for (const seg of segs) {
     let i = 0;

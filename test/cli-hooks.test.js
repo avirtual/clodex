@@ -935,25 +935,21 @@ test('the live observer is registered for Bash only, ahead of the tool call', ()
   }], 'the matcher-less entry carries the poll guard alone');
 });
 
-// ─── The ticket-seat whole-tree `git add` guard ───────────────────────────
+// ─── The whole-tree `git add` guard ───────────────────────────
 // The SECOND PreToolUse Bash hook, and the one that is allowed to speak: it
 // returns a `permissionDecision: deny` for a whole-tree stage on a ticket seat.
 // Hands 811 and 812 each swept a red-proof subagent's in-flight revert into a
 // commit with `git add -A`; the hand prompt forbids it, this enforces it.
-// The runtime table lives in test/bash-guard.test.js — this pins the generated
-// bytes and the gate that keeps every NON-ticket seat untouched.
-test('the git-add guard is generated, gated on CLODEX_TICKET, and exits 0', () => {
+// The runtime table lives in test/bash-guard.test.js.
+test('the guard is generated, runs on every seat, gates git-add on CLODEX_TICKET, and exits 0', () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
   h.setupClaudeHook('agent1');
   const guardPath = pathFor(REGISTRY_DIR, 'agent1', 'bashGuardScript');
   const body = fs.readFileSync(guardPath, 'utf-8');
 
-  // The gate is the FIRST line, before `cat`: a lead, an ios-lead or a bash tab
-  // carries no CLODEX_TICKET, and must not even pay the stdin read — let alone
-  // reach a code path that can emit a deny.
-  assert.match(body.split('\n')[1], /^\[ -n "\$CLODEX_TICKET" \] \|\| exit 0$/,
-    'the ticket gate must be the first statement, ahead of the stdin read');
+  assert.ok(!/^\[ -n "\$CLODEX_TICKET" \] \|\| exit 0$/m.test(body),
+    'no shell-head ticket gate: the kill rule must reach every seat, so the git-add gate lives in the JS body');
   assert.match(body, /exit 0\n$/, 'ends on exit 0 — a nonzero PreToolUse is a different, cruder refusal');
   assert.ok(!/require\('\.\//.test(body), 'no relative require inside a generated body');
   assert.match(body, /"permissionDecision": *"deny"|permissionDecision: "deny"/,
