@@ -22,6 +22,7 @@ function createHeadlessRestart({
   log,
   getSessions,
   restart,
+  lastInputAt,
   now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (h) => clearTimeout(h),
@@ -33,6 +34,7 @@ function createHeadlessRestart({
     setTimer,
     clearTimer,
     restart,
+    lastInputAt,
     notify: (asked) => { try { log.warn('app', giveUpBody(asked)); } catch {} },
   });
   return {

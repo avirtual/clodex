@@ -56,11 +56,13 @@ function mkHeadlessHost({ env = {}, startMs = 1_000_000 } = {}) {
   const exits = [];
   const sessions = [];
   const tmp = mkTmpRoot('clx-t910-');
+  const keyboard = { at: 0 };
   const headlessRestart = createHeadlessRestart({
     env,
     log: quietLog,
     getSessions: () => sessions,
     restart: () => exits.push(64),
+    lastInputAt: () => keyboard.at,
     now: clock.now,
     setTimer: clock.setTimer,
     clearTimer: clock.clearTimer,
@@ -87,7 +89,7 @@ function mkHeadlessHost({ env = {}, startMs = 1_000_000 } = {}) {
     eng.manager.sessions.set(name, s);
     return s;
   };
-  return { eng, clock, exits, injects, addSeat, headlessRestart, sessions };
+  return { eng, clock, exits, injects, addSeat, headlessRestart, sessions, keyboard };
 }
 
 test('supervised headless: [agent:reboot] does NOT exit synchronously — it arms the wait', () => {
@@ -124,6 +126,20 @@ test('supervised headless: the exit comes only after a SUSTAINED all-idle window
   host.clock.advance(12_000);
   assert.deepStrictEqual(host.exits, [64],
     'once every seat has been idle for the sustained window, the host exits 64 for the supervisor');
+});
+
+test('supervised headless: a typing operator holds the exit until the keyboard is quiet', () => {
+  const host = mkHeadlessHost({ env: { [SUPERVISED_ENV]: 'yes' } });
+  const asker = host.addSeat('worker', 'idle');
+  host.eng.manager._handleRebootIntent(asker, 'ship it');
+  assert.ok(host.headlessRestart.isArmed(), 'ENTER: the wait is armed');
+  for (let t = 1_002_000; t <= 1_030_000; t += 2000) {
+    host.keyboard.at = t - 3000;
+    host.clock.advance(2000);
+  }
+  assert.deepStrictEqual(host.exits, [], 'a keystroke 3s ago holds the exit with every seat idle');
+  host.clock.advance(22_000);
+  assert.deepStrictEqual(host.exits, [64], 'the exit comes once the keyboard has been quiet');
 });
 
 test('supervised headless: a wait that gives up tells the requesting seat', () => {
@@ -245,6 +261,8 @@ for (const file of ['main.js', 'headless-main.js']) {
       + 'exit/quit, which is the mid-turn kill this ticket fixed');
     assert.match(src, /createIdleWaiter|headlessRestart\./,
       `${file}'s deferred seam must reach the shared sustained-idle waiter, not a private timer`);
+    assert.match(src, /lastInputAt:\s*\(\)\s*=>\s*(engine\.)?manager\.lastOperatorInputAt\(\)/,
+      `${file} must hand the waiter the operator's last keystroke, or a reboot drops the windows mid-sentence`);
   });
 }
 

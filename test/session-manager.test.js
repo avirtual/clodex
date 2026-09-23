@@ -1303,7 +1303,7 @@ test('reboot: a seat granted the reboot intent → seam fires once, confirm inje
   await m._handleIntent('a', { type: 'reboot', body: 'overnight restart-window test' });
   assert.strictEqual(relaunches.length, 1, 'relaunchApp fired exactly once');
   assert.strictEqual(injected[0],
-    '[agent:reboot] reboot queued — restarting once every session is idle; sessions resume on relaunch');
+    '[agent:reboot] reboot queued — restarting once every session and the keyboard are idle; sessions resume on relaunch');
   assert.ok(state.lastRebootAt > 0, 'lastRebootAt stamped');
   const b = broadcasts.find((x) => x.type === 'reboot');
   assert.ok(b && /rebooting: overnight restart-window test/.test(b.body), 'ipc log carries reason');

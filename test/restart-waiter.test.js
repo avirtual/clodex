@@ -70,15 +70,17 @@ function freshWaiter(startMs = 1_000_000, opts = {}) {
   const clock = fakeClock(startMs);
   let snapshot = [];
   const events = []; // 'restart' | 'notify'
-  const waiter = createIdleWaiter({
+  const deps = {
     getSessions: () => snapshot,
     now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
     restart: () => events.push('restart'),
     notify: () => events.push('notify'),
+    lastInputAt: () => 0,
     ...opts,
-  });
+  };
+  const waiter = createIdleWaiter(deps);
   return {
-    waiter, clock, events,
+    waiter, clock, events, deps,
     setSessions: (s) => { snapshot = s; },
   };
 }
@@ -116,6 +118,51 @@ test('waiter: a busy sample mid-wait RESETS the 10s window', () => {
   assert.deepStrictEqual(events, [], 'new streak not yet sustained');
   clock.advance(4000); // now the new streak clears 10s
   assert.deepStrictEqual(events, ['restart'], 'restart fires only after the NEW sustained window');
+});
+
+test('waiter: the fixture hands createIdleWaiter every dep it reads', () => {
+  const { deps } = freshWaiter();
+  assert.deepStrictEqual(Object.keys(deps).map((k) => [k, typeof deps[k]]), [
+    ['getSessions', 'function'], ['now', 'function'], ['setTimer', 'function'],
+    ['clearTimer', 'function'], ['restart', 'function'], ['notify', 'function'],
+    ['lastInputAt', 'function'],
+  ]);
+});
+
+test('waiter: an operator typing every tick holds the restart even with every seat idle', () => {
+  let typedAt = 0;
+  const { waiter, clock, events, setSessions } = freshWaiter(1_000_000, {
+    lastInputAt: () => typedAt,
+  });
+  setSessions(IDLE);
+  waiter.arm();
+  for (let t = 1_002_000; t <= 1_030_000; t += 2000) {
+    typedAt = t - 3000;
+    clock.advance(2000);
+  }
+  assert.strictEqual(clock.now(), 1_030_000);
+  assert.deepStrictEqual(events, [], 'a keystroke 3s ago is not a quiet operator');
+  assert.ok(waiter.isArmed());
+});
+
+test('waiter: fires exactly operatorQuietMs after the last keystroke once typing stops', () => {
+  let typedAt = 0;
+  const { waiter, clock, events, setSessions } = freshWaiter(1_000_000, {
+    lastInputAt: () => typedAt, operatorQuietMs: 10_000, sustainMs: 0,
+  });
+  setSessions(IDLE);
+  waiter.arm();
+  for (let t = 1_002_000; t <= 1_008_000; t += 2000) {
+    typedAt = t;
+    clock.advance(2000);
+  }
+  assert.strictEqual(typedAt, 1_008_000);
+  clock.advance(1_016_000 - 1_008_000);
+  assert.deepStrictEqual(events, [], 'at 1_016_000, 8s after the last keystroke');
+  assert.ok(waiter.isArmed());
+  clock.advance(2000);
+  assert.strictEqual(clock.now(), 1_018_000);
+  assert.deepStrictEqual(events, ['restart'], 'fires at 1_018_000, 10s after the last keystroke');
 });
 
 test('waiter: never-quiet gives up at the 30m cap with a notify, no forced restart', () => {

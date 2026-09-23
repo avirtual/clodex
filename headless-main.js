@@ -165,9 +165,10 @@ const headlessRestart = createHeadlessRestart({
   log,
   getSessions: () => Array.from(engine.manager.sessions.values()),
   restart: restartNow,
+  lastInputAt: () => engine.manager.lastOperatorInputAt(),
 });
 log.info('app', headlessRestart.supervised
-  ? 'restart capability: supervised — [agent:reboot] will exit 64 once every session is idle'
+  ? 'restart capability: supervised — [agent:reboot] will exit 64 once every session and the keyboard are idle'
   : 'restart capability: unsupervised — [agent:reboot] is refused (see CLODEX_SUPERVISED)');
 
 const engine = createEngine({

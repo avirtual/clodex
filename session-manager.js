@@ -2660,7 +2660,12 @@ function createSessionManager(deps) {
       return { name, type, pid: ptyProc.pid, backend, noWire: wireOff, ...(teamName ? { team: teamName } : {}), ...(missingPrompt ? { missingPrompt } : {}), ...(warnings.length ? { warnings } : {}) };
     }
 
+    lastOperatorInputAt() {
+      return this._lastOperatorInputAt || 0;
+    }
+
     write(name, data) {
+      this._lastOperatorInputAt = Date.now();
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
       if (isHumanPtyInput(data)) {
@@ -5674,7 +5679,7 @@ function createSessionManager(deps) {
       catch (e) { log.error('intent', `reboot: settings write failed (proceeding): ${e.message}`); }
       this._broadcast('ipc-message', { type: 'reboot', from: who, to: 'clodex', body: `rebooting${reason ? `: ${reason}` : ''}` });
       log.info('intent', `reboot by ${who}${reason ? `: ${reason}` : ''}`);
-      reply('reboot queued — restarting once every session is idle; sessions resume on relaunch');
+      reply('reboot queued — restarting once every session and the keyboard are idle; sessions resume on relaunch');
       this._voidScratchMark(session,
         'you queued a reboot inside the episode, and no mark survives the restart — every mark is gone '
         + 'and nothing can be cut. Your summary is in your own turn above; carry on from it.');

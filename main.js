@@ -169,6 +169,7 @@ const idleWaiter = createIdleWaiter({
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: (h) => clearTimeout(h),
   restart: () => restartClodex(),
+  lastInputAt: () => manager.lastOperatorInputAt(),
   notify: (asked) => {
     try {
       if (Notification.isSupported()) new Notification({
@@ -191,7 +192,7 @@ async function confirmRestartClodex() {
       defaultId: 2,
       cancelId: 2,
       message: 'A restart is already pending.',
-      detail: 'Clodex will restart once every session is idle. Restart now anyway, cancel the pending restart, or keep waiting?',
+      detail: 'Clodex will restart once every session and the keyboard are idle. Restart now anyway, cancel the pending restart, or keep waiting?',
     });
     if (response === 0) { idleWaiter.disarm(); restartClodex(); }
     // "Restart Now" above disarms silently — the pending request is fulfilled by
