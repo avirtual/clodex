@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Bash guard: every Claude seat is now refused a pattern kill (pkill, killall, xargs kill, kill of a process group or -1) with the pid-first correction in its own context; kill by pid stays allowed.
 - Tests: the wirescope supervisor's adoption and restart rows no longer spawn listeners or shell out to lsof and ps; they drive canned output through an injected exec dep, and the one real-listener smoke test binds port 0.
 
 - Spill guard: an agent that types Clodex's transcript stand-in (the runtime note or a `@spill:` pointer) as an intent body is now told, in its own context, what it copied, that Clodex wrote it, and the exact form to emit instead.
