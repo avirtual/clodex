@@ -24,10 +24,12 @@ back from the record it names no file, so the agent gets `spillMimicBounce`
 fenced in backticks and its example intent backslash-escaped, so the bounce
 text itself is outside this grammar and never fires.
 
-The first two over-limit intent bodies of a session are never spilled and ride
-in full; the counter is per session and resets on respawn. The counter is
-`intentSpills` (session-manager.js). The long-form stand-in `SPILLED_BODY_FIRST`
-(intent-spill.js) is rendered once per REQUEST, on the first stub-bearing
-assistant message `cutSpillStubs` (wire/spill-cut.js) rewrites; every later stub
-in that request gets `SPILLED_BODY`. The measured facts live under
+Every over-limit intent body is filed. At cut time `cutSpillStubs`
+(wire/spill-cut.js) renders the two OLDEST intent stubs of each request whose
+file resolves as the original intent (bare head, the filed body, `[agent:end]`);
+a stub whose file is missing or unreadable is not counted. The decision is
+derived from the payload on every request and keeps no process state, so it is
+cache-stable until a compact drops those messages, and a compact promotes the
+next two. Of the remaining stubs, the first rendered gets the long-form stand-in
+`SPILLED_BODY_FIRST` (intent-spill.js) and every later one `SPILLED_BODY`. The measured facts live under
 `## SPILLED_BODY_FIRST` in docs/notes/wire-spill-cut.md.

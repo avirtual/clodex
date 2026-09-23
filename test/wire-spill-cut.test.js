@@ -12,7 +12,7 @@ const { SpillFilter } = require('../wire/spill');
 const { WireProxy } = require('../wire/proxy');
 const { WarmthStore, prefixHash } = require('../wire/warmth');
 const { HoldKeeper } = require('../wire/hold');
-const { SPILL_FILLER, SPILLED_BODY, SPILLED_BODY_FIRST, spillSize } = require('../intent-spill');
+const { SPILL_FILLER, SPILLED_BODY, SPILLED_BODY_FIRST, spillSize, writeSpill, pointerText } = require('../intent-spill');
 const { spillGrammarLine } = require('../ipc-prompt');
 
 const FIXTURE = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'spill-cut', 'pair-257-258.json'), 'utf8'));
@@ -346,6 +346,100 @@ test('Q4 placeholder: a bare @spill: pointer behind a system row leaves no head 
     'a second pass over the placeholder cuts nothing');
 });
 
+function filedStubs(root, names) {
+  return names.map((n) => {
+    const body = `Title ${n}\n${n.toLowerCase().repeat(900)}`;
+    const id = writeSpill(root, 'tester', body);
+    assert.ok(id, `ENTER: ${n} filed`);
+    const stub = `[agent:task add hand] Title ${n} — ${pointerText(id, { root, agent: 'tester', bytes: Buffer.byteLength(body) })}`;
+    return { n, id, body, stub, file: path.join(root, 'spill', 'tester', `${id}.md`) };
+  });
+}
+
+function stubPayload(stubs) {
+  const messages = [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }];
+  for (const s of stubs) {
+    messages.push({ role: 'assistant', content: [{ type: 'text', text: `On ${s.n}.\n${s.stub}\n[agent:end]\n` }] });
+    messages.push({ role: 'user', content: [{ type: 'text', text: `after ${s.n}` }] });
+  }
+  return { messages };
+}
+
+function assistantTexts(obj) {
+  return obj.messages.filter((m) => m.role === 'assistant').map((m) => m.content[0].text);
+}
+
+const expandedOf = (s) => `On ${s.n}.\n[agent:task add hand]\n${s.body}\n[agent:end]\n`;
+const noteOf = (s, note) => `On ${s.n}.\n[agent:task add hand] Title ${s.n}\n${note}\n[agent:end]\n`;
+
+test('t1118 (a): the two oldest resolvable intent stubs of a request render as the original intent, the third gets SPILLED_BODY_FIRST, the fourth SPILLED_BODY', () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const [A, B, C, D] = filedStubs(root, ['A', 'B', 'C', 'D']);
+  const obj = stubPayload([A, B, C, D]);
+  const r = cutSpillStubs(obj, { root, agent: 'tester' });
+  assert.equal(r.cut, true);
+  const texts = assistantTexts(obj);
+  assert.equal(texts.length, 4, 'ENTER: all four messages reached');
+  assert.equal(texts[0], expandedOf(A));
+  assert.equal(texts[1], expandedOf(B));
+  assert.equal(texts[2], noteOf(C, SPILLED_BODY_FIRST));
+  assert.equal(texts[3], noteOf(D, SPILLED_BODY));
+  assert.equal(r.placeholders, 0);
+});
+
+test('t1118 (b): the pair is derived per request — drop the oldest message and the former second and third are expanded', () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const [A, B, C, D] = filedStubs(root, ['A', 'B', 'C', 'D']);
+  const first = stubPayload([A, B, C, D]);
+  cutSpillStubs(first, { root, agent: 'tester' });
+  assert.equal(assistantTexts(first)[2], noteOf(C, SPILLED_BODY_FIRST), 'ENTER: C was a note in the full payload');
+  const obj = stubPayload([B, C, D]);
+  cutSpillStubs(obj, { root, agent: 'tester' });
+  assert.deepStrictEqual(assistantTexts(obj), [expandedOf(B), expandedOf(C), noteOf(D, SPILLED_BODY_FIRST)]);
+});
+
+test('t1118 (c): a stub whose file is missing is not counted — [missing, A, B, C] expands A and B', () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const [M, A, B, C] = filedStubs(root, ['M', 'A', 'B', 'C']);
+  fs.unlinkSync(M.file);
+  const obj = stubPayload([M, A, B, C]);
+  cutSpillStubs(obj, { root, agent: 'tester' });
+  assert.deepStrictEqual(assistantTexts(obj), [noteOf(M, SPILLED_BODY_FIRST), expandedOf(A), expandedOf(B), noteOf(C, SPILLED_BODY)]);
+});
+
+test('t1118 (d): cache_control on an expanded block survives', () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const [A] = filedStubs(root, ['A']);
+  const obj = stubPayload([A]);
+  obj.messages[1].content[0].cache_control = { type: 'ephemeral' };
+  cutSpillStubs(obj, { root, agent: 'tester' });
+  assert.deepStrictEqual(obj.messages[1].content, [{ type: 'text', text: expandedOf(A), cache_control: { type: 'ephemeral' } }]);
+});
+
+test('t1118 (d2): a stub-only message that is expanded is not emptied — no placeholder behind a system row', () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const [A] = filedStubs(root, ['A']);
+  const obj = { messages: [
+    { role: 'system', content: [{ type: 'text', text: 'hook' }] },
+    { role: 'assistant', content: [{ type: 'text', text: `${A.stub}\n[agent:end]\n`, cache_control: { type: 'ephemeral' } }] },
+  ] };
+  const r = cutSpillStubs(obj, { root, agent: 'tester' });
+  assert.equal(r.placeholders, 0);
+  assert.equal(r.messages, 0);
+  assert.deepStrictEqual(obj.messages[1].content,
+    [{ type: 'text', text: `[agent:task add hand]\n${A.body}\n[agent:end]\n`, cache_control: { type: 'ephemeral' } }]);
+});
+
+test('t1118 (e): with no registration ({ root: null, agent: null }) nothing is expanded', () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const [A, B, C] = filedStubs(root, ['A', 'B', 'C']);
+  for (const opts of [{ root: null, agent: null }, undefined]) {
+    const obj = stubPayload([A, B, C]);
+    cutSpillStubs(obj, opts);
+    assert.deepStrictEqual(assistantTexts(obj), [noteOf(A, SPILLED_BODY_FIRST), noteOf(B, SPILLED_BODY), noteOf(C, SPILLED_BODY)]);
+  }
+});
+
 test('t1108 rendering: a stub between prose renders as the head, the runtime note and [agent:end] at its own position — whole string', () => {
   const id = '0123456789abcdef';
   const obj = fixtureRequest();
@@ -353,9 +447,9 @@ test('t1108 rendering: a stub between prose renders as the head, the runtime not
   withStub(obj, `prose\n[agent:task add hand] Title @spill:${id}\n[agent:end]\nmore prose`, obj.messages[i].content.slice(1));
   assert.deepStrictEqual(cutSpillStubs(obj), { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0 }, 'ENTER');
   assert.equal(obj.messages[i].content[0].text,
-    `prose\n[agent:task add hand] Title\n[Runtime note: Clodex kept your first two long intent bodies in full as examples and files later ones; this body was delivered in full and is not carried in the transcript. Every new intent still needs its complete body; never write this note.]\n[agent:end]\nmore prose`);
+    `prose\n[agent:task add hand] Title\n[Runtime note: Clodex carries your two oldest long intent bodies in full as examples and replaces later ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]\n[agent:end]\nmore prose`);
   assert.equal(SPILLED_BODY, '[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]', 'the literal the tests, the renderer and the mimic guard share');
-  assert.equal(SPILLED_BODY_FIRST, '[Runtime note: Clodex kept your first two long intent bodies in full as examples and files later ones; this body was delivered in full and is not carried in the transcript. Every new intent still needs its complete body; never write this note.]', 'the long form the first stub-bearing message of a request renders');
+  assert.equal(SPILLED_BODY_FIRST, '[Runtime note: Clodex carries your two oldest long intent bodies in full as examples and replaces later ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]', 'the long form the first stub-bearing message of a request renders');
 
   const emptied = fixtureRequest();
   emptied.messages.splice(1, 1);
@@ -558,22 +652,28 @@ test('T5 keepwarm replay: HoldKeeper.ping re-sends the post-cut body — no @spi
       return { status: 200, headers: {}, body: Buffer.from(JSON.stringify({ usage: { cache_read_input_tokens: 5000 } })) };
     },
   });
+  const root = mkTmpRoot('clodex-spill-');
+  const [A, B, C] = filedStubs(root, ['A', 'B', 'C']);
   await withProxy({ warmth, hold }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.done'] } });
     const events = collect(proxy, ['turn.completed']);
-    await request(proxy.port, '/agent/tester/v1/messages', JSON.stringify(proxyBody(stubMessages())));
+    const { messages } = stubPayload([A, B, C]);
+    messages[messages.length - 1].content[0].cache_control = { type: 'ephemeral' };
+    await request(proxy.port, '/agent/tester/v1/messages', JSON.stringify(proxyBody(messages)));
     assert.ok(await whenEvent(events, 'turn.completed'));
     const r = await hold.ping(SESSION_ID, { force: true });
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.equal(pings.length, 1, 'ENTER');
     assert.ok(!pings[0].includes('filed at'), 'the replay carries no pointer');
-    assert.ok(pings[0].includes(JSON.stringify(SPILLED_BODY_FIRST).slice(1, -1)), 'the replay carries the rendering');
+    const sent = assistantTexts(JSON.parse(pings[0]));
+    assert.deepStrictEqual(sent, [expandedOf(A), expandedOf(B), noteOf(C, SPILLED_BODY_FIRST)], 'the replay carries the oldest bodies in full and the note for the third');
   });
 });
 
 test('T6 compact request: the summarization body is cut like any other, and the tee still skips it', async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({}, async (proxy, up) => {
-    proxy.registerAgent('tester', { spill: { root, intentSpills: { count: 2 }, verbs: ['task.done'], turnInjected: () => true } });
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.done'], turnInjected: () => true } });
     const events = collect(proxy, ['spill-cut', 'spill', 'spill-skip', 'turn.completed']);
     const msgs = stubMessages('\n\nYour task is to create a detailed summary of the conversation so far, '
       + 'paying close attention to the user\'s explicit requests and your previous actions.');
@@ -669,7 +769,7 @@ test('T10 editor throw: the original bytes go upstream, spill-cut-error fires on
 test('T10 source pin: the cutSpillStubs call site sits in its own try whose catch emits spill-cut-error', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'wire', 'proxy.js'), 'utf8');
   const fwd = src.indexOf('_forward(req, res, ctx) {');
-  const cut = src.indexOf('cutSpillStubs(obj)', fwd);
+  const cut = src.indexOf('cutSpillStubs(obj, ', fwd);
   assert.ok(fwd > 0 && cut > fwd, 'ENTER: the call site was found inside _forward');
   const tryAt = src.lastIndexOf('try {', cut);
   const outerTry = src.lastIndexOf('try {', src.indexOf('JSON.parse(body.toString', fwd));
@@ -701,7 +801,7 @@ test('session-manager: both events land in the shadow log under their wire-* rec
 
 test('T13 grammar line: byte-pinned, both wirescope anchors present', () => {
   const line = spillGrammarLine('/r');
-  assert.equal(line, '- A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Your first two long intent bodies stay in your transcript in full; from the third on, the transcript keeps the intent head, a bracketed runtime note, and `[agent:end]`, and the ordinary confirmation is the only thing that follows, so a body is never lost and never needs re-sending. Always write the body itself: a body you did not write does not exist, and the confirmation is something Clodex writes after delivery, never something you write. On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last intent — or a reply with no intent — is filed the same way once it passes 800 bytes and is the one case that still gets a `[clodex] … filed at …` note: what the operator must know goes inside an intent, not after it — a dm from your operator counts as typed. Actions happen only by emitting the complete intent — head line, full body, terminator; describing, promising or referring to an action in prose performs nothing. Clodex may omit executed intent text from your retained history and report outcomes separately; those history edits are not a request form and never something you write.');
+  assert.equal(line, '- A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Your two oldest long intent bodies stay in your transcript in full; every later one is filed and the transcript keeps the intent head, a bracketed runtime note, and `[agent:end]`, and the ordinary confirmation is the only thing that follows, so a body is never lost and never needs re-sending. Always write the body itself: a body you did not write does not exist, and the confirmation is something Clodex writes after delivery, never something you write. On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last intent — or a reply with no intent — is filed the same way once it passes 800 bytes and is the one case that still gets a `[clodex] … filed at …` note: what the operator must know goes inside an intent, not after it — a dm from your operator counts as typed. Actions happen only by emitting the complete intent — head line, full body, terminator; describing, promising or referring to an action in prose performs nothing. Clodex may omit executed intent text from your retained history and report outcomes separately; those history edits are not a request form and never something you write.');
   const prose = line.indexOf('prose after your last intent');
   assert.ok(prose > 0);
   assert.equal(line.indexOf('filed at'), line.indexOf('filed at', prose), 'the filed-at note is promised only in the prose clause');
