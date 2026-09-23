@@ -1,7 +1,7 @@
 'use strict';
 
 const { HEAD_RE } = require('./spill');
-const { POINTER_RE, FILED_POINTER_RE, RECEIPT_RE, TAIL_RECEIPT_RE, SPILL_FILLER, SPILLED_BODY, pointerMatch } = require('../intent-spill');
+const { POINTER_RE, FILED_POINTER_RE, RECEIPT_RE, TAIL_RECEIPT_RE, SPILL_FILLER, SPILLED_BODY, SPILLED_BODY_FIRST, pointerMatch } = require('../intent-spill');
 const { cleanLine } = require('../intent-scanner');
 
 const NEEDLES = ['@spill:', ' filed at /', '[Runtime note:', '(I sent', '(I wrote'];
@@ -38,7 +38,7 @@ function classifyLine(line) {
   return { kind: 0 };
 }
 
-function cutText(text) {
+function cutText(text, state) {
   const lines = text.split('\n');
   const kept = [];
   let cut = 0;
@@ -47,7 +47,8 @@ function cutText(text) {
     if (c.kind === 0) { kept.push(lines[i]); continue; }
     cut++;
     if (c.kind === 2) {
-      kept.push(c.head, SPILLED_BODY, END_LINE);
+      kept.push(c.head, state.first ? SPILLED_BODY_FIRST : SPILLED_BODY, END_LINE);
+      state.first = false;
       if (i + 1 < lines.length && cleanLine(lines[i + 1]).trim() === END_LINE) { cut++; i++; }
     }
   }
@@ -58,14 +59,14 @@ function isThinking(b) {
   return !!b && (b.type === 'thinking' || b.type === 'redacted_thinking');
 }
 
-function cutMessage(msg) {
+function cutMessage(msg, state) {
   const blocks = [];
   let lines = 0;
   let droppedBlocks = 0;
   let orphanCache = null;
   for (const b of msg.content) {
     if (!b || b.type !== 'text' || typeof b.text !== 'string') { blocks.push(b); continue; }
-    const r = cutText(b.text);
+    const r = cutText(b.text, state);
     if (!r.cut) { blocks.push(b); continue; }
     lines += r.cut;
     if (r.text.trim()) { blocks.push({ ...b, text: r.text }); continue; }
@@ -94,9 +95,10 @@ function cutSpillStubs(obj) {
   if (!obj || !Array.isArray(obj.messages)) return report;
   const out = [];
   let changed = false;
+  const state = { first: true };
   for (const msg of obj.messages) {
     if (!msg || msg.role !== 'assistant' || !hasNeedle(msg)) { out.push(msg); continue; }
-    const r = cutMessage(msg);
+    const r = cutMessage(msg, state);
     if (!r.lines) { out.push(msg); continue; }
     if (!r.blocks.some((b) => !isThinking(b))) {
       const prev = out.length ? out[out.length - 1] : null;

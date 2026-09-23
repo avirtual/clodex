@@ -897,17 +897,23 @@ accept teardown removes.
   `[<title> — ]<size> filed at <abs path>` in place of the body, `[agent:end]`
   after it, and a bare `<size> of prose filed at <abs path>` line for a spilled
   prose tail — the path links in the terminal, and recovery resolves the id
-  from its basename. The model never sees the pointer: `wire/spill-cut.js`
+  from its basename. The first two over-limit intent bodies of a session are not filed at
+  all: they ride the transcript verbatim as examples (a per-session counter on
+  the proxy registration, decided when the body first appears and never
+  re-rendered; a restart resets it), the prose tail is never exempt, and the
+  third body on spills. The model never sees the pointer: `wire/spill-cut.js`
   rewrites every outgoing request so the turn reads as the intent the model
   emitted — the head line with its title, `[Runtime note: Clodex filed this body
-  in full; it is not carried in the transcript.]` where the body stood, then
+  in full; it is not carried in the transcript.]` where the body stood (the
+  first stub-bearing message of a request carries the longer
+  `SPILLED_BODY_FIRST`, which explains the first-two rule once), then
   `[agent:end]` — and removes the receipt and filler stand-ins earlier versions
   wrote. Nothing tells the model a cut happened: no receipt is enqueued for a
   spilled intent body, and the ordinary confirmation that follows (`ticket
   created`, the dm delivery) is the proof the action ran (Bogdan's ruling
   2026-09-23: telling the model its body was removed produced phantom dispatches
   that announced the next action instead of performing it). A model that copies
-  the runtime note back as a body is bounced like a typed pointer
+  either runtime note back as a body is bounced like a typed pointer
   (`spilledBodyOf`), on the wire path and the jsonl path alike. The intent tee reads the UNSPILLED upstream bytes, so the wire path
   dispatches the full body and never a pointer; a pointer body that does arrive
   on the wire path was typed by the model and is bounced (`fromWire`), never

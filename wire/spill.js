@@ -25,6 +25,7 @@ class SpillFilter {
     this.onBail = typeof opts.onBail === 'function' ? opts.onBail : null;
     this.onMimic = typeof opts.onMimic === 'function' ? opts.onMimic : null;
     this._write = typeof opts.writeSpill === 'function' ? opts.writeSpill : defaultWriteSpill;
+    this.intentSpills = (opts.intentSpills && typeof opts.intentSpills.count === 'number') ? opts.intentSpills : null;
 
     this.proseSpill = opts.proseSpill === true;
 
@@ -239,7 +240,9 @@ class SpillFilter {
     const head = this.head;
     const verb = this.verb;
     const bytes = Buffer.byteLength(bodyText, 'utf8');
-    if (bytes > this.minBytes) {
+    if (bytes > this.minBytes && this.intentSpills && this.intentSpills.count < 2) {
+      this.intentSpills.count += 1;
+    } else if (bytes > this.minBytes) {
       let id = null;
       try { id = this._write(this.root, this.agent, bodyText); } catch { id = null; }
       if (id) {

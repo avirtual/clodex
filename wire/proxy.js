@@ -173,7 +173,11 @@ class WireProxy extends EventEmitter {
   registerAgent(name, opts = {}) {
     if (opts.sessionId) this._agentSessions.set(name, opts.sessionId);
     if (opts.upstreams) this._agentUpstreams.set(name, { ...opts.upstreams });
-    if (opts.spill) this._agentSpill.set(name, { ...opts.spill });
+    if (opts.spill) {
+      const intentSpills = (opts.spill.intentSpills && typeof opts.spill.intentSpills.count === 'number')
+        ? opts.spill.intentSpills : { count: 0 };
+      this._agentSpill.set(name, { ...opts.spill, intentSpills });
+    }
     else this._agentSpill.delete(name);
     if (this.requireTokens) {
       const token = crypto.randomBytes(16).toString('hex');

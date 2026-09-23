@@ -186,7 +186,7 @@ const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
 const { isAgentType, adapterFor } = require('./cli-adapters');
 const {
-  SPILL_VERBS, SPILL_MIN_BYTES, HEAD_RE, SPILLED_BODY, isSpillVerb, pointerOf, pointerMatch, trailingPointerOf, spilledBodyOf, resolveSpill, spillDirFor, spillPathFor, verbKeyOf, writeSpill,
+  SPILL_VERBS, SPILL_MIN_BYTES, HEAD_RE, isSpillVerb, pointerOf, pointerMatch, trailingPointerOf, spilledBodyOf, resolveSpill, spillDirFor, spillPathFor, verbKeyOf, writeSpill,
   receiptOf, resolveReceipt,
   capResumeSnapshot,
 } = require('./intent-spill');
@@ -1655,6 +1655,7 @@ function createSessionManager(deps) {
       }
 
       let proxyAgent = null;
+      const intentSpills = { count: 0 };
       if (agentType) {
         const taken = new Set();
         for (const e of getPersistence().list()) if (e.proxyAgent) taken.add(e.proxyAgent);
@@ -1803,6 +1804,7 @@ function createSessionManager(deps) {
                   ? {
                     root: REGISTRY_DIR,
                     verbs: spillVerbs,
+                    intentSpills,
                     turnInjected: () => this.sessions.get(name)?.lastSubmitInjected === true,
                   }
                   : null,
@@ -2260,6 +2262,7 @@ function createSessionManager(deps) {
         // payload.linked guard, so seeding unconditionally is safe.
         lastMainStop: { isTurn: true, ts: Date.now(), seeded: true },
         lastSubmitInjected: false,
+        intentSpills,
         bootResumeId: resumeId || null,
         promptRecipe,
         // Recompute rather than re-write: setupClaudeHook already wrote the
@@ -5257,8 +5260,9 @@ function createSessionManager(deps) {
         return;
       }
 
-      if (spilledBodyOf(intent.body) !== null) {
-        this._spillTyped(session, senderName, intent, SPILLED_BODY);
+      const spilledNote = spilledBodyOf(intent.body);
+      if (spilledNote !== null) {
+        this._spillTyped(session, senderName, intent, spilledNote);
         return;
       }
 
