@@ -14104,13 +14104,14 @@ test('context: an unknown sub-command bounces to the agent, not just console.war
 // bash/codex pass straight through. (Behavioral gate mechanics — hold, cap, dead,
 // latch — are pinned deterministically in test/inject-queue.test.js; here we pin
 // the session-manager wiring: which seats get gated, and the latch predicate.)
-function mkBoot() {
+function mkBoot(over = {}) {
   return mk({
     InjectQueue: require('../inject-queue').InjectQueue,   // real queue — we drive real seams
     INJECT_BOOT_MAXWAIT: 20_000,
     INJECT_QUIET_MS: 0,
     INJECT_QUIET_MAXWAIT: 0,
     LONG_TEXT_THRESHOLD: 100000, LONG_TEXT_DELAY: 0, SHORT_TEXT_DELAY: 0,
+    ...over,
   });
 }
 function bootSession(over = {}) {
@@ -14130,6 +14131,18 @@ test('T35 wiring: a claude seat with the boot latch already set injects immediat
   const { s, writes } = bootSession({ _bootReadySeen: true });
   await m._injectQueueFor(s).enqueue('scope');
   assert.deepStrictEqual(writes, ['\x15', 'scope', '\r']);
+});
+
+test('t1103 wiring: the latch alone is not ready — a unit enqueued at the edge waits BOOT_DRAIN_SETTLE_MS past _bootReadyAt', async () => {
+  const m = mkBoot({ bootDrainSettleMs: 300 });
+  const readyAt = Date.now();
+  const { s, writes } = bootSession({ _bootReadySeen: true, _bootReadyAt: readyAt });
+  const delivered = m._injectQueueFor(s).enqueue('spec');
+  await new Promise((r) => setTimeout(r, 150));
+  assert.deepStrictEqual(writes, [], 'inside the settle the queue has written nothing — not even the Ctrl-U');
+  await delivered;
+  assert.deepStrictEqual(writes, ['\x15', 'spec', '\r']);
+  assert.ok(Date.now() - readyAt >= 300, 'the write landed at or after _bootReadyAt + BOOT_DRAIN_SETTLE_MS');
 });
 
 test('T35 wiring: a claude seat still booting holds the write until the latch flips', async () => {
@@ -14638,6 +14651,28 @@ test('t771: an activity edge before the timer means the unit DID submit — no E
   p.m._emitActivity('nudge-c', 'thinking', false);
   assert.strictEqual(s._bootNudgeTimer, null, 'the turn edge cleared the armed timer');
   assert.deepStrictEqual(writes, DRAINED, 'and no Enter was ever written');
+});
+
+test('t1103: a DIRECT inject into a fresh seat — no boot drain ever ran — arms the nudge, which fires exactly ONE Enter', async () => {
+  const p = mkNudgeProbe({ bootNudgeMs: 40, bootNudgeQuietMs: 10 });
+  await bashCreate(p.m, 'nudge-direct', null);
+  const s = p.getSession('nudge-direct');
+  const writes = [];
+  s.pty = { write: (b) => writes.push(b) };
+  s.agentType = 'claude';
+  p.fireData('\x1b[?2004h');
+  clearTimeout(s._bootDrainTimer);
+  s._bootDrainTimer = null;
+  assert.strictEqual(s._bootDrainAt, undefined, 'the drain never ran, so nothing but the edge itself can arm the nudge');
+  const SPEC = ['\x15', '[ticket t1] the spec', '\r'];
+  await p.m._injectQueueFor(s).enqueue('[ticket t1] the spec');
+  assert.deepStrictEqual(writes, SPEC, 'the direct inject wrote its three bytes');
+  await waitFor(() => writes.length >= 4);
+  assert.deepStrictEqual(writes, [...SPEC, '\r'], 'ONE \\r appended after BOOT_NUDGE_MS — row 3 is the nudge');
+  assert.strictEqual(s._bootNudgeTimer, null, 'the timer is spent, not re-armed');
+  assert.ok(p.logged.some((l) => l.includes('boot-drain nudge for nudge-direct')));
+  await new Promise((r) => setTimeout(r, 150));
+  assert.deepStrictEqual(writes, [...SPEC, '\r'], 'and it stays exactly one');
 });
 
 test('t771: pty output at fire time RE-ARMS the nudge, which lands once the seat goes quiet', async () => {
