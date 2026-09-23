@@ -1199,6 +1199,7 @@ function registerIpcHandlers(deps) {
       defaultSessionMode: s.defaultSessionMode,
       discoverOnStartup: s.discoverOnStartup,
       theme: s.theme,
+      terminalWebgl: s.terminalWebgl,
       sidebarWidth: s.sidebarWidth,
       remoteEnabled: s.remoteEnabled,
       remotePort: s.remotePort,

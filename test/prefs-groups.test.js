@@ -22,7 +22,7 @@ function prefsMarkup() {
 // Captured from the markup BEFORE the grouping rewrite. Adding a setting means
 // adding it here on purpose; losing one to a careless move fails.
 const CONTROLS = [
-  'prefs-overlay', 'prefs-dialog', 'prefs-theme',
+  'prefs-overlay', 'prefs-dialog', 'prefs-theme', 'prefs-terminal-webgl',
   'prefs-voice-mode', 'prefs-voice-state',
   'prefs-voice-submit', 'prefs-voice-submit-phrase', 'prefs-voice-submit-composition',
   'prefs-voice-submit-rearm',
@@ -52,6 +52,15 @@ const CONTROLS = [
 test('every Preferences control survives the grouping', () => {
   const found = [...prefsMarkup().matchAll(/id="([^"]+)"/g)].map((m) => m[1]);
   assert.deepStrictEqual([...found].sort(), [...CONTROLS].sort());
+});
+
+test('the WebGL toggle sits inside the Appearance group', () => {
+  const m = prefsMarkup();
+  const start = m.indexOf('<details class="prefs-group" data-group="appearance">');
+  assert.ok(start >= 0, 'appearance group not found');
+  const end = m.indexOf('</details>', start);
+  const at = m.indexOf('id="prefs-terminal-webgl"');
+  assert.ok(at > start && at < end, 'prefs-terminal-webgl must live inside data-group="appearance"');
 });
 
 test('every group is collapsible and named', () => {

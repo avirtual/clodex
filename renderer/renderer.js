@@ -74,6 +74,7 @@ const { createActivityTab } = require('./activity-tab');
 const { createCtlTab } = require('./ctl-tab');
 const { createConsoleTab } = require('./console-tab');
 const { createTermTab } = require('./term-tab');
+const { loadWebglIfEnabled } = require('./lib/term-webgl');
 const { classifySubagent } = require('./lib/subagent-policy');
 const { initSessionHovercard } = require('./session-hovercard');
 const { initTooltips } = require('./tooltip');
@@ -96,6 +97,10 @@ const { initPluginHost } = require('./plugin-host');
 
 const sessions = new Map(); // name -> { terminal, fitAddon, wrapperEl }
 let activeSession = null;
+let terminalWebglEnabled = false;
+const terminalWebglReady = window.api.getSettings()
+  .then((s) => { terminalWebglEnabled = !!(s && s.terminalWebgl === true); })
+  .catch(() => {});
 
 const { currentXtermTheme, currentEchoPalette } = initThemes({ sessions });
 
@@ -1609,6 +1614,7 @@ function createTerminal(name, peer = null) {
   terminalContainer.appendChild(wrapperEl);
 
   terminal.open(wrapperEl);
+  const webgl = loadWebglIfEnabled(terminal, terminalWebglEnabled);
 
   // onData ALSO fires for mouse/scroll reports and terminal query replies (the Claude pane
   // enables mouse tracking), so typeToTakeControl gates on isHumanPtyInput.
@@ -1637,7 +1643,7 @@ function createTerminal(name, peer = null) {
   });
 
   const echoRewrite = peer ? (chunk) => chunk : createEchoRewriter(currentEchoPalette);
-  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, wrapperEl, peer, echoRewrite });
+  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, webgl, wrapperEl, peer, echoRewrite });
   updateWindowTitle();
   return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
 }
@@ -1806,6 +1812,7 @@ function removeSession(name, { keepPersisted = false } = {}) {
     // and disposing them afterwards throws on the marker lookup.
     if (s.intentHighlight) s.intentHighlight.dispose();
     if (s.voiceSubmit) s.voiceSubmit.dispose();
+    if (s.webgl) { try { s.webgl.dispose(); } catch {} }
     s.terminal.dispose();
     s.wrapperEl.remove();
     sessions.delete(name);
@@ -4350,6 +4357,7 @@ createTermTab({
   host: drawerHost,
   xtermTheme: currentXtermTheme,
   getActiveSession: () => activeSession,
+  getWebglEnabled: () => terminalWebglEnabled,
   getSeatType: () => (activeSession ? sessionTypeOf(activeSession) : null),
   getSeatShellCap: () => {
     const entry = activeSession ? sessions.get(activeSession) : null;
@@ -4892,6 +4900,7 @@ const prefsClaudeCmd = document.getElementById('prefs-claude-sl-cmd');
 const prefsCodexBox = document.getElementById('prefs-codex-components');
 const prefsProxyEnabled = document.getElementById('prefs-proxy-enabled');
 const prefsDisableDesignMcp = document.getElementById('prefs-disable-design-mcp');
+const prefsTerminalWebgl = document.getElementById('prefs-terminal-webgl');
 const prefsCompactOnResume = document.getElementById('prefs-compact-on-resume');
 const prefsContextHints = document.getElementById('prefs-context-hints');
 const prefsSemanticHints = document.getElementById('prefs-semantic-hints');
@@ -7356,6 +7365,7 @@ async function openPrefs() {
   renderPrefsCheckboxes(prefsCodexBox, s.codexComponents, s.statusline.codex, CODEX_LABELS);
   prefsProxyEnabled.checked = !!s.proxyEnabled;
   prefsDisableDesignMcp.checked = s.disableClaudeDesignMcp !== false;
+  if (prefsTerminalWebgl) prefsTerminalWebgl.checked = s.terminalWebgl === true;
   prefsCompactOnResume.checked = !!s.compactOnResume;
   prefsContextHints.checked = !!s.contextHints;
   if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
@@ -7467,6 +7477,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     },
     proxyEnabled: prefsProxyEnabled.checked,
     disableClaudeDesignMcp: prefsDisableDesignMcp.checked,
+    terminalWebgl: prefsTerminalWebgl ? prefsTerminalWebgl.checked : false,
     compactOnResume: prefsCompactOnResume.checked,
     contextHints: prefsContextHints.checked,
     semanticHints: prefsSemanticHints ? prefsSemanticHints.checked : false,
@@ -7496,6 +7507,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
       ? patchUnlessEnvLocked(prefsEnvLocked, 'remoteBasePath', prefsRemoteBasePath.value)
       : {}),
   });
+  terminalWebglEnabled = prefsTerminalWebgl ? prefsTerminalWebgl.checked : false;
   await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
   await window.api.setDefaultSkillDeny(collectPrefsSkillDefaults());
   await window.api.setDefaultBuiltinDeny(collectBuiltinChecklist(prefsAgentsList));
@@ -7910,6 +7922,7 @@ window.api.onSessionMovedIn((entry) => {
 
 (async function restoreSessions() {
   try {
+    await terminalWebglReady;
     const restored = await window.api.restoreSessions();
     if (!restored || restored.length === 0) { initSidebarView(); return; }
 
