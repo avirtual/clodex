@@ -14143,6 +14143,8 @@ test('t1103 wiring: the latch alone is not ready — a unit enqueued at the edge
   await delivered;
   assert.deepStrictEqual(writes, ['\x15', 'spec', '\r']);
   assert.ok(Date.now() - readyAt >= 300, 'the write landed at or after _bootReadyAt + BOOT_DRAIN_SETTLE_MS');
+  assert.ok(s._bootNudgeTimer, 'and the write armed the boot nudge off _bootReadyAt');
+  clearTimeout(s._bootNudgeTimer);
 });
 
 test('T35 wiring: a claude seat still booting holds the write until the latch flips', async () => {
