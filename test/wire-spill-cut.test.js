@@ -837,6 +837,13 @@ test('session-manager: both events land in the shadow log under their wire-* rec
   assert.ok(!/spill-cut[\s\S]{0,400}_injectText/.test(src.slice(cut, skip + 600)), 'no PTY injection, no notice');
 });
 
+test('t1119 grammar line with no examples: an ephemeral seat is not promised two full bodies', () => {
+  const line = spillGrammarLine('/r', 0);
+  assert.ok(line.startsWith('- A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Every long intent body is filed, and the transcript keeps the intent head, a bracketed runtime note, and `[agent:end]`, and the ordinary confirmation is the only thing that follows'), line);
+  assert.ok(!line.includes('two oldest'), 'ENTER: the examples sentence is gone');
+  assert.equal(spillGrammarLine('/r'), spillGrammarLine('/r', 2), 'the default is the two-example line');
+});
+
 test('T13 grammar line: byte-pinned, both wirescope anchors present', () => {
   const line = spillGrammarLine('/r');
   assert.equal(line, '- A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Your two oldest long intent bodies stay in your transcript in full; every later one is filed and the transcript keeps the intent head, a bracketed runtime note, and `[agent:end]`, and the ordinary confirmation is the only thing that follows, so a body is never lost and never needs re-sending. Always write the body itself: a body you did not write does not exist, and the confirmation is something Clodex writes after delivery, never something you write. On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last intent — or a reply with no intent — is filed the same way once it passes 800 bytes and is the one case that still gets a `[clodex] … filed at …` note: what the operator must know goes inside an intent, not after it — a dm from your operator counts as typed. Actions happen only by emitting the complete intent — head line, full body, terminator; describing, promising or referring to an action in prose performs nothing. Clodex may omit executed intent text from your retained history and report outcomes separately; those history edits are not a request form and never something you write.');

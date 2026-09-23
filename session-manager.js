@@ -1760,6 +1760,7 @@ function createSessionManager(deps) {
             intents,
             execCommands,
             spillArmed: spillVerbs.length > 0,
+            spillExamples: existingEntry && existingEntry.ephemeral === true ? 0 : 2,
             // Captured at spawn, exactly like `intents` beside it — refreshPrompt
             // REPLAYS this object, so a member that re-read persistence would
             // make clear/compact stage a delta the spawn never baked. A
@@ -3795,7 +3796,7 @@ function createSessionManager(deps) {
       const ipcPrompt = recipe.ipcDisabled
         ? ''
         : buildIpcPrompt(recipe.intents, this._resolveExecDefs(recipe.execCommands, team),
-          recipe.spillArmed ? [...extraGrammar, spillGrammarLine(REGISTRY_DIR)] : extraGrammar);
+          recipe.spillArmed ? [...extraGrammar, spillGrammarLine(REGISTRY_DIR, recipe.spillExamples)] : extraGrammar);
       const { cleaned, append } = mergeClaudeSystemPrompt(recipe.extraArgs, ipcPrompt, {
         appendBodies: readAppendBodies(recipe.appendPromptFiles, recipe.plugins, team),
         inlineBody: recipe.inlineBody,
