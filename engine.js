@@ -360,9 +360,9 @@ const COMPACT_INFLIGHT_TIMEOUT = 5 * 60 * 1000;
 // (observed twice, operator confirmed actively typing).
 const INJECT_QUIET_MS = 2 * 1000;
 const INJECT_QUIET_MAXWAIT = 5 * 60 * 1000;
-// First inject into a fresh claude seat waits for the mode-2004 readiness edge:
-// text+Enter written before the CLI's raw-mode input loop is up arrives as one
-// paste-like chunk and the Enter lands as content, so nothing submits.
+// First inject into a fresh claude seat waits for the mode-2004 readiness edge
+// plus BOOT_DRAIN_SETTLE_MS (session-manager.js), like the boot drain: text+Enter
+// written before the readline loop is up reads as one paste and the Enter lands as content.
 const INJECT_BOOT_MAXWAIT = 20 * 1000;
 // How long a renderer's "recorder is lit" sample keeps deferring injection. The
 // renderer resamples on its 300ms poll, so this is a STALENESS bound on that

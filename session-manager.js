@@ -777,19 +777,16 @@ function createSessionManager(deps) {
   const claudeHome = deps.claudeHome || (() => path.join(os.homedir(), '.claude'));
 
   const ROSTER_SETTLE_MS = deps.rosterSettleMs || 400;
-  // Settle margin before the boot-ready rising edge fires its pending drain.
-  // The first mode-2004 (which latches _bootReadySeen) is Claude ANNOUNCING
-  // bracketed-paste during terminal setup — it can PRECEDE the readline loop
-  // actually accepting a submitted Enter. Draining in that SAME synchronous tick
-  // writes a pointer into a not-yet-ready composer that the boot re-render then
-  // wipes. THIS DEFER IS THE ONLY MARGIN: by the time the deferred drain runs,
-  // _bootReadySeen is already latched (set at the edge), so the InjectQueue's own
-  // ready-gate is no-op-true and adds zero wait — it can't cover this race, only
-  // the wall-clock defer can. Long enough to let the readline loop come up.
+  // Settle margin past the boot-ready rising edge, for the pending drain AND the
+  // InjectQueue's ready gate alike. The first mode-2004 (which latches
+  // _bootReadySeen) is Claude ANNOUNCING bracketed-paste during terminal setup —
+  // it can PRECEDE the readline loop actually accepting a submitted Enter, so a
+  // write at the edge lands in a composer the boot re-render then wipes.
   // Injectable for tests (driven at 0); ~750ms in production.
   const BOOT_DRAIN_SETTLE_MS = Number.isFinite(deps.bootDrainSettleMs) ? deps.bootDrainSettleMs : 750;
   const BOOT_NUDGE_MS = Number.isFinite(deps.bootNudgeMs) ? deps.bootNudgeMs : 4000;
   const BOOT_NUDGE_QUIET_MS = Number.isFinite(deps.bootNudgeQuietMs) ? deps.bootNudgeQuietMs : 1000;
+  const BOOT_REPLAY_POLL_MS = Number.isFinite(deps.bootReplayPollMs) ? deps.bootReplayPollMs : 250;
   const ROSTER_MAX_WAIT_MS = deps.rosterMaxWaitMs || 10000;
 
   // How long an INJECTED unit has to produce a turn edge before the write is
@@ -2566,6 +2563,7 @@ function createSessionManager(deps) {
           session._pasteModeOn = pasteModeSignal(data, session._pasteModeOn);
           if (session._pasteModeOn && !session._bootReadySeen) {
             session._bootReadySeen = true;
+            session._bootReadyAt = Date.now();
             clearTimeout(session._bootDrainTimer);
             session._bootDrainTimer = setTimeout(() => {
               session._bootDrainTimer = null;
@@ -2573,7 +2571,7 @@ function createSessionManager(deps) {
               // Same margin, same reason: a ticket spec written before the readline
               // loop is up is wiped by the boot re-render, and the replay stamps it
               // delivered — so the loss is silent until the NEXT respawn.
-              this._replayTicketsOnce(session);
+              this._replayWhenQueueEmpty(session);
             }, BOOT_DRAIN_SETTLE_MS);
           }
         }
@@ -2649,10 +2647,7 @@ function createSessionManager(deps) {
             this._replayTicketsOnce(session);
           }, INJECT_BOOT_MAXWAIT);
         } else {
-          // Claude's queue gates on _bootReadySeen, but that gate CANNOT cover this
-          // race on its own (see BOOT_DRAIN_SETTLE_MS): by the time the drain runs the
-          // latch is already set, so the gate is no-op-true and adds zero wait. Only
-          // the wall-clock defer is margin, so the replay rides it.
+          // Claude's replay rides the same BOOT_DRAIN_SETTLE_MS defer as the drain.
           // The fallback covers a seat that never emits mode-2004 at all — the
           // edge-armed drain never runs there, and without this its spec is lost for
           // the life of the process.
@@ -4428,6 +4423,7 @@ function createSessionManager(deps) {
       clearTimeout(s._bootSettleTimer);
       clearTimeout(s._bootDrainTimer);
       clearTimeout(s._bootNudgeTimer);
+      clearTimeout(s._bootReplayTimer);
       clearTimeout(s._replayFallbackTimer);
       clearTimeout(s._parkedDrainFallbackTimer);
       clearTimeout(s._rebootNoticeRetryTimer);
@@ -4925,7 +4921,6 @@ function createSessionManager(deps) {
     // messages.
     _drainPendingAtBootReady(session) {
       if (!session || session.agentType !== 'claude' || session._dead || session._recycling) return;
-      session._bootDrainAt = Date.now();
       if (this._anyDraftOpen(session)) return;                     // don't splice an open draft
       if (!hasActivePending(PENDING_DIR, session.name)) return;    // nothing active — leave passives parked
       // Every bail here is a park that stays on disk EXCEPT the last one, where the
@@ -4946,11 +4941,25 @@ function createSessionManager(deps) {
       this._injectQueueFor(session).enqueue('', { produce });
     }
 
+    _replayWhenQueueEmpty(session) {
+      clearTimeout(session._bootReplayTimer);
+      session._bootReplayTimer = null;
+      if (session._dead || !session._replayTicketsPending) return;
+      const q = session._injectPtyQueue;
+      const capped = Date.now() - (session._bootReadyAt || 0) >= INJECT_BOOT_MAXWAIT;
+      if (q && q.length > 0 && !capped) {
+        session._bootReplayTimer = setTimeout(() => this._replayWhenQueueEmpty(session), BOOT_REPLAY_POLL_MS);
+        if (session._bootReplayTimer.unref) session._bootReplayTimer.unref();
+        return;
+      }
+      this._replayTicketsOnce(session);
+    }
+
     _armBootNudge(session) {
       if (!session || session.agentType !== 'claude' || session._dead) return;
       if (session._bootNudgeArmed) return;
-      const drainAt = session._bootDrainAt;
-      if (!drainAt || Date.now() - drainAt > INJECT_BOOT_MAXWAIT) return;
+      const readyAt = session._bootReadyAt;
+      if (!readyAt || Date.now() - readyAt > INJECT_BOOT_MAXWAIT) return;
       session._bootNudgeArmed = true;
       const wroteAt = Date.now();
       const arm = (ms) => {
@@ -4967,7 +4976,7 @@ function createSessionManager(deps) {
           return;
         }
         try { session.pty.write('\r'); } catch {}
-        log.info('inject', `boot-drain nudge for ${session.name} — no turn ${Date.now() - wroteAt}ms after the boot drain, sent Enter`);
+        log.info('inject', `boot-drain nudge for ${session.name} — no turn ${Date.now() - wroteAt}ms after a boot-window write, sent Enter`);
       };
       arm(BOOT_NUDGE_MS);
     }
@@ -8680,7 +8689,8 @@ function createSessionManager(deps) {
         // claude seat races CLI boot — text+Enter written before the raw-mode
         // input loop is up read as one paste-like chunk and the Enter lands as
         // content, so the message never submits. Gate claude agent seats on the
-        // latched mode-2004 edge (_bootReadySeen), capped by INJECT_BOOT_MAXWAIT.
+        // latched mode-2004 edge (_bootReadySeen) plus BOOT_DRAIN_SETTLE_MS past
+        // it — the edge precedes the readline loop — capped by INJECT_BOOT_MAXWAIT.
         // Bash/codex pass through (default ready ⇒ true): codex has its own
         // boot-settle machinery and must not be coupled to this.
         const isClaude = session.agentType === 'claude';
@@ -8718,7 +8728,7 @@ function createSessionManager(deps) {
           },
           bracketedPaste: () => !!session._pasteModeOn,
           onSubmitted: (_t, meta) => { session.lastSubmitInjected = !(meta && meta.human); },
-          ready: isClaude ? () => !!session._bootReadySeen : undefined,
+          ready: isClaude ? () => !!session._bootReadySeen && Date.now() - (session._bootReadyAt || 0) >= BOOT_DRAIN_SETTLE_MS : undefined,
           readyMaxWaitMs: INJECT_BOOT_MAXWAIT,
           onReadyCapFire: isClaude ? () => {
             log.warn('inject', `boot-readiness cap fired for ${session.name} — injected before mode-2004 seen (${INJECT_BOOT_MAXWAIT / 1000}s cap)`);
