@@ -632,36 +632,51 @@ test('t1052: a copied `[Runtime note: action text omitted from retained history.
     'the bounce is not gated on kind: a filler copied from the record costs one bounce and fabricates nothing');
 });
 
-test('t1052: the wire spill event enqueues a Clodex-voiced ack in the USER role, exact texts, "filed" never "delivered"', () => {
+test('t1052/t1108: the wire spill event enqueues a Clodex-voiced ack in the USER role for a PROSE spill only — a spilled intent body gets no receipt at all', () => {
   const { spillAckLine } = require('../session-manager');
   const { enqueueNotice, parseNotices } = require('../notice-queue');
   const root = mkTmpRoot('clodex-spill-');
   const intentPath = spillPathFor(root, 'lead', '0123456789abcdef');
   const prosePath = spillPathFor(root, 'lead', 'fedcba9876543210');
 
-  const dm = spillAckLine({ verb: 'dm', head: 'dm nobody', bytes: 901, id: '0123456789abcdef' }, intentPath);
-  assert.strictEqual(dm, `[clodex] your \`dm nobody\` intent — the 901 B body you typed — was removed from your retained transcript to save context; it was read in full and filed at ${intentPath}.`);
-  const add = spillAckLine({ verb: 'task.add', head: 'task add hand start', bytes: 6664 }, intentPath);
-  assert.strictEqual(add, `[clodex] your \`task add hand start\` intent — the 6664 B body you typed — was removed from your retained transcript to save context; it was read in full and filed at ${intentPath}.`);
+  assert.strictEqual(spillAckLine({ verb: 'dm', head: 'dm nobody', bytes: 901, id: '0123456789abcdef' }, intentPath), null,
+    'a spilled dm: the sent confirmation is the only thing the seat sees');
+  assert.strictEqual(spillAckLine({ verb: 'task.add', head: 'task add hand start', bytes: 6664 }, intentPath), null,
+    'a spilled task add: the ticket-created line is the proof, nothing says a cut happened');
   const prose = spillAckLine({ verb: 'prose', head: null, bytes: 1200, id: 'fedcba9876543210' }, prosePath);
   assert.strictEqual(prose,
     `[clodex] the 1200 B of prose you wrote after your last intent were removed from your retained transcript to save context; they reached the operator's log and were filed at ${prosePath}.`);
-  for (const line of [dm, add, prose]) {
-    assert.ok(!/deliver/.test(line), 'delivery failures have their own bounces; the ack says filed');
-    assert.ok(!/\(I sent|@spill:|\[agent:/.test(line), 'the ack carries no copyable emission shape');
-  }
+  assert.ok(!/deliver/.test(prose), 'delivery failures have their own bounces; the ack says filed');
+  assert.ok(!/\(I sent|@spill:|\[agent:/.test(prose), 'the ack carries no copyable emission shape');
 
-  assert.strictEqual(enqueueNotice(root, 'lead', dm), true);
   assert.strictEqual(enqueueNotice(root, 'lead', prose), true);
-  assert.deepStrictEqual(parseNotices(root, 'lead').map((n) => n.text), [dm, prose],
-    'the queue carries both texts byte-for-byte, so the UserPromptSubmit drain hands the seat exactly these lines');
+  assert.deepStrictEqual(parseNotices(root, 'lead').map((n) => n.text), [prose],
+    'the queue carries the text byte-for-byte, so the UserPromptSubmit drain hands the seat exactly this line');
 
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
   const arm = src.match(/wire\.on\('spill', \(ev\) => \{[\s\S]{0,1200}?wire-spill-ack-error[\s\S]{0,200}?\n\s*\}\);/);
   assert.ok(arm, 'the spill event has a consumer');
-  assert.match(arm[0], /const filePath = spillPathFor\(REGISTRY_DIR, ev\.agent, ev\.id\);[\s\S]*enqueueNotice\(REGISTRY_DIR, ev\.agent, spillAckLine\(ev, filePath\)\)/,
-    'the ack goes through notice-queue.js — the USER role, where nothing is imitated — never through _injectText into the pane');
+  assert.match(arm[0], /const filePath = spillPathFor\(REGISTRY_DIR, ev\.agent, ev\.id\);[\s\S]*const ack = spillAckLine\(ev, filePath\);\s*if \(ack\) \{\s*try \{\s*enqueueNotice\(REGISTRY_DIR, ev\.agent, ack\)/,
+    'the ack goes through notice-queue.js — the USER role, where nothing is imitated — never through _injectText into the pane, and only when there is one');
   assert.ok(!/_injectText/.test(arm[0]));
+});
+
+test('t1108: on the live arm a spilled intent enqueues NO notice; a prose spill still does', async () => {
+  const enq = [];
+  const h = mkH({ getUserDataPath: () => h.root, shadowIntentKey, enqueueNotice: (...a) => { enq.push(a); return true; } });
+  const rig = await wireRig(h);
+  try {
+    rig.wire.emit('spill', { agent: 'lead', verb: 'task.add', head: 'task add hand', id: 'deadbeef00000000', bytes: 6000 });
+    rig.wire.emit('spill', { agent: 'lead', verb: 'dm', head: 'dm bob', id: 'deadbeef00000001', bytes: 900 });
+    assert.deepStrictEqual(enq, [], 'nothing tells the agent its body was cut');
+    assert.strictEqual(h.broadcasts.filter((b) => b.type === 'spill').length, 2, 'the operator-facing rows still go out');
+    rig.wire.emit('spill', { agent: 'lead', verb: 'prose', head: null, id: 'deadbeef00000002', bytes: 1200 });
+    assert.strictEqual(enq.length, 1);
+    assert.match(enq[0][2], /^\[clodex\] the 1200 B of prose you wrote after your last intent were removed/);
+    assert.deepStrictEqual(h.errors, []);
+  } finally {
+    await rig.close();
+  }
 });
 
 test('t1059: a wire spill broadcasts one ipc-message row of type spill — head form — with the filed path on it', async () => {
@@ -710,7 +725,7 @@ test('t1059: the spill row is broadcast even when the ack enqueue throws — the
   h.m._shadowLog = (row) => shadow.push(row);
   const rig = await wireRig(h);
   try {
-    rig.wire.emit('spill', { agent: 'a', verb: 'task', head: 'task add hand', id: 'deadbeef00000000', bytes: 1234 });
+    rig.wire.emit('spill', { agent: 'a', verb: 'prose', head: null, id: 'deadbeef00000000', bytes: 1234 });
     assert.deepStrictEqual(shadow.filter((r) => r.type === 'wire-spill-ack-error'),
       [{ type: 'wire-spill-ack-error', agent: 'a', error: 'queue on fire' }], 'ENTER: the enqueue really threw');
     const rows = h.broadcasts.filter((b) => b.type === 'spill');
@@ -805,13 +820,24 @@ test('T12: the intent-shaped pointer is bounced ONCE per turn — the mimic dete
   }
 });
 
-test('t1102: the receipt stays outside the emission grammar — neither verb is a pointer, a receipt or a mimic kind, the wire cut leaves it alone — and the path it ends with resolves the real spill file', () => {
+test('t1102/t1108: the prose receipt stays outside the emission grammar — not a pointer, a receipt or a mimic kind, the wire cut leaves it alone — and the path it ends with resolves the real spill file; the spilled-body note is outside the cut grammar too, and IS a mimic kind', () => {
   const { spillAckLine } = require('../session-manager');
-  const { FILED_POINTER_RE, RECEIPT_RE, mimicKindOf, pointerOf, trailingPointerOf, resolveReceipt, writeSpill } = require('../intent-spill');
+  const { FILED_POINTER_RE, RECEIPT_RE, SPILLED_BODY, mimicKindOf, pointerOf, trailingPointerOf, spilledBodyOf, resolveReceipt, writeSpill } = require('../intent-spill');
   const { classifyLine } = require('../wire/spill-cut');
   const root = mkTmpRoot('clodex-spill-');
+  assert.strictEqual(FILED_POINTER_RE.test(SPILLED_BODY), false);
+  assert.strictEqual(RECEIPT_RE.test(SPILLED_BODY), false);
+  assert.strictEqual(pointerOf(SPILLED_BODY), null);
+  assert.strictEqual(trailingPointerOf(SPILLED_BODY), null);
+  assert.deepStrictEqual(classifyLine(SPILLED_BODY), { kind: 0 }, 'typed by the agent, the note reaches the wire uncut so the mimic bounce is what it gets');
+  assert.strictEqual(mimicKindOf(SPILLED_BODY), 'spilled');
+  assert.strictEqual(mimicKindOf(`  ${SPILLED_BODY}  `), 'spilled');
+  assert.strictEqual(mimicKindOf(`${SPILLED_BODY} — sent`), null, 'only the lone line is the copied shape');
+  assert.strictEqual(spilledBodyOf(SPILLED_BODY), SPILLED_BODY);
+  assert.strictEqual(spilledBodyOf(`Title\n${SPILLED_BODY}\n`), SPILLED_BODY, 'a body ending in the note is the copied shape');
+  assert.strictEqual(spilledBodyOf(`${SPILLED_BODY}\nreal text`), null);
+  assert.strictEqual(spilledBodyOf(null), null);
   const rows = [
-    [{ verb: 'dm', head: 'dm nobody', bytes: 901 }, 'a dm body long enough to have been cut'],
     [{ verb: 'prose', head: null, bytes: 1200 }, 'the prose the seat wrote after its last intent'],
   ];
   for (const [ev, body] of rows) {
@@ -843,6 +869,35 @@ test('t1102: `removed from your retained transcript` is spoken by spillAckLine a
   const src = fs.readFileSync(path.join(repo, 'session-manager.js'), 'utf8');
   const fn = src.match(/\nfunction spillAckLine\(ev, filePath\) \{[\s\S]*?\n\}\n/);
   assert.ok(fn);
-  assert.strictEqual(fn[0].split(phrase).length - 1, 2, 'both verbs say it');
-  assert.strictEqual(src.split(phrase).length - 1, 2, 'and nothing else in session-manager.js does');
+  assert.strictEqual(fn[0].split(phrase).length - 1, 1, 'the prose arm alone says it: a spilled intent body is not reported as removed');
+  assert.strictEqual(src.split(phrase).length - 1, 1, 'and nothing else in session-manager.js does');
+});
+
+test('t1108: a typed `[Runtime note: Clodex filed this body in full; …]` body is bounced like a typed pointer on the wire path and on the jsonl path — no ticket, one advisory', async () => {
+  const { SPILLED_BODY } = require('../intent-spill');
+  const h = mkH({ getUserDataPath: () => h.root, shadowIntentKey });
+  const rig = await wireRig(h);
+  try {
+    await rig.turn(`[agent:task add hand] Title\n${SPILLED_BODY}\n[agent:end]\n`, 'r1');
+    assert.deepStrictEqual(h.tasks, [], 'the note is a stand-in Clodex rendered into the record; copied back, it is not a body');
+    assert.deepStrictEqual(h.injected.map((i) => i.text), [MIMIC_BOUNCE], 'the pointer-mimic bounce, not a second one');
+    assert.deepStrictEqual(h.injected[0].opts, { parkable: true });
+    assert.ok(h.broadcasts.some((b) => b.type === 'intent' && b.body === `task.add dropped: its body was a pointer (${SPILLED_BODY}) — the agent typed it`), 'surfaced in the IPC log');
+    assert.deepStrictEqual(h.notes, [], 'a model slip, not an incident');
+
+    await h.m._handleIntent('lead', { type: 'task', sub: 'add', body: `Title\n${SPILLED_BODY}` });
+    assert.deepStrictEqual(h.tasks, [], 'the jsonl path has nothing to resolve either: the note names no file');
+    assert.strictEqual(h.injected.length, 2);
+    assert.strictEqual(h.injected[1].text, MIMIC_BOUNCE);
+
+    await h.m._handleIntent('lead', { type: 'dm', target: 'bob', body: `${SPILLED_BODY}`, fromWire: true, reqId: 'r9' });
+    assert.deepStrictEqual(h.dms, [], 'a dm with the note as its body is not sent');
+    assert.strictEqual(h.injected.length, 3);
+
+    await h.m._handleIntent('lead', { type: 'task', sub: 'add', body: `real spec\n${SPILLED_BODY} is a line I quoted, not my body` });
+    assert.strictEqual(h.tasks.length, 1, 'the note inside a body, not as its last line, is text');
+    assert.deepStrictEqual(h.errors, []);
+  } finally {
+    await rig.close();
+  }
 });

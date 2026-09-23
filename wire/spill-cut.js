@@ -1,7 +1,7 @@
 'use strict';
 
 const { HEAD_RE } = require('./spill');
-const { POINTER_RE, FILED_POINTER_RE, RECEIPT_RE, TAIL_RECEIPT_RE, SPILL_FILLER, pointerMatch } = require('../intent-spill');
+const { POINTER_RE, FILED_POINTER_RE, RECEIPT_RE, TAIL_RECEIPT_RE, SPILL_FILLER, SPILLED_BODY, pointerMatch } = require('../intent-spill');
 const { cleanLine } = require('../intent-scanner');
 
 const NEEDLES = ['@spill:', ' filed at /', '[Runtime note:', '(I sent', '(I wrote'];
@@ -41,18 +41,17 @@ function classifyLine(line) {
 function cutText(text) {
   const lines = text.split('\n');
   const kept = [];
-  const heads = [];
   let cut = 0;
   for (let i = 0; i < lines.length; i++) {
     const c = classifyLine(lines[i]);
     if (c.kind === 0) { kept.push(lines[i]); continue; }
     cut++;
     if (c.kind === 2) {
-      heads.push(c.head);
+      kept.push(c.head, SPILLED_BODY, END_LINE);
       if (i + 1 < lines.length && cleanLine(lines[i + 1]).trim() === END_LINE) { cut++; i++; }
     }
   }
-  return { text: cut ? kept.join('\n') : text, cut, heads };
+  return { text: cut ? kept.join('\n') : text, cut };
 }
 
 function isThinking(b) {
@@ -61,7 +60,6 @@ function isThinking(b) {
 
 function cutMessage(msg) {
   const blocks = [];
-  const heads = [];
   let lines = 0;
   let droppedBlocks = 0;
   let orphanCache = null;
@@ -70,7 +68,6 @@ function cutMessage(msg) {
     const r = cutText(b.text);
     if (!r.cut) { blocks.push(b); continue; }
     lines += r.cut;
-    heads.push(...r.heads);
     if (r.text.trim()) { blocks.push({ ...b, text: r.text }); continue; }
     droppedBlocks++;
     if (b.cache_control) orphanCache = b.cache_control;
@@ -83,11 +80,11 @@ function cutMessage(msg) {
       orphanCache = null;
     }
   }
-  return { blocks, lines, droppedBlocks, heads, orphanCache };
+  return { blocks, lines, droppedBlocks, orphanCache };
 }
 
 function placeholderOf(r) {
-  const text = { type: 'text', text: r.heads.length ? r.heads.join('\n') : PLACEHOLDER };
+  const text = { type: 'text', text: PLACEHOLDER };
   if (r.orphanCache) text.cache_control = r.orphanCache;
   return [...r.blocks.filter(isThinking), text];
 }

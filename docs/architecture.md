@@ -897,13 +897,18 @@ accept teardown removes.
   `[<title> — ]<size> filed at <abs path>` in place of the body, `[agent:end]`
   after it, and a bare `<size> of prose filed at <abs path>` line for a spilled
   prose tail — the path links in the terminal, and recovery resolves the id
-  from its basename. The model never sees it: `wire/spill-cut.js`
-  removes every stub (and the receipt and filler stand-ins earlier versions
-  wrote) from every outgoing request. Clodex confirms the filing in the USER
-  role: the `spill` wire event enqueues a `[clodex] your `<head>` intent — the N B body you typed — was
-  removed from your retained transcript to save context; it was read in full and
-  filed at <path>.` note (`notice-queue.js`, drained into the next
-  prompt). The intent tee reads the UNSPILLED upstream bytes, so the wire path
+  from its basename. The model never sees the pointer: `wire/spill-cut.js`
+  rewrites every outgoing request so the turn reads as the intent the model
+  emitted — the head line with its title, `[Runtime note: Clodex filed this body
+  in full; it is not carried in the transcript.]` where the body stood, then
+  `[agent:end]` — and removes the receipt and filler stand-ins earlier versions
+  wrote. Nothing tells the model a cut happened: no receipt is enqueued for a
+  spilled intent body, and the ordinary confirmation that follows (`ticket
+  created`, the dm delivery) is the proof the action ran (Bogdan's ruling
+  2026-09-23: telling the model its body was removed produced phantom dispatches
+  that announced the next action instead of performing it). A model that copies
+  the runtime note back as a body is bounced like a typed pointer
+  (`spilledBodyOf`), on the wire path and the jsonl path alike. The intent tee reads the UNSPILLED upstream bytes, so the wire path
   dispatches the full body and never a pointer; a pointer body that does arrive
   on the wire path was typed by the model and is bounced (`fromWire`), never
   resolved. A non-wire scan (`_scanJsonlText`, sentinel recovery) expands the
@@ -913,12 +918,14 @@ accept teardown removes.
   cross-path overlap rather than fired twice; the receipt path is confined to
   the sender's own spill dir — a copied or typed receipt fails confinement or
   the file check and bounces with the same note as a typed pointer. The filter also watches the
-  RAW stream it is fed for a receipt-, filler- or pointer-shaped line
+  RAW stream it is fed for a receipt-, filler-, runtime-note- or pointer-shaped line
   (`mimicKindOf`) outside any intent body it holds or passes through: upstream of
   its own rewrite, such a line is model-authored by construction, so it raises
-  `spill-mimic` and the seat is told nothing was executed. A stub-only assistant
-  message behind a `role:"system"` row is kept by the editor as a head-line
-  placeholder rather than dropped, since `system → user` is a shape the API rejects.
+  `spill-mimic` and the seat is told nothing was executed. A stub with a head is
+  never emptied by the cut — its rendering stands in place — so only a message
+  holding nothing but bare pointers or receipts can be dropped, and behind a
+  `role:"system"` row that one is kept by the editor as a third-person placeholder
+  instead, since `system → user` is a shape the API rejects.
   `id = sha256(body)[:16]`, path `<root>/spill/<agent>/<id>.md`,
   0700 dir / 0600 file, an existing file left alone. Pure leaf (`fs`, `path`,
   `crypto`, plus `path-confine` and `fs-util`). Every failure returns null or an
