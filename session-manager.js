@@ -204,9 +204,9 @@ function typedPointerBounce(intent, pointer) {
 
 function spillAckLine(ev, filePath) {
   if (ev.verb === 'prose') {
-    return `[clodex] the ${ev.bytes} B of prose after your last intent reached the operator's log and were filed at ${filePath}.`;
+    return `[clodex] the ${ev.bytes} B of prose you wrote after your last intent were removed from your retained transcript to save context; they reached the operator's log and were filed at ${filePath}.`;
   }
-  return `[clodex] your ${ev.head} (${ev.bytes} B) was read in full and filed at ${filePath}.`;
+  return `[clodex] your \`${ev.head}\` intent — the ${ev.bytes} B body you typed — was removed from your retained transcript to save context; it was read in full and filed at ${filePath}.`;
 }
 const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');

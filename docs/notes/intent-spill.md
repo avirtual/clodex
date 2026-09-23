@@ -82,6 +82,13 @@ intent-headed stub line, old or new shape (kind `pointer`), can only have been t
 there; the bounce never echoes any of the shapes. The verb words must name a
 `SPILL_VERBS` key or a receipt line is prose.
 
+The live `[clodex] …` ack (`spillAckLine`) is NOT one of these shapes and must
+stay outside the grammar: it opens with "body you typed — was removed from your
+retained transcript" because the agent's history otherwise shows an announcement
+followed by a confirmation that appeared on its own — measured on the lead seat
+2026-09-23, six phantom dispatches (t1099 ×1, t1100 ×3, t1102 ×3) that announced
+a ticket and bound a reminder to it with no `[agent:task add]` line typed.
+
 ## resolveReceipt
 
 The receipt carries an absolute path, so confinement is a POSITIVE check that
