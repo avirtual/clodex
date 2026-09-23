@@ -640,12 +640,12 @@ test('t1052: the wire spill event enqueues a Clodex-voiced ack in the USER role,
   const prosePath = spillPathFor(root, 'lead', 'fedcba9876543210');
 
   const dm = spillAckLine({ verb: 'dm', head: 'dm nobody', bytes: 901, id: '0123456789abcdef' }, intentPath);
-  assert.strictEqual(dm, `[clodex] your dm nobody (901 B) was read in full and filed at ${intentPath}.`);
+  assert.strictEqual(dm, `[clodex] your \`dm nobody\` intent — the 901 B body you typed — was removed from your retained transcript to save context; it was read in full and filed at ${intentPath}.`);
   const add = spillAckLine({ verb: 'task.add', head: 'task add hand start', bytes: 6664 }, intentPath);
-  assert.strictEqual(add, `[clodex] your task add hand start (6664 B) was read in full and filed at ${intentPath}.`);
+  assert.strictEqual(add, `[clodex] your \`task add hand start\` intent — the 6664 B body you typed — was removed from your retained transcript to save context; it was read in full and filed at ${intentPath}.`);
   const prose = spillAckLine({ verb: 'prose', head: null, bytes: 1200, id: 'fedcba9876543210' }, prosePath);
   assert.strictEqual(prose,
-    `[clodex] the 1200 B of prose after your last intent reached the operator's log and were filed at ${prosePath}.`);
+    `[clodex] the 1200 B of prose you wrote after your last intent were removed from your retained transcript to save context; they reached the operator's log and were filed at ${prosePath}.`);
   for (const line of [dm, add, prose]) {
     assert.ok(!/deliver/.test(line), 'delivery failures have their own bounces; the ack says filed');
     assert.ok(!/\(I sent|@spill:|\[agent:/.test(line), 'the ack carries no copyable emission shape');
@@ -803,4 +803,46 @@ test('T12: the intent-shaped pointer is bounced ONCE per turn — the mimic dete
   } finally {
     await rig.close();
   }
+});
+
+test('t1102: the receipt stays outside the emission grammar — neither verb is a pointer, a receipt or a mimic kind, the wire cut leaves it alone — and the path it ends with resolves the real spill file', () => {
+  const { spillAckLine } = require('../session-manager');
+  const { FILED_POINTER_RE, RECEIPT_RE, mimicKindOf, pointerOf, trailingPointerOf, resolveReceipt, writeSpill } = require('../intent-spill');
+  const { classifyLine } = require('../wire/spill-cut');
+  const root = mkTmpRoot('clodex-spill-');
+  const rows = [
+    [{ verb: 'dm', head: 'dm nobody', bytes: 901 }, 'a dm body long enough to have been cut'],
+    [{ verb: 'prose', head: null, bytes: 1200 }, 'the prose the seat wrote after its last intent'],
+  ];
+  for (const [ev, body] of rows) {
+    const id = writeSpill(root, 'lead', body);
+    assert.match(id, /^[0-9a-f]{16}$/, 'ENTER: a real spill file exists');
+    const filePath = spillPathFor(root, 'lead', id);
+    const line = spillAckLine({ ...ev, id }, filePath);
+    assert.strictEqual(FILED_POINTER_RE.test(line), false, `${ev.verb}: not a filed pointer`);
+    assert.strictEqual(RECEIPT_RE.test(line), false, `${ev.verb}: not the former placeholder`);
+    assert.strictEqual(mimicKindOf(line), null, `${ev.verb}: a copied ack is not a mimic kind`);
+    assert.strictEqual(pointerOf(line), null);
+    assert.strictEqual(trailingPointerOf(line), null, `${ev.verb}: a body ending in the ack is not a typed pointer`);
+    assert.deepStrictEqual(classifyLine(line), { kind: 0 }, `${ev.verb}: the wire cut does not remove the ack`);
+    const carried = /filed at (\/.+\.md)\.$/.exec(line);
+    assert.ok(carried, `${ev.verb}: filed at <path>. is the last clause`);
+    assert.strictEqual(carried[1], filePath);
+    assert.deepStrictEqual(resolveReceipt(root, 'lead', carried[1]), { ok: true, body, path: filePath, id });
+  }
+});
+
+test('t1102: `removed from your retained transcript` is spoken by spillAckLine and by no other agent-facing text', () => {
+  const { execFileSync } = require('node:child_process');
+  const repo = path.join(__dirname, '..');
+  const phrase = 'removed from your retained transcript';
+  const files = execFileSync('git', ['ls-files', '--', '*.js', '*.md', '*.json', '*.txt'], { cwd: repo, encoding: 'utf8' })
+    .split('\n').filter((f) => f && !f.startsWith('test/') && !f.startsWith('docs/') && f !== 'CHANGELOG.md');
+  const hits = files.filter((f) => fs.readFileSync(path.join(repo, f), 'utf8').includes(phrase));
+  assert.deepStrictEqual(hits, ['session-manager.js'], 'no prompt, template or kit text carries the receipt phrase');
+  const src = fs.readFileSync(path.join(repo, 'session-manager.js'), 'utf8');
+  const fn = src.match(/\nfunction spillAckLine\(ev, filePath\) \{[\s\S]*?\n\}\n/);
+  assert.ok(fn);
+  assert.strictEqual(fn[0].split(phrase).length - 1, 2, 'both verbs say it');
+  assert.strictEqual(src.split(phrase).length - 1, 2, 'and nothing else in session-manager.js does');
 });

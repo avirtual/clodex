@@ -900,8 +900,9 @@ accept teardown removes.
   from its basename. The model never sees it: `wire/spill-cut.js`
   removes every stub (and the receipt and filler stand-ins earlier versions
   wrote) from every outgoing request. Clodex confirms the filing in the USER
-  role: the `spill` wire event enqueues a `[clodex] your <head> (N B) was read in
-  full and filed at <path>.` note (`notice-queue.js`, drained into the next
+  role: the `spill` wire event enqueues a `[clodex] your `<head>` intent — the N B body you typed — was
+  removed from your retained transcript to save context; it was read in full and
+  filed at <path>.` note (`notice-queue.js`, drained into the next
   prompt). The intent tee reads the UNSPILLED upstream bytes, so the wire path
   dispatches the full body and never a pointer; a pointer body that does arrive
   on the wire path was typed by the model and is bounced (`fromWire`), never
@@ -936,8 +937,9 @@ accept teardown removes.
   `lastSubmitInjected`, read once per request through `registerAgent`'s
   `turnInjected`), the seat's trailing prose after its last intent — or a whole
   reply with no intent — is removed the same way under the same floor and
-  writer, confirmed by a `[clodex] the N B of prose after your last intent
-  reached the operator's log and were filed at <path>.` note, while a typed turn
+  writer, confirmed by a `[clodex] the N B of prose you wrote after your last intent
+  were removed from your retained transcript to save context; they reached the
+  operator's log and were filed at <path>.` note, while a typed turn
   is never touched.
 - **path-confine.js** — one caller-supplied name, one path segment, POSITIVELY
   confined to a directory Clodex owns. Positive because a charset regex is not
