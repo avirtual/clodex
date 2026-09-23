@@ -107,5 +107,5 @@ Run 2 prompt: `Run seq 1 30, then run seq 1 12, then run date, then use the Edit
 ## Not exercised
 
 - The app's own wiring was not driven live. That covers the `createTerminal` call site, the preload/IPC path of `transcript:pull`, and the Preferences checkbox. It is covered by the api-contract, settings and free-identifier tests. The harness runs the same view module and reader, but not the app's window.
-- `@` file completion, AskUserQuestion, MCP elicitation, a multi-row draft, and the `/tui fullscreen` renderer were not captured. The fullscreen renderer is on the alternate buffer, and the view declines that by buffer type.
+- `@` file completion, AskUserQuestion, MCP elicitation, the plan-approve "Tell Claude what to change" input, a multi-row draft, and the `/tui fullscreen` renderer were not captured. The fullscreen renderer is on the alternate buffer, and the view declines that by buffer type.
 - The spike leaks one `fs.watch` per Claude seat: `transcriptSpike` drops a watcher only when a pull finds the session gone or non-Claude, so a closed tab or a toggled-off pane keeps its watcher until the app quits.
