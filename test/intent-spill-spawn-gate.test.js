@@ -127,7 +127,7 @@ test('the grammar line is in the prompt with the setting OFF, so a flip changes 
     await spawn(on.m, 'seat');
     assert.ok(off.prompts[0].includes(GRAMMAR),
       'the prompt is captured at spawn and replayed on clear/compact, so it must not track the setting');
-    assert.ok(off.prompts[0].includes('Your first two long intent bodies stay in your transcript in full; from the third on, the transcript keeps the intent head, a bracketed runtime note, and `[agent:end]`, and the ordinary confirmation is the only thing that follows, so a body is never lost and never needs re-sending'));
+    assert.ok(off.prompts[0].includes('Your two oldest long intent bodies stay in your transcript in full; every later one is filed and the transcript keeps the intent head, a bracketed runtime note, and `[agent:end]`, and the ordinary confirmation is the only thing that follows, so a body is never lost and never needs re-sending'));
     assert.ok(off.prompts[0].includes('Always write the body itself: a body you did not write does not exist, and the confirmation is something Clodex writes after delivery, never something you write.'),
       'the paragraph names no token and no form: the pointer shape it used to teach is what the seats copied');
     assert.ok(off.prompts[0].includes('Actions happen only by emitting the complete intent — head line, full body, terminator; describing, promising or referring to an action in prose performs nothing. Clodex may omit executed intent text from your retained history and report outcomes separately; those history edits are not a request form and never something you write.'),

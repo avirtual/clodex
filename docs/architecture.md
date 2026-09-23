@@ -897,16 +897,15 @@ accept teardown removes.
   `[<title> — ]<size> filed at <abs path>` in place of the body, `[agent:end]`
   after it, and a bare `<size> of prose filed at <abs path>` line for a spilled
   prose tail — the path links in the terminal, and recovery resolves the id
-  from its basename. The first two over-limit intent bodies of a session are not filed at
-  all: they ride the transcript verbatim as examples (a per-session counter on
-  the proxy registration, decided when the body first appears and never
-  re-rendered; a restart resets it), the prose tail is never exempt, and the
-  third body on spills. The model never sees the pointer: `wire/spill-cut.js`
+  from its basename. Every over-limit intent body is filed; on each request the cut
+  renders the two oldest intent stubs whose file resolves as the original
+  intent with its filed body, as examples (derived from the payload, no process
+  state; a compact promotes the next two). The model never sees the pointer: `wire/spill-cut.js`
   rewrites every outgoing request so the turn reads as the intent the model
   emitted — the head line with its title, `[Runtime note: Clodex filed this body
   in full; it is not carried in the transcript.]` where the body stood (the
-  first stub-bearing message of a request carries the longer
-  `SPILLED_BODY_FIRST`, which explains the first-two rule once), then
+  first stub rendered past the expanded two carries the longer
+  `SPILLED_BODY_FIRST`), then
   `[agent:end]` — and removes the receipt and filler stand-ins earlier versions
   wrote. Nothing tells the model a cut happened: no receipt is enqueued for a
   spilled intent body, and the ordinary confirmation that follows (`ticket

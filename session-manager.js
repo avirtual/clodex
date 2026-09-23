@@ -1650,7 +1650,6 @@ function createSessionManager(deps) {
       }
 
       let proxyAgent = null;
-      const intentSpills = { count: 0 };
       if (agentType) {
         const taken = new Set();
         for (const e of getPersistence().list()) if (e.proxyAgent) taken.add(e.proxyAgent);
@@ -1799,7 +1798,6 @@ function createSessionManager(deps) {
                   ? {
                     root: REGISTRY_DIR,
                     verbs: spillVerbs,
-                    intentSpills,
                     turnInjected: () => this.sessions.get(name)?.lastSubmitInjected === true,
                   }
                   : null,
@@ -2257,7 +2255,6 @@ function createSessionManager(deps) {
         // payload.linked guard, so seeding unconditionally is safe.
         lastMainStop: { isTurn: true, ts: Date.now(), seeded: true },
         lastSubmitInjected: false,
-        intentSpills,
         bootResumeId: resumeId || null,
         promptRecipe,
         // Recompute rather than re-write: setupClaudeHook already wrote the
