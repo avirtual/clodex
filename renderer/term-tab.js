@@ -20,11 +20,12 @@
 const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
 const { termBackendFor } = require('../drawer-avail');
+const { loadWebglIfEnabled } = require('./lib/term-webgl');
 
 // getSeatShellCap: does the ACTIVE seat's peer box advertise the `shell` cap?
 // Injected because the answer lives in renderer.js's peerStatuses map, and a
 // second reader of that map here would drift the moment peer state moves.
-function createTermTab({ host, xtermTheme, getActiveSession, getSeatType = null, getSeatShellCap = null }) {
+function createTermTab({ host, xtermTheme, getActiveSession, getSeatType = null, getSeatShellCap = null, getWebglEnabled = null }) {
   // The seat this pane is currently showing a shell for. One xterm is reused
   // across seats — a terminal per seat would multiply the DOM and the fit
   // measurements for panes nobody is looking at — so this is what says whose
@@ -263,6 +264,7 @@ function createTermTab({ host, xtermTheme, getActiveSession, getSeatType = null,
     if (!terminal) return;
     if (!opened) {
       terminal.open(hostEl);
+      loadWebglIfEnabled(terminal, !!(getWebglEnabled && getWebglEnabled()));
       opened = true;
     }
     const want = (getActiveSession && getActiveSession()) || null;

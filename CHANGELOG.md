@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Terminal: Preferences ▸ Appearance gains a GPU-accelerated terminal (WebGL) option, off by default; a lost or refused WebGL context falls back to the DOM renderer silently.
+
 ## 5.86.0 — 2026-09-23
 
 - Restart: a queued relaunch (menu or `[agent:reboot]`) now also waits for the operator to be quiet: no terminal keystroke for 10 seconds, then the usual 10-second all-idle window, so it never drops the windows mid-sentence.

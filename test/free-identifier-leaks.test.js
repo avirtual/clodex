@@ -298,6 +298,7 @@ const RENDERER_SCANNED_MODULES = [
   // `activeSession` are in easy reach, and a decoration lifecycle that grabbed
   // one would ship green without this.
   'renderer/intent-highlight.js',
+  'renderer/lib/term-webgl.js',
   // The hands-free submit matcher and its watcher (t566). The watcher runs
   // per-terminal inside createTerminal's scope exactly like intent-highlight,
   // where `sessions` and `activeSession` are in easy reach — and this one WRITES
