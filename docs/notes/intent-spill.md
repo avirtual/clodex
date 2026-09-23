@@ -118,26 +118,3 @@ re-derive it from that docstring.
 The board block is the only part that gives way under the cap. Host, git and
 roster answer questions a truncated board cannot, and a resume that lost them
 spends the turn it was saving re-asking for them.
-
-## SPILLED_BODY_FIRST
-
-The first two over-limit intent bodies of a session are never spilled: they
-ride the transcript exactly as typed, no file, no `onSpill` (Bogdan's ruling
-2026-09-23: a seat that has only ever seen stand-ins learns the stand-in as the
-way a body is written; two real examples early teach the shape). The rule is
-decided at the moment the body first appears (`SpillFilter._resolve`, counter
-`intentSpills.count` on the proxy registration, owned by the session record)
-and never revisited: re-rendering an older message on a later request rewrites
-every byte behind it and busts the prompt cache. The prose arm (`_resolveTail`)
-is neither counted nor exempt. The counter lives in process memory only, so a
-restart (`--resume`, reload) grants two more full bodies — accepted.
-
-From the third spill on, the wire cut renders the stand-in; the FIRST
-stub-bearing assistant message of a request gets the long form
-`[Runtime note: Clodex kept your first two long intent bodies in full as
-examples and files later ones; this body was delivered in full and is not
-carried in the transcript. Every new intent still needs its complete body;
-never write this note.]`, every later one `SPILLED_BODY`. Message order is
-fixed within a transcript, so the same message is first on every request until
-a compact — cache-stable. Both literals are the `spilled` mimic kind and both
-are refused as a typed body (`spilledBodyOf`), on the same bounce path.
