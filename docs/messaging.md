@@ -275,10 +275,10 @@ produces no turn within `BOOT_NUDGE_MS` (4s) gets ONE `\r` written to the pty, o
 has been quiet `BOOT_NUDGE_QUIET_MS` (1s) and no draft is open — a `--resume` replaying a long
 transcript brings its readline loop up after `BOOT_DRAIN_SETTLE_MS`, so the unit's own Enter is
 read as pasted content and the message sits in the composer
-unsubmitted. Pty output or an open draft re-arms it for another
-`BOOT_NUDGE_QUIET_MS` rather than firing, so a half-typed line is never submitted
-for the operator. The nudge is cleared by the turn edge and by kill, gives up at
-`INJECT_BOOT_MAXWAIT`, and logs `boot-drain nudge for <seat>` when it fires.
+unsubmitted. Pty output or an open draft re-arms it for another `BOOT_NUDGE_QUIET_MS` rather than firing, so a
+half-typed line is never submitted for the operator. The nudge is cleared by the turn edge and by kill, gives up
+at `INJECT_BOOT_MAXWAIT`, and logs `boot-drain nudge for <seat>` when it fires. The boot replay pass waits for the
+inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spawn-path spec is stamped before the pass looks for its stamp.
 
 ### Parking & resend (pending-store.js)
 

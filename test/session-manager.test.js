@@ -14677,6 +14677,32 @@ test('t1103: a DIRECT inject into a fresh seat — no boot drain ever ran — ar
   assert.deepStrictEqual(writes, [...SPEC, '\r'], 'and it stays exactly one');
 });
 
+test('t1103: the boot replay pass waits for a queue that never empties only until _bootReadyAt + INJECT_BOOT_MAXWAIT', async (t) => {
+  const p = mkNudgeProbe({ INJECT_BOOT_MAXWAIT: 200, INJECT_QUIET_MS: 60_000, INJECT_QUIET_MAXWAIT: 60_000, bootReplayPollMs: 10 });
+  await bashCreate(p.m, 'replay-cap', null);
+  const s = p.getSession('replay-cap');
+  const writes = [];
+  s.pty = { write: (b) => writes.push(b) };
+  s.agentType = 'claude';
+  s._replayTicketsPending = true;
+  const passes = [];
+  p.m._replayTicketsOnce = (sess) => { passes.push([sess.name, Date.now() - sess._bootReadyAt]); };
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: Date.now() });
+  s.lastUserInputTs = Date.now();
+  p.m._injectQueueFor(s).enqueue('[agent:from clodex] a dm behind the operator\'s draft');
+  p.fireData('\x1b[?2004h');
+  await tickFor(t, 199);
+  assert.deepStrictEqual(passes, [], 'inside the cap the pass has not run — the queue still holds the unit');
+  assert.ok(s._injectPtyQueue.length > 0, 'ENTER: the unit is still queued, or the deferral had nothing to wait for');
+  assert.ok(s._bootReplayTimer, 'and the deferral is what is holding the pass');
+  await tickUntil(t, () => passes.length > 0, 50);
+  assert.deepStrictEqual(passes.map(([name]) => name), ['replay-cap'], 'exactly one pass, for this seat');
+  assert.ok(passes[0][1] >= 200 && passes[0][1] <= 220, `ran at the cap, not before or long after: ${passes[0][1]}ms`);
+  assert.strictEqual(s._bootReplayTimer, null, 'the deferral timer is spent');
+  assert.deepStrictEqual(writes, [], 'nothing reached the pty — the unit is still held behind the draft');
+  t.mock.timers.reset();
+});
+
 test('t771: pty output at fire time RE-ARMS the nudge, which lands once the seat goes quiet', async () => {
   // Output means the resume render is still painting. An Enter into that is the same
   // race one layer on, so the timer re-arms for BOOT_NUDGE_QUIET_MS rather than

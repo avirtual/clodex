@@ -786,6 +786,7 @@ function createSessionManager(deps) {
   const BOOT_DRAIN_SETTLE_MS = Number.isFinite(deps.bootDrainSettleMs) ? deps.bootDrainSettleMs : 750;
   const BOOT_NUDGE_MS = Number.isFinite(deps.bootNudgeMs) ? deps.bootNudgeMs : 4000;
   const BOOT_NUDGE_QUIET_MS = Number.isFinite(deps.bootNudgeQuietMs) ? deps.bootNudgeQuietMs : 1000;
+  const BOOT_REPLAY_POLL_MS = Number.isFinite(deps.bootReplayPollMs) ? deps.bootReplayPollMs : 250;
   const ROSTER_MAX_WAIT_MS = deps.rosterMaxWaitMs || 10000;
 
   // How long an INJECTED unit has to produce a turn edge before the write is
@@ -2568,7 +2569,7 @@ function createSessionManager(deps) {
               // Same margin, same reason: a ticket spec written before the readline
               // loop is up is wiped by the boot re-render, and the replay stamps it
               // delivered — so the loss is silent until the NEXT respawn.
-              this._replayTicketsOnce(session);
+              this._replayWhenQueueEmpty(session);
             }, BOOT_DRAIN_SETTLE_MS);
           }
         }
@@ -4420,6 +4421,7 @@ function createSessionManager(deps) {
       clearTimeout(s._bootSettleTimer);
       clearTimeout(s._bootDrainTimer);
       clearTimeout(s._bootNudgeTimer);
+      clearTimeout(s._bootReplayTimer);
       clearTimeout(s._replayFallbackTimer);
       clearTimeout(s._parkedDrainFallbackTimer);
       clearTimeout(s._rebootNoticeRetryTimer);
@@ -4935,6 +4937,20 @@ function createSessionManager(deps) {
         return texts.join('\n\n');
       };
       this._injectQueueFor(session).enqueue('', { produce });
+    }
+
+    _replayWhenQueueEmpty(session) {
+      clearTimeout(session._bootReplayTimer);
+      session._bootReplayTimer = null;
+      if (session._dead || !session._replayTicketsPending) return;
+      const q = session._injectPtyQueue;
+      const capped = Date.now() - (session._bootReadyAt || 0) >= INJECT_BOOT_MAXWAIT;
+      if (q && q.length > 0 && !capped) {
+        session._bootReplayTimer = setTimeout(() => this._replayWhenQueueEmpty(session), BOOT_REPLAY_POLL_MS);
+        if (session._bootReplayTimer.unref) session._bootReplayTimer.unref();
+        return;
+      }
+      this._replayTicketsOnce(session);
     }
 
     _armBootNudge(session) {

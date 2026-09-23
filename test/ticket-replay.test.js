@@ -1711,6 +1711,7 @@ test('t409: a replay still waiting in the boot gate is NOT stamped delivered', a
     // must produce it. Without this the test would also pass against code that
     // never stamps at all, which would break the replay's once-per-incarnation bound.
     app2.emit('team-hand', '\x1b[?2004h');
+    s._bootReadyAt -= 60_000;
     await settled(app2, 'team-hand', /BUILD THE WIDGET/);
     await stamped(world);
     assert.strictEqual(world.tickets().find((x) => x.id === 't1').deliveredTo.incarnation, s.incarnation,
@@ -2151,6 +2152,7 @@ test('a reassignment inside the deferral window is not overwritten by the late s
     // Release the gate: A's queued write now goes out, and its stamp hook fires
     // against a record naming B.
     app2.emit('team-hand-1', '\x1b[?2004h');
+    a._bootReadyAt -= 60_000;
     const got = await settled(app2, 'team-hand-1', /BUILD THE WIDGET/);
     assert.match(got, /BUILD THE WIDGET/,
       'ENTER: the deferred write must actually land at A — if the delivery were dropped instead, the missing '
@@ -3305,6 +3307,7 @@ test('the spawn-path stamp rides the WRITE, not the enqueue', async () => {
     // must produce it. Without this the subject would also pass against a spawn
     // path that stamps nothing at all, which is the defect itself.
     app.emit(seat, '\x1b[?2004h');
+    s._bootReadyAt -= 60_000;
     await settled(app, seat, /BUILD THE WIDGET/);
     await stamped(world);
     assert.strictEqual(world.tickets().find((x) => x.id === 't1').deliveredTo.incarnation, s.incarnation,

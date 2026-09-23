@@ -4687,7 +4687,7 @@ function createTicketMethods(deps, shared) {
       session._replayFallbackTimer = setTimeout(() => {
         session._replayFallbackTimer = null;
         if (session._dead || !session._replayTicketsPending) return;
-        if (session._bootDrainTimer) return;                       // edge latched; the drain owns it
+        if (session._bootDrainTimer || session._bootReplayTimer) return;   // edge latched; the drain owns it
         if (!session._bootReadySeen && Date.now() < deadline) {
           this._armReplayFallback(session, periodMs, deadline);
           return;
