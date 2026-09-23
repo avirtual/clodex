@@ -1,7 +1,7 @@
 'use strict';
 
 const { HEAD_RE } = require('./spill');
-const { POINTER_RE, FILED_POINTER_RE, RECEIPT_RE, TAIL_RECEIPT_RE, SPILL_FILLER, SPILLED_BODY, SPILLED_BODY_FIRST, pointerMatch, resolveSpill } = require('../intent-spill');
+const { POINTER_RE, FILED_POINTER_RE, RECEIPT_RE, TAIL_RECEIPT_RE, SPILL_FILLER, SPILLED_BODY, SPILLED_BODY_FIRST, SPILLED_BODY_EPHEMERAL, pointerMatch, resolveSpill } = require('../intent-spill');
 const { cleanLine } = require('../intent-scanner');
 
 const NEEDLES = ['@spill:', ' filed at /', '[Runtime note:', '(I sent', '(I wrote'];
@@ -39,7 +39,7 @@ function classifyLine(line) {
 }
 
 function expansionOf(line, state) {
-  if (state.expanded >= 2 || !state.root || !state.agent) return null;
+  if (state.expanded >= state.examples || !state.root || !state.agent) return null;
   const t = cleanLine(line).trim();
   const m = HEAD_RE.exec(t);
   if (!m) return null;
@@ -63,7 +63,7 @@ function cutText(text, state) {
       const full = expansionOf(lines[i], state);
       if (full) kept.push(...full, END_LINE);
       else {
-        kept.push(c.head, state.first ? SPILLED_BODY_FIRST : SPILLED_BODY, END_LINE);
+        kept.push(c.head, state.first ? (state.examples === 0 ? SPILLED_BODY_EPHEMERAL : SPILLED_BODY_FIRST) : SPILLED_BODY, END_LINE);
         state.first = false;
       }
       if (i + 1 < lines.length && cleanLine(lines[i + 1]).trim() === END_LINE) { cut++; i++; }
@@ -107,12 +107,12 @@ function placeholderOf(r) {
   return [...r.blocks.filter(isThinking), text];
 }
 
-function cutSpillStubs(obj, { root = null, agent = null } = {}) {
+function cutSpillStubs(obj, { root = null, agent = null, examples = 2 } = {}) {
   const report = { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0 };
   if (!obj || !Array.isArray(obj.messages)) return report;
   const out = [];
   let changed = false;
-  const state = { first: true, expanded: 0, root, agent };
+  const state = { first: true, expanded: 0, root, agent, examples };
   for (const msg of obj.messages) {
     if (!msg || msg.role !== 'assistant' || !hasNeedle(msg)) { out.push(msg); continue; }
     const r = cutMessage(msg, state);

@@ -1799,6 +1799,7 @@ function createSessionManager(deps) {
                     root: REGISTRY_DIR,
                     verbs: spillVerbs,
                     turnInjected: () => this.sessions.get(name)?.lastSubmitInjected === true,
+                    examples: existingEntry && existingEntry.ephemeral === true ? 0 : 2,
                   }
                   : null,
               });

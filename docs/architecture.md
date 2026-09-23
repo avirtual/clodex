@@ -899,7 +899,7 @@ accept teardown removes.
   prose tail — the path links in the terminal, and recovery resolves the id
   from its basename. Every over-limit intent body is filed; on each request the cut
   renders the two oldest intent stubs whose file resolves as the original
-  intent with its filed body, as examples (derived from the payload, no process
+  intent with its filed body, as examples (standing seats only; loop-minted seats get none; derived from the payload, no process
   state; a compact promotes the next two). The model never sees the pointer: `wire/spill-cut.js`
   rewrites every outgoing request so the turn reads as the intent the model
   emitted — the head line with its title, `[Runtime note: Clodex filed this body

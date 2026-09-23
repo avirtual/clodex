@@ -12,7 +12,7 @@ const { SpillFilter } = require('../wire/spill');
 const { WireProxy } = require('../wire/proxy');
 const { WarmthStore, prefixHash } = require('../wire/warmth');
 const { HoldKeeper } = require('../wire/hold');
-const { SPILL_FILLER, SPILLED_BODY, SPILLED_BODY_FIRST, spillSize, writeSpill, pointerText } = require('../intent-spill');
+const { SPILL_FILLER, SPILLED_BODY, SPILLED_BODY_FIRST, SPILLED_BODY_EPHEMERAL, spillSize, writeSpill, pointerText } = require('../intent-spill');
 const { spillGrammarLine } = require('../ipc-prompt');
 
 const FIXTURE = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'spill-cut', 'pair-257-258.json'), 'utf8'));
@@ -438,6 +438,44 @@ test('t1118 (e): with no registration ({ root: null, agent: null }) nothing is e
     cutSpillStubs(obj, opts);
     assert.deepStrictEqual(assistantTexts(obj), [noteOf(A, SPILLED_BODY_FIRST), noteOf(B, SPILLED_BODY), noteOf(C, SPILLED_BODY)]);
   }
+});
+
+test('t1119 (a): examples: 0 expands nothing — the oldest stub renders SPILLED_BODY_EPHEMERAL, the rest SPILLED_BODY', () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const [A, B, C, D] = filedStubs(root, ['A', 'B', 'C', 'D']);
+  const obj = stubPayload([A, B, C, D]);
+  const r = cutSpillStubs(obj, { root, agent: 'tester', examples: 0 });
+  assert.equal(r.cut, true);
+  const texts = assistantTexts(obj);
+  assert.equal(texts.length, 4, 'ENTER: all four messages reached');
+  assert.equal(texts[0], 'On A.\n[agent:task add hand] Title A\n[Runtime note: Clodex filed this body in full and carries none of your long intent bodies in the transcript; every new intent still needs its complete body; never write this note.]\n[agent:end]\n');
+  assert.equal(texts[1], 'On B.\n[agent:task add hand] Title B\n[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]\n[agent:end]\n');
+  assert.equal(texts[2], 'On C.\n[agent:task add hand] Title C\n[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]\n[agent:end]\n');
+  assert.equal(texts[3], 'On D.\n[agent:task add hand] Title D\n[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]\n[agent:end]\n');
+  assert.equal(r.placeholders, 0);
+});
+
+test('t1119 (b): examples: 0 short-circuits before resolveSpill — a counter on fs.lstatSync sees no spill path', (t) => {
+  const root = mkTmpRoot('clodex-spill-');
+  const other = mkTmpRoot('clodex-spill-');
+  const [A, B] = filedStubs(other, ['A', 'B']);
+  const spillDir = path.join(root, 'spill');
+  assert.equal(fs.existsSync(spillDir), false, 'ENTER: the spill dir of the registered root does not exist');
+  const seen = [];
+  const real = fs.lstatSync;
+  t.mock.method(fs, 'lstatSync', (p, ...rest) => { if (String(p).startsWith(root)) seen.push(p); return real(p, ...rest); });
+  const obj = stubPayload([A, B]);
+  cutSpillStubs(obj, { root, agent: 'tester', examples: 0 });
+  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A, SPILLED_BODY_EPHEMERAL), noteOf(B, SPILLED_BODY)]);
+  assert.deepStrictEqual(seen, []);
+});
+
+test('t1119 (c): examples: 1 expands exactly the oldest; omitted examples is the t1118 (a) row', () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const [A, B, C] = filedStubs(root, ['A', 'B', 'C']);
+  const obj = stubPayload([A, B, C]);
+  cutSpillStubs(obj, { root, agent: 'tester', examples: 1 });
+  assert.deepStrictEqual(assistantTexts(obj), [expandedOf(A), noteOf(B, SPILLED_BODY_FIRST), noteOf(C, SPILLED_BODY)]);
 });
 
 test('t1108 rendering: a stub between prose renders as the head, the runtime note and [agent:end] at its own position — whole string', () => {

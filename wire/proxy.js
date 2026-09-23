@@ -173,7 +173,10 @@ class WireProxy extends EventEmitter {
   registerAgent(name, opts = {}) {
     if (opts.sessionId) this._agentSessions.set(name, opts.sessionId);
     if (opts.upstreams) this._agentUpstreams.set(name, { ...opts.upstreams });
-    if (opts.spill) this._agentSpill.set(name, { ...opts.spill });
+    if (opts.spill) {
+      const examples = Number.isInteger(opts.spill.examples) && opts.spill.examples >= 0 ? opts.spill.examples : 2;
+      this._agentSpill.set(name, { ...opts.spill, examples });
+    }
     else this._agentSpill.delete(name);
     if (this.requireTokens) {
       const token = crypto.randomBytes(16).toString('hex');
@@ -293,7 +296,7 @@ class WireProxy extends EventEmitter {
           let r = null;
           try {
             const cutCfg = this._agentSpill.get(agent);
-            r = cutSpillStubs(obj, cutCfg ? { root: cutCfg.root, agent } : { root: null, agent: null });
+            r = cutSpillStubs(obj, cutCfg ? { root: cutCfg.root, agent, examples: cutCfg.examples } : { root: null, agent: null });
           } catch (e) {
             this.emit('spill-cut-error', { agent, reqId, error: e.message });
           }

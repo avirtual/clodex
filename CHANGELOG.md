@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Spill: ticket hands and cold reviewers get no expanded example bodies; every long intent body of a loop-minted seat renders as the stand-in, since those seats write their long bodies at the end of their life.
 - Terminal: Preferences ▸ Appearance gains a GPU-accelerated terminal (WebGL) option, off by default; a lost or refused WebGL context falls back to the DOM renderer silently.
 
 ## 5.86.0 — 2026-09-23

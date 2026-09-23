@@ -24,6 +24,11 @@ within a transcript, so the same two are expanded on every request until a
 compact drops them (the compact busts the cache anyway) and the next two are
 promoted. A host relaunch grants nothing.
 
+A loop-minted seat (persistence `ephemeral: true`: a ticket hand, a cold reviewer)
+is registered with `examples: 0`: nothing is expanded, no spill file is read, and
+its first stand-in is `SPILLED_BODY_EPHEMERAL`, because its long bodies come at the
+end of its life, usually the `task done` report, so expanding them teaches nothing.
+
 Of the remaining stubs, the first rendered gets the long form
 `[Runtime note: Clodex carries your two oldest long intent bodies in full as
 examples and replaces later ones with this note; this body was delivered and

@@ -33,3 +33,5 @@ cache-stable until a compact drops those messages, and a compact promotes the
 next two. Of the remaining stubs, the first rendered gets the long-form stand-in
 `SPILLED_BODY_FIRST` (intent-spill.js) and every later one `SPILLED_BODY`. The measured facts live under
 `## SPILLED_BODY_FIRST` in docs/notes/wire-spill-cut.md.
+A loop-minted seat (persistence `ephemeral: true`) gets `examples: 0` and the
+`SPILLED_BODY_EPHEMERAL` literal in place of `SPILLED_BODY_FIRST`, because its long bodies come at the end of its life.
