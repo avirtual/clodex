@@ -1,0 +1,40 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Opus 5.5 (1M context) · Claude Max
+  ▘▘ ▝▝    /…/scratchpad/cap/main-60-SB2TxB
+
+
+────────────────────────────────────────────────────────────
+❯ /
+────────────────────────────────────────────────────────────
+  /add-dir                Add a new working directory
+  /advisor                Let Claude consult a stronger
+                          model at key moments
+  /artifacts              Browse your published and shared
+                          artifacts
+  /auto-mode-setup        Teach auto mode about your
+                          environment, plus optional rule…
+  /autocompact            Set how full the context gets
+                          before auto-summarizing
+  /autofix-pr             Monitor and autofix any issues
+                          with the current PR
+  /background             Send this session to the
+                          background and free the terminal
+  /branch                 Create a branch of the current
+                          conversation at this point
+  /btw                    Ask a quick side question
+                          without interrupting the main c…
+  /bug                    Report a bug or share your
+                          conversation
+
+
+
+
+
+
+
+
+
+
+
+
+

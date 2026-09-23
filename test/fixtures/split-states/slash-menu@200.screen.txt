@@ -1,0 +1,40 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.281
+           Opus 5.5 (1M context) · Claude Max
+  ▘▘ ▝▝    /private/tmp/claude-501/-Users-bogdan-projects-tmux-wb-wrap-ui-t1122-spike-composer-anchored-live-strip-over/682adbd3-6bba-4cca-9ad8-d9e8ed7727db/scratchpad/cap/main-200-iW7t71
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  /add-dir                Add a new working directory
+  /advisor                Let Claude consult a stronger model at key moments
+  /artifacts              Browse your published and shared artifacts
+  /auto-mode-setup        Teach auto mode about your environment, plus optional rule tweaks
+  /autocompact            Set how full the context gets before auto-summarizing
+  /autofix-pr             Monitor and autofix any issues with the current PR
+  /background             Send this session to the background and free the terminal
+  /branch                 Create a branch of the current conversation at this point
+  /btw                    Ask a quick side question without interrupting the main conversation
+  /bug                    Report a bug or share your conversation
+  /cd                     Move this session to a new working directory
+  /chrome                 Open Claude in Chrome settings
+  /clear                  Start a new session with empty context; previous session stays on disk (resumable with /resume)
+  /color                  Set the prompt bar color for this session
+  /compact                Free up context by summarizing the conversation so far
+  /config                 Open settings
+  /context                Visualize current context usage as a colored grid
+  /copy                   Copy Claude's last response to clipboard (or /copy N for the Nth-latest)
+  /design-login           Authorize design-system access for /design-sync with your claude.ai account
+  /desktop                Continue the current session in Claude Desktop
+
+
+
+
+
+
+
+
+
+
+
+
