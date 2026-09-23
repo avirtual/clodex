@@ -54,8 +54,8 @@ function giveUpBody(names) {
 // armed it — never forcing a restart). Arming while already armed does
 // not restart the window (one waiter); disarm() cancels a pending wait.
 function createIdleWaiter({
-  getSessions, now, setTimer, clearTimer, restart, notify,
-  pollMs = 2000, sustainMs = 10_000, capMs = 30 * 60_000,
+  getSessions, now, setTimer, clearTimer, restart, notify, lastInputAt,
+  pollMs = 2000, sustainMs = 10_000, capMs = 30 * 60_000, operatorQuietMs = sustainMs,
 }) {
   let timer = null;      // non-null iff armed
   let armedAt = 0;       // when the wait began (drives the cap)
@@ -113,7 +113,7 @@ function createIdleWaiter({
       return;
     }
     const { busy } = classifyRestart(getSessions());
-    if (busy > 0) {
+    if (busy > 0 || t - lastInputAt() < operatorQuietMs) {
       quietSince = null; // any busy sample resets the sustained window
     } else {
       if (quietSince === null) quietSince = t; // streak begins now

@@ -168,3 +168,22 @@ test('a PASSIVE park never submits, so it never arms the bit', async () => {
     'so no Enter fires and no turn starts here');
   cleanup(h);
 });
+
+test('lastOperatorInputAt: 0 before any write, the clock after a terminal write', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 5_000_000 });
+  const h = boot();
+  assert.strictEqual(h.m.lastOperatorInputAt(), 0);
+  h.m.write('hand', 'x');
+  assert.strictEqual(h.m.lastOperatorInputAt(), 5_000_000);
+  cleanup(h);
+});
+
+test('lastOperatorInputAt: an injected dm does not count as the operator typing', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 5_000_000 });
+  const h = boot();
+  h.m._injectText(h.s, '[agent:from lead] hello');
+  await settle(h);
+  assert.ok(h.writes.length > 0, 'ENTER: the injection reached the pty');
+  assert.strictEqual(h.m.lastOperatorInputAt(), 0);
+  cleanup(h);
+});
