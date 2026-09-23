@@ -101,7 +101,7 @@ function collectLinks() {
 
 function markdownUnder(dir) {
   const listed = execFileSync('git', ['ls-files', '-z', '--', `${dir}/*.md`, `${dir}/**/*.md`], { cwd: ROOT, encoding: 'utf8' });
-  return listed.split('\0').filter((rel) => rel && !rel.startsWith('docs/notes/'));
+  return listed.split('\0').filter((rel) => rel && !rel.startsWith('docs/notes/') && !rel.startsWith('docs/explorations/'));
 }
 
 function writeFixture(pages, sections) {
@@ -142,7 +142,7 @@ test('manifest: every page path exists, names are unique and legal, each page ha
   }
 });
 
-test('every docs markdown file is listed or excluded, and docs/notes is never listed', () => {
+test('every docs markdown file is listed or excluded, and docs/notes and docs/explorations are never listed', () => {
   const found = markdownUnder('docs').sort();
   assert.ok(found.length >= 10, `docs scan returned ${found.length} markdown files`);
   assert.ok(found.includes('docs/how-to.md'), 'ENTER: docs/how-to.md did not survive the docs scan');
