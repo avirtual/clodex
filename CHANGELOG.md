@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Spill guard: an agent that types Clodex's transcript stand-in (the runtime note or a `@spill:` pointer) as an intent body is now told, in its own context, what it copied, that Clodex wrote it, and the exact form to emit instead.
+
 - Spill: a seat's first two long intent bodies stay in its transcript in full as examples; from the third on, the stand-in carries a one-time explanation the first time it appears. The injected prompt no longer promises a filed-at note for intent bodies (only prose spills get one).
 
 - Spill receipts: a long intent body an agent typed is no longer reported to it as removed. On the wire the turn keeps the intent head and `[agent:end]` around a `[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]` marker, and only the ordinary confirmation follows — an agent copying that marker as a body is bounced like a typed pointer.

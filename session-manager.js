@@ -188,19 +188,11 @@ const { isAgentType, adapterFor } = require('./cli-adapters');
 const {
   SPILL_VERBS, SPILL_MIN_BYTES, HEAD_RE, isSpillVerb, pointerOf, pointerMatch, trailingPointerOf, spilledBodyOf, resolveSpill, spillDirFor, spillPathFor, verbKeyOf, writeSpill,
   receiptOf, resolveReceipt,
-  capResumeSnapshot,
+  capResumeSnapshot, spillMimicBounce,
 } = require('./intent-spill');
 const { createFiledRing, seedFiledRing, filedEntry, spillHead } = require('./filed-ring');
 const { spillGrammarLine } = require('./ipc-prompt');
 const { readPromptSnapshotMemo, restageAtReset, clearCache } = require('./ipc-prompt-cache');
-
-const SPILL_MIMIC_BOUNCE = '[agent] Not executed: that line was a receipt, filler or pointer, not an intent, and nothing was sent or filed. Emit the complete intent — head line, full body, [agent:end].';
-
-function typedPointerBounce(intent, pointer) {
-  const label = String(verbKeyOf(intent) || intent.type).replace('.', ' ');
-  return `[agent] Not executed: your \`${label}\` ended in a pointer (${pointer}) that you typed yourself — nothing was saved, sent or filed. `
-    + 'A body you did not write does not exist; emit the complete intent with the full text and [agent:end].';
-}
 
 function spillAckLine(ev, filePath) {
   if (ev.verb !== 'prose') return null;
@@ -1031,7 +1023,10 @@ function createSessionManager(deps) {
         const s = this.sessions.get(ev.agent);
         if (s && s.agentType) {
           s.spillMimicReq = ev.reqId;
-          this._injectText(s, SPILL_MIMIC_BOUNCE, { parkable: true });
+          const typed = typeof ev.line === 'string' ? ev.line.trim() : '';
+          const at = HEAD_RE.test(typed) ? parseIntent(typed) : null;
+          const intent = at && typeof at.body === 'string' && at.body.trim() ? at : null;
+          this._injectText(s, spillMimicBounce(intent, intent ? intent.body.trim() : typed), { parkable: true });
         }
       });
       wire.on('spill-skip', (ev) => this._shadowLog({ type: 'wire-spill-skip', ...ev }));
@@ -5262,14 +5257,14 @@ function createSessionManager(deps) {
 
       const spilledNote = spilledBodyOf(intent.body);
       if (spilledNote !== null) {
-        this._spillTyped(session, senderName, intent, spilledNote);
+        this._spillTyped(session, senderName, intent, spilledNote, 'runtime note');
         return;
       }
 
       if (!isSpillVerb(intent) && typeof intent.body === 'string') {
         const typed = trailingPointerOf(intent.body.trim());
         if (typed) {
-          this._spillTyped(session, senderName, intent, typed.pointer);
+          this._spillTyped(session, senderName, intent, typed.pointer, 'pointer');
           return;
         }
       }
@@ -5281,7 +5276,7 @@ function createSessionManager(deps) {
         }
         const stub = pointerMatch(intent.body);
         if (stub && intent.fromWire) {
-          this._spillTyped(session, senderName, intent, stub.pointer);
+          this._spillTyped(session, senderName, intent, stub.pointer, 'pointer');
           return;
         }
         if (stub) {
@@ -5604,19 +5599,18 @@ function createSessionManager(deps) {
       }
     }
 
-    _spillTyped(session, senderName, intent, pointer) {
+    _spillTyped(session, senderName, intent, pointer, label) {
       const verb = verbKeyOf(intent);
       log.warn('intent', `${verb} ${senderName}: body pointer ${pointer} typed by the agent — intent dropped`);
       this._shadowLog({ type: 'spill-typed', agent: senderName, intentType: intent.type, verb, pointer, reqId: intent.reqId || null });
       this._broadcast('ipc-message', {
         type: 'intent', from: senderName, to: senderName,
-        body: `${verb} dropped: its body was a pointer (${pointer}) — the agent typed it`,
+        body: `${verb} dropped: its body was a ${label} (${pointer}) — the agent typed it`,
       });
       if (!session || !session.agentType) return;
       if (intent.reqId && session.spillMimicReq === intent.reqId) return;
       session.spillMimicReq = intent.reqId || null;
-      const bounce = isSpillVerb(intent) ? SPILL_MIMIC_BOUNCE : typedPointerBounce(intent, pointer);
-      this._injectText(session, bounce, { parkable: true });
+      this._injectText(session, spillMimicBounce(intent, pointer), { parkable: true });
     }
 
     _spillUnresolved(session, senderName, intent, pointer, r) {

@@ -640,7 +640,7 @@ test('a model-authored receipt line raises spill-mimic and leaves the client byt
     assert.equal(res.body.toString('utf8'), MIMIC_SSE, 'byte-identical: the detector never rewrites');
     assert.equal(events.spill.length, 0, 'nothing was filed');
     assert.equal(events['spill-mimic'].length, 1);
-    assert.deepEqual(events['spill-mimic'][0], { agent: 'tester', reqId: events['spill-mimic'][0].reqId, kind: 'intent' });
+    assert.deepEqual(events['spill-mimic'][0], { agent: 'tester', reqId: events['spill-mimic'][0].reqId, kind: 'intent', line: MIMIC_LINE.trim() });
     assert.ok(!fs.existsSync(path.join(root, 'spill')), 'and nothing reached disk');
   });
 });
@@ -666,7 +666,7 @@ test('a model-authored `[Runtime note: action text omitted from retained history
     assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
     assert.equal(res.body.toString('utf8'), FILLER_SSE, 'byte-identical: the detector never rewrites');
     assert.equal(events.spill.length, 0, 'nothing was filed');
-    assert.deepEqual(events['spill-mimic'], [{ agent: 'tester', reqId: events['spill-mimic'][0].reqId, kind: 'filler' }],
+    assert.deepEqual(events['spill-mimic'], [{ agent: 'tester', reqId: events['spill-mimic'][0].reqId, kind: 'filler', line: '[Runtime note: action text omitted from retained history.]' }],
       'a copied filler costs one bounce and fabricates nothing');
   });
 });
@@ -718,7 +718,7 @@ test('T12: a model-typed bare pointer line raises spill-mimic with kind pointer,
     assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
     assert.equal(res.body.toString('utf8'), POINTER_SSE, 'byte-identical: the detector never rewrites');
     assert.equal(events.spill.length, 0, 'nothing was filed');
-    assert.deepEqual(events['spill-mimic'], [{ agent: 'tester', reqId: events['spill-mimic'][0].reqId, kind: 'pointer' }],
+    assert.deepEqual(events['spill-mimic'], [{ agent: 'tester', reqId: events['spill-mimic'][0].reqId, kind: 'pointer', line: '@spill:0123456789abcdef' }],
       'the model never receives a real stub, so a pointer in its output is typed from memory');
   });
 });

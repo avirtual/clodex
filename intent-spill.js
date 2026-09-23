@@ -196,6 +196,35 @@ function capResumeSnapshot(head, board, max = SNAPSHOT_MAX_BYTES) {
   return `${head}\n(… ${rows.length} more rows — [agent:task list])`;
 }
 
+function bounceHead(intent) {
+  const label = String(verbKeyOf(intent) || intent.type).replace('.', ' ');
+  const args = [intent.target, intent.id, intent.who, intent.spec]
+    .filter((v) => typeof v === 'string' && v !== '');
+  for (const flag of ['urgent', 'park', 'start']) if (intent[flag] === true) args.push(flag);
+  return { label, head: `[agent:${[label, ...args].join(' ')}]` };
+}
+
+function typedNoun(typed) {
+  if (typed.startsWith('[Runtime note:')) return 'runtime note';
+  if (typed.startsWith('(')) return 'receipt';
+  return 'spill pointer';
+}
+
+function spillMimicBounce(intent, typed) {
+  const token = String(typed).trim();
+  const { label, head } = intent && intent.type ? bounceHead(intent) : { label: 'reply', head: '[agent:<verb> …]' };
+  return [
+    `[agent] Not executed: your \`${label}\` carried, where the body belongs, this line you did not write:`,
+    `\`${token}\``,
+    `That line is a ${typedNoun(token)}, Clodex's transcript rendering of a body you wrote earlier (it replaces the text to save context). `
+      + 'It is never typed by you, and nothing was saved, sent or filed.',
+    'Emit the complete intent again with the body written out in full:',
+    `\\${head}`,
+    '<the full body, written out>',
+    '\\[agent:end]',
+  ].join('\n');
+}
+
 module.exports = {
   SPILL_MIN_BYTES,
   SPILL_MAX_BYTES,
@@ -232,4 +261,5 @@ module.exports = {
   receiptOf,
   resolveReceipt,
   capResumeSnapshot,
+  spillMimicBounce,
 };

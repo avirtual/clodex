@@ -72,7 +72,7 @@ class SpillFilter {
 
   _mimic(line) {
     const kind = mimicKindOf(line);
-    if (kind) this._notify(this.onMimic, { kind });
+    if (kind) this._notify(this.onMimic, { kind, line: line.trim() });
   }
 
   _shadow(partial) {

@@ -662,13 +662,13 @@ test('onMimic: a receipt, filler or pointer line in the INPUT is model-authored 
       seen.length = 0;
       const r = run(T, { cs, onMimic: (i) => seen.push(i) });
       assert.equal(r.out, T, `${kind} @cs=${cs}: byte-identical`);
-      assert.deepStrictEqual(seen, [{ kind }], `${kind} @cs=${cs}: exactly one report`);
+      assert.deepStrictEqual(seen, [{ kind, line: line.trim() }], `${kind} @cs=${cs}: exactly one report`);
       assert.equal(r.filter.fired, 0, `${kind} @cs=${cs}: nothing filed`);
     }
     seen.length = 0;
     const unterminated = run(`Sent.\n${line}`, { onMimic: (i) => seen.push(i) });
     assert.equal(unterminated.out, `Sent.\n${line}`);
-    assert.deepStrictEqual(seen, [{ kind }], `${kind}: a receipt that ends the response without a newline is still seen at close()`);
+    assert.deepStrictEqual(seen, [{ kind, line: line.trim() }], `${kind}: a receipt that ends the response without a newline is still seen at close()`);
   }
 });
 
@@ -715,7 +715,7 @@ test('onMimic: an UNLISTED verb\'s body is not judged, but the line after its te
       const T = `[agent:remind in 1m] continue\n${MIMIC}\n[agent:end]\n${MIMIC_TAIL}\n`;
       const r = run(T, { cs, proseSpill, onMimic: (i) => seen.push(i) });
       assert.equal(r.out, T, `proseSpill=${proseSpill} @cs=${cs}: bytes untouched`);
-      assert.deepStrictEqual(seen, [{ kind: 'prose' }],
+      assert.deepStrictEqual(seen, [{ kind: 'prose', line: MIMIC_TAIL }],
         `proseSpill=${proseSpill} @cs=${cs}: only the line the filter could not be holding is reported`);
     }
   }
@@ -729,7 +729,7 @@ test('onMimic: a latched filter still reports, and skips the fragment it latched
   out += f.feed(`${MIMIC}\n${MIMIC}\n`);
   out += f.close();
   assert.equal(out, `[agent:dm bob]\n${'x'.repeat(120)}${MIMIC}\n${MIMIC}\n`);
-  assert.deepStrictEqual(seen, [{ kind: 'intent' }],
+  assert.deepStrictEqual(seen, [{ kind: 'intent', line: MIMIC }],
     'the first receipt is the tail of a line whose head passed unjudged; only the whole second line is reported');
 });
 
