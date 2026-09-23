@@ -146,7 +146,7 @@ const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
 
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { readerFor } = require('./transcript-readers');
-const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, newestMuseTranscript, museRegistryFor, linkTranscript } = require('./seat-config');
+const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, museRegistryFor, linkTranscript } = require('./seat-config');
 const { activationSettings } = require('./muse-skills');
 const MUSE_LINK_POLL_MS = 250;
 const MUSE_LINK_DEADLINE_MS = 60000;
@@ -2442,17 +2442,20 @@ function createSessionManager(deps) {
           }
           const taken = [];
           let until = null;
+          let seen = false;
           for (const [other, s] of this.sessions) {
-            if (other === name || s.agentType !== 'muse') continue;
-            if (s.spawnedAt > session.spawnedAt && (until === null || s.spawnedAt < until)) until = s.spawnedAt;
+            if (other === name) { seen = true; continue; }
+            if (s.agentType !== 'muse') continue;
+            const later = s.spawnedAt > session.spawnedAt || (s.spawnedAt === session.spawnedAt && seen);
+            if (later && (until === null || s.spawnedAt < until)) until = s.spawnedAt;
             try { taken.push(fs.readlinkSync(pathFor(REGISTRY_DIR, other, 'transcript'))); } catch {}
           }
-          const fallback = newestMuseTranscript({ fs, path }, museData, session.spawnedAt, taken, until);
+          const fallback = oldestMuseTranscript({ fs, path }, museData, session.spawnedAt, taken, until);
           if (fallback) {
             try {
               linkTranscript({ fs }, pathFor(REGISTRY_DIR, name, 'transcript'), fallback);
               stop('fallback');
-              log.info('muse', `${name}: no session registered for pid ${ptyProc.pid} within ${MUSE_LINK_DEADLINE_MS} ms — linked newest transcript ${fallback}`);
+              log.info('muse', `${name}: no session registered for pid ${ptyProc.pid} within ${MUSE_LINK_DEADLINE_MS} ms — linked transcript ${fallback}`);
               return;
             } catch {}
           }
