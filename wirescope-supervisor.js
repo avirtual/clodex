@@ -28,7 +28,7 @@ function wirescopeEnvGate(env = process.env) {
   return null;
 }
 
-function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDataPath, isPackaged }) {
+function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDataPath, isPackaged, exec = execFileSync }) {
   // `log` is a bare fn in some hosts (every test harness here passes one), so a
   // direct log.warn() throws a TypeError — and both call sites below sit inside a
   // `catch {}`, which would swallow it along with the work that followed the warn.
@@ -361,7 +361,7 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
         // -w: lsof exits nonzero on any warning, which would discard a good read.
         // Address-scoped and ALL holders, not [0]: a foreign co-listener picked
         // arbitrarily would block recovery forever.
-        pids = execFileSync('lsof', ['-w', '-nP', `-iTCP@${host}:${port}`, '-sTCP:LISTEN', '-t'],
+        pids = exec('lsof', ['-w', '-nP', `-iTCP@${host}:${port}`, '-sTCP:LISTEN', '-t'],
           { encoding: 'utf8', timeout: 2000 })
           .split('\n').map((l) => parseInt(l.trim(), 10)).filter(Boolean);
       } catch (e) {
@@ -374,7 +374,7 @@ function createWirescopeSupervisor({ log, ProxyClient, getUiSettings, getUserDat
       for (const pid of pids) {
         let env;
         try {
-          env = execFileSync('ps', ['-Eww', '-o', 'command=', '-p', String(pid)],
+          env = exec('ps', ['-Eww', '-o', 'command=', '-p', String(pid)],
             { encoding: 'utf8', timeout: 2000 });
         } catch (e) {
           if (e && e.code === 'ENOENT') warnOnce('ps');

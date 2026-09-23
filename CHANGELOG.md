@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Tests: the wirescope supervisor's adoption and restart rows no longer spawn listeners or shell out to lsof and ps; they drive canned output through an injected exec dep, and the one real-listener smoke test binds port 0.
+
 - Spill guard: an agent that types Clodex's transcript stand-in (the runtime note or a `@spill:` pointer) as an intent body is now told, in its own context, what it copied, that Clodex wrote it, and the exact form to emit instead.
 
 - Spill: a seat's first two long intent bodies stay in its transcript in full as examples; from the third on, the stand-in carries a one-time explanation the first time it appears. The injected prompt no longer promises a filed-at note for intent bodies (only prose spills get one).
