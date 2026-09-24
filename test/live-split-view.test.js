@@ -489,7 +489,8 @@ test('a render that replaces a changed row keeps the unchanged rows and leaves a
   const m = await mountSplit({ geometry: true });
   try {
     const turn = m.pane.childNodes[0];
-    const [head, tool] = turn.childNodes;
+    const [head, block] = turn.childNodes;
+    const tool = block.childNodes[0];
     assert.strictEqual(tool.className, 'tr-row tr-tool tr-state-pending');
     m.pane.userScroll(100);
     m.pane.scrollHeight = 1400;
@@ -497,8 +498,9 @@ test('a render that replaces a changed row keeps the unchanged rows and leaves a
     await settle();
     assert.strictEqual(m.pane.childNodes[0], turn);
     assert.strictEqual(turn.childNodes[0], head);
-    assert.notStrictEqual(turn.childNodes[1], tool);
-    assert.strictEqual(turn.childNodes[1].className, 'tr-row tr-tool tr-state-ok');
+    assert.strictEqual(turn.childNodes[1], block);
+    assert.notStrictEqual(block.childNodes[0], tool);
+    assert.strictEqual(block.childNodes[0].className, 'tr-row tr-tool tr-state-ok');
     assert.strictEqual(m.pane.scrollTop, 100);
   } finally { m.view.dispose(); m.restore(); }
 });
