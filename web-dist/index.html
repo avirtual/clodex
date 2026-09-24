@@ -29574,41 +29574,247 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // renderer/lib/prompt-echo.js
+  var require_prompt_echo = __commonJS({
+    "renderer/lib/prompt-echo.js"(exports, module) {
+      "use strict";
+      var ECHO_BG = [240, 240, 240];
+      var ECHO_TEXT = [0, 0, 0];
+      var ECHO_PROMPT = [175, 175, 175];
+      var MATCHED_TRIPLETS = [ECHO_BG, ECHO_TEXT, ECHO_PROMPT];
+      var MAX_CARRY = 24;
+      var PARTIAL_CSI = /\x1b(?:\[[0-9;:]*)?$/;
+      function parseHex(v) {
+        if (Array.isArray(v)) return v.length === 3 ? v.map(Number) : null;
+        if (typeof v !== "string") return null;
+        let h = v.trim().replace(/^#/, "");
+        if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+        if (!/^[0-9a-fA-F]{6}$/.test(h)) return null;
+        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+      }
+      function sameTriplet(a, b) {
+        return a && b && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+      }
+      function isBgParam(p) {
+        if (p === "49" || p === "48") return true;
+        const n = Number(p);
+        if (!Number.isInteger(n)) return false;
+        return n >= 40 && n <= 47 || n >= 100 && n <= 107;
+      }
+      function readColonSpec(part) {
+        const sub = part.split(":");
+        if (sub.length < 2) return null;
+        const lead = sub[0];
+        if (lead !== "38" && lead !== "48") return null;
+        if (sub[1] !== "2") return null;
+        const rest = sub.slice(2).filter((s, i) => !(i === 0 && s === ""));
+        if (rest.length !== 3) return null;
+        const rgb = rest.map(Number);
+        if (rgb.some((n) => !Number.isInteger(n))) return null;
+        return { lead, rgb, spaced: sub[2] === "" };
+      }
+      function colonOut(lead, rgb, spaced) {
+        return spaced ? `${lead}:2::${rgb.join(":")}` : `${lead}:2:${rgb.join(":")}`;
+      }
+      function rewriteBody(body, palette, state) {
+        const parts = body.split(";");
+        const out = [];
+        let changed = false;
+        let i = 0;
+        while (i < parts.length) {
+          const p = parts[i];
+          const colon = p.indexOf(":") !== -1 ? readColonSpec(p) : null;
+          if (colon) {
+            const sub = substitute(colon.lead, colon.rgb, palette, state);
+            if (sub) {
+              out.push(colonOut(colon.lead, sub, colon.spaced));
+              changed = true;
+            } else out.push(p);
+            i += 1;
+            continue;
+          }
+          if ((p === "38" || p === "48") && parts[i + 1] === "2" && parts.length >= i + 5) {
+            const rgb = [Number(parts[i + 2]), Number(parts[i + 3]), Number(parts[i + 4])];
+            if (rgb.every((n) => Number.isInteger(n))) {
+              const sub = substitute(p, rgb, palette, state);
+              if (sub) {
+                out.push(p, "2", String(sub[0]), String(sub[1]), String(sub[2]));
+                changed = true;
+              } else out.push(p, "2", parts[i + 2], parts[i + 3], parts[i + 4]);
+              i += 5;
+              continue;
+            }
+          }
+          if ((p === "38" || p === "48" || p === "58") && parts[i + 1] === "5" && parts.length >= i + 3 && Number.isInteger(Number(parts[i + 2]))) {
+            if (p === "48") state.echo = false;
+            out.push(p, "5", parts[i + 2]);
+            i += 3;
+            continue;
+          }
+          if (p === "58" && parts[i + 1] === "2" && parts.length >= i + 5 && [parts[i + 2], parts[i + 3], parts[i + 4]].every((n) => Number.isInteger(Number(n)))) {
+            out.push(p, "2", parts[i + 2], parts[i + 3], parts[i + 4]);
+            i += 5;
+            continue;
+          }
+          if (p === "" || p === "0" || isBgParam(p)) state.echo = false;
+          out.push(p);
+          i += 1;
+        }
+        return changed ? out.join(";") : null;
+      }
+      function substitute(lead, rgb, palette, state) {
+        if (lead === "48") {
+          if (sameTriplet(rgb, ECHO_BG)) {
+            state.echo = true;
+            return parseHex(palette && palette.bg);
+          }
+          state.echo = false;
+          return null;
+        }
+        if (!state.echo) return null;
+        if (sameTriplet(rgb, ECHO_TEXT)) return parseHex(palette && palette.fg);
+        if (sameTriplet(rgb, ECHO_PROMPT)) return parseHex(palette && palette.prompt);
+        return null;
+      }
+      function rewriteEchoSgr(chunk, palette, state) {
+        const st = state || { echo: false, carry: "" };
+        if (typeof chunk !== "string") return { out: chunk, state: st };
+        const input = (st.carry || "") + chunk;
+        st.carry = "";
+        const m = PARTIAL_CSI.exec(input);
+        let body = input;
+        if (m && m[0].length <= MAX_CARRY) {
+          st.carry = m[0];
+          body = input.slice(0, input.length - m[0].length);
+        }
+        if (!palette || !parseHex(palette.bg)) return { out: body, state: st };
+        const out = body.replace(/\x1b\[([0-9;:]*)m/g, (whole, params) => {
+          const next = rewriteBody(params, palette, st);
+          return next === null ? whole : `\x1B[${next}m`;
+        });
+        return { out, state: st };
+      }
+      function createEchoRewriter(getPalette) {
+        const state = { echo: false, carry: "" };
+        return (chunk) => rewriteEchoSgr(chunk, getPalette(), state).out;
+      }
+      module.exports = { rewriteEchoSgr, createEchoRewriter, MATCHED_TRIPLETS, MAX_CARRY };
+    }
+  });
+
   // renderer/live-split-view.js
   var require_live_split_view = __commonJS({
     "renderer/live-split-view.js"(exports, module) {
       "use strict";
       var { SPLIT_EXIT_MS, measureSplit, initialSplitState, reduceSplit } = require_live_split();
       var { ansiRuns } = require_ansi_html();
+      var { classifyRows } = require_intent_marks();
+      var { scanLinks } = require_path_scan();
+      var { rewriteEchoSgr } = require_prompt_echo();
+      var { isExternallyOpenable } = require_external_link();
       var TRANSCRIPT_PULL_MS = 1e3;
       var OUTPUT_LINE_CAP = 400;
-      function appendOutput(doc, frag, text) {
+      var ROW_PREFIX_RE = /^(?:⏺ |❯ | {2}→ )/;
+      var NOOP = () => {
+      };
+      function styled(doc, text, style) {
+        if (!style) return doc.createTextNode(text);
+        const span = doc.createElement("span");
+        span.style.cssText = style;
+        span.textContent = text;
+        return span;
+      }
+      function linkNode(doc, span, style, ctx) {
+        const a = doc.createElement("a");
+        a.className = "pane-link";
+        a.href = "#";
+        a.textContent = span.text;
+        if (style) a.style.cssText = style;
+        if (span.kind === "path") {
+          a.dataset.path = span.path;
+          a.addEventListener("click", (e) => {
+            e.preventDefault();
+            Promise.resolve().then(() => ctx.resolveFile(span.path)).catch((err) => ({ ok: false, error: String(err) })).then((res) => {
+              if (!res || !res.ok) {
+                ctx.toast(res && res.error || `Can't find "${span.path}"`, { kind: "warn", duration: 4e3 });
+                return;
+              }
+              ctx.openFilePeek(ctx.seatName, res.path, "file", span.line);
+            });
+          });
+        } else {
+          a.dataset.url = span.text;
+          a.addEventListener("click", (e) => {
+            e.preventDefault();
+            if (isExternallyOpenable(span.text)) ctx.openExternal(span.text);
+          });
+        }
+        return a;
+      }
+      function appendLinked(doc, parent, text, style, ctx) {
+        for (const span of scanLinks(text)) {
+          parent.appendChild(span.kind === "text" ? styled(doc, span.text, style) : linkNode(doc, span, style, ctx));
+        }
+      }
+      function appendOutput(doc, frag, text, ctx) {
+        const palette = typeof ctx.echoPalette === "function" ? ctx.echoPalette() : ctx.echoPalette;
+        if (palette) {
+          const { out, state } = rewriteEchoSgr(text, palette);
+          text = out + state.carry;
+        }
         const lines = text.split("\n");
         const more = lines.length - OUTPUT_LINE_CAP;
         for (const run of ansiRuns(more > 0 ? lines.slice(0, OUTPUT_LINE_CAP).join("\n") : text)) {
-          if (!run.style) {
-            frag.appendChild(doc.createTextNode(run.text));
-            continue;
-          }
-          const span = doc.createElement("span");
-          span.style.cssText = run.style;
-          span.textContent = run.text;
-          frag.appendChild(span);
+          appendLinked(doc, frag, run.text, run.style, ctx);
         }
         if (more > 0) frag.appendChild(doc.createTextNode(`
 \u2026 ${more} more lines`));
       }
-      function renderTranscript(doc, paneEl, rows) {
+      function appendTextRow(doc, frag, row, ctx) {
+        const lines = row.split("\n");
+        const prefix = (lines[0].match(ROW_PREFIX_RE) || [""])[0];
+        lines[0] = lines[0].slice(prefix.length);
+        const marks = /* @__PURE__ */ new Map();
+        for (const m of classifyRows(lines.map((text) => ({ text, isWrapped: false })))) {
+          if (m.span) marks.set(m.start, m);
+        }
+        if (prefix) frag.appendChild(doc.createTextNode(prefix));
+        lines.forEach((line, k) => {
+          if (k) frag.appendChild(doc.createTextNode("\n"));
+          const m = marks.get(k);
+          if (!m) {
+            appendLinked(doc, frag, line, "", ctx);
+            return;
+          }
+          const end = m.span.offset + m.span.length;
+          appendLinked(doc, frag, line.slice(0, m.span.offset), "", ctx);
+          const mark = doc.createElement("span");
+          mark.className = `intent-mark intent-mark-${m.kind}`;
+          mark.textContent = line.slice(m.span.offset, end);
+          frag.appendChild(mark);
+          appendLinked(doc, frag, line.slice(end), "", ctx);
+        });
+      }
+      function renderTranscript(doc, paneEl, rows, ctx = {}) {
+        const deps = {
+          seatName: null,
+          resolveFile: NOOP,
+          openFilePeek: NOOP,
+          openExternal: NOOP,
+          toast: NOOP,
+          echoPalette: null,
+          ...ctx
+        };
         const frag = doc.createDocumentFragment();
         rows.forEach((row, i) => {
           if (i) frag.appendChild(doc.createTextNode("\n"));
-          if (typeof row === "string") frag.appendChild(doc.createTextNode(row));
+          if (typeof row === "string") appendTextRow(doc, frag, row, deps);
           else if (row && row.kind === "command") frag.appendChild(doc.createTextNode(`\u276F ${row.name}${row.args ? ` ${row.args}` : ""}`));
-          else if (row && row.kind === "command-output") appendOutput(doc, frag, String(row.text));
+          else if (row && row.kind === "command-output") appendOutput(doc, frag, String(row.text), deps);
         });
         paneEl.replaceChildren(frag);
       }
-      function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null }) {
+      function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null }) {
         const paneEl = document.createElement("pre");
         paneEl.className = "transcript-pane";
         paneEl.hidden = true;
@@ -29634,7 +29840,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             if (available && res.rev !== rev) {
               rev = res.rev;
               const follow = paneEl.scrollTop + paneEl.clientHeight >= paneEl.scrollHeight - 4;
-              renderTranscript(document, paneEl, res.lines);
+              renderTranscript(document, paneEl, res.lines, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
               if (follow) paneEl.scrollTop = paneEl.scrollHeight;
               evaluate();
             } else if (available !== was) evaluate();
@@ -29928,134 +30134,6 @@ helper=${d.helperPath}`;
         return { currentXtermTheme, currentEchoPalette };
       }
       module.exports = { initThemes };
-    }
-  });
-
-  // renderer/lib/prompt-echo.js
-  var require_prompt_echo = __commonJS({
-    "renderer/lib/prompt-echo.js"(exports, module) {
-      "use strict";
-      var ECHO_BG = [240, 240, 240];
-      var ECHO_TEXT = [0, 0, 0];
-      var ECHO_PROMPT = [175, 175, 175];
-      var MATCHED_TRIPLETS = [ECHO_BG, ECHO_TEXT, ECHO_PROMPT];
-      var MAX_CARRY = 24;
-      var PARTIAL_CSI = /\x1b(?:\[[0-9;:]*)?$/;
-      function parseHex(v) {
-        if (Array.isArray(v)) return v.length === 3 ? v.map(Number) : null;
-        if (typeof v !== "string") return null;
-        let h = v.trim().replace(/^#/, "");
-        if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
-        if (!/^[0-9a-fA-F]{6}$/.test(h)) return null;
-        return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
-      }
-      function sameTriplet(a, b) {
-        return a && b && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
-      }
-      function isBgParam(p) {
-        if (p === "49" || p === "48") return true;
-        const n = Number(p);
-        if (!Number.isInteger(n)) return false;
-        return n >= 40 && n <= 47 || n >= 100 && n <= 107;
-      }
-      function readColonSpec(part) {
-        const sub = part.split(":");
-        if (sub.length < 2) return null;
-        const lead = sub[0];
-        if (lead !== "38" && lead !== "48") return null;
-        if (sub[1] !== "2") return null;
-        const rest = sub.slice(2).filter((s, i) => !(i === 0 && s === ""));
-        if (rest.length !== 3) return null;
-        const rgb = rest.map(Number);
-        if (rgb.some((n) => !Number.isInteger(n))) return null;
-        return { lead, rgb, spaced: sub[2] === "" };
-      }
-      function colonOut(lead, rgb, spaced) {
-        return spaced ? `${lead}:2::${rgb.join(":")}` : `${lead}:2:${rgb.join(":")}`;
-      }
-      function rewriteBody(body, palette, state) {
-        const parts = body.split(";");
-        const out = [];
-        let changed = false;
-        let i = 0;
-        while (i < parts.length) {
-          const p = parts[i];
-          const colon = p.indexOf(":") !== -1 ? readColonSpec(p) : null;
-          if (colon) {
-            const sub = substitute(colon.lead, colon.rgb, palette, state);
-            if (sub) {
-              out.push(colonOut(colon.lead, sub, colon.spaced));
-              changed = true;
-            } else out.push(p);
-            i += 1;
-            continue;
-          }
-          if ((p === "38" || p === "48") && parts[i + 1] === "2" && parts.length >= i + 5) {
-            const rgb = [Number(parts[i + 2]), Number(parts[i + 3]), Number(parts[i + 4])];
-            if (rgb.every((n) => Number.isInteger(n))) {
-              const sub = substitute(p, rgb, palette, state);
-              if (sub) {
-                out.push(p, "2", String(sub[0]), String(sub[1]), String(sub[2]));
-                changed = true;
-              } else out.push(p, "2", parts[i + 2], parts[i + 3], parts[i + 4]);
-              i += 5;
-              continue;
-            }
-          }
-          if ((p === "38" || p === "48" || p === "58") && parts[i + 1] === "5" && parts.length >= i + 3 && Number.isInteger(Number(parts[i + 2]))) {
-            if (p === "48") state.echo = false;
-            out.push(p, "5", parts[i + 2]);
-            i += 3;
-            continue;
-          }
-          if (p === "58" && parts[i + 1] === "2" && parts.length >= i + 5 && [parts[i + 2], parts[i + 3], parts[i + 4]].every((n) => Number.isInteger(Number(n)))) {
-            out.push(p, "2", parts[i + 2], parts[i + 3], parts[i + 4]);
-            i += 5;
-            continue;
-          }
-          if (p === "" || p === "0" || isBgParam(p)) state.echo = false;
-          out.push(p);
-          i += 1;
-        }
-        return changed ? out.join(";") : null;
-      }
-      function substitute(lead, rgb, palette, state) {
-        if (lead === "48") {
-          if (sameTriplet(rgb, ECHO_BG)) {
-            state.echo = true;
-            return parseHex(palette && palette.bg);
-          }
-          state.echo = false;
-          return null;
-        }
-        if (!state.echo) return null;
-        if (sameTriplet(rgb, ECHO_TEXT)) return parseHex(palette && palette.fg);
-        if (sameTriplet(rgb, ECHO_PROMPT)) return parseHex(palette && palette.prompt);
-        return null;
-      }
-      function rewriteEchoSgr(chunk, palette, state) {
-        const st = state || { echo: false, carry: "" };
-        if (typeof chunk !== "string") return { out: chunk, state: st };
-        const input = (st.carry || "") + chunk;
-        st.carry = "";
-        const m = PARTIAL_CSI.exec(input);
-        let body = input;
-        if (m && m[0].length <= MAX_CARRY) {
-          st.carry = m[0];
-          body = input.slice(0, input.length - m[0].length);
-        }
-        if (!palette || !parseHex(palette.bg)) return { out: body, state: st };
-        const out = body.replace(/\x1b\[([0-9;:]*)m/g, (whole, params) => {
-          const next = rewriteBody(params, palette, st);
-          return next === null ? whole : `\x1B[${next}m`;
-        });
-        return { out, state: st };
-      }
-      function createEchoRewriter(getPalette) {
-        const state = { echo: false, carry: "" };
-        return (chunk) => rewriteEchoSgr(chunk, getPalette(), state).out;
-      }
-      module.exports = { rewriteEchoSgr, createEchoRewriter, MATCHED_TRIPLETS, MAX_CARRY };
     }
   });
 
@@ -43915,7 +43993,12 @@ ${detail}` });
           onTranscriptChanged: (cb) => {
             transcriptChangedSubs.add(cb);
             return () => transcriptChangedSubs.delete(cb);
-          }
+          },
+          resolveFile: (p) => window.api.fileResolve(name, p, null),
+          openFilePeek: (...args) => openFilePeek(...args),
+          openExternal: (url) => window.api.openExternal(url),
+          toast: showToast,
+          echoPalette: currentEchoPalette
         });
         sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, webgl, wrapperEl, peer, echoRewrite, liveSplit });
         updateWindowTitle();
