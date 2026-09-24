@@ -142,13 +142,18 @@ function clock(ms) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-function napAdvice(runningMs) {
+function suiteOf() {
   const total = lastRunMs();
-  if (total === null) return { suiteOf: '', nap: 5 };
-  return {
-    suiteOf: ` of a ~${Math.ceil(total / 60000)} min suite`,
-    nap: Math.max(2, Math.ceil((total - runningMs) / 60000) + 1),
-  };
+  return total === null ? '' : ` of a ~${Math.ceil(total / 60000)} min suite`;
+}
+
+function holderRunningMs() {
+  try { return Math.max(0, Date.now() - fs.statSync(path.join(LOCK, 'pid')).mtimeMs); } catch { return 0; }
+}
+
+function lockNote(line) {
+  const fd = Number(process.env.CLODEX_TEST_LOCK_NOTE_FD) || 2;
+  try { fs.writeSync(fd, `run-tests: ${line}\n`); } catch {}
 }
 
 // Refuse-vs-wait, defaulting to REFUSE so an unset environment behaves exactly
@@ -176,10 +181,13 @@ function acquireLock() {
   // a wedge with no message. Waiting on a LIVE holder is not a reclaim and does
   // not consume an attempt.
   let reclaims = 0;
+  const startedAt = Date.now();
+  let queued = false;
   for (;;) {
     try {
       fs.mkdirSync(LOCK);
       fs.writeFileSync(path.join(LOCK, 'pid'), String(process.pid));
+      if (queued) lockNote(`lock acquired after ${clock(Date.now() - startedAt)}`);
       return;
     } catch (e) {
       if (e.code !== 'EEXIST') die(`could not take the suite lock: ${e.message}`);
@@ -196,15 +204,15 @@ function acquireLock() {
       // the whole acquire path straight-line — an async wait here would have to
       // thread a promise through every die() site above.
       if (Date.now() < deadline) {
+        if (!queued) {
+          queued = true;
+          lockNote(`queued behind pid ${holder} (running ${clock(holderRunningMs())}${suiteOf()})`);
+        }
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
         continue;
       }
-      let runningMs = 0;
-      try { runningMs = Math.max(0, Date.now() - fs.statSync(path.join(LOCK, 'pid')).mtimeMs); } catch {}
-      const { suiteOf, nap } = napAdvice(runningMs);
-      die(`another suite run is already going (pid ${holder}, running ${clock(runningMs)}${suiteOf})`
-        + ` - waited ${Math.round(LOCK_WAIT_MS / 1000)}s, not starting a second.`
-        + ` Do not re-emit: emit [agent:remind in ${nap}m] re-run the suite, END YOUR TURN.`
+      die(`another suite run is already going (pid ${holder}, running ${clock(holderRunningMs())}${suiteOf()})`
+        + ` - waited ${Math.round(LOCK_WAIT_MS / 1000)}s; re-emit the command, it queues behind the holder.`
         + ` Parts of this suite bind real ports, so a second run deadlocks both;`
         + ` if it is wedged: kill ${holder} && rm -rf ${LOCK}`);
     }
@@ -268,6 +276,7 @@ const childEnv = { ...process.env };
 delete childEnv.CLODEX_TEST_LOCK_DIR;
 delete childEnv.CLODEX_TEST_LOCK_WAIT_MS;
 delete childEnv.CLODEX_TEST_LOCK;
+delete childEnv.CLODEX_TEST_LOCK_NOTE_FD;
 delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
 
 const runStart = Date.now();

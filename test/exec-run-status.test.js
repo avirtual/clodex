@@ -140,6 +140,37 @@ test('status lines tick with rising elapsed time, and stop dead at exit', async 
   } finally { cleanup(); }
 });
 
+test('a status line carries the run\'s latest stderr line, so a queued run says it is queued', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const { m, session, parked, children, cleanup } = harness({ ...LONG, statusEveryMs: 60000 });
+  try {
+    m._handleExecIntent(session, 'digest', '{}');
+    await settle();
+
+    t.mock.timers.tick(60000);
+    const bare = parked().filter((r) => r.text.includes('still running'));
+    assert.strictEqual(bare.length, 1, 'ENTER: one tick, one status line');
+    assert.match(bare[0].text, /\(run #1\)\. Do not poll/, 'with nothing on stderr the line is unchanged');
+
+    children[0].stderr.emit('data', 'run-tests: queued behind pid 777 (running 1:05 of a ~6 min suite)\n');
+    t.mock.timers.tick(60000);
+    const status = parked().filter((r) => r.text.includes('still running'));
+    assert.strictEqual(status.length, 2, 'ENTER: two ticks, two status lines');
+    const second = status.find((r) => r.text.includes('2m 00s'));
+    assert.ok(second, `ENTER: the 2m status line exists; got ${JSON.stringify(status)}`);
+    assert.match(second.text,
+      /\(run #1\) — run-tests: queued behind pid 777 \(running 1:05 of a ~6 min suite\)\. Do not poll/,
+      `the ping must carry the queued line, or the seat reads a queued run as a running one; got ${second.text}`);
+
+    children[0].stderr.emit('data', 'run-tests: lock acquired after 2:10\n');
+    t.mock.timers.tick(60000);
+    const last = parked().find((r) => r.text.includes('3m 00s'));
+    assert.match(last.text, /— run-tests: lock acquired after 2:10\. Do not poll/,
+      'the LATEST line wins, so the ping stops saying queued once the lock is taken');
+    children[0].emit('exit', 0, null);
+  } finally { cleanup(); }
+});
+
 test('the ack rides passively while the RESULT still wakes the seat', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
   const { m, session, replies, parked, children, cleanup } = harness(LONG);

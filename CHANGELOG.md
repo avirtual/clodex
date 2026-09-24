@@ -12,6 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+- Exec: `clodex-run-tests` waits for a running suite to finish (up to 15 minutes) and reports that it is queued, instead of failing after 30 seconds and asking the agent to set itself a reminder.
 - Spill: ticket hands and cold reviewers keep their newest long intent body in full, so a rework round has a real example of the verb it must write again.
 - Spill: each request carries a seat's two newest long intent bodies in full instead of the two oldest, so the most recent ticket or message in a seat's view is always a real body and not the runtime note.
 - Transcript pane: `[agent:…]` intents carry the same fire/inert/filed marks as the terminal, file paths and URLs are clickable, and local-command output takes the theme's echo colours.

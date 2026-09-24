@@ -472,7 +472,7 @@ const ROOT = path.join(__dirname, '..');
 // suite run that already holds the real one. So the child gets a throwaway root
 // (a copy of the runner + its one require) and the assertions never touch the
 // lock of the run they are part of.
-function withFakeLock(holderPid, check, { lastMs, agedMs } = {}) {
+function withFakeLock(holderPid, check, { lastMs } = {}) {
   const root = mkTmpRoot('runner-root-');
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const f of ['run-tests.js', 'test-escapes.js']) {
@@ -481,18 +481,7 @@ function withFakeLock(holderPid, check, { lastMs, agedMs } = {}) {
   const lockDir = path.join(root, '.test-digest.lock');
   fs.mkdirSync(lockDir);
   fs.writeFileSync(path.join(lockDir, 'pid'), holderPid);
-  // `lastMs` is what a previous run recorded here — the input the refusal's nap
-  // is derived from. The other input is the pid file's mtime, which the runner
-  // reads as the holder's start time: freshly written it is ~0s, so the nap is
-  // arithmetic rather than a race.
   if (lastMs !== undefined) fs.writeFileSync(path.join(root, '.test-digest.last'), `${lastMs}\n`);
-  // `agedMs` backdates that mtime, which is the ONLY way to make the runner see
-  // a holder already past the recorded duration: the subtraction has to go
-  // negative for the floor under it to be reachable at all.
-  if (agedMs !== undefined) {
-    const when = new Date(Date.now() - agedMs);
-    fs.utimesSync(path.join(lockDir, 'pid'), when, when);
-  }
   const stub = path.join(root, 'stub.test.js');
   fs.writeFileSync(stub, "require('node:test').test('stub', () => {});\n");
   try {
@@ -551,15 +540,7 @@ test('lock: npm test REFUSES while another run holds it, and says how to clear i
   });
 });
 
-// ── the nap, at the OTHER entry point (t829) ────────────────────────────────
-// Both runners take the same lock, so both refuse, so both must hand over the
-// same wait. A nap that existed only on the digest path would leave every
-// `npm test` caller retrying exactly as before.
-
 test('nap: a completed sweep records its wall time for the next refusal to read', () => {
-  // The whole mechanism rests on this file: with nothing recorded, every
-  // refusal falls back to a guess. A run that measures the suite and then says
-  // nothing about how long it took leaves the next caller as blind as before.
   const root = mkTmpRoot('runner-root-');
   try {
     fs.mkdirSync(path.join(root, 'scripts'));
@@ -585,48 +566,70 @@ test('nap: a completed sweep records its wall time for the next refusal to read'
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('nap: npm test\'s refusal names the suite length and the exact reminder to emit', () => {
+test('lock: npm test\'s refusal names the suite length and tells the caller to re-emit, never to set a reminder', () => {
   withFakeLock(String(process.pid), (out) => {
     assert.match(out, /another suite run is already going/,
       'ENTER: the run was not refused, so the refusal text below is about nothing');
-    assert.match(out, /of a ~5 min suite/,
-      `the refusal must say how long a run here takes; got ${JSON.stringify(out)}`);
-    assert.match(out, /\[agent:remind in 6m\]/,
-      'the caller must be handed the LITERAL line to emit — "wait for it" is what produced the '
-      + `retry-every-two-minutes loop this replaces; got ${JSON.stringify(out)}`);
-    assert.match(out, /END YOUR TURN/,
-      'and it must say to end the turn, or the caller naps while still being billed');
+    assert.match(out, new RegExp(`\\(pid ${process.pid}, running \\d+:\\d{2} of a ~5 min suite\\) - waited 0s; `
+      + 're-emit the command, it queues behind the holder\\.'),
+      `the refusal must name the holder, the suite length and the re-emit; got ${JSON.stringify(out)}`);
+    assert.ok(!/remind in|END YOUR TURN/.test(out),
+      `the caller is never asked to track the holder by hand; got ${JSON.stringify(out)}`);
   }, { lastMs: 300000 });
 });
 
-test('nap: npm test floors the wait too — a holder past the estimate never gets 0m', () => {
-  // The sh runner's floor is pinned above; this is the same overrun at the
-  // other entry point, and it was the branch nothing exercised. A holder aged
-  // ten minutes against a one-minute recording makes the unfloored value
-  // negative, so `[agent:remind in -9m]` — not a schedulable interval, and read
-  // by a seat as "re-emit now" — is exactly what the floor prevents.
+test('lock: with no recording npm test still refuses, guessing no suite length', () => {
   withFakeLock(String(process.pid), (out) => {
-    const m = /\[agent:remind in (-?\d+)m\]/.exec(out);
-    assert.ok(m, `ENTER: the refusal named no nap, so there is no floor to check; got ${JSON.stringify(out)}`);
-    assert.ok(Number(m[1]) >= 2,
-      `a nap under 2m re-bills the caller's whole context for a refusal it was told to expect; got ${m[1]}m`);
-  }, { lastMs: 60000, agedMs: 600000 });
-});
-
-test('nap: with no recording npm test still refuses, guessing no suite length', () => {
-  withFakeLock(String(process.pid), (out) => {
-    assert.match(out, /\[agent:remind in 5m\]/,
-      `with nothing recorded the nap falls back to a stated 5m; got ${JSON.stringify(out)}`);
+    assert.match(out, /running \d+:\d{2}\) - waited 0s; re-emit the command, it queues behind the holder\./,
+      `ENTER: the live branch did not run; got ${JSON.stringify(out)}`);
     assert.ok(!/min suite/.test(out),
       `nothing was recorded, so the line must not claim a suite length; got ${JSON.stringify(out)}`);
   });
 });
 
+test('lock: a waiting runner says it is queued once, then when it acquires, then runs', async () => {
+  const root = mkTmpRoot('runner-root-');
+  fs.mkdirSync(path.join(root, 'scripts'));
+  for (const f of ['run-tests.js', 'test-escapes.js']) {
+    fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
+  }
+  const lockDir = path.join(root, '.test-digest.lock');
+  fs.mkdirSync(lockDir);
+  fs.writeFileSync(path.join(lockDir, 'pid'), String(process.pid));
+  fs.writeFileSync(path.join(root, '.test-digest.last'), '300000\n');
+  fs.writeFileSync(path.join(root, 'stub.test.js'), "require('node:test').test('stub', () => {});\n");
+  const env = { ...process.env, CLODEX_TEST_LOCK_WAIT_MS: '100000' };
+  delete env.NODE_TEST_CONTEXT;
+  delete env.CLODEX_TEST_LOCK_DIR;
+  delete env.CLODEX_TEST_LOCK_NOTE_FD;
+  try {
+    const child = spawn(process.execPath, [path.join(root, 'scripts', 'run-tests.js')], { cwd: root, env });
+    let out = '';
+    let err = '';
+    let released = false;
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => {
+      err += d;
+      if (!released && /queued behind pid/.test(err)) {
+        released = true;
+        fs.rmSync(lockDir, { recursive: true, force: true });
+      }
+    });
+    const code = await new Promise((resolve) => child.on('close', resolve));
+    assert.ok(released, `ENTER: the runner never reported the live holder pid ${process.pid}; stderr ${JSON.stringify(err)}`);
+    const notes = err.split('\n').filter((l) => /queued behind|lock acquired/.test(l));
+    assert.strictEqual(notes.length, 2, `one queued line and one acquired line; got ${JSON.stringify(notes)}`);
+    assert.match(notes[0], new RegExp(`^run-tests: queued behind pid ${process.pid} \\(running \\d+:\\d{2} of a ~5 min suite\\)$`));
+    assert.match(notes[1], /^run-tests: lock acquired after \d+:\d{2}$/);
+    assert.match(out, /TOTALS:/, 'and the suite then runs');
+    assert.strictEqual(code, 0);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('nap: a named-file run records nothing — it never measured the suite', () => {
   // The suite spawns this runner against explicit files (test-escapes.test.js,
   // and these subjects), and those runs are a fraction of it. Recording them
-  // would drive the estimate to a couple of seconds every single sweep, and the
-  // refusal would then tell a caller to nap 2m against a 5-minute suite.
+  // would drive the estimate to a couple of seconds every single sweep.
   const root = mkTmpRoot('runner-root-');
   try {
     fs.mkdirSync(path.join(root, 'scripts'));
