@@ -393,6 +393,7 @@ clx-commonmeta-
 clx-console-
 clx-createdat-
 clx-createdat-mgr-
+clx-stream-restart-
 clx-ctl-
 clx-ctx-timeout-
 clx-decoy-home-
