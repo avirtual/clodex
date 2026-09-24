@@ -30253,6 +30253,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let disposed = false;
         let baseline = "";
         let last = null;
+        let releasing = false;
         function read() {
           try {
             if (terminal.buffer.active.type !== "normal") return null;
@@ -30264,6 +30265,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
         function check() {
           if (!armed || disposed) return;
           const draft = read();
+          if (draft === "" && releasing && last !== null) {
+            armed = false;
+            releasing = false;
+            return;
+          }
           if (!draft) return;
           let text = draft;
           if (baseline && text.startsWith(baseline)) text = text.slice(baseline.length).trim();
@@ -30279,10 +30285,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
           arm() {
             baseline = read() || "";
             last = null;
+            releasing = false;
             armed = true;
+          },
+          release() {
+            if (armed) releasing = true;
           },
           disarm() {
             armed = false;
+            releasing = false;
           },
           isArmed: () => armed,
           check,
@@ -30354,12 +30365,29 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
         };
       }
-      function attachTriggerSubmit(composer, { getConfig, markOrigin, send, hasImages = () => false }) {
+      function attachTriggerSubmit(composer, {
+        getConfig,
+        markOrigin,
+        send,
+        hasImages = () => false,
+        onVoiceFire = () => {
+        },
+        quietMs = 0,
+        timers = { set: setTimeout, clear: clearTimeout }
+      }) {
         const trigger = createComposerTrigger({ getConfig });
-        const onInput = () => {
+        let span = null;
+        let quiet = null;
+        const fire = (fromVoice) => {
           const hit = trigger.check(composer.value);
           if (!hit) return;
           composer.value = hit.text;
+          if (fromVoice) {
+            try {
+              onVoiceFire();
+            } catch {
+            }
+          }
           let images = false;
           try {
             images = hasImages() === true;
@@ -30373,8 +30401,34 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           send();
         };
+        const onInput = () => fire(false);
+        const cancelQuiet = () => {
+          if (quiet !== null) {
+            timers.clear(quiet);
+            quiet = null;
+          }
+        };
         composer.addEventListener("input", onInput);
-        return { check: onInput, dispose: () => composer.removeEventListener("input", onInput) };
+        return {
+          check: onInput,
+          draft(text) {
+            const next = applyDraft(composer.value, span, text);
+            composer.value = next.value;
+            span = next.span;
+            cancelQuiet();
+            quiet = timers.set(() => {
+              quiet = null;
+              fire(true);
+            }, quietMs);
+          },
+          resetSpan() {
+            span = null;
+          },
+          dispose() {
+            cancelQuiet();
+            composer.removeEventListener("input", onInput);
+          }
+        };
       }
       module.exports = { applyDraft, createComposerTrigger, attachTriggerSubmit };
     }
@@ -44634,9 +44688,9 @@ ${detail}` });
       var { createVoiceCore, createVoiceControl } = require_voice_control();
       var { createTermSearch } = require_term_search();
       var { createIntentHighlight } = require_intent_highlight();
-      var { createVoiceSubmitWatcher } = require_voice_submit_watcher();
+      var { createVoiceSubmitWatcher, QUIET_MS: VOICE_QUIET_MS } = require_voice_submit_watcher();
       var { createVoiceMirror } = require_voice_mirror();
-      var { applyDraft, attachTriggerSubmit } = require_composer_voice();
+      var { attachTriggerSubmit } = require_composer_voice();
       var { VOICE_ENGINE_NAME } = require_voice_engine();
       var {
         DEFAULT_SUBMIT_PHRASE,
@@ -46149,13 +46203,12 @@ ${detail}` });
         transcriptChangedSubs.add(onChanged);
         const timer = setInterval(pull, TRANSCRIPT_PULL_MS);
         pull(true);
-        let voiceSpan = null;
         const sendComposer = () => {
           const text = composer.value;
           const images = pending;
           if (!text.trim() && !images.length) return;
           composer.value = "";
-          voiceSpan = null;
+          triggerSubmit.resetSpan();
           pending = [];
           renderAttachments();
           follow = true;
@@ -46187,19 +46240,18 @@ ${detail}` });
           getConfig: () => voiceSubmitConfig,
           markOrigin: () => window.api.markVoiceOrigin(name),
           send: sendComposer,
-          hasImages: () => pending.length > 0
+          hasImages: () => pending.length > 0,
+          onVoiceFire: () => streamVoiceFired(name),
+          quietMs: VOICE_QUIET_MS
         });
         return {
           focus: () => composer.focus(),
           refresh: () => pull(true),
           voiceDraft(text) {
-            const next = applyDraft(composer.value, voiceSpan, text);
-            composer.value = next.value;
-            voiceSpan = next.span;
-            triggerSubmit.check();
+            triggerSubmit.draft(text);
           },
           voiceStart() {
-            voiceSpan = null;
+            triggerSubmit.resetSpan();
           },
           setRecording(on) {
             composer.classList.toggle("voice-recording", !!on);
@@ -47902,14 +47954,22 @@ ${detail}` });
         }
         if (res.recording) {
           if (voiceArmedSeat && voiceArmedSeat !== name) {
+            view.mirror.disarm();
             const prev = sessions.get(voiceArmedSeat);
             if (prev && prev.stream) prev.stream.setRecording(false);
           }
           voiceArmedSeat = name;
           entry.stream.voiceStart();
           view.mirror.arm();
+        } else if (voiceArmedSeat === name) {
+          view.mirror.release();
         }
         entry.stream.setRecording(res.recording === true);
+      }
+      function streamVoiceFired(name) {
+        if (voiceArmedSeat !== name || !voiceEngineView) return;
+        voiceEngineView.mirror.disarm();
+        if (streamVoiceMode(name, "tap")) streamVoiceRecord(name, "stop");
       }
       window.api.onPtyData((name, data) => {
         if (name === VOICE_ENGINE_NAME) {
