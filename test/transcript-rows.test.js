@@ -235,3 +235,111 @@ test('a theme change rebuilds command output with the new echo palette and leave
   assert.notStrictEqual(turn.childNodes[1], before);
   assert.strictEqual(turn.childNodes[1].childNodes[0].style.cssText, 'color:rgb(255,255,255);background-color:rgb(0,0,0)');
 });
+
+const { segmentsOf } = require('../transcript-records');
+const { attachedReplies } = require('../renderer/transcript-rows');
+const said = (id, turn, text) => ({ id, kind: 'assistant', ts: null, turn, text, segments: segmentsOf(text) });
+const replyRec = (id, turn, verb, glyph, label, body) => ({ id, kind: 'reply', ts: null, turn, verb, glyph, label, text: body });
+const cls = (n) => n.className;
+const FILED = '/Users/x/.clodex/spill/clodex/2c45916d63a7c913.md';
+
+test('consecutive intents form one stack of cards: head of glyph, label, target and chips, no brackets, no state word; prose after the stack is its own block', () => {
+  const m = mount();
+  m.render([said('a1', 0, '[agent:dm bob urgent] hi\n[agent:end]\n\n[agent:task done t4] ok\n[agent:end]\ntail words')]);
+  const row = m.pane.childNodes[0].childNodes[0];
+  assert.strictEqual(row.className, 'tr-row tr-prose tr-segs');
+  assert.deepStrictEqual(row.childNodes.map(cls), ['intent-stack', 'tr-seg-prose']);
+  const [dm, done] = row.childNodes[0].childNodes;
+  assert.deepStrictEqual(dm.childNodes[0].childNodes.map((n) => [n.className, n.textContent]),
+    [['intent-card-glyph', '→'], ['intent-card-label', 'message'], ['intent-card-target', 'bob'], ['intent-chip', 'urgent']]);
+  assert.strictEqual(dm.childNodes[1].textContent, 'hi');
+  assert.strictEqual(done.childNodes[0].textContent, '✓donet4');
+  assert.strictEqual(row.childNodes[1].textContent, 'tail words');
+  assert.ok(!row.textContent.includes('[agent:'), row.textContent);
+  assert.ok(!/fire|fired/.test(row.textContent));
+});
+
+test('an inert line is the only card that shows brackets: ⊘ won\'t fire and the raw line', () => {
+  const m = mount();
+  m.render([said('a1', 0, 'x\n[agent:task bogus]')]);
+  const row = m.pane.childNodes[0].childNodes[0];
+  const card = row.childNodes[1].childNodes[0];
+  assert.strictEqual(card.className, 'intent-card intent-card-inert');
+  assert.deepStrictEqual(card.childNodes.map((n) => [n.className, n.textContent]),
+    [['intent-card-head', "⊘ won't fire"], ['intent-card-raw', '[agent:task bogus]']]);
+});
+
+test('a filed body becomes a link to the spill, opened through the file peek', async () => {
+  const doc = fakeDocument();
+  const pane = doc.createElement('div');
+  const opened = [];
+  const rows = createTranscriptRows(doc, pane, { seatName: 's', resolveFile: (p) => ({ ok: true, path: p }), openFilePeek: (...a) => opened.push(a) });
+  rows.render([said('a1', 0, `[agent:dm clodex] Design saved — 6.2 KB filed at ${FILED}\n[agent:end]`)]);
+  const card = pane.childNodes[0].childNodes[0].childNodes[0].childNodes[0];
+  assert.strictEqual(card.className, 'intent-card intent-card-filed');
+  assert.strictEqual(card.childNodes[1].textContent, '▢ 6.2 KB filed · Design saved');
+  const link = card.childNodes[1].childNodes[0].childNodes[1];
+  assert.strictEqual(link.dataset.path, FILED);
+  link.listeners.click({ preventDefault() {} });
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(opened, [['s', FILED, 'file', undefined]]);
+});
+
+test('a body over two lines is clamped with a count of the rest, and a click expands it', () => {
+  const m = mount();
+  m.render([said('a1', 0, '[agent:shout] one\ntwo\nthree\nfour')]);
+  const card = m.pane.childNodes[0].childNodes[0].childNodes[0].childNodes[0];
+  const [, body, foot] = card.childNodes;
+  assert.strictEqual(body.className, 'intent-card-body intent-card-clamped');
+  assert.strictEqual(foot.textContent, '+ 2 more lines');
+  foot.listeners.click();
+  assert.strictEqual(body.className, 'intent-card-body');
+  assert.strictEqual(foot.hidden, true);
+});
+
+test('a two-line body is not clamped; an exec body is monospace; a bodyless intent is its head alone', () => {
+  const m = mount();
+  m.render([said('a1', 0, '[agent:shout] one\ntwo\n[agent:exec clodex-team] {"a":1}\n[agent:who]')]);
+  const [shout, exec, who] = m.pane.childNodes[0].childNodes[0].childNodes[0].childNodes;
+  assert.deepStrictEqual(shout.childNodes.map(cls), ['intent-card-head', 'intent-card-body']);
+  assert.deepStrictEqual(exec.childNodes.map(cls), ['intent-card-head', 'intent-card-body intent-card-body-mono']);
+  assert.deepStrictEqual(who.childNodes.map(cls), ['intent-card-head']);
+});
+
+test('a runtime reply row is the verb glyph and label in an app badge, titled Clodex runtime, with no seat name', () => {
+  const m = mount();
+  m.render([replyRec('r1', 1, 'task', '⇄', 'task', 'ticket t1 created')]);
+  const row = m.pane.childNodes[0].childNodes[0];
+  assert.strictEqual(row.className, 'tr-row tr-head tr-reply');
+  const badge = row.childNodes[0].childNodes[0];
+  assert.strictEqual(badge.className, 'tr-sender tr-sender-app');
+  assert.strictEqual(badge.title, 'Clodex runtime');
+  assert.deepStrictEqual(badge.childNodes.map((n) => [n.className, n.textContent]), [['tr-sender-glyph', '⇄'], ['tr-sender-name', 'task']]);
+  assert.strictEqual(row.childNodes[0].textContent, '⇄taskticket t1 created');
+});
+
+test('a reply directly after the turn holding its card is attached with ↳; a reply after something else is not', () => {
+  const tool = { id: 't1', kind: 'tool', ts: null, turn: 0, name: 'Bash', arg: 'x', state: 'ok', sum: { lines: 1 } };
+  const m = mount();
+  m.render([said('a1', 0, '[agent:task done t4] ok'), tool, replyRec('r1', 1, 'task', '⇄', 'task', 'closed')]);
+  const reply = m.pane.childNodes[1].childNodes[0];
+  assert.strictEqual(reply.className, 'tr-row tr-head tr-reply tr-reply-attached');
+  assert.strictEqual(reply.childNodes[0].childNodes[0].textContent, '↳');
+  assert.strictEqual(reply.parentNode.parentNode, m.pane);
+  const plain = { id: 'a0', kind: 'assistant', ts: null, turn: 0, text: 'no card' };
+  m.render([plain, replyRec('r1', 1, 'task', '⇄', 'task', 'closed')]);
+  assert.strictEqual(m.pane.childNodes[1].childNodes[0].className, 'tr-row tr-head tr-reply');
+});
+
+test('attachedReplies pairs by verb within a run and attaches nothing for a verb whose counts disagree', () => {
+  const recs = [
+    said('a1', 0, '[agent:dm bob] x\n[agent:task add hand start] s\n[agent:task done t4] y'),
+    replyRec('r1', 1, 'dm', '→', 'message', 'delivered'),
+    replyRec('r2', 2, 'task', '⇄', 'task', 'created'),
+    replyRec('r3', 3, 'intent', '⊘', 'bounced', 'nope'),
+  ];
+  assert.deepStrictEqual([...attachedReplies(recs)], ['r1']);
+  recs.push(replyRec('r4', 4, 'task', '⇄', 'task', 'closed'));
+  assert.deepStrictEqual([...attachedReplies(recs)], ['r1', 'r2', 'r4']);
+  assert.deepStrictEqual([...attachedReplies([{ id: 'p', kind: 'prompt', turn: 1, text: 'hi' }, replyRec('r1', 2, 'dm', '→', 'message', 'x')])], []);
+});

@@ -5977,6 +5977,53 @@ body.web-frontend #sidebar-header {
 .tr-time { color: var(--text-tertiary); font-size: var(--fs-xs); white-space: nowrap; }
 
 .tr-prose { white-space: pre-wrap; padding: var(--sp-1) 0; }
+.tr-sender-app .tr-sender-glyph { background: none; width: auto; border-radius: 0; font-weight: 400; color: var(--text-tertiary); }
+.tr-sender-app .tr-sender-name { font-family: var(--font-ui); }
+.tr-reply-attached { margin-top: calc(-1 * var(--sp-1)); padding-left: calc(var(--sp-2) + var(--sp-3)); background: none; }
+.tr-reply-lead { color: var(--text-tertiary); margin-right: 0.35em; }
+
+.tr-segs { white-space: normal; }
+.tr-seg-prose { white-space: pre-wrap; }
+.tr-seg-prose + .intent-stack, .intent-stack + .tr-seg-prose { margin-top: var(--sp-2); }
+.intent-stack {
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.intent-card { padding: var(--sp-1) var(--sp-2); }
+.intent-card + .intent-card { border-top: 1px solid var(--border); }
+.intent-card-inert { border-left: 2px solid var(--warn); }
+.intent-card-filed { border-left: 2px solid var(--info); }
+.intent-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-family: var(--font-ui);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.intent-card-glyph { color: var(--text-secondary); min-width: 1em; text-align: center; }
+.intent-card-label { font-weight: 600; }
+.intent-card-target { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; }
+.intent-chip {
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0 var(--sp-1);
+}
+.intent-card-state { margin-left: auto; color: var(--warn); }
+.intent-card-body { white-space: pre-wrap; margin-left: calc(1em + var(--sp-2)); color: var(--text-secondary); }
+.intent-card-body-mono, .intent-card-raw { font-family: var(--font-mono); font-size: var(--fs-sm); }
+.intent-card-raw { white-space: pre-wrap; color: var(--text-secondary); }
+.intent-card-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  cursor: pointer;
+}
+.intent-card-more { margin-left: calc(1em + var(--sp-2)); font-size: var(--fs-xs); color: var(--text-tertiary); cursor: pointer; }
 
 .tr-tool {
   display: flex;
