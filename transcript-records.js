@@ -21,6 +21,8 @@ const ATTACHED_RE = /Message \((\d+) bytes\) attached: @(\S+)/;
 const EXIT_RE = /^Exit code (\d+)/;
 const DENIED_RE = /^(?:The user doesn't want to proceed with this tool use|Permission to use \S+ has been denied)/;
 const INTERRUPT_RE = /^\[Request interrupted by user[^\]]*\]/;
+const PASTE_RE = /<pasted_content id="([A-Za-z0-9]+)">\n?([\s\S]*?)<\/pasted_content(?: id="\1")?>/g;
+const PASTE_OPEN = '<pasted_content id="';
 const TODO_TOOLS = new Set(['TodoWrite', 'TaskCreate', 'TaskUpdate']);
 
 function firstLine(s, max = 160) {
@@ -89,6 +91,24 @@ function capped(fields, key, text, cap) {
 function lineCount(text) {
   const t = String(text || '').replace(/\n+$/, '');
   return t ? t.split('\n').length : 0;
+}
+
+function pastesOf(text) {
+  const pastes = [];
+  const out = text.replace(PASTE_RE, (_, id, body) => {
+    const t = body.replace(/\n+$/, '');
+    const n = pastes.length + 1;
+    pastes.push({ n, lines: lineCount(t), ...capped({}, 'text', t, PROSE_CAP) });
+    return `\u0000${n}\u0000`;
+  });
+  if (!pastes.length) return { text, pastes };
+  const marked = out.replace(/\n*\u0000(\d+)\u0000\n*/g, (m, n, off, s) => {
+    const p = pastes[n - 1];
+    const before = off > 0 ? '\n' : '';
+    const after = off + m.length < s.length ? '\n' : '';
+    return `${before}[Pasted text #${n} +${p.lines} lines]${after}`;
+  });
+  return { text: marked.trim(), pastes };
 }
 
 function tsOf(rec) {
@@ -202,7 +222,7 @@ function userRecords(rec, base, tools) {
     return [{ ...base, kind: 'notification', text: firstLine(summary || text.replace(/<[^>]*>/g, '\n'), NOTE_CAP) }];
   }
   if (INTERRUPT_RE.test(text)) return [{ ...base, kind: 'notice', level: 'warning', text: INTERRUPT_RE.exec(text)[0].slice(1, -1) }];
-  if (text.startsWith('<')) return [];
+  if (text.startsWith('<') && !text.startsWith(PASTE_OPEN)) return [];
   const from = INBOUND_RE.exec(text);
   if (from) {
     const rest = text.slice(from[0].length);
@@ -217,8 +237,10 @@ function userRecords(rec, base, tools) {
     return [capped({ ...base, kind: 'reply', verb, glyph, label }, 'text', text.slice(runtime[0].length), PROMPT_CAP)];
   }
   const fields = { ...base, kind: 'prompt' };
-  const out = capped(fields, 'text', text, PROMPT_CAP);
-  return [{ ...out, source: rec.promptSource === 'queued' ? 'queued' : 'typed' }];
+  const pasted = pastesOf(text);
+  const out = capped(fields, 'text', pasted.text, PROMPT_CAP);
+  const source = rec.promptSource === 'queued' ? 'queued' : 'typed';
+  return [pasted.pastes.length ? { ...out, source, pastes: pasted.pastes } : { ...out, source }];
 }
 
 const SIZE_RE = /^(\d+(?:\.\d)?) (B|KB)/;

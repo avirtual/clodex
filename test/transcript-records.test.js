@@ -192,6 +192,37 @@ test(`a prompt over ${PROMPT_CAP} characters is capped and marked truncated; a q
   ]);
 });
 
+const paste = (id, body) => `<pasted_content id="${id}">\n${body}\n</pasted_content id="${id}">\n`;
+const promptOf = (content) => recordsOf(rec({ type: 'user', uuid: 'u', message: { content } })).records;
+
+test('a typed intro, a blank line and a pasted block make one prompt whose text carries the marker and whose pastes carry the body', () => {
+  assert.deepStrictEqual(promptOf(`look at this\n\n${paste('2c29', 'one\ntwo\nthree')}`), [
+    { id: 'u', kind: 'prompt', ts: null, turn: 1, text: 'look at this\n[Pasted text #1 +3 lines]', source: 'typed', pastes: [{ n: 1, lines: 3, text: 'one\ntwo\nthree' }] },
+  ]);
+});
+
+test('a prompt that is only a pasted block is just the marker', () => {
+  assert.deepStrictEqual(promptOf(paste('a1', 'x\ny')), [
+    { id: 'u', kind: 'prompt', ts: null, turn: 1, text: '[Pasted text #1 +2 lines]', source: 'typed', pastes: [{ n: 1, lines: 2, text: 'x\ny' }] },
+  ]);
+});
+
+test('two pasted blocks with different ids are numbered in order; a close tag without the id still closes', () => {
+  const content = `first\n\n<pasted_content id="aa">\nA\n</pasted_content>\n\nthen\n\n${paste('bb', 'B1\nB2')}`;
+  assert.deepStrictEqual(promptOf(content), [
+    { id: 'u', kind: 'prompt', ts: null, turn: 1, text: 'first\n[Pasted text #1 +1 lines]\nthen\n[Pasted text #2 +2 lines]', source: 'typed', pastes: [{ n: 1, lines: 1, text: 'A' }, { n: 2, lines: 2, text: 'B1\nB2' }] },
+  ]);
+});
+
+test('a paste longer than PROMPT_CAP does not truncate the typed text and is kept whole under PROSE_CAP', () => {
+  const big = 'y'.repeat(5000);
+  const [r] = promptOf(`${'i'.repeat(30)}\n\n${paste('c3', big)}`);
+  assert.ok(big.length > PROMPT_CAP && big.length < PROSE_CAP);
+  assert.strictEqual(r.truncated, undefined);
+  assert.strictEqual(r.text, `${'i'.repeat(30)}\n[Pasted text #1 +1 lines]`);
+  assert.deepStrictEqual(r.pastes, [{ n: 1, lines: 1, text: big }]);
+});
+
 test('a runtime reply Clodex injects is a reply record with its verb and no sender; an agent:from delivery keeps its sender; a mid-line bracket stays a typed prompt', () => {
   const rows = [
     ['[agent:reboot] reboot queued — restarting once idle', { id: 'u', kind: 'reply', ts: null, turn: 1, verb: 'reboot', glyph: '↻', label: 'reboot', text: 'reboot queued — restarting once idle' }],
@@ -200,6 +231,7 @@ test('a runtime reply Clodex injects is a reply record with its verb and no send
     ['[agent:task done t1] report', { id: 'u', kind: 'prompt', ts: null, turn: 1, text: '[agent:task done t1] report', source: 'typed' }],
     ['[agent:from wirescope] hi', { id: 'u', kind: 'inbound', ts: null, turn: 1, from: 'wirescope', text: 'hi' }],
     ['I ran [agent:who] earlier', { id: 'u', kind: 'prompt', ts: null, turn: 1, text: 'I ran [agent:who] earlier', source: 'typed' }],
+    ['a lone <pasted_content id="x"> never closed', { id: 'u', kind: 'prompt', ts: null, turn: 1, text: 'a lone <pasted_content id="x"> never closed', source: 'typed' }],
   ];
   for (const [text, want] of rows) {
     const { records } = recordsOf(rec({ type: 'user', uuid: 'u', message: { content: text } }));
