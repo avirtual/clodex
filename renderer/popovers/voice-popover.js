@@ -180,7 +180,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
     const tip = snap.pending
       ? `Voice input: switching to ${snap.pending}`
       : (mode === 'tap' || mode === 'hold')
-        ? 'Voice input for this seat — click records, right-click changes'
+        ? 'Voice input for this seat — click to change; click records, right-click changes'
         : 'Voice input for this seat — click to change';
     return `<button class="px-action${dim}" data-act="voice" data-tip="${esc(tip)}">🎤 ${esc(label)}</button>`;
   }

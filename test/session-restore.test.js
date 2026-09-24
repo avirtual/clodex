@@ -65,7 +65,7 @@ test('restores a missing session — spawns it and returns its row', async () =>
   assert.strictEqual(created[0].name, 'alpha');
   assert.deepStrictEqual(out, [{
     name: 'alpha', type: 'claude', cwd: '/w/a', label: 'A',
-    backend: 'claude-code', team: 'shop', createdAt: null, ctx: 5, proxy: { pct: 12 },
+    backend: 'claude-code', team: 'shop', createdAt: null, ctx: 5, proxy: { pct: 12 }, voice: 'tap',
   }]);
   // No persistence mutation on the happy path.
   assert.deepStrictEqual(persistence.calls, [['listForWorkspace', 'ws1']]);
@@ -149,7 +149,7 @@ test('keeps a failed spawn in persistence and returns failed:true', async () => 
   assert.strictEqual(out.length, 1);
   assert.deepStrictEqual(out[0], {
     name: 'gamma', type: 'claude', cwd: '/w/g', label: 'G',
-    team: null, failed: true, error: 'boom: spawn refused',
+    team: null, failed: true, error: 'boom: spawn refused', voice: 'tap',
   });
   // And the store was NEVER mutated — no upsert/remove/delete. Silently wiping a
   // failed entry was the "agents vanish after upgrade" bug (CLAUDE.md gotcha).

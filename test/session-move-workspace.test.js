@@ -127,6 +127,7 @@ test('a live move rewrites both fields, tells the OLD window moved-out and the N
   assert.deepStrictEqual(windows.ws2.received, [['session:moved-in', {
     name: 'seat',
     type: 'claude',
+    voice: 'tap',
     cwd: '/work',
     label: 'My Seat',
     backend: 'pty',
@@ -203,6 +204,7 @@ test('an archived row moves record-only and its moved-in carries archived:true',
   assert.deepStrictEqual(windows.ws2.received, [['session:moved-in', {
     name: 'seat',
     type: 'claude',
+    voice: 'tap',
     cwd: '/work',
     label: 'My Seat',
     backend: null,

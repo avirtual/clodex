@@ -38437,7 +38437,7 @@ void main() {
             const why = `Voice input is unavailable on this machine: ${snap.cause || "this node\u2019s Claude CLI cannot record"}`;
             return `<button class="px-action${dim} px-voice-dead" data-act="voice" aria-disabled="true" data-tip="${esc(why)}">\u{1F3A4} ${esc(label)}</button>`;
           }
-          const tip = snap.pending ? `Voice input: switching to ${snap.pending}` : mode === "tap" || mode === "hold" ? "Voice input for this seat \u2014 click records, right-click changes" : "Voice input for this seat \u2014 click to change";
+          const tip = snap.pending ? `Voice input: switching to ${snap.pending}` : mode === "tap" || mode === "hold" ? "Voice input for this seat \u2014 click to change; click records, right-click changes" : "Voice input for this seat \u2014 click to change";
           return `<button class="px-action${dim}" data-act="voice" data-tip="${esc(tip)}">\u{1F3A4} ${esc(label)}</button>`;
         }
         function renderRows() {
