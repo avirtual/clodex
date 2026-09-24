@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Transcript pane: the pane refreshes as soon as the transcript changes, so a local command's output (/context, /cost) appears without waiting for the next keystroke.
 - Transcript pane: the output of local commands such as /context, /cost and /status shows in the pane with its colours instead of disappearing under it.
 - Experimental: Preferences ▸ Appearance ▸ "Transcript pane" renders a Claude seat's conversation from its transcript above a live strip of the terminal from the composer down; off by default, desktop only.
 

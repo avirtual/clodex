@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { MAX_ENTRIES, parseTranscript, createTranscriptSpikeReader } = require('../transcript-spike');
+const { MAX_ENTRIES, CHANGE_DEBOUNCE_MS, parseTranscript, createTranscriptSpikeReader } = require('../transcript-spike');
 
 const rec = (o) => JSON.stringify(o);
 const LINES = [
@@ -88,4 +88,48 @@ test('pull reads through the link, re-reads only after the watcher fires, and fo
   fs.unlinkSync(link);
   assert.deepStrictEqual(reader.pull('s'), { ok: false, reason: 'unavailable' });
   reader.dispose();
+});
+
+function debounceRig() {
+  const root = mkTmpRoot('clodex-tspike-');
+  const file = path.join(root, 'a.jsonl');
+  const link = path.join(root, 'transcript.jsonl');
+  fs.writeFileSync(file, `${LINES[0]}\n`);
+  fs.symlinkSync(file, link);
+  let fire = null;
+  const watch = (p, cb) => { fire = cb; return { close() {}, on() {} }; };
+  const timers = new Map();
+  let seq = 0;
+  const setTimer = (fn, ms) => { seq += 1; timers.set(seq, { fn, ms }); return seq; };
+  const clearTimer = (id) => { timers.delete(id); };
+  const flush = () => { for (const [id, t] of [...timers]) { timers.delete(id); t.fn(); } };
+  const changes = [];
+  const reader = createTranscriptSpikeReader({ linkPathFor: () => link, watch, onChange: (n) => changes.push(n), setTimer, clearTimer });
+  reader.pull('s');
+  return { reader, changes, timers, flush, fire: () => fire() };
+}
+
+test('watcher callbacks inside the debounce window coalesce into one onChange', () => {
+  const r = debounceRig();
+  r.fire();
+  r.fire();
+  assert.strictEqual(r.timers.size, 1);
+  assert.strictEqual([...r.timers.values()][0].ms, CHANGE_DEBOUNCE_MS);
+  assert.deepStrictEqual(r.changes, []);
+  r.flush();
+  assert.deepStrictEqual(r.changes, ['s']);
+  r.fire();
+  r.flush();
+  assert.deepStrictEqual(r.changes, ['s', 's']);
+  r.reader.dispose();
+});
+
+test('drop cancels a pending onChange', () => {
+  const r = debounceRig();
+  r.fire();
+  assert.strictEqual(r.timers.size, 1);
+  r.reader.drop('s');
+  assert.strictEqual(r.timers.size, 0);
+  r.flush();
+  assert.deepStrictEqual(r.changes, []);
 });

@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseTranscript } = require('../transcript-spike');
-const { OUTPUT_LINE_CAP, renderTranscript } = require('../renderer/live-split-view');
+const { OUTPUT_LINE_CAP, renderTranscript, createLiveSplitView } = require('../renderer/live-split-view');
 
 function fakeDoc() {
   return {
@@ -71,4 +71,79 @@ test(`command output is capped at ${OUTPUT_LINE_CAP} lines per record with a cou
 test('markup characters in command output land as text content, never as HTML', () => {
   const nodes = render([{ kind: 'command-output', text: '\x1b[31m<img src=x onerror=1>&amp;\x1b[39m' }]);
   assert.deepStrictEqual(nodes, [{ text: '<img src=x onerror=1>&amp;', style: 'color:rgb(205,49,49)' }]);
+});
+
+function mountView(extra = {}) {
+  const prevDoc = global.document;
+  global.document = {
+    ...fakeDoc(),
+    createElement: () => ({
+      style: {}, scrollTop: 0, clientHeight: 0, scrollHeight: 0,
+      addEventListener() {}, remove() {}, replaceChildren() {},
+    }),
+  };
+  const writes = [];
+  const terminal = {
+    rows: 3, cols: 20, element: null,
+    buffer: { active: { type: 'normal', baseY: 0, cursorY: 0, viewportY: 0, getLine: () => null } },
+    onWriteParsed(cb) { writes.push(cb); return { dispose() {} }; },
+    onResize() { return { dispose() {} }; },
+    onScroll() { return { dispose() {} }; },
+  };
+  const calls = { pull: 0, unsubscribed: 0 };
+  let listener = null;
+  let rev = 0;
+  const view = createLiveSplitView(terminal, { appendChild() {} }, {
+    isEligible: () => true,
+    pullTranscript: () => { calls.pull += 1; rev += 1; return { ok: true, rev, lines: [`r${rev}`] }; },
+    now: () => 5000,
+    seatName: 's1',
+    onTranscriptChanged: (cb) => { listener = cb; return () => { calls.unsubscribed += 1; listener = null; }; },
+    ...extra,
+  });
+  return {
+    view, calls,
+    write: () => writes.forEach((cb) => cb()),
+    change: (name) => listener && listener(name),
+    hasListener: () => !!listener,
+    restore: () => { global.document = prevDoc; },
+  };
+}
+
+const settle = () => new Promise((r) => setImmediate(r));
+
+test('a transcript-changed push for the seat pulls inside the throttle window', async () => {
+  const m = mountView();
+  try {
+    m.write();
+    await settle();
+    assert.strictEqual(m.calls.pull, 1);
+    m.write();
+    await settle();
+    assert.strictEqual(m.calls.pull, 1);
+    m.change('s1');
+    await settle();
+    assert.strictEqual(m.calls.pull, 2);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a transcript-changed push for another seat does not pull', async () => {
+  const m = mountView();
+  try {
+    m.write();
+    await settle();
+    m.change('other');
+    await settle();
+    assert.strictEqual(m.calls.pull, 1);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('dispose unsubscribes from transcript-changed', () => {
+  const m = mountView();
+  try {
+    assert.strictEqual(m.hasListener(), true);
+    m.view.dispose();
+    assert.strictEqual(m.calls.unsubscribed, 1);
+    assert.strictEqual(m.hasListener(), false);
+  } finally { m.restore(); }
 });

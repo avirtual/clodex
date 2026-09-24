@@ -799,7 +799,10 @@ function registerIpcHandlers(deps) {
     return { ok: true, open: !!s && !s._dead && isDraftOpen(s) };
   });
 
-  const transcriptSpike = createTranscriptSpikeReader({ linkPathFor: (name) => pathFor(REGISTRY_DIR, name, 'transcript') });
+  const transcriptSpike = createTranscriptSpikeReader({
+    linkPathFor: (name) => pathFor(REGISTRY_DIR, name, 'transcript'),
+    onChange: (name) => manager._sendToSession(name, 'transcript-changed', name),
+  });
   handle('transcript:pull', (_e, name) => {
     const s = manager.sessions.get(name);
     if (!s || s._dead || s.agentType !== 'claude') { transcriptSpike.drop(name); return { ok: false, reason: 'not-claude' }; }

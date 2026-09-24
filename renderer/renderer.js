@@ -97,6 +97,7 @@ const { initPluginHost } = require('./plugin-host');
 
 
 const sessions = new Map(); // name -> { terminal, fitAddon, wrapperEl }
+const transcriptChangedSubs = new Set();
 let activeSession = null;
 let terminalWebglEnabled = false;
 let transcriptPaneEnabled = false;
@@ -1652,6 +1653,8 @@ function createTerminal(name, peer = null) {
   const liveSplit = peer || window.__CLODEX_WEB__ ? null : createLiveSplitView(terminal, wrapperEl, {
     isEligible: () => transcriptPaneEnabled && sessionTypeOf(name) === 'claude',
     pullTranscript: () => window.api.transcriptPull(name),
+    seatName: name,
+    onTranscriptChanged: (cb) => { transcriptChangedSubs.add(cb); return () => transcriptChangedSubs.delete(cb); },
   });
   sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, webgl, wrapperEl, peer, echoRewrite, liveSplit });
   updateWindowTitle();
@@ -3185,6 +3188,10 @@ async function saveTemplateFromForm() {
   if (templatesDrawerRefresh) templatesDrawerRefresh();
 }
 
+
+window.api.onTranscriptChanged((name) => {
+  for (const cb of [...transcriptChangedSubs]) cb(name);
+});
 
 window.api.onPtyData((name, data) => {
   const s = sessions.get(name);

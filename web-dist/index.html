@@ -9848,6 +9848,7 @@ body.web-frontend #sidebar-header {
         // on, so focus and delivery cannot disagree about who is typing.
         { name: "draftOpen", kind: "invoke", channel: "session:draftOpen" },
         { name: "transcriptPull", kind: "invoke", channel: "transcript:pull" },
+        { name: "onTranscriptChanged", kind: "on", channel: "transcript-changed" },
         { name: "writeToSession", kind: "send", channel: "pty-input" },
         { name: "selectDirectory", kind: "invoke", channel: "dialog:selectDirectory" },
         { name: "confirmKill", kind: "invoke", channel: "dialog:confirmKill" },
@@ -29599,7 +29600,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         });
         paneEl.replaceChildren(frag);
       }
-      function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, now = Date.now, onChange = null }) {
+      function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null }) {
         const paneEl = document.createElement("pre");
         paneEl.className = "transcript-pane";
         paneEl.hidden = true;
@@ -29626,8 +29627,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
               const follow = paneEl.scrollTop + paneEl.clientHeight >= paneEl.scrollHeight - 4;
               renderTranscript(document, paneEl, res.lines);
               if (follow) paneEl.scrollTop = paneEl.scrollHeight;
-            }
-            if (available !== was) evaluate();
+              evaluate();
+            } else if (available !== was) evaluate();
           }).catch(() => {
             pulling = false;
           });
@@ -29697,6 +29698,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
             if (buf.viewportY !== buf.baseY) terminal.scrollToBottom();
           })
         ];
+        const unsubTranscript = onTranscriptChanged ? onTranscriptChanged((name) => {
+          if (disposed || name !== seatName || !isEligible()) return;
+          lastPull = 0;
+          pull();
+        }) : null;
         const ro = typeof ResizeObserver === "function" ? new ResizeObserver(() => layout()) : null;
         if (ro) ro.observe(wrapperEl);
         paneEl.addEventListener("mouseup", () => {
@@ -29718,6 +29724,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
               } catch {
               }
             }
+            if (typeof unsubTranscript === "function") unsubTranscript();
             if (ro) ro.disconnect();
             paneEl.remove();
           }
@@ -42430,6 +42437,7 @@ ${detail}` });
       var { initPeersUi } = require_peers_ui();
       var { initPluginHost } = require_plugin_host();
       var sessions = /* @__PURE__ */ new Map();
+      var transcriptChangedSubs = /* @__PURE__ */ new Set();
       var activeSession = null;
       var terminalWebglEnabled = false;
       var transcriptPaneEnabled = false;
@@ -43881,7 +43889,12 @@ ${detail}` });
         const echoRewrite = peer ? (chunk) => chunk : createEchoRewriter(currentEchoPalette);
         const liveSplit = peer || window.__CLODEX_WEB__ ? null : createLiveSplitView(terminal, wrapperEl, {
           isEligible: () => transcriptPaneEnabled && sessionTypeOf(name) === "claude",
-          pullTranscript: () => window.api.transcriptPull(name)
+          pullTranscript: () => window.api.transcriptPull(name),
+          seatName: name,
+          onTranscriptChanged: (cb) => {
+            transcriptChangedSubs.add(cb);
+            return () => transcriptChangedSubs.delete(cb);
+          }
         });
         sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, webgl, wrapperEl, peer, echoRewrite, liveSplit });
         updateWindowTitle();
@@ -45326,6 +45339,9 @@ ${detail}` });
         await refreshTemplatesDropdown();
         if (templatesDrawerRefresh) templatesDrawerRefresh();
       }
+      window.api.onTranscriptChanged((name) => {
+        for (const cb of [...transcriptChangedSubs]) cb(name);
+      });
       window.api.onPtyData((name, data) => {
         const s = sessions.get(name);
         if (s) s.terminal.write(s.echoRewrite ? s.echoRewrite(data) : data);

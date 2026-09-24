@@ -137,6 +137,7 @@ const API_CONTRACT = [
   // on, so focus and delivery cannot disagree about who is typing.
   { name: 'draftOpen', kind: 'invoke', channel: 'session:draftOpen' },
   { name: 'transcriptPull', kind: 'invoke', channel: 'transcript:pull' },
+  { name: 'onTranscriptChanged', kind: 'on', channel: 'transcript-changed' },
   { name: 'writeToSession', kind: 'send', channel: 'pty-input' },
   { name: 'selectDirectory', kind: 'invoke', channel: 'dialog:selectDirectory' },
   { name: 'confirmKill', kind: 'invoke', channel: 'dialog:confirmKill' },

@@ -30,7 +30,7 @@ function renderTranscript(doc, paneEl, rows) {
   paneEl.replaceChildren(frag);
 }
 
-function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, now = Date.now, onChange = null }) {
+function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null }) {
   const paneEl = document.createElement('pre');
   paneEl.className = 'transcript-pane';
   paneEl.hidden = true;
@@ -58,8 +58,8 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, 
         const follow = paneEl.scrollTop + paneEl.clientHeight >= paneEl.scrollHeight - 4;
         renderTranscript(document, paneEl, res.lines);
         if (follow) paneEl.scrollTop = paneEl.scrollHeight;
-      }
-      if (available !== was) evaluate();
+        evaluate();
+      } else if (available !== was) evaluate();
     }).catch(() => { pulling = false; });
   }
 
@@ -128,6 +128,11 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, 
       if (buf.viewportY !== buf.baseY) terminal.scrollToBottom();
     }),
   ];
+  const unsubTranscript = onTranscriptChanged ? onTranscriptChanged((name) => {
+    if (disposed || name !== seatName || !isEligible()) return;
+    lastPull = 0;
+    pull();
+  }) : null;
   const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => layout()) : null;
   if (ro) ro.observe(wrapperEl);
   paneEl.addEventListener('mouseup', () => {
@@ -142,6 +147,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, 
       disposed = true;
       clearTimeout(wakeTimer);
       for (const d of subs) { try { d.dispose(); } catch {} }
+      if (typeof unsubTranscript === 'function') unsubTranscript();
       if (ro) ro.disconnect();
       paneEl.remove();
     },

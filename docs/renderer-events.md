@@ -6,7 +6,7 @@ THIS is the push half. A browser frontend must receive each of these over WS
 exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
-`preload.js` (69 channels). This doc maps each to its emission point, its
+`preload.js` (70 channels). This doc maps each to its emission point, its
 payload shape (field NAMES, not full types), and the interception point a web
 host subscribes to.
 
@@ -58,6 +58,7 @@ reattach — a web host needs the same replay-on-connect for a reloaded tab.
 | `session-exit` | `name, exitCode` | session-manager (ptyProc.onExit) |
 | `session-activity` | `name, state, turnEnd` (`working`/`idle`; `turnEnd` false for the gap timer's mid-turn idle; on the transcript-watched path it is true only for a flush whose entry is a terminal end-of-turn — Claude `stop_reason: end_turn`, Codex `task_complete` — not for every idle, so an inter-tool flush reports false) | session-manager `_emitActivity` |
 | `session-ctx` | `name, pct, tok, size, cost, modelName` | session-manager (ctx poll) |
+| `transcript-changed` | `name` — the seat's transcript file changed on disk (debounced to at most one per 100 ms per seat); the transcript pane pulls on it instead of waiting for the next terminal write | ipc-handlers `createTranscriptSpikeReader({ onChange })` → `manager._sendToSession` |
 | `session-proxy` | `name, payload` (status-bar telemetry snapshot; wire-overlay shape) | wirescope-proxy poller |
 | `session-files` | `name, files` (fileTouches array) | session-manager |
 | `session-file-view` | `name, filePath` — **direct handle** (`show`+`focus`+`send`), `[agent:file view]` | session-manager |
