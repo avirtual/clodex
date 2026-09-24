@@ -10767,6 +10767,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "noteVoiceRecording", kind: "send", channel: "voice:recording" },
         { name: "noteVoiceDraft", kind: "send", channel: "voice:draft" },
         { name: "voiceRecord", kind: "invoke", channel: "voice:record" },
+        { name: "onVoiceEngineStopped", kind: "on", channel: "voice-engine-stopped" },
         // Which seat the operator is LOOKING at. Main has no other way to know: the
         // renderer owns `activeSession` and only WINDOW-level focus crosses today.
         // Read by the external voice tap, which has to pick a seat when the caller
@@ -30248,7 +30249,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         return null;
       }
-      function createVoiceMirror(terminal, { onDraft, readRows = () => readRowsToCursor(terminal) } = {}) {
+      function createVoiceMirror(terminal, { onDraft, onRelease = () => {
+      }, readRows = () => readRowsToCursor(terminal) } = {}) {
         let armed = false;
         let disposed = false;
         let baseline = "";
@@ -30268,6 +30270,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (draft === "" && releasing && last !== null) {
             armed = false;
             releasing = false;
+            try {
+              onRelease();
+            } catch {
+            }
             return;
           }
           if (!draft) return;
@@ -30344,18 +30350,26 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       function createComposerTrigger({ getConfig }) {
         let fired = null;
+        const match = (value) => {
+          let cfg = null;
+          try {
+            cfg = getConfig();
+          } catch {
+            cfg = null;
+          }
+          if (!cfg || !shouldFire({ enabled: cfg.enabled })) return null;
+          if (typeof value !== "string") return null;
+          return findSubmit(value, cfg.phrase);
+        };
         return {
+          matches(value) {
+            const hit = match(value);
+            return !!(hit && hit.erase);
+          },
           check(value) {
-            let cfg = null;
-            try {
-              cfg = getConfig();
-            } catch {
-              cfg = null;
-            }
-            if (!cfg || !shouldFire({ enabled: cfg.enabled })) return null;
             if (typeof value !== "string") return null;
             if (value === fired) return null;
-            const hit = findSubmit(value, cfg.phrase);
+            const hit = match(value);
             if (!hit || !hit.erase) {
               fired = null;
               return null;
@@ -30372,12 +30386,16 @@ ${m[2].replace(/^\r?\n/, "")}`;
         hasImages = () => false,
         onVoiceFire = () => {
         },
+        holdsFire = () => false,
+        onVoiceStop = () => {
+        },
         quietMs = 0,
         timers = { set: setTimeout, clear: clearTimeout }
       }) {
         const trigger = createComposerTrigger({ getConfig });
         let span = null;
         let quiet = null;
+        let stopping = false;
         const fire = (fromVoice) => {
           const hit = trigger.check(composer.value);
           if (!hit) return;
@@ -30401,6 +30419,25 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           send();
         };
+        const voiceFire = () => {
+          let open = false;
+          try {
+            open = holdsFire() === true;
+          } catch {
+            open = false;
+          }
+          if (!open) {
+            stopping = false;
+            fire(true);
+            return;
+          }
+          if (stopping || !trigger.matches(composer.value)) return;
+          stopping = true;
+          try {
+            onVoiceStop();
+          } catch {
+          }
+        };
         const onInput = () => fire(false);
         const cancelQuiet = () => {
           if (quiet !== null) {
@@ -30418,11 +30455,18 @@ ${m[2].replace(/^\r?\n/, "")}`;
             cancelQuiet();
             quiet = timers.set(() => {
               quiet = null;
-              fire(true);
+              voiceFire();
             }, quietMs);
+          },
+          released() {
+            if (!stopping) return;
+            stopping = false;
+            cancelQuiet();
+            fire(true);
           },
           resetSpan() {
             span = null;
+            stopping = false;
           },
           dispose() {
             cancelQuiet();
@@ -30444,6 +30488,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var HOLD_MAX_MS = 12e4;
       var BOOT_SETTLE_MS = 600;
       var BOOT_MAX_MS = 2e4;
+      var REPAINT_MAX_MS = 1500;
       var RECORD_ACTIONS = ["start", "stop", "toggle"];
       var PROMPT_MARK = "\u276F";
       function engineSettings(wireBase) {
@@ -30471,6 +30516,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         HOLD_MAX_MS,
         BOOT_SETTLE_MS,
         BOOT_MAX_MS,
+        REPAINT_MAX_MS,
         RECORD_ACTIONS,
         PROMPT_MARK,
         engineSettings,
@@ -38780,7 +38826,7 @@ void main() {
             const why = `Voice input is unavailable on this machine: ${snap.cause || "this node\u2019s Claude CLI cannot record"}`;
             return `<button class="px-action${dim} px-voice-dead" data-act="voice" aria-disabled="true" data-tip="${esc(why)}">\u{1F3A4} ${esc(label)}</button>`;
           }
-          const tip = snap.pending ? `Voice input: switching to ${snap.pending}` : "Voice input mode for every Claude session on this machine \u2014 click to change";
+          const tip = snap.pending ? `Voice input: switching to ${snap.pending}` : mode === "tap" || mode === "hold" ? "Voice input mode for every Claude session on this machine \u2014 click to change; on a stream seat click records, right-click changes" : "Voice input mode for every Claude session on this machine \u2014 click to change";
           return `<button class="px-action${dim}" data-act="voice" data-tip="${esc(tip)}">\u{1F3A4} ${esc(label)}</button>`;
         }
         function renderRows() {
@@ -46236,12 +46282,15 @@ ${detail}` });
           e.preventDefault();
           sendComposer();
         });
+        let voiceRecordingOn = false;
         const triggerSubmit = attachTriggerSubmit(composer, {
           getConfig: () => voiceSubmitConfig,
           markOrigin: () => window.api.markVoiceOrigin(name),
           send: sendComposer,
           hasImages: () => pending.length > 0,
           onVoiceFire: () => streamVoiceFired(name),
+          holdsFire: () => voiceRecordingOn && streamVoiceMode(name, "tap"),
+          onVoiceStop: () => streamVoiceRecord(name, "stop"),
           quietMs: VOICE_QUIET_MS
         });
         return {
@@ -46253,7 +46302,11 @@ ${detail}` });
           voiceStart() {
             triggerSubmit.resetSpan();
           },
+          voiceReleased() {
+            triggerSubmit.released();
+          },
           setRecording(on) {
+            voiceRecordingOn = !!on;
             composer.classList.toggle("voice-recording", !!on);
             composer.placeholder = on ? "Recording \u2014 your words appear here; Enter sends" : "Message \u2014 Enter sends, Shift+Enter for a new line";
           },
@@ -47921,6 +47974,10 @@ ${detail}` });
           onDraft: (text) => {
             const entry = voiceArmedSeat ? sessions.get(voiceArmedSeat) : null;
             if (entry && entry.stream) entry.stream.voiceDraft(text);
+          },
+          onRelease: () => {
+            const entry = voiceArmedSeat ? sessions.get(voiceArmedSeat) : null;
+            if (entry && entry.stream) entry.stream.voiceReleased();
           }
         });
         voiceEngineView = { terminal, mirror };
@@ -47969,8 +48026,13 @@ ${detail}` });
       function streamVoiceFired(name) {
         if (voiceArmedSeat !== name || !voiceEngineView) return;
         voiceEngineView.mirror.disarm();
-        if (streamVoiceMode(name, "tap")) streamVoiceRecord(name, "stop");
       }
+      window.api.onVoiceEngineStopped((name) => {
+        const entry = sessions.get(name);
+        if (!entry || !entry.stream) return;
+        if (voiceArmedSeat === name && voiceEngineView) voiceEngineView.mirror.release();
+        entry.stream.setRecording(false);
+      });
       window.api.onPtyData((name, data) => {
         if (name === VOICE_ENGINE_NAME) {
           voiceEngine().terminal.write(data);
@@ -48780,6 +48842,13 @@ Click for live activity`;
         };
         bar.addEventListener("mousedown", openPopoverOnPress);
         bar.addEventListener("click", runBarActionOnClick);
+        bar.addEventListener("contextmenu", (e) => {
+          const voiceBtn = e.target.closest('.px-action[data-act="voice"]');
+          if (!voiceBtn || !activeSession) return;
+          if (!streamVoiceMode(activeSession, "tap") && !streamVoiceMode(activeSession, "hold")) return;
+          e.preventDefault();
+          openVoicePopover(voiceBtn);
+        });
         let voiceHeld = null;
         bar.addEventListener("pointerdown", (e) => {
           if (e.button !== 0 || !activeSession) return;

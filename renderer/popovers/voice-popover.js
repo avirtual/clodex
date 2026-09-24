@@ -185,7 +185,9 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
     }
     const tip = snap.pending
       ? `Voice input: switching to ${snap.pending}`
-      : 'Voice input mode for every Claude session on this machine — click to change';
+      : (mode === 'tap' || mode === 'hold')
+        ? 'Voice input mode for every Claude session on this machine — click to change; on a stream seat click records, right-click changes'
+        : 'Voice input mode for every Claude session on this machine — click to change';
     return `<button class="px-action${dim}" data-act="voice" data-tip="${esc(tip)}">🎤 ${esc(label)}</button>`;
   }
 

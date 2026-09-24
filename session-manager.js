@@ -4676,6 +4676,7 @@ function createSessionManager(deps) {
         holdMaxMs: voiceEngineSpec.HOLD_MAX_MS,
         bootSettleMs: voiceEngineSpec.BOOT_SETTLE_MS,
         bootMaxMs: voiceEngineSpec.BOOT_MAX_MS,
+        repaintMaxMs: voiceEngineSpec.REPAINT_MAX_MS,
       };
     }
 
@@ -4709,14 +4710,15 @@ function createSessionManager(deps) {
       }
       let markReady;
       const engine = {
-        name: VOICE_ENGINE_NAME, pty: proc, recording: false, holdTimer: null, holdCap: null,
-        armedBy, dead: false, ready: new Promise((r) => { markReady = r; }),
+        name: VOICE_ENGINE_NAME, pty: proc, cols: 120, rows: 30, recording: false, holdTimer: null, holdCap: null,
+        armedBy, promptWaiters: [], dead: false, ready: new Promise((r) => { markReady = r; }),
       };
       let seen = false;
       let settle = null;
       const cap = setTimeout(() => markReady(), t.bootMaxMs);
       proc.onData((data) => {
-        if (!seen && String(data).includes(PROMPT_MARK)) seen = true;
+        const marked = String(data).includes(PROMPT_MARK);
+        if (!seen && marked) seen = true;
         if (seen) {
           clearTimeout(settle);
           settle = setTimeout(() => { clearTimeout(cap); markReady(); }, t.bootSettleMs);
@@ -4724,12 +4726,14 @@ function createSessionManager(deps) {
         const ws = engine.armedBy && engine.armedBy.workspaceId;
         const win = ws ? this.windowForWorkspace(ws) : null;
         if (win) win.webContents.send('pty-data', VOICE_ENGINE_NAME, data);
+        if (marked) for (const wake of engine.promptWaiters.splice(0)) wake();
       });
       proc.onExit(() => {
         engine.dead = true;
         clearTimeout(cap);
         clearTimeout(settle);
         this._stopVoiceHold(engine);
+        for (const wake of engine.promptWaiters.splice(0)) wake();
         markReady();
         if (this._voiceEngine === engine) this._voiceEngine = null;
         if (this._wire) { try { this._wire.unregisterAgent(VOICE_ENGINE_NAME); } catch {} }
@@ -4745,6 +4749,37 @@ function createSessionManager(deps) {
       clearTimeout(engine.holdCap);
       engine.holdTimer = null;
       engine.holdCap = null;
+    }
+
+    _voiceEnginePrompt(engine, ms) {
+      return new Promise((resolve) => {
+        const wake = () => { clearTimeout(cap); resolve(); };
+        const cap = setTimeout(() => {
+          const i = engine.promptWaiters.indexOf(wake);
+          if (i !== -1) engine.promptWaiters.splice(i, 1);
+          resolve();
+        }, ms);
+        engine.promptWaiters.push(wake);
+      });
+    }
+
+    async _repaintVoiceEngine(engine) {
+      const { cols, rows } = engine;
+      const t = this.voiceEngineTimings();
+      const wider = this._voiceEnginePrompt(engine, t.repaintMaxMs);
+      engine.pty.resize(cols + 1, rows);
+      await wider;
+      const back = this._voiceEnginePrompt(engine, t.repaintMaxMs);
+      engine.pty.resize(cols, rows);
+      await back;
+    }
+
+    _endVoiceHoldAtCap(engine) {
+      this._stopVoiceHold(engine);
+      engine.recording = false;
+      const armedBy = engine.armedBy;
+      const win = armedBy && armedBy.workspaceId ? this.windowForWorkspace(armedBy.workspaceId) : null;
+      if (win) win.webContents.send('voice-engine-stopped', armedBy.name);
     }
 
     async voiceRecord(name, action, { mode = null, workspaceId = null } = {}) {
@@ -4764,12 +4799,16 @@ function createSessionManager(deps) {
       const plan = voiceEngineSpec.planRecord({ mode, action, recording: engine.recording });
       const { RECORD_KEY } = voiceEngineSpec;
       const t = this.voiceEngineTimings();
+      const prevWs = engine.armedBy && engine.armedBy.workspaceId;
       engine.armedBy = armedBy;
+      if (armedBy.workspaceId && armedBy.workspaceId !== prevWs && !engine.dead) {
+        try { await this._repaintVoiceEngine(engine); } catch {}
+      }
       if (plan.write) engine.pty.write(RECORD_KEY);
       if (plan.hold === 'start' && !engine.holdTimer) {
         engine.pty.write(RECORD_KEY);
         engine.holdTimer = setInterval(() => { try { engine.pty.write(RECORD_KEY); } catch {} }, t.holdRepeatMs);
-        engine.holdCap = setTimeout(() => { this._stopVoiceHold(engine); engine.recording = false; }, t.holdMaxMs);
+        engine.holdCap = setTimeout(() => this._endVoiceHoldAtCap(engine), t.holdMaxMs);
       }
       if (plan.hold === 'stop') this._stopVoiceHold(engine);
       engine.recording = plan.recording;

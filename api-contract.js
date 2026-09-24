@@ -424,6 +424,7 @@ const API_CONTRACT = [
   { name: 'noteVoiceRecording', kind: 'send', channel: 'voice:recording' },
   { name: 'noteVoiceDraft', kind: 'send', channel: 'voice:draft' },
   { name: 'voiceRecord', kind: 'invoke', channel: 'voice:record' },
+  { name: 'onVoiceEngineStopped', kind: 'on', channel: 'voice-engine-stopped' },
   // Which seat the operator is LOOKING at. Main has no other way to know: the
   // renderer owns `activeSession` and only WINDOW-level focus crosses today.
   // Read by the external voice tap, which has to pick a seat when the caller

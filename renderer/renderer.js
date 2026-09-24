@@ -1631,12 +1631,15 @@ function createStreamSeatPane(name, wrapperEl) {
     e.preventDefault();
     sendComposer();
   });
+  let voiceRecordingOn = false;
   const triggerSubmit = attachTriggerSubmit(composer, {
     getConfig: () => voiceSubmitConfig,
     markOrigin: () => window.api.markVoiceOrigin(name),
     send: sendComposer,
     hasImages: () => pending.length > 0,
     onVoiceFire: () => streamVoiceFired(name),
+    holdsFire: () => voiceRecordingOn && streamVoiceMode(name, 'tap'),
+    onVoiceStop: () => streamVoiceRecord(name, 'stop'),
     quietMs: VOICE_QUIET_MS,
   });
   return {
@@ -1644,7 +1647,9 @@ function createStreamSeatPane(name, wrapperEl) {
     refresh: () => pull(true),
     voiceDraft(text) { triggerSubmit.draft(text); },
     voiceStart() { triggerSubmit.resetSpan(); },
+    voiceReleased() { triggerSubmit.released(); },
     setRecording(on) {
+      voiceRecordingOn = !!on;
       composer.classList.toggle('voice-recording', !!on);
       composer.placeholder = on
         ? 'Recording — your words appear here; Enter sends'
@@ -3461,6 +3466,10 @@ function voiceEngine() {
       const entry = voiceArmedSeat ? sessions.get(voiceArmedSeat) : null;
       if (entry && entry.stream) entry.stream.voiceDraft(text);
     },
+    onRelease: () => {
+      const entry = voiceArmedSeat ? sessions.get(voiceArmedSeat) : null;
+      if (entry && entry.stream) entry.stream.voiceReleased();
+    },
   });
   voiceEngineView = { terminal, mirror };
   return voiceEngineView;
@@ -3503,8 +3512,14 @@ async function streamVoiceRecord(name, action) {
 function streamVoiceFired(name) {
   if (voiceArmedSeat !== name || !voiceEngineView) return;
   voiceEngineView.mirror.disarm();
-  if (streamVoiceMode(name, 'tap')) streamVoiceRecord(name, 'stop');
 }
+
+window.api.onVoiceEngineStopped((name) => {
+  const entry = sessions.get(name);
+  if (!entry || !entry.stream) return;
+  if (voiceArmedSeat === name && voiceEngineView) voiceEngineView.mirror.release();
+  entry.stream.setRecording(false);
+});
 
 window.api.onPtyData((name, data) => {
   if (name === VOICE_ENGINE_NAME) {
@@ -4438,6 +4453,13 @@ setInterval(() => {
   };
   bar.addEventListener('mousedown', openPopoverOnPress);
   bar.addEventListener('click', runBarActionOnClick);
+  bar.addEventListener('contextmenu', (e) => {
+    const voiceBtn = e.target.closest('.px-action[data-act="voice"]');
+    if (!voiceBtn || !activeSession) return;
+    if (!streamVoiceMode(activeSession, 'tap') && !streamVoiceMode(activeSession, 'hold')) return;
+    e.preventDefault();
+    openVoicePopover(voiceBtn);
+  });
   let voiceHeld = null;
   bar.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || !activeSession) return;
