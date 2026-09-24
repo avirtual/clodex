@@ -70,16 +70,29 @@ function attachTriggerSubmit(composer, {
     try { markOrigin(); } catch {}
     send();
   };
+  const cancelQuiet = () => { if (quiet !== null) { timers.clear(quiet); quiet = null; } };
+  const armQuiet = () => {
+    cancelQuiet();
+    quiet = timers.set(() => { quiet = null; voiceFire(); }, quietMs);
+  };
+  const stopFailed = () => {
+    if (!stopping) return;
+    stopping = false;
+    armQuiet();
+  };
   const voiceFire = () => {
     let open = false;
     try { open = holdsFire() === true; } catch { open = false; }
     if (!open) { stopping = false; fire(true); return; }
     if (stopping || !trigger.matches(composer.value)) return;
     stopping = true;
-    try { onVoiceStop(); } catch {}
+    let stopped;
+    try { stopped = onVoiceStop(); } catch { stopFailed(); return; }
+    if (stopped && typeof stopped.then === 'function') {
+      stopped.then((ok) => { if (ok === false) stopFailed(); }, stopFailed);
+    }
   };
   const onInput = () => fire(false);
-  const cancelQuiet = () => { if (quiet !== null) { timers.clear(quiet); quiet = null; } };
   composer.addEventListener('input', onInput);
   return {
     check: onInput,
@@ -87,8 +100,7 @@ function attachTriggerSubmit(composer, {
       const next = applyDraft(composer.value, span, text);
       composer.value = next.value;
       span = next.span;
-      cancelQuiet();
-      quiet = timers.set(() => { quiet = null; voiceFire(); }, quietMs);
+      armQuiet();
     },
     released() {
       if (!stopping) return;

@@ -12,6 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+- Stream seat voice: saying the trigger word at the end of a sentence strips it and sends, the same as on a terminal seat.
 - Stream seat voice: the words arrive in the composer for a second window too, tap mode sends the finished sentence rather than the words so far, the recording light goes out when the hold limit ends it, and right-click on the voice button still opens the mode picker.
 - Stream seat: the voice button records through a hidden terminal and the words appear in the composer as you speak, for you to send; saying the trigger phrase sends them.
 - Stream seat: paste or drop an image into the composer and it goes with the message; thumbnails show what is attached until you send.
