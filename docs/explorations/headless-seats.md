@@ -915,17 +915,23 @@ to the argv.
   row where the old child's `close` arrives late.
 - **Size:** about 350 source lines and 400 test lines.
 
-**H7 — remote surfaces. This is a scope decision, not a ticket to slip in.**
+**H7 — remote surfaces. Small: a gate lift, not a rebuild.**
 
-- Today the web host (`web-host.js`'s pty-data ring) and peers
-  (`peer-client.js` `output` events) show agent seats by streaming PTY bytes.
-- A stream seat has none, so **it is invisible on the phone, in the browser
-  and to peers** until the pull, detail, live and send channels are served over
-  the web host and the peer wire.
-- The pane itself is DOM and portable. pane-app-view.md §3.7 deliberately kept
-  it desktop-only.
-- This is likely two tickets: web host, then peers. It must land before the
-  default flips.
+- Discovery, `[agent:who]`, dms and the ticket board read Clodex's own
+  registry and queue, and a stream seat registers like any other; none of
+  them touch the PTY, so a stream seat is fully reachable from the phone, the
+  browser and peers from H1 on.
+- What the remote surfaces lack is the seat's *viewport*: the web host
+  (`web-host.js`'s pty-data ring) and peers (`peer-client.js` `output`
+  events) relay PTY bytes because that is what a terminal seat produces. A
+  stream seat produces transcript records, and the pane that renders those
+  already pulls them through `transcript:pull`, which the web host proxies
+  like every other invoke. The pane is off in the web bundle only by the
+  `window.__CLODEX_WEB__` gate in `renderer.js` (`createLiveSplitView` site),
+  a choice from when the pane was new, not a limitation.
+- H7 is therefore: lift that gate for stream seats, serve `seat:send` and
+  `transcript-changed` over the web host, and the same two over the peer wire
+  for peers. Likely one ticket; it does not need to precede the default flip.
 
 **H8 — migration and the default flip.**
 
@@ -974,9 +980,9 @@ to the argv.
 
 ## 10. Open questions for Bogdan
 
-1. **Remote viewing (H7).** Does the phone, web or peer view of stream seats
-   have to exist before any seat defaults to stream, or can stream stay opt-in
-   and desktop-only for a while?
+1. **Remote viewing (H7).** The phone and browser viewport is the same pane
+   with its web-bundle gate lifted (see H7). Does that need to land before
+   the default flips, or can stream stay desktop-only for a while?
 2. **The operator sending while the seat is busy.** The default is "steer"
    (fold into the running turn, as the TTY does today), with Alt+Enter for
    "after this turn". Do you want it the other way round?
