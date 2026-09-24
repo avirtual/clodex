@@ -825,6 +825,11 @@ function createAppMenus(deps) {
             accelerator: 'CmdOrCtrl+Shift+B',
             click: () => sendToFocused('request-open-ipc-log'),
           },
+          {
+            label: 'Raw terminal',
+            accelerator: 'CmdOrCtrl+Shift+T',
+            click: () => sendToFocused('request-toggle-raw-terminal'),
+          },
           { type: 'separator' },
           {
             label: 'Theme',

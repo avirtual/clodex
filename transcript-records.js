@@ -1,0 +1,256 @@
+'use strict';
+
+const RECORD_CAP = 400;
+const PROMPT_CAP = 4096;
+const PROSE_CAP = 65536;
+const NOTE_CAP = 300;
+const ONLY_MAX = 80;
+const INPUT_KEYS = ['command', 'file_path', 'path', 'pattern', 'url', 'query', 'description', 'prompt'];
+const TURN_KINDS = new Set(['prompt', 'inbound', 'notification', 'command']);
+const INBOUND_RE = /^\[agent:from ([^\]\s]+)\][ \t]*/;
+const ATTACHED_RE = /Message \((\d+) bytes\) attached: @(\S+)/;
+const EXIT_RE = /^Exit code (\d+)/;
+const DENIED_RE = /^(?:The user doesn't want to proceed with this tool use|Permission to use \S+ has been denied)/;
+const INTERRUPT_RE = /^\[Request interrupted by user[^\]]*\]/;
+const TODO_TOOLS = new Set(['TodoWrite', 'TaskCreate', 'TaskUpdate']);
+
+function firstLine(s, max = 160) {
+  const line = String(s == null ? '' : s).split('\n').find((l) => l.trim()) || '';
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+function toolInputLine(input) {
+  if (!input || typeof input !== 'object') return firstLine(input);
+  for (const k of INPUT_KEYS) if (typeof input[k] === 'string' && input[k].trim()) return firstLine(input[k]);
+  return firstLine(JSON.stringify(input));
+}
+
+function textOf(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n');
+}
+
+function tagBody(text, tag) {
+  const open = `<${tag}>`;
+  const start = text.indexOf(open);
+  if (start < 0) return null;
+  const end = text.indexOf(`</${tag}>`, start + open.length);
+  return (end < 0 ? text.slice(start + open.length) : text.slice(start + open.length, end)).trim();
+}
+
+function capped(fields, key, text, cap) {
+  if (text.length <= cap) return { ...fields, [key]: text };
+  return { ...fields, [key]: text.slice(0, cap), truncated: true };
+}
+
+function lineCount(text) {
+  const t = String(text || '').replace(/\n+$/, '');
+  return t ? t.split('\n').length : 0;
+}
+
+function tsOf(rec) {
+  const t = Date.parse(rec.timestamp);
+  return Number.isFinite(t) ? t : null;
+}
+
+function patchCounts(patch) {
+  let add = 0;
+  let del = 0;
+  for (const hunk of Array.isArray(patch) ? patch : []) {
+    for (const l of Array.isArray(hunk && hunk.lines) ? hunk.lines : []) {
+      if (typeof l !== 'string') continue;
+      if (l[0] === '+') add += 1;
+      else if (l[0] === '-') del += 1;
+    }
+  }
+  return { add, del };
+}
+
+function outputSum(text) {
+  const lines = lineCount(text);
+  const only = lines === 1 ? String(text).trim() : '';
+  return { lines, only: only && only.length <= ONLY_MAX ? only : null };
+}
+
+function bashSum(tur, content, isError) {
+  const obj = tur && typeof tur === 'object' ? tur : {};
+  let exit = 0;
+  let body = [obj.stdout, obj.stderr].filter((s) => typeof s === 'string' && s).join('\n');
+  if (isError) {
+    const head = firstLine(content);
+    const m = EXIT_RE.exec(head);
+    exit = m ? Number(m[1]) : null;
+    body = String(content).split('\n').slice(1).join('\n');
+  }
+  const { lines, only } = outputSum(body);
+  return {
+    exit,
+    lines,
+    interrupted: !!obj.interrupted,
+    background: !!obj.backgroundTaskId,
+    persisted: typeof obj.persistedOutputSize === 'number' ? obj.persistedOutputSize : null,
+    only,
+  };
+}
+
+function todoSum(input) {
+  const list = input && Array.isArray(input.todos) ? input.todos : [];
+  return { done: list.filter((t) => t && t.status === 'completed').length, total: list.length };
+}
+
+function okSum(name, input, tur, content) {
+  const t = tur && typeof tur === 'object' ? tur : {};
+  const file = t.filePath || (input && input.file_path) || null;
+  switch (name) {
+    case 'Bash': return bashSum(tur, content, false);
+    case 'Edit':
+    case 'MultiEdit': return { file, ...patchCounts(t.structuredPatch) };
+    case 'Write': {
+      const created = t.type === 'create';
+      const counts = created ? { add: lineCount(t.content), del: 0 } : patchCounts(t.structuredPatch);
+      return { file, created, ...counts };
+    }
+    case 'Read': {
+      const f = t.file && typeof t.file === 'object' ? t.file : {};
+      const from = typeof f.startLine === 'number' ? f.startLine : null;
+      const n = typeof f.numLines === 'number' ? f.numLines : null;
+      return { file: f.filePath || file, from, to: from != null && n != null ? from + Math.max(0, n - 1) : null, total: f.totalLines ?? null };
+    }
+    case 'Grep': return { files: t.numFiles ?? null, lines: t.numLines ?? null };
+    case 'Glob': return { files: t.numFiles ?? null, truncated: !!t.truncated };
+    case 'WebFetch': return { code: t.code ?? null, bytes: t.bytes ?? null };
+    case 'WebSearch': return { results: t.searchCount ?? null };
+    case 'Agent':
+    case 'Task': return { description: t.description || (input && input.description) || null, model: t.resolvedModel || t.model || null, status: t.status || null };
+    default:
+      if (TODO_TOOLS.has(name)) return todoSum(input);
+      return { lines: lineCount(content) };
+  }
+}
+
+function settle(rec, input, block, tur) {
+  const content = textOf(block.content);
+  const isError = block.is_error === true;
+  const toolError = content.startsWith('<tool_use_error>');
+  if (isError || toolError) {
+    rec.state = DENIED_RE.test(content) ? 'denied' : 'error';
+    if (rec.name === 'Bash' && EXIT_RE.test(content)) rec.sum = bashSum(tur, content, true);
+    else rec.sum = { message: firstLine(content.replace(/<\/?tool_use_error>/g, '')) };
+    return;
+  }
+  rec.state = tur && typeof tur === 'object' && tur.interrupted ? 'interrupted' : 'ok';
+  rec.sum = okSum(rec.name, input, tur, content);
+}
+
+function userRecords(rec, base, tools) {
+  const content = rec.message.content;
+  if (Array.isArray(content)) {
+    for (const b of content) {
+      if (!b || b.type !== 'tool_result') continue;
+      const tool = tools.get(b.tool_use_id);
+      if (tool) settle(tool.rec, tool.input, b, rec.toolUseResult);
+    }
+  }
+  if (rec.isMeta || rec.isCompactSummary) return [];
+  const text = textOf(content).trim();
+  if (!text) return [];
+  if (rec.origin && rec.origin.kind === 'task-notification') {
+    const summary = tagBody(text, 'summary');
+    return [{ ...base, kind: 'notification', text: firstLine(summary || text.replace(/<[^>]*>/g, '\n'), NOTE_CAP) }];
+  }
+  if (INTERRUPT_RE.test(text)) return [{ ...base, kind: 'notice', level: 'warning', text: INTERRUPT_RE.exec(text)[0].slice(1, -1) }];
+  if (text.startsWith('<')) return [];
+  const from = INBOUND_RE.exec(text);
+  if (from) {
+    const rest = text.slice(from[0].length);
+    const att = ATTACHED_RE.exec(rest);
+    const card = capped({ ...base, kind: 'inbound', from: from[1] }, 'text', rest, PROMPT_CAP);
+    return [att ? { ...card, attached: { path: att[2], bytes: Number(att[1]) } } : card];
+  }
+  const fields = { ...base, kind: 'prompt' };
+  const out = capped(fields, 'text', text, PROMPT_CAP);
+  return [{ ...out, source: rec.promptSource === 'queued' ? 'queued' : 'typed' }];
+}
+
+function assistantRecords(rec, base, tools) {
+  const content = rec.message.content;
+  if (!Array.isArray(content)) return [];
+  const texts = content.filter((b) => b && b.type === 'text').length;
+  const out = [];
+  content.forEach((b, i) => {
+    if (!b) return;
+    if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+      const id = texts > 1 ? `${base.id}:${i}` : base.id;
+      const r = capped({ ...base, id, kind: 'assistant' }, 'text', b.text.trim(), PROSE_CAP);
+      out.push(rec.isApiErrorMessage ? { ...r, apiError: true } : r);
+    } else if (b.type === 'tool_use' && b.id) {
+      const tool = { ...base, id: b.id, kind: 'tool', name: b.name || 'tool', arg: toolInputLine(b.input), state: 'pending', sum: null };
+      tools.set(b.id, { rec: tool, input: b.input });
+      out.push(tool);
+    }
+  });
+  return out;
+}
+
+function systemRecords(rec, base) {
+  if (rec.subtype === 'local_command') {
+    const content = typeof rec.content === 'string' ? rec.content : '';
+    const name = tagBody(content, 'command-name');
+    if (name) return [{ ...base, kind: 'command', name, args: tagBody(content, 'command-args') || '' }];
+    const text = tagBody(content, 'local-command-stdout');
+    return text ? [{ ...base, kind: 'command-output', text }] : [];
+  }
+  if (rec.subtype === 'compact_boundary') {
+    const m = rec.compactMetadata || {};
+    return [{ ...base, kind: 'boundary', what: 'compact', trigger: m.trigger || null, preTokens: m.preTokens ?? null, postTokens: m.postTokens ?? null }];
+  }
+  if (rec.subtype === 'turn_duration') {
+    return [{ ...base, kind: 'turn-end', durationMs: rec.durationMs ?? null, messageCount: rec.messageCount ?? null }];
+  }
+  if (rec.subtype === 'informational' && typeof rec.content === 'string' && rec.content.trim()) {
+    const level = rec.level === 'warning' || rec.level === 'error' ? rec.level : 'info';
+    return [{ ...base, kind: 'notice', level, text: rec.content.trim() }];
+  }
+  return [];
+}
+
+function recordsOfLine(rec, base, tools) {
+  if (rec.type === 'system') return systemRecords(rec, base);
+  if (!rec.message) return [];
+  if (rec.type === 'user') return userRecords(rec, base, tools);
+  if (rec.type === 'assistant') return assistantRecords(rec, base, tools);
+  return [];
+}
+
+function cutOnTurn(all, max) {
+  if (all.length <= max) return all;
+  let start = all.length - max;
+  const headTurn = all[start - 1].turn;
+  let s = start;
+  while (s < all.length && all[s].turn === headTurn) s += 1;
+  if (s < all.length) return all.slice(s);
+  const head = all.find((r) => r.turn === headTurn && TURN_KINDS.has(r.kind));
+  return head ? [head, ...all.slice(start + 1)] : all.slice(start);
+}
+
+function recordsOf(text, max = RECORD_CAP) {
+  const tools = new Map();
+  const all = [];
+  let turn = 0;
+  for (const line of String(text).split('\n')) {
+    if (!line.trim()) continue;
+    let rec;
+    try { rec = JSON.parse(line); } catch { continue; }
+    if (!rec || typeof rec !== 'object' || rec.isSidechain) continue;
+    const base = { id: rec.uuid || `line:${all.length}`, kind: '', ts: tsOf(rec), turn };
+    for (const r of recordsOfLine(rec, base, tools)) {
+      if (TURN_KINDS.has(r.kind)) { turn += 1; r.turn = turn; }
+      else r.turn = turn;
+      all.push(r);
+    }
+  }
+  return { records: cutOnTurn(all, max) };
+}
+
+module.exports = { RECORD_CAP, PROMPT_CAP, PROSE_CAP, recordsOf, toolInputLine };

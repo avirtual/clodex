@@ -219,6 +219,7 @@ const API_CONTRACT = [
   { name: 'onRequestOpenPromptsDrawer', kind: 'on', channel: 'request-open-prompts-drawer' },
   { name: 'onRequestOpenTemplatesDrawer', kind: 'on', channel: 'request-open-templates-drawer' },
   { name: 'onRequestOpenIpcLog', kind: 'on', channel: 'request-open-ipc-log' },
+  { name: 'onRequestToggleRawTerminal', kind: 'on', channel: 'request-toggle-raw-terminal' },
   { name: 'getSettings', kind: 'invoke', channel: 'settings:get' },
   { name: 'setTheme', kind: 'invoke', channel: 'theme:set' },
   { name: 'onSetTheme', kind: 'on', channel: 'set-theme' },

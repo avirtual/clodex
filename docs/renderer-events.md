@@ -6,7 +6,7 @@ THIS is the push half. A browser frontend must receive each of these over WS
 exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
-`preload.js` (70 channels). This doc maps each to its emission point, its
+`preload.js` (71 channels). This doc maps each to its emission point, its
 payload shape (field NAMES, not full types), and the interception point a web
 host subscribes to.
 
@@ -160,7 +160,8 @@ them.
   screen before its recorder lights),
   `request-open-team-roles` (`name`), `request-open-team-create`,
   `request-open-help` (`name?`, `slug?` — bare from the Help menu's own item,
-  named from its per-page items).
+  named from its per-page items), `request-toggle-raw-terminal` (View ▸ Raw
+  terminal; the active seat's transcript pane toggles off and on).
   - `request-open-prompts-drawer` — library `{ kind, name }`, plugin `{ plugin, kind, name }`, `:new`, or `null` (Manage).
   - `request-open-templates-drawer` — library the template id (or name), plugin `{ plugin, name }`, `:new`, or `null`.
   - `request-open-agents-drawer` — library a bare name, plugin `{ plugin, name }`, `:new`, or `null`.
