@@ -851,8 +851,9 @@ function registerIpcHandlers(deps) {
     const res = transcriptSpike.pull(name);
     const extra = res && res.ok && manager.compactNoticesFor(name);
     const out = extra ? { ok: true, rev: `${res.rev}:${extra.rev}`, records: mergeCompactNotices(res.records, extra.notices) } : res;
-    const box = out && out.ok && manager.seatOutbox(name);
+    const box = manager.seatOutbox(name);
     if (!box) return out;
+    if (!out || !out.ok) return { ...out, rev: `-:o${box.rev}`, records: [], outbox: box.items };
     return { ...out, rev: `${out.rev}:o${box.rev}`, outbox: box.items };
   });
 
