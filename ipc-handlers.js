@@ -850,8 +850,10 @@ function registerIpcHandlers(deps) {
     if (!s || s._dead || s.agentType !== 'claude') { transcriptSpike.drop(name); return { ok: false, reason: 'not-claude' }; }
     const res = transcriptSpike.pull(name);
     const extra = res && res.ok && manager.compactNoticesFor(name);
-    if (!extra) return res;
-    return { ok: true, rev: `${res.rev}:${extra.rev}`, records: mergeCompactNotices(res.records, extra.notices) };
+    const out = extra ? { ok: true, rev: `${res.rev}:${extra.rev}`, records: mergeCompactNotices(res.records, extra.notices) } : res;
+    const box = out && out.ok && manager.seatOutbox(name);
+    if (!box) return out;
+    return { ...out, rev: `${out.rev}:o${box.rev}`, outbox: box.items };
   });
 
   handle('proxy:snapshot', (_e, name) => proxyPoller.snapshot(name));

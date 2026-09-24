@@ -1111,3 +1111,44 @@ test('t673: shell denies survive with no tool denies, and are deduped', () => {
   const without = fs.readFileSync(pathFor(REGISTRY_DIR, 'sh3', 'hook'), 'utf-8');
   assert.strictEqual(withDeny, without, 'the deny rules must not reach the generated script bytes');
 });
+
+test('stream seat: the tool-boundary PreToolUse script is byte-pinned, appends one attn line, and gates nothing', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('st1', null, null, [], [], [], null, null, [], true);
+  const scriptPath = pathFor(REGISTRY_DIR, 'st1', 'toolBoundaryScript');
+  const attn = pathFor(REGISTRY_DIR, 'st1', 'attn');
+  assert.strictEqual(fs.readFileSync(scriptPath, 'utf-8'), `#!/bin/bash
+printf '{"hook_event_name":"PreToolUse","ts":%s000}\\n' "$(date +%s)" >> "${attn}" 2>/dev/null || true
+exit 0
+`);
+  const out = cp.execFileSync('bash', [scriptPath], { input: JSON.stringify({ tool_name: 'Bash' }), encoding: 'utf-8' });
+  assert.strictEqual(out, '', 'no stdout: the hook never returns a permission decision');
+  const lines = fs.readFileSync(attn, 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.strictEqual(lines.length, 1);
+  assert.strictEqual(lines[0].hook_event_name, 'PreToolUse');
+  assert.ok(Number.isInteger(lines[0].ts) && lines[0].ts > 1e12);
+});
+
+test('stream seat: hook.json runs the tool-boundary script on every tool and keeps every UserPromptSubmit drain; a pty seat has neither the script nor the entry', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('st2', null, null, [], [], [], null, null, [], true);
+  h.setupClaudeHook('pt2');
+  const p = (n, k) => pathFor(REGISTRY_DIR, n, k);
+  const stream = JSON.parse(fs.readFileSync(p('st2', 'settings'), 'utf-8'));
+  assert.deepStrictEqual(stream.hooks.PreToolUse.filter((e) => e.matcher === ''), [{
+    matcher: '',
+    hooks: [
+      { type: 'command', command: p('st2', 'pollGuardScript') },
+      { type: 'command', command: p('st2', 'toolBoundaryScript') },
+    ],
+  }]);
+  const drains = stream.hooks.UserPromptSubmit[0].hooks.map((x) => x.command);
+  for (const k of ['ipcdeltaScript', 'acksScript', 'pendingScript', 'noticeScript']) {
+    assert.ok(drains.includes(p('st2', k)), `${k} still drains under -p`);
+  }
+  const pty = JSON.parse(fs.readFileSync(p('pt2', 'settings'), 'utf-8'));
+  assert.ok(!JSON.stringify(pty.hooks).includes('tool-boundary'));
+  assert.strictEqual(fs.existsSync(p('pt2', 'toolBoundaryScript')), false);
+});

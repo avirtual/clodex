@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Stream seat: dms, ticket deliveries, reminders and exec results now reach a stream seat. They queue behind what you typed and are delivered when the seat finishes its turn or reaches its next tool call; nothing is sent mid-turn.
 - Stream seat: unarchiving, or retrying a seat that failed to start, brings it back with its composer instead of an empty terminal.
 - Stream seat: Restart from the session menu brings the seat back with its composer and transcript instead of an empty terminal.
 

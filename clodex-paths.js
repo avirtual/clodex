@@ -108,6 +108,7 @@ const KINDS = {
   bashGuardScript: 'bash-guard.sh',
   pollGuardScript: 'poll-guard.sh',
   pollState: 'poll-state',
+  toolBoundaryScript: 'tool-boundary.sh',
   // A DIRECTORY kind, like bashConsole and bashLive above: zsh reads a whole
   // set of startup files from $ZDOTDIR, so the shim must be a dir.
   // The legacy sweep's rmSync is non-recursive and would refuse it, harmlessly:
@@ -158,6 +159,7 @@ const LEGACY_SUFFIXES = {
   bashGuardScript: '-bash-guard.sh',
   pollGuardScript: '-poll-guard.sh',
   pollState: '-poll-state',
+  toolBoundaryScript: '-tool-boundary.sh',
   termShim: '-zsh',
   seatConfig: '-xdg',
 };
