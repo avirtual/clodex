@@ -97,14 +97,15 @@ function parseIntentLegacy(rawLine) {
     if (sub === 'add') {
       const park = argToks.includes('park');
       const start = argToks.includes('start');
+      const dup = argToks.includes('dup');
       // t673: `reviewer:<template>` joins them as a keyed modifier, filtered
       // out of the positionals. Updated here in lockstep with parseTask, per the
       // rule below — a shape change that lands in only one copy stops the
       // differential covering the verb at all.
       const rvTok = /^reviewer:(.+)$/;
       const reviewer = (argToks.find((t) => rvTok.test(t)) || '').replace(/^reviewer:/, '') || null;
-      const rest = argToks.filter((t) => t !== 'park' && t !== 'start' && !rvTok.test(t));
-      return { type: 'task', sub, who: rest[0] || null, id: null, park, start, reviewer, body };
+      const rest = argToks.filter((t) => t !== 'park' && t !== 'start' && t !== 'dup' && !rvTok.test(t));
+      return { type: 'task', sub, who: rest[0] || null, id: null, park, start, dup, reviewer, body };
     }
     if (sub === 'assign') return { type: 'task', sub, id: argToks[0] || null, who: argToks[1] || null, body: '' };
     // t80: list carries an optional state filter from the bracket. Updated here
