@@ -8419,6 +8419,111 @@ body.web-frontend #sidebar-header {
   white-space: pre-wrap;
   padding: var(--sp-1) 0;
 }
+.tr-sender-app .tr-sender-glyph {
+  background: none;
+  width: auto;
+  border-radius: 0;
+  font-weight: 400;
+  color: var(--text-tertiary);
+}
+.tr-sender-app .tr-sender-name {
+  font-family: var(--font-ui);
+}
+.tr-reply-attached {
+  margin-top: calc(-1 * var(--sp-1));
+  padding-left: calc(var(--sp-2) + var(--sp-3));
+  background: none;
+}
+.tr-reply-lead {
+  color: var(--text-tertiary);
+  margin-right: 0.35em;
+}
+.tr-segs {
+  white-space: normal;
+}
+.tr-seg-prose {
+  white-space: pre-wrap;
+}
+.tr-seg-prose + .intent-stack,
+.intent-stack + .tr-seg-prose {
+  margin-top: var(--sp-2);
+}
+.intent-stack {
+  background: var(--surface-raised);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.intent-card {
+  padding: var(--sp-1) var(--sp-2);
+}
+.intent-card + .intent-card {
+  border-top: 1px solid var(--border);
+}
+.intent-card-inert {
+  border-left: 2px solid var(--warn);
+}
+.intent-card-filed {
+  border-left: 2px solid var(--info);
+}
+.intent-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-family: var(--font-ui);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.intent-card-glyph {
+  color: var(--text-secondary);
+  min-width: 1em;
+  text-align: center;
+}
+.intent-card-label {
+  font-weight: 600;
+}
+.intent-card-target {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.intent-chip {
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0 var(--sp-1);
+}
+.intent-card-state {
+  margin-left: auto;
+  color: var(--warn);
+}
+.intent-card-body {
+  white-space: pre-wrap;
+  margin-left: calc(1em + var(--sp-2));
+  color: var(--text-secondary);
+}
+.intent-card-body-mono,
+.intent-card-raw {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+.intent-card-raw {
+  white-space: pre-wrap;
+  color: var(--text-secondary);
+}
+.intent-card-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  cursor: pointer;
+}
+.intent-card-more {
+  margin-left: calc(1em + var(--sp-2));
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
 .tr-tool {
   display: flex;
   align-items: center;
@@ -24659,8 +24764,7 @@ ${i3.join("\n")}
         terminal: "\u25A4",
         team: "\u229E",
         "clodex-team": "\u229E",
-        wirescope: "\u223F",
-        clodex: "\u25C6"
+        wirescope: "\u223F"
       };
       var SEAT_SHAPE = /^([A-Za-z0-9]+)-([A-Za-z]+)((?:-\d+)?(?:-r\d+)?)$/;
       function systemGlyph(name) {
@@ -28296,6 +28400,148 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // intent-glyphs.js
+  var require_intent_glyphs = __commonJS({
+    "intent-glyphs.js"(exports, module) {
+      "use strict";
+      var PLUGIN_GLYPH = "\u25C7";
+      var INERT = Object.freeze({ glyph: "\u2298", label: "won't fire" });
+      var g = (glyph, label) => Object.freeze({ glyph, label });
+      var CONTEXT = { compact: g("\u229F", "compact"), clear: g("\u232B", "clear"), reload: g("\u21BA", "reload") };
+      var SCRATCH = { begin: g("\u231C", "scratch"), end: g("\u231F", "result"), rewind: g("\u21E4", "rewind"), mark: g("\u2316", "mark"), cancel: g("\u2297", "cancel") };
+      var TASK = {
+        assign: g("\u21E5", "assign"),
+        start: g("\u21C4", "start"),
+        park: g("\u2016", "park"),
+        respec: g("\u270E", "respec"),
+        reject: g("\u21B6", "reject"),
+        cancel: g("\u2297", "cancel"),
+        accept: g("\u2913", "accept"),
+        done: g("\u2713", "done"),
+        list: g("\u2261", "tickets")
+      };
+      var CORE = {
+        dm: () => g("\u2192", "message"),
+        resend: () => g("\u21C9", "resend"),
+        who: () => g("\u25CE", "who"),
+        name: () => g("@", "name"),
+        context: (i) => CONTEXT[i.sub] || g("\u229F", String(i.sub || "context")),
+        scratch: (i) => SCRATCH[i.sub] || g("\u231C", String(i.sub || "scratch")),
+        memory: (i) => g("\u25C8", String(i.sub || "memory")),
+        file: () => g("\u25A2", "show"),
+        term: () => g("\u25A4", "terminal"),
+        exec: () => g("\u25B8", "run"),
+        remind: (i) => {
+          const word = String(i.spec || "").split(/\s+/)[0];
+          if (word === "list") return g("\u25F7", "reminders");
+          if (word === "cancel") return g("\u25F7", "unremind");
+          return g("\u25F7", "remind");
+        },
+        shout: () => g("\u2691", "shout"),
+        "team-review": () => g("\u25D0", "review"),
+        "review-done": () => g("\u22A8", "verdict"),
+        reboot: () => g("\u21BB", "reboot"),
+        task: (i) => i.sub === "add" ? g("\u2295", i.start ? "dispatch" : "file") : TASK[i.sub] || g("\u21C4", String(i.sub || "task")),
+        "team-create": () => g("\u229E", "create"),
+        team: (i) => g("\u229E", String(i.sub || "team")),
+        spawn: () => g("\u2726", "spawn")
+      };
+      var REPLY_GLYPHS = Object.freeze({
+        dm: g("\u2192", "message"),
+        resend: g("\u21C9", "resend"),
+        who: g("\u25CE", "who"),
+        name: g("@", "name"),
+        context: g("\u229F", "context"),
+        scratch: g("\u231C", "scratch"),
+        memory: g("\u25C8", "memory"),
+        file: g("\u25A2", "show"),
+        term: g("\u25A4", "terminal"),
+        exec: g("\u25B8", "run"),
+        remind: g("\u25F7", "remind"),
+        shout: g("\u2691", "shout"),
+        "team-review": g("\u25D0", "review"),
+        "review-done": g("\u22A8", "verdict"),
+        reboot: g("\u21BB", "reboot"),
+        task: g("\u21C4", "task"),
+        "team-create": g("\u229E", "team"),
+        team: g("\u229E", "team"),
+        spawn: g("\u2726", "spawn"),
+        intent: g("\u2298", "bounced"),
+        peers: g("\u21E2", "peers")
+      });
+      var CORE_GLYPHS = /* @__PURE__ */ new Set([
+        PLUGIN_GLYPH,
+        INERT.glyph,
+        ...Object.values(CONTEXT).map((x) => x.glyph),
+        ...Object.values(SCRATCH).map((x) => x.glyph),
+        ...Object.values(TASK).map((x) => x.glyph),
+        ...Object.values(REPLY_GLYPHS).map((x) => x.glyph),
+        "\u2295"
+      ]);
+      function isPlainGlyph(s) {
+        return typeof s === "string" && Array.from(s).length === 1 && !new RegExp("\\p{Emoji}", "u").test(s) && !new RegExp("\\p{Extended_Pictographic}", "u").test(s);
+      }
+      function pluginGlyphOk(s) {
+        return isPlainGlyph(s) && !CORE_GLYPHS.has(s);
+      }
+      function glyphFor(intent, pluginRow) {
+        const type = intent && intent.type;
+        if (Object.prototype.hasOwnProperty.call(CORE, type)) return CORE[type](intent);
+        return g(pluginRow && pluginRow.glyph || PLUGIN_GLYPH, String(type || ""));
+      }
+      function replyGlyphFor(verb, pluginRow) {
+        if (Object.prototype.hasOwnProperty.call(REPLY_GLYPHS, verb)) return REPLY_GLYPHS[verb];
+        return g(pluginRow && pluginRow.glyph || PLUGIN_GLYPH, String(verb || ""));
+      }
+      var str = (v) => typeof v === "string" && v ? v : null;
+      var TEAM_TARGET_KEYS = ["name", "stem", "branch"];
+      var TEAM_SKIP = /* @__PURE__ */ new Set(["type", "sub", "body", ...TEAM_TARGET_KEYS]);
+      function kvChips(intent) {
+        return Object.keys(intent).filter((k) => !TEAM_SKIP.has(k) && intent[k] != null && intent[k] !== "" && intent[k] !== false).map((k) => `${k}:${intent[k]}`);
+      }
+      function targetAndChips(intent) {
+        switch (intent.type) {
+          case "dm":
+            return [str(intent.target), intent.urgent ? ["urgent"] : []];
+          case "task": {
+            const chips = ["start", "park", "dup"].filter((k) => intent[k] === true);
+            if (str(intent.reviewer)) chips.push(`reviewer:${intent.reviewer}`);
+            return [str(intent.id) || str(intent.who), chips];
+          }
+          case "exec":
+            return [str(intent.cmd), []];
+          case "remind": {
+            const spec = str(intent.spec);
+            const rest = spec && spec.replace(/^(list|cancel)\b\s*/, "");
+            return [rest || null, []];
+          }
+          case "file":
+            return [str(intent.path), intent.sub && intent.sub !== "view" ? [intent.sub] : []];
+          case "team":
+          case "team-create":
+            return [TEAM_TARGET_KEYS.map((k) => str(intent[k])).find(Boolean) || null, kvChips(intent)];
+          case "spawn":
+            return [str(intent.name), []];
+          case "resend":
+            return [str(intent.id), []];
+          case "scratch":
+            return [str(intent.label), []];
+          case "shout":
+            return ["you", []];
+          default:
+            if (Object.prototype.hasOwnProperty.call(CORE, intent.type)) return [null, []];
+            return [str(intent.target) || str(intent.name) || str(intent.id), []];
+        }
+      }
+      function headOf(intent, pluginRow) {
+        const { glyph, label } = glyphFor(intent, pluginRow);
+        const [target, chips] = targetAndChips(intent || {});
+        return { glyph, label, target, chips };
+      }
+      module.exports = { PLUGIN_GLYPH, INERT, REPLY_GLYPHS, CORE_GLYPHS, isPlainGlyph, pluginGlyphOk, glyphFor, replyGlyphFor, headOf };
+    }
+  });
+
   // intent-registry.js
   var require_intent_registry = __commonJS({
     "intent-registry.js"(exports, module) {
@@ -28307,6 +28553,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         withoutPrivilegedIntents
       } = require_intent_catalog();
       var { DEFAULT_PLUGIN_SCOPE, seatHasPlugin } = require_plugin_api();
+      var { PLUGIN_GLYPH, pluginGlyphOk } = require_intent_glyphs();
       function parseDm(cleaned) {
         const m = cleaned.match(/^\[agent:dm\s+(\S+?)(\s+urgent)?\]\s*(.*)/s);
         return m ? { type: "dm", target: m[1], urgent: !!m[2], body: m[3] } : null;
@@ -28549,8 +28796,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (spec.bodyMode != null && typeof spec.bodyMode !== "function") {
           throw new Error(`intent verb "${type}": bodyMode must be a function of the parsed intent`);
         }
+        let glyph = PLUGIN_GLYPH;
+        if (spec.glyph != null) {
+          if (pluginGlyphOk(spec.glyph)) glyph = spec.glyph;
+          else console.warn(`intent verb "${type}": glyph ${JSON.stringify(spec.glyph)} rejected, using ${PLUGIN_GLYPH}`);
+        }
         const row = Object.freeze({
           type,
+          glyph,
           // Wrapped so a plugin's parse can neither throw into the scanner nor return
           // an intent claiming to be some OTHER verb (which would route into a core
           // case in _handleIntent's switch).
@@ -30182,6 +30435,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { rewriteEchoSgr } = require_prompt_echo();
       var { isExternallyOpenable } = require_external_link();
       var OUTPUT_LINE_CAP = 400;
+      var CLAMP_LINES = 2;
+      var CLAMP_CHARS = 240;
       var NOOP = () => {
       };
       var MINUS = "\u2212";
@@ -30265,6 +30520,90 @@ ${m[2].replace(/^\r?\n/, "")}`;
           parent.appendChild(el(doc, "span", `intent-mark intent-mark-${m.kind}`, line.slice(m.span.offset, end)));
           appendLinked(doc, parent, line.slice(end), "", ctx);
         });
+      }
+      function appendPlain(doc, parent, text, ctx) {
+        String(text).split("\n").forEach((line, k) => {
+          if (k) parent.appendChild(doc.createTextNode("\n"));
+          appendLinked(doc, parent, line, "", ctx);
+        });
+      }
+      function filedLink(doc, spill, ctx) {
+        const wrap = el(doc, "span", "intent-card-filed-link");
+        const size = spill.bytes != null ? `${bytesText(spill.bytes)} ` : "";
+        wrap.appendChild(doc.createTextNode(`\u25A2 ${size}filed \xB7 `));
+        const name = spill.title || (spill.path ? baseName(spill.path) : "filed body");
+        if (spill.path) wrap.appendChild(linkNode(doc, { kind: "path", text: name, path: spill.path }, "", ctx));
+        else wrap.appendChild(doc.createTextNode(name));
+        return wrap;
+      }
+      function cardHead(doc, seg, ctx) {
+        const head = el(doc, "div", "intent-card-head");
+        const h = seg.head;
+        head.appendChild(el(doc, "span", "intent-card-glyph", h.glyph));
+        head.appendChild(el(doc, "span", "intent-card-label", h.label));
+        if (h.target) {
+          const target = el(doc, "span", "intent-card-target");
+          if (seg.verb === "file") target.appendChild(linkNode(doc, { kind: "path", text: baseName(h.target), path: h.target }, "", ctx));
+          else target.textContent = h.target;
+          head.appendChild(target);
+        }
+        for (const chip of h.chips) head.appendChild(el(doc, "span", "intent-chip", chip));
+        return head;
+      }
+      function cardBody(doc, seg, ctx) {
+        const lines = seg.body.split("\n");
+        const body = el(doc, "div", `intent-card-body${seg.verb === "exec" ? " intent-card-body-mono" : ""}`);
+        appendPlain(doc, body, seg.body, ctx);
+        const more = lines.length - CLAMP_LINES;
+        if (more <= 0 && seg.body.length <= CLAMP_CHARS) return [body];
+        body.className += " intent-card-clamped";
+        const foot = el(doc, "div", "intent-card-more", more > 0 ? `+ ${countText(more, "more line", "more lines")}` : "+ more");
+        const expand = () => {
+          body.className = body.className.replace(" intent-card-clamped", "");
+          foot.hidden = true;
+        };
+        foot.addEventListener("click", expand);
+        body.addEventListener("click", expand);
+        return [body, foot];
+      }
+      function intentCard(doc, seg, ctx) {
+        if (seg.kind === "inert") {
+          const card2 = el(doc, "div", "intent-card intent-card-inert");
+          const head = el(doc, "div", "intent-card-head");
+          head.appendChild(el(doc, "span", "intent-card-state", "\u2298 won't fire"));
+          card2.appendChild(head);
+          card2.appendChild(el(doc, "div", "intent-card-raw", seg.text));
+          return card2;
+        }
+        const card = el(doc, "div", `intent-card${seg.state === "filed" ? " intent-card-filed" : ""}`);
+        card.dataset.verb = seg.verb;
+        card.appendChild(cardHead(doc, seg, ctx));
+        if (seg.state === "filed" && seg.spill) {
+          const row = el(doc, "div", "intent-card-body");
+          row.appendChild(filedLink(doc, seg.spill, ctx));
+          card.appendChild(row);
+        } else if (seg.body) {
+          for (const n of cardBody(doc, seg, ctx)) card.appendChild(n);
+        }
+        return card;
+      }
+      function appendSegments(doc, row, segs, ctx) {
+        let stack = null;
+        for (const seg of segs) {
+          if (seg.kind === "intent" || seg.kind === "inert") {
+            if (!stack) {
+              stack = el(doc, "div", "intent-stack");
+              row.appendChild(stack);
+            }
+            stack.appendChild(intentCard(doc, seg, ctx));
+            continue;
+          }
+          stack = null;
+          const prose = el(doc, "div", "tr-seg-prose");
+          if (seg.spill) prose.appendChild(filedLink(doc, seg.spill, ctx));
+          else appendPlain(doc, prose, seg.text, ctx);
+          row.appendChild(prose);
+        }
       }
       function clock(ts) {
         if (typeof ts !== "number") return "";
@@ -30378,6 +30717,19 @@ ${m[2].replace(/^\r?\n/, "")}`;
         badge.appendChild(el(doc, "span", "tr-sender-name", label));
         return badge;
       }
+      function replyRow(doc, rec, ctx, attached) {
+        const row = headRow(doc, `tr-reply${attached ? " tr-reply-attached" : ""}`, rec);
+        const text = el(doc, "span", "tr-head-text");
+        if (attached) text.appendChild(el(doc, "span", "tr-reply-lead", "\u21B3"));
+        const badge = el(doc, "span", "tr-sender tr-sender-app");
+        badge.title = "Clodex runtime";
+        badge.appendChild(el(doc, "span", "tr-sender-glyph", rec.glyph));
+        badge.appendChild(el(doc, "span", "tr-sender-name", rec.label));
+        text.appendChild(badge);
+        appendPlain(doc, text, rec.text, ctx);
+        row.appendChild(text);
+        return withTime(doc, row, rec);
+      }
       function inboundRow(doc, rec, ctx) {
         const row = headRow(doc, "tr-inbound", rec);
         const text = el(doc, "span", "tr-head-text");
@@ -30400,12 +30752,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
         row.appendChild(span);
         return row;
       }
-      function buildRow(doc, rec, ctx) {
+      function buildRow(doc, rec, ctx, attached) {
         switch (rec.kind) {
           case "prompt":
             return promptRow(doc, rec, ctx);
           case "inbound":
             return inboundRow(doc, rec, ctx);
+          case "reply":
+            return replyRow(doc, rec, ctx, attached);
           case "notification": {
             const row = headRow(doc, "tr-notification", rec);
             row.appendChild(el(doc, "span", "tr-head-text", rec.text));
@@ -30424,9 +30778,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           case "assistant": {
             if (rec.apiError) return noticeRow(doc, rec, "error", rec.text, ctx);
-            const row = el(doc, "div", "tr-row tr-prose");
+            const row = el(doc, "div", `tr-row tr-prose${rec.segments ? " tr-segs" : ""}`);
             row.dataset.id = rec.id;
-            appendProse(doc, row, rec.text, ctx);
+            if (rec.segments) appendSegments(doc, row, rec.segments, ctx);
+            else appendProse(doc, row, rec.text, ctx);
             return row;
           }
           case "tool":
@@ -30507,6 +30862,41 @@ ${m[2].replace(/^\r?\n/, "")}`;
           cache.delete(key);
         }
       }
+      function tally(verbs) {
+        const m = /* @__PURE__ */ new Map();
+        for (const v of verbs) m.set(v, (m.get(v) || 0) + 1);
+        return m;
+      }
+      function attachedReplies(records) {
+        const out = /* @__PURE__ */ new Set();
+        let cards = null;
+        let replies = [];
+        const settle = () => {
+          if (cards && replies.length) {
+            const want = tally(cards.verbs);
+            const got = tally(replies.map((r) => r.verb));
+            for (const r of replies) if (want.get(r.verb) === got.get(r.verb)) out.add(r.id);
+          }
+          cards = null;
+          replies = [];
+        };
+        for (const r of records) {
+          if (r.kind === "tool" || r.kind === "turn-end") continue;
+          if (r.kind === "reply") {
+            if (cards) replies.push(r);
+            continue;
+          }
+          if (replies.length) settle();
+          if (r.kind === "assistant" && Array.isArray(r.segments)) {
+            const verbs = r.segments.filter((s) => s.kind === "intent").map((s) => s.verb);
+            cards = cards && cards.turn === r.turn ? { turn: r.turn, verbs: cards.verbs.concat(verbs) } : { turn: r.turn, verbs };
+            continue;
+          }
+          cards = null;
+        }
+        settle();
+        return out;
+      }
       function groupTurns(records) {
         const turns = [];
         for (const r of records) {
@@ -30519,18 +30909,22 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function createTranscriptRows(doc, paneEl, ctx = {}) {
         const deps = { seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, ...ctx };
         const turnCache = /* @__PURE__ */ new Map();
-        function rowItems(records) {
+        function rowItems(records, attached) {
           const items = [];
           for (const r of records) {
             if (r.kind === "turn-end") continue;
-            items.push({ key: r.id, sig: JSON.stringify(r) + (r.kind === "command-output" ? JSON.stringify(resolvePalette(deps) || null) : ""), build: () => buildRow(doc, r, deps) || el(doc, "div", "tr-row") });
+            const att = attached.has(r.id);
+            const extra = r.kind === "command-output" ? JSON.stringify(resolvePalette(deps) || null) : att ? "|attached" : "";
+            items.push({ key: r.id, sig: JSON.stringify(r) + extra, build: () => buildRow(doc, r, deps, att) || el(doc, "div", "tr-row") });
           }
           const footer = footerOf(records);
           if (footer) items.push({ key: "footer", sig: JSON.stringify(footer), build: () => buildFooter(doc, footer, deps) });
           return items;
         }
         function render(records) {
-          const items = groupTurns(Array.isArray(records) ? records : []).map((t) => ({
+          const list = Array.isArray(records) ? records : [];
+          const attached = attachedReplies(list);
+          const items = groupTurns(list).map((t) => ({
             key: t.key,
             sig: "",
             build: () => {
@@ -30540,14 +30934,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
             },
             after: (c) => {
               if (!c.sub) c.sub = /* @__PURE__ */ new Map();
-              reconcile(c.el, c.sub, rowItems(t.records));
+              reconcile(c.el, c.sub, rowItems(t.records, attached));
             }
           }));
           reconcile(paneEl, turnCache, items);
         }
         return { render };
       }
-      module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, createTranscriptRows };
+      module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows };
     }
   });
 
