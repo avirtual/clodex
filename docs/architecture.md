@@ -1166,8 +1166,24 @@ Own state + DOM, `init*(deps)`:
   misplaces the span. Disposed BEFORE its terminal.
 - **inbox-drawer.js** — operator inbox for `[agent:shout]` notes +
   the sidebar-footer unread badge; no core state, but takes `openFilePeek`
-  and `showToast` by injection so a link in a note lands in the same peek
-  modal and toasts the same miss a path click in the terminal does.
+  and `showToast` by injection so a link in a note lands in the same side
+  pane and toasts the same miss a path click in the terminal does.
+- **side-pane.js** — the right-side file pane beside `#terminal-container`
+  inside `#work-row`: per-seat tab sets (memory-only), the drag handle with a
+  150 ms apply throttle (the terminal refits through the existing
+  `ResizeObserver` → `refitActiveTerminal`, never on its own), `sidePaneWidth`
+  persistence, and the agent-edit refresh rules fed by `noteFiles` (the
+  `onSessionFiles` push) and by an mtime revalidation whenever a tab becomes
+  visible. Every `openFilePeek` caller lands here.
+- **file-tab.js** — one file tab's DOM: the Diff / File / Edit views, the
+  save button and the agent-changed banner. The git diff is still rendered
+  through `renderDiffHtml` into `innerHTML`; the file view is built with DOM
+  nodes.
+- **lib/side-pane-tabs.js** — the pure tab reducer behind `side-pane.js`
+  (preview / permanent / dedupe, the 12-tab LRU cap, the agent-edit matrix),
+  plus `peekEditable` (the truncation guard) and `saveArgs` (the save always
+  sends the mtime of the read the buffer came from). Tested by
+  `test/side-pane-tabs.test.js`.
 - **voice-control.js** — the voice-mode state machine (off · tap · hold),
   reading `voice-settings.js` over `getVoiceMode` and writing the settings file
   over `setVoiceMode`, which routes through the manager's `voiceMode` so the

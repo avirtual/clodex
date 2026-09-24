@@ -431,14 +431,14 @@ test('side-pane width: sidePaneWidth persists as an integer or not at all', () =
     registryDir: path.join(dir, 'registry'),
     resourcesDir: path.join(dir, '__no_seed__'),
   }).uiSettings;
-  const dir = mkTmpRoot('clodex-sidepane-');
+  const dir = mkTmpRoot('clodex-uisettings-');
   assert.strictEqual(open(dir).get().sidePaneWidth, null);
   const ui = open(dir);
   ui.set({ sidePaneWidth: 480 });
   assert.strictEqual(open(dir).get().sidePaneWidth, 480);
   ui.set({ theme: 'midnight' });
   assert.strictEqual(open(dir).get().sidePaneWidth, 480);
-  const bad = mkTmpRoot('clodex-sidepane-');
+  const bad = mkTmpRoot('clodex-uisettings-');
   fs.writeFileSync(path.join(bad, 'ui-settings.json'), JSON.stringify({ sidePaneWidth: 'wide' }), { mode: 0o600 });
   assert.strictEqual(open(bad).get().sidePaneWidth, null);
 });
