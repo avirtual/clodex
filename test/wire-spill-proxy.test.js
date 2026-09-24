@@ -970,3 +970,121 @@ test('t1146 (p4): a gap over 60 minutes on the injected clock is a cold boundary
     assert.deepStrictEqual(events['spill-cut'].map(pickCut), [{ sticky: 0, expanded: 2 }, { sticky: 2, expanded: 3 }, { sticky: 0, expanded: 2 }]);
   });
 });
+
+function fakeShownStore(opts = {}) {
+  const store = {
+    saved: {},
+    saves: 0,
+    load: () => JSON.parse(JSON.stringify(store.saved)),
+    save: (records) => {
+      store.saves += 1;
+      if (opts.throwOnSave) throw new Error('disk full');
+      store.saved = JSON.parse(JSON.stringify(records));
+    },
+  };
+  return store;
+}
+
+async function twoRequestsThenRestart(root, store, clock) {
+  const { bodies: [A, B, C, D], bodyOf } = stickyFixture(root);
+  const first = await withProxy({ proxyOpts: { now: () => clock.t, spillShownStore: store } }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
+    const events = collect(proxy, ['spill-cut', 'turn.completed']);
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C]));
+    assert.ok(await whenEvent(events, 'turn.completed', 1));
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C, D]));
+    assert.ok(await whenEvent(events, 'turn.completed', 2));
+    return events['spill-cut'].map(pickCut);
+  });
+  return { first, bodyOf, all: [A, B, C, D] };
+}
+
+async function afterRestart(root, store, clock, body) {
+  return withProxy({ proxyOpts: { now: () => clock.t, spillShownStore: store } }, async (proxy, up) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
+    const events = collect(proxy, ['spill-cut', 'turn.completed']);
+    await request(proxy.port, '/agent/tester/v1/messages', body);
+    assert.ok(await whenEvent(events, 'turn.completed', 1));
+    return { cuts: events['spill-cut'].map(pickCut), upstream: JSON.parse(up.seen.requests[0].body.toString('utf8')) };
+  });
+}
+
+test('t1167 (a): a restart inside the TTL with the same session keeps the sticky set — sticky 3, nothing collapses', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const store = fakeShownStore();
+  const clock = { t: 1_000_000 };
+  const { first, bodyOf, all } = await twoRequestsThenRestart(root, store, clock);
+  assert.deepStrictEqual(first, [{ sticky: 0, expanded: 2 }, { sticky: 2, expanded: 3 }]);
+  assert.deepStrictEqual(store.saved.tester.shown.length, 3, 'ENTER: the set reached the store');
+  const { cuts, upstream } = await afterRestart(root, store, clock, bodyOf(all));
+  assert.deepStrictEqual(cuts, [{ sticky: 3, expanded: 3 }]);
+  assert.deepStrictEqual(upstream.messages.filter((m) => m.role === 'assistant').map((m) => m.content[0].text), [
+    `[agent:task done t1]\n${SPILLED_BODY_FIRST}\n[agent:end]\n`,
+    `[agent:task done t1]\nB ${BIG}\n[agent:end]\n`,
+    `[agent:task done t1]\nC ${BIG}\n[agent:end]\n`,
+    `[agent:task done t1]\nD ${BIG}\n[agent:end]\n`,
+  ]);
+});
+
+test('t1167 (b): a restart after the TTL lapsed on the loaded lastAt resets — sticky 0, expanded 2', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const store = fakeShownStore();
+  const clock = { t: 1_000_000 };
+  const { first, bodyOf, all } = await twoRequestsThenRestart(root, store, clock);
+  assert.deepStrictEqual(first, [{ sticky: 0, expanded: 2 }, { sticky: 2, expanded: 3 }]);
+  clock.t = store.saved.tester.lastAt + 60 * 60 * 1000 + 1;
+  const { cuts } = await afterRestart(root, store, clock, bodyOf(all));
+  assert.deepStrictEqual(cuts, [{ sticky: 0, expanded: 2 }]);
+});
+
+test('t1167 (c): a compact completed before the restart is still a cold boundary — sticky 0', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const store = fakeShownStore();
+  const clock = { t: 1_000_000 };
+  const { bodies: [A, B, C, D], bodyOf } = stickyFixture(root);
+  await withProxy({ proxyOpts: { now: () => clock.t, spillShownStore: store } }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
+    const events = collect(proxy, ['spill-cut', 'turn.completed']);
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C]));
+    assert.ok(await whenEvent(events, 'turn.completed', 1));
+    await request(proxy.port, '/agent/tester/v1/messages', compactBody());
+    assert.ok(await whenEvent(events, 'turn.completed', 2));
+    assert.equal(events['turn.completed'][1].compact, true, 'ENTER: the middle request is the compact call');
+  });
+  const { cuts } = await afterRestart(root, store, clock, bodyOf([A, B, C, D]));
+  assert.deepStrictEqual(cuts, [{ sticky: 0, expanded: 2 }]);
+});
+
+test('t1167 (d): unregisterAgent removes the agent record from the store', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const store = fakeShownStore();
+  const clock = { t: 1_000_000 };
+  const { bodies: [A, B, C], bodyOf } = stickyFixture(root);
+  await withProxy({ proxyOpts: { now: () => clock.t, spillShownStore: store } }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
+    const events = collect(proxy, ['turn.completed']);
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C]));
+    assert.ok(await whenEvent(events, 'turn.completed', 1));
+    assert.ok(store.saved.tester, 'ENTER: the record was saved');
+    proxy.unregisterAgent('tester');
+    assert.ok(!Object.prototype.hasOwnProperty.call(store.saved, 'tester'));
+  });
+});
+
+test('t1167 (e): a store whose save throws never reaches the request path — forwarded, cut, onError once', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const store = fakeShownStore({ throwOnSave: true });
+  const errors = [];
+  const { bodies: [A, B, C], bodyOf } = stickyFixture(root);
+  await withProxy({ proxyOpts: { spillShownStore: store, onSpillShownError: (m) => errors.push(m) } }, async (proxy, up) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
+    const events = collect(proxy, ['spill-cut', 'spill-cut-error', 'turn.completed']);
+    const res = await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C]));
+    assert.equal(res.status, 200);
+    assert.ok(await whenEvent(events, 'turn.completed', 1));
+    assert.equal(up.seen.requests.length, 1);
+    assert.deepStrictEqual(events['spill-cut'].map(pickCut), [{ sticky: 0, expanded: 2 }]);
+    assert.deepStrictEqual(errors, ['disk full']);
+    assert.deepStrictEqual(events['spill-cut-error'], []);
+  });
+});

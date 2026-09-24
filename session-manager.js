@@ -979,10 +979,22 @@ function createSessionManager(deps) {
         }
       }
       this._holdKeeper = hold;
+      let spillShownStore = null;
+      try {
+        const { SpillShownStore } = require('./wire/spill-shown-store');
+        spillShownStore = new SpillShownStore({
+          path: path.join(getUserDataPath(), 'wire-spill-shown.json'),
+          onError: (message) => this._shadowLog({ type: 'wire-spill-shown-store-error', error: message }),
+        });
+      } catch (e) {
+        this._shadowLog({ type: 'wire-spill-shown-store-error', error: e.message });
+      }
       const wire = new WireProxy({
         requireTokens: true,
         warmth,
         hold,
+        spillShownStore,
+        onSpillShownError: (message) => this._shadowLog({ type: 'wire-spill-shown-store-error', error: message }),
         spillEnabled: () => getUiSettings().get().intentSpill === 'on',
       });
       // Account plan quota rides the `anthropic-ratelimit-unified-*` response
@@ -5000,7 +5012,7 @@ function createSessionManager(deps) {
       // instead: drainPending compares the `born` stamp, and a MINT regenerates the
       // prompt unconditionally. Residue for a never-recreated name is a few small
       // files and is harmless.
-      if (this._wire) { try { this._wire.unregisterAgent(name); } catch {} }
+      if (this._wire) { try { this._wire.unregisterAgent(name, { keepSpillShown: s._shuttingDown === true }); } catch {} }
       // AFTER the watcher stop, and the order is the whole of it: stop() calls
       // _flushPending(), which re-enters _maybeSpeak and can START a narration.
       // Stopping the speaker first therefore leaves a dead seat talking, which

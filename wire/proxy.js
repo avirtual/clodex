@@ -141,6 +141,17 @@ class WireProxy extends EventEmitter {
     this._agentUpstreams = new Map(); // agent name → { provider: baseUrl } overrides
     this._agentSpill = new Map();
     this._agentSpillShown = new Map();
+    this.spillShownStore = opts.spillShownStore || null;
+    this._onSpillShownError = typeof opts.onSpillShownError === 'function' ? opts.onSpillShownError : () => {};
+    this._spillShownRecords = {};
+    if (this.spillShownStore) {
+      try {
+        const loaded = this.spillShownStore.load();
+        if (loaded && typeof loaded === 'object') this._spillShownRecords = { ...loaded };
+      } catch (e) {
+        this._onSpillShownError(e.message);
+      }
+    }
     this._voiceSinks = new Set();
     this.now = typeof opts.now === 'function' ? opts.now : Date.now;
     this._roles = new RoleClassifier();
@@ -184,7 +195,10 @@ class WireProxy extends EventEmitter {
       this._agentSpill.set(name, { ...opts.spill, examples });
     }
     else this._agentSpill.delete(name);
-    this._agentSpillShown.set(name, { shown: new Set(), sessionId: null, lastAt: 0, compacted: false });
+    const rec = this._spillShownRecords[name];
+    this._agentSpillShown.set(name, rec && Array.isArray(rec.shown)
+      ? { shown: new Set(rec.shown), sessionId: rec.sessionId ?? null, lastAt: Number(rec.lastAt) || 0, compacted: false }
+      : { shown: new Set(), sessionId: null, lastAt: 0, compacted: false });
     if (opts.voiceSink === true) this._voiceSinks.add(name);
     else this._voiceSinks.delete(name);
     if (this.requireTokens) {
@@ -195,11 +209,12 @@ class WireProxy extends EventEmitter {
     return `http://${this.host}:${this.port}/agent/${name}`;
   }
 
-  unregisterAgent(name) {
+  unregisterAgent(name, opts = {}) {
     this._tokens.delete(name);
     this._agentUpstreams.delete(name);
     this._agentSpill.delete(name);
     this._agentSpillShown.delete(name);
+    if (!opts.keepSpillShown) this._dropSpillShownRecord(name);
     this._voiceSinks.delete(name);
     const sid = this._agentSessions.get(name);
     if (sid) this._roles.forgetSession(sid);
@@ -227,6 +242,28 @@ class WireProxy extends EventEmitter {
     st.sessionId = sessionId;
     st.lastAt = now;
     return st.shown;
+  }
+
+  _saveSpillShown() {
+    if (!this.spillShownStore) return;
+    try {
+      this.spillShownStore.save(this._spillShownRecords);
+    } catch (e) {
+      this._onSpillShownError(e.message);
+    }
+  }
+
+  _persistSpillShown(agent) {
+    const st = this._agentSpillShown.get(agent);
+    if (!st || !this.spillShownStore) return;
+    this._spillShownRecords[agent] = { shown: [...st.shown], sessionId: st.sessionId, lastAt: st.lastAt };
+    this._saveSpillShown();
+  }
+
+  _dropSpillShownRecord(agent) {
+    if (!Object.prototype.hasOwnProperty.call(this._spillShownRecords, agent)) return;
+    delete this._spillShownRecords[agent];
+    this._saveSpillShown();
   }
 
   // Main-line identity binding: only called for parent/unknown non-side-call
@@ -331,15 +368,18 @@ class WireProxy extends EventEmitter {
         if (provider === 'anthropic' && Array.isArray(obj.messages) && this.spillCut()) {
           let r = null;
           let sticky = 0;
+          let shownTouched = false;
           try {
             const cutCfg = this._agentSpill.get(agent);
             const shown = this._spillShownFor(agent, obj);
+            shownTouched = true;
             sticky = shown.size;
             r = cutSpillStubs(obj, cutCfg ? { root: cutCfg.root, agent, examples: cutCfg.examples, sticky: shown } : { root: null, agent: null });
             for (const key of r.expanded) shown.add(key);
           } catch (e) {
             this.emit('spill-cut-error', { agent, reqId, error: e.message });
           }
+          if (shownTouched) this._persistSpillShown(agent);
           if (r && r.cut) {
             body = Buffer.from(JSON.stringify(obj), 'utf8');
             this.emit('spill-cut', { agent, reqId, ...r, sticky, expanded: r.expanded.length });
@@ -666,6 +706,7 @@ class WireProxy extends EventEmitter {
               if (compactCall === true) {
                 const shownState = this._agentSpillShown.get(agent);
                 if (shownState) shownState.compacted = true;
+                this._dropSpillShownRecord(agent);
               }
               this.emit('turn.completed', {
                 agent, provider, reqId, sessionId, role, sideCall, compact: compactCall === true, text,
