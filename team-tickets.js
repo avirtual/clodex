@@ -937,10 +937,15 @@ function createTicketMethods(deps, shared) {
       const reviewer = { live: [], last: null };
       for (const t of tickets) {
         if (t.loopStep !== 'verify' || t.verifyHold) continue;
+        const landedRounds = Number(t.reviewRound) || 0;
+        const round = landedRounds + 1;
+        const num = /^t?(\d+)$/.exec(String(t.id));
+        const scoped = num ? `${team.name}-reviewer-${num[1]}-r${round}` : null;
+        const live = scoped ? this.sessions.get(scoped) : null;
         reviewer.live.push({
           ticket: t.id,
-          round: (Number(t.reviewRound) || 0) + 1,
-          seat: this._liveReviewerSeat(team, t),
+          round,
+          seat: (live && live.agentType && !live._dead) ? scoped : null,
         });
       }
       for (const t of tickets) {
@@ -6304,8 +6309,8 @@ function createTicketMethods(deps, shared) {
         if (this._verifyLooped.has(key)) continue;
         this._verifyLooped.add(key);
         if (this._liveReviewerSeat(team, t)) continue;
-        t.nudgedAt = null;
         t.lastActivityAt = Date.now();
+        t.nudgedAt = null;
         resume.push(t.id);
       }
       if (!resume.length) return;
