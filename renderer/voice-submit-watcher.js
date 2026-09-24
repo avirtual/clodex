@@ -119,6 +119,8 @@ const SUBMIT_ABANDON_MS = 8000;
 // being spoken.
 const CONSUMED_IDLE_MS = 90_000;
 
+const VOICE_RELEASE_MS = 2500;
+
 // A composition emits no event this side can subscribe to — compositionupdate
 // goes to xterm's own listener — so the overlay is sampled instead. Well under
 // QUIET_MS: the poll only OBSERVES, and it is the unchanged-for-a-quiet-window
@@ -1572,6 +1574,6 @@ function createVoiceSubmitWatcher(terminal, {
 module.exports = {
   createVoiceSubmitWatcher, readComposition, commitComposition,
   QUIET_MS, ENTER_SETTLE_MS, STOP_SETTLE_MS, SUBMIT_POLL_MS, SUBMIT_ABANDON_MS,
-  COMPOSITION_POLL_MS, CONSUMED_IDLE_MS,
+  COMPOSITION_POLL_MS, CONSUMED_IDLE_MS, VOICE_RELEASE_MS,
   REARM_SETTLE_MS, REARM_ABANDON_MS, SPEECH_ABANDON_MS, VOICE_EVIDENCE_MS,
 };

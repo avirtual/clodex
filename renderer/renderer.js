@@ -64,7 +64,7 @@ const { createInboxDrawer } = require('./inbox-drawer');
 const { createVoiceCore, createVoiceControl } = require('./voice-control');
 const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
-const { createVoiceSubmitWatcher, QUIET_MS: VOICE_QUIET_MS } = require('./voice-submit-watcher');
+const { createVoiceSubmitWatcher, QUIET_MS: VOICE_QUIET_MS, VOICE_RELEASE_MS } = require('./voice-submit-watcher');
 const { createVoiceMirror } = require('./voice-mirror');
 const { attachTriggerSubmit } = require('./lib/composer-voice');
 const { VOICE_ENGINE_NAME } = require('../voice-engine');
@@ -1677,6 +1677,7 @@ function createStreamSeatPane(name, wrapperEl) {
     holdsFire: () => voiceRecordingOn && streamVoiceMode(name, 'tap'),
     onVoiceStop: () => streamVoiceRecord(name, 'stop'),
     quietMs: VOICE_QUIET_MS,
+    releaseMs: VOICE_RELEASE_MS,
   });
   return {
     focus: () => composer.focus(),

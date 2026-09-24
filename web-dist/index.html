@@ -29652,6 +29652,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var SUBMIT_POLL_MS = 100;
       var SUBMIT_ABANDON_MS = 8e3;
       var CONSUMED_IDLE_MS = 9e4;
+      var VOICE_RELEASE_MS = 2500;
       var COMPOSITION_POLL_MS = 300;
       var REARM_SETTLE_MS = 3e3;
       var REARM_ABANDON_MS = 2e4;
@@ -30312,6 +30313,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         SUBMIT_ABANDON_MS,
         COMPOSITION_POLL_MS,
         CONSUMED_IDLE_MS,
+        VOICE_RELEASE_MS,
         REARM_SETTLE_MS,
         REARM_ABANDON_MS,
         SPEECH_ABANDON_MS,
@@ -30485,11 +30487,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
         onVoiceStop = () => {
         },
         quietMs = 0,
+        releaseMs = 0,
         timers = { set: setTimeout, clear: clearTimeout }
       }) {
         const trigger = createComposerTrigger({ getConfig });
         let span = null;
         let quiet = null;
+        let release = null;
         let stopping = false;
         const fire = (fromVoice) => {
           const hit = trigger.check(composer.value);
@@ -30527,6 +30531,27 @@ ${m[2].replace(/^\r?\n/, "")}`;
             voiceFire();
           }, quietMs);
         };
+        const cancelRelease = () => {
+          if (release !== null) {
+            timers.clear(release);
+            release = null;
+          }
+        };
+        const settle = () => {
+          stopping = false;
+          cancelRelease();
+        };
+        const armRelease = () => {
+          cancelRelease();
+          if (!(releaseMs > 0)) return;
+          release = timers.set(() => {
+            release = null;
+            if (!stopping) return;
+            stopping = false;
+            cancelQuiet();
+            fire(true);
+          }, releaseMs);
+        };
         const stopFailed = () => {
           if (!stopping) return;
           stopping = false;
@@ -30540,7 +30565,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             open = false;
           }
           if (!open) {
-            stopping = false;
+            settle();
             fire(true);
             return;
           }
@@ -30556,10 +30581,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (stopped && typeof stopped.then === "function") {
             stopped.then((ok) => {
               if (ok === false) stopFailed();
+              else if (ok === true && stopping) armRelease();
             }, stopFailed);
           }
         };
-        const onInput = () => fire(false);
+        const onInput = () => {
+          if (stopping && trigger.matches(composer.value)) settle();
+          fire(false);
+        };
         composer.addEventListener("input", onInput);
         return {
           check: onInput,
@@ -30571,16 +30600,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
           },
           released() {
             if (!stopping) return;
-            stopping = false;
+            settle();
             cancelQuiet();
             fire(true);
           },
           resetSpan() {
             span = null;
-            stopping = false;
+            settle();
           },
           dispose() {
             cancelQuiet();
+            cancelRelease();
             composer.removeEventListener("input", onInput);
           }
         };
@@ -44932,7 +44962,7 @@ ${detail}` });
       var { createVoiceCore, createVoiceControl } = require_voice_control();
       var { createTermSearch } = require_term_search();
       var { createIntentHighlight } = require_intent_highlight();
-      var { createVoiceSubmitWatcher, QUIET_MS: VOICE_QUIET_MS } = require_voice_submit_watcher();
+      var { createVoiceSubmitWatcher, QUIET_MS: VOICE_QUIET_MS, VOICE_RELEASE_MS } = require_voice_submit_watcher();
       var { createVoiceMirror } = require_voice_mirror();
       var { attachTriggerSubmit } = require_composer_voice();
       var { VOICE_ENGINE_NAME } = require_voice_engine();
@@ -46524,7 +46554,8 @@ ${detail}` });
           onVoiceFire: () => streamVoiceFired(name),
           holdsFire: () => voiceRecordingOn && streamVoiceMode(name, "tap"),
           onVoiceStop: () => streamVoiceRecord(name, "stop"),
-          quietMs: VOICE_QUIET_MS
+          quietMs: VOICE_QUIET_MS,
+          releaseMs: VOICE_RELEASE_MS
         });
         return {
           focus: () => composer.focus(),

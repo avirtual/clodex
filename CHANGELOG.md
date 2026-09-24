@@ -12,6 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+- Stream seat voice, tap mode: a spoken sentence ending in the trigger word now sends by itself even when the recorder's own row never clears, instead of waiting for the next keystroke.
 - Transcript pane: text pasted into a claude seat shows as a `Pasted text #1 · N lines` chip that expands on click, instead of the raw `<pasted_content>` tags.
 - Transcript pane: the typed echo of a slash command (`/compact`, `/cost`) no longer shows as a prompt row; the CLI's own command record and the compact boundary are the row.
 - Stream seat: a message queued while the seat is working no longer shows twice, a re-sent ticket replaces its queued copy instead of adding one, and queued rows show from the first second of a seat's life.
