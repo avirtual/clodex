@@ -12,17 +12,17 @@ predecessor is `role:"system"`, counted in `skipped`.
 
 ## SPILLED_BODY_FIRST
 
-Every over-limit intent body is filed (`SpillFilter._resolve`). The two OLDEST
+Every over-limit intent body is filed (`SpillFilter._resolve`). The two NEWEST
 intent stubs of each request whose spill file resolves (`resolveSpill`) are
 rendered by the cut as the original intent — bare head, the filed body verbatim,
 `[agent:end]` — as examples (Bogdan's rulings 2026-09-23 and 2026-09-24: a seat
 that has only ever seen stand-ins learns the stand-in as the way a body is
 written, and the rule is about the model's window, not host process lifetime).
 A stub whose file is missing, unreadable or too large is not counted. The count
-is per `cutSpillStubs` call and keeps no process state: message order is fixed
-within a transcript, so the same two are expanded on every request until a
-compact drops them (the compact busts the cache anyway) and the next two are
-promoted. A host relaunch grants nothing.
+is per `cutSpillStubs` call and keeps no process state. A host relaunch grants nothing.
+Newest, not oldest: wirescope on the lead seat after t1118 counted 3 of 12 long
+intents typed as the stand-in, all after six stubs had accumulated with the two
+expanded ones the oldest in view.
 
 A loop-minted seat (persistence `ephemeral: true`: a ticket hand, a cold reviewer)
 is registered with `examples: 0`: nothing is expanded, no spill file is read, and
@@ -30,8 +30,8 @@ its first stand-in is `SPILLED_BODY_EPHEMERAL`, because its long bodies come at 
 end of its life, usually the `task done` report, so expanding them teaches nothing.
 
 Of the remaining stubs, the first rendered gets the long form
-`[Runtime note: Clodex carries your two oldest long intent bodies in full as
-examples and replaces later ones with this note; this body was delivered and
+`[Runtime note: Clodex carries your two newest long intent bodies in full as
+examples and replaces earlier ones with this note; this body was delivered and
 filed in full. Every new intent still needs its complete body; never write this
 note.]`, every later one `SPILLED_BODY`. Both literals are the `spilled` mimic kind and both
 are refused as a typed body (`spilledBodyOf`), on the same bounce path.

@@ -40,8 +40,8 @@ test('the checkbox exists in the prefs markup with the wording the ticket fixed'
     'no checkbox means the store key stays unreachable, which is the state before this ticket');
   assert.match(html, /<span>Spill long intent bodies to files<\/span>/);
   assert.match(html, /Claude seats only; on by default, and a change applies to every running seat from its next turn\./);
-  assert.match(html, /every long body is filed, and each request carries the two oldest in full as examples; every later one appears in the transcript as the intent head, a bracketed runtime note and <code>\[agent:end\]<\/code>, the model sees only the ordinary confirmation/,
-    'every body is filed, the two oldest ride in full per request and later ones render as the intent around a runtime note, and the hint must say exactly that');
+  assert.match(html, /every long body is filed, and each request carries the two newest in full as examples; every earlier one appears in the transcript as the intent head, a bracketed runtime note and <code>\[agent:end\]<\/code>, the model sees only the ordinary confirmation/,
+    'every body is filed, the two newest ride in full per request and earlier ones render as the intent around a runtime note, and the hint must say exactly that');
   assert.ok(!/receipt|Runtime note|filler/.test(html.slice(html.indexOf('prefs-intent-spill') - 1200, html.indexOf('prefs-intent-spill') + 400)),
     'the receipt and the filler no longer exist, so the hint must not describe either');
   assert.match(html, /Ticket specs and reports, messages between seats, operator notes and context handoffs over 800 bytes/,
@@ -91,7 +91,7 @@ test('saving the spill box does not disturb the pref it was modelled on', () => 
 test('the web bundle carries the same three halves as the renderer source', () => {
   const bundle = fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8');
   assert.ok(bundle.includes('id="prefs-intent-spill"'));
-  assert.match(bundle, /every later one appears in the transcript as the intent head, a bracketed runtime note and <code>\[agent:end\]<\/code>, the model sees only the ordinary confirmation, and the terminal shows the filed path \(clickable\)/,
+  assert.match(bundle, /every earlier one appears in the transcript as the intent head, a bracketed runtime note and <code>\[agent:end\]<\/code>, the model sees only the ordinary confirmation, and the terminal shows the filed path \(clickable\)/,
     'a rebuild is owed whenever the hint text moves, or the web operator reads the old promise');
   assert.match(bundle, /prefsIntentSpill = document\.getElementById\("prefs-intent-spill"\)/);
   assert.match(bundle, /intentSpill: prefsIntentSpill/);

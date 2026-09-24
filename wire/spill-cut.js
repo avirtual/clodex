@@ -38,17 +38,36 @@ function classifyLine(line) {
   return { kind: 0 };
 }
 
-function expansionOf(line, state) {
-  if (state.expanded >= state.examples || !state.root || !state.agent) return null;
+function bodyOf(line, root, agent) {
+  if (!root || !agent) return null;
   const t = cleanLine(line).trim();
   const m = HEAD_RE.exec(t);
   if (!m) return null;
   const p = pointerMatch(t.slice(m[0].length).trim());
   if (!p) return null;
-  const r = resolveSpill(state.root, state.agent, p.id);
-  if (!r.ok) return null;
-  state.expanded += 1;
-  return [m[0], r.body];
+  const r = resolveSpill(root, agent, p.id);
+  return r.ok ? [m[0], r.body] : null;
+}
+
+function collectStubs(messages, root, agent) {
+  const stubs = [];
+  for (const msg of messages) {
+    if (!msg || msg.role !== 'assistant' || !hasNeedle(msg)) continue;
+    for (const b of msg.content) {
+      if (!b || b.type !== 'text' || typeof b.text !== 'string') continue;
+      for (const line of b.text.split('\n')) {
+        if (classifyLine(line).kind === 2) stubs.push(bodyOf(line, root, agent));
+      }
+    }
+  }
+  return stubs;
+}
+
+function expansionOf(state) {
+  const full = state.stubs[state.next++] || null;
+  if (!full) return null;
+  const ordinal = state.resolved++;
+  return ordinal >= state.total - state.examples ? full : null;
 }
 
 function cutText(text, state) {
@@ -60,7 +79,7 @@ function cutText(text, state) {
     if (c.kind === 0) { kept.push(lines[i]); continue; }
     cut++;
     if (c.kind === 2) {
-      const full = expansionOf(lines[i], state);
+      const full = expansionOf(state);
       if (full) kept.push(...full, END_LINE);
       else {
         kept.push(c.head, state.first ? (state.examples === 0 ? SPILLED_BODY_EPHEMERAL : SPILLED_BODY_FIRST) : SPILLED_BODY, END_LINE);
@@ -112,7 +131,9 @@ function cutSpillStubs(obj, { root = null, agent = null, examples = 2 } = {}) {
   if (!obj || !Array.isArray(obj.messages)) return report;
   const out = [];
   let changed = false;
-  const state = { first: true, expanded: 0, root, agent, examples };
+  const stubs = collectStubs(obj.messages, examples > 0 ? root : null, agent);
+  const total = stubs.filter(Boolean).length;
+  const state = { first: true, stubs, next: 0, resolved: 0, total, examples };
   for (const msg of obj.messages) {
     if (!msg || msg.role !== 'assistant' || !hasNeedle(msg)) { out.push(msg); continue; }
     const r = cutMessage(msg, state);

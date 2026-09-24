@@ -768,7 +768,7 @@ test('the two halves compose: the stub the tee writes is what cutSpillStubs rend
   });
 });
 
-test('t1119: a seat registered with examples: 0 gets the ephemeral stand-in for its oldest stub, the rest the short note, nothing expanded', async () => {
+test('t1119: a seat registered with examples: 0 gets the ephemeral stand-in for its first stub, the rest the short note, nothing expanded', async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({}, async (proxy, up) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['task.done'], examples: 0 } });
