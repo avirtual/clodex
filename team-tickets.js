@@ -6283,13 +6283,6 @@ function createTicketMethods(deps, shared) {
       if (loopEligible) this._runTicketLoop(team, ticket.id);
     },
 
-    // The loop step `task done` opens: verify the tree, then spawn the review.
-    //
-    // Escalation is the ONLY way out of here that reaches the lead — every
-    // failure arm below funnels through _escalateTicket, and a second "tell the
-    // lead" path added here would reintroduce the round trip the whole design
-    // removes. It tears NOTHING down on any arm: the tree, the branch and the
-    // seat are exactly what the lead looks at first.
     _liveReviewerSeat(team, t) {
       const round = (Number(t.reviewRound) || 0) + 1;
       const num = /^t?(\d+)$/.exec(String(t.id));
@@ -6321,6 +6314,13 @@ function createTicketMethods(deps, shared) {
       }
     },
 
+    // The loop step `task done` opens: verify the tree, then spawn the review.
+    //
+    // Escalation is the ONLY way out of here that reaches the lead — every
+    // failure arm below funnels through _escalateTicket, and a second "tell the
+    // lead" path added here would reintroduce the round trip the whole design
+    // removes. It tears NOTHING down on any arm: the tree, the branch and the
+    // seat are exactly what the lead looks at first.
     async _runTicketLoop(team, ticketId) {
       if (!this._verifyLooped) this._verifyLooped = new Set();
       this._verifyLooped.add(`${team.root}\0${ticketId}`);
