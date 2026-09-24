@@ -176,6 +176,33 @@ test('a prompt head carries its local clock time; a boundary reads its token dro
   assert.deepStrictEqual(head.childNodes.map((n) => [n.className, n.textContent]), [['tr-head-text', 'run it'], ['tr-time', '10:42']]);
   assert.strictEqual(boundary.textContent, 'compacted · 210k → 8k tokens · manual');
   assert.deepStrictEqual([notice.className, notice.textContent], ['tr-row tr-notice tr-notice-error', 'API Error: 500']);
+  assert.deepStrictEqual(notice.childNodes.map((n) => n.className), ['tr-mark', 'tr-notice-text']);
+  assert.deepStrictEqual(notice.childNodes[1].childNodes.map((n) => n.data ?? n.textContent), ['API Error: 500']);
+});
+
+test('a notice row links the path in its text, and clicking it resolves the path and opens it in the file peek', async () => {
+  const calls = [];
+  const doc = fakeDocument();
+  const pane = doc.createElement('div');
+  const ctx = {
+    seatName: 'wirescope',
+    resolveFile: (p) => { calls.push(['resolveFile', p]); return { ok: true, path: `/abs${p}` }; },
+    openFilePeek: (...args) => calls.push(['openFilePeek', ...args]),
+  };
+  createTranscriptRows(doc, pane, ctx).render([{ id: 'n1', kind: 'notice', ts: null, turn: 1, level: 'info', text: '882 B of prose filed at /Users/b/.clodex/spill/w/3160.md' }]);
+  const notice = pane.childNodes[0].childNodes[0];
+  assert.strictEqual(notice.className, 'tr-row tr-notice tr-notice-info');
+  assert.deepStrictEqual(notice.childNodes.map((n) => n.className), ['tr-mark', 'tr-notice-text']);
+  const parts = notice.childNodes[1].childNodes;
+  assert.deepStrictEqual(parts.map((n) => n.data ?? n.textContent), ['882 B of prose filed at ', '/Users/b/.clodex/spill/w/3160.md']);
+  const link = parts[1];
+  assert.deepStrictEqual([link.tag, link.className, link.dataset.path], ['a', 'pane-link', '/Users/b/.clodex/spill/w/3160.md']);
+  link.listeners.click({ preventDefault() {} });
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(calls, [
+    ['resolveFile', '/Users/b/.clodex/spill/w/3160.md'],
+    ['openFilePeek', 'wirescope', '/abs/Users/b/.clodex/spill/w/3160.md', 'file', null],
+  ]);
 });
 
 test('the turn-end record renders no row of its own', () => {

@@ -8512,6 +8512,11 @@ body.web-frontend #sidebar-header {
   align-items: center;
   gap: var(--sp-2);
 }
+.tr-notice-text {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+}
 .tr-notice-warning .tr-mark {
   background: var(--warn);
 }
@@ -30269,11 +30274,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
         row.appendChild(text);
         return withTime(doc, row, rec);
       }
-      function noticeRow(doc, rec, level, text) {
+      function noticeRow(doc, rec, level, text, ctx) {
         const row = el(doc, "div", `tr-row tr-notice tr-notice-${level}`);
         row.dataset.id = rec.id;
         row.appendChild(el(doc, "span", "tr-mark"));
-        row.appendChild(doc.createTextNode(text));
+        const span = el(doc, "span", "tr-notice-text");
+        appendLinked(doc, span, text, "", ctx);
+        row.appendChild(span);
         return row;
       }
       function buildRow(doc, rec, ctx) {
@@ -30299,7 +30306,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             return pre;
           }
           case "assistant": {
-            if (rec.apiError) return noticeRow(doc, rec, "error", rec.text);
+            if (rec.apiError) return noticeRow(doc, rec, "error", rec.text, ctx);
             const row = el(doc, "div", "tr-row tr-prose");
             row.dataset.id = rec.id;
             appendProse(doc, row, rec.text, ctx);
@@ -30308,7 +30315,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           case "tool":
             return toolRow(doc, rec, ctx);
           case "notice":
-            return noticeRow(doc, rec, rec.level, rec.text);
+            return noticeRow(doc, rec, rec.level, rec.text, ctx);
           case "boundary": {
             const row = el(doc, "div", "tr-row tr-boundary");
             row.dataset.id = rec.id;

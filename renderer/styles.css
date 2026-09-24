@@ -6030,6 +6030,7 @@ body.web-frontend #sidebar-header {
   color: var(--text-tertiary);
 }
 .tr-notice { display: flex; align-items: center; gap: var(--sp-2); }
+.tr-notice-text { flex: 1; min-width: 0; white-space: pre-wrap; }
 .tr-notice-warning .tr-mark { background: var(--warn); }
 .tr-notice-error .tr-mark { background: var(--error); }
 .tr-footer { padding-top: var(--sp-1); }
