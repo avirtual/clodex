@@ -710,6 +710,22 @@ body {
   background: #f97316;
   animation: pulse 0.6s ease-in-out infinite;
 }
+.session-item[data-compacting] .session-chip::after {
+  content: "\29d7";
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  right: -5px;
+  top: -5px;
+  background: var(--sidebar-bg);
+  border: none;
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 1;
+  animation: pulse 2.4s ease-in-out infinite;
+}
 .session-item[data-attention]::before {
   content: "!";
   position: absolute;
@@ -902,6 +918,10 @@ body {
 .session-think[data-state=long] {
   color: var(--error);
   background: color-mix(in srgb, var(--error) 16%, transparent);
+}
+.session-think[data-state=compact] {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .session-warm {
   font-size: 10px;
@@ -8636,6 +8656,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
   color: transparent;
   font-size: 0;
 }
+#sidebar[data-folded="1"] .session-item[data-compacting] .session-chip::after {
+  color: var(--accent);
+  font-size: 10px;
+}
 #sidebar[data-folded="1"] #sidebar-footer {
   padding: var(--sp-1) 2px;
 }
@@ -10282,6 +10306,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "onPendingCount", kind: "on", channel: "pending-count" },
         { name: "onSessionTicket", kind: "on", channel: "session-ticket" },
         { name: "onSessionAttention", kind: "on", channel: "session-attention" },
+        { name: "onSessionCompacting", kind: "on", channel: "session-compacting" },
         { name: "onSessionCtx", kind: "on", channel: "session-ctx" },
         { name: "onSessionProxy", kind: "on", channel: "session-proxy" },
         // Plan quota off our own wire's response headers, one reading per ACCOUNT and
@@ -46973,6 +46998,11 @@ ${detail}` });
         sidebarMeta.set(name, { ...sidebarMeta.get(name) || {}, lastActivityTs: Date.now() });
         scheduleSidebarRelayout();
       });
+      window.api.onSessionCompacting((name, c) => {
+        const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+        if (!el) return;
+        applyCompacting(el, c);
+      });
       window.api.onSessionAttention((name, attn) => {
         const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         if (!el) return;
@@ -47467,9 +47497,30 @@ ${detail}` });
       }
       var THINK_BADGE_MS = 2 * 60 * 1e3;
       var THINK_LONG_MS = 10 * 60 * 1e3;
+      function applyCompacting(el, c) {
+        if (c && c.since) {
+          el.dataset.compacting = c.trigger || "manual";
+          el.dataset.compactingSince = String(c.since);
+        } else {
+          delete el.dataset.compacting;
+          delete el.dataset.compactingSince;
+        }
+        applyThinkBadge(el);
+      }
+      function compactElapsedText(ms) {
+        const s = Math.max(0, Math.floor(ms / 1e3));
+        const m = Math.floor(s / 60);
+        return m ? `${m}m ${s % 60}s` : `${s}s`;
+      }
       function applyThinkBadge(el) {
         const badge = el.querySelector(".session-think");
         if (!badge) return;
+        const compactSince = Number(el.dataset.compactingSince || 0);
+        if (compactSince) {
+          badge.textContent = `\u29D7 ${compactElapsedText(Date.now() - compactSince)}`;
+          badge.dataset.state = "compact";
+          return;
+        }
         const since = Number(el.dataset.thinkingSince || 0);
         const elapsed = since ? Date.now() - since : 0;
         if (el.dataset.activity !== "thinking" || elapsed < THINK_BADGE_MS) {
@@ -47622,7 +47673,7 @@ Click for live activity`;
           applyWarmBadge(name);
           checkWarmthCooldown(name);
         }
-        for (const el of sessionList.querySelectorAll(".session-item[data-thinking-since]")) applyThinkBadge(el);
+        for (const el of sessionList.querySelectorAll(".session-item[data-thinking-since], .session-item[data-compacting-since]")) applyThinkBadge(el);
         tickProxyBar();
         refreshQuotaChip();
       }, 1e3);
@@ -51428,6 +51479,7 @@ ${res.stderr}` : "");
             item.dataset.attention = entry.attention.kind;
             item.dataset.attentionMsg = entry.attention.message || "";
           }
+          if (entry.compacting) applyCompacting(item, entry.compacting);
           if (entry.ticket) item.dataset.ticket = entry.ticket;
         }
         try {

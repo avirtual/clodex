@@ -156,6 +156,7 @@ const API_CONTRACT = [
   { name: 'onPendingCount', kind: 'on', channel: 'pending-count' },
   { name: 'onSessionTicket', kind: 'on', channel: 'session-ticket' },
   { name: 'onSessionAttention', kind: 'on', channel: 'session-attention' },
+  { name: 'onSessionCompacting', kind: 'on', channel: 'session-compacting' },
   { name: 'onSessionCtx', kind: 'on', channel: 'session-ctx' },
   { name: 'onSessionProxy', kind: 'on', channel: 'session-proxy' },
   // Plan quota off our own wire's response headers, one reading per ACCOUNT and

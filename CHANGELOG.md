@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Sidebar and transcript pane: a seat that is compacting its context shows an hourglass with elapsed time on its row and a "Compacting context…" notice in the pane, replaced by "Compacted in Ns" when it finishes, so a still terminal during a compact no longer looks hung.
 - Wire: a long intent body already shown to the model in full stays in full on later turns and is replaced by its stand-in only after a compact, a new session, or an hour idle, so the replacement no longer rewrites the cached conversation (measured 52-90k tokens per collapse before).
 - Transcript pane: head rows and intent marks lose their left bars (the raised row and the tinted mark carry the meaning), and a runtime reply Clodex injects (`[agent:reboot] queued …`) shows a `clodex` badge instead of looking like something you typed.
 - Sidebar: Cmd+B (or the chevron in the toolbar) folds the sidebar to a narrow rail of status dots and one-letter monograms, so the terminal and the file pane get the width; the fold is remembered across relaunches. Unfold the same way.

@@ -539,6 +539,23 @@ html, body {
   background: #f97316;
   animation: pulse 0.6s ease-in-out infinite;
 }
+
+.session-item[data-compacting] .session-chip::after {
+  content: '\29D7';
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  right: -5px;
+  top: -5px;
+  background: var(--sidebar-bg);
+  border: none;
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 1;
+  animation: pulse 2.4s ease-in-out infinite;
+}
 .session-item[data-attention]::before {
   content: '!';
   position: absolute;
@@ -732,6 +749,7 @@ html, body {
 .session-think:empty { display: none; }
 .session-think[data-state="on"]   { color: var(--warn);  background: color-mix(in srgb, var(--warn) 12%, transparent); }
 .session-think[data-state="long"] { color: var(--error); background: color-mix(in srgb, var(--error) 16%, transparent); }
+.session-think[data-state="compact"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 /* Per-tab cache-warmth pill: minutes remaining, amber; red when expiry is
    imminent (<5m); "cold"/"?" grey. */
@@ -6137,6 +6155,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main { top: var(--rail-t
   background: transparent;
   color: transparent;
   font-size: 0;
+}
+#sidebar[data-folded="1"] .session-item[data-compacting] .session-chip::after {
+  color: var(--accent);
+  font-size: 10px;
 }
 #sidebar[data-folded="1"] #sidebar-footer { padding: var(--sp-1) 2px; }
 #sidebar[data-folded="1"] #inbox-open {

@@ -218,6 +218,7 @@ const { SCRATCH_LABEL_RE } = require('./intent-catalog');
 const { SEGMENT_RE: IMPORT_SEGMENT_RE, SESSION_ID_RE: IMPORT_SESSION_ID_RE } = require('./seat-import');
 const { effectiveModel } = require('./accounts');
 const { liveSnapshotFor, archivedSnapshotFor, stampConfigFlags } = require('./session-restore');
+const { COMPACTING_VALVE_MS, COMPACT_NOTICE_CAP, noticeTextFor } = require('./compact-notices');
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
 // module's path. Removing the re-export as unused breaks those importers.
@@ -2539,7 +2540,7 @@ function createSessionManager(deps) {
               if (!line.trim()) continue;
               let entry = null;
               try { entry = JSON.parse(line); } catch {}
-              this._onAttention(session, entry || {});
+              this._routeAttnEntry(session, entry);
             }
           } catch { /* observer-grade */ }
         };
@@ -4380,6 +4381,7 @@ function createSessionManager(deps) {
         noWire: !!s.noWire,
         ...(s.fixFor ? { fixFor: s.fixFor } : {}),
         activity: s.activityState || 'idle',
+        compacting: s.compacting || null,
         attention: s.needsAttention ? s.needsAttention.kind : null,
         account: this.accountFor(s.name, resolveAccount),
         model: s.type === 'claude' ? this.modelFor(s.name, resolveSettingsModel) : null,
@@ -4506,6 +4508,7 @@ function createSessionManager(deps) {
       clearTimeout(s._injectHoldTimer);
       clearTimeout(s._injectFlushRetry);
       clearTimeout(s._compactValveTimer);
+      this._onCompactEnd(s, 'exit');
       clearTimeout(s._postClearValveTimer);
       clearTimeout(s._parkCapTimer);
       clearTimeout(s._bootSettleTimer);
@@ -4767,6 +4770,63 @@ function createSessionManager(deps) {
       }
     }
 
+    _routeAttnEntry(session, entry) {
+      if (entry && entry.hook_event_name === 'PreCompact') this._onCompactStart(session, entry.trigger);
+      else this._onAttention(session, entry || {});
+    }
+
+    _onCompactStart(session, trigger) {
+      const kind = trigger === 'auto' ? 'auto' : 'manual';
+      clearTimeout(session._compactingValveTimer);
+      session._compactingValveTimer = setTimeout(() => {
+        session._compactingValveTimer = null;
+        if (!session.compacting) return;
+        log.warn('session', `compacting ${session.name}: no end signal within ${COMPACTING_VALVE_MS / 1000}s, cleared`);
+        this._onCompactEnd(session, 'valve');
+      }, COMPACTING_VALVE_MS);
+      if (session.compacting) return;
+      session.compacting = { since: Date.now(), trigger: kind };
+      if (!session._compactNotices) session._compactNotices = [];
+      session._compactNotices.push({ id: `compact:${session.compacting.since}`, ts: session.compacting.since, text: noticeTextFor('start') });
+      if (session._compactNotices.length > COMPACT_NOTICE_CAP) session._compactNotices.shift();
+      session._compactNoticeRev = (session._compactNoticeRev || 0) + 1;
+      this._sendToSession(session.name, 'session-compacting', session.name, session.compacting);
+      this._sendToSession(session.name, 'transcript-changed', session.name);
+      this._broadcast('ipc-message', {
+        type: 'context', from: session.name, to: session.name,
+        body: `compact started (${kind})`,
+      });
+    }
+
+    _onCompactEnd(session, outcome = 'done') {
+      clearTimeout(session._compactingValveTimer);
+      session._compactingValveTimer = null;
+      const c = session.compacting;
+      if (!c) return;
+      session.compacting = null;
+      const ms = Date.now() - c.since;
+      const notice = (session._compactNotices || []).find((n) => n.id === `compact:${c.since}`);
+      if (notice && outcome !== 'exit') {
+        notice.text = noticeTextFor(outcome, ms);
+        session._compactNoticeRev = (session._compactNoticeRev || 0) + 1;
+      }
+      this._sendToSession(session.name, 'session-compacting', session.name, null, { outcome, ms });
+      if (outcome === 'exit') return;
+      this._sendToSession(session.name, 'transcript-changed', session.name);
+      if (outcome === 'done') {
+        this._broadcast('ipc-message', {
+          type: 'context', from: session.name, to: session.name,
+          body: `compact finished in ${Math.round(ms / 1000)}s`,
+        });
+      }
+    }
+
+    compactNoticesFor(name) {
+      const s = this.sessions.get(name);
+      if (!s || !s._compactNotices || !s._compactNotices.length) return null;
+      return { rev: s._compactNoticeRev || 0, notices: s._compactNotices };
+    }
+
     _setAttention(session, attn) {
       session.needsAttention = attn;
       this._sendToSession(session.name, 'session-attention', session.name, attn);
@@ -4775,6 +4835,7 @@ function createSessionManager(deps) {
     }
 
     _fireCompactContinuation(session) {
+      this._onCompactEnd(session);
       try { this._stampSeatCost(session, 'compact'); } catch {}
       this._voidScratchMark(session,
         'a compact landed inside the episode — every mark is gone and nothing can be cut. Your summary '

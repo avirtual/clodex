@@ -650,6 +650,10 @@ JSEOF
           matcher: '',
           hooks: [{ type: 'command', command: attnScriptPath }]
         }],
+        PreCompact: [{
+          matcher: '',
+          hooks: [{ type: 'command', command: attnScriptPath }]
+        }],
         UserPromptSubmit: [{
           matcher: '',
           hooks: [

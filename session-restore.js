@@ -49,6 +49,7 @@ function liveSnapshotFor({ manager, entry, session, readCtxFor, proxyPoller }) {
     // while detached were dropped, so without this a busy or blocked
     // session reattaches showing idle grey until its next transition.
     activity: session.activityState || 'idle',
+    compacting: session.compacting || null,
     attention: session.needsAttention || null,
     pendingCount: manager.pendingCountFor(entry.name),
     createdAt: entry.createdAt || null,

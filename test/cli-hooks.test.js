@@ -43,6 +43,9 @@ test('setupClaudeHook: writes the transcript-symlink script + name-only output +
   const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
   assert.ok(Array.isArray(settings.hooks.SessionStart));
   assert.ok(Array.isArray(settings.hooks.UserPromptSubmit));
+  const attnScript = pathFor(REGISTRY_DIR, 'agent1', 'attnScript');
+  assert.deepStrictEqual(settings.hooks.Notification, [{ matcher: '', hooks: [{ type: 'command', command: attnScript }] }]);
+  assert.deepStrictEqual(settings.hooks.PreCompact, [{ matcher: '', hooks: [{ type: 'command', command: attnScript }] }]);
   // PostToolUse drains parked DMs MID-LOOP (between tool calls). The
   // MATCHER-LESS entry must carry the pending drain ONLY — acks/ctxwarn are
   // turn-boundary bookkeeping and must not fire per-tool. Pin both facts: the

@@ -6,7 +6,7 @@ THIS is the push half. A browser frontend must receive each of these over WS
 exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
-`preload.js` (71 channels). This doc maps each to its emission point, its
+`preload.js` (72 channels). This doc maps each to its emission point, its
 payload shape (field NAMES, not full types), and the interception point a web
 host subscribes to.
 
@@ -65,6 +65,7 @@ reattach — a web host needs the same replay-on-connect for a reloaded tab.
 | `session:moved-out` | `{name}` — **direct handle** on the OLD workspace's window: the row leaves it, the pty keeps running (`removeSession(name, {keepPersisted:true})`) | session-manager `moveToWorkspace` |
 | `session:moved-in` | the restore row (`session-restore.js` `liveSnapshotFor`/`archivedSnapshotFor`) — **direct handle** on the destination window, sent only when that window is open, because building it DRAINS `pendingOutput` | session-manager `moveToWorkspace` |
 | `session-attention` | `name, attn` (needs-attention fact object, or null to clear) | session-manager `_setAttention` |
+| `session-compacting` | `name, c, end` — `c` is `{since, trigger}` while the seat compacts, null when it stops; on stop `end` is `{outcome: 'done'\|'valve'\|'exit', ms}` | session-manager `_onCompactStart` / `_onCompactEnd` |
 | `session-mention` | `name, mtype, from` (`dm`/…) | session-manager (dm/mention gate) |
 | `session:context-action` | `msg` object `{action, name, …}` (`reattach`/`spawn` path) | session-manager |
 | `session-peer-control` | `name, holder` (control-holder tag or null) | remote-wiring |
