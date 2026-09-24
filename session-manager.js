@@ -2424,6 +2424,7 @@ function createSessionManager(deps) {
         }
         session.sessionId = sessionId;
         getPersistence().setSessionId(name, sessionId);
+        if (sessionId && priorSid !== sessionId) this._repointStreamTranscript(session, sessionId);
         // A CHANGED id is /clear — whatever was offered is no longer in front of
         // the model, so the offer cooldown ends early. Read before noteSession,
         // which owns the same transition but reports nothing back. The first id
@@ -2460,7 +2461,6 @@ function createSessionManager(deps) {
         // earlier in create() would be wiped by the very event that carried it.
         try { memLoad.noteSession(name, sessionId); } catch { /* observer-grade */ }
         this._noteConversationForDigest(session, sessionId);
-        if (sessionId && priorSid !== sessionId) this._repointStreamTranscript(session, sessionId);
       };
       if (agentType && session.intentSource === 'wire') {
         const { TranscriptSentinel } = require('./wire-intents');
@@ -2993,8 +2993,13 @@ function createSessionManager(deps) {
 
     _repointStreamTranscript(s, sid) {
       if (s.io !== 'stream' || !s.cwd) return;
+      const link = pathFor(REGISTRY_DIR, s.name, 'transcript');
       try {
-        linkTranscript({ fs }, pathFor(REGISTRY_DIR, s.name, 'transcript'), this._claudeTranscriptPath(s.cwd, s.accountDir, sid));
+        let current = null;
+        try { current = fs.readlinkSync(link); } catch {}
+        const target = current ? path.join(path.dirname(current), `${sid}.jsonl`) : this._claudeTranscriptPath(s.cwd, s.accountDir, sid);
+        if (target === current) return;
+        linkTranscript({ fs }, link, target);
       } catch (e) {
         log.warn('session', `stream ${s.name}: transcript link repoint failed: ${e.message}`);
       }

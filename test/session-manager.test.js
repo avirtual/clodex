@@ -21256,6 +21256,22 @@ test('stream seat H3: each init with a new session id repoints the transcript li
   assert.strictEqual(fs.readlinkSync(link), target('sid-two'));
 });
 
+test('stream seat H3: an existing link keeps its project dir and only the file name follows the new session id', async (t) => {
+  const fs = require('node:fs');
+  const { pathFor } = require('../clodex-paths');
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sc5');
+  const link = pathFor(h.root, 'sc5', 'transcript');
+  const dir = `${h.root}/acct/projects/-Users-x-src-my-proj_under`;
+  fs.symlinkSync(`${dir}/sid-hook.jsonl`, link);
+  const init = (sid) => h.line('sc5', { type: 'system', subtype: 'init', session_id: sid, model: 'm', slash_commands: [] });
+  init('sid-one');
+  assert.strictEqual(fs.readlinkSync(link), `${dir}/sid-one.jsonl`);
+  init('sid-two');
+  assert.strictEqual(fs.readlinkSync(link), `${dir}/sid-two.jsonl`);
+});
+
 test('stream seat H3: a PTY seat whose session id changes leaves the transcript link to the hook', async (t) => {
   const fs = require('node:fs');
   const os = require('node:os');
