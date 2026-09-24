@@ -491,6 +491,7 @@ module.exports.activate = (h) => {
       return 'none';
     },
     label: 'Report git branch',
+    glyph: '⎇',
     promptLines: '  [agent:branch]                   Report this session\'s current git branch',
     // NOTE the argument order: (handle, intent), not the (intent, ctx) printed
     // at plugin-api.md:739. The first argument is a SessionHandle.
