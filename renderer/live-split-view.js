@@ -120,6 +120,21 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, 
   let pulling = false;
   let disposed = false;
   let cursorHidden = false;
+  let follow = true;
+  let pinnedTop = null;
+
+  function stickToBottom() {
+    if (!follow) return;
+    paneEl.scrollTop = paneEl.scrollHeight;
+    pinnedTop = paneEl.scrollTop;
+  }
+
+  function onPaneScroll() {
+    if (follow && paneEl.scrollTop === pinnedTop) return;
+    pinnedTop = null;
+    follow = paneEl.scrollTop + paneEl.clientHeight >= paneEl.scrollHeight - 4;
+  }
+  paneEl.addEventListener('scroll', onPaneScroll);
 
   function pull() {
     const t = now();
@@ -133,9 +148,8 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, 
       available = !!(res && res.ok);
       if (available && res.rev !== rev) {
         rev = res.rev;
-        const follow = paneEl.scrollTop + paneEl.clientHeight >= paneEl.scrollHeight - 4;
         renderTranscript(document, paneEl, res.lines, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
-        if (follow) paneEl.scrollTop = paneEl.scrollHeight;
+        stickToBottom();
         evaluate();
       } else if (available !== was) evaluate();
     }).catch(() => { pulling = false; });
@@ -176,6 +190,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, 
     wrapperEl.classList.add('live-split');
     paneEl.style.height = `${Math.max(0, Math.round(stripTop - padTop))}px`;
     paneEl.hidden = false;
+    stickToBottom();
   }
 
   function evaluate() {
@@ -211,7 +226,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, 
       if (!cursorHidden) evaluate();
       else if (!wakeTimer) wakeTimer = setTimeout(evaluate, SPLIT_EXIT_MS);
     }),
-    terminal.onResize(() => { evaluate(); layout(); }),
+    terminal.onResize(() => { evaluate(); layout(); stickToBottom(); }),
     terminal.onScroll(() => {
       if (state.mode !== 'split') return;
       const buf = terminal.buffer.active;
@@ -239,6 +254,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, 
       for (const d of subs) { try { d.dispose(); } catch {} }
       if (typeof unsubTranscript === 'function') unsubTranscript();
       if (ro) ro.disconnect();
+      paneEl.removeEventListener('scroll', onPaneScroll);
       paneEl.remove();
     },
   };
