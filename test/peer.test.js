@@ -214,7 +214,7 @@ test('dm federation: consumer→box delivers/parks/bounces per the owner verdict
   assert.ok(mine.every((c) => c.origin === 'mylaptop'));
 });
 
-test('dm federation: box outbox → hello dmOrigins → claim → delivered to consumer', async () => {
+test('dm federation: box outbox → hello dmOrigins → claim → delivered to consumer', async (t) => {
   // Queue a box→consumer reply for a fresh consumer labelled "claimer".
   fakeOutbox['claimer'] = [{ from: 'clodex', to: 'bob', body: 'reply', urgent: false, ts: 1 }];
   const got = [];
@@ -223,6 +223,7 @@ test('dm federation: box outbox → hello dmOrigins → claim → delivered to c
     emit: (channel, ...args) => { if (channel === 'peer-dms') got.push(args); },
   });
   conn2.start();
+  t.after(() => conn2.stop());
   // The immediate first hello sees our label in dmOrigins, claims, and emits.
   const msgs = await waitFor(() => (got.length ? got[0][1] : null), 'peer-dms emission');
   assert.equal(msgs.length, 1);
@@ -230,16 +231,16 @@ test('dm federation: box outbox → hello dmOrigins → claim → delivered to c
   assert.equal(msgs[0].body, 'reply');
   // Claim is one-shot: the outbox is now empty.
   assert.deepStrictEqual(fakeOutbox['claimer'], []);
-  conn2.stop();
 });
 
-test('dm doorbell: notifyDmMail pushes an immediate claim (no hello wait)', async () => {
+test('dm doorbell: notifyDmMail pushes an immediate claim (no hello wait)', async (t) => {
   const got = [];
   const conn3 = new PeerConnection({
     id: 'p3', label: 'lab3', url: `http://127.0.0.1:${server.port}`, selfLabel: 'ringer',
     emit: (channel, ...args) => { if (channel === 'peer-dms') got.push(args); },
   });
   conn3.start();
+  t.after(() => conn3.stop());
   // Wait until the SSE events feed is open so the doorbell has a listener. The
   // first hello sees an empty outbox for us and claims nothing.
   await waitFor(() => (conn3.online && conn3._eventsReq ? true : null), 'events feed open');
@@ -251,16 +252,16 @@ test('dm doorbell: notifyDmMail pushes an immediate claim (no hello wait)', asyn
   assert.equal(msgs.length, 1);
   assert.equal(msgs[0].body, 'ding');
   assert.deepStrictEqual(fakeOutbox['ringer'], []);
-  conn3.stop();
 });
 
-test('dm doorbell: a doorbell for another origin triggers no claim', async () => {
+test('dm doorbell: a doorbell for another origin triggers no claim', async (t) => {
   const got = [];
   const conn4 = new PeerConnection({
     id: 'p4', label: 'lab4', url: `http://127.0.0.1:${server.port}`, selfLabel: 'quiet',
     emit: (channel, ...args) => { if (channel === 'peer-dms') got.push(args); },
   });
   conn4.start();
+  t.after(() => conn4.stop());
   await waitFor(() => (conn4.online && conn4._eventsReq ? true : null), 'events feed open');
   // Mail is waiting for us, but the doorbell names someone else. The origin
   // filter means we never claim: our outbox stays queued and nothing emits.
@@ -269,10 +270,9 @@ test('dm doorbell: a doorbell for another origin triggers no claim', async () =>
   await new Promise((r) => setTimeout(r, 100));
   assert.equal(got.length, 0);
   assert.equal((fakeOutbox['quiet'] || []).length, 1);
-  conn4.stop();
 });
 
-test('hello: an identity change re-emits peer-state without an offline dip', async () => {
+test('hello: an identity change re-emits peer-state without an offline dip', async (t) => {
   // An in-place box Update restarts faster than the hello cadence can observe an
   // offline transition, so _setOnline never fires — the loop must emit on its own
   // when the reported identity moves, or the UI keeps the stale version forever.
@@ -283,6 +283,7 @@ test('hello: an identity change re-emits peer-state without an offline dip', asy
     emit: (channel, ...args) => { if (channel === 'peer-state') states.push(args[1]); },
   });
   conn5.start();
+  t.after(() => conn5.stop());
   // First hello: the offline→online transition emits, carrying the seed version.
   await waitFor(() => states.find((s) => s.online && s.version === '0.0.0-test'), 'initial online state');
   const beforeFlip = states.length;
@@ -295,11 +296,10 @@ test('hello: an identity change re-emits peer-state without an offline dip', asy
   assert.equal(bumped.online, true);
   // Every state we ever saw stayed online — the version moved with no transition.
   assert.ok(states.every((s) => s.online === true));
-  conn5.stop();
   server._version = '0.0.0-test'; // restore for any later readers of the shared server
 });
 
-test('hello: a steady identity emits no spurious peer-state across ticks', async () => {
+test('hello: a steady identity emits no spurious peer-state across ticks', async (t) => {
   const states = [];
   const conn6 = new PeerConnection({
     id: 'p6', label: 'lab6', url: `http://127.0.0.1:${server.port}`, selfLabel: 'steady',
@@ -307,6 +307,7 @@ test('hello: a steady identity emits no spurious peer-state across ticks', async
     emit: (channel, ...args) => { if (channel === 'peer-state') states.push(args[1]); },
   });
   conn6.start();
+  t.after(() => conn6.stop());
   // Wait out the initial burst (online transition + first session refresh).
   await waitFor(() => (conn6.online && conn6.sessions.length === 1 ? true : null), 'online + sessions');
   await new Promise((r) => setTimeout(r, 60));
@@ -314,7 +315,6 @@ test('hello: a steady identity emits no spurious peer-state across ticks', async
   // ~6 more hello ticks at 30ms with nothing changing → not one re-emission.
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(states.length, settled);
-  conn6.stop();
 });
 
 test('attach: replay carries scrollback and owner geometry', async () => {

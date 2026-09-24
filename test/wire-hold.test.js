@@ -643,6 +643,7 @@ test('proxy caches the main line for replay; count_tokens path does not', async 
     warmth: store, hold: keeper,
   });
   await proxy.listen();
+  t.after(() => proxy.close());
 
   const turns = [];
   proxy.on('turn.completed', (t) => turns.push(t));
@@ -670,7 +671,6 @@ test('proxy caches the main line for replay; count_tokens path does not', async 
   assert.equal(proxy.billing.totals.requests, 2);
   assert.equal(proxy.billing.session(SID).count_tokens_requests, 1);
 
-  await proxy.close();
 });
 
 // ---------------------------------------------------------------------------

@@ -96,6 +96,7 @@ test('upstream 5xx passes through verbatim; error receipt, not a turn', async (t
   tc.after(() => server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${port}` } });
   await proxy.listen();
+  tc.after(() => proxy.close());
   const events = collect(proxy, ['turn.completed', 'tee-failure', 'proxy-error']);
 
   const res = await request(proxy.port, '/agent/t/v1/messages', '{}');
@@ -115,7 +116,6 @@ test('upstream 5xx passes through verbatim; error receipt, not a turn', async (t
   assert.equal(t.sessionTotals.turns, 0);
   assert.equal(events['tee-failure'].length, 0);
 
-  await proxy.close();
 });
 
 test('upstream dies mid-stream: bounded error, stream-end fires, no hang', async (t) => {
@@ -127,6 +127,7 @@ test('upstream dies mid-stream: bounded error, stream-end fires, no hang', async
   t.after(() => server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${port}` } });
   await proxy.listen();
+  t.after(() => proxy.close());
   const events = collect(proxy, ['stream-start', 'stream-end', 'proxy-error', 'tee-failure']);
 
   // The client either sees a truncated-but-clean end or a connection error —
@@ -138,7 +139,6 @@ test('upstream dies mid-stream: bounded error, stream-end fires, no hang', async
   assert.equal(events['stream-end'].length, 1);
   assert.equal(events['tee-failure'].length, 0);
 
-  await proxy.close();
 });
 
 test('client aborts mid-stream: upstream released, stream-end fires', async (t) => {
@@ -151,6 +151,7 @@ test('client aborts mid-stream: upstream released, stream-end fires', async (t) 
   t.after(() => server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${port}` } });
   await proxy.listen();
+  t.after(() => proxy.close());
   const events = collect(proxy, ['stream-start', 'stream-end', 'tee-failure']);
 
   await new Promise((resolve) => {
@@ -178,7 +179,6 @@ test('client aborts mid-stream: upstream released, stream-end fires', async (t) 
   assert.equal(events['stream-end'].length, 1);
   assert.equal(events['tee-failure'].length, 0);
 
-  await proxy.close();
 });
 
 test('corrupt gzip: observer dies quietly, client gets exact bytes', async (t) => {
@@ -190,6 +190,7 @@ test('corrupt gzip: observer dies quietly, client gets exact bytes', async (t) =
   t.after(() => server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${port}` } });
   await proxy.listen();
+  t.after(() => proxy.close());
   const events = collect(proxy, ['turn.completed', 'stream-end', 'tee-failure']);
 
   const res = await request(proxy.port, '/agent/t/v1/messages', '{}');
@@ -201,7 +202,6 @@ test('corrupt gzip: observer dies quietly, client gets exact bytes', async (t) =
   assert.equal(events['turn.completed'].length, 0);
   assert.equal(events['stream-end'].length, 1);
 
-  await proxy.close();
 });
 
 test('valid gzip SSE: observer decodes, client gets the compressed bytes', async (t) => {
@@ -214,6 +214,7 @@ test('valid gzip SSE: observer decodes, client gets the compressed bytes', async
   t.after(() => server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${port}` } });
   await proxy.listen();
+  t.after(() => proxy.close());
   const events = collect(proxy, ['turn.completed']);
 
   const res = await request(proxy.port, '/agent/t/v1/messages', '{}');
@@ -222,7 +223,6 @@ test('valid gzip SSE: observer decodes, client gets the compressed bytes', async
   assert.equal(events['turn.completed'].length, 1);
   assert.equal(events['turn.completed'][0].text, 'gz ok');
 
-  await proxy.close();
 });
 
 test('tee-internal exception: forwarding untouched, tee-failure + stream-end fire', async (t) => {
@@ -239,6 +239,7 @@ test('tee-internal exception: forwarding untouched, tee-failure + stream-end fir
     close: () => { throw new Error('injected close failure'); },
   });
   await proxy.listen();
+  t.after(() => proxy.close());
   const events = collect(proxy, ['turn.completed', 'tee-failure', 'stream-start', 'stream-end']);
 
   const res = await request(proxy.port, '/agent/t/v1/messages', '{}');
@@ -252,7 +253,6 @@ test('tee-internal exception: forwarding untouched, tee-failure + stream-end fir
   assert.equal(events['stream-start'].length, 1);
   assert.equal(events['stream-end'].length, 1); // activity can't wedge on thinking
 
-  await proxy.close();
 });
 
 test('tee construction throws: same containment', async (t) => {
@@ -264,6 +264,7 @@ test('tee construction throws: same containment', async (t) => {
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${port}` } });
   proxy._buildTee = () => { throw new Error('injected construction failure'); };
   await proxy.listen();
+  t.after(() => proxy.close());
   const events = collect(proxy, ['tee-failure', 'stream-end']);
 
   const res = await request(proxy.port, '/agent/t/v1/messages', '{}');
@@ -273,13 +274,12 @@ test('tee construction throws: same containment', async (t) => {
   assert.equal(events['tee-failure'].length, 1);
   assert.equal(events['stream-end'].length, 1);
 
-  await proxy.close();
 });
 
-test('port collision: listen rejects instead of hijacking', async () => {
+test('port collision: listen rejects instead of hijacking', async (t) => {
   const p1 = new WireProxy({});
   await p1.listen();
+  t.after(() => p1.close());
   const p2 = new WireProxy({ port: p1.port });
   await assert.rejects(() => p2.listen(), /EADDRINUSE/);
-  await p1.close();
 });

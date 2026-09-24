@@ -753,6 +753,7 @@ test('a seat-pinned ticket is billed exactly, and an unstaffed role measures not
   // Also the control for the tests above: they assert absences, and a resolver
   // that resolved NOTHING would satisfy all of them.
   const rig = mkRoleRig();
+  t.after(() => rig.cleanup());
   rig.mint('team-hand-1', 't24');
   rig.m._writeTicketCost(rig.team, {
     id: 't24', role: 'hand', assignee: 'team-hand-1', state: 'done', closedBy: 'team-lead',
@@ -778,7 +779,6 @@ test('a seat-pinned ticket is billed exactly, and an unstaffed role measures not
   assert.strictEqual(miss.usd, null, 'a seat that could not be found spent an UNKNOWN amount');
   assert.strictEqual(miss.tokens.input, null);
 
-  rig.cleanup();
 });
 
 test('a taskDir that escapes the projects root writes nothing at all', async () => {
