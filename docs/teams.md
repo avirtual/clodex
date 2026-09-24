@@ -61,7 +61,9 @@ With that file alone you have a working loop: the lead writes a ticket with
 `[agent:task add hand] <spec>`, `[agent:task start <id>]` mints a branch and a
 worktree, spawns a hand seat in it and delivers the spec — or
 `[agent:task add hand start] <spec>` does both in one intent, replying with the
-new id already started; the hand commits and
+new id already started (an add whose first line matches an open ticket's title
+is refused unless the head line carries `dup`, which opens a second ticket with
+a title an open one already carries); the hand commits and
 closes the ticket; the loop verifies the branch and escalates or reviews.
 
 Everything below is what you add so that loop is *productive* on your code.

@@ -141,9 +141,10 @@ function parseTask(cleaned) {
     // literally named `park` or `start` is unaddressable here and needs `assign`.
     const park = argToks.includes('park');
     const start = argToks.includes('start');
+    const dup = argToks.includes('dup');
     const reviewer = reviewerToken(argToks);
-    const rest = argToks.filter((t) => t !== 'park' && t !== 'start' && !REVIEWER_TOKEN_RE.test(t));
-    return { type: 'task', sub, who: rest[0] || null, id: null, park, start, reviewer, body };
+    const rest = argToks.filter((t) => t !== 'park' && t !== 'start' && t !== 'dup' && !REVIEWER_TOKEN_RE.test(t));
+    return { type: 'task', sub, who: rest[0] || null, id: null, park, start, dup, reviewer, body };
   }
   if (sub === 'assign') return { type: 'task', sub, id: argToks[0] || null, who: argToks[1] || null, body: '' };
   if (sub === 'list') return { type: 'task', sub, id: null, who: null, filter: argToks[0] || null, body: '' };
