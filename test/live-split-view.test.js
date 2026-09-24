@@ -1,6 +1,7 @@
 'use strict';
 
 const test = require('node:test');
+const { mock } = test;
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -73,7 +74,7 @@ test('markup characters in command output land as text content, never as HTML', 
   assert.deepStrictEqual(nodes, [{ text: '<img src=x onerror=1>&amp;', style: 'color:rgb(205,49,49)' }]);
 });
 
-function mountView(extra = {}) {
+function mountView(extra = {}, { parser = true } = {}) {
   const prevDoc = global.document;
   global.document = {
     ...fakeDoc(),
@@ -88,9 +89,9 @@ function mountView(extra = {}) {
   const terminal = {
     rows: 4, cols: 20, element: null,
     buffer: { active: { type: 'normal', baseY: 0, cursorY: 1, viewportY: 0, getLine: (i) => (screen[i] == null ? null : { translateToString: () => screen[i] }) } },
-    parser: {
+    parser: parser ? {
       registerCsiHandler(id, cb) { csi[`${id.prefix}${id.final}`] = cb; return { dispose() {} }; },
-    },
+    } : undefined,
     onWriteParsed(cb) { writes.push(cb); return { dispose() {} }; },
     onResize() { return { dispose() {} }; },
     onScroll() { return { dispose() {} }; },
@@ -159,10 +160,10 @@ const ANCHORED = [RULE_ROW, '❯ ', '', ''];
 const ANCHORED_TALL = [RULE_ROW, '❯ ', '  footer', ''];
 const STREAMING = ['partial reply', '─────', '', ''];
 
-async function mountSplit() {
+async function mountSplit(opts) {
   let t = 5000;
   const changes = [];
-  const m = mountView({ now: () => t, onChange: (st) => changes.push({ ...st }) });
+  const m = mountView({ now: () => t, onChange: (st) => changes.push({ ...st }) }, opts);
   m.show(ANCHORED);
   m.write();
   await settle();
@@ -217,6 +218,33 @@ test('a transcript pull with a new rev while already available re-evaluates the 
     m.show(ANCHORED_TALL);
     m.change('s1');
     await settle();
+    assert.deepStrictEqual(m.changes.map((c) => [c.mode, c.bottom]), [['split', 2]]);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a frame the CLI leaves with the cursor hidden still drops to full after the fallback and the exit settle', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  const m = await mountSplit();
+  try {
+    m.csi['?l']([25]);
+    m.show(STREAMING);
+    m.write();
+    assert.strictEqual(m.view.state().mode, 'split');
+    m.tick(50);
+    mock.timers.tick(50);
+    assert.deepStrictEqual([m.view.state().mode, m.view.state().wakeAt], ['split', 5350]);
+    m.tick(50);
+    mock.timers.tick(50);
+    assert.strictEqual(m.view.state().mode, 'full');
+    assert.deepStrictEqual(m.changes.map((c) => c.mode), ['full']);
+  } finally { m.view.dispose(); m.restore(); mock.timers.reset(); }
+});
+
+test('a terminal without a parser evaluates every write', async () => {
+  const m = await mountSplit({ parser: false });
+  try {
+    m.show(ANCHORED_TALL);
+    m.write();
     assert.deepStrictEqual(m.changes.map((c) => [c.mode, c.bottom]), [['split', 2]]);
   } finally { m.view.dispose(); m.restore(); }
 });

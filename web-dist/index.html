@@ -29577,7 +29577,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_live_split_view = __commonJS({
     "renderer/live-split-view.js"(exports, module) {
       "use strict";
-      var { measureSplit, initialSplitState, reduceSplit } = require_live_split();
+      var { SPLIT_EXIT_MS, measureSplit, initialSplitState, reduceSplit } = require_live_split();
       var { ansiRuns } = require_ansi_html();
       var TRANSCRIPT_PULL_MS = 1e3;
       var OUTPUT_LINE_CAP = 400;
@@ -29706,6 +29706,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           ] : [],
           terminal.onWriteParsed(() => {
             if (!cursorHidden) evaluate();
+            else if (!wakeTimer) wakeTimer = setTimeout(evaluate, SPLIT_EXIT_MS);
           }),
           terminal.onResize(() => {
             evaluate();
