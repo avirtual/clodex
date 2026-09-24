@@ -30570,6 +30570,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             return;
           }
           if (stopping || !trigger.matches(composer.value)) return;
+          cancelRelease();
           stopping = true;
           let stopped;
           try {
@@ -30606,7 +30607,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           },
           resetSpan() {
             span = null;
-            settle();
+            stopping = false;
           },
           dispose() {
             cancelQuiet();

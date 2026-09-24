@@ -99,6 +99,7 @@ function attachTriggerSubmit(composer, {
     try { open = holdsFire() === true; } catch { open = false; }
     if (!open) { settle(); fire(true); return; }
     if (stopping || !trigger.matches(composer.value)) return;
+    cancelRelease();
     stopping = true;
     let stopped;
     try { stopped = onVoiceStop(); } catch { stopFailed(); return; }
@@ -128,7 +129,7 @@ function attachTriggerSubmit(composer, {
       cancelQuiet();
       fire(true);
     },
-    resetSpan() { span = null; settle(); },
+    resetSpan() { span = null; stopping = false; },
     dispose() {
       cancelQuiet();
       cancelRelease();
