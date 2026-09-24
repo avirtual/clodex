@@ -8209,20 +8209,180 @@ body.web-frontend #sidebar-header {
   left: 4px;
   right: 4px;
   margin: 0;
-  padding: 6px 10px;
+  padding: var(--sp-1) var(--sp-2);
   box-sizing: border-box;
   overflow: auto;
   z-index: 2;
   background: var(--bg);
-  color: var(--text);
-  border-bottom: 1px solid var(--border);
-  font:
-    12px/1.45 "SF Mono",
-    "Menlo",
-    "Monaco",
-    monospace;
-  white-space: pre-wrap;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: 1.45;
   word-break: break-word;
+}
+.tr-turn + .tr-turn {
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--border);
+}
+.tr-row {
+  margin: 0;
+}
+.tr-turn > .tr-row:not(.tr-head) {
+  margin-left: var(--sp-3);
+}
+.tr-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--surface-raised);
+  border-left: 2px solid var(--accent);
+}
+.tr-head-text {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.tr-inbound {
+  border-left-color: var(--info);
+}
+.tr-notification {
+  border-left-color: var(--text-tertiary);
+}
+.tr-command {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+.tr-from {
+  color: var(--info);
+  white-space: nowrap;
+}
+.tr-time {
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.tr-prose {
+  white-space: pre-wrap;
+  padding: var(--sp-1) 0;
+}
+.tr-tool {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 20px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.tr-tool:hover {
+  background: var(--surface-hover);
+}
+.tr-tool-name {
+  flex: none;
+  width: 6ch;
+  color: var(--text-primary);
+}
+.tr-tool-arg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+.tr-tool-sum {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.tr-mark {
+  flex: none;
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+.tr-state-ok .tr-mark {
+  opacity: 0.5;
+}
+.tr-state-pending .tr-mark {
+  background: var(--info);
+  animation: tr-pulse 1.2s ease-in-out infinite;
+}
+.tr-state-error .tr-mark,
+.tr-state-denied .tr-mark {
+  background: var(--error);
+}
+.tr-state-interrupted .tr-mark {
+  background: var(--warn);
+}
+@keyframes tr-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+.tr-add {
+  color: var(--ok);
+}
+.tr-del,
+.tr-err {
+  color: var(--error);
+}
+.tr-warn {
+  color: var(--warn);
+}
+.tr-dim {
+  color: var(--text-tertiary);
+}
+.tr-output {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  background: var(--surface-input);
+  padding: var(--sp-1) var(--sp-2);
+}
+.tr-notice,
+.tr-footer {
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+}
+.tr-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.tr-notice-warning .tr-mark {
+  background: var(--warn);
+}
+.tr-notice-error .tr-mark {
+  background: var(--error);
+}
+.tr-footer {
+  padding-top: var(--sp-1);
+}
+.tr-boundary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+}
+.tr-boundary::before,
+.tr-boundary::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
 }
 .transcript-pane[hidden] {
   display: none;
@@ -9930,6 +10090,7 @@ body.web-frontend #sidebar-header {
         { name: "onRequestOpenPromptsDrawer", kind: "on", channel: "request-open-prompts-drawer" },
         { name: "onRequestOpenTemplatesDrawer", kind: "on", channel: "request-open-templates-drawer" },
         { name: "onRequestOpenIpcLog", kind: "on", channel: "request-open-ipc-log" },
+        { name: "onRequestToggleRawTerminal", kind: "on", channel: "request-toggle-raw-terminal" },
         { name: "getSettings", kind: "invoke", channel: "settings:get" },
         { name: "setTheme", kind: "invoke", channel: "theme:set" },
         { name: "onSetTheme", kind: "on", channel: "set-theme" },
@@ -29702,21 +29863,25 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
-  // renderer/live-split-view.js
-  var require_live_split_view = __commonJS({
-    "renderer/live-split-view.js"(exports, module) {
+  // renderer/transcript-rows.js
+  var require_transcript_rows = __commonJS({
+    "renderer/transcript-rows.js"(exports, module) {
       "use strict";
-      var { SPLIT_EXIT_MS, measureSplit, initialSplitState, reduceSplit } = require_live_split();
       var { ansiRuns } = require_ansi_html();
       var { classifyRows } = require_intent_marks();
       var { scanLinks } = require_path_scan();
       var { rewriteEchoSgr } = require_prompt_echo();
       var { isExternallyOpenable } = require_external_link();
-      var TRANSCRIPT_PULL_MS = 1e3;
       var OUTPUT_LINE_CAP = 400;
-      var ROW_PREFIX_RE = /^(?:⏺ |❯ | {2}→ )/;
       var NOOP = () => {
       };
+      var MINUS = "\u2212";
+      function el(doc, tag, cls, text) {
+        const node = doc.createElement(tag);
+        if (cls) node.className = cls;
+        if (text != null) node.textContent = text;
+        return node;
+      }
       function styled(doc, text, style) {
         if (!style) return doc.createTextNode(text);
         const span = doc.createElement("span");
@@ -29756,7 +29921,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           parent.appendChild(span.kind === "text" ? styled(doc, span.text, style) : linkNode(doc, span, style, ctx));
         }
       }
-      function appendOutput(doc, frag, text, ctx) {
+      function appendOutput(doc, parent, text, ctx) {
         const palette = typeof ctx.echoPalette === "function" ? ctx.echoPalette() : ctx.echoPalette;
         if (palette) {
           const { out, state } = rewriteEchoSgr(text, palette);
@@ -29765,57 +29930,325 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const lines = text.split("\n");
         const more = lines.length - OUTPUT_LINE_CAP;
         for (const run of ansiRuns(more > 0 ? lines.slice(0, OUTPUT_LINE_CAP).join("\n") : text)) {
-          appendLinked(doc, frag, run.text, run.style, ctx);
+          appendLinked(doc, parent, run.text, run.style, ctx);
         }
-        if (more > 0) frag.appendChild(doc.createTextNode(`
+        if (more > 0) parent.appendChild(doc.createTextNode(`
 \u2026 ${more} more lines`));
       }
-      function appendTextRow(doc, frag, row, ctx) {
-        const lines = row.split("\n");
-        const prefix = (lines[0].match(ROW_PREFIX_RE) || [""])[0];
-        lines[0] = lines[0].slice(prefix.length);
+      function appendProse(doc, parent, text, ctx) {
+        const lines = String(text).split("\n");
         const marks = /* @__PURE__ */ new Map();
-        for (const m of classifyRows(lines.map((text) => ({ text, isWrapped: false })))) {
+        for (const m of classifyRows(lines.map((t) => ({ text: t, isWrapped: false })))) {
           if (m.span) marks.set(m.start, m);
         }
-        if (prefix) frag.appendChild(doc.createTextNode(prefix));
         lines.forEach((line, k) => {
-          if (k) frag.appendChild(doc.createTextNode("\n"));
+          if (k) parent.appendChild(doc.createTextNode("\n"));
           const m = marks.get(k);
           if (!m) {
-            appendLinked(doc, frag, line, "", ctx);
+            appendLinked(doc, parent, line, "", ctx);
             return;
           }
           const end = m.span.offset + m.span.length;
-          appendLinked(doc, frag, line.slice(0, m.span.offset), "", ctx);
-          const mark = doc.createElement("span");
-          mark.className = `intent-mark intent-mark-${m.kind}`;
-          mark.textContent = line.slice(m.span.offset, end);
-          frag.appendChild(mark);
-          appendLinked(doc, frag, line.slice(end), "", ctx);
+          appendLinked(doc, parent, line.slice(0, m.span.offset), "", ctx);
+          parent.appendChild(el(doc, "span", `intent-mark intent-mark-${m.kind}`, line.slice(m.span.offset, end)));
+          appendLinked(doc, parent, line.slice(end), "", ctx);
         });
       }
-      function renderTranscript(doc, paneEl, rows, ctx = {}) {
-        const deps = {
-          seatName: null,
-          resolveFile: NOOP,
-          openFilePeek: NOOP,
-          openExternal: NOOP,
-          toast: NOOP,
-          echoPalette: null,
-          ...ctx
+      function clock(ts) {
+        if (typeof ts !== "number") return "";
+        const d = new Date(ts);
+        return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      }
+      function bytesText(n) {
+        if (n < 1024) return `${n} B`;
+        if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+        return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+      }
+      function countText(n, one, many) {
+        return `${n} ${n === 1 ? one : many}`;
+      }
+      function tokensText(n) {
+        return n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
+      }
+      function durationText(ms) {
+        const s = ms / 1e3;
+        if (s < 10) return `${s.toFixed(1)}s`;
+        if (s < 60) return `${Math.round(s)}s`;
+        const m = Math.floor(s / 60);
+        return `${m}m ${Math.round(s - m * 60)}s`;
+      }
+      function baseName(p) {
+        const parts = String(p).split("/");
+        return parts[parts.length - 1] || String(p);
+      }
+      function diffParts(add, del) {
+        return [[`+${add}`, "tr-add"], [" ", ""], [`${MINUS}${del}`, "tr-del"]];
+      }
+      function bashParts(s) {
+        if (s.interrupted) return [["interrupted", "tr-warn"]];
+        if (s.background) return [["background", ""]];
+        if (s.persisted != null) return [[bytesText(s.persisted), ""]];
+        if (s.only) return [[s.only, ""]];
+        return [[s.lines ? countText(s.lines, "line", "lines") : "no output", ""]];
+      }
+      function summaryParts(rec) {
+        const s = rec.sum || {};
+        if (rec.state === "pending") return [["running", ""]];
+        if (rec.state === "denied") return [["denied", "tr-err"]];
+        if (rec.state === "error") {
+          if (s.message != null) return [[s.message, "tr-err"]];
+          const exit = `exit ${s.exit == null ? "?" : s.exit}`;
+          return [[s.lines ? `${exit} \xB7 ${countText(s.lines, "line", "lines")}` : exit, "tr-err"]];
+        }
+        if (rec.state === "interrupted") return [["interrupted", "tr-warn"]];
+        switch (rec.name) {
+          case "Bash":
+            return bashParts(s);
+          case "Edit":
+          case "MultiEdit":
+            return diffParts(s.add, s.del);
+          case "Write":
+            return s.created ? [[`new \xB7 ${countText(s.add, "line", "lines")}`, ""]] : diffParts(s.add, s.del);
+          case "Read":
+            return s.from == null ? [] : [[`${s.from}\u2013${s.to} of ${s.total}`, ""]];
+          case "Grep":
+            return [[s.lines == null ? countText(s.files, "file", "files") : `${countText(s.lines, "line", "lines")} in ${countText(s.files, "file", "files")}`, ""]];
+          case "Glob":
+            return [[countText(s.files, "file", "files"), ""]];
+          case "WebFetch":
+            return [[[s.code, s.bytes != null ? bytesText(s.bytes) : null].filter((x) => x != null).join(" \xB7 "), ""]];
+          case "WebSearch":
+            return [[countText(s.results, "result", "results"), ""]];
+          case "Agent":
+          case "Task":
+            return [[s.description || "", ""], ...s.model ? [[` ${s.model}`, "tr-dim"]] : []];
+          default:
+            if (s.total != null) return [[`${s.done}/${s.total} done`, ""]];
+            return s.lines != null ? [[countText(s.lines, "line", "lines"), ""]] : [];
+        }
+      }
+      function toolRow(doc, rec, ctx) {
+        const row = el(doc, "div", `tr-row tr-tool tr-state-${rec.state}`);
+        row.dataset.id = rec.id;
+        row.appendChild(el(doc, "span", "tr-mark"));
+        row.appendChild(el(doc, "span", "tr-tool-name", rec.name));
+        const arg = el(doc, "span", "tr-tool-arg");
+        arg.title = rec.arg;
+        appendLinked(doc, arg, rec.arg, "", ctx);
+        row.appendChild(arg);
+        const sum = el(doc, "span", "tr-tool-sum");
+        for (const [text, cls] of summaryParts(rec)) sum.appendChild(cls ? el(doc, "span", cls, text) : doc.createTextNode(text));
+        row.appendChild(sum);
+        return row;
+      }
+      function headRow(doc, cls, rec) {
+        const row = el(doc, "div", `tr-row tr-head ${cls}`);
+        row.dataset.id = rec.id;
+        return row;
+      }
+      function withTime(doc, row, rec) {
+        const t = clock(rec.ts);
+        if (t) row.appendChild(el(doc, "span", "tr-time", t));
+        return row;
+      }
+      function promptRow(doc, rec, ctx) {
+        const row = headRow(doc, "tr-prompt", rec);
+        const text = el(doc, "span", "tr-head-text");
+        appendProse(doc, text, rec.text, ctx);
+        row.appendChild(text);
+        return withTime(doc, row, rec);
+      }
+      function inboundRow(doc, rec, ctx) {
+        const row = headRow(doc, "tr-inbound", rec);
+        row.appendChild(el(doc, "span", "tr-from", `from ${rec.from}`));
+        const text = el(doc, "span", "tr-head-text");
+        if (rec.attached) {
+          const lead = rec.text.slice(0, rec.text.indexOf("Message (")).trim();
+          if (lead) appendProse(doc, text, `${lead} `, ctx);
+          text.appendChild(el(doc, "span", "tr-dim", `${bytesText(rec.attached.bytes)} `));
+          text.appendChild(linkNode(doc, { kind: "path", text: baseName(rec.attached.path), path: rec.attached.path }, "", ctx));
+        } else appendProse(doc, text, rec.text, ctx);
+        row.appendChild(text);
+        return withTime(doc, row, rec);
+      }
+      function noticeRow(doc, rec, level, text) {
+        const row = el(doc, "div", `tr-row tr-notice tr-notice-${level}`);
+        row.dataset.id = rec.id;
+        row.appendChild(el(doc, "span", "tr-mark"));
+        row.appendChild(doc.createTextNode(text));
+        return row;
+      }
+      function buildRow(doc, rec, ctx) {
+        switch (rec.kind) {
+          case "prompt":
+            return promptRow(doc, rec, ctx);
+          case "inbound":
+            return inboundRow(doc, rec, ctx);
+          case "notification": {
+            const row = headRow(doc, "tr-notification", rec);
+            row.appendChild(el(doc, "span", "tr-head-text", rec.text));
+            return withTime(doc, row, rec);
+          }
+          case "command": {
+            const row = headRow(doc, "tr-command", rec);
+            row.appendChild(el(doc, "span", "tr-head-text", `\u276F ${rec.name}${rec.args ? ` ${rec.args}` : ""}`));
+            return withTime(doc, row, rec);
+          }
+          case "command-output": {
+            const pre = el(doc, "pre", "tr-row tr-output");
+            pre.dataset.id = rec.id;
+            appendOutput(doc, pre, String(rec.text), ctx);
+            return pre;
+          }
+          case "assistant": {
+            if (rec.apiError) return noticeRow(doc, rec, "error", rec.text);
+            const row = el(doc, "div", "tr-row tr-prose");
+            row.dataset.id = rec.id;
+            appendProse(doc, row, rec.text, ctx);
+            return row;
+          }
+          case "tool":
+            return toolRow(doc, rec, ctx);
+          case "notice":
+            return noticeRow(doc, rec, rec.level, rec.text);
+          case "boundary": {
+            const row = el(doc, "div", "tr-row tr-boundary");
+            row.dataset.id = rec.id;
+            const label = rec.what === "compact" ? ["compacted", rec.preTokens != null && rec.postTokens != null ? `${tokensText(rec.preTokens)} \u2192 ${tokensText(rec.postTokens)} tokens` : null, rec.trigger].filter(Boolean).join(" \xB7 ") : "cleared";
+            row.appendChild(el(doc, "span", "tr-boundary-label", label));
+            return row;
+          }
+          default:
+            return null;
+        }
+      }
+      function footerOf(records) {
+        const end = records.find((r) => r.kind === "turn-end");
+        const boundary = records.find((r) => r.kind === "boundary" && r.what === "compact" && r.preTokens != null && r.postTokens != null);
+        if (!end && !boundary) return null;
+        const tools = records.filter((r) => r.kind === "tool");
+        const files = /* @__PURE__ */ new Map();
+        for (const r of tools) {
+          if (r.state !== "ok" || !r.sum || !r.sum.file || r.sum.add == null) continue;
+          const f = files.get(r.sum.file) || { file: r.sum.file, add: 0, del: 0 };
+          f.add += r.sum.add;
+          f.del += r.sum.del;
+          files.set(r.sum.file, f);
+        }
+        return {
+          durationMs: end && end.durationMs != null ? end.durationMs : null,
+          tools: tools.length,
+          errors: tools.filter((r) => r.state === "error" || r.state === "denied").length,
+          files: [...files.values()],
+          compacted: boundary ? [boundary.preTokens, boundary.postTokens] : null
         };
-        const frag = doc.createDocumentFragment();
-        rows.forEach((row, i) => {
-          if (i) frag.appendChild(doc.createTextNode("\n"));
-          if (typeof row === "string") appendTextRow(doc, frag, row, deps);
-          else if (row && row.kind === "command") frag.appendChild(doc.createTextNode(`\u276F ${row.name}${row.args ? ` ${row.args}` : ""}`));
-          else if (row && row.kind === "command-output") appendOutput(doc, frag, String(row.text), deps);
+      }
+      function buildFooter(doc, f, ctx) {
+        const row = el(doc, "div", "tr-row tr-footer");
+        const parts = [];
+        if (f.durationMs != null) parts.push(() => row.appendChild(doc.createTextNode(durationText(f.durationMs))));
+        if (f.tools) parts.push(() => row.appendChild(doc.createTextNode(countText(f.tools, "tool", "tools"))));
+        if (f.errors) parts.push(() => row.appendChild(el(doc, "span", "tr-err", countText(f.errors, "error", "errors"))));
+        for (const file of f.files) {
+          parts.push(() => {
+            row.appendChild(linkNode(doc, { kind: "path", text: baseName(file.file), path: file.file }, "", ctx));
+            row.appendChild(doc.createTextNode(` +${file.add} ${MINUS}${file.del}`));
+          });
+        }
+        if (f.compacted) parts.push(() => row.appendChild(doc.createTextNode(`compacted ${tokensText(f.compacted[0])} \u2192 ${tokensText(f.compacted[1])}`)));
+        parts.forEach((add, i) => {
+          if (i) row.appendChild(doc.createTextNode(" \xB7 "));
+          add();
         });
-        paneEl.replaceChildren(frag);
+        return row;
+      }
+      function reconcile(parent, cache, items) {
+        const seen = /* @__PURE__ */ new Set();
+        let prev = null;
+        for (const it of items) {
+          seen.add(it.key);
+          let c = cache.get(it.key);
+          if (!c || c.sig !== it.sig) {
+            const node = it.build();
+            if (c && c.el.parentNode === parent) parent.replaceChild(node, c.el);
+            c = { sig: it.sig, el: node, sub: c ? c.sub : null };
+            cache.set(it.key, c);
+          }
+          const want = prev ? prev.nextSibling : parent.firstChild;
+          if (want !== c.el) parent.insertBefore(c.el, want || null);
+          prev = c.el;
+          if (it.after) it.after(c);
+        }
+        for (const [key, c] of cache) {
+          if (seen.has(key)) continue;
+          if (c.el.parentNode === parent) parent.removeChild(c.el);
+          cache.delete(key);
+        }
+      }
+      function groupTurns(records) {
+        const turns = [];
+        for (const r of records) {
+          const last = turns[turns.length - 1];
+          if (last && last.turn === r.turn) last.records.push(r);
+          else turns.push({ turn: r.turn, key: r.id, records: [r] });
+        }
+        return turns;
+      }
+      function createTranscriptRows(doc, paneEl, ctx = {}) {
+        const deps = { seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, ...ctx };
+        const turnCache = /* @__PURE__ */ new Map();
+        function rowItems(records) {
+          const items = [];
+          for (const r of records) {
+            if (r.kind === "turn-end") continue;
+            items.push({ key: r.id, sig: JSON.stringify(r), build: () => buildRow(doc, r, deps) || el(doc, "div", "tr-row") });
+          }
+          const footer = footerOf(records);
+          if (footer) items.push({ key: "footer", sig: JSON.stringify(footer), build: () => buildFooter(doc, footer, deps) });
+          return items;
+        }
+        function render(records) {
+          const items = groupTurns(Array.isArray(records) ? records : []).map((t) => ({
+            key: t.key,
+            sig: "",
+            build: () => {
+              const block = el(doc, "div", "tr-turn");
+              block.dataset.turn = t.key;
+              return block;
+            },
+            after: (c) => {
+              if (!c.sub) c.sub = /* @__PURE__ */ new Map();
+              reconcile(c.el, c.sub, rowItems(t.records));
+            }
+          }));
+          reconcile(paneEl, turnCache, items);
+        }
+        return { render };
+      }
+      module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, createTranscriptRows };
+    }
+  });
+
+  // renderer/live-split-view.js
+  var require_live_split_view = __commonJS({
+    "renderer/live-split-view.js"(exports, module) {
+      "use strict";
+      var { SPLIT_EXIT_MS, measureSplit, initialSplitState, reduceSplit } = require_live_split();
+      var { createTranscriptRows } = require_transcript_rows();
+      var TRANSCRIPT_PULL_MS = 1e3;
+      var views = /* @__PURE__ */ new WeakMap();
+      var NOOP = () => {
+      };
+      function renderTranscript(doc, paneEl, records, ctx = {}) {
+        let rows = views.get(paneEl);
+        if (!rows) {
+          rows = createTranscriptRows(doc, paneEl, ctx);
+          views.set(paneEl, rows);
+        }
+        rows.render(records);
       }
       function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null }) {
-        const paneEl = document.createElement("pre");
+        const paneEl = document.createElement("div");
         paneEl.className = "transcript-pane";
         paneEl.hidden = true;
         wrapperEl.appendChild(paneEl);
@@ -29829,6 +30262,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let cursorHidden = false;
         let follow = true;
         let pinnedTop = null;
+        let raw = false;
         function stickToBottom() {
           if (!follow) return;
           paneEl.scrollTop = paneEl.scrollHeight;
@@ -29852,7 +30286,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             available = !!(res && res.ok);
             if (available && res.rev !== rev) {
               rev = res.rev;
-              renderTranscript(document, paneEl, res.lines, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
+              renderTranscript(document, paneEl, res.records, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
               stickToBottom();
               evaluate();
             } else if (available !== was) evaluate();
@@ -29901,13 +30335,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
           clearTimeout(wakeTimer);
           wakeTimer = null;
           let measured = null;
-          if (isEligible()) {
+          if (!raw && isEligible()) {
             pull();
             const buf = terminal.buffer.active;
             if (available && buf.type === "normal") measured = measureSplit(screenRows(), buf.cursorY, terminal.cols);
           }
           const prev = state;
-          state = reduceSplit(state, measured, now());
+          state = reduceSplit(state, measured, now(), void 0, raw ? 0 : void 0);
           if (state.wakeAt != null) wakeTimer = setTimeout(evaluate, Math.max(0, state.wakeAt - now()));
           if (prev.mode !== state.mode || prev.top !== state.top || prev.bottom !== state.bottom) {
             layout();
@@ -29931,7 +30365,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
           terminal.onResize(() => {
             evaluate();
             layout();
-            stickToBottom();
           }),
           terminal.onScroll(() => {
             if (state.mode !== "split") return;
@@ -29940,7 +30373,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           })
         ];
         const unsubTranscript = onTranscriptChanged ? onTranscriptChanged((name) => {
-          if (disposed || name !== seatName || !isEligible()) return;
+          if (disposed || raw || name !== seatName || !isEligible()) return;
           lastPull = 0;
           pull();
         }) : null;
@@ -29955,6 +30388,12 @@ ${m[2].replace(/^\r?\n/, "")}`;
             evaluate();
             layout();
           },
+          setRaw(on) {
+            if (raw === !!on) return;
+            raw = !!on;
+            evaluate();
+          },
+          raw: () => raw,
           state: () => state,
           dispose() {
             disposed = true;
@@ -29972,7 +30411,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
         };
       }
-      module.exports = { TRANSCRIPT_PULL_MS, OUTPUT_LINE_CAP, renderTranscript, createLiveSplitView };
+      module.exports = { TRANSCRIPT_PULL_MS, renderTranscript, createLiveSplitView };
     }
   });
 
@@ -46637,6 +47076,10 @@ Click for live activity`;
       var resizeObserver = new ResizeObserver(refitActiveTerminal);
       resizeObserver.observe(terminalContainer);
       window.api.onZoomNudge(refitActiveTerminal);
+      window.api.onRequestToggleRawTerminal(() => {
+        const entry = activeSession ? sessions.get(activeSession) : null;
+        if (entry && entry.liveSplit) entry.liveSplit.setRaw(!entry.liveSplit.raw());
+      });
       var overlayElementById = (id) => document.getElementById(id);
       var overlayElementsByClass = (cls) => Array.from(document.getElementsByClassName(cls));
       var overlayProbes = { byId: overlayElementById, byClass: overlayElementsByClass };

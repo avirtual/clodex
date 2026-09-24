@@ -1187,14 +1187,21 @@ Own state + DOM, `init*(deps)`:
   pane (t1122 spike, `transcriptPane` setting, off by default). The pure half
   finds the composer anchor on the visible screen and applies the hysteresis; the
   view translates and clips the unresized xterm into a bottom strip under a
-  `<pre>` pane. See docs/explorations/split-proof.md.
+  `<div>` pane. See docs/explorations/split-proof.md.
 - **lib/ansi-html.js** — pure SGR converter for the transcript pane: `ansiRuns`
   turns a local command's stdout into `{ text, style }` runs and strips every
   other escape sequence; the view builds the spans with `textContent`.
-- **transcript-spike.js** — the naive main-side reader behind `transcript:pull`:
-  re-reads `run/<name>/transcript.jsonl` after `fs.watch` fires, one line per
-  user text, assistant text and tool_use, plus a `command` / `command-output` row
-  per `system/local_command` record, last 200.
+- **transcript-spike.js** — the main-side reader behind `transcript:pull`:
+  re-reads `run/<name>/transcript.jsonl` after `fs.watch` fires and returns
+  `{ ok, rev, records }` built by `transcript-records.js`.
+- **transcript-records.js** — pure, electron-free record builder:
+  `recordsOf(text)` turns transcript JSONL into typed records (prompt, inbound,
+  notification, assistant, tool paired with its result summary, command,
+  command-output, notice, boundary, turn-end), capped at 400 on a turn boundary.
+  See docs/explorations/pane-app-view.md §1.
+- **transcript-rows.js** — DOM builders per record kind and the keyed reconcile
+  behind the transcript pane: turn blocks keyed by their first record, rows keyed
+  by record id and replaced only when their summary changes. No innerHTML.
 - **voice-submit-watcher.js** + **lib/voice-submit.js** — hands-free submit: one
   watcher per local Claude terminal sends Enter when the composer ENDS with the
   configured trigger phrase. The composer is read from `terminal.buffer.active`
