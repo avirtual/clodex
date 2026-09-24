@@ -2704,7 +2704,8 @@ function createSessionManager(deps) {
         this._maybeInjectComposition(session, resolvedTeam, existingEntry);
         session._replayTicketsPending = true;
         if (streamIo) {
-          session._replayAtInit = true;
+          if (resumeId) this._replayTicketsOnce(session);
+          session._replayAtInit = !!session._replayTicketsPending;
         } else if (session.agentType !== 'claude') {
           session._bootSettling = true;
           session._bootSettleSince = Date.now();   // absolute-wait cap anchor

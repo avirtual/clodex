@@ -7,7 +7,7 @@ Spawned `detached: true` so the child leads its own process group: `groupKill` s
 The transcript symlink has one writer at a time: headless, `hook.sh` repoints it only on SessionStart `startup` (no later SessionStart fires under `-p`), and `_repointStreamTranscript` repoints it on every session-id change after that.
 They cannot race: startup's SessionStart precedes the first `init` (headless-seats.md §0.4, row "The transcript symlink").
 
-A team seat's open-ticket replay fires at its first `init` (`_onStreamEvent`, flag `_replayAtInit`), not at spawn, so the delivery stamp names a process that is running a turn. A fresh `-p` process emits no `init` until something is written to its stdin (headless-seats.md S5): a minted ticket seat gets its spec from the dispatch itself, which starts that turn, while a respawned seat with nothing written to it has not replayed yet.
+A team seat's open-ticket replay fires at its first `init` (`_onStreamEvent`, flag `_replayAtInit`), not at spawn, so the delivery stamp names a process that is running a turn. A fresh `-p` process emits no `init` until something is written to its stdin (headless-seats.md S5): a minted ticket seat gets its spec from the dispatch itself, which starts that turn. A seat created with a `resumeId` (restart, unarchive, relaunch) replays at create instead, because a `-p` process emits no `init` until it is written to; a held replay falls back to `_replayAtInit`.
 
 ## groupKill
 
