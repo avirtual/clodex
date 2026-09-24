@@ -36,7 +36,7 @@ function probe(eng) {
   persistence.remove = (n) => { origRemove(n); removals.push({ name: n, recordAfter: persistence.get(n) }); };
   eng.manager.create = async (...args) => {
     seen.push(args);
-    return { name: args[0], backend: null };
+    return { name: args[0], backend: null, ...(args[24] === 'stream' ? { io: 'stream' } : {}) };
   };
   return { seen, removals };
 }
@@ -63,6 +63,8 @@ for (const [label, run] of [
     assert.strictEqual(seen.length, 1, 'ENTER: create() was reached');
     assert.deepStrictEqual([seen[0][23], seen[0][24]], ['peer-a', 'stream'],
       `${label} must pass fixFor and io as create()'s 24th and 25th positionals, or a stream seat restarts as a pty seat`);
+    assert.strictEqual(res.io, 'stream',
+      `${label} must return io so the renderer rebuilds a stream pane, not an xterm, over the restarted seat`);
   });
 }
 

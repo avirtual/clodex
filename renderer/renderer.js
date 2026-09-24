@@ -800,12 +800,14 @@ function restartSessionWithReattach(name) {
   const snapBackend = item ? item.dataset.backend || null : null;
   const snapTeam = item ? item.dataset.team || null : null; // cwd is unchanged by a restart → team persists
   const snapNoWire = item ? item.dataset.noWire === '1' : false; // spawn-time config, unchanged by a restart
+  const snapIo = streamSeatNames.has(name) ? 'stream' : 'pty';
   return window.api.restartSession(name).then((res) => {
     if (!res || !res.ok) {
       alert(`Restart failed: ${res && res.error ? res.error : 'unknown error'}`);
       return;
     }
     if (snapType) {
+      markSeatIo(name, res.io || snapIo);
       createTerminal(name);
       addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam, snapNoWire, snapAccount);
       switchSession(name);
@@ -820,6 +822,7 @@ function moveSessionWithPicker(name) {
   const snapBackend = item ? item.dataset.backend || null : null;
   const snapNoWire = item ? item.dataset.noWire === '1' : false;
   const snapAccount = accountOfRow(name);
+  const snapIo = streamSeatNames.has(name) ? 'stream' : 'pty';
   return window.api.selectDirectory().then((dir) => {
     if (!dir) return;
     return window.api.moveSession(name, dir).then((res) => {
@@ -840,6 +843,7 @@ function moveSessionWithPicker(name) {
         return;
       }
       if (snapType || res.type) {
+        markSeatIo(name, snapIo);
         createTerminal(name);
         addSessionToSidebar(name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, snapNoWire, snapAccount);
         switchSession(name);
@@ -877,6 +881,7 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
   const snapCreatedAt = (sidebarMeta.get(name) || {}).createdAt || null;
   const snapNoWire = item ? item.dataset.noWire === '1' : false;
   const snapAccount = accountOfRow(name);
+  const snapIo = streamSeatNames.has(name) ? 'stream' : 'pty';
   pendingPeerMove.set(name, async (farCwd) => {
     if (movingToPeer.has(name)) return { ok: false, error: 'move already in progress' };
     const toast = showToast(`Moving ${name} to ${peerLabel}…`, { sticky: true, name });
@@ -902,6 +907,7 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
     }
     if (res && res.kept) {
       if (res.respawned) {
+        markSeatIo(name, snapIo);
         createTerminal(name);
         addSessionToSidebar(name, res.type || snapType, res.cwd, snapLabel,
           snapBackend, res.team || null, snapNoWire, snapAccount);
@@ -8270,6 +8276,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   // applySessionArgs replays the PERSISTED value), so the rebuilt row must carry
   // the flag forward or an unrelated edit silently un-marks a wire-off seat.
   const snapNoWire = existing ? existing.dataset.noWire === '1' : false;
+  const snapIo = streamSeatNames.has(name) ? 'stream' : 'pty';
   const snapAccount = env === undefined
     ? accountOfRow(name)
     : accountFromEnv(formatEnvLines(env), argsAccounts || []);
@@ -8292,6 +8299,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   if (res.restarted) {
     if (source) source.onRestarted();
     else if (snapType) {
+      markSeatIo(name, res.io || snapIo);
       createTerminal(name);
       addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, null, snapNoWire, snapAccount);
       switchSession(name);

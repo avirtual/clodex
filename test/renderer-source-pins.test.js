@@ -28,3 +28,19 @@ test('the ✉ badge click handler carries a tip for every reason flushPending ca
 
   assert.ok(/r\.ok === false/.test(src), 'the tip is set on the refusal verdict, not unconditionally');
 });
+
+for (const [label, anchor] of [
+  ['restartSessionWithReattach', /function restartSessionWithReattach\(name\) \{[\s\S]*?\n\}\n/],
+  ['moveSessionWithPicker', /function moveSessionWithPicker\(name\) \{[\s\S]*?\n\}\n/],
+  ['moveSessionToPeerWithDialog respawn', /if \(res\.respawned\) \{[\s\S]*?switchSession\(name\);/],
+  ['Edit Session save restart', /if \(res\.restarted\) \{\n    if \(source\) source\.onRestarted\(\);[\s\S]*?switchSession\(name\);/],
+]) {
+  test(`${label} marks the seat's io before createTerminal, so a stream seat is not rebuilt as an xterm`, () => {
+    const m = SRC.match(anchor);
+    assert.ok(m, `ENTER: ${label} is still found by this anchor`);
+    const at = m[0].indexOf('createTerminal(');
+    assert.ok(at > 0, `ENTER: ${label} still calls createTerminal`);
+    const mark = m[0].indexOf('markSeatIo(');
+    assert.ok(mark >= 0 && mark < at, `${label} must call markSeatIo before createTerminal`);
+  });
+}
