@@ -34,6 +34,39 @@ function toolInputLine(input) {
   return firstLine(JSON.stringify(input));
 }
 
+const CD_RE = /^cd[ \t]+(?:"([^"]+)"|'([^']+)'|([^\s;&]+))[ \t]*(?:;|&&)\s*/;
+
+function trimSlash(p) {
+  return p.length > 1 ? p.replace(/\/+$/, '') : p;
+}
+
+function isSeatPath(p, cwd) {
+  if (typeof cwd !== 'string' || !cwd) return false;
+  const want = trimSlash(p);
+  const here = trimSlash(cwd);
+  if (want === here) return true;
+  const cut = here.lastIndexOf('/');
+  const prefix = `${here.slice(0, cut + 1)}${here.slice(cut + 1)}-t`;
+  return want.startsWith(prefix) && !want.slice(prefix.length).includes('/');
+}
+
+function bashShown(command, cwd) {
+  if (typeof command !== 'string') return null;
+  const m = CD_RE.exec(command.trimStart());
+  if (!m || !isSeatPath(m[1] || m[2] || m[3], cwd)) return null;
+  const rest = command.trimStart().slice(m[0].length);
+  return rest.trim() ? firstLine(rest) : null;
+}
+
+function toolRecord(base, b, cwd) {
+  const tool = { ...base, id: b.id, kind: 'tool', name: b.name || 'tool', arg: toolInputLine(b.input), state: 'pending', sum: null };
+  if (tool.name !== 'Bash' || !b.input || typeof b.input !== 'object') return tool;
+  const shown = bashShown(b.input.command, cwd);
+  if (shown != null && shown !== tool.arg) tool.argShown = shown;
+  if (typeof b.input.description === 'string' && b.input.description.trim()) tool.desc = firstLine(b.input.description);
+  return tool;
+}
+
 function textOf(content) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
@@ -295,7 +328,7 @@ function assistantRecords(rec, base, tools) {
       }
       out.push(rec.isApiErrorMessage ? { ...r, apiError: true } : r);
     } else if (b.type === 'tool_use' && b.id) {
-      const tool = { ...base, id: b.id, kind: 'tool', name: b.name || 'tool', arg: toolInputLine(b.input), state: 'pending', sum: null };
+      const tool = toolRecord(base, b, rec.cwd);
       tools.set(b.id, { rec: tool, input: b.input });
       out.push(tool);
     }

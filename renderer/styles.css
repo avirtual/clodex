@@ -6057,6 +6057,12 @@ body.web-frontend #sidebar-header {
 .tr-tool-name { flex: none; width: 6ch; color: var(--text-primary); }
 .tr-tool-arg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
 .tr-tool-sum { flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.tr-tool-many {
+  border-left: 2px solid var(--border);
+  padding: var(--sp-1) 0 var(--sp-1) var(--sp-2);
+}
+.tr-tool-head { font-family: var(--font-ui); color: var(--text-secondary); white-space: nowrap; }
+.tr-tool-count { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
 
 .tr-mark {
   flex: none;

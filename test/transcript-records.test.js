@@ -14,17 +14,17 @@ const BASH_PLAIN = { interrupted: false, background: false, persisted: null };
 
 const ROWS = [
   ['a Bash success with one short output line carries it as only', 'bash-ok', [{
-    id: 'toolu_01Adbs7yzWMhKVXywkHPLaJJ', kind: 'tool', ts: 1789988805620, turn: 0, name: 'Bash', arg: 'wc -l docs/DESIGN.md', state: 'ok',
+    id: 'toolu_01Adbs7yzWMhKVXywkHPLaJJ', kind: 'tool', ts: 1789988805620, turn: 0, name: 'Bash', arg: 'wc -l docs/DESIGN.md', state: 'ok', desc: 'Confirm line budget and that the project tree is untouched',
     sum: { exit: 0, lines: 1, ...BASH_PLAIN, only: '210 docs/DESIGN.md' },
   }]],
   ['a Bash Exit code 1 with a string toolUseResult parses the exit and counts the lines after it', 'bash-exit', [{
-    id: 'toolu_01G7QbzNV7SDUYafrQeJaQhC', kind: 'tool', ts: 1790229197666, turn: 0, name: 'Bash', arg: 'ls docs/tasks | tail -3; grep -rl t1129 docs/tasks | head -1', state: 'error',
+    id: 'toolu_01G7QbzNV7SDUYafrQeJaQhC', kind: 'tool', ts: 1790229197666, turn: 0, name: 'Bash', arg: 'ls docs/tasks | tail -3; grep -rl t1129 docs/tasks | head -1', state: 'error', desc: 'Find the record and check the t1129 spec body',
     sum: { exit: 1, lines: 3, ...BASH_PLAIN, only: null },
   }]],
   ['a <tool_use_error> block is an error whose message is its first line, tag stripped', 'tool-use-error', [{
     id: 'toolu_01W1VArV7gi4UjNMb4TBVDA3', kind: 'tool', ts: 1790196151640, turn: 0, name: 'Bash',
     arg: 'sleep 240; tail -1 /repo/tmp/publish-image-5.86.0.log | cut -c1-120; pgrep -f publish-image.sh >/dev/null && echo "publish running" || (echo "publish finished";',
-    state: 'error',
+    state: 'error', desc: 'Wait and check whether the image publish has finished and the 5.86.0 tag exists',
     sum: { message: 'Blocked: sleep 240 followed by: tail -1 /repo/tmp/publish-image-5.86.0.log cut -c1-120 pgrep -f publish-image.sh echo "publish running" (echo "p' },
   }]],
   ['a persisted Bash output carries persistedOutputSize', 'bash-persisted', [{
@@ -256,4 +256,40 @@ test(`segment strings share one ${PROSE_CAP}-character budget and the record say
   const [r] = records;
   assert.strictEqual(r.truncated, true);
   assert.strictEqual(r.segments[0].text.length + r.segments[1].body.length, PROSE_CAP);
+});
+
+const CWD = '/Users/op/projects/wb-wrap-ui';
+const bashAt = (command, cwd = CWD) => {
+  const { records } = recordsOf(rec({ type: 'assistant', uuid: 'u', cwd, message: { content: [{ type: 'tool_use', id: 'b', name: 'Bash', input: { command } }] } }));
+  return [records[0].arg, records[0].argShown];
+};
+
+const CD_ROWS = [
+  ['cd /Users/op/projects/wb-wrap-ui; git status', 'git status'],
+  ['cd /Users/op/projects/wb-wrap-ui && git status', 'git status'],
+  ['cd /Users/op/projects/wb-wrap-ui-t1158-fold-rows; npm test', 'npm test'],
+  ['cd "/Users/op/projects/wb-wrap-ui-t1158-fold-rows" && npm test', 'npm test'],
+  ['cd /Users/op/projects/other && git status', undefined],
+  ['cd /Users/op/projects/wb-wrap-ui-old; git status', undefined],
+  ['cd /Users/op/projects/wb-wrap-ui-t1158/sub; git status', undefined],
+  ['cd /Users/op/projects/wb-wrap-ui', undefined],
+  ['git status', undefined],
+];
+
+for (const [command, shown] of CD_ROWS) {
+  test(`Bash display arg of ${JSON.stringify(command)} is ${JSON.stringify(shown)}, and arg stays raw`, () => {
+    assert.deepStrictEqual(bashAt(command), [command, shown]);
+  });
+}
+
+test('a Bash cd prefix is kept when the record carries no cwd', () => {
+  assert.deepStrictEqual(bashAt('cd /Users/op/projects/wb-wrap-ui; git status', null), ['cd /Users/op/projects/wb-wrap-ui; git status', undefined]);
+});
+
+test('a Bash description rides the record as desc; other tools carry neither desc nor argShown', () => {
+  const { records } = recordsOf(rec({ type: 'assistant', uuid: 'u', cwd: CWD, message: { content: [
+    { type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'ls', description: 'List files' } },
+    { type: 'tool_use', id: 'r', name: 'Read', input: { file_path: `${CWD}/a.js`, description: 'x' } },
+  ] } }));
+  assert.deepStrictEqual(records.map((r) => [r.name, r.desc, r.argShown]), [['Bash', 'List files', undefined], ['Read', undefined, undefined]]);
 });
