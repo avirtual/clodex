@@ -16,7 +16,7 @@ const TABLE = [
   ['team', { cls: 'system', label: 'team', glyph: '⊞' }],
   ['clodex-team', { cls: 'system', label: 'clodex-team', glyph: '⊞' }],
   ['wirescope', { cls: 'system', label: 'wirescope', glyph: '∿' }],
-  ['clodex', { cls: 'system', label: 'clodex', glyph: '◆' }],
+  ['clodex', { cls: 'seat', label: 'clodex', glyph: 'C' }],
   ['review-loop', { cls: 'system', label: 'review-loop', glyph: '⇄' }],
   ['merge-watchdog', { cls: 'system', label: 'merge-watchdog', glyph: '◉' }],
   ['user', { cls: 'operator', label: 'you', glyph: '●' }],
@@ -34,5 +34,5 @@ for (const [from, want] of TABLE) {
 }
 
 test('SYSTEM_GLYPHS names exactly the known system senders', () => {
-  assert.deepStrictEqual(Object.keys(SYSTEM_GLYPHS), ['reminder', 'reboot', 'ticket-loop', 'ticket-watchdog', 'monitor', 'memory', 'exec', 'terminal', 'team', 'clodex-team', 'wirescope', 'clodex']);
+  assert.deepStrictEqual(Object.keys(SYSTEM_GLYPHS), ['reminder', 'reboot', 'ticket-loop', 'ticket-watchdog', 'monitor', 'memory', 'exec', 'terminal', 'team', 'clodex-team', 'wirescope']);
 });
