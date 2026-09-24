@@ -882,6 +882,7 @@ function createSessionManager(deps) {
       this._wire = null;       // in-process tee (WIRE_SHADOW only in W1)
       this._voiceEngine = null;
       this._voiceEnginePending = null;
+      this._voiceOp = Promise.resolve();
       this._shadow = null;     // wire-vs-jsonl intent differ
       this._wireTelemetry = null; // W2 step-4 dark bridge (wire-telemetry.js)
       const { IntentDeduper, ActivityTracker } = require('./wire-intents');
@@ -4678,18 +4679,18 @@ function createSessionManager(deps) {
       };
     }
 
-    ensureVoiceEngine() {
+    ensureVoiceEngine(armedBy = null) {
       const live = this._voiceEngine;
       if (live && !live.dead) return live.ready.then(() => live);
       if (this._voiceEnginePending) return this._voiceEnginePending;
-      const pending = this._spawnVoiceEngine().finally(() => {
+      const pending = this._spawnVoiceEngine(armedBy).finally(() => {
         if (this._voiceEnginePending === pending) this._voiceEnginePending = null;
       });
       this._voiceEnginePending = pending;
       return pending;
     }
 
-    async _spawnVoiceEngine() {
+    async _spawnVoiceEngine(armedBy = null) {
       const { VOICE_ENGINE_NAME, PROMPT_MARK, engineArgs } = voiceEngineSpec;
       const t = this.voiceEngineTimings();
       if (!WIRE_SHADOW) throw new Error('the voice engine needs the in-process wire, which is off');
@@ -4709,7 +4710,7 @@ function createSessionManager(deps) {
       let markReady;
       const engine = {
         name: VOICE_ENGINE_NAME, pty: proc, recording: false, holdTimer: null, holdCap: null,
-        armedBy: null, dead: false, ready: new Promise((r) => { markReady = r; }),
+        armedBy, dead: false, ready: new Promise((r) => { markReady = r; }),
       };
       let seen = false;
       let settle = null;
@@ -4720,7 +4721,9 @@ function createSessionManager(deps) {
           clearTimeout(settle);
           settle = setTimeout(() => { clearTimeout(cap); markReady(); }, t.bootSettleMs);
         }
-        this._broadcast('pty-data', VOICE_ENGINE_NAME, data);
+        const ws = engine.armedBy && engine.armedBy.workspaceId;
+        const win = ws ? this.windowForWorkspace(ws) : null;
+        if (win) win.webContents.send('pty-data', VOICE_ENGINE_NAME, data);
       });
       proc.onExit(() => {
         engine.dead = true;
@@ -4747,14 +4750,21 @@ function createSessionManager(deps) {
     async voiceRecord(name, action, { mode = null, workspaceId = null } = {}) {
       const s = this.sessions.get(name);
       if (!s || s._dead || s.io !== 'stream') return { ok: false, error: 'voice:record is for a stream seat' };
-      const live = this._voiceEngine && !this._voiceEngine.dead ? this._voiceEngine : null;
-      const plan = voiceEngineSpec.planRecord({ mode, action, recording: live ? live.recording : false });
-      if (!plan) return { ok: false, error: `cannot record in voice mode ${mode || 'unknown'}` };
+      if (!voiceEngineSpec.planRecord({ mode, action, recording: false })) return { ok: false, error: `cannot record in voice mode ${mode || 'unknown'}` };
+      const armedBy = { name, workspaceId: workspaceId || s.workspaceId || null };
+      const run = () => this._voiceRecordNow(armedBy, action, mode);
+      const op = this._voiceOp.then(run, run);
+      this._voiceOp = op.catch(() => {});
+      return op;
+    }
+
+    async _voiceRecordNow(armedBy, action, mode) {
       let engine;
-      try { engine = await this.ensureVoiceEngine(); } catch (e) { return { ok: false, error: e.message }; }
+      try { engine = await this.ensureVoiceEngine(armedBy); } catch (e) { return { ok: false, error: e.message }; }
+      const plan = voiceEngineSpec.planRecord({ mode, action, recording: engine.recording });
       const { RECORD_KEY } = voiceEngineSpec;
       const t = this.voiceEngineTimings();
-      engine.armedBy = { name, workspaceId: workspaceId || s.workspaceId || null };
+      engine.armedBy = armedBy;
       if (plan.write) engine.pty.write(RECORD_KEY);
       if (plan.hold === 'start' && !engine.holdTimer) {
         engine.pty.write(RECORD_KEY);

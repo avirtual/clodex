@@ -43,20 +43,42 @@ function createComposerTrigger({ getConfig }) {
   };
 }
 
-function attachTriggerSubmit(composer, { getConfig, markOrigin, send, hasImages = () => false }) {
+function attachTriggerSubmit(composer, {
+  getConfig, markOrigin, send, hasImages = () => false, onVoiceFire = () => {},
+  quietMs = 0, timers = { set: setTimeout, clear: clearTimeout },
+}) {
   const trigger = createComposerTrigger({ getConfig });
-  const onInput = () => {
+  let span = null;
+  let quiet = null;
+  const fire = (fromVoice) => {
     const hit = trigger.check(composer.value);
     if (!hit) return;
     composer.value = hit.text;
+    if (fromVoice) { try { onVoiceFire(); } catch {} }
     let images = false;
     try { images = hasImages() === true; } catch { images = false; }
     if (!hit.text.trim() && !images) return;
     try { markOrigin(); } catch {}
     send();
   };
+  const onInput = () => fire(false);
+  const cancelQuiet = () => { if (quiet !== null) { timers.clear(quiet); quiet = null; } };
   composer.addEventListener('input', onInput);
-  return { check: onInput, dispose: () => composer.removeEventListener('input', onInput) };
+  return {
+    check: onInput,
+    draft(text) {
+      const next = applyDraft(composer.value, span, text);
+      composer.value = next.value;
+      span = next.span;
+      cancelQuiet();
+      quiet = timers.set(() => { quiet = null; fire(true); }, quietMs);
+    },
+    resetSpan() { span = null; },
+    dispose() {
+      cancelQuiet();
+      composer.removeEventListener('input', onInput);
+    },
+  };
 }
 
 module.exports = { applyDraft, createComposerTrigger, attachTriggerSubmit };

@@ -63,9 +63,9 @@ const { createInboxDrawer } = require('./inbox-drawer');
 const { createVoiceCore, createVoiceControl } = require('./voice-control');
 const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
-const { createVoiceSubmitWatcher } = require('./voice-submit-watcher');
+const { createVoiceSubmitWatcher, QUIET_MS: VOICE_QUIET_MS } = require('./voice-submit-watcher');
 const { createVoiceMirror } = require('./voice-mirror');
-const { applyDraft, attachTriggerSubmit } = require('./lib/composer-voice');
+const { attachTriggerSubmit } = require('./lib/composer-voice');
 const { VOICE_ENGINE_NAME } = require('../voice-engine');
 const {
   DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings, resolveTriggerKey,
@@ -1598,13 +1598,12 @@ function createStreamSeatPane(name, wrapperEl) {
   transcriptChangedSubs.add(onChanged);
   const timer = setInterval(pull, TRANSCRIPT_PULL_MS);
   pull(true);
-  let voiceSpan = null;
   const sendComposer = () => {
     const text = composer.value;
     const images = pending;
     if (!text.trim() && !images.length) return;
     composer.value = '';
-    voiceSpan = null;
+    triggerSubmit.resetSpan();
     pending = [];
     renderAttachments();
     follow = true;
@@ -1637,17 +1636,14 @@ function createStreamSeatPane(name, wrapperEl) {
     markOrigin: () => window.api.markVoiceOrigin(name),
     send: sendComposer,
     hasImages: () => pending.length > 0,
+    onVoiceFire: () => streamVoiceFired(name),
+    quietMs: VOICE_QUIET_MS,
   });
   return {
     focus: () => composer.focus(),
     refresh: () => pull(true),
-    voiceDraft(text) {
-      const next = applyDraft(composer.value, voiceSpan, text);
-      composer.value = next.value;
-      voiceSpan = next.span;
-      triggerSubmit.check();
-    },
-    voiceStart() { voiceSpan = null; },
+    voiceDraft(text) { triggerSubmit.draft(text); },
+    voiceStart() { triggerSubmit.resetSpan(); },
     setRecording(on) {
       composer.classList.toggle('voice-recording', !!on);
       composer.placeholder = on
@@ -3491,14 +3487,23 @@ async function streamVoiceRecord(name, action) {
   }
   if (res.recording) {
     if (voiceArmedSeat && voiceArmedSeat !== name) {
+      view.mirror.disarm();
       const prev = sessions.get(voiceArmedSeat);
       if (prev && prev.stream) prev.stream.setRecording(false);
     }
     voiceArmedSeat = name;
     entry.stream.voiceStart();
     view.mirror.arm();
+  } else if (voiceArmedSeat === name) {
+    view.mirror.release();
   }
   entry.stream.setRecording(res.recording === true);
+}
+
+function streamVoiceFired(name) {
+  if (voiceArmedSeat !== name || !voiceEngineView) return;
+  voiceEngineView.mirror.disarm();
+  if (streamVoiceMode(name, 'tap')) streamVoiceRecord(name, 'stop');
 }
 
 window.api.onPtyData((name, data) => {

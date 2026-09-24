@@ -110,3 +110,47 @@ test('the trigger phrase strips, marks the origin and sends once per draft', () 
   ta.type('late over and out');
   assert.equal(log.length, 4, 'disabled in Preferences: never fires');
 });
+
+test('a mirrored utterance sends once: the trigger waits out the repaint, then stops and disarms', () => {
+  const t = fakeTerminal([`${HEAD}`]);
+  const ta = fakeTextarea();
+  const pending = [];
+  const timers = { set: (fn) => { pending.push(fn); return pending.length; }, clear: (id) => { pending[id - 1] = null; } };
+  const flush = () => { for (let i = 0; i < pending.length; i++) { const fn = pending[i]; pending[i] = null; if (fn) fn(); } };
+  const sent = [];
+  let fired = 0;
+  let mirror = null;
+  const sub = attachTriggerSubmit(ta, {
+    getConfig: () => ({ enabled: true, phrase: 'over and out' }),
+    markOrigin: () => {},
+    send: () => { sent.push(ta.value); ta.value = ''; sub.resetSpan(); },
+    onVoiceFire: () => { fired++; mirror.disarm(); },
+    quietMs: 1200,
+    timers,
+  });
+  mirror = createVoiceMirror(t, { onDraft: (d) => sub.draft(d) });
+  mirror.arm();
+  t.paint([`${HEAD}ship it over and out █`]);
+  t.paint([`${HEAD}Ship it, over and out.`]);
+  flush();
+  t.paint([`${HEAD}Ship it, over and out. more`]);
+  flush();
+  assert.deepEqual(sent, ['Ship it,']);
+  assert.equal(fired, 1);
+  assert.equal(mirror.isArmed(), false);
+  assert.equal(ta.value, '');
+});
+
+test('a released mirror disarms once the engine clears its input row', () => {
+  const t = fakeTerminal([`${HEAD}`]);
+  const drafts = [];
+  const mirror = createVoiceMirror(t, { onDraft: (d) => drafts.push(d) });
+  mirror.arm();
+  t.paint([`${HEAD}hello █`]);
+  mirror.release();
+  t.paint([`${HEAD}Hello there.`]);
+  t.paint([`${HEAD}`]);
+  t.paint([`${HEAD}stray`]);
+  assert.deepEqual(drafts, ['hello', 'Hello there.']);
+  assert.equal(mirror.isArmed(), false);
+});

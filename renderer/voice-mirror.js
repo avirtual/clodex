@@ -28,6 +28,7 @@ function createVoiceMirror(terminal, { onDraft, readRows = () => readRowsToCurso
   let disposed = false;
   let baseline = '';
   let last = null;
+  let releasing = false;
 
   function read() {
     try {
@@ -39,6 +40,7 @@ function createVoiceMirror(terminal, { onDraft, readRows = () => readRowsToCurso
   function check() {
     if (!armed || disposed) return;
     const draft = read();
+    if (draft === '' && releasing && last !== null) { armed = false; releasing = false; return; }
     if (!draft) return;
     let text = draft;
     if (baseline && text.startsWith(baseline)) text = text.slice(baseline.length).trim();
@@ -53,9 +55,11 @@ function createVoiceMirror(terminal, { onDraft, readRows = () => readRowsToCurso
     arm() {
       baseline = read() || '';
       last = null;
+      releasing = false;
       armed = true;
     },
-    disarm() { armed = false; },
+    release() { if (armed) releasing = true; },
+    disarm() { armed = false; releasing = false; },
     isArmed: () => armed,
     check,
     dispose() {

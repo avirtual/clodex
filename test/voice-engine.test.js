@@ -168,6 +168,38 @@ test('voiceRecord writes the recorder key for a stream seat and refuses a termin
   h.m.killVoiceEngine();
 });
 
+test('a hold released while the engine boots ends stopped: voiceRecord runs in order', async () => {
+  const h = managerFixture();
+  const start = h.m.voiceRecord('st', 'start', { mode: 'hold' });
+  for (let i = 0; i < 50 && !h.m._voiceEngine; i++) await Promise.resolve();
+  assert.ok(h.m._voiceEngine, 'the engine is assigned before it is ready');
+  const stop = h.m.voiceRecord('st', 'stop', { mode: 'hold' });
+  const [a, b] = await Promise.all([start, stop]);
+  assert.equal(a.recording, true);
+  assert.equal(b.recording, false);
+  assert.equal(h.m._voiceEngine.holdTimer, null);
+  assert.equal(h.m._voiceEngine.recording, false);
+  h.m.killVoiceEngine();
+});
+
+test('engine output reaches only the window of the workspace that armed it', async () => {
+  const h = managerFixture();
+  const got = { 'ws-1': [], 'ws-2': [] };
+  const win = (ws) => ({ isDestroyed: () => false, webContents: { send: (...a) => got[ws].push(a) } });
+  h.m.windows.set('ws-1', win('ws-1'));
+  h.m.windows.set('ws-2', win('ws-2'));
+  h.m.sessions.set('st2', { name: 'st2', type: 'claude', agentType: 'claude', io: 'stream', cwd: '/proj', workspaceId: 'ws-2', pty: { pid: 3 }, activityState: 'idle' });
+  await h.m.voiceRecord('st', 'toggle', { mode: 'tap' });
+  h.spawns[0].data('one');
+  await h.m.voiceRecord('st', 'toggle', { mode: 'tap' });
+  got['ws-1'].length = 0;
+  await h.m.voiceRecord('st2', 'toggle', { mode: 'tap' });
+  h.spawns[0].data('two');
+  assert.deepEqual(got['ws-1'], []);
+  assert.deepEqual(got['ws-2'], [['pty-data', VOICE_ENGINE_NAME, 'two']]);
+  h.m.killVoiceEngine();
+});
+
 test('planRecord: tap toggles with one key, hold starts and stops a repeat', () => {
   assert.deepEqual(planRecord({ mode: 'tap', action: 'toggle', recording: false }), { write: true, hold: null, recording: true });
   assert.deepEqual(planRecord({ mode: 'tap', action: 'start', recording: true }), { write: false, hold: null, recording: true });
