@@ -598,36 +598,40 @@ record is dropped as soon as the file yields its uuid. The existing 100 ms
 change debounce and the 1 s pull throttle stay for the file. Live state is
 pushed on a coalesced 50 ms `transcript:live` event for the active seat only.
 
-### 4.1a Three channels, and the proxy paints (Bogdan, 2026-09-24)
+### 4.1a Three channels, and the Clodex wire paints (Bogdan, 2026-09-24)
 
 Bogdan's framing supersedes the stdout-centred reading above: under the PTY,
 Clodex received a painting the CLI had already executed and tried to change a
 colour here and there; on a stream seat, Clodex does the painting itself, and
-the richest source of paint is not the CLI's stdout but the wire the seat
-already runs through. So a stream seat has three channels, each carrying only
-what the others cannot:
+the paint comes from the wire every agent seat already runs through. The path
+is CLI → Clodex wire (`wire/proxy.js`, the in-process proxy that parses
+intents, cuts spills and collects telemetry) → upstream, where upstream is
+wirescope when it is on and Anthropic directly when it is not. Wirescope is
+an observer behind the wire, not a party to it; nothing here depends on it.
+So a stream seat has three channels, each carrying only what the others
+cannot:
 
 | channel | direction | carries |
 |---|---|---|
 | stdin | Clodex → CLI | user messages, slash commands, control requests (`interrupt`, `set_model`, `set_permission_mode`), permission replies |
-| **wirescope proxy** | API wire, observed | the live painting: `content_block_delta` text and thinking deltas, `tool_use` blocks as they are emitted, `message_start`/`message_delta` usage, model, stop reason. This is the same feed the telemetry and the spill cut already consume (`wire/proxy.js` `stream-start`/`stream-end`/`turn.*`, `wire/sse.js` framer). |
+| **Clodex wire** | API wire, observed in-process | the live painting: `content_block_delta` text and thinking deltas, `tool_use` blocks as they are emitted, `message_start`/`message_delta` usage, model, stop reason. This is the same feed the intent scanner, the telemetry and the spill cut already consume (`stream-start`/`stream-end`/`turn.*` events, `wire/sse.js` framer). |
 | stdout | CLI → Clodex | only what never crosses the API wire: `init`, `result`, `conversation_reset`, `compact_boundary`, `system/status`, `can_use_tool` requests, the local replies to `/cost`, `/context` and friends |
 
 The join key exists on both sides today: a transcript assistant record carries
 `message.id` (the API `msg_…` id) and `requestId` next to its `uuid`, and the
-proxy's framer records `message_start`'s `msg.id` as `messageId`. So a live row
-painted from proxy deltas is keyed `messageId:blockIndex`, and when the file
+wire's framer records `message_start`'s `msg.id` as `messageId`. So a live row
+painted from wire deltas is keyed `messageId:blockIndex`, and when the file
 yields the record with that `message.id` the keyed reconcile swaps it in
 place, exactly as §4.1 describes for stream uuids. `--include-partial-messages`
-becomes unnecessary: stdout is read for control only, and the proxy's deltas
-are the overlay. A seat that runs without the proxy (wirescope off) degrades
-to the stdout-delta path of §4.2, which stays as the fallback, not the
-default.
+is not needed: stdout is read for control only, and the wire's deltas are the
+overlay. §4.2's stdout-delta rows are therefore dropped, not kept as a
+fallback; there is no seat without the wire.
 
 Consequences for H1: `stream-codec-claude.js` decodes control records only;
-`stream-overlay.js` subscribes to the proxy's per-agent stream events (the
-seat must route through `/agent/<name>/`, per M18, or wirescope sees it as an
-unnamed session); the file remains the source of truth and the restore path.
+`stream-overlay.js` subscribes to the wire's per-agent stream events, which
+already arrive keyed by agent because the seat's `ANTHROPIC_BASE_URL` routes
+through `/agent/<name>/`; the file remains the source of truth and the
+restore path.
 
 ### 4.2 Stream event to row
 
