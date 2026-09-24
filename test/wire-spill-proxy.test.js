@@ -9,7 +9,7 @@ const zlib = require('zlib');
 
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { WireProxy } = require('../wire/proxy');
-const { mimicKindOf, spillSize, SPILLED_BODY, SPILLED_BODY_EPHEMERAL, writeSpill } = require('../intent-spill');
+const { mimicKindOf, spillSize, SPILLED_BODY, SPILLED_BODY_FIRST, SPILLED_BODY_EPHEMERAL, writeSpill } = require('../intent-spill');
 
 function filed(root, spill) {
   return `${spillSize(spill.bytes)}${spill.verb === 'prose' ? ' of prose' : ''} filed at ${path.join(root, 'spill', 'tester', `${spill.id}.md`)}`;
@@ -873,5 +873,100 @@ test('t1118: an over-limit intent body and the over-limit prose tail behind it b
     assert.ok(await whenEvent(events, 'stream-end'), 'stream finished');
     assert.deepEqual(events.spill.map((e) => e.verb), ['task.add', 'prose']);
     assert.equal(textOf(res.body), `[agent:task add hand] ${filed(root, events.spill[0])}\n[agent:end]\n${filed(root, events.spill[1])}\n`);
+  });
+});
+
+function stickyFixture(root) {
+  const bodies = ['A', 'B', 'C', 'D'].map((n) => ({ n, text: `${n} ${BIG}` }));
+  for (const b of bodies) {
+    b.id = writeSpill(root, 'tester', b.text);
+    assert.ok(/^[0-9a-f]{16}$/.test(b.id), `ENTER: ${b.n} filed`);
+    b.stub = `[agent:task done t1] ${filed(root, { id: b.id, bytes: Buffer.byteLength(b.text), verb: 'task.done' })}\n[agent:end]\n`;
+  }
+  const bodyOf = (list, sid = SESSION_ID) => {
+    const messages = [{ role: 'user', content: 'hi' }];
+    for (const b of list) {
+      messages.push({ role: 'assistant', content: [{ type: 'text', text: b.stub }] });
+      messages.push({ role: 'user', content: `after ${b.n}` });
+    }
+    return makeBody({ messages, metadata: { user_id: JSON.stringify({ session_id: sid }) } });
+  };
+  return { bodies, bodyOf };
+}
+
+const pickCut = (e) => ({ sticky: e.sticky, expanded: e.expanded });
+
+test('t1146 (p1): a body expanded on one request stays expanded on the next — sticky 2, expanded 3, the third-newest carried in full', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({}, async (proxy, up) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
+    const events = collect(proxy, ['spill-cut', 'turn.completed']);
+    const { bodies: [A, B, C, D], bodyOf } = stickyFixture(root);
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C]));
+    assert.ok(await whenEvent(events, 'turn.completed', 1));
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C, D]));
+    assert.ok(await whenEvent(events, 'turn.completed', 2));
+    assert.deepStrictEqual(events['spill-cut'].map(pickCut), [{ sticky: 0, expanded: 2 }, { sticky: 2, expanded: 3 }]);
+    const upstream = JSON.parse(up.seen.requests[1].body.toString('utf8'));
+    assert.deepStrictEqual(upstream.messages.filter((m) => m.role === 'assistant').map((m) => m.content), [
+      [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_BODY_FIRST}\n[agent:end]\n` }],
+      [{ type: 'text', text: `[agent:task done t1]\nB ${BIG}\n[agent:end]\n` }],
+      [{ type: 'text', text: `[agent:task done t1]\nC ${BIG}\n[agent:end]\n` }],
+      [{ type: 'text', text: `[agent:task done t1]\nD ${BIG}\n[agent:end]\n` }],
+    ]);
+  });
+});
+
+test('t1146 (p2): a new session id is a cold boundary — sticky 0, expanded 2', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({}, async (proxy, up) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
+    const events = collect(proxy, ['spill-cut', 'turn.completed']);
+    const { bodies: [A, B, C, D], bodyOf } = stickyFixture(root);
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C]));
+    assert.ok(await whenEvent(events, 'turn.completed', 1));
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C, D], '0b8f3c1e-1111-4222-8333-944455556666'));
+    assert.ok(await whenEvent(events, 'turn.completed', 2));
+    assert.deepStrictEqual(events['spill-cut'].map(pickCut), [{ sticky: 0, expanded: 2 }, { sticky: 0, expanded: 2 }]);
+    const upstream = JSON.parse(up.seen.requests[1].body.toString('utf8'));
+    assert.deepStrictEqual(upstream.messages[3].content, [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_BODY}\n[agent:end]\n` }]);
+  });
+});
+
+test('t1146 (p3): a compact call completing between two requests is a cold boundary — sticky 0, expanded 2', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({}, async (proxy, up) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
+    const events = collect(proxy, ['spill-cut', 'turn.completed']);
+    const { bodies: [A, B, C, D], bodyOf } = stickyFixture(root);
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C]));
+    assert.ok(await whenEvent(events, 'turn.completed', 1));
+    await request(proxy.port, '/agent/tester/v1/messages', compactBody());
+    assert.ok(await whenEvent(events, 'turn.completed', 2));
+    assert.equal(events['turn.completed'][1].compact, true, 'ENTER: the middle request is the compact call');
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C, D]));
+    assert.ok(await whenEvent(events, 'turn.completed', 3));
+    assert.deepStrictEqual(events['spill-cut'].map(pickCut), [{ sticky: 0, expanded: 2 }, { sticky: 0, expanded: 2 }]);
+    const upstream = JSON.parse(up.seen.requests[2].body.toString('utf8'));
+    assert.deepStrictEqual(upstream.messages[3].content, [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_BODY}\n[agent:end]\n` }]);
+  });
+});
+
+test('t1146 (p4): a gap over 60 minutes on the injected clock is a cold boundary; 59 minutes is not', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  let clock = 1_000_000;
+  await withProxy({ proxyOpts: { now: () => clock } }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
+    const events = collect(proxy, ['spill-cut', 'turn.completed']);
+    const { bodies: [A, B, C, D], bodyOf } = stickyFixture(root);
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C]));
+    assert.ok(await whenEvent(events, 'turn.completed', 1));
+    clock += 59 * 60 * 1000;
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C, D]));
+    assert.ok(await whenEvent(events, 'turn.completed', 2));
+    clock += 61 * 60 * 1000;
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C, D]));
+    assert.ok(await whenEvent(events, 'turn.completed', 3));
+    assert.deepStrictEqual(events['spill-cut'].map(pickCut), [{ sticky: 0, expanded: 2 }, { sticky: 2, expanded: 3 }, { sticky: 0, expanded: 2 }]);
   });
 });

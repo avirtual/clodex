@@ -23,6 +23,8 @@ const { billing, billingOpenai, Ledger } = require('./billing');
 const { SpillTee } = require('./spill');
 const { cutSpillStubs } = require('./spill-cut');
 
+const SPILL_SHOWN_TTL_MS = 60 * 60 * 1000;
+
 // Hop-by-hop headers per RFC 7230 §6.1, plus content-length/host which the
 // HTTP libs manage themselves. content-encoding stays — the client receives
 // raw upstream bytes, still compressed when upstream compresses.
@@ -137,6 +139,8 @@ class WireProxy extends EventEmitter {
     this._agentSessions = new Map(); // agent name → last main-line sessionId
     this._agentUpstreams = new Map(); // agent name → { provider: baseUrl } overrides
     this._agentSpill = new Map();
+    this._agentSpillShown = new Map();
+    this.now = typeof opts.now === 'function' ? opts.now : Date.now;
     this._roles = new RoleClassifier();
     this.billing = new Ledger(); // global + per-session running totals
     this.stats = {
@@ -178,6 +182,7 @@ class WireProxy extends EventEmitter {
       this._agentSpill.set(name, { ...opts.spill, examples });
     }
     else this._agentSpill.delete(name);
+    this._agentSpillShown.set(name, { shown: new Set(), sessionId: null, lastAt: 0, compacted: false });
     if (this.requireTokens) {
       const token = crypto.randomBytes(16).toString('hex');
       this._tokens.set(name, token);
@@ -190,6 +195,7 @@ class WireProxy extends EventEmitter {
     this._tokens.delete(name);
     this._agentUpstreams.delete(name);
     this._agentSpill.delete(name);
+    this._agentSpillShown.delete(name);
     const sid = this._agentSessions.get(name);
     if (sid) this._roles.forgetSession(sid);
     this._agentSessions.delete(name);
@@ -201,6 +207,21 @@ class WireProxy extends EventEmitter {
 
   spillOf(name) {
     return this._agentSpill.get(name) || null;
+  }
+
+  _spillShownFor(agent, obj) {
+    let st = this._agentSpillShown.get(agent);
+    if (!st) {
+      st = { shown: new Set(), sessionId: null, lastAt: 0, compacted: false };
+      this._agentSpillShown.set(agent, st);
+    }
+    const now = this.now();
+    const sessionId = sessionIdFrom(obj);
+    if (st.compacted || sessionId !== st.sessionId || now - st.lastAt > SPILL_SHOWN_TTL_MS) st.shown = new Set();
+    st.compacted = false;
+    st.sessionId = sessionId;
+    st.lastAt = now;
+    return st.shown;
   }
 
   // Main-line identity binding: only called for parent/unknown non-side-call
@@ -294,15 +315,19 @@ class WireProxy extends EventEmitter {
         const obj = JSON.parse(body.toString('utf8'));
         if (provider === 'anthropic' && Array.isArray(obj.messages) && this.spillCut()) {
           let r = null;
+          let sticky = 0;
           try {
             const cutCfg = this._agentSpill.get(agent);
-            r = cutSpillStubs(obj, cutCfg ? { root: cutCfg.root, agent, examples: cutCfg.examples } : { root: null, agent: null });
+            const shown = this._spillShownFor(agent, obj);
+            sticky = shown.size;
+            r = cutSpillStubs(obj, cutCfg ? { root: cutCfg.root, agent, examples: cutCfg.examples, sticky: shown } : { root: null, agent: null });
+            for (const key of r.expanded) shown.add(key);
           } catch (e) {
             this.emit('spill-cut-error', { agent, reqId, error: e.message });
           }
           if (r && r.cut) {
             body = Buffer.from(JSON.stringify(obj), 'utf8');
-            this.emit('spill-cut', { agent, reqId, ...r });
+            this.emit('spill-cut', { agent, reqId, ...r, sticky, expanded: r.expanded.length });
           }
         }
         bodyObj = obj;
@@ -622,6 +647,10 @@ class WireProxy extends EventEmitter {
                   cache_creation_input_tokens: us.cache_creation_input_tokens,
                   cache_read_input_tokens: us.cache_read_input_tokens,
                 }, (!sideCall && !isSubagentRole(role)) ? sessionId : null);
+              }
+              if (compactCall === true) {
+                const shownState = this._agentSpillShown.get(agent);
+                if (shownState) shownState.compacted = true;
               }
               this.emit('turn.completed', {
                 agent, provider, reqId, sessionId, role, sideCall, compact: compactCall === true, text,
