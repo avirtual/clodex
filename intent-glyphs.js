@@ -6,7 +6,7 @@ const INERT = Object.freeze({ glyph: '⊘', label: "won't fire" });
 const g = (glyph, label) => Object.freeze({ glyph, label });
 
 const CONTEXT = { compact: g('⊟', 'compact'), clear: g('⌫', 'clear'), reload: g('↺', 'reload') };
-const SCRATCH = { begin: g('⌜', 'scratch'), end: g('⌟', 'result'), rewind: g('⇤', 'rewind'), mark: g('⌖', 'mark'), cancel: g('⊗', 'cancel') };
+const SCRATCH = { begin: g('⟦', 'scratch'), end: g('⟧', 'result'), rewind: g('⇤', 'rewind'), mark: g('✱', 'mark'), cancel: g('⊗', 'cancel') };
 const TASK = {
   assign: g('⇥', 'assign'),
   start: g('⇄', 'start'),
@@ -25,7 +25,7 @@ const CORE = {
   who: () => g('◎', 'who'),
   name: () => g('@', 'name'),
   context: (i) => CONTEXT[i.sub] || g('⊟', String(i.sub || 'context')),
-  scratch: (i) => SCRATCH[i.sub] || g('⌜', String(i.sub || 'scratch')),
+  scratch: (i) => SCRATCH[i.sub] || g('⟦', String(i.sub || 'scratch')),
   memory: (i) => g('◈', String(i.sub || 'memory')),
   file: () => g('▢', 'show'),
   term: () => g('▤', 'terminal'),
@@ -52,7 +52,7 @@ const REPLY_GLYPHS = Object.freeze({
   who: g('◎', 'who'),
   name: g('@', 'name'),
   context: g('⊟', 'context'),
-  scratch: g('⌜', 'scratch'),
+  scratch: g('⟦', 'scratch'),
   memory: g('◈', 'memory'),
   file: g('▢', 'show'),
   term: g('▤', 'terminal'),

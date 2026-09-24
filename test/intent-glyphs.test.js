@@ -16,10 +16,10 @@ const CARD_ROWS = [
   ['[agent:context compact] keep', '⊟', 'compact', null, []],
   ['[agent:context clear]', '⌫', 'clear', null, []],
   ['[agent:context reload] brief', '↺', 'reload', null, []],
-  ['[agent:scratch begin]', '⌜', 'scratch', null, []],
-  ['[agent:scratch end] summary', '⌟', 'result', null, []],
+  ['[agent:scratch begin]', '⟦', 'scratch', null, []],
+  ['[agent:scratch end] summary', '⟧', 'result', null, []],
   ['[agent:scratch rewind] why', '⇤', 'rewind', null, []],
-  ['[agent:scratch mark here]', '⌖', 'mark', 'here', []],
+  ['[agent:scratch mark here]', '✱', 'mark', 'here', []],
   ['[agent:scratch cancel]', '⊗', 'cancel', null, []],
   ['[agent:memory remember] x', '◈', 'remember', null, []],
   ['[agent:memory recall] x', '◈', 'recall', null, []],
@@ -71,7 +71,7 @@ test('team-create reads its name and kvs', () => {
 
 const REPLY_ROWS = [
   ['dm', '→', 'message'], ['resend', '⇉', 'resend'], ['who', '◎', 'who'], ['name', '@', 'name'],
-  ['context', '⊟', 'context'], ['scratch', '⌜', 'scratch'], ['memory', '◈', 'memory'], ['file', '▢', 'show'],
+  ['context', '⊟', 'context'], ['scratch', '⟦', 'scratch'], ['memory', '◈', 'memory'], ['file', '▢', 'show'],
   ['term', '▤', 'terminal'], ['exec', '▸', 'run'], ['remind', '◷', 'remind'], ['shout', '⚑', 'shout'],
   ['team-review', '◐', 'review'], ['review-done', '⊨', 'verdict'], ['reboot', '↻', 'reboot'], ['task', '⇄', 'task'],
   ['team-create', '⊞', 'team'], ['team', '⊞', 'team'], ['spawn', '✦', 'spawn'], ['intent', '⊘', 'bounced'], ['peers', '⇢', 'peers'],
