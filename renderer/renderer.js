@@ -64,6 +64,9 @@ const { createVoiceCore, createVoiceControl } = require('./voice-control');
 const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
 const { createVoiceSubmitWatcher } = require('./voice-submit-watcher');
+const { createVoiceMirror } = require('./voice-mirror');
+const { applyDraft, attachTriggerSubmit } = require('./lib/composer-voice');
+const { VOICE_ENGINE_NAME } = require('../voice-engine');
 const {
   DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings, resolveTriggerKey,
 } = require('./lib/voice-submit');
@@ -1561,6 +1564,7 @@ function createStreamSeatPane(name, wrapperEl) {
   wrapperEl.addEventListener('drop', (e) => {
     const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
     if (!files.length || !files.every((f) => /^image\//.test(f.type))) return;
+    if (!files.some((f) => SEAT_IMAGE_TYPES.includes(f.type))) return;
     e.preventDefault();
     e.stopPropagation();
     attachFiles(files);
@@ -1594,13 +1598,13 @@ function createStreamSeatPane(name, wrapperEl) {
   transcriptChangedSubs.add(onChanged);
   const timer = setInterval(pull, TRANSCRIPT_PULL_MS);
   pull(true);
-  composer.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
-    e.preventDefault();
+  let voiceSpan = null;
+  const sendComposer = () => {
     const text = composer.value;
     const images = pending;
     if (!text.trim() && !images.length) return;
     composer.value = '';
+    voiceSpan = null;
     pending = [];
     renderAttachments();
     follow = true;
@@ -1622,12 +1626,37 @@ function createStreamSeatPane(name, wrapperEl) {
       showToast(`Send failed: ${err && err.message ? err.message : err}`, { kind: 'error', name });
       restore();
     });
+  };
+  composer.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+    e.preventDefault();
+    sendComposer();
+  });
+  const triggerSubmit = attachTriggerSubmit(composer, {
+    getConfig: () => voiceSubmitConfig,
+    markOrigin: () => window.api.markVoiceOrigin(name),
+    send: sendComposer,
+    hasImages: () => pending.length > 0,
   });
   return {
     focus: () => composer.focus(),
     refresh: () => pull(true),
+    voiceDraft(text) {
+      const next = applyDraft(composer.value, voiceSpan, text);
+      composer.value = next.value;
+      voiceSpan = next.span;
+      triggerSubmit.check();
+    },
+    voiceStart() { voiceSpan = null; },
+    setRecording(on) {
+      composer.classList.toggle('voice-recording', !!on);
+      composer.placeholder = on
+        ? 'Recording — your words appear here; Enter sends'
+        : 'Message — Enter sends, Shift+Enter for a new line';
+    },
     dispose() {
       disposed = true;
+      triggerSubmit.dispose();
       clearInterval(timer);
       transcriptChangedSubs.delete(onChanged);
       paneEl.removeEventListener('scroll', onScroll);
@@ -3422,7 +3451,61 @@ window.api.onTranscriptChanged((name) => {
   for (const cb of [...transcriptChangedSubs]) cb(name);
 });
 
+let voiceEngineView = null;
+let voiceArmedSeat = null;
+function voiceEngine() {
+  if (voiceEngineView) return voiceEngineView;
+  const host = document.createElement('div');
+  host.className = 'voice-engine-host';
+  document.body.appendChild(host);
+  const terminal = new Terminal({ cols: 120, rows: 30, allowProposedApi: true });
+  terminal.open(host);
+  const mirror = createVoiceMirror(terminal, {
+    onDraft: (text) => {
+      const entry = voiceArmedSeat ? sessions.get(voiceArmedSeat) : null;
+      if (entry && entry.stream) entry.stream.voiceDraft(text);
+    },
+  });
+  voiceEngineView = { terminal, mirror };
+  return voiceEngineView;
+}
+
+function streamVoiceMode(name, mode) {
+  if (!name || !streamSeatNames.has(name)) return false;
+  let snap = null;
+  try { snap = voiceCore.snapshot(); } catch { snap = null; }
+  if (!snap || snap.capable === false) return false;
+  return (snap.pending || snap.mode) === mode;
+}
+
+async function streamVoiceRecord(name, action) {
+  const entry = sessions.get(name);
+  if (!entry || !entry.stream) return;
+  const view = voiceEngine();
+  let res = null;
+  try { res = await window.api.voiceRecord(name, action); } catch (e) { res = { ok: false, error: e && e.message ? e.message : String(e) }; }
+  if (!res || res.ok !== true) {
+    entry.stream.setRecording(false);
+    showToast(`Voice: ${(res && res.error) || 'recording failed'}`, { kind: 'error', name });
+    return;
+  }
+  if (res.recording) {
+    if (voiceArmedSeat && voiceArmedSeat !== name) {
+      const prev = sessions.get(voiceArmedSeat);
+      if (prev && prev.stream) prev.stream.setRecording(false);
+    }
+    voiceArmedSeat = name;
+    entry.stream.voiceStart();
+    view.mirror.arm();
+  }
+  entry.stream.setRecording(res.recording === true);
+}
+
 window.api.onPtyData((name, data) => {
+  if (name === VOICE_ENGINE_NAME) {
+    voiceEngine().terminal.write(data);
+    return;
+  }
   const s = sessions.get(name);
   if (s && s.terminal) s.terminal.write(s.echoRewrite ? s.echoRewrite(data) : data);
 });
@@ -4325,7 +4408,10 @@ setInterval(() => {
         return;
       }
       if (action.dataset.act === 'files') openFilesPopover(activeSession, action);
-      else if (action.dataset.act === 'voice') openVoicePopover(action);
+      else if (action.dataset.act === 'voice') {
+        if (streamVoiceMode(activeSession, 'tap')) streamVoiceRecord(activeSession, 'toggle');
+        else if (!streamVoiceMode(activeSession, 'hold')) openVoicePopover(action);
+      }
       else if (action.dataset.act === 'peer-edit') {
         openPeerArgs(activeSession);
       }
@@ -4347,6 +4433,24 @@ setInterval(() => {
   };
   bar.addEventListener('mousedown', openPopoverOnPress);
   bar.addEventListener('click', runBarActionOnClick);
+  let voiceHeld = null;
+  bar.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !activeSession) return;
+    if (!e.target.closest('.px-action[data-act="voice"]')) return;
+    if (!streamVoiceMode(activeSession, 'hold')) return;
+    e.preventDefault();
+    voiceHeld = activeSession;
+    streamVoiceRecord(voiceHeld, 'start');
+  });
+  const releaseVoiceHold = () => {
+    if (!voiceHeld) return;
+    const held = voiceHeld;
+    voiceHeld = null;
+    streamVoiceRecord(held, 'stop');
+  };
+  document.addEventListener('pointerup', releaseVoiceHold);
+  document.addEventListener('pointercancel', releaseVoiceHold);
+  window.addEventListener('blur', releaseVoiceHold);
 })();
 
 const {

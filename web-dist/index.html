@@ -8696,6 +8696,19 @@ body.web-frontend #sidebar-header {
   outline: none;
   border-color: var(--accent, var(--border));
 }
+.seat-composer.voice-recording {
+  border-color: var(--error);
+  box-shadow: 0 0 0 1px var(--error);
+}
+.voice-engine-host {
+  position: absolute;
+  left: -10000px;
+  top: 0;
+  width: 960px;
+  height: 480px;
+  visibility: hidden;
+  pointer-events: none;
+}
 .seat-attachments {
   flex: 0 0 auto;
   display: flex;
@@ -10753,6 +10766,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         // to the seat permanently, which is worse than the bug this fixes.
         { name: "noteVoiceRecording", kind: "send", channel: "voice:recording" },
         { name: "noteVoiceDraft", kind: "send", channel: "voice:draft" },
+        { name: "voiceRecord", kind: "invoke", channel: "voice:record" },
         // Which seat the operator is LOOKING at. Main has no other way to know: the
         // renderer owns `activeSession` and only WINDOW-level focus crosses today.
         // Read by the external voice tap, which has to pick a seat when the caller
@@ -29490,6 +29504,34 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // renderer/lib/cursor-row.js
+  var require_cursor_row = __commonJS({
+    "renderer/lib/cursor-row.js"(exports, module) {
+      "use strict";
+      function readCursorRow(terminal) {
+        const buf = terminal.buffer.active;
+        const line = buf.getLine(buf.baseY + buf.cursorY);
+        if (!line) return null;
+        return line.translateToString(false, 0, buf.cursorX);
+      }
+      function readRowsToCursor(terminal) {
+        try {
+          const buf = terminal.buffer.active;
+          const out = [];
+          for (let y = buf.cursorY; y >= 0 && out.length < terminal.rows; y--) {
+            const line = buf.getLine(buf.baseY + y);
+            if (!line) break;
+            out.unshift(line.translateToString(true));
+          }
+          return out.length ? out : null;
+        } catch {
+          return null;
+        }
+      }
+      module.exports = { readCursorRow, readRowsToCursor };
+    }
+  });
+
   // renderer/voice-submit-watcher.js
   var require_voice_submit_watcher = __commonJS({
     "renderer/voice-submit-watcher.js"(exports, module) {
@@ -29506,6 +29548,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         processingObserved
       } = require_voice_submit();
       var { isHumanPtyInput } = require_proxy_util();
+      var { readCursorRow, readRowsToCursor } = require_cursor_row();
       var QUIET_MS = 1200;
       var ENTER_SETTLE_MS = 30;
       var VOICE_TAP_MODE_SETTLE_MS = 1500;
@@ -29676,10 +29719,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         function cursorRow() {
           if (!onNormalBuffer()) return null;
-          const buf = terminal.buffer.active;
-          const line = buf.getLine(buf.baseY + buf.cursorY);
-          if (!line) return null;
-          return line.translateToString(false, 0, buf.cursorX);
+          return readCursorRow(terminal);
         }
         function indicatorRows() {
           if (!onNormalBuffer()) return null;
@@ -29699,18 +29739,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         function composerRows() {
           if (!onNormalBuffer()) return null;
-          try {
-            const buf = terminal.buffer.active;
-            const out = [];
-            for (let y = buf.cursorY; y >= 0 && out.length < terminal.rows; y--) {
-              const line = buf.getLine(buf.baseY + y);
-              if (!line) break;
-              out.unshift(line.translateToString(true));
-            }
-            return out.length ? out : null;
-          } catch {
-            return null;
-          }
+          return readRowsToCursor(terminal);
         }
         function tick() {
           timer = null;
@@ -30191,6 +30220,208 @@ ${m[2].replace(/^\r?\n/, "")}`;
         REARM_ABANDON_MS,
         SPEECH_ABANDON_MS,
         VOICE_EVIDENCE_MS
+      };
+    }
+  });
+
+  // renderer/voice-mirror.js
+  var require_voice_mirror = __commonJS({
+    "renderer/voice-mirror.js"(exports, module) {
+      "use strict";
+      var { readRowsToCursor } = require_cursor_row();
+      var { composerHasDraft, composerIsEmpty, composerContinues } = require_voice_submit();
+      var HEAD = /^[❯>][  ]/u;
+      var TAIL_JUNK = /[\s█]+$/u;
+      function draftFromRows(rows) {
+        if (!Array.isArray(rows) || !rows.length) return null;
+        const parts = [];
+        for (let i = rows.length - 1; i >= 0; i--) {
+          const row = rows[i];
+          if (typeof row !== "string") return null;
+          if (composerIsEmpty(row)) return parts.length ? null : "";
+          if (composerHasDraft(row)) {
+            parts.unshift(row.replace(HEAD, ""));
+            return parts.join(" ").replace(TAIL_JUNK, "").trim();
+          }
+          if (!composerContinues(row)) return null;
+          parts.unshift(row.slice(2));
+        }
+        return null;
+      }
+      function createVoiceMirror(terminal, { onDraft, readRows = () => readRowsToCursor(terminal) } = {}) {
+        let armed = false;
+        let disposed = false;
+        let baseline = "";
+        let last = null;
+        function read() {
+          try {
+            if (terminal.buffer.active.type !== "normal") return null;
+            return draftFromRows(readRows());
+          } catch {
+            return null;
+          }
+        }
+        function check() {
+          if (!armed || disposed) return;
+          const draft = read();
+          if (!draft) return;
+          let text = draft;
+          if (baseline && text.startsWith(baseline)) text = text.slice(baseline.length).trim();
+          if (!text || text === last) return;
+          last = text;
+          try {
+            onDraft(text);
+          } catch {
+          }
+        }
+        const sub = typeof terminal.onWriteParsed === "function" ? terminal.onWriteParsed(check) : null;
+        return {
+          arm() {
+            baseline = read() || "";
+            last = null;
+            armed = true;
+          },
+          disarm() {
+            armed = false;
+          },
+          isArmed: () => armed,
+          check,
+          dispose() {
+            disposed = true;
+            armed = false;
+            try {
+              if (sub) sub.dispose();
+            } catch {
+            }
+          }
+        };
+      }
+      module.exports = { createVoiceMirror, draftFromRows };
+    }
+  });
+
+  // renderer/lib/composer-voice.js
+  var require_composer_voice = __commonJS({
+    "renderer/lib/composer-voice.js"(exports, module) {
+      "use strict";
+      var { findSubmit, shouldFire } = require_voice_submit();
+      function applyDraft(value, span, text) {
+        const v = typeof value === "string" ? value : "";
+        let start = -1;
+        let end = -1;
+        if (span && typeof span.text === "string" && span.text) {
+          if (v.slice(span.start, span.end) === span.text) {
+            start = span.start;
+            end = span.end;
+          } else {
+            const at = v.lastIndexOf(span.text);
+            if (at !== -1) {
+              start = at;
+              end = at + span.text.length;
+            }
+          }
+        }
+        if (start === -1) {
+          const lead = v && !/\s$/.test(v) ? " " : "";
+          const s = v.length + lead.length;
+          return { value: v + lead + text, span: { start: s, end: s + text.length, text } };
+        }
+        return {
+          value: v.slice(0, start) + text + v.slice(end),
+          span: { start, end: start + text.length, text }
+        };
+      }
+      function createComposerTrigger({ getConfig }) {
+        let fired = null;
+        return {
+          check(value) {
+            let cfg = null;
+            try {
+              cfg = getConfig();
+            } catch {
+              cfg = null;
+            }
+            if (!cfg || !shouldFire({ enabled: cfg.enabled })) return null;
+            if (typeof value !== "string") return null;
+            if (value === fired) return null;
+            const hit = findSubmit(value, cfg.phrase);
+            if (!hit || !hit.erase) {
+              fired = null;
+              return null;
+            }
+            fired = value;
+            return { text: value.slice(0, value.length - hit.erase) };
+          }
+        };
+      }
+      function attachTriggerSubmit(composer, { getConfig, markOrigin, send, hasImages = () => false }) {
+        const trigger = createComposerTrigger({ getConfig });
+        const onInput = () => {
+          const hit = trigger.check(composer.value);
+          if (!hit) return;
+          composer.value = hit.text;
+          let images = false;
+          try {
+            images = hasImages() === true;
+          } catch {
+            images = false;
+          }
+          if (!hit.text.trim() && !images) return;
+          try {
+            markOrigin();
+          } catch {
+          }
+          send();
+        };
+        composer.addEventListener("input", onInput);
+        return { check: onInput, dispose: () => composer.removeEventListener("input", onInput) };
+      }
+      module.exports = { applyDraft, createComposerTrigger, attachTriggerSubmit };
+    }
+  });
+
+  // voice-engine.js
+  var require_voice_engine = __commonJS({
+    "voice-engine.js"(exports, module) {
+      "use strict";
+      var VOICE_ENGINE_NAME = "clodex-voice-engine";
+      var RECORD_KEY = " ";
+      var HOLD_REPEAT_MS = 30;
+      var HOLD_MAX_MS = 12e4;
+      var BOOT_SETTLE_MS = 600;
+      var BOOT_MAX_MS = 2e4;
+      var RECORD_ACTIONS = ["start", "stop", "toggle"];
+      var PROMPT_MARK = "\u276F";
+      function engineSettings(wireBase) {
+        if (typeof wireBase !== "string" || !wireBase) throw new Error("voice engine needs a wire base");
+        return { env: { ANTHROPIC_BASE_URL: `${wireBase}/anthropic` } };
+      }
+      function engineArgs(wireBase) {
+        return ["--settings", JSON.stringify(engineSettings(wireBase))];
+      }
+      function planRecord({ mode, action, recording } = {}) {
+        if (!RECORD_ACTIONS.includes(action)) return null;
+        if (mode !== "tap" && mode !== "hold") return null;
+        const was = recording === true;
+        const want = action === "toggle" ? !was : action === "start";
+        if (mode === "tap") {
+          const write = action === "toggle" || want !== was;
+          return { write, hold: null, recording: want };
+        }
+        return { write: false, hold: want ? "start" : "stop", recording: want };
+      }
+      module.exports = {
+        VOICE_ENGINE_NAME,
+        RECORD_KEY,
+        HOLD_REPEAT_MS,
+        HOLD_MAX_MS,
+        BOOT_SETTLE_MS,
+        BOOT_MAX_MS,
+        RECORD_ACTIONS,
+        PROMPT_MARK,
+        engineSettings,
+        engineArgs,
+        planRecord
       };
     }
   });
@@ -44404,6 +44635,9 @@ ${detail}` });
       var { createTermSearch } = require_term_search();
       var { createIntentHighlight } = require_intent_highlight();
       var { createVoiceSubmitWatcher } = require_voice_submit_watcher();
+      var { createVoiceMirror } = require_voice_mirror();
+      var { applyDraft, attachTriggerSubmit } = require_composer_voice();
+      var { VOICE_ENGINE_NAME } = require_voice_engine();
       var {
         DEFAULT_SUBMIT_PHRASE,
         readVoiceSubmitSettings,
@@ -45875,6 +46109,7 @@ ${detail}` });
         wrapperEl.addEventListener("drop", (e) => {
           const files = Array.from(e.dataTransfer && e.dataTransfer.files || []);
           if (!files.length || !files.every((f) => /^image\//.test(f.type))) return;
+          if (!files.some((f) => SEAT_IMAGE_TYPES.includes(f.type))) return;
           e.preventDefault();
           e.stopPropagation();
           attachFiles(files);
@@ -45914,13 +46149,13 @@ ${detail}` });
         transcriptChangedSubs.add(onChanged);
         const timer = setInterval(pull, TRANSCRIPT_PULL_MS);
         pull(true);
-        composer.addEventListener("keydown", (e) => {
-          if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
-          e.preventDefault();
+        let voiceSpan = null;
+        const sendComposer = () => {
           const text = composer.value;
           const images = pending;
           if (!text.trim() && !images.length) return;
           composer.value = "";
+          voiceSpan = null;
           pending = [];
           renderAttachments();
           follow = true;
@@ -45942,12 +46177,37 @@ ${detail}` });
             showToast(`Send failed: ${err && err.message ? err.message : err}`, { kind: "error", name });
             restore();
           });
+        };
+        composer.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+          e.preventDefault();
+          sendComposer();
+        });
+        const triggerSubmit = attachTriggerSubmit(composer, {
+          getConfig: () => voiceSubmitConfig,
+          markOrigin: () => window.api.markVoiceOrigin(name),
+          send: sendComposer,
+          hasImages: () => pending.length > 0
         });
         return {
           focus: () => composer.focus(),
           refresh: () => pull(true),
+          voiceDraft(text) {
+            const next = applyDraft(composer.value, voiceSpan, text);
+            composer.value = next.value;
+            voiceSpan = next.span;
+            triggerSubmit.check();
+          },
+          voiceStart() {
+            voiceSpan = null;
+          },
+          setRecording(on) {
+            composer.classList.toggle("voice-recording", !!on);
+            composer.placeholder = on ? "Recording \u2014 your words appear here; Enter sends" : "Message \u2014 Enter sends, Shift+Enter for a new line";
+          },
           dispose() {
             disposed = true;
+            triggerSubmit.dispose();
             clearInterval(timer);
             transcriptChangedSubs.delete(onChanged);
             paneEl.removeEventListener("scroll", onScroll);
@@ -47596,7 +47856,66 @@ ${detail}` });
       window.api.onTranscriptChanged((name) => {
         for (const cb of [...transcriptChangedSubs]) cb(name);
       });
+      var voiceEngineView = null;
+      var voiceArmedSeat = null;
+      function voiceEngine() {
+        if (voiceEngineView) return voiceEngineView;
+        const host = document.createElement("div");
+        host.className = "voice-engine-host";
+        document.body.appendChild(host);
+        const terminal = new Terminal({ cols: 120, rows: 30, allowProposedApi: true });
+        terminal.open(host);
+        const mirror = createVoiceMirror(terminal, {
+          onDraft: (text) => {
+            const entry = voiceArmedSeat ? sessions.get(voiceArmedSeat) : null;
+            if (entry && entry.stream) entry.stream.voiceDraft(text);
+          }
+        });
+        voiceEngineView = { terminal, mirror };
+        return voiceEngineView;
+      }
+      function streamVoiceMode(name, mode) {
+        if (!name || !streamSeatNames.has(name)) return false;
+        let snap = null;
+        try {
+          snap = voiceCore.snapshot();
+        } catch {
+          snap = null;
+        }
+        if (!snap || snap.capable === false) return false;
+        return (snap.pending || snap.mode) === mode;
+      }
+      async function streamVoiceRecord(name, action) {
+        const entry = sessions.get(name);
+        if (!entry || !entry.stream) return;
+        const view = voiceEngine();
+        let res = null;
+        try {
+          res = await window.api.voiceRecord(name, action);
+        } catch (e) {
+          res = { ok: false, error: e && e.message ? e.message : String(e) };
+        }
+        if (!res || res.ok !== true) {
+          entry.stream.setRecording(false);
+          showToast(`Voice: ${res && res.error || "recording failed"}`, { kind: "error", name });
+          return;
+        }
+        if (res.recording) {
+          if (voiceArmedSeat && voiceArmedSeat !== name) {
+            const prev = sessions.get(voiceArmedSeat);
+            if (prev && prev.stream) prev.stream.setRecording(false);
+          }
+          voiceArmedSeat = name;
+          entry.stream.voiceStart();
+          view.mirror.arm();
+        }
+        entry.stream.setRecording(res.recording === true);
+      }
       window.api.onPtyData((name, data) => {
+        if (name === VOICE_ENGINE_NAME) {
+          voiceEngine().terminal.write(data);
+          return;
+        }
         const s = sessions.get(name);
         if (s && s.terminal) s.terminal.write(s.echoRewrite ? s.echoRewrite(data) : data);
       });
@@ -48375,8 +48694,10 @@ Click for live activity`;
               return;
             }
             if (action.dataset.act === "files") openFilesPopover(activeSession, action);
-            else if (action.dataset.act === "voice") openVoicePopover(action);
-            else if (action.dataset.act === "peer-edit") {
+            else if (action.dataset.act === "voice") {
+              if (streamVoiceMode(activeSession, "tap")) streamVoiceRecord(activeSession, "toggle");
+              else if (!streamVoiceMode(activeSession, "hold")) openVoicePopover(action);
+            } else if (action.dataset.act === "peer-edit") {
               openPeerArgs(activeSession);
             } else if (action.dataset.act === "session-menu") {
               if (isSessionMenuOpen()) closeSessionMenu();
@@ -48399,6 +48720,24 @@ Click for live activity`;
         };
         bar.addEventListener("mousedown", openPopoverOnPress);
         bar.addEventListener("click", runBarActionOnClick);
+        let voiceHeld = null;
+        bar.addEventListener("pointerdown", (e) => {
+          if (e.button !== 0 || !activeSession) return;
+          if (!e.target.closest('.px-action[data-act="voice"]')) return;
+          if (!streamVoiceMode(activeSession, "hold")) return;
+          e.preventDefault();
+          voiceHeld = activeSession;
+          streamVoiceRecord(voiceHeld, "start");
+        });
+        const releaseVoiceHold = () => {
+          if (!voiceHeld) return;
+          const held = voiceHeld;
+          voiceHeld = null;
+          streamVoiceRecord(held, "stop");
+        };
+        document.addEventListener("pointerup", releaseVoiceHold);
+        document.addEventListener("pointercancel", releaseVoiceHold);
+        window.addEventListener("blur", releaseVoiceHold);
       })();
       var {
         openWarmMenu,

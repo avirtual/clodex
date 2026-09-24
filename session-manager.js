@@ -153,6 +153,7 @@ const { activationSettings } = require('./muse-skills');
 const MUSE_LINK_POLL_MS = 250;
 const MUSE_LINK_DEADLINE_MS = 60000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
+const voiceEngineSpec = require('./voice-engine');
 const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX } = require('./proxy-util');
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
@@ -879,6 +880,8 @@ function createSessionManager(deps) {
       this._stallProbing = new Set();
       this._movingNames = new Set();
       this._wire = null;       // in-process tee (WIRE_SHADOW only in W1)
+      this._voiceEngine = null;
+      this._voiceEnginePending = null;
       this._shadow = null;     // wire-vs-jsonl intent differ
       this._wireTelemetry = null; // W2 step-4 dark bridge (wire-telemetry.js)
       const { IntentDeduper, ActivityTracker } = require('./wire-intents');
@@ -4663,6 +4666,113 @@ function createSessionManager(deps) {
         if (s.pty && Number.isInteger(s.pty.pid)) reapFromSnapshot({ rows, ptyPid: s.pty.pid, name, log });
         try { s.pty.kill(); } catch {}
       }
+      this.killVoiceEngine();
+    }
+
+    voiceEngineTimings() {
+      return {
+        holdRepeatMs: voiceEngineSpec.HOLD_REPEAT_MS,
+        holdMaxMs: voiceEngineSpec.HOLD_MAX_MS,
+        bootSettleMs: voiceEngineSpec.BOOT_SETTLE_MS,
+        bootMaxMs: voiceEngineSpec.BOOT_MAX_MS,
+      };
+    }
+
+    ensureVoiceEngine() {
+      const live = this._voiceEngine;
+      if (live && !live.dead) return live.ready.then(() => live);
+      if (this._voiceEnginePending) return this._voiceEnginePending;
+      const pending = this._spawnVoiceEngine().finally(() => {
+        if (this._voiceEnginePending === pending) this._voiceEnginePending = null;
+      });
+      this._voiceEnginePending = pending;
+      return pending;
+    }
+
+    async _spawnVoiceEngine() {
+      const { VOICE_ENGINE_NAME, PROMPT_MARK, engineArgs } = voiceEngineSpec;
+      const t = this.voiceEngineTimings();
+      if (!WIRE_SHADOW) throw new Error('the voice engine needs the in-process wire, which is off');
+      const wire = await this._ensureWire();
+      const wireBase = wire.registerAgent(VOICE_ENGINE_NAME, { voiceSink: true });
+      if (!wireBase) throw new Error('the wire refused the voice engine');
+      const cwd = getUserDataPath();
+      preseedClaudeOnboarding({ fs, path, homeDir: os.homedir(), cwd });
+      const env = withUtf8Charset({ ...process.env, TERM: 'xterm-256color' });
+      let proc;
+      try {
+        proc = pty.spawn('claude', engineArgs(wireBase), { name: 'xterm-256color', cols: 120, rows: 30, cwd, env });
+      } catch (e) {
+        try { wire.unregisterAgent(VOICE_ENGINE_NAME); } catch {}
+        throw e;
+      }
+      let markReady;
+      const engine = {
+        name: VOICE_ENGINE_NAME, pty: proc, recording: false, holdTimer: null, holdCap: null,
+        armedBy: null, dead: false, ready: new Promise((r) => { markReady = r; }),
+      };
+      let seen = false;
+      let settle = null;
+      const cap = setTimeout(() => markReady(), t.bootMaxMs);
+      proc.onData((data) => {
+        if (!seen && String(data).includes(PROMPT_MARK)) seen = true;
+        if (seen) {
+          clearTimeout(settle);
+          settle = setTimeout(() => { clearTimeout(cap); markReady(); }, t.bootSettleMs);
+        }
+        this._broadcast('pty-data', VOICE_ENGINE_NAME, data);
+      });
+      proc.onExit(() => {
+        engine.dead = true;
+        clearTimeout(cap);
+        clearTimeout(settle);
+        this._stopVoiceHold(engine);
+        markReady();
+        if (this._voiceEngine === engine) this._voiceEngine = null;
+        if (this._wire) { try { this._wire.unregisterAgent(VOICE_ENGINE_NAME); } catch {} }
+      });
+      this._voiceEngine = engine;
+      await engine.ready;
+      if (engine.dead) throw new Error('the voice engine exited while starting');
+      return engine;
+    }
+
+    _stopVoiceHold(engine) {
+      clearInterval(engine.holdTimer);
+      clearTimeout(engine.holdCap);
+      engine.holdTimer = null;
+      engine.holdCap = null;
+    }
+
+    async voiceRecord(name, action, { mode = null, workspaceId = null } = {}) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead || s.io !== 'stream') return { ok: false, error: 'voice:record is for a stream seat' };
+      const live = this._voiceEngine && !this._voiceEngine.dead ? this._voiceEngine : null;
+      const plan = voiceEngineSpec.planRecord({ mode, action, recording: live ? live.recording : false });
+      if (!plan) return { ok: false, error: `cannot record in voice mode ${mode || 'unknown'}` };
+      let engine;
+      try { engine = await this.ensureVoiceEngine(); } catch (e) { return { ok: false, error: e.message }; }
+      const { RECORD_KEY } = voiceEngineSpec;
+      const t = this.voiceEngineTimings();
+      engine.armedBy = { name, workspaceId: workspaceId || s.workspaceId || null };
+      if (plan.write) engine.pty.write(RECORD_KEY);
+      if (plan.hold === 'start' && !engine.holdTimer) {
+        engine.pty.write(RECORD_KEY);
+        engine.holdTimer = setInterval(() => { try { engine.pty.write(RECORD_KEY); } catch {} }, t.holdRepeatMs);
+        engine.holdCap = setTimeout(() => { this._stopVoiceHold(engine); engine.recording = false; }, t.holdMaxMs);
+      }
+      if (plan.hold === 'stop') this._stopVoiceHold(engine);
+      engine.recording = plan.recording;
+      return { ok: true, recording: plan.recording, engine: engine.name };
+    }
+
+    killVoiceEngine() {
+      const engine = this._voiceEngine;
+      if (!engine) return;
+      this._stopVoiceHold(engine);
+      this._voiceEngine = null;
+      try { engine.pty.kill(); } catch {}
+      if (this._wire) { try { this._wire.unregisterAgent(engine.name); } catch {} }
     }
 
     _cleanup(name) {

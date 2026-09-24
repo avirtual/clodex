@@ -423,6 +423,7 @@ const API_CONTRACT = [
   // to the seat permanently, which is worse than the bug this fixes.
   { name: 'noteVoiceRecording', kind: 'send', channel: 'voice:recording' },
   { name: 'noteVoiceDraft', kind: 'send', channel: 'voice:draft' },
+  { name: 'voiceRecord', kind: 'invoke', channel: 'voice:record' },
   // Which seat the operator is LOOKING at. Main has no other way to know: the
   // renderer owns `activeSession` and only WINDOW-level focus crosses today.
   // Read by the external voice tap, which has to pick a seat when the caller

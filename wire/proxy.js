@@ -22,6 +22,7 @@ const { RoleClassifier, isSubagentRole, isTitleCall, isProbeCall, isClassifierCa
 const { billing, billingOpenai, Ledger } = require('./billing');
 const { SpillTee } = require('./spill');
 const { cutSpillStubs } = require('./spill-cut');
+const { answerVoiceSink } = require('./voice-sink');
 
 const SPILL_SHOWN_TTL_MS = 60 * 60 * 1000;
 
@@ -140,6 +141,7 @@ class WireProxy extends EventEmitter {
     this._agentUpstreams = new Map(); // agent name → { provider: baseUrl } overrides
     this._agentSpill = new Map();
     this._agentSpillShown = new Map();
+    this._voiceSinks = new Set();
     this.now = typeof opts.now === 'function' ? opts.now : Date.now;
     this._roles = new RoleClassifier();
     this.billing = new Ledger(); // global + per-session running totals
@@ -183,6 +185,8 @@ class WireProxy extends EventEmitter {
     }
     else this._agentSpill.delete(name);
     this._agentSpillShown.set(name, { shown: new Set(), sessionId: null, lastAt: 0, compacted: false });
+    if (opts.voiceSink === true) this._voiceSinks.add(name);
+    else this._voiceSinks.delete(name);
     if (this.requireTokens) {
       const token = crypto.randomBytes(16).toString('hex');
       this._tokens.set(name, token);
@@ -196,6 +200,7 @@ class WireProxy extends EventEmitter {
     this._agentUpstreams.delete(name);
     this._agentSpill.delete(name);
     this._agentSpillShown.delete(name);
+    this._voiceSinks.delete(name);
     const sid = this._agentSessions.get(name);
     if (sid) this._roles.forgetSession(sid);
     this._agentSessions.delete(name);
@@ -272,6 +277,16 @@ class WireProxy extends EventEmitter {
     }
 
     const { provider, upstreamPath } = inferProvider(rest);
+    if (this._voiceSinks.has(agent)) {
+      const sunk = [];
+      req.on('data', (c) => sunk.push(c));
+      req.on('end', () => {
+        this.emit('voice-sink', { agent, method: req.method, path: upstreamPath });
+        answerVoiceSink(res, { method: req.method, upstreamPath, body: sunk.length ? Buffer.concat(sunk) : null });
+      });
+      req.on('error', () => {});
+      return;
+    }
     const agentUp = this._agentUpstreams.get(agent);
     const upstreamBase = (agentUp && agentUp[provider]) || this.upstreams[provider];
     const chatgptMode = provider === 'openai' && isChatgptBackend(upstreamBase);
