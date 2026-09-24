@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  SPLIT_SETTLE_MS, isRuleRow, findAnchor, measureSplit, initialSplitState, reduceSplit,
+  SPLIT_SETTLE_MS, SPLIT_EXIT_MS, isRuleRow, findAnchor, measureSplit, initialSplitState, reduceSplit,
 } = require('../renderer/lib/live-split');
 
 const DIR = path.join(__dirname, 'fixtures', 'split-states');
@@ -146,9 +146,34 @@ test('an anchor lost mid-hold restarts the hold', () => {
   assert.strictEqual(st.mode, 'split');
 });
 
-test('split -> FULL is immediate', () => {
-  const st = reduceSplit({ mode: 'split', top: 5, bottom: 9, pending: null, wakeAt: null }, FULL, 1);
-  assert.strictEqual(st.mode, 'full');
+test('split -> anchorless keeps the geometry and pends an exit that wakes 50 ms later', () => {
+  assert.strictEqual(SPLIT_EXIT_MS, 50);
+  const on = { mode: 'split', top: 5, bottom: 9, pending: null, wakeAt: null };
+  const st = reduceSplit(on, FULL, 1000);
+  assert.deepStrictEqual(st, { mode: 'split', top: 5, bottom: 9, pending: { kind: 'exit', since: 1000 }, wakeAt: 1050 });
+  assert.deepStrictEqual(reduceSplit(on, null, 1000).pending, { kind: 'exit', since: 1000 });
+});
+
+test('split -> FULL once the frame has stayed anchorless for 50 ms', () => {
+  const on = { mode: 'split', top: 5, bottom: 9, pending: null, wakeAt: null };
+  let st = reduceSplit(on, FULL, 1000);
+  st = reduceSplit(st, FULL, 1049);
+  assert.deepStrictEqual([st.mode, st.top, st.bottom, st.wakeAt], ['split', 5, 9, 1050]);
+  st = reduceSplit(st, FULL, 1050);
+  assert.deepStrictEqual(st, initialSplitState());
+});
+
+test('a split measure during an exit pending cancels the exit and takes the new geometry', () => {
+  const on = { mode: 'split', top: 5, bottom: 9, pending: null, wakeAt: null };
+  let st = reduceSplit(on, FULL, 1000);
+  st = reduceSplit(st, S(6, 11), 1020);
+  assert.deepStrictEqual(st, { mode: 'split', top: 6, bottom: 11, pending: null, wakeAt: null });
+});
+
+test('full state plus an anchorless measure is the initial state with no pending', () => {
+  assert.deepStrictEqual(reduceSplit(initialSplitState(), FULL, 1000), initialSplitState());
+  const entering = reduceSplit(initialSplitState(), S(5, 9), 1000);
+  assert.deepStrictEqual(reduceSplit(entering, FULL, 1100), initialSplitState());
 });
 
 test('grow applies at once; shrink holds the old height until the smaller one has held for the window', () => {

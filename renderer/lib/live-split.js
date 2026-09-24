@@ -3,6 +3,7 @@
 const { composerIsEmpty, composerHasDraft } = require('./voice-submit');
 
 const SPLIT_SETTLE_MS = 250;
+const SPLIT_EXIT_MS = 50;
 const RULE = /^─+$/u;
 
 function isRuleRow(row, cols) {
@@ -42,9 +43,14 @@ function initialSplitState() {
   return { mode: 'full', top: -1, bottom: -1, pending: null, wakeAt: null };
 }
 
-function reduceSplit(state, measured, now, settleMs = SPLIT_SETTLE_MS) {
+function reduceSplit(state, measured, now, settleMs = SPLIT_SETTLE_MS, exitMs = SPLIT_EXIT_MS) {
   const cur = state || initialSplitState();
-  if (!measured || measured.mode !== 'split') return initialSplitState();
+  if (!measured || measured.mode !== 'split') {
+    if (cur.mode !== 'split') return initialSplitState();
+    const since = cur.pending && cur.pending.kind === 'exit' ? cur.pending.since : now;
+    if (now - since >= exitMs) return initialSplitState();
+    return { mode: 'split', top: cur.top, bottom: cur.bottom, pending: { kind: 'exit', since }, wakeAt: since + exitMs };
+  }
   const h = measured.bottom - measured.top + 1;
   if (cur.mode !== 'split') {
     const since = cur.pending && cur.pending.kind === 'enter' ? cur.pending.since : now;
@@ -73,6 +79,7 @@ function reduceSplit(state, measured, now, settleMs = SPLIT_SETTLE_MS) {
 
 module.exports = {
   SPLIT_SETTLE_MS,
+  SPLIT_EXIT_MS,
   isRuleRow,
   isComposerRow,
   findAnchor,

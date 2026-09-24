@@ -83,9 +83,14 @@ function mountView(extra = {}) {
     }),
   };
   const writes = [];
+  const csi = {};
+  const screen = [];
   const terminal = {
-    rows: 3, cols: 20, element: null,
-    buffer: { active: { type: 'normal', baseY: 0, cursorY: 0, viewportY: 0, getLine: () => null } },
+    rows: 4, cols: 20, element: null,
+    buffer: { active: { type: 'normal', baseY: 0, cursorY: 1, viewportY: 0, getLine: (i) => (screen[i] == null ? null : { translateToString: () => screen[i] }) } },
+    parser: {
+      registerCsiHandler(id, cb) { csi[`${id.prefix}${id.final}`] = cb; return { dispose() {} }; },
+    },
     onWriteParsed(cb) { writes.push(cb); return { dispose() {} }; },
     onResize() { return { dispose() {} }; },
     onScroll() { return { dispose() {} }; },
@@ -102,7 +107,8 @@ function mountView(extra = {}) {
     ...extra,
   });
   return {
-    view, calls,
+    view, calls, csi,
+    show: (rows) => { screen.length = 0; screen.push(...rows); },
     write: () => writes.forEach((cb) => cb()),
     change: (name) => listener && listener(name),
     hasListener: () => !!listener,
@@ -146,4 +152,83 @@ test('dispose unsubscribes from transcript-changed', () => {
     assert.strictEqual(m.calls.unsubscribed, 1);
     assert.strictEqual(m.hasListener(), false);
   } finally { m.restore(); }
+});
+
+const RULE_ROW = '─'.repeat(20);
+const ANCHORED = [RULE_ROW, '❯ ', '', ''];
+const ANCHORED_TALL = [RULE_ROW, '❯ ', '  footer', ''];
+const STREAMING = ['partial reply', '─────', '', ''];
+
+async function mountSplit() {
+  let t = 5000;
+  const changes = [];
+  const m = mountView({ now: () => t, onChange: (st) => changes.push({ ...st }) });
+  m.show(ANCHORED);
+  m.write();
+  await settle();
+  t += 250;
+  m.write();
+  assert.deepStrictEqual([m.view.state().mode, m.view.state().top, m.view.state().bottom], ['split', 0, 1]);
+  changes.length = 0;
+  return { ...m, changes, tick: (ms) => { t += ms; } };
+}
+
+test('a write parsed while the cursor is hidden is not evaluated; the frame close re-evaluates without a flicker', async () => {
+  const m = await mountSplit();
+  try {
+    const before = m.view.state();
+    assert.strictEqual(m.csi['?l']([25]), false);
+    m.show(STREAMING);
+    m.write();
+    assert.deepStrictEqual(m.view.state(), before);
+    assert.deepStrictEqual(m.changes, []);
+    assert.strictEqual(m.csi['?h']([25]), false);
+    m.show(ANCHORED_TALL);
+    m.write();
+    assert.deepStrictEqual([m.view.state().mode, m.view.state().bottom], ['split', 2]);
+    assert.deepStrictEqual(m.changes.map((c) => c.mode), ['split']);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a chunk that both hides and shows the cursor evaluates at its parse end', async () => {
+  const m = await mountSplit();
+  try {
+    m.csi['?l']([25]);
+    m.csi['?h']([25]);
+    m.show(ANCHORED_TALL);
+    m.write();
+    assert.deepStrictEqual(m.changes.map((c) => [c.mode, c.bottom]), [['split', 2]]);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a private mode other than 25 does not gate evaluation', async () => {
+  const m = await mountSplit();
+  try {
+    m.csi['?l']([2004]);
+    m.show(ANCHORED_TALL);
+    m.write();
+    assert.deepStrictEqual(m.changes.map((c) => [c.mode, c.bottom]), [['split', 2]]);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a transcript pull with a new rev while already available re-evaluates the split', async () => {
+  const m = await mountSplit();
+  try {
+    m.show(ANCHORED_TALL);
+    m.change('s1');
+    await settle();
+    assert.deepStrictEqual(m.changes.map((c) => [c.mode, c.bottom]), [['split', 2]]);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+const CAPTURE = fs.readFileSync(path.join(__dirname, 'fixtures', 'cli-captures', 'a-seq-truncated.raw'), 'latin1');
+const FRAMES = CAPTURE.split('\x1b[?25h');
+const OPEN_ACROSS_LF = FRAMES.filter((seg) => {
+  const hide = seg.lastIndexOf('\x1b[?25l');
+  return hide >= 0 && seg.indexOf('\n', hide) >= 0;
+});
+
+test(`ENTER: the real capture splits into ${FRAMES.length} segments at ?25h, ${OPEN_ACROSS_LF.length} of them feed a line inside a hidden-cursor frame`, () => {
+  assert.ok(FRAMES.length > 1);
+  assert.ok(OPEN_ACROSS_LF.length >= 1);
 });
