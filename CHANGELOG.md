@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 - Spill: each request carries a seat's two newest long intent bodies in full instead of the two oldest, so the most recent ticket or message in a seat's view is always a real body and not the runtime note.
+- Transcript pane: `[agent:…]` intents carry the same fire/inert/filed marks as the terminal, file paths and URLs are clickable, and local-command output takes the theme's echo colours.
 - Transcript pane: the view no longer flickers between the pane and the raw terminal while a reply streams; a mid-redraw frame keeps the current layout, and the pane drops to the raw terminal only after a frame has stayed anchorless for 50 ms.
 - Transcript pane: the pane refreshes as soon as the transcript changes, so a local command's output (/context, /cost) appears without waiting for the next keystroke.
 - Tickets: `task add` refuses a spec whose title matches an open ticket and names it; add `dup` to the head line to open a second one deliberately.

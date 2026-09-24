@@ -1655,6 +1655,11 @@ function createTerminal(name, peer = null) {
     pullTranscript: () => window.api.transcriptPull(name),
     seatName: name,
     onTranscriptChanged: (cb) => { transcriptChangedSubs.add(cb); return () => transcriptChangedSubs.delete(cb); },
+    resolveFile: (p) => window.api.fileResolve(name, p, null),
+    openFilePeek: (...args) => openFilePeek(...args),
+    openExternal: (url) => window.api.openExternal(url),
+    toast: showToast,
+    echoPalette: currentEchoPalette,
   });
   sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, webgl, wrapperEl, peer, echoRewrite, liveSplit });
   updateWindowTitle();
