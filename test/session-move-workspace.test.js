@@ -133,6 +133,7 @@ test('a live move rewrites both fields, tells the OLD window moved-out and the N
     team: null,
     replay: 'buffered bytes',
     activity: 'thinking',
+    compacting: null,
     attention: null,
     pendingCount: 3,
     createdAt: 111,
