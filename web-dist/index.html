@@ -29377,6 +29377,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       "use strict";
       var { composerIsEmpty, composerHasDraft } = require_voice_submit();
       var SPLIT_SETTLE_MS = 250;
+      var SPLIT_EXIT_MS = 50;
       var RULE = /^─+$/u;
       function isRuleRow(row, cols) {
         if (typeof row !== "string") return false;
@@ -29409,9 +29410,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function initialSplitState() {
         return { mode: "full", top: -1, bottom: -1, pending: null, wakeAt: null };
       }
-      function reduceSplit(state, measured, now, settleMs = SPLIT_SETTLE_MS) {
+      function reduceSplit(state, measured, now, settleMs = SPLIT_SETTLE_MS, exitMs = SPLIT_EXIT_MS) {
         const cur = state || initialSplitState();
-        if (!measured || measured.mode !== "split") return initialSplitState();
+        if (!measured || measured.mode !== "split") {
+          if (cur.mode !== "split") return initialSplitState();
+          const since2 = cur.pending && cur.pending.kind === "exit" ? cur.pending.since : now;
+          if (now - since2 >= exitMs) return initialSplitState();
+          return { mode: "split", top: cur.top, bottom: cur.bottom, pending: { kind: "exit", since: since2 }, wakeAt: since2 + exitMs };
+        }
         const h = measured.bottom - measured.top + 1;
         if (cur.mode !== "split") {
           const since2 = cur.pending && cur.pending.kind === "enter" ? cur.pending.since : now;
@@ -29439,6 +29445,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       module.exports = {
         SPLIT_SETTLE_MS,
+        SPLIT_EXIT_MS,
         isRuleRow,
         isComposerRow,
         findAnchor,
@@ -29612,6 +29619,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let lastPull = 0;
         let pulling = false;
         let disposed = false;
+        let cursorHidden = false;
         function pull() {
           const t = now();
           if (pulling || t - lastPull < TRANSCRIPT_PULL_MS) return;
@@ -29686,8 +29694,19 @@ ${m[2].replace(/^\r?\n/, "")}`;
             if (onChange) onChange(state);
           }
         }
+        const cursorVisibility = (hidden) => (params) => {
+          if (Array.from(params || []).includes(25)) cursorHidden = hidden;
+          return false;
+        };
+        const parser = terminal.parser;
         const subs = [
-          terminal.onWriteParsed(evaluate),
+          ...parser ? [
+            parser.registerCsiHandler({ prefix: "?", final: "l" }, cursorVisibility(true)),
+            parser.registerCsiHandler({ prefix: "?", final: "h" }, cursorVisibility(false))
+          ] : [],
+          terminal.onWriteParsed(() => {
+            if (!cursorHidden) evaluate();
+          }),
           terminal.onResize(() => {
             evaluate();
             layout();
