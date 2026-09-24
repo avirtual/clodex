@@ -1528,9 +1528,20 @@ function createStreamSeatPane(name, wrapperEl) {
       attachEl.appendChild(thumb);
     });
   };
+  const SEAT_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+  const SEAT_IMAGE_MAX = 5;
+  let reading = 0;
   const attachFiles = (files) => {
-    for (const file of files) {
+    const allowed = files.filter((f) => SEAT_IMAGE_TYPES.includes(f.type));
+    const room = Math.max(0, SEAT_IMAGE_MAX - pending.length - reading);
+    const taken = allowed.slice(0, room);
+    if (taken.length < files.length) {
+      showToast(`${files.length - taken.length} image(s) not attached — png, jpeg, gif or webp only, at most ${SEAT_IMAGE_MAX} per message.`, { kind: 'error', name });
+    }
+    for (const file of taken) {
+      reading += 1;
       const reader = new FileReader();
+      reader.onloadend = () => { reading -= 1; };
       reader.onload = () => {
         const m = /^data:([^;,]+);base64,(.*)$/.exec(String(reader.result || ''));
         if (!m || disposed) return;
@@ -1549,11 +1560,10 @@ function createStreamSeatPane(name, wrapperEl) {
   });
   wrapperEl.addEventListener('drop', (e) => {
     const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
-    const images = files.filter((f) => /^image\//.test(f.type));
-    if (!images.length) return;
+    if (!files.length || !files.every((f) => /^image\//.test(f.type))) return;
     e.preventDefault();
-    if (images.length === files.length) e.stopPropagation();
-    attachFiles(images);
+    e.stopPropagation();
+    attachFiles(files);
   });
   let rev = -1;
   let pulling = false;

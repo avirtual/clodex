@@ -2860,7 +2860,7 @@ function createSessionManager(deps) {
           if (s.outbox.length) {
             const queued = s.outbox.splice(0);
             this._streamDeliver(s, {
-              text: queued.map((q) => q.text).filter((t) => t).join('\n\n'),
+              text: queued.map((q) => q.text).filter((t) => t.trim()).join('\n\n'),
               images: queued.flatMap((q) => q.images),
             });
           } else {

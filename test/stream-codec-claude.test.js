@@ -80,5 +80,9 @@ test('encodeUser with images and empty text omits the text block; an empty image
     type: 'user',
     message: { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/gif', data: 'CCCC' } }] },
   });
+  assert.deepStrictEqual(encodeUser(' \n', [{ mediaType: 'image/gif', data: 'CCCC' }]), {
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/gif', data: 'CCCC' } }] },
+  });
   assert.deepStrictEqual(encodeUser('hello', []), { type: 'user', message: { role: 'user', content: 'hello' } });
 });

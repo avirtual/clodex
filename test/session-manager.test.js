@@ -20930,8 +20930,9 @@ test('stream seat (i2): queued images concatenate in order and ride the joined m
   assert.deepStrictEqual(h.m.seatSend('st8', 'second', [jpg]), { ok: true, queued: 1 });
   assert.deepStrictEqual(h.m.seatSend('st8', '', [png]), { ok: true, queued: 2 });
   assert.deepStrictEqual(h.m.seatSend('st8', 'fourth'), { ok: true, queued: 3 });
+  assert.deepStrictEqual(h.m.seatSend('st8', ' ', [jpg]), { ok: true, queued: 4 });
   assert.deepStrictEqual(h.m.sessions.get('st8').outbox, [
-    { text: 'second', images: [jpg] }, { text: '', images: [png] }, { text: 'fourth', images: [] },
+    { text: 'second', images: [jpg] }, { text: '', images: [png] }, { text: 'fourth', images: [] }, { text: ' ', images: [jpg] },
   ]);
   h.line('st8', { type: 'result', subtype: 'success', duration_ms: 1, total_cost_usd: 0, is_error: false });
   assert.deepStrictEqual(seat.sent, [
@@ -20939,9 +20940,15 @@ test('stream seat (i2): queued images concatenate in order and ride the joined m
     { type: 'user', message: { role: 'user', content: [
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'SlBH' } },
       { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'UE5H' } },
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'SlBH' } },
       { type: 'text', text: 'second\n\nfourth' },
     ] } },
   ]);
+  assert.deepStrictEqual(h.m.seatSend('st8', '\n', [png]), { ok: true, queued: 1 });
+  h.line('st8', { type: 'result', subtype: 'success', duration_ms: 1, total_cost_usd: 0, is_error: false });
+  assert.deepStrictEqual(seat.sent[2], { type: 'user', message: { role: 'user', content: [
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'UE5H' } },
+  ] } });
   h.stopAll();
 });
 

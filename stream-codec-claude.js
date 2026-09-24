@@ -43,7 +43,7 @@ function encodeUser(text, images = []) {
   if (!images || !images.length) return { type: 'user', message: { role: 'user', content: String(text) } };
   const content = images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.data } }));
   const body = text == null ? '' : String(text);
-  if (body) content.push({ type: 'text', text: body });
+  if (body.trim()) content.push({ type: 'text', text: body });
   return { type: 'user', message: { role: 'user', content } };
 }
 
