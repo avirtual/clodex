@@ -4588,6 +4588,10 @@ const resizeObserver = new ResizeObserver(refitActiveTerminal);
 resizeObserver.observe(terminalContainer);
 
 window.api.onZoomNudge(refitActiveTerminal);
+window.api.onRequestToggleRawTerminal(() => {
+  const entry = activeSession ? sessions.get(activeSession) : null;
+  if (entry && entry.liveSplit) entry.liveSplit.setRaw(!entry.liveSplit.raw());
+});
 
 
 const overlayElementById = (id) => document.getElementById(id);

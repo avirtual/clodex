@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Transcript pane: typed records; each prompt heads a turn block with a footer (duration, tool count, files changed), each tool call is one row with its result summary (exit code, line counts, +/− lines), inbound deliveries render as sender cards, and Cmd+Shift+T (View ▸ Raw terminal) toggles the raw terminal.
 
 - Transcript pane: the pane keeps following the bottom when the composer grows to a second line or the layout changes; scrolling up releases it, scrolling back down re-engages it.
 
