@@ -69,8 +69,9 @@ reattach — a web host needs the same replay-on-connect for a reloaded tab.
 | `session-mention` | `name, mtype, from` (`dm`/…) | session-manager (dm/mention gate) |
 | `session:context-action` | `msg` object `{action, name, …}` (`reattach`/`spawn` path) | session-manager |
 | `session-peer-control` | `name, holder` (control-holder tag or null) | remote-wiring |
-| `voice-tap` | `name, modeSettling` (ensure-on request from an outside script; the renderer decides whether a key is written, since only it can read the recording indicator. `modeSettling` says the voice mode was set to `tap` too recently for the CLI to have observed it, so the renderer waits before writing the key) | session-manager `voiceTap` |
-| `voice-engine-stopped` | `name` — the voice engine's hold cap ended a recording this stream seat armed, so its recording light goes out — **direct handle** on the arming workspace's window (`windowForWorkspace`) | session-manager `_endVoiceHoldAtCap` |
+| `voice-tap` | `name` (ensure-on request from an outside script for a seat whose voice mode is `tap`; the renderer asks main to start the voice engine's recorder for that seat over `voice:record`) | session-manager `voiceTap` |
+| `seat-voice` | `name, mode` — a seat's voice mode (`off`, `tap`, `hold`) changed in its record; broadcast to every window | session-manager `setVoice` |
+| `voice-engine-stopped` | `name` — the voice engine's hold cap ended a recording this seat armed, so its recording light goes out — **direct handle** on the arming workspace's window (`windowForWorkspace`) | session-manager `_endVoiceHoldAtCap` |
 
 ## B. Broadcast channels (via `_broadcast`)
 

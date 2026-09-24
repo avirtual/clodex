@@ -129,16 +129,6 @@ const REBOOT_NOTICE_MAX_ATTEMPTS = 3;
 // settings, the re-park follows, and the T+150s rung lands after the render.
 const REBOOT_NOTICE_FLUSH_MS = 25 * 1000;
 
-// How long after setting the voice mode the CLI may still be acting on the old
-// one, so a tap arriving inside this window must wait it out like the tap that
-// set it. The measurement, the observable and why the number is what it is live
-// with the wait itself — VOICE_TAP_MODE_SETTLE_MS in
-// renderer/voice-submit-watcher.js — and this must not drift from it: this side
-// decides who waits, that side performs the wait, and a shorter value here
-// silently stops arming the wait it is naming. Pinned equal in
-// test/external-tap-trigger.test.js.
-const VOICE_MODE_SETTLE_MS = 1500;
-
 // How long the pane must have been untouched before the forced flush is allowed
 // to fire. Comfortably longer than INJECT_QUIET_MS (2s), which is tuned to not
 // cut mid-WORD: this one has to clear a pause mid-COMPOSITION, and stopping to
@@ -154,6 +144,7 @@ const MUSE_LINK_POLL_MS = 250;
 const MUSE_LINK_DEADLINE_MS = 60000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const voiceEngineSpec = require('./voice-engine');
+const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX } = require('./proxy-util');
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
@@ -325,7 +316,7 @@ function nearMissFormHint(text) {
 // id that is by construction not in the array, so a preserved list cannot
 // suppress a digest that is due. That is what makes it safe here where a bare
 // timestamp is not.
-const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested'];
+const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice'];
 
 // The delayed backstop SIGKILL for a pty that ignored `pty.kill()`. The `> 0`
 // is the whole function: `process.kill` reads non-positive pids as BROADCASTS,
@@ -714,8 +705,6 @@ function createSessionManager(deps) {
     termExec: termExecDep,
     whichBin,
     writeClaudeDigestFile,
-    readVoiceMode,
-    writeVoiceMode,
     deliverSkills,
     skillDeliveryProviders,
     writeAgentPlugin,
@@ -865,11 +854,6 @@ function createSessionManager(deps) {
       // there is no window to bring forward and the attempt only fans a
       // `focus-hint` nobody asked for.
       this._appFocusReported = false;
-      // When the spoken tap last set the voice mode, box-wide. The CLI observes
-      // that write on a delay, so this is what tells a tap arriving inside the
-      // window that it must wait too — see voiceTap. Starts 0: nothing has been
-      // written, so no tap owes a wait for it.
-      this._lastVoiceModeWriteAt = 0;
       // Box-wide recorder stamp — see noteVoiceRecording. Separate from the
       // per-seat field of the same name because audio has no seat.
       this._lastVoiceRecordingTs = 0;
@@ -3296,7 +3280,7 @@ function createSessionManager(deps) {
       if (!name) return { ok: false, error: 'no target and no focused session' };
       const s = this.sessions.get(name);
       if (!s || s._dead) return { ok: false, error: `no live session "${name}"` };
-      if (s.agentType !== 'claude') return { ok: false, error: `"${name}" is not a claude seat` };
+      if (this.voiceModeFor(name) === 'off') return { ok: false, error: 'voice is off for this seat' };
       const win = this.windowForSession(name);
       if (!win) return { ok: false, error: `"${name}" has no window attached` };
       return { ok: true, name, session: s, win };
@@ -3327,56 +3311,29 @@ function createSessionManager(deps) {
       return this.voiceTap(r.name, { raise: true });
     }
 
-    // Switch the CLI's push-to-talk mode by WRITING the settings file it reads.
-    // A running CLI picks that up: the mode is read through a live store
-    // selector rather than cached at startup, and the CLI watches the settings
-    // directory. Observed directly — an external edit moved a live session. Not
-    // immediately, though: that watcher debounces ~1s, which is why the write
-    // stamps `_lastVoiceModeWriteAt` and a tap inside the window waits it out.
-    //
-    // BOTH WRITE SURFACES land here — the spoken verb and the Preferences /
-    // popover row over `settings:setVoiceMode`. That is what keeps the stamp
-    // above true of every write: a surface reaching past this to the writer
-    // would move the mode without arming the wait it creates.
-    //
-    // NOT AN INJECTION, and not a spawned CLI either. Injection dragged in the
-    // composer, the inject queue, the quiet gate and `parkable` — and a PARKED
-    // slash command never executes, because the hook hands parked text back as
-    // additionalContext, which the model reads as prose instead of typing. So
-    // the verb could silently do nothing behind an open draft. Spawning was
-    // measured and rejected: `/voice` declares supportsNonInteractive false, so
-    // `claude -p "/voice tap"` exits 0 and changes nothing, and the positional
-    // form starts an interactive TUI that needs a pty and does not self-exit.
-    //
-    // TAKES NO SEAT. The file is one per box, so there is no mic holder, window
-    // or live session for this to resolve, and arming a mode before any seat
-    // exists is a thing he can reasonably want from across the room. An invalid
-    // mode and a failed write are the only declines left.
-    voiceMode(mode) {
-      const r = writeVoiceMode(mode);
-      if (!r.ok) {
-        log.warn('voice', `mode ${mode} failed: ${r.error}`);
-        return r;
-      }
-      // SAME MEMO AS THE TAP'S OWN WRITE, and it has to be: `mode tap` followed
-      // by the tap phrase is the exact two-phrase workflow this ticket replaces,
-      // and without this stamp the tap that follows sends its byte under a mode
-      // the CLI has not observed — the blink, on the way out of the blink.
-      //
-      // `tap` only. Moving to `hold` or `off` arms nothing, so a tap that
-      // followed one has no reason to wait: the wait exists to let the CLI catch
-      // up to TAP, and stamping here for a mode that will not arm would delay a
-      // later tap for nothing.
-      if (mode === 'tap') this._lastVoiceModeWriteAt = Date.now();
-      log.info('voice', `mode ${mode}`);
-      return { ok: true, mode };
+    voiceModeFor(name) {
+      let rec = null;
+      try { rec = getPersistence().get(name); } catch { rec = null; }
+      return voiceModeOf(rec);
     }
 
-    // Spoken replies on or off, from across the room. CLODEX'S OWN setting, so
-    // this is an ordinary store write — no CLI, no slash command, no pty. The
-    // contrast with `mode` is which side owns the value: voice mode lives in
-    // the CLI's settings file, this lives in Clodex's store.
-    //
+    setVoice(name, mode) {
+      if (!VOICE_MODES.includes(mode)) return { ok: false, error: `unknown voice mode "${mode}" (use off|tap|hold)` };
+      const s = this.sessions.get(name);
+      if (!s) return { ok: false, error: `no session "${name}"` };
+      const p = getPersistence();
+      if (!p || !p.setVoice(name, mode)) return { ok: false, error: `"${name}" has no record to hold a voice mode` };
+      this._broadcast('seat-voice', name, mode);
+      log.info('voice', `mode ${mode} on ${name}`);
+      return { ok: true, name, mode };
+    }
+
+    voiceMode(mode, target = null) {
+      const name = target || this._focusedSession;
+      if (!name) return { ok: false, error: 'no target and no focused session' };
+      return this.setVoice(name, mode);
+    }
+
     // BOX-WIDE. There is no per-seat speech flag, so this takes no seat name and
     // never consults the microphone holder.
     //
@@ -3403,16 +3360,13 @@ function createSessionManager(deps) {
     // ENSURE-ON from outside the app: a Voice Control wake word arrived over
     // this box's agent socket asking for the recorder.
     //
-    // ROUTES ONLY. Whether a key may actually be written is decided in the
-    // renderer, against the seat's own screen — main cannot read the recording
-    // indicator, and a decision made here would be made blind.
-    //
     // An explicit target overrides the focused seat, so a script can address a
     // seat the operator is not looking at.
     voiceTap(target = null, { raise = false } = {}) {
       const r = this._voiceRoute(target);
       if (!r.ok) return r;
       const { name, win } = r;
+      if (this.voiceModeFor(name) !== 'tap') return { ok: false, error: `"${name}" is in hold mode; a tap arms only a tap seat` };
       // THE TAP RETARGETS, and the automatic re-arm never does. That asymmetry
       // is the design: he NAMED this seat, so it takes the microphone from
       // whoever held it; a re-arm names nobody, so it gets no say in who holds
@@ -3445,41 +3399,7 @@ function createSessionManager(deps) {
       if (raise || (this._appFocusReported && !this._appFocused)) {
         try { win.show(); win.focus(); } catch { /* a host that cannot raise still routes the tap */ }
       }
-      // In `hold` the tap arms nothing: that arm expects a HELD key, so it
-      // starts recording and sets a release timer through an auto-repeat
-      // fallback, and one synthetic keystroke has no auto-repeat.
-      //
-      // BELOW every decline, so a tap that routes nowhere changes no box-wide
-      // setting. The mode is NOT restored afterwards: restoring races his
-      // dictation, and `mode hold` is the deliberate stand-down verb.
-      //
-      // READ FIRST, so an already-tap file is left alone. The renderer owes a
-      // ~1s wait whenever the CLI may not have caught up, and paying it on every
-      // tap would delay the common case for nothing.
-      //
-      // `effective`, not `mode`: with voice switched off the file still names
-      // tap or hold beside the flag, and the tap has to turn voice back ON.
-      const cur = readVoiceMode();
-      if (!cur || cur.effective !== 'tap') {
-        const w = writeVoiceMode('tap');
-        // Reported, not fatal: the mode it could not change may already suit,
-        // so the tap is still worth routing.
-        if (w.ok) this._lastVoiceModeWriteAt = Date.now();
-        else log.warn('voice', `tap could not set mode: ${w.error}`);
-      }
-      // THE QUESTION IS "HAS THE CLI OBSERVED TAP YET", NOT "DID I JUST WRITE".
-      // Those differ for the tap that matters most: he says the phrase, sees
-      // nothing happen, and says it again. The second one reads a file the first
-      // already set to tap, so a did-I-write flag reports nothing to wait for
-      // and sends its byte under the mode the CLI is still on — the blink, back,
-      // on the repeat he made BECAUSE of the blink.
-      //
-      // So it is the age of the last write that decides, and any tap inside that
-      // window inherits the wait. The memo is the only state this needs, and it
-      // lives here because the renderer cannot see the write at all.
-      const settling = this._lastVoiceModeWriteAt
-        && (Date.now() - this._lastVoiceModeWriteAt) < VOICE_MODE_SETTLE_MS;
-      this._sendToSession(name, 'voice-tap', name, !!settling);
+      this._sendToSession(name, 'voice-tap', name);
       return { ok: true, name };
     }
 
@@ -4672,11 +4592,14 @@ function createSessionManager(deps) {
       };
       const resolveAccount = this._accountResolver();
       const resolveSettingsModel = this._settingsModelResolver();
+      const records = new Map();
+      try { for (const e of getPersistence().list()) records.set(e.name, e); } catch {}
       return Array.from(this.sessions.values()).map(s => ({
         name: s.name,
         type: s.type,
         pid: this._procPid(s),
         io: s.io || 'pty',
+        voice: voiceModeOf(records.get(s.name)),
         cwd: s.cwd,
         workspaceId: s.workspaceId,
         team: teamFor(s.cwd),
@@ -4823,18 +4746,21 @@ function createSessionManager(deps) {
       };
     }
 
-    ensureVoiceEngine(armedBy = null) {
+    ensureVoiceEngine(armedBy = null, mode = 'tap') {
       const live = this._voiceEngine;
-      if (live && !live.dead) return live.ready.then(() => live);
-      if (this._voiceEnginePending) return this._voiceEnginePending;
-      const pending = this._spawnVoiceEngine(armedBy).finally(() => {
+      if (live && !live.dead && live.mode === mode) return live.ready.then(() => live);
+      if (this._voiceEnginePending) {
+        return this._voiceEnginePending.then((e) => (e.mode === mode ? e : this.ensureVoiceEngine(armedBy, mode)));
+      }
+      if (live && !live.dead) this.killVoiceEngine();
+      const pending = this._spawnVoiceEngine(armedBy, mode).finally(() => {
         if (this._voiceEnginePending === pending) this._voiceEnginePending = null;
       });
       this._voiceEnginePending = pending;
       return pending;
     }
 
-    async _spawnVoiceEngine(armedBy = null) {
+    async _spawnVoiceEngine(armedBy = null, mode = 'tap') {
       const { VOICE_ENGINE_NAME, PROMPT_MARK, SCREEN_RESET, engineArgs } = voiceEngineSpec;
       const t = this.voiceEngineTimings();
       if (!WIRE_SHADOW) throw new Error('the voice engine needs the in-process wire, which is off');
@@ -4846,14 +4772,14 @@ function createSessionManager(deps) {
       const env = withUtf8Charset({ ...process.env, TERM: 'xterm-256color' });
       let proc;
       try {
-        proc = pty.spawn('claude', engineArgs(wireBase), { name: 'xterm-256color', cols: 120, rows: 30, cwd, env });
+        proc = pty.spawn('claude', engineArgs(wireBase, mode), { name: 'xterm-256color', cols: 120, rows: 30, cwd, env });
       } catch (e) {
         try { wire.unregisterAgent(VOICE_ENGINE_NAME); } catch {}
         throw e;
       }
       let markReady;
       const engine = {
-        name: VOICE_ENGINE_NAME, pty: proc, cols: 120, rows: 30, recording: false, holdTimer: null, holdCap: null,
+        name: VOICE_ENGINE_NAME, mode, pty: proc, cols: 120, rows: 30, recording: false, holdTimer: null, holdCap: null,
         armedBy, promptWaiters: [], dead: false, ready: new Promise((r) => { markReady = r; }),
       };
       let seen = false;
@@ -4881,7 +4807,8 @@ function createSessionManager(deps) {
         this._stopVoiceHold(engine);
         for (const wake of engine.promptWaiters.splice(0)) wake();
         markReady();
-        if (this._voiceEngine === engine) this._voiceEngine = null;
+        if (this._voiceEngine && this._voiceEngine !== engine) return;
+        this._voiceEngine = null;
         if (this._wire) { try { this._wire.unregisterAgent(VOICE_ENGINE_NAME); } catch {} }
       });
       this._voiceEngine = engine;
@@ -4928,21 +4855,23 @@ function createSessionManager(deps) {
       if (win) win.webContents.send('voice-engine-stopped', armedBy.name);
     }
 
-    async voiceRecord(name, action, { mode = null, workspaceId = null, observed = null } = {}) {
+    async voiceRecord(name, action, { workspaceId = null, observed = null } = {}) {
       const s = this.sessions.get(name);
-      if (!s || s._dead || s.io !== 'stream') return { ok: false, error: 'voice:record is for a stream seat' };
-      if (!voiceEngineSpec.planRecord({ mode, action, recording: false })) return { ok: false, error: `cannot record in voice mode ${mode || 'unknown'}` };
+      if (!s || s._dead) return { ok: false, error: `no live session "${name}"` };
+      if (!voiceEngineSpec.RECORD_ACTIONS.includes(action)) return { ok: false, error: `unknown record action "${action}"` };
       const armedBy = { name, workspaceId: workspaceId || s.workspaceId || null };
-      const run = () => this._voiceRecordNow(armedBy, action, mode, observed);
+      const run = () => this._voiceRecordNow(armedBy, action, observed);
       const op = this._voiceOp.then(run, run);
       this._voiceOp = op.catch(() => {});
       return op;
     }
 
-    async _voiceRecordNow(armedBy, action, mode, observed = null) {
+    async _voiceRecordNow(armedBy, action, observed = null) {
+      const mode = this.voiceModeFor(armedBy.name);
+      if (mode === 'off') return { ok: false, error: 'voice is off for this seat' };
       const prior = this._voiceEngine;
       let engine;
-      try { engine = await this.ensureVoiceEngine(armedBy); } catch (e) { return { ok: false, error: e.message }; }
+      try { engine = await this.ensureVoiceEngine(armedBy, mode); } catch (e) { return { ok: false, error: e.message }; }
       const sameWindow = engine === prior && engine.armedBy && engine.armedBy.workspaceId === armedBy.workspaceId;
       if (observed && typeof observed === 'object' && sameWindow) {
         const seen = observed.recording === true;

@@ -404,6 +404,8 @@ const API_CONTRACT = [
   // both surfaces work with zero Claude seats open.
   { name: 'getVoiceMode', kind: 'invoke', channel: 'settings:voiceMode' },
   { name: 'setVoiceMode', kind: 'invoke', channel: 'settings:setVoiceMode' },
+  { name: 'setSeatVoice', kind: 'invoke', channel: 'session:setVoice' },
+  { name: 'onSeatVoice', kind: 'on', channel: 'seat-voice' },
   // t572: mark the hands-free submit about to happen as voice-originated. A
   // SEND, not an invoke, and that is the contract: the marker must never put a
   // round trip in front of the operator's Enter, so there is no result to wait

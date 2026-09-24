@@ -26,9 +26,7 @@ const { splitModelArg, withModelArg } = require('./lib/args-model');
 const { PLATFORMS, adapterFor, isAgentType, capsFor } = require('../cli-adapters');
 const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
-const { createMirrorLatch } = require('./lib/mirror-latch');
 const { filterSummary, setFilterFolded } = require('./lib/sidebar-filter-fold');
-const { createMicHandoff } = require('./lib/mic-handoff');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
@@ -64,12 +62,11 @@ const { createInboxDrawer } = require('./inbox-drawer');
 const { createVoiceCore, createVoiceControl } = require('./voice-control');
 const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
-const { createVoiceSubmitWatcher, QUIET_MS: VOICE_QUIET_MS, VOICE_RELEASE_MS } = require('./voice-submit-watcher');
 const { createVoiceMirror, engineObserved } = require('./voice-mirror');
-const { attachTriggerSubmit } = require('./lib/composer-voice');
+const { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require('./lib/composer-voice');
 const { VOICE_ENGINE_NAME } = require('../voice-engine');
 const {
-  DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings, resolveTriggerKey,
+  DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings,
 } = require('./lib/voice-submit');
 const { createLiveSplitView, renderTranscript, TRANSCRIPT_PULL_MS } = require('./live-split-view');
 const { initBanners } = require('./banners');
@@ -1430,7 +1427,7 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
   } catch {} finally { metaRefreshInFlight = false; }
   try {
     const live = await window.api.listSessions();
-    if (Array.isArray(live)) for (const s of live) applyAccountChip(s.name, s.account || null);
+    if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); }
   } catch {}
   refreshSidebarView();
   // Which footer buttons show is answered off sidebarMeta, which does not exist
@@ -1673,9 +1670,9 @@ function createStreamSeatPane(name, wrapperEl) {
     markOrigin: () => window.api.markVoiceOrigin(name),
     send: sendComposer,
     hasImages: () => pending.length > 0,
-    onVoiceFire: () => streamVoiceFired(name),
-    holdsFire: () => voiceRecordingOn && streamVoiceMode(name, 'tap'),
-    onVoiceStop: () => streamVoiceRecord(name, 'stop'),
+    onVoiceFire: () => seatVoiceFired(name),
+    holdsFire: () => voiceRecordingOn && seatVoiceMode(name, 'tap'),
+    onVoiceStop: () => seatVoiceRecord(name, 'stop'),
     quietMs: VOICE_QUIET_MS,
     releaseMs: VOICE_RELEASE_MS,
   });
@@ -1823,63 +1820,15 @@ function createTerminal(name, peer = null) {
 
   const intentHighlight = createIntentHighlight(terminal);
 
-  // Local Claude seats only: a peer's composer is on the other machine, and the
-  // erase-then-Enter shape is verified against the Claude CLI's input box alone
-  // — in a bash seat Enter RUNS the line rather than sending a message, so the
-  // consequence of a false fire is not the same and the widening needs its own
-  // decision. The type is resolved at FIRE time rather than here: the sidebar
-  // row this reads may not exist yet while the terminal is being built.
-  const voiceSubmit = peer ? null : createVoiceSubmitWatcher(terminal, {
-    // Gated on the ACTIVE session, not merely a live one. Dictation only ever
-    // reaches the focused composer, so a background seat's watcher can never
-    // help and can only misfire — and an agent seat parked at its own composer
-    // with injected text is exactly the shape the prompt check accepts.
-    getConfig: () => (voiceSubmitConfig.enabled
-      && name === activeSession
-      && sessionTypeOf(name) === 'claude'
-      ? voiceSubmitConfig : null),
-    getAttention: () => {
-      const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-      // A row that is GONE is not a row without a dialog. Reporting 'permission'
-      // makes the missing-row case decline, matching the throw path in the
-      // watcher — the interlock's failures all have to land on the safe side.
-      return el ? (el.dataset.attention || null) : 'permission';
-    },
+  const ptyVoice = peer ? null : createPtyVoiceDraft({
+    getConfig: () => voiceSubmitConfig,
     write: (data) => window.api.writeToSession(name, data),
-    // Both read through voiceCore, which already polls the CLI's config for the
-    // bar button — a second reader here would be a second copy of a box-wide
-    // value, which voice-control.js's header rules out.
-    // The FILE-backed mode, not snapshot().mode: that one prefers a PENDING
-    // pick, so a queued `/voice tap` the CLI has not run yet would make the
-    // re-arm act as though tap were already live.
-    getVoiceMode: () => {
-      const { state } = voiceCore.snapshot();
-      return (state && state.effective) || null;
-    },
-    getTriggerKey: () => resolveTriggerKey(voiceCore.triggerBinding()),
-    // A `send`, so this returns immediately and the erase/Enter that follow it
-    // are never waiting on the proxy.
-    markVoiceOrigin: () => window.api.markVoiceOrigin(name),
-    unmarkVoiceOrigin: () => window.api.unmarkVoiceOrigin(name),
-    // Deliberately NOT gated on voiceSubmitConfig.enabled, which getConfig above
-    // requires: he dictates into claude seats whether or not hands-free submit
-    // is switched on, and the quiet-gate protection is owed to him either way.
-    // Still the ACTIVE seat only — dictation reaches the focused composer, so a
-    // background seat's indicator is not him speaking into it.
-    recorderScope: () => name === activeSession && sessionTypeOf(name) === 'claude',
-    // Box-wide and read fresh per attempt, never captured: the flag flips
-    // mid-wait, which is the entire point of the deferral.
-    getSpeakerBusy: () => speakerBusy,
-    // Does THIS seat hold the microphone? Compared against main's box-wide
-    // name, never against `activeSession`, which is this window's own answer
-    // and true of one seat in every window that is open.
-    isMicTarget: () => micTargetMirror.read() === name,
-    // Is Clodex frontmost? Read fresh per attempt and never captured, for the
-    // same reason as the speaker flag: he alt-tabs away DURING the settle
-    // window, and that is the case this exists to catch.
-    isAppFocused: () => appFocusedMirror.read(),
-    noteVoiceRecording: () => window.api.noteVoiceRecording(name),
-    noteVoiceDraft: () => window.api.noteVoiceDraft(name),
+    markOrigin: () => window.api.markVoiceOrigin(name),
+    onVoiceFire: () => seatVoiceFired(name),
+    holdsFire: () => voiceRecordingSeat === name && seatVoiceMode(name, 'tap'),
+    onVoiceStop: () => seatVoiceRecord(name, 'stop'),
+    quietMs: VOICE_QUIET_MS,
+    releaseMs: VOICE_RELEASE_MS,
   });
 
   const searchAddon = new SearchAddon();
@@ -1917,11 +1866,6 @@ function createTerminal(name, peer = null) {
       typeToTakeControl(name, data);
       return;
     }
-    // Typing is evidence the draft was NOT dictated, and this is the only place
-    // that sees it: the recording indicator can be lit through an ordinary typed
-    // turn (the re-arm writes the trigger character at every turn end), so
-    // without this the operator's exact typed words submit marked as spoken.
-    if (voiceSubmit) voiceSubmit.noteInput(data);
     window.api.writeToSession(name, data);
   });
 
@@ -1937,7 +1881,7 @@ function createTerminal(name, peer = null) {
     toast: showToast,
     echoPalette: currentEchoPalette,
   });
-  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, webgl, wrapperEl, peer, echoRewrite, liveSplit });
+  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit });
   updateWindowTitle();
   return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
 }
@@ -2111,7 +2055,7 @@ function removeSession(name, { keepPersisted = false } = {}) {
     // Before the terminal: its decorations hold markers that the terminal owns,
     // and disposing them afterwards throws on the marker lookup.
     if (s.intentHighlight) s.intentHighlight.dispose();
-    if (s.voiceSubmit) s.voiceSubmit.dispose();
+    if (s.ptyVoice) s.ptyVoice.dispose();
     if (s.liveSplit) s.liveSplit.dispose();
     if (s.webgl) { try { s.webgl.dispose(); } catch {} }
     if (s.stream) s.stream.dispose();
@@ -3495,6 +3439,32 @@ window.api.onTranscriptChanged((name) => {
 
 let voiceEngineView = null;
 let voiceArmedSeat = null;
+let voiceRecordingSeat = null;
+const seatVoices = new Map();
+function markSeatVoice(name, mode) {
+  if (name && typeof mode === 'string') seatVoices.set(name, mode);
+}
+
+function voiceSinkFor(name) {
+  const entry = name ? sessions.get(name) : null;
+  if (!entry) return null;
+  if (entry.stream) {
+    return {
+      draft: (text) => entry.stream.voiceDraft(text),
+      released: () => entry.stream.voiceReleased(),
+      start: () => entry.stream.voiceStart(),
+      setRecording: (on) => entry.stream.setRecording(on),
+    };
+  }
+  if (!entry.ptyVoice) return null;
+  return {
+    draft: (text) => entry.ptyVoice.draft(text),
+    released: () => entry.ptyVoice.released(),
+    start: () => entry.ptyVoice.resetSpan(),
+    setRecording: () => {},
+  };
+}
+
 function voiceEngine() {
   if (voiceEngineView) return voiceEngineView;
   const host = document.createElement('div');
@@ -3504,64 +3474,71 @@ function voiceEngine() {
   terminal.open(host);
   const mirror = createVoiceMirror(terminal, {
     onDraft: (text) => {
-      const entry = voiceArmedSeat ? sessions.get(voiceArmedSeat) : null;
-      if (entry && entry.stream) entry.stream.voiceDraft(text);
+      const sink = voiceSinkFor(voiceArmedSeat);
+      if (sink) sink.draft(text);
     },
     onRelease: () => {
-      const entry = voiceArmedSeat ? sessions.get(voiceArmedSeat) : null;
-      if (entry && entry.stream) entry.stream.voiceReleased();
+      const sink = voiceSinkFor(voiceArmedSeat);
+      if (sink) sink.released();
     },
   });
   voiceEngineView = { terminal, mirror };
   return voiceEngineView;
 }
 
-function streamVoiceMode(name, mode) {
-  if (!name || !streamSeatNames.has(name)) return false;
+function seatVoiceMode(name, mode) {
+  const entry = name ? sessions.get(name) : null;
+  if (!entry || entry.peer) return false;
   let snap = null;
   try { snap = voiceCore.snapshot(); } catch { snap = null; }
   if (!snap || snap.capable === false) return false;
-  return (snap.pending || snap.mode) === mode;
+  const own = snap.state && snap.state.seat === name ? (snap.pending || snap.mode) : null;
+  return (own || seatVoices.get(name) || null) === mode;
 }
 
-async function streamVoiceRecord(name, action) {
-  const entry = sessions.get(name);
-  if (!entry || !entry.stream) return;
+function setSeatRecording(name, on) {
+  if (on) voiceRecordingSeat = name;
+  else if (voiceRecordingSeat === name) voiceRecordingSeat = null;
+  const sink = voiceSinkFor(name);
+  if (sink) sink.setRecording(on);
+}
+
+async function seatVoiceRecord(name, action) {
+  const sink = voiceSinkFor(name);
+  if (!sink) return false;
   const observed = engineObserved(voiceEngineView);
   const view = voiceEngine();
   let res = null;
   try { res = await window.api.voiceRecord(name, action, observed); } catch (e) { res = { ok: false, error: e && e.message ? e.message : String(e) }; }
   if (!res || res.ok !== true) {
-    entry.stream.setRecording(false);
+    setSeatRecording(name, false);
     showToast(`Voice: ${(res && res.error) || 'recording failed'}`, { kind: 'error', name });
     return false;
   }
   if (res.recording) {
     if (voiceArmedSeat && voiceArmedSeat !== name) {
       view.mirror.disarm();
-      const prev = sessions.get(voiceArmedSeat);
-      if (prev && prev.stream) prev.stream.setRecording(false);
+      setSeatRecording(voiceArmedSeat, false);
     }
     voiceArmedSeat = name;
-    entry.stream.voiceStart();
+    sink.start();
     view.mirror.arm();
   } else if (voiceArmedSeat === name) {
     view.mirror.release();
   }
-  entry.stream.setRecording(res.recording === true);
+  setSeatRecording(name, res.recording === true);
   return true;
 }
 
-function streamVoiceFired(name) {
+function seatVoiceFired(name) {
   if (voiceArmedSeat !== name || !voiceEngineView) return;
   voiceEngineView.mirror.disarm();
 }
 
 window.api.onVoiceEngineStopped((name) => {
-  const entry = sessions.get(name);
-  if (!entry || !entry.stream) return;
+  if (!voiceSinkFor(name)) return;
   if (voiceArmedSeat === name && voiceEngineView) voiceEngineView.mirror.release();
-  entry.stream.setRecording(false);
+  setSeatRecording(name, false);
 });
 
 window.api.onPtyData((name, data) => {
@@ -3616,7 +3593,7 @@ window.api.onSessionExit((name, code, meta) => {
 
 window.api.onSelectionSent((name) => drawerHost.onSelectionSent(name));
 
-window.api.onSessionActivity((name, state, turnEnd) => {
+window.api.onSessionActivity((name, state) => {
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!el) return;
   // Thinking-duration stamp: the amber dot alone makes a 3s turn and a wedged
@@ -3630,10 +3607,6 @@ window.api.onSessionActivity((name, state, turnEnd) => {
     applyThinkBadge(el);
   }
   el.dataset.activity = state;
-  // AFTER the dataset write, because the watcher's own permission interlock
-  // reads this row back.
-  const sess = sessions.get(name);
-  if (sess && sess.voiceSubmit) sess.voiceSubmit.noteActivity(state, turnEnd === true);
   sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), lastActivityTs: Date.now() });
   scheduleSidebarRelayout();
 });
@@ -3896,7 +3869,10 @@ function renderSessionActions(holdHtml = '') {
   const el = document.getElementById('proxy-actions');
   if (!el) return;
   const type = activeSession ? sessionTypeOf(activeSession) : null;
+  const activeEntry = activeSession ? sessions.get(activeSession) : null;
+  const voiceBtn = activeEntry && !activeEntry.peer ? voiceBarActionHtml() : '';
   const btns = [];
+  if (!isAgentType(type) && voiceBtn) btns.push(voiceBtn);
   if (isAgentType(type)) {
     const nFiles = (filesState.get(activeSession) || []).length;
     if (type === 'claude' || nFiles > 0) {
@@ -3904,9 +3880,7 @@ function renderSessionActions(holdHtml = '') {
       const unseen = filesUnseen.has(activeSession) ? ' px-files-new' : '';
       btns.push(`<button class="px-action${unseen}" data-act="files" data-tip="Files this agent's tools touched — click to view or diff">${label}</button>`);
     }
-    // Claude only: Codex has no `/voice`, so the button would name a setting
-    // that seat cannot have.
-    if (type === 'claude') btns.push(voiceBarActionHtml());
+    if (voiceBtn) btns.push(voiceBtn);
     btns.push('<button class="px-action" data-act="session-menu" data-tip="Session actions — tools, skills, agents, intents, plugins, settings, history, reload">⚙ session ▾</button>');
   }
   if (activePeerQueryable()) {
@@ -4472,8 +4446,8 @@ setInterval(() => {
       }
       if (action.dataset.act === 'files') openFilesPopover(activeSession, action);
       else if (action.dataset.act === 'voice') {
-        if (streamVoiceMode(activeSession, 'tap')) streamVoiceRecord(activeSession, 'toggle');
-        else if (!streamVoiceMode(activeSession, 'hold')) openVoicePopover(action);
+        if (seatVoiceMode(activeSession, 'tap')) seatVoiceRecord(activeSession, 'toggle');
+        else if (!seatVoiceMode(activeSession, 'hold')) openVoicePopover(action);
       }
       else if (action.dataset.act === 'peer-edit') {
         openPeerArgs(activeSession);
@@ -4499,7 +4473,7 @@ setInterval(() => {
   bar.addEventListener('contextmenu', (e) => {
     const voiceBtn = e.target.closest('.px-action[data-act="voice"]');
     if (!voiceBtn || !activeSession) return;
-    if (!streamVoiceMode(activeSession, 'tap') && !streamVoiceMode(activeSession, 'hold')) return;
+    if (!seatVoiceMode(activeSession, 'tap') && !seatVoiceMode(activeSession, 'hold')) return;
     e.preventDefault();
     openVoicePopover(voiceBtn);
   });
@@ -4507,16 +4481,16 @@ setInterval(() => {
   bar.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || !activeSession) return;
     if (!e.target.closest('.px-action[data-act="voice"]')) return;
-    if (!streamVoiceMode(activeSession, 'hold')) return;
+    if (!seatVoiceMode(activeSession, 'hold')) return;
     e.preventDefault();
     voiceHeld = activeSession;
-    streamVoiceRecord(voiceHeld, 'start');
+    seatVoiceRecord(voiceHeld, 'start');
   });
   const releaseVoiceHold = () => {
     if (!voiceHeld) return;
     const held = voiceHeld;
     voiceHeld = null;
-    streamVoiceRecord(held, 'stop');
+    seatVoiceRecord(held, 'stop');
   };
   document.addEventListener('pointerup', releaseVoiceHold);
   document.addEventListener('pointercancel', releaseVoiceHold);
@@ -4829,7 +4803,7 @@ createTermTab({
 
 createInboxDrawer({ openFilePeek, showToast });
 
-const voiceCore = createVoiceCore({ showToast });
+const voiceCore = createVoiceCore({ showToast, getSeat: () => activeSession });
 
 // Cached because the watcher consults it on every quiet-window expiry, per
 // terminal — an invoke per tick would put IPC on a timer. Refreshed by the two
@@ -4846,65 +4820,6 @@ refreshVoiceSubmitConfig();
 // voice-control.js re-reads the mode for the same reason.
 window.addEventListener('focus', () => { refreshVoiceSubmitConfig(); });
 
-// Whether a spoken reply is playing, box-wide. Main owns the `say` child and
-// pushes both edges, so this is a mirror of a value that lives elsewhere and
-// never a reading taken here.
-//
-// ONE flag for every terminal, matching the thing it describes: there is a
-// single audio output, so a narration started by any seat is one every seat's
-// re-arm has to wait out — a per-terminal copy would let a background seat arm
-// its microphone into the same room.
-//
-// Starts false. A window opened mid-narration re-arms as it does today until
-// the next edge arrives, which is the same direction every other absent-evidence
-// gate here takes: a missed deferral costs one narration the operator can stop,
-// a stuck one silences the feature.
-let speakerBusy = false;
-window.api.onSpeakerBusy((busy) => { speakerBusy = busy === true; });
-
-// Which seat holds the microphone, box-wide. A mirror of main's value like
-// `speakerBusy` above, and never a reading taken here: `activeSession` is this
-// WINDOW's answer, and two windows each have one — which is precisely how a
-// background seat's re-arm put a second live recorder in the room.
-//
-// Starts null, so every seat declines until main has spoken. The opposite
-// default would arm every seat in a window that had not yet heard, which is the
-// bug; a seat that declines for one poll costs the operator one repeated tap.
-const micTargetMirror = createMirrorLatch(null, {
-  normalize: (name) => (typeof name === 'string' ? name : null),
-});
-// The broadcast also STOPS a recorder on the seat that just lost the
-// microphone: the mirror alone only stops it re-ARMING, which left a live
-// recorder in the window he switched away from.
-const noteMicTarget = createMicHandoff({
-  mirror: micTargetMirror,
-  // Resolved at call time against this window's own map, so a seat in another
-  // window resolves to nothing here and is stopped by its own window's handler.
-  watcherFor: (name) => {
-    const entry = name ? sessions.get(name) : null;
-    return (entry && entry.voiceSubmit) || null;
-  },
-});
-window.api.onMicTarget((name) => noteMicTarget(name));
-// A window that opened or reloaded mid-dictation missed the broadcast, and the
-// target does not move again while he keeps talking to the seat he picked. The
-// latch is what keeps this late answer from overwriting a fresher one.
-window.api.micTarget().then((name) => micTargetMirror.pull(name)).catch(() => {});
-
-// Is CLODEX the frontmost application? A second condition on the automatic
-// re-arm, independent of the target: the operator browsed the web with Clodex
-// behind it, an agent's turn ended, the re-arm fired, and the CLI transcribed
-// the VIDEO he was watching into that seat's composer.
-//
-// Main's answer, never `document.hasFocus()`, which answers about this WINDOW:
-// a window can be the focused window of an application that is itself behind a
-// browser — precisely the case that recorded.
-//
-// Starts false, like the target: before the host has reported, no seat arms.
-const appFocusedMirror = createMirrorLatch(false, { normalize: (on) => on === true });
-window.api.onAppFocused((on) => appFocusedMirror.note(on));
-window.api.appFocused().then((on) => appFocusedMirror.pull(on)).catch(() => {});
-
 // Tell main which seat the operator is looking at.
 //
 // ALSO ON WINDOW FOCUS, not on session switch alone, and that is what makes it
@@ -4914,62 +4829,28 @@ window.api.appFocused().then((on) => appFocusedMirror.pull(on)).catch(() => {});
 // into the window he just left.
 function reportFocusedSession() {
   try { window.api.noteFocusedSession(activeSession); } catch {}
+  try { voiceCore.refresh(); } catch {}
 }
 window.addEventListener('focus', reportFocusedSession);
 // No eval-time report: an unconditional one would send a null that clears
 // whatever another workspace window just recorded.
 
-// An outside script asked for the recorder on this seat (a Voice Control wake
-// word, over the agent socket). Main routed it here because only this side can
-// read the recording indicator; the watcher makes the decision and owns the
-// polarity rule that an unreadable screen writes nothing.
-//
-// voiceCore must be REFRESHED before the arm, since the watcher's own mode gate
-// reads it and its reading is a 15s POLL — without this the core still reports
-// `hold` and `tapTrigger` writes NOTHING.
-//
-// UNCONDITIONALLY, not only when `modeSettling`. The stale read is not caused by
-// this tap's write: a `/voice tap` typed straight into a terminal leaves the file
-// already on tap, so main writes nothing and reports no settle, and a core that
-// has not polled since still says `hold` — no byte, which is the symptom this
-// whole path exists to remove. It costs one already-live IPC on a path that may
-// be about to wait a second and a half anyway.
-//
-// `modeSettling` says the mode was set to `tap` too recently for the CLI to have
-// observed it — by THIS tap or by one moments before it — so the watcher owes it
-// a settle delay before its key is worth writing. That delay cannot cover the
-// poll above: it is sized to the CLI's file watcher, a different clock.
-window.api.onVoiceTap(async (name, modeSettling) => {
-  try { await voiceCore.refresh(); } catch { /* the watcher's own gate still declines on a stale read */ }
-  const sess = sessions.get(name);
-  if (sess && sess.voiceSubmit) await sess.voiceSubmit.externalTap(modeSettling);
+window.api.onVoiceTap((name) => { seatVoiceRecord(name, 'start'); });
+window.api.onSeatVoice((name, mode) => {
+  markSeatVoice(name, mode);
+  if (name === activeSession) voiceCore.refresh();
 });
 const voiceControl = createVoiceControl({ core: voiceCore });
-
-// Both halves resolve the ACTIVE seat's watcher at call time rather than
-// closing over one: the popover outlives every session, and a captured watcher
-// would report the recorder of a seat the operator left. A seat with no watcher
-// (a peer, a bash shell, one still being built) reports out-of-scope and stops
-// nothing, which is what those seats are.
-function activeVoiceSubmit() {
-  const entry = activeSession ? sessions.get(activeSession) : null;
-  return (entry && entry.voiceSubmit) || null;
-}
 
 const { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
   core: voiceCore,
   renderProxyBar,
-  getRecorderReading: () => {
-    const vs = activeVoiceSubmit();
-    return vs ? vs.recorderReading() : 'out';
-  },
-  getRecorderCause: () => {
-    const vs = activeVoiceSubmit();
-    return vs ? vs.recorderCause() : null;
-  },
+  getRecorderReading: () => (activeSession && voiceRecordingSeat === activeSession ? 'lit' : 'off'),
+  getRecorderCause: () => null,
   tapOffRecorder: () => {
-    const vs = activeVoiceSubmit();
-    return vs ? vs.tapOff() : false;
+    if (!activeSession || voiceRecordingSeat !== activeSession) return false;
+    seatVoiceRecord(activeSession, 'stop');
+    return true;
   },
 });
 voiceBarActionHtml = voiceActionHtml;
@@ -8367,6 +8248,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
 
 function mountRestoredSession(entry) {
   markSeatIo(entry.name, entry.io);
+  markSeatVoice(entry.name, entry.voice);
   const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
   addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true, null, entry.fixFor || null);
   if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });

@@ -1,31 +1,5 @@
 // voice-control.js — the voice-mode state machine (off · tap · hold) and the
 // Preferences selector over it.
-//
-// TWO SURFACES, ONE CORE. `createVoiceCore` owns the whole state machine;
-// `createVoiceControl` is the Preferences selector and popovers/voice-popover.js
-// is the session-bar button. What each surface is FOR: the bar answers "what is
-// the seat I am looking at going to do", read at a glance without opening a
-// dialog; Preferences is where the box-wide setting is stated in full, with the
-// hint text explaining that it is box-wide at all. The setting itself is one per
-// machine either way — it lives in `~/.claude/settings.json`, which every Claude
-// session here shares — so the bar button carries the same value the dialog
-// does, and neither surface may keep its own copy of it.
-//
-// STATE COMES FROM THE FILE, never from what we last wrote. The user can type
-// `/voice hold` in any terminal, so a last-written mirror goes stale with no
-// event to correct it; the read is re-run on window focus and on a slow poll.
-// The label reflects the FILE rather than claiming per-session truth the
-// renderer cannot have: a session the CLI is not watching (it watches only
-// directories that had a settings file when that session started) can sit on a
-// mode the file no longer names.
-//
-// The WRITE goes through `settings:setVoiceMode`, which shares the `voice mode`
-// verb's path down to the same single writer. NO SEAT is involved: the setting
-// is box-wide and the file is writable with none open, so a control keyed to a
-// live seat would refuse a write that was always possible. The shared path also
-// stamps the settle memo, so a spoken tap that follows a pick made HERE waits
-// for the CLI to observe it like any other.
-//
 // WE SKIP THE FOUR GATES the CLI runs before its own `/voice` write (recording
 // availability, voice-stream entitlement, audio-tool dependencies, microphone
 // permission). Accepted deliberately: a mode is a stored PREFERENCE, the CLI
@@ -33,17 +7,6 @@
 // preference persisted on a box that cannot record — recoverable and honest. Do
 // NOT re-implement any of them here; that would be a second, drifting copy of a
 // vendor policy we cannot see.
-//
-// The Preferences row is never HIDDEN: it lives in a modal settings dialog that
-// opens with no live Claude session at all, and a row that vanishes from a
-// settings dialog reads as a missing feature rather than an unavailable one. The
-// BAR button is the opposite case and is absent for a non-Claude seat — an
-// always-present bar button would claim the seat under it has a voice mode when
-// Codex has no `/voice` at all.
-//
-// `createVoiceCore` is DOM-free and unit-tested in test/voice-core.test.js; only
-// `createVoiceControl`'s paint is DOM-bound per the R1 rule. The read behind
-// both is test/voice-settings.test.js.
 
 const VOICE_ITEMS = [
   { mode: 'off', name: 'Off', desc: 'No voice input' },
@@ -56,9 +19,10 @@ const CHOICE_DEBOUNCE_MS = 250;
 
 // The shared state machine. Surfaces subscribe; the core never touches a
 // surface's DOM.
-function createVoiceCore({ showToast }) {
-  let state = null;        // the last read of settings.json
-  let pending = null;      // a mode written but not yet observed in the file
+function createVoiceCore({ showToast, getSeat = () => null }) {
+  let state = null;
+  let pending = null;
+  let pendingSeat = null;
   let writeTimer = null;   // debounce handle: only the final choice is sent
   let pollTimer = null;    // runs only while a surface holds the core open
   let holds = 0;           // start/stop refcount — see start()
@@ -100,20 +64,20 @@ function createVoiceCore({ showToast }) {
 
   async function refresh() {
     let r = null;
-    try { r = await window.api.getVoiceMode(); } catch { r = null; }
+    let seat = null;
+    try { seat = getSeat() || null; } catch { seat = null; }
+    try { r = await window.api.getVoiceMode(seat); } catch { r = null; }
     if (r && r.ok) {
+      if (pending && pendingSeat !== r.seat) pending = null;
       state = r;
-      // The file caught up with what we wrote — drop the pending affordance.
-      // Only an EQUAL reading clears it: a differing one means the write has not
-      // landed yet, not that it was rejected.
       if (pending && r.effective === pending) pending = null;
     }
     emit();
   }
 
-  async function sendMode(mode) {
+  async function sendMode(mode, seat) {
     let r = null;
-    try { r = await window.api.setVoiceMode(mode); } catch (err) { r = { ok: false, error: err.message }; }
+    try { r = await window.api.setVoiceMode(mode, seat); } catch (err) { r = { ok: false, error: err.message }; }
     if (!r || !r.ok) {
       // Only the write that still OWNS `pending` may clear it. A slow first
       // attempt can fail after a second choice has already been made and sent;
@@ -125,28 +89,19 @@ function createVoiceCore({ showToast }) {
       showToast(`Setting voice to ${mode} failed: ${(r && r.error) || 'unknown error'}`);
       return;
     }
-    // Re-read rather than trusting the write: `effective` is the read's own fold
-    // over the two keys, and the poll would otherwise own retiring the
-    // affordance 15s later.
     refresh();
   }
 
   // Returns false when the pick was not actionable, so a surface can repaint
   // itself out of a selection the core is not going to honour.
   function choose(mode) {
-    // "Not set" is a READING of the file, not a mode — there is nothing to write
-    // for it, so re-picking it is a no-op.
     if (!isMode(mode)) { emit(true); return false; }
     pending = mode;
+    try { pendingSeat = getSeat() || null; } catch { pendingSeat = null; }
     emit();
-    // Coalesce to the FINAL value. On the platforms the web-dist frontend is
-    // served to, a closed <select> cycles through its options on arrow keys and
-    // fires `change` at each one — so keyboard selection would otherwise perform
-    // one atomic write of the user's global settings file per option passed
-    // over. Converging eventually is not enough when each intermediate step
-    // rewrites a file the operator shares with every Claude session on the box.
+    const seat = pendingSeat;
     if (writeTimer) clearTimeout(writeTimer);
-    writeTimer = setTimeout(() => { writeTimer = null; sendMode(mode); }, CHOICE_DEBOUNCE_MS);
+    writeTimer = setTimeout(() => { writeTimer = null; sendMode(mode, seat); }, CHOICE_DEBOUNCE_MS);
     return true;
   }
 
@@ -199,7 +154,7 @@ function createVoiceControl({ core }) {
   if (!sel || !stateEl) return { start() {}, stop() {} };
 
   function paint(snap) {
-    const { state, pending, mode, force } = snap;
+    const { pending, mode, force } = snap;
     // Never move the selection out from under an open/keyboard-driven picker:
     // the 15s poll and a window-focus refresh fire this on their own schedule,
     // and rewriting `value` mid-interaction would drag the operator's
@@ -210,9 +165,7 @@ function createVoiceControl({ core }) {
     if (pending) {
       stateEl.textContent = `Switching to ${pending}…`;
     } else if (!core.isMode(mode)) {
-      stateEl.textContent = state && state.source === 'legacy'
-        ? 'Only the legacy voiceEnabled key is set in the settings file — pick a mode to set one.'
-        : 'Not set in the settings file yet — pick a mode to set one.';
+      stateEl.textContent = 'No seat is focused — open a seat to set its voice mode.';
     } else {
       stateEl.textContent = '';
     }

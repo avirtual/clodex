@@ -25,7 +25,7 @@ const { peekFile } = require('./file-peek');
 const { resolveDisplayedPath } = require('./file-resolve');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
 const { migrateSeatLayout } = require('./seat-layout');
-const { readVoiceMode, writeVoiceMode, readVoiceTrigger } = require('./voice-settings');
+const { readVoiceTrigger } = require('./voice-settings');
 const { readVoiceCapabilityCached } = require('./voice-capability');
 const { createSpeaker, createVoiceCatalog } = require('./speaker');
 const { runTicketsMigration } = require('./tickets-migrate');
@@ -1353,8 +1353,6 @@ const SessionManager = createSessionManager({
     termExec,
     whichBin,
     writeClaudeDigestFile,
-    readVoiceMode,
-    writeVoiceMode,
     readVoiceCapability: readVoiceCapabilityCached,
     deliverSkills,
     skillDeliveryProviders,
@@ -2513,7 +2511,7 @@ const toolCache = createToolCache({ whichBin });
     restartSession, waitForSessionExit,
     readSessionArgs, applySessionArgs, readSkillCatalog, applySessionSkills,
     accounts, moveAccountByModel,
-    sessionScopeCtx, readEffectiveSkillState, readEffectiveToolState, readVoiceMode, readVoiceTrigger, writeVoiceMode,
+    sessionScopeCtx, readEffectiveSkillState, readEffectiveToolState, readVoiceTrigger,
     readVoiceCapability: readVoiceCapabilityCached,
     readSessionMeta, sessionMeta, sessionInfo, claudeProjectDir, rebuildAllStatusScripts,
     stripLevelOf, updateApplies, jsonlToMarkdown, sshRun,
