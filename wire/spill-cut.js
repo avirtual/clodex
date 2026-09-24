@@ -82,7 +82,7 @@ function cutText(text, state) {
       const full = expansionOf(state);
       if (full) kept.push(...full, END_LINE);
       else {
-        kept.push(c.head, state.first ? (state.examples === 0 ? SPILLED_BODY_EPHEMERAL : SPILLED_BODY_FIRST) : SPILLED_BODY, END_LINE);
+        kept.push(c.head, state.first ? (state.examples <= 1 ? SPILLED_BODY_EPHEMERAL : SPILLED_BODY_FIRST) : SPILLED_BODY, END_LINE);
         state.first = false;
       }
       if (i + 1 < lines.length && cleanLine(lines[i + 1]).trim() === END_LINE) { cut++; i++; }

@@ -31,5 +31,5 @@ a stub whose file is missing or unreadable is not counted. The decision is
 derived from the payload on every request and keeps no process state. Of the remaining stubs, the first rendered gets the long-form stand-in
 `SPILLED_BODY_FIRST` (intent-spill.js) and every later one `SPILLED_BODY`. The measured facts live under
 `## SPILLED_BODY_FIRST` in docs/notes/wire-spill-cut.md.
-A loop-minted seat (persistence `ephemeral: true`) gets `examples: 0` and the
-`SPILLED_BODY_EPHEMERAL` literal in place of `SPILLED_BODY_FIRST`, because its long bodies come at the end of its life.
+A loop-minted seat (persistence `ephemeral: true`) gets `examples: 1` and the
+`SPILLED_BODY_EPHEMERAL` literal in place of `SPILLED_BODY_FIRST`: its newest long body stays in full, so a rework round has a real example of the verb it must write again.

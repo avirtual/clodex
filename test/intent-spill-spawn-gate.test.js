@@ -189,7 +189,7 @@ function spillShape(spill) {
   return { ...spill, verbs: [...spill.verbs].sort(), turnInjected: typeof spill.turnInjected };
 }
 
-test('a loop-minted seat (persisted ephemeral: true) registers spill with examples: 0', async () => {
+test('a loop-minted seat (persisted ephemeral: true) registers spill with examples: 1', async () => {
   const h = mkManager({ intentSpill: 'on' });
   try {
     h.persistence.upsert({ name: 'seat', ephemeral: true });
@@ -199,7 +199,7 @@ test('a loop-minted seat (persisted ephemeral: true) registers spill with exampl
       root: h.root,
       verbs: ['dm', 'shout', 'task.add', 'task.done', 'task.reject', 'task.respec'],
       turnInjected: 'function',
-      examples: 0,
+      examples: 1,
     });
   } finally { h.stop('seat'); }
 });
