@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Side pane: every file you open stays open in its own tab (up to 12; the least recently used untouched tab is closed to make room), and the single remaining tab no longer shows a close button next to the pane's own.
 - Teams: the ticket loop merges into the team's trunk instead of a hard-coded `master`; it defaults to the repo's default branch (`main` or `master`) and can be set per team in the roles editor or with `[agent:team trunk <branch>]`.
 - Transcript pane: typed records; each prompt heads a turn block with a footer (duration, tool count, files changed), each tool call is one row with its result summary (exit code, line counts, +/− lines), inbound deliveries render as sender cards, and Cmd+Shift+T (View ▸ Raw terminal) toggles the raw terminal.
 

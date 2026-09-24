@@ -2929,10 +2929,6 @@ body.side-pane-dragging {
   color: var(--text-dim);
   white-space: nowrap;
 }
-#side-pane-pin:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
 .side-tab {
   flex: none;
   display: flex;
@@ -2953,9 +2949,6 @@ body.side-pane-dragging {
   color: var(--text);
   background: var(--active-bg);
   border-color: var(--border);
-}
-.side-tab.preview .side-tab-title {
-  font-style: italic;
 }
 .side-tab-title {
   overflow: hidden;
@@ -2981,6 +2974,9 @@ body.side-pane-dragging {
 }
 .side-tab-close:hover {
   color: var(--text);
+}
+.side-strip[data-count="1"] .side-tab-close {
+  display: none;
 }
 #side-pane-body {
   flex: 1;
@@ -8855,9 +8851,8 @@ body.web-frontend #sidebar-header {
       <div id="side-pane-handle" class="side-pane-closed"></div>
       <div id="side-pane" class="side-pane-closed">
         <div id="side-pane-head">
-          <div id="side-pane-tabs"></div>
+          <div id="side-pane-tabs" class="side-strip"></div>
           <span id="side-pane-seat" hidden></span>
-          <button type="button" class="file-peek-tab" id="side-pane-pin" title="Keep this tab open">Pin</button>
           <button type="button" class="popover-close" id="side-pane-close" title="Close the pane (its tabs are kept)" aria-label="Close">&times;</button>
         </div>
         <div id="side-pane-body"></div>
@@ -36875,7 +36870,7 @@ void main() {
         filesPopoverBody.addEventListener("dblclick", (e) => {
           const row = e.target.closest(".file-row");
           if (!row || !row.dataset.path) return;
-          sidePane.open(filesPopover.dataset.name, { kind: "file", path: row.dataset.path }, { preview: false });
+          sidePane.open(filesPopover.dataset.name, { kind: "file", path: row.dataset.path });
         });
         document.addEventListener("mousedown", (e) => {
           if (filesPopover.classList.contains("hidden")) return;
@@ -36889,7 +36884,7 @@ void main() {
         });
         document.getElementById("files-popover-close").addEventListener("click", closeFilesPopover);
         async function openFilePeek(name, filePath, forceTab = null, line = null, keepHistory = false, pushedBy = null) {
-          sidePane.open(name, { kind: "file", path: filePath }, { preview: true, line, view: forceTab, pushedBy });
+          sidePane.open(name, { kind: "file", path: filePath }, { line, view: forceTab, pushedBy });
         }
         window.api.onSessionFileView((name, filePath) => {
           openFilePeek(name, filePath, null, null, false, name);
@@ -36948,7 +36943,7 @@ void main() {
         while (tabs.length > SIDE_PANE_MAX_TABS) {
           let victim = null;
           for (const t of tabs) {
-            if (t.preview || t.dirty || t.id === set.active) continue;
+            if (t.dirty || t.id === set.active) continue;
             if (!victim || t.used < victim.used) victim = t;
           }
           if (!victim) break;
@@ -36956,14 +36951,23 @@ void main() {
         }
         return { ...set, tabs };
       }
+      function stripState(set) {
+        return {
+          count: set.tabs.length,
+          activeId: set.active,
+          tabs: set.tabs.map((t) => ({
+            id: t.id,
+            title: (t.path.split("/").pop() || t.path) + (t.deleted ? " (deleted)" : ""),
+            dirty: !!t.dirty
+          }))
+        };
+      }
       function openTab(set, a) {
         const clock = set.clock + 1;
         const existing = set.tabs.find((t) => t.id === a.id);
         if (existing) {
           const wasShowing = set.open && set.active === a.id;
-          const pinned = a.preview === false ? false : existing.preview;
           const next = patchTab({ ...set, open: true, active: a.id, clock }, a.id, {
-            preview: pinned,
             used: clock,
             line: a.line != null ? a.line : existing.line,
             stale: false
@@ -36974,7 +36978,7 @@ void main() {
           id: a.id,
           kind: a.kind || "file",
           path: a.path,
-          preview: a.preview !== false,
+          preview: false,
           view: a.view || null,
           line: a.line != null ? a.line : null,
           pushedBy: a.pushedBy || null,
@@ -36985,14 +36989,7 @@ void main() {
           mtime: null,
           used: clock
         };
-        let tabs;
-        const previewAt = tab.preview ? set.tabs.findIndex((t) => t.preview) : -1;
-        if (previewAt >= 0) {
-          tabs = set.tabs.slice();
-          tabs[previewAt] = tab;
-        } else {
-          tabs = set.tabs.concat(tab);
-        }
+        const tabs = set.tabs.concat(tab);
         return { set: evictOverCap({ ...set, tabs, open: true, active: tab.id, clock }), effect: "fetch" };
       }
       function closeTab(set, a) {
@@ -37045,12 +37042,8 @@ void main() {
               effect: tab.stale ? "reload" : "revalidate"
             };
           }
-          case "pin":
-            return { set: patchTab(set, a.id, { preview: false }), effect: null };
-          case "view": {
-            const patch = a.view === "edit" ? { view: a.view, preview: false } : { view: a.view };
-            return { set: patchTab(set, a.id, patch), effect: null };
-          }
+          case "view":
+            return { set: patchTab(set, a.id, { view: a.view }), effect: null };
           case "dirty":
             return { set: patchTab(set, a.id, { dirty: !!a.dirty }), effect: null };
           case "closePane":
@@ -37082,7 +37075,8 @@ void main() {
         saveArgs,
         shouldKeepBuffer,
         isMissing,
-        reduceTabs
+        reduceTabs,
+        stripState
       };
     }
   });
@@ -37337,14 +37331,14 @@ void main() {
         clampSidePaneWidth,
         saveArgs,
         shouldKeepBuffer,
-        reduceTabs
+        reduceTabs,
+        stripState
       } = require_side_pane_tabs();
       function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, focusTerminal, doc = document, win = window }) {
         const pane = doc.getElementById("side-pane");
         const handle = doc.getElementById("side-pane-handle");
         const strip = doc.getElementById("side-pane-tabs");
         const seatEl = doc.getElementById("side-pane-seat");
-        const pinBtn = doc.getElementById("side-pane-pin");
         const closeBtn = doc.getElementById("side-pane-close");
         const host = doc.getElementById("side-pane-body");
         const isWeb = !!win.__CLODEX_WEB__;
@@ -37388,21 +37382,22 @@ void main() {
           handle.classList.toggle("side-pane-closed", !shown || sheet);
           if (!shownSeat) {
             strip.replaceChildren();
+            strip.dataset.count = "0";
             return;
           }
           const set = setOf(shownSeat);
-          const active = set.tabs.find((t) => t.id === set.active) || null;
+          const view = stripState(set);
+          strip.dataset.count = String(view.count);
           seatEl.textContent = shownSeat;
           seatEl.hidden = shownSeat === getActiveSession();
-          pinBtn.disabled = !active || !active.preview;
-          const nodes = set.tabs.map((t) => {
+          const nodes = set.tabs.map((t, i) => {
             const tabEl = doc.createElement("div");
-            tabEl.className = `side-tab${t.id === set.active ? " active" : ""}${t.preview ? " preview" : ""}`;
+            tabEl.className = `side-tab${t.id === set.active ? " active" : ""}`;
             tabEl.dataset.id = t.id;
             tabEl.title = t.path;
             const title = doc.createElement("span");
             title.className = "side-tab-title";
-            title.textContent = (t.path.split("/").pop() || t.path) + (t.deleted ? " (deleted)" : "");
+            title.textContent = view.tabs[i].title;
             tabEl.appendChild(title);
             if (t.stale) {
               const dot = doc.createElement("span");
@@ -37547,13 +37542,13 @@ void main() {
             showToast(res && res.error || `Can't find "${target}"`, { kind: "warn", duration: 4e3 });
             return;
           }
-          open(seat, { kind: "file", path: res.path }, { preview: true, line, view: "file" });
+          open(seat, { kind: "file", path: res.path }, { line, view: "file" });
         }
-        function open(seat, target, { preview = true, line = null, pushedBy = null, view = null } = {}) {
+        function open(seat, target, { line = null, pushedBy = null, view = null } = {}) {
           const id = fileTabId(seat, target.path);
           const existed = !!tabOf(seat, id);
           shownSeat = seat;
-          const { effect } = dispatch(seat, { type: "open", id, kind: "file", path: target.path, preview, line, pushedBy });
+          const { effect } = dispatch(seat, { type: "open", id, kind: "file", path: target.path, line, pushedBy });
           if (!existed) makeView(seat, id, target.path);
           const tab = tabOf(seat, id);
           if (existed && view && tab && !(tab.view === "edit" && tab.dirty)) {
@@ -37620,18 +37615,6 @@ void main() {
           }
           const r = dispatch(seat, { type: "focus", id });
           runEffect(seat, id, r.effect);
-        });
-        strip.addEventListener("dblclick", (e) => {
-          const tabEl = e.target.closest(".side-tab");
-          if (!tabEl || !shownSeat || e.target.closest(".side-tab-close")) return;
-          dispatch(shownSeat, { type: "pin", id: tabEl.dataset.id });
-          renderChrome();
-        });
-        pinBtn.addEventListener("click", () => {
-          if (!shownSeat) return;
-          const set = setOf(shownSeat);
-          if (set.active) dispatch(shownSeat, { type: "pin", id: set.active });
-          renderChrome();
         });
         closeBtn.addEventListener("click", () => {
           if (!shownSeat) return;

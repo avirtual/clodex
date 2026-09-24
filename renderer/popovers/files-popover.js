@@ -104,7 +104,7 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
   filesPopoverBody.addEventListener('dblclick', (e) => {
     const row = e.target.closest('.file-row');
     if (!row || !row.dataset.path) return;
-    sidePane.open(filesPopover.dataset.name, { kind: 'file', path: row.dataset.path }, { preview: false });
+    sidePane.open(filesPopover.dataset.name, { kind: 'file', path: row.dataset.path });
   });
   document.addEventListener('mousedown', (e) => {
     if (filesPopover.classList.contains('hidden')) return;
@@ -119,7 +119,7 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
   document.getElementById('files-popover-close').addEventListener('click', closeFilesPopover);
 
   async function openFilePeek(name, filePath, forceTab = null, line = null, keepHistory = false, pushedBy = null) {
-    sidePane.open(name, { kind: 'file', path: filePath }, { preview: true, line, view: forceTab, pushedBy });
+    sidePane.open(name, { kind: 'file', path: filePath }, { line, view: forceTab, pushedBy });
   }
   window.api.onSessionFileView((name, filePath) => { openFilePeek(name, filePath, null, null, false, name); });
 

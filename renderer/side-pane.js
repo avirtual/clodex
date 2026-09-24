@@ -3,7 +3,7 @@
 const { createFileTab } = require('./file-tab');
 const {
   SIDE_PANE_REFIT_THROTTLE_MS, emptyTabSet, fileTabId, sidePaneFits, clampSidePaneWidth,
-  saveArgs, shouldKeepBuffer, reduceTabs,
+  saveArgs, shouldKeepBuffer, reduceTabs, stripState,
 } = require('./lib/side-pane-tabs');
 
 function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, focusTerminal, doc = document, win = window }) {
@@ -11,7 +11,6 @@ function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, foc
   const handle = doc.getElementById('side-pane-handle');
   const strip = doc.getElementById('side-pane-tabs');
   const seatEl = doc.getElementById('side-pane-seat');
-  const pinBtn = doc.getElementById('side-pane-pin');
   const closeBtn = doc.getElementById('side-pane-close');
   const host = doc.getElementById('side-pane-body');
   const isWeb = !!win.__CLODEX_WEB__;
@@ -60,20 +59,20 @@ function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, foc
     pane.classList.toggle('side-pane-closed', !shown);
     pane.classList.toggle('side-pane-sheet', sheet);
     handle.classList.toggle('side-pane-closed', !shown || sheet);
-    if (!shownSeat) { strip.replaceChildren(); return; }
+    if (!shownSeat) { strip.replaceChildren(); strip.dataset.count = '0'; return; }
     const set = setOf(shownSeat);
-    const active = set.tabs.find((t) => t.id === set.active) || null;
+    const view = stripState(set);
+    strip.dataset.count = String(view.count);
     seatEl.textContent = shownSeat;
     seatEl.hidden = shownSeat === getActiveSession();
-    pinBtn.disabled = !active || !active.preview;
-    const nodes = set.tabs.map((t) => {
+    const nodes = set.tabs.map((t, i) => {
       const tabEl = doc.createElement('div');
-      tabEl.className = `side-tab${t.id === set.active ? ' active' : ''}${t.preview ? ' preview' : ''}`;
+      tabEl.className = `side-tab${t.id === set.active ? ' active' : ''}`;
       tabEl.dataset.id = t.id;
       tabEl.title = t.path;
       const title = doc.createElement('span');
       title.className = 'side-tab-title';
-      title.textContent = (t.path.split('/').pop() || t.path) + (t.deleted ? ' (deleted)' : '');
+      title.textContent = view.tabs[i].title;
       tabEl.appendChild(title);
       if (t.stale) {
         const dot = doc.createElement('span');
@@ -218,14 +217,14 @@ function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, foc
       showToast((res && res.error) || `Can't find "${target}"`, { kind: 'warn', duration: 4000 });
       return;
     }
-    open(seat, { kind: 'file', path: res.path }, { preview: true, line, view: 'file' });
+    open(seat, { kind: 'file', path: res.path }, { line, view: 'file' });
   }
 
-  function open(seat, target, { preview = true, line = null, pushedBy = null, view = null } = {}) {
+  function open(seat, target, { line = null, pushedBy = null, view = null } = {}) {
     const id = fileTabId(seat, target.path);
     const existed = !!tabOf(seat, id);
     shownSeat = seat;
-    const { effect } = dispatch(seat, { type: 'open', id, kind: 'file', path: target.path, preview, line, pushedBy });
+    const { effect } = dispatch(seat, { type: 'open', id, kind: 'file', path: target.path, line, pushedBy });
     if (!existed) makeView(seat, id, target.path);
     const tab = tabOf(seat, id);
     if (existed && view && tab && !(tab.view === 'edit' && tab.dirty)) {
@@ -296,18 +295,6 @@ function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, foc
     }
     const r = dispatch(seat, { type: 'focus', id });
     runEffect(seat, id, r.effect);
-  });
-  strip.addEventListener('dblclick', (e) => {
-    const tabEl = e.target.closest('.side-tab');
-    if (!tabEl || !shownSeat || e.target.closest('.side-tab-close')) return;
-    dispatch(shownSeat, { type: 'pin', id: tabEl.dataset.id });
-    renderChrome();
-  });
-  pinBtn.addEventListener('click', () => {
-    if (!shownSeat) return;
-    const set = setOf(shownSeat);
-    if (set.active) dispatch(shownSeat, { type: 'pin', id: set.active });
-    renderChrome();
   });
   closeBtn.addEventListener('click', () => {
     if (!shownSeat) return;

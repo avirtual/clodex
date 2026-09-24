@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const {
-  emptyTabSet, fileTabId, sidePaneFits, clampSidePaneWidth, peekEditable, saveArgs, shouldKeepBuffer, reduceTabs,
+  emptyTabSet, fileTabId, sidePaneFits, clampSidePaneWidth, peekEditable, saveArgs, shouldKeepBuffer, reduceTabs, stripState,
   SIDE_PANE_MAX_TABS,
 } = require('../renderer/lib/side-pane-tabs');
 const { initStores } = require('../stores.js');
@@ -35,20 +35,20 @@ function props(s, id, keys) {
 
 const ACTIONS = [
   {
-    name: 'single click on a file link opens the preview tab',
+    name: 'a click on a file link opens a permanent tab',
     before: emptyTabSet(),
-    action: { type: 'open', id: 'a', path: '/w/a', preview: true },
+    action: { type: 'open', id: 'a', path: '/w/a' },
     effect: 'fetch',
     after: { ids: ['a'], active: 'a', open: true },
-    tab: ['a', { preview: true, view: null, mtime: null, pushedBy: null }],
+    tab: ['a', { preview: false, view: null, mtime: null, pushedBy: null }],
   },
   {
-    name: 'single click replaces the current preview tab in its slot',
-    before: set([tab('p1'), tab('a', { preview: true }), tab('p2')], 'a'),
-    action: { type: 'open', id: 'b', path: '/w/b', preview: true },
+    name: 'a click on another file adds a tab and keeps the others',
+    before: set([tab('p1'), tab('a'), tab('p2')], 'a'),
+    action: { type: 'open', id: 'b', path: '/w/b' },
     effect: 'fetch',
-    after: { ids: ['p1', 'b', 'p2'], active: 'b', open: true },
-    tab: ['b', { preview: true }],
+    after: { ids: ['p1', 'a', 'p2', 'b'], active: 'b', open: true },
+    tab: ['b', { preview: false }],
   },
   {
     name: 'a target already open in a permanent tab is focused, not duplicated',
@@ -59,60 +59,28 @@ const ACTIONS = [
     tab: ['a', { preview: false, used: 51 }],
   },
   {
-    name: 'double click on the same source makes the preview permanent',
-    before: set([tab('a', { preview: true })], 'a'),
-    action: { type: 'open', id: 'a', path: '/w/a', preview: false },
+    name: 'opening the tab already showing only shows it',
+    before: set([tab('a')], 'a'),
+    action: { type: 'open', id: 'a', path: '/w/a' },
     effect: 'show',
     after: { ids: ['a'], active: 'a', open: true },
-    tab: ['a', { preview: false }],
+    tab: ['a', { preview: false, used: 51 }],
   },
   {
-    name: 'double click on the preview title or the pin button pins it',
-    before: set([tab('a', { preview: true })], 'a'),
-    action: { type: 'pin', id: 'a' },
-    effect: null,
-    after: { ids: ['a'], active: 'a', open: true },
-    tab: ['a', { preview: false }],
-  },
-  {
-    name: 'switching a file tab to Edit pins it',
-    before: set([tab('a', { preview: true })], 'a'),
+    name: 'switching a file tab to Edit sets its view',
+    before: set([tab('a')], 'a'),
     action: { type: 'view', id: 'a', view: 'edit' },
     effect: null,
     after: { ids: ['a'], active: 'a', open: true },
     tab: ['a', { preview: false, view: 'edit' }],
   },
   {
-    name: 'switching to Diff or File does not pin',
-    before: set([tab('a', { preview: true })], 'a'),
-    action: { type: 'view', id: 'a', view: 'diff' },
-    effect: null,
-    after: { ids: ['a'], active: 'a', open: true },
-    tab: ['a', { preview: true, view: 'diff' }],
-  },
-  {
-    name: 'after a pin the next single click opens a new preview beside it',
-    before: set([tab('a')], 'a'),
-    action: { type: 'open', id: 'b', path: '/w/b', preview: true },
+    name: 'an agent push adds a tab with its badge and never replaces one',
+    before: set([tab('a'), tab('p')], 'a'),
+    action: { type: 'open', id: 'b', path: '/w/b', pushedBy: 'hand-1' },
     effect: 'fetch',
-    after: { ids: ['a', 'b'], active: 'b', open: true },
-    tab: ['b', { preview: true }],
-  },
-  {
-    name: 'an agent push opens as a preview with its badge and never replaces a permanent tab',
-    before: set([tab('a')], 'a'),
-    action: { type: 'open', id: 'b', path: '/w/b', preview: true, pushedBy: 'hand-1' },
-    effect: 'fetch',
-    after: { ids: ['a', 'b'], active: 'b', open: true },
-    tab: ['b', { preview: true, pushedBy: 'hand-1' }],
-  },
-  {
-    name: 'an agent push replaces only the preview tab',
-    before: set([tab('a'), tab('p', { preview: true })], 'a'),
-    action: { type: 'open', id: 'b', path: '/w/b', preview: true, pushedBy: 'hand-1' },
-    effect: 'fetch',
-    after: { ids: ['a', 'b'], active: 'b', open: true },
-    tab: ['a', { preview: false }],
+    after: { ids: ['a', 'p', 'b'], active: 'b', open: true },
+    tab: ['b', { preview: false, pushedBy: 'hand-1' }],
   },
   {
     name: 'a 13th tab closes the least recently used clean permanent tab',
@@ -412,9 +380,65 @@ for (const row of [...ACTIONS, ...MATRIX]) {
 }
 
 test('side-pane tabs: the table covers every section 3.2 action and the section 3.3 matrix', () => {
-  assert.strictEqual(ACTIONS.length, 21);
+  assert.strictEqual(ACTIONS.length, 17);
   assert.strictEqual(MATRIX.length, 27);
   assert.strictEqual(SIDE_PANE_MAX_TABS, 12);
+});
+
+function opened(id, used, over = {}) {
+  return {
+    id, kind: 'file', path: `/w/${id}`, preview: false, view: null, line: null, pushedBy: null,
+    dirty: false, stale: false, banner: false, deleted: false, mtime: null, used, ...over,
+  };
+}
+
+function openAll(s, ids) {
+  return ids.reduce((acc, id) => reduceTabs(acc, { type: 'open', id, path: `/w/${id}` }).set, s);
+}
+
+const TWELVE = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'f9', 'f10', 'f11', 'f12'];
+
+test('side-pane tabs: open A then open B keeps both tabs, B active', () => {
+  const s = openAll(emptyTabSet(), ['a', 'b']);
+  assert.deepStrictEqual(s.tabs, [opened('a', 1), opened('b', 2)]);
+  assert.strictEqual(s.active, 'b');
+});
+
+test('side-pane tabs: open A twice keeps one tab and focuses it', () => {
+  const s = openAll(emptyTabSet(), ['a', 'a']);
+  assert.deepStrictEqual(s.tabs, [opened('a', 2)]);
+  assert.strictEqual(s.active, 'a');
+});
+
+test('side-pane tabs: a 13th open evicts the least recently used non-active tab', () => {
+  const s = openAll(emptyTabSet(), [...TWELVE, 'f13']);
+  assert.deepStrictEqual(s.tabs, [
+    opened('f2', 2), opened('f3', 3), opened('f4', 4), opened('f5', 5), opened('f6', 6), opened('f7', 7),
+    opened('f8', 8), opened('f9', 9), opened('f10', 10), opened('f11', 11), opened('f12', 12), opened('f13', 13),
+  ]);
+  assert.strictEqual(s.active, 'f13');
+});
+
+test('side-pane tabs: a dirty tab is never evicted at the cap', () => {
+  const twelve = openAll(emptyTabSet(), TWELVE);
+  const dirtied = reduceTabs(twelve, { type: 'dirty', id: 'f1', dirty: true }).set;
+  const s = openAll(dirtied, ['f13']);
+  assert.deepStrictEqual(s.tabs, [
+    opened('f1', 1, { dirty: true }), opened('f3', 3), opened('f4', 4), opened('f5', 5), opened('f6', 6),
+    opened('f7', 7), opened('f8', 8), opened('f9', 9), opened('f10', 10), opened('f11', 11), opened('f12', 12),
+    opened('f13', 13),
+  ]);
+});
+
+test('side-pane tabs: stripState gives the strip its count, active id and titles', () => {
+  assert.deepStrictEqual(stripState(openAll(emptyTabSet(), ['a.js'])), {
+    count: 1, activeId: 'a.js', tabs: [{ id: 'a.js', title: 'a.js', dirty: false }],
+  });
+  const two = reduceTabs(openAll(emptyTabSet(), ['a.js', 'b.js']), { type: 'dirty', id: 'a.js', dirty: true }).set;
+  assert.deepStrictEqual(stripState(two), {
+    count: 2, activeId: 'b.js',
+    tabs: [{ id: 'a.js', title: 'a.js', dirty: true }, { id: 'b.js', title: 'b.js', dirty: false }],
+  });
 });
 
 test('side-pane tabs: a tab identity is per seat and per path', () => {
