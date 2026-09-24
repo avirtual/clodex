@@ -20728,7 +20728,7 @@ test('t1099 onUndelivered: a unit whose seat DIES mid-settle is re-parked stampe
     'stamped from the closure\'s own session: after _cleanup neither the map nor persistence knows the name, and an unstamped entry would reach the next seat of that name');
 });
 
-function mkStreamSeatManager({ persisted = {} } = {}) {
+function mkStreamSeatManager({ persisted = {}, fakePty = null } = {}) {
   const os = require('node:os');
   const fs = require('node:fs');
   const path = require('node:path');
@@ -20741,6 +20741,7 @@ function mkStreamSeatManager({ persisted = {} } = {}) {
   const reaps = [];
   const logs = [];
   const handles = [];
+  const watchers = [];
   const ensureDir = (d) => fs.mkdirSync(d, { recursive: true });
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
@@ -20776,8 +20777,8 @@ function mkStreamSeatManager({ persisted = {} } = {}) {
     composeDigest: () => null,
     registry: { register: () => {}, unregister: () => {} },
     Transport: class { start() {} stop() {} },
-    JsonlWatcher: class { start() {} stop() {} },
-    pty: { spawn: () => { throw new Error('a stream seat must not spawn a pty'); } },
+    JsonlWatcher: class { constructor(...a) { watchers.push(a); } start() {} stop() {} },
+    pty: { spawn: () => { if (fakePty) return fakePty; throw new Error('a stream seat must not spawn a pty'); } },
     spawnStreamSeat: (opts) => {
       const h = {
         pid: 7001, startedAt: 1790000000123, startTime: 1790000000000, stderrTail: '',
@@ -20847,7 +20848,7 @@ function mkStreamSeatManager({ persisted = {} } = {}) {
       clearTimeout(s._bootDrainTimer);
     }
   };
-  return { m, create, line, store, sessionIds, spawns, hookCalls, reaps, logs, handles, root, stopAll };
+  return { m, create, line, store, sessionIds, spawns, hookCalls, reaps, logs, handles, watchers, root, stopAll };
 }
 
 const STREAM_HEAD = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'];
@@ -21188,6 +21189,89 @@ test('stream seat H2.1: two keyed deliveries with the same parkKey leave one out
   h.m._deliverMessage('sh12', 'clodex', 'other', 'dm');
   h.m._deliverMessage('sh12', 'clodex', 'second copy', 'dm', '', null, 'ticket:t9');
   assert.deepStrictEqual(s.outbox.map((q) => q.text), ['[agent:from clodex] second copy', '[agent:from clodex] other']);
+});
+
+function mkCompactHarness(t) {
+  const { mock } = require('node:test');
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  const sends = [];
+  h.m._sendToSession = (...a) => sends.push(a);
+  mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  t.after(() => mock.timers.reset());
+  return { h, sends, mock };
+}
+
+const COMPACT_BOUNDARY = { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual', pre_tokens: 90000, post_tokens: 4000 } };
+
+test('stream seat H3: a compact_boundary line ends a PreCompact-armed compact and disarms the valve', async (t) => {
+  const { COMPACTING_VALVE_MS, noticeTextFor } = require('../compact-notices');
+  const { h, sends, mock } = mkCompactHarness(t);
+  await h.create('sc1');
+  const s = h.m.sessions.get('sc1');
+  h.m._routeAttnEntry(s, { hook_event_name: 'PreCompact', trigger: 'manual' });
+  assert.ok(s.compacting, 'ENTER: PreCompact armed the compact');
+  mock.timers.tick(2500);
+  h.line('sc1', COMPACT_BOUNDARY);
+  assert.strictEqual(s.compacting, null);
+  assert.strictEqual(s._compactNotices[0].text, noticeTextFor('done', 2500));
+  assert.match(s._compactNotices[0].text, /^Compacted in /);
+  mock.timers.tick(COMPACTING_VALVE_MS + 1000);
+  const ends = sends.filter((a) => a[1] === 'session-compacting' && a[3] === null).map((a) => a[4].outcome);
+  assert.deepStrictEqual(ends, ['done'], 'one end, and no valve after it');
+});
+
+test('stream seat H3: a compact_boundary line on a seat with no compact in flight changes nothing', async (t) => {
+  const { h, sends } = mkCompactHarness(t);
+  await h.create('sc2');
+  const s = h.m.sessions.get('sc2');
+  sends.length = 0;
+  h.line('sc2', COMPACT_BOUNDARY);
+  assert.strictEqual(s.compacting || null, null);
+  assert.strictEqual((s._compactNotices || []).length, 0);
+  assert.deepStrictEqual(sends.filter((a) => a[1] === 'session-compacting'), []);
+});
+
+test('stream seat H3: each init with a new session id repoints the transcript link; a repeated id does not', async (t) => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const { pathFor, claudeProjectSlug } = require('../clodex-paths');
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sc3');
+  h.m.sessions.get('sc3').accountDir = `${h.root}/acct`;
+  let repoints = 0;
+  const orig = h.m._repointStreamTranscript;
+  h.m._repointStreamTranscript = function (...a) { repoints += 1; return orig.apply(this, a); };
+  const link = pathFor(h.root, 'sc3', 'transcript');
+  const target = (sid) => `${h.root}/acct/projects/${claudeProjectSlug(os.tmpdir())}/${sid}.jsonl`;
+  const init = (sid) => h.line('sc3', { type: 'system', subtype: 'init', session_id: sid, model: 'm', slash_commands: [] });
+  init('sid-one');
+  assert.strictEqual(fs.readlinkSync(link), target('sid-one'), 'the first init writes the link');
+  init('sid-two');
+  assert.strictEqual(fs.readlinkSync(link), target('sid-two'));
+  assert.strictEqual(repoints, 2);
+  init('sid-two');
+  assert.strictEqual(repoints, 2, 'the same id does not rewrite the link');
+  assert.strictEqual(fs.readlinkSync(link), target('sid-two'));
+});
+
+test('stream seat H3: a PTY seat whose session id changes leaves the transcript link to the hook', async (t) => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const { pathFor } = require('../clodex-paths');
+  const fakePty = { pid: 8001, onData: () => {}, onExit: () => {}, write: () => {}, resize: () => {}, kill: () => {} };
+  const h = mkStreamSeatManager({ fakePty });
+  t.after(() => h.stopAll());
+  await h.m.create('sc4', 'claude', os.tmpdir(), [], null, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, null);
+  const s = h.m.sessions.get('sc4');
+  assert.strictEqual(s.io, 'pty', 'ENTER: a pty seat');
+  const onSessionId = h.watchers[0][2];
+  onSessionId('sid-a');
+  onSessionId('sid-b');
+  assert.strictEqual(s.sessionId, 'sid-b', 'ENTER: the id change reached the seat');
+  assert.throws(() => fs.lstatSync(pathFor(h.root, 'sc4', 'transcript')), { code: 'ENOENT' });
 });
 
 test('stream seat: close after exit runs the pty exit order, and kill() uses the stream group kill', async () => {

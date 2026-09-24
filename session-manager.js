@@ -2460,6 +2460,7 @@ function createSessionManager(deps) {
         // earlier in create() would be wiped by the very event that carried it.
         try { memLoad.noteSession(name, sessionId); } catch { /* observer-grade */ }
         this._noteConversationForDigest(session, sessionId);
+        if (sessionId && priorSid !== sessionId) this._repointStreamTranscript(session, sessionId);
       };
       if (agentType && session.intentSource === 'wire') {
         const { TranscriptSentinel } = require('./wire-intents');
@@ -2976,6 +2977,9 @@ function createSessionManager(deps) {
           }
           this._streamTurnEnd(s);
           break;
+        case 'compact':
+          this._onCompactEnd(s, 'done');
+          break;
         case 'reset':
           log.info('session', `stream ${s.name}: conversation reset (${rec.newConversationId}); the next init carries the resumable id`);
           break;
@@ -2984,6 +2988,15 @@ function createSessionManager(deps) {
           break;
         default:
           break;
+      }
+    }
+
+    _repointStreamTranscript(s, sid) {
+      if (s.io !== 'stream' || !s.cwd) return;
+      try {
+        linkTranscript({ fs }, pathFor(REGISTRY_DIR, s.name, 'transcript'), this._claudeTranscriptPath(s.cwd, s.accountDir, sid));
+      } catch (e) {
+        log.warn('session', `stream ${s.name}: transcript link repoint failed: ${e.message}`);
       }
     }
 
@@ -4211,9 +4224,13 @@ function createSessionManager(deps) {
       }
     }
 
+    _claudeTranscriptPath(cwd, accountDir, sid) {
+      return path.join(accountDir || claudeHome(), 'projects', claudeProjectSlug(cwd), `${sid}.jsonl`);
+    }
+
     _snapshotBlockFor(name, cwd, accountDir, sid) {
       const candidates = [];
-      if (sid && cwd) candidates.push(path.join(accountDir || claudeHome(), 'projects', claudeProjectSlug(cwd), `${sid}.jsonl`));
+      if (sid && cwd) candidates.push(this._claudeTranscriptPath(cwd, accountDir, sid));
       candidates.push(pathFor(REGISTRY_DIR, name, 'transcript'));
       for (const p of candidates) {
         const found = readPromptSnapshotMemo(REGISTRY_DIR, name, p);
