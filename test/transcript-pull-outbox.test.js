@@ -2,15 +2,12 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 
 const { registerIpcHandlers } = require('../ipc-handlers');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
-test('transcript:pull on a stream seat with no transcript yet still carries its queued outbox rows', (t) => {
-  const reg = fs.mkdtempSync(path.join(os.tmpdir(), 'tpull-'));
-  t.after(() => fs.rmSync(reg, { recursive: true, force: true }));
+test('transcript:pull on a stream seat with no transcript yet still carries its queued outbox rows', () => {
+  const reg = mkTmpRoot('ipc-tpull-');
   const handlers = new Map();
   const seat = { name: 'fresh', agentType: 'claude', io: 'stream', _dead: false };
   registerIpcHandlers({
