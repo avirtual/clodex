@@ -6889,6 +6889,10 @@ body:not(.sessions-restored) [data-peer-ui] {
   border-left-color: var(--ok);
   background: rgba(152, 195, 121, .13);
 }
+.transcript-pane .intent-mark {
+  border-left: 0;
+  padding-left: 0.15em;
+}
 [data-theme=claude] .intent-mark-fire {
   background: rgba(217, 119, 87, .14);
 }
@@ -8359,7 +8363,6 @@ body.web-frontend #sidebar-header {
   gap: var(--sp-2);
   padding: var(--sp-1) var(--sp-2);
   background: var(--surface-raised);
-  border-left: 2px solid var(--accent);
 }
 .tr-head-text {
   flex: 1;
@@ -8369,12 +8372,6 @@ body.web-frontend #sidebar-header {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   overflow: hidden;
-}
-.tr-inbound {
-  border-left-color: var(--info);
-}
-.tr-notification {
-  border-left-color: var(--text-tertiary);
 }
 .tr-command {
   font-family: var(--font-mono);
@@ -24662,7 +24659,8 @@ ${i3.join("\n")}
         terminal: "\u25A4",
         team: "\u229E",
         "clodex-team": "\u229E",
-        wirescope: "\u223F"
+        wirescope: "\u223F",
+        clodex: "\u25C6"
       };
       var SEAT_SHAPE = /^([A-Za-z0-9]+)-([A-Za-z]+)((?:-\d+)?(?:-r\d+)?)$/;
       function systemGlyph(name) {

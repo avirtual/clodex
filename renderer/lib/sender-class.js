@@ -12,6 +12,7 @@ const SYSTEM_GLYPHS = {
   team: '⊞',
   'clodex-team': '⊞',
   wirescope: '∿',
+  clodex: '◆',
 };
 
 const SEAT_SHAPE = /^([A-Za-z0-9]+)-([A-Za-z]+)((?:-\d+)?(?:-r\d+)?)$/;

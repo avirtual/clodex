@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { classifySender } = require('../renderer/lib/sender-class');
+const { classifySender, SYSTEM_GLYPHS } = require('../renderer/lib/sender-class');
 
 const TABLE = [
   ['reminder', { cls: 'system', label: 'reminder', glyph: '◷' }],
@@ -16,6 +16,7 @@ const TABLE = [
   ['team', { cls: 'system', label: 'team', glyph: '⊞' }],
   ['clodex-team', { cls: 'system', label: 'clodex-team', glyph: '⊞' }],
   ['wirescope', { cls: 'system', label: 'wirescope', glyph: '∿' }],
+  ['clodex', { cls: 'system', label: 'clodex', glyph: '◆' }],
   ['review-loop', { cls: 'system', label: 'review-loop', glyph: '⇄' }],
   ['merge-watchdog', { cls: 'system', label: 'merge-watchdog', glyph: '◉' }],
   ['user', { cls: 'operator', label: 'you', glyph: '●' }],
@@ -31,3 +32,7 @@ for (const [from, want] of TABLE) {
     assert.deepStrictEqual(classifySender(from), want);
   });
 }
+
+test('SYSTEM_GLYPHS names exactly the known system senders', () => {
+  assert.deepStrictEqual(Object.keys(SYSTEM_GLYPHS), ['reminder', 'reboot', 'ticket-loop', 'ticket-watchdog', 'monitor', 'memory', 'exec', 'terminal', 'team', 'clodex-team', 'wirescope', 'clodex']);
+});

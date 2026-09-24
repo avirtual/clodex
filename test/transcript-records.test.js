@@ -152,6 +152,18 @@ test(`a prompt over ${PROMPT_CAP} characters is capped and marked truncated; a q
   ]);
 });
 
+test('a runtime reply Clodex injects is an inbound from clodex; an agent:from delivery keeps its sender; a mid-line bracket stays a typed prompt', () => {
+  const rows = [
+    ['[agent:reboot] reboot queued — restarting once idle', { id: 'u', kind: 'inbound', ts: null, turn: 1, from: 'clodex', text: '[agent:reboot] reboot queued — restarting once idle' }],
+    ['[agent:from wirescope] hi', { id: 'u', kind: 'inbound', ts: null, turn: 1, from: 'wirescope', text: 'hi' }],
+    ['I ran [agent:who] earlier', { id: 'u', kind: 'prompt', ts: null, turn: 1, text: 'I ran [agent:who] earlier', source: 'typed' }],
+  ];
+  for (const [text, want] of rows) {
+    const { records } = recordsOf(rec({ type: 'user', uuid: 'u', message: { content: text } }));
+    assert.deepStrictEqual(records, [want], text);
+  }
+});
+
 const prompt = (i) => rec({ type: 'user', uuid: `p${i}`, message: { content: `m${i}` } });
 const reply = (i, k) => rec({ type: 'assistant', uuid: `a${i}-${k}`, message: { content: [{ type: 'text', text: `r${i}-${k}` }] } });
 
