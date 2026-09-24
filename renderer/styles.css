@@ -13,6 +13,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 :root {
   color-scheme: dark;
   --sidebar-width: 220px;
+  --rail-titlebar-h: 28px;
 
   --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
@@ -6051,4 +6052,102 @@ body.web-frontend #sidebar-header {
 
 .transcript-pane[hidden] {
   display: none;
+}
+
+#sidebar[data-folded="1"] .app-title-stack,
+#sidebar[data-folded="1"] #shell-share-chip,
+#sidebar[data-folded="1"] #sidebar-filterbar,
+#sidebar[data-folded="1"] #sidebar-header button:not(#sidebar-fold),
+#sidebar[data-folded="1"] .session-info,
+#sidebar[data-folded="1"] .session-close,
+#sidebar[data-folded="1"] .session-info-btn {
+  display: none;
+}
+#sidebar[data-folded="1"] .session-item.failed::after,
+#sidebar[data-folded="1"] .session-item.archived,
+#sidebar[data-folded="1"] .session-child,
+#sidebar[data-folded="1"] .session-empty-note,
+#sidebar[data-folded="1"] .session-group-header > *,
+#sidebar[data-folded="1"] .peer-header > :not(.peer-dot) {
+  display: none;
+}
+#sidebar[data-folded="1"] #served-terminal-text,
+#sidebar[data-folded="1"] #update-text,
+#sidebar[data-folded="1"] #diag-text,
+#sidebar[data-folded="1"] #diag-actions,
+#sidebar[data-folded="1"] #auth-text,
+#sidebar[data-folded="1"] .footer-label,
+#sidebar[data-folded="1"] #sidebar-footer [data-plugin-footer] {
+  display: none;
+}
+#sidebar[data-folded="1"] #sidebar-header {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+#sidebar-fold {
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+#sidebar-fold:hover { background: var(--surface-hover); color: var(--text-primary); }
+#sidebar[data-folded="1"] #sidebar-resizer { pointer-events: none; }
+body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main { top: var(--rail-titlebar-h); }
+#sidebar[data-folded="1"] #session-list { padding: var(--sp-1) 0; overflow-x: hidden; }
+#sidebar[data-folded="1"] .session-group-header {
+  height: 0;
+  padding: 0;
+  margin: var(--sp-1) var(--sp-2);
+  border-top: 1px solid var(--border);
+}
+#sidebar[data-folded="1"] .peer-header {
+  justify-content: center;
+  padding: var(--sp-1) 0;
+}
+#sidebar[data-folded="1"] .session-item {
+  justify-content: center;
+  padding: 5px 0;
+  gap: 0;
+}
+#sidebar[data-folded="1"] .session-item::before {
+  content: attr(data-monogram);
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4em;
+  height: 1.4em;
+  border-radius: 50%;
+  font-size: var(--fs-md);
+  line-height: 1;
+  font-weight: 600;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+#sidebar[data-folded="1"] .session-chip {
+  position: absolute;
+  top: 4px;
+  right: 9px;
+  width: 0;
+  height: 0;
+  background: transparent;
+  color: transparent;
+  font-size: 0;
+}
+#sidebar[data-folded="1"] #sidebar-footer { padding: var(--sp-1) 2px; }
+#sidebar[data-folded="1"] #inbox-open {
+  justify-content: center;
+  gap: 2px;
+  padding: 5px 0;
+}
+#sidebar[data-folded="1"] #inbox-count {
+  margin-left: 0;
+  min-width: 0;
+  padding: 1px 4px;
 }

@@ -229,6 +229,30 @@ test('uiSettings: a settings file predating intentSpill reads back ON', () => {
   } finally { cleanup(); }
 });
 
+test('uiSettings: sidebarFolded defaults false, reads only a literal true, and survives an unrelated write', () => {
+  const { stores, userData, cleanup } = freshStores();
+  try {
+    const p = path.join(userData, 'ui-settings.json');
+    const pair = () => {
+      const s = stores.uiSettings.get();
+      return { sidebarFolded: s.sidebarFolded, sidebarWidth: s.sidebarWidth };
+    };
+    assert.deepStrictEqual(pair(), { sidebarFolded: false, sidebarWidth: 220 });
+    fs.writeFileSync(p, JSON.stringify({ sidebarFolded: true, sidebarWidth: 300 }));
+    assert.deepStrictEqual(pair(), { sidebarFolded: true, sidebarWidth: 300 });
+    fs.writeFileSync(p, JSON.stringify({ sidebarFolded: 'yes', sidebarWidth: 300 }));
+    assert.deepStrictEqual(pair(), { sidebarFolded: false, sidebarWidth: 300 });
+    stores.uiSettings.set({ sidebarFolded: true });
+    assert.deepStrictEqual(pair(), { sidebarFolded: true, sidebarWidth: 300 });
+    stores.uiSettings.set({});
+    assert.deepStrictEqual(pair(), { sidebarFolded: true, sidebarWidth: 300 });
+    stores.uiSettings.set({ sidebarFolded: 'no' });
+    assert.deepStrictEqual(pair(), { sidebarFolded: true, sidebarWidth: 300 });
+    stores.uiSettings.set({ sidebarFolded: false });
+    assert.deepStrictEqual(pair(), { sidebarFolded: false, sidebarWidth: 300 });
+  } finally { cleanup(); }
+});
+
 test('uiSettings: reboot rate-limit stamp ships at 0 and round-trips (Task 27)', () => {
   const { stores, cleanup } = freshStores();
   try {

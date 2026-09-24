@@ -12,6 +12,7 @@ const { peerStateText, NEEDS_UPGRADE_TIP } = require('./lib/peer-state-text');
 const { isPeerExpanded, togglePeerExpanded } = require('./lib/peer-collapse');
 const { servedBannerView } = require('./lib/served-banner');
 const { placeAboveAnchor } = require('./lib/popover-place');
+const { classifySender } = require('./lib/sender-class');
 const { farCwdGuess, localFromHome } = require('./lib/far-cwd-guess');
 
 function initPeersUi({
@@ -266,6 +267,7 @@ function initPeersUi({
         // updateSidebarActive and the badge writes below still find it.
         if (!expanded) item.style.display = 'none';
         item.dataset.name = key;
+        item.dataset.monogram = classifySender(s.name).glyph;
         item.dataset.activity = s.activity || 'idle';
         if (sessions.has(key)) item.classList.add('attached');
         item.dataset.type = 'remote';
