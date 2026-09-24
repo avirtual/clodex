@@ -13,7 +13,7 @@ const rmTree = (root) => {
 };
 
 test('SpillShownStore round-trips records at mode 0600 and removes the file when empty', (t) => {
-  const dir = mkTmpRoot('clx-spill-shown-');
+  const dir = mkTmpRoot('clodex-spill-');
   t.after(() => rmTree(dir));
   const file = path.join(dir, 'wire-spill-shown.json');
   const errors = [];
@@ -31,7 +31,7 @@ test('SpillShownStore round-trips records at mode 0600 and removes the file when
 });
 
 test('session-manager builds the wire with a SpillShownStore under userData', async () => {
-  const root = mkTmpRoot('clx-spill-shown-sm-');
+  const root = mkTmpRoot('clodex-t418-seam-');
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     REGISTRY_DIR: root,
