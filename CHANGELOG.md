@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Transcript pane: the pane keeps following the bottom when the composer grows to a second line or the layout changes; scrolling up releases it, scrolling back down re-engages it.
+
 - Exec: `clodex-run-tests` waits for a running suite to finish (up to 15 minutes) and reports that it is queued, instead of failing after 30 seconds and asking the agent to set itself a reminder.
 - Spill: ticket hands and cold reviewers keep their newest long intent body in full, so a rework round has a real example of the verb it must write again.
 
