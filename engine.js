@@ -1641,6 +1641,7 @@ async function restoreSessionsForWorkspace(workspaceId) {
     maybeCompactBeforeResume, readCtxFor, log,
   });
   try { manager.maybeDeliverRebootNotice(); } catch (e) { log.error('intent', `reboot notice delivery failed: ${e.message}`); }
+  try { manager.deliverLostExecRuns(); } catch (e) { log.error('intent', `lost exec run delivery failed: ${e.message}`); }
   return restored;
 }
 

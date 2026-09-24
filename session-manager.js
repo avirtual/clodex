@@ -34,6 +34,7 @@ const EXEC_ACK_MIN_TIMEOUT_MS = 60 * 1000;
 const EXEC_STATUS_DEFAULT_MS = 3 * 60 * 1000;
 const EXEC_STATUS_MIN_MS = 30 * 1000;
 const EXEC_RUN_RECORD_CAP = 20;
+const EXEC_RUN_LEDGER_FILE = 'exec-runs-inflight.json';
 const EXEC_STATUS_QUERY_CMD = 'status';
 const EXEC_STATUS_REPLY_MAX = 400;
 const EXEC_STATUS_REPLY_RUNS = 3;
@@ -2661,6 +2662,87 @@ function createSessionManager(deps) {
 
     lastOperatorInputAt() {
       return this._lastOperatorInputAt || 0;
+    }
+
+    inFlightExecRuns() {
+      const out = [];
+      for (const s of this.sessions.values()) {
+        if (!s || s._dead || !Array.isArray(s.execRuns)) continue;
+        for (const r of s.execRuns) {
+          if (r && r.state === 'running') out.push(`${s.name} run #${r.seq} (${r.cmd})`);
+        }
+      }
+      return out;
+    }
+
+    _execLedgerPath() {
+      return path.join(REGISTRY_DIR, EXEC_RUN_LEDGER_FILE);
+    }
+
+    _loadLostExecRuns() {
+      if (Array.isArray(this._lostExecRuns)) return this._lostExecRuns;
+      let rows = [];
+      try {
+        const parsed = JSON.parse(fs.readFileSync(this._execLedgerPath(), 'utf-8'));
+        if (Array.isArray(parsed)) rows = parsed;
+      } catch { rows = []; }
+      this._lostExecRuns = rows.filter((r) => r && typeof r.name === 'string' && r.name
+        && Number.isFinite(r.seq) && typeof r.cmd === 'string');
+      return this._lostExecRuns;
+    }
+
+    _writeExecLedger() {
+      try {
+        const rows = this._loadLostExecRuns().slice();
+        for (const s of this.sessions.values()) {
+          if (!s || !Array.isArray(s.execRuns)) continue;
+          for (const r of s.execRuns) {
+            if (r && r.state === 'running') {
+              rows.push({ name: s.name, seq: r.seq, cmd: r.cmd, pid: r.pid, startedAt: r.startedAt });
+            }
+          }
+        }
+        const file = this._execLedgerPath();
+        const tmp = `${file}.${process.pid}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify(rows));
+        fs.renameSync(tmp, file);
+      } catch (e) {
+        log.warn('intent', `exec run ledger write failed: ${e.message}`);
+      }
+    }
+
+    deliverLostExecRuns() {
+      const pending = this._loadLostExecRuns();
+      if (!pending.length) return 0;
+      const keep = [];
+      let delivered = 0;
+      for (const r of pending) {
+        const target = this.sessions.get(r.name);
+        if (!target || target._dead) {
+          let entry = null;
+          try { entry = getPersistence().get(r.name); } catch { entry = null; }
+          if (entry) keep.push(r);
+          else log.info('intent', `exec run #${r.seq} (${r.cmd}) of ${r.name} lost to a host restart — seat gone, dropped`);
+          continue;
+        }
+        const runs = target.execRuns || (target.execRuns = []);
+        const body = `run #${r.seq} (${r.cmd}) lost to a host restart; re-emit it`;
+        if (!runs.some((x) => x && x.seq === r.seq)) {
+          const now = Date.now();
+          runs.push({
+            seq: r.seq, cmd: r.cmd, pid: r.pid, startedAt: Number.isFinite(r.startedAt) ? r.startedAt : now,
+            endedAt: now, state: 'lost', tail: body, ceilingMin: 0,
+          });
+          runs.sort((a, b) => a.seq - b.seq);
+          while (runs.length > EXEC_RUN_RECORD_CAP) runs.shift();
+        }
+        this._injectText(target, `[agent:exec] ${body}`, { parkable: true });
+        log.warn('intent', `exec ${r.cmd} by ${r.name}: run #${r.seq} lost to a host restart (pid ${r.pid})`);
+        delivered += 1;
+      }
+      this._lostExecRuns = keep;
+      this._writeExecLedger();
+      return delivered;
     }
 
     write(name, data) {
@@ -6214,6 +6296,7 @@ function createSessionManager(deps) {
           };
           runs.push(record);
           while (runs.length > EXEC_RUN_RECORD_CAP) runs.shift();
+          this._writeExecLedger();
 
           const statusEveryMs = (typeof entry.statusEveryMs === 'number'
             && entry.statusEveryMs >= EXEC_STATUS_MIN_MS)
@@ -6234,6 +6317,7 @@ function createSessionManager(deps) {
           record.state = state;
           record.endedAt = Date.now();
           record.tail = tail;
+          this._writeExecLedger();
         };
 
         const finish = (fn) => {

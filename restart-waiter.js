@@ -55,11 +55,14 @@ function giveUpBody(names) {
 // not restart the window (one waiter); disarm() cancels a pending wait.
 function createIdleWaiter({
   getSessions, now, setTimer, clearTimer, restart, notify, lastInputAt,
+  inFlightRuns = () => [], log = null,
   pollMs = 2000, sustainMs = 10_000, capMs = 30 * 60_000, operatorQuietMs = sustainMs,
+  runCapMs = 10 * 60_000,
 }) {
   let timer = null;      // non-null iff armed
   let armedAt = 0;       // when the wait began (drives the cap)
   let quietSince = null; // start of the current all-idle streak, or null if busy
+  let heldOnRuns = '';
   // Who asked for this wait, and how to tell them it ended without a restart.
   // The agent path ([agent:reboot]) has no operator reading the give-up
   // notification, so a dropped wait it is never told about leaves a seat blocked
@@ -113,7 +116,18 @@ function createIdleWaiter({
       return;
     }
     const { busy } = classifyRestart(getSessions());
-    if (busy > 0 || t - lastInputAt() < operatorQuietMs) {
+    let runs = [];
+    try { runs = inFlightRuns() || []; } catch { runs = []; }
+    const runsPastCap = runs.length > 0 && t - armedAt >= runCapMs;
+    const runsHold = runs.length > 0 && !runsPastCap;
+    if (runsHold) {
+      const key = runs.join(', ');
+      if (key !== heldOnRuns) {
+        heldOnRuns = key;
+        if (log) { try { log.info('app', `restart waiting on in-flight exec runs: ${key}`); } catch {} }
+      }
+    }
+    if (busy > 0 || runsHold || t - lastInputAt() < operatorQuietMs) {
       quietSince = null; // any busy sample resets the sustained window
     } else {
       if (quietSince === null) quietSince = t; // streak begins now
@@ -121,7 +135,15 @@ function createIdleWaiter({
       // That holds for a host that quits; a future host whose restart can FAIL
       // asynchronously must re-register them before calling it, or its requesters
       // are left waiting on a restart that already fell over.
-      if (t - quietSince >= sustainMs) { quietSince = null; requests = []; restart(); return; }
+      if (t - quietSince >= sustainMs) {
+        quietSince = null;
+        requests = [];
+        if (runsPastCap && log) {
+          try { log.warn('app', `restart proceeding past the ${Math.round(runCapMs / 60_000)}m exec-run ceiling — abandoning: ${runs.join(', ')}`); } catch {}
+        }
+        restart();
+        return;
+      }
     }
     timer = setTimer(tick, pollMs);
   }
@@ -139,6 +161,7 @@ function createIdleWaiter({
     if (timer !== null) return false; // already waiting — one waiter
     armedAt = now();
     quietSince = null;
+    heldOnRuns = '';
     timer = setTimer(tick, pollMs);
     return true;
   }

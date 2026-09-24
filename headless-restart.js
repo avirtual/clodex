@@ -23,6 +23,7 @@ function createHeadlessRestart({
   getSessions,
   restart,
   lastInputAt,
+  inFlightRuns,
   now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (h) => clearTimeout(h),
@@ -35,6 +36,8 @@ function createHeadlessRestart({
     clearTimer,
     restart,
     lastInputAt,
+    inFlightRuns,
+    log,
     notify: (asked) => { try { log.warn('app', giveUpBody(asked)); } catch {} },
   });
   return {

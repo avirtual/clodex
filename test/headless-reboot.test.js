@@ -284,3 +284,26 @@ test('both hosts defer the agent restart; only headless gates it on a declared s
 
 // createEngine starts background timers with no host to stop them.
 after(() => { setImmediate(() => process.exit(0)); });
+
+test('supervised headless: an in-flight exec run holds the exit until it ends', () => {
+  const clock = fakeClock(1_000_000);
+  const exits = [];
+  let runs = ['a run #1 (digest)'];
+  const hr = createHeadlessRestart({
+    env: { CLODEX_SUPERVISED: '1' },
+    log: quietLog,
+    getSessions: () => [],
+    restart: () => exits.push(64),
+    lastInputAt: () => 0,
+    inFlightRuns: () => runs,
+    now: clock.now,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+  });
+  hr.restartHostWhenIdle({});
+  clock.advance(60_000);
+  assert.deepStrictEqual(exits, []);
+  runs = [];
+  clock.advance(12_000);
+  assert.deepStrictEqual(exits, [64]);
+});
