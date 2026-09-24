@@ -73,13 +73,25 @@ function parseTranscript(text, max = MAX_ENTRIES) {
   return out.slice(-max);
 }
 
-function createTranscriptSpikeReader({ linkPathFor, watch = fs.watch }) {
+const CHANGE_DEBOUNCE_MS = 100;
+
+function createTranscriptSpikeReader({ linkPathFor, watch = fs.watch, onChange = null, setTimer = setTimeout, clearTimer = clearTimeout }) {
   const cache = new Map();
 
   function drop(name) {
     const c = cache.get(name);
     if (c && c.watcher) { try { c.watcher.close(); } catch {} }
+    if (c && c.changeTimer) { clearTimer(c.changeTimer); c.changeTimer = null; }
     cache.delete(name);
+  }
+
+  function changed(name, c) {
+    c.dirty = true;
+    if (!onChange || c.changeTimer || cache.get(name) !== c) return;
+    c.changeTimer = setTimer(() => {
+      c.changeTimer = null;
+      if (cache.get(name) === c) onChange(name);
+    }, CHANGE_DEBOUNCE_MS);
   }
 
   function pull(name) {
@@ -88,10 +100,10 @@ function createTranscriptSpikeReader({ linkPathFor, watch = fs.watch }) {
     let c = cache.get(name);
     if (c && c.path !== real) { drop(name); c = null; }
     if (!c) {
-      c = { path: real, rev: 0, dirty: true, lines: [], watcher: null };
+      c = { path: real, rev: 0, dirty: true, lines: [], watcher: null, changeTimer: null };
       try {
-        c.watcher = watch(real, () => { c.dirty = true; });
-        if (c.watcher && typeof c.watcher.on === 'function') c.watcher.on('error', () => { c.dirty = true; });
+        c.watcher = watch(real, () => changed(name, c));
+        if (c.watcher && typeof c.watcher.on === 'function') c.watcher.on('error', () => changed(name, c));
       } catch {}
       cache.set(name, c);
     }
@@ -110,4 +122,4 @@ function createTranscriptSpikeReader({ linkPathFor, watch = fs.watch }) {
   return { pull, drop, dispose };
 }
 
-module.exports = { MAX_ENTRIES, parseTranscript, createTranscriptSpikeReader };
+module.exports = { MAX_ENTRIES, CHANGE_DEBOUNCE_MS, parseTranscript, createTranscriptSpikeReader };
