@@ -869,7 +869,7 @@ const { createTeamDelete } = require('./team-delete');
 const { createTeamManifest } = require('./team-manifest');
 const {
   findProjectRoot, resolveTeam, createTeam, addRole, listTeams, loadManifest,
-  setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setLead, teamsDir, deleteTeam,
+  setRole, removeRole, renameRole, setTeamWatchdog, setLead, setTeamTrunk, teamsDir, deleteTeam,
   kitCatalog, resolveKit,
   // PASSED, not left to defaultClodexHome(): that reads CLODEX_HOME, which
   // would put teams on a different tree than every other subsystem.
@@ -2493,7 +2493,7 @@ const toolCache = createToolCache({ whichBin });
     listAllPrompts,
     resolveSystemPromptFile, readAppendBodies, readSystemPromptBody,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
-    setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setLead, gatherTeam, teamsDir,
+    setRole, removeRole, renameRole, setTeamWatchdog, setLead, setTeamTrunk, gatherTeam, teamsDir,
     teamDeleteCheck, teamDeleteGated,
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
     DEPLOY_FIX_INJECT_DELAY_MS, SKILL_REENABLE_CONFIRMED,

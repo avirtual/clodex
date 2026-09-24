@@ -72,7 +72,7 @@ function registerIpcHandlers(deps) {
     pty, readEffectiveToolState, readVoiceMode, readVoiceTrigger, readVoiceCapability, writeVoiceMode, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
-    setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setLead, gatherTeam, teamsDir,
+    setRole, removeRole, renameRole, setTeamWatchdog, setLead, setTeamTrunk, gatherTeam, teamsDir,
     teamDeleteCheck, teamDeleteGated,
     resolveDeployFolder, restartSession, restoreSessionsForWorkspace,
     readSessionArgs, applySessionArgs, sessionMeta, sessionInfo,
