@@ -60,3 +60,25 @@ test('decode: assistant and user content records are not decoded', () => {
 test('encodeUser builds the stream-json user message', () => {
   assert.deepStrictEqual(encodeUser('hello'), { type: 'user', message: { role: 'user', content: 'hello' } });
 });
+
+test('encodeUser with images puts the image blocks first, then one text block', () => {
+  assert.deepStrictEqual(encodeUser('what is this', [{ mediaType: 'image/png', data: 'AAAA' }, { mediaType: 'image/jpeg', data: 'BBBB' }]), {
+    type: 'user',
+    message: {
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'BBBB' } },
+        { type: 'text', text: 'what is this' },
+      ],
+    },
+  });
+});
+
+test('encodeUser with images and empty text omits the text block; an empty image list keeps string content', () => {
+  assert.deepStrictEqual(encodeUser('', [{ mediaType: 'image/gif', data: 'CCCC' }]), {
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/gif', data: 'CCCC' } }] },
+  });
+  assert.deepStrictEqual(encodeUser('hello', []), { type: 'user', message: { role: 'user', content: 'hello' } });
+});

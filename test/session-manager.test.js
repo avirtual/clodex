@@ -20919,6 +20919,32 @@ test('stream seat (i): two seatSends while busy become ONE joined message on res
   h.stopAll();
 });
 
+test('stream seat (i2): queued images concatenate in order and ride the joined message; image-only sends are accepted', async () => {
+  const h = mkStreamSeatManager();
+  await h.create('st8');
+  const seat = h.handles[0];
+  const png = { mediaType: 'image/png', data: 'UE5H' };
+  const jpg = { mediaType: 'image/jpeg', data: 'SlBH' };
+  assert.deepStrictEqual(h.m.seatSend('st8', '', []), { ok: false, error: 'empty message' });
+  assert.deepStrictEqual(h.m.seatSend('st8', '', [png]), { ok: true, queued: 0 });
+  assert.deepStrictEqual(h.m.seatSend('st8', 'second', [jpg]), { ok: true, queued: 1 });
+  assert.deepStrictEqual(h.m.seatSend('st8', '', [png]), { ok: true, queued: 2 });
+  assert.deepStrictEqual(h.m.seatSend('st8', 'fourth'), { ok: true, queued: 3 });
+  assert.deepStrictEqual(h.m.sessions.get('st8').outbox, [
+    { text: 'second', images: [jpg] }, { text: '', images: [png] }, { text: 'fourth', images: [] },
+  ]);
+  h.line('st8', { type: 'result', subtype: 'success', duration_ms: 1, total_cost_usd: 0, is_error: false });
+  assert.deepStrictEqual(seat.sent, [
+    { type: 'user', message: { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'UE5H' } }] } },
+    { type: 'user', message: { role: 'user', content: [
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'SlBH' } },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'UE5H' } },
+      { type: 'text', text: 'second\n\nfourth' },
+    ] } },
+  ]);
+  h.stopAll();
+});
+
 test('stream seat (j): _deliverMessage to a stream seat refuses with the logged reason and writes nothing', async () => {
   const h = mkStreamSeatManager();
   await h.create('st5');
@@ -20955,7 +20981,7 @@ test('stream seat: the outbox has no timed force-flush — ten busy minutes stil
     h.m.seatSend('st7', 'held');
     mock.timers.tick(10 * 60 * 1000);
     assert.deepStrictEqual(h.handles[0].sent, [{ type: 'user', message: { role: 'user', content: 'first' } }]);
-    assert.deepStrictEqual(h.m.sessions.get('st7').outbox, ['held']);
+    assert.deepStrictEqual(h.m.sessions.get('st7').outbox, [{ text: 'held', images: [] }]);
   } finally {
     mock.timers.reset();
   }
