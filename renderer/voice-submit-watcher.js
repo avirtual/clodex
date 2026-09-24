@@ -33,6 +33,7 @@ const {
 // mouse reports and query replies too, and treating those as typing would wipe
 // the microphone evidence on scroll alone.
 const { isHumanPtyInput } = require('../proxy-util');
+const { readCursorRow, readRowsToCursor } = require('./lib/cursor-row');
 
 // The quiet window. Streamed transcription lands in segments, so a fire on the
 // first write that completes the phrase submits half an utterance. Shorter than
@@ -587,10 +588,7 @@ function createVoiceSubmitWatcher(terminal, {
 
   function cursorRow() {
     if (!onNormalBuffer()) return null;
-    const buf = terminal.buffer.active;
-    const line = buf.getLine(buf.baseY + buf.cursorY);
-    if (!line) return null;
-    return line.translateToString(false, 0, buf.cursorX);
+    return readCursorRow(terminal);
   }
 
   // The rows the recording indicator could be on: the cursor row and the ones
@@ -633,16 +631,7 @@ function createVoiceSubmitWatcher(terminal, {
   // guessing — an unreadable screen must not park deliveries.
   function composerRows() {
     if (!onNormalBuffer()) return null;
-    try {
-      const buf = terminal.buffer.active;
-      const out = [];
-      for (let y = buf.cursorY; y >= 0 && out.length < terminal.rows; y--) {
-        const line = buf.getLine(buf.baseY + y);
-        if (!line) break;
-        out.unshift(line.translateToString(true));
-      }
-      return out.length ? out : null;
-    } catch { return null; }
+    return readRowsToCursor(terminal);
   }
 
   function tick() {

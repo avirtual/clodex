@@ -6152,6 +6152,21 @@ body.web-frontend #sidebar-header {
   border-color: var(--accent, var(--border));
 }
 
+.seat-composer.voice-recording {
+  border-color: var(--error);
+  box-shadow: 0 0 0 1px var(--error);
+}
+
+.voice-engine-host {
+  position: absolute;
+  left: -10000px;
+  top: 0;
+  width: 960px;
+  height: 480px;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .seat-attachments {
   flex: 0 0 auto;
   display: flex;

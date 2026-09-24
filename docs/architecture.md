@@ -1375,6 +1375,18 @@ Own state + DOM, `init*(deps)`:
   the caret through the shared `.session-group-header.collapsed` rule. Lifted
   out of renderer.js, which has no harness, so `test/sidebar-filter-fold.test.js`
   can reach both halves.
+- **voice-engine.js** — the stream seat's recorder: one hidden `claude` pty
+  per box (session-manager `ensureVoiceEngine`), never in `sessions`, so it is
+  absent from `list()`, `[agent:who]` and every roster; its wire registration
+  carries `voiceSink`, so wire/proxy.js answers each request locally through
+  **wire/voice-sink.js** and nothing reaches a model. `voice:record` writes the
+  recorder key into it for a stream seat; `planRecord` maps tap/hold onto keys.
+- **voice-mirror.js** + **lib/cursor-row.js** + **lib/composer-voice.js** — the
+  renderer half: the engine's output feeds a hidden xterm, the mirror reads its
+  input row (the same cursor-row read voice-submit-watcher.js uses, shared in
+  `lib/cursor-row.js`) and hands each new draft to the stream composer, which
+  replaces only the span it mirrored (`applyDraft`) and runs the trigger-phrase
+  submit on it (`attachTriggerSubmit`).
 - **lib/mic-handoff.js** — what a window does when the microphone moves OFF one
   of its seats: notes the mirror above, then STOPS that seat's recorder through
   the watcher's ensure-off. The broadcast alone only made losers stop re-ARMING,
