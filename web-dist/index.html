@@ -8383,9 +8383,37 @@ body.web-frontend #sidebar-header {
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
 }
-.tr-from {
-  color: var(--info);
+.tr-sender {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
   white-space: nowrap;
+}
+.tr-sender-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4em;
+  height: 1.4em;
+  border-radius: 50%;
+  font-size: 0.85em;
+  line-height: 1;
+  font-weight: 600;
+  background: var(--surface-selected);
+  color: var(--text-secondary);
+}
+.tr-sender-seat .tr-sender-glyph {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.tr-sender-operator .tr-sender-glyph {
+  background: var(--accent);
+  color: var(--bg);
+}
+.tr-sender-name {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--text-tertiary);
 }
 .tr-time {
   color: var(--text-tertiary);
@@ -29850,6 +29878,50 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // renderer/lib/sender-class.js
+  var require_sender_class = __commonJS({
+    "renderer/lib/sender-class.js"(exports, module) {
+      "use strict";
+      var SYSTEM_GLYPHS = {
+        reminder: "\u25F7",
+        reboot: "\u21BB",
+        "ticket-loop": "\u21C4",
+        "ticket-watchdog": "\u25C9",
+        monitor: "\u25A3",
+        memory: "\u25C8",
+        exec: "\u25B8",
+        terminal: "\u25A4",
+        team: "\u229E",
+        "clodex-team": "\u229E",
+        wirescope: "\u223F"
+      };
+      var SEAT_SHAPE = /^([A-Za-z0-9]+)-([A-Za-z]+)((?:-\d+)?(?:-r\d+)?)$/;
+      function systemGlyph(name) {
+        if (Object.prototype.hasOwnProperty.call(SYSTEM_GLYPHS, name)) return SYSTEM_GLYPHS[name];
+        if (name.endsWith("-loop")) return SYSTEM_GLYPHS["ticket-loop"];
+        if (name.endsWith("-watchdog")) return SYSTEM_GLYPHS["ticket-watchdog"];
+        return null;
+      }
+      function initial(text) {
+        const first = Array.from(String(text || ""))[0];
+        return first ? first.toUpperCase() : "?";
+      }
+      function classifySender(from) {
+        const name = String(from == null ? "" : from);
+        const system = systemGlyph(name);
+        if (system) return { cls: "system", label: name, glyph: system };
+        if (name === "user") return { cls: "operator", label: "you", glyph: "\u25CF" };
+        if (name.includes("@")) return { cls: "peer", label: name, glyph: "\u21E2" };
+        const shape = SEAT_SHAPE.exec(name);
+        if (shape) {
+          return { cls: "seat", label: `${shape[2]}${shape[3]}`, glyph: initial(shape[2]) };
+        }
+        return { cls: "seat", label: name, glyph: initial(name) };
+      }
+      module.exports = { classifySender, SYSTEM_GLYPHS };
+    }
+  });
+
   // renderer/lib/prompt-echo.js
   var require_prompt_echo = __commonJS({
     "renderer/lib/prompt-echo.js"(exports, module) {
@@ -29984,6 +30056,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       "use strict";
       var { ansiRuns } = require_ansi_html();
       var { classifyRows } = require_intent_marks();
+      var { classifySender } = require_sender_class();
       var { scanLinks } = require_path_scan();
       var { rewriteEchoSgr } = require_prompt_echo();
       var { isExternallyOpenable } = require_external_link();
@@ -30176,9 +30249,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
         row.appendChild(text);
         return withTime(doc, row, rec);
       }
+      function senderBadge(doc, from) {
+        const { cls, label, glyph } = classifySender(from);
+        const badge = el(doc, "span", `tr-sender tr-sender-${cls}`);
+        badge.title = String(from);
+        badge.appendChild(el(doc, "span", "tr-sender-glyph", glyph));
+        badge.appendChild(el(doc, "span", "tr-sender-name", label));
+        return badge;
+      }
       function inboundRow(doc, rec, ctx) {
         const row = headRow(doc, "tr-inbound", rec);
-        row.appendChild(el(doc, "span", "tr-from", `from ${rec.from}`));
+        row.appendChild(senderBadge(doc, rec.from));
         const text = el(doc, "span", "tr-head-text");
         if (rec.attached) {
           const lead = rec.text.slice(0, rec.text.indexOf("Message (")).trim();

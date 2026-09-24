@@ -2,6 +2,7 @@
 
 const { ansiRuns } = require('./lib/ansi-html');
 const { classifyRows } = require('./lib/intent-marks');
+const { classifySender } = require('./lib/sender-class');
 const { scanLinks } = require('./lib/path-scan');
 const { rewriteEchoSgr } = require('./lib/prompt-echo');
 const { isExternallyOpenable } = require('../external-link');
@@ -204,9 +205,18 @@ function promptRow(doc, rec, ctx) {
   return withTime(doc, row, rec);
 }
 
+function senderBadge(doc, from) {
+  const { cls, label, glyph } = classifySender(from);
+  const badge = el(doc, 'span', `tr-sender tr-sender-${cls}`);
+  badge.title = String(from);
+  badge.appendChild(el(doc, 'span', 'tr-sender-glyph', glyph));
+  badge.appendChild(el(doc, 'span', 'tr-sender-name', label));
+  return badge;
+}
+
 function inboundRow(doc, rec, ctx) {
   const row = headRow(doc, 'tr-inbound', rec);
-  row.appendChild(el(doc, 'span', 'tr-from', `from ${rec.from}`));
+  row.appendChild(senderBadge(doc, rec.from));
   const text = el(doc, 'span', 'tr-head-text');
   if (rec.attached) {
     const lead = rec.text.slice(0, rec.text.indexOf('Message (')).trim();

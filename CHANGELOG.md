@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Transcript pane: messages from Clodex itself (reminders, the ticket loop, reboot notices, exec results) and from other seats show a sender badge with a glyph and a short name instead of the wire's `from X` text.
 - Transcript pane: typed records; each prompt heads a turn block with a footer (duration, tool count, files changed), each tool call is one row with its result summary (exit code, line counts, +/− lines), inbound deliveries render as sender cards, and Cmd+Shift+T (View ▸ Raw terminal) toggles the raw terminal.
 
 - Files open in a right-side pane instead of a popover: tabbed (single click previews, double click or Edit pins), resizable with the width remembered, one tab set per seat; every file link, the inbox, the IPC log and `[agent:file view]` land there. Unsaved operator edits are never overwritten by an agent's change; the tab shows a banner instead.

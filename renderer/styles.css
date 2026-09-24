@@ -5965,7 +5965,16 @@ body.web-frontend #sidebar-header {
 .tr-inbound { border-left-color: var(--info); }
 .tr-notification { border-left-color: var(--text-tertiary); }
 .tr-command { font-family: var(--font-mono); font-size: var(--fs-sm); }
-.tr-from { color: var(--info); white-space: nowrap; }
+.tr-sender { display: inline-flex; align-items: center; gap: 0.35em; white-space: nowrap; }
+.tr-sender-glyph {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.4em; height: 1.4em; border-radius: 50%;
+  font-size: 0.85em; line-height: 1; font-weight: 600;
+  background: var(--surface-selected); color: var(--text-secondary);
+}
+.tr-sender-seat .tr-sender-glyph { background: var(--accent-soft); color: var(--accent); }
+.tr-sender-operator .tr-sender-glyph { background: var(--accent); color: var(--bg); }
+.tr-sender-name { font-family: var(--font-mono); font-size: 0.9em; color: var(--text-tertiary); }
 .tr-time { color: var(--text-tertiary); font-size: var(--fs-xs); white-space: nowrap; }
 
 .tr-prose { white-space: pre-wrap; padding: var(--sp-1) 0; }
