@@ -1188,9 +1188,13 @@ Own state + DOM, `init*(deps)`:
   finds the composer anchor on the visible screen and applies the hysteresis; the
   view translates and clips the unresized xterm into a bottom strip under a
   `<pre>` pane. See docs/explorations/split-proof.md.
+- **lib/ansi-html.js** — pure SGR converter for the transcript pane: `ansiRuns`
+  turns a local command's stdout into `{ text, style }` runs and strips every
+  other escape sequence; the view builds the spans with `textContent`.
 - **transcript-spike.js** — the naive main-side reader behind `transcript:pull`:
   re-reads `run/<name>/transcript.jsonl` after `fs.watch` fires, one line per
-  user text, assistant text and tool_use, last 200.
+  user text, assistant text and tool_use, plus a `command` / `command-output` row
+  per `system/local_command` record, last 200.
 - **voice-submit-watcher.js** + **lib/voice-submit.js** — hands-free submit: one
   watcher per local Claude terminal sends Enter when the composer ENDS with the
   configured trigger phrase. The composer is read from `terminal.buffer.active`
