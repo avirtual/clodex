@@ -12,6 +12,7 @@ const CLAMP_LINES = 2;
 const CLAMP_CHARS = 240;
 const NOOP = () => {};
 const MINUS = '−';
+const TIMES = ' ×';
 
 function el(doc, tag, cls, text) {
   const node = doc.createElement(tag);
@@ -236,7 +237,7 @@ function bashParts(s) {
 
 function summaryParts(rec) {
   const s = rec.sum || {};
-  if (rec.state === 'pending') return [['running', '']];
+  if (rec.state === 'pending') return [[rec.desc || 'running', '']];
   if (rec.state === 'denied') return [['denied', 'tr-err']];
   if (rec.state === 'error') {
     if (s.message != null) return [[s.message, 'tr-err']];
@@ -262,14 +263,14 @@ function summaryParts(rec) {
   }
 }
 
-function toolRow(doc, rec, ctx) {
-  const row = el(doc, 'div', `tr-row tr-tool tr-state-${rec.state}`);
+function toolRow(doc, rec, ctx, named = true) {
+  const row = el(doc, 'div', `${named ? 'tr-row tr-tool' : 'tr-tool tr-tool-line'} tr-state-${rec.state}`);
   row.dataset.id = rec.id;
   row.appendChild(el(doc, 'span', 'tr-mark'));
-  row.appendChild(el(doc, 'span', 'tr-tool-name', rec.name));
+  if (named) row.appendChild(el(doc, 'span', 'tr-tool-name', rec.name));
   const arg = el(doc, 'span', 'tr-tool-arg');
   arg.title = rec.arg;
-  appendLinked(doc, arg, rec.arg, '', ctx);
+  appendLinked(doc, arg, rec.argShown || rec.arg, '', ctx);
   row.appendChild(arg);
   const sum = el(doc, 'span', 'tr-tool-sum');
   for (const [text, cls] of summaryParts(rec)) sum.appendChild(cls ? el(doc, 'span', cls, text) : doc.createTextNode(text));
@@ -373,7 +374,6 @@ function buildRow(doc, rec, ctx, attached) {
       else appendProse(doc, row, rec.text, ctx);
       return row;
     }
-    case 'tool': return toolRow(doc, rec, ctx);
     case 'notice': return noticeRow(doc, rec, rec.level, rec.text, ctx);
     case 'boundary': {
       const row = el(doc, 'div', 'tr-row tr-boundary');
@@ -491,6 +491,16 @@ function attachedReplies(records) {
   return out;
 }
 
+function toolRuns(records) {
+  const out = [];
+  for (const r of records) {
+    const last = out[out.length - 1];
+    if (r.kind === 'tool' && last && last.tools && last.tools[0].name === r.name) last.tools.push(r);
+    else out.push(r.kind === 'tool' ? { tools: [r] } : { rec: r });
+  }
+  return out;
+}
+
 function groupTurns(records) {
   const turns = [];
   for (const r of records) {
@@ -505,9 +515,42 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
   const deps = { seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, ...ctx };
   const turnCache = new Map();
 
+  function toolBlockItem(tools) {
+    const many = tools.length > 1;
+    return {
+      key: `tools:${tools[0].id}`,
+      sig: 'tools',
+      build: () => {
+        const block = el(doc, 'div', 'tr-row tr-tool-block');
+        block.dataset.id = `tools:${tools[0].id}`;
+        return block;
+      },
+      after: (c) => {
+        if (!c.sub) c.sub = new Map();
+        c.el.className = `tr-row tr-tool-block${many ? ' tr-tool-many' : ''}`;
+        const items = [];
+        if (many) {
+          items.push({ key: 'head', sig: String(tools.length), build: () => {
+            const head = el(doc, 'div', 'tr-tool-head');
+            head.appendChild(el(doc, 'span', 'tr-tool-head-name', tools[0].name));
+            head.appendChild(el(doc, 'span', 'tr-tool-count', `${TIMES}${tools.length}`));
+            return head;
+          } });
+        }
+        for (const r of tools) items.push({ key: r.id, sig: JSON.stringify(r) + (many ? '' : '|named'), build: () => toolRow(doc, r, deps, !many) });
+        reconcile(c.el, c.sub, items);
+      },
+    };
+  }
+
   function rowItems(records, attached) {
     const items = [];
-    for (const r of records) {
+    for (const run of toolRuns(records)) {
+      if (run.tools) {
+        items.push(toolBlockItem(run.tools));
+        continue;
+      }
+      const r = run.rec;
       if (r.kind === 'turn-end') continue;
       const att = attached.has(r.id);
       const extra = r.kind === 'command-output' ? JSON.stringify(resolvePalette(deps) || null) : att ? '|attached' : '';

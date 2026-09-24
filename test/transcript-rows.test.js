@@ -23,15 +23,17 @@ test('a changed sig replaces only its own element; the turn block and its other 
   const m = mount();
   m.render([prompt, prose, pending]);
   const turn = m.pane.childNodes[0];
-  const [head, body, tool] = turn.childNodes;
+  const [head, body, block] = turn.childNodes;
+  const tool = block.childNodes[0];
   m.render([prompt, prose, done]);
   assert.strictEqual(m.pane.childNodes.length, 1);
   assert.strictEqual(m.pane.childNodes[0], turn);
   assert.strictEqual(turn.childNodes[0], head);
   assert.strictEqual(turn.childNodes[1], body);
-  assert.notStrictEqual(turn.childNodes[2], tool);
+  assert.strictEqual(turn.childNodes[2], block);
+  assert.notStrictEqual(block.childNodes[0], tool);
   assert.strictEqual(tool.parentNode, null);
-  assert.strictEqual(turn.childNodes[2].textContent, 'BashdateWed Sep 24 10:42:13 2026');
+  assert.strictEqual(block.childNodes[0].textContent, 'BashdateWed Sep 24 10:42:13 2026');
 });
 
 test('an unchanged record keeps its node identity across renders, a new one is appended and a gone one removed', () => {
@@ -63,13 +65,13 @@ test('markup in prompt, prose and tool arguments lands as text, never as element
   const turn = m.pane.childNodes[0];
   assert.strictEqual(turn.childNodes[0].textContent, evil);
   assert.strictEqual(turn.childNodes[1].textContent, evil);
-  assert.strictEqual(turn.childNodes[2].childNodes[2].textContent, evil);
+  assert.strictEqual(turn.childNodes[2].childNodes[0].childNodes[2].textContent, evil);
 });
 
 test('a tool row is mark, name, argument and summary, with its state in the class', () => {
   const m = mount();
   m.render([pending]);
-  const row = m.pane.childNodes[0].childNodes[0];
+  const row = m.pane.childNodes[0].childNodes[0].childNodes[0];
   assert.deepStrictEqual([row.className, row.dataset.id], ['tr-row tr-tool tr-state-pending', 't1']);
   assert.deepStrictEqual(row.childNodes.map((n) => [n.className, n.textContent]), [
     ['tr-mark', ''], ['tr-tool-name', 'Bash'], ['tr-tool-arg', 'date'], ['tr-tool-sum', 'running'],
@@ -342,4 +344,64 @@ test('attachedReplies pairs by verb within a run and attaches nothing for a verb
   recs.push(replyRec('r4', 4, 'task', '⇄', 'task', 'closed'));
   assert.deepStrictEqual([...attachedReplies(recs)], ['r1', 'r2', 'r4']);
   assert.deepStrictEqual([...attachedReplies([{ id: 'p', kind: 'prompt', turn: 1, text: 'hi' }, replyRec('r1', 2, 'dm', '→', 'message', 'x')])], []);
+});
+
+const call = (id, name, arg, state = 'ok', extra = {}) => ({ id, kind: 'tool', ts: null, turn: 1, name, arg, state, sum: state === 'pending' ? null : { exit: 0, lines: 0, interrupted: false, background: false, persisted: null, only: null }, ...extra });
+const blocksOf = (m) => m.pane.childNodes[0].childNodes.filter((n) => /\btr-tool-block\b/.test(n.className));
+const linesOf = (block) => block.childNodes.filter((n) => /\btr-tool-line\b/.test(n.className));
+const headOf = (block) => block.childNodes.find((n) => n.className === 'tr-tool-head');
+
+test('three consecutive Bash calls fold into one block headed Bash ×3 with three lines of mark, argument and summary', () => {
+  const m = mount();
+  m.render([prompt, call('b1', 'Bash', 'ls'), call('b2', 'Bash', 'pwd'), call('b3', 'Bash', 'date')]);
+  const blocks = blocksOf(m);
+  assert.strictEqual(blocks.length, 1);
+  assert.strictEqual(blocks[0].className, 'tr-row tr-tool-block tr-tool-many');
+  assert.strictEqual(headOf(blocks[0]).textContent, 'Bash ×3');
+  assert.deepStrictEqual(linesOf(blocks[0]).map((l) => l.childNodes.map((n) => n.className)), [
+    ['tr-mark', 'tr-tool-arg', 'tr-tool-sum'], ['tr-mark', 'tr-tool-arg', 'tr-tool-sum'], ['tr-mark', 'tr-tool-arg', 'tr-tool-sum'],
+  ]);
+  assert.deepStrictEqual(linesOf(blocks[0]).map((l) => l.childNodes[1].textContent), ['ls', 'pwd', 'date']);
+});
+
+test('Bash, Read, Bash are three blocks of one, each today\'s named row with no count', () => {
+  const m = mount();
+  m.render([prompt, call('b1', 'Bash', 'ls'), call('r1', 'Read', 'a.js'), call('b2', 'Bash', 'pwd')]);
+  const blocks = blocksOf(m);
+  assert.deepStrictEqual(blocks.map((b) => [b.className, b.childNodes.length, headOf(b)]), [
+    ['tr-row tr-tool-block', 1, undefined], ['tr-row tr-tool-block', 1, undefined], ['tr-row tr-tool-block', 1, undefined],
+  ]);
+  assert.deepStrictEqual(blocks.map((b) => b.childNodes[0].childNodes[1].textContent), ['Bash', 'Read', 'Bash']);
+  assert.ok(!/×/.test(m.pane.textContent));
+});
+
+test('a pending call joining a block keeps the block node and its dataset.id, and the earlier lines keep theirs', () => {
+  const m = mount();
+  const b1 = call('b1', 'Bash', 'ls');
+  const b2 = call('b2', 'Bash', 'pwd');
+  m.render([prompt, b1, b2]);
+  const [block] = blocksOf(m);
+  const id = block.dataset.id;
+  const [l1, l2] = linesOf(block);
+  m.render([prompt, b1, b2, call('b3', 'Bash', 'date', 'pending')]);
+  assert.strictEqual(blocksOf(m).length, 1);
+  assert.strictEqual(blocksOf(m)[0], block);
+  assert.strictEqual(block.dataset.id, id);
+  assert.strictEqual(headOf(block).textContent, 'Bash ×3');
+  const lines = linesOf(block);
+  assert.deepStrictEqual([lines.length, lines[0] === l1, lines[1] === l2], [3, true, true]);
+});
+
+test('prose between two Bash calls ends the block', () => {
+  const m = mount();
+  m.render([prompt, call('b1', 'Bash', 'ls'), { ...prose, id: 'a2' }, call('b2', 'Bash', 'pwd')]);
+  const kids = m.pane.childNodes[0].childNodes;
+  assert.deepStrictEqual(kids.map((n) => n.className), ['tr-row tr-head tr-prompt', 'tr-row tr-tool-block', 'tr-row tr-prose', 'tr-row tr-tool-block']);
+});
+
+test('a Bash line shows argShown with the raw command in its title, and a pending call shows its description as the summary', () => {
+  const m = mount();
+  m.render([prompt, call('b1', 'Bash', 'cd /r; npm test', 'pending', { argShown: 'npm test', desc: 'Run the suite' })]);
+  const row = blocksOf(m)[0].childNodes[0];
+  assert.deepStrictEqual([row.childNodes[2].textContent, row.childNodes[2].title, row.childNodes[3].textContent], ['npm test', 'cd /r; npm test', 'Run the suite']);
 });
