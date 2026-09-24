@@ -46337,9 +46337,11 @@ ${detail}` });
           pulling = true;
           Promise.resolve(window.api.transcriptPull(name)).then((res) => {
             pulling = false;
-            if (disposed || !res || !res.ok || res.rev === rev) return;
+            if (disposed || !res || res.rev === rev) return;
+            if (!res.ok && !Array.isArray(res.outbox)) return;
             rev = res.rev;
             renderOutbox(Array.isArray(res.outbox) ? res.outbox : []);
+            if (!res.ok) return;
             renderTranscript(document, paneEl, res.records, {
               seatName: name,
               resolveFile: (p) => window.api.fileResolve(name, p, null),
