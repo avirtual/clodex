@@ -1,7 +1,7 @@
 'use strict';
 
 const { readRowsToCursor } = require('./lib/cursor-row');
-const { composerHasDraft, composerIsEmpty, composerContinues } = require('./lib/voice-submit');
+const { composerHasDraft, composerIsEmpty, composerContinues, recordingObserved, processingObserved } = require('./lib/voice-submit');
 
 const HEAD = /^[❯>][  ]/u;
 const TAIL_JUNK = /[\s\u2581-\u2588]+$/u;
@@ -75,4 +75,23 @@ function createVoiceMirror(terminal, { onDraft, onRelease = () => {}, readRows =
   };
 }
 
-module.exports = { createVoiceMirror, draftFromRows };
+function readScreenRows(terminal) {
+  try {
+    const buf = terminal.buffer.active;
+    const out = [];
+    for (let y = 0; y < terminal.rows; y++) {
+      const line = buf.getLine(buf.baseY + y);
+      if (line) out.push(line.translateToString(true));
+    }
+    return out;
+  } catch { return null; }
+}
+
+function engineObserved(view) {
+  if (!view || !view.terminal) return null;
+  const rows = readScreenRows(view.terminal);
+  if (!rows) return null;
+  return { recording: recordingObserved(rows), processing: processingObserved(rows) };
+}
+
+module.exports = { createVoiceMirror, draftFromRows, engineObserved };

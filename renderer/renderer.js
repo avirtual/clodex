@@ -65,7 +65,7 @@ const { createVoiceCore, createVoiceControl } = require('./voice-control');
 const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
 const { createVoiceSubmitWatcher, QUIET_MS: VOICE_QUIET_MS, VOICE_RELEASE_MS } = require('./voice-submit-watcher');
-const { createVoiceMirror } = require('./voice-mirror');
+const { createVoiceMirror, engineObserved } = require('./voice-mirror');
 const { attachTriggerSubmit } = require('./lib/composer-voice');
 const { VOICE_ENGINE_NAME } = require('../voice-engine');
 const {
@@ -3527,9 +3527,10 @@ function streamVoiceMode(name, mode) {
 async function streamVoiceRecord(name, action) {
   const entry = sessions.get(name);
   if (!entry || !entry.stream) return;
+  const observed = engineObserved(voiceEngineView);
   const view = voiceEngine();
   let res = null;
-  try { res = await window.api.voiceRecord(name, action); } catch (e) { res = { ok: false, error: e && e.message ? e.message : String(e) }; }
+  try { res = await window.api.voiceRecord(name, action, observed); } catch (e) { res = { ok: false, error: e && e.message ? e.message : String(e) }; }
   if (!res || res.ok !== true) {
     entry.stream.setRecording(false);
     showToast(`Voice: ${(res && res.error) || 'recording failed'}`, { kind: 'error', name });

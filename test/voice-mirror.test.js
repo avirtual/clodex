@@ -2,7 +2,9 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { createVoiceMirror, draftFromRows } = require('../renderer/voice-mirror');
+const fs = require('node:fs');
+const path = require('node:path');
+const { createVoiceMirror, draftFromRows, engineObserved } = require('../renderer/voice-mirror');
 const { applyDraft, attachTriggerSubmit } = require('../renderer/lib/composer-voice');
 
 const HEAD = '❯ ';
@@ -343,4 +345,21 @@ test('tap mode: a keystroke while the release is owed sends once and cancels the
   s.clock.advance(5000);
   s.t.paint([`${HEAD}`]);
   assert.equal(s.sent.length, 1);
+});
+
+test('engineObserved reads the recorder and processing indicators off the whole engine screen', () => {
+  assert.equal(engineObserved(null), null);
+  const lit = fakeTerminal([`${HEAD}`, '\u23fa REC  space to stop']);
+  assert.deepEqual(engineObserved({ terminal: lit }), { recording: true, processing: false });
+  assert.deepEqual(engineObserved({ terminal: fakeTerminal([`${HEAD}`, 'Voice: processing\u2026']) }), { recording: false, processing: true });
+  assert.deepEqual(engineObserved({ terminal: fakeTerminal([`${HEAD}`]) }), { recording: false, processing: false });
+});
+
+test('streamVoiceRecord passes the engine view it already had, read before the view is created', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const body = src.slice(src.indexOf('async function streamVoiceRecord('), src.indexOf('function streamVoiceFired('));
+  const read = body.indexOf('const observed = engineObserved(voiceEngineView);');
+  assert.ok(read !== -1);
+  assert.ok(read < body.indexOf('voiceEngine()'));
+  assert.match(body, /window\.api\.voiceRecord\(name, action, observed\)/);
 });

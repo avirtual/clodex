@@ -28,6 +28,8 @@ for as long as the room is not silent); on the stop tap `❯ Hello world enter.`
 Hold: the same interim rows, `❯ Hello world enter.▄`, and after the spaces stop
 `❯ Hello world enter.`, `❯ Hello, world, enter.`; the row is not cleared.
 
+`recording` is reconciled from the engine screen before every tap: the CLI's tap recorder stops itself after its silence timeout (`No speech detected`) with no signal to the pty owner (observed 2026-09-25 01:40; one tap out of phase silenced every later sentence).
+
 ## engineSettings
 
 Speech-to-text does not go through `ANTHROPIC_BASE_URL`: with it pointed at a
