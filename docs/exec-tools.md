@@ -213,6 +213,9 @@ program that is not a shell, still refuse by name with nothing typed.
   (optional def field, integer ≥ 30 000, default 3m), and stamps its result with
   the same `run #<seq>`. Shorter runs stay silent whatever the def says, so a
   10-second command pays no prompt tax to say it started.
+  A `clodex-run-tests` run that finds the suite lock held queues behind the
+  holder (up to 15 min) and its status pings say so; the agent never re-emits
+  or schedules a reminder for it.
 - **`[agent:exec status] {}` is a reserved name, not a registered command.** It
   answers from `session.execRuns` (last 3 runs, newest first, or one via
   `{"seq":N}`) without a grant and without spawning; a registry def named

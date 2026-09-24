@@ -12,6 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+- Exec: `clodex-run-tests` waits for a running suite to finish (up to 15 minutes) and reports that it is queued, instead of failing after 30 seconds and asking the agent to set itself a reminder.
 - Spill: ticket hands and cold reviewers keep their newest long intent body in full, so a rework round has a real example of the verb it must write again.
 
 - Restart: a queued relaunch also waits for granted exec runs still in flight (up to 10 minutes), and a run that was in flight when the app restarted comes back to its seat as a failure line instead of vanishing.

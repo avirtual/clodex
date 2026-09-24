@@ -15,6 +15,7 @@ const KEEP_RED = path.join(KEEP_DIR, 'last-red.txt');
 const FAIL_CAP = 2000;
 const DIAG_CAP = 400;
 const RAW_CAP = 400;
+const LOCK_WAIT_MS = 15 * 60 * 1000;
 
 function keepShow() {
   const home = os.homedir();
@@ -104,8 +105,10 @@ function retireKeep() {
   try { fs.rmSync(KEEP, { force: true }); } catch {}
 }
 
+let headSuffix = '';
+
 function emit(msg, code, cap) {
-  process.stderr.write((cap ? String(msg).slice(0, cap) : String(msg)) + '\n');
+  process.stderr.write((cap ? String(msg).slice(0, cap) : String(msg)) + headSuffix + '\n');
   process.exit(code);
 }
 
@@ -361,12 +364,14 @@ if (!fs.existsSync(runner)) {
 const selected = scope === 'own' ? selectSet(measure) : null;
 
 const headLine = `${gitRead(measure, ['rev-parse', '--abbrev-ref', 'HEAD'])} ${gitRead(measure, ['log', '-1', '--format=%h %s'])}`.trim();
+const headBefore = gitRead(measure, ['rev-parse', 'HEAD']);
 const startedIso = nowIso();
 const startedAt = Date.now();
 const childEnv = {
   ...process.env,
   CLODEX_TEST_LOCK_DIR: path.join(ROOT, '.test-digest.lock'),
-  CLODEX_TEST_LOCK_WAIT_MS: '30000',
+  CLODEX_TEST_LOCK_WAIT_MS: String(LOCK_WAIT_MS),
+  CLODEX_TEST_LOCK_NOTE_FD: '3',
 };
 if (selected && selected.locked) childEnv.CLODEX_TEST_LOCK = '1';
 else delete childEnv.CLODEX_TEST_LOCK;
@@ -375,25 +380,25 @@ else delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
 const res = spawnSync(process.execPath, [runner, '--reporter=dot', ...(selected ? selected.files : [])], {
   cwd: measure,
   env: childEnv,
+  stdio: ['pipe', 'pipe', 'pipe', 2],
   maxBuffer: 64 * 1024 * 1024,
   encoding: 'utf8',
 });
 
 const wallMs = Date.now() - startedAt;
+const headAfter = gitRead(measure, ['rev-parse', 'HEAD']);
+if (headBefore && headAfter && headAfter !== headBefore) {
+  headSuffix = ` (HEAD moved to ${headAfter.slice(0, 9)} during the queue; the suite measured the tree at its start)`;
+}
 
 function wallShow(ms) {
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
 }
 
-const TURN_END = 'END YOUR TURN.';
-
 function lockRefusal(lines) {
   for (let i = lines.length - 1; i >= 0; i -= 1) {
-    if (!/another suite run is already going/.test(lines[i])) continue;
-    const order = lines[i].replace(/^run-tests: /, '');
-    const cut = order.indexOf(TURN_END);
-    return cut === -1 ? order : order.slice(0, cut + TURN_END.length);
+    if (/another suite run is already going/.test(lines[i])) return lines[i].replace(/^run-tests: /, '');
   }
   return null;
 }

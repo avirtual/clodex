@@ -41,6 +41,7 @@ function writeStub(root, { body, exit }) {
     '  lockDir: process.env.CLODEX_TEST_LOCK_DIR || null,',
     '  lockWait: process.env.CLODEX_TEST_LOCK_WAIT_MS || null,',
     '  lock: process.env.CLODEX_TEST_LOCK || null,',
+    '  noteFd: process.env.CLODEX_TEST_LOCK_NOTE_FD || null,',
     '  advisory: process.env.CLODEX_TEST_SLOW_ADVISORY || null,',
     '  reexec: process.env.CLODEX_RUN_TESTS_REEXEC || null,',
     '  cwd: process.cwd(),',
@@ -352,8 +353,27 @@ test('the runner inherits the ROOT\'s lock dir, so every checkout shares one mut
     const rec = stubRecord(root);
     assert.ok(rec, 'the stub must have run');
     assert.strictEqual(rec.lockDir, path.join(root, '.test-digest.lock'));
-    assert.strictEqual(rec.lockWait, '30000');
+    assert.strictEqual(rec.lockWait, String(15 * 60 * 1000),
+      'the runner queues behind a holder for 15 minutes rather than refusing after 30 seconds');
+    assert.strictEqual(rec.noteFd, '3', 'and writes its queue notes to the fd the wrapper forwards live');
     assert.strictEqual(rec.cwd, root, 'the runner runs in the measured tree');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('a queue note the runner writes to its note fd reaches the wrapper\'s stderr ahead of the digest', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, {
+      body: "fs.writeSync(Number(process.env.CLODEX_TEST_LOCK_NOTE_FD), 'run-tests: queued behind pid 77 (running 0:05)\\n');"
+        + " console.log('TOTALS: 1 pass, 0 fail, 1 tests');",
+      exit: 0,
+    });
+    const r = run(root, '{}');
+    assert.strictEqual(r.code, 0, `ENTER: the run must have succeeded, got: ${r.stderr}`);
+    const lines = r.stderr.split('\n').filter((l) => l.trim());
+    assert.deepStrictEqual(lines.slice(0, -1), ['run-tests: queued behind pid 77 (running 0:05)'],
+      `the queued line must reach the dispatcher's stderr pipe, where the status ping reads it; got ${JSON.stringify(r.stderr)}`);
+    assert.match(r.digest, /green/, 'and the digest is still the last line');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -372,27 +392,19 @@ test('a runner that prints no TOTALS is reported as "nothing measured", never as
 });
 
 test('a lock refusal reaches the seat WHOLE — the order is what the exec exists to deliver', () => {
-  // A refused run produces no TOTALS, so it used to fall into the "no TOTALS
-  // summary … last line:" wrapper, which slices the runner's line at 160 with a
-  // 79-char prefix in front of it. `[agent:remind in <K>m]` sits at char 149+
-  // of the refusal (run-tests.js's die() prefixes `run-tests: `), so the cut
-  // landed inside the fragment and the dispatcher's own 200-slice then left the
-  // caller "…not starting a s". The entire deliverable was lost on this path,
-  // and a seat that cannot read the wait retries every two minutes — the loop
-  // the refusal was written to stop.
   const root = mkRoot();
   try {
-    const refusal = 'run-tests: another suite run is already going (pid 1234567, running 2:05 of a'
-      + ' ~9 min suite) - waited 30s, not starting a second. Do not re-emit: emit'
-      + ' [agent:remind in 6m] re-run the suite, END YOUR TURN. Parts of this suite bind real'
-      + ' ports, so a second run deadlocks both; if it is wedged: kill 1234567 && rm -rf /x/y';
+    const refusal = 'run-tests: another suite run is already going (pid 1234567, running 12:05 of a'
+      + ' ~9 min suite) - waited 900s; re-emit the command, it queues behind the holder. Parts of this'
+      + ' suite bind real ports, so a second run deadlocks both; if it is wedged: kill 1234567 && rm -rf /x/y';
     writeStub(root, { body: `console.error(${JSON.stringify(refusal)});`, exit: 1 });
     const r = run(root, '{}');
     assert.strictEqual(r.code, 1, 'a refusal is not a green');
-    assert.ok(r.digest.includes('[agent:remind in 6m]'),
-      `the literal line the caller must emit has to survive; got ${JSON.stringify(r.digest)}`);
-    assert.ok(r.digest.includes('END YOUR TURN'),
-      `and the instruction to stop being billed; got ${JSON.stringify(r.digest)}`);
+    assert.ok(r.digest.startsWith('another suite run is already going (pid 1234567, running 12:05 of a ~9 min suite)'
+      + ' - waited 900s; re-emit the command, it queues behind the holder.'),
+      `the holder, the wait and the instruction to re-emit have to survive; got ${JSON.stringify(r.digest)}`);
+    assert.ok(!/remind in|END YOUR TURN/.test(r.digest),
+      `the caller is never asked to schedule its own retry; got ${JSON.stringify(r.digest)}`);
     assert.ok(r.digest.length <= 200,
       `the dispatcher delivers 200 chars of the last stderr line, so anything past that never `
       + `arrives; got ${r.digest.length}`);
@@ -537,11 +549,10 @@ test('keep: a lock refusal preserves nothing and destroys nothing — it measure
     assert.ok(red.kept !== null, 'ENTER: nothing was preserved for the refusal to threaten');
 
     const refusal = 'run-tests: another suite run is already going (pid 1234567, running 2:05) -'
-      + ' waited 30s, not starting a second. Do not re-emit: emit [agent:remind in 6m] re-run the'
-      + ' suite, END YOUR TURN.';
+      + ' waited 900s; re-emit the command, it queues behind the holder.';
     writeStub(root, { body: `console.error(${JSON.stringify(refusal)});`, exit: 1 });
     const r = run(root, '{}', { home });
-    assert.ok(r.digest.includes('[agent:remind in 6m]'), 'ENTER: this is not the refusal arm');
+    assert.ok(r.digest.includes('it queues behind the holder'), 'ENTER: this is not the refusal arm');
     assert.strictEqual(r.kept, red.kept,
       'a refused run rewrote the dump: it ran no tests, so anything it writes replaces real '
       + 'evidence with the text of a run that never started');
@@ -702,6 +713,25 @@ function put(root, rel, body) {
 }
 
 const EMPTY_TEST = "require('node:test').test('x', () => {});\n";
+
+test('a HEAD that moves while the runner queues is named on the digest', () => {
+  const root = mkRoot();
+  try {
+    const commit = "require('child_process').execFileSync('git', ['-C', process.cwd(), '-c', 'user.email=t@t',"
+      + " '-c', 'user.name=t', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'moved'],"
+      + " { stdio: 'ignore' });";
+    writeStub(root, { body: `${commit} console.log('TOTALS: 1 pass, 0 fail, 1 tests');`, exit: 0 });
+    git(root, 'init', '-q', '-b', 'master');
+    git(root, 'add', '-A');
+    git(root, 'commit', '-qm', 'base');
+    const r = run(root, '{}');
+    const moved = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    assert.strictEqual(r.code, 0, `ENTER: the run must have succeeded, got: ${r.digest}`);
+    assertDigest(r.digest, `[${path.basename(root)}] 1/1 green (${WALL}) (HEAD moved to ${moved.slice(0, 9)}`
+      + ' during the queue; the suite measured the tree at its start)',
+      'a digest read against a HEAD that moved under it must say so');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 function mkBranchRepo(root, { extraOnMaster = {}, onBranch = () => {}, stub = {} } = {}) {
   writeStub(root, { body: stub.body || "console.log('TOTALS: 1 pass, 0 fail, 1 tests');", exit: stub.exit ?? 0 });

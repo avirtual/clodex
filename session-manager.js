@@ -6280,6 +6280,7 @@ function createSessionManager(deps) {
         let done = false;
         let stderr = '';
         let stderrTruncated = false;
+        let stderrRecent = '';
 
         const tracked = timeoutMs >= EXEC_ACK_MIN_TIMEOUT_MS;
         const startedAt = Date.now();
@@ -6307,8 +6308,9 @@ function createSessionManager(deps) {
             + 'Do not poll, do not re-emit — END YOUR TURN. '
             + `A status line arrives every ${everyLabel} and the result when it ends.`);
           statusTimer = setInterval(() => {
+            const latest = stderrRecent.trim().split('\n').pop().trim().slice(0, 200);
             notice(`${cmd}: still running — ${execElapsedLabel(Date.now() - startedAt)} `
-              + `of a ${ceilingMin}m ceiling (run #${seq}). Do not poll; END YOUR TURN.`);
+              + `of a ${ceilingMin}m ceiling (run #${seq})${latest ? ` — ${latest}` : ''}. Do not poll; END YOUR TURN.`);
           }, statusEveryMs);
           if (statusTimer && typeof statusTimer.unref === 'function') statusTimer.unref();
         }
@@ -6361,6 +6363,7 @@ function createSessionManager(deps) {
           // em-dash. Multi-chunk collection is the norm on the widened path.
           if (typeof child.stderr.setEncoding === 'function') child.stderr.setEncoding('utf8');
           child.stderr.on('data', (d) => {
+            stderrRecent = (stderrRecent + d.toString()).slice(-1000);
             if (stderr.length < stderrCap) stderr += d.toString();
             else stderrTruncated = true;   // makes the clamp's count honest
           });
