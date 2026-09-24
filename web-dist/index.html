@@ -36486,6 +36486,9 @@ void main() {
       function peekEditable(editable, peekRes) {
         return !!(editable && peekRes && peekRes.ok && !peekRes.binary && !peekRes.truncated);
       }
+      function shouldKeepBuffer(tab) {
+        return !!(tab && tab.dirty);
+      }
       function saveArgs(seat, tab, text) {
         return [seat, tab.path, text, tab.mtime];
       }
@@ -36564,7 +36567,7 @@ void main() {
       function agentChanged(set, a) {
         const tab = set.tabs.find((t) => t.id === a.id);
         if (!tab) return { set, effect: null };
-        if (tab.view === "edit" && tab.dirty) return { set: patchTab(set, a.id, { banner: true }), effect: "banner" };
+        if (tab.dirty) return { set: patchTab(set, a.id, { banner: true }), effect: "banner" };
         if (a.visible) return { set, effect: "reload" };
         return { set: patchTab(set, a.id, { stale: true }), effect: null };
       }
@@ -36575,7 +36578,7 @@ void main() {
           return { set: patchTab(set, a.id, { deleted: true, stale: false }), effect: tab.deleted ? null : "render" };
         }
         const mtime = a.peek && a.peek.ok ? a.peek.mtime : null;
-        if (tab.view === "edit" && tab.dirty) {
+        if (tab.dirty) {
           if (mtime != null && mtime !== tab.mtime) return { set: patchTab(set, a.id, { banner: true, deleted: false }), effect: "banner" };
           return { set: patchTab(set, a.id, { deleted: false }), effect: null };
         }
@@ -36607,10 +36610,6 @@ void main() {
             return { set: patchTab(set, a.id, { dirty: !!a.dirty }), effect: null };
           case "closePane":
             return { set: { ...set, open: false }, effect: null };
-          case "showPane": {
-            if (!set.tabs.length || set.open) return { set, effect: null };
-            return { set: { ...set, open: true }, effect: "revalidate" };
-          }
           case "changed":
             return agentChanged(set, a);
           case "loaded":
@@ -36636,6 +36635,7 @@ void main() {
         clampSidePaneWidth,
         peekEditable,
         saveArgs,
+        shouldKeepBuffer,
         isMissing,
         reduceTabs
       };
@@ -36711,6 +36711,7 @@ void main() {
         let paintedKey = "";
         const canEdit = () => peekEditable(editable, peekRes);
         const isDirty = () => baseline != null && editor.value !== baseline;
+        const hasBuffer = () => baseline != null;
         function renderDirty() {
           const d = isDirty();
           dirtyEl.classList.toggle("hidden", !d || editor.classList.contains("hidden"));
@@ -36799,7 +36800,8 @@ void main() {
           diffBtn.classList.toggle("active", view === "diff");
           fileBtn.classList.toggle("active", view === "file");
           editBtn.classList.toggle("active", edit);
-          editBtn.style.display = canEdit() ? "" : "none";
+          editBtn.style.display = canEdit() || hasBuffer() ? "" : "none";
+          editor.readOnly = !canEdit();
           const diffOk = !!(diffRes && diffRes.ok);
           diffBtn.disabled = !diffOk;
           diffBtn.title = diffOk ? "Uncommitted changes (git, vs HEAD)" : diffRes && diffRes.error || "Diff unavailable";
@@ -36808,7 +36810,7 @@ void main() {
           pathEl.textContent = tab.deleted ? `${filePath} (deleted)` : filePath;
           body.classList.toggle("hidden", edit);
           editor.classList.toggle("hidden", !edit);
-          saveBtn.classList.toggle("hidden", !edit);
+          saveBtn.classList.toggle("hidden", !edit || !canEdit());
           banner.classList.toggle("hidden", !tab.banner);
           renderDirty();
           if (edit || !peekRes && !diffRes) return;
@@ -36828,7 +36830,7 @@ void main() {
         diffBtn.addEventListener("click", () => on.view("diff"));
         fileBtn.addEventListener("click", () => on.view("file"));
         editBtn.addEventListener("click", () => {
-          if (!canEdit()) return;
+          if (!canEdit() && !hasBuffer()) return;
           on.view("edit");
           editor.focus();
         });
@@ -36889,6 +36891,7 @@ void main() {
         sidePaneFits,
         clampSidePaneWidth,
         saveArgs,
+        shouldKeepBuffer,
         reduceTabs
       } = require_side_pane_tabs();
       function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, focusTerminal, doc = document, win = window }) {
@@ -37006,7 +37009,7 @@ void main() {
           const anchor = !first && isVisible(seat, id) ? v.anchorLine() : null;
           const { effect } = dispatch(seat, { type: "loaded", id, peek: peekRes, force });
           if (effect === "render") {
-            v.setData(peekRes, diffRes);
+            v.setData(peekRes, diffRes, { keepBuffer: shouldKeepBuffer(tabOf(seat, id)) });
             if (first || !tabOf(seat, id).view) {
               dispatch(seat, { type: "view", id, view: v.defaultView(forceView || tabOf(seat, id).view) });
             }
@@ -37073,6 +37076,7 @@ void main() {
           const v = views.get(viewKey(seat, id));
           if (!tab || !v || !v.canEdit()) return;
           const text = v.getText();
+          v.gen = (v.gen || 0) + 1;
           v.setSaving(true);
           const res = await win.api.fileWrite(...saveArgs(seat, tab, text)).catch((e) => ({ ok: false, error: String(e) }));
           if (views.get(viewKey(seat, id)) !== v) return;
@@ -37112,6 +37116,9 @@ void main() {
             if (view !== "edit" || v && v.canEdit()) dispatch(seat, { type: "view", id, view });
           }
           applyWidth();
+          if (!isWeb && !sidePaneFits(win.innerWidth)) {
+            showToast("Widen the window to see the side pane", { kind: "warn", duration: 4e3 });
+          }
           runEffect(seat, id, effect, { forceView: view });
         }
         function showSeat(seat) {
@@ -37122,7 +37129,11 @@ void main() {
         }
         function forgetSeat(seat) {
           const set = setOf(seat);
-          if (set.tabs.some((t) => t.dirty)) return;
+          if (set.tabs.some((t) => t.dirty)) {
+            if (shownSeat === seat) shownSeat = null;
+            renderChrome();
+            return;
+          }
           for (const t of set.tabs) {
             const k = viewKey(seat, t.id);
             const v = views.get(k);

@@ -30,6 +30,10 @@ function peekEditable(editable, peekRes) {
   return !!(editable && peekRes && peekRes.ok && !peekRes.binary && !peekRes.truncated);
 }
 
+function shouldKeepBuffer(tab) {
+  return !!(tab && tab.dirty);
+}
+
 function saveArgs(seat, tab, text) {
   return [seat, tab.path, text, tab.mtime];
 }
@@ -101,7 +105,7 @@ function closeTab(set, a) {
 function agentChanged(set, a) {
   const tab = set.tabs.find((t) => t.id === a.id);
   if (!tab) return { set, effect: null };
-  if (tab.view === 'edit' && tab.dirty) return { set: patchTab(set, a.id, { banner: true }), effect: 'banner' };
+  if (tab.dirty) return { set: patchTab(set, a.id, { banner: true }), effect: 'banner' };
   if (a.visible) return { set, effect: 'reload' };
   return { set: patchTab(set, a.id, { stale: true }), effect: null };
 }
@@ -113,7 +117,7 @@ function loaded(set, a) {
     return { set: patchTab(set, a.id, { deleted: true, stale: false }), effect: tab.deleted ? null : 'render' };
   }
   const mtime = a.peek && a.peek.ok ? a.peek.mtime : null;
-  if (tab.view === 'edit' && tab.dirty) {
+  if (tab.dirty) {
     if (mtime != null && mtime !== tab.mtime) return { set: patchTab(set, a.id, { banner: true, deleted: false }), effect: 'banner' };
     return { set: patchTab(set, a.id, { deleted: false }), effect: null };
   }
@@ -141,10 +145,6 @@ function reduceTabs(set, a) {
     }
     case 'dirty': return { set: patchTab(set, a.id, { dirty: !!a.dirty }), effect: null };
     case 'closePane': return { set: { ...set, open: false }, effect: null };
-    case 'showPane': {
-      if (!set.tabs.length || set.open) return { set, effect: null };
-      return { set: { ...set, open: true }, effect: 'revalidate' };
-    }
     case 'changed': return agentChanged(set, a);
     case 'loaded': return loaded(set, a);
     case 'saved': return { set: patchTab(set, a.id, { mtime: a.mtime, dirty: false, banner: false, deleted: false }), effect: null };
@@ -165,6 +165,7 @@ module.exports = {
   clampSidePaneWidth,
   peekEditable,
   saveArgs,
+  shouldKeepBuffer,
   isMissing,
   reduceTabs,
 };

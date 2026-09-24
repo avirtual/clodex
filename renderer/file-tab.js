@@ -73,6 +73,7 @@ function createFileTab({ doc = document, filePath, editable, showOpen, on }) {
 
   const canEdit = () => peekEditable(editable, peekRes);
   const isDirty = () => baseline != null && editor.value !== baseline;
+  const hasBuffer = () => baseline != null;
 
   function renderDirty() {
     const d = isDirty();
@@ -168,7 +169,8 @@ function createFileTab({ doc = document, filePath, editable, showOpen, on }) {
     diffBtn.classList.toggle('active', view === 'diff');
     fileBtn.classList.toggle('active', view === 'file');
     editBtn.classList.toggle('active', edit);
-    editBtn.style.display = canEdit() ? '' : 'none';
+    editBtn.style.display = (canEdit() || hasBuffer()) ? '' : 'none';
+    editor.readOnly = !canEdit();
     const diffOk = !!(diffRes && diffRes.ok);
     diffBtn.disabled = !diffOk;
     diffBtn.title = diffOk ? 'Uncommitted changes (git, vs HEAD)' : ((diffRes && diffRes.error) || 'Diff unavailable');
@@ -177,7 +179,7 @@ function createFileTab({ doc = document, filePath, editable, showOpen, on }) {
     pathEl.textContent = tab.deleted ? `${filePath} (deleted)` : filePath;
     body.classList.toggle('hidden', edit);
     editor.classList.toggle('hidden', !edit);
-    saveBtn.classList.toggle('hidden', !edit);
+    saveBtn.classList.toggle('hidden', !edit || !canEdit());
     banner.classList.toggle('hidden', !tab.banner);
     renderDirty();
     if (edit || (!peekRes && !diffRes)) return;
@@ -199,7 +201,7 @@ function createFileTab({ doc = document, filePath, editable, showOpen, on }) {
   diffBtn.addEventListener('click', () => on.view('diff'));
   fileBtn.addEventListener('click', () => on.view('file'));
   editBtn.addEventListener('click', () => {
-    if (!canEdit()) return;
+    if (!canEdit() && !hasBuffer()) return;
     on.view('edit');
     editor.focus();
   });

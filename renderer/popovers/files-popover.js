@@ -1,5 +1,3 @@
-// DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the guarantee.
-
 const { esc, fmtAgo } = require('../lib/format');
 
 function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount, renderProxyBar, getActiveSession, sidePane }) {

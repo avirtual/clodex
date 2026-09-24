@@ -3,7 +3,7 @@
 const { createFileTab } = require('./file-tab');
 const {
   SIDE_PANE_REFIT_THROTTLE_MS, emptyTabSet, fileTabId, sidePaneFits, clampSidePaneWidth,
-  saveArgs, reduceTabs,
+  saveArgs, shouldKeepBuffer, reduceTabs,
 } = require('./lib/side-pane-tabs');
 
 function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, focusTerminal, doc = document, win = window }) {
@@ -127,7 +127,7 @@ function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, foc
     const anchor = !first && isVisible(seat, id) ? v.anchorLine() : null;
     const { effect } = dispatch(seat, { type: 'loaded', id, peek: peekRes, force });
     if (effect === 'render') {
-      v.setData(peekRes, diffRes);
+      v.setData(peekRes, diffRes, { keepBuffer: shouldKeepBuffer(tabOf(seat, id)) });
       if (first || !tabOf(seat, id).view) {
         dispatch(seat, { type: 'view', id, view: v.defaultView(forceView || tabOf(seat, id).view) });
       }
@@ -189,6 +189,7 @@ function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, foc
     const v = views.get(viewKey(seat, id));
     if (!tab || !v || !v.canEdit()) return;
     const text = v.getText();
+    v.gen = (v.gen || 0) + 1;
     v.setSaving(true);
     const res = await win.api.fileWrite(...saveArgs(seat, tab, text))
       .catch((e) => ({ ok: false, error: String(e) }));
@@ -232,6 +233,9 @@ function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, foc
       if (view !== 'edit' || (v && v.canEdit())) dispatch(seat, { type: 'view', id, view });
     }
     applyWidth();
+    if (!isWeb && !sidePaneFits(win.innerWidth)) {
+      showToast('Widen the window to see the side pane', { kind: 'warn', duration: 4000 });
+    }
     runEffect(seat, id, effect, { forceView: view });
   }
 
@@ -244,7 +248,11 @@ function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, foc
 
   function forgetSeat(seat) {
     const set = setOf(seat);
-    if (set.tabs.some((t) => t.dirty)) return;
+    if (set.tabs.some((t) => t.dirty)) {
+      if (shownSeat === seat) shownSeat = null;
+      renderChrome();
+      return;
+    }
     for (const t of set.tabs) {
       const k = viewKey(seat, t.id);
       const v = views.get(k);

@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const {
-  emptyTabSet, fileTabId, sidePaneFits, clampSidePaneWidth, peekEditable, saveArgs, reduceTabs,
+  emptyTabSet, fileTabId, sidePaneFits, clampSidePaneWidth, peekEditable, saveArgs, shouldKeepBuffer, reduceTabs,
   SIDE_PANE_MAX_TABS,
 } = require('../renderer/lib/side-pane-tabs');
 const { initStores } = require('../stores.js');
@@ -199,20 +199,6 @@ const ACTIONS = [
     after: { ids: ['a', 'b', 'c'], active: 'c', open: true },
   },
   {
-    name: 'showing a seat with kept tabs reopens its pane',
-    before: set([tab('a')], 'a', { open: false }),
-    action: { type: 'showPane' },
-    effect: 'revalidate',
-    after: { ids: ['a'], active: 'a', open: true },
-  },
-  {
-    name: 'a seat without tabs shows no pane',
-    before: emptyTabSet(),
-    action: { type: 'showPane' },
-    effect: null,
-    after: { ids: [], active: null, open: false },
-  },
-  {
     name: 'clicking a tab focuses it',
     before: set([tab('a'), tab('b')], 'b'),
     action: { type: 'focus', id: 'a' },
@@ -283,6 +269,48 @@ const MATRIX = [
     name: 'Edit view, dirty, hidden: banner, buffer and mtime untouched',
     before: set([tab('a', { view: 'edit', dirty: true }), tab('b')], 'b'),
     action: { type: 'changed', id: 'a', visible: false },
+    effect: 'banner',
+    tab: ['a', { dirty: true, banner: true, mtime: 100 }],
+  },
+  {
+    name: 'File view over a dirty buffer, visible: banner, mtime untouched',
+    before: set([tab('a', { view: 'file', dirty: true })], 'a'),
+    action: { type: 'changed', id: 'a', visible: true },
+    effect: 'banner',
+    tab: ['a', { dirty: true, banner: true, stale: false, mtime: 100 }],
+  },
+  {
+    name: 'Diff view over a dirty buffer, visible: banner, mtime untouched',
+    before: set([tab('a', { view: 'diff', dirty: true })], 'a'),
+    action: { type: 'changed', id: 'a', visible: true },
+    effect: 'banner',
+    tab: ['a', { dirty: true, banner: true, stale: false, mtime: 100 }],
+  },
+  {
+    name: 'File view over a dirty buffer, hidden: banner, mtime untouched',
+    before: set([tab('a', { view: 'file', dirty: true }), tab('b')], 'b'),
+    action: { type: 'changed', id: 'a', visible: false },
+    effect: 'banner',
+    tab: ['a', { dirty: true, banner: true, stale: false, mtime: 100 }],
+  },
+  {
+    name: 'Diff view over a dirty buffer, hidden: banner, mtime untouched',
+    before: set([tab('a', { view: 'diff', dirty: true }), tab('b')], 'b'),
+    action: { type: 'changed', id: 'a', visible: false },
+    effect: 'banner',
+    tab: ['a', { dirty: true, banner: true, stale: false, mtime: 100 }],
+  },
+  {
+    name: 'a fetch in the Diff view over a dirty buffer that finds a new mtime raises the banner and keeps the old mtime',
+    before: set([tab('a', { view: 'diff', dirty: true })], 'a'),
+    action: { type: 'loaded', id: 'a', peek: { ok: true, mtime: 200, content: 'theirs' } },
+    effect: 'banner',
+    tab: ['a', { dirty: true, banner: true, mtime: 100 }],
+  },
+  {
+    name: 'a forced fetch over a dirty buffer still does not adopt the new mtime',
+    before: set([tab('a', { view: 'file', dirty: true })], 'a'),
+    action: { type: 'loaded', id: 'a', peek: { ok: true, mtime: 200, content: 'theirs' }, force: true },
     effect: 'banner',
     tab: ['a', { dirty: true, banner: true, mtime: 100 }],
   },
@@ -384,8 +412,8 @@ for (const row of [...ACTIONS, ...MATRIX]) {
 }
 
 test('side-pane tabs: the table covers every section 3.2 action and the section 3.3 matrix', () => {
-  assert.strictEqual(ACTIONS.length, 23);
-  assert.strictEqual(MATRIX.length, 21);
+  assert.strictEqual(ACTIONS.length, 21);
+  assert.strictEqual(MATRIX.length, 27);
   assert.strictEqual(SIDE_PANE_MAX_TABS, 12);
 });
 
@@ -402,6 +430,20 @@ test('side-pane tabs: Edit is offered only for whole, local, text content', () =
   assert.strictEqual(peekEditable(true, { ok: false, error: 'x' }), false);
   assert.strictEqual(peekEditable(false, whole), false);
   assert.strictEqual(peekEditable(true, null), false);
+});
+
+test('side-pane tabs: a fetch keeps the buffer of a dirty tab, whatever its view or the file state', () => {
+  const rows = [
+    [{ view: 'edit', dirty: true }, true],
+    [{ view: 'diff', dirty: true }, true],
+    [{ view: 'file', dirty: true, deleted: true }, true],
+    [{ view: 'edit', dirty: false }, false],
+    [{ view: 'file', dirty: false, deleted: true }, false],
+  ];
+  for (const [over, keep] of rows) assert.strictEqual(shouldKeepBuffer(tab('a', over)), keep, JSON.stringify(over));
+  let s = set([tab('a', { view: 'edit', dirty: true })], 'a');
+  s = reduceTabs(s, { type: 'loaded', id: 'a', peek: { ok: false, code: 'not-found', error: 'no such file' } }).set;
+  assert.strictEqual(shouldKeepBuffer(s.tabs[0]), true);
 });
 
 test('side-pane tabs: a save carries the mtime of the read the buffer came from', () => {
