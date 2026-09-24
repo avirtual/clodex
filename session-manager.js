@@ -2817,25 +2817,27 @@ function createSessionManager(deps) {
       return s.stream ? s.stream.pid : undefined;
     }
 
-    seatSend(name, text) {
+    seatSend(name, text, images = []) {
       const s = this.sessions.get(name);
       if (!s || s._dead || s.io !== 'stream' || !s.stream) return { ok: false, error: 'not a live stream seat' };
       const body = String(text == null ? '' : text);
-      if (!body.trim()) return { ok: false, error: 'empty message' };
+      const imgs = Array.isArray(images) ? images : [];
+      if (!body.trim() && !imgs.length) return { ok: false, error: 'empty message' };
       this._lastOperatorInputAt = Date.now();
       if (s.streamBusy) {
-        s.outbox.push(body);
+        s.outbox.push({ text: body, images: imgs });
         return { ok: true, queued: s.outbox.length };
       }
-      this._streamDeliver(s, body);
+      this._streamDeliver(s, { text: body, images: imgs });
       return { ok: true, queued: 0 };
     }
 
-    _streamDeliver(s, body) {
+    _streamDeliver(s, { text, images }) {
       s.streamBusy = true;
       this._emitActivity(s.name, 'thinking', false);
-      s.stream.send(streamCodecClaude.encodeUser(body)).catch((e) => {
-        log.warn('session', `stream send ${s.name} failed (${Buffer.byteLength(body)} bytes): ${e.message}`);
+      s.stream.send(streamCodecClaude.encodeUser(text, images)).catch((e) => {
+        const imageBytes = images.reduce((n, img) => n + img.data.length, 0);
+        log.warn('session', `stream send ${s.name} failed (${Buffer.byteLength(text)} bytes, ${images.length} images ${imageBytes} b64 bytes): ${e.message}`);
       });
     }
 
@@ -2856,7 +2858,11 @@ function createSessionManager(deps) {
         case 'result':
           s.streamBusy = false;
           if (s.outbox.length) {
-            this._streamDeliver(s, s.outbox.splice(0).join('\n\n'));
+            const queued = s.outbox.splice(0);
+            this._streamDeliver(s, {
+              text: queued.map((q) => q.text).filter((t) => t.trim()).join('\n\n'),
+              images: queued.flatMap((q) => q.images),
+            });
           } else {
             this._emitActivity(s.name, 'idle', true);
           }

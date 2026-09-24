@@ -1500,7 +1500,71 @@ function createStreamSeatPane(name, wrapperEl) {
   composer.className = 'seat-composer';
   composer.rows = 3;
   composer.placeholder = 'Message — Enter sends, Shift+Enter for a new line';
+  const attachEl = document.createElement('div');
+  attachEl.className = 'seat-attachments';
+  attachEl.hidden = true;
+  wrapperEl.appendChild(attachEl);
   wrapperEl.appendChild(composer);
+  let pending = [];
+  const renderAttachments = () => {
+    attachEl.replaceChildren();
+    attachEl.hidden = pending.length === 0;
+    pending.forEach((img, i) => {
+      const thumb = document.createElement('div');
+      thumb.className = 'seat-attachment';
+      const pic = document.createElement('img');
+      pic.src = `data:${img.mediaType};base64,${img.data}`;
+      pic.alt = '';
+      const rm = document.createElement('button');
+      rm.type = 'button';
+      rm.className = 'seat-attachment-remove';
+      rm.textContent = '×';
+      rm.title = 'Remove image';
+      rm.addEventListener('click', () => {
+        pending = pending.filter((_, j) => j !== i);
+        renderAttachments();
+      });
+      thumb.append(pic, rm);
+      attachEl.appendChild(thumb);
+    });
+  };
+  const SEAT_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+  const SEAT_IMAGE_MAX = 5;
+  let reading = 0;
+  const attachFiles = (files) => {
+    const allowed = files.filter((f) => SEAT_IMAGE_TYPES.includes(f.type));
+    const room = Math.max(0, SEAT_IMAGE_MAX - pending.length - reading);
+    const taken = allowed.slice(0, room);
+    if (taken.length < files.length) {
+      showToast(`${files.length - taken.length} image(s) not attached — png, jpeg, gif or webp only, at most ${SEAT_IMAGE_MAX} per message.`, { kind: 'error', name });
+    }
+    for (const file of taken) {
+      reading += 1;
+      const reader = new FileReader();
+      reader.onloadend = () => { reading -= 1; };
+      reader.onload = () => {
+        const m = /^data:([^;,]+);base64,(.*)$/.exec(String(reader.result || ''));
+        if (!m || disposed) return;
+        pending = [...pending, { mediaType: m[1], data: m[2] }];
+        renderAttachments();
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+  composer.addEventListener('paste', (e) => {
+    const items = Array.from((e.clipboardData && e.clipboardData.items) || []);
+    const files = items.filter((it) => it.kind === 'file' && /^image\//.test(it.type)).map((it) => it.getAsFile()).filter(Boolean);
+    if (!files.length) return;
+    e.preventDefault();
+    attachFiles(files);
+  });
+  wrapperEl.addEventListener('drop', (e) => {
+    const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+    if (!files.length || !files.every((f) => /^image\//.test(f.type))) return;
+    e.preventDefault();
+    e.stopPropagation();
+    attachFiles(files);
+  });
   let rev = -1;
   let pulling = false;
   let disposed = false;
@@ -1534,19 +1598,29 @@ function createStreamSeatPane(name, wrapperEl) {
     if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
     e.preventDefault();
     const text = composer.value;
-    if (!text.trim()) return;
+    const images = pending;
+    if (!text.trim() && !images.length) return;
     composer.value = '';
+    pending = [];
+    renderAttachments();
     follow = true;
-    Promise.resolve(window.api.seatSend(name, text)).then((res) => {
+    const restore = () => {
+      if (!composer.value) composer.value = text;
+      if (!pending.length && images.length) {
+        pending = images;
+        renderAttachments();
+      }
+    };
+    Promise.resolve(window.api.seatSend(name, text, images)).then((res) => {
       if (res && res.ok === false) {
         showToast(`Send failed: ${res.error || 'unknown error'}`, { kind: 'error', name });
-        if (!composer.value) composer.value = text;
+        restore();
         return;
       }
       pull(true);
     }).catch((err) => {
       showToast(`Send failed: ${err && err.message ? err.message : err}`, { kind: 'error', name });
-      if (!composer.value) composer.value = text;
+      restore();
     });
   });
   return {
