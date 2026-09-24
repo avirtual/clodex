@@ -2509,7 +2509,7 @@ function registerIpcHandlers(deps) {
         typeof entry.fixFor === 'string' ? entry.fixFor : null,
         entry.io || 'pty',
       );
-      return { ok: true };
+      return { ok: true, io: entry.io || 'pty' };
     } catch (err) {
       return { ok: false, error: err.message };
     }
