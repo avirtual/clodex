@@ -8709,6 +8709,37 @@ body.web-frontend #sidebar-header {
   visibility: hidden;
   pointer-events: none;
 }
+.seat-outbox {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 30%;
+  overflow-y: auto;
+}
+.seat-outbox[hidden] {
+  display: none;
+}
+.seat-outbox-row {
+  display: flex;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary, var(--text-primary));
+  opacity: 0.6;
+  font-size: var(--fs-sm, var(--fs-md));
+  white-space: nowrap;
+  overflow: hidden;
+}
+.seat-outbox-badge {
+  flex: 0 0 auto;
+  font-family: var(--font-mono, var(--font-ui));
+}
+.seat-outbox-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .seat-attachments {
   flex: 0 0 auto;
   display: flex;
@@ -24909,6 +24940,177 @@ ${i3.join("\n")}
     }
   });
 
+  // intent-glyphs.js
+  var require_intent_glyphs = __commonJS({
+    "intent-glyphs.js"(exports, module) {
+      "use strict";
+      var PLUGIN_GLYPH = "\u25C7";
+      var INERT = Object.freeze({ glyph: "\u2298", label: "won't fire" });
+      var g = (glyph, label) => Object.freeze({ glyph, label });
+      var CONTEXT = { compact: g("\u229F", "compact"), clear: g("\u232B", "clear"), reload: g("\u21BA", "reload") };
+      var SCRATCH = { begin: g("\u27E6", "scratch"), end: g("\u27E7", "result"), rewind: g("\u21E4", "rewind"), mark: g("\u2731", "mark"), cancel: g("\u2297", "cancel") };
+      var TASK = {
+        assign: g("\u21E5", "assign"),
+        start: g("\u21C4", "start"),
+        park: g("\u2016", "park"),
+        respec: g("\u270E", "respec"),
+        reject: g("\u21B6", "reject"),
+        cancel: g("\u2297", "cancel"),
+        accept: g("\u2913", "accept"),
+        done: g("\u2713", "done"),
+        list: g("\u2261", "tickets")
+      };
+      var CORE = {
+        dm: () => g("\u2192", "message"),
+        resend: () => g("\u21C9", "resend"),
+        who: () => g("\u25CE", "who"),
+        name: () => g("@", "name"),
+        context: (i) => CONTEXT[i.sub] || g("\u229F", String(i.sub || "context")),
+        scratch: (i) => SCRATCH[i.sub] || g("\u27E6", String(i.sub || "scratch")),
+        memory: (i) => g("\u25C8", String(i.sub || "memory")),
+        file: () => g("\u25A2", "show"),
+        term: () => g("\u25A4", "terminal"),
+        exec: () => g("\u25B8", "run"),
+        remind: (i) => {
+          const word = String(i.spec || "").split(/\s+/)[0];
+          if (word === "list") return g("\u25F7", "reminders");
+          if (word === "cancel") return g("\u25F7", "unremind");
+          return g("\u25F7", "remind");
+        },
+        shout: () => g("\u2691", "shout"),
+        "team-review": () => g("\u25D0", "review"),
+        "review-done": () => g("\u22A8", "verdict"),
+        reboot: () => g("\u21BB", "reboot"),
+        task: (i) => i.sub === "add" ? g("\u2295", i.start ? "dispatch" : "file") : TASK[i.sub] || g("\u21C4", String(i.sub || "task")),
+        "team-create": () => g("\u229E", "create"),
+        team: (i) => g("\u229E", String(i.sub || "team")),
+        spawn: () => g("\u2726", "spawn")
+      };
+      var REPLY_GLYPHS = Object.freeze({
+        dm: g("\u2192", "message"),
+        resend: g("\u21C9", "resend"),
+        who: g("\u25CE", "who"),
+        name: g("@", "name"),
+        context: g("\u229F", "context"),
+        scratch: g("\u27E6", "scratch"),
+        memory: g("\u25C8", "memory"),
+        file: g("\u25A2", "show"),
+        term: g("\u25A4", "terminal"),
+        exec: g("\u25B8", "run"),
+        remind: g("\u25F7", "remind"),
+        shout: g("\u2691", "shout"),
+        "team-review": g("\u25D0", "review"),
+        "review-done": g("\u22A8", "verdict"),
+        reboot: g("\u21BB", "reboot"),
+        task: g("\u21C4", "task"),
+        "team-create": g("\u229E", "team"),
+        team: g("\u229E", "team"),
+        spawn: g("\u2726", "spawn"),
+        intent: g("\u2298", "bounced"),
+        peers: g("\u21E2", "peers")
+      });
+      var CORE_GLYPHS = /* @__PURE__ */ new Set([
+        PLUGIN_GLYPH,
+        INERT.glyph,
+        ...Object.values(CONTEXT).map((x) => x.glyph),
+        ...Object.values(SCRATCH).map((x) => x.glyph),
+        ...Object.values(TASK).map((x) => x.glyph),
+        ...Object.values(REPLY_GLYPHS).map((x) => x.glyph),
+        "\u2295"
+      ]);
+      function isPlainGlyph(s) {
+        return typeof s === "string" && Array.from(s).length === 1 && !new RegExp("\\p{Emoji}", "u").test(s) && !new RegExp("\\p{Extended_Pictographic}", "u").test(s);
+      }
+      function pluginGlyphOk(s) {
+        return isPlainGlyph(s) && !CORE_GLYPHS.has(s);
+      }
+      function glyphFor(intent, pluginRow) {
+        const type = intent && intent.type;
+        if (Object.prototype.hasOwnProperty.call(CORE, type)) return CORE[type](intent);
+        return g(pluginRow && pluginRow.glyph || PLUGIN_GLYPH, String(type || ""));
+      }
+      function replyGlyphFor(verb, pluginRow) {
+        if (Object.prototype.hasOwnProperty.call(REPLY_GLYPHS, verb)) return REPLY_GLYPHS[verb];
+        return g(pluginRow && pluginRow.glyph || PLUGIN_GLYPH, String(verb || ""));
+      }
+      var str = (v) => typeof v === "string" && v ? v : null;
+      var TEAM_TARGET_KEYS = ["name", "stem", "branch"];
+      var TEAM_SKIP = /* @__PURE__ */ new Set(["type", "sub", "body", ...TEAM_TARGET_KEYS]);
+      function kvChips(intent) {
+        return Object.keys(intent).filter((k) => !TEAM_SKIP.has(k) && intent[k] != null && intent[k] !== "" && intent[k] !== false).map((k) => `${k}:${intent[k]}`);
+      }
+      function targetAndChips(intent) {
+        switch (intent.type) {
+          case "dm":
+            return [str(intent.target), intent.urgent ? ["urgent"] : []];
+          case "task": {
+            const chips = ["start", "park", "dup"].filter((k) => intent[k] === true);
+            if (str(intent.reviewer)) chips.push(`reviewer:${intent.reviewer}`);
+            return [str(intent.id) || str(intent.who), chips];
+          }
+          case "exec":
+            return [str(intent.cmd), []];
+          case "remind": {
+            const spec = str(intent.spec);
+            const rest = spec && spec.replace(/^(list|cancel)\b\s*/, "");
+            return [rest || null, []];
+          }
+          case "file":
+            return [str(intent.path), intent.sub && intent.sub !== "view" ? [intent.sub] : []];
+          case "team":
+          case "team-create":
+            return [TEAM_TARGET_KEYS.map((k) => str(intent[k])).find(Boolean) || null, kvChips(intent)];
+          case "spawn":
+            return [str(intent.name), []];
+          case "resend":
+            return [str(intent.id), []];
+          case "scratch":
+            return [str(intent.label), []];
+          case "shout":
+            return ["you", []];
+          default:
+            if (Object.prototype.hasOwnProperty.call(CORE, intent.type)) return [null, []];
+            return [str(intent.target) || str(intent.name) || str(intent.id), []];
+        }
+      }
+      function headOf(intent, pluginRow) {
+        const { glyph, label } = glyphFor(intent, pluginRow);
+        const [target, chips] = targetAndChips(intent || {});
+        return { glyph, label, target, chips };
+      }
+      module.exports = { PLUGIN_GLYPH, INERT, REPLY_GLYPHS, CORE_GLYPHS, isPlainGlyph, pluginGlyphOk, glyphFor, replyGlyphFor, headOf };
+    }
+  });
+
+  // renderer/lib/outbox-rows.js
+  var require_outbox_rows = __commonJS({
+    "renderer/lib/outbox-rows.js"(exports, module) {
+      "use strict";
+      var { replyGlyphFor } = require_intent_glyphs();
+      var INBOUND_RE = /^\[agent:from ([^\]\s]+)\][ \t]*/;
+      var RUNTIME_RE = /^\[agent:([a-z-]+)\][ \t]*/;
+      var ROW_CAP = 160;
+      function firstLine(text) {
+        const line = String(text || "").split("\n").find((l) => l.trim()) || "";
+        return line.length > ROW_CAP ? `${line.slice(0, ROW_CAP - 1)}\u2026` : line;
+      }
+      function outboxRowOf(item) {
+        const text = String(item && item.text || "");
+        const images = item && Number(item.images) || 0;
+        if (!item || item.origin !== "system") return { origin: "operator", badge: null, text: firstLine(text), images };
+        const from = INBOUND_RE.exec(text);
+        if (from) return { origin: "system", badge: { glyph: null, label: from[1] }, text: firstLine(text.slice(from[0].length)), images };
+        const runtime = RUNTIME_RE.exec(text);
+        if (runtime) {
+          const { glyph, label } = replyGlyphFor(runtime[1]);
+          return { origin: "system", badge: { glyph, label }, text: firstLine(text.slice(runtime[0].length)), images };
+        }
+        return { origin: "system", badge: { glyph: null, label: "system" }, text: firstLine(text), images };
+      }
+      module.exports = { outboxRowOf };
+    }
+  });
+
   // renderer/lib/path-scan.js
   var require_path_scan = __commonJS({
     "renderer/lib/path-scan.js"(exports, module) {
@@ -28513,148 +28715,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
         ).length;
       }
       module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, LEGACY_INTENT_KEYS, SCRATCH_LABEL_RE, canonicalIntentKey, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount };
-    }
-  });
-
-  // intent-glyphs.js
-  var require_intent_glyphs = __commonJS({
-    "intent-glyphs.js"(exports, module) {
-      "use strict";
-      var PLUGIN_GLYPH = "\u25C7";
-      var INERT = Object.freeze({ glyph: "\u2298", label: "won't fire" });
-      var g = (glyph, label) => Object.freeze({ glyph, label });
-      var CONTEXT = { compact: g("\u229F", "compact"), clear: g("\u232B", "clear"), reload: g("\u21BA", "reload") };
-      var SCRATCH = { begin: g("\u27E6", "scratch"), end: g("\u27E7", "result"), rewind: g("\u21E4", "rewind"), mark: g("\u2731", "mark"), cancel: g("\u2297", "cancel") };
-      var TASK = {
-        assign: g("\u21E5", "assign"),
-        start: g("\u21C4", "start"),
-        park: g("\u2016", "park"),
-        respec: g("\u270E", "respec"),
-        reject: g("\u21B6", "reject"),
-        cancel: g("\u2297", "cancel"),
-        accept: g("\u2913", "accept"),
-        done: g("\u2713", "done"),
-        list: g("\u2261", "tickets")
-      };
-      var CORE = {
-        dm: () => g("\u2192", "message"),
-        resend: () => g("\u21C9", "resend"),
-        who: () => g("\u25CE", "who"),
-        name: () => g("@", "name"),
-        context: (i) => CONTEXT[i.sub] || g("\u229F", String(i.sub || "context")),
-        scratch: (i) => SCRATCH[i.sub] || g("\u27E6", String(i.sub || "scratch")),
-        memory: (i) => g("\u25C8", String(i.sub || "memory")),
-        file: () => g("\u25A2", "show"),
-        term: () => g("\u25A4", "terminal"),
-        exec: () => g("\u25B8", "run"),
-        remind: (i) => {
-          const word = String(i.spec || "").split(/\s+/)[0];
-          if (word === "list") return g("\u25F7", "reminders");
-          if (word === "cancel") return g("\u25F7", "unremind");
-          return g("\u25F7", "remind");
-        },
-        shout: () => g("\u2691", "shout"),
-        "team-review": () => g("\u25D0", "review"),
-        "review-done": () => g("\u22A8", "verdict"),
-        reboot: () => g("\u21BB", "reboot"),
-        task: (i) => i.sub === "add" ? g("\u2295", i.start ? "dispatch" : "file") : TASK[i.sub] || g("\u21C4", String(i.sub || "task")),
-        "team-create": () => g("\u229E", "create"),
-        team: (i) => g("\u229E", String(i.sub || "team")),
-        spawn: () => g("\u2726", "spawn")
-      };
-      var REPLY_GLYPHS = Object.freeze({
-        dm: g("\u2192", "message"),
-        resend: g("\u21C9", "resend"),
-        who: g("\u25CE", "who"),
-        name: g("@", "name"),
-        context: g("\u229F", "context"),
-        scratch: g("\u27E6", "scratch"),
-        memory: g("\u25C8", "memory"),
-        file: g("\u25A2", "show"),
-        term: g("\u25A4", "terminal"),
-        exec: g("\u25B8", "run"),
-        remind: g("\u25F7", "remind"),
-        shout: g("\u2691", "shout"),
-        "team-review": g("\u25D0", "review"),
-        "review-done": g("\u22A8", "verdict"),
-        reboot: g("\u21BB", "reboot"),
-        task: g("\u21C4", "task"),
-        "team-create": g("\u229E", "team"),
-        team: g("\u229E", "team"),
-        spawn: g("\u2726", "spawn"),
-        intent: g("\u2298", "bounced"),
-        peers: g("\u21E2", "peers")
-      });
-      var CORE_GLYPHS = /* @__PURE__ */ new Set([
-        PLUGIN_GLYPH,
-        INERT.glyph,
-        ...Object.values(CONTEXT).map((x) => x.glyph),
-        ...Object.values(SCRATCH).map((x) => x.glyph),
-        ...Object.values(TASK).map((x) => x.glyph),
-        ...Object.values(REPLY_GLYPHS).map((x) => x.glyph),
-        "\u2295"
-      ]);
-      function isPlainGlyph(s) {
-        return typeof s === "string" && Array.from(s).length === 1 && !new RegExp("\\p{Emoji}", "u").test(s) && !new RegExp("\\p{Extended_Pictographic}", "u").test(s);
-      }
-      function pluginGlyphOk(s) {
-        return isPlainGlyph(s) && !CORE_GLYPHS.has(s);
-      }
-      function glyphFor(intent, pluginRow) {
-        const type = intent && intent.type;
-        if (Object.prototype.hasOwnProperty.call(CORE, type)) return CORE[type](intent);
-        return g(pluginRow && pluginRow.glyph || PLUGIN_GLYPH, String(type || ""));
-      }
-      function replyGlyphFor(verb, pluginRow) {
-        if (Object.prototype.hasOwnProperty.call(REPLY_GLYPHS, verb)) return REPLY_GLYPHS[verb];
-        return g(pluginRow && pluginRow.glyph || PLUGIN_GLYPH, String(verb || ""));
-      }
-      var str = (v) => typeof v === "string" && v ? v : null;
-      var TEAM_TARGET_KEYS = ["name", "stem", "branch"];
-      var TEAM_SKIP = /* @__PURE__ */ new Set(["type", "sub", "body", ...TEAM_TARGET_KEYS]);
-      function kvChips(intent) {
-        return Object.keys(intent).filter((k) => !TEAM_SKIP.has(k) && intent[k] != null && intent[k] !== "" && intent[k] !== false).map((k) => `${k}:${intent[k]}`);
-      }
-      function targetAndChips(intent) {
-        switch (intent.type) {
-          case "dm":
-            return [str(intent.target), intent.urgent ? ["urgent"] : []];
-          case "task": {
-            const chips = ["start", "park", "dup"].filter((k) => intent[k] === true);
-            if (str(intent.reviewer)) chips.push(`reviewer:${intent.reviewer}`);
-            return [str(intent.id) || str(intent.who), chips];
-          }
-          case "exec":
-            return [str(intent.cmd), []];
-          case "remind": {
-            const spec = str(intent.spec);
-            const rest = spec && spec.replace(/^(list|cancel)\b\s*/, "");
-            return [rest || null, []];
-          }
-          case "file":
-            return [str(intent.path), intent.sub && intent.sub !== "view" ? [intent.sub] : []];
-          case "team":
-          case "team-create":
-            return [TEAM_TARGET_KEYS.map((k) => str(intent[k])).find(Boolean) || null, kvChips(intent)];
-          case "spawn":
-            return [str(intent.name), []];
-          case "resend":
-            return [str(intent.id), []];
-          case "scratch":
-            return [str(intent.label), []];
-          case "shout":
-            return ["you", []];
-          default:
-            if (Object.prototype.hasOwnProperty.call(CORE, intent.type)) return [null, []];
-            return [str(intent.target) || str(intent.name) || str(intent.id), []];
-        }
-      }
-      function headOf(intent, pluginRow) {
-        const { glyph, label } = glyphFor(intent, pluginRow);
-        const [target, chips] = targetAndChips(intent || {});
-        return { glyph, label, target, chips };
-      }
-      module.exports = { PLUGIN_GLYPH, INERT, REPLY_GLYPHS, CORE_GLYPHS, isPlainGlyph, pluginGlyphOk, glyphFor, replyGlyphFor, headOf };
     }
   });
 
@@ -44695,6 +44755,7 @@ ${detail}` });
       var { renderMarkdown } = require_render_markdown();
       var { placeAboveAnchor } = require_popover_place();
       var { classifySender } = require_sender_class();
+      var { outboxRowOf } = require_outbox_rows();
       var { scanPaths } = require_path_scan();
       var { matchGutterRow, findGutterFile } = require_gutter_scan();
       var GUTTER_HEADER_SCAN = 400;
@@ -46173,8 +46234,32 @@ ${detail}` });
         const attachEl = document.createElement("div");
         attachEl.className = "seat-attachments";
         attachEl.hidden = true;
+        const outboxEl = document.createElement("div");
+        outboxEl.className = "seat-outbox";
+        outboxEl.hidden = true;
+        wrapperEl.appendChild(outboxEl);
         wrapperEl.appendChild(attachEl);
         wrapperEl.appendChild(composer);
+        const renderOutbox = (items) => {
+          outboxEl.replaceChildren();
+          outboxEl.hidden = items.length === 0;
+          for (const item of items) {
+            const row = outboxRowOf(item);
+            const el = document.createElement("div");
+            el.className = `seat-outbox-row seat-outbox-${row.origin}`;
+            if (row.badge) {
+              const badge = document.createElement("span");
+              badge.className = "seat-outbox-badge";
+              badge.textContent = row.badge.glyph ? `${row.badge.glyph} ${row.badge.label}` : row.badge.label;
+              el.appendChild(badge);
+            }
+            const body = document.createElement("span");
+            body.className = "seat-outbox-text";
+            body.textContent = row.images ? `${row.text} [${row.images} image${row.images === 1 ? "" : "s"}]` : row.text;
+            el.appendChild(body);
+            outboxEl.appendChild(el);
+          }
+        };
         let pending = [];
         const renderAttachments = () => {
           attachEl.replaceChildren();
@@ -46254,6 +46339,7 @@ ${detail}` });
             pulling = false;
             if (disposed || !res || !res.ok || res.rev === rev) return;
             rev = res.rev;
+            renderOutbox(Array.isArray(res.outbox) ? res.outbox : []);
             renderTranscript(document, paneEl, res.records, {
               seatName: name,
               resolveFile: (p) => window.api.fileResolve(name, p, null),

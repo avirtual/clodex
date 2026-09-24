@@ -221,6 +221,7 @@ const { SEGMENT_RE: IMPORT_SEGMENT_RE, SESSION_ID_RE: IMPORT_SESSION_ID_RE } = r
 const { effectiveModel } = require('./accounts');
 const { liveSnapshotFor, archivedSnapshotFor, stampConfigFlags } = require('./session-restore');
 const { COMPACTING_VALVE_MS, COMPACT_NOTICE_CAP, noticeTextFor } = require('./compact-notices');
+const STREAM_TOOL_DRAIN_MIN_MS = 2000;
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
 // module's path. Removing the re-export as unused breaks those importers.
@@ -1872,7 +1873,7 @@ function createSessionManager(deps) {
               known: Array.isArray(disabledSkills) && disabledSkills.includes('*') ? knownSkillNames() : [],
               injectSkills,
             });
-            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : []);
+            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo);
             args.push('--settings', settingsPath);
             hookInstalled = true;
           }
@@ -2828,17 +2829,93 @@ function createSessionManager(deps) {
       const imgs = Array.isArray(images) ? images : [];
       if (!body.trim() && !imgs.length) return { ok: false, error: 'empty message' };
       this._lastOperatorInputAt = Date.now();
-      if (s.streamBusy) {
-        s.outbox.push({ text: body, images: imgs });
-        return { ok: true, queued: s.outbox.length };
-      }
-      this._streamDeliver(s, { text: body, images: imgs });
-      return { ok: true, queued: 0 };
+      return { ok: true, queued: this._streamEnqueue(s, { text: body, images: imgs, origin: 'operator' }) };
     }
 
-    _streamDeliver(s, { text, images }) {
+    _streamEnqueue(s, item, onSend = null, produce = null) {
+      if (onSend) Object.defineProperty(item, 'onSend', { value: onSend, enumerable: false });
+      if (produce) Object.defineProperty(item, 'produce', { value: produce, enumerable: false });
+      if (!s.streamBusy) {
+        const payload = this._streamJoin([item]);
+        if (!payload.text.trim() && !payload.images.length) return 0;
+        this._streamDeliver(s, payload);
+        this._streamSent([item]);
+        return 0;
+      }
+      if (item.origin === 'operator') {
+        let i = 0;
+        while (i < s.outbox.length && s.outbox[i].origin === 'operator') i += 1;
+        s.outbox.splice(i, 0, item);
+      } else {
+        s.outbox.push(item);
+      }
+      this._streamOutboxChanged(s);
+      return s.outbox.length;
+    }
+
+    _streamEnqueueSystem(s, text, produce, where, onSend = null) {
+      if (this._refuseStreamInject(s, text, where)) return;
+      if (!produce && !String(text || '').trim()) return;
+      this._streamEnqueue(s, { text: produce ? '' : String(text), images: [], origin: 'system' }, onSend, produce);
+    }
+
+    _streamJoin(items) {
+      const texts = items.map((q) => {
+        if (typeof q.produce !== 'function') return q.text;
+        let t = null;
+        try { t = q.produce(); } catch { t = null; }
+        return t ? String(t) : '';
+      });
+      return {
+        text: texts.filter((t) => t.trim()).join('\n\n'),
+        images: items.flatMap((q) => q.images),
+      };
+    }
+
+    _streamSent(items) {
+      for (const q of items) {
+        if (typeof q.onSend === 'function') { try { q.onSend(); } catch {} }
+      }
+    }
+
+    _streamOutboxChanged(s) {
+      s._outboxRev = (s._outboxRev || 0) + 1;
+      this._sendToSession(s.name, 'transcript-changed', s.name);
+    }
+
+    seatOutbox(name) {
+      const s = this.sessions.get(name);
+      if (!s || s.io !== 'stream') return null;
+      return {
+        rev: s._outboxRev || 0,
+        items: (s.outbox || []).map((q) => ({ text: q.text, origin: q.origin, images: q.images.length })),
+      };
+    }
+
+    _onStreamToolBoundary(s) {
+      if (!s || s.io !== 'stream' || s._dead || !s.stream) return;
+      const sys = s.outbox.filter((q) => q.origin === 'system');
+      if (!sys.length) return;
+      const now = Date.now();
+      if (s._toolDrainAt != null && now - s._toolDrainAt < STREAM_TOOL_DRAIN_MIN_MS) return;
+      s._toolDrainAt = now;
+      const keep = s.outbox.filter((q) => q.origin !== 'system');
+      s.outbox.splice(0, s.outbox.length, ...keep);
+      const payload = this._streamJoin(sys);
+      if (payload.text.trim() || payload.images.length) {
+        this._streamWrite(s, payload);
+        this._streamSent(sys);
+      }
+      this._streamOutboxChanged(s);
+    }
+
+    _streamDeliver(s, payload) {
       s.streamBusy = true;
       this._emitActivity(s.name, 'thinking', false);
+      this._streamWrite(s, payload);
+    }
+
+    _streamWrite(s, { text, images }) {
       s.stream.send(streamCodecClaude.encodeUser(text, images)).catch((e) => {
         const imageBytes = images.reduce((n, img) => n + img.data.length, 0);
         log.warn('session', `stream send ${s.name} failed (${Buffer.byteLength(text)} bytes, ${images.length} images ${imageBytes} b64 bytes): ${e.message}`);
@@ -2861,12 +2938,12 @@ function createSessionManager(deps) {
           break;
         case 'result':
           s.streamBusy = false;
-          if (s.outbox.length) {
-            const queued = s.outbox.splice(0);
-            this._streamDeliver(s, {
-              text: queued.map((q) => q.text).filter((t) => t.trim()).join('\n\n'),
-              images: queued.flatMap((q) => q.images),
-            });
+          const queued = s.outbox.splice(0);
+          const payload = queued.length ? this._streamJoin(queued) : null;
+          if (queued.length) this._streamOutboxChanged(s);
+          if (payload && (payload.text.trim() || payload.images.length)) {
+            this._streamDeliver(s, payload);
+            this._streamSent(queued);
           } else {
             this._emitActivity(s.name, 'idle', true);
           }
@@ -2882,9 +2959,11 @@ function createSessionManager(deps) {
       }
     }
 
-    _refuseStreamInject(s, bytes, where) {
+    _refuseStreamInject(s, text, where) {
       if (!s || s.io !== 'stream') return false;
-      log.warn('inject', `${s.name}: stream seat: messaging arrives in H2 — ${where} dropped ${bytes} bytes`);
+      if (!s._dead && s.stream) return false;
+      const buf = Buffer.from(String(text == null ? '' : text));
+      log.warn('inject', `${s.name}: stream seat ${s._dead ? 'dead' : 'has no stream'} — ${where} dropped ${buf.length} bytes: ${JSON.stringify(buf.subarray(0, 80).toString('utf8'))}`);
       return true;
     }
 
@@ -5048,7 +5127,7 @@ function createSessionManager(deps) {
       }
       if (state !== 'idle') this._touchTicketActivity(name);
       if (s && state !== 'idle' && s.needsAttention) this._setAttention(s, null);
-      if (s && state === 'idle') { this._maybeFlushInjectQueue(s); if (s.io !== 'stream') this._drainPendingAtIdle(s); }
+      if (s && state === 'idle') { this._maybeFlushInjectQueue(s); this._drainPendingAtIdle(s); }
       // `notify` is TURN-END, not merely idle, and the renderer needs that
       // distinction: two emitters produce `idle` MID-TURN — the wire tracker's
       // gap-idle timer when a tool runs long with nothing in flight, and the
@@ -5095,6 +5174,7 @@ function createSessionManager(deps) {
     _routeAttnEntry(session, entry) {
       if (entry && entry.hook_event_name === 'PreCompact') this._onCompactStart(session, entry.trigger);
       else if (entry && entry.hook_event_name === 'SessionStart') { if (entry.source === 'compact') this._onCompactEnd(session, 'done'); }
+      else if (entry && entry.hook_event_name === 'PreToolUse') this._onStreamToolBoundary(session);
       else this._onAttention(session, entry || {});
     }
 
@@ -5320,8 +5400,10 @@ function createSessionManager(deps) {
       if (session._dead) return;
       if (session.io === 'stream' && session._injectQueue && session._injectQueue.length) {
         const held = session._injectQueue.splice(0);
-        const bytes = held.reduce((n, e) => n + (typeof e === 'string' ? Buffer.byteLength(e) : 0), 0);
-        this._refuseStreamInject(session, bytes, `queued flush of ${held.length}`);
+        for (const e of held) {
+          if (e && typeof e.produce === 'function') this._streamEnqueueSystem(session, '', e.produce, 'queued flush');
+          else this._streamEnqueueSystem(session, e, null, 'queued flush');
+        }
         return;
       }
       const queue = session._injectQueue;
@@ -8846,10 +8928,13 @@ function createSessionManager(deps) {
     _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null, parkKey = null) {
       const target = this.sessions.get(targetName);
       if (!target) return;
-      if (this._refuseStreamInject(target, Buffer.byteLength(String(body || '')), `${mtype || 'message'} from ${senderName}`)) return;
+      if (this._refuseStreamInject(target, body, `${mtype || 'message'} from ${senderName}`)) return;
       const finalText = this._buildDeliveryText(target, senderName, body, mtype, tag);
       const fire = typeof onWrite === 'function' ? onWrite : null;
-      if (!this._maybeParkDelivery(target, finalText, parkKey)) {
+      if (target.io === 'stream') {
+        this._streamEnqueue(target, { text: finalText, images: [], origin: senderName === 'user' ? 'operator' : 'system' },
+          fire ? () => fire('injected') : null);
+      } else if (!this._maybeParkDelivery(target, finalText, parkKey)) {
         this._injectText(target, finalText, {
           parkable: true,
           parkKey,
@@ -9042,8 +9127,11 @@ function createSessionManager(deps) {
     // is the loss this pattern exists to prevent.
     _injectText(session, text, opts = {}) {
       if (session._dead) return;
-      if (this._refuseStreamInject(session, Buffer.byteLength(String(text || '')), 'inject')) return;
       const produce = typeof opts.produce === 'function' ? opts.produce : null;
+      if (session.io === 'stream') {
+        this._streamEnqueueSystem(session, text, produce, 'inject');
+        return;
+      }
       if (!opts.bypassHold && this._injectHoldReason(session)) {
         // Held as an ENTRY, not as text — see above. Flattening here would claim
         // now and hold the bytes in memory for the whole hold, so a process that

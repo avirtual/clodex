@@ -528,6 +528,32 @@ names (clodex-paths grammar); the parked-DM DATA stays in the shared
 | PostToolUse (`matcher: Bash`) | `run/<name>/poll-guard.sh` | on a call with `run_in_background: true`, injects "Result arrives as a notification: do not poll for it. End your turn now unless you have unrelated work.". A foreground Bash call gets nothing — the guard speaks only where there is something to wait FOR |
 | PostToolUse (`matcher: Agent\|Task`) | `run/<name>/poll-guard.sh` | the same injection after a subagent spawn, which is the other shape whose result arrives as input rather than a return value |
 | PostToolUseFailure (`matcher: Bash`) | `run/<name>/bash-console.sh` | the same spool write — a FAILING Bash call fires only this event, with no `tool_response` and the exit code inside a top-level `error` |
+| PreToolUse (`matcher: ''`, stream seats only) | `run/<name>/tool-boundary.sh` | appends `{"hook_event_name":"PreToolUse","ts":…}` to `attn.jsonl` and prints nothing; `_routeAttnEntry` turns it into a tool-boundary drain of the stream seat's outbox |
+
+## 7a. Stream seats (`io: 'stream'`)
+
+A stream seat has no PTY to inject into, so everything that would be injected goes
+into ONE in-memory outbox per seat (`s.outbox`, items `{text, images, origin}`):
+what the operator types (`seatSend`, origin `operator`) and everything Clodex
+delivers — dms (spilled over 500 bytes exactly as for a PTY seat), ticket
+deliveries, reminders, exec results, continuations (`_deliverMessage` /
+`_injectText`, origin `system`). An idle seat takes the item at once as its own
+stdin message.
+
+- **Ordering:** operator items go to the head of the outbox, behind earlier
+  operator items; system items append. That is the operator's only privilege —
+  there is no send-now and no steer.
+- **Drain 1, turn end:** the `result` event sends the WHOLE outbox as one stdin
+  message, joined by a blank line.
+- **Drain 2, tool boundary:** `tool-boundary.sh` (PreToolUse) writes an attn
+  line; `_onStreamToolBoundary` sends only the SYSTEM items as one message,
+  leaving operator items for `result` and the seat busy. At most one such drain
+  per `STREAM_TOOL_DRAIN_MIN_MS` (2s) per seat.
+- The UserPromptSubmit drains (§7) still fire under `-p` and are not copied into
+  the outbox. Passive notices and held (cold-seat) dms still park to
+  `pending/<name>/`; the idle edge drains active parks into the outbox.
+- The composer shows queued items as dimmed `.seat-outbox-row`s, fed by
+  `transcript:pull` (`outbox`) and refreshed on `transcript-changed`.
 
 ## Invariants (do not break)
 

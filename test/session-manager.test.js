@@ -20748,6 +20748,16 @@ function mkStreamSeatManager({ persisted = {} } = {}) {
     fs, path, pathFor, runDirFor, os,
     PENDING_DIR: path.join(root, 'pending'),
     MSG_DIR: path.join(root, 'messages'),
+    hasActivePending: require('../pending-store').hasActivePending,
+    drainPending: require('../pending-store').drainPending,
+    MSG_SPILL_THRESHOLD: 500,
+    spillToFile: (sender, body, recipient) => {
+      const dir = path.join(root, 'messages', recipient);
+      fs.mkdirSync(dir, { recursive: true });
+      const fpath = path.join(dir, `msg-${fs.readdirSync(dir).length + 1}.txt`);
+      fs.writeFileSync(fpath, `From: ${sender}\n\n${body}`);
+      return fpath;
+    },
     ensureDir,
     getPersistence: () => ({
       list: () => [...store.values()], get: (n) => store.get(n) || null,
@@ -20933,7 +20943,8 @@ test('stream seat (i2): queued images concatenate in order and ride the joined m
   assert.deepStrictEqual(h.m.seatSend('st8', 'fourth'), { ok: true, queued: 3 });
   assert.deepStrictEqual(h.m.seatSend('st8', ' ', [jpg]), { ok: true, queued: 4 });
   assert.deepStrictEqual(h.m.sessions.get('st8').outbox, [
-    { text: 'second', images: [jpg] }, { text: '', images: [png] }, { text: 'fourth', images: [] }, { text: ' ', images: [jpg] },
+    { text: 'second', images: [jpg], origin: 'operator' }, { text: '', images: [png], origin: 'operator' },
+    { text: 'fourth', images: [], origin: 'operator' }, { text: ' ', images: [jpg], origin: 'operator' },
   ]);
   h.line('st8', { type: 'result', subtype: 'success', duration_ms: 1, total_cost_usd: 0, is_error: false });
   assert.deepStrictEqual(seat.sent, [
@@ -20952,16 +20963,149 @@ test('stream seat (i2): queued images concatenate in order and ride the joined m
   ] } });
 });
 
-test('stream seat (j): _deliverMessage to a stream seat refuses with the logged reason and writes nothing', async (t) => {
+const RESULT = { type: 'result', subtype: 'success', duration_ms: 1, total_cost_usd: 0, is_error: false };
+const userMsg = (content) => ({ type: 'user', message: { role: 'user', content } });
+
+test('stream seat (j): a dm to a seat with no stream is refused and the log carries the byte count and the first 80 bytes', async (t) => {
   const h = mkStreamSeatManager();
   t.after(() => h.stopAll());
   await h.create('st5');
-  const seat = h.handles[0];
-  h.m._deliverMessage('st5', 'lead', 'hello there', 'dm');
-  assert.deepStrictEqual(seat.sent, []);
-  assert.deepStrictEqual(h.m.sessions.get('st5').outbox, []);
+  const s = h.m.sessions.get('st5');
+  s.stream = null;
+  h.m._deliverMessage('st5', 'lead', 'x'.repeat(100), 'dm');
+  assert.deepStrictEqual(h.handles[0].sent, []);
+  assert.deepStrictEqual(s.outbox, []);
   assert.deepStrictEqual(h.logs.filter((l) => l[1] === 'inject'),
-    [['warn', 'inject', 'st5: stream seat: messaging arrives in H2 — dm from lead dropped 11 bytes']]);
+    [['warn', 'inject', `st5: stream seat has no stream — dm from lead dropped 100 bytes: "${'x'.repeat(80)}"`]]);
+});
+
+test('stream seat H2 (a): a dm to a busy seat queues behind the operator text and rides the result after it', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sh1');
+  const seat = h.handles[0];
+  h.m.seatSend('sh1', 'go');
+  h.m._deliverMessage('sh1', 'clodex', 'ping', 'dm');
+  h.m.seatSend('sh1', 'typed while busy');
+  assert.deepStrictEqual(h.m.sessions.get('sh1').outbox.map((q) => [q.origin, q.text]), [
+    ['operator', 'typed while busy'],
+    ['system', '[agent:from clodex] ping'],
+  ]);
+  assert.deepStrictEqual(seat.sent, [userMsg('go')]);
+  h.line('sh1', RESULT);
+  assert.deepStrictEqual(seat.sent, [userMsg('go'), userMsg('typed while busy\n\n[agent:from clodex] ping')]);
+  assert.deepStrictEqual(h.m.sessions.get('sh1').outbox, []);
+});
+
+test('stream seat H2 (b): a PreToolUse attn line delivers the queued system items as one message, leaves operator text queued and the seat busy', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sh2');
+  const seat = h.handles[0];
+  const s = h.m.sessions.get('sh2');
+  h.m.seatSend('sh2', 'go');
+  h.m._deliverMessage('sh2', 'clodex', 'one', 'dm');
+  h.m.seatSend('sh2', 'mine');
+  h.m._injectText(s, '[agent:exec] run #3 ok', { parkable: true });
+  h.m._routeAttnEntry(s, { hook_event_name: 'PreToolUse', ts: 1 });
+  assert.deepStrictEqual(seat.sent, [userMsg('go'), userMsg('[agent:from clodex] one\n\n[agent:exec] run #3 ok')]);
+  assert.deepStrictEqual(s.outbox, [{ text: 'mine', images: [], origin: 'operator' }]);
+  assert.strictEqual(s.streamBusy, true);
+  assert.strictEqual(s.needsAttention || null, null, 'a tool boundary is not an attention event');
+  h.line('sh2', RESULT);
+  assert.deepStrictEqual(seat.sent[2], userMsg('mine'));
+});
+
+test('stream seat H2 (c): two tool boundaries 500ms apart drain once; a third past 2s drains again', async (t) => {
+  const { mock } = require('node:test');
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sh3');
+  mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+  t.after(() => mock.timers.reset());
+  const seat = h.handles[0];
+  const s = h.m.sessions.get('sh3');
+  h.m.seatSend('sh3', 'go');
+  h.m._deliverMessage('sh3', 'clodex', 'first', 'dm');
+  h.m._routeAttnEntry(s, { hook_event_name: 'PreToolUse' });
+  h.m._deliverMessage('sh3', 'clodex', 'second', 'dm');
+  mock.timers.tick(500);
+  h.m._routeAttnEntry(s, { hook_event_name: 'PreToolUse' });
+  assert.deepStrictEqual(seat.sent, [userMsg('go'), userMsg('[agent:from clodex] first')]);
+  assert.deepStrictEqual(s.outbox.map((q) => q.text), ['[agent:from clodex] second']);
+  mock.timers.tick(1500);
+  h.m._routeAttnEntry(s, { hook_event_name: 'PreToolUse' });
+  assert.deepStrictEqual(seat.sent[2], userMsg('[agent:from clodex] second'));
+  assert.deepStrictEqual(s.outbox, []);
+});
+
+test('stream seat H2 (d): an idle seat gets a dm as an immediate stdin message and goes busy', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sh4');
+  const fired = [];
+  h.m._deliverMessage('sh4', 'clodex', 'hello', 'dm', '', (how) => fired.push(how));
+  assert.deepStrictEqual(h.handles[0].sent, [userMsg('[agent:from clodex] hello')]);
+  assert.deepStrictEqual(fired, ['injected']);
+  const s = h.m.sessions.get('sh4');
+  assert.deepStrictEqual({ busy: s.streamBusy, outbox: s.outbox }, { busy: true, outbox: [] });
+});
+
+test('stream seat H2 (e): a reminder and an exec result to a busy seat are enqueued, not dropped', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sh5');
+  const s = h.m.sessions.get('sh5');
+  h.m.seatSend('sh5', 'go');
+  assert.strictEqual(h.m._deliverReminder('sh5', 'continue: t1 build'), 'delivered');
+  h.m._injectText(s, '[agent:exec] run #7 (clodex-run-tests) failed', { parkable: true });
+  assert.deepStrictEqual(s.outbox, [
+    { text: '[agent:from reminder] continue: t1 build', images: [], origin: 'system' },
+    { text: '[agent:exec] run #7 (clodex-run-tests) failed', images: [], origin: 'system' },
+  ]);
+  assert.deepStrictEqual(h.m.seatOutbox('sh5').items.map((q) => q.origin), ['system', 'system']);
+  assert.deepStrictEqual(h.logs.filter((l) => l[1] === 'inject'), []);
+});
+
+test('stream seat H2 (f): a 600-byte dm arrives as the spill pointer line and the file exists', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sh6');
+  const body = 'y'.repeat(600);
+  h.m._deliverMessage('sh6', 'clodex', body, 'dm');
+  const sent = h.handles[0].sent;
+  assert.strictEqual(sent.length, 1);
+  const m = /^\[agent:from clodex\] Message \(600 bytes\) attached: @(\S+) $/.exec(sent[0].message.content);
+  assert.ok(m, sent[0].message.content);
+  assert.ok(require('node:fs').readFileSync(m[1], 'utf8').endsWith(body));
+});
+
+test('stream seat H2: the idle edge drains parked pending mail into the seat', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sh7');
+  const { parkDelivery } = require('../pending-store');
+  parkDelivery(require('node:path').join(h.root, 'pending'), 'sh7', '[agent:from clodex] parked', '1.000000001', null, false, h.m._bornFor('sh7'));
+  h.m._emitActivity('sh7', 'idle', true);
+  assert.deepStrictEqual(h.handles[0].sent, [userMsg('[agent:from clodex] parked')]);
+});
+
+test('stream seat H2: a pending drain on a busy seat queues a producer that claims nothing until the result sends it', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sh8');
+  const path = require('node:path');
+  const { parkDelivery, hasActivePending } = require('../pending-store');
+  const PENDING = path.join(h.root, 'pending');
+  const s = h.m.sessions.get('sh8');
+  h.m.seatSend('sh8', 'go');
+  parkDelivery(PENDING, 'sh8', '[agent:from clodex] parked', '1.000000001', null, false, h.m._bornFor('sh8'));
+  h.m._drainPendingAtIdle(s);
+  assert.deepStrictEqual(s.outbox, [{ text: '', images: [], origin: 'system' }]);
+  assert.strictEqual(hasActivePending(PENDING, 'sh8'), true, 'still on disk while queued');
+  h.line('sh8', RESULT);
+  assert.deepStrictEqual(h.handles[0].sent[1], userMsg('[agent:from clodex] parked'));
+  assert.strictEqual(hasActivePending(PENDING, 'sh8'), false);
 });
 
 test('stream seat: close after exit runs the pty exit order, and kill() uses the stream group kill', async () => {
@@ -20988,7 +21132,7 @@ test('stream seat: the outbox has no timed force-flush — ten busy minutes stil
     h.m.seatSend('st7', 'held');
     mock.timers.tick(10 * 60 * 1000);
     assert.deepStrictEqual(h.handles[0].sent, [{ type: 'user', message: { role: 'user', content: 'first' } }]);
-    assert.deepStrictEqual(h.m.sessions.get('st7').outbox, [{ text: 'held', images: [] }]);
+    assert.deepStrictEqual(h.m.sessions.get('st7').outbox, [{ text: 'held', images: [], origin: 'operator' }]);
   } finally {
     mock.timers.reset();
   }

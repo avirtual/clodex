@@ -6167,6 +6167,42 @@ body.web-frontend #sidebar-header {
   pointer-events: none;
 }
 
+.seat-outbox {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 30%;
+  overflow-y: auto;
+}
+
+.seat-outbox[hidden] {
+  display: none;
+}
+
+.seat-outbox-row {
+  display: flex;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary, var(--text-primary));
+  opacity: 0.6;
+  font-size: var(--fs-sm, var(--fs-md));
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.seat-outbox-badge {
+  flex: 0 0 auto;
+  font-family: var(--font-mono, var(--font-ui));
+}
+
+.seat-outbox-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .seat-attachments {
   flex: 0 0 auto;
   display: flex;

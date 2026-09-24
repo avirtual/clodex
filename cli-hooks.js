@@ -49,7 +49,7 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
     return !!digest;
   }
 
-  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = []) {
+  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = [], stream = false) {
     ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
@@ -641,6 +641,14 @@ try { fs.unlinkSync(path.join(d, 'delta.md')); } catch (e) {}
 JSEOF
 `, { mode: 0o700 });
 
+    const toolBoundaryScriptPath = pathFor(REGISTRY_DIR, name, 'toolBoundaryScript');
+    if (stream) {
+      fs.writeFileSync(toolBoundaryScriptPath, `#!/bin/bash
+printf '{"hook_event_name":"PreToolUse","ts":%s000}\\n' "$(date +%s)" >> "${attnPath}" 2>/dev/null || true
+exit 0
+`, { mode: 0o700 });
+    }
+
     const settings = {
       trustedDirectories: [msgDir],
       statusLine: { type: 'command', command: statusPath },
@@ -684,6 +692,7 @@ JSEOF
           matcher: '',
           hooks: [
             { type: 'command', command: pollGuardScriptPath },
+            ...(stream ? [{ type: 'command', command: toolBoundaryScriptPath }] : []),
           ]
         }],
         PostToolUse: [{

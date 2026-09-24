@@ -14,6 +14,7 @@ const { renderDiffHtml, costStackBlock, bustRow } = require('./lib/render-html')
 const { renderMarkdown } = require('./lib/render-markdown');
 const { placeAboveAnchor } = require('./lib/popover-place');
 const { classifySender } = require('./lib/sender-class');
+const { outboxRowOf } = require('./lib/outbox-rows');
 const { scanPaths } = require('./lib/path-scan');
 const { matchGutterRow, findGutterFile } = require('./lib/gutter-scan');
 
@@ -1514,8 +1515,32 @@ function createStreamSeatPane(name, wrapperEl) {
   const attachEl = document.createElement('div');
   attachEl.className = 'seat-attachments';
   attachEl.hidden = true;
+  const outboxEl = document.createElement('div');
+  outboxEl.className = 'seat-outbox';
+  outboxEl.hidden = true;
+  wrapperEl.appendChild(outboxEl);
   wrapperEl.appendChild(attachEl);
   wrapperEl.appendChild(composer);
+  const renderOutbox = (items) => {
+    outboxEl.replaceChildren();
+    outboxEl.hidden = items.length === 0;
+    for (const item of items) {
+      const row = outboxRowOf(item);
+      const el = document.createElement('div');
+      el.className = `seat-outbox-row seat-outbox-${row.origin}`;
+      if (row.badge) {
+        const badge = document.createElement('span');
+        badge.className = 'seat-outbox-badge';
+        badge.textContent = row.badge.glyph ? `${row.badge.glyph} ${row.badge.label}` : row.badge.label;
+        el.appendChild(badge);
+      }
+      const body = document.createElement('span');
+      body.className = 'seat-outbox-text';
+      body.textContent = row.images ? `${row.text} [${row.images} image${row.images === 1 ? '' : 's'}]` : row.text;
+      el.appendChild(body);
+      outboxEl.appendChild(el);
+    }
+  };
   let pending = [];
   const renderAttachments = () => {
     attachEl.replaceChildren();
@@ -1591,6 +1616,7 @@ function createStreamSeatPane(name, wrapperEl) {
       pulling = false;
       if (disposed || !res || !res.ok || res.rev === rev) return;
       rev = res.rev;
+      renderOutbox(Array.isArray(res.outbox) ? res.outbox : []);
       renderTranscript(document, paneEl, res.records, {
         seatName: name,
         resolveFile: (p) => window.api.fileResolve(name, p, null),
