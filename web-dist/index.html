@@ -28408,7 +28408,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var INERT = Object.freeze({ glyph: "\u2298", label: "won't fire" });
       var g = (glyph, label) => Object.freeze({ glyph, label });
       var CONTEXT = { compact: g("\u229F", "compact"), clear: g("\u232B", "clear"), reload: g("\u21BA", "reload") };
-      var SCRATCH = { begin: g("\u231C", "scratch"), end: g("\u231F", "result"), rewind: g("\u21E4", "rewind"), mark: g("\u2316", "mark"), cancel: g("\u2297", "cancel") };
+      var SCRATCH = { begin: g("\u27E6", "scratch"), end: g("\u27E7", "result"), rewind: g("\u21E4", "rewind"), mark: g("\u2731", "mark"), cancel: g("\u2297", "cancel") };
       var TASK = {
         assign: g("\u21E5", "assign"),
         start: g("\u21C4", "start"),
@@ -28426,7 +28426,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         who: () => g("\u25CE", "who"),
         name: () => g("@", "name"),
         context: (i) => CONTEXT[i.sub] || g("\u229F", String(i.sub || "context")),
-        scratch: (i) => SCRATCH[i.sub] || g("\u231C", String(i.sub || "scratch")),
+        scratch: (i) => SCRATCH[i.sub] || g("\u27E6", String(i.sub || "scratch")),
         memory: (i) => g("\u25C8", String(i.sub || "memory")),
         file: () => g("\u25A2", "show"),
         term: () => g("\u25A4", "terminal"),
@@ -28452,7 +28452,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         who: g("\u25CE", "who"),
         name: g("@", "name"),
         context: g("\u229F", "context"),
-        scratch: g("\u231C", "scratch"),
+        scratch: g("\u27E6", "scratch"),
         memory: g("\u25C8", "memory"),
         file: g("\u25A2", "show"),
         term: g("\u25A4", "terminal"),
