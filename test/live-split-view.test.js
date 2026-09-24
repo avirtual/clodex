@@ -11,8 +11,13 @@ const { OUTPUT_LINE_CAP, renderTranscript, createLiveSplitView } = require('../r
 function fakeDoc() {
   return {
     createTextNode: (text) => ({ text, style: '' }),
-    createElement: () => ({
+    createElement: (tag) => ({
+      tag,
       style: {},
+      dataset: {},
+      className: '',
+      listeners: {},
+      addEventListener(type, cb) { this.listeners[type] = cb; },
       get text() { return this.textContent; },
       set innerHTML(v) { throw new Error(`innerHTML written: ${v}`); },
     }),
@@ -20,10 +25,19 @@ function fakeDoc() {
   };
 }
 
-function render(rows) {
+function renderNodes(rows, ctx) {
   const pane = { replaceChildren(frag) { this.nodes = frag.kids; } };
-  renderTranscript(fakeDoc(), pane, rows);
-  return pane.nodes.map((n) => ({ text: n.text, style: n.style.cssText !== undefined ? n.style.cssText : n.style }));
+  renderTranscript(fakeDoc(), pane, rows, ctx);
+  return pane.nodes;
+}
+
+function render(rows, ctx) {
+  return renderNodes(rows, ctx).map((n) => {
+    const out = { text: n.text, style: typeof n.style === 'string' ? n.style : n.style.cssText || '' };
+    if (n.className) out.cls = n.className;
+    if (n.tag === 'a') out.href = n.dataset.path || n.dataset.url;
+    return out;
+  });
 }
 
 const plain = (nodes) => nodes.map((n) => n.text).join('');
@@ -72,6 +86,96 @@ test(`command output is capped at ${OUTPUT_LINE_CAP} lines per record with a cou
 test('markup characters in command output land as text content, never as HTML', () => {
   const nodes = render([{ kind: 'command-output', text: '\x1b[31m<img src=x onerror=1>&amp;\x1b[39m' }]);
   assert.deepStrictEqual(nodes, [{ text: '<img src=x onerror=1>&amp;', style: 'color:rgb(205,49,49)' }]);
+});
+
+const marked = (nodes) => nodes.filter((n) => n.cls);
+
+test('an assistant row marks each intent token and leaves the prose around it as plain text', () => {
+  const nodes = render(['⏺ Reply\n[agent:dm bob] hi\n[agent:end]']);
+  assert.deepStrictEqual(marked(nodes), [
+    { text: '[agent:dm bob]', style: '', cls: 'intent-mark intent-mark-fire' },
+    { text: '[agent:end]', style: '', cls: 'intent-mark intent-mark-fire' },
+  ]);
+  assert.strictEqual(plain(nodes), '⏺ Reply\n[agent:dm bob] hi\n[agent:end]');
+  assert.deepStrictEqual(nodes.filter((n) => !n.cls).map((n) => n.text).join('|'), '⏺ |Reply|\n| hi|\n');
+});
+
+test('a start-of-line intent behind the row prefix is classified, not missed', () => {
+  assert.deepStrictEqual(marked(render(['⏺ [agent:task list]'])), [{ text: '[agent:task list]', style: '', cls: 'intent-mark intent-mark-fire' }]);
+  assert.deepStrictEqual(marked(render(['❯ [agent:task list]'])), [{ text: '[agent:task list]', style: '', cls: 'intent-mark intent-mark-fire' }]);
+});
+
+test('an intent inside a fence gets no mark', () => {
+  assert.deepStrictEqual(marked(render(['⏺ ```\n[agent:dm x]\n```'])), []);
+});
+
+function linkCtx(resolved) {
+  const calls = { resolve: [], peek: [], toast: [], external: [] };
+  return {
+    calls,
+    ctx: {
+      seatName: 's1',
+      resolveFile: (p) => { calls.resolve.push(p); return Promise.resolve(resolved); },
+      openFilePeek: (...a) => calls.peek.push(a),
+      toast: (...a) => calls.toast.push(a),
+      openExternal: (u) => calls.external.push(u),
+    },
+  };
+}
+
+const click = (node) => {
+  let prevented = 0;
+  node.listeners.click({ preventDefault: () => { prevented += 1; } });
+  return prevented;
+};
+
+test('a file path renders as a link that resolves then peeks at the named line', async () => {
+  const { calls, ctx } = linkCtx({ ok: true, path: '/abs/y.js' });
+  const nodes = renderNodes(['⏺ see /Users/x/y.js:12 now'], ctx);
+  const a = nodes.find((n) => n.tag === 'a');
+  assert.deepStrictEqual([a.className, a.href, a.textContent, a.dataset.path], ['pane-link', '#', '/Users/x/y.js:12', '/Users/x/y.js']);
+  assert.strictEqual(click(a), 1);
+  await settle();
+  assert.deepStrictEqual(calls.resolve, ['/Users/x/y.js']);
+  assert.deepStrictEqual(calls.peek, [['s1', '/abs/y.js', 'file', 12]]);
+  assert.deepStrictEqual(calls.toast.length, 0);
+});
+
+test('a path that does not resolve toasts once and never peeks', async () => {
+  const { calls, ctx } = linkCtx({ ok: false });
+  const a = renderNodes(['⏺ see /Users/x/y.js:12'], ctx).find((n) => n.tag === 'a');
+  click(a);
+  await settle();
+  assert.strictEqual(calls.toast.length, 1);
+  assert.deepStrictEqual(calls.peek, []);
+});
+
+test('an https URL renders as a link that opens externally; a javascript: URL stays text', () => {
+  const { calls, ctx } = linkCtx(null);
+  const nodes = renderNodes(['⏺ at https://example.com and javascript:alert(1)'], ctx);
+  const links = nodes.filter((n) => n.tag === 'a');
+  assert.deepStrictEqual(links.map((n) => n.dataset.url), ['https://example.com']);
+  assert.strictEqual(click(links[0]), 1);
+  assert.deepStrictEqual(calls.external, ['https://example.com']);
+  assert.match(plain(render(['⏺ at https://example.com and javascript:alert(1)'])), /javascript:alert\(1\)$/);
+});
+
+test('a link inside styled command output keeps its run style', () => {
+  const nodes = render([{ kind: 'command-output', text: '\x1b[1mopen /Users/x/y.js\x1b[22m' }]);
+  assert.deepStrictEqual(nodes, [
+    { text: 'open ', style: 'font-weight:bold' },
+    { text: '/Users/x/y.js', style: 'font-weight:bold', cls: 'pane-link', href: '/Users/x/y.js' },
+  ]);
+});
+
+test('command output in the CLI echo colours takes the theme echo palette', () => {
+  const text = '\x1b[48;2;240;240;240m\x1b[38;2;0;0;0m ls \x1b[49m\x1b[39m';
+  const palette = { bg: '#102030', fg: '#aabbcc', prompt: '#445566' };
+  assert.deepStrictEqual(render([{ kind: 'command-output', text }], { echoPalette: palette }), [
+    { text: ' ls ', style: 'color:rgb(170,187,204);background-color:rgb(16,32,48)' },
+  ]);
+  assert.deepStrictEqual(render([{ kind: 'command-output', text }], { echoPalette: () => palette })[0].style, 'color:rgb(170,187,204);background-color:rgb(16,32,48)');
+  assert.deepStrictEqual(render([{ kind: 'command-output', text }])[0].style, 'color:rgb(0,0,0);background-color:rgb(240,240,240)');
 });
 
 function mountView(extra = {}, { parser = true } = {}) {
@@ -224,8 +328,9 @@ test('a transcript pull with a new rev while already available re-evaluates the 
 
 test('a frame the CLI leaves with the cursor hidden still drops to full after the fallback and the exit settle', async () => {
   mock.timers.enable({ apis: ['setTimeout'] });
-  const m = await mountSplit();
+  let m = null;
   try {
+    m = await mountSplit();
     m.csi['?l']([25]);
     m.show(STREAMING);
     m.write();
@@ -237,7 +342,7 @@ test('a frame the CLI leaves with the cursor hidden still drops to full after th
     mock.timers.tick(50);
     assert.strictEqual(m.view.state().mode, 'full');
     assert.deepStrictEqual(m.changes.map((c) => c.mode), ['full']);
-  } finally { m.view.dispose(); m.restore(); mock.timers.reset(); }
+  } finally { if (m) { m.view.dispose(); m.restore(); } mock.timers.reset(); }
 });
 
 test('a terminal without a parser evaluates every write', async () => {

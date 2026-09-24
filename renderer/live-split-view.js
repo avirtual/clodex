@@ -2,35 +2,112 @@
 
 const { SPLIT_EXIT_MS, measureSplit, initialSplitState, reduceSplit } = require('./lib/live-split');
 const { ansiRuns } = require('./lib/ansi-html');
+const { classifyRows } = require('./lib/intent-marks');
+const { scanLinks } = require('./lib/path-scan');
+const { rewriteEchoSgr } = require('./lib/prompt-echo');
+const { isExternallyOpenable } = require('../external-link');
 
 const TRANSCRIPT_PULL_MS = 1000;
 const OUTPUT_LINE_CAP = 400;
+const ROW_PREFIX_RE = /^(?:⏺ |❯ | {2}→ )/;
+const NOOP = () => {};
 
-function appendOutput(doc, frag, text) {
+function styled(doc, text, style) {
+  if (!style) return doc.createTextNode(text);
+  const span = doc.createElement('span');
+  span.style.cssText = style;
+  span.textContent = text;
+  return span;
+}
+
+function linkNode(doc, span, style, ctx) {
+  const a = doc.createElement('a');
+  a.className = 'pane-link';
+  a.href = '#';
+  a.textContent = span.text;
+  if (style) a.style.cssText = style;
+  if (span.kind === 'path') {
+    a.dataset.path = span.path;
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      Promise.resolve().then(() => ctx.resolveFile(span.path))
+        .catch((err) => ({ ok: false, error: String(err) }))
+        .then((res) => {
+          if (!res || !res.ok) {
+            ctx.toast((res && res.error) || `Can't find "${span.path}"`, { kind: 'warn', duration: 4000 });
+            return;
+          }
+          ctx.openFilePeek(ctx.seatName, res.path, 'file', span.line);
+        });
+    });
+  } else {
+    a.dataset.url = span.text;
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (isExternallyOpenable(span.text)) ctx.openExternal(span.text);
+    });
+  }
+  return a;
+}
+
+function appendLinked(doc, parent, text, style, ctx) {
+  for (const span of scanLinks(text)) {
+    parent.appendChild(span.kind === 'text' ? styled(doc, span.text, style) : linkNode(doc, span, style, ctx));
+  }
+}
+
+function appendOutput(doc, frag, text, ctx) {
+  const palette = typeof ctx.echoPalette === 'function' ? ctx.echoPalette() : ctx.echoPalette;
+  if (palette) {
+    const { out, state } = rewriteEchoSgr(text, palette);
+    text = out + state.carry;
+  }
   const lines = text.split('\n');
   const more = lines.length - OUTPUT_LINE_CAP;
   for (const run of ansiRuns(more > 0 ? lines.slice(0, OUTPUT_LINE_CAP).join('\n') : text)) {
-    if (!run.style) { frag.appendChild(doc.createTextNode(run.text)); continue; }
-    const span = doc.createElement('span');
-    span.style.cssText = run.style;
-    span.textContent = run.text;
-    frag.appendChild(span);
+    appendLinked(doc, frag, run.text, run.style, ctx);
   }
   if (more > 0) frag.appendChild(doc.createTextNode(`\n… ${more} more lines`));
 }
 
-function renderTranscript(doc, paneEl, rows) {
+function appendTextRow(doc, frag, row, ctx) {
+  const lines = row.split('\n');
+  const prefix = (lines[0].match(ROW_PREFIX_RE) || [''])[0];
+  lines[0] = lines[0].slice(prefix.length);
+  const marks = new Map();
+  for (const m of classifyRows(lines.map((text) => ({ text, isWrapped: false })))) {
+    if (m.span) marks.set(m.start, m);
+  }
+  if (prefix) frag.appendChild(doc.createTextNode(prefix));
+  lines.forEach((line, k) => {
+    if (k) frag.appendChild(doc.createTextNode('\n'));
+    const m = marks.get(k);
+    if (!m) { appendLinked(doc, frag, line, '', ctx); return; }
+    const end = m.span.offset + m.span.length;
+    appendLinked(doc, frag, line.slice(0, m.span.offset), '', ctx);
+    const mark = doc.createElement('span');
+    mark.className = `intent-mark intent-mark-${m.kind}`;
+    mark.textContent = line.slice(m.span.offset, end);
+    frag.appendChild(mark);
+    appendLinked(doc, frag, line.slice(end), '', ctx);
+  });
+}
+
+function renderTranscript(doc, paneEl, rows, ctx = {}) {
+  const deps = {
+    seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, ...ctx,
+  };
   const frag = doc.createDocumentFragment();
   rows.forEach((row, i) => {
     if (i) frag.appendChild(doc.createTextNode('\n'));
-    if (typeof row === 'string') frag.appendChild(doc.createTextNode(row));
+    if (typeof row === 'string') appendTextRow(doc, frag, row, deps);
     else if (row && row.kind === 'command') frag.appendChild(doc.createTextNode(`❯ ${row.name}${row.args ? ` ${row.args}` : ''}`));
-    else if (row && row.kind === 'command-output') appendOutput(doc, frag, String(row.text));
+    else if (row && row.kind === 'command-output') appendOutput(doc, frag, String(row.text), deps);
   });
   paneEl.replaceChildren(frag);
 }
 
-function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null }) {
+function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null }) {
   const paneEl = document.createElement('pre');
   paneEl.className = 'transcript-pane';
   paneEl.hidden = true;
@@ -57,7 +134,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, 
       if (available && res.rev !== rev) {
         rev = res.rev;
         const follow = paneEl.scrollTop + paneEl.clientHeight >= paneEl.scrollHeight - 4;
-        renderTranscript(document, paneEl, res.lines);
+        renderTranscript(document, paneEl, res.lines, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
         if (follow) paneEl.scrollTop = paneEl.scrollHeight;
         evaluate();
       } else if (available !== was) evaluate();
