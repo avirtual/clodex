@@ -53,11 +53,12 @@ function createComposerTrigger({ getConfig }) {
 
 function attachTriggerSubmit(composer, {
   getConfig, markOrigin, send, hasImages = () => false, onVoiceFire = () => {},
-  holdsFire = () => false, onVoiceStop = () => {}, quietMs = 0, timers = { set: setTimeout, clear: clearTimeout },
+  holdsFire = () => false, onVoiceStop = () => {}, quietMs = 0, releaseMs = 0, timers = { set: setTimeout, clear: clearTimeout },
 }) {
   const trigger = createComposerTrigger({ getConfig });
   let span = null;
   let quiet = null;
+  let release = null;
   let stopping = false;
   const fire = (fromVoice) => {
     const hit = trigger.check(composer.value);
@@ -75,6 +76,19 @@ function attachTriggerSubmit(composer, {
     cancelQuiet();
     quiet = timers.set(() => { quiet = null; voiceFire(); }, quietMs);
   };
+  const cancelRelease = () => { if (release !== null) { timers.clear(release); release = null; } };
+  const settle = () => { stopping = false; cancelRelease(); };
+  const armRelease = () => {
+    cancelRelease();
+    if (!(releaseMs > 0)) return;
+    release = timers.set(() => {
+      release = null;
+      if (!stopping) return;
+      stopping = false;
+      cancelQuiet();
+      fire(true);
+    }, releaseMs);
+  };
   const stopFailed = () => {
     if (!stopping) return;
     stopping = false;
@@ -83,16 +97,23 @@ function attachTriggerSubmit(composer, {
   const voiceFire = () => {
     let open = false;
     try { open = holdsFire() === true; } catch { open = false; }
-    if (!open) { stopping = false; fire(true); return; }
+    if (!open) { settle(); fire(true); return; }
     if (stopping || !trigger.matches(composer.value)) return;
+    cancelRelease();
     stopping = true;
     let stopped;
     try { stopped = onVoiceStop(); } catch { stopFailed(); return; }
     if (stopped && typeof stopped.then === 'function') {
-      stopped.then((ok) => { if (ok === false) stopFailed(); }, stopFailed);
+      stopped.then((ok) => {
+        if (ok === false) stopFailed();
+        else if (ok === true && stopping) armRelease();
+      }, stopFailed);
     }
   };
-  const onInput = () => fire(false);
+  const onInput = () => {
+    if (stopping && trigger.matches(composer.value)) settle();
+    fire(false);
+  };
   composer.addEventListener('input', onInput);
   return {
     check: onInput,
@@ -104,13 +125,14 @@ function attachTriggerSubmit(composer, {
     },
     released() {
       if (!stopping) return;
-      stopping = false;
+      settle();
       cancelQuiet();
       fire(true);
     },
     resetSpan() { span = null; stopping = false; },
     dispose() {
       cancelQuiet();
+      cancelRelease();
       composer.removeEventListener('input', onInput);
     },
   };

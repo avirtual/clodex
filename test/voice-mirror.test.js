@@ -210,6 +210,7 @@ function fakeClock() {
       }
       now = end;
     },
+    pending: () => due.size,
   };
 }
 
@@ -235,6 +236,7 @@ function streamSeat({ recording, onStop }) {
     holdsFire: () => seat.recording,
     onVoiceStop: () => { seat.stops++; return onStop(seat); },
     quietMs: 1200,
+    releaseMs: 2500,
     timers: clock.timers,
   });
   seat.sub = sub;
@@ -279,7 +281,7 @@ test('tap mode: a failed stop clears the latch and the next quiet window retries
   const s = streamSeat({
     recording: true,
     onStop: (seat) => {
-      if (fail) return Promise.resolve(false);
+      if (fail) { seat.recording = false; return Promise.resolve(false); }
       seat.recording = false;
       seat.mirror.release();
       return Promise.resolve(true);
@@ -291,7 +293,54 @@ test('tap mode: a failed stop clears the latch and the next quiet window retries
   await Promise.resolve();
   fail = false;
   s.clock.advance(1200);
-  assert.equal(s.stops, 2, 'the retry asked the recorder to stop again');
+  assert.equal(s.stops, 1);
+  assert.deepEqual(s.sent, ['Hello world']);
+});
+
+function tapStopped() {
+  return streamSeat({
+    recording: true,
+    onStop: (seat) => { seat.recording = false; seat.mirror.release(); return Promise.resolve(true); },
+  });
+}
+
+test('tap mode: the stop tap landed but the engine row never clears; the release deadline sends the sentence', async () => {
+  const s = tapStopped();
+  s.t.paint([`${HEAD}Hello world enter.`]);
+  s.clock.advance(1200);
+  await Promise.resolve();
+  assert.equal(s.stops, 1);
+  assert.deepEqual(s.sent, []);
+  s.clock.advance(2500);
+  assert.deepEqual(s.sent, ['Hello world']);
+  assert.equal(s.stops, 1);
+  assert.equal(s.mirror.isArmed(), false);
+});
+
+test('tap mode: the engine row clears before the release deadline; it sends on the clear and the deadline sends nothing', async () => {
+  const s = tapStopped();
+  s.t.paint([`${HEAD}Hello world enter.`]);
+  s.clock.advance(1200);
+  await Promise.resolve();
+  s.clock.advance(400);
   s.t.paint([`${HEAD}`]);
   assert.deepEqual(s.sent, ['Hello world']);
+  assert.equal(s.clock.pending(), 0, 'the clear cancelled the release deadline');
+  s.clock.advance(5000);
+  assert.equal(s.sent.length, 1);
+  assert.equal(s.mirror.isArmed(), false);
+});
+
+test('tap mode: a keystroke while the release is owed sends once and cancels the deadline', async () => {
+  const s = tapStopped();
+  s.t.paint([`${HEAD}Hello world enter.`]);
+  s.clock.advance(1200);
+  await Promise.resolve();
+  s.clock.advance(800);
+  s.ta.type('Hello world enter. ');
+  assert.equal(s.sent.length, 1);
+  assert.equal(s.clock.pending(), 0, 'the keystroke cancelled the release deadline');
+  s.clock.advance(5000);
+  s.t.paint([`${HEAD}`]);
+  assert.equal(s.sent.length, 1);
 });
