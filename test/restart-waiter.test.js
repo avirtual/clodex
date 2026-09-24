@@ -426,3 +426,37 @@ test('watcher: a throwing watcher does not stop the others or the give-up', () =
   assert.deepStrictEqual(events, ['notify', 'abandon:b'], 'one bad watcher cannot silence the rest');
   assert.strictEqual(waiter.isArmed(), false, 'and the waiter still ended cleanly');
 });
+
+function runGatedWaiter() {
+  let runs = [];
+  const logs = { info: [], warn: [] };
+  const log = { info: (_t, m) => logs.info.push(m), warn: (_t, m) => logs.warn.push(m) };
+  const w = freshWaiter(1_000_000, { inFlightRuns: () => runs, log });
+  w.setSessions(IDLE);
+  return { ...w, logs, setRuns: (r) => { runs = r; } };
+}
+
+test('waiter: an in-flight exec run holds an otherwise idle restart, and it fires once the run ends', () => {
+  const { waiter, clock, events, logs, setRuns } = runGatedWaiter();
+  setRuns(['hand-1 run #3 (clodex-run-tests)']);
+  waiter.arm();
+  clock.advance(5 * 60_000);
+  assert.deepStrictEqual(events, [], 'idle seat, quiet keyboard, but a run in flight — no restart');
+  assert.deepStrictEqual(logs.info, ['restart waiting on in-flight exec runs: hand-1 run #3 (clodex-run-tests)']);
+  setRuns([]);
+  clock.advance(12_000);
+  assert.deepStrictEqual(events, ['restart'], 'the run ended — the usual 10s window then fires');
+  assert.deepStrictEqual(logs.warn, [], 'nothing was abandoned');
+});
+
+test('waiter: a run still in flight 10 minutes after arming no longer holds the restart, and the warn names it', () => {
+  const { waiter, clock, events, logs, setRuns } = runGatedWaiter();
+  setRuns(['hand-1 run #3 (clodex-run-tests)']);
+  waiter.arm();
+  clock.advance(10 * 60_000 - 2000);
+  assert.deepStrictEqual(events, []);
+  clock.advance(12_000);
+  assert.deepStrictEqual(events, ['restart']);
+  assert.strictEqual(logs.warn.length, 1);
+  assert.match(logs.warn[0], /abandoning: hand-1 run #3 \(clodex-run-tests\)/);
+});

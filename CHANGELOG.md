@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 - Spill: ticket hands and cold reviewers keep their newest long intent body in full, so a rework round has a real example of the verb it must write again.
+
+- Restart: a queued relaunch also waits for granted exec runs still in flight (up to 10 minutes), and a run that was in flight when the app restarted comes back to its seat as a failure line instead of vanishing.
 - Spill: each request carries a seat's two newest long intent bodies in full instead of the two oldest, so the most recent ticket or message in a seat's view is always a real body and not the runtime note.
 - Ticket loop: a verify step interrupted by a Clodex restart (suite or reviewer not yet reported) resumes when the app comes back, instead of sitting at verify until the watchdog alarms.
 - Transcript pane: `[agent:…]` intents carry the same fire/inert/filed marks as the terminal, file paths and URLs are clickable, and local-command output takes the theme's echo colours.
