@@ -8380,10 +8380,8 @@ body.web-frontend #sidebar-header {
   font-size: var(--fs-sm);
 }
 .tr-sender {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35em;
-  white-space: nowrap;
+  display: inline;
+  white-space: normal;
 }
 .tr-sender-glyph {
   display: inline-flex;
@@ -8397,6 +8395,8 @@ body.web-frontend #sidebar-header {
   font-weight: 600;
   background: var(--surface-selected);
   color: var(--text-secondary);
+  margin-right: 0.35em;
+  vertical-align: -0.2em;
 }
 .tr-sender-seat .tr-sender-glyph {
   background: var(--accent-soft);
@@ -8410,6 +8410,7 @@ body.web-frontend #sidebar-header {
   font-family: var(--font-mono);
   font-size: 0.9em;
   color: var(--text-tertiary);
+  margin-right: var(--sp-2);
 }
 .tr-time {
   color: var(--text-tertiary);
@@ -30257,8 +30258,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       function inboundRow(doc, rec, ctx) {
         const row = headRow(doc, "tr-inbound", rec);
-        row.appendChild(senderBadge(doc, rec.from));
         const text = el(doc, "span", "tr-head-text");
+        text.appendChild(senderBadge(doc, rec.from));
         if (rec.attached) {
           const lead = rec.text.slice(0, rec.text.indexOf("Message (")).trim();
           if (lead) appendProse(doc, text, `${lead} `, ctx);

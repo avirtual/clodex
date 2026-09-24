@@ -216,8 +216,8 @@ function senderBadge(doc, from) {
 
 function inboundRow(doc, rec, ctx) {
   const row = headRow(doc, 'tr-inbound', rec);
-  row.appendChild(senderBadge(doc, rec.from));
   const text = el(doc, 'span', 'tr-head-text');
+  text.appendChild(senderBadge(doc, rec.from));
   if (rec.attached) {
     const lead = rec.text.slice(0, rec.text.indexOf('Message (')).trim();
     if (lead) appendProse(doc, text, `${lead} `, ctx);
