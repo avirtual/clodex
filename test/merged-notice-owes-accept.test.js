@@ -58,6 +58,7 @@ function mkLoop({ ticket = {} } = {}) {
     fs: fsReal,
     path: pathReal,
     pathFor: require('../clodex-paths').pathFor,
+    gitWorktree: require('../git-worktree'),
     resolveTeam: (cwd) => (cwd && cwd.startsWith(root) ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(root) ? root : null),
   });
