@@ -43,10 +43,13 @@ function bodyOf(line, root, agent) {
   const t = cleanLine(line).trim();
   const m = HEAD_RE.exec(t);
   if (!m) return null;
-  const p = pointerMatch(t.slice(m[0].length).trim());
+  const rest = t.slice(m[0].length).trim();
+  const p = pointerMatch(rest);
   if (!p) return null;
   const r = resolveSpill(root, agent, p.id);
-  return r.ok ? [m[0], r.body] : null;
+  if (!r.ok) return null;
+  const f = FILED_POINTER_RE.exec(rest);
+  return { key: f ? f[3] : p.pointer, lines: [m[0], r.body] };
 }
 
 function collectStubs(messages, root, agent) {
@@ -64,10 +67,12 @@ function collectStubs(messages, root, agent) {
 }
 
 function expansionOf(state) {
-  const full = state.stubs[state.next++] || null;
-  if (!full) return null;
+  const stub = state.stubs[state.next++] || null;
+  if (!stub) return null;
   const ordinal = state.resolved++;
-  return ordinal >= state.total - state.examples ? full : null;
+  if (ordinal < state.total - state.examples && !state.sticky.has(stub.key)) return null;
+  state.expanded.push(stub.key);
+  return stub.lines;
 }
 
 function cutText(text, state) {
@@ -126,14 +131,14 @@ function placeholderOf(r) {
   return [...r.blocks.filter(isThinking), text];
 }
 
-function cutSpillStubs(obj, { root = null, agent = null, examples = 2 } = {}) {
-  const report = { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0 };
+function cutSpillStubs(obj, { root = null, agent = null, examples = 2, sticky = new Set() } = {}) {
+  const report = { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0, expanded: [] };
   if (!obj || !Array.isArray(obj.messages)) return report;
   const out = [];
   let changed = false;
   const stubs = collectStubs(obj.messages, examples > 0 ? root : null, agent);
   const total = stubs.filter(Boolean).length;
-  const state = { first: true, stubs, next: 0, resolved: 0, total, examples };
+  const state = { first: true, stubs, next: 0, resolved: 0, total, examples, sticky, expanded: report.expanded };
   for (const msg of obj.messages) {
     if (!msg || msg.role !== 'assistant' || !hasNeedle(msg)) { out.push(msg); continue; }
     const r = cutMessage(msg, state);
