@@ -12,7 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
-- Stream transport is a seat property: a template can set it, ticket seats spawn with it, Edit Session can switch a seat and Restart applies it; a stream seat now receives its team roster and open tickets at boot.
+- Stream transport is a seat property: a template can set it, ticket seats spawn with it, Edit Session can switch a seat and Restart applies it; a stream seat now receives its team roster and open tickets at boot, whether minted for the ticket or brought back by a restart or relaunch.
 - Stream seats: `[agent:context compact]` now ends on the stream's own compact boundary instead of timing out, and the transcript pane follows the seat across a `/clear`.
 
 - Stream seat voice, tap mode: a spoken sentence ending in the trigger word now sends by itself even when the recorder's own row never clears, instead of waiting for the next keystroke.

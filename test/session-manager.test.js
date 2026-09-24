@@ -20728,7 +20728,7 @@ test('t1099 onUndelivered: a unit whose seat DIES mid-settle is re-parked stampe
     'stamped from the closure\'s own session: after _cleanup neither the map nor persistence knows the name, and an unstamped entry would reach the next seat of that name');
 });
 
-function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null } = {}) {
+function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, holdDm = null } = {}) {
   const os = require('node:os');
   const fs = require('node:fs');
   const path = require('node:path');
@@ -20752,7 +20752,7 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null } = {
     hasActivePending: require('../pending-store').hasActivePending,
     drainPending: require('../pending-store').drainPending,
     parkDelivery: require('../pending-store').parkDelivery,
-    shouldHoldDm: require('../proxy-util').shouldHoldDm,
+    shouldHoldDm: holdDm || require('../proxy-util').shouldHoldDm,
     claimParkedByKey: require('../pending-store').claimParkedByKey,
     parkIdInUse: require('../pending-store').parkIdInUse,
     MSG_SPILL_THRESHOLD: 500,
@@ -21360,6 +21360,7 @@ test('stream seat team (a): the open ticket replays at the first init, not at cr
   const board = seedStreamTicket(h, team, 'stt1');
   await h.create('stt1');
   const s = h.m.sessions.get('stt1');
+  assert.deepStrictEqual(h.handles[0].sent, [], 'ENTER: a minted seat writes nothing at create');
   h.m.seatSend('stt1', 'go');
   assert.deepStrictEqual({ outbox: s.outbox, pending: s._replayTicketsPending, stamp: board()[0].deliveredTo || null },
     { outbox: [], pending: true, stamp: null });
@@ -21373,6 +21374,48 @@ test('stream seat team (a): the open ticket replays at the first init, not at cr
   assert.strictEqual(board()[0].deliveredTo && board()[0].deliveredTo.seat, 'stt1');
   h.line('stt1', INIT('sid-a'));
   assert.deepStrictEqual(s.outbox, [], 'a second init replays nothing');
+});
+
+const sentText = (msg) => spilledText(typeof msg.message.content === 'string' ? msg.message.content : JSON.stringify(msg.message.content));
+
+test('stream seat team (d): a resumed seat replays its open ticket at create, with no init fed', async (t) => {
+  const team = mkStreamTeam();
+  const h = mkStreamSeatManager({ team });
+  t.after(() => h.stopAll());
+  const board = seedStreamTicket(h, team, 'stt5');
+  await h.create('stt5', 'sid-1');
+  const s = h.m.sessions.get('stt5');
+  assert.strictEqual(h.handles[0].sent.length, 1, 'ENTER: the replay went straight to stdin');
+  assert.ok(sentText(h.handles[0].sent[0]).includes('STREAM WIDGET TICKET'), JSON.stringify(h.handles[0].sent[0]));
+  assert.strictEqual(board()[0].deliveredTo && board()[0].deliveredTo.seat, 'stt5');
+  assert.deepStrictEqual({ pending: s._replayTicketsPending, atInit: s._replayAtInit }, { pending: false, atInit: false });
+});
+
+test('stream seat team (d): a resumed seat with no open ticket writes nothing at create', async (t) => {
+  const team = mkStreamTeam();
+  const h = mkStreamSeatManager({ team });
+  t.after(() => h.stopAll());
+  await h.create('stt6', 'sid-1');
+  assert.deepStrictEqual(h.handles[0].sent, []);
+});
+
+test('stream seat team (f): a held resume-arm replay writes nothing and retries at the next init', async (t) => {
+  const team = mkStreamTeam();
+  let holding = true;
+  const h = mkStreamSeatManager({ team, holdDm: () => (holding ? { hold: true, reason: 'test hold' } : { hold: false }) });
+  t.after(() => h.stopAll());
+  h.m._parkHeldDelivery = () => null;
+  const board = seedStreamTicket(h, team, 'stt7');
+  await h.create('stt7', 'sid-1');
+  const s = h.m.sessions.get('stt7');
+  assert.deepStrictEqual({ sent: h.handles[0].sent, pending: s._replayTicketsPending, atInit: s._replayAtInit },
+    { sent: [], pending: true, atInit: true });
+  holding = false;
+  h.line('stt7', INIT('sid-1'));
+  assert.strictEqual(s._replayTicketsPending, false, 'ENTER: the init retried the held replay');
+  const delivered = [...h.handles[0].sent.map(sentText), ...s.outbox.map((o) => spilledText(o.text))];
+  assert.ok(delivered.some((x) => x.includes('STREAM WIDGET TICKET')), JSON.stringify(delivered));
+  assert.strictEqual(board()[0].deliveredTo && board()[0].deliveredTo.seat, 'stt7');
 });
 
 test('stream seat team (b): the roster parks passive at create and an idle edge leaves it for the prompt hook', async (t) => {
