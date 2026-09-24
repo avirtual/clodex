@@ -143,6 +143,14 @@ test('an inbound from a system sender draws a system badge inline at the head of
   assert.deepStrictEqual(card.childNodes[0].childNodes.map((n) => n.data ?? n.textContent), ['◷reminder', 'continue: t1 build']);
 });
 
+test('an inbound from clodex draws the system badge with its diamond glyph', () => {
+  const m = mount();
+  m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'clodex', text: '[agent:reboot] reboot queued' }]);
+  const badge = m.pane.childNodes[0].childNodes[0].childNodes[0].childNodes[0];
+  assert.strictEqual(badge.className, 'tr-sender tr-sender-system');
+  assert.deepStrictEqual(badge.childNodes.map((n) => [n.className, n.textContent]), [['tr-sender-glyph', '◆'], ['tr-sender-name', 'clodex']]);
+});
+
 test('an inbound from a seat draws a seat badge inline: role initial, team prefix dropped, full token in the title', () => {
   const m = mount();
   m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'clodex-hand-1138-r2', text: 'done' }]);

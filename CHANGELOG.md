@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Transcript pane: head rows and intent marks lose their left bars (the raised row and the tinted mark carry the meaning), and a runtime reply Clodex injects (`[agent:reboot] queued …`) shows a `clodex` badge instead of looking like something you typed.
 - Sidebar: Cmd+B (or the chevron in the toolbar) folds the sidebar to a narrow rail of status dots and one-letter monograms, so the terminal and the file pane get the width; the fold is remembered across relaunches. Unfold the same way.
 - Transcript pane: messages from Clodex itself (reminders, the ticket loop, reboot notices, exec results) and from other seats show a sender badge with a glyph and a short name instead of the wire's `from X` text.
 - Side pane: every file you open stays open in its own tab (up to 12; the least recently used untouched tab is closed to make room), and the single remaining tab no longer shows a close button next to the pane's own.

@@ -8,6 +8,7 @@ const ONLY_MAX = 80;
 const INPUT_KEYS = ['command', 'file_path', 'path', 'pattern', 'url', 'query', 'description', 'prompt'];
 const TURN_KINDS = new Set(['prompt', 'inbound', 'notification', 'command']);
 const INBOUND_RE = /^\[agent:from ([^\]\s]+)\][ \t]*/;
+const RUNTIME_RE = /^\[agent:[a-z-]+\b/;
 const ATTACHED_RE = /Message \((\d+) bytes\) attached: @(\S+)/;
 const EXIT_RE = /^Exit code (\d+)/;
 const DENIED_RE = /^(?:The user doesn't want to proceed with this tool use|Permission to use \S+ has been denied)/;
@@ -168,6 +169,7 @@ function userRecords(rec, base, tools) {
     const card = capped({ ...base, kind: 'inbound', from: from[1] }, 'text', rest, PROMPT_CAP);
     return [att ? { ...card, attached: { path: att[2], bytes: Number(att[1]) } } : card];
   }
+  if (RUNTIME_RE.test(text)) return [capped({ ...base, kind: 'inbound', from: 'clodex' }, 'text', text, PROMPT_CAP)];
   const fields = { ...base, kind: 'prompt' };
   const out = capped(fields, 'text', text, PROMPT_CAP);
   return [{ ...out, source: rec.promptSource === 'queued' ? 'queued' : 'typed' }];

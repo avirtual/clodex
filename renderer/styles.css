@@ -5131,6 +5131,7 @@ body:not(.sessions-restored) [data-peer-ui] { display: none; }
    at all: it was never going to fire, and marking those buried the real ones. */
 .intent-mark-inert { border-left-color: var(--warn); background: rgba(229, 192, 123, .13); }
 .intent-mark-filed { border-left-color: var(--ok); background: rgba(152, 195, 121, .13); }
+.transcript-pane .intent-mark { border-left: 0; padding-left: 0.15em; }
 
 /* Paper and light are LIGHT grounds: a wash tuned on the dark default turns
    muddy or invisible there, so each theme states its own. */
@@ -5951,7 +5952,6 @@ body.web-frontend #sidebar-header {
   gap: var(--sp-2);
   padding: var(--sp-1) var(--sp-2);
   background: var(--surface-raised);
-  border-left: 2px solid var(--accent);
 }
 .tr-head-text {
   flex: 1;
@@ -5962,8 +5962,6 @@ body.web-frontend #sidebar-header {
   -webkit-line-clamp: 3;
   overflow: hidden;
 }
-.tr-inbound { border-left-color: var(--info); }
-.tr-notification { border-left-color: var(--text-tertiary); }
 .tr-command { font-family: var(--font-mono); font-size: var(--fs-sm); }
 .tr-sender { display: inline; white-space: normal; }
 .tr-sender-glyph {
