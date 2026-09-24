@@ -82,6 +82,7 @@ function managerFixture() {
   const writes = [];
   const events = [];
   const registered = [];
+  const records = new Map();
   const fakePty = {
     spawn: (cmd, args, opts) => {
       const rec = { cmd, args, opts, killed: false, data: null, exit: null };
@@ -105,7 +106,11 @@ function managerFixture() {
     getUserDataPath: () => userData,
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
-    getPersistence: () => ({ list: () => [], get: () => null }),
+    getPersistence: () => ({
+      list: () => [...records.values()],
+      get: (n) => records.get(n) || null,
+      setVoice: (n, mode) => { records.set(n, { ...(records.get(n) || { name: n }), voice: mode }); return true; },
+    }),
     registry: { register: (n) => registered.push(n), unregister: () => {}, listPeers: () => [] },
     notifyOS: () => {},
     setAppQuitting: () => {},
@@ -124,7 +129,8 @@ function managerFixture() {
   m.voiceEngineTimings = () => ({ holdRepeatMs: 1, holdMaxMs: 1000, bootSettleMs: 0, bootMaxMs: 50, repaintMaxMs: 50 });
   m.sessions.set('st', { name: 'st', type: 'claude', agentType: 'claude', io: 'stream', cwd: '/proj', workspaceId: 'ws-1', pty: { pid: 1 }, activityState: 'idle' });
   m.sessions.set('tt', { name: 'tt', type: 'claude', agentType: 'claude', io: 'pty', cwd: '/proj', workspaceId: 'ws-1', pty: { pid: 2 }, activityState: 'idle' });
-  return { m, spawns, writes, events, registered, wireCalls, home, userData };
+  const setVoice = (n, mode) => records.set(n, { ...(records.get(n) || { name: n }), voice: mode });
+  return { m, spawns, writes, events, registered, wireCalls, home, userData, setVoice };
 }
 
 test('the voice engine is a private claude pty: wire-sunk, never listed, never registered', async () => {
@@ -134,7 +140,7 @@ test('the voice engine is a private claude pty: wire-sunk, never listed, never r
   assert.equal(h.spawns.length, 1);
   assert.equal(h.spawns[0].cmd, 'claude');
   assert.equal(h.spawns[0].opts.cwd, h.userData);
-  assert.deepEqual(h.spawns[0].args, engineArgs(`http://127.0.0.1:1/agent/${VOICE_ENGINE_NAME}/tok`));
+  assert.deepEqual(h.spawns[0].args, engineArgs(`http://127.0.0.1:1/agent/${VOICE_ENGINE_NAME}/tok`, 'tap'));
   assert.deepEqual(h.wireCalls[0], ['register', VOICE_ENGINE_NAME, { voiceSink: true }]);
   assert.equal(h.m.sessions.has(VOICE_ENGINE_NAME), false);
   assert.ok(!h.m.list().some((r) => r.name === VOICE_ENGINE_NAME), 'absent from list()');
@@ -149,14 +155,8 @@ test('the voice engine is a private claude pty: wire-sunk, never listed, never r
   assert.deepEqual(h.wireCalls.at(-1), ['unregister', VOICE_ENGINE_NAME]);
 });
 
-test('voiceRecord writes the recorder key for a stream seat and refuses a terminal seat', async () => {
+test('voiceRecord writes the recorder key for a tap seat', async () => {
   const h = managerFixture();
-  const refused = await h.m.voiceRecord('tt', 'toggle', { mode: 'tap' });
-  assert.equal(refused.ok, false);
-  assert.equal(h.spawns.length, 0, 'a refusal spawns nothing');
-  const off = await h.m.voiceRecord('st', 'toggle', { mode: 'off' });
-  assert.equal(off.ok, false);
-  assert.equal(h.spawns.length, 0);
   const on = await h.m.voiceRecord('st', 'toggle', { mode: 'tap', workspaceId: 'ws-1' });
   assert.deepEqual(on, { ok: true, recording: true, engine: VOICE_ENGINE_NAME });
   assert.deepEqual(h.writes, [' ']);
@@ -172,6 +172,7 @@ test('voiceRecord writes the recorder key for a stream seat and refuses a termin
 
 test('a hold released while the engine boots ends stopped: voiceRecord runs in order', async () => {
   const h = managerFixture();
+  h.setVoice('st', 'hold');
   const start = h.m.voiceRecord('st', 'start', { mode: 'hold' });
   for (let i = 0; i < 50 && !h.m._voiceEngine; i++) await Promise.resolve();
   assert.ok(h.m._voiceEngine, 'the engine is assigned before it is ready');
@@ -216,6 +217,7 @@ test('the hold cap stops the engine and tells the arming window so its light goe
   const h = managerFixture();
   const got = [];
   h.m.windows.set('ws-1', { isDestroyed: () => false, webContents: { send: (...a) => got.push(a) } });
+  h.setVoice('st', 'hold');
   const start = h.m.voiceRecord('st', 'start', { mode: 'hold' });
   let res = null;
   start.then((r) => { res = r; });
@@ -252,7 +254,6 @@ function ipcFixture() {
     handle: (ch, fn) => handlers.set(ch, fn),
     on: (ch, fn) => handlers.set(ch, fn),
     manager,
-    readVoiceMode: () => ({ effective: 'tap' }),
     surfaceOfSender: () => 'desktop',
     workspaceOfSender: () => 'ws-1',
     log: { info() {}, error() {}, warn() {} },
@@ -260,19 +261,62 @@ function ipcFixture() {
   return { calls, record: (...a) => handlers.get('voice:record')({}, ...a) };
 }
 
-test('voice:record refuses a pty seat and passes a stream seat with the box-wide mode', async () => {
+test('voice:record passes a pty seat and a stream seat alike, carrying no mode of its own', async () => {
   const f = ipcFixture();
-  const refused = await f.record('tt', 'toggle');
-  assert.equal(refused.ok, false);
-  assert.match(refused.error, /stream seat/);
-  assert.deepEqual(f.calls, []);
   const bad = await f.record('st', 'send');
   assert.equal(bad.ok, false);
   assert.deepEqual(f.calls, []);
+  await f.record('tt', 'toggle');
   await f.record('st', 'toggle');
-  assert.deepEqual(f.calls, [['st', 'toggle', { mode: 'tap', workspaceId: 'ws-1', observed: null }]]);
+  assert.deepEqual(f.calls, [
+    ['tt', 'toggle', { workspaceId: 'ws-1', observed: null }],
+    ['st', 'toggle', { workspaceId: 'ws-1', observed: null }],
+  ]);
   await f.record('st', 'start', { recording: 1, processing: true, extra: 'x' });
-  assert.deepEqual(f.calls[1], ['st', 'start', { mode: 'tap', workspaceId: 'ws-1', observed: { recording: false, processing: true } }]);
+  assert.deepEqual(f.calls[2], ['st', 'start', { workspaceId: 'ws-1', observed: { recording: false, processing: true } }]);
+});
+
+test('voiceRecord on an OFF seat writes nothing, spawns nothing and refuses', async () => {
+  const h = managerFixture();
+  h.setVoice('st', 'off');
+  const off = await h.m.voiceRecord('st', 'toggle', { workspaceId: 'ws-1' });
+  assert.deepStrictEqual(off, { ok: false, error: 'voice is off for this seat' });
+  assert.equal(h.spawns.length, 0);
+  assert.deepEqual(h.writes, []);
+});
+
+test('a tap on a codex pty seat spawns the engine with the tap mode in its inline settings', async () => {
+  const h = managerFixture();
+  h.m.sessions.set('cx', { name: 'cx', type: 'codex', agentType: 'codex', io: 'pty', cwd: '/proj', workspaceId: 'ws-1', pty: { pid: 5 }, activityState: 'idle' });
+  const on = await h.m.voiceRecord('cx', 'toggle', { workspaceId: 'ws-1' });
+  assert.deepStrictEqual(on, { ok: true, recording: true, engine: VOICE_ENGINE_NAME });
+  assert.equal(h.spawns.length, 1);
+  assert.equal(h.spawns[0].args[0], '--settings');
+  assert.deepStrictEqual(JSON.parse(h.spawns[0].args[1]), {
+    env: { ANTHROPIC_BASE_URL: `http://127.0.0.1:1/agent/${VOICE_ENGINE_NAME}/tok/anthropic` },
+    voice: { mode: 'tap' },
+    voiceEnabled: true,
+  });
+  assert.deepEqual(h.writes, [' ']);
+  h.m.killVoiceEngine();
+});
+
+test('arming a hold seat after a tap seat respawns the engine once, in hold', async () => {
+  const h = managerFixture();
+  h.m.sessions.set('hd', { name: 'hd', type: 'bash', io: 'pty', cwd: '/proj', workspaceId: 'ws-1', pty: { pid: 6 }, activityState: 'idle' });
+  h.setVoice('hd', 'hold');
+  await h.m.voiceRecord('st', 'toggle', { workspaceId: 'ws-1' });
+  await h.m.voiceRecord('st', 'toggle', { workspaceId: 'ws-1' });
+  assert.equal(h.spawns.length, 1);
+  const start = await h.m.voiceRecord('hd', 'start', { workspaceId: 'ws-1' });
+  assert.equal(start.recording, true);
+  assert.equal(h.spawns.length, 2);
+  assert.equal(h.spawns[0].killed, true);
+  assert.deepStrictEqual(JSON.parse(h.spawns[1].args[1]).voice, { mode: 'hold' });
+  assert.equal(h.m._voiceEngine.mode, 'hold');
+  await h.m.voiceRecord('hd', 'stop', { workspaceId: 'ws-1' });
+  assert.equal(h.spawns.length, 2, 'the same mode reuses the live engine');
+  h.m.killVoiceEngine();
 });
 
 function resyncFixture() {

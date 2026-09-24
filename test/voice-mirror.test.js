@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createVoiceMirror, draftFromRows, engineObserved } = require('../renderer/voice-mirror');
-const { applyDraft, attachTriggerSubmit } = require('../renderer/lib/composer-voice');
+const { applyDraft, attachTriggerSubmit, createPtyVoiceDraft } = require('../renderer/lib/composer-voice');
 
 const HEAD = '❯ ';
 
@@ -355,11 +355,65 @@ test('engineObserved reads the recorder and processing indicators off the whole 
   assert.deepEqual(engineObserved({ terminal: fakeTerminal([`${HEAD}`]) }), { recording: false, processing: false });
 });
 
-test('streamVoiceRecord passes the engine view it already had, read before the view is created', () => {
+test('seatVoiceRecord passes the engine view it already had, read before the view is created', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
-  const body = src.slice(src.indexOf('async function streamVoiceRecord('), src.indexOf('function streamVoiceFired('));
+  const body = src.slice(src.indexOf('async function seatVoiceRecord('), src.indexOf('function seatVoiceFired('));
   const read = body.indexOf('const observed = engineObserved(voiceEngineView);');
   assert.ok(read !== -1);
   assert.ok(read < body.indexOf('voiceEngine()'));
   assert.match(body, /window\.api\.voiceRecord\(name, action, observed\)/);
+});
+
+function ptyFixture(phrase = 'over and out') {
+  const t = fakeTerminal([`${HEAD}`]);
+  const pending = [];
+  const timers = { set: (fn) => { pending.push(fn); return pending.length; }, clear: (id) => { pending[id - 1] = null; } };
+  const flush = () => { for (let i = 0; i < pending.length; i++) { const fn = pending[i]; pending[i] = null; if (fn) fn(); } };
+  const writes = [];
+  let origins = 0;
+  const sink = createPtyVoiceDraft({
+    getConfig: () => ({ enabled: true, phrase }),
+    write: (d) => writes.push(d),
+    markOrigin: () => { origins++; },
+    quietMs: 1200,
+    timers,
+  });
+  const mirror = createVoiceMirror(t, { onDraft: (d) => sink.draft(d), onRelease: () => sink.released() });
+  return { t, sink, mirror, writes, flush, origins: () => origins };
+}
+
+test('a pty seat: the release writes the bracketed text, then Enter, as two writes in that order', () => {
+  const f = ptyFixture();
+  f.mirror.arm();
+  f.t.paint([`${HEAD}first line`]);
+  f.t.paint([`${HEAD}First line. Second line.`]);
+  assert.deepEqual(f.writes, [], 'nothing reaches the pty while he is still speaking');
+  f.mirror.release();
+  f.t.paint([`${HEAD}`]);
+  assert.deepStrictEqual(f.writes, ['\x1b[200~First line. Second line.\x1b[201~', '\r']);
+  assert.equal(f.origins(), 1);
+  assert.equal(f.sink.pending(), '');
+});
+
+test('a pty seat: the trigger phrase fires the draft without the phrase, once', () => {
+  const f = ptyFixture();
+  f.mirror.arm();
+  f.t.paint([`${HEAD}ship it over and out`]);
+  f.flush();
+  assert.deepStrictEqual(f.writes, ['\x1b[200~ship it\x1b[201~', '\r']);
+  f.mirror.release();
+  f.t.paint([`${HEAD}`]);
+  assert.equal(f.writes.length, 2, 'the release after a fire sends nothing more');
+});
+
+test('a pty seat: an empty dictation writes nothing', () => {
+  const f = ptyFixture();
+  f.sink.released();
+  assert.deepEqual(f.writes, []);
+});
+
+test('renderer.js no longer requires the pty voice-submit watcher', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  assert.doesNotMatch(src, /require\(['"][^'"]*voice-submit-watcher['"]\)/);
+  assert.doesNotMatch(src, /createVoiceSubmitWatcher/);
 });

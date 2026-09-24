@@ -14,13 +14,14 @@ const PROCESSING_INDICATOR = /Voice:\s*processing/i;
 const NO_SPEECH = /No speech detected/;
 const SCREEN_RESET = '\x1b[H\x1b[2J\x1b[3J';
 
-function engineSettings(wireBase) {
+function engineSettings(wireBase, mode) {
   if (typeof wireBase !== 'string' || !wireBase) throw new Error('voice engine needs a wire base');
-  return { env: { ANTHROPIC_BASE_URL: `${wireBase}/anthropic` } };
+  if (mode !== 'tap' && mode !== 'hold') throw new Error(`voice engine needs a tap or hold mode, not ${mode}`);
+  return { env: { ANTHROPIC_BASE_URL: `${wireBase}/anthropic` }, voice: { mode }, voiceEnabled: true };
 }
 
-function engineArgs(wireBase) {
-  return ['--settings', JSON.stringify(engineSettings(wireBase))];
+function engineArgs(wireBase, mode) {
+  return ['--settings', JSON.stringify(engineSettings(wireBase, mode))];
 }
 
 function planRecord({ mode, action, recording } = {}) {

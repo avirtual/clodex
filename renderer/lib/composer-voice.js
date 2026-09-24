@@ -2,6 +2,11 @@
 
 const { findSubmit, shouldFire } = require('./voice-submit');
 
+const VOICE_QUIET_MS = 1200;
+const VOICE_RELEASE_MS = 2500;
+const PASTE_OPEN = '\x1b[200~';
+const PASTE_CLOSE = '\x1b[201~';
+
 function applyDraft(value, span, text) {
   const v = typeof value === 'string' ? value : '';
   let start = -1;
@@ -138,4 +143,42 @@ function attachTriggerSubmit(composer, {
   };
 }
 
-module.exports = { applyDraft, createComposerTrigger, attachTriggerSubmit };
+function createPtyVoiceDraft({
+  getConfig, write, markOrigin = () => {}, onVoiceFire = () => {}, holdsFire = () => false, onVoiceStop = () => {},
+  quietMs = 0, releaseMs = 0, timers = { set: setTimeout, clear: clearTimeout },
+}) {
+  let value = '';
+  const composer = {
+    get value() { return value; },
+    set value(v) { value = typeof v === 'string' ? v : ''; },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const submit = () => {
+    const text = value.trim();
+    value = '';
+    if (!text) return;
+    try { markOrigin(); } catch {}
+    write(`${PASTE_OPEN}${text}${PASTE_CLOSE}`);
+    write('\r');
+  };
+  const trigger = attachTriggerSubmit(composer, {
+    getConfig, markOrigin: () => {}, send: submit, onVoiceFire, holdsFire, onVoiceStop, quietMs, releaseMs, timers,
+  });
+  return {
+    draft(text) { trigger.draft(text); },
+    released() {
+      trigger.released();
+      trigger.check();
+      submit();
+    },
+    resetSpan() { trigger.resetSpan(); },
+    pending: () => value,
+    dispose() { value = ''; trigger.dispose(); },
+  };
+}
+
+module.exports = {
+  applyDraft, createComposerTrigger, attachTriggerSubmit, createPtyVoiceDraft,
+  VOICE_QUIET_MS, VOICE_RELEASE_MS, PASTE_OPEN, PASTE_CLOSE,
+};

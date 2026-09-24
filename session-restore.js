@@ -18,6 +18,8 @@
 
 'use strict';
 
+const { voiceModeOf } = require('./voice-settings');
+
 function archivedSnapshotFor({ manager, entry }) {
   return {
     name: entry.name,
@@ -61,6 +63,7 @@ function liveSnapshotFor({ manager, entry, session, readCtxFor, proxyPoller }) {
 function stampConfigFlags(row, entry) {
   if (entry.noWire === true) row.noWire = true;
   if (entry.io === 'stream') row.io = 'stream';
+  row.voice = voiceModeOf(entry);
   if (typeof entry.fixFor === 'string' && entry.fixFor) row.fixFor = entry.fixFor;
   return row;
 }

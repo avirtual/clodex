@@ -1,12 +1,12 @@
 # Renderer event push surface — the other half of the browser contract
 
 The contract map for every event the main process pushes at a renderer.
-`preload.js` invoke/send is the request half of `window.api` (248 endpoints);
+`preload.js` invoke/send is the request half of `window.api` (249 endpoints);
 THIS is the push half. A browser frontend must receive each of these over WS
 exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
-`preload.js` (73 channels). This doc maps each to its emission point, its
+`preload.js` (74 channels). This doc maps each to its emission point, its
 payload shape (field NAMES, not full types), and the interception point a web
 host subscribes to.
 
@@ -69,8 +69,9 @@ reattach — a web host needs the same replay-on-connect for a reloaded tab.
 | `session-mention` | `name, mtype, from` (`dm`/…) | session-manager (dm/mention gate) |
 | `session:context-action` | `msg` object `{action, name, …}` (`reattach`/`spawn` path) | session-manager |
 | `session-peer-control` | `name, holder` (control-holder tag or null) | remote-wiring |
-| `voice-tap` | `name, modeSettling` (ensure-on request from an outside script; the renderer decides whether a key is written, since only it can read the recording indicator. `modeSettling` says the voice mode was set to `tap` too recently for the CLI to have observed it, so the renderer waits before writing the key) | session-manager `voiceTap` |
-| `voice-engine-stopped` | `name` — the voice engine's hold cap ended a recording this stream seat armed, so its recording light goes out — **direct handle** on the arming workspace's window (`windowForWorkspace`) | session-manager `_endVoiceHoldAtCap` |
+| `voice-tap` | `name` (ensure-on request from an outside script for a seat whose voice mode is `tap`; the renderer asks main to start the voice engine's recorder for that seat over `voice:record`) | session-manager `voiceTap` |
+| `seat-voice` | `name, mode` — a seat's voice mode (`off`, `tap`, `hold`) changed in its record; broadcast to every window | session-manager `setVoice` |
+| `voice-engine-stopped` | `name` — the voice engine's hold cap ended a recording this seat armed, so its recording light goes out — **direct handle** on the arming workspace's window (`windowForWorkspace`) | session-manager `_endVoiceHoldAtCap` |
 
 ## B. Broadcast channels (via `_broadcast`)
 

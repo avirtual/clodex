@@ -90,7 +90,7 @@ function registerIpcHandlers(deps) {
     jsonlToMarkdown, log, manager,
     openWirescopeWindow, os,
     path, persistence, probePeer, proxyPoller,
-    pty, readEffectiveToolState, readVoiceMode, readVoiceTrigger, readVoiceCapability, writeVoiceMode, readSessionMeta,
+    pty, readEffectiveToolState, readVoiceTrigger, readVoiceCapability, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog, setLead, setTeamTrunk, gatherTeam, teamsDir,
@@ -1180,26 +1180,14 @@ function registerIpcHandlers(deps) {
   });
   handle('session:skillCatalog', (_e, name) => readSkillCatalog({ name }));
   handle('settings:skillCatalogFor', (_e, cwd, type) => readSkillCatalog({ cwd: cwd || null, type: type || null }));
-  // Box-wide, so it takes no session name: ~/.claude/settings.json is global and
-  // every Claude session on this box shares it. Reading it MAIN-side is what lets
-  // the browser frontend have this control at all — a renderer-side fs read would
-  // ship a button that is dead over web-host.
-  // The trigger key and the machine's capability ride this same channel rather
-  // than two more: all three are read-only facts about what the CLI on this box
-  // can do, read on one poll.
-  handle('settings:voiceMode', () => {
+  handle('settings:voiceMode', (_e, name) => {
     const cap = readVoiceCapability ? readVoiceCapability() : { capable: true, cause: null };
-    return { ok: true, ...readVoiceMode(), trigger: readVoiceTrigger(), capable: cap.capable !== false, cause: cap.cause || null };
+    const seat = (typeof name === 'string' && name) || manager._focusedSession || null;
+    const mode = seat && manager.sessions.has(seat) ? manager.voiceModeFor(seat) : null;
+    return { ok: true, seat, mode, effective: mode, trigger: readVoiceTrigger(), capable: cap.capable !== false, cause: cap.cause || null };
   });
-  // Box-wide for the same reason as the read, and takes no session name for a
-  // second one: the write goes to the file, not into a seat, so it is the one
-  // path that still works with zero Claude sessions open.
-  // THROUGH THE MANAGER, not straight to the writer, so this write stamps the
-  // settle memo like the spoken verb does. The CLI observes any of these writes
-  // on a delay, and a tap that follows one must wait however the mode got there
-  // — picking `tap` in Preferences and then saying the tap phrase is the same
-  // race as saying `mode tap` first.
-  handle('settings:setVoiceMode', (_e, mode) => manager.voiceMode(mode));
+  handle('settings:setVoiceMode', (_e, mode, name) => manager.voiceMode(mode, typeof name === 'string' && name ? name : null));
+  handle('session:setVoice', (_e, name, mode) => manager.setVoice(String(name || ''), mode));
 
   handle('settings:toolCatalogFor', (_e, cwd) => {
     return { ok: true, effective: readEffectiveToolState(cwd || null).overrides };
@@ -2407,14 +2395,11 @@ function registerIpcHandlers(deps) {
   handle('voice:record', (e, name, action, observed = null) => {
     const s = manager.sessions.get(String(name || ''));
     if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };
-    if (s.io !== 'stream') return { ok: false, error: 'voice:record is for a stream seat; a terminal seat records in its own terminal' };
     if (!['start', 'stop', 'toggle'].includes(action)) return { ok: false, error: 'action must be start, stop or toggle' };
-    let mode = null;
-    try { mode = readVoiceMode().effective; } catch { mode = null; }
     const seen = observed && typeof observed === 'object'
       ? { recording: observed.recording === true, processing: observed.processing === true }
       : null;
-    return manager.voiceRecord(s.name, action, { mode, workspaceId: s.workspaceId, observed: seen });
+    return manager.voiceRecord(s.name, action, { workspaceId: s.workspaceId, observed: seen });
   });
 
   // The renderer knows a submit is voice-originated (it watched the composition

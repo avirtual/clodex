@@ -27,6 +27,7 @@ const {
 const { deferredSkillDeny, isSkillDenyDirective } = require('./skills-off');
 const { seatDirFor } = require('./clodex-paths');
 const { seatLayoutActive } = require('./seat-layout');
+const { VOICE_MODES } = require('./voice-settings');
 
 const PROMPT_KINDS = ['system', 'append'];
 const PROMPT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/; // mirrors session/agent name rule
@@ -589,6 +590,15 @@ function initStores(userDataPath, {
         entry.io = io === 'stream' ? 'stream' : 'pty';
         this._save(all, name);
       }
+    },
+    setVoice(name, mode) {
+      if (!VOICE_MODES.includes(mode)) return false;
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (!entry) return false;
+      entry.voice = mode;
+      this._save(all, name);
+      return true;
     },
     setRosterSent(name) {
       const all = this._load();
