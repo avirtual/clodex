@@ -1,12 +1,5 @@
 // voice-control.js — the voice-mode state machine (off · tap · hold) and the
 // Preferences selector over it.
-// WE SKIP THE FOUR GATES the CLI runs before its own `/voice` write (recording
-// availability, voice-stream entitlement, audio-tool dependencies, microphone
-// permission). Accepted deliberately: a mode is a stored PREFERENCE, the CLI
-// re-checks all four when recording actually starts, so the worst case is a
-// preference persisted on a box that cannot record — recoverable and honest. Do
-// NOT re-implement any of them here; that would be a second, drifting copy of a
-// vendor policy we cannot see.
 
 const VOICE_ITEMS = [
   { mode: 'off', name: 'Off', desc: 'No voice input' },
@@ -107,8 +100,7 @@ function createVoiceCore({ showToast, getSeat = () => null }) {
 
   // REFCOUNTED because the two surfaces have different lifetimes: Preferences
   // holds only while its dialog is open, the bar holds for the life of the
-  // window. The dialog closing must not stop the poll under the bar, which is
-  // on screen the whole time and whose label is a claim about the file.
+  // window.
   function start() {
     holds++;
     if (holds === 1 && !pollTimer) pollTimer = setInterval(refresh, POLL_MS);
@@ -175,10 +167,6 @@ function createVoiceControl({ core }) {
 
   sel.addEventListener('change', () => { core.choose(sel.value); });
 
-  // The value write above is skipped while the picker holds focus, so whatever
-  // arrived meanwhile — a failed write reverting the pick, or an external
-  // `/voice` the poll read — is unpainted until something repaints. Blur is that
-  // moment; without it the row can sit showing a mode the file contradicts.
   sel.addEventListener('blur', () => core.repaint());
 
   // start/stop ONLY. `refresh` and `render` were exported here with no caller in

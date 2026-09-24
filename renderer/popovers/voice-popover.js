@@ -1,15 +1,10 @@
 // popovers/voice-popover.js — the session bar's voice-mode button and its
-// popover (off · tap · hold). The button label carries the CURRENT mode read
-// from the settings file, so the mode is answerable at a glance without opening
-// Preferences; the popover is the picker.
+// popover (off · tap · hold).
 //
 // Self-contained island: it owns its DOM handles and dismiss wiring, and gets
 // every piece of voice state from the shared core in voice-control.js. It holds
 // NO state of its own — a second copy of the box-wide mode is exactly what the
 // core exists to prevent.
-//
-// Claude only. Codex has no `/voice`, so a button on a Codex seat's bar would
-// name a setting that seat cannot have.
 //
 // It also carries the OUTPUT half: whether Clodex reads the final reply
 // aloud. Input and output are one popover because they are one conversation
@@ -27,7 +22,6 @@
 
 const { esc } = require('../lib/format');
 const { VOICE_ITEMS } = require('../voice-control');
-const { COMPOSITION_POLL_MS } = require('../voice-submit-watcher');
 
 // Read on OPEN rather than cached at init: the file is the truth for the input
 // half and must be for this half too, or a Preferences change would leave the
@@ -71,7 +65,7 @@ const DEFAULT_SPEAK_RATE = 210;
 // bar would repaint #proxy-actions on this timer, which is the measured
 // click-eating rebuild that ate 10-15% of clicks; the popover placement is what
 // makes a tick this fast affordable at all.
-const RECORDER_TICK_MS = COMPOSITION_POLL_MS;
+const RECORDER_TICK_MS = 300;
 
 // What CLODEX believes, in the words of the predicate that produced it.
 // 'unreadable' is the one this whole surface exists for: it silently blocks
@@ -186,8 +180,8 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
     const tip = snap.pending
       ? `Voice input: switching to ${snap.pending}`
       : (mode === 'tap' || mode === 'hold')
-        ? 'Voice input mode for every Claude session on this machine — click to change; on a stream seat click records, right-click changes'
-        : 'Voice input mode for every Claude session on this machine — click to change';
+        ? 'Voice input for this seat — click records, right-click changes'
+        : 'Voice input for this seat — click to change';
     return `<button class="px-action${dim}" data-act="voice" data-tip="${esc(tip)}">🎤 ${esc(label)}</button>`;
   }
 
@@ -207,7 +201,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
       ? `Voice input is unavailable on this machine: ${esc(snap.cause || 'this node\u2019s Claude CLI cannot record')}`
       : (snap.pending
         ? `Switching to ${esc(snap.pending)}…`
-        : 'One setting for every Claude session on this machine.');
+        : 'This seat\u2019s voice mode.');
     // The reading rides in its own host node so the tick can replace it without
     // touching the picker rows around it.
     body.innerHTML = `<div class="voice-rows">${rows}</div>`

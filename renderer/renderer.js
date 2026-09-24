@@ -4805,9 +4805,6 @@ createInboxDrawer({ openFilePeek, showToast });
 
 const voiceCore = createVoiceCore({ showToast, getSeat: () => activeSession });
 
-// Cached because the watcher consults it on every quiet-window expiry, per
-// terminal — an invoke per tick would put IPC on a timer. Refreshed by the two
-// events that can change it: Preferences saving, and this window loading.
 let voiceSubmitConfig = {
   enabled: false, composition: false, rearm: false, phrase: DEFAULT_SUBMIT_PHRASE,
 };

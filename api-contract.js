@@ -399,9 +399,6 @@ const API_CONTRACT = [
   { name: 'getAgentCatalog', kind: 'invoke', channel: 'session:agentCatalog' },
   { name: 'getSkillCatalogFor', kind: 'invoke', channel: 'settings:skillCatalogFor' },
   { name: 'getToolCatalogFor', kind: 'invoke', channel: 'settings:toolCatalogFor' },
-  // The box-wide voice-input mode the CLI persists, read and written. The write
-  // is a direct settings-file write, NOT an injection: it needs no session, so
-  // both surfaces work with zero Claude seats open.
   { name: 'getVoiceMode', kind: 'invoke', channel: 'settings:voiceMode' },
   { name: 'setVoiceMode', kind: 'invoke', channel: 'settings:setVoiceMode' },
   { name: 'setSeatVoice', kind: 'invoke', channel: 'session:setVoice' },

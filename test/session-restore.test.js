@@ -322,3 +322,20 @@ test('io passes through to create() as the last positional, pty by default, and 
   assert.deepStrictEqual(createArgs.get('pty').slice(23), ['pty']);
   assert.deepStrictEqual(out.map((e) => [e.name, e.io]), [['run', 'stream'], ['st', 'stream'], ['arch', 'stream'], ['pty', undefined]]);
 });
+
+test('each restored row carries its seat voice mode, tap when the record has none', async () => {
+  const manager = {
+    sessions: new Map([['run', { backend: null, pendingOutput: '' }]]),
+    async create(name) { manager.sessions.set(name, { backend: null }); return { name }; },
+    resumeCwdOf: (e) => e.cwd,
+    pendingCountFor: () => 0,
+    teamNameFor: () => null,
+  };
+  const persistence = fakePersistence([
+    { name: 'run', type: 'codex', cwd: '/w/r', voice: 'hold' },
+    { name: 'off', type: 'bash', cwd: '/w/o', voice: 'off' },
+    { name: 'plain', type: 'claude', cwd: '/w/p' },
+  ]);
+  const out = await restoreSessionsForWorkspace({ workspaceId: 'ws1', persistence, manager, ...noopDeps });
+  assert.deepStrictEqual(out.map((e) => [e.name, e.voice]), [['run', 'hold'], ['off', 'off'], ['plain', 'tap']]);
+});

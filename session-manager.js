@@ -3388,9 +3388,7 @@ function createSessionManager(deps) {
       // `show()` then `focus()`, the pair the file-view path already uses and
       // the window-bridge contract already documents — this adds no window
       // capability. AFTER the retarget and BEFORE the frame: the seat must
-      // already hold the microphone when its window comes forward, and the
-      // renderer decides whether the key may be written against an app that is
-      // by then coming to the front.
+      // already hold the microphone when its window comes forward.
       // `raise` is the CALLER'S INTENT and is why it ORs rather than extending
       // the focus test: app-focus answers "is Clodex buried", which is the
       // tap's question, and it is FALSE exactly when he is looking at another
