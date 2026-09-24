@@ -302,3 +302,32 @@ test('lock: neither the lock nor the slow-advisory declaration reaches the child
       + 'stops enforcing six seconds on tests nobody measured under a lock');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('timeout: a run that wedges is cut off with a TIMEOUT line naming the file it was in', () => {
+  const root = fs.realpathSync(mkTmpRoot('clx-t279-'));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  for (const f of ['run-tests.js', 'test-escapes.js']) {
+    fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
+  }
+  fs.writeFileSync(path.join(root, 'wedge.test.js'), [
+    "require('node:test').test('wedges', () => {",
+    '  let n = 0;',
+    '  const iv = setInterval(() => { if (++n > 60) clearInterval(iv); }, 500);',
+    '});',
+  ].join('\n'));
+  const env = { ...process.env, CLODEX_TEST_RUN_TIMEOUT_MS: '1000' };
+  delete env.NODE_TEST_CONTEXT;
+  try {
+    const res = spawnSync(
+      process.execPath,
+      [path.join(root, 'scripts', 'run-tests.js'), 'wedge.test.js'],
+      { encoding: 'utf-8', cwd: root, timeout: 120000, env },
+    );
+    const out = `${res.stdout || ''}${res.stderr || ''}`;
+    assert.match(out, /TIMEOUT after/, `ENTER: the runner never cut the wedged run off:\n${out.slice(-600)}`);
+    assert.match(out, /TIMEOUT after 0\.02m in wedge\.test\.js/, out.slice(-600));
+    assert.ok(!/TOTALS:/.test(out), 'a wedged run must not report totals');
+    assert.ok(!/another suite run is already going/.test(out), 'a wedge must not read as a lock refusal');
+    assert.notStrictEqual(res.status, 0);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

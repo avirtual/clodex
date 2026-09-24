@@ -279,15 +279,27 @@ delete childEnv.CLODEX_TEST_LOCK;
 delete childEnv.CLODEX_TEST_LOCK_NOTE_FD;
 delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
 
+const RUN_TIMEOUT_MS = 20 * 60 * 1000;
+const runTimeoutMs = Number(process.env.CLODEX_TEST_RUN_TIMEOUT_MS) > 0
+  ? Number(process.env.CLODEX_TEST_RUN_TIMEOUT_MS)
+  : RUN_TIMEOUT_MS;
+
 const runStart = Date.now();
 const run = spawnSync(process.execPath, [
   '--test',
   `--test-reporter=${reporter}`, '--test-reporter-destination=stdout',
   '--test-reporter=tap', `--test-reporter-destination=${tapFile}`,
   ...passthrough,
-], { cwd: ROOT, stdio: 'inherit', env: childEnv });
+], { cwd: ROOT, stdio: 'inherit', env: childEnv, timeout: runTimeoutMs, killSignal: 'SIGTERM' });
 const runMs = Date.now() - runStart;
 
+if (run.error && run.error.code === 'ETIMEDOUT') {
+  let partial = '';
+  try { partial = fs.readFileSync(tapFile, 'utf8'); } catch {}
+  const inFlight = [...partial.matchAll(/^# Interrupted while running: (.+?) at \S+:\d+:\d+$/gm)].map((m) => m[1]);
+  const minutes = Math.round((runTimeoutMs / 60000) * 100) / 100;
+  die(`TIMEOUT after ${minutes}m in ${inFlight.length ? inFlight.join(', ') : 'an unnamed file'}`);
+}
 if (run.error) die(`could not start node --test: ${run.error.message}`);
 
 let tap = '';
