@@ -3317,6 +3317,12 @@ window.api.onSessionActivity((name, state, turnEnd) => {
   scheduleSidebarRelayout();
 });
 
+window.api.onSessionCompacting((name, c) => {
+  const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (!el) return;
+  applyCompacting(el, c);
+});
+
 window.api.onSessionAttention((name, attn) => {
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!el) return;
@@ -3919,9 +3925,32 @@ if (window.api.getWireQuota) {
 
 const THINK_BADGE_MS = 2 * 60 * 1000;
 const THINK_LONG_MS = 10 * 60 * 1000;
+function applyCompacting(el, c) {
+  if (c && c.since) {
+    el.dataset.compacting = c.trigger || 'manual';
+    el.dataset.compactingSince = String(c.since);
+  } else {
+    delete el.dataset.compacting;
+    delete el.dataset.compactingSince;
+  }
+  applyThinkBadge(el);
+}
+
+function compactElapsedText(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(s / 60);
+  return m ? `${m}m ${s % 60}s` : `${s}s`;
+}
+
 function applyThinkBadge(el) {
   const badge = el.querySelector('.session-think');
   if (!badge) return;
+  const compactSince = Number(el.dataset.compactingSince || 0);
+  if (compactSince) {
+    badge.textContent = `⧗ ${compactElapsedText(Date.now() - compactSince)}`;
+    badge.dataset.state = 'compact';
+    return;
+  }
   const since = Number(el.dataset.thinkingSince || 0);
   const elapsed = since ? Date.now() - since : 0;
   if (el.dataset.activity !== 'thinking' || elapsed < THINK_BADGE_MS) {
@@ -4076,7 +4105,7 @@ function checkWarmthCooldown(name) {
 
 setInterval(() => {
   for (const name of proxyState.keys()) { applyWarmBadge(name); checkWarmthCooldown(name); }
-  for (const el of sessionList.querySelectorAll('.session-item[data-thinking-since]')) applyThinkBadge(el);
+  for (const el of sessionList.querySelectorAll('.session-item[data-thinking-since], .session-item[data-compacting-since]')) applyThinkBadge(el);
   tickProxyBar();
   // Staleness is time-based, so it has to be re-evaluated on the clock rather
   // than only when a payload arrives — the case it exists for is payloads
@@ -7988,6 +8017,7 @@ function mountRestoredSession(entry) {
       item.dataset.attention = entry.attention.kind;
       item.dataset.attentionMsg = entry.attention.message || '';
     }
+    if (entry.compacting) applyCompacting(item, entry.compacting);
     if (entry.ticket) item.dataset.ticket = entry.ticket;
   }
   try {

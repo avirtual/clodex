@@ -176,6 +176,10 @@ bundle), whose packaged form is the Docker image under
   `app:restore-sessions`: iterates persisted entries → archived (never spawned,
   `{archived:true}`) / already-running (replay `pendingOutput`) / cold
   (`--resume`) / failed (`{failed:true}`, entry kept). Injected deps, unit-pinned.
+- **compact-notices.js** — pure helpers for the compacting indicator: the
+  5-minute display valve, the transcript-pane notice text, and
+  `mergeCompactNotices`, which splices the main-side notice records into
+  `transcript:pull` by timestamp.
 - **session-discovery.js** — scans for adoptable external agent processes
   (opt-in startup discovery), excluding Clodex's own `livePids`; in
   SCANNED_MODULES.

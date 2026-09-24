@@ -76,6 +76,7 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
     // The CLI RE-FIRES SessionStart with source=compact, so this hook's
     // additionalContext is re-emitted, not preserved across compaction — which is
     // why the baseline reset below hangs off this event.
+    const attnPath = pathFor(REGISTRY_DIR, name, 'attn');
     const script = `#!/bin/bash
 set -euo pipefail
 INPUT="$(cat)"
@@ -120,6 +121,9 @@ try {
 // exists to prevent, aimed at the longest-lived seats, since those compact.
 RESETEOF
 fi
+if [ "$SRC" = "compact" ]; then
+  printf '%s\\n' '{"hook_event_name":"SessionStart","source":"compact"}' >> "${attnPath}" 2>/dev/null || true
+fi
 # compact belongs with startup/clear: all three are context resets, and the
 # promptcache branch above already treats compact as one. A compact keeps the
 # sessionId, so nothing else re-delivers the digest.
@@ -133,7 +137,6 @@ fi
 
     fs.writeFileSync(statusPath, renderClaudeStatusScript(name, !!proxyBase, getUiSettings(), REGISTRY_DIR), { mode: 0o700 });
 
-    const attnPath = pathFor(REGISTRY_DIR, name, 'attn');
     const attnScriptPath = pathFor(REGISTRY_DIR, name, 'attnScript');
     fs.writeFileSync(attnPath, '');
     fs.writeFileSync(attnScriptPath, `#!/bin/bash
@@ -647,6 +650,10 @@ JSEOF
           hooks: [{ type: 'command', command: scriptPath }]
         }],
         Notification: [{
+          matcher: '',
+          hooks: [{ type: 'command', command: attnScriptPath }]
+        }],
+        PreCompact: [{
           matcher: '',
           hooks: [{ type: 'command', command: attnScriptPath }]
         }],

@@ -43,6 +43,9 @@ test('setupClaudeHook: writes the transcript-symlink script + name-only output +
   const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
   assert.ok(Array.isArray(settings.hooks.SessionStart));
   assert.ok(Array.isArray(settings.hooks.UserPromptSubmit));
+  const attnScript = pathFor(REGISTRY_DIR, 'agent1', 'attnScript');
+  assert.deepStrictEqual(settings.hooks.Notification, [{ matcher: '', hooks: [{ type: 'command', command: attnScript }] }]);
+  assert.deepStrictEqual(settings.hooks.PreCompact, [{ matcher: '', hooks: [{ type: 'command', command: attnScript }] }]);
   // PostToolUse drains parked DMs MID-LOOP (between tool calls). The
   // MATCHER-LESS entry must carry the pending drain ONLY — acks/ctxwarn are
   // turn-boundary bookkeeping and must not fire per-tool. Pin both facts: the
@@ -419,6 +422,19 @@ function runSessionStart(REGISTRY_DIR, name, source) {
   const input = JSON.stringify({ transcript_path: path.join(REGISTRY_DIR, 't.jsonl'), source });
   return cp.execFileSync('bash', [pathFor(REGISTRY_DIR, name, 'hook')], { input, encoding: 'utf-8' });
 }
+
+test('SessionStart: only a compact appends the compact-end line to the attention file', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  fs.writeFileSync(path.join(REGISTRY_DIR, 't.jsonl'), '');
+  h.setupClaudeHook('agentC');
+  const attn = pathFor(REGISTRY_DIR, 'agentC', 'attn');
+  for (const source of ['startup', 'clear', 'resume']) runSessionStart(REGISTRY_DIR, 'agentC', source);
+  assert.strictEqual(fs.readFileSync(attn, 'utf-8'), '', 'non-compact sources append nothing');
+  runSessionStart(REGISTRY_DIR, 'agentC', 'compact');
+  const lines = fs.readFileSync(attn, 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepStrictEqual(lines, [{ hook_event_name: 'SessionStart', source: 'compact' }]);
+});
 
 test('SessionStart: every context reset serves the DIGEST, an ordinary resume serves the name file', () => {
   const REGISTRY_DIR = tmp();
