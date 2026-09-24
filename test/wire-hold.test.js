@@ -622,7 +622,7 @@ const until = (pred, ms = 10000) => new Promise((resolve) => {
   tick();
 });
 
-test('proxy caches the main line for replay; count_tokens path does not', async () => {
+test('proxy caches the main line for replay; count_tokens path does not', async (t) => {
   const server = http.createServer((req, res) => {
     if (req.url.includes('count_tokens')) {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -632,6 +632,7 @@ test('proxy caches the main line for replay; count_tokens path does not', async 
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     res.end(SSE_OK);
   });
+  t.after(() => server.close());
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
 
   const clock = { t: 1_000_000 };
@@ -670,7 +671,6 @@ test('proxy caches the main line for replay; count_tokens path does not', async 
   assert.equal(proxy.billing.session(SID).count_tokens_requests, 1);
 
   await proxy.close();
-  server.close();
 });
 
 // ---------------------------------------------------------------------------

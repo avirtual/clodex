@@ -132,7 +132,7 @@ test('delete session and restart node stay refused even with --force', () => {
   assert.strictEqual(refuse(['delete', 'nodes', 'a']), null, 'the plural spelling resolves the same way');
 });
 
-test('run: a refused verb is a block, and never opens a transport', async () => {
+test('run: a refused verb is a block, and never opens a transport', async (t) => {
   // `delete` rather than a read-only verb: the gate must stop it BEFORE
   // wireFor(), and a service that gated after the dial would still produce a
   // refusal block — just one that had already resolved a context and opened a
@@ -142,20 +142,21 @@ test('run: a refused verb is a block, and never opens a transport', async () => 
     contextsFile: tmpCtxFile(), env: {},
     openTransport: () => { throw new Error('DIALED — the gate ran after the transport'); },
   });
+  t.after(() => svc.dispose());
   const b = await svc.run('delete session somebox --force');
   assert.strictEqual(b.command, 'delete session somebox --force');
   assert.match(b.output, /refused: "delete session"/);
   assert.strictEqual(b.exitCode, 2);
-  svc.dispose();
 });
 
 // Removed spellings reach this pane too and the pointer must win AHEAD of the gate,
 // which would say "not available in the ctl tab" and hide that the verb is gone.
-test('a removed spelling answers with the rename pointer, not the gate refusal', async () => {
+test('a removed spelling answers with the rename pointer, not the gate refusal', async (t) => {
   const svc = createCtlService({
     contextsFile: tmpCtxFile(), env: {},
     openTransport: () => { throw new Error('DIALED — a pointer must run nothing'); },
   });
+  t.after(() => svc.dispose());
   for (const [line, to] of [['kill somebox --force', 'delete session'], ['spawn w --type bash', 'create session'],
     ['run a ls', 'exec'], ['send a hi', 'dm'], ['restart-app --force', 'restart node']]) {
     const b = await svc.run(line);
@@ -163,11 +164,11 @@ test('a removed spelling answers with the rename pointer, not the gate refusal',
     assert.match(b.output, new RegExp(`was renamed: use clodexctl ${to.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), line);
     assert.doesNotMatch(b.output, /refused:/, `${line} must point, not merely refuse`);
   }
-  svc.dispose();
 });
 
-test('a leading flag moves the verb, and the gate follows it', async () => {
+test('a leading flag moves the verb, and the gate follows it', async (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   // Both halves matter and they pull in opposite directions, which is why this
   // is one test. A gate reading the RAW argv sees `-o` in slot 0 for both
   // lines: it would refuse the legitimate one as a verb named "-o", and
@@ -179,48 +180,48 @@ test('a leading flag moves the verb, and the gate follows it', async () => {
   const ok = await svc.run('get nodes -o json');
   assert.doesNotMatch(ok.output, /refused/, '`-o json get nodes` is just `get nodes` with a flag');
   assert.strictEqual(ok.exitCode, 0);
-  svc.dispose();
 });
 
-test('a line with no verb at all is refused, not dispatched on undefined', async () => {
+test('a line with no verb at all is refused, not dispatched on undefined', async (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   // `--tunnel` is greedy — it eats the rest of the line, leaving zero
   // positionals. Without an explicit check that reaches a handler lookup on
   // `undefined`, which throws somewhere less legible than here.
   const b = await svc.run('--tunnel ssh -L {port}:localhost:7900 host');
   assert.match(b.output, /no verb in that line/);
   assert.strictEqual(b.exitCode, 2);
-  svc.dispose();
 });
 
-test('run: block shape is exactly what the tenant renders', async () => {
+test('run: block shape is exactly what the tenant renders', async (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   const b = await svc.run('get nodes');
   assert.deepStrictEqual(Object.keys(b).sort(), ['command', 'ctx', 'exitCode', 'output', 'ts'].sort());
   assert.strictEqual(typeof b.output, 'string');
   assert.strictEqual(typeof b.exitCode, 'number');
   assert.ok(Number.isFinite(b.ts) && b.ts > 0, 'ts is a real timestamp');
-  svc.dispose();
 });
 
-test('run: an empty line is a no-op block, not an error', async () => {
+test('run: an empty line is a no-op block, not an error', async (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   const b = await svc.run('   ');
   assert.strictEqual(b.output, '');
   assert.strictEqual(b.exitCode, 0);
-  svc.dispose();
 });
 
-test('run: an unparseable line reports itself instead of throwing', async () => {
+test('run: an unparseable line reports itself instead of throwing', async (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   const b = await svc.run('query "unbalanced');
   assert.match(b.output, /unbalanced double quote/);
   assert.strictEqual(b.exitCode, 2);
-  svc.dispose();
 });
 
-test('run: a renamed verb answers with the pointer in BOTH spellings, ahead of help routing', async () => {
+test('run: a renamed verb answers with the pointer in BOTH spellings, ahead of help routing', async (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   const bare = await svc.run('sessions');
   assert.strictEqual(bare.output, 'clodexctl: clodexctl sessions was renamed: use clodexctl get sessions\n');
   assert.strictEqual(bare.exitCode, 2);
@@ -230,19 +231,19 @@ test('run: a renamed verb answers with the pointer in BOTH spellings, ahead of h
   const flagged = await svc.run('sessions --help');
   assert.strictEqual(flagged.output, 'clodexctl sessions was renamed: use clodexctl get sessions\n');
   assert.strictEqual(flagged.exitCode, 1);
-  svc.dispose();
 });
 
-test('run: no context selected is a usage block, not a crash', async () => {
+test('run: no context selected is a usage block, not a crash', async (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   const b = await svc.run('get sessions');
   assert.match(b.output, /no context selected/);
   assert.strictEqual(b.exitCode, 2);
-  svc.dispose();
 });
 
-test('use node is STATEFUL across runs — the reason this is a REPL', async () => {
+test('use node is STATEFUL across runs — the reason this is a REPL', async (t) => {
   const { svc, file } = mkService();
+  t.after(() => svc.dispose());
   const added = await svc.run('create node alpha --url http://alpha.example');
   assert.strictEqual(added.exitCode, 0, `ENTER: create node succeeded (${added.output})`);
   await svc.run('create node beta --url http://beta.example');
@@ -260,7 +261,6 @@ test('use node is STATEFUL across runs — the reason this is a REPL', async () 
   // every assertion above.
   const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
   assert.strictEqual(onDisk.current, 'alpha');
-  svc.dispose();
 });
 
 test('get nodes --current runs through the service, and NODE_LOCAL_VERBS is the local family', async () => {
@@ -279,8 +279,9 @@ test('get nodes --current runs through the service, and NODE_LOCAL_VERBS is the 
   assert.deepStrictEqual(NODE_LOCAL_VERBS, ['get', 'describe', 'create', 'delete', 'use']);
 });
 
-test('get node <name> --current is a usage error, not a silently ignored name', async () => {
+test('get node <name> --current is a usage error, not a silently ignored name', async (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   await svc.run('create node home --url http://home.example');
   await svc.run('create node work --url http://work.example');
   const b = await svc.run('get node home --current');
@@ -290,16 +291,15 @@ test('get node <name> --current is a usage error, not a silently ignored name', 
   const ok = await svc.run('get nodes --current');
   assert.strictEqual(ok.exitCode, 0, `ENTER: --current alone still prints (${ok.output})`);
   assert.strictEqual(ok.output, 'home\n');
-  svc.dispose();
 });
 
-test('describe node redacts the token, and the block is scrubbed besides', async () => {
+test('describe node redacts the token, and the block is scrubbed besides', async (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   await svc.run('create node prod --url http://prod.example --token SUPERSECRET');
   const b = await svc.run('describe node prod');
   assert.match(b.output, /name\s+prod/, 'ENTER: the entry really rendered');
   assert.doesNotMatch(b.output, /SUPERSECRET/, 'a token must never reach the renderer');
-  svc.dispose();
 });
 
 // ---------------------------------------------------------------------------
@@ -323,8 +323,9 @@ function fakeTransport({ fail = null } = {}) {
   return fn;
 }
 
-test('MF2: get nodes -o json must not print the tokens it lists', async () => {
+test('MF2: get nodes -o json must not print the tokens it lists', async (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   await svc.run('create node prod --url http://prod.example --token SUPERSECRET');
   await svc.run('create node other --url http://other.example --token SECOND_TOKEN');
   const b = await svc.run('get nodes -o json');
@@ -342,10 +343,9 @@ test('MF2: get nodes -o json must not print the tokens it lists', async () => {
   // Dropped, not redacted — but the operator still learns a token is set.
   assert.strictEqual(parsed.nodes.find((n) => n.name === 'prod').tokenSet, true);
   assert.ok(!('token' in parsed.nodes.find((n) => n.name === 'prod')), 'no token key at all');
-  svc.dispose();
 });
 
-test('MF2: the listing drops the token at the projection, not by scrubbing the output', async () => {
+test('MF2: the listing drops the token at the projection, not by scrubbing the output', async (t) => {
   // Two layers cover the listing: nodeRow's explicit-field projection, and the
   // output fold over every stored token. For a normal-length token they are
   // indistinguishable — both leave no token in the block — so the test above
@@ -355,6 +355,7 @@ test('MF2: the listing drops the token at the projection, not by scrubbing the o
   // (scrubbing a 3-char string would shred every block), which leaves the
   // projection as the only thing standing between it and the renderer.
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   await svc.run('create node prod --url http://prod.example --token abc');
   const b = await svc.run('get nodes -o json');
 
@@ -365,16 +366,16 @@ test('MF2: the listing drops the token at the projection, not by scrubbing the o
   assert.strictEqual(row.tokenSet, true, 'ENTER: the entry really carries a token');
   assert.doesNotMatch(b.output, /"abc"/, 'a short token is dropped at the projection or not at all');
   assert.deepStrictEqual(row.transport, { url: 'http://prod.example' }, 'the transport carries no token key');
-  svc.dispose();
 });
 
-test('MF1: a token in an ERROR message is scrubbed from the block', async () => {
+test('MF1: a token in an ERROR message is scrubbed from the block', async (t) => {
   const file = tmpCtxFile();
   const svc = createCtlService({
     contextsFile: file,
     env: {},
     openTransport: fakeTransport({ fail: (ctx) => `ssh: connect failed running: ssh -o Token=${ctx.token} host` }),
   });
+  t.after(() => svc.dispose());
   await svc.run('create node prod --url http://prod.example --token SUPERSECRET');
   const b = await svc.run('get sessions');
 
@@ -382,10 +383,9 @@ test('MF1: a token in an ERROR message is scrubbed from the block', async () => 
   assert.match(b.output, /connect failed/, 'ENTER: the child message reached the block');
   assert.doesNotMatch(b.output, /SUPERSECRET/, 'a token relayed in a dial error must not reach the renderer');
   assert.match(b.output, /\*\*\*/, 'it was redacted rather than the whole message dropped');
-  svc.dispose();
 });
 
-test('MF1: the scrub covers tokens the failing line never resolved', async () => {
+test('MF1: the scrub covers tokens the failing line never resolved', async (t) => {
   // The hole that made the original `finally` scrub dead BY CONSTRUCTION: it
   // read a `token` local that is still null when the dial itself throws, and
   // that the node path never set at all. Folding over the whole store is what
@@ -396,16 +396,16 @@ test('MF1: the scrub covers tokens the failing line never resolved', async () =>
     env: {},
     openTransport: fakeTransport({ fail: () => 'dial failed: OTHER_CTX_TOKEN appeared in a relayed argv' }),
   });
+  t.after(() => svc.dispose());
   await svc.run('create node other --url http://other.example --token OTHER_CTX_TOKEN');
   await svc.run('create node prod --url http://prod.example --token PROD_TOKEN');
   const b = await svc.run('get sessions --ctx prod');
 
   assert.match(b.output, /dial failed/, 'ENTER: the error really surfaced');
   assert.doesNotMatch(b.output, /OTHER_CTX_TOKEN/, 'every stored token is scrubbed, not just the resolved one');
-  svc.dispose();
 });
 
-test('MF1 guard: a short or empty stored token does not redact everything', async () => {
+test('MF1 guard: a short or empty stored token does not redact everything', async (t) => {
   // A 1-char token folded in naively turns every block into asterisks — the
   // containment would destroy the tab rather than protect it.
   const svc = createCtlService({
@@ -413,10 +413,10 @@ test('MF1 guard: a short or empty stored token does not redact everything', asyn
     env: {},
     openTransport: fakeTransport({ fail: () => 'dial failed: e' }),
   });
+  t.after(() => svc.dispose());
   await svc.run('create node tiny --url http://tiny.example --token e');
   const b = await svc.run('get sessions');
   assert.match(b.output, /dial failed: e/, 'a short token is NOT folded into the scrub');
-  svc.dispose();
 });
 
 test('MF3: a different token re-dials instead of reusing the warm client', async () => {
@@ -465,16 +465,16 @@ test('MF3: a different token re-dials instead of reusing the warm client', async
   }
 });
 
-test('an empty verb is refused, not passed to a handler lookup', async () => {
+test('an empty verb is refused, not passed to a handler lookup', async (t) => {
   // `"" sessions` tokenizes to ['', 'sessions']. A `!verb` guard reads that as
   // an empty line and lets it through to a map lookup that finds nothing,
   // surfacing as "handler is not a function" from three frames down.
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   const b = await svc.run('"" get sessions');
   assert.match(b.output, /refused/);
   assert.doesNotMatch(b.output, /is not a function/, 'it must not reach the handler map');
   assert.strictEqual(b.exitCode, 2);
-  svc.dispose();
 });
 
 test('dispose latches — a late run cannot spawn a child during shutdown', async () => {
@@ -491,14 +491,14 @@ test('dispose latches — a late run cannot spawn a child during shutdown', asyn
   assert.strictEqual(transport.opened.length, 0, 'no transport may be opened after dispose');
 });
 
-test('run: commands serialize — the warm slot has one writer', async () => {
+test('run: commands serialize — the warm slot has one writer', async (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   // Fired without awaiting between them: if these interleaved, the second
   // could close a transport the first is mid-request on. Order out must match
   // order in.
   const [a, b, c] = await Promise.all([svc.run('get nodes'), svc.run('info'), svc.run('get nodes')]);
   assert.deepStrictEqual([a.command, b.command, c.command], ['get nodes', 'info', 'get nodes']);
-  svc.dispose();
 });
 
 test('the service is electron-free — it must load in a plain node process', () => {
@@ -565,7 +565,7 @@ test('an absent contextsFile falls back to the CLI default path, not null', asyn
 // it ahead of context resolution, and the bug this pins is that the flag was
 // simply not read: `get --help` ran the verb and returned live session
 // data from whatever context was current.
-test('--help short-circuits before the wire, for every help spelling', async () => {
+test('--help short-circuits before the wire, for every help spelling', async (t) => {
   // openTransport THROWS: any path that reaches a dial fails this test loudly
   // rather than quietly succeeding against a context the developer happens to
   // have. That is the whole assertion — help must never get here.
@@ -575,6 +575,7 @@ test('--help short-circuits before the wire, for every help spelling', async () 
     env: {},
     openTransport: (ctx) => { dialed.push(ctx); throw new Error('DIALED — help must not open a transport'); },
   });
+  t.after(() => svc.dispose());
 
   for (const line of ['help', '--help', '-h', 'get --help', 'help use']) {
     const b = await svc.run(line);
@@ -584,13 +585,13 @@ test('--help short-circuits before the wire, for every help spelling', async () 
     assert.match(b.output, /clodexctl|USAGE|^\w+ —/m, `ENTER: ${line} produced no help text`);
   }
   assert.deepStrictEqual(dialed, [], 'help opened a transport');
-  svc.dispose();
 });
 
-test('help explains a verb the tab refuses to RUN', async () => {
+test('help explains a verb the tab refuses to RUN', async (t) => {
   // The gate must not swallow the explanation: "why is attach refused here" is
   // a question only help answers, and refusing both leaves no way to find out.
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   const b = await svc.run('attach --help');
   assert.strictEqual(b.exitCode, 0);
   assert.match(b.output, /^attach —/m);
@@ -601,7 +602,6 @@ test('help explains a verb the tab refuses to RUN', async () => {
   const run = await svc.run('attach box');
   assert.strictEqual(run.exitCode, 2);
   assert.match(run.output, /refused: "attach" is not available/);
-  svc.dispose();
 });
 
 // `logs` is allowed but `logs --follow` is not, and the refusal is on the FLAG.
@@ -609,11 +609,12 @@ test('help explains a verb the tab refuses to RUN', async () => {
 // which is exactly why it needs its own test: nothing about the allowlist
 // implies it, and follow would otherwise hold the command chain open forever
 // while the pane showed a disabled input and no output.
-test('logs --follow is refused, in every spelling, while plain logs is not', async () => {
+test('logs --follow is refused, in every spelling, while plain logs is not', async (t) => {
   const svc = createCtlService({
     contextsFile: tmpCtxFile(), env: {},
     openTransport: () => { throw new Error('DIALED — follow must be refused before the wire'); },
   });
+  t.after(() => svc.dispose());
   // A context must EXIST, or the ENTER below cannot tell "the flag check let it
   // through" from "context resolution refused it first" — both produce a
   // non-follow error message and the test would pass without the check running.
@@ -629,7 +630,6 @@ test('logs --follow is refused, in every spelling, while plain logs is not', asy
   const plain = await svc.run('logs bob --tail 5');
   assert.doesNotMatch(plain.output, /streams and never returns/, 'plain logs must not hit the follow refusal');
   assert.match(plain.output, /DIALED/, 'ENTER: plain logs reached the transport, so the check is flag-scoped');
-  svc.dispose();
 });
 
 test('get sessions -o yaml through the drawer prints YAML: the format reaches the printer execute() built before the line was parsed', async () => {
@@ -867,12 +867,12 @@ test('get session --subresource transcript -f is a one-shot read that opens no e
   }
 });
 
-test('an unknown verb has no help, and says so', async () => {
+test('an unknown verb has no help, and says so', async (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   const b = await svc.run('help nosuchverb');
   assert.notStrictEqual(b.exitCode, 0);
   assert.match(b.output, /no help for "nosuchverb"/);
-  svc.dispose();
 });
 
 test('help is not in the allowlist, and does not need to be', () => {
@@ -890,8 +890,9 @@ test('help is not in the allowlist, and does not need to be', () => {
 // than a list in the renderer because a hand-kept copy is what drifts: the pane
 // would keep advertising a verb after the allowlist dropped it, or hide one it
 // gained. These tests pin the derivation, not the current contents.
-test('helpIndex advertises exactly the verbs the service will run', () => {
+test('helpIndex advertises exactly the verbs the service will run', (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   const idx = svc.helpIndex();
   // ENTER: a real index. Every assertion below is about the SHAPE of a set,
   // and an empty set satisfies most of them.
@@ -913,22 +914,22 @@ test('helpIndex advertises exactly the verbs the service will run', () => {
     assert.ok(!['attach', 'deploy', 'undeploy', 'upgrade', 'port-forward', 'web'].includes(v.verb),
       `${v.verb} is refused and must not be advertised as runnable`);
   }
-  svc.dispose();
 });
 
-test('helpIndex names the surviving words of a PARTIALLY allowed family', () => {
+test('helpIndex names the surviving words of a PARTIALLY allowed family', (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   const restart = svc.helpIndex().verbs.find((v) => v.verb === 'restart');
   // `restart` is the ONE family the allowlist spells as a word array, so the only entry
   // that can carry `subs` — and genuinely narrowed: its usage advertises `restart node`.
   assert.deepStrictEqual(restart.subs, ['session', 'sessions']);
   const get = svc.helpIndex().verbs.find((v) => v.verb === 'get');
   assert.strictEqual(get.subs, null, 'a fully-allowed verb carries no subs restriction');
-  svc.dispose();
 });
 
-test('helpIndex carries summaries and no credential material', () => {
+test('helpIndex carries summaries and no credential material', (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   const idx = svc.helpIndex();
   for (const v of idx.verbs) {
     assert.ok(typeof v.summary === 'string' && v.summary.length > 0,
@@ -938,15 +939,15 @@ test('helpIndex carries summaries and no credential material', () => {
   // there is no path by which a token reaches it. Pinned because the obvious
   // future edit ("show the current context in the popover") would change that.
   assert.doesNotMatch(JSON.stringify(idx), /token/i);
-  svc.dispose();
 });
 
-test('every node word runs in this tab and opens NO transport', async () => {
+test('every node word runs in this tab and opens NO transport', async (t) => {
   const opened = [];
   const svc = createCtlService({
     contextsFile: tmpCtxFile(), env: {},
     openTransport: async (ctx) => { opened.push(ctx); throw new Error('DIALED — a node word must never reach the wire'); },
   });
+  t.after(() => svc.dispose());
   const lines = [
     'create node x --url http://h.example --token STORED_TOKEN_L',
     'use node x',
@@ -961,11 +962,11 @@ test('every node word runs in this tab and opens NO transport', async () => {
     assert.doesNotMatch(b.output, /refused|LOCAL record/, `${line} must RUN here, not refuse`);
   }
   assert.deepStrictEqual(opened, [], 'a node word opened a transport');
-  svc.dispose();
 });
 
-test('the node family is stateful on disk, and delete node really forgets', async () => {
+test('the node family is stateful on disk, and delete node really forgets', async (t) => {
   const { svc, file } = mkService();
+  t.after(() => svc.dispose());
   await svc.run('create node home --url http://home.example');
   await svc.run('create node work --ssh u@box --remote-port 7911');
   assert.strictEqual((await svc.run('use node work')).ctx, 'work');
@@ -979,10 +980,9 @@ test('the node family is stateful on disk, and delete node really forgets', asyn
   const after = JSON.parse(fs.readFileSync(file, 'utf-8'));
   assert.deepStrictEqual(Object.keys(after.contexts), ['work'], 'the record left the FILE, not just the listing');
   assert.strictEqual(after.current, 'work', 'the current node is untouched by deleting another');
-  svc.dispose();
 });
 
-test('get nodes -o json prints no credential-shaped field at any depth', async () => {
+test('get nodes -o json prints no credential-shaped field at any depth', async (t) => {
   const file = tmpCtxFile();
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({
@@ -998,6 +998,7 @@ test('get nodes -o json prints no credential-shaped field at any depth', async (
     },
   }), { mode: 0o600 });
   const svc = createCtlService({ contextsFile: file, env: {} });
+  t.after(() => svc.dispose());
   const b = await svc.run('get nodes -o json');
   assert.strictEqual(b.exitCode, 0, `ENTER: the listing ran (${b.output})`);
   const parsed = JSON.parse(b.output);
@@ -1017,10 +1018,9 @@ test('get nodes -o json prints no credential-shaped field at any depth', async (
   for (const leaked of ['PASSWORD_LEAKED', 'SECRET_LEAKED', 'AUTH_LEAKED', 'STORED_TOKEN_LONG']) {
     assert.doesNotMatch(b.output, new RegExp(leaked), `${leaked} reached the renderer`);
   }
-  svc.dispose();
 });
 
-test('get nodes -o json prints no credential-shaped field nested INSIDE a kind object', async () => {
+test('get nodes -o json prints no credential-shaped field nested INSIDE a kind object', async (t) => {
   const file = tmpCtxFile();
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({
@@ -1031,6 +1031,7 @@ test('get nodes -o json prints no credential-shaped field nested INSIDE a kind o
     },
   }), { mode: 0o600 });
   const svc = createCtlService({ contextsFile: file, env: {} });
+  t.after(() => svc.dispose());
   const b = await svc.run('get nodes -o json');
   assert.strictEqual(b.exitCode, 0, `ENTER: the listing ran (${b.output})`);
   const parsed = JSON.parse(b.output);
@@ -1053,13 +1054,13 @@ test('get nodes -o json prints no credential-shaped field nested INSIDE a kind o
   for (const leaked of ['NESTED_PASSWORD', 'NESTED_AUTHTOKEN', 'NESTED_SECRET']) {
     assert.doesNotMatch(b.output, new RegExp(leaked), `${leaked} reached the renderer from inside a kind object`);
   }
-  svc.dispose();
 });
 
-test('describe node --test dials the INJECTED transport, never the real one', async () => {
+test('describe node --test dials the INJECTED transport, never the real one', async (t) => {
   const file = tmpCtxFile();
   const openTransport = fakeTransport();
   const svc = createCtlService({ contextsFile: file, env: {}, openTransport });
+  t.after(() => svc.dispose());
   await svc.run('create node prod --url http://prod.example --token SUPERSECRET');
 
   const b = await svc.run('describe node prod --test');
@@ -1068,7 +1069,6 @@ test('describe node --test dials the INJECTED transport, never the real one', as
   assert.strictEqual(openTransport.opened[0].url, 'http://prod.example',
     'and it was dialed with the resolved node, not some other context');
   assert.doesNotMatch(b.output, /SUPERSECRET/, 'the token must not reach the renderer');
-  svc.dispose();
 });
 
 test('every ARRAY rule in ALLOWED names a verb the resource-word check re-judges', () => {
@@ -1081,8 +1081,9 @@ test('every ARRAY rule in ALLOWED names a verb the resource-word check re-judges
   }
 });
 
-test('a name where a resource word belongs suggests the command the operator meant', async () => {
+test('a name where a resource word belongs suggests the command the operator meant', async (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   for (const [line, want] of [
     ['use murmurfi', 'use murmurfi: "murmurfi" is not a resource — did you mean: use node murmurfi'],
     ['create murmurfi', 'create murmurfi: "murmurfi" is not a resource — did you mean: create <session|node> murmurfi'],
@@ -1097,7 +1098,6 @@ test('a name where a resource word belongs suggests the command the operator mea
   const real = await svc.run('use session bob');
   assert.match(real.output, /use session is not supported \(node\)/);
   assert.doesNotMatch(real.output, /did you mean/);
-  svc.dispose();
 });
 
 test('isNodeLine routes on the resource word, and use has no other resource', () => {
@@ -1113,11 +1113,12 @@ test('isNodeLine routes on the resource word, and use has no other resource', ()
   assert.strictEqual(isNodeLine('exec', ['node'], R), false);
 });
 
-test('a ctx spelling answers with the CLI pointer, in the tab as in the terminal', async () => {
+test('a ctx spelling answers with the CLI pointer, in the tab as in the terminal', async (t) => {
   const svc = createCtlService({
     contextsFile: tmpCtxFile(), env: {},
     openTransport: () => { throw new Error('DIALED — a pointer must run nothing'); },
   });
+  t.after(() => svc.dispose());
   for (const [line, to] of [['ctx add p --url http://h', 'create node'], ['ctx use p', 'use node'],
     ['ctx list', 'get nodes'], ['ctx show p', 'describe node'], ['ctx rm p', 'delete node']]) {
     const b = await svc.run(line);
@@ -1126,16 +1127,15 @@ test('a ctx spelling answers with the CLI pointer, in the tab as in the terminal
   }
   const helped = await svc.run('help ctx');
   assert.match(helped.output, /no help for "ctx"/, 'no ctx help entry survives in this tab');
-  svc.dispose();
 });
 
-test('helpIndex advertises no ctx shorthand — there is none left to advertise', () => {
+test('helpIndex advertises no ctx shorthand — there is none left to advertise', (t) => {
   const { svc } = mkService();
+  t.after(() => svc.dispose());
   const idx = svc.helpIndex();
   assert.ok(!('ctxAliases' in idx), 'the ctx alias list is gone with the family');
   assert.deepStrictEqual(Object.keys(idx).sort(), ['deferred', 'verbs']);
   for (const v of ['get', 'describe', 'create', 'delete', 'use']) {
     assert.ok(idx.verbs.some((r) => r.verb === v), `${v} must be advertised`);
   }
-  svc.dispose();
 });

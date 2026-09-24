@@ -85,6 +85,7 @@ test('THE BUG: a perpetual hold pings after a restart with no intervening turn',
 
   // --- launch 2. A NEW keeper: nothing in memory, and no turn will ever come.
   const after = m.boot();
+  t.after(() => after.stop());
   assert.strictEqual(after.entry(SID), null, 'ENTER: the restarted keeper starts amnesiac');
   assert.deepStrictEqual(after.holds(), {}, 'ENTER: and with no armed hold — this IS the bug');
 
@@ -105,7 +106,6 @@ test('THE BUG: a perpetual hold pings after a restart with no intervening turn',
   assert.deepStrictEqual(m.sent[0].body.messages, obj.messages, 'same prefix — a cache READ');
   assert.strictEqual(m.sent[0].headers.authorization, 'Bearer tok',
     'replayed with the session own headers; without them it is not a replay');
-  after.stop();
 });
 
 test('the warm-only gate survives the restore: a prefix that went cold DECLINES', async (t) => {
@@ -126,6 +126,7 @@ test('the warm-only gate survives the restore: a prefix that went cold DECLINES'
     'ENTER: the prefix really is cold now — a still-warm one would prove nothing');
 
   const after = m.boot();
+  t.after(() => after.stop());
   const r = after.restorePerpetual({ accept: () => true });
   assert.deepStrictEqual(r, { restored: 0, declined: 1, dropped: 0 });
   assert.deepStrictEqual(after.holds(), {}, 'nothing armed against a cold prefix');
@@ -134,7 +135,6 @@ test('the warm-only gate survives the restore: a prefix that went cold DECLINES'
   assert.strictEqual(m.sent.length, 0, 'and not one forced cache write');
   // The declined record is dropped rather than left holding a token on disk.
   assert.strictEqual(fs.existsSync(m.file), false);
-  after.stop();
 });
 
 test('a TIMED hold gains nothing: it is not persisted and does not restore', async (t) => {
@@ -155,12 +155,12 @@ test('a TIMED hold gains nothing: it is not persisted and does not restore', asy
     'a timed hold writes no file — scoping is the whole reason this is safe');
 
   const after = m.boot();
+  t.after(() => after.stop());
   assert.deepStrictEqual(after.restorePerpetual({ accept: () => true }),
     { restored: 0, declined: 0, dropped: 0 });
   assert.deepStrictEqual(after.holds(), {});
   await after.tick();
   assert.strictEqual(m.sent.length, 0);
-  after.stop();
 });
 
 test('accept() is the authority on whether a persisted conversation may still be pinged', async (t) => {
@@ -177,6 +177,7 @@ test('accept() is the authority on whether a persisted conversation may still be
   // The operator turned keep-warm off, or archived the seat, while the app was
   // down — the record on disk is stale and must not spend anything.
   const after = m.boot();
+  t.after(() => after.stop());
   assert.deepStrictEqual(after.restorePerpetual({ accept: () => false }),
     { restored: 0, declined: 0, dropped: 1 });
   assert.deepStrictEqual(after.holds(), {});
@@ -184,13 +185,13 @@ test('accept() is the authority on whether a persisted conversation may still be
   assert.strictEqual(m.sent.length, 0);
   // Rejected means the token comes off the disk now, not at some later write.
   assert.strictEqual(fs.existsSync(m.file), false);
-  after.stop();
 });
 
 test('the persisted set tracks the live one: never the entry map, gone on disarm', (t) => {
   const m = machine(t);
   const obj = makeObj();
   const k = m.boot();
+  t.after(() => k.stop());
 
   // Three sessions cross the wire; only one is armed perpetually. maxEntries is
   // 2000 in production — spilling the map to fix a bug about a handful of armed
@@ -217,7 +218,6 @@ test('the persisted set tracks the live one: never the entry map, gone on disarm
   // Disarming takes the credential off the disk immediately.
   k.disarm(SID);
   assert.strictEqual(fs.existsSync(m.file), false);
-  k.stop();
 });
 
 test('mode 0600, and a broken store degrades the hold instead of breaking the keeper', (t) => {
@@ -237,10 +237,10 @@ test('mode 0600, and a broken store degrades the hold instead of breaking the ke
   // a keeper that throws on boot is an outage.
   fs.writeFileSync(m.file, 'not json at all{{', { mode: 0o600 });
   const after = m.boot();
+  t.after(() => after.stop());
   assert.deepStrictEqual(after.restorePerpetual({ accept: () => true }),
     { restored: 0, declined: 0, dropped: 0 });
   assert.deepStrictEqual(after.holds(), {});
-  after.stop();
 });
 
 // --- r1 must-fixes. Both are the SAME failure class as the original bug: a
@@ -289,10 +289,10 @@ test('a warmth-store ERROR at startup leaves the record on disk for the next lau
   fs.copyFileSync(m.file, healed.file);
   healed.stampWarm(obj);
   const after = healed.boot();
+  t.after(() => after.stop());
   assert.deepStrictEqual(after.restorePerpetual({ accept: () => true }),
     { restored: 1, declined: 0, dropped: 0 });
   assert.strictEqual(after.holds()[SID].always, true, 'the hold came back on the next launch');
-  after.stop();
 });
 
 test('an armed-perpetual entry is exempt from the entry-cap eviction', async (t) => {
@@ -303,6 +303,7 @@ test('an armed-perpetual entry is exempt from the entry-cap eviction', async (t)
     warmth: m.warmth, now: () => m.clock.t, request: m.request, maxEntries: 2, marginSeconds: 100,
     entryStore: new HoldEntryStore({ path: m.file, onError: (e) => m.errors.push(e) }),
   });
+  t.after(() => k.stop());
 
   k.noteRequest(SID, obj, { authorization: 'Bearer tok' }, 'http://up/v1/messages');
   m.stampWarm(obj);
@@ -333,18 +334,17 @@ test('an armed-perpetual entry is exempt from the entry-cap eviction', async (t)
   await k.tick();
   assert.strictEqual(m.sent.length, 1, 'the surviving entry is still replayable');
   assert.strictEqual(m.sent[0].headers.authorization, 'Bearer tok');
-  k.stop();
 });
 
 test('a keeper with no entryStore is exactly as in-memory as before', (t) => {
   const m = machine(t);
   const obj = makeObj();
   const k = new HoldKeeper({ warmth: m.warmth, now: () => m.clock.t, request: async () => { throw new Error('no pings here'); } });
+  t.after(() => k.stop());
   k.noteRequest(SID, obj, { authorization: 'Bearer tok' }, 'http://up/v1/messages');
   m.stampWarm(obj);
   assert.strictEqual(k.arm(SID, 0, { always: true }).armed, true,
     'ENTER: armed perpetually WITHOUT a store — the absence below is the point');
   assert.strictEqual(fs.existsSync(m.file), false, 'no store, no file, no token on disk');
   assert.deepStrictEqual(k.restorePerpetual({ accept: () => true }), { restored: 0, declined: 0, dropped: 0 });
-  k.stop();
 });

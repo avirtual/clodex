@@ -30,7 +30,7 @@ test('MAX_ENTRIES is the record cap, and the cut lands on a turn boundary', () =
   assert.strictEqual(out[0].text, 'm5');
 });
 
-test('pull reads through the link, re-reads only after the watcher fires, and follows a repoint', () => {
+test('pull reads through the link, re-reads only after the watcher fires, and follows a repoint', (t) => {
   const root = mkTmpRoot('clodex-tspike-');
   const a = path.join(root, 'a.jsonl');
   const b = path.join(root, 'b.jsonl');
@@ -41,6 +41,7 @@ test('pull reads through the link, re-reads only after the watcher fires, and fo
   const fires = new Map();
   const watch = (p, cb) => { fires.set(p, cb); return { close() { fires.delete(p); }, on() {} }; };
   const reader = createTranscriptSpikeReader({ linkPathFor: () => link, watch });
+  t.after(() => reader.dispose());
   const first = reader.pull('s');
   assert.deepStrictEqual([first.ok, first.rev, texts(first.records)], [true, 1, ['run the tests']]);
   fs.appendFileSync(a, `${LINES[1]}\n`);
@@ -56,7 +57,6 @@ test('pull reads through the link, re-reads only after the watcher fires, and fo
   assert.strictEqual(fires.has(fs.realpathSync(a)), false);
   fs.unlinkSync(link);
   assert.deepStrictEqual(reader.pull('s'), { ok: false, reason: 'unavailable' });
-  reader.dispose();
 });
 
 function debounceRig() {
@@ -78,8 +78,9 @@ function debounceRig() {
   return { reader, changes, timers, flush, fire: () => fire() };
 }
 
-test('watcher callbacks inside the debounce window coalesce into one onChange', () => {
+test('watcher callbacks inside the debounce window coalesce into one onChange', (t) => {
   const r = debounceRig();
+  t.after(() => r.reader.dispose());
   r.fire();
   r.fire();
   assert.strictEqual(r.timers.size, 1);
@@ -90,7 +91,6 @@ test('watcher callbacks inside the debounce window coalesce into one onChange', 
   r.fire();
   r.flush();
   assert.deepStrictEqual(r.changes, ['s', 's']);
-  r.reader.dispose();
 });
 
 test('drop cancels a pending onChange', () => {

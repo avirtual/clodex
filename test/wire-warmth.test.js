@@ -97,9 +97,10 @@ test('markerTtl: message tail wins, system fallback, default 300', () => {
   assert.equal(markerTtl({ messages: [] }), 300);
 });
 
-test('two-state: stamp → warm; clock past expiry → cold; unknown → absent', () => {
+test('two-state: stamp → warm; clock past expiry → cold; unknown → absent', (t) => {
   let now = 1000000;
   const w = new WarmthStore({ now: () => now });
+  t.after(() => w.close());
   const obj = makeBody();
   const rec = w.record(obj, CACHED, 'sess-1');
   assert.ok(rec);
@@ -112,20 +113,20 @@ test('two-state: stamp → warm; clock past expiry → cold; unknown → absent'
   assert.equal(w.state(rec.hash), 'cold'); // lapsed, row still on disk
   assert.equal(w.state('feedfeed'), 'absent');
   assert.equal(w.warm(rec.hash), false);
-  w.close();
 });
 
-test('stamps are response-confirmed: no cache event → no row', () => {
+test('stamps are response-confirmed: no cache event → no row', (t) => {
   const w = new WarmthStore({});
+  t.after(() => w.close());
   const rec = w.record(makeBody(), UNCACHED, 'sess-1');
   assert.equal(rec, null);
   assert.equal(w.query({ session: 'sess-1' }).found, false);
-  w.close();
 });
 
-test('a cache read re-stamps (TTL slides) and reports warm_on_arrival', () => {
+test('a cache read re-stamps (TTL slides) and reports warm_on_arrival', (t) => {
   let now = 1000000;
   const w = new WarmthStore({ now: () => now });
+  t.after(() => w.close());
   const obj = makeBody();
   w.record(obj, CACHED, 'sess-1');
   now += 250;
@@ -136,12 +137,12 @@ test('a cache read re-stamps (TTL slides) and reports warm_on_arrival', () => {
   const q = w.query({ session: 'sess-1' });
   assert.equal(q.found && q.warm, true);
   assert.equal(q.ttl_s, 300);
-  w.close();
 });
 
-test('cold-resume counter: lapsed head + real turn increments; first turn never counts', () => {
+test('cold-resume counter: lapsed head + real turn increments; first turn never counts', (t) => {
   let now = 1000000;
   const w = new WarmthStore({ now: () => now });
+  t.after(() => w.close());
   const t1 = makeBody({ nMessages: 2 });
   const rec1 = w.record(t1, CACHED, 'sess-1');
   assert.equal(rec1.cold_resume, false); // initial cold start, not a resume
@@ -157,12 +158,12 @@ test('cold-resume counter: lapsed head + real turn increments; first turn never 
   const rec3 = w.record(t3, READ, 'sess-1');
   assert.equal(rec3.cold_resume, false);
   assert.equal(w.coldResumes('sess-1'), 1);
-  w.close();
 });
 
-test('null-session record (subagent line): ledger stamps, head and cold_resumes untouched', () => {
+test('null-session record (subagent line): ledger stamps, head and cold_resumes untouched', (t) => {
   let now = 1000000;
   const w = new WarmthStore({ now: () => now });
+  t.after(() => w.close());
   // Main line owns the head with a 1h prefix.
   const main = makeBody({ nMessages: 4, ttl: '1h' });
   const mainRec = w.record(main, CACHED, 'sess-1');
@@ -185,12 +186,12 @@ test('null-session record (subagent line): ledger stamps, head and cold_resumes 
   const rec2 = w.record(makeBody({ nMessages: 6, ttl: '1h' }), READ, 'sess-1');
   assert.equal(rec2.cold_resume, false);
   assert.equal(w.coldResumes('sess-1'), 0);
-  w.close();
 });
 
-test('ping: hashes up to (not incl.) the sentinel tail; refreshes shared prefix, never the head', () => {
+test('ping: hashes up to (not incl.) the sentinel tail; refreshes shared prefix, never the head', (t) => {
   let now = 1000000;
   const w = new WarmthStore({ now: () => now, sentinel: '[keep-warm]' });
+  t.after(() => w.close());
   const real = makeBody({ nMessages: 4 });
   const rec = w.record(real, CACHED, 'sess-1');
   // fork's ping: same 4-message history + throwaway sentinel tail
@@ -205,12 +206,12 @@ test('ping: hashes up to (not incl.) the sentinel tail; refreshes shared prefix,
   // the fork's own session id never grew a head row
   assert.equal(w.query({ session: 'fork-sess-9' }).found, false);
   assert.equal(w.query({ session: 'sess-1' }).hash, rec.hash);
-  w.close();
 });
 
-test('coldPingDecision: declines on cold/absent, passes on warm, ignores non-pings', () => {
+test('coldPingDecision: declines on cold/absent, passes on warm, ignores non-pings', (t) => {
   let now = 1000000;
   const w = new WarmthStore({ now: () => now, sentinel: '[keep-warm]' });
+  t.after(() => w.close());
   const ping = makeBody({ nMessages: 4, sentinelTail: '[keep-warm] ping' });
   // never stamped → absent → decline
   const d1 = w.coldPingDecision(ping);
@@ -224,12 +225,12 @@ test('coldPingDecision: declines on cold/absent, passes on warm, ignores non-pin
   assert.equal(w.coldPingDecision(ping).warmth_state, 'cold');
   // a real turn is never a ping decision
   assert.equal(w.coldPingDecision(makeBody({ nMessages: 4 })), null);
-  w.close();
 });
 
-test('segments readout: sibling session shares rows; lapse reads cold', () => {
+test('segments readout: sibling session shares rows; lapse reads cold', (t) => {
   let now = 1000000;
   const w = new WarmthStore({ now: () => now });
+  t.after(() => w.close());
   w.record(makeBody({ nMessages: 2 }), CACHED, 'sess-a');
   w.record(makeBody({ nMessages: 8 }), CACHED, 'sess-b'); // same tools+system
   const segA = w.segments('sess-a');
@@ -242,7 +243,6 @@ test('segments readout: sibling session shares rows; lapse reads cold', () => {
   assert.equal(seg2.tools.state, 'cold');
   assert.equal(seg2.system.state, 'warm');
   assert.equal(w.segments('nobody'), null);
-  w.close();
 });
 
 test('persistence: reopening the same file keeps rows and heads (schema re-run safe)', async () => {
@@ -261,9 +261,10 @@ test('persistence: reopening the same file keeps rows and heads (schema re-run s
   fs.rmSync(path.dirname(file), { recursive: true, force: true });
 });
 
-test('sweep is hygiene-only: reclaims long-lapsed rows, never changes verdicts', () => {
+test('sweep is hygiene-only: reclaims long-lapsed rows, never changes verdicts', (t) => {
   let now = 1000000;
   const w = new WarmthStore({ now: () => now });
+  t.after(() => w.close());
   const rec = w.record(makeBody(), CACHED, 'sess-1');
   now += 400;
   assert.equal(w.state(rec.hash), 'cold');
@@ -272,5 +273,4 @@ test('sweep is hygiene-only: reclaims long-lapsed rows, never changes verdicts',
   now += 8 * 24 * 3600;
   w.sweep();
   assert.equal(w.state(rec.hash), 'absent'); // reclaimed; verdict still not-warm
-  w.close();
 });

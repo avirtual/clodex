@@ -88,11 +88,12 @@ const until = (pred, ms = 10000) => new Promise((resolve) => {
 const whenEvent = (events, name, n = 1, ms = 10000) =>
   until(() => (events[name] || []).length >= n, ms);
 
-test('upstream 5xx passes through verbatim; error receipt, not a turn', async () => {
+test('upstream 5xx passes through verbatim; error receipt, not a turn', async (tc) => {
   const { server, port } = await serveOnce((req, res) => {
     res.writeHead(529, { 'content-type': 'application/json' });
     res.end('{"error":{"type":"overloaded_error"}}');
   });
+  tc.after(() => server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${port}` } });
   await proxy.listen();
   const events = collect(proxy, ['turn.completed', 'tee-failure', 'proxy-error']);
@@ -115,15 +116,15 @@ test('upstream 5xx passes through verbatim; error receipt, not a turn', async ()
   assert.equal(events['tee-failure'].length, 0);
 
   await proxy.close();
-  server.close();
 });
 
-test('upstream dies mid-stream: bounded error, stream-end fires, no hang', async () => {
+test('upstream dies mid-stream: bounded error, stream-end fires, no hang', async (t) => {
   const { server, port } = await serveOnce((req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     res.write('event: message_start\ndata: {"type":"message_start","message":{"id":"m1","usage":{"input_tokens":5}}}\n\n');
     setTimeout(() => res.destroy(), 20); // hard kill mid-stream
   });
+  t.after(() => server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${port}` } });
   await proxy.listen();
   const events = collect(proxy, ['stream-start', 'stream-end', 'proxy-error', 'tee-failure']);
@@ -138,16 +139,16 @@ test('upstream dies mid-stream: bounded error, stream-end fires, no hang', async
   assert.equal(events['tee-failure'].length, 0);
 
   await proxy.close();
-  server.close();
 });
 
-test('client aborts mid-stream: upstream released, stream-end fires', async () => {
+test('client aborts mid-stream: upstream released, stream-end fires', async (t) => {
   let upstreamClosed = false;
   const { server, port } = await serveOnce((req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     const iv = setInterval(() => res.write('event: ping\ndata: {}\n\n'), 10);
     res.on('close', () => { upstreamClosed = true; clearInterval(iv); });
   });
+  t.after(() => server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${port}` } });
   await proxy.listen();
   const events = collect(proxy, ['stream-start', 'stream-end', 'tee-failure']);
@@ -178,15 +179,15 @@ test('client aborts mid-stream: upstream released, stream-end fires', async () =
   assert.equal(events['tee-failure'].length, 0);
 
   await proxy.close();
-  server.close();
 });
 
-test('corrupt gzip: observer dies quietly, client gets exact bytes', async () => {
+test('corrupt gzip: observer dies quietly, client gets exact bytes', async (t) => {
   const GARBAGE = Buffer.from('this is definitely not gzip', 'utf8');
   const { server, port } = await serveOnce((req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'content-encoding': 'gzip' });
     res.end(GARBAGE);
   });
+  t.after(() => server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${port}` } });
   await proxy.listen();
   const events = collect(proxy, ['turn.completed', 'stream-end', 'tee-failure']);
@@ -201,16 +202,16 @@ test('corrupt gzip: observer dies quietly, client gets exact bytes', async () =>
   assert.equal(events['stream-end'].length, 1);
 
   await proxy.close();
-  server.close();
 });
 
-test('valid gzip SSE: observer decodes, client gets the compressed bytes', async () => {
+test('valid gzip SSE: observer decodes, client gets the compressed bytes', async (t) => {
   const SSE = 'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"gz ok"}}\n\n';
   const gz = zlib.gzipSync(Buffer.from(SSE, 'utf8'));
   const { server, port } = await serveOnce((req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'content-encoding': 'gzip' });
     res.end(gz);
   });
+  t.after(() => server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${port}` } });
   await proxy.listen();
   const events = collect(proxy, ['turn.completed']);
@@ -222,15 +223,15 @@ test('valid gzip SSE: observer decodes, client gets the compressed bytes', async
   assert.equal(events['turn.completed'][0].text, 'gz ok');
 
   await proxy.close();
-  server.close();
 });
 
-test('tee-internal exception: forwarding untouched, tee-failure + stream-end fire', async () => {
+test('tee-internal exception: forwarding untouched, tee-failure + stream-end fire', async (t) => {
   const SSE_BODY = 'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}\n\n';
   const { server, port } = await serveOnce((req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     res.end(SSE_BODY);
   });
+  t.after(() => server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${port}` } });
   // Sabotage the whole tee: entry points throw on every call.
   proxy._buildTee = () => ({
@@ -252,14 +253,14 @@ test('tee-internal exception: forwarding untouched, tee-failure + stream-end fir
   assert.equal(events['stream-end'].length, 1); // activity can't wedge on thinking
 
   await proxy.close();
-  server.close();
 });
 
-test('tee construction throws: same containment', async () => {
+test('tee construction throws: same containment', async (t) => {
   const { server, port } = await serveOnce((req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     res.end('data: {}\n\n');
   });
+  t.after(() => server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${port}` } });
   proxy._buildTee = () => { throw new Error('injected construction failure'); };
   await proxy.listen();
@@ -273,7 +274,6 @@ test('tee construction throws: same containment', async () => {
   assert.equal(events['stream-end'].length, 1);
 
   await proxy.close();
-  server.close();
 });
 
 test('port collision: listen rejects instead of hijacking', async () => {

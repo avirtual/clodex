@@ -266,19 +266,19 @@ test('TranscriptSentinel: compact rendezvous arms a watcher, summary disarms + f
   assert.ok(made[2].stopped);
 });
 
-test('TranscriptSentinel: abandoned compact window times out and stops parsing', async () => {
+test('TranscriptSentinel: abandoned compact window times out and stops parsing', async (t) => {
   const made = [];
   let now = 0;
   const s = new TranscriptSentinel({
     linkPath: '/reg/a.jsonl', makeWatcher: fakeWatcherFactory(made),
     fs: { realpathSync: () => '/t/sid.jsonl' }, pollMs: 5, now: () => now,
   });
+  t.after(() => s.stop());
   s.start();
   s.armCompact(() => { throw new Error('must not fire'); });
   now = 11 * 60_000; // past COMPACT_ARM_TIMEOUT
   await sleep(15);   // next poll notices
   assert.ok(made[0].stopped);
-  s.stop();
 });
 
 test('TranscriptSentinel: recovery is idempotent, healthy wire turn ends it', () => {

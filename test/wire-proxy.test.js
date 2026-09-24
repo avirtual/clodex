@@ -222,8 +222,9 @@ const whenEvent = (events, name, n = 1, ms = 10000) => new Promise((resolve) => 
   tick();
 });
 
-test('e2e: byte-exact pass-through + turn.completed/session/usage events', async () => {
+test('e2e: byte-exact pass-through + turn.completed/session/usage events', async (t) => {
   const up = await startFakeUpstream();
+  t.after(() => up.server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
   await proxy.listen();
   const events = collect(proxy, ['turn.completed', 'session', 'usage', 'stream-start', 'stream-end']);
@@ -285,7 +286,6 @@ test('e2e: byte-exact pass-through + turn.completed/session/usage events', async
   assert.deepEqual(order, ['usage', 'turn.completed', 'stream-end']);
 
   await proxy.close();
-  up.server.close();
 });
 
 // The reason turn text and thinking are two fields rather than one. This is
@@ -299,9 +299,10 @@ test('e2e: byte-exact pass-through + turn.completed/session/usage events', async
 // It runs the REAL parseIntent (a pure leaf, no electron) over the REAL text
 // the tee accumulated, so it fails on any merge at any point in the chain,
 // rather than restating the fixture.
-test('e2e: an intent inside a thinking block never reaches the scanner', async () => {
+test('e2e: an intent inside a thinking block never reaches the scanner', async (t) => {
   const { parseIntent } = require('../intent-scanner');
   const up = await startFakeUpstream();
+  t.after(() => up.server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
   await proxy.listen();
   const events = collect(proxy, ['turn.completed']);
@@ -325,11 +326,11 @@ test('e2e: an intent inside a thinking block never reaches the scanner', async (
   assert.ok(!turn.thinking.includes('bob'), 'and no text bytes leaked the other way');
 
   await proxy.close();
-  up.server.close();
 });
 
-test('e2e: a mixed Read+Edit turn splits cleanly into reads and files (no cross-contamination)', async () => {
+test('e2e: a mixed Read+Edit turn splits cleanly into reads and files (no cross-contamination)', async (t) => {
   const up = await startFakeUpstream(MIXED_SSE_BODY);
+  t.after(() => up.server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
   await proxy.listen();
   const events = collect(proxy, ['turn.completed']);
@@ -361,11 +362,11 @@ test('e2e: a mixed Read+Edit turn splits cleanly into reads and files (no cross-
   assert.equal(turn.thinking, null, 'no thinking_delta on this stream means null, not ""');
 
   await proxy.close();
-  up.server.close();
 });
 
-test('e2e: token auth closes the loop', async () => {
+test('e2e: token auth closes the loop', async (t) => {
   const up = await startFakeUpstream();
+  t.after(() => up.server.close());
   const proxy = new WireProxy({
     requireTokens: true,
     upstreams: { anthropic: `http://127.0.0.1:${up.port}` },
@@ -391,27 +392,27 @@ test('e2e: token auth closes the loop', async () => {
   assert.equal(up.seen.requests[0].url, '/v1/messages');
 
   await proxy.close();
-  up.server.close();
 });
 
-test('non-agent paths are rejected', async () => {
+test('non-agent paths are rejected', async (t) => {
   const proxy = new WireProxy({});
+  t.after(() => proxy.close());
   await proxy.listen();
   const res = await request(proxy.port, '/v1/messages', '{}');
   assert.equal(res.status, 400);
-  await proxy.close();
 });
 
-test('dead upstream yields 502, not a hang', async () => {
+test('dead upstream yields 502, not a hang', async (t) => {
   const proxy = new WireProxy({ upstreams: { anthropic: 'http://127.0.0.1:1' } });
+  t.after(() => proxy.close());
   await proxy.listen();
   const res = await request(proxy.port, '/agent/tester/v1/messages', '{}');
   assert.equal(res.status, 502);
-  await proxy.close();
 });
 
-test('identity binding: main line owns it; subagents and side-calls cannot rebind', async () => {
+test('identity binding: main line owns it; subagents and side-calls cannot rebind', async (t) => {
   const up = await startFakeUpstream();
+  t.after(() => up.server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
   await proxy.listen();
   const events = collect(proxy, ['session', 'turn.completed']);
@@ -454,13 +455,13 @@ test('identity binding: main line owns it; subagents and side-calls cannot rebin
   ]);
 
   await proxy.close();
-  up.server.close();
 });
 
-test('warmth head: a subagent turn stamps the ledger but never repoints the session head', async () => {
+test('warmth head: a subagent turn stamps the ledger but never repoints the session head', async (t) => {
   const { WarmthStore } = require('../wire/warmth');
   const up = await startFakeUpstream();
   const warmth = new WarmthStore({});
+  t.after(() => warmth.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` }, warmth });
   await proxy.listen();
   const events = collect(proxy, ['turn.completed']);
@@ -493,11 +494,11 @@ test('warmth head: a subagent turn stamps the ledger but never repoints the sess
 
   await proxy.close();
   up.server.close();
-  warmth.close();
 });
 
-test('registerAgent pre-binds a resumed session id', async () => {
+test('registerAgent pre-binds a resumed session id', async (t) => {
   const up = await startFakeUpstream();
+  t.after(() => up.server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
   await proxy.listen();
   // turn.completed is collected only as a gate for the absence assertion
@@ -524,11 +525,11 @@ test('registerAgent pre-binds a resumed session id', async () => {
   assert.equal(events.session[0].previous, SESSION_ID);
 
   await proxy.close();
-  up.server.close();
 });
 
-test('per-agent upstream override chains through an external proxy base', async () => {
+test('per-agent upstream override chains through an external proxy base', async (t) => {
   const up = await startFakeUpstream();
+  t.after(() => up.server.close());
   const proxy = new WireProxy({
     requireTokens: true,
     upstreams: { anthropic: 'http://127.0.0.1:1' }, // default must NOT be hit
@@ -548,10 +549,9 @@ test('per-agent upstream override chains through an external proxy base', async 
   assert.equal(up.seen.requests[0].body, REQUEST_BODY);
 
   await proxy.close();
-  up.server.close();
 });
 
-test('malformed SSE degrades to an empty receipt, session unbroken', async () => {
+test('malformed SSE degrades to an empty receipt, session unbroken', async (tc) => {
   // Upstream streams garbage that is not valid SSE JSON — the client must
   // still receive the exact bytes; the observer sees no usage/text but
   // still finalizes a receipt (proxylab bills every messages response).
@@ -560,6 +560,7 @@ test('malformed SSE degrades to an empty receipt, session unbroken', async () =>
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     res.end(GARBAGE);
   });
+  tc.after(() => server.close());
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${server.address().port}` } });
   await proxy.listen();
@@ -579,5 +580,4 @@ test('malformed SSE degrades to an empty receipt, session unbroken', async () =>
   assert.equal(events['proxy-error'].length, 0);
 
   await proxy.close();
-  server.close();
 });
