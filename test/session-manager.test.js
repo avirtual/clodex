@@ -21001,6 +21001,9 @@ test('stream seat H2 (b): a PreToolUse attn line delivers the queued system item
   const h = mkStreamSeatManager();
   t.after(() => h.stopAll());
   await h.create('sh2');
+  const { mock } = require('node:test');
+  mock.timers.enable({ apis: ['setTimeout'] });
+  t.after(() => mock.timers.reset());
   const seat = h.handles[0];
   const s = h.m.sessions.get('sh2');
   h.m.seatSend('sh2', 'go');
@@ -21013,6 +21016,7 @@ test('stream seat H2 (b): a PreToolUse attn line delivers the queued system item
   assert.strictEqual(s.streamBusy, true);
   assert.strictEqual(s.needsAttention || null, null, 'a tool boundary is not an attention event');
   h.line('sh2', RESULT);
+  mock.timers.tick(400);
   assert.deepStrictEqual(seat.sent[2], userMsg('mine'));
 });
 
@@ -21106,6 +21110,84 @@ test('stream seat H2: a pending drain on a busy seat queues a producer that clai
   h.line('sh8', RESULT);
   assert.deepStrictEqual(h.handles[0].sent[1], userMsg('[agent:from clodex] parked'));
   assert.strictEqual(hasActivePending(PENDING, 'sh8'), false);
+});
+
+test('stream seat H2.1: after a tool-boundary drain, an init inside the result hold keeps the seat busy and the queued text waits for the second result', async (t) => {
+  const { mock } = require('node:test');
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sh9');
+  mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  t.after(() => mock.timers.reset());
+  const seat = h.handles[0];
+  const s = h.m.sessions.get('sh9');
+  h.m.seatSend('sh9', 'go');
+  h.m._deliverMessage('sh9', 'clodex', 'mid', 'dm');
+  h.m._routeAttnEntry(s, { hook_event_name: 'PreToolUse' });
+  h.m.seatSend('sh9', 'typed');
+  assert.strictEqual(seat.sent.length, 2, 'ENTER: the tool boundary wrote the dm mid-turn');
+  h.line('sh9', RESULT);
+  mock.timers.tick(399);
+  assert.strictEqual(s.streamBusy, true);
+  assert.strictEqual(seat.sent.length, 2, 'held: nothing drains inside the window');
+  h.line('sh9', { type: 'system', subtype: 'init', session_id: 'sid-q', model: 'm', slash_commands: [] });
+  mock.timers.tick(1000);
+  assert.strictEqual(s.streamBusy, true);
+  assert.deepStrictEqual(s.outbox.map((q) => q.text), ['typed']);
+  h.line('sh9', RESULT);
+  assert.deepStrictEqual(seat.sent[2], userMsg('typed'));
+});
+
+test('stream seat H2.1: after a tool-boundary drain, a result with no init inside 400ms clears busy and drains then', async (t) => {
+  const { mock } = require('node:test');
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sh10');
+  mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  t.after(() => mock.timers.reset());
+  const seat = h.handles[0];
+  const s = h.m.sessions.get('sh10');
+  h.m.seatSend('sh10', 'go');
+  h.m._deliverMessage('sh10', 'clodex', 'mid', 'dm');
+  h.m._routeAttnEntry(s, { hook_event_name: 'PreToolUse' });
+  h.m.seatSend('sh10', 'typed');
+  assert.strictEqual(seat.sent.length, 2, 'ENTER: the tool boundary wrote the dm mid-turn');
+  h.line('sh10', RESULT);
+  mock.timers.tick(399);
+  assert.strictEqual(seat.sent.length, 2, 'held: nothing drains inside the window');
+  mock.timers.tick(1);
+  assert.deepStrictEqual(seat.sent[2], userMsg('typed'));
+  assert.deepStrictEqual(s.outbox, []);
+  h.line('sh10', RESULT);
+  assert.strictEqual(s.streamBusy, false, 'a result with no tool drain in its turn ends it at once');
+});
+
+test('stream seat H2.1: two idle edges on a busy seat with one pending file queue one outbox row', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sh11');
+  const { parkDelivery } = require('../pending-store');
+  const s = h.m.sessions.get('sh11');
+  h.m.seatSend('sh11', 'go');
+  parkDelivery(require('node:path').join(h.root, 'pending'), 'sh11', '[agent:from clodex] parked', '1.000000001', null, false, h.m._bornFor('sh11'));
+  h.m._emitActivity('sh11', 'idle', false);
+  assert.strictEqual(s.outbox.length, 1, 'ENTER: the first idle edge queued the producer');
+  h.m._emitActivity('sh11', 'idle', false);
+  assert.strictEqual(s.outbox.length, 1);
+  h.line('sh11', RESULT);
+  assert.deepStrictEqual(h.handles[0].sent[1], userMsg('[agent:from clodex] parked'));
+});
+
+test('stream seat H2.1: two keyed deliveries with the same parkKey leave one outbox item carrying the later body', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sh12');
+  const s = h.m.sessions.get('sh12');
+  h.m.seatSend('sh12', 'go');
+  h.m._deliverMessage('sh12', 'clodex', 'first copy', 'dm', '', null, 'ticket:t9');
+  h.m._deliverMessage('sh12', 'clodex', 'other', 'dm');
+  h.m._deliverMessage('sh12', 'clodex', 'second copy', 'dm', '', null, 'ticket:t9');
+  assert.deepStrictEqual(s.outbox.map((q) => q.text), ['[agent:from clodex] second copy', '[agent:from clodex] other']);
 });
 
 test('stream seat: close after exit runs the pty exit order, and kill() uses the stream group kill', async () => {

@@ -7,3 +7,7 @@ Spawned `detached: true` so the child leads its own process group: `groupKill` s
 ## groupKill
 
 Refuses a non-positive pid before negating it: `-0` and `-(-1)` would be broadcasts. Censused in test/sigkill-pid-census.test.js.
+
+## send
+
+M16 (wirescope, claude 2.1.281): a stdin message written between tool calls folds into the running turn (one `result`, replayed after the tool_result); one written during plain text generation is queued and gets its own `init` and `result` after the first. `queued_turn_count` is 0 on every `result` either way, so it cannot tell the cases apart; `_onStreamEvent` holds the first `result` after a tool-boundary drain for `STREAM_RESULT_HOLD_MS` instead.

@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 - Transcript pane: text pasted into a claude seat shows as a `Pasted text #1 · N lines` chip that expands on click, instead of the raw `<pasted_content>` tags.
 - Transcript pane: the typed echo of a slash command (`/compact`, `/cost`) no longer shows as a prompt row; the CLI's own command record and the compact boundary are the row.
+- Stream seat: a message queued while the seat is working no longer shows twice, a re-sent ticket replaces its queued copy instead of adding one, and queued rows show from the first second of a seat's life.
 - Stream seat: dms, ticket deliveries, reminders and exec results now reach a stream seat. They queue behind what you typed and are delivered when the seat finishes its turn or reaches its next tool call; nothing is sent mid-turn.
 - Transcript pane: consecutive calls of the same tool fold under one label with a count, and a Bash command no longer starts with the worktree cd prefix, so the command itself is what you read.
 - Stream seat: unarchiving, or retrying a seat that failed to start, brings it back with its composer instead of an empty terminal.

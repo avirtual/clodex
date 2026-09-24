@@ -222,6 +222,8 @@ const { effectiveModel } = require('./accounts');
 const { liveSnapshotFor, archivedSnapshotFor, stampConfigFlags } = require('./session-restore');
 const { COMPACTING_VALVE_MS, COMPACT_NOTICE_CAP, noticeTextFor } = require('./compact-notices');
 const STREAM_TOOL_DRAIN_MIN_MS = 2000;
+const STREAM_RESULT_HOLD_MS = 400;
+const PENDING_DRAIN_KEY = '\0pending-drain';
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
 // module's path. Removing the re-export as unused breaks those importers.
@@ -2832,9 +2834,10 @@ function createSessionManager(deps) {
       return { ok: true, queued: this._streamEnqueue(s, { text: body, images: imgs, origin: 'operator' }) };
     }
 
-    _streamEnqueue(s, item, onSend = null, produce = null) {
+    _streamEnqueue(s, item, onSend = null, produce = null, parkKey = null) {
       if (onSend) Object.defineProperty(item, 'onSend', { value: onSend, enumerable: false });
       if (produce) Object.defineProperty(item, 'produce', { value: produce, enumerable: false });
+      if (parkKey) Object.defineProperty(item, 'parkKey', { value: parkKey, enumerable: false });
       if (!s.streamBusy) {
         const payload = this._streamJoin([item]);
         if (!payload.text.trim() && !payload.images.length) return 0;
@@ -2842,7 +2845,10 @@ function createSessionManager(deps) {
         this._streamSent([item]);
         return 0;
       }
-      if (item.origin === 'operator') {
+      const same = parkKey ? s.outbox.findIndex((q) => q.parkKey === parkKey) : -1;
+      if (same >= 0) {
+        s.outbox[same] = item;
+      } else if (item.origin === 'operator') {
         let i = 0;
         while (i < s.outbox.length && s.outbox[i].origin === 'operator') i += 1;
         s.outbox.splice(i, 0, item);
@@ -2853,10 +2859,10 @@ function createSessionManager(deps) {
       return s.outbox.length;
     }
 
-    _streamEnqueueSystem(s, text, produce, where, onSend = null) {
+    _streamEnqueueSystem(s, text, produce, where, onSend = null, parkKey = null) {
       if (this._refuseStreamInject(s, text, where)) return;
       if (!produce && !String(text || '').trim()) return;
-      this._streamEnqueue(s, { text: produce ? '' : String(text), images: [], origin: 'system' }, onSend, produce);
+      this._streamEnqueue(s, { text: produce ? '' : String(text), images: [], origin: 'system' }, onSend, produce, parkKey);
     }
 
     _streamJoin(items) {
@@ -2905,6 +2911,7 @@ function createSessionManager(deps) {
       if (payload.text.trim() || payload.images.length) {
         this._streamWrite(s, payload);
         this._streamSent(sys);
+        s._toolDrainedInTurn = true;
       }
       this._streamOutboxChanged(s);
     }
@@ -2922,8 +2929,28 @@ function createSessionManager(deps) {
       });
     }
 
+    _clearStreamResultHold(s) {
+      if (!s._resultHold) return;
+      clearTimeout(s._resultHold);
+      s._resultHold = null;
+    }
+
+    _streamTurnEnd(s) {
+      s.streamBusy = false;
+      const queued = s.outbox.splice(0);
+      const payload = queued.length ? this._streamJoin(queued) : null;
+      if (queued.length) this._streamOutboxChanged(s);
+      if (payload && (payload.text.trim() || payload.images.length)) {
+        this._streamDeliver(s, payload);
+        this._streamSent(queued);
+      } else {
+        this._emitActivity(s.name, 'idle', true);
+      }
+    }
+
     _onStreamEvent(s, ev, onSessionId, onProcExit) {
       if (ev.close) {
+        this._clearStreamResultHold(s);
         const { code, signal } = ev.close;
         if (s.stream && s.stream.stderrTail && code) {
           log.warn('session', `stream ${s.name} stderr: ${s.stream.stderrTail.slice(-400)}`);
@@ -2934,19 +2961,20 @@ function createSessionManager(deps) {
       const rec = streamCodecClaude.decode(ev.line);
       switch (rec.kind) {
         case 'init':
+          this._clearStreamResultHold(s);
           if (rec.sessionId && rec.sessionId !== s.sessionId) onSessionId(rec.sessionId);
           break;
         case 'result':
-          s.streamBusy = false;
-          const queued = s.outbox.splice(0);
-          const payload = queued.length ? this._streamJoin(queued) : null;
-          if (queued.length) this._streamOutboxChanged(s);
-          if (payload && (payload.text.trim() || payload.images.length)) {
-            this._streamDeliver(s, payload);
-            this._streamSent(queued);
-          } else {
-            this._emitActivity(s.name, 'idle', true);
+          this._clearStreamResultHold(s);
+          if (s._toolDrainedInTurn) {
+            s._toolDrainedInTurn = false;
+            s._resultHold = setTimeout(() => {
+              s._resultHold = null;
+              if (!s._dead) this._streamTurnEnd(s);
+            }, STREAM_RESULT_HOLD_MS);
+            break;
           }
+          this._streamTurnEnd(s);
           break;
         case 'reset':
           log.info('session', `stream ${s.name}: conversation reset (${rec.newConversationId}); the next init carries the resumable id`);
@@ -5457,6 +5485,7 @@ function createSessionManager(deps) {
       if (!hasActivePending(PENDING_DIR, session.name)) return;
       this._injectText(session, '', {
         parkable: true,
+        parkKey: session.io === 'stream' ? PENDING_DRAIN_KEY : null,
         produce: () => {
           if (session._dead || session._recycling) return null;
           if (this._anyDraftOpen(session)) return null;
@@ -8933,7 +8962,7 @@ function createSessionManager(deps) {
       const fire = typeof onWrite === 'function' ? onWrite : null;
       if (target.io === 'stream') {
         this._streamEnqueue(target, { text: finalText, images: [], origin: senderName === 'user' ? 'operator' : 'system' },
-          fire ? () => fire('injected') : null);
+          fire ? () => fire('injected') : null, null, parkKey);
       } else if (!this._maybeParkDelivery(target, finalText, parkKey)) {
         this._injectText(target, finalText, {
           parkable: true,
@@ -9129,7 +9158,7 @@ function createSessionManager(deps) {
       if (session._dead) return;
       const produce = typeof opts.produce === 'function' ? opts.produce : null;
       if (session.io === 'stream') {
-        this._streamEnqueueSystem(session, text, produce, 'inject');
+        this._streamEnqueueSystem(session, text, produce, 'inject', null, opts.parkKey || null);
         return;
       }
       if (!opts.bypassHold && this._injectHoldReason(session)) {

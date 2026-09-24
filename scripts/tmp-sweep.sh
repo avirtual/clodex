@@ -575,6 +575,7 @@ ipc-del-home-
 ipc-del-root-
 ipc-team-home-
 ipc-team-root-
+ipc-tpull-
 legib-home-
 legib-proj-
 linger-fallback-
