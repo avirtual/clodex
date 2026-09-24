@@ -782,7 +782,8 @@ function createTicketMethods(deps, shared) {
             // carry it. What it cannot do is redirect traffic: proxyBase is nulled
             // outright, never pointed somewhere the template chose.
             (tpl && tpl.noWire) === true,
-            plugins,
+            plugins, null, null,
+            (tpl && tpl.io) === 'stream' ? 'stream' : 'pty',
           );
           // AFTER create(), which is what mints the persistence entry: setWorktree
           // silently no-ops when no entry exists, so recording it earlier would
@@ -1301,7 +1302,7 @@ function createTicketMethods(deps, shared) {
             reviewBrief, false, session.proxy ?? null, shape.agents, shape.denyBuiltins, shape.disabledTools,
             shape.disabledSkills, shape.injectSkills,
             reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
-            false, shape.plugins, shape.shellDeny,
+            false, shape.plugins, shape.shellDeny, null, shape.io || 'pty',
           );
           // The rule is "reported ONCE", and this is the one caller that can
           // report twice: a reviewer whose prompt rides as system fails the
@@ -4966,6 +4967,7 @@ function createTicketMethods(deps, shared) {
         envDropped: dropped,
         envBadType: badType,
         noWire: tpl.noWire === true,
+        io: tpl.io === 'stream' ? 'stream' : 'pty',
         // `|| []` inverts this: absent means every shipped bundle, `[]` means none.
         plugins: Array.isArray(tpl.plugins) ? tpl.plugins.map(String) : null,
       };
@@ -5168,6 +5170,7 @@ function createTicketMethods(deps, shared) {
           // seat keeps the living all-enabled default. Not interchangeable.
           intents: shape ? shape.intents : null,
           plugins: shape ? shape.plugins : null,
+          io: (shape && shape.io) || 'pty',
           env: withAccount((shape && shape.sessionEnv) || null),
           account: accountLabel,
           accountMissing,
@@ -5292,6 +5295,7 @@ function createTicketMethods(deps, shared) {
         // ticket arm — the two values mean opposite things to create().
         intents: (shape && Array.isArray(shape.intents)) ? shape.intents : [],
         plugins: shape ? shape.plugins : null,
+        io: (shape && shape.io) || 'pty',
         // An object always, never null — and the fallback applies whenever the
         // TEMPLATE supplied no usable env, not merely when the template is
         // missing: a reviewer that booted without CLODEX_DISABLE_IPC_PROMPT gets
@@ -5579,7 +5583,7 @@ function createTicketMethods(deps, shared) {
             // wire that measures what this seat costs. It also cannot be dropped —
             // the plugin list after it is positional.
             { ...shape.env, CLODEX_TICKET: ticket.id }, true,
-            false, shape.plugins,
+            false, shape.plugins, null, null, shape.io || 'pty',
           );
           this._applyTemplatePersistence(seat.name, shape.tpl);
           // FIRST, before anything else that can throw. Between create() and this

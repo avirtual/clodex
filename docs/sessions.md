@@ -623,6 +623,7 @@ worktree-removal failure is toasted by the renderer while the row goes.
 | Restore failure | kept, returned `{failed:true}` | never spawned | failed ghost tab (retry / forget) |
 | Restore (archived) | kept | never spawned | dimmed archived row (click = resume) |
 | Move (right-click "Move Session…") | kept, `cwd` rewritten (archive stamp cleared) | killed + respawned (`--resume`) | tab rebuilt under the new folder; failed ghost row if the respawn throws |
+| Restart (right-click "Restart Session", or Edit Session with "Restart session now") | kept; `io` (the transport) is kept, and Edit Session's Stream transport box rewrites it (`persistence.setIo`) | killed + respawned (`--resume`) on the entry's `io` | tab rebuilt as a terminal or a stream pane to match `io` |
 | Move to peer (right-click "Move to Peer…" ▸ peer) | entry kept, `movedTo` stamped, `archivedAt` set | killed; shipped; not respawned (failure → respawned like Move) | archived row "moved to <peer>" |
 | Move to workspace (right-click "Move to Workspace…" ▸ name) | entry kept, only `workspaceId` rewritten | untouched — keeps running; output buffered until the new window attaches | tab leaves this window, appears in the other (or when it next opens) |
 

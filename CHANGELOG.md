@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Stream transport is a seat property: a template can set it, ticket seats spawn with it, Edit Session can switch a seat and Restart applies it; a stream seat now receives its team roster and open tickets at boot.
 - Stream seats: `[agent:context compact]` now ends on the stream's own compact boundary instead of timing out, and the transcript pane follows the seat across a `/clear`.
 - Transcript pane: text pasted into a claude seat shows as a `Pasted text #1 · N lines` chip that expands on click, instead of the raw `<pasted_content>` tags.
 - Transcript pane: the typed echo of a slash command (`/compact`, `/cost`) no longer shows as a prompt row; the CLI's own command record and the compact boundary are the row.

@@ -338,3 +338,36 @@ test('t830: role-set reviewer with any OTHER key is still refused', async () => 
   assert.ok(!f.liveTeam().roles.reviewer.account,
     'the account must NOT half-apply out of a patch that was refused');
 });
+
+const HAND_TUPLE = (io) => [
+  'team-hand-1', 'claude', '/proj', [], null, undefined, null, false, null,
+  [], [], [], [], [], 'clodex-team-hand', [], [], null,
+  { CLODEX_DISABLE_IPC_PROMPT: '1', FORCE_PROMPT_CACHING_5M: '1', CLODEX_TICKET: 't1' }, true,
+  false, null, null, null, io,
+];
+
+test('t1165: a hand template with io:stream spawns its ticket seat with io stream in the trailing slot', async () => {
+  const f = mkFixture({ templates: [{ ...HAND_TEMPLATE, io: 'stream' }, SHIPPED_REVIEWER_TEMPLATE] });
+  await dispatchTicket(f);
+  assert.deepStrictEqual(f.created, [HAND_TUPLE('stream')]);
+});
+
+test('t1165: a hand template without io spawns its ticket seat as pty', async () => {
+  const f = mkFixture();
+  await dispatchTicket(f);
+  assert.deepStrictEqual(f.created, [HAND_TUPLE('pty')]);
+});
+
+for (const [label, tpl, want] of [
+  ['without io defaults to pty', SHIPPED_REVIEWER_TEMPLATE, 'pty'],
+  ['with io:stream carries it', { ...SHIPPED_REVIEWER_TEMPLATE, io: 'stream' }, 'stream'],
+]) {
+  test(`t1165: a cold reviewer template ${label}`, async () => {
+    const f = mkFixture({ templates: [HAND_TEMPLATE, tpl] });
+    f.seat('lead');
+    f.m._handleTeamReview(f.m.sessions.get('lead'), 'review the diff');
+    await settle();
+    assert.strictEqual(f.created.length, 1, 'ENTER: the reviewer seat must have spawned');
+    assert.deepStrictEqual([f.created[0].length, f.created[0][23], f.created[0][24]], [25, null, want]);
+  });
+}

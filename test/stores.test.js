@@ -892,6 +892,30 @@ test('templates: save() REMOVES tools when the allowlist control is emptied', ()
   } finally { cleanup(); }
 });
 
+test('templates: io round-trips through save/load and is REMOVED when the stream box is cleared', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.templates.saveByName({ name: 'st', type: 'claude', cwd: '/a', io: 'stream' });
+    stores.templates.save({ id: 'st', name: 'st', type: 'claude', cwd: '/a', io: 'stream' });
+    assert.strictEqual(stores.templates.list()[0].io, 'stream');
+    stores.templates.save({ id: 'st', name: 'st', type: 'claude', cwd: '/a' });
+    assert.strictEqual('io' in stores.templates.list()[0], false);
+  } finally { cleanup(); }
+});
+
+test('persistence: setIo writes the entry transport and normalises anything else to pty', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'default', io: 'pty' });
+    stores.persistence.setIo('a', 'stream');
+    assert.strictEqual(stores.persistence.get('a').io, 'stream');
+    stores.persistence.setIo('a', 'bogus');
+    assert.strictEqual(stores.persistence.get('a').io, 'pty');
+    stores.persistence.setIo('missing', 'stream');
+    assert.strictEqual(stores.persistence.get('missing'), null);
+  } finally { cleanup(); }
+});
+
 test('templates: list() skips a malformed file', () => {
   const { registryDir, stores, cleanup } = freshStores();
   try {

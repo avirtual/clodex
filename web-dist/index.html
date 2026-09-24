@@ -9817,6 +9817,12 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
       <label>Extra CLI args
         <input type="text" id="args-input" placeholder="(none)">
       </label>
+      <label id="args-stream-io-row">Stream transport (experimental)
+        <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
+          <input type="checkbox" id="args-stream-io" style="margin: 0;">
+          <span class="hint-text" style="margin: 0;">Run the seat as <code>claude -p</code> over stream-json. Takes effect at the next restart.</span>
+        </label>
+      </label>
       <details id="args-append-section" class="dialog-section">
         <summary>Append prompts</summary>
         <label id="args-append-row">
@@ -46932,7 +46938,7 @@ ${detail}` });
         if (stripRow) stripRow.style.display = caps.strip ? "" : "none";
         if (autoCompactRow) autoCompactRow.style.display = caps.autoCompact ? "" : "none";
         if (noWireRow) noWireRow.style.display = caps.noWire ? "" : "none";
-        if (streamIoRow) streamIoRow.style.display = type === "claude" && !authoring ? "" : "none";
+        if (streamIoRow) streamIoRow.style.display = type === "claude" ? "" : "none";
         if (accountRow) accountRow.style.display = caps.accounts ? "" : "none";
         if (toolsAllowRow) toolsAllowRow.style.display = authoring ? "" : "none";
         if (authoring && caps.tools && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, /* @__PURE__ */ new Set());
@@ -47814,6 +47820,7 @@ ${detail}` });
         if (tplCaps.strip && inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
         if (tplCaps.autoCompact && inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
         if (tplCaps.noWire && inputNoWire) inputNoWire.checked = t.noWire === true;
+        if (inputStreamIo) inputStreamIo.checked = t.type === "claude" && t.io === "stream";
         if (agentType) {
           setProxyControls(inputProxyMode, inputProxyUrl, t.proxy ?? null, inputProxyUrl.value);
         }
@@ -47878,6 +47885,7 @@ ${detail}` });
         const toolsAllow = dialogMode === "template" && caps.tools ? collectToolAllowChecklist(inputToolsAllowList) : [];
         const autoCompactOff = caps.autoCompact && inputAutoCompact && !inputAutoCompact.checked;
         const noWireOn = caps.noWire && inputNoWire && inputNoWire.checked;
+        const streamIoOn = type === "claude" && inputStreamIo && inputStreamIo.checked;
         return {
           type,
           cwd: expandPath(inputCwd.value.trim()) || homeDir,
@@ -47889,6 +47897,7 @@ ${detail}` });
           plugins,
           ...autoCompactOff ? { autoCompact: false } : {},
           ...noWireOn ? { noWire: true } : {},
+          ...streamIoOn ? { io: "stream" } : {},
           ...toolsAllow.length ? { tools: toolsAllow } : {},
           denyBuiltins: caps.agents ? collectBuiltinChecklist(inputBuiltinsList) : [],
           disabledTools: caps.tools ? collectToolChecklist(inputToolsList) : [],
@@ -48103,6 +48112,7 @@ ${detail}` });
         if (inputStripLevel) inputStripLevel.value = String(tpl && tpl.stripLevel || 0);
         if (inputAutoCompact) inputAutoCompact.checked = !(tpl && tpl.autoCompact === false);
         if (inputNoWire) inputNoWire.checked = (tpl && tpl.noWire) === true;
+        if (inputStreamIo) inputStreamIo.checked = (tpl && tpl.io) === "stream";
         for (const sec of [toolsSection, skillsSection, otherSection]) {
           if (sec) sec.open = false;
         }
@@ -52518,6 +52528,8 @@ ${res.stderr}` : "");
       var argsModelRow = document.getElementById("args-model-row");
       var argsTarget = document.getElementById("args-target");
       var argsRestart = document.getElementById("args-restart");
+      var argsStreamIoRow = document.getElementById("args-stream-io-row");
+      var argsStreamIo = document.getElementById("args-stream-io");
       var argsProxyRow = document.getElementById("args-proxy-row");
       var argsProxyMode = document.getElementById("args-proxy-mode");
       var argsProxyUrl = document.getElementById("args-proxy-url");
@@ -52640,6 +52652,9 @@ ${res.stderr}` : "");
         argsAppendRow.style.display = isAgent ? "" : "none";
         argsAppendSection.style.display = isAgent ? "" : "none";
         const caps = capsFor(res.type);
+        const ioEditable = res.type === "claude" && !argsSource;
+        if (argsStreamIoRow) argsStreamIoRow.style.display = ioEditable ? "" : "none";
+        if (argsStreamIo) argsStreamIo.checked = ioEditable && res.io === "stream";
         argsAccountRow.style.display = caps.accounts ? "" : "none";
         argsAgentsRow.style.display = caps.agents ? "" : "none";
         argsOtherSection.style.display = caps.agents ? "" : "none";
@@ -52755,6 +52770,7 @@ ${res.stderr}` : "");
           pluginsForUnlistedPlugins(argsPluginsPersisted, argsPluginsRendered)
         );
         const execCommandsGrant = argsExecSection.style.display === "none" ? void 0 : collectExecChecklist(argsExecList);
+        const io = !argsStreamIoRow || argsStreamIoRow.style.display === "none" || !argsStreamIo ? void 0 : argsStreamIo.checked ? "stream" : "pty";
         const env = argsEnvSection.style.display === "none" ? void 0 : parseEnvLines(argsEnv.value || "").env;
         const skillsShown = argsSkillsSection.style.display !== "none";
         const disabledSkills = !skillsShown ? void 0 : argsSkillsRow.style.display === "none" ? argsSkillsDisabledPersisted : collectSkillChecklist(argsSkillsList);
@@ -52790,7 +52806,7 @@ ${res.stderr}` : "");
           systemPromptFile,
           appendPromptFiles,
           intents
-        }) : await window.api.setSessionArgs(name, parsed, restart, proxy, void 0, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins);
+        }) : await window.api.setSessionArgs(name, parsed, restart, proxy, void 0, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io);
         if (!res || !res.ok) {
           alert(`Save settings failed: ${res && res.error ? res.error : "unknown error"}`);
           return;

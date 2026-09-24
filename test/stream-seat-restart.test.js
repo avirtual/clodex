@@ -68,4 +68,58 @@ for (const [label, run] of [
   });
 }
 
+const PTY_ENTRY = (name) => ({ name, type: 'claude', cwd: '/tmp', workspaceId: 'default', sessionId: 's-1', io: 'pty' });
+const RESTART_TUPLE = (name, io) => [
+  name, 'claude', '/tmp', [], 's-1', 'default', null, false, null, [], [], [], [], [], null, [], [], null, null,
+  false, false, null, null, null, io,
+];
+
+test('restartSession after setIo(stream) respawns the seat as a stream seat', async () => {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert(PTY_ENTRY('io-flip'));
+  liveSession(eng, 'io-flip', PTY_ENTRY('io-flip'));
+  eng.stores.persistence.setIo('io-flip', 'stream');
+  const { seen } = probe(eng);
+  const res = await eng.restartSession('io-flip', {}, 'default');
+  assert.deepStrictEqual(seen, [RESTART_TUPLE('io-flip', 'stream')]);
+  assert.strictEqual(res.io, 'stream');
+});
+
+test('a plain restartSession of a pty seat keeps pty', async () => {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert(PTY_ENTRY('io-keep'));
+  liveSession(eng, 'io-keep', PTY_ENTRY('io-keep'));
+  const { seen } = probe(eng);
+  const res = await eng.restartSession('io-keep', {}, 'default');
+  assert.deepStrictEqual(seen, [RESTART_TUPLE('io-keep', 'pty')]);
+  assert.strictEqual(res.io, 'pty');
+});
+
+test('applySessionArgs with io:stream persists it and the restart spawns a stream seat', async () => {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert(PTY_ENTRY('io-edit'));
+  liveSession(eng, 'io-edit', PTY_ENTRY('io-edit'));
+  const { seen } = probe(eng);
+  const res = await eng.applySessionArgs('io-edit', { extraArgs: [], restart: true, io: 'stream' }, 'default');
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(seen.length, 1, 'ENTER: create() was reached');
+  assert.strictEqual(seen[0][24], 'stream');
+  assert.strictEqual(res.io, 'stream');
+});
+
+test('applySessionArgs with io:stream and no restart persists it for the next restart', async () => {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert(PTY_ENTRY('io-later'));
+  const res = await eng.applySessionArgs('io-later', { extraArgs: [], restart: false, io: 'stream' }, 'default');
+  assert.deepStrictEqual(res, { ok: true, restarted: false });
+  assert.strictEqual(eng.stores.persistence.get('io-later').io, 'stream');
+});
+
+test('applySessionArgs refuses io:stream on a non-claude seat and keeps its transport', async () => {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert({ ...PTY_ENTRY('io-codex'), type: 'codex' });
+  await eng.applySessionArgs('io-codex', { extraArgs: [], restart: false, io: 'stream' }, 'default');
+  assert.strictEqual(eng.stores.persistence.get('io-codex').io, 'pty');
+});
+
 after(() => { setImmediate(() => process.exit(0)); });
