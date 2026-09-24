@@ -10557,6 +10557,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "onTranscriptChanged", kind: "on", channel: "transcript-changed" },
         { name: "writeToSession", kind: "send", channel: "pty-input" },
         { name: "seatSend", kind: "invoke", channel: "seat:send" },
+        { name: "seatDraft", kind: "send", channel: "seat:draft" },
         { name: "selectDirectory", kind: "invoke", channel: "dialog:selectDirectory" },
         { name: "confirmKill", kind: "invoke", channel: "dialog:confirmKill" },
         { name: "restoreSessions", kind: "invoke", channel: "app:restore-sessions" },
@@ -46413,6 +46414,7 @@ ${detail}` });
           return null;
         }
       }
+      var SEAT_DRAFT_DEBOUNCE_MS = 300;
       function createStreamSeatPane(name, wrapperEl) {
         wrapperEl.classList.add("stream-seat");
         const paneEl = document.createElement("div");
@@ -46552,10 +46554,21 @@ ${detail}` });
         transcriptChangedSubs.add(onChanged);
         const timer = setInterval(pull, TRANSCRIPT_PULL_MS);
         pull(true);
+        let draftTimer = null;
+        const onComposerInput = () => {
+          clearTimeout(draftTimer);
+          draftTimer = setTimeout(() => {
+            draftTimer = null;
+            if (!disposed) window.api.seatDraft(name, composer.value);
+          }, SEAT_DRAFT_DEBOUNCE_MS);
+        };
+        composer.addEventListener("input", onComposerInput);
         const sendComposer = () => {
           const text = composer.value;
           const images = pending;
           if (!text.trim() && !images.length) return;
+          clearTimeout(draftTimer);
+          draftTimer = null;
           composer.value = "";
           triggerSubmit.resetSpan();
           pending = [];
@@ -46618,6 +46631,8 @@ ${detail}` });
             disposed = true;
             triggerSubmit.dispose();
             clearInterval(timer);
+            clearTimeout(draftTimer);
+            composer.removeEventListener("input", onComposerInput);
             transcriptChangedSubs.delete(onChanged);
             paneEl.removeEventListener("scroll", onScroll);
           }
