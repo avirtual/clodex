@@ -10819,6 +10819,8 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         // both surfaces work with zero Claude seats open.
         { name: "getVoiceMode", kind: "invoke", channel: "settings:voiceMode" },
         { name: "setVoiceMode", kind: "invoke", channel: "settings:setVoiceMode" },
+        { name: "setSeatVoice", kind: "invoke", channel: "session:setVoice" },
+        { name: "onSeatVoice", kind: "on", channel: "seat-voice" },
         // t572: mark the hands-free submit about to happen as voice-originated. A
         // SEND, not an invoke, and that is the contract: the marker must never put a
         // round trip in front of the operator's Enter, so there is no result to wait
@@ -25557,36 +25559,6 @@ ${i3.join("\n")}
     }
   });
 
-  // renderer/lib/mirror-latch.js
-  var require_mirror_latch = __commonJS({
-    "renderer/lib/mirror-latch.js"(exports, module) {
-      "use strict";
-      function createMirrorLatch(initial = null, { normalize = (v) => v } = {}) {
-        let value = normalize(initial);
-        let heard = false;
-        return {
-          // A broadcast landed. Always wins, and latches the mirror against pulls.
-          note(next) {
-            heard = true;
-            value = normalize(next);
-          },
-          // The catch-up read resolved. Ignored once any broadcast has been heard.
-          pull(next) {
-            if (heard) return;
-            value = normalize(next);
-          },
-          read() {
-            return value;
-          },
-          heard() {
-            return heard;
-          }
-        };
-      }
-      module.exports = { createMirrorLatch };
-    }
-  });
-
   // renderer/lib/sidebar-filter-fold.js
   var require_sidebar_filter_fold = __commonJS({
     "renderer/lib/sidebar-filter-fold.js"(exports, module) {
@@ -25626,33 +25598,6 @@ ${i3.join("\n")}
         if (persist) persist({ filterFolded: on });
       }
       module.exports = { filterSummary, setFilterFolded };
-    }
-  });
-
-  // renderer/lib/mic-handoff.js
-  var require_mic_handoff = __commonJS({
-    "renderer/lib/mic-handoff.js"(exports, module) {
-      "use strict";
-      function createMicHandoff({ mirror, watcherFor }) {
-        return function onMicTarget(next) {
-          const lost = mirror.read();
-          mirror.note(next);
-          if (!lost || lost === mirror.read()) return false;
-          let w = null;
-          try {
-            w = watcherFor(lost);
-          } catch {
-            w = null;
-          }
-          if (!w || typeof w.tapOff !== "function") return false;
-          try {
-            return w.tapOff() === true;
-          } catch {
-            return false;
-          }
-        };
-      }
-      module.exports = { createMicHandoff };
     }
   });
 
@@ -28480,9 +28425,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
       ];
       var POLL_MS = 15e3;
       var CHOICE_DEBOUNCE_MS = 250;
-      function createVoiceCore({ showToast }) {
+      function createVoiceCore({ showToast, getSeat = () => null }) {
         let state = null;
         let pending = null;
+        let pendingSeat = null;
         let writeTimer = null;
         let pollTimer = null;
         let holds = 0;
@@ -28525,21 +28471,28 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         async function refresh() {
           let r = null;
+          let seat = null;
           try {
-            r = await window.api.getVoiceMode();
+            seat = getSeat() || null;
+          } catch {
+            seat = null;
+          }
+          try {
+            r = await window.api.getVoiceMode(seat);
           } catch {
             r = null;
           }
           if (r && r.ok) {
+            if (pending && pendingSeat !== (r.seat || null)) pending = null;
             state = r;
             if (pending && r.effective === pending) pending = null;
           }
           emit();
         }
-        async function sendMode(mode) {
+        async function sendMode(mode, seat) {
           let r = null;
           try {
-            r = await window.api.setVoiceMode(mode);
+            r = await window.api.setVoiceMode(mode, seat);
           } catch (err) {
             r = { ok: false, error: err.message };
           }
@@ -28558,11 +28511,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
             return false;
           }
           pending = mode;
+          try {
+            pendingSeat = getSeat() || null;
+          } catch {
+            pendingSeat = null;
+          }
           emit();
+          const seat = pendingSeat;
           if (writeTimer) clearTimeout(writeTimer);
           writeTimer = setTimeout(() => {
             writeTimer = null;
-            sendMode(mode);
+            sendMode(mode, seat);
           }, CHOICE_DEBOUNCE_MS);
           return true;
         }
@@ -28608,14 +28567,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }, stop() {
         } };
         function paint(snap) {
-          const { state, pending, mode, force } = snap;
+          const { pending, mode, force } = snap;
           if (force || document.activeElement !== sel) {
             sel.value = core.isMode(mode) ? mode : "";
           }
           if (pending) {
             stateEl.textContent = `Switching to ${pending}\u2026`;
           } else if (!core.isMode(mode)) {
-            stateEl.textContent = state && state.source === "legacy" ? "Only the legacy voiceEnabled key is set in the settings file \u2014 pick a mode to set one." : "Not set in the settings file yet \u2014 pick a mode to set one.";
+            stateEl.textContent = "No seat is focused \u2014 open a seat to set its voice mode.";
           } else {
             stateEl.textContent = "";
           }
@@ -29470,6 +29429,34 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // renderer/lib/cursor-row.js
+  var require_cursor_row = __commonJS({
+    "renderer/lib/cursor-row.js"(exports, module) {
+      "use strict";
+      function readCursorRow(terminal) {
+        const buf = terminal.buffer.active;
+        const line = buf.getLine(buf.baseY + buf.cursorY);
+        if (!line) return null;
+        return line.translateToString(false, 0, buf.cursorX);
+      }
+      function readRowsToCursor(terminal) {
+        try {
+          const buf = terminal.buffer.active;
+          const out = [];
+          for (let y = buf.cursorY; y >= 0 && out.length < terminal.rows; y--) {
+            const line = buf.getLine(buf.baseY + y);
+            if (!line) break;
+            out.unshift(line.translateToString(true));
+          }
+          return out.length ? out : null;
+        } catch {
+          return null;
+        }
+      }
+      module.exports = { readCursorRow, readRowsToCursor };
+    }
+  });
+
   // voice-engine.js
   var require_voice_engine = __commonJS({
     "voice-engine.js"(exports, module) {
@@ -29487,12 +29474,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var PROCESSING_INDICATOR = /Voice:\s*processing/i;
       var NO_SPEECH = /No speech detected/;
       var SCREEN_RESET = "\x1B[H\x1B[2J\x1B[3J";
-      function engineSettings(wireBase) {
+      function engineSettings(wireBase, mode) {
         if (typeof wireBase !== "string" || !wireBase) throw new Error("voice engine needs a wire base");
-        return { env: { ANTHROPIC_BASE_URL: `${wireBase}/anthropic` } };
+        if (mode !== "tap" && mode !== "hold") throw new Error(`voice engine needs a tap or hold mode, not ${mode}`);
+        return { env: { ANTHROPIC_BASE_URL: `${wireBase}/anthropic` }, voice: { mode }, voiceEnabled: true };
       }
-      function engineArgs(wireBase) {
-        return ["--settings", JSON.stringify(engineSettings(wireBase))];
+      function engineArgs(wireBase, mode) {
+        return ["--settings", JSON.stringify(engineSettings(wireBase, mode))];
       }
       function planRecord({ mode, action, recording } = {}) {
         if (!RECORD_ACTIONS.includes(action)) return null;
@@ -29668,728 +29656,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
-  // renderer/lib/cursor-row.js
-  var require_cursor_row = __commonJS({
-    "renderer/lib/cursor-row.js"(exports, module) {
-      "use strict";
-      function readCursorRow(terminal) {
-        const buf = terminal.buffer.active;
-        const line = buf.getLine(buf.baseY + buf.cursorY);
-        if (!line) return null;
-        return line.translateToString(false, 0, buf.cursorX);
-      }
-      function readRowsToCursor(terminal) {
-        try {
-          const buf = terminal.buffer.active;
-          const out = [];
-          for (let y = buf.cursorY; y >= 0 && out.length < terminal.rows; y--) {
-            const line = buf.getLine(buf.baseY + y);
-            if (!line) break;
-            out.unshift(line.translateToString(true));
-          }
-          return out.length ? out : null;
-        } catch {
-          return null;
-        }
-      }
-      module.exports = { readCursorRow, readRowsToCursor };
-    }
-  });
-
-  // renderer/voice-submit-watcher.js
-  var require_voice_submit_watcher = __commonJS({
-    "renderer/voice-submit-watcher.js"(exports, module) {
-      var {
-        findSubmit,
-        matchTrigger,
-        shouldFire,
-        shouldRearm,
-        composerIsEmpty,
-        composerHasDraftRows,
-        recorderBlocksRearm,
-        isVoiceOriginated,
-        recordingObserved,
-        processingObserved
-      } = require_voice_submit();
-      var { isHumanPtyInput } = require_proxy_util();
-      var { readCursorRow, readRowsToCursor } = require_cursor_row();
-      var QUIET_MS = 1200;
-      var ENTER_SETTLE_MS = 30;
-      var VOICE_TAP_MODE_SETTLE_MS = 1500;
-      var STOP_SETTLE_MS = 250;
-      var SUBMIT_POLL_MS = 100;
-      var SUBMIT_ABANDON_MS = 8e3;
-      var CONSUMED_IDLE_MS = 9e4;
-      var VOICE_RELEASE_MS = 2500;
-      var COMPOSITION_POLL_MS = 300;
-      var REARM_SETTLE_MS = 3e3;
-      var REARM_ABANDON_MS = 2e4;
-      var SPEECH_ABANDON_MS = 12e4;
-      var VOICE_EVIDENCE_MS = 2e4;
-      var VOICE_DRAFT_SITTING_MS = 12e4;
-      function readComposition(terminal) {
-        const root = terminal && terminal.element;
-        if (!root || typeof root.querySelector !== "function") return null;
-        const view = root.querySelector(".composition-view.active");
-        if (!view) return null;
-        const text = view.textContent;
-        if (typeof text !== "string" || !text.trim()) return null;
-        return text;
-      }
-      function commitComposition(terminal, composed = "", consumed = "") {
-        const ta = terminal && terminal.textarea;
-        if (!ta || typeof ta.dispatchEvent !== "function") return false;
-        if (consumed) {
-          const value = typeof ta.value === "string" ? ta.value : "";
-          if (!composed || !composed.startsWith(consumed)) return false;
-          const held = value.endsWith(composed) ? composed : value.endsWith(composed.trimStart()) ? composed.trimStart() : null;
-          if (held === null) return false;
-          const already = held.length - (composed.length - consumed.length);
-          ta.value = value.slice(0, value.length - held.length) + held.slice(already);
-        }
-        ta.dispatchEvent(new KeyboardEvent("keydown", {
-          key: "Meta",
-          code: "MetaLeft",
-          keyCode: 91,
-          which: 91,
-          metaKey: true,
-          bubbles: false,
-          cancelable: true
-        }));
-        ta.value = "";
-        return readComposition(terminal) === null;
-      }
-      function createVoiceSubmitWatcher(terminal, {
-        getConfig,
-        getAttention,
-        write,
-        quietMs = QUIET_MS,
-        pollMs = COMPOSITION_POLL_MS,
-        readComposition: readPending = readComposition,
-        commitComposition: commitPending = commitComposition,
-        getVoiceMode = () => null,
-        getTriggerKey = () => null,
-        rearmMs = REARM_SETTLE_MS,
-        abandonMs = REARM_ABANDON_MS,
-        stopSettleMs = STOP_SETTLE_MS,
-        submitPollMs = SUBMIT_POLL_MS,
-        submitAbandonMs = SUBMIT_ABANDON_MS,
-        modeSettleMs = VOICE_TAP_MODE_SETTLE_MS,
-        speechAbandonMs = SPEECH_ABANDON_MS,
-        // Marks the submit as voice-originated. Absent, the feature is simply off and
-        // every other path here is unchanged — the marker is an annotation on a
-        // submit, never a precondition for one.
-        markVoiceOrigin = null,
-        // Withdraws a marker whose submit stood down. Absent, an abandoned submit
-        // leaves its marker live for the rest of its TTL and the next turn inside
-        // that window is labelled spoken whether or not it was.
-        unmarkVoiceOrigin = null,
-        // Reports the CLI's recording indicator to main, which defers injection while
-        // it is lit. Resent on every poll that sees it, never paired with an off —
-        // main expires the stamp, so a watcher disposed mid-utterance releases the
-        // deferral instead of stranding it.
-        noteVoiceRecording = null,
-        // Reports that a DICTATED draft is sitting in the composer, which outlives the
-        // recorder: the indicator goes dark the moment he stops talking, and that is
-        // when he starts READING what was transcribed. Reported on the level like the
-        // recorder above and expired by main the same way, so every way this watcher
-        // can stop — disposed, seat switched, window closed, screen unreadable —
-        // releases the protection rather than stranding the seat.
-        noteVoiceDraft = null,
-        // How long after the recorder was last seen lit a non-empty composer is still
-        // attributed to dictation. Bounds the attribution, not the protection: past
-        // it the text is just text, and a draft he typed was never this feature's.
-        voiceDraftMs = VOICE_DRAFT_SITTING_MS,
-        // Whether this seat is one whose recorder is worth reporting at all. Distinct
-        // from `getConfig`, which additionally requires hands-free SUBMIT to be
-        // switched on: the operator dictates whether or not that feature is enabled,
-        // and gating his protection on an unrelated checkbox would fix the bug only
-        // for the seats that had opted into something else.
-        recorderScope = () => false,
-        // Whether a spoken reply is PLAYING right now, box-wide, reported by main —
-        // this side cannot see the `say` child at all. Absent, the re-arm behaves
-        // exactly as it did before speech existed, which is the requirement for a
-        // seat with the feature switched off.
-        getSpeakerBusy = () => false,
-        // Whether this seat is the one seat that holds the microphone, box-wide, as
-        // main decides it. The automatic re-arm may arm the target and nothing else.
-        //
-        // DEFAULTS TO FALSE, the same polarity every interlock here takes: a host
-        // that forgets to wire this silences the re-arm rather than restoring the
-        // failure it exists to prevent — one operator's speech reaching two agents.
-        isMicTarget = () => false,
-        // Whether CLODEX is the frontmost application, as main reports it. Independent
-        // of the target: a seat can legitimately hold the microphone while the app
-        // sits behind a browser, and a recorder armed there transcribes whatever the
-        // room is playing.
-        //
-        // DEFAULTS FALSE, same polarity and same reason as isMicTarget above.
-        isAppFocused = () => false,
-        evidenceMs = VOICE_EVIDENCE_MS,
-        now = Date.now
-      }) {
-        let timer = null;
-        let enterTimer = null;
-        let submitTimer = null;
-        let pollTimer = null;
-        const modeSettleTimers = /* @__PURE__ */ new Map();
-        let lastTriggerWriteAt = 0;
-        let disposed = false;
-        let answered = null;
-        let fires = 0;
-        let keyStops = 0;
-        let deferredSubmits = 0;
-        let externalTaps = 0;
-        let offTaps = 0;
-        let voiceEvidenceAt = null;
-        let mutedByTyping = false;
-        let prevObserved = false;
-        let lastLitAt = 0;
-        let marks = 0;
-        let markPending = false;
-        let unmarks = 0;
-        let reading = "out";
-        let readingCause = null;
-        let pending = null;
-        let pendingAt = 0;
-        let committed = null;
-        let consumed = "";
-        let consumedAt = 0;
-        let desynced = false;
-        let commits = 0;
-        let commitFailures = 0;
-        let activity = null;
-        let rearms = 0;
-        let rearmTimer = null;
-        let lastWriteAt = 0;
-        let rearmDeadline = 0;
-        let speechDeferredSince = 0;
-        let unreadable = null;
-        function why(e) {
-          try {
-            return e && e.message || String(e);
-          } catch {
-            return "unknown";
-          }
-        }
-        function onNormalBuffer() {
-          try {
-            if (terminal.buffer.active.type === "normal") return true;
-            unreadable = "alternate screen buffer is active (a full-screen program is up)";
-            return false;
-          } catch (e) {
-            unreadable = `reading terminal.buffer.active threw: ${why(e)}`;
-            return false;
-          }
-        }
-        function cursorRow() {
-          if (!onNormalBuffer()) return null;
-          return readCursorRow(terminal);
-        }
-        function indicatorRows() {
-          if (!onNormalBuffer()) return null;
-          try {
-            const buf = terminal.buffer.active;
-            const out = [];
-            for (let y = buf.cursorY; y < terminal.rows; y++) {
-              const line = buf.getLine(buf.baseY + y);
-              if (line) out.push(line.translateToString(true));
-            }
-            unreadable = null;
-            return out;
-          } catch (e) {
-            unreadable = `scanning the indicator rows threw: ${why(e)}`;
-            return null;
-          }
-        }
-        function composerRows() {
-          if (!onNormalBuffer()) return null;
-          return readRowsToCursor(terminal);
-        }
-        function tick() {
-          timer = null;
-          if (disposed) return;
-          let cfg = null;
-          try {
-            cfg = getConfig();
-          } catch {
-            cfg = null;
-          }
-          if (!cfg) return;
-          const row = cursorRow();
-          if (row === null) return;
-          const found = findSubmit(row, cfg.phrase);
-          if (!found) return;
-          if (!found.erase) {
-            answered = null;
-            return;
-          }
-          if (answered === found.content) return;
-          answered = found.content;
-          cancelDeferredSubmit();
-          let attention = null;
-          try {
-            attention = getAttention();
-          } catch {
-            attention = "permission";
-          }
-          if (!shouldFire({ enabled: cfg.enabled, attention })) {
-            unmarkPending();
-            return;
-          }
-          fires += 1;
-          if (markVoiceOrigin && isVoiceOriginated({ evidenceAt: voiceEvidenceAt, now: now(), windowMs: evidenceMs })) {
-            marks += 1;
-            voiceEvidenceAt = null;
-            markPending = true;
-            try {
-              markVoiceOrigin();
-            } catch {
-            }
-          } else {
-            unmarkPending();
-          }
-          const litAtMatch = recordingObserved(indicatorRows());
-          write("\x7F".repeat(found.erase));
-          enterTimer = setTimeout(() => {
-            enterTimer = null;
-            if (disposed) return;
-            if (litAtMatch && tapTrigger()) {
-              keyStops += 1;
-              deferSubmit();
-              return;
-            }
-            write("\r");
-            markPending = false;
-          }, ENTER_SETTLE_MS);
-        }
-        function deferSubmit() {
-          const deadline = now() + submitAbandonMs;
-          const poll = () => {
-            submitTimer = null;
-            if (disposed) return;
-            if (now() < deadline && processingObserved(indicatorRows())) {
-              submitTimer = setTimeout(poll, submitPollMs);
-              return;
-            }
-            if (!deferredSubmitAllowed()) {
-              unmarkPending();
-              return;
-            }
-            write("\r");
-            markPending = false;
-            deferredSubmits += 1;
-          };
-          submitTimer = setTimeout(poll, stopSettleMs);
-        }
-        function cancelDeferredSubmit() {
-          if (submitTimer) clearTimeout(submitTimer);
-          submitTimer = null;
-        }
-        function unmarkPending() {
-          if (!markPending) return;
-          markPending = false;
-          unmarks += 1;
-          if (!unmarkVoiceOrigin) return;
-          try {
-            unmarkVoiceOrigin();
-          } catch {
-          }
-        }
-        function deferredSubmitAllowed() {
-          let cfg = null;
-          try {
-            cfg = getConfig();
-          } catch {
-            cfg = null;
-          }
-          if (!cfg) return false;
-          let attention = null;
-          try {
-            attention = getAttention();
-          } catch {
-            attention = "permission";
-          }
-          if (!shouldFire({ enabled: cfg.enabled, attention })) return false;
-          return composerHasDraftRows(composerRows());
-        }
-        function forgetPending() {
-          pending = null;
-          pendingAt = 0;
-          committed = null;
-        }
-        function forgetConsumed() {
-          consumed = "";
-          consumedAt = 0;
-          desynced = false;
-        }
-        function pollComposition() {
-          if (disposed) return;
-          let cfg = null;
-          try {
-            cfg = getConfig();
-          } catch {
-            cfg = null;
-          }
-          let inScope = false;
-          try {
-            inScope = !!cfg || !!recorderScope();
-          } catch {
-          }
-          const indRows = inScope ? indicatorRows() : null;
-          const observed = inScope ? recordingObserved(indRows) : false;
-          if (!inScope) reading = "out";
-          else if (!Array.isArray(indRows)) reading = "unreadable";
-          else if (observed) reading = "lit";
-          else if (recorderBlocksRearm(indRows)) reading = "busy";
-          else reading = "off";
-          readingCause = reading === "unreadable" ? unreadable : null;
-          if (observed && noteVoiceRecording) {
-            try {
-              noteVoiceRecording();
-            } catch {
-            }
-          }
-          if (observed) lastLitAt = now();
-          if (inScope && noteVoiceDraft && lastLitAt && now() - lastLitAt < voiceDraftMs) {
-            let rows = null;
-            try {
-              rows = composerRows();
-            } catch {
-              rows = null;
-            }
-            if (composerHasDraftRows(rows)) {
-              try {
-                noteVoiceDraft();
-              } catch {
-              }
-            }
-          }
-          if (!cfg) {
-            forgetPending();
-            prevObserved = false;
-            return;
-          }
-          if (observed && !prevObserved) mutedByTyping = false;
-          prevObserved = observed;
-          if (observed && !mutedByTyping) voiceEvidenceAt = now();
-          if (cfg.composition !== true) {
-            forgetPending();
-            forgetConsumed();
-            return;
-          }
-          if (!onNormalBuffer()) {
-            forgetPending();
-            return;
-          }
-          let text = null;
-          try {
-            text = readPending(terminal);
-          } catch {
-            text = null;
-          }
-          if (text === null) {
-            forgetPending();
-            if (consumed && now() - consumedAt >= CONSUMED_IDLE_MS) forgetConsumed();
-            return;
-          }
-          if (desynced) return;
-          if (!text.startsWith(consumed)) {
-            desynced = true;
-            return;
-          }
-          consumedAt = now();
-          if (text !== pending) {
-            pending = text;
-            pendingAt = now();
-            return;
-          }
-          if (now() - pendingAt < quietMs) return;
-          const fresh = text.slice(consumed.length);
-          if (!matchTrigger(fresh.trim(), cfg.phrase)) return;
-          if (committed === text) return;
-          committed = text;
-          const alreadySent = consumed;
-          consumed = text;
-          let attention = null;
-          try {
-            attention = getAttention();
-          } catch {
-            attention = "permission";
-          }
-          if (!shouldFire({ enabled: cfg.enabled, attention })) return;
-          commits += 1;
-          let took = false;
-          try {
-            took = commitPending(terminal, text, alreadySent) !== false;
-          } catch {
-            took = false;
-          }
-          if (!took) commitFailures += 1;
-          voiceEvidenceAt = now();
-        }
-        function rearmAllowed(from, to) {
-          let cfg = null;
-          try {
-            cfg = getConfig();
-          } catch {
-            cfg = null;
-          }
-          if (!cfg) return false;
-          let mode = null;
-          try {
-            mode = getVoiceMode();
-          } catch {
-            mode = null;
-          }
-          let attention = null;
-          try {
-            attention = getAttention();
-          } catch {
-            attention = "permission";
-          }
-          return shouldRearm({
-            enabled: cfg.enabled,
-            rearm: cfg.rearm,
-            voiceMode: mode,
-            attention,
-            from,
-            to
-          });
-        }
-        function attemptRearm() {
-          rearmTimer = null;
-          if (disposed) return;
-          if (activity !== "idle" || !rearmAllowed("thinking", "idle")) return;
-          const quietFor = now() - lastWriteAt;
-          if (quietFor < rearmMs) {
-            if (now() >= rearmDeadline) return;
-            rearmTimer = setTimeout(attemptRearm, rearmMs - quietFor);
-            return;
-          }
-          let mine = false;
-          try {
-            mine = isMicTarget() === true;
-          } catch {
-            mine = false;
-          }
-          if (!mine) return;
-          let frontmost = false;
-          try {
-            frontmost = isAppFocused() === true;
-          } catch {
-            frontmost = false;
-          }
-          if (!frontmost) return;
-          let speaking = false;
-          try {
-            speaking = getSpeakerBusy() === true;
-          } catch {
-            speaking = false;
-          }
-          if (speaking) {
-            if (speechDeferredSince === 0) speechDeferredSince = now();
-            if (now() - speechDeferredSince >= speechAbandonMs) return;
-            rearmDeadline = now() + abandonMs;
-            rearmTimer = setTimeout(attemptRearm, rearmMs);
-            return;
-          }
-          speechDeferredSince = 0;
-          if (!composerIsEmpty(cursorRow())) return;
-          if (recorderBlocksRearm(indicatorRows())) return;
-          if (tapTrigger()) rearms += 1;
-        }
-        function tapTrigger() {
-          let mode = null;
-          try {
-            mode = getVoiceMode();
-          } catch {
-            mode = null;
-          }
-          if (mode !== "tap") return false;
-          let key = null;
-          try {
-            key = getTriggerKey();
-          } catch {
-            key = null;
-          }
-          if (typeof key !== "string" || key.length !== 1) return false;
-          write(key);
-          lastTriggerWriteAt = now();
-          return true;
-        }
-        function externalTap(modeSettling = false) {
-          if (disposed) return false;
-          if (modeSettling) {
-            return new Promise((resolve) => {
-              const t = setTimeout(() => {
-                modeSettleTimers.delete(t);
-                try {
-                  resolve(externalTap(false));
-                } catch {
-                  resolve(false);
-                }
-              }, modeSettleMs);
-              modeSettleTimers.set(t, resolve);
-            });
-          }
-          let attention = null;
-          try {
-            attention = getAttention();
-          } catch {
-            attention = "permission";
-          }
-          if (attention === "permission") return false;
-          if (lastTriggerWriteAt && now() - lastTriggerWriteAt < STOP_SETTLE_MS) return false;
-          const rows = indicatorRows();
-          if (!Array.isArray(rows)) {
-            try {
-              console.warn("[voice] external tap declined \u2014 cannot read the screen:", unreadable);
-            } catch {
-            }
-            return false;
-          }
-          if (recorderBlocksRearm(rows)) return false;
-          let row = null;
-          let threw = null;
-          try {
-            row = cursorRow();
-          } catch (e) {
-            threw = why(e);
-          }
-          if (threw !== null) {
-            try {
-              console.warn("[voice] external tap declined \u2014 the composer read threw:", threw);
-            } catch {
-            }
-            return false;
-          }
-          if (!composerIsEmpty(row)) return false;
-          if (!tapTrigger()) return false;
-          externalTaps += 1;
-          return true;
-        }
-        function tapOff() {
-          if (disposed) return false;
-          let attention = null;
-          try {
-            attention = getAttention();
-          } catch {
-            attention = "permission";
-          }
-          if (attention === "permission") return false;
-          const rows = indicatorRows();
-          if (!Array.isArray(rows)) return false;
-          if (!recordingObserved(rows)) return false;
-          if (!composerIsEmpty(cursorRow())) return false;
-          if (!tapTrigger()) return false;
-          offTaps += 1;
-          return true;
-        }
-        function noteInput(data) {
-          if (disposed) return;
-          if (!isHumanPtyInput(data)) return;
-          if (submitTimer) unmarkPending();
-          cancelDeferredSubmit();
-          voiceEvidenceAt = null;
-          mutedByTyping = true;
-        }
-        function noteActivity(state, turnEnd) {
-          if (disposed) return;
-          const from = activity;
-          activity = state;
-          if (from !== "thinking" || state !== "idle") return;
-          if (turnEnd !== true) return;
-          if (!rearmAllowed(from, state)) return;
-          if (rearmTimer) clearTimeout(rearmTimer);
-          rearmDeadline = now() + abandonMs;
-          speechDeferredSince = 0;
-          rearmTimer = setTimeout(attemptRearm, rearmMs);
-        }
-        const schedule = () => {
-          if (disposed) return;
-          if (timer) clearTimeout(timer);
-          timer = setTimeout(tick, quietMs);
-        };
-        let lastRow = null;
-        const subs = [terminal.onWriteParsed(() => {
-          lastWriteAt = now();
-          let row = null;
-          try {
-            row = cursorRow();
-          } catch {
-          }
-          if (row === lastRow) return;
-          lastRow = row;
-          schedule();
-        })];
-        pollTimer = setInterval(pollComposition, pollMs);
-        return {
-          refresh: schedule,
-          noteActivity,
-          noteInput,
-          externalTap,
-          tapOff,
-          // A GETTER over the existing 300ms poll, never a scan of its own: the
-          // display must report what the gates last saw, and a fresh read on every
-          // paint could answer differently from the decision it is describing.
-          recorderReading: () => reading,
-          // Beside the reading and from the same poll, never a scan of its own, for
-          // the reason above it.
-          recorderCause: () => readingCause,
-          fireCount: () => fires,
-          keyStopCount: () => keyStops,
-          deferredSubmitCount: () => deferredSubmits,
-          rearmCount: () => rearms,
-          externalTapCount: () => externalTaps,
-          offTapCount: () => offTaps,
-          commitCount: () => commits,
-          commitFailureCount: () => commitFailures,
-          markCount: () => marks,
-          unmarkCount: () => unmarks,
-          dispose() {
-            unmarkPending();
-            disposed = true;
-            if (timer) clearTimeout(timer);
-            if (enterTimer) clearTimeout(enterTimer);
-            if (submitTimer) clearTimeout(submitTimer);
-            if (pollTimer) clearInterval(pollTimer);
-            if (rearmTimer) clearTimeout(rearmTimer);
-            for (const [t, resolve] of modeSettleTimers) {
-              clearTimeout(t);
-              resolve(false);
-            }
-            modeSettleTimers.clear();
-            speechDeferredSince = 0;
-            timer = null;
-            enterTimer = null;
-            submitTimer = null;
-            pollTimer = null;
-            rearmTimer = null;
-            for (const s of subs) s.dispose();
-          }
-        };
-      }
-      module.exports = {
-        createVoiceSubmitWatcher,
-        readComposition,
-        commitComposition,
-        QUIET_MS,
-        ENTER_SETTLE_MS,
-        STOP_SETTLE_MS,
-        SUBMIT_POLL_MS,
-        SUBMIT_ABANDON_MS,
-        COMPOSITION_POLL_MS,
-        CONSUMED_IDLE_MS,
-        VOICE_RELEASE_MS,
-        REARM_SETTLE_MS,
-        REARM_ABANDON_MS,
-        SPEECH_ABANDON_MS,
-        VOICE_EVIDENCE_MS
-      };
-    }
-  });
-
   // renderer/voice-mirror.js
   var require_voice_mirror = __commonJS({
     "renderer/voice-mirror.js"(exports, module) {
@@ -30506,6 +29772,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
     "renderer/lib/composer-voice.js"(exports, module) {
       "use strict";
       var { findSubmit, shouldFire } = require_voice_submit();
+      var VOICE_QUIET_MS = 1200;
+      var VOICE_RELEASE_MS = 2500;
+      var PASTE_OPEN = "\x1B[200~";
+      var PASTE_CLOSE = "\x1B[201~";
       function applyDraft(value, span, text) {
         const v = typeof value === "string" ? value : "";
         let start = -1;
@@ -30703,7 +29973,85 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
         };
       }
-      module.exports = { applyDraft, createComposerTrigger, attachTriggerSubmit };
+      function createPtyVoiceDraft({
+        getConfig,
+        write,
+        markOrigin = () => {
+        },
+        onVoiceFire = () => {
+        },
+        holdsFire = () => false,
+        onVoiceStop = () => {
+        },
+        quietMs = 0,
+        releaseMs = 0,
+        timers = { set: setTimeout, clear: clearTimeout }
+      }) {
+        let value = "";
+        const composer = {
+          get value() {
+            return value;
+          },
+          set value(v) {
+            value = typeof v === "string" ? v : "";
+          },
+          addEventListener() {
+          },
+          removeEventListener() {
+          }
+        };
+        const submit = () => {
+          const text = value.trim();
+          value = "";
+          if (!text) return;
+          try {
+            markOrigin();
+          } catch {
+          }
+          write(`${PASTE_OPEN}${text}${PASTE_CLOSE}`);
+          write("\r");
+        };
+        const trigger = attachTriggerSubmit(composer, {
+          getConfig,
+          markOrigin: () => {
+          },
+          send: submit,
+          onVoiceFire,
+          holdsFire,
+          onVoiceStop,
+          quietMs,
+          releaseMs,
+          timers
+        });
+        return {
+          draft(text) {
+            trigger.draft(text);
+          },
+          released() {
+            trigger.released();
+            trigger.check();
+            submit();
+          },
+          resetSpan() {
+            trigger.resetSpan();
+          },
+          pending: () => value,
+          dispose() {
+            value = "";
+            trigger.dispose();
+          }
+        };
+      }
+      module.exports = {
+        applyDraft,
+        createComposerTrigger,
+        attachTriggerSubmit,
+        createPtyVoiceDraft,
+        VOICE_QUIET_MS,
+        VOICE_RELEASE_MS,
+        PASTE_OPEN,
+        PASTE_CLOSE
+      };
     }
   });
 
@@ -38977,6 +38325,700 @@ void main() {
     }
   });
 
+  // renderer/voice-submit-watcher.js
+  var require_voice_submit_watcher = __commonJS({
+    "renderer/voice-submit-watcher.js"(exports, module) {
+      var {
+        findSubmit,
+        matchTrigger,
+        shouldFire,
+        shouldRearm,
+        composerIsEmpty,
+        composerHasDraftRows,
+        recorderBlocksRearm,
+        isVoiceOriginated,
+        recordingObserved,
+        processingObserved
+      } = require_voice_submit();
+      var { isHumanPtyInput } = require_proxy_util();
+      var { readCursorRow, readRowsToCursor } = require_cursor_row();
+      var QUIET_MS = 1200;
+      var ENTER_SETTLE_MS = 30;
+      var VOICE_TAP_MODE_SETTLE_MS = 1500;
+      var STOP_SETTLE_MS = 250;
+      var SUBMIT_POLL_MS = 100;
+      var SUBMIT_ABANDON_MS = 8e3;
+      var CONSUMED_IDLE_MS = 9e4;
+      var VOICE_RELEASE_MS = 2500;
+      var COMPOSITION_POLL_MS = 300;
+      var REARM_SETTLE_MS = 3e3;
+      var REARM_ABANDON_MS = 2e4;
+      var SPEECH_ABANDON_MS = 12e4;
+      var VOICE_EVIDENCE_MS = 2e4;
+      var VOICE_DRAFT_SITTING_MS = 12e4;
+      function readComposition(terminal) {
+        const root = terminal && terminal.element;
+        if (!root || typeof root.querySelector !== "function") return null;
+        const view = root.querySelector(".composition-view.active");
+        if (!view) return null;
+        const text = view.textContent;
+        if (typeof text !== "string" || !text.trim()) return null;
+        return text;
+      }
+      function commitComposition(terminal, composed = "", consumed = "") {
+        const ta = terminal && terminal.textarea;
+        if (!ta || typeof ta.dispatchEvent !== "function") return false;
+        if (consumed) {
+          const value = typeof ta.value === "string" ? ta.value : "";
+          if (!composed || !composed.startsWith(consumed)) return false;
+          const held = value.endsWith(composed) ? composed : value.endsWith(composed.trimStart()) ? composed.trimStart() : null;
+          if (held === null) return false;
+          const already = held.length - (composed.length - consumed.length);
+          ta.value = value.slice(0, value.length - held.length) + held.slice(already);
+        }
+        ta.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Meta",
+          code: "MetaLeft",
+          keyCode: 91,
+          which: 91,
+          metaKey: true,
+          bubbles: false,
+          cancelable: true
+        }));
+        ta.value = "";
+        return readComposition(terminal) === null;
+      }
+      function createVoiceSubmitWatcher(terminal, {
+        getConfig,
+        getAttention,
+        write,
+        quietMs = QUIET_MS,
+        pollMs = COMPOSITION_POLL_MS,
+        readComposition: readPending = readComposition,
+        commitComposition: commitPending = commitComposition,
+        getVoiceMode = () => null,
+        getTriggerKey = () => null,
+        rearmMs = REARM_SETTLE_MS,
+        abandonMs = REARM_ABANDON_MS,
+        stopSettleMs = STOP_SETTLE_MS,
+        submitPollMs = SUBMIT_POLL_MS,
+        submitAbandonMs = SUBMIT_ABANDON_MS,
+        modeSettleMs = VOICE_TAP_MODE_SETTLE_MS,
+        speechAbandonMs = SPEECH_ABANDON_MS,
+        // Marks the submit as voice-originated. Absent, the feature is simply off and
+        // every other path here is unchanged — the marker is an annotation on a
+        // submit, never a precondition for one.
+        markVoiceOrigin = null,
+        // Withdraws a marker whose submit stood down. Absent, an abandoned submit
+        // leaves its marker live for the rest of its TTL and the next turn inside
+        // that window is labelled spoken whether or not it was.
+        unmarkVoiceOrigin = null,
+        // Reports the CLI's recording indicator to main, which defers injection while
+        // it is lit. Resent on every poll that sees it, never paired with an off —
+        // main expires the stamp, so a watcher disposed mid-utterance releases the
+        // deferral instead of stranding it.
+        noteVoiceRecording = null,
+        // Reports that a DICTATED draft is sitting in the composer, which outlives the
+        // recorder: the indicator goes dark the moment he stops talking, and that is
+        // when he starts READING what was transcribed. Reported on the level like the
+        // recorder above and expired by main the same way, so every way this watcher
+        // can stop — disposed, seat switched, window closed, screen unreadable —
+        // releases the protection rather than stranding the seat.
+        noteVoiceDraft = null,
+        // How long after the recorder was last seen lit a non-empty composer is still
+        // attributed to dictation. Bounds the attribution, not the protection: past
+        // it the text is just text, and a draft he typed was never this feature's.
+        voiceDraftMs = VOICE_DRAFT_SITTING_MS,
+        // Whether this seat is one whose recorder is worth reporting at all. Distinct
+        // from `getConfig`, which additionally requires hands-free SUBMIT to be
+        // switched on: the operator dictates whether or not that feature is enabled,
+        // and gating his protection on an unrelated checkbox would fix the bug only
+        // for the seats that had opted into something else.
+        recorderScope = () => false,
+        // Whether a spoken reply is PLAYING right now, box-wide, reported by main —
+        // this side cannot see the `say` child at all. Absent, the re-arm behaves
+        // exactly as it did before speech existed, which is the requirement for a
+        // seat with the feature switched off.
+        getSpeakerBusy = () => false,
+        // Whether this seat is the one seat that holds the microphone, box-wide, as
+        // main decides it. The automatic re-arm may arm the target and nothing else.
+        //
+        // DEFAULTS TO FALSE, the same polarity every interlock here takes: a host
+        // that forgets to wire this silences the re-arm rather than restoring the
+        // failure it exists to prevent — one operator's speech reaching two agents.
+        isMicTarget = () => false,
+        // Whether CLODEX is the frontmost application, as main reports it. Independent
+        // of the target: a seat can legitimately hold the microphone while the app
+        // sits behind a browser, and a recorder armed there transcribes whatever the
+        // room is playing.
+        //
+        // DEFAULTS FALSE, same polarity and same reason as isMicTarget above.
+        isAppFocused = () => false,
+        evidenceMs = VOICE_EVIDENCE_MS,
+        now = Date.now
+      }) {
+        let timer = null;
+        let enterTimer = null;
+        let submitTimer = null;
+        let pollTimer = null;
+        const modeSettleTimers = /* @__PURE__ */ new Map();
+        let lastTriggerWriteAt = 0;
+        let disposed = false;
+        let answered = null;
+        let fires = 0;
+        let keyStops = 0;
+        let deferredSubmits = 0;
+        let externalTaps = 0;
+        let offTaps = 0;
+        let voiceEvidenceAt = null;
+        let mutedByTyping = false;
+        let prevObserved = false;
+        let lastLitAt = 0;
+        let marks = 0;
+        let markPending = false;
+        let unmarks = 0;
+        let reading = "out";
+        let readingCause = null;
+        let pending = null;
+        let pendingAt = 0;
+        let committed = null;
+        let consumed = "";
+        let consumedAt = 0;
+        let desynced = false;
+        let commits = 0;
+        let commitFailures = 0;
+        let activity = null;
+        let rearms = 0;
+        let rearmTimer = null;
+        let lastWriteAt = 0;
+        let rearmDeadline = 0;
+        let speechDeferredSince = 0;
+        let unreadable = null;
+        function why(e) {
+          try {
+            return e && e.message || String(e);
+          } catch {
+            return "unknown";
+          }
+        }
+        function onNormalBuffer() {
+          try {
+            if (terminal.buffer.active.type === "normal") return true;
+            unreadable = "alternate screen buffer is active (a full-screen program is up)";
+            return false;
+          } catch (e) {
+            unreadable = `reading terminal.buffer.active threw: ${why(e)}`;
+            return false;
+          }
+        }
+        function cursorRow() {
+          if (!onNormalBuffer()) return null;
+          return readCursorRow(terminal);
+        }
+        function indicatorRows() {
+          if (!onNormalBuffer()) return null;
+          try {
+            const buf = terminal.buffer.active;
+            const out = [];
+            for (let y = buf.cursorY; y < terminal.rows; y++) {
+              const line = buf.getLine(buf.baseY + y);
+              if (line) out.push(line.translateToString(true));
+            }
+            unreadable = null;
+            return out;
+          } catch (e) {
+            unreadable = `scanning the indicator rows threw: ${why(e)}`;
+            return null;
+          }
+        }
+        function composerRows() {
+          if (!onNormalBuffer()) return null;
+          return readRowsToCursor(terminal);
+        }
+        function tick() {
+          timer = null;
+          if (disposed) return;
+          let cfg = null;
+          try {
+            cfg = getConfig();
+          } catch {
+            cfg = null;
+          }
+          if (!cfg) return;
+          const row = cursorRow();
+          if (row === null) return;
+          const found = findSubmit(row, cfg.phrase);
+          if (!found) return;
+          if (!found.erase) {
+            answered = null;
+            return;
+          }
+          if (answered === found.content) return;
+          answered = found.content;
+          cancelDeferredSubmit();
+          let attention = null;
+          try {
+            attention = getAttention();
+          } catch {
+            attention = "permission";
+          }
+          if (!shouldFire({ enabled: cfg.enabled, attention })) {
+            unmarkPending();
+            return;
+          }
+          fires += 1;
+          if (markVoiceOrigin && isVoiceOriginated({ evidenceAt: voiceEvidenceAt, now: now(), windowMs: evidenceMs })) {
+            marks += 1;
+            voiceEvidenceAt = null;
+            markPending = true;
+            try {
+              markVoiceOrigin();
+            } catch {
+            }
+          } else {
+            unmarkPending();
+          }
+          const litAtMatch = recordingObserved(indicatorRows());
+          write("\x7F".repeat(found.erase));
+          enterTimer = setTimeout(() => {
+            enterTimer = null;
+            if (disposed) return;
+            if (litAtMatch && tapTrigger()) {
+              keyStops += 1;
+              deferSubmit();
+              return;
+            }
+            write("\r");
+            markPending = false;
+          }, ENTER_SETTLE_MS);
+        }
+        function deferSubmit() {
+          const deadline = now() + submitAbandonMs;
+          const poll = () => {
+            submitTimer = null;
+            if (disposed) return;
+            if (now() < deadline && processingObserved(indicatorRows())) {
+              submitTimer = setTimeout(poll, submitPollMs);
+              return;
+            }
+            if (!deferredSubmitAllowed()) {
+              unmarkPending();
+              return;
+            }
+            write("\r");
+            markPending = false;
+            deferredSubmits += 1;
+          };
+          submitTimer = setTimeout(poll, stopSettleMs);
+        }
+        function cancelDeferredSubmit() {
+          if (submitTimer) clearTimeout(submitTimer);
+          submitTimer = null;
+        }
+        function unmarkPending() {
+          if (!markPending) return;
+          markPending = false;
+          unmarks += 1;
+          if (!unmarkVoiceOrigin) return;
+          try {
+            unmarkVoiceOrigin();
+          } catch {
+          }
+        }
+        function deferredSubmitAllowed() {
+          let cfg = null;
+          try {
+            cfg = getConfig();
+          } catch {
+            cfg = null;
+          }
+          if (!cfg) return false;
+          let attention = null;
+          try {
+            attention = getAttention();
+          } catch {
+            attention = "permission";
+          }
+          if (!shouldFire({ enabled: cfg.enabled, attention })) return false;
+          return composerHasDraftRows(composerRows());
+        }
+        function forgetPending() {
+          pending = null;
+          pendingAt = 0;
+          committed = null;
+        }
+        function forgetConsumed() {
+          consumed = "";
+          consumedAt = 0;
+          desynced = false;
+        }
+        function pollComposition() {
+          if (disposed) return;
+          let cfg = null;
+          try {
+            cfg = getConfig();
+          } catch {
+            cfg = null;
+          }
+          let inScope = false;
+          try {
+            inScope = !!cfg || !!recorderScope();
+          } catch {
+          }
+          const indRows = inScope ? indicatorRows() : null;
+          const observed = inScope ? recordingObserved(indRows) : false;
+          if (!inScope) reading = "out";
+          else if (!Array.isArray(indRows)) reading = "unreadable";
+          else if (observed) reading = "lit";
+          else if (recorderBlocksRearm(indRows)) reading = "busy";
+          else reading = "off";
+          readingCause = reading === "unreadable" ? unreadable : null;
+          if (observed && noteVoiceRecording) {
+            try {
+              noteVoiceRecording();
+            } catch {
+            }
+          }
+          if (observed) lastLitAt = now();
+          if (inScope && noteVoiceDraft && lastLitAt && now() - lastLitAt < voiceDraftMs) {
+            let rows = null;
+            try {
+              rows = composerRows();
+            } catch {
+              rows = null;
+            }
+            if (composerHasDraftRows(rows)) {
+              try {
+                noteVoiceDraft();
+              } catch {
+              }
+            }
+          }
+          if (!cfg) {
+            forgetPending();
+            prevObserved = false;
+            return;
+          }
+          if (observed && !prevObserved) mutedByTyping = false;
+          prevObserved = observed;
+          if (observed && !mutedByTyping) voiceEvidenceAt = now();
+          if (cfg.composition !== true) {
+            forgetPending();
+            forgetConsumed();
+            return;
+          }
+          if (!onNormalBuffer()) {
+            forgetPending();
+            return;
+          }
+          let text = null;
+          try {
+            text = readPending(terminal);
+          } catch {
+            text = null;
+          }
+          if (text === null) {
+            forgetPending();
+            if (consumed && now() - consumedAt >= CONSUMED_IDLE_MS) forgetConsumed();
+            return;
+          }
+          if (desynced) return;
+          if (!text.startsWith(consumed)) {
+            desynced = true;
+            return;
+          }
+          consumedAt = now();
+          if (text !== pending) {
+            pending = text;
+            pendingAt = now();
+            return;
+          }
+          if (now() - pendingAt < quietMs) return;
+          const fresh = text.slice(consumed.length);
+          if (!matchTrigger(fresh.trim(), cfg.phrase)) return;
+          if (committed === text) return;
+          committed = text;
+          const alreadySent = consumed;
+          consumed = text;
+          let attention = null;
+          try {
+            attention = getAttention();
+          } catch {
+            attention = "permission";
+          }
+          if (!shouldFire({ enabled: cfg.enabled, attention })) return;
+          commits += 1;
+          let took = false;
+          try {
+            took = commitPending(terminal, text, alreadySent) !== false;
+          } catch {
+            took = false;
+          }
+          if (!took) commitFailures += 1;
+          voiceEvidenceAt = now();
+        }
+        function rearmAllowed(from, to) {
+          let cfg = null;
+          try {
+            cfg = getConfig();
+          } catch {
+            cfg = null;
+          }
+          if (!cfg) return false;
+          let mode = null;
+          try {
+            mode = getVoiceMode();
+          } catch {
+            mode = null;
+          }
+          let attention = null;
+          try {
+            attention = getAttention();
+          } catch {
+            attention = "permission";
+          }
+          return shouldRearm({
+            enabled: cfg.enabled,
+            rearm: cfg.rearm,
+            voiceMode: mode,
+            attention,
+            from,
+            to
+          });
+        }
+        function attemptRearm() {
+          rearmTimer = null;
+          if (disposed) return;
+          if (activity !== "idle" || !rearmAllowed("thinking", "idle")) return;
+          const quietFor = now() - lastWriteAt;
+          if (quietFor < rearmMs) {
+            if (now() >= rearmDeadline) return;
+            rearmTimer = setTimeout(attemptRearm, rearmMs - quietFor);
+            return;
+          }
+          let mine = false;
+          try {
+            mine = isMicTarget() === true;
+          } catch {
+            mine = false;
+          }
+          if (!mine) return;
+          let frontmost = false;
+          try {
+            frontmost = isAppFocused() === true;
+          } catch {
+            frontmost = false;
+          }
+          if (!frontmost) return;
+          let speaking = false;
+          try {
+            speaking = getSpeakerBusy() === true;
+          } catch {
+            speaking = false;
+          }
+          if (speaking) {
+            if (speechDeferredSince === 0) speechDeferredSince = now();
+            if (now() - speechDeferredSince >= speechAbandonMs) return;
+            rearmDeadline = now() + abandonMs;
+            rearmTimer = setTimeout(attemptRearm, rearmMs);
+            return;
+          }
+          speechDeferredSince = 0;
+          if (!composerIsEmpty(cursorRow())) return;
+          if (recorderBlocksRearm(indicatorRows())) return;
+          if (tapTrigger()) rearms += 1;
+        }
+        function tapTrigger() {
+          let mode = null;
+          try {
+            mode = getVoiceMode();
+          } catch {
+            mode = null;
+          }
+          if (mode !== "tap") return false;
+          let key = null;
+          try {
+            key = getTriggerKey();
+          } catch {
+            key = null;
+          }
+          if (typeof key !== "string" || key.length !== 1) return false;
+          write(key);
+          lastTriggerWriteAt = now();
+          return true;
+        }
+        function externalTap(modeSettling = false) {
+          if (disposed) return false;
+          if (modeSettling) {
+            return new Promise((resolve) => {
+              const t = setTimeout(() => {
+                modeSettleTimers.delete(t);
+                try {
+                  resolve(externalTap(false));
+                } catch {
+                  resolve(false);
+                }
+              }, modeSettleMs);
+              modeSettleTimers.set(t, resolve);
+            });
+          }
+          let attention = null;
+          try {
+            attention = getAttention();
+          } catch {
+            attention = "permission";
+          }
+          if (attention === "permission") return false;
+          if (lastTriggerWriteAt && now() - lastTriggerWriteAt < STOP_SETTLE_MS) return false;
+          const rows = indicatorRows();
+          if (!Array.isArray(rows)) {
+            try {
+              console.warn("[voice] external tap declined \u2014 cannot read the screen:", unreadable);
+            } catch {
+            }
+            return false;
+          }
+          if (recorderBlocksRearm(rows)) return false;
+          let row = null;
+          let threw = null;
+          try {
+            row = cursorRow();
+          } catch (e) {
+            threw = why(e);
+          }
+          if (threw !== null) {
+            try {
+              console.warn("[voice] external tap declined \u2014 the composer read threw:", threw);
+            } catch {
+            }
+            return false;
+          }
+          if (!composerIsEmpty(row)) return false;
+          if (!tapTrigger()) return false;
+          externalTaps += 1;
+          return true;
+        }
+        function tapOff() {
+          if (disposed) return false;
+          let attention = null;
+          try {
+            attention = getAttention();
+          } catch {
+            attention = "permission";
+          }
+          if (attention === "permission") return false;
+          const rows = indicatorRows();
+          if (!Array.isArray(rows)) return false;
+          if (!recordingObserved(rows)) return false;
+          if (!composerIsEmpty(cursorRow())) return false;
+          if (!tapTrigger()) return false;
+          offTaps += 1;
+          return true;
+        }
+        function noteInput(data) {
+          if (disposed) return;
+          if (!isHumanPtyInput(data)) return;
+          if (submitTimer) unmarkPending();
+          cancelDeferredSubmit();
+          voiceEvidenceAt = null;
+          mutedByTyping = true;
+        }
+        function noteActivity(state, turnEnd) {
+          if (disposed) return;
+          const from = activity;
+          activity = state;
+          if (from !== "thinking" || state !== "idle") return;
+          if (turnEnd !== true) return;
+          if (!rearmAllowed(from, state)) return;
+          if (rearmTimer) clearTimeout(rearmTimer);
+          rearmDeadline = now() + abandonMs;
+          speechDeferredSince = 0;
+          rearmTimer = setTimeout(attemptRearm, rearmMs);
+        }
+        const schedule = () => {
+          if (disposed) return;
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(tick, quietMs);
+        };
+        let lastRow = null;
+        const subs = [terminal.onWriteParsed(() => {
+          lastWriteAt = now();
+          let row = null;
+          try {
+            row = cursorRow();
+          } catch {
+          }
+          if (row === lastRow) return;
+          lastRow = row;
+          schedule();
+        })];
+        pollTimer = setInterval(pollComposition, pollMs);
+        return {
+          refresh: schedule,
+          noteActivity,
+          noteInput,
+          externalTap,
+          tapOff,
+          // A GETTER over the existing 300ms poll, never a scan of its own: the
+          // display must report what the gates last saw, and a fresh read on every
+          // paint could answer differently from the decision it is describing.
+          recorderReading: () => reading,
+          // Beside the reading and from the same poll, never a scan of its own, for
+          // the reason above it.
+          recorderCause: () => readingCause,
+          fireCount: () => fires,
+          keyStopCount: () => keyStops,
+          deferredSubmitCount: () => deferredSubmits,
+          rearmCount: () => rearms,
+          externalTapCount: () => externalTaps,
+          offTapCount: () => offTaps,
+          commitCount: () => commits,
+          commitFailureCount: () => commitFailures,
+          markCount: () => marks,
+          unmarkCount: () => unmarks,
+          dispose() {
+            unmarkPending();
+            disposed = true;
+            if (timer) clearTimeout(timer);
+            if (enterTimer) clearTimeout(enterTimer);
+            if (submitTimer) clearTimeout(submitTimer);
+            if (pollTimer) clearInterval(pollTimer);
+            if (rearmTimer) clearTimeout(rearmTimer);
+            for (const [t, resolve] of modeSettleTimers) {
+              clearTimeout(t);
+              resolve(false);
+            }
+            modeSettleTimers.clear();
+            speechDeferredSince = 0;
+            timer = null;
+            enterTimer = null;
+            submitTimer = null;
+            pollTimer = null;
+            rearmTimer = null;
+            for (const s of subs) s.dispose();
+          }
+        };
+      }
+      module.exports = {
+        createVoiceSubmitWatcher,
+        readComposition,
+        commitComposition,
+        QUIET_MS,
+        ENTER_SETTLE_MS,
+        STOP_SETTLE_MS,
+        SUBMIT_POLL_MS,
+        SUBMIT_ABANDON_MS,
+        COMPOSITION_POLL_MS,
+        CONSUMED_IDLE_MS,
+        VOICE_RELEASE_MS,
+        REARM_SETTLE_MS,
+        REARM_ABANDON_MS,
+        SPEECH_ABANDON_MS,
+        VOICE_EVIDENCE_MS
+      };
+    }
+  });
+
   // renderer/popovers/voice-popover.js
   var require_voice_popover = __commonJS({
     "renderer/popovers/voice-popover.js"(exports, module) {
@@ -44954,9 +44996,7 @@ ${detail}` });
       var { PLATFORMS, adapterFor, isAgentType, capsFor } = require_cli_adapters();
       var { expandTeamRoot, usesTeamRoot } = require_team_root_expand();
       var { altChordAction } = require_web_shortcuts();
-      var { createMirrorLatch } = require_mirror_latch();
       var { filterSummary, setFilterFolded } = require_sidebar_filter_fold();
-      var { createMicHandoff } = require_mic_handoff();
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
       var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
@@ -45002,14 +45042,12 @@ ${detail}` });
       var { createVoiceCore, createVoiceControl } = require_voice_control();
       var { createTermSearch } = require_term_search();
       var { createIntentHighlight } = require_intent_highlight();
-      var { createVoiceSubmitWatcher, QUIET_MS: VOICE_QUIET_MS, VOICE_RELEASE_MS } = require_voice_submit_watcher();
       var { createVoiceMirror, engineObserved } = require_voice_mirror();
-      var { attachTriggerSubmit } = require_composer_voice();
+      var { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require_composer_voice();
       var { VOICE_ENGINE_NAME } = require_voice_engine();
       var {
         DEFAULT_SUBMIT_PHRASE,
-        readVoiceSubmitSettings,
-        resolveTriggerKey
+        readVoiceSubmitSettings
       } = require_voice_submit();
       var { createLiveSplitView, renderTranscript, TRANSCRIPT_PULL_MS } = require_live_split_view();
       var { initBanners } = require_banners();
@@ -46348,7 +46386,10 @@ ${detail}` });
         }
         try {
           const live = await window.api.listSessions();
-          if (Array.isArray(live)) for (const s of live) applyAccountChip(s.name, s.account || null);
+          if (Array.isArray(live)) for (const s of live) {
+            applyAccountChip(s.name, s.account || null);
+            markSeatVoice(s.name, s.voice);
+          }
         } catch {
         }
         refreshSidebarView();
@@ -46591,9 +46632,9 @@ ${detail}` });
           markOrigin: () => window.api.markVoiceOrigin(name),
           send: sendComposer,
           hasImages: () => pending.length > 0,
-          onVoiceFire: () => streamVoiceFired(name),
-          holdsFire: () => voiceRecordingOn && streamVoiceMode(name, "tap"),
-          onVoiceStop: () => streamVoiceRecord(name, "stop"),
+          onVoiceFire: () => seatVoiceFired(name),
+          holdsFire: () => voiceRecordingOn && seatVoiceMode(name, "tap"),
+          onVoiceStop: () => seatVoiceRecord(name, "stop"),
           quietMs: VOICE_QUIET_MS,
           releaseMs: VOICE_RELEASE_MS
         });
@@ -46710,51 +46751,15 @@ ${detail}` });
           }
         });
         const intentHighlight = createIntentHighlight(terminal);
-        const voiceSubmit = peer ? null : createVoiceSubmitWatcher(terminal, {
-          // Gated on the ACTIVE session, not merely a live one. Dictation only ever
-          // reaches the focused composer, so a background seat's watcher can never
-          // help and can only misfire — and an agent seat parked at its own composer
-          // with injected text is exactly the shape the prompt check accepts.
-          getConfig: () => voiceSubmitConfig.enabled && name === activeSession && sessionTypeOf(name) === "claude" ? voiceSubmitConfig : null,
-          getAttention: () => {
-            const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-            return el ? el.dataset.attention || null : "permission";
-          },
+        const ptyVoice = peer ? null : createPtyVoiceDraft({
+          getConfig: () => voiceSubmitConfig,
           write: (data) => window.api.writeToSession(name, data),
-          // Both read through voiceCore, which already polls the CLI's config for the
-          // bar button — a second reader here would be a second copy of a box-wide
-          // value, which voice-control.js's header rules out.
-          // The FILE-backed mode, not snapshot().mode: that one prefers a PENDING
-          // pick, so a queued `/voice tap` the CLI has not run yet would make the
-          // re-arm act as though tap were already live.
-          getVoiceMode: () => {
-            const { state } = voiceCore.snapshot();
-            return state && state.effective || null;
-          },
-          getTriggerKey: () => resolveTriggerKey(voiceCore.triggerBinding()),
-          // A `send`, so this returns immediately and the erase/Enter that follow it
-          // are never waiting on the proxy.
-          markVoiceOrigin: () => window.api.markVoiceOrigin(name),
-          unmarkVoiceOrigin: () => window.api.unmarkVoiceOrigin(name),
-          // Deliberately NOT gated on voiceSubmitConfig.enabled, which getConfig above
-          // requires: he dictates into claude seats whether or not hands-free submit
-          // is switched on, and the quiet-gate protection is owed to him either way.
-          // Still the ACTIVE seat only — dictation reaches the focused composer, so a
-          // background seat's indicator is not him speaking into it.
-          recorderScope: () => name === activeSession && sessionTypeOf(name) === "claude",
-          // Box-wide and read fresh per attempt, never captured: the flag flips
-          // mid-wait, which is the entire point of the deferral.
-          getSpeakerBusy: () => speakerBusy,
-          // Does THIS seat hold the microphone? Compared against main's box-wide
-          // name, never against `activeSession`, which is this window's own answer
-          // and true of one seat in every window that is open.
-          isMicTarget: () => micTargetMirror.read() === name,
-          // Is Clodex frontmost? Read fresh per attempt and never captured, for the
-          // same reason as the speaker flag: he alt-tabs away DURING the settle
-          // window, and that is the case this exists to catch.
-          isAppFocused: () => appFocusedMirror.read(),
-          noteVoiceRecording: () => window.api.noteVoiceRecording(name),
-          noteVoiceDraft: () => window.api.noteVoiceDraft(name)
+          markOrigin: () => window.api.markVoiceOrigin(name),
+          onVoiceFire: () => seatVoiceFired(name),
+          holdsFire: () => voiceRecordingSeat === name && seatVoiceMode(name, "tap"),
+          onVoiceStop: () => seatVoiceRecord(name, "stop"),
+          quietMs: VOICE_QUIET_MS,
+          releaseMs: VOICE_RELEASE_MS
         });
         const searchAddon = new SearchAddon();
         terminal.loadAddon(searchAddon);
@@ -46783,7 +46788,6 @@ ${detail}` });
             typeToTakeControl(name, data);
             return;
           }
-          if (voiceSubmit) voiceSubmit.noteInput(data);
           window.api.writeToSession(name, data);
         });
         const echoRewrite = peer ? (chunk) => chunk : createEchoRewriter(currentEchoPalette);
@@ -46801,7 +46805,7 @@ ${detail}` });
           toast: showToast,
           echoPalette: currentEchoPalette
         });
-        sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, voiceSubmit, webgl, wrapperEl, peer, echoRewrite, liveSplit });
+        sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit });
         updateWindowTitle();
         return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
       }
@@ -46941,7 +46945,7 @@ ${detail}` });
             forgetControlMirror(s.peer.id, s.peer.name);
           }
           if (s.intentHighlight) s.intentHighlight.dispose();
-          if (s.voiceSubmit) s.voiceSubmit.dispose();
+          if (s.ptyVoice) s.ptyVoice.dispose();
           if (s.liveSplit) s.liveSplit.dispose();
           if (s.webgl) {
             try {
@@ -48271,6 +48275,31 @@ ${detail}` });
       });
       var voiceEngineView = null;
       var voiceArmedSeat = null;
+      var voiceRecordingSeat = null;
+      var seatVoices = /* @__PURE__ */ new Map();
+      function markSeatVoice(name, mode) {
+        if (name && typeof mode === "string") seatVoices.set(name, mode);
+      }
+      function voiceSinkFor(name) {
+        const entry = name ? sessions.get(name) : null;
+        if (!entry) return null;
+        if (entry.stream) {
+          return {
+            draft: (text) => entry.stream.voiceDraft(text),
+            released: () => entry.stream.voiceReleased(),
+            start: () => entry.stream.voiceStart(),
+            setRecording: (on) => entry.stream.setRecording(on)
+          };
+        }
+        if (!entry.ptyVoice) return null;
+        return {
+          draft: (text) => entry.ptyVoice.draft(text),
+          released: () => entry.ptyVoice.released(),
+          start: () => entry.ptyVoice.resetSpan(),
+          setRecording: () => {
+          }
+        };
+      }
       function voiceEngine() {
         if (voiceEngineView) return voiceEngineView;
         const host = document.createElement("div");
@@ -48280,19 +48309,20 @@ ${detail}` });
         terminal.open(host);
         const mirror = createVoiceMirror(terminal, {
           onDraft: (text) => {
-            const entry = voiceArmedSeat ? sessions.get(voiceArmedSeat) : null;
-            if (entry && entry.stream) entry.stream.voiceDraft(text);
+            const sink = voiceSinkFor(voiceArmedSeat);
+            if (sink) sink.draft(text);
           },
           onRelease: () => {
-            const entry = voiceArmedSeat ? sessions.get(voiceArmedSeat) : null;
-            if (entry && entry.stream) entry.stream.voiceReleased();
+            const sink = voiceSinkFor(voiceArmedSeat);
+            if (sink) sink.released();
           }
         });
         voiceEngineView = { terminal, mirror };
         return voiceEngineView;
       }
-      function streamVoiceMode(name, mode) {
-        if (!name || !streamSeatNames.has(name)) return false;
+      function seatVoiceMode(name, mode) {
+        const entry = name ? sessions.get(name) : null;
+        if (!entry || entry.peer) return false;
         let snap = null;
         try {
           snap = voiceCore.snapshot();
@@ -48300,11 +48330,18 @@ ${detail}` });
           snap = null;
         }
         if (!snap || snap.capable === false) return false;
-        return (snap.pending || snap.mode) === mode;
+        const own = snap.state && snap.state.seat === name ? snap.pending || snap.mode : null;
+        return (own || seatVoices.get(name) || null) === mode;
       }
-      async function streamVoiceRecord(name, action) {
-        const entry = sessions.get(name);
-        if (!entry || !entry.stream) return;
+      function setSeatRecording(name, on) {
+        if (on) voiceRecordingSeat = name;
+        else if (voiceRecordingSeat === name) voiceRecordingSeat = null;
+        const sink = voiceSinkFor(name);
+        if (sink) sink.setRecording(on);
+      }
+      async function seatVoiceRecord(name, action) {
+        const sink = voiceSinkFor(name);
+        if (!sink) return false;
         const observed = engineObserved(voiceEngineView);
         const view = voiceEngine();
         let res = null;
@@ -48314,34 +48351,32 @@ ${detail}` });
           res = { ok: false, error: e && e.message ? e.message : String(e) };
         }
         if (!res || res.ok !== true) {
-          entry.stream.setRecording(false);
+          setSeatRecording(name, false);
           showToast(`Voice: ${res && res.error || "recording failed"}`, { kind: "error", name });
           return false;
         }
         if (res.recording) {
           if (voiceArmedSeat && voiceArmedSeat !== name) {
             view.mirror.disarm();
-            const prev = sessions.get(voiceArmedSeat);
-            if (prev && prev.stream) prev.stream.setRecording(false);
+            setSeatRecording(voiceArmedSeat, false);
           }
           voiceArmedSeat = name;
-          entry.stream.voiceStart();
+          sink.start();
           view.mirror.arm();
         } else if (voiceArmedSeat === name) {
           view.mirror.release();
         }
-        entry.stream.setRecording(res.recording === true);
+        setSeatRecording(name, res.recording === true);
         return true;
       }
-      function streamVoiceFired(name) {
+      function seatVoiceFired(name) {
         if (voiceArmedSeat !== name || !voiceEngineView) return;
         voiceEngineView.mirror.disarm();
       }
       window.api.onVoiceEngineStopped((name) => {
-        const entry = sessions.get(name);
-        if (!entry || !entry.stream) return;
+        if (!voiceSinkFor(name)) return;
         if (voiceArmedSeat === name && voiceEngineView) voiceEngineView.mirror.release();
-        entry.stream.setRecording(false);
+        setSeatRecording(name, false);
       });
       window.api.onPtyData((name, data) => {
         if (name === VOICE_ENGINE_NAME) {
@@ -48389,7 +48424,7 @@ ${detail}` });
         }
       });
       window.api.onSelectionSent((name) => drawerHost.onSelectionSent(name));
-      window.api.onSessionActivity((name, state, turnEnd) => {
+      window.api.onSessionActivity((name, state) => {
         const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         if (!el) return;
         if (state === "thinking") {
@@ -48399,8 +48434,6 @@ ${detail}` });
           applyThinkBadge(el);
         }
         el.dataset.activity = state;
-        const sess = sessions.get(name);
-        if (sess && sess.voiceSubmit) sess.voiceSubmit.noteActivity(state, turnEnd === true);
         sidebarMeta.set(name, { ...sidebarMeta.get(name) || {}, lastActivityTs: Date.now() });
         scheduleSidebarRelayout();
       });
@@ -48643,7 +48676,10 @@ ${detail}` });
         const el = document.getElementById("proxy-actions");
         if (!el) return;
         const type = activeSession ? sessionTypeOf(activeSession) : null;
+        const activeEntry = activeSession ? sessions.get(activeSession) : null;
+        const voiceBtn = activeEntry && !activeEntry.peer ? voiceBarActionHtml() : "";
         const btns = [];
+        if (!isAgentType(type) && voiceBtn) btns.push(voiceBtn);
         if (isAgentType(type)) {
           const nFiles = (filesState.get(activeSession) || []).length;
           if (type === "claude" || nFiles > 0) {
@@ -48651,7 +48687,7 @@ ${detail}` });
             const unseen = filesUnseen.has(activeSession) ? " px-files-new" : "";
             btns.push(`<button class="px-action${unseen}" data-act="files" data-tip="Files this agent's tools touched \u2014 click to view or diff">${label}</button>`);
           }
-          if (type === "claude") btns.push(voiceBarActionHtml());
+          if (voiceBtn) btns.push(voiceBtn);
           btns.push('<button class="px-action" data-act="session-menu" data-tip="Session actions \u2014 tools, skills, agents, intents, plugins, settings, history, reload">\u2699 session \u25BE</button>');
         }
         if (activePeerQueryable()) {
@@ -49127,8 +49163,8 @@ Click for live activity`;
             }
             if (action.dataset.act === "files") openFilesPopover(activeSession, action);
             else if (action.dataset.act === "voice") {
-              if (streamVoiceMode(activeSession, "tap")) streamVoiceRecord(activeSession, "toggle");
-              else if (!streamVoiceMode(activeSession, "hold")) openVoicePopover(action);
+              if (seatVoiceMode(activeSession, "tap")) seatVoiceRecord(activeSession, "toggle");
+              else if (!seatVoiceMode(activeSession, "hold")) openVoicePopover(action);
             } else if (action.dataset.act === "peer-edit") {
               openPeerArgs(activeSession);
             } else if (action.dataset.act === "session-menu") {
@@ -49155,7 +49191,7 @@ Click for live activity`;
         bar.addEventListener("contextmenu", (e) => {
           const voiceBtn = e.target.closest('.px-action[data-act="voice"]');
           if (!voiceBtn || !activeSession) return;
-          if (!streamVoiceMode(activeSession, "tap") && !streamVoiceMode(activeSession, "hold")) return;
+          if (!seatVoiceMode(activeSession, "tap") && !seatVoiceMode(activeSession, "hold")) return;
           e.preventDefault();
           openVoicePopover(voiceBtn);
         });
@@ -49163,16 +49199,16 @@ Click for live activity`;
         bar.addEventListener("pointerdown", (e) => {
           if (e.button !== 0 || !activeSession) return;
           if (!e.target.closest('.px-action[data-act="voice"]')) return;
-          if (!streamVoiceMode(activeSession, "hold")) return;
+          if (!seatVoiceMode(activeSession, "hold")) return;
           e.preventDefault();
           voiceHeld = activeSession;
-          streamVoiceRecord(voiceHeld, "start");
+          seatVoiceRecord(voiceHeld, "start");
         });
         const releaseVoiceHold = () => {
           if (!voiceHeld) return;
           const held = voiceHeld;
           voiceHeld = null;
-          streamVoiceRecord(held, "stop");
+          seatVoiceRecord(held, "stop");
         };
         document.addEventListener("pointerup", releaseVoiceHold);
         document.addEventListener("pointercancel", releaseVoiceHold);
@@ -49447,7 +49483,7 @@ Click for live activity`;
         }
       });
       createInboxDrawer({ openFilePeek, showToast });
-      var voiceCore = createVoiceCore({ showToast });
+      var voiceCore = createVoiceCore({ showToast, getSeat: () => activeSession });
       var voiceSubmitConfig = {
         enabled: false,
         composition: false,
@@ -49464,63 +49500,34 @@ Click for live activity`;
       window.addEventListener("focus", () => {
         refreshVoiceSubmitConfig();
       });
-      var speakerBusy = false;
-      window.api.onSpeakerBusy((busy) => {
-        speakerBusy = busy === true;
-      });
-      var micTargetMirror = createMirrorLatch(null, {
-        normalize: (name) => typeof name === "string" ? name : null
-      });
-      var noteMicTarget = createMicHandoff({
-        mirror: micTargetMirror,
-        // Resolved at call time against this window's own map, so a seat in another
-        // window resolves to nothing here and is stopped by its own window's handler.
-        watcherFor: (name) => {
-          const entry = name ? sessions.get(name) : null;
-          return entry && entry.voiceSubmit || null;
-        }
-      });
-      window.api.onMicTarget((name) => noteMicTarget(name));
-      window.api.micTarget().then((name) => micTargetMirror.pull(name)).catch(() => {
-      });
-      var appFocusedMirror = createMirrorLatch(false, { normalize: (on) => on === true });
-      window.api.onAppFocused((on) => appFocusedMirror.note(on));
-      window.api.appFocused().then((on) => appFocusedMirror.pull(on)).catch(() => {
-      });
       function reportFocusedSession() {
         try {
           window.api.noteFocusedSession(activeSession);
         } catch {
         }
-      }
-      window.addEventListener("focus", reportFocusedSession);
-      window.api.onVoiceTap(async (name, modeSettling) => {
         try {
-          await voiceCore.refresh();
+          voiceCore.refresh();
         } catch {
         }
-        const sess = sessions.get(name);
-        if (sess && sess.voiceSubmit) await sess.voiceSubmit.externalTap(modeSettling);
+      }
+      window.addEventListener("focus", reportFocusedSession);
+      window.api.onVoiceTap((name) => {
+        seatVoiceRecord(name, "start");
+      });
+      window.api.onSeatVoice((name, mode) => {
+        markSeatVoice(name, mode);
+        if (name === activeSession) voiceCore.refresh();
       });
       var voiceControl = createVoiceControl({ core: voiceCore });
-      function activeVoiceSubmit() {
-        const entry = activeSession ? sessions.get(activeSession) : null;
-        return entry && entry.voiceSubmit || null;
-      }
       var { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
         core: voiceCore,
         renderProxyBar,
-        getRecorderReading: () => {
-          const vs = activeVoiceSubmit();
-          return vs ? vs.recorderReading() : "out";
-        },
-        getRecorderCause: () => {
-          const vs = activeVoiceSubmit();
-          return vs ? vs.recorderCause() : null;
-        },
+        getRecorderReading: () => activeSession && voiceRecordingSeat === activeSession ? "lit" : "off",
+        getRecorderCause: () => null,
         tapOffRecorder: () => {
-          const vs = activeVoiceSubmit();
-          return vs ? vs.tapOff() : false;
+          if (!activeSession || voiceRecordingSeat !== activeSession) return false;
+          seatVoiceRecord(activeSession, "stop");
+          return true;
         }
       });
       voiceBarActionHtml = voiceActionHtml;
@@ -52909,6 +52916,7 @@ ${res.stderr}` : "");
       }));
       function mountRestoredSession(entry) {
         markSeatIo(entry.name, entry.io);
+        markSeatVoice(entry.name, entry.voice);
         const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
         addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true, null, entry.fixFor || null);
         if (entry.createdAt) sidebarMeta.set(entry.name, { ...sidebarMeta.get(entry.name) || {}, createdAt: entry.createdAt });

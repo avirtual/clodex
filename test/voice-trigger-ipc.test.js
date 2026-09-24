@@ -24,7 +24,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { registerIpcHandlers } = require('../ipc-handlers');
-const { readVoiceMode, readVoiceTrigger } = require('../voice-settings');
+const { readVoiceTrigger } = require('../voice-settings');
 const { createVoiceCore } = require('../renderer/voice-control');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -34,30 +34,32 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const CHORD = 'ctrl+j';
 const PARSED = { key: 'j', ctrl: true, alt: false, shift: false, meta: false, super: false };
 
-// A real HOME on disk with both files the two readers open — no fs stubbing, so
-// a change to either read path surfaces here rather than only on a live box.
 function withHome(fn) {
   const home = mkTmpRoot('clodex-voice-ipc-');
   const dir = path.join(home, '.claude');
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'settings.json'),
-    JSON.stringify({ voice: { enabled: true, mode: 'tap' } }));
   fs.writeFileSync(path.join(dir, 'keybindings.json'),
     JSON.stringify({ bindings: [{ context: 'Chat', bindings: { [CHORD]: 'voice:pushToTalk' } }] }));
   try { return fn(home); } finally { fs.rmSync(home, { recursive: true, force: true }); }
 }
 
-// The real handler registration, with only the two readers this channel calls
-// pointed at the temp HOME. Everything else the module destructures is absent,
-// exactly as in env-scopes-ipc.test.js.
+function fakeManager() {
+  const modes = new Map([['seat-a', 'hold'], ['seat-b', 'off']]);
+  return {
+    sessions: new Map([['seat-a', {}], ['seat-b', {}]]),
+    _focusedSession: 'seat-a',
+    voiceModeFor: (name) => modes.get(name),
+  };
+}
+
 function voiceModeHandler(home, capability = { capable: true, cause: null }) {
   const handlers = new Map();
   registerIpcHandlers({
     handle: (ch, fn) => handlers.set(ch, fn),
     on: (ch, fn) => handlers.set(ch, fn),
-    readVoiceMode: () => readVoiceMode({ homeDir: home }),
     readVoiceTrigger: () => readVoiceTrigger({ homeDir: home }),
     readVoiceCapability: () => capability,
+    manager: fakeManager(),
     log: { info() {}, error() {} },
   });
   const fn = handlers.get('settings:voiceMode');
@@ -72,12 +74,9 @@ test('settings:voiceMode carries the push-to-talk chord at trigger.binding — t
     // though `payload.someOtherName.binding.key` would still be 'j'.
     assert.deepStrictEqual(payload, {
       ok: true,
-      file: path.join(home, '.claude', 'settings.json'),
-      source: 'voice',
-      mode: 'tap',
-      enabled: true,
-      legacy: null,
-      effective: 'tap',
+      seat: 'seat-a',
+      mode: 'hold',
+      effective: 'hold',
       trigger: {
         file: path.join(home, '.claude', 'keybindings.json'),
         binding: PARSED,
@@ -94,12 +93,9 @@ test('settings:voiceMode carries the machine\u2019s capability — the whole pay
     const payload = voiceModeHandler(home, { capable: false, cause: 'SoX is not installed on this machine' })();
     assert.deepStrictEqual(payload, {
       ok: true,
-      file: path.join(home, '.claude', 'settings.json'),
-      source: 'voice',
-      mode: 'tap',
-      enabled: true,
-      legacy: null,
-      effective: 'tap',
+      seat: 'seat-a',
+      mode: 'hold',
+      effective: 'hold',
       trigger: {
         file: path.join(home, '.claude', 'keybindings.json'),
         binding: PARSED,
@@ -111,14 +107,23 @@ test('settings:voiceMode carries the machine\u2019s capability — the whole pay
   });
 });
 
+test('settings:voiceMode answers the NAMED seat\u2019s mode over the focused one', () => {
+  withHome((home) => {
+    const payload = voiceModeHandler(home)(null, 'seat-b');
+    assert.strictEqual(payload.seat, 'seat-b');
+    assert.strictEqual(payload.mode, 'off');
+    assert.strictEqual(payload.effective, 'off');
+  });
+});
+
 test('settings:voiceMode with no capability read wired answers capable, not disabled', () => {
   withHome((home) => {
     const handlers = new Map();
     registerIpcHandlers({
       handle: (ch, fn) => handlers.set(ch, fn),
       on: (ch, fn) => handlers.set(ch, fn),
-      readVoiceMode: () => readVoiceMode({ homeDir: home }),
       readVoiceTrigger: () => readVoiceTrigger({ homeDir: home }),
+      manager: fakeManager(),
       log: { info() {}, error() {} },
     });
     const payload = handlers.get('settings:voiceMode')();

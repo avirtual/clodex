@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Voice on every seat: each seat has its own voice mode (off, tap, hold) in its record, the statusbar voice control is the same on claude, codex and shell seats, and a dictated sentence reaches a terminal seat as typed text. Clodex no longer reads or writes ~/.claude/settings.json for voice; only the hidden engine carries a voice setting, inline.
+
 - Stream voice: a tap now reads the engine's own recorder indicator first, so a recording the CLI ended on its own (silence timeout) no longer leaves every later tap out of phase and the stream seat silent.
 - Wire spill cut: an expanded intent body now stays expanded across a Clodex restart; the sticky set is persisted per agent and reset only at a real cold boundary (session change, compact, or 60 minutes idle).
 - Stream transport is a seat property: a template can set it, ticket seats spawn with it, Edit Session can switch a seat and Restart applies it; a stream seat now receives its team roster and open tickets at boot, whether minted for the ticket or brought back by a restart or relaunch.

@@ -68,7 +68,7 @@ function createVoiceCore({ showToast, getSeat = () => null }) {
     try { seat = getSeat() || null; } catch { seat = null; }
     try { r = await window.api.getVoiceMode(seat); } catch { r = null; }
     if (r && r.ok) {
-      if (pending && pendingSeat !== r.seat) pending = null;
+      if (pending && pendingSeat !== (r.seat || null)) pending = null;
       state = r;
       if (pending && r.effective === pending) pending = null;
     }

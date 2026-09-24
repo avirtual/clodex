@@ -114,11 +114,10 @@ const PINNED_NAMES = [
   'setSessionTools', 'setSessionSkills', 'setSessionAgents',
   'setSessionIntents', 'setSessionPlugins', 'getSkillCatalog', 'getAgentCatalog', 'getSkillCatalogFor',
   'getToolCatalogFor', 'listWorkspaces', 'currentWorkspace', 'setWorkspaceName',
-  // The voice-mode selector's read of ~/.claude/settings.json, and the direct
-  // write beside it. Box-wide: neither takes a session name, and the write is
-  // the reason both surfaces work with no Claude session open.
   'getVoiceMode',
   'setVoiceMode',
+  'setSeatVoice',
+  'onSeatVoice',
   'markVoiceOrigin',
   // The withdrawal of that marker when the submit it was armed for stands down.
   // A send like its neighbour: the abandon paths are keystroke paths too.
@@ -253,8 +252,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 321-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 321, 'pinned list is the full 321-method surface');
+test('contract covers exactly the pinned 323-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 323, 'pinned list is the full 323-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -278,7 +277,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 321, 'window.api has exactly 321 methods');
+    assert.equal(generated.length, 323, 'window.api has exactly 323 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

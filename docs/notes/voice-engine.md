@@ -36,6 +36,11 @@ Speech-to-text does not go through `ANTHROPIC_BASE_URL`: with it pointed at a
 dead port, tap recording still ran to `No speech detected`. So sinking the
 engine's base URL at the wire costs the recorder nothing.
 
+The engine is the only CLI on the box that receives a voice section, and it
+receives it inline in its `--settings` JSON (`voice.mode`, `voiceEnabled`);
+Clodex no longer reads or writes `~/.claude/settings.json` for voice. A seat's
+mode lives in its own record, and a change of mode respawns the engine.
+
 ## REPAINT_MAX_MS
 
 A resize repaints the whole screen from home (`\e[H`, every row erased, then
