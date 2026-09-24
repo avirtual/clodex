@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 - Spill: ticket hands and cold reviewers keep their newest long intent body in full, so a rework round has a real example of the verb it must write again.
 - Spill: each request carries a seat's two newest long intent bodies in full instead of the two oldest, so the most recent ticket or message in a seat's view is always a real body and not the runtime note.
+- Ticket loop: a verify step interrupted by a Clodex restart (suite or reviewer not yet reported) resumes when the app comes back, instead of sitting at verify until the watchdog alarms.
 - Transcript pane: `[agent:…]` intents carry the same fire/inert/filed marks as the terminal, file paths and URLs are clickable, and local-command output takes the theme's echo colours.
 - Transcript pane: the view no longer flickers between the pane and the raw terminal while a reply streams; a mid-redraw frame keeps the current layout, and the pane drops to the raw terminal only after a frame has stayed anchorless for 50 ms.
 - Transcript pane: the pane refreshes as soon as the transcript changes, so a local command's output (/context, /cost) appears without waiting for the next keystroke.

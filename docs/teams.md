@@ -65,6 +65,7 @@ new id already started (an add whose first line matches an open ticket's title
 is refused unless the head line carries `dup`, which opens a second ticket with
 a title an open one already carries); the hand commits and
 closes the ticket; the loop verifies the branch and escalates or reviews.
+A verify step interrupted by a host restart resumes at the next boot.
 
 Everything below is what you add so that loop is *productive* on your code.
 

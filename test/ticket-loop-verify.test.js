@@ -5565,3 +5565,48 @@ test('t1016: every FAILURE close still bounces — silence must never read as su
     says(() => f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'again' })),
     /is done, not open/, 'a ticket that is not open bounces — four guards, one property: a hand told nothing concludes it finished');
 });
+
+function mkOrphan(over = {}) {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, ticketOver: { state: 'done', loopStep: 'verify', nudgedAt: 123, lastActivityAt: 1, ...over } });
+  const calls = [];
+  f.m._runTicketLoop = async (team, id) => { calls.push(id); };
+  return { f, calls };
+}
+
+test('t1130 (a): a done/verify ticket with no hold and no live reviewer is resumed once per process', async () => {
+  const { f, calls } = mkOrphan();
+  await f.m._sweepTickets(Date.now());
+  assert.deepStrictEqual(calls, ['t1'], 'ENTER: the orphaned verify step was resumed with its id');
+  assert.strictEqual(f.one().nudgedAt, null);
+  assert.ok(f.one().lastActivityAt > 1, 'the stall window measures from the resume');
+  assert.ok(f.logs.some((l) => l.tag === 'intent' && l.msg === 'verify resumed for t1 after a host restart'));
+  await f.m._sweepTickets(Date.now());
+  assert.deepStrictEqual(calls, ['t1'], 'a second pass in the same process does not resume it again');
+});
+
+test('t1130 (b): a held verify step is not resumed', async () => {
+  const { f, calls } = mkOrphan({ verifyHold: { step: 'verify: commits-on-branch', at: 1, evidence: 'x', recovery: 'hand' } });
+  await f.m._sweepTickets(Date.now());
+  assert.deepStrictEqual(calls, []);
+});
+
+test('t1130 (c): a verify step whose reviewer seat is live is left to that reviewer', async () => {
+  const { f, calls } = mkOrphan();
+  f.seat('team-reviewer-1-r1');
+  await f.m._sweepTickets(Date.now());
+  assert.deepStrictEqual(calls, []);
+});
+
+test('t1130 (d): a done ticket at another loop step is not resumed', async () => {
+  const { f, calls } = mkOrphan({ loopStep: 'review' });
+  await f.m._sweepTickets(Date.now());
+  assert.deepStrictEqual(calls, []);
+});
+
+test('t1130 (e): the not-yet-reported bounce says the loop resumes it at boot', () => {
+  const { f } = mkOrphan();
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'again' });
+  assert.match(f.injected.join('\n'), /checks have not reported yet;.*rather than rejecting it; if the host restarted since, the loop resumes it at boot\./);
+});

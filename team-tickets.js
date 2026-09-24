@@ -6116,7 +6116,7 @@ function createTicketMethods(deps, shared) {
           // and points at the alarm that does cover the dead-process case.
           : (ticket.state === 'done' && ticket.loopStep === 'verify'
             ? ' — it is at the verify step with no hold recorded, so its checks have not reported yet;'
-              + " wait for the result (or the watchdog's stall alarm) rather than rejecting it."
+              + " wait for the result (or the watchdog's stall alarm) rather than rejecting it; if the host restarted since, the loop resumes it at boot."
             : '');
         reply(`error: ticket ${intent.id} is ${ticket.state}, not open${held}${this._spillRejectedPayload(session, 'task done', report)}`); return;
       }
@@ -6283,6 +6283,37 @@ function createTicketMethods(deps, shared) {
       if (loopEligible) this._runTicketLoop(team, ticket.id);
     },
 
+    _liveReviewerSeat(team, t) {
+      const round = (Number(t.reviewRound) || 0) + 1;
+      const num = /^t?(\d+)$/.exec(String(t.id));
+      const scoped = num ? `${team.name}-reviewer-${num[1]}-r${round}` : null;
+      const live = scoped ? this.sessions.get(scoped) : null;
+      return (live && live.agentType && !live._dead) ? scoped : null;
+    },
+
+    _resumeOrphanedVerify(team) {
+      if (!team || team.solo) return;
+      if (!this._verifyLooped) this._verifyLooped = new Set();
+      let tickets; try { tickets = ticketsStore.load(team.root); } catch { return; }
+      const resume = [];
+      for (const t of tickets) {
+        if (t.state !== 'done' || t.loopStep !== 'verify' || t.verifyHold) continue;
+        const key = `${team.root}\0${t.id}`;
+        if (this._verifyLooped.has(key)) continue;
+        this._verifyLooped.add(key);
+        if (this._liveReviewerSeat(team, t)) continue;
+        t.lastActivityAt = Date.now();
+        t.nudgedAt = null;
+        resume.push(t.id);
+      }
+      if (!resume.length) return;
+      try { ticketsStore.save(team.root, tickets); } catch (e) { log.error('ticket', `verify resume: save failed: ${e.message}`); return; }
+      for (const id of resume) {
+        log.info('intent', `verify resumed for ${id} after a host restart`);
+        this._runTicketLoop(team, id);
+      }
+    },
+
     // The loop step `task done` opens: verify the tree, then spawn the review.
     //
     // Escalation is the ONLY way out of here that reaches the lead — every
@@ -6291,6 +6322,8 @@ function createTicketMethods(deps, shared) {
     // removes. It tears NOTHING down on any arm: the tree, the branch and the
     // seat are exactly what the lead looks at first.
     async _runTicketLoop(team, ticketId) {
+      if (!this._verifyLooped) this._verifyLooped = new Set();
+      this._verifyLooped.add(`${team.root}\0${ticketId}`);
       // THE verifyHold INVARIANT, the shape `_autoMergeTicket` states for
       // `mergeWaiting`: set on the fail arms, cleared on EVERY other exit, and
       // held in a `finally` rather than by clearing at each one. The exits are not
@@ -9418,6 +9451,7 @@ function createTicketMethods(deps, shared) {
         if (!reconciledTeams.has(team.file)) {
           reconciledTeams.add(team.file);
           this._reconcileTickets(team); // self-heal the watch map + badges post-restart
+          this._resumeOrphanedVerify(team);
         }
       }
       return Promise.all(sweeps);
