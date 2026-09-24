@@ -228,11 +228,13 @@ function inboundRow(doc, rec, ctx) {
   return withTime(doc, row, rec);
 }
 
-function noticeRow(doc, rec, level, text) {
+function noticeRow(doc, rec, level, text, ctx) {
   const row = el(doc, 'div', `tr-row tr-notice tr-notice-${level}`);
   row.dataset.id = rec.id;
   row.appendChild(el(doc, 'span', 'tr-mark'));
-  row.appendChild(doc.createTextNode(text));
+  const span = el(doc, 'span', 'tr-notice-text');
+  appendLinked(doc, span, text, '', ctx);
+  row.appendChild(span);
   return row;
 }
 
@@ -257,14 +259,14 @@ function buildRow(doc, rec, ctx) {
       return pre;
     }
     case 'assistant': {
-      if (rec.apiError) return noticeRow(doc, rec, 'error', rec.text);
+      if (rec.apiError) return noticeRow(doc, rec, 'error', rec.text, ctx);
       const row = el(doc, 'div', 'tr-row tr-prose');
       row.dataset.id = rec.id;
       appendProse(doc, row, rec.text, ctx);
       return row;
     }
     case 'tool': return toolRow(doc, rec, ctx);
-    case 'notice': return noticeRow(doc, rec, rec.level, rec.text);
+    case 'notice': return noticeRow(doc, rec, rec.level, rec.text, ctx);
     case 'boundary': {
       const row = el(doc, 'div', 'tr-row tr-boundary');
       row.dataset.id = rec.id;
