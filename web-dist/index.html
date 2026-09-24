@@ -8543,13 +8543,17 @@ body.web-frontend #sidebar-header {
 #sidebar[data-folded="1"] #sidebar-header button:not(#sidebar-fold),
 #sidebar[data-folded="1"] .session-info,
 #sidebar[data-folded="1"] .session-close,
-#sidebar[data-folded="1"] .session-info-btn,
+#sidebar[data-folded="1"] .session-info-btn {
+  display: none;
+}
 #sidebar[data-folded="1"] .session-item.failed::after,
 #sidebar[data-folded="1"] .session-item.archived,
 #sidebar[data-folded="1"] .session-child,
 #sidebar[data-folded="1"] .session-empty-note,
 #sidebar[data-folded="1"] .session-group-header > *,
-#sidebar[data-folded="1"] .peer-header > :not(.peer-dot),
+#sidebar[data-folded="1"] .peer-header > :not(.peer-dot) {
+  display: none;
+}
 #sidebar[data-folded="1"] #served-terminal-text,
 #sidebar[data-folded="1"] #update-text,
 #sidebar[data-folded="1"] #diag-text,
