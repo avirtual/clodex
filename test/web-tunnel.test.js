@@ -116,7 +116,7 @@ async function failUntilGaveUp(get, children, { stderr = '', timeoutMs = 6000 } 
 
 // ── Inversion 1: the local port is PINNED ────────────────────────────────────
 
-test('the local port is pinned: a respawn re-binds the SAME port', async () => {
+test('the local port is pinned: a respawn re-binds the SAME port', async (t) => {
   // The load-bearing difference from peer-tunnel.js, whose _spawnTunnel calls
   // pickFreePort on EVERY attempt. Our consumer is a browser tab Clodex cannot
   // re-point, so a fresh port after a wifi blip would leave that tab pointing at
@@ -124,6 +124,7 @@ test('the local port is pinned: a respawn re-binds the SAME port', async () => {
   // determines where the forward actually lands.
   const { calls, children, spawnFn } = makeSpawnRecorder();
   const tun = new WebTunnel({ id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, onState: () => {} });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => calls.length === 1, 'first spawn');
   const pinned = tun.localPort;
@@ -138,30 +139,30 @@ test('the local port is pinned: a respawn re-binds the SAME port', async () => {
   children[1].emit('exit', 255);
   await waitFor(() => calls.length === 3, 'second respawn');
   assert.equal(forwardSpec(calls[2]), `${pinned}:127.0.0.1:8080`, 'and again');
-  tun.stop();
 });
 
-test('the pinned port survives a respawn even while the tunnel is DOWN', async () => {
+test('the pinned port survives a respawn even while the tunnel is DOWN', async (t) => {
   // localPort is not cleared on exit (peer-tunnel nulls it at :125). The pin has
   // to outlive the down state or it isn't a pin — but the URL must NOT, which
   // the next block covers.
   const { calls, children, spawnFn } = makeSpawnRecorder();
   const tun = new WebTunnel({ id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, onState: () => {} });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => calls.length === 1, 'spawn');
   const pinned = tun.localPort;
   children[0].emit('exit', 1);
   assert.equal(tun.state, 'down');
   assert.equal(tun.localPort, pinned, 'the port is remembered across the outage');
-  tun.stop();
 });
 
-test('ssh argv carries the honest-failure flags, and ExitOnForwardFailure is the pin`s safety', async () => {
+test('ssh argv carries the honest-failure flags, and ExitOnForwardFailure is the pin`s safety', async (t) => {
   // A pinned port can be taken by something else between attempts.
   // ExitOnForwardFailure=yes makes that an ssh exit (→ backoff → retry) instead
   // of a silent bind elsewhere, which would be a tunnel to the wrong place.
   const { calls, spawnFn } = makeSpawnRecorder();
   const tun = new WebTunnel({ id: 'p1', sshHost: 'user@box', remotePort: 8080, spawnFn, onState: () => {} });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => calls.length === 1, 'spawn');
   const { cmd, args } = calls[0];
@@ -170,7 +171,6 @@ test('ssh argv carries the honest-failure flags, and ExitOnForwardFailure is the
   assert.ok(args.includes('BatchMode=yes'), 'never prompts for a password');
   assert.ok(args.includes('ExitOnForwardFailure=yes'), 'a taken pin fails honestly');
   assert.equal(args[args.length - 1], 'user@box');
-  tun.stop();
 });
 
 // ── t36: the typed cloud transports ──────────────────────────────────────────
@@ -212,7 +212,7 @@ test('cloud argv comes from the CLI builders, and carries the PINNED port', asyn
   }
 });
 
-test('the pinned port survives a CLOUD respawn — the whole reason this supervisor exists', async () => {
+test('the pinned port survives a CLOUD respawn — the whole reason this supervisor exists', async (t) => {
   // The regression the ticket names explicitly: copying peer-tunnel too
   // faithfully would re-pick a free port on every attempt, which is right for
   // the wire (its consumer is re-pointed through onState) and wrong here (the
@@ -223,6 +223,7 @@ test('the pinned port survives a CLOUD respawn — the whole reason this supervi
   const tun = new WebTunnel({
     id: 'p1', kubectl: { target: 'svc/clodex' }, remotePort: 8080, spawnFn, onState: () => {},
   });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => calls.length === 1, 'first spawn');
   const pinned = tun.localPort;
@@ -237,7 +238,6 @@ test('the pinned port survives a CLOUD respawn — the whole reason this supervi
   children[1].emit('exit', 255);
   await waitFor(() => calls.length === 3, 'second respawn');
   assert.ok(calls[2].args.includes(spec), 'and again');
-  tun.stop();
 });
 
 test('a cloud child leads its own process group and is killed BY GROUP', async () => {
@@ -287,7 +287,7 @@ test('the ssh path is untouched: no `detached`, and a plain child kill', async (
   assert.deepEqual(signalled, ['child.kill'], 'and is killed directly, never by group');
 });
 
-test('a missing vendor CLI is named, not reported as a bare ENOENT', async () => {
+test('a missing vendor CLI is named, not reported as a bare ENOENT', async (t) => {
   // The common cloud misconfig. `spawn ENOENT` alone tells an operator nothing
   // about WHICH binary to install. (ssh is always present, which is why the
   // ssh-only version of this module had no such arm.)
@@ -296,6 +296,7 @@ test('a missing vendor CLI is named, not reported as a bare ENOENT', async () =>
   const tun = new WebTunnel({
     id: 'p1', kubectl: { target: 'svc/x' }, remotePort: 8080, spawnFn, onState: () => {},
   });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => children.length === 1, 'spawn');
   const err = new Error('spawn kubectl ENOENT');
@@ -303,14 +304,14 @@ test('a missing vendor CLI is named, not reported as a bare ENOENT', async () =>
   children[0].emit('error', err);
   assert.ok(tun.lastError, 'an error was recorded');
   assert.match(tun.lastError, /kubectl/, 'and it names the binary the operator must install');
-  tun.stop();
 });
 
-test('a cloud tunnel`s status carries its destination block, so the UI can name the transport', async () => {
+test('a cloud tunnel`s status carries its destination block, so the UI can name the transport', async (t) => {
   const { calls, spawnFn } = makeSpawnRecorder();
   const tun = new WebTunnel({
     id: 'p1', kubectl: { target: 'svc/x', namespace: 'ops' }, remotePort: 8080, spawnFn, onState: () => {},
   });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => calls.length === 1, 'spawn');
   const st = tun.status();
@@ -319,16 +320,16 @@ test('a cloud tunnel`s status carries its destination block, so the UI can name 
   // The status is a UI row: an argv in it would be code crossing a boundary that
   // only carries data.
   assert.ok(!JSON.stringify(st).includes('port-forward'), 'never an argv');
-  tun.stop();
 });
 
-test('sync KEEPS a cloud web tunnel — an sshHost-only prune would close it instantly', async () => {
+test('sync KEEPS a cloud web tunnel — an sshHost-only prune would close it instantly', async (t) => {
   // The second bug the ssh-only gate hid: sync() compared `live.get(id)` (never
   // set for a cloud peer) against `tun.sshHost` (null), so every cloud web
   // tunnel would be pruned by the next settings write — an affordance that
   // closes itself a moment after it opens, with nothing to say why.
   const { calls, spawnFn } = makeSpawnRecorder();
   const mgr = new WebTunnelManager({ spawnFn, onState: () => {} });
+  t.after(() => mgr.stopAll());
   const peer = { id: 'p1', kubectl: { target: 'svc/x', namespace: 'ops' } };
   mgr.open({ ...peer, remotePort: 8080 });
   await waitFor(() => calls.length === 1, 'spawn');
@@ -338,12 +339,12 @@ test('sync KEEPS a cloud web tunnel — an sshHost-only prune would close it ins
   // …and a re-pointed one still loses it: a changed namespace is a different box.
   mgr.sync([{ id: 'p1', kubectl: { target: 'svc/x', namespace: 'staging' } }]);
   assert.equal(mgr.statusFor('p1'), null, 'a re-pointed cloud peer loses the stale forward');
-  mgr.stopAll();
 });
 
-test('re-opening a cloud tunnel is idempotent, but a changed field replaces it', async () => {
+test('re-opening a cloud tunnel is idempotent, but a changed field replaces it', async (t) => {
   const { calls, spawnFn } = makeSpawnRecorder();
   const mgr = new WebTunnelManager({ spawnFn, onState: () => {} });
+  t.after(() => mgr.stopAll());
   mgr.open({ id: 'p1', ssm: { target: 'i-0abc', region: 'eu-west-1' }, remotePort: 8080 });
   await waitFor(() => calls.length === 1, 'spawn');
   mgr.open({ id: 'p1', ssm: { target: 'i-0abc', region: 'eu-west-1' }, remotePort: 8080 });
@@ -351,7 +352,6 @@ test('re-opening a cloud tunnel is idempotent, but a changed field replaces it',
   // A changed region is a DIFFERENT instance, not the same one described twice.
   mgr.open({ id: 'p1', ssm: { target: 'i-0abc', region: 'us-east-1' }, remotePort: 8080 });
   await waitFor(() => calls.length === 2, 'replacement spawn');
-  mgr.stopAll();
 });
 
 // ── No placeholder: a URL exists only while the forward is up ────────────────
@@ -422,7 +422,7 @@ function probeAfter(n) {
   return fn;
 }
 
-test('t37: the pop waits until the port ACCEPTS — a live child is not a live forward', async () => {
+test('t37: the pop waits until the port ACCEPTS — a live child is not a live forward', async (t) => {
   const { calls, spawnFn } = makeSpawnRecorder();
   const emits = [];
   const probeFn = probeAfter(3);
@@ -430,6 +430,7 @@ test('t37: the pop waits until the port ACCEPTS — a live child is not a live f
     id: 'p1', kubectl: { target: 'svc/x' }, remotePort: 8080, spawnFn, probeFn,
     onState: (_id, st) => emits.push(st),
   });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => calls.length === 1, 'spawn');
   // The supervision emit is immediate — the UI phase must NOT wait for the port,
@@ -443,10 +444,9 @@ test('t37: the pop waits until the port ACCEPTS — a live child is not a live f
   assert.strictEqual(pop.ready, true, 'and it is flagged as a CONFIRMED port, not a fallback');
   assert.match(pop.url, /^http:\/\/127\.0\.0\.1:\d+$/, 'carrying the live URL');
   assert.ok(probeFn.count() >= 4, 'the probe actually retried rather than succeeding by luck');
-  tun.stop();
 });
 
-test('t37: ssh pops on the FIRST probe — no polling delay for a forward that is already live', async () => {
+test('t37: ssh pops on the FIRST probe — no polling delay for a forward that is already live', async (t) => {
   // ssh -N accepts the moment the child is up, so it must not pay a poll
   // interval it does not need. Asserted as "exactly one probe call", which is
   // the honest statement: the pop IS one async turn later than before (the probe
@@ -458,14 +458,14 @@ test('t37: ssh pops on the FIRST probe — no polling delay for a forward that i
     id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, probeFn,
     onState: (_id, st) => emits.push(st),
   });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => emits.some((e) => e.firstUp === true), 'the pop');
   assert.equal(probeFn.count(), 1, 'one probe, no retry loop');
   assert.strictEqual(emits.find((e) => e.firstUp === true).ready, true);
-  tun.stop();
 });
 
-test('t37: a child that dies mid-probe does NOT pop, and the respawn still owes the pop', async () => {
+test('t37: a child that dies mid-probe does NOT pop, and the respawn still owes the pop', async (t) => {
   // The failure the probe introduces if it is written carelessly: a loop that
   // outlives its child would open a browser at a port nothing is listening on —
   // strictly worse than the blip it was meant to fix. And because the pop is
@@ -486,6 +486,7 @@ test('t37: a child that dies mid-probe does NOT pop, and the respawn still owes 
     probeFn: () => Promise.resolve(accepting),
     onState: (_id, st) => emits.push(st),
   });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => calls.length === 1, 'spawn');
   children[0].emit('exit', 255);                       // dies while the probe polls
@@ -499,10 +500,9 @@ test('t37: a child that dies mid-probe does NOT pop, and the respawn still owes 
   await waitFor(() => calls.length === 2, 'respawn');
   await waitFor(() => emits.some((e) => e.firstUp === true), 'the respawn pops');
   assert.strictEqual(emits.find((e) => e.firstUp === true).ready, true);
-  tun.stop();
 });
 
-test('t37: the probe is BOUNDED — a port that never accepts pops anyway, flagged unconfirmed', async () => {
+test('t37: the probe is BOUNDED — a port that never accepts pops anyway, flagged unconfirmed', async (t) => {
   // The bound must lapse rather than hang. Popping anyway is the deliberate
   // choice: the operator asked for a browser, and after the full bound giving
   // them the tab they clicked (worst case: the old behaviour, a page they
@@ -515,6 +515,7 @@ test('t37: the probe is BOUNDED — a port that never accepts pops anyway, flagg
     id: 'p1', kubectl: { target: 'svc/x' }, remotePort: 8080, spawnFn, probeFn,
     probeMs: 250, onState: (_id, st) => emits.push(st),
   });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => calls.length === 1, 'spawn');
   await waitFor(() => emits.some((e) => e.firstUp === true), 'the bounded fallback pop', 4000);
@@ -522,10 +523,9 @@ test('t37: the probe is BOUNDED — a port that never accepts pops anyway, flagg
   assert.strictEqual(pop.ready, false, 'flagged UNCONFIRMED — a fallback the log can tell apart');
   assert.match(pop.url, /^http:\/\/127\.0\.0\.1:\d+$/, 'still a real URL, not a placeholder');
   assert.ok(probeFn.count() > 1, 'and it genuinely retried before giving in');
-  tun.stop();
 });
 
-test('t37: a tunnel that never comes up still reaches gave-up — the probe does not block the cap', async () => {
+test('t37: a tunnel that never comes up still reaches gave-up — the probe does not block the cap', async (t) => {
   // The probe runs alongside supervision, never in front of it. If it ever
   // gated the restart path, a box that is down would sit in a probe loop
   // instead of reaching the cap — recreating exactly the forgotten-forward hole
@@ -536,12 +536,12 @@ test('t37: a tunnel that never comes up still reaches gave-up — the probe does
     spawnFn, giveUpMs: 400, probeFn: probeAfter(Infinity), probeMs: 60000,
     onState: (_id, st) => emits.push(st),
   });
+  t.after(() => mgr.stopAll());
   mgr.open({ id: 'p1', kubectl: { target: 'svc/x' }, remotePort: 8080 });
   await waitFor(() => calls.length === 1, 'spawn');
   assert.ok(await failUntilGaveUp(() => mgr.statusFor('p1'), children), 'the cap still fires');
   assert.equal(emits.filter((e) => e.firstUp === true).length, 0,
     'and a box that never served never popped a browser');
-  mgr.stopAll();
 });
 
 test('t37: stop() abandons a pending probe — a closed tunnel never pops later', async () => {
@@ -564,7 +564,7 @@ test('t37: stop() abandons a pending probe — a closed tunnel never pops later'
 
 // ── Inversion 2: the browser opens EXACTLY once ──────────────────────────────
 
-test('firstUp rides exactly one emit, and never a later status() read', async () => {
+test('firstUp rides exactly one emit, and never a later status() read', async (t) => {
   // The pop is main's job (peer-wiring), triggered by this flag. If firstUp were
   // stored on the status instead of riding one emit, anything that later reads
   // status() — peer:list seeding a reopened window, say — would read it as still
@@ -575,6 +575,7 @@ test('firstUp rides exactly one emit, and never a later status() read', async ()
     id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, probeFn: okProbe,
     onState: (_id, st) => emits.push(st),
   });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => emits.some((e) => e.firstUp === true), 'the pop emit');
   assert.equal(emits.filter((e) => e.state === 'up').length, 2,
@@ -589,22 +590,21 @@ test('firstUp rides exactly one emit, and never a later status() read', async ()
   assert.equal(emits.filter((e) => e.firstUp === true).length, 1,
     'the respawn does NOT pop a second window — the pinned port means the tab already works');
   assert.strictEqual(tun.status().firstUp, undefined, 'still absent from the stored status');
-  tun.stop();
 });
 
-test('firstUp is per-tunnel: a fresh tunnel to the same peer pops again', async () => {
+test('firstUp is per-tunnel: a fresh tunnel to the same peer pops again', async (t) => {
   // Closing and re-opening is a NEW request to look at the box — the operator
   // closed the tab. The once-only rule is scoped to a tunnel's life, not the
   // peer's, or a re-open would silently do nothing visible.
   const { calls, spawnFn } = makeSpawnRecorder();
   const emits = [];
   const mgr = new WebTunnelManager({ spawnFn, probeFn: okProbe, onState: (_id, st) => emits.push(st) });
+  t.after(() => mgr.stopAll());
   mgr.open({ id: 'p1', sshHost: 'box', remotePort: 8080 });
   await waitFor(() => emits.filter((e) => e.firstUp === true).length === 1, 'first pop');
   mgr.close('p1');
   mgr.open({ id: 'p1', sshHost: 'box', remotePort: 8080 });
   await waitFor(() => emits.filter((e) => e.firstUp === true).length === 2, 'each tunnel pops once');
-  mgr.stopAll();
 });
 
 // ── Inversion 3: the give-up cap (close #4) ──────────────────────────────────
@@ -629,19 +629,19 @@ test('give-up cap: a box that never comes up stops retrying and SAYS why', async
   assert.equal(calls.length, after, 'no further spawns after giving up');
 });
 
-test('a tunnel that DID come up is never capped — a blip is not a failure', async () => {
+test('a tunnel that DID come up is never capped — a blip is not a failure', async (t) => {
   // The cap exists for boxes that never worked. Once the operator has a working
   // tab, a wifi drop must keep retrying, or looking away for two minutes would
   // kill a working view.
   const { calls, children, spawnFn } = makeSpawnRecorder();
   const tun = new WebTunnel({ id: 'p1', sshHost: 'box', remotePort: 8080, spawnFn, giveUpMs: 400, onState: () => {} });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => calls.length === 1, 'first spawn (this one comes UP)');
   await new Promise((r) => setTimeout(r, 80));   // longer than giveUpMs
   children[0].emit('exit', 255);
   await waitFor(() => calls.length === 2, 'respawn after the cap window would have expired');
   assert.notEqual(tun.state, 'gave-up', 'a tunnel that served the operator is not capped');
-  tun.stop();
 });
 
 // ── The four closes ──────────────────────────────────────────────────────────
@@ -659,13 +659,14 @@ test('close #1 (explicit toggle): close() kills ssh, drops the tunnel, reports c
   assert.ok(emits.some(([, s]) => s === 'closed'), 'a closed state was reported, so the UI can repaint');
 });
 
-test('close #2 (peer removed or disabled): sync prunes, and NEVER opens', async () => {
+test('close #2 (peer removed or disabled): sync prunes, and NEVER opens', async (t) => {
   // syncPeerManager feeds this the same already-disabled-filtered list it gives
   // TunnelManager. The asymmetry is the point: TunnelManager.sync OPENS what's
   // missing; this one only closes. A web tunnel to a peer nobody asked to look
   // at is a tunnel with no reason to exist.
   const { calls, spawnFn } = makeSpawnRecorder();
   const mgr = new WebTunnelManager({ spawnFn, onState: () => {} });
+  t.after(() => mgr.stopAll());
   mgr.sync([{ id: 'p1', sshHost: 'box' }, { id: 'p2', sshHost: 'box2' }]);
   assert.deepEqual(mgr.statuses(), [], 'sync opened nothing');
   assert.equal(calls.length, 0, 'and spawned no ssh');
@@ -676,19 +677,18 @@ test('close #2 (peer removed or disabled): sync prunes, and NEVER opens', async 
   assert.ok(mgr.statusFor('p1'), 'a peer that is still present keeps its tunnel');
   mgr.sync([]);                                              // removed / disabled
   assert.equal(mgr.statusFor('p1'), null, 'a removed or disabled peer loses its web tunnel');
-  mgr.stopAll();
 });
 
-test('close #2 also fires when the peer is re-pointed at a DIFFERENT ssh host', async () => {
+test('close #2 also fires when the peer is re-pointed at a DIFFERENT ssh host', async (t) => {
   // Same record id, different box. Keeping the old forward would leave the
   // operator looking at a machine the peer no longer refers to.
   const { calls, spawnFn } = makeSpawnRecorder();
   const mgr = new WebTunnelManager({ spawnFn, onState: () => {} });
+  t.after(() => mgr.stopAll());
   mgr.open({ id: 'p1', sshHost: 'box', remotePort: 8080 });
   await waitFor(() => calls.length === 1, 'spawn');
   mgr.sync([{ id: 'p1', sshHost: 'a-different-box' }]);
   assert.equal(mgr.statusFor('p1'), null, 'the stale forward is closed');
-  mgr.stopAll();
 });
 
 test('close #3 (app shutdown): stopAll kills every child and empties the map', async () => {
@@ -725,37 +725,38 @@ test('open refuses rather than guessing: no forwardable transport, and no report
   assert.equal(calls.length, 0, 'a refusal never spawns ssh');
 });
 
-test('re-opening an already-open tunnel to the same place is idempotent', async () => {
+test('re-opening an already-open tunnel to the same place is idempotent', async (t) => {
   // The affordance can be clicked twice, and two forwards to one box on two
   // ports would leave one of them orphaned.
   const { calls, spawnFn } = makeSpawnRecorder();
   const mgr = new WebTunnelManager({ spawnFn, onState: () => {} });
+  t.after(() => mgr.stopAll());
   const a = mgr.open({ id: 'p1', sshHost: 'box', remotePort: 8080 });
   await waitFor(() => calls.length === 1, 'spawn');
   const b = mgr.open({ id: 'p1', sshHost: 'box', remotePort: 8080 });
   assert.equal(b.ok, true);
   assert.equal(calls.length, 1, 'no second ssh');
   assert.equal(b.status.localPort, a.status.localPort ?? mgr.statusFor('p1').localPort, 'same forward');
-  mgr.stopAll();
 });
 
-test('re-opening after the remote web port MOVED replaces the tunnel', async () => {
+test('re-opening after the remote web port MOVED replaces the tunnel', async (t) => {
   // The box restarted its web host on another port. Forwarding to the old one
   // would tunnel to nothing — or worse, to whatever took the port.
   const { calls, children, spawnFn } = makeSpawnRecorder();
   const mgr = new WebTunnelManager({ spawnFn, onState: () => {} });
+  t.after(() => mgr.stopAll());
   mgr.open({ id: 'p1', sshHost: 'box', remotePort: 8080 });
   await waitFor(() => calls.length === 1, 'first spawn');
   mgr.open({ id: 'p1', sshHost: 'box', remotePort: 9999 });
   await waitFor(() => calls.length === 2, 'replacement spawn');
   assert.ok(children[0].killed, 'the stale forward was torn down');
   assert.match(forwardSpec(calls[1]), /:127\.0\.0\.1:9999$/, 'the new one goes to the new port');
-  mgr.stopAll();
 });
 
-test('re-opening a GAVE-UP tunnel tries again (the retry affordance is real)', async () => {
+test('re-opening a GAVE-UP tunnel tries again (the retry affordance is real)', async (t) => {
   const { calls, children, spawnFn } = makeSpawnRecorder();
   const mgr = new WebTunnelManager({ spawnFn, onState: () => {}, giveUpMs: 400 });
+  t.after(() => mgr.stopAll());
   mgr.open({ id: 'p1', sshHost: 'box', remotePort: 8080 });
   await waitFor(() => calls.length === 1, 'spawn');
   await failUntilGaveUp(() => mgr.statusFor('p1'), children);
@@ -763,12 +764,12 @@ test('re-opening a GAVE-UP tunnel tries again (the retry affordance is real)', a
   const before = calls.length;
   mgr.open({ id: 'p1', sshHost: 'box', remotePort: 8080 });
   await waitFor(() => calls.length > before, 'a retry actually spawns');
-  mgr.stopAll();
 });
 
-test('statuses/urlFor are per-peer and empty for a peer nobody opened', async () => {
+test('statuses/urlFor are per-peer and empty for a peer nobody opened', async (t) => {
   const { calls, spawnFn } = makeSpawnRecorder();
   const mgr = new WebTunnelManager({ spawnFn, onState: () => {} });
+  t.after(() => mgr.stopAll());
   assert.deepEqual(mgr.statuses(), []);
   assert.strictEqual(mgr.urlFor('p1'), null, 'no tunnel → no URL, not a guess');
   assert.strictEqual(mgr.statusFor('p1'), null);
@@ -776,5 +777,4 @@ test('statuses/urlFor are per-peer and empty for a peer nobody opened', async ()
   await waitFor(() => calls.length === 1, 'spawn');
   assert.match(mgr.urlFor('p1'), /^http:\/\/127\.0\.0\.1:\d+$/);
   assert.strictEqual(mgr.urlFor('p2'), null, 'and still nothing for an unopened peer');
-  mgr.stopAll();
 });

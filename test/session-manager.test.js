@@ -20842,8 +20842,9 @@ function mkStreamSeatManager({ persisted = {} } = {}) {
 
 const STREAM_HEAD = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'];
 
-test('stream seat (f): create(io:stream) builds the -p stream-json argv with a fresh --session-id, keeping --settings and the base-url route', async () => {
+test('stream seat (f): create(io:stream) builds the -p stream-json argv with a fresh --session-id, keeping --settings and the base-url route', async (t) => {
   const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
   const res = await h.create('st1');
   assert.strictEqual(h.spawns.length, 1);
   const { cmd, args } = h.spawns[0];
@@ -20864,11 +20865,11 @@ test('stream seat (f): create(io:stream) builds the -p stream-json argv with a f
   assert.deepStrictEqual({ io: h.store.get('st1').io, streamPid: h.store.get('st1').streamPid },
     { io: 'stream', streamPid: { pid: 7001, startTime: 1790000000000 } });
   assert.deepStrictEqual({ pid: res.pid, io: res.io }, { pid: 7001, io: 'stream' });
-  h.stopAll();
 });
 
-test('stream seat (g): a restore with io:stream reaps the persisted streamPid BEFORE spawning --resume <id>', async () => {
+test('stream seat (g): a restore with io:stream reaps the persisted streamPid BEFORE spawning --resume <id>', async (t) => {
   const h = mkStreamSeatManager({ persisted: { st2: { io: 'stream', sessionId: 'sid-old', streamPid: { pid: 6001, startTime: 1780000000000 } } } });
+  t.after(() => h.stopAll());
   const { restoreSessionsForWorkspace } = require('../session-restore');
   const entry = h.store.get('st2');
   entry.type = 'claude';
@@ -20887,20 +20888,20 @@ test('stream seat (g): a restore with io:stream reaps the persisted streamPid BE
   assert.strictEqual(h.spawns.length, 1);
   assert.deepStrictEqual(h.spawns[0].args.slice(0, 8), [...STREAM_HEAD, '--resume', 'sid-old']);
   assert.ok(h.logs.some((l) => l[2] === 'stream reap st2: dead pid=6001'), 'the reap decision is logged');
-  h.stopAll();
 });
 
-test('stream seat (h): an init line on stdout updates the persisted sessionId', async () => {
+test('stream seat (h): an init line on stdout updates the persisted sessionId', async (t) => {
   const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
   await h.create('st3');
   h.line('st3', { type: 'system', subtype: 'init', session_id: 'sid-new', model: 'm', slash_commands: [] });
   assert.deepStrictEqual(h.sessionIds, [['st3', 'sid-new']]);
   assert.strictEqual(h.m.sessions.get('st3').sessionId, 'sid-new');
-  h.stopAll();
 });
 
-test('stream seat (i): two seatSends while busy become ONE joined message on result', async () => {
+test('stream seat (i): two seatSends while busy become ONE joined message on result', async (t) => {
   const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
   await h.create('st4');
   const seat = h.handles[0];
   assert.deepStrictEqual(h.m.seatSend('st4', 'first'), { ok: true, queued: 0 });
@@ -20916,11 +20917,11 @@ test('stream seat (i): two seatSends while busy become ONE joined message on res
   h.line('st4', { type: 'result', subtype: 'success', duration_ms: 1, total_cost_usd: 0, is_error: false });
   assert.strictEqual(seat.sent.length, 2, 'an empty outbox sends nothing on result');
   assert.strictEqual(h.m.sessions.get('st4').activityState, 'idle');
-  h.stopAll();
 });
 
-test('stream seat (i2): queued images concatenate in order and ride the joined message; image-only sends are accepted', async () => {
+test('stream seat (i2): queued images concatenate in order and ride the joined message; image-only sends are accepted', async (t) => {
   const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
   await h.create('st8');
   const seat = h.handles[0];
   const png = { mediaType: 'image/png', data: 'UE5H' };
@@ -20949,11 +20950,11 @@ test('stream seat (i2): queued images concatenate in order and ride the joined m
   assert.deepStrictEqual(seat.sent[2], { type: 'user', message: { role: 'user', content: [
     { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'UE5H' } },
   ] } });
-  h.stopAll();
 });
 
-test('stream seat (j): _deliverMessage to a stream seat refuses with the logged reason and writes nothing', async () => {
+test('stream seat (j): _deliverMessage to a stream seat refuses with the logged reason and writes nothing', async (t) => {
   const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
   await h.create('st5');
   const seat = h.handles[0];
   h.m._deliverMessage('st5', 'lead', 'hello there', 'dm');
@@ -20961,7 +20962,6 @@ test('stream seat (j): _deliverMessage to a stream seat refuses with the logged 
   assert.deepStrictEqual(h.m.sessions.get('st5').outbox, []);
   assert.deepStrictEqual(h.logs.filter((l) => l[1] === 'inject'),
     [['warn', 'inject', 'st5: stream seat: messaging arrives in H2 — dm from lead dropped 11 bytes']]);
-  h.stopAll();
 });
 
 test('stream seat: close after exit runs the pty exit order, and kill() uses the stream group kill', async () => {

@@ -93,3 +93,11 @@ must not inherit this process's lock variables: `test/test-digest-lock.test.js`,
 `test/run-tests-args.test.js`, `test/run-tests-slow-gate.test.js`. The comment
 above `childEnv` in the source names the first two; the list lives here because
 the suite's comment ratchet refuses new comment lines.
+
+## RUN_TIMEOUT_MS
+
+20 minutes, deliberately under the 25-minute exec ceiling of `clodex-run-tests`:
+a wedged run must end in this runner's own `TIMEOUT after <m>m in <file>` line
+(the file comes from node's `# Interrupted while running:` tap line on SIGTERM)
+rather than be killed from outside with no file named. `CLODEX_TEST_RUN_TIMEOUT_MS`
+overrides it for the runner's own tests only.

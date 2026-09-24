@@ -55,9 +55,10 @@ async function settleOr(pred, deadlineMs = 1000) {
   }
 }
 
-test('tunnel spawns ssh with batch/forward-failure/keepalive flags and correct -L', async () => {
+test('tunnel spawns ssh with batch/forward-failure/keepalive flags and correct -L', async (t) => {
   const { calls, spawnFn } = makeSpawnRecorder();
   const tun = new Tunnel({ id: 'p1', sshHost: 'user@laptop2', remotePort: 7900, spawnFn, onState: () => {} });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => calls.length === 1, 'spawn');
   const { cmd, args } = calls[0];
@@ -71,13 +72,13 @@ test('tunnel spawns ssh with batch/forward-failure/keepalive flags and correct -
   assert.match(args[lIdx + 1], /^\d+:127\.0\.0\.1:7900$/);
   assert.equal(tun.state, 'up');
   assert.match(tun.url(), /^http:\/\/127\.0\.0\.1:\d+$/);
-  tun.stop();
 });
 
-test('ssh exit -> down with stderr tail as error, then restart on a fresh port', async () => {
+test('ssh exit -> down with stderr tail as error, then restart on a fresh port', async (t) => {
   const { calls, children, spawnFn } = makeSpawnRecorder();
   const states = [];
   const tun = new Tunnel({ id: 'p1', sshHost: 'laptop2', remotePort: 7900, spawnFn, onState: (_id, st) => states.push(st.state) });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => calls.length === 1, 'first spawn');
   const firstPort = tun.localPort;
@@ -96,7 +97,6 @@ test('ssh exit -> down with stderr tail as error, then restart on a fresh port',
   assert.ok(calls[1].args[lIdx + 1].startsWith(`${tun.localPort}:`));
   assert.ok(states.includes('down') && states.includes('up'));
   assert.ok(firstPort); // sanity
-  tun.stop();
 });
 
 test('stop kills the child and stays down (no restart)', async () => {
@@ -111,9 +111,10 @@ test('stop kills the child and stays down (no restart)', async () => {
   assert.equal(calls.length, 1);
 });
 
-test('manager reconciles: only sshHost peers, restart on host change, drop on removal', async () => {
+test('manager reconciles: only sshHost peers, restart on host change, drop on removal', async (t) => {
   const { calls, spawnFn } = makeSpawnRecorder();
   const mgr = new TunnelManager({ spawnFn, onState: () => {} });
+  t.after(() => mgr.stopAll());
   mgr.sync([
     { id: 'a', label: 'a', sshHost: 'laptop2', remotePort: 7900 },
     { id: 'b', label: 'b', url: 'http://127.0.0.1:7901' },   // url-only: no tunnel
@@ -129,7 +130,6 @@ test('manager reconciles: only sshHost peers, restart on host change, drop on re
 
   mgr.sync([]);
   assert.equal(mgr.statuses().length, 0);
-  mgr.stopAll();
 });
 
 // --- typed cloud transports (t32 step 1: ssm.target) -------------------------
@@ -139,9 +139,10 @@ test('manager reconciles: only sshHost peers, restart on host change, drop on re
 // wiring (the right builder, the port substituted, the right process handling),
 // not the argv's contents, which cli/test owns.
 
-test('tunnel dials an ssm peer with the CLI`s aws argv, {port} substituted', async () => {
+test('tunnel dials an ssm peer with the CLI`s aws argv, {port} substituted', async (t) => {
   const { calls, spawnFn } = makeSpawnRecorder();
   const tun = new Tunnel({ id: 'p1', ssm: { target: 'i-0abc123', region: 'eu-west-1' }, remotePort: 7900, spawnFn, onState: () => {} });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => calls.length === 1, 'spawn');
   const { cmd, args, opts } = calls[0];
@@ -159,19 +160,18 @@ test('tunnel dials an ssm peer with the CLI`s aws argv, {port} substituted', asy
   assert.deepStrictEqual(params.portNumber, ['7900'], 'the remote end is the peer`s wire port');
   // aws forks a session-manager-plugin helper that a plain child-kill orphans.
   assert.equal(opts.detached, true, 'an ssm child leads its own process group');
-  tun.stop();
 });
 
-test('tunnel leaves the ssh path exactly as it was (no detach, ssh argv)', async () => {
+test('tunnel leaves the ssh path exactly as it was (no detach, ssh argv)', async (t) => {
   const { calls, spawnFn } = makeSpawnRecorder();
   const tun = new Tunnel({ id: 'p1', sshHost: 'user@laptop2', remotePort: 7900, spawnFn, onState: () => {} });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => calls.length === 1, 'spawn');
   const { cmd, args, opts } = calls[0];
   assert.equal(cmd, 'ssh');
   assert.equal(args[args.length - 1], 'user@laptop2');
   assert.ok(!('detached' in opts), 'ssh keeps its original non-detached spawn — group-kill is ssm-only');
-  tun.stop();
 });
 
 test('stopping an ssm tunnel kills the process GROUP, not just the child', async () => {
@@ -192,9 +192,10 @@ test('stopping an ssm tunnel kills the process GROUP, not just the child', async
   } finally { process.kill = realKill; }
 });
 
-test('manager: an ssm peer gets a tunnel, and a region change restarts it', async () => {
+test('manager: an ssm peer gets a tunnel, and a region change restarts it', async (t) => {
   const { calls, spawnFn } = makeSpawnRecorder();
   const mgr = new TunnelManager({ spawnFn, onState: () => {} });
+  t.after(() => mgr.stopAll());
   mgr.sync([{ id: 'a', label: 'a', ssm: { target: 'i-0abc', region: 'eu-west-1' }, remotePort: 7900 }]);
   await waitFor(() => calls.length === 1, 'tunnel for the ssm peer');
   await waitFor(() => mgr.urlFor('a'), 'a up');
@@ -215,12 +216,12 @@ test('manager: an ssm peer gets a tunnel, and a region change restarts it', asyn
   mgr.sync([{ id: 'a', label: 'a', ssm: { target: 'i-0abc', region: 'us-east-1' }, remotePort: 7900 }]);
   await new Promise((r) => setTimeout(r, 100));
   assert.equal(calls.length, 2, 'an identical sync is a no-op');
-  mgr.stopAll();
 });
 
-test('manager: a peer with neither sshHost nor a usable ssm target gets no tunnel', async () => {
+test('manager: a peer with neither sshHost nor a usable ssm target gets no tunnel', async (t) => {
   const { calls, spawnFn } = makeSpawnRecorder();
   const mgr = new TunnelManager({ spawnFn, onState: () => {} });
+  t.after(() => mgr.stopAll());
   mgr.sync([
     { id: 'url', url: 'http://127.0.0.1:7901' },
     { id: 'empty', ssm: {} },
@@ -229,7 +230,6 @@ test('manager: a peer with neither sshHost nor a usable ssm target gets no tunne
   await new Promise((r) => setTimeout(r, 100));
   assert.equal(calls.length, 0);
   assert.equal(mgr.statuses().length, 0);
-  mgr.stopAll();
 });
 
 // --- the other typed cloud kinds (t32 step 2) --------------------------------
@@ -302,9 +302,10 @@ test('manager: a namespace or zone change restarts the tunnel, an identical sync
   }
 });
 
-test('manager: retyping a destination as a DIFFERENT kind restarts the tunnel', async () => {
+test('manager: retyping a destination as a DIFFERENT kind restarts the tunnel', async (t) => {
   const { calls, spawnFn } = makeSpawnRecorder();
   const mgr = new TunnelManager({ spawnFn, onState: () => {} });
+  t.after(() => mgr.stopAll());
   // The SAME identifying value under two different kinds — deliberately, so
   // this test isolates the kind check. With different values it would pass even
   // with the kind comparison removed, on the field difference alone, and would
@@ -316,7 +317,6 @@ test('manager: retyping a destination as a DIFFERENT kind restarts the tunnel', 
   await settleOr(() => calls.length === 2);
   assert.equal(calls.length, 2, 'a kind change must restart — sameCloud compares kind first');
   assert.equal(calls[1].cmd, 'kubectl');
-  mgr.stopAll();
 });
 
 test('hasCloudTransport: every kind, and only with its required fields', () => {

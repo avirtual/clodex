@@ -170,9 +170,10 @@ test('two overlapping probe loops each own their own wake, timer and promise', a
 // 71 green. Without it the handler nulls `_child` out from under the LIVE
 // child, releases its port and schedules a restart, so a third ssh lands on top
 // of a forward that was never down.
-test('D3: a stale ERROR from a killed child never disturbs the live one', async () => {
+test('D3: a stale ERROR from a killed child never disturbs the live one', async (t) => {
   const { calls, children, spawnFn } = makeSpawnRecorder({ syncExit: false });
   const tun = new SupervisedTunnel(peerish({ spawnFn }));
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => calls.length === 1, 'the first spawn');
   const first = children[0];
@@ -195,7 +196,6 @@ test('D3: a stale ERROR from a killed child never disturbs the live one', async 
   assert.strictEqual(tun.localPort, livePort,
     'and the live tunnel`s port was released out from under it');
   assert.strictEqual(tun.state, 'up');
-  tun.stop();
 });
 
 // ── The RETRY parameter's zero ───────────────────────────────────────────────
@@ -209,11 +209,12 @@ test('D3: a stale ERROR from a killed child never disturbs the live one', async 
 // Latent — no call site passes 0 — and it is a behaviour lost in a MOVE, which
 // is the category that gets a guard precisely because nothing else would catch
 // it. Reverting to `if (this._giveUpMs)` fails this by message.
-test('retry: giveUpMs 0 gives up on the first failure, it does not mean forever', async () => {
+test('retry: giveUpMs 0 gives up on the first failure, it does not mean forever', async (t) => {
   const { children, spawnFn } = makeSpawnRecorder({ syncExit: false });
   const tun = new SupervisedTunnel(peerish({
     spawnFn, giveUpMs: 0, backoffMinMs: 20, backoffMaxMs: 20,
   }));
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => children.length === 1, 'the spawn');
 
@@ -223,7 +224,6 @@ test('retry: giveUpMs 0 gives up on the first failure, it does not mean forever'
   assert.strictEqual(tun.state, 'gave-up',
     `giveUpMs: 0 asked for a bound of zero and got an unbounded retry instead — the tunnel is state '${tun.state}' after its first failure and will keep dialling a box nobody is waiting on`);
   assert.strictEqual(children.length, 1, 'and it must not have retried at all');
-  tun.stop();
 });
 
 // ── D5's third death path ────────────────────────────────────────────────────
@@ -238,12 +238,13 @@ test('retry: giveUpMs 0 gives up on the first failure, it does not mean forever'
 // Cosmetic, exactly like D5 itself (`url()` gates on `state === 'up'`, so
 // nothing downstream lies — the renderer's status row does), and free. Removing
 // the `_releasePort()` from the catch fails this by message.
-test('D5: an unpinned port is released when the spawn throws SYNCHRONOUSLY too', async () => {
+test('D5: an unpinned port is released when the spawn throws SYNCHRONOUSLY too', async (t) => {
   let thrown = 0;
   const spawnFn = () => { thrown++; throw new Error('spawn ssh EACCES'); };
   const tun = new SupervisedTunnel(peerish({
     spawnFn, backoffMinMs: 5_000, backoffMaxMs: 5_000,
   }));
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => thrown === 1, 'the throwing spawn');
   await settle(50);
@@ -252,7 +253,6 @@ test('D5: an unpinned port is released when the spawn throws SYNCHRONOUSLY too',
   assert.strictEqual(tun.status().localPort, null,
     'the status row still names a local port, but the spawn threw before anything bound it — the third death path does not release, so D5 holds on two paths out of three');
   assert.strictEqual(tun.url(), null);
-  tun.stop();
 });
 
 // ── D1, de-vacuumed ──────────────────────────────────────────────────────────

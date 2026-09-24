@@ -33,9 +33,10 @@ test('jsonl-first match flags the ordering', () => {
   assert.equal(records.find((r) => r.type === 'match').first, 'jsonl');
 });
 
-test('duplicate from the same side is counted, not matched', () => {
+test('duplicate from the same side is counted, not matched', (t) => {
   const records = [];
   const d = new ShadowDiff(sinkInto(records), { windowMs: 1000 });
+  t.after(() => d.stop());
   d.record('wire', 'k1', {});
   d.record('wire', 'k1', {});
   d.record('wire', 'k1', {});
@@ -45,24 +46,24 @@ test('duplicate from the same side is counted, not matched', () => {
   d.record('jsonl', 'k1', {});
   const match = records.find((r) => r.type === 'match');
   assert.equal(match.dupes, 2);
-  d.stop();
 });
 
-test('unmatched fires after the window', async () => {
+test('unmatched fires after the window', async (t) => {
   const records = [];
   const d = new ShadowDiff(sinkInto(records), { windowMs: 30 });
+  t.after(() => d.stop());
   d.record('wire', 'lonely', { agent: 'a' });
   await new Promise((r) => setTimeout(r, 60));
   const un = records.find((r) => r.type === 'unmatched');
   assert.ok(un);
   assert.equal(un.source, 'wire');
   assert.equal(un.agent, 'a');
-  d.stop();
 });
 
-test('independent keys do not cross-match', () => {
+test('independent keys do not cross-match', (t) => {
   const records = [];
   const d = new ShadowDiff(sinkInto(records), { windowMs: 1000 });
+  t.after(() => d.stop());
   d.record('wire', 'k1', {});
   d.record('jsonl', 'k2', {});
   // Both keys were actually seen: the absence below is the matcher declining to
@@ -70,11 +71,10 @@ test('independent keys do not cross-match', () => {
   assert.equal(records.filter((r) => r.type === 'sighting').length, 2,
     'ENTER: two independent sightings reached the differ');
   assert.equal(records.filter((r) => r.type === 'match').length, 0);
-  d.stop();
 });
 
-test('sink exceptions never escape', () => {
+test('sink exceptions never escape', (t) => {
   const d = new ShadowDiff(() => { throw new Error('boom'); }, { windowMs: 1000 });
+  t.after(() => d.stop());
   assert.doesNotThrow(() => d.record('wire', 'k1', {}));
-  d.stop();
 });

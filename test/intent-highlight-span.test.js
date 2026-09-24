@@ -44,99 +44,100 @@ async function paintOnce(data, opts) {
   return h;
 }
 
-test('the mark covers the [agent:…] token and stops there', async () => {
+test('the mark covers the [agent:…] token and stops there', async (t) => {
   const { painted, highlight } = await paintOnce('[agent:who] and then some prose\r\n');
+  t.after(() => highlight.dispose());
   assert.strictEqual(highlight.count(), 1);
   assert.strictEqual(painted.length, 1);
   // `[agent:who]` is 11 cells at column 0. Not `cols`: an intent starts its own
   // line, so a full-width wash paints mostly empty terminal.
   assert.strictEqual(painted[0].x, 0);
   assert.strictEqual(painted[0].width, 11);
-  highlight.dispose();
 });
 
-test('a same-line dm body is left untinted', async () => {
+test('a same-line dm body is left untinted', async (t) => {
   const { painted, highlight } = await paintOnce('[agent:dm bob] hello there\r\n');
+  t.after(() => highlight.dispose());
   // Through the closing bracket, not into the body: the body is the operator's
   // own prose, and tinting it is what the scoping exists to stop.
   assert.deepStrictEqual(
     { x: painted[0].x, width: painted[0].width },
     { x: 0, width: '[agent:dm bob]'.length },
   );
-  highlight.dispose();
 });
 
-test('a double-width char inside the token widens the span by CELLS, not by string length', async () => {
+test('a double-width char inside the token widens the span by CELLS, not by string length', async (t) => {
   // The bug class this test exists for. `一` is ONE string index and TWO cells,
   // so a span measured off string offsets stops one cell short of the closing
   // bracket — it paints `[agent:dm 一bob` and leaves the `]` bare.
   const line = '[agent:dm 一bob] body';
   const { painted, highlight } = await paintOnce(`${line}\r\n`);
+  t.after(() => highlight.dispose());
   assert.strictEqual(line.indexOf(']') + 1, 15, 'the naive answer this must not give');
   assert.deepStrictEqual({ x: painted[0].x, width: painted[0].width }, { x: 0, width: 16 });
-  highlight.dispose();
 });
 
-test('an emoji inside the token narrows it by cells, the other direction of the same mismatch', async () => {
+test('an emoji inside the token narrows it by cells, the other direction of the same mismatch', async (t) => {
   // A surrogate pair is TWO string indices in ONE cell, so string offsets
   // overshoot here exactly as they undershot above — a span one cell too wide,
   // reaching into the body. One rule (walk the cells) covers both; an
   // off-by-one fudge on either would break the other.
   const line = '[agent:dm 👍bob] x';
   const { painted, highlight } = await paintOnce(`${line}\r\n`);
+  t.after(() => highlight.dispose());
   assert.strictEqual(line.indexOf(']') + 1, 16, 'the naive answer this must not give');
   assert.deepStrictEqual({ x: painted[0].x, width: painted[0].width }, { x: 0, width: 15 });
-  highlight.dispose();
 });
 
-test('decoration and indentation ahead of the token are not covered by the mark', async () => {
+test('decoration and indentation ahead of the token are not covered by the mark', async (t) => {
   // These still FIRE — the scanner strips them — so the row is marked; the mark
   // just points at the bracket rather than at the bullet.
   const { painted, highlight } = await paintOnce('  • [agent:who]\r\n');
+  t.after(() => highlight.dispose());
   assert.strictEqual(highlight.count(), 1);
   assert.deepStrictEqual({ x: painted[0].x, width: painted[0].width }, { x: 4, width: 11 });
-  highlight.dispose();
 });
 
-test('the overview-ruler tick stays line-granular and themed', async () => {
+test('the overview-ruler tick stays line-granular and themed', async (t) => {
   const { painted, highlight } = await paintOnce('[agent:who]\r\n');
+  t.after(() => highlight.dispose());
   // The tick is what solves finding an intent without scrolling: the ruler lane
   // is line-granular by construction, so the span scoping above must not have
   // reached it, and the colour must still come from the theme at paint time.
   assert.deepStrictEqual(painted[0].overviewRulerOptions, { color: RULER, position: 'right' });
   assert.strictEqual(painted[0].layer, 'bottom');
-  highlight.dispose();
 });
 
-test('an intent whose token is split by the wrap takes ONE mark, clipped to the head row', async () => {
+test('an intent whose token is split by the wrap takes ONE mark, clipped to the head row', async (t) => {
   // cols=10 cuts `[agent:dm bob]` in half. Decision: one decoration on the head
   // row, clipped, rather than a second on the continuation — the mark is
   // anchored to the logical line's head row, and a second decoration means a
   // second marker and a second tick in the ruler for one intent.
   const { painted, highlight } = await paintOnce('[agent:dm bob] body\r\n', { cols: 10 });
+  t.after(() => highlight.dispose());
   assert.strictEqual(highlight.count(), 1);
   assert.strictEqual(painted.length, 1);
   assert.deepStrictEqual({ x: painted[0].x, width: painted[0].width }, { x: 0, width: 10 });
-  highlight.dispose();
 });
 
-test('an unlocatable token falls back to the full-row wash rather than a guessed column', async () => {
+test('an unlocatable token falls back to the full-row wash rather than a guessed column', async (t) => {
   // cols=5 splits the bracket ITSELF ('[agen' / 't:who' / ']'), so the head row
   // holds no `[agent:` to locate. The line still fires, so it must stay marked
   // — and the whole row is the honest mark exactly where a column would
   // otherwise be invented.
   const { painted, highlight } = await paintOnce('[agent:who]\r\n', { cols: 5 });
+  t.after(() => highlight.dispose());
   assert.strictEqual(highlight.count(), 1);
   assert.deepStrictEqual({ x: painted[0].x, width: painted[0].width }, { x: 0, width: 5 });
-  highlight.dispose();
 });
 
-test('a span stranded by a resize is repainted, not kept', async () => {
+test('a span stranded by a resize is repainted, not kept', async (t) => {
   // x/width are frozen into the decoration at registration while reconcile
   // deliberately KEEPS unchanged rows. A reflow moves the token, so the kept
   // decoration would sit over the wrong cells — pinned because nothing on
   // screen would say so.
   const h = harness({ cols: 10 });
+  t.after(() => h.highlight.dispose());
   await h.write('[agent:dm bob] body\r\n');
   await h.settle();
   assert.deepStrictEqual({ x: h.painted[0].x, width: h.painted[0].width }, { x: 0, width: 10 });
@@ -147,29 +148,28 @@ test('a span stranded by a resize is repainted, not kept', async () => {
   const last = h.painted[h.painted.length - 1];
   // Unclipped now that the whole token fits one row.
   assert.deepStrictEqual({ x: last.x, width: last.width }, { x: 0, width: '[agent:dm bob]'.length });
-  h.highlight.dispose();
 });
 
-test('prose that merely mentions an intent paints nothing', async () => {
+test('prose that merely mentions an intent paints nothing', async (t) => {
   // The part-1 gate, seen from the paint side: this is what the operator was
   // watching turn into a mosaic.
   const h = harness();
+  t.after(() => h.highlight.dispose());
   await h.write('I will emit [agent:who] shortly\r\nsee [agent:dm bob] for the form\r\n[agent:who]\r\n');
   await h.settle();
   // ENTER: the real intent on the third row IS painted, so the two absences are
   // absences in a buffer that was actually scanned.
   assert.strictEqual(h.painted.length, 1);
   assert.strictEqual(h.terminal.buffer.active.getLine(2).translateToString(true), '[agent:who]');
-  h.highlight.dispose();
 });
 
-test('a spill receipt row is painted filed across the whole trimmed line', async () => {
+test('a spill receipt row is painted filed across the whole trimmed line', async (t) => {
   const receipt = '⏺ 1.1 KB of prose filed at /s/spill/clodex/dde60eea12b4cea9.md';
   const h = await paintOnce(`${receipt}\r\n[agent:who]\r\n`, { cols: 80 });
+  t.after(() => h.highlight.dispose());
   assert.strictEqual(h.highlight.count(), 2);
   const filed = h.painted.find((p) => p.width === receipt.length);
   assert.ok(filed, 'the receipt row is painted');
   assert.deepStrictEqual({ x: filed.x, width: filed.width }, { x: 0, width: receipt.length });
   assert.strictEqual(filed.overviewRulerOptions.color, RULER);
-  h.highlight.dispose();
 });

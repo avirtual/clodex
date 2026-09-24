@@ -100,9 +100,10 @@ function peerish(over) {
 // So the assertion is AGREEMENT between what the supervisor reports and what the
 // child was actually given. Reverting the `|| this._child` half of the re-check
 // fails it by message (measured: child forwards 61442, status says 61443).
-test('D1: a second start in the port-pick window cannot re-point the reported URL', async () => {
+test('D1: a second start in the port-pick window cannot re-point the reported URL', async (t) => {
   const { calls, spawnFn } = makeSpawnRecorder();
   const tun = new SupervisedTunnel(peerish({ spawnFn }));
+  t.after(() => tun.stop());
   // Both calls land before either pick resolves — that IS the window.
   tun.start();
   tun.start();
@@ -114,7 +115,6 @@ test('D1: a second start in the port-pick window cannot re-point the reported UR
   assert.ok(forwarded.startsWith(`${tun.localPort}:`),
     `the supervisor reports port ${tun.localPort} but its child forwards ${forwarded} — the second pick overwrote localPort, so url() names a port nothing is bound to and the peer client would dial it`);
   assert.strictEqual(tun.url(), `http://127.0.0.1:${forwarded.split(':')[0]}`);
-  tun.stop();
 });
 
 // ── D3: a stale child's exit must not act on a live one ──────────────────────
@@ -130,9 +130,10 @@ test('D1: a second start in the port-pick window cannot re-point the reported UR
 //
 // Reverting `mine()` in the exit handler fails this by message on the state
 // assertion, not by crash.
-test('D3: a stale exit from a killed child never disturbs the live one', async () => {
+test('D3: a stale exit from a killed child never disturbs the live one', async (t) => {
   const { calls, children, spawnFn } = makeSpawnRecorder({ syncExit: false });
   const tun = new SupervisedTunnel(peerish({ spawnFn }));
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => calls.length === 1, 'the first spawn');
   const first = children[0];
@@ -160,7 +161,6 @@ test('D3: a stale exit from a killed child never disturbs the live one', async (
   assert.strictEqual(tun.localPort, livePort,
     'and the live tunnel`s port was released out from under it');
   assert.strictEqual(tun.state, 'up');
-  tun.stop();
 });
 
 // ── D5: the port is released on BOTH death paths, or on neither ──────────────
@@ -171,9 +171,10 @@ test('D3: a stale exit from a killed child never disturbs the live one', async (
 // named a port that was never bound.
 //
 // Reverting the `_releasePort()` in the error handler fails this by message.
-test('D5: an unpinned port is released when the SPAWN fails, not only on exit', async () => {
+test('D5: an unpinned port is released when the SPAWN fails, not only on exit', async (t) => {
   const { children, spawnFn } = makeSpawnRecorder();
   const tun = new SupervisedTunnel(peerish({ spawnFn, backoffMinMs: 5_000, backoffMaxMs: 5_000 }));
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => children.length === 1, 'the spawn');
   assert.ok(tun.localPort, 'precondition: a port was picked');
@@ -187,7 +188,6 @@ test('D5: an unpinned port is released when the SPAWN fails, not only on exit', 
   assert.strictEqual(tun.status().localPort, null,
     'the status row still names a local port, but the child never bound it — nothing is listening there');
   assert.strictEqual(tun.url(), null);
-  tun.stop();
 });
 
 // WINDOW: the same failure on a PINNED tunnel, where the answer is the opposite
@@ -196,11 +196,12 @@ test('D5: an unpinned port is released when the SPAWN fails, not only on exit', 
 // it on a failed spawn would hand the next attempt a different port and strand
 // the tab — the exact bug the pin prevents, reached through the one death path
 // that used to be handled differently from the other.
-test('D5: a PINNED port survives a failed spawn — the tab keeps working', async () => {
+test('D5: a PINNED port survives a failed spawn — the tab keeps working', async (t) => {
   const { calls, children, spawnFn } = makeSpawnRecorder();
   const tun = new SupervisedTunnel(peerish({
     spawnFn, pinPort: true, backoffMinMs: 20, backoffMaxMs: 20,
   }));
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => children.length === 1, 'the spawn');
   const pinned = tun.localPort;
@@ -216,7 +217,6 @@ test('D5: a PINNED port survives a failed spawn — the tab keeps working', asyn
   const lIdx = calls[1].args.indexOf('-L');
   assert.ok(calls[1].args[lIdx + 1].startsWith(`${pinned}:`),
     'and the retry`s argv must carry the SAME local end');
-  tun.stop();
 });
 
 // ── D8: one status row shape ─────────────────────────────────────────────────
@@ -268,7 +268,7 @@ test('D8: both supervisors report the same status row, url included', async () =
 // The bounded arm runs the same failure loop and must reach 'gave-up', which is
 // what proves the loop genuinely exercises the cap and the unbounded arm's
 // silence means something.
-test('retry: the wire tunnel retries forever, where a bounded one gives up', async () => {
+test('retry: the wire tunnel retries forever, where a bounded one gives up', async (t) => {
   const failFor = async (tun, children, ms) => {
     const t0 = Date.now();
     while (Date.now() - t0 < ms && tun.state !== 'gave-up') {
@@ -292,13 +292,13 @@ test('retry: the wire tunnel retries forever, where a bounded one gives up', asy
   // long enough that any deadline shorter than the run would have fired.
   const u = makeSpawnRecorder();
   const wire = new Tunnel({ id: 'p1', sshHost: 'box', spawnFn: u.spawnFn, onState: () => {} });
+  t.after(() => wire.stop());
   wire.start();
   await failFor(wire, u.children, 2500);
   assert.notStrictEqual(wire.state, 'gave-up',
     'a forward nobody is watching gave up — nothing would notice and re-arm it, and the peer would stay offline until the app restarted');
   assert.ok(u.calls.length >= 2,
     `and it must still be trying across the backoff: only ${u.calls.length} attempt(s) were made`);
-  wire.stop();
 });
 
 // ── The readiness probe's own teardown ───────────────────────────────────────
@@ -349,15 +349,15 @@ test('stop() during a probe wakes the sleeping loop instead of parking it foreve
 // wiring up a signal that fires on every peer.
 //
 // Giving `Tunnel` a readiness config fails this by message.
-test('readiness: null emits no firstUp, ever', async () => {
+test('readiness: null emits no firstUp, ever', async (t) => {
   const { children, spawnFn } = makeSpawnRecorder();
   const emits = [];
   const tun = new Tunnel({ id: 'p1', sshHost: 'box', spawnFn, onState: (_id, st) => emits.push(st) });
+  t.after(() => tun.stop());
   tun.start();
   await waitFor(() => children.length === 1, 'the spawn');
   await settle(200);
   assert.strictEqual(tun.state, 'up', 'precondition: the tunnel came up, so an announcement had its chance');
   assert.deepStrictEqual(emits.filter((e) => e.firstUp), [],
     'a wire tunnel announced firstUp — the one-shot a consumer ACTS on, emitted for a consumer that has its own hello loop');
-  tun.stop();
 });

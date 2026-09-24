@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 - Stream seat voice: the words arrive in the composer for a second window too, tap mode sends the finished sentence rather than the words so far, the recording light goes out when the hold limit ends it, and right-click on the voice button still opens the mode picker.
+- Test suite: a failing test that skips its fixture teardown no longer hangs the run, and a run that wedges anyway is cut off before the tool ceiling with a line naming the file it was in.
 - Stream seat: the voice button records through a hidden terminal and the words appear in the composer as you speak, for you to send; saying the trigger phrase sends them.
 - Stream seat: paste or drop an image into the composer and it goes with the message; thumbnails show what is attached until you send.
 - Transcript pane: an intent renders as a card (glyph, verb, target, a clamped body) with the wire brackets hidden, and a Clodex runtime reply shows the verb's glyph instead of a badge for a seat named clodex.
