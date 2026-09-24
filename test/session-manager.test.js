@@ -20728,7 +20728,7 @@ test('t1099 onUndelivered: a unit whose seat DIES mid-settle is re-parked stampe
     'stamped from the closure\'s own session: after _cleanup neither the map nor persistence knows the name, and an unstamped entry would reach the next seat of that name');
 });
 
-function mkStreamSeatManager({ persisted = {}, fakePty = null } = {}) {
+function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null } = {}) {
   const os = require('node:os');
   const fs = require('node:fs');
   const path = require('node:path');
@@ -20751,6 +20751,10 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null } = {}) {
     MSG_DIR: path.join(root, 'messages'),
     hasActivePending: require('../pending-store').hasActivePending,
     drainPending: require('../pending-store').drainPending,
+    parkDelivery: require('../pending-store').parkDelivery,
+    shouldHoldDm: require('../proxy-util').shouldHoldDm,
+    claimParkedByKey: require('../pending-store').claimParkedByKey,
+    parkIdInUse: require('../pending-store').parkIdInUse,
     MSG_SPILL_THRESHOLD: 500,
     spillToFile: (sender, body, recipient) => {
       const dir = path.join(root, 'messages', recipient);
@@ -20815,7 +20819,7 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null } = {}) {
     mergeSessionEnv: () => ({ ...process.env }),
     getEnvScopes: () => ({ all: () => ({ global: {}, workspaces: {} }) }),
     getUserDataPath: () => root,
-    resolveTeam: () => null,
+    resolveTeam: () => team,
     strictMcpReason: () => null,
     scrubInheritedClaudeMarkers: (e) => e,
     resolveSystemPromptFile: () => null,
@@ -20838,14 +20842,15 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null } = {}) {
   const m = new SessionManager();
   m._sendToSession = () => {};
   m._broadcast = () => {};
-  const create = (name, resumeId = null) => m.create(name, 'claude', os.tmpdir(), [], resumeId, 'ws', null, false, null,
-    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream');
+  const create = (name, resumeId = null, io = 'stream') => m.create(name, 'claude', os.tmpdir(), [], resumeId, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, io);
   const line = (name, obj) => handles[handles.length - 1].opts.onLine(obj);
   const stopAll = () => {
     for (const s of m.sessions.values()) {
       try { if (s.ctxWatcher) s.ctxWatcher.close(); } catch {}
       try { if (s.watcher) s.watcher.stop(); } catch {}
       clearTimeout(s._bootDrainTimer);
+      clearTimeout(s._replayFallbackTimer);
     }
   };
   return { m, create, line, store, sessionIds, spawns, hookCalls, reaps, logs, handles, watchers, root, stopAll };
@@ -21318,4 +21323,89 @@ test('stream seat: the outbox has no timed force-flush — ten busy minutes stil
   } finally {
     mock.timers.reset();
   }
+});
+
+function mkStreamTeam() {
+  const os = require('node:os');
+  return {
+    name: 'team', root: os.tmpdir(), lead: 'lead', watchdogMs: null,
+    roles: {
+      lead: { instantiate: 'session', brief: 'the lead' },
+      hand: { instantiate: 'session', brief: 'the hand' },
+    },
+  };
+}
+
+function seedStreamTicket(h, team, seat) {
+  const { createTicketsStore } = require('../tickets-store');
+  const tstore = createTicketsStore({ clodexHome: h.root });
+  tstore.save(team.root, [{
+    id: 't9', title: 'STREAM WIDGET TICKET', spec: 'STREAM WIDGET TICKET\nbuild the widget',
+    state: 'open', assignee: seat, openedAt: 1, startedAt: 1,
+  }]);
+  return () => tstore.load(team.root);
+}
+
+function spilledText(text) {
+  const m = /@(\S+)/.exec(text);
+  return m ? `${text}\n${require('node:fs').readFileSync(m[1], 'utf8')}` : text;
+}
+
+const INIT = (sid) => ({ type: 'system', subtype: 'init', session_id: sid, model: 'm', slash_commands: [] });
+
+test('stream seat team (a): the open ticket replays at the first init, not at create, and stamps the seat', async (t) => {
+  const team = mkStreamTeam();
+  const h = mkStreamSeatManager({ team });
+  t.after(() => h.stopAll());
+  const board = seedStreamTicket(h, team, 'stt1');
+  await h.create('stt1');
+  const s = h.m.sessions.get('stt1');
+  h.m.seatSend('stt1', 'go');
+  assert.deepStrictEqual({ outbox: s.outbox, pending: s._replayTicketsPending, stamp: board()[0].deliveredTo || null },
+    { outbox: [], pending: true, stamp: null });
+  h.line('stt1', INIT('sid-a'));
+  assert.strictEqual(s.outbox.length, 1, 'ENTER: the replay queued behind the running turn');
+  assert.strictEqual(s.outbox[0].origin, 'system');
+  assert.match(s.outbox[0].text, /\[ticket t9 REPLAY\]/);
+  assert.ok(spilledText(s.outbox[0].text).includes('STREAM WIDGET TICKET'), s.outbox[0].text);
+  assert.strictEqual(s._replayTicketsPending, false);
+  h.line('stt1', RESULT);
+  assert.strictEqual(board()[0].deliveredTo && board()[0].deliveredTo.seat, 'stt1');
+  h.line('stt1', INIT('sid-a'));
+  assert.deepStrictEqual(s.outbox, [], 'a second init replays nothing');
+});
+
+test('stream seat team (b): the roster parks passive at create and an idle edge leaves it for the prompt hook', async (t) => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const team = mkStreamTeam();
+  const h = mkStreamSeatManager({ team });
+  t.after(() => h.stopAll());
+  await h.create('stt2');
+  const s = h.m.sessions.get('stt2');
+  const dir = path.join(h.root, 'pending', 'stt2');
+  const rows = () => fs.readdirSync(dir).filter((f) => f.endsWith('.json'))
+    .map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')));
+  assert.strictEqual(rows().length, 1);
+  assert.match(rows()[0].text, /^\[agent:from team\] \[team team\] roster \(lead: lead\)/);
+  assert.deepStrictEqual({ outbox: s.outbox, sent: h.handles[0].sent }, { outbox: [], sent: [] });
+  h.m.seatSend('stt2', 'go');
+  h.m._emitActivity('stt2', 'idle', true);
+  assert.deepStrictEqual({ outbox: s.outbox, parked: rows().length }, { outbox: [], parked: 1 });
+});
+
+test('stream seat team (c): a pty team seat arms the replay fallback and a stream team seat does not', async (t) => {
+  const team = mkStreamTeam();
+  const fakePty = { pid: 8002, onData: () => {}, onExit: () => {}, write: () => {}, resize: () => {}, kill: () => {} };
+  const h = mkStreamSeatManager({ team, fakePty });
+  t.after(() => h.stopAll());
+  await h.create('stt3', null, 'pty');
+  await h.create('stt4');
+  const pty = h.m.sessions.get('stt3');
+  const stream = h.m.sessions.get('stt4');
+  assert.deepStrictEqual([pty.io, stream.io], ['pty', 'stream'], 'ENTER: one seat per transport');
+  assert.notStrictEqual(pty._replayFallbackTimer, undefined);
+  assert.notStrictEqual(pty._replayFallbackTimer, null);
+  assert.deepStrictEqual({ timer: stream._replayFallbackTimer, pending: stream._replayTicketsPending, atInit: stream._replayAtInit },
+    { timer: undefined, pending: true, atInit: true });
 });

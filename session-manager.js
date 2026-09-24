@@ -2700,15 +2700,12 @@ function createSessionManager(deps) {
       if (typeof refreshAppMenu === 'function') refreshAppMenu();
       if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
       log.info('session', `spawn ${name} (${type}) pid=${procPid}${streamIo ? ' io=stream' : ''}${resumeId ? ' resumed' : ''} cwd=${cwd}`);
-      if (resolvedTeam && !streamIo) {
+      if (resolvedTeam) {
         this._maybeInjectComposition(session, resolvedTeam, existingEntry);
-        // NEVER fired here. Both arms defer to the edge where the seat can actually
-        // receive, which is a different edge per agent type — a write at create()
-        // lands in a CLI whose input loop is not up, and the boot re-render wipes it
-        // while the replay stamps it delivered: the same silent drop this exists to
-        // close, one layer down.
         session._replayTicketsPending = true;
-        if (session.agentType !== 'claude') {
+        if (streamIo) {
+          session._replayAtInit = true;
+        } else if (session.agentType !== 'claude') {
           session._bootSettling = true;
           session._bootSettleSince = Date.now();   // absolute-wait cap anchor
           // That cap is NOT wall-clock: _settleBoot runs only from _armBootSettle,
@@ -2964,6 +2961,10 @@ function createSessionManager(deps) {
         case 'init':
           this._clearStreamResultHold(s);
           if (rec.sessionId && rec.sessionId !== s.sessionId) onSessionId(rec.sessionId);
+          if (s._replayAtInit) {
+            this._replayTicketsOnce(s);
+            s._replayAtInit = !!s._replayTicketsPending;
+          }
           break;
         case 'result':
           this._clearStreamResultHold(s);

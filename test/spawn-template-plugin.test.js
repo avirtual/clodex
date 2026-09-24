@@ -74,3 +74,18 @@ test('without listAllTemplates, a spawn intent naming a plugin template is refus
   assert.strictEqual(replies.length, 1);
   assert.match(replies[0], /no template named "rev:audit"/);
 });
+
+for (const [label, extra, want] of [['io:stream', { io: 'stream' }, 'stream'], ['no io', {}, 'pty']]) {
+  test(`t1165: a spawn intent on a template with ${label} passes io ${want} as create()'s trailing argument`, async () => {
+    const tpl = { name: 'rev:audit', id: 'rev:audit', plugin: 'rev', type: 'claude', cwd: os.tmpdir(), ...extra };
+    const { m, calls } = harness({ listAllTemplates: () => [tpl] });
+    m._handleSpawnIntent(
+      { name: 'lead', cwd: os.tmpdir(), workspaceId: 'default', type: 'claude' },
+      { name: 'child', template: 'rev:audit' },
+    );
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(calls.length, 1);
+    assert.deepStrictEqual([calls[0].length, calls[0][22], calls[0][23], calls[0][24]], [25, null, null, want]);
+  });
+}

@@ -2182,7 +2182,7 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   if (stripRow) stripRow.style.display = caps.strip ? '' : 'none';
   if (autoCompactRow) autoCompactRow.style.display = caps.autoCompact ? '' : 'none';
   if (noWireRow) noWireRow.style.display = caps.noWire ? '' : 'none';
-  if (streamIoRow) streamIoRow.style.display = type === 'claude' && !authoring ? '' : 'none';
+  if (streamIoRow) streamIoRow.style.display = type === 'claude' ? '' : 'none';
   if (accountRow) accountRow.style.display = caps.accounts ? '' : 'none';
   if (toolsAllowRow) toolsAllowRow.style.display = authoring ? '' : 'none';
   if (authoring && caps.tools && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, new Set());
@@ -3085,6 +3085,7 @@ inputTemplate.addEventListener('change', async () => {
   if (tplCaps.strip && inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
   if (tplCaps.autoCompact && inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
   if (tplCaps.noWire && inputNoWire) inputNoWire.checked = t.noWire === true;
+  if (inputStreamIo) inputStreamIo.checked = t.io === 'stream';
   if (agentType) {
     setProxyControls(inputProxyMode, inputProxyUrl, t.proxy ?? null, inputProxyUrl.value);
   }
@@ -3160,6 +3161,7 @@ function collectFormConfig() {
     : [];
   const autoCompactOff = caps.autoCompact && inputAutoCompact && !inputAutoCompact.checked;
   const noWireOn = caps.noWire && inputNoWire && inputNoWire.checked;
+  const streamIoOn = type === 'claude' && inputStreamIo && inputStreamIo.checked;
   // NOTE (maintained-list coupling): the keys this returns are the EDITOR_OWNED
   // set in stores.js `save()` — the dialog fully controls them, so an OMITTED
   // owned key on save means "removed", not "preserve the stored value". Keep the
@@ -3176,6 +3178,7 @@ function collectFormConfig() {
     plugins,
     ...(autoCompactOff ? { autoCompact: false } : {}),
     ...(noWireOn ? { noWire: true } : {}),
+    ...(streamIoOn ? { io: 'stream' } : {}),
     ...(toolsAllow.length ? { tools: toolsAllow } : {}),
     denyBuiltins: caps.agents ? collectBuiltinChecklist(inputBuiltinsList) : [],
     disabledTools: caps.tools ? collectToolChecklist(inputToolsList) : [],
@@ -3396,6 +3399,7 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
   if (inputStripLevel) inputStripLevel.value = String((tpl && tpl.stripLevel) || 0);
   if (inputAutoCompact) inputAutoCompact.checked = !(tpl && tpl.autoCompact === false);
   if (inputNoWire) inputNoWire.checked = (tpl && tpl.noWire) === true;
+  if (inputStreamIo) inputStreamIo.checked = (tpl && tpl.io) === 'stream';
   for (const sec of [toolsSection, skillsSection, otherSection]) { if (sec) sec.open = false; }
   setModeSelect('custom');
   setDialogMode('template');
@@ -8051,6 +8055,8 @@ const argsModel = document.getElementById('args-model');
 const argsModelRow = document.getElementById('args-model-row');
 const argsTarget = document.getElementById('args-target');
 const argsRestart = document.getElementById('args-restart');
+const argsStreamIoRow = document.getElementById('args-stream-io-row');
+const argsStreamIo = document.getElementById('args-stream-io');
 const argsProxyRow = document.getElementById('args-proxy-row');
 const argsProxyMode = document.getElementById('args-proxy-mode');
 const argsProxyUrl = document.getElementById('args-proxy-url');
@@ -8169,6 +8175,9 @@ async function openArgsDialog(name, argsSource = null) {
   argsAppendRow.style.display = isAgent ? '' : 'none';
   argsAppendSection.style.display = isAgent ? '' : 'none';
   const caps = capsFor(res.type);
+  const ioEditable = res.type === 'claude' && !argsSource;
+  if (argsStreamIoRow) argsStreamIoRow.style.display = ioEditable ? '' : 'none';
+  if (argsStreamIo) argsStreamIo.checked = ioEditable && res.io === 'stream';
   argsAccountRow.style.display = caps.accounts ? '' : 'none';
   argsAgentsRow.style.display = caps.agents ? '' : 'none';
   argsOtherSection.style.display = caps.agents ? '' : 'none';
@@ -8283,6 +8292,8 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     : mergePlugins(collectPluginChecklist(argsPluginList),
       pluginsForUnlistedPlugins(argsPluginsPersisted, argsPluginsRendered));
   const execCommandsGrant = argsExecSection.style.display === 'none' ? undefined : collectExecChecklist(argsExecList);
+  const io = (!argsStreamIoRow || argsStreamIoRow.style.display === 'none' || !argsStreamIo)
+    ? undefined : (argsStreamIo.checked ? 'stream' : 'pty');
   // LOCAL-only: a hidden section (peer row) leaves env untouched via `undefined`. Locally the
   // dialog OWNS env — an empty box is {}, a real clear, not a no-op.
   const env = argsEnvSection.style.display === 'none'
@@ -8323,7 +8334,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
         extraArgs: parsed, restart, proxy, systemPrompt: undefined, agents, denyBuiltins,
         disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents,
       })
-    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins);
+    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io);
   if (!res || !res.ok) {
     alert(`Save settings failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;
