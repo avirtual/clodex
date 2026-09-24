@@ -4772,6 +4772,7 @@ function createSessionManager(deps) {
 
     _routeAttnEntry(session, entry) {
       if (entry && entry.hook_event_name === 'PreCompact') this._onCompactStart(session, entry.trigger);
+      else if (entry && entry.hook_event_name === 'SessionStart') { if (entry.source === 'compact') this._onCompactEnd(session, 'done'); }
       else this._onAttention(session, entry || {});
     }
 

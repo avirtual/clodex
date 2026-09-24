@@ -78,6 +78,22 @@ test('start → end: sets the display state, sends it, notices the pane, and cle
   assert.strictEqual(win.sent.length, sends, 'idempotent when nothing is in flight');
 });
 
+test('SessionStart compact line alone ends the compact and rewrites the notice, without _onAttention', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+  const { m, s, win } = seat();
+  const attns = [];
+  m._onAttention = (sess, entry) => attns.push(entry);
+  m._routeAttnEntry(s, { hook_event_name: 'PreCompact', trigger: 'auto' });
+  assert.ok(s.compacting, 'ENTER: compacting after PreCompact');
+  t.mock.timers.tick(42_000);
+  m._routeAttnEntry(s, { hook_event_name: 'SessionStart', source: 'compact' });
+  assert.strictEqual(s.compacting, null);
+  assert.deepStrictEqual(compactingSends(win).at(-1), ['session-compacting', 'a', null, { outcome: 'done', ms: 42_000 }]);
+  assert.deepStrictEqual(m.compactNoticesFor('a').notices.map((n) => n.text), ['Compacted in 42s']);
+  m._routeAttnEntry(s, { hook_event_name: 'SessionStart', source: 'startup' });
+  assert.deepStrictEqual(attns, [], 'SessionStart lines never reach _onAttention');
+});
+
 test('_fireCompactContinuation ends the compacting display first', () => {
   const { m, s } = seat();
   const boom = new Error('stop here');
