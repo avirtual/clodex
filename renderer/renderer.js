@@ -3084,7 +3084,7 @@ inputTemplate.addEventListener('change', async () => {
   if (tplCaps.strip && inputStripLevel) inputStripLevel.value = String(t.stripLevel || 0);
   if (tplCaps.autoCompact && inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
   if (tplCaps.noWire && inputNoWire) inputNoWire.checked = t.noWire === true;
-  if (inputStreamIo) inputStreamIo.checked = t.type === 'claude' && t.io === 'stream';
+  if (inputStreamIo) inputStreamIo.checked = t.io === 'stream';
   if (agentType) {
     setProxyControls(inputProxyMode, inputProxyUrl, t.proxy ?? null, inputProxyUrl.value);
   }
