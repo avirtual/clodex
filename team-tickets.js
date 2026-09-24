@@ -5704,12 +5704,18 @@ function createTicketMethods(deps, shared) {
       }
       const tickets = ticketsStore.load(team.root);
       const now = Date.now();
+      const title = ticketTitle(spec);
+      const twin = intent.dup === true ? null : tickets.find((t) => t.state === 'open' && t.title === title);
+      if (twin) {
+        reply(`error: an open ticket already carries this title — ${twin.id} (${humanizeAge(now - (twin.openedAt || now))} ago); cancel or respec it, or add \`dup\` to the head line to open a second one deliberately${this._spillRejectedPayload(session, 'task add', spec)}`);
+        return;
+      }
       // Written only when true: absent is the overwhelming majority and is what
       // every record predating this field carries, so a stored `parked: false`
       // would be a second spelling of the same state for readers to get wrong.
       const parked = !!intent.park;
       const ticket = {
-        id: nextTicketId(tickets), title: ticketTitle(spec), spec,
+        id: nextTicketId(tickets), title, spec,
         assignee, opener: session.name, state: 'open',
         openedAt: now, closedAt: null, lastActivityAt: now, nudgedAt: null,
         // Written as an explicit null, against the convention `parked` follows

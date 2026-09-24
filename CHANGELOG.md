@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 - Transcript pane: the pane refreshes as soon as the transcript changes, so a local command's output (/context, /cost) appears without waiting for the next keystroke.
+- Tickets: `task add` refuses a spec whose title matches an open ticket and names it; add `dup` to the head line to open a second one deliberately.
 - Transcript pane: the output of local commands such as /context, /cost and /status shows in the pane with its colours instead of disappearing under it.
 - Experimental: Preferences ▸ Appearance ▸ "Transcript pane" renders a Claude seat's conversation from its transcript above a live strip of the terminal from the composer down; off by default, desktop only.
 

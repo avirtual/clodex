@@ -185,6 +185,57 @@ test('add writes the ticket and spawns NOTHING, even for an assigned, unparked t
   assert.strictEqual(t.role, undefined, 'and no delivery-time role marker');
 });
 
+test('add refuses a second open ticket with the same title, names the first, and spills the spec', () => {
+  const f = mkStart();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget\nfirst detail' });
+  const openWith = () => f.load().filter((t) => t.state === 'open' && t.title === 'build the widget').length;
+  assert.strictEqual(openWith(), 1, 'ENTER: the first add created the ticket');
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget\nsecond detail' });
+  const note = f.notes();
+  assert.match(note, /an open ticket already carries this title — t1 \(\d+s ago\)/);
+  assert.match(note, /add `dup` to the head line/);
+  assert.match(note, /is saved for the next/);
+  assert.strictEqual(openWith(), 1);
+});
+
+test('add with dup opens a second ticket carrying an open title', () => {
+  const f = mkStart();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, dup: true, body: 'build the widget' });
+  assert.deepStrictEqual(f.load().filter((t) => t.state === 'open').map((t) => t.id), ['t1', 't2']);
+});
+
+test('add refiles a cancelled ticket\'s title without dup', () => {
+  const f = mkStart();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', who: null, id: 't1', body: 'duplicate' });
+  assert.strictEqual(f.one('t1').state, 'cancelled', 'ENTER: the first ticket is cancelled');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget' });
+  assert.strictEqual(f.one('t2').state, 'open');
+});
+
+test('add compares the title only: a different first line over the same detail is not a duplicate', () => {
+  const f = mkStart();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the widget\nshared detail' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build the gadget\nshared detail' });
+  assert.deepStrictEqual(f.load().filter((t) => t.state === 'open').map((t) => t.id), ['t1', 't2']);
+});
+
+test('grammar: dup is a position-free add modifier, never the assignee', () => {
+  const a = parseIntent('[agent:task add hand start dup] spec');
+  assert.deepStrictEqual([a.dup, a.start, a.who], [true, true, 'hand']);
+  const b = parseIntent('[agent:task add hand dup start] spec');
+  assert.deepStrictEqual([b.dup, b.start, b.who], [true, true, 'hand']);
+  const c = parseIntent('[agent:task add dup] spec');
+  assert.deepStrictEqual([c.dup, c.who], [true, null]);
+  assert.strictEqual(parseIntent('[agent:task add hand] spec').dup, false);
+});
+
 // ── start dispatches ───────────────────────────────────────────────────────
 
 test('start delivers the spec, re-pins to the receiving seat, and wakes it', () => {
@@ -629,7 +680,7 @@ test('t431: a ticket WITH a task dir still dispatches, through both verbs', () =
     'start dispatches exactly as before');
   assert.ok(f.one('t1').startedAt, 'and stamps the dispatch');
 
-  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: spec });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, dup: true, body: spec });
   f.gated.length = 0;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'assign', id: 't2', who: 'hand', body: '' });
   assert.ok(f.gated.length >= 1, 'assign dispatches exactly as before');

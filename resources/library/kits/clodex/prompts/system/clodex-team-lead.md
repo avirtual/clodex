@@ -60,7 +60,9 @@ visible rather than silently lost.
   new id, the seat and the branch, so you never spend a turn learning the id
   before you can start it. `start` and `park` are opposites and are refused
   together. The first line of the body becomes the title; a task-dir path on
-  that line links the ticket to its artifact.
+  that line links the ticket to its artifact. An add whose title an open
+  ticket already carries is refused; the position-free `dup` modifier opens a
+  second ticket with a title an open one already carries.
 - `[agent:task assign <id> <role|name>]` — (re)assigns an open ticket.
   Reassignment is your stall-remediation lever: it notifies the old assignee
   and delivers the spec to the new one as two independent, ordered steps.
