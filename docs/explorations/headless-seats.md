@@ -397,32 +397,40 @@ every current consumer unchanged: the tray, `[agent:who]`, `shouldHoldDm`, the
 restart waiter's `classifyRestart`, and the stall nudge. `result` is a definite
 turn end, which the jsonl path only infers after 1 s of silence.
 
-### 2.2 The rule
+### 2.2 The rule (ruled by Bogdan, 2026-09-24)
 
-- **Clodex-originated input** (dms, tickets, reminders, exec results,
-  continuations, monitor ticks) is **held while the seat is not `idle`**.
-  - Everything held is joined with a blank line and sent as **one** message at
-    the next `result`. That is exactly today's turn batching
-    (`_injectHoldReason` returning `'busy'`, then `_maybeFlushInjectQueue` joins
-    the queue).
-  - This is not new policy: today Clodex already never injects into a busy
-    seat. The fold measured in E and E3 therefore **never happens to
-    Clodex-originated input under this rule**.
-  - The 5-minute force-flush valve (`INJECT_HOLD_TIMEOUT`) is kept. A forced
-    flush into a busy seat folds, and that is logged.
-- **Urgent** dms are sent immediately, even while busy. They fold into the
-  running turn at the next tool boundary (E3), and the model sees them in that
-  turn. That is what "urgent" asks for.
-- **The operator's composer** sends immediately by default.
-  - While the seat is busy, that folds at the next tool boundary. **That is
-    the TTY CLI's current behaviour**: a prompt typed while the seat is busy is
-    written to the transcript as a `queue-operation` enqueue and then consumed
-    inside the running turn (pane-app-view.md §1.2, the `queued` kind).
-  - The composer has a second action, **Send after turn** (Alt+Enter). It puts
-    the text in the outbox under the Clodex hold rule.
+**One queue. Operator and system both add to it; nothing bypasses it.** A
+busy model is either running a tool or thinking. Thinking cannot be
+interrupted except by an explicit escape, and a tool step drains the queue
+anyway, so there is no "steer" mode and no send-immediately path: every
+message waits for a boundary the CLI itself provides.
+
+- **Everything Clodex-originated** (dms, tickets, reminders, exec results,
+  continuations, monitor ticks) **and everything the operator types** goes
+  into the seat's outbox. The outbox drains at the next boundary:
+  - the next `result` (turn end), joined with a blank line and sent as one
+    message, exactly today's turn batching;
+  - or the next **tool boundary**, observed through the PreToolUse hook that
+    already fires under `-p` (M12). Draining there is what the TTY fold did
+    by accident; here it is Clodex's decision, taken with the whole queue in
+    view, and the drained text is delivered as its own stdin message rather
+    than folded into the tool result.
+- **Ordering is the operator's only privilege.** The operator's message goes
+  to the head of the outbox; queued dms and ticket replies follow it. Each
+  queued item shows as a dimmed row above the composer with Send now (move to
+  head) and Drop (re-park, nothing lost), per §2.0.
+- **Urgent** dms lose their bypass: there is nothing to bypass into. Urgent
+  means head-of-queue, ahead of the operator's own pending text, and nothing
+  more.
+- The 5-minute force-flush valve (`INJECT_HOLD_TIMEOUT`) is dropped. It
+  existed to break a wedge in the PTY quiet gate; a queue draining on CLI
+  boundaries cannot wedge, and a turn that never reaches a boundary is a
+  seat to escape, not to force.
 - **Never interrupt automatically.** `interrupt` is sent only by the
   operator's Stop button or Esc in the composer. README C shows it answers in
-  1 ms and leaves the seat usable.
+  1 ms and leaves the seat usable; t5 row 7 shows a plain interrupt leaves a
+  queued message answered, so Clodex sends `interrupt {cancel_queued:true}`
+  and re-queues from its own outbox.
 
 ### 2.3 Delivery confirmation and fold detection
 
@@ -698,8 +706,9 @@ restore path.
 A stream seat's tab is: pane (flex 1), live tail, composer. The composer is a
 textarea with these parts:
 
-- Enter sends, Shift+Enter inserts a newline, Alt+Enter is "Send after turn"
-  (§2.2), and Esc interrupts while the seat is busy.
+- Enter queues (it sends at once when the seat is idle), Shift+Enter inserts a
+  newline, and Esc interrupts while the seat is busy. There is no "send now"
+  chord (§2.2).
 - A slash menu fed by `init.slash_commands` (§5).
 - `@` file completion from the seat's cwd, using the files popover's existing
   listing.
@@ -1018,9 +1027,9 @@ to the argv.
 1. **Remote viewing (H7).** The phone and browser viewport is the same pane
    with its web-bundle gate lifted (see H7). Does that need to land before
    the default flips, or can stream stay desktop-only for a while?
-2. **The operator sending while the seat is busy.** The default is "steer"
-   (fold into the running turn, as the TTY does today), with Alt+Enter for
-   "after this turn". Do you want it the other way round?
+2. ~~The operator sending while the seat is busy.~~ Ruled 2026-09-24: one
+   queue, operator and system alike, draining on tool and turn boundaries;
+   no steer, no send-now (§2.2).
 3. **Voice.** Is OS dictation into Clodex's composer an acceptable replacement
    for the CLI's hold-to-talk, or is voice a reason to keep some seats on the
    terminal?
