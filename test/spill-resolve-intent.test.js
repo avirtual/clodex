@@ -935,7 +935,7 @@ test('t1119: the ephemeral runtime note typed as a body is bounced exactly like 
   assert.strictEqual(spilledBodyOf(`Title\n${SPILLED_BODY_EPHEMERAL}\n`), SPILLED_BODY_EPHEMERAL);
   assert.strictEqual(spillMimicBounce({ type: 'dm', target: 'bob', urgent: false, body: SPILLED_BODY_EPHEMERAL }, SPILLED_BODY_EPHEMERAL),
     '[agent] Not executed: your `dm` carried, where the body belongs, this line you did not write:\n'
-    + '`[Runtime note: Clodex filed this body in full and carries none of your long intent bodies in the transcript; every new intent still needs its complete body; never write this note.]`\n'
+    + '`[Runtime note: Clodex carries your newest long intent body in full as an example and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]`\n'
     + "That line is a runtime note, Clodex's transcript rendering of a body you wrote earlier (it replaces the text to save context). "
     + 'It is never typed by you, and nothing was saved, sent or filed.\n'
     + 'Emit the complete intent again with the body written out in full:\n'

@@ -14,7 +14,7 @@ const SNAPSHOT_MAX_BYTES = 4096;
 const SPILL_FILLER = '[Runtime note: action text omitted from retained history.]';
 const SPILLED_BODY = '[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]';
 const SPILLED_BODY_FIRST = '[Runtime note: Clodex carries your two newest long intent bodies in full as examples and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]';
-const SPILLED_BODY_EPHEMERAL = '[Runtime note: Clodex filed this body in full and carries none of your long intent bodies in the transcript; every new intent still needs its complete body; never write this note.]';
+const SPILLED_BODY_EPHEMERAL = '[Runtime note: Clodex carries your newest long intent body in full as an example and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]';
 
 const SPILL_VERBS = new Set([
   'task.add', 'task.respec', 'task.reject', 'task.done',

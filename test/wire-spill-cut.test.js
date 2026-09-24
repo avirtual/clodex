@@ -459,7 +459,7 @@ test('t1119 (a): examples: 0 expands nothing — the first stub renders SPILLED_
   assert.equal(r.cut, true);
   const texts = assistantTexts(obj);
   assert.equal(texts.length, 4, 'ENTER: all four messages reached');
-  assert.equal(texts[0], 'On A.\n[agent:task add hand] Title A\n[Runtime note: Clodex filed this body in full and carries none of your long intent bodies in the transcript; every new intent still needs its complete body; never write this note.]\n[agent:end]\n');
+  assert.equal(texts[0], 'On A.\n[agent:task add hand] Title A\n[Runtime note: Clodex carries your newest long intent body in full as an example and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]\n[agent:end]\n');
   assert.equal(texts[1], 'On B.\n[agent:task add hand] Title B\n[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]\n[agent:end]\n');
   assert.equal(texts[2], 'On C.\n[agent:task add hand] Title C\n[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]\n[agent:end]\n');
   assert.equal(texts[3], 'On D.\n[agent:task add hand] Title D\n[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]\n[agent:end]\n');
@@ -481,12 +481,12 @@ test('t1119 (b): examples: 0 short-circuits before resolveSpill — a counter on
   assert.deepStrictEqual(seen, []);
 });
 
-test('t1119 (c): examples: 1 expands exactly the newest; omitted examples is the t1118 (a) row', () => {
+test('t1131: examples: 1 expands exactly the newest; the first stand-in is SPILLED_BODY_EPHEMERAL, the next SPILLED_BODY', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [A, B, C] = filedStubs(root, ['A', 'B', 'C']);
   const obj = stubPayload([A, B, C]);
   cutSpillStubs(obj, { root, agent: 'tester', examples: 1 });
-  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A, SPILLED_BODY_FIRST), noteOf(B, SPILLED_BODY), expandedOf(C)]);
+  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A, SPILLED_BODY_EPHEMERAL), noteOf(B, SPILLED_BODY), expandedOf(C)]);
 });
 
 test('t1108 rendering: a stub between prose renders as the head, the runtime note and [agent:end] at its own position — whole string', () => {
@@ -853,6 +853,12 @@ test('t1119 grammar line with no examples: an ephemeral seat is not promised two
   assert.ok(line.startsWith('- A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Every long intent body is filed, and the transcript keeps the intent head, a bracketed runtime note, and `[agent:end]`, and the ordinary confirmation is the only thing that follows'), line);
   assert.ok(!line.includes('two newest'), 'ENTER: the examples sentence is gone');
   assert.equal(spillGrammarLine('/r'), spillGrammarLine('/r', 2), 'the default is the two-example line');
+});
+
+test('t1131 grammar line with one example: the singular sentence, no two newest', () => {
+  const line = spillGrammarLine('/r', 1);
+  assert.ok(line.startsWith('- A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Your newest long intent body stays in your transcript in full; every earlier one is filed and the transcript keeps the intent head'), line);
+  assert.ok(!line.includes('two newest'));
 });
 
 test('T13 grammar line: byte-pinned, both wirescope anchors present', () => {

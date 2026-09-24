@@ -1760,7 +1760,7 @@ function createSessionManager(deps) {
             intents,
             execCommands,
             spillArmed: spillVerbs.length > 0,
-            spillExamples: existingEntry && existingEntry.ephemeral === true ? 0 : 2,
+            spillExamples: existingEntry && existingEntry.ephemeral === true ? 1 : 2,
             // Captured at spawn, exactly like `intents` beside it — refreshPrompt
             // REPLAYS this object, so a member that re-read persistence would
             // make clear/compact stage a delta the spawn never baked. A
@@ -1800,7 +1800,7 @@ function createSessionManager(deps) {
                     root: REGISTRY_DIR,
                     verbs: spillVerbs,
                     turnInjected: () => this.sessions.get(name)?.lastSubmitInjected === true,
-                    examples: existingEntry && existingEntry.ephemeral === true ? 0 : 2,
+                    examples: existingEntry && existingEntry.ephemeral === true ? 1 : 2,
                   }
                   : null,
               });

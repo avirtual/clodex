@@ -25,9 +25,9 @@ intents typed as the stand-in, all after six stubs had accumulated with the two
 expanded ones the oldest in view.
 
 A loop-minted seat (persistence `ephemeral: true`: a ticket hand, a cold reviewer)
-is registered with `examples: 0`: nothing is expanded, no spill file is read, and
-its first stand-in is `SPILLED_BODY_EPHEMERAL`, because its long bodies come at the
-end of its life, usually the `task done` report, so expanding them teaches nothing.
+is registered with `examples: 1`: only its newest resolvable stub is expanded, and
+its first stand-in is `SPILLED_BODY_EPHEMERAL`. With zero examples, hand t1122 typed the
+stand-in as the body of its rework-round `task done`, its only prior example of that verb.
 
 Of the remaining stubs, the first rendered gets the long form
 `[Runtime note: Clodex carries your two newest long intent bodies in full as
