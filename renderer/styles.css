@@ -2074,7 +2074,6 @@ body.side-pane-dragging { cursor: col-resize; user-select: none; }
 }
 #side-pane-tabs { flex: 1; min-width: 0; display: flex; gap: 2px; overflow-x: auto; }
 #side-pane-seat { flex: none; font-size: 10px; color: var(--text-dim); white-space: nowrap; }
-#side-pane-pin:disabled { opacity: 0.4; cursor: default; }
 .side-tab {
   flex: none; display: flex; align-items: center; gap: 4px; max-width: 180px;
   padding: 2px 4px 2px 8px; border-radius: 4px; cursor: pointer;
@@ -2082,7 +2081,6 @@ body.side-pane-dragging { cursor: col-resize; user-select: none; }
 }
 .side-tab:hover { color: var(--text); }
 .side-tab.active { color: var(--text); background: var(--active-bg); border-color: var(--border); }
-.side-tab.preview .side-tab-title { font-style: italic; }
 .side-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-tab-stale { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--info); }
 .side-tab-close {
@@ -2090,6 +2088,7 @@ body.side-pane-dragging { cursor: col-resize; user-select: none; }
   color: var(--text-dim); font-size: 13px; line-height: 1;
 }
 .side-tab-close:hover { color: var(--text); }
+.side-strip[data-count="1"] .side-tab-close { display: none; }
 #side-pane-body { flex: 1; min-height: 0; position: relative; }
 .side-tab-view {
   position: absolute; inset: 0; display: flex; flex-direction: column;

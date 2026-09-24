@@ -521,11 +521,7 @@ with Back.
 | ✕ on a tab | closes it. Closing the last tab closes the pane. A dirty tab asks first (Save / Discard / Cancel). |
 | ✕ on the pane | closes the pane, and the seat's tabs are kept. The next open restores them. |
 
-**Answering the ruling's question:** opening a file from the pane **replaces
-the current preview tab**, or **focuses** its existing tab if it is already
-open. It **adds** a tab only when the operator makes it permanent. Without the
-preview rule, a few minutes of clicking through tool rows buries the one file
-the operator actually cares about.
+**Ruling (2026-09-24):** the preview/pin model is dropped; every open adds a permanent tab (or focuses the existing one), capped at 12 by the LRU rule above.
 
 **Tab kinds:**
 

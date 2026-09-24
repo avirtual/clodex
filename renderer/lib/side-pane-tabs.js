@@ -51,7 +51,7 @@ function evictOverCap(set) {
   while (tabs.length > SIDE_PANE_MAX_TABS) {
     let victim = null;
     for (const t of tabs) {
-      if (t.preview || t.dirty || t.id === set.active) continue;
+      if (t.dirty || t.id === set.active) continue;
       if (!victim || t.used < victim.used) victim = t;
     }
     if (!victim) break;
@@ -60,30 +60,32 @@ function evictOverCap(set) {
   return { ...set, tabs };
 }
 
+function stripState(set) {
+  return {
+    count: set.tabs.length,
+    activeId: set.active,
+    tabs: set.tabs.map((t) => ({
+      id: t.id, title: (t.path.split('/').pop() || t.path) + (t.deleted ? ' (deleted)' : ''), dirty: !!t.dirty,
+    })),
+  };
+}
+
 function openTab(set, a) {
   const clock = set.clock + 1;
   const existing = set.tabs.find((t) => t.id === a.id);
   if (existing) {
     const wasShowing = set.open && set.active === a.id;
-    const pinned = a.preview === false ? false : existing.preview;
     const next = patchTab({ ...set, open: true, active: a.id, clock }, a.id, {
-      preview: pinned, used: clock, line: a.line != null ? a.line : existing.line, stale: false,
+      used: clock, line: a.line != null ? a.line : existing.line, stale: false,
     });
     return { set: next, effect: existing.stale ? 'reload' : (wasShowing ? 'show' : 'revalidate') };
   }
   const tab = {
-    id: a.id, kind: a.kind || 'file', path: a.path, preview: a.preview !== false,
+    id: a.id, kind: a.kind || 'file', path: a.path, preview: false,
     view: a.view || null, line: a.line != null ? a.line : null, pushedBy: a.pushedBy || null,
     dirty: false, stale: false, banner: false, deleted: false, mtime: null, used: clock,
   };
-  let tabs;
-  const previewAt = tab.preview ? set.tabs.findIndex((t) => t.preview) : -1;
-  if (previewAt >= 0) {
-    tabs = set.tabs.slice();
-    tabs[previewAt] = tab;
-  } else {
-    tabs = set.tabs.concat(tab);
-  }
+  const tabs = set.tabs.concat(tab);
   return { set: evictOverCap({ ...set, tabs, open: true, active: tab.id, clock }), effect: 'fetch' };
 }
 
@@ -138,11 +140,7 @@ function reduceTabs(set, a) {
         effect: tab.stale ? 'reload' : 'revalidate',
       };
     }
-    case 'pin': return { set: patchTab(set, a.id, { preview: false }), effect: null };
-    case 'view': {
-      const patch = a.view === 'edit' ? { view: a.view, preview: false } : { view: a.view };
-      return { set: patchTab(set, a.id, patch), effect: null };
-    }
+    case 'view': return { set: patchTab(set, a.id, { view: a.view }), effect: null };
     case 'dirty': return { set: patchTab(set, a.id, { dirty: !!a.dirty }), effect: null };
     case 'closePane': return { set: { ...set, open: false }, effect: null };
     case 'changed': return agentChanged(set, a);
@@ -168,4 +166,5 @@ module.exports = {
   shouldKeepBuffer,
   isMissing,
   reduceTabs,
+  stripState,
 };

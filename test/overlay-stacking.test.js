@@ -110,7 +110,7 @@ test('the file peek names the seat that pushed it, and only then', () => {
   assert.match(popover, /async function openFilePeek\(name, filePath, forceTab = null, line = null, keepHistory = false, pushedBy = null\)/,
     'openFilePeek lost its pushedBy parameter — a pushed viewer can no longer say who pushed it');
   const fileTab = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'file-tab.js'), 'utf8');
-  assert.match(popover, /sidePane\.open\(name, \{ kind: 'file', path: filePath \}, \{ preview: true, line, view: forceTab, pushedBy \}\)/,
+  assert.match(popover, /sidePane\.open\(name, \{ kind: 'file', path: filePath \}, \{ line, view: forceTab, pushedBy \}\)/,
     'openFilePeek no longer hands its pusher to the side pane');
   assert.match(fileTab, /byEl\.hidden = !tab\.pushedBy;/,
     'the pushed-by label is no longer hidden when there is no pusher — an operator-opened tab would show an empty label');
