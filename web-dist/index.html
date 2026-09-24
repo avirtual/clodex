@@ -29485,7 +29485,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var PROMPT_MARK = "\u276F";
       var RECORDING_INDICATOR = /\u23fa\u0020REC(?!\w)/u;
       var PROCESSING_INDICATOR = /Voice:\s*processing/i;
-      var NO_SPEECH = /No speech detected/i;
+      var NO_SPEECH = /No speech detected/;
+      var SCREEN_RESET = "\x1B[H\x1B[2J\x1B[3J";
       function engineSettings(wireBase) {
         if (typeof wireBase !== "string" || !wireBase) throw new Error("voice engine needs a wire base");
         return { env: { ANTHROPIC_BASE_URL: `${wireBase}/anthropic` } };
@@ -29521,6 +29522,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         RECORDING_INDICATOR,
         PROCESSING_INDICATOR,
         NO_SPEECH,
+        SCREEN_RESET,
         engineSettings,
         engineArgs,
         planRecord,
@@ -30476,11 +30478,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
         };
       }
-      function readScreenRows(terminal) {
+      function readFooterRows(terminal) {
         try {
           const buf = terminal.buffer.active;
           const out = [];
-          for (let y = 0; y < terminal.rows; y++) {
+          for (let y = buf.cursorY; y < terminal.rows; y++) {
             const line = buf.getLine(buf.baseY + y);
             if (line) out.push(line.translateToString(true));
           }
@@ -30491,7 +30493,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       function engineObserved(view) {
         if (!view || !view.terminal) return null;
-        const rows = readScreenRows(view.terminal);
+        const rows = readFooterRows(view.terminal);
         if (!rows) return null;
         return { recording: recordingObserved(rows), processing: processingObserved(rows) };
       }
