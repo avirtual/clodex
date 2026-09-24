@@ -630,10 +630,11 @@ test('MIC: a tap that DECLINES does not move the microphone', () => {
   for (const [label, target, setup] of [
     ['unknown name', 'ghost', () => {}],
     ['dead seat', 'D', (m) => m.sessions.set('D', { name: 'D', agentType: 'claude', workspaceId: 'ws1', _dead: true })],
-    ['bash seat', 'S', (m) => m.sessions.set('S', { name: 'S', agentType: null, workspaceId: 'ws1' })],
+    ['off seat', 'O', (m) => m.sessions.set('O', { name: 'O', agentType: null, workspaceId: 'ws1' })],
+    ['hold seat', 'H', (m) => m.sessions.set('H', { name: 'H', agentType: 'codex', workspaceId: 'ws1' })],
     ['no window', 'X', (m) => m.sessions.set('X', { name: 'X', agentType: 'claude', workspaceId: 'ws-closed' })],
   ]) {
-    const m = mk();
+    const { m } = mkSeatModes({ O: 'off', H: 'hold' });
     const { a } = twoWindows(m);
     setup(m);
     reportFrom(m, a, 'A');
