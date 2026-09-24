@@ -377,17 +377,37 @@ function cutOnTurn(all, max) {
   return head ? [head, ...all.slice(start + 1)] : all.slice(start);
 }
 
+function echoedCommand(rec) {
+  if (rec.type !== 'user' || !rec.message) return null;
+  const name = tagBody(textOf(rec.message.content).trim(), 'command-name');
+  if (!name) return null;
+  return name.startsWith('/') ? name : `/${name}`;
+}
+
+function isTypedEcho(prompt, name) {
+  return prompt.text === name || prompt.text.startsWith(`${name} `);
+}
+
 function recordsOf(text, max = RECORD_CAP) {
   const tools = new Map();
   const all = [];
   let turn = 0;
+  let lastPromptId = null;
   for (const line of String(text).split('\n')) {
     if (!line.trim()) continue;
     let rec;
     try { rec = JSON.parse(line); } catch { continue; }
     if (!rec || typeof rec !== 'object' || rec.isSidechain) continue;
+    const echoed = echoedCommand(rec);
+    const prev = all[all.length - 1];
+    if (echoed && prev && prev.kind === 'prompt' && rec.promptId && lastPromptId === rec.promptId && isTypedEcho(prev, echoed)) {
+      all.pop();
+      turn -= 1;
+    }
     const base = { id: rec.uuid || `line:${all.length}`, kind: '', ts: tsOf(rec), turn };
-    for (const r of recordsOfLine(rec, base, tools)) {
+    const produced = recordsOfLine(rec, base, tools);
+    if (produced.length) lastPromptId = rec.promptId || null;
+    for (const r of produced) {
       if (TURN_KINDS.has(r.kind)) { turn += 1; r.turn = turn; }
       else r.turn = turn;
       all.push(r);
