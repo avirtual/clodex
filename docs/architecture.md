@@ -1532,6 +1532,9 @@ and are not, which is why the judgement worth testing is pushed down here.
   and the resolver branch behind it).
 - **gutter-scan.js** — recognize the line-number gutter the CLI prints under a
   file-editing tool call, so those numbers become clickable. Offsets only.
+- **sender-class.js** — `classifySender`: an inbound `[agent:from X]` token as
+  a transcript-pane badge (`system`, `seat`, `operator` or `peer`, a glyph and a
+  short label). Pure; no live roster is consulted, seats are recognised by shape.
 - **drop-paths.js** — the string typed at the prompt when files are dropped on a
   session: each path shell-quoted, space-joined, one trailing space.
 - **prompt-echo.js** — recolour the CLI's submitted-prompt echo on the wire,
