@@ -4835,7 +4835,7 @@ function createSessionManager(deps) {
     }
 
     async _spawnVoiceEngine(armedBy = null) {
-      const { VOICE_ENGINE_NAME, PROMPT_MARK, engineArgs } = voiceEngineSpec;
+      const { VOICE_ENGINE_NAME, PROMPT_MARK, SCREEN_RESET, engineArgs } = voiceEngineSpec;
       const t = this.voiceEngineTimings();
       if (!WIRE_SHADOW) throw new Error('the voice engine needs the in-process wire, which is off');
       const wire = await this._ensureWire();
@@ -4859,6 +4859,8 @@ function createSessionManager(deps) {
       let seen = false;
       let settle = null;
       const cap = setTimeout(() => markReady(), t.bootMaxMs);
+      const firstWin = armedBy && armedBy.workspaceId ? this.windowForWorkspace(armedBy.workspaceId) : null;
+      if (firstWin) firstWin.webContents.send('pty-data', VOICE_ENGINE_NAME, SCREEN_RESET);
       proc.onData((data) => {
         const marked = String(data).includes(PROMPT_MARK);
         if (!seen && marked) seen = true;
@@ -4938,9 +4940,10 @@ function createSessionManager(deps) {
     }
 
     async _voiceRecordNow(armedBy, action, mode, observed = null) {
+      const prior = this._voiceEngine;
       let engine;
       try { engine = await this.ensureVoiceEngine(armedBy); } catch (e) { return { ok: false, error: e.message }; }
-      const sameWindow = engine.armedBy && engine.armedBy.workspaceId === armedBy.workspaceId;
+      const sameWindow = engine === prior && engine.armedBy && engine.armedBy.workspaceId === armedBy.workspaceId;
       if (observed && typeof observed === 'object' && sameWindow) {
         const seen = observed.recording === true;
         if (seen !== engine.recording) {

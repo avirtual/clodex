@@ -75,11 +75,11 @@ function createVoiceMirror(terminal, { onDraft, onRelease = () => {}, readRows =
   };
 }
 
-function readScreenRows(terminal) {
+function readFooterRows(terminal) {
   try {
     const buf = terminal.buffer.active;
     const out = [];
-    for (let y = 0; y < terminal.rows; y++) {
+    for (let y = buf.cursorY; y < terminal.rows; y++) {
       const line = buf.getLine(buf.baseY + y);
       if (line) out.push(line.translateToString(true));
     }
@@ -89,7 +89,7 @@ function readScreenRows(terminal) {
 
 function engineObserved(view) {
   if (!view || !view.terminal) return null;
-  const rows = readScreenRows(view.terminal);
+  const rows = readFooterRows(view.terminal);
   if (!rows) return null;
   return { recording: recordingObserved(rows), processing: processingObserved(rows) };
 }

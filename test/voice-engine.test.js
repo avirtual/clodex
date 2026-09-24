@@ -287,6 +287,7 @@ function resyncFixture() {
 
 test('a lit recorder the tracked state missed is reconciled: start writes nothing and reports recording', async () => {
   const h = resyncFixture();
+  await h.tap('stop', null);
   const res = await h.tap('start', { recording: true, processing: false });
   assert.deepEqual(res, { ok: true, recording: true, engine: VOICE_ENGINE_NAME });
   assert.deepEqual(h.writes, []);
@@ -308,9 +309,34 @@ test('a recorder the CLI stopped on its own: the next toggle starts it rather th
 
 test('a tap while the recorder is still transcribing writes nothing and is refused', async () => {
   const h = resyncFixture();
+  await h.tap('stop', null);
   const res = await h.tap('start', { recording: false, processing: true });
   assert.deepEqual(res, { ok: false, error: 'the recorder is still transcribing' });
   assert.deepEqual(h.writes, []);
+  h.m.killVoiceEngine();
+});
+
+test('a tap that spawns the engine ignores the screen the window kept from a dead one', async () => {
+  const h = resyncFixture();
+  const lit = await h.tap('start', { recording: true, processing: false });
+  assert.deepEqual(lit, { ok: true, recording: true, engine: VOICE_ENGINE_NAME });
+  assert.deepEqual(h.writes, [' ']);
+  h.m.killVoiceEngine();
+  h.writes.length = 0;
+  const busy = await h.tap('start', { recording: false, processing: true });
+  assert.equal(busy.ok, true);
+  assert.deepEqual(h.writes, [' ']);
+  assert.deepEqual(h.logs, []);
+  h.m.killVoiceEngine();
+});
+
+test('a spawn clears the arming window copy of the engine screen before the first chunk', async () => {
+  const h = resyncFixture();
+  await h.tap('stop', null);
+  const data = h.got.filter((a) => a[0] === 'pty-data');
+  assert.deepEqual(data[0], ['pty-data', VOICE_ENGINE_NAME, '\x1b[H\x1b[2J\x1b[3J']);
+  assert.ok(data.length > 1);
+  assert.ok(data.slice(1).every((a) => a[2] !== data[0][2]));
   h.m.killVoiceEngine();
 });
 
