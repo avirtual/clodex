@@ -17,6 +17,8 @@
 // prints it). The CURSOR is the better evidence — it rests in the composer, not
 // in scrollback — and the alt-screen decline in the watcher covers the rest.
 
+const { RECORDING_INDICATOR, PROCESSING_INDICATOR } = require('../../voice-engine');
+
 // A fixed three-word radio sign-off. The default is the part that must not
 // misfire, and every shorter candidate collides with ordinary speech in this
 // repo: we dictate "send it", "send the message" and "message bob" constantly,
@@ -292,7 +294,7 @@ function composerHasDraftRows(rows) {
 //
 // U+23FA is the MACOS glyph; every other platform paints U+25CF. Clodex ships
 // macOS-only, so no branch is written here and this rule is dark off macos.
-const RECORDING = /\u23fa\u0020REC(?!\w)/u;
+const RECORDING = RECORDING_INDICATOR;
 
 // The CLI's PROCESSING indicator, which REPLACES the lit one rather than joining
 // it: the moment recording stops, `\u23fa REC` is gone and this is painted in its
@@ -324,7 +326,7 @@ const RECORDING = /\u23fa\u0020REC(?!\w)/u;
 // contains this text blocks the operator's own re-arm; that direction is the
 // safe one and is deliberate — excluding the composer row would blind the whole
 // footer scan, which is the only thing indicator detection reads.
-const PROCESSING = /Voice:\s*processing/i;
+const PROCESSING = PROCESSING_INDICATOR;
 
 // Whether the re-arm must stand down — the recorder is BUSY (running OR still
 // finishing), or the screen could not be read at all.

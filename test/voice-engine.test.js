@@ -270,5 +270,85 @@ test('voice:record refuses a pty seat and passes a stream seat with the box-wide
   assert.equal(bad.ok, false);
   assert.deepEqual(f.calls, []);
   await f.record('st', 'toggle');
-  assert.deepEqual(f.calls, [['st', 'toggle', { mode: 'tap', workspaceId: 'ws-1' }]]);
+  assert.deepEqual(f.calls, [['st', 'toggle', { mode: 'tap', workspaceId: 'ws-1', observed: null }]]);
+  await f.record('st', 'start', { recording: 1, processing: true, extra: 'x' });
+  assert.deepEqual(f.calls[1], ['st', 'start', { mode: 'tap', workspaceId: 'ws-1', observed: { recording: false, processing: true } }]);
+});
+
+function resyncFixture() {
+  const h = managerFixture();
+  const logs = [];
+  h.m._shadowLog = (r) => logs.push(r);
+  const got = [];
+  h.m.windows.set('ws-1', { isDestroyed: () => false, webContents: { send: (...a) => got.push(a) } });
+  const tap = (action, observed) => h.m.voiceRecord('st', action, { mode: 'tap', workspaceId: 'ws-1', observed });
+  return { ...h, logs, got, tap };
+}
+
+test('a lit recorder the tracked state missed is reconciled: start writes nothing and reports recording', async () => {
+  const h = resyncFixture();
+  await h.tap('stop', null);
+  const res = await h.tap('start', { recording: true, processing: false });
+  assert.deepEqual(res, { ok: true, recording: true, engine: VOICE_ENGINE_NAME });
+  assert.deepEqual(h.writes, []);
+  assert.deepEqual(h.logs, [{ type: 'voice-engine-resync', agent: 'st', tracked: false, observed: true }]);
+  h.m.killVoiceEngine();
+});
+
+test('a recorder the CLI stopped on its own: the next toggle starts it rather than stopping a dark one', async () => {
+  const h = resyncFixture();
+  await h.tap('start', null);
+  assert.deepEqual(h.writes, [' ']);
+  assert.equal(h.m._voiceEngine.recording, true);
+  const res = await h.tap('toggle', { recording: false, processing: false });
+  assert.deepEqual(res, { ok: true, recording: true, engine: VOICE_ENGINE_NAME });
+  assert.deepEqual(h.writes, [' ', ' ']);
+  assert.deepEqual(h.logs, [{ type: 'voice-engine-resync', agent: 'st', tracked: true, observed: false }]);
+  h.m.killVoiceEngine();
+});
+
+test('a tap while the recorder is still transcribing writes nothing and is refused', async () => {
+  const h = resyncFixture();
+  await h.tap('stop', null);
+  const res = await h.tap('start', { recording: false, processing: true });
+  assert.deepEqual(res, { ok: false, error: 'the recorder is still transcribing' });
+  assert.deepEqual(h.writes, []);
+  h.m.killVoiceEngine();
+});
+
+test('a tap that spawns the engine ignores the screen the window kept from a dead one', async () => {
+  const h = resyncFixture();
+  const lit = await h.tap('start', { recording: true, processing: false });
+  assert.deepEqual(lit, { ok: true, recording: true, engine: VOICE_ENGINE_NAME });
+  assert.deepEqual(h.writes, [' ']);
+  h.m.killVoiceEngine();
+  h.writes.length = 0;
+  const busy = await h.tap('start', { recording: false, processing: true });
+  assert.equal(busy.ok, true);
+  assert.deepEqual(h.writes, [' ']);
+  assert.deepEqual(h.logs, []);
+  h.m.killVoiceEngine();
+});
+
+test('a spawn clears the arming window copy of the engine screen before the first chunk', async () => {
+  const h = resyncFixture();
+  await h.tap('stop', null);
+  const data = h.got.filter((a) => a[0] === 'pty-data');
+  assert.deepEqual(data[0], ['pty-data', VOICE_ENGINE_NAME, '\x1b[H\x1b[2J\x1b[3J']);
+  assert.ok(data.length > 1);
+  assert.ok(data.slice(1).every((a) => a[2] !== data[0][2]));
+  h.m.killVoiceEngine();
+});
+
+test('the engine screen saying no speech ends a tracked recording and tells the arming window once', async () => {
+  const h = resyncFixture();
+  await h.tap('start', null);
+  h.got.length = 0;
+  h.spawns[0].data('No speech detected');
+  assert.equal(h.m._voiceEngine.recording, false);
+  assert.deepEqual(h.got.filter((a) => a[0] !== 'pty-data'), [['voice-engine-stopped', 'st']]);
+  h.spawns[0].data('No speech detected');
+  h.spawns[0].data('Voice: processing');
+  assert.deepEqual(h.got.filter((a) => a[0] !== 'pty-data'), [['voice-engine-stopped', 'st']]);
+  h.m.killVoiceEngine();
 });

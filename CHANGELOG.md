@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Stream voice: a tap now reads the engine's own recorder indicator first, so a recording the CLI ended on its own (silence timeout) no longer leaves every later tap out of phase and the stream seat silent.
 - Wire spill cut: an expanded intent body now stays expanded across a Clodex restart; the sticky set is persisted per agent and reset only at a real cold boundary (session change, compact, or 60 minutes idle).
 - Stream transport is a seat property: a template can set it, ticket seats spawn with it, Edit Session can switch a seat and Restart applies it; a stream seat now receives its team roster and open tickets at boot, whether minted for the ticket or brought back by a restart or relaunch.
 - Stream seats: `[agent:context compact]` now ends on the stream's own compact boundary instead of timing out, and the transcript pane follows the seat across a `/clear`.

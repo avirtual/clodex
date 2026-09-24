@@ -29470,9 +29470,71 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // voice-engine.js
+  var require_voice_engine = __commonJS({
+    "voice-engine.js"(exports, module) {
+      "use strict";
+      var VOICE_ENGINE_NAME = "clodex-voice-engine";
+      var RECORD_KEY = " ";
+      var HOLD_REPEAT_MS = 30;
+      var HOLD_MAX_MS = 12e4;
+      var BOOT_SETTLE_MS = 600;
+      var BOOT_MAX_MS = 2e4;
+      var REPAINT_MAX_MS = 1500;
+      var RECORD_ACTIONS = ["start", "stop", "toggle"];
+      var PROMPT_MARK = "\u276F";
+      var RECORDING_INDICATOR = /\u23fa\u0020REC(?!\w)/u;
+      var PROCESSING_INDICATOR = /Voice:\s*processing/i;
+      var NO_SPEECH = /No speech detected/;
+      var SCREEN_RESET = "\x1B[H\x1B[2J\x1B[3J";
+      function engineSettings(wireBase) {
+        if (typeof wireBase !== "string" || !wireBase) throw new Error("voice engine needs a wire base");
+        return { env: { ANTHROPIC_BASE_URL: `${wireBase}/anthropic` } };
+      }
+      function engineArgs(wireBase) {
+        return ["--settings", JSON.stringify(engineSettings(wireBase))];
+      }
+      function planRecord({ mode, action, recording } = {}) {
+        if (!RECORD_ACTIONS.includes(action)) return null;
+        if (mode !== "tap" && mode !== "hold") return null;
+        const was = recording === true;
+        const want = action === "toggle" ? !was : action === "start";
+        if (mode === "tap") {
+          const write = action === "toggle" || want !== was;
+          return { write, hold: null, recording: want };
+        }
+        return { write: false, hold: want ? "start" : "stop", recording: want };
+      }
+      function recorderSelfStopped(chunk) {
+        const text = String(chunk);
+        return PROCESSING_INDICATOR.test(text) || NO_SPEECH.test(text);
+      }
+      module.exports = {
+        VOICE_ENGINE_NAME,
+        RECORD_KEY,
+        HOLD_REPEAT_MS,
+        HOLD_MAX_MS,
+        BOOT_SETTLE_MS,
+        BOOT_MAX_MS,
+        REPAINT_MAX_MS,
+        RECORD_ACTIONS,
+        PROMPT_MARK,
+        RECORDING_INDICATOR,
+        PROCESSING_INDICATOR,
+        NO_SPEECH,
+        SCREEN_RESET,
+        engineSettings,
+        engineArgs,
+        planRecord,
+        recorderSelfStopped
+      };
+    }
+  });
+
   // renderer/lib/voice-submit.js
   var require_voice_submit = __commonJS({
     "renderer/lib/voice-submit.js"(exports, module) {
+      var { RECORDING_INDICATOR, PROCESSING_INDICATOR } = require_voice_engine();
       var DEFAULT_SUBMIT_PHRASE = "over and out";
       var EDGE_PUNCT = /^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu;
       var CONFUSABLES = /* @__PURE__ */ new Map([
@@ -29549,8 +29611,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         return false;
       }
-      var RECORDING = /\u23fa\u0020REC(?!\w)/u;
-      var PROCESSING = /Voice:\s*processing/i;
+      var RECORDING = RECORDING_INDICATOR;
+      var PROCESSING = PROCESSING_INDICATOR;
       function recorderBlocksRearm(rows) {
         if (!Array.isArray(rows)) return true;
         return rows.some((row) => typeof row === "string" && (RECORDING.test(row) || PROCESSING.test(row)));
@@ -30333,7 +30395,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
     "renderer/voice-mirror.js"(exports, module) {
       "use strict";
       var { readRowsToCursor } = require_cursor_row();
-      var { composerHasDraft, composerIsEmpty, composerContinues } = require_voice_submit();
+      var { composerHasDraft, composerIsEmpty, composerContinues, recordingObserved, processingObserved } = require_voice_submit();
       var HEAD = /^[❯>][  ]/u;
       var TAIL_JUNK = /[\s\u2581-\u2588]+$/u;
       function draftFromRows(rows) {
@@ -30416,7 +30478,26 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
         };
       }
-      module.exports = { createVoiceMirror, draftFromRows };
+      function readFooterRows(terminal) {
+        try {
+          const buf = terminal.buffer.active;
+          const out = [];
+          for (let y = buf.cursorY; y < terminal.rows; y++) {
+            const line = buf.getLine(buf.baseY + y);
+            if (line) out.push(line.translateToString(true));
+          }
+          return out;
+        } catch {
+          return null;
+        }
+      }
+      function engineObserved(view) {
+        if (!view || !view.terminal) return null;
+        const rows = readFooterRows(view.terminal);
+        if (!rows) return null;
+        return { recording: recordingObserved(rows), processing: processingObserved(rows) };
+      }
+      module.exports = { createVoiceMirror, draftFromRows, engineObserved };
     }
   });
 
@@ -30623,54 +30704,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
         };
       }
       module.exports = { applyDraft, createComposerTrigger, attachTriggerSubmit };
-    }
-  });
-
-  // voice-engine.js
-  var require_voice_engine = __commonJS({
-    "voice-engine.js"(exports, module) {
-      "use strict";
-      var VOICE_ENGINE_NAME = "clodex-voice-engine";
-      var RECORD_KEY = " ";
-      var HOLD_REPEAT_MS = 30;
-      var HOLD_MAX_MS = 12e4;
-      var BOOT_SETTLE_MS = 600;
-      var BOOT_MAX_MS = 2e4;
-      var REPAINT_MAX_MS = 1500;
-      var RECORD_ACTIONS = ["start", "stop", "toggle"];
-      var PROMPT_MARK = "\u276F";
-      function engineSettings(wireBase) {
-        if (typeof wireBase !== "string" || !wireBase) throw new Error("voice engine needs a wire base");
-        return { env: { ANTHROPIC_BASE_URL: `${wireBase}/anthropic` } };
-      }
-      function engineArgs(wireBase) {
-        return ["--settings", JSON.stringify(engineSettings(wireBase))];
-      }
-      function planRecord({ mode, action, recording } = {}) {
-        if (!RECORD_ACTIONS.includes(action)) return null;
-        if (mode !== "tap" && mode !== "hold") return null;
-        const was = recording === true;
-        const want = action === "toggle" ? !was : action === "start";
-        if (mode === "tap") {
-          const write = action === "toggle" || want !== was;
-          return { write, hold: null, recording: want };
-        }
-        return { write: false, hold: want ? "start" : "stop", recording: want };
-      }
-      module.exports = {
-        VOICE_ENGINE_NAME,
-        RECORD_KEY,
-        HOLD_REPEAT_MS,
-        HOLD_MAX_MS,
-        BOOT_SETTLE_MS,
-        BOOT_MAX_MS,
-        REPAINT_MAX_MS,
-        RECORD_ACTIONS,
-        PROMPT_MARK,
-        engineSettings,
-        engineArgs,
-        planRecord
-      };
     }
   });
 
@@ -44970,7 +45003,7 @@ ${detail}` });
       var { createTermSearch } = require_term_search();
       var { createIntentHighlight } = require_intent_highlight();
       var { createVoiceSubmitWatcher, QUIET_MS: VOICE_QUIET_MS, VOICE_RELEASE_MS } = require_voice_submit_watcher();
-      var { createVoiceMirror } = require_voice_mirror();
+      var { createVoiceMirror, engineObserved } = require_voice_mirror();
       var { attachTriggerSubmit } = require_composer_voice();
       var { VOICE_ENGINE_NAME } = require_voice_engine();
       var {
@@ -48272,10 +48305,11 @@ ${detail}` });
       async function streamVoiceRecord(name, action) {
         const entry = sessions.get(name);
         if (!entry || !entry.stream) return;
+        const observed = engineObserved(voiceEngineView);
         const view = voiceEngine();
         let res = null;
         try {
-          res = await window.api.voiceRecord(name, action);
+          res = await window.api.voiceRecord(name, action, observed);
         } catch (e) {
           res = { ok: false, error: e && e.message ? e.message : String(e) };
         }

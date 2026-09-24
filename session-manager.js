@@ -4835,7 +4835,7 @@ function createSessionManager(deps) {
     }
 
     async _spawnVoiceEngine(armedBy = null) {
-      const { VOICE_ENGINE_NAME, PROMPT_MARK, engineArgs } = voiceEngineSpec;
+      const { VOICE_ENGINE_NAME, PROMPT_MARK, SCREEN_RESET, engineArgs } = voiceEngineSpec;
       const t = this.voiceEngineTimings();
       if (!WIRE_SHADOW) throw new Error('the voice engine needs the in-process wire, which is off');
       const wire = await this._ensureWire();
@@ -4859,6 +4859,8 @@ function createSessionManager(deps) {
       let seen = false;
       let settle = null;
       const cap = setTimeout(() => markReady(), t.bootMaxMs);
+      const firstWin = armedBy && armedBy.workspaceId ? this.windowForWorkspace(armedBy.workspaceId) : null;
+      if (firstWin) firstWin.webContents.send('pty-data', VOICE_ENGINE_NAME, SCREEN_RESET);
       proc.onData((data) => {
         const marked = String(data).includes(PROMPT_MARK);
         if (!seen && marked) seen = true;
@@ -4869,6 +4871,7 @@ function createSessionManager(deps) {
         const ws = engine.armedBy && engine.armedBy.workspaceId;
         const win = ws ? this.windowForWorkspace(ws) : null;
         if (win) win.webContents.send('pty-data', VOICE_ENGINE_NAME, data);
+        if (engine.recording && voiceEngineSpec.recorderSelfStopped(data)) this._endVoiceHoldAtCap(engine);
         if (marked) for (const wake of engine.promptWaiters.splice(0)) wake();
       });
       proc.onExit(() => {
@@ -4925,20 +4928,30 @@ function createSessionManager(deps) {
       if (win) win.webContents.send('voice-engine-stopped', armedBy.name);
     }
 
-    async voiceRecord(name, action, { mode = null, workspaceId = null } = {}) {
+    async voiceRecord(name, action, { mode = null, workspaceId = null, observed = null } = {}) {
       const s = this.sessions.get(name);
       if (!s || s._dead || s.io !== 'stream') return { ok: false, error: 'voice:record is for a stream seat' };
       if (!voiceEngineSpec.planRecord({ mode, action, recording: false })) return { ok: false, error: `cannot record in voice mode ${mode || 'unknown'}` };
       const armedBy = { name, workspaceId: workspaceId || s.workspaceId || null };
-      const run = () => this._voiceRecordNow(armedBy, action, mode);
+      const run = () => this._voiceRecordNow(armedBy, action, mode, observed);
       const op = this._voiceOp.then(run, run);
       this._voiceOp = op.catch(() => {});
       return op;
     }
 
-    async _voiceRecordNow(armedBy, action, mode) {
+    async _voiceRecordNow(armedBy, action, mode, observed = null) {
+      const prior = this._voiceEngine;
       let engine;
       try { engine = await this.ensureVoiceEngine(armedBy); } catch (e) { return { ok: false, error: e.message }; }
+      const sameWindow = engine === prior && engine.armedBy && engine.armedBy.workspaceId === armedBy.workspaceId;
+      if (observed && typeof observed === 'object' && sameWindow) {
+        const seen = observed.recording === true;
+        if (seen !== engine.recording) {
+          this._shadowLog({ type: 'voice-engine-resync', agent: armedBy.name, tracked: engine.recording, observed: seen });
+        }
+        engine.recording = seen;
+        if (observed.processing === true && action !== 'stop') return { ok: false, error: 'the recorder is still transcribing' };
+      }
       const plan = voiceEngineSpec.planRecord({ mode, action, recording: engine.recording });
       const { RECORD_KEY } = voiceEngineSpec;
       const t = this.voiceEngineTimings();

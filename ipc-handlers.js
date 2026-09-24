@@ -2404,14 +2404,17 @@ function registerIpcHandlers(deps) {
     return manager.seatSend(s.name, typeof text === 'string' ? text : '', checked.images);
   });
 
-  handle('voice:record', (e, name, action) => {
+  handle('voice:record', (e, name, action, observed = null) => {
     const s = manager.sessions.get(String(name || ''));
     if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };
     if (s.io !== 'stream') return { ok: false, error: 'voice:record is for a stream seat; a terminal seat records in its own terminal' };
     if (!['start', 'stop', 'toggle'].includes(action)) return { ok: false, error: 'action must be start, stop or toggle' };
     let mode = null;
     try { mode = readVoiceMode().effective; } catch { mode = null; }
-    return manager.voiceRecord(s.name, action, { mode, workspaceId: s.workspaceId });
+    const seen = observed && typeof observed === 'object'
+      ? { recording: observed.recording === true, processing: observed.processing === true }
+      : null;
+    return manager.voiceRecord(s.name, action, { mode, workspaceId: s.workspaceId, observed: seen });
   });
 
   // The renderer knows a submit is voice-originated (it watched the composition
