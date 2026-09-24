@@ -540,6 +540,13 @@ deliveries, reminders, exec results, continuations (`_deliverMessage` /
 `_injectText`, origin `system`). An idle seat takes the item at once as its own
 stdin message.
 
+- **Hints:** a composer send arms contextual and selection hints like a PTY
+  Enter (`_armSubmit`: final draft arm, submit, selection submit), and the
+  composer's typing pause pre-arms through `seat:draft` (`seatDraft`). While
+  the arm holds (`holding`, or a final rank still landing, capped at
+  `STREAM_ARM_WAIT_MS`), an idle seat parks new items in the outbox instead of
+  writing stdin, bounded by the hint hold cap.
+
 - **Ordering:** operator items go to the head of the outbox, behind earlier
   operator items; system items append. That is the operator's only privilege —
   there is no send-now and no steer.

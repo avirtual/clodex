@@ -15,7 +15,7 @@
 // edited-away draft keeps serving the winner it no longer describes.
 //
 // ARMING MAY NEVER AFFECT THE KEYSTROKE. Every entry point here is fire and
-// forget: no caller awaits, a proxy failure is logged at debug and swallowed.
+// forget: a proxy failure is logged at debug and swallowed.
 // The user's byte reaches the PTY whether or not wirescope is even running.
 
 const { draftChunkSignal } = require('./proxy-util');
@@ -475,7 +475,7 @@ function createHintArm({
     try {
       p = armHints({ base, route, id: HINT_ID, text, ttl_s: TTL_S, turn_start_only: true, once: true });
     } catch (e) { st.lastIds = null; debug(`arm threw for ${route}: ${e.message}`); return; }
-    Promise.resolve(p).then((res) => {
+    return Promise.resolve(p).then((res) => {
       // Recorded on a successful POST, not on the rank: a unit the proxy never
       // accepted has not been offered, and burning its cooldown would suppress
       // the retry the failure exists to allow.
@@ -519,7 +519,7 @@ function createHintArm({
       // process on a daemon hiccup.
       const go = (preArm) => Promise.resolve(fire(key, draft, ctx, { preArm }))
         .catch((e) => debug(`fire failed: ${e && e.message}`));
-      if (final) { go(false); return; }
+      if (final) return go(false);
       const st = stateFor(key);
       // Held from the TIMER, not from the rank it starts: by the time the pause
       // elapses the operator has stopped typing, so the inject queue's own

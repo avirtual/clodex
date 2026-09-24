@@ -1503,6 +1503,8 @@ function filePathFromUri(uri) {
   try { return decodeURIComponent(new URL(uri).pathname) || null; } catch { return null; }
 }
 
+const SEAT_DRAFT_DEBOUNCE_MS = 300;
+
 function createStreamSeatPane(name, wrapperEl) {
   wrapperEl.classList.add('stream-seat');
   const paneEl = document.createElement('div');
@@ -1634,10 +1636,21 @@ function createStreamSeatPane(name, wrapperEl) {
   transcriptChangedSubs.add(onChanged);
   const timer = setInterval(pull, TRANSCRIPT_PULL_MS);
   pull(true);
+  let draftTimer = null;
+  const onComposerInput = () => {
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => {
+      draftTimer = null;
+      if (!disposed) window.api.seatDraft(name, composer.value);
+    }, SEAT_DRAFT_DEBOUNCE_MS);
+  };
+  composer.addEventListener('input', onComposerInput);
   const sendComposer = () => {
     const text = composer.value;
     const images = pending;
     if (!text.trim() && !images.length) return;
+    clearTimeout(draftTimer);
+    draftTimer = null;
     composer.value = '';
     triggerSubmit.resetSpan();
     pending = [];
@@ -1696,6 +1709,8 @@ function createStreamSeatPane(name, wrapperEl) {
       disposed = true;
       triggerSubmit.dispose();
       clearInterval(timer);
+      clearTimeout(draftTimer);
+      composer.removeEventListener('input', onComposerInput);
       transcriptChangedSubs.delete(onChanged);
       paneEl.removeEventListener('scroll', onScroll);
     },

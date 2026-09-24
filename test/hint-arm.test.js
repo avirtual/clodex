@@ -565,6 +565,29 @@ test('arm: a draft submitted inside the debounce still arms on Enter', async () 
   assert.strictEqual(h.posts.length, 1, 'Enter must arm a draft the debounce never reached');
 });
 
+test('arm: a final pass returns a promise that settles only once the hint POST has landed', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const posts = [];
+  const arm = createHintArm({
+    retriever: createMemoryRetriever({ listUnits: (agent) => slow.store.list(agent) }),
+    compose,
+    terms,
+    loadState: () => 'absent',
+    armHints: (p) => { posts.push(p); return gate.then(() => ({ status: 200 })); },
+    clearHints: () => Promise.resolve({ status: 200 }),
+  });
+  let landed = false;
+  const p = arm.onDraft('s', DRAFT, CTX, { final: true });
+  assert.ok(p && typeof p.then === 'function', 'final must hand back something to wait on');
+  p.then(() => { landed = true; });
+  await settle();
+  assert.deepStrictEqual({ posts: posts.length, landed }, { posts: 1, landed: false });
+  release();
+  await settle();
+  assert.strictEqual(landed, true);
+});
+
 // Precision is the open question for this feature, and it cannot be answered
 // from a log that records only WHICH unit won. Two arms observed in production
 // on 2026-08-01 both looked wrong and neither could be diagnosed, because the

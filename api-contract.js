@@ -142,6 +142,7 @@ const API_CONTRACT = [
   { name: 'onTranscriptChanged', kind: 'on', channel: 'transcript-changed' },
   { name: 'writeToSession', kind: 'send', channel: 'pty-input' },
   { name: 'seatSend', kind: 'invoke', channel: 'seat:send' },
+  { name: 'seatDraft', kind: 'send', channel: 'seat:draft' },
   { name: 'selectDirectory', kind: 'invoke', channel: 'dialog:selectDirectory' },
   { name: 'confirmKill', kind: 'invoke', channel: 'dialog:confirmKill' },
   { name: 'restoreSessions', kind: 'invoke', channel: 'app:restore-sessions' },

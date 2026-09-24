@@ -203,7 +203,7 @@ function spillAckLine(ev, filePath) {
 }
 const { previewLine } = require('./body-preview');
 const { createMemoryLoad } = require('./memory-load');
-const { foldDraft } = require('./hint-arm');
+const { foldDraft, HOLD_MAX_MS: HINT_HOLD_MAX_MS } = require('./hint-arm');
 const { didGrow, parsePsRows, descendantPids } = require('./stall-evidence');
 const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
@@ -223,6 +223,8 @@ const { liveSnapshotFor, archivedSnapshotFor, stampConfigFlags } = require('./se
 const { COMPACTING_VALVE_MS, COMPACT_NOTICE_CAP, noticeTextFor } = require('./compact-notices');
 const STREAM_TOOL_DRAIN_MIN_MS = 2000;
 const STREAM_RESULT_HOLD_MS = 400;
+const STREAM_ARM_WAIT_MS = 1000;
+const STREAM_HINT_POLL_MS = 50;
 const PENDING_DRAIN_KEY = '\0pending-drain';
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
@@ -2842,14 +2844,59 @@ function createSessionManager(deps) {
       const imgs = Array.isArray(images) ? images : [];
       if (!body.trim() && !imgs.length) return { ok: false, error: 'empty message' };
       this._lastOperatorInputAt = Date.now();
+      const landed = this._armSubmit(s, body);
+      if (landed && typeof landed.then === 'function') {
+        const wait = { until: Date.now() + STREAM_ARM_WAIT_MS };
+        s._armWait = wait;
+        Promise.resolve(landed).finally(() => {
+          if (s._armWait !== wait) return;
+          s._armWait = null;
+          this._streamReleaseHeld(s);
+        });
+      }
       return { ok: true, queued: this._streamEnqueue(s, { text: body, images: imgs, origin: 'operator' }) };
+    }
+
+    seatDraft(name, text) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead || s.io !== 'stream') return;
+      const draft = String(text == null ? '' : text);
+      try {
+        if (!draft.trim()) arm.disarm(s.name, this._armCtx(s));
+        else arm.onDraft(s.name, draft, this._armCtx(s));
+      } catch (e) { log.debug('hint', `seat draft arm failed for ${s.name}: ${e.message}`); }
+    }
+
+    _streamHintHeld(s) {
+      const now = Date.now();
+      if (now - (s._streamHeldSince || now) >= HINT_HOLD_MAX_MS) return false;
+      if (s._armWait && now < s._armWait.until) return true;
+      try { return !!arm.holding(s.name); } catch { return false; }
+    }
+
+    _streamReleaseHeld(s) {
+      if (s._dead || s.streamBusy || !s.outbox.length) { s._streamHeldSince = 0; return; }
+      if (this._streamHintHeld(s)) { this._streamHoldPoll(s); return; }
+      s._streamHeldSince = 0;
+      this._streamTurnEnd(s);
+    }
+
+    _streamHoldPoll(s) {
+      if (!s._streamHeldSince) s._streamHeldSince = Date.now();
+      if (s._streamHoldTimer) return;
+      s._streamHoldTimer = setTimeout(() => {
+        s._streamHoldTimer = null;
+        this._streamReleaseHeld(s);
+      }, STREAM_HINT_POLL_MS);
+      if (typeof s._streamHoldTimer.unref === 'function') s._streamHoldTimer.unref();
     }
 
     _streamEnqueue(s, item, onSend = null, produce = null, parkKey = null) {
       if (onSend) Object.defineProperty(item, 'onSend', { value: onSend, enumerable: false });
       if (produce) Object.defineProperty(item, 'produce', { value: produce, enumerable: false });
       if (parkKey) Object.defineProperty(item, 'parkKey', { value: parkKey, enumerable: false });
-      if (!s.streamBusy) {
+      const held = !s.streamBusy && this._streamHintHeld(s);
+      if (!s.streamBusy && !held) {
         const payload = this._streamJoin([item]);
         if (!payload.text.trim() && !payload.images.length) return 0;
         this._streamDeliver(s, payload);
@@ -2866,6 +2913,7 @@ function createSessionManager(deps) {
       } else {
         s.outbox.push(item);
       }
+      if (held) this._streamHoldPoll(s);
       this._streamOutboxChanged(s);
       return s.outbox.length;
     }
@@ -3070,29 +3118,36 @@ function createSessionManager(deps) {
         const key = s.name;
         if (r.cleared) { arm.disarm(key, this._armCtx(s)); return; }
         if (r.closes) {
-          // The final pass runs BEFORE the reset, on the draft the user actually
-          // submitted — after the reset there is nothing left to rank.
-          arm.onDraft(key, s._draft, this._armCtx(s),
-            { final: true, overflow: r.overflow, desync: r.desync });
+          const submitted = s._draft;
           s._draft = '';
           s._draftState = null;
-          arm.onSubmit(key);
-          // The CLI's hook drains the attachment queue on this same submit, so
-          // the pending list has served its purpose. Holding it longer would
-          // suppress a peek for text the transcript now carries anyway — once
-          // it is IN the conversation, re-selecting it is an ordinary selection
-          // about an ordinary part of the context.
-          //
-          // The renderer is told because its status line claims a delivery that
-          // had not happened yet; this is the event that makes the claim true
-          // and then retires it.
-          try {
-            if (selectionArm.onSubmit(key)) this._sendToSession(key, 'selection-sent', key);
-          } catch {}
+          this._armSubmit(s, submitted, r);
           return;
         }
         arm.onDraft(key, s._draft, this._armCtx(s), { overflow: r.overflow, desync: r.desync });
       } catch (e) { log.debug('hint', `draft fold failed for ${s.name}: ${e.message}`); }
+    }
+
+    _armSubmit(s, draft, { overflow = false, desync = false } = {}) {
+      const key = s.name;
+      let landed;
+      try {
+        landed = arm.onDraft(key, draft, this._armCtx(s), { final: true, overflow, desync });
+        arm.onSubmit(key);
+      } catch (e) { log.debug('hint', `submit arm failed for ${key}: ${e.message}`); }
+      // The CLI's hook drains the attachment queue on this same submit, so
+      // the pending list has served its purpose. Holding it longer would
+      // suppress a peek for text the transcript now carries anyway — once
+      // it is IN the conversation, re-selecting it is an ordinary selection
+      // about an ordinary part of the context.
+      //
+      // The renderer is told because its status line claims a delivery that
+      // had not happened yet; this is the event that makes the claim true
+      // and then retires it.
+      try {
+        if (selectionArm.onSubmit(key)) this._sendToSession(key, 'selection-sent', key);
+      } catch {}
+      return landed;
     }
 
     // The EXACT route when we have it, a glob only as a fallback. A glob is
