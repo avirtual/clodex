@@ -21,7 +21,7 @@ const path = require('path');
 const HTML = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
 
 // Overlays that cover the viewport and must sit above every drawer.
-const ROOT_OVERLAYS = ['file-peek-overlay', 'report-overlay'];
+const ROOT_OVERLAYS = ['report-overlay'];
 
 // Walk the tag stack with a regex scanner: no DOM dependency, and it only has
 // to answer "which element ids enclose this id", not build a real tree.
@@ -94,7 +94,6 @@ test('the init sites this ordering protects still query at module scope', () => 
   // test above would be guarding nothing while still passing.
   const sites = [
     ['popovers/report-panel.js', 'report-overlay'],
-    ['popovers/files-popover.js', 'file-peek-overlay'],
   ];
   for (const [rel, id] of sites) {
     const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', rel), 'utf8');
@@ -110,14 +109,15 @@ test('the file peek names the seat that pushed it, and only then', () => {
     'ENTER: files-popover.js no longer declares openFilePeek — the pins below match nothing and would pass by vacuity');
   assert.match(popover, /async function openFilePeek\(name, filePath, forceTab = null, line = null, keepHistory = false, pushedBy = null\)/,
     'openFilePeek lost its pushedBy parameter — a pushed viewer can no longer say who pushed it');
-  assert.match(popover, /filePeekBy\.hidden = !pushedBy;/,
-    'the #file-peek-by span is no longer hidden when there is no pusher — an operator-opened viewer would show an empty label');
+  const fileTab = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'file-tab.js'), 'utf8');
+  assert.match(popover, /sidePane\.open\(name, \{ kind: 'file', path: filePath \}, \{ preview: true, line, view: forceTab, pushedBy \}\)/,
+    'openFilePeek no longer hands its pusher to the side pane');
+  assert.match(fileTab, /byEl\.hidden = !tab\.pushedBy;/,
+    'the pushed-by label is no longer hidden when there is no pusher — an operator-opened tab would show an empty label');
   assert.match(popover, /onSessionFileView\(\(name, filePath\) => \{ openFilePeek\(name, filePath, null, null, false, name\); \}\)/,
     'the [agent:file view] listener no longer passes the sending session as the pusher');
   assert.match(peers, /openFilePeek\(key, args\.path, null, null, false, key\)/,
     'the peer fileView mirror no longer passes its name@peer key as the pusher');
-  assert.match(HTML, /<span id="file-peek-by" hidden><\/span>/,
-    '#file-peek-by is gone from the peek title bar — the label has nowhere to render');
 });
 
 test('#main still creates the stacking context this test guards against', () => {

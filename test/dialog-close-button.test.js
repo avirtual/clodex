@@ -340,8 +340,8 @@ function chainFor(selector) {
     : { tag: 'div', id: null, classes: [selector.slice(1)], attrs: {} }];
 }
 
-test('the file peek, report and tool overlay panels wear the shared neutral chrome', () => {
-  const surfaces = ['#file-peek-modal', '#report-modal', '.tool-overlay-panel'];
+test('the report and tool overlay panels wear the shared neutral chrome', () => {
+  const surfaces = ['#report-modal', '.tool-overlay-panel'];
   const selectors = new Set(parseRules(cssSrc)
     .flatMap((r) => r.selector.split(',').map((s) => s.trim())));
   for (const sel of surfaces) {

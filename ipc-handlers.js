@@ -1213,6 +1213,7 @@ function registerIpcHandlers(deps) {
       terminalWebgl: s.terminalWebgl,
       transcriptPane: s.transcriptPane,
       sidebarWidth: s.sidebarWidth,
+      sidePaneWidth: s.sidePaneWidth,
       remoteEnabled: s.remoteEnabled,
       remotePort: s.remotePort,
       remoteBasePath: s.remoteBasePath,

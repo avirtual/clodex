@@ -112,6 +112,7 @@ const DEFAULT_UI_SETTINGS = {
   terminalWebgl: false,
   transcriptPane: false,
   sidebarWidth: 220,
+  sidePaneWidth: null,
   remoteEnabled: false,
   remotePort: 7900,
   remoteBasePath: '',
@@ -139,6 +140,10 @@ const DEFAULT_UI_SETTINGS = {
 // singleton or one of its nested arrays lets one caller's edit become the
 // process-wide default for every later read — including reads by code that never
 // touched settings. Pure JSON data, so the round-trip is the whole clone.
+function sanitizeSidePaneWidth(px) {
+  return Number.isInteger(px) && px >= 320 && px <= 10000 ? px : null;
+}
+
 function defaultUiSettings() { return JSON.parse(JSON.stringify(DEFAULT_UI_SETTINGS)); }
 
 // Shape-only, by design (see DEFAULT_UI_SETTINGS.plugins). Anything that isn't
@@ -1470,6 +1475,7 @@ function initStores(userDataPath, {
           terminalWebgl: raw?.terminalWebgl === true,
           transcriptPane: raw?.transcriptPane === true,
           sidebarWidth: clampSidebarWidth(raw?.sidebarWidth),
+          sidePaneWidth: sanitizeSidePaneWidth(raw?.sidePaneWidth),
           remoteEnabled: typeof raw?.remoteEnabled === 'boolean' ? raw.remoteEnabled : DEFAULT_UI_SETTINGS.remoteEnabled,
           remotePort: Number.isInteger(raw?.remotePort) ? raw.remotePort : DEFAULT_UI_SETTINGS.remotePort,
           remoteBasePath: coerceRemoteBasePath(raw?.remoteBasePath) ?? DEFAULT_UI_SETTINGS.remoteBasePath,
@@ -1566,6 +1572,7 @@ function initStores(userDataPath, {
         terminalWebgl: typeof partial?.terminalWebgl === 'boolean' ? partial.terminalWebgl : cur.terminalWebgl,
         transcriptPane: typeof partial?.transcriptPane === 'boolean' ? partial.transcriptPane : cur.transcriptPane,
         sidebarWidth: clampSidebarWidth(partial?.sidebarWidth ?? cur.sidebarWidth),
+        sidePaneWidth: (partial && 'sidePaneWidth' in partial) ? sanitizeSidePaneWidth(partial.sidePaneWidth) : cur.sidePaneWidth,
         remoteEnabled: partial?.remoteEnabled ?? cur.remoteEnabled,
         remotePort: Number.isInteger(partial?.remotePort) ? partial.remotePort : cur.remotePort,
         remoteBasePath: (partial && 'remoteBasePath' in partial)

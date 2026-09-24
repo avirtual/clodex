@@ -1188,26 +1188,33 @@ html, body {
   color: var(--text);
 }
 
-#terminal-container {
+#work-row {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   bottom: var(--drawer-collapsed-h);
   transition: bottom 0.2s ease;
+  display: flex;
 }
 
-#main.drawer-expanded #terminal-container {
+#terminal-container {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+#main.drawer-expanded #work-row {
   bottom: var(--drawer-h);
 }
 
 /* When the proxy status bar is shown, reserve a strip above the drawer. The
    24px is #proxy-bar's own height below, the one offset here that is not the
    drawer's. */
-#main.has-proxy-bar #terminal-container {
+#main.has-proxy-bar #work-row {
   bottom: calc(var(--drawer-collapsed-h) + 24px);
 }
-#main.has-proxy-bar.drawer-expanded #terminal-container {
+#main.has-proxy-bar.drawer-expanded #work-row {
   bottom: calc(var(--drawer-h) + 24px);
 }
 
@@ -1215,10 +1222,10 @@ html, body {
    the terminal's bottom and the proxy bar are positioned independently of the
    drawer's own height, so a height change that skips them leaves the terminal
    painting underneath the drawer. */
-#main.drawer-tall #terminal-container {
+#main.drawer-tall #work-row {
   bottom: var(--drawer-tall-h);
 }
-#main.has-proxy-bar.drawer-tall #terminal-container {
+#main.has-proxy-bar.drawer-tall #work-row {
   bottom: calc(var(--drawer-tall-h) + 24px);
 }
 
@@ -2047,23 +2054,62 @@ html, body {
   100% { box-shadow: 0 0 0 7px transparent; }
 }
 
-/* File peek — read-only Diff/File viewer, report-modal shell. */
-#file-peek-overlay {
-  position: fixed; inset: 0; z-index: 70;
-  display: flex; align-items: flex-start; justify-content: center;
-  padding: 5vh 16px; background: rgba(0, 0, 0, 0.55);
+#side-pane {
+  flex: none; display: flex; flex-direction: column; min-width: 0;
+  background: var(--bg); border-left: 1px solid var(--border);
 }
-#file-peek-overlay.hidden { display: none; }
-#file-peek-modal {
-  width: 860px; max-width: 100%; max-height: 90vh; overflow: hidden;
-  display: flex; flex-direction: column;
-  background: var(--surface-overlay); border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg); padding: 12px 16px 16px;
-  box-shadow: var(--shadow-overlay);
+#side-pane.side-pane-closed, #side-pane-handle.side-pane-closed { display: none; }
+#side-pane.side-pane-sheet {
+  position: fixed; inset: 0; z-index: 60; width: auto !important;
+  border-left: 0;
 }
-#file-peek-modal .popover-title { flex: none; }
-#file-peek-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; min-width: 0; }
-#file-peek-by { flex: none; white-space: nowrap; font-weight: 400; color: var(--text-dim); }
+#side-pane-handle {
+  flex: none; width: 5px; cursor: col-resize; background: var(--border);
+}
+#side-pane-handle:hover, body.side-pane-dragging #side-pane-handle { background: var(--accent); }
+body.side-pane-dragging { cursor: col-resize; user-select: none; }
+#side-pane-head {
+  flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 4px 6px; border-bottom: 1px solid var(--border);
+}
+#side-pane-tabs { flex: 1; min-width: 0; display: flex; gap: 2px; overflow-x: auto; }
+#side-pane-seat { flex: none; font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+#side-pane-pin:disabled { opacity: 0.4; cursor: default; }
+.side-tab {
+  flex: none; display: flex; align-items: center; gap: 4px; max-width: 180px;
+  padding: 2px 4px 2px 8px; border-radius: 4px; cursor: pointer;
+  font-size: 11px; color: var(--text-dim); border: 1px solid transparent;
+}
+.side-tab:hover { color: var(--text); }
+.side-tab.active { color: var(--text); background: var(--active-bg); border-color: var(--border); }
+.side-tab.preview .side-tab-title { font-style: italic; }
+.side-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-tab-stale { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--info); }
+.side-tab-close {
+  flex: none; background: none; border: 0; padding: 0 2px; cursor: pointer;
+  color: var(--text-dim); font-size: 13px; line-height: 1;
+}
+.side-tab-close:hover { color: var(--text); }
+#side-pane-body { flex: 1; min-height: 0; position: relative; }
+.side-tab-view {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  gap: 6px; padding: 8px 10px;
+}
+.side-tab-view.side-tab-inactive { visibility: hidden; }
+.side-file-bar { flex: none; display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 11px; }
+.side-file-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; min-width: 0; }
+.side-file-by { flex: none; white-space: nowrap; color: var(--text-dim); }
+.side-file-banner {
+  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 6px 8px; border-radius: 5px; font-size: 11px;
+  background: var(--accent-soft); color: var(--text);
+}
+.side-file-banner-act {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--text); text-decoration: underline; font-size: 11px;
+}
+.side-file-body { flex: 1; min-height: 0; overflow-y: auto; }
+#side-pane .hidden { display: none; }
 .file-peek-controls { display: flex; align-items: center; gap: 6px; flex: none; }
 .file-peek-tab, .file-peek-open {
   font-size: 10px; padding: 2px 10px; border-radius: 4px; cursor: pointer;
@@ -2073,9 +2119,6 @@ html, body {
 .file-peek-tab.active { color: var(--text); border-color: var(--accent); }
 .file-peek-tab:disabled { opacity: 0.4; cursor: default; }
 .file-peek-open:hover, .file-peek-tab:not(:disabled):hover { color: var(--text); }
-#file-peek-body { overflow-y: auto; min-height: 80px; }
-#file-peek-body.hidden, #file-peek-editor.hidden, #file-peek-save.hidden,
-#file-peek-dirty.hidden, #file-peek-back.hidden { display: none; }
 /* Speculative links: scanned, never statted, so the resting state is DOTTED —
    the conventional "this might be something" underline — rather than the solid
    one that promises a destination. Hover commits to solid + accent. Muted
@@ -2092,20 +2135,16 @@ html, body {
   text-decoration: underline solid;
   text-decoration-color: currentColor;
 }
-#file-peek-save:disabled { opacity: 0.45; cursor: default; }
+#side-pane .side-file-save:disabled { opacity: 0.45; cursor: default; }
 .file-peek-dirty { color: var(--accent); font-size: 14px; line-height: 1; }
-/* Sized by its `rows` (set from the line count) rather than a fixed height, so
-   the Edit tab is as tall as the File tab showing the same bytes and switching
-   between them doesn't resize the modal. flex-shrink + min-height:0 let the
-   modal's max-height still clamp a long file, exactly as it clamps the body. */
-#file-peek-editor {
-  flex: 0 1 auto; min-height: 0; resize: none; tab-size: 2;
+#side-pane .side-file-editor {
+  flex: 1 1 auto; min-height: 0; resize: none; tab-size: 2;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px; line-height: 1.45; white-space: pre; overflow: auto;
   background: var(--active-bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 5px; padding: 8px 10px;
 }
-#file-peek-editor:focus { outline: none; border-color: var(--accent); }
+#side-pane .side-file-editor:focus { outline: none; border-color: var(--accent); }
 .file-peek-pre {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere;
@@ -4717,8 +4756,7 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
 #intents-popover { overflow-y: auto; }
 #intents-popover #popover-intents-list { flex: 0 0 auto; }
 #tools-popover, #skills-popover, #agents-popover, #intents-popover, #plugins-popover,
-#ctx-popover, #cost-popover, #bust-popover, #files-popover,
-#file-peek-modal {
+#ctx-popover, #cost-popover, #bust-popover, #files-popover {
   resize: both;
   min-width: 260px;
   min-height: 60px;
@@ -5055,16 +5093,16 @@ body:not(.sessions-restored) [data-peer-ui] { display: none; }
 
 /* Peer bar reserves the terminal's top edge the same way the proxy bar
    reserves the bottom — never overlay terminal rows. */
-#main.has-peer-bar #terminal-container { top: 26px; }
+#main.has-peer-bar #work-row { top: 26px; }
 
 /* Browser frontend only: renderer/web/menubar.js adds .has-web-menubar to #main
    when it mounts the top menu bar (30px), so the terminal starts below the bar.
    The Electron app never sets this class, so its layout is byte-for-byte
    unchanged. The combined rule wins over the single-class ones by specificity,
    so a peer session stacks the peer bar under the menu bar. */
-#main.has-web-menubar #terminal-container { top: 30px; }
+#main.has-web-menubar #work-row { top: 30px; }
 #main.has-web-menubar #peer-bar { top: 30px; }
-#main.has-web-menubar.has-peer-bar #terminal-container { top: 56px; } /* 30 + 26 */
+#main.has-web-menubar.has-peer-bar #work-row { top: 56px; } /* 30 + 26 */
 
 /* Browser frontend only: the engine's version line, appended to the sidebar
    footer by renderer/web/boot.js (t28). The Electron app never creates this
