@@ -101,6 +101,10 @@ const { initPluginHost } = require('./plugin-host');
 const sessions = new Map(); // name -> { terminal, fitAddon, wrapperEl }
 const transcriptChangedSubs = new Set();
 const streamSeatNames = new Set();
+function markSeatIo(name, io) {
+  if (io === 'stream') streamSeatNames.add(name);
+  else streamSeatNames.delete(name);
+}
 let activeSession = null;
 let terminalWebglEnabled = false;
 let transcriptPaneEnabled = false;
@@ -945,7 +949,7 @@ window.api.onSessionMoveProgress(({ name, phase, bytes, total, files, fileIndex 
     : head);
 });
 
-window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition, background, peerId, peerLabel, workspaceId, workspaceName }) => {
+window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, io, disposition, background, peerId, peerLabel, workspaceId, workspaceName }) => {
   switch (action) {
     case 'editArgs':
       openArgsDialog(name);
@@ -982,6 +986,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, d
     case 'reattach':
       if (type) {
         const snapAccount = accountOfRow(name);
+        markSeatIo(name, io);
         createTerminal(name);
         addSessionToSidebar(name, type, cwd, null, backend || null, null, noWire === true, snapAccount);
         // `background` marks the agent-initiated emitters (ticket seat, spawn
@@ -1104,7 +1109,8 @@ function startRename(item, nameEl, sessionName) {
         return;
       }
       removeSession(sessionName, { keepPersisted: true });
-      if (streamSeatNames.has(sessionName)) streamSeatNames.add(res.name);
+      markSeatIo(res.name, streamSeatNames.has(sessionName) ? 'stream' : 'pty');
+      streamSeatNames.delete(sessionName);
       createTerminal(res.name);
       addSessionToSidebar(res.name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, res.noWire === true, snapAccount);
       switchSession(res.name);
@@ -1972,6 +1978,7 @@ function removeSession(name, { keepPersisted = false } = {}) {
     s.wrapperEl.remove();
     sessions.delete(name);
   }
+  if (!keepPersisted) streamSeatNames.delete(name);
   drawerHost.forgetSession(name);
   sidePane.forgetSeat(name);
   removeSessionFromSidebar(name);
@@ -3163,7 +3170,7 @@ async function doCreate() {
 
     if (worktree) window.api.markSessionWorktree(name, worktree);
 
-    if (result.session && result.session.io === 'stream') streamSeatNames.add(name);
+    markSeatIo(name, result.session && result.session.io);
     createTerminal(name);
     addSessionToSidebar(name, type, spawnCwd, null, (result.session && result.session.backend) || null, (result.session && result.session.team) || null, (result.session && result.session.noWire) === true);
     // Manual, so it focuses as it always has — unless the operator has a line
@@ -8073,7 +8080,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
 
 
 function mountRestoredSession(entry) {
-  if (entry.io === 'stream') streamSeatNames.add(entry.name);
+  markSeatIo(entry.name, entry.io);
   const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
   addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true, null, entry.fixFor || null);
   if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
@@ -8111,7 +8118,7 @@ window.api.onSessionMovedOut(({ name }) => {
 
 window.api.onSessionMovedIn((entry) => {
   if (!entry || !entry.name) return;
-  if (entry.io === 'stream') streamSeatNames.add(entry.name);
+  markSeatIo(entry.name, entry.io);
   if (entry.archived) addArchivedSessionToSidebar(entry);
   else mountRestoredSession(entry);
   refreshSidebarView();
@@ -8125,7 +8132,7 @@ window.api.onSessionMovedIn((entry) => {
 
     let firstHealthy = null;
     for (const entry of restored) {
-      if (entry.io === 'stream') streamSeatNames.add(entry.name);
+      markSeatIo(entry.name, entry.io);
       if (entry.archived) {
         addArchivedSessionToSidebar(entry);
         continue;

@@ -531,7 +531,7 @@ function dmContentKey(senderTag, body) {
 const MOVE_TO_PEER_OMIT = [
   'execCommands', 'worktree', 'archivedAt', 'failed', 'movedTo',
   'ephemeral', 'reviewFor', 'reviewTicket', 'reviewerTemplate', 'pluginGrants',
-  'wireLabel', 'ticketId', 'holdUntil', 'rosterSentAt',
+  'wireLabel', 'ticketId', 'holdUntil', 'rosterSentAt', 'streamPid',
 ];
 
 function moveFileBytes(fs, f) {
@@ -2199,7 +2199,7 @@ function createSessionManager(deps) {
         try {
           registry.register(name, socketPath, cwd);
         } catch (e) {
-          if (e.code !== 'EEXIST') { abandonHint(); throw e; }
+          if (e.code !== 'EEXIST') { abandonHint(); if (streamSeat) streamSeat.kill(); throw e; }
           const existingRaw = fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8');
           const existing = JSON.parse(existingRaw);
           if (existingRaw !== blockerRaw) blockerLive = null;
@@ -2218,7 +2218,7 @@ function createSessionManager(deps) {
             try { fs.unlinkSync(existing.socket); } catch {}
             registry.register(name, socketPath, cwd);
           } else {
-            abandonHint();
+            abandonHint(); if (streamSeat) streamSeat.kill();
             throw new Error(
               `Session "${name}" is already running elsewhere (pid ${existing.pid})`,
             );
@@ -2231,7 +2231,7 @@ function createSessionManager(deps) {
         try {
           await transport.start();
         } catch (e) {
-          abandonHint();
+          abandonHint(); if (streamSeat) streamSeat.kill();
           registry.unregister(name);
           transport = null;
           throw e;
@@ -6988,7 +6988,7 @@ function createSessionManager(deps) {
           if (lvl >= 1) getPersistence().setStripLevel(name, lvl);
           if (entry.label) getPersistence().setLabel(name, entry.label);
           this._sendToSession(name, 'session:context-action', {
-            action: 'reattach', name, type: entry.type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
+            action: 'reattach', name, type: entry.type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire, io: (this.sessions.get(name) || {}).io || 'pty',
           });
           const fresh = this.sessions.get(name);
           if (fresh && session._scratchVoid) fresh._scratchVoid = session._scratchVoid;
@@ -7593,7 +7593,7 @@ function createSessionManager(deps) {
       if (entry.label) getPersistence().setLabel(name, entry.label);
       this._sendToSession(name, 'session:context-action', {
         action: 'reattach', name, type: entry.type, cwd,
-        backend: (fresh || {}).backend || null, noWire: !!(fresh || {}).noWire,
+        backend: (fresh || {}).backend || null, noWire: !!(fresh || {}).noWire, io: (fresh || {}).io || 'pty',
       });
       return fresh || null;
     }

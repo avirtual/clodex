@@ -43984,6 +43984,10 @@ ${detail}` });
       var sessions = /* @__PURE__ */ new Map();
       var transcriptChangedSubs = /* @__PURE__ */ new Set();
       var streamSeatNames = /* @__PURE__ */ new Set();
+      function markSeatIo(name, io) {
+        if (io === "stream") streamSeatNames.add(name);
+        else streamSeatNames.delete(name);
+      }
       var activeSession = null;
       var terminalWebglEnabled = false;
       var transcriptPaneEnabled = false;
@@ -44817,7 +44821,7 @@ ${detail}` });
         const head = `Moving ${name} to ${held.peerLabel} \u2014 ${phase}`;
         held.toast.set(total ? `${head} ${MiB(bytes)}/${MiB(total)} MiB (${fileIndex}/${files})` : head);
       });
-      window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition, background, peerId, peerLabel, workspaceId, workspaceName }) => {
+      window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, io, disposition, background, peerId, peerLabel, workspaceId, workspaceName }) => {
         switch (action) {
           case "editArgs":
             openArgsDialog(name);
@@ -44854,6 +44858,7 @@ ${detail}` });
           case "reattach":
             if (type) {
               const snapAccount = accountOfRow(name);
+              markSeatIo(name, io);
               createTerminal(name);
               addSessionToSidebar(name, type, cwd, null, backend || null, null, noWire === true, snapAccount);
               switchToNewSession(name, { agentInitiated: background === true });
@@ -44973,7 +44978,8 @@ ${detail}` });
               return;
             }
             removeSession(sessionName, { keepPersisted: true });
-            if (streamSeatNames.has(sessionName)) streamSeatNames.add(res.name);
+            markSeatIo(res.name, streamSeatNames.has(sessionName) ? "stream" : "pty");
+            streamSeatNames.delete(sessionName);
             createTerminal(res.name);
             addSessionToSidebar(res.name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, res.noWire === true, snapAccount);
             switchSession(res.name);
@@ -45746,6 +45752,7 @@ ${detail}` });
           s.wrapperEl.remove();
           sessions.delete(name);
         }
+        if (!keepPersisted) streamSeatNames.delete(name);
         drawerHost.forgetSession(name);
         sidePane.forgetSeat(name);
         removeSessionFromSidebar(name);
@@ -46886,7 +46893,7 @@ ${detail}` });
             return;
           }
           if (worktree) window.api.markSessionWorktree(name, worktree);
-          if (result.session && result.session.io === "stream") streamSeatNames.add(name);
+          markSeatIo(name, result.session && result.session.io);
           createTerminal(name);
           addSessionToSidebar(name, type, spawnCwd, null, result.session && result.session.backend || null, result.session && result.session.team || null, (result.session && result.session.noWire) === true);
           await switchToNewSession(name, { agentInitiated: false });
@@ -51556,7 +51563,7 @@ ${res.stderr}` : "");
         }
       }));
       function mountRestoredSession(entry) {
-        if (entry.io === "stream") streamSeatNames.add(entry.name);
+        markSeatIo(entry.name, entry.io);
         const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
         addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true, null, entry.fixFor || null);
         if (entry.createdAt) sidebarMeta.set(entry.name, { ...sidebarMeta.get(entry.name) || {}, createdAt: entry.createdAt });
@@ -51599,7 +51606,7 @@ ${res.stderr}` : "");
       });
       window.api.onSessionMovedIn((entry) => {
         if (!entry || !entry.name) return;
-        if (entry.io === "stream") streamSeatNames.add(entry.name);
+        markSeatIo(entry.name, entry.io);
         if (entry.archived) addArchivedSessionToSidebar(entry);
         else mountRestoredSession(entry);
         refreshSidebarView();
@@ -51614,7 +51621,7 @@ ${res.stderr}` : "");
           }
           let firstHealthy = null;
           for (const entry of restored) {
-            if (entry.io === "stream") streamSeatNames.add(entry.name);
+            markSeatIo(entry.name, entry.io);
             if (entry.archived) {
               addArchivedSessionToSidebar(entry);
               continue;
