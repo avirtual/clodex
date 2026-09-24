@@ -1,14 +1,22 @@
 'use strict';
 
+const { scanIntentLines } = require('./intent-segments');
+const { looksLikeIntent, parseIntent } = require('./intent-scanner');
+const { pluginRowFor } = require('./intent-registry');
+const { headOf, replyGlyphFor } = require('./intent-glyphs');
+const { pointerMatch, receiptOf } = require('./intent-spill');
+const { FILED_POINTER_RE } = require('./spill-grammar');
+const { DEFAULT_MAX_BYTES } = require('./exec-schema');
+
 const RECORD_CAP = 400;
 const PROMPT_CAP = 4096;
 const PROSE_CAP = 65536;
 const NOTE_CAP = 300;
 const ONLY_MAX = 80;
 const INPUT_KEYS = ['command', 'file_path', 'path', 'pattern', 'url', 'query', 'description', 'prompt'];
-const TURN_KINDS = new Set(['prompt', 'inbound', 'notification', 'command']);
+const TURN_KINDS = new Set(['prompt', 'inbound', 'reply', 'notification', 'command']);
 const INBOUND_RE = /^\[agent:from ([^\]\s]+)\][ \t]*/;
-const RUNTIME_RE = /^\[agent:[a-z-]+\b/;
+const RUNTIME_RE = /^\[agent:([a-z-]+)\][ \t]*/;
 const ATTACHED_RE = /Message \((\d+) bytes\) attached: @(\S+)/;
 const EXIT_RE = /^Exit code (\d+)/;
 const DENIED_RE = /^(?:The user doesn't want to proceed with this tool use|Permission to use \S+ has been denied)/;
@@ -169,10 +177,103 @@ function userRecords(rec, base, tools) {
     const card = capped({ ...base, kind: 'inbound', from: from[1] }, 'text', rest, PROMPT_CAP);
     return [att ? { ...card, attached: { path: att[2], bytes: Number(att[1]) } } : card];
   }
-  if (RUNTIME_RE.test(text)) return [capped({ ...base, kind: 'inbound', from: 'clodex' }, 'text', text, PROMPT_CAP)];
+  const runtime = RUNTIME_RE.exec(text);
+  if (runtime) {
+    const verb = runtime[1];
+    const { glyph, label } = replyGlyphFor(verb, pluginRowFor(verb));
+    return [capped({ ...base, kind: 'reply', verb, glyph, label }, 'text', text.slice(runtime[0].length), PROMPT_CAP)];
+  }
   const fields = { ...base, kind: 'prompt' };
   const out = capped(fields, 'text', text, PROMPT_CAP);
   return [{ ...out, source: rec.promptSource === 'queued' ? 'queued' : 'typed' }];
+}
+
+const SIZE_RE = /^(\d+(?:\.\d)?) (B|KB)/;
+
+function spillOf(text) {
+  const m = FILED_POINTER_RE.exec(String(text || ''));
+  if (!m) return { path: null, bytes: null, title: null };
+  const size = SIZE_RE.exec(m[2]);
+  const bytes = size ? Math.round(Number(size[1]) * (size[2] === 'KB' ? 1024 : 1)) : null;
+  return { path: m[3], bytes, title: m[1] || null };
+}
+
+function intentSegment(intent, closed) {
+  const { type, sub, body, bodyOpen, spill: _spill, ...fields } = intent;
+  const head = headOf(intent, pluginRowFor(type));
+  const filed = pointerMatch(typeof body === 'string' ? body.trim() : body);
+  return {
+    kind: 'intent',
+    verb: type,
+    sub: sub == null ? null : sub,
+    fields,
+    body: filed || typeof body !== 'string' || !body.trim() ? null : body,
+    state: filed ? 'filed' : 'fire',
+    spill: filed ? spillOf(body.trim()) : null,
+    open: !closed,
+    head,
+  };
+}
+
+function receiptSegment(rc) {
+  const intent = parseIntent(`[agent:${rc.head}]`) || { type: rc.type, sub: rc.sub };
+  return {
+    kind: 'intent',
+    verb: intent.type,
+    sub: intent.sub == null ? null : intent.sub,
+    fields: {},
+    body: null,
+    state: 'filed',
+    spill: { path: rc.path, bytes: null, title: null },
+    open: false,
+    head: headOf(intent, pluginRowFor(intent.type)),
+  };
+}
+
+function proseSegments(lines) {
+  const out = [];
+  let run = [];
+  const flush = () => {
+    const text = run.join('\n').replace(/^\n+|\s+$/g, '');
+    if (text.trim()) out.push({ kind: 'prose', text });
+    run = [];
+  };
+  for (const line of lines) {
+    const rc = receiptOf(line);
+    if (rc) { flush(); out.push(receiptSegment(rc)); continue; }
+    if (FILED_POINTER_RE.test(line)) { flush(); out.push({ kind: 'prose', text: line.trim(), spill: spillOf(line) }); continue; }
+    run.push(line);
+  }
+  flush();
+  return out;
+}
+
+function segmentsOf(text) {
+  const lines = String(text == null ? '' : text).split('\n');
+  if (!lines.some((l) => looksLikeIntent(l) || FILED_POINTER_RE.test(l) || receiptOf(l))) return null;
+  const segs = [];
+  for (const seg of scanIntentLines(lines, { execBodyCap: DEFAULT_MAX_BYTES })) {
+    if (seg.kind === 'prose') segs.push(...proseSegments(lines.slice(seg.from, seg.to)));
+    else if (seg.kind === 'near-miss') segs.push({ kind: 'inert', text: lines[seg.at].trim() });
+    else if (seg.kind === 'intent') segs.push(intentSegment(seg.intent, seg.closed));
+  }
+  return segs.some((s) => s.kind !== 'prose' || s.spill) ? segs : null;
+}
+
+function capSegments(segs) {
+  let budget = PROSE_CAP;
+  let truncated = false;
+  const out = segs.map((seg) => {
+    const key = seg.kind === 'intent' ? 'body' : 'text';
+    const v = seg[key];
+    if (typeof v !== 'string') return seg;
+    const cut = v.length > budget;
+    const kept = cut ? v.slice(0, Math.max(0, budget)) : v;
+    budget = Math.max(0, budget - kept.length);
+    if (cut) truncated = true;
+    return cut ? { ...seg, [key]: kept } : seg;
+  });
+  return { segments: out, truncated };
 }
 
 function assistantRecords(rec, base, tools) {
@@ -184,7 +285,14 @@ function assistantRecords(rec, base, tools) {
     if (!b) return;
     if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
       const id = texts > 1 ? `${base.id}:${i}` : base.id;
-      const r = capped({ ...base, id, kind: 'assistant' }, 'text', b.text.trim(), PROSE_CAP);
+      const text = b.text.trim();
+      let r = capped({ ...base, id, kind: 'assistant' }, 'text', text, PROSE_CAP);
+      const segs = rec.isApiErrorMessage ? null : segmentsOf(text);
+      if (segs) {
+        const { segments, truncated } = capSegments(segs);
+        r = { ...r, segments };
+        if (truncated) r.truncated = true;
+      }
       out.push(rec.isApiErrorMessage ? { ...r, apiError: true } : r);
     } else if (b.type === 'tool_use' && b.id) {
       const tool = { ...base, id: b.id, kind: 'tool', name: b.name || 'tool', arg: toolInputLine(b.input), state: 'pending', sum: null };
@@ -255,4 +363,4 @@ function recordsOf(text, max = RECORD_CAP) {
   return { records: cutOnTurn(all, max) };
 }
 
-module.exports = { RECORD_CAP, PROMPT_CAP, PROSE_CAP, recordsOf, toolInputLine };
+module.exports = { RECORD_CAP, PROMPT_CAP, PROSE_CAP, recordsOf, segmentsOf, toolInputLine };

@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { RECORD_CAP, PROMPT_CAP, recordsOf } = require('../transcript-records');
+const { RECORD_CAP, PROMPT_CAP, PROSE_CAP, recordsOf, segmentsOf } = require('../transcript-records');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'transcript-records');
 const fixture = (name) => fs.readFileSync(path.join(FIXTURES, `${name}.jsonl`), 'utf8');
@@ -152,9 +152,12 @@ test(`a prompt over ${PROMPT_CAP} characters is capped and marked truncated; a q
   ]);
 });
 
-test('a runtime reply Clodex injects is an inbound from clodex; an agent:from delivery keeps its sender; a mid-line bracket stays a typed prompt', () => {
+test('a runtime reply Clodex injects is a reply record with its verb and no sender; an agent:from delivery keeps its sender; a mid-line bracket stays a typed prompt', () => {
   const rows = [
-    ['[agent:reboot] reboot queued — restarting once idle', { id: 'u', kind: 'inbound', ts: null, turn: 1, from: 'clodex', text: '[agent:reboot] reboot queued — restarting once idle' }],
+    ['[agent:reboot] reboot queued — restarting once idle', { id: 'u', kind: 'reply', ts: null, turn: 1, verb: 'reboot', glyph: '↻', label: 'reboot', text: 'reboot queued — restarting once idle' }],
+    ['[agent:task] ticket t1 created', { id: 'u', kind: 'reply', ts: null, turn: 1, verb: 'task', glyph: '⇄', label: 'task', text: 'ticket t1 created' }],
+    ['[agent:branch] main', { id: 'u', kind: 'reply', ts: null, turn: 1, verb: 'branch', glyph: '◇', label: 'branch', text: 'main' }],
+    ['[agent:task done t1] report', { id: 'u', kind: 'prompt', ts: null, turn: 1, text: '[agent:task done t1] report', source: 'typed' }],
     ['[agent:from wirescope] hi', { id: 'u', kind: 'inbound', ts: null, turn: 1, from: 'wirescope', text: 'hi' }],
     ['I ran [agent:who] earlier', { id: 'u', kind: 'prompt', ts: null, turn: 1, text: 'I ran [agent:who] earlier', source: 'typed' }],
   ];
@@ -184,4 +187,73 @@ test('a single turn longer than the cap keeps its head record ahead of the newes
   for (let k = 0; k < 6; k += 1) lines.push(reply(0, k));
   const { records } = recordsOf(lines.join('\n'), 3);
   assert.deepStrictEqual(records.map((r) => r.id), ['p0', 'a0-4', 'a0-5']);
+});
+
+const said = (text) => rec({ type: 'assistant', uuid: 'a', message: { content: [{ type: 'text', text }] } });
+const FILED = '/Users/x/.clodex/spill/clodex/2c45916d63a7c913.md';
+
+test('an all-prose assistant record keeps its exact shape: no segments key', () => {
+  const { records } = recordsOf(said('just prose\n\\[agent:who] escaped\n```\n[agent:who]\n```'));
+  assert.deepStrictEqual(records, [{ id: 'a', kind: 'assistant', ts: null, turn: 0, text: 'just prose\n\\[agent:who] escaped\n```\n[agent:who]\n```' }]);
+});
+
+test('segmentsOf: prose, a stack of intents with their heads, an inert line, and the operator tail', () => {
+  const text = [
+    'Both converge.',
+    '',
+    '[agent:dm bob urgent] hi',
+    'second line',
+    '[agent:end]',
+    '',
+    '[agent:task add hand start] Fix it',
+    '[agent:end]',
+    '[agent:task bogus]',
+    '[agent:who]',
+    'tail prose',
+  ].join('\n');
+  assert.deepStrictEqual(segmentsOf(text), [
+    { kind: 'prose', text: 'Both converge.' },
+    { kind: 'intent', verb: 'dm', sub: null, fields: { target: 'bob', urgent: true }, body: 'hi\nsecond line', state: 'fire', spill: null, open: false,
+      head: { glyph: '→', label: 'message', target: 'bob', chips: ['urgent'] } },
+    { kind: 'intent', verb: 'task', sub: 'add', fields: { who: 'hand', id: null, park: false, start: true, dup: false, reviewer: null }, body: 'Fix it', state: 'fire', spill: null, open: false,
+      head: { glyph: '⊕', label: 'dispatch', target: 'hand', chips: ['start'] } },
+    { kind: 'inert', text: '[agent:task bogus]' },
+    { kind: 'intent', verb: 'who', sub: null, fields: {}, body: null, state: 'fire', spill: null, open: false,
+      head: { glyph: '◎', label: 'who', target: null, chips: [] } },
+    { kind: 'prose', text: 'tail prose' },
+  ]);
+});
+
+test('segmentsOf: an unclosed greedy body is open', () => {
+  const segs = segmentsOf('[agent:shout] still writing\nmore');
+  assert.deepStrictEqual(segs.map((s) => [s.kind, s.body, s.open]), [['intent', 'still writing\nmore', true]]);
+});
+
+test('segmentsOf: a filed stand-in becomes a filed card whose head is parsed from the stand-in line', () => {
+  const segs = segmentsOf(`[agent:dm clodex] Design saved — 6.2 KB filed at ${FILED}\n[agent:end]`);
+  assert.deepStrictEqual(segs, [{ kind: 'intent', verb: 'dm', sub: null, fields: { target: 'clodex', urgent: false }, body: null, state: 'filed',
+    spill: { path: FILED, bytes: 6349, title: 'Design saved' }, open: false, head: { glyph: '→', label: 'message', target: 'clodex', chips: [] } }]);
+});
+
+test('segmentsOf: a bare filed pointer is prose carrying its spill; a receipt is a filed card', () => {
+  const receipt = `(I sent task add hand start in full, 5300 B; Clodex kept my text at ${FILED}.)`;
+  const segs = segmentsOf(`800 B of prose filed at ${FILED}\n${receipt}`);
+  assert.deepStrictEqual(segs, [
+    { kind: 'prose', text: `800 B of prose filed at ${FILED}`, spill: { path: FILED, bytes: 800, title: null } },
+    { kind: 'intent', verb: 'task', sub: 'add', fields: {}, body: null, state: 'filed', spill: { path: FILED, bytes: null, title: null }, open: false,
+      head: { glyph: '⊕', label: 'dispatch', target: 'hand', chips: ['start'] } },
+  ]);
+});
+
+test('segmentsOf: an exec JSON body stops at the closing brace, and prose after it is its own segment', () => {
+  const segs = segmentsOf('[agent:exec clodex-team] {"a":\n1}\nafter');
+  assert.deepStrictEqual(segs.map((s) => [s.kind, s.body || s.text]), [['intent', '{"a":\n1}'], ['prose', 'after']]);
+});
+
+test(`segment strings share one ${PROSE_CAP}-character budget and the record says truncated`, () => {
+  const big = 'y'.repeat(PROSE_CAP - 10);
+  const { records } = recordsOf(said(`${big}\n[agent:shout] ${'z'.repeat(50)}`));
+  const [r] = records;
+  assert.strictEqual(r.truncated, true);
+  assert.strictEqual(r.segments[0].text.length + r.segments[1].body.length, PROSE_CAP);
 });
