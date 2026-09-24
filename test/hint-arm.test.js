@@ -569,8 +569,9 @@ test('arm: a final pass returns a promise that settles only once the hint POST h
   let release;
   const gate = new Promise((r) => { release = r; });
   const posts = [];
+  const src = mkArm();
   const arm = createHintArm({
-    retriever: createMemoryRetriever({ listUnits: (agent) => slow.store.list(agent) }),
+    retriever: createMemoryRetriever({ listUnits: (agent) => src.store.list(agent) }),
     compose,
     terms,
     loadState: () => 'absent',

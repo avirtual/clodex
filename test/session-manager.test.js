@@ -20838,7 +20838,7 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, hold
     memLoad: { noteDigest: () => {}, noteSession: () => {} },
     tiersOf: () => ({}),
     arm: { onContextReset: () => {} },
-    ...(hintArm ? { hintArm, isHumanPtyInput: require('../proxy-util').isHumanPtyInput } : {}),
+    ...(hintArm ? { hintArm, isHumanPtyInput: require('../proxy-util').isHumanPtyInput, draftChunkSignal: require('../proxy-util').draftChunkSignal } : {}),
     ...(selectionArm ? { selectionArm } : {}),
   });
   const m = new SessionManager();
