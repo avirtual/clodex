@@ -20943,3 +20943,20 @@ test('stream seat: close after exit runs the pty exit order, and kill() uses the
   assert.deepStrictEqual(sent.filter((c) => c === 'session-exit'), ['session-exit']);
   assert.strictEqual(h.m.sessions.has('st6'), false);
 });
+
+test('stream seat: the outbox has no timed force-flush — ten busy minutes still hold it for the result', async () => {
+  const { mock } = require('node:test');
+  const h = mkStreamSeatManager();
+  await h.create('st7');
+  h.stopAll();
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  try {
+    h.m.seatSend('st7', 'first');
+    h.m.seatSend('st7', 'held');
+    mock.timers.tick(10 * 60 * 1000);
+    assert.deepStrictEqual(h.handles[0].sent, [{ type: 'user', message: { role: 'user', content: 'first' } }]);
+    assert.deepStrictEqual(h.m.sessions.get('st7').outbox, ['held']);
+  } finally {
+    mock.timers.reset();
+  }
+});

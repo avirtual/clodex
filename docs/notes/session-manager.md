@@ -118,7 +118,3 @@ the engine would reach them.
 ## _handleShoutIntent
 
 The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `archive()`: archive kills the pty, and the renderer rebuilds a row as archived only for a name already stamped into `archivingSessions`. Sent late or not at all, the row is REMOVED. Precedent: `team-tickets.js` retire.
-
-## seatSend
-
-A stream seat's outbox has no 5-minute force-flush (`INJECT_HOLD_TIMEOUT`): it drains only on the CLI's own `result` boundary, joined with a blank line into one message. A turn that never reaches a boundary is a seat to interrupt, not to force (headless-seats.md §2.2).

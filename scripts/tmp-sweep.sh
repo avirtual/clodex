@@ -449,6 +449,7 @@ clx-skill-catalog-
 clx-skillsoff-
 clx-spillgate-
 clx-statusq-
+clx-stream-seat-
 clx-t1002-fix-
 clx-t279-
 clx-t282-
