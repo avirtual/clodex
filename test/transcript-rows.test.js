@@ -147,3 +147,20 @@ test('the turn-end record renders no row of its own', () => {
   m.render([{ id: 'e1', kind: 'turn-end', ts: null, turn: 0, durationMs: 2500, messageCount: 2 }]);
   assert.deepStrictEqual(m.pane.childNodes[0].childNodes.map((n) => n.textContent), ['2.5s']);
 });
+
+test('a theme change rebuilds command output with the new echo palette and leaves other rows alone', () => {
+  const doc = fakeDocument();
+  const pane = doc.createElement('div');
+  let palette = { bg: '#102030', fg: '#aabbcc', prompt: '#445566' };
+  const rows = createTranscriptRows(doc, pane, { echoPalette: () => palette });
+  const output = { id: 'o1', kind: 'command-output', ts: null, turn: 1, text: '\x1b[48;2;240;240;240m\x1b[38;2;0;0;0m ls \x1b[49m\x1b[39m' };
+  rows.render([prompt, output]);
+  const turn = pane.childNodes[0];
+  const [head, before] = turn.childNodes;
+  assert.strictEqual(before.childNodes[0].style.cssText, 'color:rgb(170,187,204);background-color:rgb(16,32,48)');
+  palette = { bg: '#000000', fg: '#ffffff', prompt: '#445566' };
+  rows.render([prompt, output]);
+  assert.strictEqual(turn.childNodes[0], head);
+  assert.notStrictEqual(turn.childNodes[1], before);
+  assert.strictEqual(turn.childNodes[1].childNodes[0].style.cssText, 'color:rgb(255,255,255);background-color:rgb(0,0,0)');
+});

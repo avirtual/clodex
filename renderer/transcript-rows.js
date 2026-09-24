@@ -61,8 +61,12 @@ function appendLinked(doc, parent, text, style, ctx) {
   }
 }
 
+function resolvePalette(ctx) {
+  return typeof ctx.echoPalette === 'function' ? ctx.echoPalette() : ctx.echoPalette;
+}
+
 function appendOutput(doc, parent, text, ctx) {
-  const palette = typeof ctx.echoPalette === 'function' ? ctx.echoPalette() : ctx.echoPalette;
+  const palette = resolvePalette(ctx);
   if (palette) {
     const { out, state } = rewriteEchoSgr(text, palette);
     text = out + state.carry;
@@ -348,7 +352,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     const items = [];
     for (const r of records) {
       if (r.kind === 'turn-end') continue;
-      items.push({ key: r.id, sig: JSON.stringify(r), build: () => buildRow(doc, r, deps) || el(doc, 'div', 'tr-row') });
+      items.push({ key: r.id, sig: JSON.stringify(r) + (r.kind === 'command-output' ? JSON.stringify(resolvePalette(deps) || null) : ''), build: () => buildRow(doc, r, deps) || el(doc, 'div', 'tr-row') });
     }
     const footer = footerOf(records);
     if (footer) items.push({ key: 'footer', sig: JSON.stringify(footer), build: () => buildFooter(doc, footer, deps) });

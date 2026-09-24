@@ -108,6 +108,74 @@ test('an intent inside a fence gets no mark', () => {
   assert.deepStrictEqual(marked(render([prose('```\n[agent:dm x]\n```')])), []);
 });
 
+function linkCtx(resolved) {
+  const calls = { resolve: [], peek: [], toast: [], external: [] };
+  return {
+    calls,
+    ctx: {
+      seatName: 's1',
+      resolveFile: (p) => { calls.resolve.push(p); return Promise.resolve(resolved); },
+      openFilePeek: (...a) => calls.peek.push(a),
+      toast: (...a) => calls.toast.push(a),
+      openExternal: (u) => calls.external.push(u),
+    },
+  };
+}
+
+const click = (node) => {
+  let prevented = 0;
+  node.listeners.click({ preventDefault: () => { prevented += 1; } });
+  return prevented;
+};
+
+const tick = () => new Promise((r) => setImmediate(r));
+
+test('a file path renders as a link that resolves then peeks at the named line', async () => {
+  const { calls, ctx } = linkCtx({ ok: true, path: '/abs/y.js' });
+  const a = renderNodes([prose('see /Users/x/y.js:12 now')], ctx).find((n) => n.tag === 'a');
+  assert.deepStrictEqual([a.className, a.href, a.textContent, a.dataset.path], ['pane-link', '#', '/Users/x/y.js:12', '/Users/x/y.js']);
+  assert.strictEqual(click(a), 1);
+  await tick();
+  assert.deepStrictEqual(calls.resolve, ['/Users/x/y.js']);
+  assert.deepStrictEqual(calls.peek, [['s1', '/abs/y.js', 'file', 12]]);
+  assert.deepStrictEqual(calls.toast.length, 0);
+});
+
+test('a path that does not resolve toasts once and never peeks', async () => {
+  const { calls, ctx } = linkCtx({ ok: false });
+  const a = renderNodes([prose('see /Users/x/y.js:12 now')], ctx).find((n) => n.tag === 'a');
+  click(a);
+  await tick();
+  assert.strictEqual(calls.toast.length, 1);
+  assert.deepStrictEqual(calls.peek, []);
+});
+
+test('an https URL renders as a link that opens externally; a javascript: URL stays text', () => {
+  const { calls, ctx } = linkCtx(null);
+  const links = renderNodes([prose('at https://example.com and javascript://x')], ctx).filter((n) => n.tag === 'a');
+  assert.deepStrictEqual(links.map((n) => n.dataset.url), ['https://example.com']);
+  assert.strictEqual(click(links[0]), 1);
+  assert.deepStrictEqual(calls.external, ['https://example.com']);
+  assert.match(plain(render([prose('at https://example.com and javascript://x')])), / and javascript:\/\/x$/);
+});
+
+test('a link inside styled command output keeps its run style', () => {
+  assert.deepStrictEqual(render([out('\x1b[1mopen /Users/x/y.js\x1b[22m')]), [
+    { text: 'open ', style: 'font-weight:bold' },
+    { text: '/Users/x/y.js', style: 'font-weight:bold', cls: 'pane-link', href: '/Users/x/y.js' },
+  ]);
+});
+
+test('command output in the CLI echo colours takes the theme echo palette', () => {
+  const echoText = '\x1b[48;2;240;240;240m\x1b[38;2;0;0;0m ls \x1b[49m\x1b[39m';
+  const palette = { bg: '#102030', fg: '#aabbcc', prompt: '#445566' };
+  assert.deepStrictEqual(render([out(echoText)], { echoPalette: palette }), [
+    { text: ' ls ', style: 'color:rgb(170,187,204);background-color:rgb(16,32,48)' },
+  ]);
+  assert.deepStrictEqual(render([out(echoText)], { echoPalette: () => palette })[0].style, 'color:rgb(170,187,204);background-color:rgb(16,32,48)');
+  assert.deepStrictEqual(render([out(echoText)])[0].style, 'color:rgb(0,0,0);background-color:rgb(240,240,240)');
+});
+
 function fakePane() {
   let height = 0;
   const pane = fakeDocument().createElement('div');
