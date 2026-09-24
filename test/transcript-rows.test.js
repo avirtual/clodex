@@ -118,34 +118,50 @@ test('a turn with a turn-end gets a footer of duration, tool count, errors and f
   assert.deepStrictEqual([link.className, link.dataset.path], ['pane-link', '/r/notes.txt']);
 });
 
-test('an inbound delivery renders as a sender card: from label, byte size and the attachment as a path link', () => {
+test('an inbound delivery renders as a sender card: the badge leads the text span, then byte size and the attachment as a path link', () => {
   const m = mount();
   m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'wirescope', text: 'Message (1569 bytes) attached: @/r/msg-6.txt', attached: { path: '/r/msg-6.txt', bytes: 1569 } }]);
   const card = m.pane.childNodes[0].childNodes[0];
   assert.strictEqual(card.className, 'tr-row tr-head tr-inbound');
-  assert.deepStrictEqual(card.childNodes.map((n) => n.textContent), ['∿wirescope', '1.5 KB msg-6.txt']);
-  const link = card.childNodes[1].childNodes.find((n) => n.tag === 'a');
-  assert.deepStrictEqual([link.textContent, link.dataset.path], ['msg-6.txt', '/r/msg-6.txt']);
+  assert.deepStrictEqual(card.childNodes.map((n) => n.className), ['tr-head-text']);
+  const text = card.childNodes[0];
+  assert.deepStrictEqual(text.childNodes.map((n) => n.textContent), ['∿wirescope', '1.5 KB ', 'msg-6.txt']);
+  assert.strictEqual(text.childNodes[0].className, 'tr-sender tr-sender-system');
+  const link = text.childNodes[2];
+  assert.deepStrictEqual([link.tag, link.textContent, link.dataset.path], ['a', 'msg-6.txt', '/r/msg-6.txt']);
 });
 
-test('an inbound from a system sender draws a system badge with its glyph, not the wire\'s "from X" text', () => {
+test('an inbound from a system sender draws a system badge inline at the head of its text, not the wire\'s "from X" text', () => {
   const m = mount();
   m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'reminder', text: 'continue: t1 build' }]);
   const card = m.pane.childNodes[0].childNodes[0];
-  const badge = card.childNodes[0];
+  assert.deepStrictEqual(card.childNodes.map((n) => n.className), ['tr-head-text']);
+  const badge = card.childNodes[0].childNodes[0];
   assert.strictEqual(badge.className, 'tr-sender tr-sender-system');
   assert.strictEqual(badge.title, 'reminder');
   assert.deepStrictEqual(badge.childNodes.map((n) => [n.className, n.textContent]), [['tr-sender-glyph', '◷'], ['tr-sender-name', 'reminder']]);
-  assert.ok(!card.textContent.includes('from reminder'));
+  assert.deepStrictEqual(card.childNodes[0].childNodes.map((n) => n.data ?? n.textContent), ['◷reminder', 'continue: t1 build']);
 });
 
-test('an inbound from a seat draws a seat badge: role initial, team prefix dropped, full token in the title', () => {
+test('an inbound from a seat draws a seat badge inline: role initial, team prefix dropped, full token in the title', () => {
   const m = mount();
   m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'clodex-hand-1138-r2', text: 'done' }]);
-  const badge = m.pane.childNodes[0].childNodes[0].childNodes[0];
+  const card = m.pane.childNodes[0].childNodes[0];
+  assert.deepStrictEqual(card.childNodes.map((n) => n.className), ['tr-head-text']);
+  const badge = card.childNodes[0].childNodes[0];
   assert.strictEqual(badge.className, 'tr-sender tr-sender-seat');
   assert.strictEqual(badge.title, 'clodex-hand-1138-r2');
-  assert.deepStrictEqual(badge.childNodes.map((n) => n.textContent), ['H', 'hand-1138-r2']);
+  assert.deepStrictEqual(badge.childNodes.map((n) => [n.className, n.textContent]), [['tr-sender-glyph', 'H'], ['tr-sender-name', 'hand-1138-r2']]);
+});
+
+test('a two-paragraph inbound renders the badge once, first in the text span, with the prose following in the same span', () => {
+  const m = mount();
+  m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'reminder', text: 'first para\n\nsecond para' }]);
+  const card = m.pane.childNodes[0].childNodes[0];
+  assert.deepStrictEqual(card.childNodes.map((n) => n.className), ['tr-head-text']);
+  const text = card.childNodes[0];
+  assert.deepStrictEqual(text.childNodes.map((n) => n.className), ['tr-sender tr-sender-system', undefined, undefined, undefined, undefined]);
+  assert.deepStrictEqual(text.childNodes.map((n) => n.data ?? n.textContent), ['◷reminder', 'first para', '\n', '\n', 'second para']);
 });
 
 test('a prompt head carries its local clock time; a boundary reads its token drop; an API error is an error notice', () => {
