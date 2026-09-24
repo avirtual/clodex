@@ -87,6 +87,46 @@ test('local_command records become command and command-output records; a command
   ]);
 });
 
+const typed = (uuid, promptId, content) => rec({ type: 'user', uuid, promptId, message: { role: 'user', content } });
+
+test('a typed /compact echoed back as <command-name> is no prompt row; the boundary keeps turn 0 because no turn-opening record precedes it', () => {
+  const { records } = recordsOf([
+    typed('p1', 'P', '/compact'),
+    typed('p2', 'P', '<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>'),
+    typed('p3', 'P', '<local-command-stdout>Compacted (ctrl+o to see full summary)</local-command-stdout>'),
+    rec({ type: 'system', subtype: 'compact_boundary', uuid: 'b1', compactMetadata: { trigger: 'manual', preTokens: 100, postTokens: 10 } }),
+  ].join('\n'));
+  assert.deepStrictEqual(records, [
+    { id: 'b1', kind: 'boundary', ts: null, turn: 0, what: 'compact', trigger: 'manual', preTokens: 100, postTokens: 10 },
+  ]);
+  assert.doesNotMatch(JSON.stringify(records), /\/compact/);
+});
+
+test('a /compact-shaped prompt with no echo after it stays a typed prompt row', () => {
+  const { records } = recordsOf([
+    typed('p1', 'P', '/compact'),
+    typed('p2', 'Q', 'next thing'),
+  ].join('\n'));
+  assert.deepStrictEqual(records, [
+    { id: 'p1', kind: 'prompt', ts: null, turn: 1, text: '/compact', source: 'typed' },
+    { id: 'p2', kind: 'prompt', ts: null, turn: 2, text: 'next thing', source: 'typed' },
+  ]);
+});
+
+test('a typed /cost with args echoed as <command-name> loses its prompt row and the tagged lines still produce nothing', () => {
+  const { records } = recordsOf([
+    typed('p1', 'P', '/cost --all'),
+    typed('p2', 'P', '<command-name>/cost</command-name>\n<command-args>--all</command-args>'),
+    typed('p3', 'P', '<local-command-stdout>Total cost: $1</local-command-stdout>'),
+  ].join('\n'));
+  assert.deepStrictEqual(records, []);
+});
+
+test('ENTER: the /compact fixture really carries a plain /compact prompt line, so its absence from the records is a removal', () => {
+  const { records } = recordsOf(typed('p1', 'P', '/compact'));
+  assert.deepStrictEqual(records.map((r) => r.kind), ['prompt']);
+});
+
 test('meta, sidechain, attachment, bookkeeping and orphan tool_result records produce nothing', () => {
   const { records } = recordsOf([
     rec({ type: 'user', uuid: 'm', isMeta: true, message: { content: 'meta' } }),
