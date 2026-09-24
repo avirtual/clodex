@@ -372,7 +372,7 @@ function assistantTexts(obj) {
 const expandedOf = (s) => `On ${s.n}.\n[agent:task add hand]\n${s.body}\n[agent:end]\n`;
 const noteOf = (s, note) => `On ${s.n}.\n[agent:task add hand] Title ${s.n}\n${note}\n[agent:end]\n`;
 
-test('t1118 (a): the two oldest resolvable intent stubs of a request render as the original intent, the third gets SPILLED_BODY_FIRST, the fourth SPILLED_BODY', () => {
+test('t1118 (a): the two newest resolvable intent stubs of a request render as the original intent, the first gets SPILLED_BODY_FIRST, the second SPILLED_BODY', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [A, B, C, D] = filedStubs(root, ['A', 'B', 'C', 'D']);
   const obj = stubPayload([A, B, C, D]);
@@ -380,31 +380,42 @@ test('t1118 (a): the two oldest resolvable intent stubs of a request render as t
   assert.equal(r.cut, true);
   const texts = assistantTexts(obj);
   assert.equal(texts.length, 4, 'ENTER: all four messages reached');
-  assert.equal(texts[0], expandedOf(A));
-  assert.equal(texts[1], expandedOf(B));
-  assert.equal(texts[2], noteOf(C, SPILLED_BODY_FIRST));
-  assert.equal(texts[3], noteOf(D, SPILLED_BODY));
+  assert.equal(texts[0], 'On A.\n[agent:task add hand] Title A\n[Runtime note: Clodex carries your two newest long intent bodies in full as examples and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]\n[agent:end]\n');
+  assert.equal(texts[1], 'On B.\n[agent:task add hand] Title B\n[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]\n[agent:end]\n');
+  assert.equal(texts[2], `On C.\n[agent:task add hand]\nTitle C\n${'c'.repeat(900)}\n[agent:end]\n`);
+  assert.equal(texts[3], `On D.\n[agent:task add hand]\nTitle D\n${'d'.repeat(900)}\n[agent:end]\n`);
   assert.equal(r.placeholders, 0);
 });
 
-test('t1118 (b): the pair is derived per request — drop the oldest message and the former second and third are expanded', () => {
+test('t1118 (b): the pair is derived per request — append a fifth stub and the third collapses while the fourth and fifth expand', () => {
   const root = mkTmpRoot('clodex-spill-');
-  const [A, B, C, D] = filedStubs(root, ['A', 'B', 'C', 'D']);
+  const [A, B, C, D, E] = filedStubs(root, ['A', 'B', 'C', 'D', 'E']);
   const first = stubPayload([A, B, C, D]);
   cutSpillStubs(first, { root, agent: 'tester' });
-  assert.equal(assistantTexts(first)[2], noteOf(C, SPILLED_BODY_FIRST), 'ENTER: C was a note in the full payload');
-  const obj = stubPayload([B, C, D]);
+  assert.equal(assistantTexts(first)[2], expandedOf(C), 'ENTER: C was expanded in the four-stub payload');
+  const obj = stubPayload([A, B, C, D, E]);
   cutSpillStubs(obj, { root, agent: 'tester' });
-  assert.deepStrictEqual(assistantTexts(obj), [expandedOf(B), expandedOf(C), noteOf(D, SPILLED_BODY_FIRST)]);
+  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A, SPILLED_BODY_FIRST), noteOf(B, SPILLED_BODY), noteOf(C, SPILLED_BODY), expandedOf(D), expandedOf(E)]);
 });
 
-test('t1118 (c): a stub whose file is missing is not counted — [missing, A, B, C] expands A and B', () => {
+test('t1118 (c): a stub whose file is missing is not counted — [missing, A, B, C] expands B and C', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [M, A, B, C] = filedStubs(root, ['M', 'A', 'B', 'C']);
   fs.unlinkSync(M.file);
   const obj = stubPayload([M, A, B, C]);
   cutSpillStubs(obj, { root, agent: 'tester' });
-  assert.deepStrictEqual(assistantTexts(obj), [noteOf(M, SPILLED_BODY_FIRST), expandedOf(A), expandedOf(B), noteOf(C, SPILLED_BODY)]);
+  assert.deepStrictEqual(assistantTexts(obj), [noteOf(M, SPILLED_BODY_FIRST), noteOf(A, SPILLED_BODY), expandedOf(B), expandedOf(C)]);
+});
+
+test('t1128: an unresolvable stub among resolvable ones is a stand-in but never an example and takes no example slot — [A, missing, B], examples 2', () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const [A, M, B] = filedStubs(root, ['A', 'M', 'B']);
+  fs.unlinkSync(M.file);
+  const obj = stubPayload([A, M, B]);
+  cutSpillStubs(obj, { root, agent: 'tester', examples: 2 });
+  const texts = assistantTexts(obj);
+  assert.equal(texts.length, 3, 'ENTER: three stubs reached');
+  assert.deepStrictEqual(texts, [expandedOf(A), noteOf(M, SPILLED_BODY_FIRST), expandedOf(B)]);
 });
 
 test('t1118 (d): cache_control on an expanded block survives', () => {
@@ -440,7 +451,7 @@ test('t1118 (e): with no registration ({ root: null, agent: null }) nothing is e
   }
 });
 
-test('t1119 (a): examples: 0 expands nothing — the oldest stub renders SPILLED_BODY_EPHEMERAL, the rest SPILLED_BODY', () => {
+test('t1119 (a): examples: 0 expands nothing — the first stub renders SPILLED_BODY_EPHEMERAL, the rest SPILLED_BODY', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [A, B, C, D] = filedStubs(root, ['A', 'B', 'C', 'D']);
   const obj = stubPayload([A, B, C, D]);
@@ -470,12 +481,12 @@ test('t1119 (b): examples: 0 short-circuits before resolveSpill — a counter on
   assert.deepStrictEqual(seen, []);
 });
 
-test('t1119 (c): examples: 1 expands exactly the oldest; omitted examples is the t1118 (a) row', () => {
+test('t1119 (c): examples: 1 expands exactly the newest; omitted examples is the t1118 (a) row', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [A, B, C] = filedStubs(root, ['A', 'B', 'C']);
   const obj = stubPayload([A, B, C]);
   cutSpillStubs(obj, { root, agent: 'tester', examples: 1 });
-  assert.deepStrictEqual(assistantTexts(obj), [expandedOf(A), noteOf(B, SPILLED_BODY_FIRST), noteOf(C, SPILLED_BODY)]);
+  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A, SPILLED_BODY_FIRST), noteOf(B, SPILLED_BODY), expandedOf(C)]);
 });
 
 test('t1108 rendering: a stub between prose renders as the head, the runtime note and [agent:end] at its own position — whole string', () => {
@@ -485,9 +496,9 @@ test('t1108 rendering: a stub between prose renders as the head, the runtime not
   withStub(obj, `prose\n[agent:task add hand] Title @spill:${id}\n[agent:end]\nmore prose`, obj.messages[i].content.slice(1));
   assert.deepStrictEqual(cutSpillStubs(obj), { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0 }, 'ENTER');
   assert.equal(obj.messages[i].content[0].text,
-    `prose\n[agent:task add hand] Title\n[Runtime note: Clodex carries your two oldest long intent bodies in full as examples and replaces later ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]\n[agent:end]\nmore prose`);
+    `prose\n[agent:task add hand] Title\n[Runtime note: Clodex carries your two newest long intent bodies in full as examples and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]\n[agent:end]\nmore prose`);
   assert.equal(SPILLED_BODY, '[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]', 'the literal the tests, the renderer and the mimic guard share');
-  assert.equal(SPILLED_BODY_FIRST, '[Runtime note: Clodex carries your two oldest long intent bodies in full as examples and replaces later ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]', 'the long form the first stub-bearing message of a request renders');
+  assert.equal(SPILLED_BODY_FIRST, '[Runtime note: Clodex carries your two newest long intent bodies in full as examples and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]', 'the long form the first stub-bearing message of a request renders');
 
   const emptied = fixtureRequest();
   emptied.messages.splice(1, 1);
@@ -704,7 +715,7 @@ test('T5 keepwarm replay: HoldKeeper.ping re-sends the post-cut body — no @spi
     assert.equal(pings.length, 1, 'ENTER');
     assert.ok(!pings[0].includes('filed at'), 'the replay carries no pointer');
     const sent = assistantTexts(JSON.parse(pings[0]));
-    assert.deepStrictEqual(sent, [expandedOf(A), expandedOf(B), noteOf(C, SPILLED_BODY_FIRST)], 'the replay carries the oldest bodies in full and the note for the third');
+    assert.deepStrictEqual(sent, [noteOf(A, SPILLED_BODY_FIRST), expandedOf(B), expandedOf(C)], 'the replay carries the note for the first and the newest bodies in full');
   });
 });
 
@@ -840,13 +851,13 @@ test('session-manager: both events land in the shadow log under their wire-* rec
 test('t1119 grammar line with no examples: an ephemeral seat is not promised two full bodies', () => {
   const line = spillGrammarLine('/r', 0);
   assert.ok(line.startsWith('- A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Every long intent body is filed, and the transcript keeps the intent head, a bracketed runtime note, and `[agent:end]`, and the ordinary confirmation is the only thing that follows'), line);
-  assert.ok(!line.includes('two oldest'), 'ENTER: the examples sentence is gone');
+  assert.ok(!line.includes('two newest'), 'ENTER: the examples sentence is gone');
   assert.equal(spillGrammarLine('/r'), spillGrammarLine('/r', 2), 'the default is the two-example line');
 });
 
 test('T13 grammar line: byte-pinned, both wirescope anchors present', () => {
   const line = spillGrammarLine('/r');
-  assert.equal(line, '- A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Your two oldest long intent bodies stay in your transcript in full; every later one is filed and the transcript keeps the intent head, a bracketed runtime note, and `[agent:end]`, and the ordinary confirmation is the only thing that follows, so a body is never lost and never needs re-sending. Always write the body itself: a body you did not write does not exist, and the confirmation is something Clodex writes after delivery, never something you write. On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last intent — or a reply with no intent — is filed the same way once it passes 800 bytes and is the one case that still gets a `[clodex] … filed at …` note: what the operator must know goes inside an intent, not after it — a dm from your operator counts as typed. Actions happen only by emitting the complete intent — head line, full body, terminator; describing, promising or referring to an action in prose performs nothing. Clodex may omit executed intent text from your retained history and report outcomes separately; those history edits are not a request form and never something you write.');
+  assert.equal(line, '- A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Your two newest long intent bodies stay in your transcript in full; every earlier one is filed and the transcript keeps the intent head, a bracketed runtime note, and `[agent:end]`, and the ordinary confirmation is the only thing that follows, so a body is never lost and never needs re-sending. Always write the body itself: a body you did not write does not exist, and the confirmation is something Clodex writes after delivery, never something you write. On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last intent — or a reply with no intent — is filed the same way once it passes 800 bytes and is the one case that still gets a `[clodex] … filed at …` note: what the operator must know goes inside an intent, not after it — a dm from your operator counts as typed. Actions happen only by emitting the complete intent — head line, full body, terminator; describing, promising or referring to an action in prose performs nothing. Clodex may omit executed intent text from your retained history and report outcomes separately; those history edits are not a request form and never something you write.');
   const prose = line.indexOf('prose after your last intent');
   assert.ok(prose > 0);
   assert.equal(line.indexOf('filed at'), line.indexOf('filed at', prose), 'the filed-at note is promised only in the prose clause');

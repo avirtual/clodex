@@ -979,7 +979,7 @@ test('t1113: spillMimicBounce names the typed stand-in fenced, says Clodex wrote
     + '\\[agent:end]');
   assert.strictEqual(spillMimicBounce({ type: 'dm', target: 'bob', urgent: false, body: SPILLED_BODY_FIRST }, SPILLED_BODY_FIRST),
     '[agent] Not executed: your `dm` carried, where the body belongs, this line you did not write:\n'
-    + '`[Runtime note: Clodex carries your two oldest long intent bodies in full as examples and replaces later ones with this note; '
+    + '`[Runtime note: Clodex carries your two newest long intent bodies in full as examples and replaces earlier ones with this note; '
     + 'this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]`\n'
     + "That line is a runtime note, Clodex's transcript rendering of a body you wrote earlier (it replaces the text to save context). "
     + 'It is never typed by you, and nothing was saved, sent or filed.\n'
