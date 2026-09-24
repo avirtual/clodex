@@ -8,6 +8,8 @@ const { rewriteEchoSgr } = require('./lib/prompt-echo');
 const { isExternallyOpenable } = require('../external-link');
 
 const OUTPUT_LINE_CAP = 400;
+const CLAMP_LINES = 2;
+const CLAMP_CHARS = 240;
 const NOOP = () => {};
 const MINUS = '−';
 
@@ -95,6 +97,96 @@ function appendProse(doc, parent, text, ctx) {
     parent.appendChild(el(doc, 'span', `intent-mark intent-mark-${m.kind}`, line.slice(m.span.offset, end)));
     appendLinked(doc, parent, line.slice(end), '', ctx);
   });
+}
+
+function appendPlain(doc, parent, text, ctx) {
+  String(text).split('\n').forEach((line, k) => {
+    if (k) parent.appendChild(doc.createTextNode('\n'));
+    appendLinked(doc, parent, line, '', ctx);
+  });
+}
+
+function filedLink(doc, spill, ctx) {
+  const wrap = el(doc, 'span', 'intent-card-filed-link');
+  const size = spill.bytes != null ? `${bytesText(spill.bytes)} ` : '';
+  wrap.appendChild(doc.createTextNode(`▢ ${size}filed · `));
+  const name = spill.title || (spill.path ? baseName(spill.path) : 'filed body');
+  if (spill.path) wrap.appendChild(linkNode(doc, { kind: 'path', text: name, path: spill.path }, '', ctx));
+  else wrap.appendChild(doc.createTextNode(name));
+  return wrap;
+}
+
+function cardHead(doc, seg, ctx) {
+  const head = el(doc, 'div', 'intent-card-head');
+  const h = seg.head;
+  head.appendChild(el(doc, 'span', 'intent-card-glyph', h.glyph));
+  head.appendChild(el(doc, 'span', 'intent-card-label', h.label));
+  if (h.target) {
+    const target = el(doc, 'span', 'intent-card-target');
+    if (seg.verb === 'file') target.appendChild(linkNode(doc, { kind: 'path', text: baseName(h.target), path: h.target }, '', ctx));
+    else target.textContent = h.target;
+    head.appendChild(target);
+  }
+  for (const chip of h.chips) head.appendChild(el(doc, 'span', 'intent-chip', chip));
+  return head;
+}
+
+function cardBody(doc, seg, ctx) {
+  const lines = seg.body.split('\n');
+  const body = el(doc, 'div', `intent-card-body${seg.verb === 'exec' ? ' intent-card-body-mono' : ''}`);
+  appendPlain(doc, body, seg.body, ctx);
+  const more = lines.length - CLAMP_LINES;
+  if (more <= 0 && seg.body.length <= CLAMP_CHARS) return [body];
+  body.className += ' intent-card-clamped';
+  const foot = el(doc, 'div', 'intent-card-more', more > 0 ? `+ ${countText(more, 'more line', 'more lines')}` : '+ more');
+  const expand = () => {
+    body.className = body.className.replace(' intent-card-clamped', '');
+    foot.hidden = true;
+  };
+  foot.addEventListener('click', expand);
+  body.addEventListener('click', expand);
+  return [body, foot];
+}
+
+function intentCard(doc, seg, ctx) {
+  if (seg.kind === 'inert') {
+    const card = el(doc, 'div', 'intent-card intent-card-inert');
+    const head = el(doc, 'div', 'intent-card-head');
+    head.appendChild(el(doc, 'span', 'intent-card-state', "⊘ won't fire"));
+    card.appendChild(head);
+    card.appendChild(el(doc, 'div', 'intent-card-raw', seg.text));
+    return card;
+  }
+  const card = el(doc, 'div', `intent-card${seg.state === 'filed' ? ' intent-card-filed' : ''}`);
+  card.dataset.verb = seg.verb;
+  card.appendChild(cardHead(doc, seg, ctx));
+  if (seg.state === 'filed' && seg.spill) {
+    const row = el(doc, 'div', 'intent-card-body');
+    row.appendChild(filedLink(doc, seg.spill, ctx));
+    card.appendChild(row);
+  } else if (seg.body) {
+    for (const n of cardBody(doc, seg, ctx)) card.appendChild(n);
+  }
+  return card;
+}
+
+function appendSegments(doc, row, segs, ctx) {
+  let stack = null;
+  for (const seg of segs) {
+    if (seg.kind === 'intent' || seg.kind === 'inert') {
+      if (!stack) {
+        stack = el(doc, 'div', 'intent-stack');
+        row.appendChild(stack);
+      }
+      stack.appendChild(intentCard(doc, seg, ctx));
+      continue;
+    }
+    stack = null;
+    const prose = el(doc, 'div', 'tr-seg-prose');
+    if (seg.spill) prose.appendChild(filedLink(doc, seg.spill, ctx));
+    else appendPlain(doc, prose, seg.text, ctx);
+    row.appendChild(prose);
+  }
 }
 
 function clock(ts) {
@@ -214,6 +306,20 @@ function senderBadge(doc, from) {
   return badge;
 }
 
+function replyRow(doc, rec, ctx, attached) {
+  const row = headRow(doc, `tr-reply${attached ? ' tr-reply-attached' : ''}`, rec);
+  const text = el(doc, 'span', 'tr-head-text');
+  if (attached) text.appendChild(el(doc, 'span', 'tr-reply-lead', '↳'));
+  const badge = el(doc, 'span', 'tr-sender tr-sender-app');
+  badge.title = 'Clodex runtime';
+  badge.appendChild(el(doc, 'span', 'tr-sender-glyph', rec.glyph));
+  badge.appendChild(el(doc, 'span', 'tr-sender-name', rec.label));
+  text.appendChild(badge);
+  appendPlain(doc, text, rec.text, ctx);
+  row.appendChild(text);
+  return withTime(doc, row, rec);
+}
+
 function inboundRow(doc, rec, ctx) {
   const row = headRow(doc, 'tr-inbound', rec);
   const text = el(doc, 'span', 'tr-head-text');
@@ -238,10 +344,11 @@ function noticeRow(doc, rec, level, text, ctx) {
   return row;
 }
 
-function buildRow(doc, rec, ctx) {
+function buildRow(doc, rec, ctx, attached) {
   switch (rec.kind) {
     case 'prompt': return promptRow(doc, rec, ctx);
     case 'inbound': return inboundRow(doc, rec, ctx);
+    case 'reply': return replyRow(doc, rec, ctx, attached);
     case 'notification': {
       const row = headRow(doc, 'tr-notification', rec);
       row.appendChild(el(doc, 'span', 'tr-head-text', rec.text));
@@ -260,9 +367,10 @@ function buildRow(doc, rec, ctx) {
     }
     case 'assistant': {
       if (rec.apiError) return noticeRow(doc, rec, 'error', rec.text, ctx);
-      const row = el(doc, 'div', 'tr-row tr-prose');
+      const row = el(doc, 'div', `tr-row tr-prose${rec.segments ? ' tr-segs' : ''}`);
       row.dataset.id = rec.id;
-      appendProse(doc, row, rec.text, ctx);
+      if (rec.segments) appendSegments(doc, row, rec.segments, ctx);
+      else appendProse(doc, row, rec.text, ctx);
       return row;
     }
     case 'tool': return toolRow(doc, rec, ctx);
@@ -346,6 +454,43 @@ function reconcile(parent, cache, items) {
   }
 }
 
+function tally(verbs) {
+  const m = new Map();
+  for (const v of verbs) m.set(v, (m.get(v) || 0) + 1);
+  return m;
+}
+
+function attachedReplies(records) {
+  const out = new Set();
+  let cards = null;
+  let replies = [];
+  const settle = () => {
+    if (cards && replies.length) {
+      const want = tally(cards.verbs);
+      const got = tally(replies.map((r) => r.verb));
+      for (const r of replies) if (want.get(r.verb) === got.get(r.verb)) out.add(r.id);
+    }
+    cards = null;
+    replies = [];
+  };
+  for (const r of records) {
+    if (r.kind === 'tool' || r.kind === 'turn-end') continue;
+    if (r.kind === 'reply') {
+      if (cards) replies.push(r);
+      continue;
+    }
+    if (replies.length) settle();
+    if (r.kind === 'assistant' && Array.isArray(r.segments)) {
+      const verbs = r.segments.filter((s) => s.kind === 'intent').map((s) => s.verb);
+      cards = cards && cards.turn === r.turn ? { turn: r.turn, verbs: cards.verbs.concat(verbs) } : { turn: r.turn, verbs };
+      continue;
+    }
+    cards = null;
+  }
+  settle();
+  return out;
+}
+
 function groupTurns(records) {
   const turns = [];
   for (const r of records) {
@@ -360,11 +505,13 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
   const deps = { seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, ...ctx };
   const turnCache = new Map();
 
-  function rowItems(records) {
+  function rowItems(records, attached) {
     const items = [];
     for (const r of records) {
       if (r.kind === 'turn-end') continue;
-      items.push({ key: r.id, sig: JSON.stringify(r) + (r.kind === 'command-output' ? JSON.stringify(resolvePalette(deps) || null) : ''), build: () => buildRow(doc, r, deps) || el(doc, 'div', 'tr-row') });
+      const att = attached.has(r.id);
+      const extra = r.kind === 'command-output' ? JSON.stringify(resolvePalette(deps) || null) : att ? '|attached' : '';
+      items.push({ key: r.id, sig: JSON.stringify(r) + extra, build: () => buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row') });
     }
     const footer = footerOf(records);
     if (footer) items.push({ key: 'footer', sig: JSON.stringify(footer), build: () => buildFooter(doc, footer, deps) });
@@ -372,7 +519,9 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
   }
 
   function render(records) {
-    const items = groupTurns(Array.isArray(records) ? records : []).map((t) => ({
+    const list = Array.isArray(records) ? records : [];
+    const attached = attachedReplies(list);
+    const items = groupTurns(list).map((t) => ({
       key: t.key,
       sig: '',
       build: () => {
@@ -382,7 +531,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
       },
       after: (c) => {
         if (!c.sub) c.sub = new Map();
-        reconcile(c.el, c.sub, rowItems(t.records));
+        reconcile(c.el, c.sub, rowItems(t.records, attached));
       },
     }));
     reconcile(paneEl, turnCache, items);
@@ -391,4 +540,4 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
   return { render };
 }
 
-module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, createTranscriptRows };
+module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows };

@@ -10,6 +10,7 @@ const {
   withoutPrivilegedIntents,
 } = require('./intent-catalog');
 const { DEFAULT_PLUGIN_SCOPE, seatHasPlugin } = require('./plugin-api');
+const { PLUGIN_GLYPH, pluginGlyphOk } = require('./intent-glyphs');
 
 // `parse` receives the CLEANED, TRIMMED line; the scanner shell owns cleanLine/trim and the escape check.
 
@@ -317,8 +318,14 @@ function registerIntent(spec, source, opts = {}) {
   if (spec.bodyMode != null && typeof spec.bodyMode !== 'function') {
     throw new Error(`intent verb "${type}": bodyMode must be a function of the parsed intent`);
   }
+  let glyph = PLUGIN_GLYPH;
+  if (spec.glyph != null) {
+    if (pluginGlyphOk(spec.glyph)) glyph = spec.glyph;
+    else console.warn(`intent verb "${type}": glyph ${JSON.stringify(spec.glyph)} rejected, using ${PLUGIN_GLYPH}`);
+  }
   const row = Object.freeze({
     type,
+    glyph,
     // Wrapped so a plugin's parse can neither throw into the scanner nor return
     // an intent claiming to be some OTHER verb (which would route into a core
     // case in _handleIntent's switch).

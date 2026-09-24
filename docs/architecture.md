@@ -328,6 +328,13 @@ bundle), whose packaged form is the Docker image under
   scanner's parse chain, intent extraction in session-manager, and the
   handler's routing switch). Do not reintroduce a parallel verb list in any
   of them.
+- **intent-segments.js** — `scanIntentLines`: the greedy body loop split out
+  of `_extractIntents`, returning prose / intent / near-miss / end segments
+  over a turn's lines. Shared by session-manager and transcript-records.
+- **intent-glyphs.js** — the glyph vocabulary: `glyphFor`, `headOf` (glyph,
+  label, target, chips for a card head), `REPLY_GLYPHS` for runtime replies,
+  and the plugin-glyph check `registerIntent` applies. Main-side, no deps.
+  See docs/explorations/intent-cards.md §1.
 - **intent-catalog.js** — the single source of truth for the GATEABLE intent
   set: which verbs a session may be allowed or denied, in IPC-prompt order.
   Three consumers across two processes read it (the fire-time gate in
@@ -1212,12 +1219,16 @@ Own state + DOM, `init*(deps)`:
   `{ ok, rev, records }` built by `transcript-records.js`.
 - **transcript-records.js** — pure, electron-free record builder:
   `recordsOf(text)` turns transcript JSONL into typed records (prompt, inbound,
-  notification, assistant, tool paired with its result summary, command,
+  reply, notification, assistant, tool paired with its result summary, command,
   command-output, notice, boundary, turn-end), capped at 400 on a turn boundary.
-  See docs/explorations/pane-app-view.md §1.
+  An assistant record holding an intent line also carries `segments` from
+  `segmentsOf`, each intent's card head computed here, main-side.
+  See docs/explorations/pane-app-view.md §1 and intent-cards.md §4.
 - **transcript-rows.js** — DOM builders per record kind and the keyed reconcile
   behind the transcript pane: turn blocks keyed by their first record, rows keyed
   by record id and replaced only when their summary changes. No innerHTML.
+  Paints intent segments as cards in an `.intent-stack` and a runtime reply as
+  a verb-glyph row, attached (`↳`) when it directly follows its card.
 - **voice-submit-watcher.js** + **lib/voice-submit.js** — hands-free submit: one
   watcher per local Claude terminal sends Enter when the composer ENDS with the
   configured trigger phrase. The composer is read from `terminal.buffer.active`

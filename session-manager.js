@@ -147,6 +147,7 @@ const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
 
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { readerFor } = require('./transcript-readers');
+const { scanIntentLines } = require('./intent-segments');
 const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, museRegistryFor, linkTranscript } = require('./seat-config');
 const { activationSettings } = require('./muse-skills');
 const MUSE_LINK_POLL_MS = 250;
@@ -5120,77 +5121,16 @@ function createSessionManager(deps) {
         spillAt = ex.spillAt.size ? ex.spillAt : null;
         intents.push(...ex.unresolved);
       }
-      const jsonComplete = (s) => {
-        const t = s.trim();
-        if (!t) return false;
-        try { JSON.parse(t); return true; } catch { return false; }
-      };
-      let i = 0;
-      // Fence map for the whole turn (intent-scanner.fencedLines): a line
-      // inside a ```/~~~ code block is a QUOTE — literal text at every level
-      // of this scan (no intent parse, no body boundary, no near-miss bounce).
-      // Before this, an intent-shaped example inside a fence FIRED: a fence only
-      // renders as a block; raw turn text keeps each line at column 1.
-      const fenced = fencedLines(lines);
       let unknown = null;
-      while (i < lines.length) {
-        const line = lines[i].trim();
-        const inFence = fenced[i];
-        const headAt = i;
-        i++;
-        if (inFence) continue;
-        const intent = parseIntent(line);
-        if (intent && intent.type === 'end') continue;
-        if (intent && spillAt && spillAt.has(headAt)) intent.spill = spillAt.get(headAt);
-        if (!intent || intent.type === 'escape') {
-          const nearMiss = !intent && looksLikeIntent(line);
-          if (nearMiss) {
-            if (unknown) unknown.more++;
-            else { unknown = { type: 'unknown', text: nearMiss.slice(0, 160), more: 0 }; intents.push(unknown); }
-          }
+      for (const seg of scanIntentLines(lines, { execBodyCap, parseIntent, fencedLines, looksLikeIntent, bodyModeFor })) {
+        if (seg.kind === 'near-miss') {
+          if (unknown) unknown.more++;
+          else { unknown = { type: 'unknown', text: seg.text.slice(0, 160), more: 0 }; intents.push(unknown); }
           continue;
         }
-
-        if (bodyModeFor(intent) === 'json') {
-          let buf = intent.body || '';
-          let j = i;
-          let complete = jsonComplete(buf); // may already be complete on the intent line
-          while (!complete && j < lines.length) {
-            const next = fenced[j] ? null : parseIntent(lines[j]);
-            if (next && next.type !== 'escape') break; // a col-1 intent ends the body
-            const grown = buf + '\n' + lines[j];
-            if (Buffer.byteLength(grown, 'utf8') > execBodyCap) break; // cap the region
-            buf = grown;
-            j++;
-            complete = jsonComplete(buf);
-          }
-          if (complete) {
-            intent.body = buf;   // exactly the JSON value; trailing prose not consumed
-            i = j;               // resume the outer loop at the value's first unused line
-            intents.push(intent);
-            continue;
-          }
-        }
-
-        const bodyMode = bodyModeFor(intent);
-        if (bodyMode === 'greedy' || bodyMode === 'json') {
-          const body = [];
-          let closed = false;
-          while (i < lines.length) {
-            const next = fenced[i] ? null : parseIntent(lines[i]);
-            if (next && next.type !== 'escape') { closed = true; break; }
-            body.push(lines[i]);
-            i++;
-          }
-          if (!closed) intent.bodyOpen = true;
-          while (body.length && !body[body.length - 1].trim()) body.pop();
-          if (body.length) {
-            const firstBody = intent.body || '';
-            intent.body = firstBody + '\n' + body.join('\n');
-          }
-        }
-
-        intents.push(intent);
+        if (seg.kind !== 'intent') continue;
+        if (spillAt && spillAt.has(seg.from)) seg.intent.spill = spillAt.get(seg.from);
+        intents.push(seg.intent);
       }
       return intents;
     }
