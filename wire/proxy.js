@@ -25,6 +25,7 @@ const { cutSpillStubs } = require('./spill-cut');
 const { answerVoiceSink } = require('./voice-sink');
 
 const SPILL_SHOWN_TTL_MS = 60 * 60 * 1000;
+const SPILL_SHOWN_PERSIST_SLACK_MS = 60 * 1000;
 
 // Hop-by-hop headers per RFC 7230 §6.1, plus content-length/host which the
 // HTTP libs manage themselves. content-encoding stays — the client receives
@@ -144,6 +145,7 @@ class WireProxy extends EventEmitter {
     this.spillShownStore = opts.spillShownStore || null;
     this._onSpillShownError = typeof opts.onSpillShownError === 'function' ? opts.onSpillShownError : () => {};
     this._spillShownRecords = {};
+    this._spillShownSavePending = false;
     if (this.spillShownStore) {
       try {
         const loaded = this.spillShownStore.load();
@@ -245,17 +247,30 @@ class WireProxy extends EventEmitter {
   }
 
   _saveSpillShown() {
-    if (!this.spillShownStore) return;
-    try {
-      this.spillShownStore.save(this._spillShownRecords);
-    } catch (e) {
-      this._onSpillShownError(e.message);
-    }
+    if (!this.spillShownStore || this._spillShownSavePending) return;
+    this._spillShownSavePending = true;
+    setImmediate(() => {
+      this._spillShownSavePending = false;
+      const cutoff = this.now() - SPILL_SHOWN_TTL_MS;
+      for (const [name, rec] of Object.entries(this._spillShownRecords)) {
+        if (!this._agentSpillShown.has(name) && !(rec.lastAt >= cutoff)) delete this._spillShownRecords[name];
+      }
+      try {
+        this.spillShownStore.save(this._spillShownRecords);
+      } catch (e) {
+        this._onSpillShownError(e.message);
+      }
+    });
   }
 
   _persistSpillShown(agent) {
     const st = this._agentSpillShown.get(agent);
     if (!st || !this.spillShownStore) return;
+    const prev = this._spillShownRecords[agent];
+    const unchanged = prev && prev.sessionId === st.sessionId
+      && prev.shown.length === st.shown.size && prev.shown.every((k) => st.shown.has(k))
+      && st.lastAt - prev.lastAt <= SPILL_SHOWN_PERSIST_SLACK_MS;
+    if (unchanged) return;
     this._spillShownRecords[agent] = { shown: [...st.shown], sessionId: st.sessionId, lastAt: st.lastAt };
     this._saveSpillShown();
   }

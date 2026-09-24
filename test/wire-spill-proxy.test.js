@@ -1067,6 +1067,7 @@ test('t1167 (d): unregisterAgent removes the agent record from the store', async
     assert.ok(await whenEvent(events, 'turn.completed', 1));
     assert.ok(store.saved.tester, 'ENTER: the record was saved');
     proxy.unregisterAgent('tester');
+    await new Promise((r) => setImmediate(r));
     assert.ok(!Object.prototype.hasOwnProperty.call(store.saved, 'tester'));
   });
 });
@@ -1086,5 +1087,49 @@ test('t1167 (e): a store whose save throws never reaches the request path — fo
     assert.deepStrictEqual(events['spill-cut'].map(pickCut), [{ sticky: 0, expanded: 2 }]);
     assert.deepStrictEqual(errors, ['disk full']);
     assert.deepStrictEqual(events['spill-cut-error'], []);
+  });
+});
+
+test('t1167 (f): an unchanged set is not rewritten until lastAt has moved past a minute; a changed one is', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const store = fakeShownStore();
+  const clock = { t: 1_000_000 };
+  const { bodies: [A, B, C, D], bodyOf } = stickyFixture(root);
+  await withProxy({ proxyOpts: { now: () => clock.t, spillShownStore: store } }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
+    const events = collect(proxy, ['turn.completed']);
+    const send = async (list, n) => {
+      await request(proxy.port, '/agent/tester/v1/messages', bodyOf(list));
+      assert.ok(await whenEvent(events, 'turn.completed', n));
+    };
+    await send([A, B, C], 1);
+    assert.equal(store.saves, 1);
+    clock.t += 30 * 1000;
+    await send([A, B, C], 2);
+    assert.equal(store.saves, 1, 'same set, lastAt moved 30 s: no write');
+    clock.t += 31 * 1000;
+    await send([A, B, C], 3);
+    assert.equal(store.saves, 2, 'same set, lastAt moved 61 s: written');
+    assert.equal(store.saved.tester.lastAt, clock.t);
+    await send([A, B, C, D], 4);
+    assert.equal(store.saves, 3, 'the set grew: written at once');
+  });
+});
+
+test('t1167 (g): a record for an agent not registered since load is pruned once its lastAt is past the TTL', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const store = fakeShownStore();
+  const clock = { t: 10_000_000 };
+  store.saved = {
+    ghost: { shown: ['x'], sessionId: SESSION_ID, lastAt: clock.t - 60 * 60 * 1000 - 1 },
+    fresh: { shown: ['y'], sessionId: SESSION_ID, lastAt: clock.t - 1000 },
+  };
+  const { bodies: [A, B, C], bodyOf } = stickyFixture(root);
+  await withProxy({ proxyOpts: { now: () => clock.t, spillShownStore: store } }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
+    const events = collect(proxy, ['turn.completed']);
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C]));
+    assert.ok(await whenEvent(events, 'turn.completed', 1));
+    assert.deepStrictEqual(Object.keys(store.saved).sort(), ['fresh', 'tester']);
   });
 });

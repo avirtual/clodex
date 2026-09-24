@@ -58,3 +58,32 @@ test('session-manager builds the wire with a SpillShownStore under userData', as
     rmTree(root);
   }
 });
+
+test('session-manager _cleanup keeps the spill-shown record only while the app is shutting down', () => {
+  const root = mkTmpRoot('clodex-t418-seam-');
+  try {
+    const SessionManager = createSessionManager({
+      knownSkillNames: () => [],
+      REGISTRY_DIR: root,
+      fs,
+      path,
+      getUserDataPath: () => root,
+      getRemoteServer: () => null,
+      getUiSettings: () => ({ get: () => ({}) }),
+      getPersistence: () => ({ list: () => [], get: () => null }),
+      notifyOS: () => {},
+      log: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+    const m = new SessionManager();
+    m._broadcast = () => {};
+    const calls = [];
+    m._wire = { unregisterAgent: (name, opts) => calls.push([name, opts]) };
+    m.sessions.set('quitting', { name: 'quitting', _shuttingDown: true });
+    m.sessions.set('killed', { name: 'killed' });
+    m._cleanup('quitting');
+    m._cleanup('killed');
+    assert.deepStrictEqual(calls, [['quitting', { keepSpillShown: true }], ['killed', { keepSpillShown: false }]]);
+  } finally {
+    rmTree(root);
+  }
+});
