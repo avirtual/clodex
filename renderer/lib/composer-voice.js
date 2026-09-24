@@ -28,14 +28,22 @@ function applyDraft(value, span, text) {
 
 function createComposerTrigger({ getConfig }) {
   let fired = null;
+  const match = (value) => {
+    let cfg = null;
+    try { cfg = getConfig(); } catch { cfg = null; }
+    if (!cfg || !shouldFire({ enabled: cfg.enabled })) return null;
+    if (typeof value !== 'string') return null;
+    return findSubmit(value, cfg.phrase);
+  };
   return {
+    matches(value) {
+      const hit = match(value);
+      return !!(hit && hit.erase);
+    },
     check(value) {
-      let cfg = null;
-      try { cfg = getConfig(); } catch { cfg = null; }
-      if (!cfg || !shouldFire({ enabled: cfg.enabled })) return null;
       if (typeof value !== 'string') return null;
       if (value === fired) return null;
-      const hit = findSubmit(value, cfg.phrase);
+      const hit = match(value);
       if (!hit || !hit.erase) { fired = null; return null; }
       fired = value;
       return { text: value.slice(0, value.length - hit.erase) };
@@ -45,11 +53,12 @@ function createComposerTrigger({ getConfig }) {
 
 function attachTriggerSubmit(composer, {
   getConfig, markOrigin, send, hasImages = () => false, onVoiceFire = () => {},
-  quietMs = 0, timers = { set: setTimeout, clear: clearTimeout },
+  holdsFire = () => false, onVoiceStop = () => {}, quietMs = 0, timers = { set: setTimeout, clear: clearTimeout },
 }) {
   const trigger = createComposerTrigger({ getConfig });
   let span = null;
   let quiet = null;
+  let stopping = false;
   const fire = (fromVoice) => {
     const hit = trigger.check(composer.value);
     if (!hit) return;
@@ -61,6 +70,14 @@ function attachTriggerSubmit(composer, {
     try { markOrigin(); } catch {}
     send();
   };
+  const voiceFire = () => {
+    let open = false;
+    try { open = holdsFire() === true; } catch { open = false; }
+    if (!open) { stopping = false; fire(true); return; }
+    if (stopping || !trigger.matches(composer.value)) return;
+    stopping = true;
+    try { onVoiceStop(); } catch {}
+  };
   const onInput = () => fire(false);
   const cancelQuiet = () => { if (quiet !== null) { timers.clear(quiet); quiet = null; } };
   composer.addEventListener('input', onInput);
@@ -71,9 +88,15 @@ function attachTriggerSubmit(composer, {
       composer.value = next.value;
       span = next.span;
       cancelQuiet();
-      quiet = timers.set(() => { quiet = null; fire(true); }, quietMs);
+      quiet = timers.set(() => { quiet = null; voiceFire(); }, quietMs);
     },
-    resetSpan() { span = null; },
+    released() {
+      if (!stopping) return;
+      stopping = false;
+      cancelQuiet();
+      fire(true);
+    },
+    resetSpan() { span = null; stopping = false; },
     dispose() {
       cancelQuiet();
       composer.removeEventListener('input', onInput);

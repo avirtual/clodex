@@ -6,6 +6,7 @@ const HOLD_REPEAT_MS = 30;
 const HOLD_MAX_MS = 120000;
 const BOOT_SETTLE_MS = 600;
 const BOOT_MAX_MS = 20000;
+const REPAINT_MAX_MS = 1500;
 const RECORD_ACTIONS = ['start', 'stop', 'toggle'];
 const PROMPT_MARK = '❯';
 
@@ -31,6 +32,6 @@ function planRecord({ mode, action, recording } = {}) {
 }
 
 module.exports = {
-  VOICE_ENGINE_NAME, RECORD_KEY, HOLD_REPEAT_MS, HOLD_MAX_MS, BOOT_SETTLE_MS, BOOT_MAX_MS,
+  VOICE_ENGINE_NAME, RECORD_KEY, HOLD_REPEAT_MS, HOLD_MAX_MS, BOOT_SETTLE_MS, BOOT_MAX_MS, REPAINT_MAX_MS,
   RECORD_ACTIONS, PROMPT_MARK, engineSettings, engineArgs, planRecord,
 };

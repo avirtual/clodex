@@ -154,3 +154,37 @@ test('a released mirror disarms once the engine clears its input row', () => {
   assert.deepEqual(drafts, ['hello', 'Hello there.']);
   assert.equal(mirror.isArmed(), false);
 });
+
+test('tap mode: a phrase in the interim paint stops the recorder and sends the final sentence once', () => {
+  const t = fakeTerminal([`${HEAD}`]);
+  const ta = fakeTextarea();
+  const pending = [];
+  const timers = { set: (fn) => { pending.push(fn); return pending.length; }, clear: (id) => { pending[id - 1] = null; } };
+  const flush = () => { for (let i = 0; i < pending.length; i++) { const fn = pending[i]; pending[i] = null; if (fn) fn(); } };
+  const sent = [];
+  let recording = true;
+  let stops = 0;
+  let mirror = null;
+  const sub = attachTriggerSubmit(ta, {
+    getConfig: () => ({ enabled: true, phrase: 'over and out' }),
+    markOrigin: () => {},
+    send: () => { sent.push(ta.value); ta.value = ''; sub.resetSpan(); },
+    onVoiceFire: () => mirror.disarm(),
+    holdsFire: () => recording,
+    onVoiceStop: () => { stops++; recording = false; mirror.release(); },
+    quietMs: 1200,
+    timers,
+  });
+  mirror = createVoiceMirror(t, { onDraft: (d) => sub.draft(d), onRelease: () => sub.released() });
+  mirror.arm();
+  t.paint([`${HEAD}ship it over and out █`]);
+  flush();
+  assert.deepEqual(sent, [], 'the interim paint never sends');
+  assert.equal(stops, 1);
+  t.paint([`${HEAD}Ship it now, over and out.`]);
+  t.paint([`${HEAD}`]);
+  flush();
+  assert.deepEqual(sent, ['Ship it now,']);
+  assert.equal(stops, 1);
+  assert.equal(mirror.isArmed(), false);
+});

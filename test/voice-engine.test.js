@@ -80,6 +80,7 @@ function managerFixture() {
   fs.mkdirSync(userData, { recursive: true });
   const spawns = [];
   const writes = [];
+  const events = [];
   const registered = [];
   const fakePty = {
     spawn: (cmd, args, opts) => {
@@ -89,7 +90,8 @@ function managerFixture() {
         pid: 4242,
         onData(cb) { rec.data = cb; cb('❯ '); },
         onExit(cb) { rec.exit = cb; },
-        write(d) { writes.push(d); },
+        write(d) { writes.push(d); events.push(['write', d]); },
+        resize(c, r) { events.push(['resize', c, r]); if (rec.data) rec.data('❯ '); },
         kill() { rec.killed = true; },
       };
     },
@@ -119,10 +121,10 @@ function managerFixture() {
     unregisterAgent: (name) => wireCalls.push(['unregister', name]),
   };
   m._broadcast = () => {};
-  m.voiceEngineTimings = () => ({ holdRepeatMs: 1, holdMaxMs: 1000, bootSettleMs: 0, bootMaxMs: 50 });
+  m.voiceEngineTimings = () => ({ holdRepeatMs: 1, holdMaxMs: 1000, bootSettleMs: 0, bootMaxMs: 50, repaintMaxMs: 50 });
   m.sessions.set('st', { name: 'st', type: 'claude', agentType: 'claude', io: 'stream', cwd: '/proj', workspaceId: 'ws-1', pty: { pid: 1 }, activityState: 'idle' });
   m.sessions.set('tt', { name: 'tt', type: 'claude', agentType: 'claude', io: 'pty', cwd: '/proj', workspaceId: 'ws-1', pty: { pid: 2 }, activityState: 'idle' });
-  return { m, spawns, writes, registered, wireCalls, home, userData };
+  return { m, spawns, writes, events, registered, wireCalls, home, userData };
 }
 
 test('the voice engine is a private claude pty: wire-sunk, never listed, never registered', async () => {
@@ -192,11 +194,38 @@ test('engine output reaches only the window of the workspace that armed it', asy
   await h.m.voiceRecord('st', 'toggle', { mode: 'tap' });
   h.spawns[0].data('one');
   await h.m.voiceRecord('st', 'toggle', { mode: 'tap' });
+  assert.deepEqual(h.events.filter((e) => e[0] === 'resize'), [], 'the first armer saw the engine from spawn');
   got['ws-1'].length = 0;
+  h.events.length = 0;
   await h.m.voiceRecord('st2', 'toggle', { mode: 'tap' });
+  assert.deepEqual(h.events, [['resize', 121, 30], ['resize', 120, 30], ['write', ' ']],
+    'a new workspace gets a full repaint before the record key');
   h.spawns[0].data('two');
   assert.deepEqual(got['ws-1'], []);
-  assert.deepEqual(got['ws-2'], [['pty-data', VOICE_ENGINE_NAME, 'two']]);
+  assert.deepEqual(got['ws-2'], [
+    ['pty-data', VOICE_ENGINE_NAME, '❯ '], ['pty-data', VOICE_ENGINE_NAME, '❯ '], ['pty-data', VOICE_ENGINE_NAME, 'two'],
+  ]);
+  h.events.length = 0;
+  await h.m.voiceRecord('st2', 'toggle', { mode: 'tap' });
+  assert.deepEqual(h.events, [['write', ' ']], 'a same-workspace re-arm does not repaint');
+  h.m.killVoiceEngine();
+});
+
+test('the hold cap stops the engine and tells the arming window so its light goes out', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const h = managerFixture();
+  const got = [];
+  h.m.windows.set('ws-1', { isDestroyed: () => false, webContents: { send: (...a) => got.push(a) } });
+  const start = h.m.voiceRecord('st', 'start', { mode: 'hold' });
+  let res = null;
+  start.then((r) => { res = r; });
+  for (let i = 0; i < 200 && !res; i++) { await Promise.resolve(); t.mock.timers.tick(1); }
+  assert.equal(res && res.recording, true);
+  assert.deepEqual(got.filter((a) => a[0] !== 'pty-data'), []);
+  t.mock.timers.tick(1000);
+  assert.deepEqual(got.filter((a) => a[0] !== 'pty-data'), [['voice-engine-stopped', 'st']]);
+  assert.equal(h.m._voiceEngine.recording, false);
+  assert.equal(h.m._voiceEngine.holdTimer, null);
   h.m.killVoiceEngine();
 });
 
