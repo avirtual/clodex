@@ -91,7 +91,7 @@ function managerFixture() {
         onData(cb) { rec.data = cb; cb('❯ '); },
         onExit(cb) { rec.exit = cb; },
         write(d) { writes.push(d); events.push(['write', d]); },
-        resize(c, r) { events.push(['resize', c, r]); if (rec.data) rec.data('❯ '); },
+        resize(c, r) { events.push(['resize', c, r]); setImmediate(() => { events.push(['paint']); if (rec.data) rec.data('❯ '); }); },
         kill() { rec.killed = true; },
       };
     },
@@ -198,7 +198,7 @@ test('engine output reaches only the window of the workspace that armed it', asy
   got['ws-1'].length = 0;
   h.events.length = 0;
   await h.m.voiceRecord('st2', 'toggle', { mode: 'tap' });
-  assert.deepEqual(h.events, [['resize', 121, 30], ['resize', 120, 30], ['write', ' ']],
+  assert.deepEqual(h.events, [['resize', 121, 30], ['paint'], ['resize', 120, 30], ['paint'], ['write', ' ']],
     'a new workspace gets a full repaint before the record key');
   h.spawns[0].data('two');
   assert.deepEqual(got['ws-1'], []);

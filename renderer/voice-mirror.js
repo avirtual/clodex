@@ -4,7 +4,7 @@ const { readRowsToCursor } = require('./lib/cursor-row');
 const { composerHasDraft, composerIsEmpty, composerContinues } = require('./lib/voice-submit');
 
 const HEAD = /^[❯>][  ]/u;
-const TAIL_JUNK = /[\s█]+$/u;
+const TAIL_JUNK = /[\s\u2581-\u2588]+$/u;
 
 function draftFromRows(rows) {
   if (!Array.isArray(rows) || !rows.length) return null;

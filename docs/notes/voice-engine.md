@@ -18,6 +18,16 @@ shows `Voice: processing…`. The transcription is painted into the input row
 while speaking (an interim word followed by a U+2588 block), then replaced by
 the final sentence.
 
+Probe 2026-09-24, CLI 2.1.281, `say -r 150 "hello world enter"` into the mic.
+The block after the text is the level meter, drawn in the cursor cell as any
+of U+2581..U+2588 and re-drawn on a ~50ms tick while any sound reaches the mic.
+Tap: `❯ ▁`..`❯ █` (meter only), `❯ Hello█`, `❯ Hello▇`..`❯ Hello▂`,
+`❯ Hello world▂`, `❯ Hello world enter.▂` (then `.▅`, `.▆`, `.▇`, `.█`, ...
+for as long as the room is not silent); on the stop tap `❯ Hello world enter.`,
+`❯ Hello world, enter.`, then the row clears (the CLI submits) to `❯`.
+Hold: the same interim rows, `❯ Hello world enter.▄`, and after the spaces stop
+`❯ Hello world enter.`, `❯ Hello, world, enter.`; the row is not cleared.
+
 ## engineSettings
 
 Speech-to-text does not go through `ANTHROPIC_BASE_URL`: with it pointed at a

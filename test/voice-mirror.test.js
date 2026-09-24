@@ -188,3 +188,110 @@ test('tap mode: a phrase in the interim paint stops the recorder and sends the f
   assert.equal(stops, 1);
   assert.equal(mirror.isArmed(), false);
 });
+
+function fakeClock() {
+  let now = 0;
+  let seq = 0;
+  const due = new Map();
+  return {
+    timers: {
+      set: (fn, ms) => { seq++; due.set(seq, { at: now + ms, fn }); return seq; },
+      clear: (id) => { due.delete(id); },
+    },
+    advance(ms) {
+      const end = now + ms;
+      for (;;) {
+        let next = null;
+        for (const [id, t] of due) if (t.at <= end && (!next || t.at < next[1].at)) next = [id, t];
+        if (!next) break;
+        due.delete(next[0]);
+        now = next[1].at;
+        next[1].fn();
+      }
+      now = end;
+    },
+  };
+}
+
+const METER = ['▅', '▆', '▇', '█', '▆', '▅', '▄', '▃', '▄', '▅', '▆', '▇'];
+
+function meterFor(t, clock, text, ms) {
+  for (let i = 0; i * 50 < ms; i++) {
+    t.paint([`${HEAD}${text}${METER[i % METER.length]}`]);
+    clock.advance(50);
+  }
+}
+
+function streamSeat({ recording, onStop }) {
+  const t = fakeTerminal([`${HEAD}`]);
+  const ta = fakeTextarea();
+  const clock = fakeClock();
+  const seat = { t, ta, clock, sent: [], stops: 0, recording, mirror: null };
+  const sub = attachTriggerSubmit(ta, {
+    getConfig: () => ({ enabled: true, phrase: 'enter' }),
+    markOrigin: () => {},
+    send: () => { seat.sent.push(ta.value); ta.value = ''; sub.resetSpan(); },
+    onVoiceFire: () => seat.mirror.disarm(),
+    holdsFire: () => seat.recording,
+    onVoiceStop: () => { seat.stops++; return onStop(seat); },
+    quietMs: 1200,
+    timers: clock.timers,
+  });
+  seat.sub = sub;
+  seat.mirror = createVoiceMirror(t, { onDraft: (d) => sub.draft(d), onRelease: () => sub.released() });
+  seat.mirror.arm();
+  return seat;
+}
+
+test('draftFromRows drops the level meter the CLI animates in the cursor cell', () => {
+  for (const g of '▁▂▃▄▅▆▇█') assert.equal(draftFromRows([`${HEAD}Hello world enter.${g}`]), 'Hello world enter.');
+});
+
+test('tap mode, probe rows: the meter ticking past "enter" does not starve the quiet window; ENTER sends once, phrase stripped', () => {
+  const s = streamSeat({ recording: true, onStop: (seat) => { seat.recording = false; seat.mirror.release(); } });
+  s.t.paint([`${HEAD}Hello█`]);
+  s.t.paint([`${HEAD}Hello world▂`]);
+  meterFor(s.t, s.clock, 'Hello world enter.', 3000);
+  assert.equal(s.stops, 1, 'the quiet window elapsed while the meter still ticked');
+  s.t.paint([`${HEAD}Hello world enter.`]);
+  s.t.paint([`${HEAD}Hello world, enter.`]);
+  s.t.paint([`${HEAD}`]);
+  s.clock.advance(5000);
+  assert.deepEqual(s.sent, ['Hello world,']);
+  assert.equal(s.ta.value, '');
+});
+
+test('hold mode, probe rows: the meter ticking past "enter" while held does not starve the quiet window; ENTER sends once, phrase stripped', () => {
+  const s = streamSeat({ recording: false, onStop: () => {} });
+  s.t.paint([`${HEAD}Hello█`]);
+  s.t.paint([`${HEAD}Hello world▄`]);
+  meterFor(s.t, s.clock, 'Hello world enter.', 3000);
+  assert.deepEqual(s.sent, ['Hello world']);
+  meterFor(s.t, s.clock, 'Hello world enter.', 3000);
+  s.t.paint([`${HEAD}Hello, world, enter.`]);
+  s.clock.advance(5000);
+  assert.deepEqual(s.sent, ['Hello world']);
+  assert.equal(s.stops, 0);
+});
+
+test('tap mode: a failed stop clears the latch and the next quiet window retries it', async () => {
+  let fail = true;
+  const s = streamSeat({
+    recording: true,
+    onStop: (seat) => {
+      if (fail) return Promise.resolve(false);
+      seat.recording = false;
+      seat.mirror.release();
+      return Promise.resolve(true);
+    },
+  });
+  s.t.paint([`${HEAD}Hello world enter.`]);
+  s.clock.advance(1200);
+  assert.equal(s.stops, 1);
+  await Promise.resolve();
+  fail = false;
+  s.clock.advance(1200);
+  assert.equal(s.stops, 2, 'the retry asked the recorder to stop again');
+  s.t.paint([`${HEAD}`]);
+  assert.deepEqual(s.sent, ['Hello world']);
+});

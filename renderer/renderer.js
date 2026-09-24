@@ -3498,7 +3498,7 @@ async function streamVoiceRecord(name, action) {
   if (!res || res.ok !== true) {
     entry.stream.setRecording(false);
     showToast(`Voice: ${(res && res.error) || 'recording failed'}`, { kind: 'error', name });
-    return;
+    return false;
   }
   if (res.recording) {
     if (voiceArmedSeat && voiceArmedSeat !== name) {
@@ -3513,6 +3513,7 @@ async function streamVoiceRecord(name, action) {
     view.mirror.release();
   }
   entry.stream.setRecording(res.recording === true);
+  return true;
 }
 
 function streamVoiceFired(name) {
