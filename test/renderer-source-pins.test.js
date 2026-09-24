@@ -34,6 +34,8 @@ for (const [label, anchor] of [
   ['moveSessionWithPicker', /function moveSessionWithPicker\(name\) \{[\s\S]*?\n\}\n/],
   ['moveSessionToPeerWithDialog respawn', /if \(res\.respawned\) \{[\s\S]*?switchSession\(name\);/],
   ['Edit Session save restart', /if \(res\.restarted\) \{\n    if \(source\) source\.onRestarted\(\);[\s\S]*?switchSession\(name\);/],
+  ['failed-row retry', /function addFailedSessionToSidebar\(entry\) \{[\s\S]*?\n\}\n/],
+  ['archived-row unarchive', /function addArchivedSessionToSidebar\(entry\) \{[\s\S]*?\n\}\n/],
 ]) {
   test(`${label} marks the seat's io before createTerminal, so a stream seat is not rebuilt as an xterm`, () => {
     const m = SRC.match(anchor);
@@ -44,3 +46,10 @@ for (const [label, anchor] of [
     assert.ok(mark >= 0 && mark < at, `${label} must call markSeatIo before createTerminal`);
   });
 }
+
+test('session:retrySpawn returns the seat io, so a row built without one is still re-marked a stream seat', () => {
+  const ipc = fs.readFileSync(path.join(__dirname, '..', 'ipc-handlers.js'), 'utf8');
+  const m = ipc.match(/handle\('session:retrySpawn'[\s\S]*?\n  \}\);\n/);
+  assert.ok(m, 'ENTER: the retrySpawn handler is still found by this anchor');
+  assert.ok(/return \{ ok: true, io: entry\.io \|\| 'pty' \};/.test(m[0]), 'retrySpawn reports the io it spawned with');
+});

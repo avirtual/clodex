@@ -579,6 +579,7 @@ function addFailedSessionToSidebar(entry) {
       return;
     }
     item.remove();
+    markSeatIo(entry.name, res.io || entry.io);
     createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
     switchSession(entry.name);
@@ -626,6 +627,7 @@ function addArchivedSessionToSidebar(entry) {
     if (!res || !res.ok) { alert(`Resume failed: ${(res && res.error) || 'unknown error'}`); return; }
     item.remove();
     sidebarMeta.delete(entry.name);
+    markSeatIo(entry.name, res.io || entry.io);
     createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
     if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });

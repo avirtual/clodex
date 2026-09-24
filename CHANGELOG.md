@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Stream seat: unarchiving, or retrying a seat that failed to start, brings it back with its composer instead of an empty terminal.
 - Stream seat: Restart from the session menu brings the seat back with its composer and transcript instead of an empty terminal.
 
 - Stream seat voice: saying the trigger word at the end of a sentence strips it and sends, the same as on a terminal seat.
