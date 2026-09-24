@@ -2424,6 +2424,7 @@ function createSessionManager(deps) {
         }
         session.sessionId = sessionId;
         getPersistence().setSessionId(name, sessionId);
+        if (sessionId && priorSid !== sessionId) this._repointStreamTranscript(session, sessionId);
         // A CHANGED id is /clear — whatever was offered is no longer in front of
         // the model, so the offer cooldown ends early. Read before noteSession,
         // which owns the same transition but reports nothing back. The first id
@@ -2976,6 +2977,9 @@ function createSessionManager(deps) {
           }
           this._streamTurnEnd(s);
           break;
+        case 'compact':
+          this._onCompactEnd(s, 'done');
+          break;
         case 'reset':
           log.info('session', `stream ${s.name}: conversation reset (${rec.newConversationId}); the next init carries the resumable id`);
           break;
@@ -2984,6 +2988,20 @@ function createSessionManager(deps) {
           break;
         default:
           break;
+      }
+    }
+
+    _repointStreamTranscript(s, sid) {
+      if (s.io !== 'stream' || !s.cwd) return;
+      const link = pathFor(REGISTRY_DIR, s.name, 'transcript');
+      try {
+        let current = null;
+        try { current = fs.readlinkSync(link); } catch {}
+        const target = current ? path.join(path.dirname(current), `${sid}.jsonl`) : this._claudeTranscriptPath(s.cwd, s.accountDir, sid);
+        if (target === current) return;
+        linkTranscript({ fs }, link, target);
+      } catch (e) {
+        log.warn('session', `stream ${s.name}: transcript link repoint failed: ${e.message}`);
       }
     }
 
@@ -4211,9 +4229,13 @@ function createSessionManager(deps) {
       }
     }
 
+    _claudeTranscriptPath(cwd, accountDir, sid) {
+      return path.join(accountDir || claudeHome(), 'projects', claudeProjectSlug(cwd), `${sid}.jsonl`);
+    }
+
     _snapshotBlockFor(name, cwd, accountDir, sid) {
       const candidates = [];
-      if (sid && cwd) candidates.push(path.join(accountDir || claudeHome(), 'projects', claudeProjectSlug(cwd), `${sid}.jsonl`));
+      if (sid && cwd) candidates.push(this._claudeTranscriptPath(cwd, accountDir, sid));
       candidates.push(pathFor(REGISTRY_DIR, name, 'transcript'));
       for (const p of candidates) {
         const found = readPromptSnapshotMemo(REGISTRY_DIR, name, p);

@@ -4,6 +4,9 @@
 
 Spawned `detached: true` so the child leads its own process group: `groupKill` signals `-pid`, which reaches the CLI's tool children without ever reaching Clodex's own group. A pipe child gets no SIGHUP when Clodex dies (unlike a pty), and SIGKILL to the leader alone leaves its tool children running (measured, headless-seats.md §0.5).
 
+The transcript symlink has one writer at a time: headless, `hook.sh` repoints it only on SessionStart `startup` (no later SessionStart fires under `-p`), and `_repointStreamTranscript` repoints it on every session-id change after that.
+They cannot race: startup's SessionStart precedes the first `init` (headless-seats.md §0.4, row "The transcript symlink").
+
 ## groupKill
 
 Refuses a non-positive pid before negating it: `-0` and `-(-1)` would be broadcasts. Censused in test/sigkill-pid-census.test.js.
