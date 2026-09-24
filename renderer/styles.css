@@ -13,6 +13,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 :root {
   color-scheme: dark;
   --sidebar-width: 220px;
+  --rail-titlebar-h: 28px;
 
   --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
@@ -6096,6 +6097,7 @@ body.web-frontend #sidebar-header {
 }
 #sidebar-fold:hover { background: var(--surface-hover); color: var(--text-primary); }
 #sidebar[data-folded="1"] #sidebar-resizer { pointer-events: none; }
+body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main { top: var(--rail-titlebar-h); }
 #sidebar[data-folded="1"] #session-list { padding: var(--sp-1) 0; overflow-x: hidden; }
 #sidebar[data-folded="1"] .session-group-header {
   height: 0;

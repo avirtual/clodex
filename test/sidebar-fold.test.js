@@ -137,6 +137,13 @@ test('a stored fold is applied on load, and the chevron button drives the same t
   assert.deepStrictEqual([h.els.sidebar.dataset.folded, h.vars['--sidebar-width']], ['0', '280px']);
 });
 
+test('a Cmd+B pressed before settings arrive is not undone by the stored fold', async () => {
+  const h = loadFoldIife({ settings: { sidebarWidth: 300, sidebarFolded: false } });
+  h.toggle();
+  await h.settle();
+  assert.deepStrictEqual([h.els.sidebar.dataset.folded, h.vars['--sidebar-width']], ['1', '44px']);
+});
+
 test('while folded the resizer drag is inert', async () => {
   const h = loadFoldIife({ settings: { sidebarWidth: 300, sidebarFolded: true } });
   await h.settle();
@@ -170,5 +177,8 @@ test('index.html pre-paints the fold and carries the chevron inside the toolbar'
 
 test('styles.css makes the resizer inert while folded', () => {
   assert.match(css, /#sidebar\[data-folded="1"\] #sidebar-resizer \{ pointer-events: none; \}/);
+  assert.match(css, /body:not\(\.web-frontend\):has\(#sidebar\[data-folded="1"\]\) #main \{ top: var\(--rail-titlebar-h\); \}/,
+    'folded, #main drops below the hiddenInset traffic lights');
+  assert.match(css, /:root \{[^}]*--rail-titlebar-h: 28px;/);
   assert.match(css, /#sidebar\[data-folded="1"\] \.session-item::before \{\s*content: attr\(data-monogram\);/);
 });

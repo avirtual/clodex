@@ -183,6 +183,7 @@ button:disabled {
 :root {
   color-scheme: dark;
   --sidebar-width: 220px;
+  --rail-titlebar-h: 28px;
   --font-ui:
     -apple-system,
     BlinkMacSystemFont,
@@ -8585,6 +8586,9 @@ body.web-frontend #sidebar-header {
 }
 #sidebar[data-folded="1"] #sidebar-resizer {
   pointer-events: none;
+}
+body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
+  top: var(--rail-titlebar-h);
 }
 #sidebar[data-folded="1"] #session-list {
   padding: var(--sp-1) 0;
@@ -43966,6 +43970,7 @@ ${detail}` });
           folded = localStorage.getItem(LS_FOLD_KEY) === "1";
         } catch {
         }
+        let toggled = false;
         const apply = () => {
           root.style.setProperty("--sidebar-width", effectiveSidebarWidth({ folded, width }) + "px");
           if (sidebar) sidebar.dataset.folded = folded ? "1" : "0";
@@ -44009,7 +44014,7 @@ ${detail}` });
             } catch {
             }
           }
-          if (typeof s.sidebarFolded === "boolean") {
+          if (typeof s.sidebarFolded === "boolean" && !toggled) {
             folded = s.sidebarFolded;
             try {
               localStorage.setItem(LS_FOLD_KEY, folded ? "1" : "0");
@@ -44069,6 +44074,7 @@ ${detail}` });
           persist(SIDEBAR_WIDTH_DEFAULT);
         });
         const toggle = () => {
+          toggled = true;
           folded = !folded;
           apply();
           persistFold();

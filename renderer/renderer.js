@@ -129,6 +129,7 @@ const toggleSidebarFold = (function initSidebarResize() {
   } catch {}
   let folded = false;
   try { folded = localStorage.getItem(LS_FOLD_KEY) === '1'; } catch {}
+  let toggled = false;
 
   const apply = () => {
     root.style.setProperty('--sidebar-width', effectiveSidebarWidth({ folded, width }) + 'px');
@@ -156,7 +157,7 @@ const toggleSidebarFold = (function initSidebarResize() {
       width = clampSidebarWidth(s.sidebarWidth);
       try { localStorage.setItem(LS_KEY, String(width)); } catch {}
     }
-    if (typeof s.sidebarFolded === 'boolean') {
+    if (typeof s.sidebarFolded === 'boolean' && !toggled) {
       folded = s.sidebarFolded;
       try { localStorage.setItem(LS_FOLD_KEY, folded ? '1' : '0'); } catch {}
     }
@@ -204,6 +205,7 @@ const toggleSidebarFold = (function initSidebarResize() {
   });
 
   const toggle = () => {
+    toggled = true;
     folded = !folded;
     apply();
     persistFold();
