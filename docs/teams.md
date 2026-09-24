@@ -398,12 +398,22 @@ while a different live run holds the lock. Check `ps` for a live runner before
 concluding anything. Deleting a valid lock deadlocks the two runs it was
 protecting.
 
+**Merge target.** The loop merges an accepted ticket into the team's trunk, not
+a hard-coded `master`. With no `trunk` key in `team.json` the trunk is the repo's
+default branch: `origin/HEAD` if the root has one, else a local `main`, else a
+local `master`, else whatever the root has checked out. Set it per team with
+`[agent:team trunk <branch>]` (lead only; the branch must exist in the root
+repo) or the "merge target" field on the lead row of the roles editor; bare
+`[agent:team trunk]` shows the effective value and whether it is set or derived.
+The merge gate refuses (`merge: on-master`, kept as the key for stability) when
+the root checkout is on anything other than that branch, and names it.
+
 **One conflict the loop resolves itself: CHANGELOG.md.** Every ticket adds its
 bullet at the head of `## Unreleased`, so the second of two in-flight tickets
 always conflicts there even when nothing else overlaps. When the ONLY conflicted
 path is the root `CHANGELOG.md` and both sides did nothing but insert lines
 (nothing deleted or rewritten, no `## ` heading added on either side), the loop
-keeps both — master's bullet above the branch's — completes the merge commit and
+keeps both — the trunk's bullet above the branch's — completes the merge commit and
 says so in the `[ticket MERGED]` notice, so you read `## Unreleased` once before
 a release. Any other conflict, in that file or any other, still escalates on the
 first try.

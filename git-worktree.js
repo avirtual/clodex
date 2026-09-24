@@ -147,16 +147,57 @@ async function createWorktree(cwd, branch, opts = null) {
 // The repo's default branch. Prefers the remote HEAD (origin/HEAD → origin/main
 // or origin/master), falling back to a local main/master, else the current
 // branch. Returns a ref string or null. Best-effort, never throws.
-async function defaultBranch(repo) {
-  // origin/HEAD symbolic ref → "origin/main"
-  const sym = await git(repo, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
+function* defaultBranchSteps() {
+  const sym = yield ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'];
   if (sym.ok && sym.stdout.trim()) return sym.stdout.trim();
   for (const b of ['main', 'master']) {
-    if ((await git(repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${b}`])).ok) return b;
+    if ((yield ['rev-parse', '--verify', '--quiet', `refs/heads/${b}`]).ok) return b;
   }
-  const cur = await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  const cur = yield ['rev-parse', '--abbrev-ref', 'HEAD'];
   const name = cur.ok && cur.stdout.trim();
   return name && name !== 'HEAD' ? name : null;
+}
+
+async function defaultBranch(repo) {
+  const it = defaultBranchSteps();
+  let step = it.next();
+  while (!step.done) step = it.next(await git(repo, step.value));
+  return step.value;
+}
+
+function gitSync(cwd, args) {
+  try {
+    const stdout = execFileSync('git', ['-C', cwd, ...args],
+      { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
+    return { ok: true, stdout: stdout || '' };
+  } catch { return { ok: false, stdout: '' }; }
+}
+
+function defaultBranchSync(repo) {
+  if (!repo || !fs.existsSync(repo)) return null;
+  const it = defaultBranchSteps();
+  let step = it.next();
+  while (!step.done) step = it.next(gitSync(repo, step.value));
+  return step.value;
+}
+
+function localTrunkName(ref) {
+  return ref ? String(ref).replace(/^origin\//, '') : null;
+}
+
+async function mergeTargetFor(team) {
+  if (team && team.trunk) return team.trunk;
+  return localTrunkName(team && team.root ? await defaultBranch(team.root) : null);
+}
+
+function mergeTargetForSync(team) {
+  if (team && team.trunk) return team.trunk;
+  return localTrunkName(team && team.root ? defaultBranchSync(team.root) : null);
+}
+
+async function localBranches(repo) {
+  const r = await git(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/']);
+  return r.ok ? r.stdout.split('\n').map((l) => l.trim()).filter(Boolean) : null;
 }
 
 // Is `branch` already contained in `base`? The one FACT that makes a ticket
@@ -694,7 +735,7 @@ async function revertCommit(cwd, sha) {
 
 module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
-  defaultBranch, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch,
+  defaultBranch, defaultBranchSync, mergeTargetFor, mergeTargetForSync, localBranches, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch,
   diffText, diffNames, fileAt, currentBranch, mergeNoFf, revertCommit, initRepo, hasCommit,
   checkoutDetached, headSha, headShaSync, headLogSync,
 };

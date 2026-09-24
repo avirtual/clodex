@@ -152,6 +152,15 @@ function pickRoleKeys(def) {
 // per live seat, so an ungated warn is several lines a minute forever.
 const warnedDrops = new Set();
 
+const TRUNK_RE = /^[A-Za-z0-9._/-]{1,120}$/;
+
+function normalizeTrunk(v) {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  if (!TRUNK_RE.test(t) || t.startsWith('-') || t.includes('..')) return null;
+  return t;
+}
+
 function createTeamManifest({ fs, clodexHome } = {}) {
   const home = clodexHome || defaultClodexHome();
   const teamsDir = path.join(home, 'teams');
@@ -511,7 +520,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       ? Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, rawWatchdog))
       : null;
     const kit = (typeof m.kit === 'string' && !badStem(m.kit) && TEAM_STEM_RE.test(m.kit)) ? m.kit : LEGACY_KIT;
-    return { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, version, droppedFields };
+    const trunk = normalizeTrunk(m.trunk);
+    return { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, trunk, version, droppedFields };
   }
 
   function containsPath(root, cwd) {
@@ -963,9 +973,23 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return loadManifest(teamName);
   }
 
+  function setTeamTrunk(teamName, branch) {
+    const team = loadManifest(teamName);
+    const blank = branch == null || (typeof branch === 'string' && !branch.trim());
+    const trunk = blank ? null : normalizeTrunk(branch);
+    if (!blank && !trunk) {
+      throw new Error(`trunk must be a branch name matching ${TRUNK_RE}, not starting with "-" and without ".." (${team.file})`);
+    }
+    const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
+    if (trunk == null) delete raw.trunk;
+    else raw.trunk = trunk;
+    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+    return loadManifest(teamName);
+  }
+
   return {
     resolveTeam, findProjectRoot, loadManifest, listTeams, cwdInProject,
-    createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setLead,
+    createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setLead,
     listKits, kitCatalog, resolveKit,
     teamsDir, TEAM_FILE,
   };
@@ -1120,6 +1144,6 @@ module.exports = {
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
-  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH,
+  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk,
   ROLE_RE, RESERVED_ROLE_KEYS, RESERVED_ROLE_PATCH_FIELDS,
 };

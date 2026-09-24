@@ -417,14 +417,6 @@ const WAKE_GRACE_MS = 5 * 60 * 1000;
 
 const MERGED_ACCEPT_NUDGE_MS = 10 * 60 * 1000;
 
-// The branch an accepted ticket lands on. A literal, matching what
-// scripts/release.sh's preflight demands, and deliberately NOT
-// gitWorktree.defaultBranch(): that prefers origin/HEAD, which answers about a
-// ref this checkout may never merge to, and the auto-merge writes to the tree in
-// front of it. A checkout parked anywhere else is a blocked merge, not a merge
-// somewhere else.
-const MERGE_TARGET_BRANCH = 'master';
-
 function humanizeAge(ms) {
   const s = Math.max(0, Math.round(ms / 1000));
   if (s < 60) return `${s}s`;
@@ -501,6 +493,7 @@ function createTicketMethods(deps, shared) {
     removeRole,
     renameRole,
     setTeamWatchdog,
+    setTeamTrunk,
     setLead,
     createTeam,
     kitCatalog,
@@ -1961,6 +1954,12 @@ function createTicketMethods(deps, shared) {
         // as it had no loop to run. Silent, not an escalation: nothing went
         // wrong, there is simply nothing to land.
         if (!branch || !baseSha) return;
+        const target = await gitWorktree.mergeTargetFor(team).catch(() => null);
+        if (!target) {
+          fail('on-master', `could not resolve the merge target branch for ${team.name}: no trunk is set and ${team.root} has no origin/HEAD, main, master or checked-out branch`,
+            'nothing was merged; set one with [agent:team trunk <branch>]');
+          return;
+        }
 
         // STEP 1 — the must-fixes in the verdict BODY are empty.
         //
@@ -2005,7 +2004,7 @@ function createTicketMethods(deps, shared) {
         }
 
         // STEP 3 — the checkout we are about to write to is clean and on
-        // master. BOTH, and before the merge: a dirty tree makes git refuse
+        // the trunk. BOTH, and before the merge: a dirty tree makes git refuse
         // mid-way, and a checkout parked on another branch would take the merge
         // silently onto whatever it is sitting on.
         const dirty = await gitWorktree.isDirty(team.root).catch((e) => ({ ok: false, error: e.message }));
@@ -2025,9 +2024,9 @@ function createTicketMethods(deps, shared) {
             'nothing was merged');
           return;
         }
-        if (cur.branch !== MERGE_TARGET_BRANCH) {
-          fail('on-master', `the root checkout is on "${cur.branch}", not ${MERGE_TARGET_BRANCH} — merging here would land ${branch} on the wrong branch`,
-            `nothing was merged; check out ${MERGE_TARGET_BRANCH} in ${team.root} and merge ${branch} by hand`);
+        if (cur.branch !== target) {
+          fail('on-master', `the root checkout is on "${cur.branch}", not the team's trunk ${target} — merging here would land ${branch} on the wrong branch`,
+            `nothing was merged; check out ${target} in ${team.root} and merge ${branch} by hand`);
           return;
         }
 
@@ -2222,7 +2221,7 @@ function createTicketMethods(deps, shared) {
           // `--no-ff` on an already-merged branch prints "Already up to date",
           // exits 0 and creates nothing. Reading ok alone would announce a merge
           // that did not happen and then run a suite proving nothing about it.
-          fail('merge', `git merge --no-ff ${branch} exited 0 but HEAD did not move — the branch was already contained in ${MERGE_TARGET_BRANCH}, so no merge commit exists`,
+          fail('merge', `git merge --no-ff ${branch} exited 0 but HEAD did not move — the branch was already contained in ${target}, so no merge commit exists`,
             `ran the merge in ${team.root}; nothing to revert`);
           return;
         }
@@ -2246,12 +2245,12 @@ function createTicketMethods(deps, shared) {
           // step exists to prevent, and a revert is cheap and recoverable while
           // a silently unverified master is neither.
           const why = mergeSlowOwned.length
-            ? `the suite's slow gate tripped on ${MERGE_TARGET_BRANCH} after the merge — ${suite.summary}, 0 failing\n`
+            ? `the suite's slow gate tripped on ${target} after the merge — ${suite.summary}, 0 failing\n`
               + `SLOW GATE: ${mergeSlowOwned.join('; ')}\nThese are tests a file this branch changed contains, so they are this `
               + 'ticket\'s to fix with a seam or a test/slow-tests.json entry — verify should have caught it before the merge.'
             : suite.ran
-              ? `the suite FAILS on ${MERGE_TARGET_BRANCH} after the merge — ${suite.summary}\nFAILING: ${suite.failing || '(the runner reported no test names)'}`
-              : `the suite could not be RUN on ${MERGE_TARGET_BRANCH} after the merge: ${suite.error}`;
+              ? `the suite FAILS on ${target} after the merge — ${suite.summary}\nFAILING: ${suite.failing || '(the runner reported no test names)'}`
+              : `the suite could not be RUN on ${target} after the merge: ${suite.error}`;
 
           // The failing output, kept — the SAME writer the loop's verify run
           // uses, not a second mechanism. This dump matters more than that one:
@@ -2279,7 +2278,7 @@ function createTicketMethods(deps, shared) {
           const keptWhere = (reverted) => (kept.ok
             ? (reverted
               ? ` Full output (assertion text, diff and stack) preserved at ${kept.path} — read it instead of re-running, which would measure the reverted tree.`
-              : ` Full output (assertion text, diff and stack) preserved at ${kept.path} — read it; ${MERGE_TARGET_BRANCH} still carries the merge.`)
+              : ` Full output (assertion text, diff and stack) preserved at ${kept.path} — read it; ${target} still carries the merge.`)
             : ` The failing output could not be preserved (${kept.error}).`);
 
           // The revert is a write to the shared root checkout exactly as the
@@ -2307,15 +2306,15 @@ function createTicketMethods(deps, shared) {
             const state = suite.ran
               ? `is RED: the merge ${merged.sha} IS on it and the suite FAILED`
               : `carries an UNVERIFIED merge ${merged.sha}: its suite never ran`;
-            fail('revert-blocked', `${why}\n\n${MERGE_TARGET_BRANCH} ${state}, and it was left that way deliberately: a test suite is running in ${team.root} (pid ${blocker}), so reverting now would rewrite the files under it.`,
+            fail('revert-blocked', `${why}\n\n${target} ${state}, and it was left that way deliberately: a test suite is running in ${team.root} (pid ${blocker}), so reverting now would rewrite the files under it.`,
               `merged ${branch} as ${merged.sha} and did NOT revert. Undo it yourself once that suite finishes: \`git -C ${team.root} revert -m 1 ${merged.sha}\`.${keptWhere(false)}`);
             return;
           }
           const rev = await gitWorktree.revertCommit(team.root, merged.sha)
             .catch((e) => ({ ok: false, error: e.message }));
           fail('suite', why, (rev.ok
-            ? `merged ${branch} as ${merged.sha}, ran the suite in ${team.root}, then REVERTED the merge (${rev.sha}) — ${MERGE_TARGET_BRANCH} is green again and the branch is untouched`
-            : `merged ${branch} as ${merged.sha} and the revert ALSO failed (${rev.error}) — ${MERGE_TARGET_BRANCH} is left carrying the merge and needs a human`) + keptWhere(rev.ok));
+            ? `merged ${branch} as ${merged.sha}, ran the suite in ${team.root}, then REVERTED the merge (${rev.sha}) — ${target} is green again and the branch is untouched`
+            : `merged ${branch} as ${merged.sha} and the revert ALSO failed (${rev.error}) — ${target} is left carrying the merge and needs a human`) + keptWhere(rev.ok));
           return;
         }
 
@@ -2375,7 +2374,7 @@ function createTicketMethods(deps, shared) {
           closeOut = { ok: false, closedOut: false, text: `the loop's close-out threw (${e.message})` };
         }
         this._notifyMergeLanded(team, ticketId, {
-          branch, sha: merged.sha, rounds, summary: suite.summary, changelog, unioned: merged.unioned, closeOut,
+          branch, target, sha: merged.sha, rounds, summary: suite.summary, changelog, unioned: merged.unioned, closeOut,
           slow: slowPass ? suite.slow : null,
         });
       } catch (e) {
@@ -2384,7 +2383,7 @@ function createTicketMethods(deps, shared) {
         // lead has the one thing needed to undo it.
         fail('unexpected', `the auto-merge threw: ${e && e.message ? e.message : String(e)}`,
           merged && merged.ok && merged.sha
-            ? `the merge commit ${merged.sha} IS on ${MERGE_TARGET_BRANCH} and was NOT verified — \`git -C ${team.root} revert -m 1 ${merged.sha}\` undoes it`
+            ? `the merge commit ${merged.sha} IS on ${target} and was NOT verified — \`git -C ${team.root} revert -m 1 ${merged.sha}\` undoes it`
             : 'nothing was merged');
       } finally {
         // Only the defer arm leaves it set, and only on the pass where it
@@ -2487,8 +2486,9 @@ function createTicketMethods(deps, shared) {
     // and `closedOut` are all read; every other shape falls to the step line, so
     // a forgotten argument cannot report a teardown that never ran. A REOPEN
     // renders no verb anywhere in the body, reassurance line included.
-    _notifyMergeLanded(team, ticketId, { branch, sha, rounds, summary, changelog, unioned, closeOut = null, slow = null }) {
+    _notifyMergeLanded(team, ticketId, { branch, target = null, sha, rounds, summary, changelog, unioned, closeOut = null, slow = null }) {
       try {
+        const into = target || gitWorktree.mergeTargetForSync(team);
         // Collapsed and capped BEFORE it reaches the array. git stderr is routinely
         // multi-line, and this body's safety property is that no line starts with
         // `[agent:` — an invariant the hazard comment above reasons about as lines
@@ -2504,7 +2504,7 @@ function createTicketMethods(deps, shared) {
             // that the branch wrote an entry. A branch fixing a typo in
             // CHANGELOG.md trips the same header, so the claim stops where the
             // evidence does and the lead is told to look rather than told not to.
-            ? `CHANGELOG.md was CHANGED by this merge — the branch touched it, so an entry may already be on ${MERGE_TARGET_BRANCH}. Look before adding one, or you will write a duplicate.`
+            ? `CHANGELOG.md was CHANGED by this merge — the branch touched it, so an entry may already be on ${into}. Look before adding one, or you will write a duplicate.`
             // A repo with no root CHANGELOG.md owes nothing; billing it on every
             // merge is how a lead learns to skip the line on the day it is true.
             // `=== false`: a result carrying no `present` is not a measured absence.
@@ -2526,18 +2526,18 @@ function createTicketMethods(deps, shared) {
         const closedOutOk = !!(closeOut && closeOut.ok && closeOut.closedOut);
         // A reopen gets its own arm: `Step owed:` names a verb `_taskAccept` refuses.
         const stepLine = closeOut && closeOut.reopened
-          ? `Reopened by rework (${closeOut.state}) during the post-merge suite: the merge is on ${MERGE_TARGET_BRANCH}, `
+          ? `Reopened by rework (${closeOut.state}) during the post-merge suite: the merge is on ${into}, `
             + `nothing was torn down, and the rework round's tree is the one now live. No step is owed here.`
           : closedOutOk
             ? `Closed out: ${wideLine(closeOutDetail(ticketId, closeOut.text))}`
             : `Step owed: \`[agent:task accept ${ticketId}]\` — alone in a reply, no tool call beside it. `
               + `The loop could not close it out: ${wideLine(closeOutDetail(ticketId, (closeOut && closeOut.text) || 'it did not run'))}`;
         const body = [
-          `[ticket ${ticketId} MERGED] ${branch} → ${MERGE_TARGET_BRANCH} as ${sha}`,
+          `[ticket ${ticketId} MERGED] ${branch} → ${into} as ${sha}`,
           '',
           stepLine,
           '',
-          `Review rounds: ${rounds}. Suite on ${MERGE_TARGET_BRANCH} after the merge: ${summary}.`,
+          `Review rounds: ${rounds}. Suite on ${into} after the merge: ${summary}.`,
           ...(slow && slow.length ? [`slow gate tripped by tests outside this diff: ${wideLine(slow.join('; '))}`] : []),
           ...(unioned ? [`${unioned} conflicted with a bullet another ticket merged first; the loop kept BOTH (the earlier one above this ticket's). Read ## Unreleased once before the next release.`] : []),
           ...(stamp ? [`Verify suite was re-measured. First run: ${oneLine(stamp.first) || 'unrecorded'} (${wideLine(stamp.firstFailing) || 'no names recorded'}).`] : []),
@@ -2551,8 +2551,8 @@ function createTicketMethods(deps, shared) {
         if (!(r && (r.queued || r.parked))) {
           log.error('ticket', `ticket ${ticketId} merged as ${sha} but ${team.lead} was NOT told (${(r && (r.error || r.held)) || 'unknown delivery failure'})`);
         }
-        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} merged: ${branch} → ${MERGE_TARGET_BRANCH}` });
-        log.info('intent', `ticket ${ticketId} auto-merged: ${branch} → ${MERGE_TARGET_BRANCH} as ${sha}`);
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} merged: ${branch} → ${into}` });
+        log.info('intent', `ticket ${ticketId} auto-merged: ${branch} → ${into} as ${sha}`);
       } catch (e) {
         log.error('ticket', `merge notification for ${ticketId} failed: ${e.message}`);
       }
@@ -3079,16 +3079,39 @@ function createTicketMethods(deps, shared) {
             reply(`prompt ${kind}/${stem} removed from ${res.file}`);
             return;
           }
+          case 'trunk': {
+            this._handleTeamTrunk(team, intent, reply).catch((err) => reply(`error: ${(err && err.message) || err}`));
+            return;
+          }
           case 'sandbox': {
             this._handleTeamSandbox(team, intent, reply).catch((err) => reply(`error: ${(err && err.message) || err}`));
             return;
           }
           default:
-            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox`);
+            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox | trunk`);
         }
       } catch (err) {
         reply(`error: ${err.message}`);
       }
+    },
+
+    async _handleTeamTrunk(team, intent, reply) {
+      const derived = await gitWorktree.mergeTargetFor({ root: team.root });
+      if (!intent.branch) {
+        reply(team.trunk
+          ? `trunk of ${team.name} is "${team.trunk}" (set in team.json; the repo's default would be ${derived ? `"${derived}"` : 'unresolvable'})`
+          : `trunk of ${team.name} is ${derived ? `"${derived}"` : 'unresolvable'} (derived from the repo's default branch; not set — [agent:team trunk <branch>] sets it)`);
+        return;
+      }
+      const branches = await gitWorktree.localBranches(team.root);
+      if (!branches) { reply(`error: could not list the branches of ${team.root}`); return; }
+      if (!branches.includes(intent.branch)) {
+        const shown = branches.slice(0, 20).join(', ') + (branches.length > 20 ? `, … (${branches.length} in all)` : '');
+        reply(`error: no branch "${intent.branch}" in ${team.root} — it has: ${shown || '(no branches)'}`);
+        return;
+      }
+      const m = setTeamTrunk(team.name, intent.branch);
+      reply(`trunk of ${team.name} set to "${m.trunk}" — accepted tickets now merge into it`);
     },
 
     _teamSandboxFile(team) {

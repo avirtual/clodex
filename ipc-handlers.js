@@ -72,7 +72,7 @@ function registerIpcHandlers(deps) {
     pty, readEffectiveToolState, readVoiceMode, readVoiceTrigger, readVoiceCapability, writeVoiceMode, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
-    setRole, removeRole, renameRole, setTeamWatchdog, setLead, gatherTeam, teamsDir,
+    setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setLead, gatherTeam, teamsDir,
     teamDeleteCheck, teamDeleteGated,
     resolveDeployFolder, restartSession, restoreSessionsForWorkspace,
     readSessionArgs, applySessionArgs, sessionMeta, sessionInfo,
@@ -316,6 +316,27 @@ function registerIpcHandlers(deps) {
   handle('team:setWatchdog', (_e, team, ms) => {
     try { return { ok: true, team: setTeamWatchdog(team, ms) }; }
     catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  handle('team:trunk', async (_e, name) => {
+    try {
+      const team = loadManifest(name);
+      const derived = await gitWorktree.mergeTargetFor({ root: team.root });
+      return { ok: true, trunk: team.trunk, derived, effective: team.trunk || derived };
+    } catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  handle('team:setTrunk', async (_e, name, branch) => {
+    try {
+      const want = typeof branch === 'string' ? branch.trim() : '';
+      if (want) {
+        const team = loadManifest(name);
+        const branches = await gitWorktree.localBranches(team.root);
+        if (!branches) return { ok: false, error: `could not list the branches of ${team.root}` };
+        if (!branches.includes(want)) return { ok: false, error: `no branch "${want}" in ${team.root} — it has: ${branches.slice(0, 20).join(', ') || '(no branches)'}` };
+      }
+      return { ok: true, team: setTeamTrunk(name, want || null) };
+    } catch (err) { return { ok: false, error: err.message }; }
   });
 
   // Re-point the lead SEAT. Not a role edit: setRole('lead') still refuses, and
