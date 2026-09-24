@@ -59,6 +59,7 @@ function liveSnapshotFor({ manager, entry, session, readCtxFor, proxyPoller }) {
 
 function stampConfigFlags(row, entry) {
   if (entry.noWire === true) row.noWire = true;
+  if (entry.io === 'stream') row.io = 'stream';
   if (typeof entry.fixFor === 'string' && entry.fixFor) row.fixFor = entry.fixFor;
   return row;
 }
@@ -118,6 +119,7 @@ async function restoreSessionsForWorkspace({
         Array.isArray(entry.plugins) ? entry.plugins : null,
         Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
         typeof entry.fixFor === 'string' ? entry.fixFor : null,
+        entry.io || 'pty',
       );
       restored.push({
         name: entry.name,

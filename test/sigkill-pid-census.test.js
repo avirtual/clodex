@@ -185,6 +185,11 @@ const CENSUS = [
     why: "sigkillPid, the funnel both the kill() and archive() backstops go through (12ec89d)",
   },
   {
+    file: 'stream-seat.js', pid: '-pid', sig: 'sig', count: 1,
+    guard: 'if (!(pid > 0)) return false;',
+    why: "groupKill, the one funnel for a stream seat's SIGTERM, its 5s SIGKILL and the boot reap; the negation makes it a group signal, so a non-positive pid is refused before it",
+  },
+  {
     file: 'team-tickets.js', pid: '-child.pid', sig: "'SIGKILL'", count: 1,
     guard: 'if (child.pid > 0) {',
     why: 'the suite runner\'s group kill; this guard predates the incident and is what the others were missing',
@@ -216,6 +221,10 @@ const CENSUS = [
   {
     file: 'scripts/run-tests.js', pid: 'holder', sig: '0', count: 1, probe: true,
     why: 'suite-lock holder liveness; a lying probe waits for a lock instead of stealing it',
+  },
+  {
+    file: 'stream-seat.js', pid: 'pid', sig: '0', count: 1, probe: true,
+    why: 'isAlive for the boot reap, behind its own `> 0` refusal; a lying probe reads a dead orphan as alive, and the start-time match then leaves it alone',
   },
   {
     file: 'wirescope-supervisor.js', pid: 'rec.pid', sig: '0', count: 1, probe: true,

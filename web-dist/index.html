@@ -8540,6 +8540,37 @@ body.web-frontend #sidebar-header {
 .transcript-pane[hidden] {
   display: none;
 }
+.terminal-wrapper.stream-seat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  box-sizing: border-box;
+}
+.transcript-pane.transcript-pane-full {
+  position: static;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.seat-composer {
+  flex: 0 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 3.5em;
+  max-height: 40%;
+  resize: vertical;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: 1.4;
+}
+.seat-composer:focus {
+  outline: none;
+  border-color: var(--accent, var(--border));
+}
 #sidebar[data-folded="1"] .app-title-stack,
 #sidebar[data-folded="1"] #shell-share-chip,
 #sidebar[data-folded="1"] #sidebar-filterbar,
@@ -9384,6 +9415,12 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
               <input type="checkbox" id="input-no-wire" style="margin: 0;">
               <span class="hint-text" style="margin: 0;">Spawn this seat with no <code>ANTHROPIC_BASE_URL</code> at all — no Clodex tee, no API proxy. Needed for Anthropic's remote access (attaching from the phone app), which refuses to run when that variable is set. Costs the wire-only features: warmth, wire telemetry and protocol-accurate activity. Intents and the touched-file list still work (both come from the transcript), but edits are no longer attributed to the subagent that made them. Wire-off seats show a <code>⊘</code> in the sidebar.</span>
             </label>
+          <label id="stream-io-row">Stream transport (experimental)
+            <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
+              <input type="checkbox" id="input-stream-io" style="margin: 0;">
+              <span class="hint-text" style="margin: 0;">Run the seat as <code>claude -p</code> over stream-json with no terminal: the transcript is its view and a composer below it is its input. It survives a Clodex relaunch. No dms, intents or permission prompts yet.</span>
+            </label>
+          </label>
           </label>
         </details>
         <label id="model-row">Model
@@ -10267,6 +10304,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "transcriptPull", kind: "invoke", channel: "transcript:pull" },
         { name: "onTranscriptChanged", kind: "on", channel: "transcript-changed" },
         { name: "writeToSession", kind: "send", channel: "pty-input" },
+        { name: "seatSend", kind: "invoke", channel: "seat:send" },
         { name: "selectDirectory", kind: "invoke", channel: "dialog:selectDirectory" },
         { name: "confirmKill", kind: "invoke", channel: "dialog:confirmKill" },
         { name: "restoreSessions", kind: "invoke", channel: "app:restore-sessions" },
@@ -28202,7 +28240,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (getActiveSession()) {
             const s = sessions.get(getActiveSession());
             if (s && s.searchAddon) s.searchAddon.clearDecorations();
-            if (s) s.terminal.focus();
+            if (s && s.terminal) s.terminal.focus();
           }
         }
         function findInTerminal(direction = "next") {
@@ -43914,7 +43952,7 @@ ${detail}` });
         readVoiceSubmitSettings,
         resolveTriggerKey
       } = require_voice_submit();
-      var { createLiveSplitView } = require_live_split_view();
+      var { createLiveSplitView, renderTranscript, TRANSCRIPT_PULL_MS } = require_live_split_view();
       var { initBanners } = require_banners();
       var { initThemes } = require_themes();
       var { createEchoRewriter } = require_prompt_echo();
@@ -43945,6 +43983,7 @@ ${detail}` });
       var { initPluginHost } = require_plugin_host();
       var sessions = /* @__PURE__ */ new Map();
       var transcriptChangedSubs = /* @__PURE__ */ new Set();
+      var streamSeatNames = /* @__PURE__ */ new Set();
       var activeSession = null;
       var terminalWebglEnabled = false;
       var transcriptPaneEnabled = false;
@@ -44934,6 +44973,7 @@ ${detail}` });
               return;
             }
             removeSession(sessionName, { keepPersisted: true });
+            if (streamSeatNames.has(sessionName)) streamSeatNames.add(res.name);
             createTerminal(res.name);
             addSessionToSidebar(res.name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, res.noWire === true, snapAccount);
             switchSession(res.name);
@@ -45300,7 +45340,92 @@ ${detail}` });
           return null;
         }
       }
+      function createStreamSeatPane(name, wrapperEl) {
+        wrapperEl.classList.add("stream-seat");
+        const paneEl = document.createElement("div");
+        paneEl.className = "transcript-pane transcript-pane-full";
+        wrapperEl.appendChild(paneEl);
+        const composer = document.createElement("textarea");
+        composer.className = "seat-composer";
+        composer.rows = 3;
+        composer.placeholder = "Message \u2014 Enter sends, Shift+Enter for a new line";
+        wrapperEl.appendChild(composer);
+        let rev = -1;
+        let pulling = false;
+        let disposed = false;
+        let follow = true;
+        const onScroll = () => {
+          follow = paneEl.scrollTop + paneEl.clientHeight >= paneEl.scrollHeight - 4;
+        };
+        paneEl.addEventListener("scroll", onScroll);
+        const pull = (force = false) => {
+          if (pulling || disposed) return;
+          if (!force && !wrapperEl.classList.contains("visible")) return;
+          pulling = true;
+          Promise.resolve(window.api.transcriptPull(name)).then((res) => {
+            pulling = false;
+            if (disposed || !res || !res.ok || res.rev === rev) return;
+            rev = res.rev;
+            renderTranscript(document, paneEl, res.records, {
+              seatName: name,
+              resolveFile: (p) => window.api.fileResolve(name, p, null),
+              openFilePeek: (...args) => openFilePeek(...args),
+              openExternal: (url) => window.api.openExternal(url),
+              toast: showToast,
+              echoPalette: currentEchoPalette
+            });
+            if (follow) paneEl.scrollTop = paneEl.scrollHeight;
+          }).catch(() => {
+            pulling = false;
+          });
+        };
+        const onChanged = (n) => {
+          if (n === name) pull(true);
+        };
+        transcriptChangedSubs.add(onChanged);
+        const timer = setInterval(pull, TRANSCRIPT_PULL_MS);
+        pull(true);
+        composer.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+          e.preventDefault();
+          const text = composer.value;
+          if (!text.trim()) return;
+          composer.value = "";
+          follow = true;
+          Promise.resolve(window.api.seatSend(name, text)).then((res) => {
+            if (res && res.ok === false) {
+              showToast(`Send failed: ${res.error || "unknown error"}`, { kind: "error", name });
+              if (!composer.value) composer.value = text;
+              return;
+            }
+            pull(true);
+          }).catch((err) => {
+            showToast(`Send failed: ${err && err.message ? err.message : err}`, { kind: "error", name });
+            if (!composer.value) composer.value = text;
+          });
+        });
+        return {
+          focus: () => composer.focus(),
+          refresh: () => pull(true),
+          dispose() {
+            disposed = true;
+            clearInterval(timer);
+            transcriptChangedSubs.delete(onChanged);
+            paneEl.removeEventListener("scroll", onScroll);
+          }
+        };
+      }
       function createTerminal(name, peer = null) {
+        if (!peer && streamSeatNames.has(name)) {
+          const wrapperEl2 = document.createElement("div");
+          wrapperEl2.className = "terminal-wrapper";
+          wrapperEl2.dataset.name = name;
+          terminalContainer.appendChild(wrapperEl2);
+          const stream = createStreamSeatPane(name, wrapperEl2);
+          sessions.set(name, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl: wrapperEl2, peer: null, stream, liveSplit: null });
+          updateWindowTitle();
+          return { terminal: null, fitAddon: null, searchAddon: null, wrapperEl: wrapperEl2, echoRewrite: (chunk) => chunk };
+        }
         const terminal = new Terminal({
           fontSize: 13,
           fontFamily: "'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace",
@@ -45499,7 +45624,7 @@ ${detail}` });
         }), style);
         if (!text) return;
         window.api.writeToSession(activeSession, text);
-        entry.terminal.focus();
+        if (entry.terminal) entry.terminal.focus();
       });
       function remeasureReadonlyPeer(entry) {
         const { fitAddon, terminal } = entry;
@@ -45540,6 +45665,13 @@ ${detail}` });
         const entry = sessions.get(name);
         const { fitAddon, terminal } = entry;
         requestAnimationFrame(() => {
+          if (!terminal) {
+            if (entry.stream) {
+              entry.stream.refresh();
+              entry.stream.focus();
+            }
+            return;
+          }
           if (entry.peer) {
             if (entry.peer.controlled) {
               fitAddon.fit();
@@ -45574,6 +45706,7 @@ ${detail}` });
         const entry = sessions.get(name);
         if (!entry) return;
         const { fitAddon, terminal } = entry;
+        if (!terminal) return;
         requestAnimationFrame(() => {
           if (!sessions.has(name)) return;
           try {
@@ -45608,7 +45741,8 @@ ${detail}` });
             } catch {
             }
           }
-          s.terminal.dispose();
+          if (s.stream) s.stream.dispose();
+          if (s.terminal) s.terminal.dispose();
           s.wrapperEl.remove();
           sessions.delete(name);
         }
@@ -45660,6 +45794,7 @@ ${detail}` });
         if (stripRow) stripRow.style.display = caps.strip ? "" : "none";
         if (autoCompactRow) autoCompactRow.style.display = caps.autoCompact ? "" : "none";
         if (noWireRow) noWireRow.style.display = caps.noWire ? "" : "none";
+        if (streamIoRow) streamIoRow.style.display = type === "claude" && !authoring ? "" : "none";
         if (accountRow) accountRow.style.display = caps.accounts ? "" : "none";
         if (toolsAllowRow) toolsAllowRow.style.display = authoring ? "" : "none";
         if (authoring && caps.tools && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, /* @__PURE__ */ new Set());
@@ -46022,6 +46157,8 @@ ${detail}` });
       var inputStripLevel = document.getElementById("input-strip-level");
       var inputAutoCompact = document.getElementById("input-auto-compact");
       var inputNoWire = document.getElementById("input-no-wire");
+      var streamIoRow = document.getElementById("stream-io-row");
+      var inputStreamIo = document.getElementById("input-stream-io");
       var toolsSection = document.getElementById("tools-section");
       var skillsSection = document.getElementById("skills-section");
       var otherSection = document.getElementById("other-section");
@@ -46387,6 +46524,7 @@ ${detail}` });
         if (inputStripLevel) inputStripLevel.value = "0";
         if (inputAutoCompact) inputAutoCompact.checked = true;
         if (inputNoWire) inputNoWire.checked = false;
+        if (inputStreamIo) inputStreamIo.checked = false;
         inputPlacement.value = "host";
         for (const sec of [toolsSection, skillsSection, otherSection, envSection]) {
           if (sec) sec.open = false;
@@ -46648,6 +46786,7 @@ ${detail}` });
           noWire,
           plugins
         } = cfg;
+        const io = type === "claude" && inputStreamIo && inputStreamIo.checked ? "stream" : "pty";
         const env = collectDialogEnv();
         const supportsPrompts = isAgentType(type);
         const systemPromptBody = null;
@@ -46719,7 +46858,7 @@ ${detail}` });
           window.api.noteCwd(cwd);
           if (typeof proxy === "string") window.api.setSettings({ lastCustomProxyUrl: proxy });
           const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== "none";
-          const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins };
+          const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins, io };
           let result;
           if (teamOn && dialogTeamMode === "create") {
             const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
@@ -46729,7 +46868,7 @@ ${detail}` });
             const prompt2 = teamRoleSelect && teamRoleSelect.value === "hand" ? null : teamRolePromptSelect && teamRolePromptSelect.value || null;
             result = await window.api.teamJoin({ team: dialogTeamName, role, prompt: prompt2, ...seatParams });
           } else {
-            result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins);
+            result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins, io);
           }
           if (!applyCreateResult(nameFieldEls(), result)) {
             if (worktree) {
@@ -46747,6 +46886,7 @@ ${detail}` });
             return;
           }
           if (worktree) window.api.markSessionWorktree(name, worktree);
+          if (result.session && result.session.io === "stream") streamSeatNames.add(name);
           createTerminal(name);
           addSessionToSidebar(name, type, spawnCwd, null, result.session && result.session.backend || null, result.session && result.session.team || null, (result.session && result.session.noWire) === true);
           await switchToNewSession(name, { agentInitiated: false });
@@ -46918,7 +47058,7 @@ ${detail}` });
       });
       window.api.onPtyData((name, data) => {
         const s = sessions.get(name);
-        if (s) s.terminal.write(s.echoRewrite ? s.echoRewrite(data) : data);
+        if (s && s.terminal) s.terminal.write(s.echoRewrite ? s.echoRewrite(data) : data);
       });
       window.api.onSessionExit((name, code, meta) => {
         if (isToolInstallSession(name)) {
@@ -47890,7 +48030,8 @@ Click for live activity`;
         getFiles: (name) => filesState.get(name),
         focusTerminal: () => {
           const s = sessions.get(activeSession);
-          if (s) s.terminal.focus();
+          if (s && s.terminal) s.terminal.focus();
+          else if (s && s.stream) s.stream.focus();
         }
       });
       var { openFilesPopover, openFilePeek, isFilesPopoverForKey } = initFilesPopover({
@@ -48088,7 +48229,7 @@ Click for live activity`;
       function refitActiveTerminal() {
         if (!activeSession) return;
         const s = sessions.get(activeSession);
-        if (!s) return;
+        if (!s || !s.terminal) return;
         if (s.peer) {
           if (s.peer.controlled) {
             s.fitAddon.fit();
@@ -51415,6 +51556,7 @@ ${res.stderr}` : "");
         }
       }));
       function mountRestoredSession(entry) {
+        if (entry.io === "stream") streamSeatNames.add(entry.name);
         const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
         addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true, null, entry.fixFor || null);
         if (entry.createdAt) sidebarMeta.set(entry.name, { ...sidebarMeta.get(entry.name) || {}, createdAt: entry.createdAt });
@@ -51430,12 +51572,14 @@ ${res.stderr}` : "");
           }
           if (entry.ticket) item.dataset.ticket = entry.ticket;
         }
-        try {
-          fitAddon.fit();
-          window.api.resizeSession(entry.name, terminal.cols, terminal.rows);
-        } catch {
+        if (terminal) {
+          try {
+            fitAddon.fit();
+            window.api.resizeSession(entry.name, terminal.cols, terminal.rows);
+          } catch {
+          }
+          if (entry.replay) terminal.write(echoRewrite(entry.replay));
         }
-        if (entry.replay) terminal.write(echoRewrite(entry.replay));
         if (typeof entry.ctx === "number") {
           ctxPct.set(entry.name, entry.ctx);
           applyCtxBadge(entry.name, entry.ctx);
@@ -51455,6 +51599,7 @@ ${res.stderr}` : "");
       });
       window.api.onSessionMovedIn((entry) => {
         if (!entry || !entry.name) return;
+        if (entry.io === "stream") streamSeatNames.add(entry.name);
         if (entry.archived) addArchivedSessionToSidebar(entry);
         else mountRestoredSession(entry);
         refreshSidebarView();
@@ -51469,6 +51614,7 @@ ${res.stderr}` : "");
           }
           let firstHealthy = null;
           for (const entry of restored) {
+            if (entry.io === "stream") streamSeatNames.add(entry.name);
             if (entry.archived) {
               addArchivedSessionToSidebar(entry);
               continue;

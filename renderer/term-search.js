@@ -42,7 +42,7 @@ function createTermSearch({ sessions, getActiveSession }) {
     if (getActiveSession()) {
       const s = sessions.get(getActiveSession());
       if (s && s.searchAddon) s.searchAddon.clearDecorations();
-      if (s) s.terminal.focus();
+      if (s && s.terminal) s.terminal.focus();
     }
   }
 

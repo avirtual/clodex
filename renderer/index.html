@@ -701,6 +701,12 @@
               <input type="checkbox" id="input-no-wire" style="margin: 0;">
               <span class="hint-text" style="margin: 0;">Spawn this seat with no <code>ANTHROPIC_BASE_URL</code> at all — no Clodex tee, no API proxy. Needed for Anthropic's remote access (attaching from the phone app), which refuses to run when that variable is set. Costs the wire-only features: warmth, wire telemetry and protocol-accurate activity. Intents and the touched-file list still work (both come from the transcript), but edits are no longer attributed to the subagent that made them. Wire-off seats show a <code>⊘</code> in the sidebar.</span>
             </label>
+          <label id="stream-io-row">Stream transport (experimental)
+            <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
+              <input type="checkbox" id="input-stream-io" style="margin: 0;">
+              <span class="hint-text" style="margin: 0;">Run the seat as <code>claude -p</code> over stream-json with no terminal: the transcript is its view and a composer below it is its input. It survives a Clodex relaunch. No dms, intents or permission prompts yet.</span>
+            </label>
+          </label>
           </label>
         </details>
         <label id="model-row">Model

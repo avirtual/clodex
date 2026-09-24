@@ -518,6 +518,10 @@ function peerOriginSuffix(p, nameRe = ORIGIN_NAME_RE) {
 const { speakable } = require('./speakable');
 const { proseVerdictNeedsNudge, PROSE_VERDICT_NUDGE } = require('./verdict-nudge');
 const { expandSkillsOff } = require('./skills-off');
+const { randomUUID } = require('crypto');
+const streamSeatLib = require('./stream-seat');
+const streamCodecClaude = require('./stream-codec-claude');
+const streamReap = require('./stream-reap');
 
 function dmContentKey(senderTag, body) {
   return require('crypto').createHash('sha256')
@@ -717,6 +721,13 @@ function createSessionManager(deps) {
     getPluginHooks,
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp, relaunchUnavailable,
   } = deps;
+  const spawnStreamSeat = deps.spawnStreamSeat || streamSeatLib.spawnStreamSeat;
+  const reapBeforeResume = deps.reapBeforeResume || streamReap.reapBeforeResume;
+  const streamProc = deps.streamProc || {
+    kill: streamSeatLib.groupKill,
+    isAlive: streamSeatLib.isAlive,
+    startTimeOf: streamSeatLib.kernelStartTime,
+  };
 
   // Which memory units are live in each agent's context. Every call site below
   // is observer-grade, and partial deps objects (tests, the plugin harness)
@@ -1544,7 +1555,7 @@ function createSessionManager(deps) {
       }
     }
 
-    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null) {
+    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty') {
       if (this.sessions.has(name) || this._creating.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
@@ -1557,13 +1568,31 @@ function createSessionManager(deps) {
       }
     }
 
-    async _createReserved(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null) {
+    async _createReserved(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty') {
       const freshBake = this._freshBakeOnce.delete(name);
       if (cwd) {
         let st = null;
         try { st = fs.statSync(cwd); } catch { /* missing — handled below */ }
         if (!st) throw new Error(`Directory does not exist: ${cwd}`);
         if (!st.isDirectory()) throw new Error(`Not a directory: ${cwd}`);
+      }
+      const streamIo = io === 'stream';
+      if (streamIo && type !== 'claude') throw new Error(`stream transport is claude-only (got ${type})`);
+      if (streamIo && resumeId) {
+        const prior = getPersistence().get(name);
+        const record = prior && prior.streamPid ? prior.streamPid : null;
+        let decision = 'dead';
+        try {
+          decision = await reapBeforeResume({
+            record,
+            kill: streamProc.kill,
+            isAlive: streamProc.isAlive,
+            startTimeOf: streamProc.startTimeOf,
+          });
+        } catch (e) {
+          log.warn('session', `stream reap ${name} failed: ${e.message}`);
+        }
+        log.info('session', `stream reap ${name}: ${decision}${record ? ` pid=${record.pid}` : ' (no record)'}`);
       }
       let mergedEnv;
       const baseEnv = { ...process.env };
@@ -1918,7 +1947,12 @@ function createSessionManager(deps) {
               }
             }
           } catch {}
-          if (resumeId && !args.includes('--resume') && !args.includes('-r')) {
+          if (streamIo) {
+            const idArgs = resumeId
+              ? ['--resume', resumeId, ...(fork ? ['--fork-session'] : [])]
+              : ['--session-id', randomUUID()];
+            args.unshift('-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', ...idArgs);
+          } else if (resumeId && !args.includes('--resume') && !args.includes('-r')) {
             args.push('--resume', resumeId);
             if (fork && !args.includes('--fork-session')) args.push('--fork-session');
           }
@@ -2090,15 +2124,31 @@ function createSessionManager(deps) {
       if (type === 'codex') env.WB_WRAP_NAME = name;
       if (type === 'muse') env.MUSE_NO_AUTO_UPDATE = '1';
 
-      let ptyProc;
+      let ptyProc = null;
+      let streamSeat = null;
+      const streamEarly = [];
+      let streamRoute = (ev) => { streamEarly.push(ev); };
       try {
-        ptyProc = pty.spawn(cmd, args, {
-          name: 'xterm-256color',
-          cols: 120,
-          rows: 30,
-          cwd: cwd || process.env.HOME || os.homedir(),
-          env,
-        });
+        if (streamIo) {
+          streamSeat = spawnStreamSeat({
+            cmd,
+            args,
+            cwd: cwd || process.env.HOME || os.homedir(),
+            env,
+            log,
+            onLine: (obj) => streamRoute({ line: obj }),
+            onClose: (code, signal) => streamRoute({ close: { code, signal } }),
+          });
+          if (!(streamSeat.pid > 0)) throw new Error(`spawn ${cmd} failed: no pid`);
+        } else {
+          ptyProc = pty.spawn(cmd, args, {
+            name: 'xterm-256color',
+            cols: 120,
+            rows: 30,
+            cwd: cwd || process.env.HOME || os.homedir(),
+            env,
+          });
+        }
       } catch (e) {
         abandonHint();
         const d = collectSystemDiagnostics();
@@ -2190,6 +2240,12 @@ function createSessionManager(deps) {
 
       const session = {
         name, type, cwd, pty: ptyProc, transport, socketPath,
+        io: streamIo ? 'stream' : 'pty',
+        ...(streamIo ? {
+          stream: streamSeat,
+          outbox: [],
+          streamPid: { pid: streamSeat.pid, startTime: streamSeat.startTime ?? streamSeat.startedAt },
+        } : {}),
         spawnedAt: Date.now(),
         createdAt,
         agentType, lineBuffer: '', watcher: null,
@@ -2316,6 +2372,8 @@ function createSessionManager(deps) {
         // by writing the boolean every time.
         noWire: wireOff,
         intentSpill: spillArmedForRecord && wireRouted,
+        io: streamIo ? 'stream' : 'pty',
+        streamPid: streamIo ? { pid: streamSeat.pid, startTime: streamSeat.startTime ?? streamSeat.startedAt } : null,
         ...(fixHost ? { fixFor: fixHost } : {}),
         denyBuiltins: Array.isArray(denyBuiltins) ? denyBuiltins : [],
         disabledTools: Array.isArray(disabledTools) ? disabledTools : [],
@@ -2552,7 +2610,7 @@ function createSessionManager(deps) {
         readCtx();
       }
 
-      ptyProc.onData((data) => {
+      if (ptyProc) ptyProc.onData((data) => {
         session._lastPtyDataAt = Date.now();
         session.scrollback = ((session.scrollback || '') + data);
         if (session.scrollback.length > SCROLLBACK_MAX) {
@@ -2585,7 +2643,7 @@ function createSessionManager(deps) {
         if (session._bootSettling) this._armBootSettle(session);
       });
 
-      ptyProc.onExit(({ exitCode, signal }) => {
+      const onProcExit = ({ exitCode, signal }) => {
         // The native fd is gone the moment the process exits; any later
         // write/resize/kill into node-pty throws an uncaught Napi::Error that
         // aborts the whole app (SIGABRT). Mark dead so deferred ops bail.
@@ -2619,13 +2677,20 @@ function createSessionManager(deps) {
         this._cleanup(name);
         if (typeof refreshTrayMenu === 'function') refreshTrayMenu();
         if (typeof refreshAppMenu === 'function') refreshAppMenu();
-      });
+      };
+      if (ptyProc) {
+        ptyProc.onExit(onProcExit);
+      } else {
+        streamRoute = (ev) => this._onStreamEvent(session, ev, onSessionId, onProcExit);
+        for (const ev of streamEarly.splice(0)) streamRoute(ev);
+      }
+      const procPid = ptyProc ? ptyProc.pid : streamSeat.pid;
 
       if (typeof refreshTrayMenu === 'function') refreshTrayMenu();
       if (typeof refreshAppMenu === 'function') refreshAppMenu();
       if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
-      log.info('session', `spawn ${name} (${type}) pid=${ptyProc.pid}${resumeId ? ' resumed' : ''} cwd=${cwd}`);
-      if (resolvedTeam) {
+      log.info('session', `spawn ${name} (${type}) pid=${procPid}${streamIo ? ' io=stream' : ''}${resumeId ? ' resumed' : ''} cwd=${cwd}`);
+      if (resolvedTeam && !streamIo) {
         this._maybeInjectComposition(session, resolvedTeam, existingEntry);
         // NEVER fired here. Both arms defer to the edge where the seat can actually
         // receive, which is a different edge per agent type — a write at create()
@@ -2657,7 +2722,7 @@ function createSessionManager(deps) {
         }
       }
       try { getPluginHooks && getPluginHooks() && getPluginHooks().fireCreate(name); } catch {}
-      return { name, type, pid: ptyProc.pid, backend, noWire: wireOff, ...(teamName ? { team: teamName } : {}), ...(missingPrompt ? { missingPrompt } : {}), ...(warnings.length ? { warnings } : {}) };
+      return { name, type, pid: procPid, backend, noWire: wireOff, ...(streamIo ? { io: 'stream' } : {}), ...(teamName ? { team: teamName } : {}), ...(missingPrompt ? { missingPrompt } : {}), ...(warnings.length ? { warnings } : {}) };
     }
 
     lastOperatorInputAt() {
@@ -2745,10 +2810,81 @@ function createSessionManager(deps) {
       return delivered;
     }
 
+    _procPid(s) {
+      if (s.pty) return s.pty.pid;
+      return s.stream ? s.stream.pid : undefined;
+    }
+
+    seatSend(name, text) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead || s.io !== 'stream' || !s.stream) return { ok: false, error: 'not a live stream seat' };
+      const body = String(text == null ? '' : text);
+      if (!body.trim()) return { ok: false, error: 'empty message' };
+      this._lastOperatorInputAt = Date.now();
+      if (s.streamBusy) {
+        s.outbox.push(body);
+        return { ok: true, queued: s.outbox.length };
+      }
+      this._streamDeliver(s, body);
+      return { ok: true, queued: 0 };
+    }
+
+    _streamDeliver(s, body) {
+      s.streamBusy = true;
+      this._emitActivity(s.name, 'thinking', false);
+      s.stream.send(streamCodecClaude.encodeUser(body)).catch((e) => {
+        log.warn('session', `stream send ${s.name} failed (${Buffer.byteLength(body)} bytes): ${e.message}`);
+      });
+    }
+
+    _onStreamEvent(s, ev, onSessionId, onProcExit) {
+      if (ev.close) {
+        const { code, signal } = ev.close;
+        if (s.stream && s.stream.stderrTail && code) {
+          log.warn('session', `stream ${s.name} stderr: ${s.stream.stderrTail.slice(-400)}`);
+        }
+        onProcExit({ exitCode: code, signal: signal || undefined });
+        return;
+      }
+      const rec = streamCodecClaude.decode(ev.line);
+      switch (rec.kind) {
+        case 'init':
+          if (rec.sessionId && rec.sessionId !== s.sessionId) onSessionId(rec.sessionId);
+          break;
+        case 'result':
+          s.streamBusy = false;
+          if (s.outbox.length) {
+            this._streamDeliver(s, s.outbox.splice(0).join('\n\n'));
+          } else {
+            this._emitActivity(s.name, 'idle', true);
+          }
+          break;
+        case 'reset':
+          log.info('session', `stream ${s.name}: conversation reset (${rec.newConversationId}); the next init carries the resumable id`);
+          break;
+        case 'status':
+          if (rec.status) this._emitActivity(s.name, 'thinking', false);
+          break;
+        default:
+          break;
+      }
+    }
+
+    _refuseStreamInject(s, bytes, where) {
+      if (!s || s.io !== 'stream') return false;
+      log.warn('inject', `${s.name}: stream seat: messaging arrives in H2 — ${where} dropped ${bytes} bytes`);
+      return true;
+    }
+
     write(name, data) {
       this._lastOperatorInputAt = Date.now();
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
+      if (s.io === 'stream') {
+        const text = String(data == null ? '' : data).replace(/[\r\n]+$/, '');
+        if (text.trim()) this.seatSend(name, text);
+        return;
+      }
       if (isHumanPtyInput(data)) {
         s.lastUserInputTs = Date.now();
         const wasInPaste = s._inPaste;
@@ -3221,7 +3357,7 @@ function createSessionManager(deps) {
 
     resize(name, cols, rows, requester = 'owner') {
       const s = this.sessions.get(name);
-      if (!s || s._dead) return;
+      if (!s || s._dead || !s.pty) return;
       try { s.pty.resize(cols, rows); } catch {}
       const key = `${s.pty.cols}x${s.pty.rows}:${requester}`;
       if (s._lastLoggedResize !== key) {
@@ -3236,7 +3372,7 @@ function createSessionManager(deps) {
     async kill(name) {
       const s = this.sessions.get(name);
       if (!s) return;
-      log.info('session', `kill ${name} (user-initiated) pid=${s.pty.pid}`);
+      log.info('session', `kill ${name} (user-initiated) pid=${this._procPid(s)}`);
       s._userKilled = true;
       this._notifyComposition(s, 'retired');
       if (s.spawnerHintSet && s.proxyBase && s.proxyAgent) {
@@ -3249,6 +3385,7 @@ function createSessionManager(deps) {
       }
       try { this._stampSeatCost(s, 'kill'); } catch {}
       getPersistence().remove(name);
+      if (s.stream) { s.stream.kill(); return; }
       const ptyPid = s.pty.pid;
       setTimeout(() => { sigkillPid(ptyPid, name, log); }, 5000);
       await reapPtyDescendants({ ptyPid, name, log, childProcess });
@@ -3338,10 +3475,11 @@ function createSessionManager(deps) {
     async archive(name) {
       const s = this.sessions.get(name);
       if (!s) return;
-      log.info('session', `archive ${name} pid=${s.pty.pid}`);
+      log.info('session', `archive ${name} pid=${this._procPid(s)}`);
       this._notifyComposition(s, 'archived');
       getPersistence().setArchived(name, true);
       s._archived = true;
+      if (s.stream) { s.stream.kill(); return; }
       const ptyPid = s.pty.pid;
       setTimeout(() => { sigkillPid(ptyPid, name, log); }, 5000);
       await reapPtyDescendants({ ptyPid, name, log, childProcess });
@@ -3390,10 +3528,14 @@ function createSessionManager(deps) {
       try {
         const s = this.sessions.get(name);
         if (s) {
-          log.info('session', `rename ${name} → ${newName} pid=${s.pty.pid}`);
+          log.info('session', `rename ${name} → ${newName} pid=${this._procPid(s)}`);
           s._moving = true;
-          try { s.pty.kill(); } catch {}
-          setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
+          if (s.stream) {
+            s.stream.kill();
+          } else {
+            try { s.pty.kill(); } catch {}
+            setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
+          }
           if (!await this._waitForExit(name)) {
             return {
               ok: false, kept: true,
@@ -3446,6 +3588,7 @@ function createSessionManager(deps) {
             Array.isArray(entry.plugins) ? entry.plugins : null,
             Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
             typeof entry.fixFor === 'string' ? entry.fixFor : null,
+            entry.io || 'pty',
           );
         } catch (err) {
           const kept = { ...entry, name: newName };
@@ -3491,10 +3634,14 @@ function createSessionManager(deps) {
       try {
         const s = this.sessions.get(name);
         if (s) {
-          log.info('session', `move ${name} ${entry.cwd} → ${newCwd} pid=${s.pty.pid}`);
+          log.info('session', `move ${name} ${entry.cwd} → ${newCwd} pid=${this._procPid(s)}`);
           s._moving = true;
-          try { s.pty.kill(); } catch {}
-          setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
+          if (s.stream) {
+            s.stream.kill();
+          } else {
+            try { s.pty.kill(); } catch {}
+            setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
+          }
           if (!await this._waitForExit(name)) {
             return {
               ok: false, kept: true,
@@ -3526,6 +3673,7 @@ function createSessionManager(deps) {
             Array.isArray(entry.plugins) ? entry.plugins : null,
             Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
             typeof entry.fixFor === 'string' ? entry.fixFor : null,
+            entry.io || 'pty',
           );
         } catch (err) {
           getPersistence().upsert(this._stripClaimedTree({ ...entry, cwd: newCwd }));
@@ -3692,10 +3840,14 @@ function createSessionManager(deps) {
 
         const s = this.sessions.get(name);
         if (s) {
-          log.info('session', `move-to-peer ${name} → ${peerLabel}:${destCwd} pid=${s.pty.pid}`);
+          log.info('session', `move-to-peer ${name} → ${peerLabel}:${destCwd} pid=${this._procPid(s)}`);
           s._moving = true;
-          try { s.pty.kill(); } catch {}
-          setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
+          if (s.stream) {
+            s.stream.kill();
+          } else {
+            try { s.pty.kill(); } catch {}
+            setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
+          }
           if (!await this._waitForExit(name)) {
             try { await conn.importAbort(stagingId); } catch {}
             return {
@@ -3761,6 +3913,7 @@ function createSessionManager(deps) {
             Array.isArray(entry.plugins) ? entry.plugins : null,
             Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
             typeof entry.fixFor === 'string' ? entry.fixFor : null,
+            entry.io || 'pty',
           );
         } catch (err) {
           getPersistence().upsert(this._stripClaimedTree({ ...entry }));
@@ -4367,7 +4520,8 @@ function createSessionManager(deps) {
       return Array.from(this.sessions.values()).map(s => ({
         name: s.name,
         type: s.type,
-        pid: s.pty.pid,
+        pid: this._procPid(s),
+        io: s.io || 'pty',
         cwd: s.cwd,
         workspaceId: s.workspaceId,
         team: teamFor(s.cwd),
@@ -4434,6 +4588,7 @@ function createSessionManager(deps) {
       const pids = new Set();
       for (const s of this.sessions.values()) {
         if (s.pty && Number.isInteger(s.pty.pid)) pids.add(s.pty.pid);
+        else if (s.stream && Number.isInteger(s.stream.pid)) pids.add(s.stream.pid);
       }
       return pids;
     }
@@ -4495,6 +4650,7 @@ function createSessionManager(deps) {
       const rows = psSnapshotSync(childProcess);
       for (const [name] of this.sessions) {
         const s = this.sessions.get(name);
+        if (s.stream) { s.stream.kill(); continue; }
         if (s.pty && Number.isInteger(s.pty.pid)) reapFromSnapshot({ rows, ptyPid: s.pty.pid, name, log });
         try { s.pty.kill(); } catch {}
       }
@@ -4723,7 +4879,7 @@ function createSessionManager(deps) {
       }
       if (state !== 'idle') this._touchTicketActivity(name);
       if (s && state !== 'idle' && s.needsAttention) this._setAttention(s, null);
-      if (s && state === 'idle') { this._maybeFlushInjectQueue(s); this._drainPendingAtIdle(s); }
+      if (s && state === 'idle') { this._maybeFlushInjectQueue(s); if (s.io !== 'stream') this._drainPendingAtIdle(s); }
       // `notify` is TURN-END, not merely idle, and the renderer needs that
       // distinction: two emitters produce `idle` MID-TURN — the wire tracker's
       // gap-idle timer when a tool runs long with nothing in flight, and the
@@ -4934,6 +5090,12 @@ function createSessionManager(deps) {
       clearTimeout(session._injectFlushRetry);
       session._injectFlushRetry = null;
       if (session._dead) return;
+      if (session.io === 'stream' && session._injectQueue && session._injectQueue.length) {
+        const held = session._injectQueue.splice(0);
+        const bytes = held.reduce((n, e) => n + (typeof e === 'string' ? Buffer.byteLength(e) : 0), 0);
+        this._refuseStreamInject(session, bytes, `queued flush of ${held.length}`);
+        return;
+      }
       const queue = session._injectQueue;
       if (!queue || !queue.length) {
         if (!session._compactGuard) {
@@ -5063,6 +5225,7 @@ function createSessionManager(deps) {
           arm(BOOT_NUDGE_QUIET_MS);
           return;
         }
+        if (!session.pty) return;
         try { session.pty.write('\r'); } catch {}
         log.info('inject', `boot-drain nudge for ${session.name} — no turn ${Date.now() - wroteAt}ms after a boot-window write, sent Enter`);
       };
@@ -6819,6 +6982,7 @@ function createSessionManager(deps) {
             Array.isArray(entry.plugins) ? entry.plugins : null,
             Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
             typeof entry.fixFor === 'string' ? entry.fixFor : null,
+            entry.io || 'pty',
           );
           const lvl = stripLevelOf(entry);
           if (lvl >= 1) getPersistence().setStripLevel(name, lvl);
@@ -7395,7 +7559,8 @@ function createSessionManager(deps) {
       const name = session.name;
       session._moving = true;
       const pid = session.pty && session.pty.pid;
-      try { session.pty.kill(); } catch {}
+      if (session.stream) session.stream.kill();
+      else { try { session.pty.kill(); } catch {} }
       if (pid) setTimeout(() => { sigkillPid(pid, name, log); }, 5000);
       if (!await this._waitForExit(name)) {
         session._moving = false;
@@ -7420,6 +7585,7 @@ function createSessionManager(deps) {
         Array.isArray(entry.plugins) ? entry.plugins : null,
         Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
         typeof entry.fixFor === 'string' ? entry.fixFor : null,
+        entry.io || 'pty',
       );
       const fresh = this.sessions.get(name);
       const lvl = stripLevelOf(entry);
@@ -8513,6 +8679,7 @@ function createSessionManager(deps) {
     _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null, parkKey = null) {
       const target = this.sessions.get(targetName);
       if (!target) return;
+      if (this._refuseStreamInject(target, Buffer.byteLength(String(body || '')), `${mtype || 'message'} from ${senderName}`)) return;
       const finalText = this._buildDeliveryText(target, senderName, body, mtype, tag);
       const fire = typeof onWrite === 'function' ? onWrite : null;
       if (!this._maybeParkDelivery(target, finalText, parkKey)) {
@@ -8708,6 +8875,7 @@ function createSessionManager(deps) {
     // is the loss this pattern exists to prevent.
     _injectText(session, text, opts = {}) {
       if (session._dead) return;
+      if (this._refuseStreamInject(session, Buffer.byteLength(String(text || '')), 'inject')) return;
       const produce = typeof opts.produce === 'function' ? opts.produce : null;
       if (!opts.bypassHold && this._injectHoldReason(session)) {
         // Held as an ENTRY, not as text — see above. Flattening here would claim
@@ -8797,7 +8965,7 @@ function createSessionManager(deps) {
         // boot-settle machinery and must not be coupled to this.
         const isClaude = session.agentType === 'claude';
         session._injectPtyQueue = new InjectQueue({
-          write: (bytes) => { try { session.pty.write(bytes); } catch {} this._armBootNudge(session); },
+          write: (bytes) => { if (!session.pty) return; try { session.pty.write(bytes); } catch {} this._armBootNudge(session); },
           settleMsFor: (t) => (t.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY),
           quietMs: INJECT_QUIET_MS,
           maxWaitMs: INJECT_QUIET_MAXWAIT,

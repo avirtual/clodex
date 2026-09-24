@@ -6052,6 +6052,41 @@ body.web-frontend #sidebar-header {
   display: none;
 }
 
+.terminal-wrapper.stream-seat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  box-sizing: border-box;
+}
+
+.transcript-pane.transcript-pane-full {
+  position: static;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.seat-composer {
+  flex: 0 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 3.5em;
+  max-height: 40%;
+  resize: vertical;
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  line-height: 1.4;
+}
+
+.seat-composer:focus {
+  outline: none;
+  border-color: var(--accent, var(--border));
+}
+
 #sidebar[data-folded="1"] .app-title-stack,
 #sidebar[data-folded="1"] #shell-share-chip,
 #sidebar[data-folded="1"] #sidebar-filterbar,

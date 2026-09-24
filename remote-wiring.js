@@ -617,7 +617,7 @@ function createRemoteWiring(deps) {
         getWirescopeInfo: typeof getWirescopeInfo === 'function' ? getWirescopeInfo : () => null,
         getAttachInfo: (name) => {
           const sess = manager.sessions.get(name);
-          if (!sess || sess._dead) return { ok: false };
+          if (!sess || sess._dead || !sess.pty) return { ok: false };
           return {
             ok: true,
             scrollback: Buffer.from(sess.scrollback || '', 'utf8'),

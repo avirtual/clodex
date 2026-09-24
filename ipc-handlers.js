@@ -111,15 +111,15 @@ function registerIpcHandlers(deps) {
     const seedTools = (p.disabledTools === undefined) ? agentDefaults.getDefaultDeny() : p.disabledTools;
     const seedSkills = (p.disabledSkills === undefined) ? agentDefaults.getDefaultSkillDeny() : p.disabledSkills;
     const seedBuiltins = (p.denyBuiltins === undefined) ? agentDefaults.getDefaultBuiltinDeny() : p.denyBuiltins;
-    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], seedBuiltins || [], seedTools || [], seedSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null, true, p.noWire === true, Array.isArray(p.plugins) ? p.plugins : null);
+    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], seedBuiltins || [], seedTools || [], seedSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null, true, p.noWire === true, Array.isArray(p.plugins) ? p.plugins : null, null, null, p.io === 'stream' ? 'stream' : 'pty');
     const seedStrip = (p.stripLevel === 1 || p.stripLevel === 2) ? p.stripLevel : agentDefaults.getStrip(p.name);
     if (seedStrip === 1 || seedStrip === 2) persistence.setStripLevel(p.name, seedStrip);
     return { ok: true, session };
   }
 
-  handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire, plugins) => {
+  handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire, plugins, io) => {
     try {
-      return await spawnFromParams(e, { name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire, plugins });
+      return await spawnFromParams(e, { name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire, plugins, io });
     } catch (err) {
       return { ok: false, error: err.message };
     }
@@ -2367,6 +2367,14 @@ function registerIpcHandlers(deps) {
     manager.write(name, data);
   });
 
+  handle('seat:send', (e, name, text) => {
+    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
+    if (surface !== 'desktop') return { ok: false, error: 'seat:send is local only' };
+    const s = manager.sessions.get(String(name || ''));
+    if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };
+    return manager.seatSend(s.name, typeof text === 'string' ? text : '');
+  });
+
   // The renderer knows a submit is voice-originated (it watched the composition
   // or the recorder); the proxy base and route live here. Carries no text — the
   // marker's wording is decided in voice-origin-arm.js, so a doctored payload
@@ -2463,6 +2471,7 @@ function registerIpcHandlers(deps) {
         Array.isArray(entry.plugins) ? entry.plugins : null,
         Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
         typeof entry.fixFor === 'string' ? entry.fixFor : null,
+        entry.io || 'pty',
       );
       return { ok: true };
     } catch (err) {
