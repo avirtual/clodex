@@ -1,8 +1,34 @@
 'use strict';
 
 const { measureSplit, initialSplitState, reduceSplit } = require('./lib/live-split');
+const { ansiRuns } = require('./lib/ansi-html');
 
 const TRANSCRIPT_PULL_MS = 1000;
+const OUTPUT_LINE_CAP = 400;
+
+function appendOutput(doc, frag, text) {
+  const lines = text.split('\n');
+  const more = lines.length - OUTPUT_LINE_CAP;
+  for (const run of ansiRuns(more > 0 ? lines.slice(0, OUTPUT_LINE_CAP).join('\n') : text)) {
+    if (!run.style) { frag.appendChild(doc.createTextNode(run.text)); continue; }
+    const span = doc.createElement('span');
+    span.style.cssText = run.style;
+    span.textContent = run.text;
+    frag.appendChild(span);
+  }
+  if (more > 0) frag.appendChild(doc.createTextNode(`\n… ${more} more lines`));
+}
+
+function renderTranscript(doc, paneEl, rows) {
+  const frag = doc.createDocumentFragment();
+  rows.forEach((row, i) => {
+    if (i) frag.appendChild(doc.createTextNode('\n'));
+    if (typeof row === 'string') frag.appendChild(doc.createTextNode(row));
+    else if (row && row.kind === 'command') frag.appendChild(doc.createTextNode(`❯ ${row.name}${row.args ? ` ${row.args}` : ''}`));
+    else if (row && row.kind === 'command-output') appendOutput(doc, frag, String(row.text));
+  });
+  paneEl.replaceChildren(frag);
+}
 
 function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, now = Date.now, onChange = null }) {
   const paneEl = document.createElement('pre');
@@ -30,7 +56,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, 
       if (available && res.rev !== rev) {
         rev = res.rev;
         const follow = paneEl.scrollTop + paneEl.clientHeight >= paneEl.scrollHeight - 4;
-        paneEl.textContent = res.lines.join('\n');
+        renderTranscript(document, paneEl, res.lines);
         if (follow) paneEl.scrollTop = paneEl.scrollHeight;
       }
       if (available !== was) evaluate();
@@ -122,4 +148,4 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, 
   };
 }
 
-module.exports = { TRANSCRIPT_PULL_MS, createLiveSplitView };
+module.exports = { TRANSCRIPT_PULL_MS, OUTPUT_LINE_CAP, renderTranscript, createLiveSplitView };

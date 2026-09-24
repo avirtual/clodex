@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Transcript pane: the output of local commands such as /context, /cost and /status shows in the pane with its colours instead of disappearing under it.
 - Experimental: Preferences ▸ Appearance ▸ "Transcript pane" renders a Claude seat's conversation from its transcript above a live strip of the terminal from the composer down; off by default, desktop only.
 
 - Spill: ticket hands and cold reviewers get no expanded example bodies; every long intent body of a loop-minted seat renders as the stand-in, since those seats write their long bodies at the end of their life.

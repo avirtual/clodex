@@ -307,6 +307,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/voice-submit.js',
   'renderer/voice-submit-watcher.js',
   'renderer/lib/live-split.js',
+  'renderer/lib/ansi-html.js',
   'renderer/live-split-view.js',
   // The broadcast-beats-late-pull latch behind the mic-target and app-focused
   // mirrors. A pure leaf read by renderer.js, which has no harness — the whole

@@ -22,8 +22,27 @@ function textOf(content) {
   return content.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n');
 }
 
+function tagBody(text, tag) {
+  const open = `<${tag}>`;
+  const start = text.indexOf(open);
+  if (start < 0) return null;
+  const end = text.indexOf(`</${tag}>`, start + open.length);
+  return (end < 0 ? text.slice(start + open.length) : text.slice(start + open.length, end)).trim();
+}
+
+function localCommandEntries(content) {
+  if (typeof content !== 'string') return [];
+  const name = tagBody(content, 'command-name');
+  if (name) return [{ kind: 'command', name, args: tagBody(content, 'command-args') || '' }];
+  const text = tagBody(content, 'local-command-stdout');
+  if (text) return [{ kind: 'command-output', text }];
+  return [];
+}
+
 function entriesOf(rec) {
-  if (!rec || typeof rec !== 'object' || !rec.message) return [];
+  if (!rec || typeof rec !== 'object') return [];
+  if (rec.type === 'system') return rec.subtype === 'local_command' ? localCommandEntries(rec.content) : [];
+  if (!rec.message) return [];
   const content = rec.message.content;
   if (rec.type === 'user') {
     if (rec.isMeta || rec.isCompactSummary) return [];

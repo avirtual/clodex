@@ -32,6 +32,28 @@ test('one entry per user text, assistant text and tool_use; meta, tool results, 
   ]);
 });
 
+test('local_command system records become command and command-output rows in order; other system records are dropped', () => {
+  const out = parseTranscript([
+    rec({ type: 'system', subtype: 'local_command', content: '<command-name>/cost</command-name>\n  <command-message>cost</command-message>\n  <command-args>--all </command-args>' }),
+    rec({ type: 'system', subtype: 'local_command', content: '<local-command-stdout>\n  Total cost: $1\n</local-command-stdout>' }),
+    rec({ type: 'system', subtype: 'local_command', content: '<local-command-stdout></local-command-stdout>' }),
+    rec({ type: 'system', subtype: 'turn_duration', content: '<local-command-stdout>no</local-command-stdout>' }),
+  ].join('\n'));
+  assert.deepStrictEqual(out, [
+    { kind: 'command', name: '/cost', args: '--all' },
+    { kind: 'command-output', text: 'Total cost: $1' },
+  ]);
+});
+
+test('local command rows count toward the MAX_ENTRIES cap', () => {
+  const cmd = rec({ type: 'system', subtype: 'local_command', content: '<command-name>/status</command-name>' });
+  const many = Array.from({ length: MAX_ENTRIES }, (_, i) => rec({ type: 'user', message: { content: `m${i}` } }));
+  const out = parseTranscript([...many, cmd].join('\n'));
+  assert.strictEqual(out.length, MAX_ENTRIES);
+  assert.strictEqual(out[0], '❯ m1');
+  assert.deepStrictEqual(out[MAX_ENTRIES - 1], { kind: 'command', name: '/status', args: '' });
+});
+
 test('only the last MAX_ENTRIES entries are kept', () => {
   const many = Array.from({ length: MAX_ENTRIES + 5 }, (_, i) => rec({ type: 'user', message: { content: `m${i}` } }));
   const out = parseTranscript(many.join('\n'));
