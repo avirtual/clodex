@@ -1,6 +1,6 @@
 'use strict';
 
-const { measureSplit, initialSplitState, reduceSplit } = require('./lib/live-split');
+const { SPLIT_EXIT_MS, measureSplit, initialSplitState, reduceSplit } = require('./lib/live-split');
 const { ansiRuns } = require('./lib/ansi-html');
 
 const TRANSCRIPT_PULL_MS = 1000;
@@ -42,6 +42,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, 
   let lastPull = 0;
   let pulling = false;
   let disposed = false;
+  let cursorHidden = false;
 
   function pull() {
     const t = now();
@@ -119,8 +120,20 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, 
     }
   }
 
+  const cursorVisibility = (hidden) => (params) => {
+    if (Array.from(params || []).includes(25)) cursorHidden = hidden;
+    return false;
+  };
+  const parser = terminal.parser;
   const subs = [
-    terminal.onWriteParsed(evaluate),
+    ...(parser ? [
+      parser.registerCsiHandler({ prefix: '?', final: 'l' }, cursorVisibility(true)),
+      parser.registerCsiHandler({ prefix: '?', final: 'h' }, cursorVisibility(false)),
+    ] : []),
+    terminal.onWriteParsed(() => {
+      if (!cursorHidden) evaluate();
+      else if (!wakeTimer) wakeTimer = setTimeout(evaluate, SPLIT_EXIT_MS);
+    }),
     terminal.onResize(() => { evaluate(); layout(); }),
     terminal.onScroll(() => {
       if (state.mode !== 'split') return;

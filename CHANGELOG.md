@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Transcript pane: the view no longer flickers between the pane and the raw terminal while a reply streams; a mid-redraw frame keeps the current layout, and the pane drops to the raw terminal only after a frame has stayed anchorless for 50 ms.
 - Transcript pane: the pane refreshes as soon as the transcript changes, so a local command's output (/context, /cost) appears without waiting for the next keystroke.
 - Tickets: `task add` refuses a spec whose title matches an open ticket and names it; add `dup` to the head line to open a second one deliberately.
 - Transcript pane: the output of local commands such as /context, /cost and /status shows in the pane with its colours instead of disappearing under it.

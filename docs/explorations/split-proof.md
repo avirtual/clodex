@@ -10,7 +10,7 @@ One caveat for ticket 3. The row above the rule, which holds the spinner, the in
 
 - `renderer/lib/live-split.js` is pure. `measureSplit(rows, cursorY, cols)` returns `{mode, top, bottom}`.
   - The anchor is a row made only of U+2500 that is at least `cols - 1` cells wide, **immediately** followed by a row that `composerIsEmpty` or `composerHasDraft` accepts. The scan goes up from the cursor row, then down.
-  - `reduceSplit(state, measured, now)` is the hysteresis from §3. It grows at once and shrinks only after the smaller height has held for 250 ms. Split→FULL is immediate. FULL→split needs the anchor held for 250 ms, and returns a `wakeAt` so the caller can look again when the screen goes quiet.
+  - `reduceSplit(state, measured, now)` is the hysteresis from §3. It grows at once and shrinks only after the smaller height has held for 250 ms. FULL→split needs the anchor held for 250 ms, and returns a `wakeAt` so the caller can look again when the screen goes quiet.
 - `renderer/live-split-view.js` is the DOM half.
   - The xterm element gets `translateY` so that the anchor row sits at the strip's top edge, plus a `clip-path` inset that hides the rows above the anchor and below `bottom`.
   - A `<pre class="transcript-pane">` fills the space above the strip.
@@ -21,6 +21,8 @@ One caveat for ticket 3. The row above the rule, which holds the spinner, the in
   - It re-reads the whole file only after `fs.watch` fires, and keeps the last 200 entries.
   - Entries are one per user text and assistant text, and one line per `tool_use` with the tool name and the first line of its main input.
 - Toggle: Preferences ▸ Appearance ▸ "Transcript pane (experimental)", ui-settings key `transcriptPane`, default off. It takes effect live on save. The view is only built for local desktop seats. Peer tabs and the web build never get one, and it activates only when the sidebar type is `claude`, so Codex and bash seats stay raw.
+
+Flicker while streaming (t1127): the CLI draws each frame between `?25l` and `?25h`, and a PTY chunk often ends mid-frame with the rule or composer row half-drawn. The view therefore tracks cursor visibility with CSI handlers and skips the `onWriteParsed` evaluation while the cursor is hidden (the frame gate), arming a 50 ms fallback evaluation so a frame the CLI ends with the cursor still hidden (verbose mode) cannot freeze the layout; resize, the wake timer and a transcript change still evaluate. On top of that, `reduceSplit` keeps the split geometry for `SPLIT_EXIT_MS` (50 ms) of anchorless measurements before dropping to FULL, and the view's wake timer finishes the exit when no further write arrives.
 
 ## Fixture matrix
 
