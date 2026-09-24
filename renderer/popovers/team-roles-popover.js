@@ -146,6 +146,47 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   // The open team's root, kept for the "Create lead seat…" prefill — the dialog
   // wants a cwd, and the manifest is the only place that knows it.
   let currentRoot = '';
+  let trunkInfo = null;
+  async function loadTrunk(name) {
+    if (typeof window.api.teamTrunk !== 'function') { trunkInfo = null; return; }
+    let res;
+    try { res = await window.api.teamTrunk(name); } catch { res = null; }
+    trunkInfo = res && res.ok ? res : null;
+  }
+
+  function buildTrunkField() {
+    const wrap = document.createElement('div');
+    wrap.className = 'team-trunk';
+    const field = document.createElement('label');
+    field.className = 'team-role-field';
+    const label = document.createElement('span');
+    label.textContent = 'merge target';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.dataset.f = 'trunk';
+    const derived = trunkInfo && trunkInfo.derived;
+    input.placeholder = derived ? `default: ${derived}` : "default: the repo's default branch";
+    input.value = (trunkInfo && trunkInfo.effective) || '';
+    field.appendChild(label);
+    field.appendChild(input);
+    wrap.appendChild(field);
+    const actions = document.createElement('div');
+    actions.className = 'team-role-actions';
+    const setBtn = document.createElement('button');
+    setBtn.type = 'button';
+    setBtn.dataset.act = 'set-trunk';
+    setBtn.textContent = 'Set merge target';
+    actions.appendChild(setBtn);
+    wrap.appendChild(actions);
+    const hint = document.createElement('div');
+    hint.className = 'team-lead-hint';
+    hint.textContent = trunkInfo && trunkInfo.trunk
+      ? 'Accepted tickets merge into this branch. Clear the field to go back to the repo default.'
+      : 'Accepted tickets merge into this branch, derived from the repo default. Set one to pin it.';
+    wrap.appendChild(hint);
+    return wrap;
+  }
+
   async function loadLeadSeats() {
     let live;
     try { live = await window.api.listSessions(); } catch { live = null; }
@@ -261,6 +302,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     hint.textContent = 'Changing this re-points the team at another seat. '
       + 'Nothing is handed over — the new lead starts fresh, and you can point it back at any time.';
     box.appendChild(hint);
+    box.appendChild(buildTrunkField());
 
     return box;
   }
@@ -988,6 +1030,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     // status line is rendered FROM these listings, so a stale one would state a
     // resolution the manifest no longer has.
     await loadLeadSeats();
+    await loadTrunk(res.team.name);
     renderRows(res.team);
     // Show the stored (read-clamped) watchdog back in friendly units, not raw ms.
     watchdogInput.value = res.team.watchdogMs != null ? formatDuration(res.team.watchdogMs) : '';
@@ -1149,6 +1192,15 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       // field is explicitly meant to accept.
       const res = await window.api.teamSetLead(name, seat);
       await afterMutation(res, `lead seat set to "${seat}"`);
+      return;
+    }
+    if (act === 'set-trunk') {
+      const inp = rowEl.querySelector('input[data-f="trunk"]');
+      const want = ((inp && inp.value) || '').trim();
+      if (!trunkInfo || typeof window.api.teamSetTrunk !== 'function') { setStatus('the merge target cannot be read here', true); return; }
+      if (!trunkInfo.trunk && want === (trunkInfo.derived || '')) { setStatus(`merge target is already the repo default (${want})`); return; }
+      const res = await window.api.teamSetTrunk(name, want || null);
+      await afterMutation(res, want ? `merge target set to "${want}"` : 'merge target cleared (back to the repo default)');
       return;
     }
     if (act === 'create-lead') {
@@ -1457,7 +1509,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     // The lead row has no Save — its input pairs with Set lead. Matched on the
     // field rather than on the row's role so a row that grows both buttons later
     // still fires the one belonging to the focused input.
-    const act = inp.dataset.f === 'lead-seat' ? 'set-lead' : 'save';
+    const act = inp.dataset.f === 'lead-seat' ? 'set-lead' : inp.dataset.f === 'trunk' ? 'set-trunk' : 'save';
     const btn = rowEl && rowEl.querySelector(`button[data-act="${act}"]`);
     if (!btn) return;
     e.preventDefault();

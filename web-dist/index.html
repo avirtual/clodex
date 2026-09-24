@@ -10038,6 +10038,8 @@ body.web-frontend #sidebar-header {
         { name: "teamDeleteCheck", kind: "invoke", channel: "team:deleteCheck" },
         { name: "teamDelete", kind: "invoke", channel: "team:delete" },
         { name: "teamSetWatchdog", kind: "invoke", channel: "team:setWatchdog" },
+        { name: "teamTrunk", kind: "invoke", channel: "team:trunk" },
+        { name: "teamSetTrunk", kind: "invoke", channel: "team:setTrunk" },
         { name: "teamGather", kind: "invoke", channel: "team:gather" },
         // Which SEAT is the team's lead (t420) — the manifest's top-level pointer, not
         // the reserved `lead` ROLE (that stays locked). The only door to a team whose
@@ -28239,7 +28241,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         };
       }
       function parseTeam(cleaned) {
-        const m = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|template-save|template-rm|prompt-save|prompt-rm|sandbox)\b([^\]]*)\]\s*(.*)/s);
+        const m = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|template-save|template-rm|prompt-save|prompt-rm|sandbox|trunk)\b([^\]]*)\]\s*(.*)/s);
         if (!m) return null;
         const sub = m[1];
         const argStr = m[2];
@@ -28255,6 +28257,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           return { type: "team", sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, model: modelM ? modelM[1] : null, account: accountM ? accountM[1] : null, body };
         }
         if (sub === "role-rm" || sub === "set-lead") return { type: "team", sub, name: positional[0] || null, body: "" };
+        if (sub === "trunk") return { type: "team", sub, branch: positional[0] || null, body: "" };
         if (sub === "role-rename") return { type: "team", sub, name: positional[0] || null, to: positional[1] || null, body: "" };
         if (sub === "gather") return { type: "team", sub, dry: positional[0] === "dry", body: "" };
         if (sub === "template-save") return { type: "team", sub, stem: positional[0] || null, body };
@@ -39351,6 +39354,50 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         let leadSessions = [];
         let leadKnown = [];
         let currentRoot = "";
+        let trunkInfo = null;
+        async function loadTrunk(name) {
+          if (typeof window.api.teamTrunk !== "function") {
+            trunkInfo = null;
+            return;
+          }
+          let res;
+          try {
+            res = await window.api.teamTrunk(name);
+          } catch {
+            res = null;
+          }
+          trunkInfo = res && res.ok ? res : null;
+        }
+        function buildTrunkField() {
+          const wrap = document.createElement("div");
+          wrap.className = "team-trunk";
+          const field = document.createElement("label");
+          field.className = "team-role-field";
+          const label = document.createElement("span");
+          label.textContent = "merge target";
+          const input = document.createElement("input");
+          input.type = "text";
+          input.dataset.f = "trunk";
+          const derived = trunkInfo && trunkInfo.derived;
+          input.placeholder = derived ? `default: ${derived}` : "default: the repo's default branch";
+          input.value = trunkInfo && trunkInfo.effective || "";
+          field.appendChild(label);
+          field.appendChild(input);
+          wrap.appendChild(field);
+          const actions = document.createElement("div");
+          actions.className = "team-role-actions";
+          const setBtn = document.createElement("button");
+          setBtn.type = "button";
+          setBtn.dataset.act = "set-trunk";
+          setBtn.textContent = "Set merge target";
+          actions.appendChild(setBtn);
+          wrap.appendChild(actions);
+          const hint = document.createElement("div");
+          hint.className = "team-lead-hint";
+          hint.textContent = trunkInfo && trunkInfo.trunk ? "Accepted tickets merge into this branch. Clear the field to go back to the repo default." : "Accepted tickets merge into this branch, derived from the repo default. Set one to pin it.";
+          wrap.appendChild(hint);
+          return wrap;
+        }
         async function loadLeadSeats() {
           let live;
           try {
@@ -39443,6 +39490,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           hint.className = "team-lead-hint";
           hint.textContent = "Changing this re-points the team at another seat. Nothing is handed over \u2014 the new lead starts fresh, and you can point it back at any time.";
           box.appendChild(hint);
+          box.appendChild(buildTrunkField());
           return box;
         }
         const CLEARABLE = clearableFields();
@@ -39932,6 +39980,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           await loadActivity(res.team.name);
           await loadUses(res.team.name, Object.keys(res.team && res.team.roles || {}));
           await loadLeadSeats();
+          await loadTrunk(res.team.name);
           renderRows(res.team);
           watchdogInput.value = res.team.watchdogMs != null ? formatDuration(res.team.watchdogMs) : "";
           return true;
@@ -40067,6 +40116,21 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             }
             const res = await window.api.teamSetLead(name, seat);
             await afterMutation(res, `lead seat set to "${seat}"`);
+            return;
+          }
+          if (act === "set-trunk") {
+            const inp = rowEl.querySelector('input[data-f="trunk"]');
+            const want = (inp && inp.value || "").trim();
+            if (!trunkInfo || typeof window.api.teamSetTrunk !== "function") {
+              setStatus("the merge target cannot be read here", true);
+              return;
+            }
+            if (!trunkInfo.trunk && want === (trunkInfo.derived || "")) {
+              setStatus(`merge target is already the repo default (${want})`);
+              return;
+            }
+            const res = await window.api.teamSetTrunk(name, want || null);
+            await afterMutation(res, want ? `merge target set to "${want}"` : "merge target cleared (back to the repo default)");
             return;
           }
           if (act === "create-lead") {
@@ -40294,7 +40358,7 @@ You can add it back from this popover.` : "";
           if (!inp) return;
           if (inp.type === "radio") return;
           const rowEl = inp.closest(".team-role-row");
-          const act = inp.dataset.f === "lead-seat" ? "set-lead" : "save";
+          const act = inp.dataset.f === "lead-seat" ? "set-lead" : inp.dataset.f === "trunk" ? "set-trunk" : "save";
           const btn = rowEl && rowEl.querySelector(`button[data-act="${act}"]`);
           if (!btn) return;
           e.preventDefault();

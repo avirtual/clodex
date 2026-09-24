@@ -199,6 +199,7 @@ function mkFixture() {
     removeRole: manifest.removeRole,
     renameRole: manifest.renameRole,
     setTeamWatchdog: manifest.setTeamWatchdog,
+    setTeamTrunk: manifest.setTeamTrunk,
   };
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();

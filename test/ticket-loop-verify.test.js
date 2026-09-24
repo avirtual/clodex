@@ -329,6 +329,7 @@ function mkLoop({
     removeRole: manifest.removeRole,
     renameRole: manifest.renameRole,
     setTeamWatchdog: manifest.setTeamWatchdog,
+    setTeamTrunk: manifest.setTeamTrunk,
   };
   const reminders = initStores(userData, { log: console, registryDir: seedDir() }).reminders;
   const scheduler = createRemindScheduler({

@@ -7887,11 +7887,15 @@ function createSessionManager(deps) {
       try {
         if (root && gitWorktree && typeof gitWorktree.headLogSync === 'function') log = gitWorktree.headLogSync(root);
       } catch { log = null; }
-      head.push(log
-        ? `host ${appVersion || 'unknown'}; master ${log.sha} "${log.subject}" (${root})`
-        : `host ${appVersion || 'unknown'}; git: unavailable`);
       let team = null;
       try { team = resolveTeam(session && session.cwd); } catch { team = null; }
+      let trunk = null;
+      try {
+        if (log && typeof gitWorktree.mergeTargetForSync === 'function') trunk = gitWorktree.mergeTargetForSync({ root, trunk: team && team.trunk });
+      } catch { trunk = null; }
+      head.push(log
+        ? `host ${appVersion || 'unknown'}; ${trunk || 'HEAD'} ${log.sha} "${log.subject}" (${root})`
+        : `host ${appVersion || 'unknown'}; git: unavailable`);
       let board = '';
       if (team) {
         const role = matchSeatRole(team, session.name) || 'none';

@@ -74,6 +74,7 @@ function createPluginHostEngine(deps) {
   const LIB_GIT_WITHHELD = new Set([
     'deleteBranch', 'isMerged', 'diffText', 'diffNames', 'fileAt', 'mergeNoFf', 'revertCommit',
     'initRepo', 'hasCommit', 'checkoutDetached', 'headSha', 'headShaSync', 'headLogSync',
+    'defaultBranchSync', 'mergeTargetFor', 'mergeTargetForSync', 'localBranches',
   ]);
   const libGitWorktree = Object.freeze(Object.fromEntries(
     Object.keys(gitWorktree || {})

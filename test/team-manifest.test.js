@@ -2373,3 +2373,42 @@ test('t1092: a stale stash key for a role never re-added survives loadManifest r
   }
   assert.deepStrictEqual(warns, []);
 });
+
+const TRUNK_ROWS = [
+  ['main', 'main'],
+  ['release/2.x', 'release/2.x'],
+  ['  master  ', 'master'],
+  ['', null],
+  ['   ', null],
+  [undefined, null],
+  [42, null],
+  ['../../etc', null],
+  ['main..evil', null],
+  ['-rf', null],
+  ['has space', null],
+  ['semi;colon', null],
+  ['a'.repeat(121), null],
+];
+
+for (const [raw, want] of TRUNK_ROWS) {
+  test(`trunk ${JSON.stringify(raw)} loads as ${JSON.stringify(want)}`, () => {
+    const home = mkHome();
+    const root = mkTmpRoot('proj-');
+    mkTeam(home, 'shop', { ...validManifest(root), ...(raw === undefined ? {} : { trunk: raw }) });
+    const tm = createTeamManifest({ fs, clodexHome: home });
+    assert.strictEqual(tm.loadManifest('shop').trunk, want);
+  });
+}
+
+test('setTeamTrunk writes a valid branch, clears on null, and refuses a traversal-shaped one', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('proj-');
+  mkTeam(home, 'shop', validManifest(root));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  assert.strictEqual(tm.setTeamTrunk('shop', 'main').trunk, 'main');
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf8')).trunk, 'main');
+  assert.throws(() => tm.setTeamTrunk('shop', '../x'), /trunk must be a branch name/);
+  assert.strictEqual(tm.loadManifest('shop').trunk, 'main', 'a refused write leaves the stored value');
+  assert.strictEqual(tm.setTeamTrunk('shop', null).trunk, null);
+  assert.ok(!('trunk' in JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf8'))));
+});

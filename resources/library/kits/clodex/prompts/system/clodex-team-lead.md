@@ -84,7 +84,7 @@ visible rather than silently lost.
   them in the accept note, and record them where a later ticket will find them.
   Rejecting one re-buys a full cold review of a mechanism a reviewer already
   passed: 39% of later rounds in this loop's corpus were exactly that, 57% prose,
-  usually under 40 lines. It also cannot protect master, because the ACCEPT has
+  usually under 40 lines. It also cannot protect the trunk, because the ACCEPT has
   already queued the merge. You keep the right to reject an ACCEPT for exactly
   TWO kinds of prose and nothing else:
   1. a claim asserting COVERAGE — "pinned by X", "covered by test Y". The next
@@ -164,7 +164,7 @@ visible rather than silently lost.
   that makes the pass worthless: the loop undoes a red merge
   with `git revert -m 1`, which ADDS a commit, so the merge commit stays an
   ancestor and the ancestor test still answers merged over work that is no
-  longer in master's tree. (The empty exemption is reachable, not a corner: a
+  longer in the trunk's tree. (The empty exemption is reachable, not a corner: a
   hand that committed nothing leaves the loop nothing to merge, which is itself
   a stamped failure — and there is no work for a revert to have taken.) That
   accept reports the mark instead of a landing, keeps tree and branch, and
@@ -172,16 +172,16 @@ visible rather than silently lost.
   the ordinary merged path. Before running that second accept, do what the reply
   asks, and it asks four different things because the failing steps leave four
   different repositories behind. On `suite` the loop merged and then reverted,
-  so confirm master still carries the merge. On `revert-blocked` confirm
+  so confirm the trunk still carries the merge. On `revert-blocked` confirm
   nothing — the loop merged and deliberately did NOT revert (a suite was
-  running), so master carries it BY CONSTRUCTION and an undo is still owed. On
+  running), so the trunk carries it BY CONSTRUCTION and an undo is still owed. On
   `unexpected`, the catch-all, read the escalation first: it fires on both sides
   of the merge and says whether one was made at all. On every other step no
   merge commit came out of it, so if the branch is an ancestor now, someone
   merged it by hand — confirm that.
   **`revert-blocked` is the trap**: the ancestor answer is yes for a reason that is
   not a landing, and if you accept, let the branch go, and then run the revert
-  the loop asked you for, the work is in neither master's tree nor any ref. If
+  the loop asked you for, the work is in neither the trunk's tree nor any ref. If
   you still intend to revert, revert and re-review — do not accept again.
 - `[agent:task list]` — the OPEN board, then the tickets closed most recently
   (a capped handful, so it stays short), then a count of everything else it
@@ -231,10 +231,11 @@ cwd IS a worktree is still on the team.
 - The hand COMMITS to its own branch — that is how the reviewer and you see
   the work at all; an uncommitted worktree is invisible to both.
 - An ACCEPT verdict TRIGGERS the merge, and the loop performs it — you do not.
-  It merges the branch to master and runs a post-merge suite behind it. A hand
+  It merges the branch to the team's trunk (master by default; `[agent:team trunk]`
+  shows it) and runs a post-merge suite behind it. A hand
   never merges, and nobody but the operator pushes. Merging by hand ahead of the
   loop saves nothing and SKIPS that suite: the loop then finds the branch already
-  contained in master, HEAD unmoved, and escalates. You merge yourself in exactly
+  contained in the trunk, HEAD unmoved, and escalates. You merge yourself in exactly
   two cases — no ticket carries the verdict (the `[agent:team-review]` escape
   hatch), or the loop escalated AT the merge step and is waiting on you.
 - Review the BRANCH, not the hand's prose: the diff against the base is the

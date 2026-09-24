@@ -153,7 +153,7 @@ function parseIntentLegacy(rawLine) {
     };
   }
 
-  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|template-save|template-rm|prompt-save|prompt-rm|sandbox)\b([^\]]*)\]\s*(.*)/s);
+  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|template-save|template-rm|prompt-save|prompt-rm|sandbox|trunk)\b([^\]]*)\]\s*(.*)/s);
   if (teamMatch) {
     const sub = teamMatch[1];
     const argStr = teamMatch[2];
@@ -169,6 +169,7 @@ function parseIntentLegacy(rawLine) {
       return { type: 'team', sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, model: modelM ? modelM[1] : null, account: accountM ? accountM[1] : null, body };
     }
     if (sub === 'role-rm' || sub === 'set-lead') return { type: 'team', sub, name: positional[0] || null, body: '' };
+    if (sub === 'trunk') return { type: 'team', sub, branch: positional[0] || null, body: '' };
     if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
     // t701's gather, landed here in the same commit as parseTeam's — the same
     // lockstep rule the task copy above states, and the reason it is stated:
@@ -394,6 +395,7 @@ const ADVERSARIAL = [
   '[agent:team gather]', '[agent:team gather dry]', '[agent:team gather junk]',
   '[agent:team gatherx]',
   '[agent:team set-lead bob]', '[agent:team set-lead]', '[agent:team set-lead a b]',
+  '[agent:team trunk main]', '[agent:team trunk]',
   '[agent:team template-save hand-seat] {"type":"claude"}', '[agent:team template-save]',
   '[agent:team template-rm hand-seat]', '[agent:team template-rmx hand-seat]',
   '[agent:team prompt-save system lead] body text', '[agent:team prompt-save append lead] body',

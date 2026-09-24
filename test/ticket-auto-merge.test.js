@@ -114,9 +114,9 @@ const SUITE_STUBS = {
 // the checkout, and the merge's step 3 refuses a dirty tree. Without it every
 // subject here would escalate at clean-tree and the assertions downstream would
 // be measuring that escalation instead of the merge.
-function mkRepo() {
+function mkRepo({ trunk = 'master' } = {}) {
   const dir = mkTmpRoot('clodex-merge-repo-');
-  git(dir, ['init', '-q', '-b', 'master']);
+  git(dir, ['init', '-q', '-b', trunk]);
   git(dir, ['config', 'user.email', 't@t.t']);
   git(dir, ['config', 'user.name', 'T']);
   // `.test-digest.lock/` is ignored in the real repo for the same reason it is
@@ -254,6 +254,7 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
     removeRole: manifest.removeRole,
     renameRole: manifest.renameRole,
     setTeamWatchdog: manifest.setTeamWatchdog,
+    setTeamTrunk: manifest.setTeamTrunk,
     // REAL, deliberately — see the header. The merge WRITES to this repo.
     gitWorktree: gitOver ? { ...require('../git-worktree'), ...gitOver } : require('../git-worktree'),
     childProcess: require('node:child_process'),
@@ -3457,4 +3458,66 @@ test('t975: the merge message file is stamped on the record as a basename', asyn
   walk(pathReal.join(f.home, 'projects'));
   assert.strictEqual(hits.length, 1,
     'and it resolves to exactly one file under the task dir, so a reader is not sent into an ENOENT');
+});
+
+test('a repo whose trunk is main with no master: the loop merges into main and the MERGED notice names main', async () => {
+  const repo = mkRepo({ trunk: 'main' });
+  assert.throws(() => git(repo.dir, ['rev-parse', '--verify', '--quiet', 'refs/heads/master']),
+    'ENTER: the fixture repo has no master');
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const before = git(repo.dir, ['rev-parse', 'main']);
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc().map((e) => e.body.split('\n')[0]), [], 'no escalation, in particular not on-master');
+  const head = git(repo.dir, ['rev-parse', 'main']);
+  assert.notStrictEqual(head, before, 'main moved');
+  assert.strictEqual(git(repo.dir, ['rev-list', '--parents', '-n', '1', 'main']).split(/\s+/).length, 3, 'a merge commit on main');
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1);
+  assert.match(notes[0].body, /^\[ticket t1 MERGED\] tl-1 → main as /);
+  assert.match(notes[0].body, /Suite on main after the merge/);
+  assert.doesNotMatch(notes[0].body, /\bmaster\b/);
+});
+
+test('a configured trunk that is not the checked-out branch trips the guard, naming the configured branch', async () => {
+  const repo = mkRepo();
+  git(repo.dir, ['branch', 'release']);
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  f.team.trunk = 'release';
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1);
+  assert.match(esc[0].body, /merge: on-master/, 'the fail key stays on-master');
+  assert.match(esc[0].body, /on "master", not the team's trunk release/);
+  assert.match(esc[0].body, /check out release in /);
+  assert.strictEqual(f.masterHead(), repo.baseSha, 'master did not move');
+  assert.strictEqual(git(repo.dir, ['rev-parse', 'release']), repo.baseSha, 'nor did release');
+});
+
+test('[agent:team trunk <branch>] refuses a branch the root repo does not have, naming the ones it does', async () => {
+  const repo = mkRepo();
+  const f = mkMerge({ repo });
+  const intent = require('../intent-registry').parseWithRegistry('[agent:team trunk nope]');
+  assert.strictEqual(intent && intent.sub, 'trunk');
+  assert.strictEqual(intent.branch, 'nope');
+  const replies = [];
+  await f.m._handleTeamTrunk(f.team, intent, (msg) => replies.push(msg));
+  assert.strictEqual(replies.length, 1);
+  assert.match(replies[0], /^error: no branch "nope" in /);
+  assert.match(replies[0], /it has: .*\bmaster\b/);
+  assert.match(replies[0], /\btl-1\b/);
+  assert.strictEqual(f.team.trunk, undefined, 'nothing was written');
+});
+
+test('bare [agent:team trunk] reports the derived value when none is set', async () => {
+  const repo = mkRepo({ trunk: 'main' });
+  const f = mkMerge({ repo });
+  const replies = [];
+  await f.m._handleTeamTrunk(f.team, { type: 'team', sub: 'trunk', branch: null }, (msg) => replies.push(msg));
+  assert.match(replies[0], /trunk of team is "main" \(derived from the repo's default branch; not set/);
 });

@@ -249,6 +249,7 @@ test('t699: loadManifest and resolveTeam both carry `dir`, the directory holding
     file,
     dir: path.dirname(file),
     watchdogMs: null,
+    trunk: null,
     version: 3,
     droppedFields: [],
   }, 'the WHOLE object, so a field that stops being carried cannot pass unnoticed');

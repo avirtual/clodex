@@ -242,6 +242,7 @@ function mkWorld({ tplPlugins } = {}) {
     gatherTeam: () => null,
     addRole: () => {}, setRole: () => {}, removeRole: () => {}, renameRole: () => {},
     setTeamWatchdog: () => {},
+    setTeamTrunk: () => {},
   };
   // The team-metadata deps: createTeam, kitCatalog and resolveKit are read only
   // by _handleTeamCreate, setLead only by _handleTeam's set-lead case, teamsDir
