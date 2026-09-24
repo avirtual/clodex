@@ -22,6 +22,7 @@ const ROOT = path.join(__dirname, '..');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
 const cssSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'styles.css'), 'utf8');
 const { DEFAULT_LABEL } = require('../renderer/lib/account-select');
+const { classifySender } = require('../renderer/lib/sender-class');
 
 // The smallest node the builder touches: dataset, innerHTML (kept as the raw
 // string — the assertions below read the emitted MARKUP, which is what the
@@ -40,6 +41,7 @@ const FREE = [
   'document', 'window', 'esc', 'baseName', 'typeGlyph', 'ACCOUNT_DEFAULT',
   'switchSession', 'openSessionInfoPopover', 'archiveSessionRow', 'startRename',
   'insertLocalSessionRow', 'sidebarMeta', 'scheduleSidebarRelayout', 'applyFixChip',
+  'classifySender',
 ];
 
 function loadBuilder() {
@@ -63,6 +65,7 @@ function loadBuilder() {
     sidebarMeta: new Map(),
     scheduleSidebarRelayout() {},
     applyFixChip() {},
+    classifySender,
   };
   // eslint-disable-next-line no-new-func
   const fn = new Function(...FREE, `${body}; return addSessionToSidebar;`)(...FREE.map((n) => env[n]));

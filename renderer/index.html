@@ -18,7 +18,9 @@
       // getItem's null must NOT reach Number(): Number(null)===0 → clamp→160,
       // flashing every FRESH profile at 160px. No stored value → CSS default.
       const s = localStorage.getItem('clodex-sidebar-width');
-      if (s !== null) {
+      if (localStorage.getItem('clodex-sidebar-folded') === '1') {
+        document.documentElement.style.setProperty('--sidebar-width', '44px');
+      } else if (s !== null) {
         document.documentElement.style.setProperty('--sidebar-width', clampSidebarWidth(Number(s)) + 'px');
       }
     } catch (e) {}
@@ -42,6 +44,7 @@
         <button id="btn-new-sandbox" data-tip="New sandbox">&#9635;</button>
         <button id="btn-add-peer" data-tip="Add peer">&#8644;</button>
         <button id="btn-discover" data-tip="Discover sessions on this machine">&#9906;</button>
+        <button id="sidebar-fold" data-tip="Fold sidebar (Cmd+B)">&#8249;</button>
       </div>
     </div>
     <div id="sidebar-filterbar">

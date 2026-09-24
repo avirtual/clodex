@@ -4,7 +4,7 @@ const { SearchAddon } = require('@xterm/addon-search');
 const { WebLinksAddon } = require('@xterm/addon-web-links');
 const { isExternallyOpenable } = require('../external-link');
 const { seatHasPlugin, pluginsForUnlistedPlugins, mergePlugins } = require('../plugin-api');
-const { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
+const { clampSidebarWidth, effectiveSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
 const { mergeMeta } = require('../meta-tiers');
 const { PendingInput } = require('../peer-input-queue');
 const { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota } = require('../proxy-util');
@@ -13,6 +13,7 @@ const { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, f
 const { renderDiffHtml, costStackBlock, bustRow } = require('./lib/render-html');
 const { renderMarkdown } = require('./lib/render-markdown');
 const { placeAboveAnchor } = require('./lib/popover-place');
+const { classifySender } = require('./lib/sender-class');
 const { scanPaths } = require('./lib/path-scan');
 const { matchGutterRow, findGutterFile } = require('./lib/gutter-scan');
 
@@ -112,24 +113,54 @@ const terminalWebglReady = window.api.getSettings()
 
 const { currentXtermTheme, currentEchoPalette } = initThemes({ sessions });
 
-(function initSidebarResize() {
+const toggleSidebarFold = (function initSidebarResize() {
   const resizer = document.getElementById('sidebar-resizer');
-  if (!resizer) return;
+  if (!resizer) return () => {};
   const root = document.documentElement;
+  const sidebar = document.getElementById('sidebar');
+  const foldBtn = document.getElementById('sidebar-fold');
   const LS_KEY = 'clodex-sidebar-width';
+  const LS_FOLD_KEY = 'clodex-sidebar-folded';
 
-  const applyWidth = (px) => root.style.setProperty('--sidebar-width', clampSidebarWidth(px) + 'px');
+  let width = SIDEBAR_WIDTH_DEFAULT;
+  try {
+    const s = localStorage.getItem(LS_KEY);
+    if (s !== null) width = clampSidebarWidth(Number(s));
+  } catch {}
+  let folded = false;
+  try { folded = localStorage.getItem(LS_FOLD_KEY) === '1'; } catch {}
+
+  const apply = () => {
+    root.style.setProperty('--sidebar-width', effectiveSidebarWidth({ folded, width }) + 'px');
+    if (sidebar) sidebar.dataset.folded = folded ? '1' : '0';
+    if (foldBtn) {
+      foldBtn.dataset.tip = folded ? 'Unfold sidebar (Cmd+B)' : 'Fold sidebar (Cmd+B)';
+      foldBtn.textContent = folded ? '\u203A' : '\u2039';
+    }
+  };
+  const applyWidth = (px) => { width = clampSidebarWidth(px); apply(); };
   const persist = (px) => {
     const w = clampSidebarWidth(px);
     try { localStorage.setItem(LS_KEY, String(w)); } catch {}
     try { window.api.setSettings({ sidebarWidth: w }); } catch {}
   };
+  const persistFold = () => {
+    try { localStorage.setItem(LS_FOLD_KEY, folded ? '1' : '0'); } catch {}
+    try { window.api.setSettings({ sidebarFolded: folded }); } catch {}
+  };
+  apply();
 
   window.api.getSettings().then((s) => {
-    if (s && typeof s.sidebarWidth === 'number') {
-      applyWidth(s.sidebarWidth);
-      try { localStorage.setItem(LS_KEY, String(clampSidebarWidth(s.sidebarWidth))); } catch {}
+    if (!s) return;
+    if (typeof s.sidebarWidth === 'number') {
+      width = clampSidebarWidth(s.sidebarWidth);
+      try { localStorage.setItem(LS_KEY, String(width)); } catch {}
     }
+    if (typeof s.sidebarFolded === 'boolean') {
+      folded = s.sidebarFolded;
+      try { localStorage.setItem(LS_FOLD_KEY, folded ? '1' : '0'); } catch {}
+    }
+    apply();
   }).catch(() => {});
 
   let dragging = false;
@@ -138,6 +169,7 @@ const { currentXtermTheme, currentEchoPalette } = initThemes({ sessions });
   const flush = () => { rafId = 0; if (pendingPx != null) applyWidth(pendingPx); };
 
   resizer.addEventListener('pointerdown', (e) => {
+    if (folded) return;
     if (e.button !== 0) return;
     dragging = true;
     resizer.classList.add('dragging');
@@ -166,9 +198,18 @@ const { currentXtermTheme, currentEchoPalette } = initThemes({ sessions });
   resizer.addEventListener('pointercancel', endDrag);
 
   resizer.addEventListener('dblclick', () => {
+    if (folded) return;
     applyWidth(SIDEBAR_WIDTH_DEFAULT);
     persist(SIDEBAR_WIDTH_DEFAULT);
   });
+
+  const toggle = () => {
+    folded = !folded;
+    apply();
+    persistFold();
+  };
+  if (foldBtn) foldBtn.addEventListener('click', toggle);
+  return toggle;
 })();
 
 const sessionList = document.getElementById('session-list');
@@ -501,6 +542,7 @@ function addFailedSessionToSidebar(entry) {
   const item = document.createElement('div');
   item.className = 'session-item failed';
   item.dataset.name = entry.name;
+  item.dataset.monogram = classifySender(entry.name).glyph;
   item.dataset.cwd = entry.cwd || '';
   item.dataset.type = entry.type;
   item.dataset.failed = '1';
@@ -548,6 +590,7 @@ function addArchivedSessionToSidebar(entry) {
   const item = document.createElement('div');
   item.className = 'session-item archived';
   item.dataset.name = entry.name;
+  item.dataset.monogram = classifySender(entry.name).glyph;
   item.dataset.cwd = entry.cwd || '';
   item.dataset.type = entry.type;
   if (entry.backend) item.dataset.backend = entry.backend;
@@ -646,6 +689,7 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
   const item = document.createElement('div');
   item.className = 'session-item';
   item.dataset.name = name;
+  item.dataset.monogram = classifySender(name).glyph;
   item.dataset.cwd = cwd || '';
   item.dataset.type = type;
   if (backend) item.dataset.backend = backend;
@@ -4660,6 +4704,13 @@ document.addEventListener('keydown', (e) => {
   // drawer must not reach them — Cmd+W typed into a drawer tenant would
   // archive an unrelated session.
   if (drawerHost.hasFocus()) return;
+
+  if (e.key === 'b') {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleSidebarFold();
+    return;
+  }
 
   const overlaysOpen = anyOverlayOpen(overlayProbes);
 

@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Sidebar: Cmd+B (or the chevron in the toolbar) folds the sidebar to a narrow rail of status dots and one-letter monograms, so the terminal and the file pane get the width; the fold is remembered across relaunches. Unfold the same way.
 - Transcript pane: messages from Clodex itself (reminders, the ticket loop, reboot notices, exec results) and from other seats show a sender badge with a glyph and a short name instead of the wire's `from X` text.
 - Side pane: every file you open stays open in its own tab (up to 12; the least recently used untouched tab is closed to make room), and the single remaining tab no longer shows a close button next to the pane's own.
 - Teams: the ticket loop merges into the team's trunk instead of a hard-coded `master`; it defaults to the repo's default branch (`main` or `master`) and can be set per team in the roles editor or with `[agent:team trunk <branch>]`.

@@ -8537,6 +8537,108 @@ body.web-frontend #sidebar-header {
 .transcript-pane[hidden] {
   display: none;
 }
+#sidebar[data-folded="1"] .app-title-stack,
+#sidebar[data-folded="1"] #shell-share-chip,
+#sidebar[data-folded="1"] #sidebar-filterbar,
+#sidebar[data-folded="1"] #sidebar-header button:not(#sidebar-fold),
+#sidebar[data-folded="1"] .session-info,
+#sidebar[data-folded="1"] .session-close,
+#sidebar[data-folded="1"] .session-info-btn,
+#sidebar[data-folded="1"] .session-item.failed::after,
+#sidebar[data-folded="1"] .session-item.archived,
+#sidebar[data-folded="1"] .session-child,
+#sidebar[data-folded="1"] .session-empty-note,
+#sidebar[data-folded="1"] .session-group-header > *,
+#sidebar[data-folded="1"] .peer-header > :not(.peer-dot),
+#sidebar[data-folded="1"] #served-terminal-text,
+#sidebar[data-folded="1"] #update-text,
+#sidebar[data-folded="1"] #diag-text,
+#sidebar[data-folded="1"] #diag-actions,
+#sidebar[data-folded="1"] #auth-text,
+#sidebar[data-folded="1"] .footer-label,
+#sidebar[data-folded="1"] #sidebar-footer [data-plugin-footer] {
+  display: none;
+}
+#sidebar[data-folded="1"] #sidebar-header {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+#sidebar-fold {
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+#sidebar-fold:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+#sidebar[data-folded="1"] #sidebar-resizer {
+  pointer-events: none;
+}
+#sidebar[data-folded="1"] #session-list {
+  padding: var(--sp-1) 0;
+  overflow-x: hidden;
+}
+#sidebar[data-folded="1"] .session-group-header {
+  height: 0;
+  padding: 0;
+  margin: var(--sp-1) var(--sp-2);
+  border-top: 1px solid var(--border);
+}
+#sidebar[data-folded="1"] .peer-header {
+  justify-content: center;
+  padding: var(--sp-1) 0;
+}
+#sidebar[data-folded="1"] .session-item {
+  justify-content: center;
+  padding: 5px 0;
+  gap: 0;
+}
+#sidebar[data-folded="1"] .session-item::before {
+  content: attr(data-monogram);
+  position: static;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4em;
+  height: 1.4em;
+  border-radius: 50%;
+  font-size: var(--fs-md);
+  line-height: 1;
+  font-weight: 600;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+#sidebar[data-folded="1"] .session-chip {
+  position: absolute;
+  top: 4px;
+  right: 9px;
+  width: 0;
+  height: 0;
+  background: transparent;
+  color: transparent;
+  font-size: 0;
+}
+#sidebar[data-folded="1"] #sidebar-footer {
+  padding: var(--sp-1) 2px;
+}
+#sidebar[data-folded="1"] #inbox-open {
+  justify-content: center;
+  gap: 2px;
+  padding: 5px 0;
+}
+#sidebar[data-folded="1"] #inbox-count {
+  margin-left: 0;
+  min-width: 0;
+  padding: 1px 4px;
+}
 
 /* renderer/web/app.css */
 /*! Bundled license information:
@@ -8589,7 +8691,9 @@ body.web-frontend #sidebar-header {
       // getItem's null must NOT reach Number(): Number(null)===0 → clamp→160,
       // flashing every FRESH profile at 160px. No stored value → CSS default.
       const s = localStorage.getItem('clodex-sidebar-width');
-      if (s !== null) {
+      if (localStorage.getItem('clodex-sidebar-folded') === '1') {
+        document.documentElement.style.setProperty('--sidebar-width', '44px');
+      } else if (s !== null) {
         document.documentElement.style.setProperty('--sidebar-width', clampSidebarWidth(Number(s)) + 'px');
       }
     } catch (e) {}
@@ -8613,6 +8717,7 @@ body.web-frontend #sidebar-header {
         <button id="btn-new-sandbox" data-tip="New sandbox">&#9635;</button>
         <button id="btn-add-peer" data-tip="Add peer">&#8644;</button>
         <button id="btn-discover" data-tip="Discover sessions on this machine">&#9906;</button>
+        <button id="sidebar-fold" data-tip="Fold sidebar (Cmd+B)">&#8249;</button>
       </div>
     </div>
     <div id="sidebar-filterbar">
@@ -23202,6 +23307,7 @@ ${i3.join("\n")}
       var SIDEBAR_WIDTH_MIN = 160;
       var SIDEBAR_WIDTH_MAX = 560;
       var SIDEBAR_WIDTH_DEFAULT = 220;
+      var SIDEBAR_RAIL_WIDTH = 44;
       function clampSidebarWidth(px) {
         if (typeof px !== "number" || !Number.isFinite(px)) return SIDEBAR_WIDTH_DEFAULT;
         const r = Math.round(px);
@@ -23209,8 +23315,13 @@ ${i3.join("\n")}
         if (r > SIDEBAR_WIDTH_MAX) return SIDEBAR_WIDTH_MAX;
         return r;
       }
+      function effectiveSidebarWidth({ folded, width } = {}) {
+        return folded === true ? SIDEBAR_RAIL_WIDTH : clampSidebarWidth(width);
+      }
       module.exports = {
         clampSidebarWidth,
+        effectiveSidebarWidth,
+        SIDEBAR_RAIL_WIDTH,
         SIDEBAR_WIDTH_MIN,
         SIDEBAR_WIDTH_MAX,
         SIDEBAR_WIDTH_DEFAULT
@@ -24520,6 +24631,50 @@ ${i3.join("\n")}
         return p;
       }
       module.exports = { isDetachedRect, barPlacement, liveAnchor, placeAboveAnchor, MARGIN, GAP };
+    }
+  });
+
+  // renderer/lib/sender-class.js
+  var require_sender_class = __commonJS({
+    "renderer/lib/sender-class.js"(exports, module) {
+      "use strict";
+      var SYSTEM_GLYPHS = {
+        reminder: "\u25F7",
+        reboot: "\u21BB",
+        "ticket-loop": "\u21C4",
+        "ticket-watchdog": "\u25C9",
+        monitor: "\u25A3",
+        memory: "\u25C8",
+        exec: "\u25B8",
+        terminal: "\u25A4",
+        team: "\u229E",
+        "clodex-team": "\u229E",
+        wirescope: "\u223F"
+      };
+      var SEAT_SHAPE = /^([A-Za-z0-9]+)-([A-Za-z]+)((?:-\d+)?(?:-r\d+)?)$/;
+      function systemGlyph(name) {
+        if (Object.prototype.hasOwnProperty.call(SYSTEM_GLYPHS, name)) return SYSTEM_GLYPHS[name];
+        if (name.endsWith("-loop")) return SYSTEM_GLYPHS["ticket-loop"];
+        if (name.endsWith("-watchdog")) return SYSTEM_GLYPHS["ticket-watchdog"];
+        return null;
+      }
+      function initial(text) {
+        const first = Array.from(String(text || ""))[0];
+        return first ? first.toUpperCase() : "?";
+      }
+      function classifySender(from) {
+        const name = String(from == null ? "" : from);
+        const system = systemGlyph(name);
+        if (system) return { cls: "system", label: name, glyph: system };
+        if (name === "user") return { cls: "operator", label: "you", glyph: "\u25CF" };
+        if (name.includes("@")) return { cls: "peer", label: name, glyph: "\u21E2" };
+        const shape = SEAT_SHAPE.exec(name);
+        if (shape) {
+          return { cls: "seat", label: `${shape[2]}${shape[3]}`, glyph: initial(shape[2]) };
+        }
+        return { cls: "seat", label: name, glyph: initial(name) };
+      }
+      module.exports = { classifySender, SYSTEM_GLYPHS };
     }
   });
 
@@ -29874,50 +30029,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return runs;
       }
       module.exports = { ansiRuns, color256 };
-    }
-  });
-
-  // renderer/lib/sender-class.js
-  var require_sender_class = __commonJS({
-    "renderer/lib/sender-class.js"(exports, module) {
-      "use strict";
-      var SYSTEM_GLYPHS = {
-        reminder: "\u25F7",
-        reboot: "\u21BB",
-        "ticket-loop": "\u21C4",
-        "ticket-watchdog": "\u25C9",
-        monitor: "\u25A3",
-        memory: "\u25C8",
-        exec: "\u25B8",
-        terminal: "\u25A4",
-        team: "\u229E",
-        "clodex-team": "\u229E",
-        wirescope: "\u223F"
-      };
-      var SEAT_SHAPE = /^([A-Za-z0-9]+)-([A-Za-z]+)((?:-\d+)?(?:-r\d+)?)$/;
-      function systemGlyph(name) {
-        if (Object.prototype.hasOwnProperty.call(SYSTEM_GLYPHS, name)) return SYSTEM_GLYPHS[name];
-        if (name.endsWith("-loop")) return SYSTEM_GLYPHS["ticket-loop"];
-        if (name.endsWith("-watchdog")) return SYSTEM_GLYPHS["ticket-watchdog"];
-        return null;
-      }
-      function initial(text) {
-        const first = Array.from(String(text || ""))[0];
-        return first ? first.toUpperCase() : "?";
-      }
-      function classifySender(from) {
-        const name = String(from == null ? "" : from);
-        const system = systemGlyph(name);
-        if (system) return { cls: "system", label: name, glyph: system };
-        if (name === "user") return { cls: "operator", label: "you", glyph: "\u25CF" };
-        if (name.includes("@")) return { cls: "peer", label: name, glyph: "\u21E2" };
-        const shape = SEAT_SHAPE.exec(name);
-        if (shape) {
-          return { cls: "seat", label: `${shape[2]}${shape[3]}`, glyph: initial(shape[2]) };
-        }
-        return { cls: "seat", label: name, glyph: initial(name) };
-      }
-      module.exports = { classifySender, SYSTEM_GLYPHS };
     }
   });
 
@@ -41708,6 +41819,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       var { isPeerExpanded, togglePeerExpanded } = require_peer_collapse();
       var { servedBannerView } = require_served_banner();
       var { placeAboveAnchor } = require_popover_place();
+      var { classifySender } = require_sender_class();
       var { farCwdGuess, localFromHome } = require_far_cwd_guess();
       function initPeersUi({
         sessions,
@@ -41951,6 +42063,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
               item.dataset.peerUi = "1";
               if (!expanded) item.style.display = "none";
               item.dataset.name = key;
+              item.dataset.monogram = classifySender(s.name).glyph;
               item.dataset.activity = s.activity || "idle";
               if (sessions.has(key)) item.classList.add("attached");
               item.dataset.type = "remote";
@@ -43717,7 +43830,7 @@ ${detail}` });
       var { WebLinksAddon } = require_addon_web_links();
       var { isExternallyOpenable } = require_external_link();
       var { seatHasPlugin, pluginsForUnlistedPlugins, mergePlugins } = require_plugin_api();
-      var { clampSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require_sidebar_width();
+      var { clampSidebarWidth, effectiveSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require_sidebar_width();
       var { mergeMeta } = require_meta_tiers();
       var { PendingInput } = require_peer_input_queue();
       var { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota } = require_proxy_util();
@@ -43726,6 +43839,7 @@ ${detail}` });
       var { renderDiffHtml, costStackBlock, bustRow } = require_render_html();
       var { renderMarkdown } = require_render_markdown();
       var { placeAboveAnchor } = require_popover_place();
+      var { classifySender } = require_sender_class();
       var { scanPaths } = require_path_scan();
       var { matchGutterRow, findGutterFile } = require_gutter_scan();
       var GUTTER_HEADER_SCAN = 400;
@@ -43828,12 +43942,38 @@ ${detail}` });
       }).catch(() => {
       });
       var { currentXtermTheme, currentEchoPalette } = initThemes({ sessions });
-      (function initSidebarResize() {
+      var toggleSidebarFold = (function initSidebarResize() {
         const resizer = document.getElementById("sidebar-resizer");
-        if (!resizer) return;
+        if (!resizer) return () => {
+        };
         const root = document.documentElement;
+        const sidebar = document.getElementById("sidebar");
+        const foldBtn = document.getElementById("sidebar-fold");
         const LS_KEY = "clodex-sidebar-width";
-        const applyWidth = (px) => root.style.setProperty("--sidebar-width", clampSidebarWidth(px) + "px");
+        const LS_FOLD_KEY = "clodex-sidebar-folded";
+        let width = SIDEBAR_WIDTH_DEFAULT;
+        try {
+          const s = localStorage.getItem(LS_KEY);
+          if (s !== null) width = clampSidebarWidth(Number(s));
+        } catch {
+        }
+        let folded = false;
+        try {
+          folded = localStorage.getItem(LS_FOLD_KEY) === "1";
+        } catch {
+        }
+        const apply = () => {
+          root.style.setProperty("--sidebar-width", effectiveSidebarWidth({ folded, width }) + "px");
+          if (sidebar) sidebar.dataset.folded = folded ? "1" : "0";
+          if (foldBtn) {
+            foldBtn.dataset.tip = folded ? "Unfold sidebar (Cmd+B)" : "Fold sidebar (Cmd+B)";
+            foldBtn.textContent = folded ? "\u203A" : "\u2039";
+          }
+        };
+        const applyWidth = (px) => {
+          width = clampSidebarWidth(px);
+          apply();
+        };
         const persist = (px) => {
           const w = clampSidebarWidth(px);
           try {
@@ -43845,14 +43985,34 @@ ${detail}` });
           } catch {
           }
         };
+        const persistFold = () => {
+          try {
+            localStorage.setItem(LS_FOLD_KEY, folded ? "1" : "0");
+          } catch {
+          }
+          try {
+            window.api.setSettings({ sidebarFolded: folded });
+          } catch {
+          }
+        };
+        apply();
         window.api.getSettings().then((s) => {
-          if (s && typeof s.sidebarWidth === "number") {
-            applyWidth(s.sidebarWidth);
+          if (!s) return;
+          if (typeof s.sidebarWidth === "number") {
+            width = clampSidebarWidth(s.sidebarWidth);
             try {
-              localStorage.setItem(LS_KEY, String(clampSidebarWidth(s.sidebarWidth)));
+              localStorage.setItem(LS_KEY, String(width));
             } catch {
             }
           }
+          if (typeof s.sidebarFolded === "boolean") {
+            folded = s.sidebarFolded;
+            try {
+              localStorage.setItem(LS_FOLD_KEY, folded ? "1" : "0");
+            } catch {
+            }
+          }
+          apply();
         }).catch(() => {
         });
         let dragging = false;
@@ -43863,6 +44023,7 @@ ${detail}` });
           if (pendingPx != null) applyWidth(pendingPx);
         };
         resizer.addEventListener("pointerdown", (e) => {
+          if (folded) return;
           if (e.button !== 0) return;
           dragging = true;
           resizer.classList.add("dragging");
@@ -43899,9 +44060,17 @@ ${detail}` });
         resizer.addEventListener("pointerup", endDrag);
         resizer.addEventListener("pointercancel", endDrag);
         resizer.addEventListener("dblclick", () => {
+          if (folded) return;
           applyWidth(SIDEBAR_WIDTH_DEFAULT);
           persist(SIDEBAR_WIDTH_DEFAULT);
         });
+        const toggle = () => {
+          folded = !folded;
+          apply();
+          persistFold();
+        };
+        if (foldBtn) foldBtn.addEventListener("click", toggle);
+        return toggle;
       })();
       var sessionList = document.getElementById("session-list");
       var terminalContainer = document.getElementById("terminal-container");
@@ -44211,6 +44380,7 @@ ${detail}` });
         const item = document.createElement("div");
         item.className = "session-item failed";
         item.dataset.name = entry.name;
+        item.dataset.monogram = classifySender(entry.name).glyph;
         item.dataset.cwd = entry.cwd || "";
         item.dataset.type = entry.type;
         item.dataset.failed = "1";
@@ -44254,6 +44424,7 @@ ${detail}` });
         const item = document.createElement("div");
         item.className = "session-item archived";
         item.dataset.name = entry.name;
+        item.dataset.monogram = classifySender(entry.name).glyph;
         item.dataset.cwd = entry.cwd || "";
         item.dataset.type = entry.type;
         if (entry.backend) item.dataset.backend = entry.backend;
@@ -44343,6 +44514,7 @@ ${detail}` });
         const item = document.createElement("div");
         item.className = "session-item";
         item.dataset.name = name;
+        item.dataset.monogram = classifySender(name).glyph;
         item.dataset.cwd = cwd || "";
         item.dataset.type = type;
         if (backend) item.dataset.backend = backend;
@@ -47969,6 +48141,12 @@ Click for live activity`;
       document.addEventListener("keydown", (e) => {
         if (!e.metaKey || e.altKey || e.ctrlKey) return;
         if (drawerHost.hasFocus()) return;
+        if (e.key === "b") {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleSidebarFold();
+          return;
+        }
         const overlaysOpen = anyOverlayOpen(overlayProbes);
         if (e.key === "t") {
           e.preventDefault();

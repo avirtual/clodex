@@ -18,6 +18,7 @@
 const SIDEBAR_WIDTH_MIN = 160;
 const SIDEBAR_WIDTH_MAX = 560;
 const SIDEBAR_WIDTH_DEFAULT = 220;
+const SIDEBAR_RAIL_WIDTH = 44;
 
 function clampSidebarWidth(px) {
   if (typeof px !== 'number' || !Number.isFinite(px)) return SIDEBAR_WIDTH_DEFAULT;
@@ -27,8 +28,14 @@ function clampSidebarWidth(px) {
   return r;
 }
 
+function effectiveSidebarWidth({ folded, width } = {}) {
+  return folded === true ? SIDEBAR_RAIL_WIDTH : clampSidebarWidth(width);
+}
+
 module.exports = {
   clampSidebarWidth,
+  effectiveSidebarWidth,
+  SIDEBAR_RAIL_WIDTH,
   SIDEBAR_WIDTH_MIN,
   SIDEBAR_WIDTH_MAX,
   SIDEBAR_WIDTH_DEFAULT,
