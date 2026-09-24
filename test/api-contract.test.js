@@ -46,7 +46,7 @@ const PINNED_NAMES = [
   'getVersion', 'getDiagnostics', 'toolsCheck', 'invalidateToolCache', 'onUpdateAvailable', 'onSessionContextAction',
   // t412: the focus decision's read of main-side draft state.
   'draftOpen', 'transcriptPull', 'onTranscriptChanged',
-  'writeToSession', 'selectDirectory', 'confirmKill', 'restoreSessions',
+  'writeToSession', 'seatSend', 'selectDirectory', 'confirmKill', 'restoreSessions',
   'onPtyData', 'onSessionExit', 'onIpcMessage', 'onSessionActivity',
   // Retires the drawer status line's claim about a delivery that had not
   // happened yet — the CLI's own hook drains the queue, so the app cannot

@@ -20727,3 +20727,236 @@ test('t1099 onUndelivered: a unit whose seat DIES mid-settle is re-parked stampe
   assert.strictEqual(entry.born, session.createdAt,
     'stamped from the closure\'s own session: after _cleanup neither the map nor persistence knows the name, and an unstamped entry would reach the next seat of that name');
 });
+
+function mkStreamSeatManager({ persisted = {} } = {}) {
+  const os = require('node:os');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { pathFor, runDirFor } = require('../clodex-paths');
+  const root = mkTmpRoot('clx-stream-seat-');
+  const store = new Map(Object.entries(persisted).map(([k, v]) => [k, { name: k, ...v }]));
+  const sessionIds = [];
+  const spawns = [];
+  const hookCalls = [];
+  const reaps = [];
+  const logs = [];
+  const handles = [];
+  const ensureDir = (d) => fs.mkdirSync(d, { recursive: true });
+  const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
+    REGISTRY_DIR: root,
+    fs, path, pathFor, runDirFor, os,
+    PENDING_DIR: path.join(root, 'pending'),
+    MSG_DIR: path.join(root, 'messages'),
+    ensureDir,
+    getPersistence: () => ({
+      list: () => [...store.values()], get: (n) => store.get(n) || null,
+      upsert: (e) => store.set(e.name, { ...(store.get(e.name) || {}), ...e }),
+      remove: (n) => store.delete(n),
+      setSessionId: (n, id) => { sessionIds.push([n, id]); const e = store.get(n); if (e) e.sessionId = id; },
+    }),
+    getRemoteServer: () => null,
+    getUiSettings: () => ({ get: () => ({}) }),
+    resolveProxyBase: () => 'http://127.0.0.1:9999',
+    normalizeProxyBase: (v) => v,
+    resolveProxyAgentId: () => 'agent-x',
+    ProxyClient: { spawnerHint: () => Promise.resolve() },
+    lastTranscriptWrite: () => null,
+    memoryStore: { list: () => [] },
+    composeDigest: () => null,
+    registry: { register: () => {}, unregister: () => {} },
+    Transport: class { start() {} stop() {} },
+    JsonlWatcher: class { start() {} stop() {} },
+    pty: { spawn: () => { throw new Error('a stream seat must not spawn a pty'); } },
+    spawnStreamSeat: (opts) => {
+      const h = {
+        pid: 7001, startedAt: 1790000000123, startTime: 1790000000000, stderrTail: '',
+        sent: [], killed: 0,
+        send: (obj) => { h.sent.push(obj); return Promise.resolve(); },
+        close: () => {},
+        kill: () => { h.killed += 1; },
+        opts,
+      };
+      spawns.push({ cmd: opts.cmd, args: opts.args });
+      handles.push(h);
+      return h;
+    },
+    reapBeforeResume: async (o) => { reaps.push({ record: o.record, at: spawns.length }); return 'dead'; },
+    notifyOS: () => {},
+    log: {
+      info: (tag, msg) => logs.push(['info', tag, msg]),
+      warn: (tag, msg) => logs.push(['warn', tag, msg]),
+      error: (tag, msg) => logs.push(['error', tag, msg]),
+    },
+    WIRE_SHADOW: false,
+    WIRE_INTENTS_LIVE: false,
+    setupClaudeHook: (n, proxyBase, proxyAgent) => {
+      hookCalls.push([n, proxyBase, proxyAgent]);
+      fs.mkdirSync(runDirFor(root, n), { recursive: true });
+      return path.join(root, 'settings.json');
+    },
+    setupCodexHook: () => {},
+    cleanupClaudeHook: () => {}, cleanupCodexHook: () => {},
+    cleanupSkills: () => {}, cleanupAgentPlugin: () => {},
+    buildIpcPrompt: () => '', writeClaudeDigestFile: () => false,
+    teeBlindBackend: () => null,
+    readEffectiveClaudeEnv: () => ({}),
+    mergeSessionEnv: () => ({ ...process.env }),
+    getEnvScopes: () => ({ all: () => ({ global: {}, workspaces: {} }) }),
+    getUserDataPath: () => root,
+    resolveTeam: () => null,
+    strictMcpReason: () => null,
+    scrubInheritedClaudeMarkers: (e) => e,
+    resolveSystemPromptFile: () => null,
+    mergeClaudeSystemPrompt: (a) => ({ cleaned: [...a], append: null }),
+    readAppendBodies: () => [],
+    pluginGrammarLines: () => [], intentEnabled,
+    getAgentLibrary: () => ({ list: () => [] }),
+    unionEnabled: (names) => names || [],
+    effectiveInjectedAgents: () => [],
+    effectiveInjectedSkills: () => [],
+    writeAgentPlugin: () => null,
+    deliverSkills: () => null,
+    skillDeliveryProviders: () => [],
+    bakePrompt: () => '',
+    nextIncarnation: () => 1,
+    memLoad: { noteDigest: () => {}, noteSession: () => {} },
+    tiersOf: () => ({}),
+    arm: { onContextReset: () => {} },
+  });
+  const m = new SessionManager();
+  m._sendToSession = () => {};
+  m._broadcast = () => {};
+  const create = (name, resumeId = null) => m.create(name, 'claude', os.tmpdir(), [], resumeId, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream');
+  const line = (name, obj) => handles[handles.length - 1].opts.onLine(obj);
+  const stopAll = () => {
+    for (const s of m.sessions.values()) {
+      try { if (s.ctxWatcher) s.ctxWatcher.close(); } catch {}
+      try { if (s.watcher) s.watcher.stop(); } catch {}
+      clearTimeout(s._bootDrainTimer);
+    }
+  };
+  return { m, create, line, store, sessionIds, spawns, hookCalls, reaps, logs, handles, root, stopAll };
+}
+
+const STREAM_HEAD = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'];
+
+test('stream seat (f): create(io:stream) builds the -p stream-json argv with a fresh --session-id, keeping --settings and the base-url route', async () => {
+  const h = mkStreamSeatManager();
+  const res = await h.create('st1');
+  assert.strictEqual(h.spawns.length, 1);
+  const { cmd, args } = h.spawns[0];
+  assert.strictEqual(cmd, 'claude');
+  assert.match(args[7], /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  const promptPath = require('../clodex-paths').pathFor(h.root, 'st1', 'appendPrompt');
+  assert.deepStrictEqual([...args.slice(0, 7), '<uuid>', ...args.slice(8)], [
+    ...STREAM_HEAD, '--session-id', '<uuid>',
+    '--settings', require('node:path').join(h.root, 'settings.json'),
+    '--add-dir', require('node:path').join(h.root, 'messages'),
+    '--append-system-prompt-file', promptPath,
+  ]);
+  assert.deepStrictEqual(h.hookCalls.map((c) => c.slice(0, 3)), [['st1', 'http://127.0.0.1:9999', 'agent-x']]);
+  assert.deepStrictEqual(h.reaps, [], 'a fresh seat has nothing to reap');
+  const s = h.m.sessions.get('st1');
+  assert.deepStrictEqual({ pty: s.pty, io: s.io, outbox: s.outbox, streamPid: s.streamPid, stream: s.stream === h.handles[0] },
+    { pty: null, io: 'stream', outbox: [], streamPid: { pid: 7001, startTime: 1790000000000 }, stream: true });
+  assert.deepStrictEqual({ io: h.store.get('st1').io, streamPid: h.store.get('st1').streamPid },
+    { io: 'stream', streamPid: { pid: 7001, startTime: 1790000000000 } });
+  assert.deepStrictEqual({ pid: res.pid, io: res.io }, { pid: 7001, io: 'stream' });
+  h.stopAll();
+});
+
+test('stream seat (g): a restore with io:stream reaps the persisted streamPid BEFORE spawning --resume <id>', async () => {
+  const h = mkStreamSeatManager({ persisted: { st2: { io: 'stream', sessionId: 'sid-old', streamPid: { pid: 6001, startTime: 1780000000000 } } } });
+  const { restoreSessionsForWorkspace } = require('../session-restore');
+  const entry = h.store.get('st2');
+  entry.type = 'claude';
+  entry.cwd = require('node:os').tmpdir();
+  const saved = [entry];
+  await restoreSessionsForWorkspace({
+    workspaceId: 'ws',
+    persistence: { listForWorkspace: () => saved },
+    manager: Object.assign(Object.create(h.m), { resumeCwdOf: (e) => e.cwd, teamNameFor: () => null }),
+    proxyPoller: { snapshot: () => null },
+    maybeCompactBeforeResume: async () => {},
+    readCtxFor: () => ({}),
+    log: { error: () => {} },
+  });
+  assert.deepStrictEqual(h.reaps, [{ record: { pid: 6001, startTime: 1780000000000 }, at: 0 }]);
+  assert.strictEqual(h.spawns.length, 1);
+  assert.deepStrictEqual(h.spawns[0].args.slice(0, 8), [...STREAM_HEAD, '--resume', 'sid-old']);
+  assert.ok(h.logs.some((l) => l[2] === 'stream reap st2: dead pid=6001'), 'the reap decision is logged');
+  h.stopAll();
+});
+
+test('stream seat (h): an init line on stdout updates the persisted sessionId', async () => {
+  const h = mkStreamSeatManager();
+  await h.create('st3');
+  h.line('st3', { type: 'system', subtype: 'init', session_id: 'sid-new', model: 'm', slash_commands: [] });
+  assert.deepStrictEqual(h.sessionIds, [['st3', 'sid-new']]);
+  assert.strictEqual(h.m.sessions.get('st3').sessionId, 'sid-new');
+  h.stopAll();
+});
+
+test('stream seat (i): two seatSends while busy become ONE joined message on result', async () => {
+  const h = mkStreamSeatManager();
+  await h.create('st4');
+  const seat = h.handles[0];
+  assert.deepStrictEqual(h.m.seatSend('st4', 'first'), { ok: true, queued: 0 });
+  assert.deepStrictEqual(h.m.seatSend('st4', 'second'), { ok: true, queued: 1 });
+  assert.deepStrictEqual(h.m.seatSend('st4', 'third'), { ok: true, queued: 2 });
+  assert.deepStrictEqual(seat.sent, [{ type: 'user', message: { role: 'user', content: 'first' } }]);
+  h.line('st4', { type: 'result', subtype: 'success', duration_ms: 1, total_cost_usd: 0, is_error: false });
+  assert.deepStrictEqual(seat.sent, [
+    { type: 'user', message: { role: 'user', content: 'first' } },
+    { type: 'user', message: { role: 'user', content: 'second\n\nthird' } },
+  ]);
+  assert.deepStrictEqual(h.m.sessions.get('st4').outbox, []);
+  h.line('st4', { type: 'result', subtype: 'success', duration_ms: 1, total_cost_usd: 0, is_error: false });
+  assert.strictEqual(seat.sent.length, 2, 'an empty outbox sends nothing on result');
+  assert.strictEqual(h.m.sessions.get('st4').activityState, 'idle');
+  h.stopAll();
+});
+
+test('stream seat (j): _deliverMessage to a stream seat refuses with the logged reason and writes nothing', async () => {
+  const h = mkStreamSeatManager();
+  await h.create('st5');
+  const seat = h.handles[0];
+  h.m._deliverMessage('st5', 'lead', 'hello there', 'dm');
+  assert.deepStrictEqual(seat.sent, []);
+  assert.deepStrictEqual(h.m.sessions.get('st5').outbox, []);
+  assert.deepStrictEqual(h.logs.filter((l) => l[1] === 'inject'),
+    [['warn', 'inject', 'st5: stream seat: messaging arrives in H2 — dm from lead dropped 11 bytes']]);
+  h.stopAll();
+});
+
+test('stream seat: close after exit runs the pty exit order, and kill() uses the stream group kill', async () => {
+  const h = mkStreamSeatManager();
+  await h.create('st6');
+  h.stopAll();
+  const sent = [];
+  h.m._sendToSession = (...a) => sent.push(a[1]);
+  await h.m.kill('st6');
+  assert.strictEqual(h.handles[0].killed, 1);
+  h.handles[0].opts.onClose(0, 'SIGTERM');
+  assert.deepStrictEqual(sent.filter((c) => c === 'session-exit'), ['session-exit']);
+  assert.strictEqual(h.m.sessions.has('st6'), false);
+});
+
+test('stream seat: the outbox has no timed force-flush — ten busy minutes still hold it for the result', async () => {
+  const { mock } = require('node:test');
+  const h = mkStreamSeatManager();
+  await h.create('st7');
+  h.stopAll();
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  try {
+    h.m.seatSend('st7', 'first');
+    h.m.seatSend('st7', 'held');
+    mock.timers.tick(10 * 60 * 1000);
+    assert.deepStrictEqual(h.handles[0].sent, [{ type: 'user', message: { role: 'user', content: 'first' } }]);
+    assert.deepStrictEqual(h.m.sessions.get('st7').outbox, ['held']);
+  } finally {
+    mock.timers.reset();
+  }
+});

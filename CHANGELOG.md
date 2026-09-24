@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 - Transcript pane: an intent renders as a card (glyph, verb, target, a clamped body) with the wire brackets hidden, and a Clodex runtime reply shows the verb's glyph instead of a badge for a seat named clodex.
 - Sidebar and transcript pane: a seat that is compacting its context shows an hourglass with elapsed time on its row and a "Compacting context…" notice in the pane, replaced by "Compacted in Ns" when it finishes, so a still terminal during a compact no longer looks hung.
+- Stream transport (experimental, New Session checkbox on claude seats): the seat runs `claude -p` over stream-json with no terminal, the transcript pane is its viewport and a composer its input; it survives a Clodex relaunch through --resume, and a child left running by a crash is stopped before the resume so two processes never write one transcript. No dms, intents or permission prompts yet.
 - Wire: a long intent body already shown to the model in full stays in full on later turns and is replaced by its stand-in only after a compact, a new session, or an hour idle, so the replacement no longer rewrites the cached conversation (measured 52-90k tokens per collapse before).
 - Transcript pane: head rows and intent marks lose their left bars (the raised row and the tinted mark carry the meaning).
 - Sidebar: Cmd+B (or the chevron in the toolbar) folds the sidebar to a narrow rail of status dots and one-letter monograms, so the terminal and the file pane get the width; the fold is remembered across relaunches. Unfold the same way.

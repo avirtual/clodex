@@ -47,13 +47,7 @@ test('args-edit restart threads the persisted env into create() (19th positional
   assert.strictEqual(res.ok, true);
   assert.strictEqual(res.restarted, true);
   assert.strictEqual(captured.length, 1, 'create was called once');
-  // 23, because create() grew four positionals past env (mint, then noWire, then
-  // the seat's plugin list, then the reviewer shell deny rules). The count is
-  // still asserted rather than only the index: env sits at 18 and a signature
-  // that lost a LATER argument would leave 18 correct while the tail silently
-  // defaults — which is how noWire would stop surviving a restart with nothing
-  // else failing, and how the shell reviewer's deny rules did stop surviving one.
-  assert.strictEqual(captured[0].length, 23, 'create got the full 23-positional signature');
+  assert.strictEqual(captured[0].length, 25, 'create got the full 25-positional signature');
   assert.deepStrictEqual(captured[0][18], { AWS_PROFILE: 'acct', DB: 'x' }, 'the persisted env is threaded as the 19th arg — not dropped');
   assert.strictEqual(captured[0][20], false,
     'and the 21st is noWire, resolved off the persisted entry — an args edit must not un-wire an ordinary seat');

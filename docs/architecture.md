@@ -180,6 +180,20 @@ bundle), whose packaged form is the Docker image under
   5-minute display valve, the transcript-pane notice text, and
   `mergeCompactNotices`, which splices the main-side notice records into
   `transcript:pull` by timestamp.
+- **stream-seat.js** — the electron-free child-process owner behind a stream
+  seat (`io: 'stream'`, `claude -p` over stream-json): spawns detached in its
+  own process group, splits stdout into JSON lines with no length cap, writes
+  one JSON line per `send`, and fires `onClose` only after both `exit` and the
+  stdio `close`. `groupKill` / `isAlive` / `kernelStartTime` are its guarded
+  signal, probe and `ps -o lstart=` helpers.
+- **stream-codec-claude.js** — pure decode of the claude stream-json CONTROL
+  records (`init`, `result`, `conversation_reset`, `compact_boundary`,
+  `system/status`, `permission_denied`) and `encodeUser`. Content records are
+  not decoded: the transcript file carries them.
+- **stream-reap.js** — the reap-before-resume decision (`kill` / `recycled` /
+  `dead` from liveness + a start-time match) and `reapBeforeResume`, which
+  applies it (SIGTERM the group, wait, SIGKILL) before a stream seat resumes,
+  so two processes never write one transcript.
 - **session-discovery.js** — scans for adoptable external agent processes
   (opt-in startup discovery), excluding Clodex's own `livePids`; in
   SCANNED_MODULES.

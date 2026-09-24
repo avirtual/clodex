@@ -792,7 +792,7 @@ function createTicketMethods(deps, shared) {
           }
           this._applyTemplatePersistence(name, tpl);
           this._sendToSession(name, 'session:context-action', {
-            action: 'reattach', name, type, cwd: spawnCwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
+            action: 'reattach', name, type, cwd: spawnCwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire, io: (this.sessions.get(name) || {}).io || 'pty',
             // Agent-initiated: appears while the operator is working somewhere
             // else, so it may not take the keyboard. The reload respawn in
             // session-manager omits this flag on purpose — that one is the
@@ -1318,7 +1318,7 @@ function createTicketMethods(deps, shared) {
           // inside the seat.
           this._applyTemplatePersistence(name, shape.tpl);
           this._sendToSession(name, 'session:context-action', {
-            action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire,
+            action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire, io: (this.sessions.get(name) || {}).io || 'pty',
             background: true,
           });
           // Kept, and carrying no copy of the scope: the prompt above has it, but a prompt alone
@@ -5596,6 +5596,7 @@ function createTicketMethods(deps, shared) {
             action: 'reattach', name: seat.name, type: (this.sessions.get(seat.name) || {}).agentType || null,
             cwd: seatCwd, backend: (this.sessions.get(seat.name) || {}).backend || null,
             noWire: !!(this.sessions.get(seat.name) || {}).noWire,
+            io: (this.sessions.get(seat.name) || {}).io || 'pty',
             background: true,
           });
           const d = this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true, false, false,

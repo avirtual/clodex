@@ -241,7 +241,7 @@ test('t189: noWire reaches every row shape — running, restored, archived and f
   const NOWIRE_IDX = 19;
   const okArgs = createArgs.get('ok');
   assert.ok(okArgs, 'ENTER: the restored seat was actually spawned, so there are arguments to inspect');
-  assert.strictEqual(okArgs.length, 23, 'ENTER: every positional past name was passed, so the index below is the flag');
+  assert.strictEqual(okArgs.length, 24, 'ENTER: every positional past name was passed, so the index below is the flag');
   assert.strictEqual(okArgs[NOWIRE_IDX], true,
     'the restore respawn passes noWire through to create()');
   const wiredArgs = createArgs.get('wired');
@@ -295,4 +295,30 @@ test('a restore spawns in the resolved cwd, and reports that one — not the rec
     'and the row reports it, or the sidebar points at a directory the seat is not in');
   assert.strictEqual(out[0].team, 'shop',
     'the team is resolved from the same directory — a stale cwd can resolve a different team, or none');
+});
+
+test('io passes through to create() as the last positional, pty by default, and rides every row shape', async () => {
+  const createArgs = new Map();
+  const manager = {
+    sessions: new Map([['run', { backend: null, pendingOutput: '' }]]),
+    async create(name, ...rest) {
+      createArgs.set(name, rest);
+      manager.sessions.set(name, { backend: null });
+      return { name };
+    },
+    resumeCwdOf: (e) => e.cwd,
+    pendingCountFor: () => 0,
+    teamNameFor: () => null,
+  };
+  const persistence = fakePersistence([
+    { name: 'run', type: 'claude', cwd: '/w/r', io: 'stream' },
+    { name: 'st', type: 'claude', cwd: '/w/s', io: 'stream', sessionId: 'sid-1' },
+    { name: 'arch', type: 'claude', cwd: '/w/a', io: 'stream', archivedAt: 1 },
+    { name: 'pty', type: 'claude', cwd: '/w/p' },
+  ]);
+  const out = await restoreSessionsForWorkspace({ workspaceId: 'ws1', persistence, manager, ...noopDeps });
+  assert.deepStrictEqual([...createArgs.keys()], ['st', 'pty']);
+  assert.deepStrictEqual(createArgs.get('st').slice(3, 4).concat(createArgs.get('st').slice(23)), ['sid-1', 'stream']);
+  assert.deepStrictEqual(createArgs.get('pty').slice(23), ['pty']);
+  assert.deepStrictEqual(out.map((e) => [e.name, e.io]), [['run', 'stream'], ['st', 'stream'], ['arch', 'stream'], ['pty', undefined]]);
 });

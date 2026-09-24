@@ -175,6 +175,9 @@ test('t679: a plugin template\'s appendPromptFiles reach create() ALONGSIDE its 
       true,                         // mint
       false,                        // noWire
       ['rev'],                      // plugins — what makes both namespaced refs resolvable
+      null,
+      null,
+      'pty',
     ], 'the namespaced append stem must arrive with the plugin that can resolve it');
   });
 });

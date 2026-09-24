@@ -393,6 +393,7 @@ clx-commonmeta-
 clx-console-
 clx-createdat-
 clx-createdat-mgr-
+clx-stream-restart-
 clx-ctl-
 clx-ctx-timeout-
 clx-decoy-home-
@@ -449,6 +450,7 @@ clx-skill-catalog-
 clx-skillsoff-
 clx-spillgate-
 clx-statusq-
+clx-stream-seat-
 clx-t1002-fix-
 clx-t279-
 clx-t282-

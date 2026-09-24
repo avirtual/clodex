@@ -67,7 +67,7 @@ const { createVoiceSubmitWatcher } = require('./voice-submit-watcher');
 const {
   DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings, resolveTriggerKey,
 } = require('./lib/voice-submit');
-const { createLiveSplitView } = require('./live-split-view');
+const { createLiveSplitView, renderTranscript, TRANSCRIPT_PULL_MS } = require('./live-split-view');
 const { initBanners } = require('./banners');
 const { initThemes } = require('./themes');
 const { createEchoRewriter } = require('./lib/prompt-echo');
@@ -100,6 +100,11 @@ const { initPluginHost } = require('./plugin-host');
 
 const sessions = new Map(); // name -> { terminal, fitAddon, wrapperEl }
 const transcriptChangedSubs = new Set();
+const streamSeatNames = new Set();
+function markSeatIo(name, io) {
+  if (io === 'stream') streamSeatNames.add(name);
+  else streamSeatNames.delete(name);
+}
 let activeSession = null;
 let terminalWebglEnabled = false;
 let transcriptPaneEnabled = false;
@@ -944,7 +949,7 @@ window.api.onSessionMoveProgress(({ name, phase, bytes, total, files, fileIndex 
     : head);
 });
 
-window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, disposition, background, peerId, peerLabel, workspaceId, workspaceName }) => {
+window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, io, disposition, background, peerId, peerLabel, workspaceId, workspaceName }) => {
   switch (action) {
     case 'editArgs':
       openArgsDialog(name);
@@ -981,6 +986,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, d
     case 'reattach':
       if (type) {
         const snapAccount = accountOfRow(name);
+        markSeatIo(name, io);
         createTerminal(name);
         addSessionToSidebar(name, type, cwd, null, backend || null, null, noWire === true, snapAccount);
         // `background` marks the agent-initiated emitters (ticket seat, spawn
@@ -1103,6 +1109,8 @@ function startRename(item, nameEl, sessionName) {
         return;
       }
       removeSession(sessionName, { keepPersisted: true });
+      markSeatIo(res.name, streamSeatNames.has(sessionName) ? 'stream' : 'pty');
+      streamSeatNames.delete(sessionName);
       createTerminal(res.name);
       addSessionToSidebar(res.name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, res.noWire === true, snapAccount);
       switchSession(res.name);
@@ -1483,7 +1491,87 @@ function filePathFromUri(uri) {
   try { return decodeURIComponent(new URL(uri).pathname) || null; } catch { return null; }
 }
 
+function createStreamSeatPane(name, wrapperEl) {
+  wrapperEl.classList.add('stream-seat');
+  const paneEl = document.createElement('div');
+  paneEl.className = 'transcript-pane transcript-pane-full';
+  wrapperEl.appendChild(paneEl);
+  const composer = document.createElement('textarea');
+  composer.className = 'seat-composer';
+  composer.rows = 3;
+  composer.placeholder = 'Message — Enter sends, Shift+Enter for a new line';
+  wrapperEl.appendChild(composer);
+  let rev = -1;
+  let pulling = false;
+  let disposed = false;
+  let follow = true;
+  const onScroll = () => { follow = paneEl.scrollTop + paneEl.clientHeight >= paneEl.scrollHeight - 4; };
+  paneEl.addEventListener('scroll', onScroll);
+  const pull = (force = false) => {
+    if (pulling || disposed) return;
+    if (!force && !wrapperEl.classList.contains('visible')) return;
+    pulling = true;
+    Promise.resolve(window.api.transcriptPull(name)).then((res) => {
+      pulling = false;
+      if (disposed || !res || !res.ok || res.rev === rev) return;
+      rev = res.rev;
+      renderTranscript(document, paneEl, res.records, {
+        seatName: name,
+        resolveFile: (p) => window.api.fileResolve(name, p, null),
+        openFilePeek: (...args) => openFilePeek(...args),
+        openExternal: (url) => window.api.openExternal(url),
+        toast: showToast,
+        echoPalette: currentEchoPalette,
+      });
+      if (follow) paneEl.scrollTop = paneEl.scrollHeight;
+    }).catch(() => { pulling = false; });
+  };
+  const onChanged = (n) => { if (n === name) pull(true); };
+  transcriptChangedSubs.add(onChanged);
+  const timer = setInterval(pull, TRANSCRIPT_PULL_MS);
+  pull(true);
+  composer.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+    e.preventDefault();
+    const text = composer.value;
+    if (!text.trim()) return;
+    composer.value = '';
+    follow = true;
+    Promise.resolve(window.api.seatSend(name, text)).then((res) => {
+      if (res && res.ok === false) {
+        showToast(`Send failed: ${res.error || 'unknown error'}`, { kind: 'error', name });
+        if (!composer.value) composer.value = text;
+        return;
+      }
+      pull(true);
+    }).catch((err) => {
+      showToast(`Send failed: ${err && err.message ? err.message : err}`, { kind: 'error', name });
+      if (!composer.value) composer.value = text;
+    });
+  });
+  return {
+    focus: () => composer.focus(),
+    refresh: () => pull(true),
+    dispose() {
+      disposed = true;
+      clearInterval(timer);
+      transcriptChangedSubs.delete(onChanged);
+      paneEl.removeEventListener('scroll', onScroll);
+    },
+  };
+}
+
 function createTerminal(name, peer = null) {
+  if (!peer && streamSeatNames.has(name)) {
+    const wrapperEl = document.createElement('div');
+    wrapperEl.className = 'terminal-wrapper';
+    wrapperEl.dataset.name = name;
+    terminalContainer.appendChild(wrapperEl);
+    const stream = createStreamSeatPane(name, wrapperEl);
+    sessions.set(name, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, peer: null, stream, liveSplit: null });
+    updateWindowTitle();
+    return { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, echoRewrite: (chunk) => chunk };
+  }
   const terminal = new Terminal({
     fontSize: 13,
     fontFamily: "'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace",
@@ -1739,7 +1827,7 @@ terminalContainer.addEventListener('drop', (e) => {
   }), style);
   if (!text) return;
   window.api.writeToSession(activeSession, text);
-  entry.terminal.focus();
+  if (entry.terminal) entry.terminal.focus();
 });
 
 // Read-only peer re-measure: xterm holds stale char metrics when its pane was
@@ -1804,6 +1892,10 @@ function switchSession(name) {
   const entry = sessions.get(name);
   const { fitAddon, terminal } = entry;
   requestAnimationFrame(() => {
+    if (!terminal) {
+      if (entry.stream) { entry.stream.refresh(); entry.stream.focus(); }
+      return;
+    }
     if (entry.peer) {
       if (entry.peer.controlled) {
         fitAddon.fit();
@@ -1848,6 +1940,7 @@ function fitSessionInBackground(name) {
   const entry = sessions.get(name);
   if (!entry) return;
   const { fitAddon, terminal } = entry;
+  if (!terminal) return;
   requestAnimationFrame(() => {
     // The session can die inside the frame; a disposed terminal throws here.
     if (!sessions.has(name)) return;
@@ -1880,10 +1973,12 @@ function removeSession(name, { keepPersisted = false } = {}) {
     if (s.voiceSubmit) s.voiceSubmit.dispose();
     if (s.liveSplit) s.liveSplit.dispose();
     if (s.webgl) { try { s.webgl.dispose(); } catch {} }
-    s.terminal.dispose();
+    if (s.stream) s.stream.dispose();
+    if (s.terminal) s.terminal.dispose();
     s.wrapperEl.remove();
     sessions.delete(name);
   }
+  if (!keepPersisted) streamSeatNames.delete(name);
   drawerHost.forgetSession(name);
   sidePane.forgetSeat(name);
   removeSessionFromSidebar(name);
@@ -1946,6 +2041,7 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   if (stripRow) stripRow.style.display = caps.strip ? '' : 'none';
   if (autoCompactRow) autoCompactRow.style.display = caps.autoCompact ? '' : 'none';
   if (noWireRow) noWireRow.style.display = caps.noWire ? '' : 'none';
+  if (streamIoRow) streamIoRow.style.display = type === 'claude' && !authoring ? '' : 'none';
   if (accountRow) accountRow.style.display = caps.accounts ? '' : 'none';
   if (toolsAllowRow) toolsAllowRow.style.display = authoring ? '' : 'none';
   if (authoring && caps.tools && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, new Set());
@@ -2298,6 +2394,8 @@ const noWireRow = document.getElementById('no-wire-row');
 const inputStripLevel = document.getElementById('input-strip-level');
 const inputAutoCompact = document.getElementById('input-auto-compact');
 const inputNoWire = document.getElementById('input-no-wire');
+const streamIoRow = document.getElementById('stream-io-row');
+const inputStreamIo = document.getElementById('input-stream-io');
 const toolsSection = document.getElementById('tools-section');
 const skillsSection = document.getElementById('skills-section');
 const otherSection = document.getElementById('other-section');
@@ -2666,6 +2764,7 @@ async function openDialog(prefill = null) {
   if (inputStripLevel) inputStripLevel.value = '0'; // default off each open
   if (inputAutoCompact) inputAutoCompact.checked = true; // default ON (opt-out unchecked)
   if (inputNoWire) inputNoWire.checked = false; // default wired each open
+  if (inputStreamIo) inputStreamIo.checked = false;
   // Reset placement to Host BEFORE applyTypeDefaults so a stale box value from a
   // prior open can't trip the type-change → applySandboxState hook during open
   // (which would fire a spurious catalog fetch). The options + placementRow
@@ -2958,6 +3057,7 @@ async function doCreate() {
   const { type, cwd, extraArgs, proxy, agents, execCommands, denyBuiltins,
           disabledTools, disabledSkills, injectSkills, stripLevel,
           systemPromptFile, appendPromptFiles, intents, noWire, plugins } = cfg;
+  const io = type === 'claude' && inputStreamIo && inputStreamIo.checked ? 'stream' : 'pty';
   const env = collectDialogEnv();
 
   const supportsPrompts = isAgentType(type);
@@ -3040,7 +3140,7 @@ async function doCreate() {
     // could abandon the managed wirescope when the port stops matching).
     if (typeof proxy === 'string') window.api.setSettings({ lastCustomProxyUrl: proxy });
     const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== 'none';
-    const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins };
+    const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins, io };
     let result;
     if (teamOn && dialogTeamMode === 'create') {
       const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
@@ -3050,7 +3150,7 @@ async function doCreate() {
       const prompt = (teamRoleSelect && teamRoleSelect.value === 'hand') ? null : ((teamRolePromptSelect && teamRolePromptSelect.value) || null);
       result = await window.api.teamJoin({ team: dialogTeamName, role, prompt, ...seatParams });
     } else {
-      result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins);
+      result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins, io);
     }
     if (!applyCreateResult(nameFieldEls(), result)) {
       if (worktree) {
@@ -3070,6 +3170,7 @@ async function doCreate() {
 
     if (worktree) window.api.markSessionWorktree(name, worktree);
 
+    markSeatIo(name, result.session && result.session.io);
     createTerminal(name);
     addSessionToSidebar(name, type, spawnCwd, null, (result.session && result.session.backend) || null, (result.session && result.session.team) || null, (result.session && result.session.noWire) === true);
     // Manual, so it focuses as it always has — unless the operator has a line
@@ -3249,7 +3350,7 @@ window.api.onTranscriptChanged((name) => {
 
 window.api.onPtyData((name, data) => {
   const s = sessions.get(name);
-  if (s) s.terminal.write(s.echoRewrite ? s.echoRewrite(data) : data);
+  if (s && s.terminal) s.terminal.write(s.echoRewrite ? s.echoRewrite(data) : data);
 });
 
 window.api.onSessionExit((name, code, meta) => {
@@ -4385,7 +4486,11 @@ const sidePane = createSidePane({
   popoverApi, showToast,
   getActiveSession: () => activeSession,
   getFiles: (name) => filesState.get(name),
-  focusTerminal: () => { const s = sessions.get(activeSession); if (s) s.terminal.focus(); },
+  focusTerminal: () => {
+    const s = sessions.get(activeSession);
+    if (s && s.terminal) s.terminal.focus();
+    else if (s && s.stream) s.stream.focus();
+  },
 });
 
 const { openFilesPopover, openFilePeek, isFilesPopoverForKey } = initFilesPopover({
@@ -4657,7 +4762,7 @@ const { openSearch, closeSearch, isSearchOpen, setSearchInfo } =
 function refitActiveTerminal() {
   if (!activeSession) return;
   const s = sessions.get(activeSession);
-  if (!s) return;
+  if (!s || !s.terminal) return;
   if (s.peer) {
     if (s.peer.controlled) {
       s.fitAddon.fit();
@@ -8004,6 +8109,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
 
 
 function mountRestoredSession(entry) {
+  markSeatIo(entry.name, entry.io);
   const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
   addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true, null, entry.fixFor || null);
   if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
@@ -8020,11 +8126,13 @@ function mountRestoredSession(entry) {
     if (entry.compacting) applyCompacting(item, entry.compacting);
     if (entry.ticket) item.dataset.ticket = entry.ticket;
   }
-  try {
-    fitAddon.fit();
-    window.api.resizeSession(entry.name, terminal.cols, terminal.rows);
-  } catch {}
-  if (entry.replay) terminal.write(echoRewrite(entry.replay));
+  if (terminal) {
+    try {
+      fitAddon.fit();
+      window.api.resizeSession(entry.name, terminal.cols, terminal.rows);
+    } catch {}
+    if (entry.replay) terminal.write(echoRewrite(entry.replay));
+  }
   if (typeof entry.ctx === 'number') { ctxPct.set(entry.name, entry.ctx); applyCtxBadge(entry.name, entry.ctx); }
   if (typeof entry.ctxTok === 'number' && typeof entry.ctxSize === 'number' && entry.ctxSize > 0) {
     ctxTokens.set(entry.name, { used: entry.ctxTok, size: entry.ctxSize, cost: typeof entry.ctxCost === 'number' ? entry.ctxCost : null, model: entry.ctxModel || null });
@@ -8040,6 +8148,7 @@ window.api.onSessionMovedOut(({ name }) => {
 
 window.api.onSessionMovedIn((entry) => {
   if (!entry || !entry.name) return;
+  markSeatIo(entry.name, entry.io);
   if (entry.archived) addArchivedSessionToSidebar(entry);
   else mountRestoredSession(entry);
   refreshSidebarView();
@@ -8053,6 +8162,7 @@ window.api.onSessionMovedIn((entry) => {
 
     let firstHealthy = null;
     for (const entry of restored) {
+      markSeatIo(entry.name, entry.io);
       if (entry.archived) {
         addArchivedSessionToSidebar(entry);
         continue;
