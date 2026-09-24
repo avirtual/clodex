@@ -14,6 +14,8 @@ blocks a release.
 ## Unreleased
 - Transcript pane: typed records; each prompt heads a turn block with a footer (duration, tool count, files changed), each tool call is one row with its result summary (exit code, line counts, +/− lines), inbound deliveries render as sender cards, and Cmd+Shift+T (View ▸ Raw terminal) toggles the raw terminal.
 
+- Files open in a right-side pane instead of a popover: tabbed (single click previews, double click or Edit pins), resizable with the width remembered, one tab set per seat; every file link, the inbox, the IPC log and `[agent:file view]` land there. Unsaved operator edits are never overwritten by an agent's change; the tab shows a banner instead.
+
 - Transcript pane: the pane keeps following the bottom when the composer grows to a second line or the layout changes; scrolling up releases it, scrolling back down re-engages it.
 
 - Exec: `clodex-run-tests` waits for a running suite to finish (up to 15 minutes) and reports that it is queued, instead of failing after 30 seconds and asking the agent to set itself a reminder.

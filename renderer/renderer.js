@@ -86,6 +86,7 @@ const { initCostPopover } = require('./popovers/cost-popover');
 const { initBustPopover } = require('./popovers/bust-popover');
 const { initSessionInfoPopover } = require('./popovers/session-info-popover');
 const { initFilesPopover } = require('./popovers/files-popover');
+const { createSidePane } = require('./side-pane');
 const { initVoicePopover } = require('./popovers/voice-popover');
 const { initSelectionPopover } = require('./popovers/selection-popover');
 const { initChecklistPopovers } = require('./popovers/checklist-popovers');
@@ -1729,6 +1730,7 @@ function switchSession(name) {
   // seat it lands on may be one the terminal cannot serve. Idempotent, so the
   // switch path calling both is a repeated read and nothing more.
   else drawerHost.syncSeatAvailability();
+  sidePane.showSeat(name);
 
   // Toggle visibility — use visibility so xterm can still measure
   for (const [n, s] of sessions) {
@@ -1837,6 +1839,7 @@ function removeSession(name, { keepPersisted = false } = {}) {
     sessions.delete(name);
   }
   drawerHost.forgetSession(name);
+  sidePane.forgetSeat(name);
   removeSessionFromSidebar(name);
   updateWindowTitle();
   proxyState.delete(name);
@@ -4303,8 +4306,15 @@ const { openSessionInfoPopover } = initSessionInfoPopover({ sessionList });
 
 const { openBustPopover } = initBustPopover({ popoverApi, proxyState, barPopovers });
 
+const sidePane = createSidePane({
+  popoverApi, showToast,
+  getActiveSession: () => activeSession,
+  getFiles: (name) => filesState.get(name),
+  focusTerminal: () => { const s = sessions.get(activeSession); if (s) s.terminal.focus(); },
+});
+
 const { openFilesPopover, openFilePeek, isFilesPopoverForKey } = initFilesPopover({
-  popoverApi, filesState, filesUnseen, peerFilesCount, renderProxyBar, showToast,
+  popoverApi, filesState, filesUnseen, peerFilesCount, renderProxyBar, sidePane,
   getActiveSession: () => activeSession,
 });
 

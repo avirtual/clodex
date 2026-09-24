@@ -124,11 +124,11 @@ test('the five overlays the pre-fix guard never consulted', () => {
   }
 });
 
-test('the four less obvious overlays are consulted too', () => {
-  // discovery / peer-session / file-peek / report are modal by the same CSS and
+test('the less obvious overlays are consulted too', () => {
+  // discovery / peer-session / report are modal by the same CSS and
   // were archive paths for the same reason, but none of them is a Settings-style
   // dialog anyone thinks of first. Same literal-not-derived reason as above.
-  for (const id of ['discovery-overlay', 'peer-session-overlay', 'file-peek-overlay', 'report-overlay']) {
+  for (const id of ['discovery-overlay', 'peer-session-overlay', 'report-overlay']) {
     assert.ok(MODAL_OVERLAY_IDS.includes(id), `${id} must be consulted`);
     const [calls, actions] = spies();
     performCloseChord({ ...localSession, ...fakeDom([id]) }, actions);

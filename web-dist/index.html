@@ -1400,27 +1400,33 @@ body {
   background: var(--sidebar-hover);
   color: var(--text);
 }
-#terminal-container {
+#work-row {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   bottom: var(--drawer-collapsed-h);
   transition: bottom 0.2s ease;
+  display: flex;
 }
-#main.drawer-expanded #terminal-container {
+#terminal-container {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+#main.drawer-expanded #work-row {
   bottom: var(--drawer-h);
 }
-#main.has-proxy-bar #terminal-container {
+#main.has-proxy-bar #work-row {
   bottom: calc(var(--drawer-collapsed-h) + 24px);
 }
-#main.has-proxy-bar.drawer-expanded #terminal-container {
+#main.has-proxy-bar.drawer-expanded #work-row {
   bottom: calc(var(--drawer-h) + 24px);
 }
-#main.drawer-tall #terminal-container {
+#main.drawer-tall #work-row {
   bottom: var(--drawer-tall-h);
 }
-#main.has-proxy-bar.drawer-tall #terminal-container {
+#main.has-proxy-bar.drawer-tall #work-row {
   bottom: calc(var(--drawer-tall-h) + 24px);
 }
 #proxy-bar {
@@ -2869,36 +2875,139 @@ body {
     box-shadow: 0 0 0 7px transparent;
   }
 }
-#file-peek-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 70;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 5vh 16px;
-  background: rgba(0, 0, 0, 0.55);
-}
-#file-peek-overlay.hidden {
-  display: none;
-}
-#file-peek-modal {
-  width: 860px;
-  max-width: 100%;
-  max-height: 90vh;
-  overflow: hidden;
+#side-pane {
+  flex: none;
   display: flex;
   flex-direction: column;
-  background: var(--surface-overlay);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  padding: 12px 16px 16px;
-  box-shadow: var(--shadow-overlay);
+  min-width: 0;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
 }
-#file-peek-modal .popover-title {
+#side-pane.side-pane-closed,
+#side-pane-handle.side-pane-closed {
+  display: none;
+}
+#side-pane.side-pane-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  width: auto !important;
+  border-left: 0;
+}
+#side-pane-handle {
   flex: none;
+  width: 5px;
+  cursor: col-resize;
+  background: var(--border);
 }
-#file-peek-path {
+#side-pane-handle:hover,
+body.side-pane-dragging #side-pane-handle {
+  background: var(--accent);
+}
+body.side-pane-dragging {
+  cursor: col-resize;
+  user-select: none;
+}
+#side-pane-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+#side-pane-tabs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+}
+#side-pane-seat {
+  flex: none;
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+#side-pane-pin:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.side-tab {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 180px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px solid transparent;
+}
+.side-tab:hover {
+  color: var(--text);
+}
+.side-tab.active {
+  color: var(--text);
+  background: var(--active-bg);
+  border-color: var(--border);
+}
+.side-tab.preview .side-tab-title {
+  font-style: italic;
+}
+.side-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-tab-stale {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--info);
+}
+.side-tab-close {
+  flex: none;
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+}
+.side-tab-close:hover {
+  color: var(--text);
+}
+#side-pane-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.side-tab-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+}
+.side-tab-view.side-tab-inactive {
+  visibility: hidden;
+}
+.side-file-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11px;
+}
+.side-file-path {
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2906,11 +3015,39 @@ body {
   text-align: left;
   min-width: 0;
 }
-#file-peek-by {
+.side-file-by {
   flex: none;
   white-space: nowrap;
-  font-weight: 400;
   color: var(--text-dim);
+}
+.side-file-banner {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.side-file-banner-act {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text);
+  text-decoration: underline;
+  font-size: 11px;
+}
+.side-file-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+#side-pane .hidden {
+  display: none;
 }
 .file-peek-controls {
   display: flex;
@@ -2940,17 +3077,6 @@ body {
 .file-peek-tab:not(:disabled):hover {
   color: var(--text);
 }
-#file-peek-body {
-  overflow-y: auto;
-  min-height: 80px;
-}
-#file-peek-body.hidden,
-#file-peek-editor.hidden,
-#file-peek-save.hidden,
-#file-peek-dirty.hidden,
-#file-peek-back.hidden {
-  display: none;
-}
 .peek-path {
   cursor: pointer;
   text-decoration: underline dotted;
@@ -2962,7 +3088,7 @@ body {
   text-decoration: underline solid;
   text-decoration-color: currentColor;
 }
-#file-peek-save:disabled {
+#side-pane .side-file-save:disabled {
   opacity: 0.45;
   cursor: default;
 }
@@ -2971,8 +3097,8 @@ body {
   font-size: 14px;
   line-height: 1;
 }
-#file-peek-editor {
-  flex: 0 1 auto;
+#side-pane .side-file-editor {
+  flex: 1 1 auto;
   min-height: 0;
   resize: none;
   tab-size: 2;
@@ -2991,7 +3117,7 @@ body {
   border-radius: 5px;
   padding: 8px 10px;
 }
-#file-peek-editor:focus {
+#side-pane .side-file-editor:focus {
   outline: none;
   border-color: var(--accent);
 }
@@ -6249,8 +6375,7 @@ input.env-locked {
 #ctx-popover,
 #cost-popover,
 #bust-popover,
-#files-popover,
-#file-peek-modal {
+#files-popover {
   resize: both;
   min-width: 260px;
   min-height: 60px;
@@ -6731,16 +6856,16 @@ body:not(.sessions-restored) [data-peer-ui] {
 .peer-deploy-tail {
   margin-top: 6px;
 }
-#main.has-peer-bar #terminal-container {
+#main.has-peer-bar #work-row {
   top: 26px;
 }
-#main.has-web-menubar #terminal-container {
+#main.has-web-menubar #work-row {
   top: 30px;
 }
 #main.has-web-menubar #peer-bar {
   top: 30px;
 }
-#main.has-web-menubar.has-peer-bar #terminal-container {
+#main.has-web-menubar.has-peer-bar #work-row {
   top: 56px;
 }
 #sidebar-version {
@@ -8725,7 +8850,19 @@ body.web-frontend #sidebar-header {
       <button id="search-next" title="Next match (Enter)" type="button">▼</button>
       <button id="search-close" title="Close (Esc)" type="button">×</button>
     </div>
-    <div id="terminal-container"></div>
+    <div id="work-row">
+      <div id="terminal-container"></div>
+      <div id="side-pane-handle" class="side-pane-closed"></div>
+      <div id="side-pane" class="side-pane-closed">
+        <div id="side-pane-head">
+          <div id="side-pane-tabs"></div>
+          <span id="side-pane-seat" hidden></span>
+          <button type="button" class="file-peek-tab" id="side-pane-pin" title="Keep this tab open">Pin</button>
+          <button type="button" class="popover-close" id="side-pane-close" title="Close the pane (its tabs are kept)" aria-label="Close">&times;</button>
+        </div>
+        <div id="side-pane-body"></div>
+      </div>
+    </div>
     <div id="peer-bar" class="hidden"></div>
     <div id="proxy-bar" style="display:none;">
       <span id="proxy-telemetry"></span>
@@ -9841,28 +9978,7 @@ body.web-frontend #sidebar-header {
   <!-- Full-screen overlays live at ROOT, not inside #main. #main is
        position:fixed and so its own stacking context: an overlay nested in it
        is flattened to #main's z-index (11) however high its own value, and the
-       root-level drawers (z15) then paint over it. Both are inset:0, so root
-       placement is geometrically identical. -->
-  <div id="file-peek-overlay" class="hidden">
-    <div id="file-peek-modal">
-      <div class="popover-title">
-        <span id="file-peek-path" title=""></span>
-        <span id="file-peek-by" hidden></span>
-        <span class="file-peek-controls">
-          <button type="button" class="file-peek-tab hidden" id="file-peek-back" title="Back to the file you came from">&larr;</button>
-          <button type="button" class="file-peek-tab" id="file-peek-tab-diff">Diff</button>
-          <button type="button" class="file-peek-tab" id="file-peek-tab-file">File</button>
-          <button type="button" class="file-peek-tab" id="file-peek-tab-edit">Edit</button>
-          <span id="file-peek-dirty" class="file-peek-dirty hidden" title="Unsaved changes">&bull;</span>
-          <button type="button" class="file-peek-open" id="file-peek-save" title="Save (Cmd+S)">Save</button>
-          <button type="button" class="file-peek-open" id="file-peek-open" title="Open in the default editor">Open</button>
-          <button type="button" class="popover-close" id="file-peek-close" title="Close" aria-label="Close">&times;</button>
-        </span>
-      </div>
-      <div id="file-peek-body"></div>
-      <textarea id="file-peek-editor" class="hidden" spellcheck="false"></textarea>
-    </div>
-  </div>
+       root-level drawers (z15) then paint over it. -->
   <div id="report-overlay" class="hidden">
     <div id="report-modal">
       <div class="popover-title"><span>Session Report — <span id="report-name"></span></span><button type="button" class="popover-close" id="report-close" title="Close" aria-label="Close">&times;</button></div>
@@ -25655,7 +25771,6 @@ ${i3.join("\n")}
         "peers-overlay",
         "sandbox-overlay",
         "setup-overlay",
-        "file-peek-overlay",
         "report-overlay",
         "help-overlay",
         "prompt-editor",
@@ -36679,85 +36794,17 @@ void main() {
     }
   });
 
-  // renderer/lib/popover-drag.js
-  var require_popover_drag = __commonJS({
-    "renderer/lib/popover-drag.js"(exports, module) {
-      "use strict";
-      var offsets = /* @__PURE__ */ new WeakMap();
-      function clampAxis(start, size, delta, viewport, margin) {
-        const minDelta = margin - start;
-        const maxDelta = viewport - margin - size - start;
-        if (maxDelta < minDelta) return minDelta;
-        return Math.max(minDelta, Math.min(maxDelta, delta));
-      }
-      function clampTranslate(rect, dx, dy, vw, vh, margin = 8) {
-        return {
-          dx: clampAxis(rect.left, rect.width, dx, vw, margin),
-          dy: clampAxis(rect.top, rect.height, dy, vh, margin)
-        };
-      }
-      function anchorRect(anchorEl) {
-        return anchorEl && typeof anchorEl.getBoundingClientRect === "function" ? anchorEl.getBoundingClientRect() : { left: 24, bottom: 24 };
-      }
-      function applyOffset(popover, dx, dy) {
-        offsets.set(popover, { dx, dy });
-        popover.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : "";
-      }
-      function resetDrag(popover) {
-        if (popover) applyOffset(popover, 0, 0);
-      }
-      function makeDraggable(popover) {
-        if (!popover) return;
-        const title = popover.querySelector(".popover-title");
-        if (!title) return;
-        title.classList.add("draggable-title");
-        title.addEventListener("mousedown", (e) => {
-          if (e.button !== 0) return;
-          if (e.target.closest("button")) return;
-          const cur = offsets.get(popover) || { dx: 0, dy: 0 };
-          const startX = e.clientX;
-          const startY = e.clientY;
-          const r = popover.getBoundingClientRect();
-          const base = { left: r.left - cur.dx, top: r.top - cur.dy, width: r.width, height: r.height };
-          e.preventDefault();
-          title.classList.add("dragging");
-          const onMove = (ev) => {
-            const want = clampTranslate(
-              base,
-              cur.dx + (ev.clientX - startX),
-              cur.dy + (ev.clientY - startY),
-              window.innerWidth,
-              window.innerHeight,
-              8
-            );
-            applyOffset(popover, want.dx, want.dy);
-          };
-          const onUp = () => {
-            title.classList.remove("dragging");
-            document.removeEventListener("mousemove", onMove);
-            document.removeEventListener("mouseup", onUp);
-          };
-          document.addEventListener("mousemove", onMove);
-          document.addEventListener("mouseup", onUp);
-        });
-      }
-      module.exports = { anchorRect, clampTranslate, makeDraggable, resetDrag };
-    }
-  });
-
   // renderer/popovers/files-popover.js
   var require_files_popover = __commonJS({
     "renderer/popovers/files-popover.js"(exports, module) {
       var { esc, fmtAgo } = require_format();
-      var { renderDiffHtml } = require_render_html();
-      var { scanPaths } = require_path_scan();
-      var { makeDraggable, resetDrag } = require_popover_drag();
-      function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount, renderProxyBar, getActiveSession, showToast }) {
+      function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount, renderProxyBar, getActiveSession, sidePane }) {
         const filesPopover = document.getElementById("files-popover");
         const filesPopoverName = document.getElementById("files-popover-name");
         const filesPopoverBody = document.getElementById("files-popover-body");
         window.api.onSessionFiles((name, files) => {
           filesState.set(name, files || []);
+          sidePane.noteFiles(name, files || []);
           const watching = !filesPopover.classList.contains("hidden") && filesPopover.dataset.name === name;
           if (!watching) filesUnseen.add(name);
           if (name === getActiveSession()) {
@@ -36822,245 +36869,826 @@ void main() {
           if (!row || !row.dataset.path) return;
           openFilePeek(filesPopover.dataset.name, row.dataset.path);
         });
+        filesPopoverBody.addEventListener("dblclick", (e) => {
+          const row = e.target.closest(".file-row");
+          if (!row || !row.dataset.path) return;
+          sidePane.open(filesPopover.dataset.name, { kind: "file", path: row.dataset.path }, { preview: false });
+        });
         document.addEventListener("mousedown", (e) => {
           if (filesPopover.classList.contains("hidden")) return;
           if (filesPopover.contains(e.target)) return;
           if (e.target.closest('[data-act="files"]')) return;
-          if (e.target.closest("#file-peek-overlay")) return;
+          if (e.target.closest("#side-pane")) return;
           closeFilesPopover();
         });
         document.addEventListener("keydown", (e) => {
-          if (e.key === "Escape" && !filesPopover.classList.contains("hidden") && filePeekOverlay.classList.contains("hidden")) closeFilesPopover();
+          if (e.key === "Escape" && !filesPopover.classList.contains("hidden")) closeFilesPopover();
         });
         document.getElementById("files-popover-close").addEventListener("click", closeFilesPopover);
-        const filePeekOverlay = document.getElementById("file-peek-overlay");
-        const filePeekModal = document.getElementById("file-peek-modal");
-        const filePeekPath = document.getElementById("file-peek-path");
-        const filePeekBy = document.getElementById("file-peek-by");
-        const filePeekBody = document.getElementById("file-peek-body");
-        const filePeekTabDiff = document.getElementById("file-peek-tab-diff");
-        const filePeekTabFile = document.getElementById("file-peek-tab-file");
-        const filePeekTabEdit = document.getElementById("file-peek-tab-edit");
-        const filePeekEditor = document.getElementById("file-peek-editor");
-        const filePeekSave = document.getElementById("file-peek-save");
-        const filePeekDirty = document.getElementById("file-peek-dirty");
-        const peekBackBtn = document.getElementById("file-peek-back");
-        let filePeek = null;
-        let peekBack = [];
-        const peekDirty = () => !!(filePeek && filePeek.baseline != null && filePeekEditor.value !== filePeek.baseline);
-        function renderPeekDirty() {
-          const d = peekDirty();
-          filePeekDirty.classList.toggle("hidden", !d);
-          filePeekSave.disabled = !d;
-        }
-        function confirmDiscardPeekEdit() {
-          if (!peekDirty()) return true;
-          return confirm("Discard unsaved changes to this file?");
-        }
-        function closeFilePeek() {
-          if (!confirmDiscardPeekEdit()) return;
-          filePeekOverlay.classList.add("hidden");
-          filePeek = null;
-        }
-        function linkifyPaths(line) {
-          const hits = scanPaths(line);
-          if (!hits.length) return esc(line);
-          let out = "";
-          let at = 0;
-          for (const h of hits) {
-            out += esc(line.slice(at, h.start));
-            out += `<span class="peek-path" data-path="${esc(h.path)}"${h.line ? ` data-goto="${h.line}"` : ""}>${esc(h.text)}</span>`;
-            at = h.end;
-          }
-          return out + esc(line.slice(at));
-        }
-        function peekEditable() {
-          const { peekRes, editable } = filePeek || {};
-          return !!(editable && peekRes && peekRes.ok && !peekRes.binary && !peekRes.truncated);
-        }
-        function renderFilePeek() {
-          if (!filePeek) return;
-          const { tab, diffRes, peekRes } = filePeek;
-          filePeekTabDiff.classList.toggle("active", tab === "diff");
-          filePeekTabFile.classList.toggle("active", tab === "file");
-          filePeekTabEdit.classList.toggle("active", tab === "edit");
-          filePeekTabEdit.style.display = peekEditable() ? "" : "none";
-          peekBackBtn.classList.toggle("hidden", peekBack.length === 0);
-          filePeekBody.classList.toggle("hidden", tab === "edit");
-          filePeekEditor.classList.toggle("hidden", tab !== "edit");
-          filePeekSave.classList.toggle("hidden", tab !== "edit");
-          filePeekDirty.classList.toggle("hidden", tab !== "edit" || !peekDirty());
-          const diffOk = !!(diffRes && diffRes.ok);
-          filePeekTabDiff.disabled = !diffOk;
-          filePeekTabDiff.title = diffOk ? "Uncommitted changes (git, vs HEAD)" : diffRes && diffRes.error || "Diff unavailable";
-          if (tab === "edit") {
-            renderPeekDirty();
-            return;
-          }
-          if (tab === "diff") {
-            if (!diffOk) {
-              filePeekBody.innerHTML = `<div class="cost-note">${esc(diffRes && diffRes.error || "Diff unavailable")}</div>`;
-            } else if (diffRes.untracked) {
-              filePeekBody.innerHTML = '<div class="cost-note">New file \u2014 not tracked by git yet. The File tab shows its full contents.</div>';
-            } else if (!diffRes.diff.trim()) {
-              filePeekBody.innerHTML = '<div class="cost-note">No uncommitted changes \u2014 what the agent touched here is already committed (or was reverted).</div>';
-            } else {
-              filePeekBody.innerHTML = `<div class="file-peek-pre">${renderDiffHtml(diffRes.diff, { lineNumbers: true })}</div>`;
-            }
-            return;
-          }
-          if (!peekRes || !peekRes.ok) {
-            filePeekBody.innerHTML = `<div class="cost-note">${esc(peekRes && peekRes.error || "File unavailable")}</div>`;
-          } else if (peekRes.binary) {
-            filePeekBody.innerHTML = `<div class="cost-note">Binary file (${peekRes.size} bytes) \u2014 use Open.</div>`;
-          } else {
-            const note = peekRes.truncated ? `<div class="cost-note">Showing the first ${Math.round(peekRes.content.length / 1024)}KB of ${Math.round(peekRes.size / 1024)}KB.</div>` : "";
-            const raw = peekRes.content.split("\n");
-            const w = String(raw.length).length;
-            const rows = raw.map((l, i) => {
-              const n = String(i + 1).padStart(w, " ");
-              const hit = filePeek.line === i + 1 ? " peek-line-hit" : "";
-              return `<div class="diff-line diff-ctx${hit}" data-line="${i + 1}"><span class="peek-ln">${n}</span>${linkifyPaths(l) || " "}</div>`;
-            }).join("");
-            filePeekBody.innerHTML = `${note}<div class="file-peek-pre">${rows}</div>`;
-            if (filePeek.line) {
-              const el = filePeekBody.querySelector(`.diff-line[data-line="${filePeek.line}"]`);
-              if (el) el.scrollIntoView({ block: "center" });
-            }
-          }
-        }
         async function openFilePeek(name, filePath, forceTab = null, line = null, keepHistory = false, pushedBy = null) {
-          if (!confirmDiscardPeekEdit()) return;
-          if (!keepHistory) peekBack = [];
-          const api = popoverApi(name);
-          filePeek = {
-            path: filePath,
-            name,
-            tab: "diff",
-            diffRes: null,
-            peekRes: null,
-            line,
-            by: pushedBy,
-            editable: !api.remote,
-            baseline: null,
-            mtime: null
-          };
-          filePeekEditor.value = "";
-          filePeekEditor.rows = 8;
-          filePeekSave.disabled = true;
-          filePeekPath.textContent = filePath;
-          filePeekPath.title = filePath;
-          filePeekBy.textContent = pushedBy ? `pushed by ${pushedBy}` : "";
-          filePeekBy.hidden = !pushedBy;
-          document.getElementById("file-peek-open").style.display = api.remote || window.__CLODEX_WEB__ ? "none" : "";
-          filePeekBody.innerHTML = '<div class="cost-note">Loading\u2026</div>';
-          if (filePeekOverlay.classList.contains("hidden")) resetDrag(filePeekModal);
-          filePeekOverlay.classList.remove("hidden");
-          const [diffRes, peekRes] = await Promise.all([
-            api.diff(filePath).catch((e) => ({ ok: false, error: String(e) })),
-            api.peek(filePath).catch((e) => ({ ok: false, error: String(e) }))
-          ]);
-          if (!filePeek || filePeek.path !== filePath) return;
-          filePeek.diffRes = diffRes;
-          filePeek.peekRes = peekRes;
-          if (peekRes && peekRes.ok && !peekRes.binary && !peekRes.truncated) {
-            filePeekEditor.value = peekRes.content;
-            filePeekEditor.rows = Math.min(Math.max(peekRes.content.split("\n").length, 8), 400);
-            filePeek.baseline = peekRes.content;
-            filePeek.mtime = peekRes.mtime;
-          }
-          filePeek.tab = (forceTab === "edit" && !peekEditable() ? "file" : forceTab) || (diffRes && diffRes.ok && !diffRes.untracked && diffRes.diff.trim() ? "diff" : "file");
-          renderFilePeek();
+          sidePane.open(name, { kind: "file", path: filePath }, { preview: true, line, view: forceTab, pushedBy });
         }
-        filePeekTabDiff.addEventListener("click", () => {
-          if (filePeek) {
-            filePeek.tab = "diff";
-            renderFilePeek();
-          }
-        });
-        filePeekTabFile.addEventListener("click", () => {
-          if (filePeek) {
-            filePeek.tab = "file";
-            renderFilePeek();
-          }
-        });
-        filePeekTabEdit.addEventListener("click", () => {
-          if (!filePeek || !peekEditable()) return;
-          filePeek.tab = "edit";
-          renderFilePeek();
-          filePeekEditor.focus();
-        });
-        filePeekEditor.addEventListener("input", renderPeekDirty);
-        filePeekEditor.addEventListener("keydown", (e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-            e.preventDefault();
-            if (!filePeekSave.disabled) filePeekSave.click();
-          }
-          if (e.key === "Escape" && peekDirty()) e.stopPropagation();
-        });
-        filePeekSave.addEventListener("click", async () => {
-          if (!filePeek || !peekEditable()) return;
-          const { path: p, name, mtime } = filePeek;
-          const text = filePeekEditor.value;
-          filePeekSave.disabled = true;
-          const res = await window.api.fileWrite(name, p, text, mtime).catch((e) => ({ ok: false, error: String(e) }));
-          if (!filePeek || filePeek.path !== p) return;
-          if (!res || !res.ok) {
-            filePeekSave.disabled = false;
-            showToast(`Save failed: ${res && res.error || "unknown"}`, { kind: "error", duration: 1e4 });
-            return;
-          }
-          filePeek.baseline = text;
-          filePeek.mtime = res.mtime;
-          filePeek.peekRes = { ...filePeek.peekRes, content: text, size: res.size, mtime: res.mtime };
-          renderPeekDirty();
-          const fresh = await popoverApi(name).diff(p).catch((e) => ({ ok: false, error: String(e) }));
-          if (filePeek && filePeek.path === p) {
-            filePeek.diffRes = fresh;
-            renderFilePeek();
-          }
-        });
-        document.getElementById("file-peek-open").addEventListener("click", async () => {
-          if (!filePeek) return;
-          const err = await window.api.fileOpen(filePeek.path);
-          if (!err) closeFilePeek();
-        });
-        filePeekBody.addEventListener("click", async (e) => {
-          const el = e.target.closest(".peek-path");
-          if (!el || !filePeek) return;
-          const { name, path: from } = filePeek;
-          const cut = from.lastIndexOf("/");
-          const baseDir = cut > 0 ? from.slice(0, cut) : null;
-          const res = await window.api.fileResolve(name, el.dataset.path, baseDir).catch((err) => ({ ok: false, error: String(err) }));
-          if (!res || !res.ok) {
-            showToast(res && res.error || `Can't find "${el.dataset.path}"`, { kind: "warn", duration: 4e3 });
-            return;
-          }
-          peekBack.push({ path: from, line: filePeek.line, tab: filePeek.tab, by: filePeek.by });
-          openFilePeek(name, res.path, "file", el.dataset.goto ? Number(el.dataset.goto) : null, true);
-        });
-        peekBackBtn.addEventListener("click", () => {
-          const prev = peekBack.pop();
-          if (!prev || !filePeek) return;
-          openFilePeek(filePeek.name, prev.path, prev.tab, prev.line, true, prev.by || null);
-        });
-        document.getElementById("file-peek-close").addEventListener("click", closeFilePeek);
         window.api.onSessionFileView((name, filePath) => {
           openFilePeek(name, filePath, null, null, false, name);
         });
-        filePeekOverlay.addEventListener("mousedown", (e) => {
-          if (e.target === filePeekOverlay) closeFilePeek();
-        });
-        document.addEventListener("keydown", (e) => {
-          if (e.key === "Escape" && !filePeekOverlay.classList.contains("hidden")) closeFilePeek();
-        });
-        makeDraggable(filePeekModal);
         function isFilesPopoverForKey(key) {
           return !filesPopover.classList.contains("hidden") && filesPopover.dataset.name === key;
         }
         return { openFilesPopover, openFilePeek, isFilesPopoverForKey };
       }
       module.exports = { initFilesPopover };
+    }
+  });
+
+  // renderer/lib/side-pane-tabs.js
+  var require_side_pane_tabs = __commonJS({
+    "renderer/lib/side-pane-tabs.js"(exports, module) {
+      "use strict";
+      var SIDE_PANE_MAX_TABS = 12;
+      var SIDE_PANE_MIN_PX = 320;
+      var SIDE_PANE_DEFAULT_FRACTION = 0.4;
+      var SIDE_PANE_MAX_FRACTION = 0.6;
+      var SIDE_PANE_MIN_WINDOW_PX = 700;
+      var SIDE_PANE_REFIT_THROTTLE_MS = 150;
+      var MISSING_CODES = /* @__PURE__ */ new Set(["not-found", "gone"]);
+      function emptyTabSet() {
+        return { tabs: [], active: null, open: false, clock: 0 };
+      }
+      function fileTabId(seat, filePath) {
+        return `file:${seat}:${filePath}`;
+      }
+      function sidePaneFits(windowPx) {
+        return windowPx >= SIDE_PANE_MIN_WINDOW_PX;
+      }
+      function clampSidePaneWidth(px, windowPx) {
+        const max = Math.max(SIDE_PANE_MIN_PX, Math.floor(windowPx * SIDE_PANE_MAX_FRACTION));
+        const want = typeof px === "number" && Number.isFinite(px) ? Math.round(px) : Math.round(windowPx * SIDE_PANE_DEFAULT_FRACTION);
+        return Math.min(max, Math.max(SIDE_PANE_MIN_PX, want));
+      }
+      function peekEditable(editable, peekRes) {
+        return !!(editable && peekRes && peekRes.ok && !peekRes.binary && !peekRes.truncated);
+      }
+      function shouldKeepBuffer(tab) {
+        return !!(tab && tab.dirty);
+      }
+      function saveArgs(seat, tab, text) {
+        return [seat, tab.path, text, tab.mtime];
+      }
+      function isMissing(peekRes) {
+        return !!(peekRes && !peekRes.ok && MISSING_CODES.has(peekRes.code));
+      }
+      function patchTab(set, id, patch) {
+        return { ...set, tabs: set.tabs.map((t) => t.id === id ? { ...t, ...patch } : t) };
+      }
+      function evictOverCap(set) {
+        let tabs = set.tabs;
+        while (tabs.length > SIDE_PANE_MAX_TABS) {
+          let victim = null;
+          for (const t of tabs) {
+            if (t.preview || t.dirty || t.id === set.active) continue;
+            if (!victim || t.used < victim.used) victim = t;
+          }
+          if (!victim) break;
+          tabs = tabs.filter((t) => t !== victim);
+        }
+        return { ...set, tabs };
+      }
+      function openTab(set, a) {
+        const clock = set.clock + 1;
+        const existing = set.tabs.find((t) => t.id === a.id);
+        if (existing) {
+          const wasShowing = set.open && set.active === a.id;
+          const pinned = a.preview === false ? false : existing.preview;
+          const next = patchTab({ ...set, open: true, active: a.id, clock }, a.id, {
+            preview: pinned,
+            used: clock,
+            line: a.line != null ? a.line : existing.line,
+            stale: false
+          });
+          return { set: next, effect: existing.stale ? "reload" : wasShowing ? "show" : "revalidate" };
+        }
+        const tab = {
+          id: a.id,
+          kind: a.kind || "file",
+          path: a.path,
+          preview: a.preview !== false,
+          view: a.view || null,
+          line: a.line != null ? a.line : null,
+          pushedBy: a.pushedBy || null,
+          dirty: false,
+          stale: false,
+          banner: false,
+          deleted: false,
+          mtime: null,
+          used: clock
+        };
+        let tabs;
+        const previewAt = tab.preview ? set.tabs.findIndex((t) => t.preview) : -1;
+        if (previewAt >= 0) {
+          tabs = set.tabs.slice();
+          tabs[previewAt] = tab;
+        } else {
+          tabs = set.tabs.concat(tab);
+        }
+        return { set: evictOverCap({ ...set, tabs, open: true, active: tab.id, clock }), effect: "fetch" };
+      }
+      function closeTab(set, a) {
+        const at = set.tabs.findIndex((t) => t.id === a.id);
+        if (at < 0) return { set, effect: null };
+        if (set.tabs[at].dirty && !a.force) return { set, effect: "confirm" };
+        const tabs = set.tabs.filter((t) => t.id !== a.id);
+        if (!tabs.length) return { set: { ...set, tabs, active: null, open: false }, effect: null };
+        if (set.active !== a.id) return { set: { ...set, tabs }, effect: null };
+        const next = tabs[Math.min(at, tabs.length - 1)];
+        const clock = set.clock + 1;
+        return {
+          set: patchTab({ ...set, tabs, active: next.id, clock }, next.id, { used: clock, stale: false }),
+          effect: next.stale ? "reload" : "revalidate"
+        };
+      }
+      function agentChanged(set, a) {
+        const tab = set.tabs.find((t) => t.id === a.id);
+        if (!tab) return { set, effect: null };
+        if (tab.dirty) return { set: patchTab(set, a.id, { banner: true }), effect: "banner" };
+        if (a.visible) return { set, effect: "reload" };
+        return { set: patchTab(set, a.id, { stale: true }), effect: null };
+      }
+      function loaded(set, a) {
+        const tab = set.tabs.find((t) => t.id === a.id);
+        if (!tab) return { set, effect: null };
+        if (isMissing(a.peek)) {
+          return { set: patchTab(set, a.id, { deleted: true, stale: false }), effect: tab.deleted ? null : "render" };
+        }
+        const mtime = a.peek && a.peek.ok ? a.peek.mtime : null;
+        if (tab.dirty) {
+          if (mtime != null && mtime !== tab.mtime) return { set: patchTab(set, a.id, { banner: true, deleted: false }), effect: "banner" };
+          return { set: patchTab(set, a.id, { deleted: false }), effect: null };
+        }
+        if (!a.force && tab.mtime != null && mtime === tab.mtime && !tab.deleted && !tab.stale) return { set, effect: null };
+        return { set: patchTab(set, a.id, { mtime, deleted: false, stale: false, banner: false }), effect: "render" };
+      }
+      function reduceTabs(set, a) {
+        switch (a.type) {
+          case "open":
+            return openTab(set, a);
+          case "close":
+            return closeTab(set, a);
+          case "focus": {
+            const tab = set.tabs.find((t) => t.id === a.id);
+            if (!tab) return { set, effect: null };
+            const clock = set.clock + 1;
+            return {
+              set: patchTab({ ...set, active: a.id, open: true, clock }, a.id, { used: clock, stale: false }),
+              effect: tab.stale ? "reload" : "revalidate"
+            };
+          }
+          case "pin":
+            return { set: patchTab(set, a.id, { preview: false }), effect: null };
+          case "view": {
+            const patch = a.view === "edit" ? { view: a.view, preview: false } : { view: a.view };
+            return { set: patchTab(set, a.id, patch), effect: null };
+          }
+          case "dirty":
+            return { set: patchTab(set, a.id, { dirty: !!a.dirty }), effect: null };
+          case "closePane":
+            return { set: { ...set, open: false }, effect: null };
+          case "changed":
+            return agentChanged(set, a);
+          case "loaded":
+            return loaded(set, a);
+          case "saved":
+            return { set: patchTab(set, a.id, { mtime: a.mtime, dirty: false, banner: false, deleted: false }), effect: null };
+          case "discard":
+            return { set: patchTab(set, a.id, { dirty: false, banner: false }), effect: "reload" };
+          case "keep":
+            return { set: patchTab(set, a.id, { banner: false }), effect: null };
+          default:
+            return { set, effect: null };
+        }
+      }
+      module.exports = {
+        SIDE_PANE_MAX_TABS,
+        SIDE_PANE_MIN_PX,
+        SIDE_PANE_MIN_WINDOW_PX,
+        SIDE_PANE_REFIT_THROTTLE_MS,
+        emptyTabSet,
+        fileTabId,
+        sidePaneFits,
+        clampSidePaneWidth,
+        peekEditable,
+        saveArgs,
+        shouldKeepBuffer,
+        isMissing,
+        reduceTabs
+      };
+    }
+  });
+
+  // renderer/file-tab.js
+  var require_file_tab = __commonJS({
+    "renderer/file-tab.js"(exports, module) {
+      "use strict";
+      var { renderDiffHtml } = require_render_html();
+      var { scanPaths } = require_path_scan();
+      var { peekEditable } = require_side_pane_tabs();
+      function el(doc, tag, className, text) {
+        const n = doc.createElement(tag);
+        if (className) n.className = className;
+        if (text != null) n.textContent = text;
+        return n;
+      }
+      function button(doc, className, text, title) {
+        const b = el(doc, "button", className, text);
+        b.type = "button";
+        if (title) b.title = title;
+        return b;
+      }
+      function appendLinkified(doc, row, line) {
+        const hits = scanPaths(line);
+        let at = 0;
+        for (const h of hits) {
+          if (h.start > at) row.appendChild(doc.createTextNode(line.slice(at, h.start)));
+          const span = el(doc, "span", "peek-path", h.text);
+          span.dataset.path = h.path;
+          if (h.line) span.dataset.goto = String(h.line);
+          row.appendChild(span);
+          at = h.end;
+        }
+        const rest = line.slice(at);
+        if (rest || !hits.length) row.appendChild(doc.createTextNode(rest || " "));
+      }
+      function createFileTab({ doc = document, filePath, editable, showOpen, on }) {
+        const root = el(doc, "div", "side-tab-view side-file");
+        const bar = el(doc, "div", "side-file-bar");
+        const pathEl = el(doc, "span", "side-file-path", filePath);
+        pathEl.title = filePath;
+        const byEl = el(doc, "span", "side-file-by");
+        byEl.hidden = true;
+        const controls = el(doc, "span", "file-peek-controls");
+        const diffBtn = button(doc, "file-peek-tab", "Diff");
+        const fileBtn = button(doc, "file-peek-tab", "File");
+        const editBtn = button(doc, "file-peek-tab", "Edit");
+        const dirtyEl = el(doc, "span", "file-peek-dirty hidden", "\u2022");
+        dirtyEl.title = "Unsaved changes";
+        const saveBtn = button(doc, "file-peek-open side-file-save hidden", "Save", "Save (Cmd+S)");
+        const openBtn = button(doc, "file-peek-open", "Open", "Open in the default editor");
+        if (!showOpen) openBtn.style.display = "none";
+        controls.append(diffBtn, fileBtn, editBtn, dirtyEl, saveBtn, openBtn);
+        bar.append(pathEl, byEl, controls);
+        const banner = el(doc, "div", "side-file-banner hidden");
+        const bannerText = el(doc, "span", "side-file-banner-text");
+        const reloadBtn = button(doc, "side-file-banner-act", "Reload (discard yours)");
+        const theirsBtn = button(doc, "side-file-banner-act", "Show their change");
+        const keepBtn = button(doc, "side-file-banner-act", "Keep editing");
+        banner.append(bannerText, reloadBtn, theirsBtn, keepBtn);
+        const body = el(doc, "div", "side-file-body");
+        body.appendChild(el(doc, "div", "cost-note", "Loading\u2026"));
+        const editor = el(doc, "textarea", "side-file-editor hidden");
+        editor.spellcheck = false;
+        root.append(bar, banner, body, editor);
+        let peekRes = null;
+        let diffRes = null;
+        let baseline = null;
+        let dataRev = 0;
+        let paintedKey = "";
+        const canEdit = () => peekEditable(editable, peekRes);
+        const isDirty = () => baseline != null && editor.value !== baseline;
+        const hasBuffer = () => baseline != null;
+        function renderDirty() {
+          const d = isDirty();
+          dirtyEl.classList.toggle("hidden", !d || editor.classList.contains("hidden"));
+          saveBtn.disabled = !d;
+        }
+        function setData(nextPeek, nextDiff, { keepBuffer = false } = {}) {
+          peekRes = nextPeek;
+          diffRes = nextDiff;
+          dataRev++;
+          if (keepBuffer) return;
+          if (canEdit()) {
+            editor.value = peekRes.content;
+            baseline = peekRes.content;
+          } else {
+            editor.value = "";
+            baseline = null;
+          }
+        }
+        function markSaved(text, res) {
+          baseline = text;
+          peekRes = { ...peekRes, content: text, size: res.size, mtime: res.mtime };
+          dataRev++;
+          renderDirty();
+        }
+        function setDiff(nextDiff) {
+          diffRes = nextDiff;
+          dataRev++;
+        }
+        function defaultView(forceView) {
+          if (forceView === "edit" && !canEdit()) return "file";
+          if (forceView) return forceView;
+          return diffRes && diffRes.ok && !diffRes.untracked && diffRes.diff.trim() ? "diff" : "file";
+        }
+        function paintNote(text) {
+          body.replaceChildren(el(doc, "div", "cost-note", text));
+        }
+        function paintDiff() {
+          const diffOk = !!(diffRes && diffRes.ok);
+          if (!diffOk) return paintNote(diffRes && diffRes.error || "Diff unavailable");
+          if (diffRes.untracked) return paintNote("New file \u2014 not tracked by git yet. The File tab shows its full contents.");
+          if (!diffRes.diff.trim()) return paintNote("No uncommitted changes \u2014 what the agent touched here is already committed (or was reverted).");
+          const pre = el(doc, "div", "file-peek-pre");
+          pre.innerHTML = renderDiffHtml(diffRes.diff, { lineNumbers: true });
+          body.replaceChildren(pre);
+        }
+        function paintFile(tab) {
+          if (tab.deleted) return paintNote("No longer on disk.");
+          if (!peekRes || !peekRes.ok) return paintNote(peekRes && peekRes.error || "File unavailable");
+          if (peekRes.binary) return paintNote(`Binary file (${peekRes.size} bytes) \u2014 use Open.`);
+          const nodes = [];
+          if (peekRes.truncated) {
+            nodes.push(el(
+              doc,
+              "div",
+              "cost-note",
+              `Showing the first ${Math.round(peekRes.content.length / 1024)}KB of ${Math.round(peekRes.size / 1024)}KB.`
+            ));
+          }
+          const raw = peekRes.content.split("\n");
+          const w = String(raw.length).length;
+          const pre = el(doc, "div", "file-peek-pre");
+          raw.forEach((l, i) => {
+            const row = el(doc, "div", `diff-line diff-ctx${tab.line === i + 1 ? " peek-line-hit" : ""}`);
+            row.dataset.line = String(i + 1);
+            row.appendChild(el(doc, "span", "peek-ln", String(i + 1).padStart(w, " ")));
+            appendLinkified(doc, row, l);
+            pre.appendChild(row);
+          });
+          nodes.push(pre);
+          body.replaceChildren(...nodes);
+        }
+        function anchorLine() {
+          const rows = body.querySelectorAll(".diff-line[data-line]");
+          for (const r of rows) if (r.offsetTop + r.offsetHeight > body.scrollTop) return Number(r.dataset.line);
+          return null;
+        }
+        function scrollToLine(n, block) {
+          const row = body.querySelector(`.diff-line[data-line="${n}"]`);
+          if (!row) return;
+          if (block === "top") body.scrollTop = row.offsetTop - body.offsetTop;
+          else row.scrollIntoView({ block: "center" });
+        }
+        function render(tab, { anchor = null } = {}) {
+          const view = tab.view || "file";
+          const edit = view === "edit";
+          diffBtn.classList.toggle("active", view === "diff");
+          fileBtn.classList.toggle("active", view === "file");
+          editBtn.classList.toggle("active", edit);
+          editBtn.style.display = canEdit() || hasBuffer() ? "" : "none";
+          editor.readOnly = !canEdit();
+          const diffOk = !!(diffRes && diffRes.ok);
+          diffBtn.disabled = !diffOk;
+          diffBtn.title = diffOk ? "Uncommitted changes (git, vs HEAD)" : diffRes && diffRes.error || "Diff unavailable";
+          byEl.textContent = tab.pushedBy ? `pushed by ${tab.pushedBy}` : "";
+          byEl.hidden = !tab.pushedBy;
+          pathEl.textContent = tab.deleted ? `${filePath} (deleted)` : filePath;
+          body.classList.toggle("hidden", edit);
+          editor.classList.toggle("hidden", !edit);
+          saveBtn.classList.toggle("hidden", !edit || !canEdit());
+          banner.classList.toggle("hidden", !tab.banner);
+          renderDirty();
+          if (edit || !peekRes && !diffRes) return;
+          const key = `${dataRev}|${view}|${tab.line}|${tab.deleted}`;
+          if (key === paintedKey) return;
+          paintedKey = key;
+          if (view === "diff") paintDiff();
+          else paintFile(tab);
+          if (view === "file" && anchor != null) scrollToLine(anchor, "top");
+          else if (view === "file" && tab.line) scrollToLine(tab.line, "center");
+        }
+        function showBanner(seat, at) {
+          const hh = String(at.getHours()).padStart(2, "0");
+          const mm = String(at.getMinutes()).padStart(2, "0");
+          bannerText.textContent = `${seat} changed this file at ${hh}:${mm} \u2014 `;
+        }
+        diffBtn.addEventListener("click", () => on.view("diff"));
+        fileBtn.addEventListener("click", () => on.view("file"));
+        editBtn.addEventListener("click", () => {
+          if (!canEdit() && !hasBuffer()) return;
+          on.view("edit");
+          editor.focus();
+        });
+        editor.addEventListener("input", () => {
+          renderDirty();
+          on.dirty(isDirty());
+        });
+        editor.addEventListener("keydown", (e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+            e.preventDefault();
+            if (!saveBtn.disabled) on.save();
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            on.escape();
+          }
+        });
+        saveBtn.addEventListener("click", () => on.save());
+        openBtn.addEventListener("click", () => on.open());
+        reloadBtn.addEventListener("click", () => on.discard());
+        theirsBtn.addEventListener("click", () => on.theirs());
+        keepBtn.addEventListener("click", () => on.keep());
+        body.addEventListener("click", (e) => {
+          const link = e.target.closest(".peek-path");
+          if (link) on.follow(link.dataset.path, link.dataset.goto ? Number(link.dataset.goto) : null);
+        });
+        return {
+          el: root,
+          canEdit,
+          isDirty,
+          getText: () => editor.value,
+          setSaving: (busy) => {
+            saveBtn.disabled = busy || !isDirty();
+          },
+          setData,
+          setDiff,
+          markSaved,
+          defaultView,
+          anchorLine,
+          render,
+          showBanner
+        };
+      }
+      module.exports = { createFileTab };
+    }
+  });
+
+  // renderer/side-pane.js
+  var require_side_pane = __commonJS({
+    "renderer/side-pane.js"(exports, module) {
+      "use strict";
+      var { createFileTab } = require_file_tab();
+      var {
+        SIDE_PANE_REFIT_THROTTLE_MS,
+        emptyTabSet,
+        fileTabId,
+        sidePaneFits,
+        clampSidePaneWidth,
+        saveArgs,
+        shouldKeepBuffer,
+        reduceTabs
+      } = require_side_pane_tabs();
+      function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, focusTerminal, doc = document, win = window }) {
+        const pane = doc.getElementById("side-pane");
+        const handle = doc.getElementById("side-pane-handle");
+        const strip = doc.getElementById("side-pane-tabs");
+        const seatEl = doc.getElementById("side-pane-seat");
+        const pinBtn = doc.getElementById("side-pane-pin");
+        const closeBtn = doc.getElementById("side-pane-close");
+        const host = doc.getElementById("side-pane-body");
+        const isWeb = !!win.__CLODEX_WEB__;
+        const sets = /* @__PURE__ */ new Map();
+        const views = /* @__PURE__ */ new Map();
+        const seenTs = /* @__PURE__ */ new Map();
+        let shownSeat = null;
+        let storedWidth = null;
+        const setOf = (seat) => sets.get(seat) || emptyTabSet();
+        const tabOf = (seat, id) => setOf(seat).tabs.find((t) => t.id === id) || null;
+        const viewKey = (seat, id) => `${seat}\0${id}`;
+        function dispatch(seat, action) {
+          const before = setOf(seat);
+          const { set, effect } = reduceTabs(before, action);
+          sets.set(seat, set);
+          const alive = new Set(set.tabs.map((t) => t.id));
+          for (const t of before.tabs) {
+            if (alive.has(t.id)) continue;
+            const k = viewKey(seat, t.id);
+            const v = views.get(k);
+            if (v) v.el.remove();
+            views.delete(k);
+            seenTs.delete(k);
+          }
+          return { set, effect };
+        }
+        function paneVisible() {
+          return !!shownSeat && setOf(shownSeat).open && (isWeb || sidePaneFits(win.innerWidth));
+        }
+        function isVisible(seat, id) {
+          return seat === shownSeat && paneVisible() && setOf(seat).active === id;
+        }
+        function applyWidth() {
+          pane.style.width = `${clampSidePaneWidth(storedWidth, win.innerWidth)}px`;
+        }
+        function renderChrome() {
+          const shown = paneVisible();
+          const sheet = shown && isWeb && !sidePaneFits(win.innerWidth);
+          pane.classList.toggle("side-pane-closed", !shown);
+          pane.classList.toggle("side-pane-sheet", sheet);
+          handle.classList.toggle("side-pane-closed", !shown || sheet);
+          if (!shownSeat) {
+            strip.replaceChildren();
+            return;
+          }
+          const set = setOf(shownSeat);
+          const active = set.tabs.find((t) => t.id === set.active) || null;
+          seatEl.textContent = shownSeat;
+          seatEl.hidden = shownSeat === getActiveSession();
+          pinBtn.disabled = !active || !active.preview;
+          const nodes = set.tabs.map((t) => {
+            const tabEl = doc.createElement("div");
+            tabEl.className = `side-tab${t.id === set.active ? " active" : ""}${t.preview ? " preview" : ""}`;
+            tabEl.dataset.id = t.id;
+            tabEl.title = t.path;
+            const title = doc.createElement("span");
+            title.className = "side-tab-title";
+            title.textContent = (t.path.split("/").pop() || t.path) + (t.deleted ? " (deleted)" : "");
+            tabEl.appendChild(title);
+            if (t.stale) {
+              const dot = doc.createElement("span");
+              dot.className = "side-tab-stale";
+              dot.title = "Changed by the agent since you looked";
+              tabEl.appendChild(dot);
+            }
+            if (t.dirty) {
+              const dot = doc.createElement("span");
+              dot.className = "file-peek-dirty";
+              dot.textContent = "\u2022";
+              dot.title = "Unsaved changes";
+              tabEl.appendChild(dot);
+            }
+            const x = doc.createElement("button");
+            x.type = "button";
+            x.className = "side-tab-close";
+            x.textContent = "\xD7";
+            x.title = "Close tab";
+            x.setAttribute("aria-label", "Close tab");
+            tabEl.appendChild(x);
+            return tabEl;
+          });
+          strip.replaceChildren(...nodes);
+          for (const [k, v] of views) {
+            const [seat, id] = k.split("\0");
+            v.el.classList.toggle("side-tab-inactive", !(seat === shownSeat && id === set.active));
+          }
+        }
+        function renderTab(seat, id, opts) {
+          const tab = tabOf(seat, id);
+          const v = views.get(viewKey(seat, id));
+          if (tab && v) v.render(tab, opts);
+        }
+        async function fetchTab(seat, id, { force = false, forceView = null } = {}) {
+          const k = viewKey(seat, id);
+          const v = views.get(k);
+          const tab = tabOf(seat, id);
+          if (!v || !tab) return;
+          const gen = (v.gen || 0) + 1;
+          v.gen = gen;
+          const api = popoverApi(seat);
+          const [diffRes, peekRes] = await Promise.all([
+            api.diff(tab.path).catch((e) => ({ ok: false, error: String(e) })),
+            api.peek(tab.path).catch((e) => ({ ok: false, error: String(e) }))
+          ]);
+          if (views.get(k) !== v || v.gen !== gen) return;
+          const first = tab.mtime == null && !tab.deleted;
+          const anchor = !first && isVisible(seat, id) ? v.anchorLine() : null;
+          const { effect } = dispatch(seat, { type: "loaded", id, peek: peekRes, force });
+          if (effect === "render") {
+            v.setData(peekRes, diffRes, { keepBuffer: shouldKeepBuffer(tabOf(seat, id)) });
+            if (first || !tabOf(seat, id).view) {
+              dispatch(seat, { type: "view", id, view: v.defaultView(forceView || tabOf(seat, id).view) });
+            }
+            renderTab(seat, id, { anchor: first ? null : anchor });
+          } else if (effect === "banner") {
+            v.showBanner(seat, /* @__PURE__ */ new Date());
+            renderTab(seat, id);
+          }
+          renderChrome();
+        }
+        function runEffect(seat, id, effect, extra = {}) {
+          if (effect === "fetch" || effect === "revalidate") fetchTab(seat, id, extra);
+          else if (effect === "reload") fetchTab(seat, id, { ...extra, force: true });
+          else if (effect === "banner") {
+            const v = views.get(viewKey(seat, id));
+            if (v) v.showBanner(seat, /* @__PURE__ */ new Date());
+          }
+          renderTab(seat, id);
+          renderChrome();
+        }
+        function recordSeen(seat, id, filePath) {
+          const entry = (getFiles(seat) || []).find((f) => f.path === filePath);
+          seenTs.set(viewKey(seat, id), entry ? entry.ts : null);
+        }
+        function makeView(seat, id, filePath) {
+          const api = popoverApi(seat);
+          const act = (action) => {
+            const r = dispatch(seat, { ...action, id });
+            runEffect(seat, id, r.effect);
+          };
+          const v = createFileTab({
+            doc,
+            filePath,
+            editable: !api.remote,
+            showOpen: !(api.remote || isWeb),
+            on: {
+              view: (view) => act({ type: "view", view }),
+              dirty: (dirty) => {
+                dispatch(seat, { type: "dirty", id, dirty });
+                renderChrome();
+              },
+              save: () => save(seat, id),
+              open: () => win.api.fileOpen(filePath),
+              escape: () => focusTerminal(),
+              discard: () => act({ type: "discard" }),
+              keep: () => act({ type: "keep" }),
+              theirs: async () => {
+                const fresh = await popoverApi(seat).diff(filePath).catch((e) => ({ ok: false, error: String(e) }));
+                const cur = views.get(viewKey(seat, id));
+                if (cur !== v) return;
+                v.setDiff(fresh);
+                act({ type: "view", view: "diff" });
+              },
+              follow: (p, line) => follow(seat, filePath, p, line)
+            }
+          });
+          host.appendChild(v.el);
+          views.set(viewKey(seat, id), v);
+          recordSeen(seat, id, filePath);
+          return v;
+        }
+        async function save(seat, id) {
+          const tab = tabOf(seat, id);
+          const v = views.get(viewKey(seat, id));
+          if (!tab || !v || !v.canEdit()) return;
+          const text = v.getText();
+          v.gen = (v.gen || 0) + 1;
+          v.setSaving(true);
+          const res = await win.api.fileWrite(...saveArgs(seat, tab, text)).catch((e) => ({ ok: false, error: String(e) }));
+          if (views.get(viewKey(seat, id)) !== v) return;
+          if (!res || !res.ok) {
+            v.setSaving(false);
+            showToast(`Save failed: ${res && res.error || "unknown"}`, { kind: "error", duration: 1e4 });
+            return;
+          }
+          v.markSaved(text, res);
+          dispatch(seat, { type: "saved", id, mtime: res.mtime });
+          renderTab(seat, id);
+          renderChrome();
+          const fresh = await popoverApi(seat).diff(tab.path).catch((e) => ({ ok: false, error: String(e) }));
+          if (views.get(viewKey(seat, id)) !== v) return;
+          v.setDiff(fresh);
+          renderTab(seat, id);
+        }
+        async function follow(seat, fromPath, target, line) {
+          const cut = fromPath.lastIndexOf("/");
+          const baseDir = cut > 0 ? fromPath.slice(0, cut) : null;
+          const res = await win.api.fileResolve(seat, target, baseDir).catch((err) => ({ ok: false, error: String(err) }));
+          if (!res || !res.ok) {
+            showToast(res && res.error || `Can't find "${target}"`, { kind: "warn", duration: 4e3 });
+            return;
+          }
+          open(seat, { kind: "file", path: res.path }, { preview: true, line, view: "file" });
+        }
+        function open(seat, target, { preview = true, line = null, pushedBy = null, view = null } = {}) {
+          const id = fileTabId(seat, target.path);
+          const existed = !!tabOf(seat, id);
+          shownSeat = seat;
+          const { effect } = dispatch(seat, { type: "open", id, kind: "file", path: target.path, preview, line, pushedBy });
+          if (!existed) makeView(seat, id, target.path);
+          const tab = tabOf(seat, id);
+          if (existed && view && tab && !(tab.view === "edit" && tab.dirty)) {
+            const v = views.get(viewKey(seat, id));
+            if (view !== "edit" || v && v.canEdit()) dispatch(seat, { type: "view", id, view });
+          }
+          applyWidth();
+          if (!isWeb && !sidePaneFits(win.innerWidth)) {
+            showToast("Widen the window to see the side pane", { kind: "warn", duration: 4e3 });
+          }
+          runEffect(seat, id, effect, { forceView: view });
+        }
+        function showSeat(seat) {
+          shownSeat = seat || null;
+          const set = seat ? setOf(seat) : null;
+          renderChrome();
+          if (set && set.open && set.active) fetchTab(seat, set.active);
+        }
+        function forgetSeat(seat) {
+          const set = setOf(seat);
+          if (set.tabs.some((t) => t.dirty)) {
+            if (shownSeat === seat) shownSeat = null;
+            renderChrome();
+            return;
+          }
+          for (const t of set.tabs) {
+            const k = viewKey(seat, t.id);
+            const v = views.get(k);
+            if (v) v.el.remove();
+            views.delete(k);
+            seenTs.delete(k);
+          }
+          sets.delete(seat);
+          if (shownSeat === seat) shownSeat = null;
+          renderChrome();
+        }
+        function noteFiles(seat, files) {
+          for (const t of setOf(seat).tabs) {
+            const k = viewKey(seat, t.id);
+            const entry = (files || []).find((f) => f.path === t.path);
+            if (!entry || entry.ts === seenTs.get(k)) continue;
+            seenTs.set(k, entry.ts);
+            const { effect } = dispatch(seat, { type: "changed", id: t.id, visible: isVisible(seat, t.id) });
+            if (effect) runEffect(seat, t.id, effect);
+          }
+          if (seat === shownSeat) renderChrome();
+        }
+        function noteToolRecord() {
+        }
+        strip.addEventListener("click", (e) => {
+          const tabEl = e.target.closest(".side-tab");
+          if (!tabEl || !shownSeat) return;
+          const seat = shownSeat;
+          const id = tabEl.dataset.id;
+          if (e.target.closest(".side-tab-close")) {
+            let r2 = dispatch(seat, { type: "close", id });
+            if (r2.effect === "confirm") {
+              if (!win.confirm("Discard unsaved changes to this file?")) return;
+              r2 = dispatch(seat, { type: "close", id, force: true });
+            }
+            if (r2.set.active) runEffect(seat, r2.set.active, r2.effect);
+            else renderChrome();
+            return;
+          }
+          const r = dispatch(seat, { type: "focus", id });
+          runEffect(seat, id, r.effect);
+        });
+        strip.addEventListener("dblclick", (e) => {
+          const tabEl = e.target.closest(".side-tab");
+          if (!tabEl || !shownSeat || e.target.closest(".side-tab-close")) return;
+          dispatch(shownSeat, { type: "pin", id: tabEl.dataset.id });
+          renderChrome();
+        });
+        pinBtn.addEventListener("click", () => {
+          if (!shownSeat) return;
+          const set = setOf(shownSeat);
+          if (set.active) dispatch(shownSeat, { type: "pin", id: set.active });
+          renderChrome();
+        });
+        closeBtn.addEventListener("click", () => {
+          if (!shownSeat) return;
+          dispatch(shownSeat, { type: "closePane" });
+          renderChrome();
+        });
+        let dragging = false;
+        let pendingPx = null;
+        let lastApply = 0;
+        let timer = null;
+        function flushDrag() {
+          timer = null;
+          if (pendingPx == null) return;
+          storedWidth = pendingPx;
+          lastApply = Date.now();
+          applyWidth();
+        }
+        handle.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          dragging = true;
+          doc.body.classList.add("side-pane-dragging");
+        });
+        win.addEventListener("mousemove", (e) => {
+          if (!dragging) return;
+          const right = pane.getBoundingClientRect().right;
+          pendingPx = clampSidePaneWidth(right - e.clientX, win.innerWidth);
+          const wait = SIDE_PANE_REFIT_THROTTLE_MS - (Date.now() - lastApply);
+          if (wait <= 0) flushDrag();
+          else if (!timer) timer = setTimeout(flushDrag, wait);
+        });
+        win.addEventListener("mouseup", () => {
+          if (!dragging) return;
+          dragging = false;
+          doc.body.classList.remove("side-pane-dragging");
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+          flushDrag();
+          pendingPx = null;
+          try {
+            win.api.setSettings({ sidePaneWidth: storedWidth });
+          } catch {
+          }
+        });
+        win.addEventListener("resize", () => {
+          applyWidth();
+          renderChrome();
+        });
+        Promise.resolve().then(() => win.api.getSettings()).then((s) => {
+          if (s && typeof s.sidePaneWidth === "number") storedWidth = s.sidePaneWidth;
+          applyWidth();
+        }).catch(() => {
+        });
+        applyWidth();
+        renderChrome();
+        return { open, showSeat, forgetSeat, noteFiles, noteToolRecord };
+      }
+      module.exports = { createSidePane };
     }
   });
 
@@ -37504,6 +38132,72 @@ void main() {
         return { openSelectionPopover: open, closeSelectionPopover: close, refreshSelectionBadge: refreshBadge };
       }
       module.exports = { initSelectionPopover };
+    }
+  });
+
+  // renderer/lib/popover-drag.js
+  var require_popover_drag = __commonJS({
+    "renderer/lib/popover-drag.js"(exports, module) {
+      "use strict";
+      var offsets = /* @__PURE__ */ new WeakMap();
+      function clampAxis(start, size, delta, viewport, margin) {
+        const minDelta = margin - start;
+        const maxDelta = viewport - margin - size - start;
+        if (maxDelta < minDelta) return minDelta;
+        return Math.max(minDelta, Math.min(maxDelta, delta));
+      }
+      function clampTranslate(rect, dx, dy, vw, vh, margin = 8) {
+        return {
+          dx: clampAxis(rect.left, rect.width, dx, vw, margin),
+          dy: clampAxis(rect.top, rect.height, dy, vh, margin)
+        };
+      }
+      function anchorRect(anchorEl) {
+        return anchorEl && typeof anchorEl.getBoundingClientRect === "function" ? anchorEl.getBoundingClientRect() : { left: 24, bottom: 24 };
+      }
+      function applyOffset(popover, dx, dy) {
+        offsets.set(popover, { dx, dy });
+        popover.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : "";
+      }
+      function resetDrag(popover) {
+        if (popover) applyOffset(popover, 0, 0);
+      }
+      function makeDraggable(popover) {
+        if (!popover) return;
+        const title = popover.querySelector(".popover-title");
+        if (!title) return;
+        title.classList.add("draggable-title");
+        title.addEventListener("mousedown", (e) => {
+          if (e.button !== 0) return;
+          if (e.target.closest("button")) return;
+          const cur = offsets.get(popover) || { dx: 0, dy: 0 };
+          const startX = e.clientX;
+          const startY = e.clientY;
+          const r = popover.getBoundingClientRect();
+          const base = { left: r.left - cur.dx, top: r.top - cur.dy, width: r.width, height: r.height };
+          e.preventDefault();
+          title.classList.add("dragging");
+          const onMove = (ev) => {
+            const want = clampTranslate(
+              base,
+              cur.dx + (ev.clientX - startX),
+              cur.dy + (ev.clientY - startY),
+              window.innerWidth,
+              window.innerHeight,
+              8
+            );
+            applyOffset(popover, want.dx, want.dy);
+          };
+          const onUp = () => {
+            title.classList.remove("dragging");
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+          };
+          document.addEventListener("mousemove", onMove);
+          document.addEventListener("mouseup", onUp);
+        });
+      }
+      module.exports = { anchorRect, clampTranslate, makeDraggable, resetDrag };
     }
   });
 
@@ -42984,6 +43678,7 @@ ${detail}` });
       var { initBustPopover } = require_bust_popover();
       var { initSessionInfoPopover } = require_session_info_popover();
       var { initFilesPopover } = require_files_popover();
+      var { createSidePane } = require_side_pane();
       var { initVoicePopover } = require_voice_popover();
       var { initSelectionPopover } = require_selection_popover();
       var { initChecklistPopovers } = require_checklist_popovers();
@@ -44508,6 +45203,7 @@ ${detail}` });
         reportFocusedSession();
         if (wasActive && wasActive !== name) drawerHost.onSessionChanged();
         else drawerHost.syncSeatAvailability();
+        sidePane.showSeat(name);
         for (const [n, s] of sessions) {
           s.wrapperEl.classList.toggle("visible", n === name);
         }
@@ -44601,6 +45297,7 @@ ${detail}` });
           sessions.delete(name);
         }
         drawerHost.forgetSession(name);
+        sidePane.forgetSeat(name);
         removeSessionFromSidebar(name);
         updateWindowTitle();
         proxyState.delete(name);
@@ -46870,13 +47567,23 @@ Click for live activity`;
       var { openCostPopover } = initCostPopover({ popoverApi, proxyState, barPopovers });
       var { openSessionInfoPopover } = initSessionInfoPopover({ sessionList });
       var { openBustPopover } = initBustPopover({ popoverApi, proxyState, barPopovers });
+      var sidePane = createSidePane({
+        popoverApi,
+        showToast,
+        getActiveSession: () => activeSession,
+        getFiles: (name) => filesState.get(name),
+        focusTerminal: () => {
+          const s = sessions.get(activeSession);
+          if (s) s.terminal.focus();
+        }
+      });
       var { openFilesPopover, openFilePeek, isFilesPopoverForKey } = initFilesPopover({
         popoverApi,
         filesState,
         filesUnseen,
         peerFilesCount,
         renderProxyBar,
-        showToast,
+        sidePane,
         getActiveSession: () => activeSession
       });
       var { openReportPanel } = initReportPanel({ popoverApi, ctxCatLabel });
