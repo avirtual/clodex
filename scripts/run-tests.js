@@ -281,7 +281,7 @@ delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
 
 const runStart = Date.now();
 const run = spawnSync(process.execPath, [
-  '--test',
+  '--test', '--test-force-exit',
   `--test-reporter=${reporter}`, '--test-reporter-destination=stdout',
   '--test-reporter=tap', `--test-reporter-destination=${tapFile}`,
   ...passthrough,

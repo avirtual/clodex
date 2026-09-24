@@ -302,3 +302,38 @@ test('lock: neither the lock nor the slow-advisory declaration reaches the child
       + 'stops enforcing six seconds on tests nobody measured under a lock');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('force-exit: a red test that leaks a handle is reported by name and the run exits', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'run-tests.js'), 'utf-8');
+  assert.match(src, /'--test',\s*'--test-force-exit'/,
+    'ENTER: the runner no longer passes --test-force-exit to node --test');
+  const root = fs.realpathSync(mkTmpRoot('clx-t1153-'));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  for (const f of ['run-tests.js', 'test-escapes.js']) {
+    fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
+  }
+  fs.writeFileSync(path.join(root, 'leak.test.js'), [
+    "const assert = require('node:assert');",
+    "require('node:test').test('leaky red', () => {",
+    '  let n = 0;',
+    '  const iv = setInterval(() => { if (++n > 60) clearInterval(iv); }, 500);',
+    "  assert.strictEqual(1, 2, 'the red that skips the teardown');",
+    '  clearInterval(iv);',
+    '});',
+  ].join('\n'));
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  try {
+    const res = spawnSync(
+      process.execPath,
+      [path.join(root, 'scripts', 'run-tests.js'), 'leak.test.js'],
+      { encoding: 'utf-8', cwd: root, timeout: 15000, env },
+    );
+    const out = `${res.stdout || ''}${res.stderr || ''}`;
+    assert.strictEqual(res.error && res.error.code, undefined,
+      `the run never exited: the leaked interval held node --test open (${out.slice(-400)})`);
+    assert.match(out, /TOTALS: 0 pass, 1 fail/, out.slice(-400));
+    assert.match(out, /leaky red/, 'the failing test is named in the digest');
+    assert.notStrictEqual(res.status, 0);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

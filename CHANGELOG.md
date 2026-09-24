@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Test suite: a failing test that leaks a handle now reports its name and exits instead of hanging until the runner's ceiling.
 - Stream seat: the voice button records through a hidden terminal and the words appear in the composer as you speak, for you to send; saying the trigger phrase sends them.
 - Stream seat: paste or drop an image into the composer and it goes with the message; thumbnails show what is attached until you send.
 - Transcript pane: an intent renders as a card (glyph, verb, target, a clamped body) with the wire brackets hidden, and a Clodex runtime reply shows the verb's glyph instead of a badge for a seat named clodex.
