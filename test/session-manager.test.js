@@ -19278,7 +19278,7 @@ test('scratch begin (wire): a reply that goes on to call tools is still refused 
   assert.strictEqual(f.s._scratchPendingBegin, null);
 });
 
-test('scratch begin (wire): the wait times out into the refusal and leaves no mark', (t) => {
+test('scratch begin (wire): the wait times out on a transcript that moved on — the refusal says so, not that the reply called tools', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const f = mkScratch();
   const tape = scratchPrefix(f);
@@ -19291,8 +19291,8 @@ test('scratch begin (wire): the wait times out into the refusal and leaves no ma
   assert.deepStrictEqual(f.injected, [], 'the wait is the same bound `end` uses');
   t.mock.timers.tick(1);
   assert.strictEqual(f.injected[0],
-    '[agent:scratch] begin refused: it must be the last line of a reply (your reply went on to '
-    + 'call tools). Emit it alone and stop; the episode opens when Clodex acks it. Not marked.');
+    '[agent:scratch] begin refused: the transcript moved on before the turn end could be confirmed '
+    + '(the wait timed out after 120s). Emit it again as the last line of your next reply. Not marked.');
   assert.strictEqual(f.s._scratch, undefined, 'no mark');
   assert.strictEqual(f.s._scratchPendingBegin, null, 'and no wait left armed');
 });
@@ -19315,6 +19315,43 @@ test('scratch begin: an end_turn whose turn_duration has not landed waits for it
   await waitFor(() => f.injected.length > 0);
   assert.ok(dur);
   assert.strictEqual(f.s._scratch.leafUuid, asked, 'the leaf is the prompt the begin answered; the turn_duration is dropped with the reply');
+});
+
+test('scratch begin (stream): an idle stream seat marks on the end_turn record at once — claude -p writes no turn_duration', () => {
+  const f = mkScratch();
+  f.s.io = 'stream';
+  f.s.streamBusy = false;
+  const tape = scratchPrefix(f);
+  const asked = tape.prompt('now open an episode');
+  tape.conv({ type: 'assistant', message: { role: 'assistant', id: 'msg_s', stop_reason: 'end_turn', content: [{ type: 'text', text: '[agent:scratch begin]' }] } });
+  f.write(tape);
+  f.s._flushTurnEnd = true;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
+  assert.ok(f.s._scratch, 'marked without waiting');
+  assert.strictEqual(f.s._scratch.leafUuid, asked);
+  assert.ok(f.injected[0].startsWith(`${SCRATCH_ACK_PREFIX_T}${f.s._scratch.nonce}`), f.injected[0].slice(0, 80));
+  assert.strictEqual(f.s._scratchPendingBegin, undefined, 'and no wait was armed');
+});
+
+test('scratch begin (stream): a begin scanned before the result record waits, and the stream turn end marks it', async () => {
+  const f = mkScratch();
+  f.s.io = 'stream';
+  f.s.streamBusy = true;
+  f.s.outbox = [];
+  f.m._emitActivity = () => {};
+  const tape = scratchPrefix(f);
+  const asked = tape.prompt('now open an episode');
+  tape.conv({ type: 'assistant', message: { role: 'assistant', id: 'msg_b', stop_reason: 'end_turn', content: [{ type: 'text', text: '[agent:scratch begin]' }] } });
+  f.write(tape);
+  f.s._flushTurnEnd = true;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(f.s._scratch, undefined, 'the result record has not arrived yet');
+  assert.ok(f.s._scratchPendingBegin);
+  f.m._streamTurnEnd(f.s);
+  assert.ok(f.s._scratch, 'the turn end settles the parked begin');
+  assert.strictEqual(f.s._scratch.leafUuid, asked);
+  assert.strictEqual(f.s._scratchPendingBegin, null);
 });
 
 test('scratch cancel: drops the mark, cuts nothing, and says so', () => {

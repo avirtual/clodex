@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Stream seats: `[agent:scratch begin]` and `[agent:scratch mark]` now open at once on a headless seat instead of waiting two minutes and refusing with a reason that blamed the reply for calling tools.
 - Stream seats: a permission prompt from the CLI (Claude, Codex, Muse) now shows as a card above the composer with the tool, what it wants to do and the CLI's own choices, badges the sidebar like a terminal seat's dialog, and holds incoming dms until it is answered, including on Codex and Muse seats.
 - Stream seat: a fresh restart from the session menu brings the seat back with its composer and transcript pane instead of a blank terminal, and a stray keystroke can no longer be sent to a stream seat as a message.
 - Stream seat: resuming a past conversation from the history menu brings the seat back with its pane, and peer terminal input to a stream seat is refused instead of silently dropped.
