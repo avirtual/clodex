@@ -25319,7 +25319,9 @@ ${i3.join("\n")}
               "--output-format",
               "stream-json",
               "--verbose",
-              ...resumeId ? ["--resume", resumeId, ...fork ? ["--fork-session"] : []] : ["--session-id", sessionId]
+              ...resumeId ? ["--resume", resumeId, ...fork ? ["--fork-session"] : []] : ["--session-id", sessionId],
+              "--permission-prompt-tool",
+              "stdio"
             ],
             toolBoundary: "hook",
             transcriptRepoint: "claude"
