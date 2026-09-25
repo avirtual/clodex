@@ -21785,7 +21785,7 @@ test('t1202: the init watchdog is cleared when init arrives before it fires', as
   const s = c.h.m.sessions.get('si2');
   t.after(() => c.clearTimers(s));
   assert.ok(s._streamInitTimer);
-  c.h.line('si2', { rec: { kind: 'init', sessionId: 'thr-2', turnEnd: true } });
+  c.h.line('si2', { rec: { kind: 'init', sessionId: 'thr-2' } });
   assert.strictEqual(s._streamInitTimer, null);
   t.mock.timers.tick(10000);
   assert.deepStrictEqual(c.h.logs.filter(([, , msg]) => /never initialized/.test(msg)), []);
