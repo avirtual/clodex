@@ -3608,6 +3608,7 @@ function setSeatRecording(name, on) {
   else if (voiceRecordingSeat === name) voiceRecordingSeat = null;
   const sink = voiceSinkFor(name);
   if (sink) sink.setRecording(on);
+  if (name === activeSession) renderProxyBar();
 }
 
 async function seatVoiceRecord(name, action) {
@@ -4925,6 +4926,7 @@ const { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
   renderProxyBar,
   getRecorderReading: () => (activeSession && voiceRecordingSeat === activeSession ? 'lit' : 'off'),
   getRecorderCause: () => null,
+  isRecording: () => !!activeSession && voiceRecordingSeat === activeSession,
   tapOffRecorder: () => {
     if (!activeSession || voiceRecordingSeat !== activeSession) return false;
     seatVoiceRecord(activeSession, 'stop');

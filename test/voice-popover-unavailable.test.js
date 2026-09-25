@@ -21,7 +21,7 @@ function fakeEl(classes = []) {
   return el;
 }
 
-function harness({ capable = true, cause = null, reading = 'off' } = {}) {
+function harness({ capable = true, cause = null, reading = 'off', recording = false } = {}) {
   const prevDoc = global.document;
   const prevWin = global.window;
 
@@ -57,6 +57,7 @@ function harness({ capable = true, cause = null, reading = 'off' } = {}) {
       getRecorderReading: () => reading,
       getRecorderCause: () => null,
       tapOffRecorder: () => true,
+      isRecording: () => recording,
     });
   } catch (e) {
     global.document = prevDoc; global.window = prevWin;
@@ -97,6 +98,24 @@ test('capable tap seat: the button reads on, its tip says it opens the settings,
     assert.deepStrictEqual([...rows.matchAll(/voice-row-name">([^<]+)</g)].map((m) => m[1]), ['Off', 'On']);
     assert.ok(rows.includes('No voice input on this seat'));
     assert.ok(rows.includes('Press space on an empty prompt to dictate; say the trigger word to send'));
+  } finally { h.restore(); }
+});
+
+test('recording: the bar button lights live and reads listening', () => {
+  const h = harness({ capable: true, recording: true });
+  try {
+    const html = h.api.actionHtml();
+    assert.ok(html.includes('px-voice-live'), html);
+    assert.ok(html.includes('🎤 listening'), html);
+  } finally { h.restore(); }
+});
+
+test('not recording on a tap seat: the bar button reads on and is not live', () => {
+  const h = harness({ capable: true, recording: false });
+  try {
+    const html = h.api.actionHtml();
+    assert.ok(html.includes('🎤 on'), html);
+    assert.ok(!html.includes('px-voice-live'), html);
   } finally { h.restore(); }
 });
 

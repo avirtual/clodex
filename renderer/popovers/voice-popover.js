@@ -70,7 +70,7 @@ const RECORDER_STATES = {
   unavailable: { cls: 'rec-unavailable', text: 'No microphone on this machine', hint: 'This node\u2019s Claude CLI cannot record, so voice input cannot work here whatever the mode says' },
 };
 
-function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorderCause, tapOffRecorder }) {
+function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorderCause, tapOffRecorder, isRecording = () => false }) {
   const pop = document.getElementById('voice-popover');
   const body = document.getElementById('voice-popover-body');
   if (!pop || !body) return { actionHtml: () => '', closeVoicePopover() {}, openVoicePopover() {} };
@@ -154,6 +154,9 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
     const tip = snap.pending
       ? `Voice input: switching to ${label}`
       : 'click to change voice settings';
+    if (isRecording()) {
+      return `<button class="px-action px-voice-live" data-act="voice" data-tip="${esc(tip)}">🎤 listening</button>`;
+    }
     return `<button class="px-action${dim}" data-act="voice" data-tip="${esc(tip)}">🎤 ${esc(label)}</button>`;
   }
 
