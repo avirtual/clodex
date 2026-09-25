@@ -6284,14 +6284,14 @@ body.web-frontend #sidebar-header {
 }
 
 .seat-permission-choice[data-kind="allow"] {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--ok);
+  border-color: var(--ok);
   color: #fff;
 }
 
 .seat-permission-choice[data-kind="allow-always"] {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--ok);
+  color: var(--ok);
 }
 
 .seat-permission-choice[data-kind="deny"] {

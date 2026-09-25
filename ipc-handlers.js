@@ -847,8 +847,8 @@ function registerIpcHandlers(deps) {
   });
   handle('transcript:pull', (_e, name) => {
     const s = manager.sessions.get(name);
-    if (!s || s._dead || s.agentType !== 'claude') { transcriptSpike.drop(name); return { ok: false, reason: 'not-claude' }; }
-    const res = transcriptSpike.pull(name);
+    if (!s || s._dead || (s.agentType !== 'claude' && s.io !== 'stream')) { transcriptSpike.drop(name); return { ok: false, reason: 'not-claude' }; }
+    const res = s.agentType === 'claude' ? transcriptSpike.pull(name) : { ok: false, reason: 'not-claude' };
     const extra = res && res.ok && manager.compactNoticesFor(name);
     const out = extra ? { ok: true, rev: `${res.rev}:${extra.rev}`, records: mergeCompactNotices(res.records, extra.notices) } : res;
     const box = manager.seatOutbox(name);

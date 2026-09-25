@@ -1525,6 +1525,7 @@ function createStreamSeatPane(name, wrapperEl) {
   wrapperEl.appendChild(attachEl);
   wrapperEl.appendChild(composer);
   const SEAT_PERMISSION_INPUT_MAX = 600;
+  let permKey = '';
   const renderPermissions = (items) => {
     permEl.replaceChildren();
     permEl.hidden = items.length === 0;
@@ -1683,7 +1684,8 @@ function createStreamSeatPane(name, wrapperEl) {
       if (!res.ok && !Array.isArray(res.outbox)) return;
       rev = res.rev;
       renderOutbox(Array.isArray(res.outbox) ? res.outbox : []);
-      if (Array.isArray(res.permissions)) renderPermissions(res.permissions);
+      const nextPermKey = Array.isArray(res.permissions) ? res.permissions.map((i) => i.id).join('\n') : permKey;
+      if (nextPermKey !== permKey) { permKey = nextPermKey; renderPermissions(res.permissions); }
       if (!res.ok) return;
       renderTranscript(document, paneEl, res.records, {
         seatName: name,
