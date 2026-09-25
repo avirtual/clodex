@@ -9,6 +9,12 @@ const TURN_REQUESTS = new Set(['turn/start', 'thread/compact/start']);
 const THREAD_REQUESTS = new Set(['thread/start', 'thread/resume']);
 const CONTEXT_TEXTS = new Set(['/compact', '/clear']);
 
+function sessionIdOf(thread) {
+  const p = typeof thread.path === 'string' ? thread.path : '';
+  const base = p.slice(p.lastIndexOf('/') + 1).replace(/\.jsonl$/, '');
+  return base && UUID_TAIL_RE.test(base) ? base : (thread.id || null);
+}
+
 function postureFor({ bypass, readOnly }) {
   if (bypass) return { approvalPolicy: 'never', sandbox: 'danger-full-access' };
   if (readOnly) return { approvalPolicy: 'never', sandbox: 'read-only' };
@@ -68,7 +74,7 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
       turnId = null;
       return {
         kind: 'init',
-        sessionId: threadId,
+        sessionId: sessionIdOf(thread),
         model: result.model || thread.model || null,
         slashCommands: [],
         turnEnd: true,

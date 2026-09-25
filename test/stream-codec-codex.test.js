@@ -9,6 +9,7 @@ const { create } = require('../stream-codec-codex');
 const FIX = path.join(__dirname, 'fixtures', 'stream-codex');
 const lines = (name) => fs.readFileSync(path.join(FIX, `${name}.jsonl`), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 const wire = (name, d = 'in') => lines(name).filter((l) => l.d === d).map((l) => l.m);
+const rolloutId = (thread) => path.basename(thread.path, '.jsonl');
 
 const opened = (ctx = {}) => {
   const warns = [];
@@ -57,13 +58,13 @@ test('a resume opens with thread/resume on the uuid; fork warns once and resumes
   const [resumed] = wire('thread-resume');
   const { codec } = opened({ resumeId: resumed.result.thread.id });
   const rec = codec.decode(resumed);
-  assert.deepStrictEqual(rec, { kind: 'init', sessionId: resumed.result.thread.id, model: resumed.result.model, slashCommands: [], turnEnd: true });
+  assert.deepStrictEqual(rec, { kind: 'init', sessionId: rolloutId(resumed.result.thread), model: resumed.result.model, slashCommands: [], turnEnd: true });
 });
 
-test('the thread/start result decodes to init with the thread id and turnEnd', () => {
+test('the thread/start result decodes to init with the rollout-name id the transcript watcher reports, and turnEnd', () => {
   const [threadStart] = wire('thread-start');
   const { init } = started();
-  assert.deepStrictEqual(init, { kind: 'init', sessionId: threadStart.result.thread.id, model: threadStart.result.model, slashCommands: [], turnEnd: true });
+  assert.deepStrictEqual(init, { kind: 'init', sessionId: rolloutId(threadStart.result.thread), model: threadStart.result.model, slashCommands: [], turnEnd: true });
 });
 
 test('turn/started is status running; turn/completed is a result, failed only when the turn failed', () => {
@@ -154,7 +155,7 @@ test('encodeContext: compact is thread/compact/start on the thread, clear a fres
   assert.deepStrictEqual(compact.params, { threadId: threadStart.result.thread.id });
   const clear = codec.encodeContext('clear');
   assert.deepStrictEqual({ method: clear.method, params: clear.params }, { method: 'thread/start', params: { cwd: '/w', approvalPolicy: 'never', sandbox: 'read-only' } });
-  const fresh = { ...threadStart, id: clear.id, result: { ...threadStart.result, thread: { ...threadStart.result.thread, id: 'new-thread' } } };
+  const fresh = { ...threadStart, id: clear.id, result: { ...threadStart.result, thread: { ...threadStart.result.thread, id: 'new-thread', path: undefined } } };
   assert.deepStrictEqual(codec.decode(fresh), { kind: 'init', sessionId: 'new-thread', model: threadStart.result.model, slashCommands: [], turnEnd: true });
   assert.strictEqual(codec.encodeUser('x', []).params.threadId, 'new-thread');
   assert.strictEqual(codec.encodeContext('reload'), null);
