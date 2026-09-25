@@ -58,7 +58,7 @@ const VOICE_ID = 'voice-origin';
 // States what the channel was and what to DO about it. The instruction is the
 // payload: "this was dictated" alone invites the reader to note the fact and
 // carry on reading the literal, which is the behaviour this exists to change.
-const VOICE_TEXT = 'The message that follows was SPOKEN by the operator and '
+const VOICE_TEXT = 'The message ABOVE was SPOKEN by the operator and '
   + 'machine-transcribed, not typed. Transcription errors are expected and '
   + 'measured: a word that does not fit the context is more likely a '
   + 'near-homophone mis-transcription than a deliberate choice. Read for '

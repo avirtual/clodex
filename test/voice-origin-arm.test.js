@@ -87,6 +87,8 @@ test('the text tells the reader what to DO, not merely that it was dictated', ()
   assert.match(VOICE_TEXT, /spoken/i);
   assert.match(VOICE_TEXT, /transcri/i);
   assert.match(VOICE_TEXT, /ask/i);
+  assert.ok(VOICE_TEXT.startsWith('The message ABOVE was SPOKEN'), VOICE_TEXT);
+  assert.ok(!VOICE_TEXT.includes('follows'), VOICE_TEXT);
   // Well under the proxy's 2500-char per-hint ceiling.
   assert.ok(VOICE_TEXT.length < 2500, `hint is ${VOICE_TEXT.length} chars`);
 });
