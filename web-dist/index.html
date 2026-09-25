@@ -26850,6 +26850,43 @@ ${i3.join("\n")}
     }
   });
 
+  // renderer/lib/composer-keys.js
+  var require_composer_keys = __commonJS({
+    "renderer/lib/composer-keys.js"(exports, module) {
+      "use strict";
+      var KEYS = /* @__PURE__ */ new Set(["u", "k", "w", "a", "e"]);
+      function lineStart(value, pos) {
+        return value.lastIndexOf("\n", pos - 1) + 1;
+      }
+      function lineEnd(value, pos) {
+        const i = value.indexOf("\n", pos);
+        return i === -1 ? value.length : i;
+      }
+      function composerReadlineEdit({ key, ctrlKey, metaKey, altKey, value, selectionStart, selectionEnd }) {
+        if (!ctrlKey || metaKey || altKey || typeof key !== "string") return null;
+        const k = key.toLowerCase();
+        if (!KEYS.has(k)) return null;
+        const text = String(value == null ? "" : value);
+        const start = Math.max(0, Math.min(text.length, selectionStart == null ? text.length : selectionStart));
+        const end = Math.max(start, Math.min(text.length, selectionEnd == null ? start : selectionEnd));
+        if (k === "a") return { value: text, cursor: lineStart(text, start) };
+        if (k === "e") return { value: text, cursor: lineEnd(text, end) };
+        if (end > start) return { value: text.slice(0, start) + text.slice(end), cursor: start };
+        let from = start;
+        let to = start;
+        if (k === "u") from = lineStart(text, start);
+        else if (k === "k") to = lineEnd(text, start);
+        else {
+          const floor = lineStart(text, start);
+          while (from > floor && /\s/.test(text[from - 1])) from--;
+          while (from > floor && !/\s/.test(text[from - 1])) from--;
+        }
+        return { value: text.slice(0, from) + text.slice(to), cursor: from };
+      }
+      module.exports = { composerReadlineEdit };
+    }
+  });
+
   // renderer/lib/turn-stat.js
   var require_turn_stat = __commonJS({
     "renderer/lib/turn-stat.js"(exports, module) {
@@ -44515,6 +44552,7 @@ ${detail}` });
       var { isToolInstallSession } = require_tool_doctor();
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
+      var { composerReadlineEdit } = require_composer_keys();
       var { turnSeg, reqSeg, costSeg } = require_turn_stat();
       var { renderAppendChecklist, collectAppendChecklist, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
@@ -46195,6 +46233,22 @@ ${detail}` });
           });
         };
         composer.addEventListener("keydown", (e) => {
+          const edit = composerReadlineEdit({
+            key: e.key,
+            ctrlKey: e.ctrlKey,
+            metaKey: e.metaKey,
+            altKey: e.altKey,
+            value: composer.value,
+            selectionStart: composer.selectionStart,
+            selectionEnd: composer.selectionEnd
+          });
+          if (edit) {
+            e.preventDefault();
+            composer.value = edit.value;
+            composer.setSelectionRange(edit.cursor, edit.cursor);
+            composer.dispatchEvent(new Event("input", { bubbles: true }));
+            return;
+          }
           if (e.key === " " && !e.repeat && !e.isComposing && !composer.value && seatVoiceMode(name, "tap")) {
             e.preventDefault();
             seatVoiceRecord(name, voiceRecordingSeat === name ? "stop" : "start");

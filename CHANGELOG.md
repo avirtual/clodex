@@ -83,6 +83,7 @@ blocks a release.
 - The transcript pane shows pasted text inline in your prompt instead of a "Pasted text #n" chip that had to be clicked open.
 - Voice dictation now sends on the trigger word without a keystroke: the quiet-window timer was never armed in the app (a setTimeout receiver error the tests could not see), and typing the trigger word in an ordinary message no longer truncates it, since the typed-text check runs only while a dictation is in progress.
 - Voice: a second dictation right after the first now records; the hidden recorder's input line kept the previous sentence and swallowed the record key as a typed space, so it is cleared before each start.
+- Stream seat composer: Ctrl-U, Ctrl-K, Ctrl-W, Ctrl-A and Ctrl-E edit the line the way they do in a terminal (clear to line start, clear to line end, delete the previous word, jump to line start or end).
 
 ## 5.86.0 — 2026-09-23
 
