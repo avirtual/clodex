@@ -2630,7 +2630,7 @@ function createSessionManager(deps) {
             }
           }
           const target = findCodexRollout({ fs, path }, codexLink.home, {
-            sessionId: codexLink.sessionId, cwd: codexLink.cwd, sinceMs: codexLink.sessionId ? session.spawnedAt : session.firstInputAt - 1000, excludePaths: taken,
+            sessionId: codexLink.sessionId, cwd: codexLink.cwd, sinceMs: codexLink.sessionId ? session.spawnedAt : session.firstInputAt, excludePaths: taken,
           });
           if (!target) return;
           try {
@@ -3360,6 +3360,7 @@ function createSessionManager(deps) {
       }
       if (isHumanPtyInput(data)) {
         s.lastUserInputTs = Date.now();
+        if (!s.firstInputAt) s.firstInputAt = s.lastUserInputTs;
         const wasInPaste = s._inPaste;
         const sig = draftChunkSignal(data, s._inPaste);
         s._inPaste = sig.inPaste;
@@ -3375,7 +3376,6 @@ function createSessionManager(deps) {
         // rather than a second predicate that can drift from this one.
         this._foldDraft(s, data, wasInPaste);
       }
-      if (!s.firstInputAt) s.firstInputAt = Date.now();
       try { s.pty.write(data); } catch {}
     }
 

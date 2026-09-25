@@ -8,6 +8,7 @@ const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { isHumanPtyInput, draftChunkSignal } = require('../proxy-util');
 
 const RESUME_ID = '01a0da2a-6469-7632-88a4-67b6ba1a041a';
 
@@ -58,7 +59,7 @@ function mkCodex({ pollMs = 1, deadlineMs = 60000, slowPollMs = 5000 } = {}) {
     mergeCodexInstructions: (a) => ({ cleaned: [...a], merged: '' }),
     deliverSkills: () => null,
     codexStatusLineArg: () => '',
-    isHumanPtyInput: () => false,
+    isHumanPtyInput, draftChunkSignal,
   });
   const m = new SessionManager();
   m._sendToSession = () => {};
@@ -198,4 +199,20 @@ test('t1207: of two codex seats in one cwd, only the one typed into links the ro
     assert.strictEqual(fs.readlinkSync(f.link('b')), target);
     assert.throws(() => fs.lstatSync(f.link('a')), /ENOENT/);
   } finally { f.stop('a'); f.stop('b'); }
+});
+
+test('t1207: terminal auto-replies written to an untyped seat do not count as its first input', async () => {
+  const f = mkCodex();
+  await f.create('cx');
+  const s = f.m.sessions.get('cx');
+  let outcome = null;
+  s._codexLinkDone.then((o) => { outcome = o; });
+  try {
+    f.m.write('cx', '\x1b[1;1R\x1b[I');
+    f.writeRollout(today(), 'rollout-2026-09-25T23-03-27-01a0da2a-0000-7000-8000-000000000001.jsonl', f.work);
+    await new Promise((r) => setTimeout(r, 10));
+    assert.strictEqual(s.firstInputAt, undefined);
+    assert.strictEqual(outcome, null);
+    assert.throws(() => fs.lstatSync(f.link('cx')), /ENOENT/);
+  } finally { f.stop('cx'); }
 });
