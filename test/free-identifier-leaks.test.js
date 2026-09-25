@@ -269,6 +269,9 @@ const SCANNED_MODULES = [
   'team-measure.js',
   'seat-layout.js',
   'muse-skills.js',
+  'stream-seat.js',
+  'stream-reap.js',
+  'stream-codec-claude.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction

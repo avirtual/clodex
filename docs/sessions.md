@@ -627,6 +627,11 @@ worktree-removal failure is toasted by the renderer while the row goes.
 | Move to peer (right-click "Move to Peer…" ▸ peer) | entry kept, `movedTo` stamped, `archivedAt` set | killed; shipped; not respawned (failure → respawned like Move) | archived row "moved to <peer>" |
 | Move to workspace (right-click "Move to Workspace…" ▸ name) | entry kept, only `workspaceId` rewritten | untouched — keeps running; output buffered until the new window attaches | tab leaves this window, appears in the other (or when it next opens) |
 
+Which CLIs support the stream transport is declared per adapter (`stream` block
+in cli-adapters.js): `streamFor(type)` gives the argv, the codec module and the
+transcript repoint, and `capsFor(type).streamIo` gates the dialogs' Stream
+transport box. Today only claude declares one.
+
 **Move Session…** (right-click, agent rows only) changes a seat's cwd. A move is
 "same record, new cwd, restart": `manager.move(name, newCwd)` refuses an unknown
 name, a relative or missing or non-directory destination, an unchanged cwd, and a

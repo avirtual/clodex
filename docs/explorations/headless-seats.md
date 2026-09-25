@@ -803,6 +803,9 @@ What this implies for the other two CLIs:
 - Codex's `caps.park: false` stays true: whether a CLI can be a park target
   depends on its hooks, not on its transport.
 
+The seam landed in t1171 (`stream` block, `streamFor`, per-seat `streamCodec`);
+the codex and muse codec tickets follow on it.
+
 ---
 
 ## 8. Coexistence and sequencing

@@ -2141,7 +2141,7 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   if (stripRow) stripRow.style.display = caps.strip ? '' : 'none';
   if (autoCompactRow) autoCompactRow.style.display = caps.autoCompact ? '' : 'none';
   if (noWireRow) noWireRow.style.display = caps.noWire ? '' : 'none';
-  if (streamIoRow) streamIoRow.style.display = type === 'claude' ? '' : 'none';
+  if (streamIoRow) streamIoRow.style.display = caps.streamIo ? '' : 'none';
   if (accountRow) accountRow.style.display = caps.accounts ? '' : 'none';
   if (toolsAllowRow) toolsAllowRow.style.display = authoring ? '' : 'none';
   if (authoring && caps.tools && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, new Set());
@@ -3120,7 +3120,7 @@ function collectFormConfig() {
     : [];
   const autoCompactOff = caps.autoCompact && inputAutoCompact && !inputAutoCompact.checked;
   const noWireOn = caps.noWire && inputNoWire && inputNoWire.checked;
-  const streamIoOn = type === 'claude' && inputStreamIo && inputStreamIo.checked;
+  const streamIoOn = caps.streamIo && inputStreamIo && inputStreamIo.checked;
   // NOTE (maintained-list coupling): the keys this returns are the EDITOR_OWNED
   // set in stores.js `save()` — the dialog fully controls them, so an OMITTED
   // owned key on save means "removed", not "preserve the stored value". Keep the
@@ -3160,7 +3160,7 @@ async function doCreate() {
   const { type, cwd, extraArgs, proxy, agents, execCommands, denyBuiltins,
           disabledTools, disabledSkills, injectSkills, stripLevel,
           systemPromptFile, appendPromptFiles, intents, noWire, plugins } = cfg;
-  const io = type === 'claude' && inputStreamIo && inputStreamIo.checked ? 'stream' : 'pty';
+  const io = capsFor(type).streamIo && inputStreamIo && inputStreamIo.checked ? 'stream' : 'pty';
   const env = collectDialogEnv();
 
   const supportsPrompts = isAgentType(type);
@@ -8069,7 +8069,7 @@ async function openArgsDialog(name, argsSource = null) {
   argsAppendRow.style.display = isAgent ? '' : 'none';
   argsAppendSection.style.display = isAgent ? '' : 'none';
   const caps = capsFor(res.type);
-  const ioEditable = res.type === 'claude' && !argsSource;
+  const ioEditable = caps.streamIo && !argsSource;
   if (argsStreamIoRow) argsStreamIoRow.style.display = ioEditable ? '' : 'none';
   if (argsStreamIo) argsStreamIo.checked = ioEditable && res.io === 'stream';
   argsAccountRow.style.display = caps.accounts ? '' : 'none';

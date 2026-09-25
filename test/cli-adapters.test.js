@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, adapterFor, seatType, stripModelArgs, hasBypass, resolveModelId,
+  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, streamFor, adapterFor, seatType, stripModelArgs, hasBypass, resolveModelId,
 } = require('../cli-adapters');
 const { createSkillDelivery } = require('../skill-delivery');
 
@@ -24,6 +24,7 @@ test('t749: claude is the full row', () => {
     autoCompact: true,
     noWire: true,
     accounts: true,
+    streamIo: true,
   });
 });
 
@@ -38,6 +39,7 @@ test('t749: codex gets exactly the two settings it honours', () => {
     autoCompact: false,
     noWire: false,
     accounts: false,
+    streamIo: false,
   });
 });
 
@@ -66,7 +68,7 @@ test('t749: the dialog may not offer skills to a provider main cannot deliver to
   assert.deepStrictEqual(offered.sort(), [...deliverable].sort());
 });
 
-const ENTRY_KEYS = ['id', 'label', 'cmd', 'model', 'posture', 'account', 'cwdDir', 'readOnlyCap', 'seatSettings', 'skills', 'instructions', 'transcript', 'caps', 'ui'];
+const ENTRY_KEYS = ['id', 'label', 'cmd', 'model', 'posture', 'account', 'cwdDir', 'readOnlyCap', 'seatSettings', 'skills', 'instructions', 'transcript', 'caps', 'stream', 'ui'];
 
 test('every adapter entry carries the whole entry key set', () => {
   for (const [type, entry] of Object.entries(ADAPTERS)) {
@@ -134,14 +136,15 @@ test('m2: the muse row — Meta\'s CLI, XDG overlay bootstrap, user-scope AGENTS
     instructions: 'user-agents-md',
     transcript: { reader: 'muse', link: 'clodex' },
     caps: { park: false, transcript: true, warmth: false },
+    stream: null,
     ui: {
       injectSkills: true, skillRoster: true, plugins: true, agents: false, tools: false,
-      strip: false, autoCompact: false, noWire: false, accounts: false,
+      strip: false, autoCompact: false, noWire: false, accounts: false, streamIo: false,
     },
   });
   assert.deepStrictEqual(capsFor('muse'), {
     injectSkills: true, skillRoster: true, plugins: true, agents: false, tools: false,
-    strip: false, autoCompact: false, noWire: false, accounts: false,
+    strip: false, autoCompact: false, noWire: false, accounts: false, streamIo: false,
   });
   assert.deepStrictEqual(stripModelArgs('muse', ['--model', 'x', 'y']), ['y']);
   assert.strictEqual(resolveModelId('muse', 'opus'), 'opus', 'no aliases: an alias word is not expanded, it passes through as an id');
@@ -362,4 +365,47 @@ test('t749: the Edit save echoes a roster it never painted instead of clearing i
     src.indexOf('\nfunction closeArgsDialog'));
   assert.match(dlg, /argsSkillsDisabledPersisted = sc\.disabledSkills \|\| \[\];/,
     'openArgsDialog captures the read roster for the save to echo');
+});
+
+const STREAM_HEAD = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'];
+
+test('t1171: streamFor(claude) builds the stream-json argv; a fresh seat gets --session-id, a resume --resume and --fork-session', () => {
+  const block = streamFor('claude');
+  assert.strictEqual(block.codec, 'stream-codec-claude');
+  assert.strictEqual(block.toolBoundary, 'hook');
+  assert.strictEqual(block.transcriptRepoint, 'claude');
+  assert.deepStrictEqual(block.argv({ resumeId: null, sessionId: 'S', fork: false }), [...STREAM_HEAD, '--session-id', 'S']);
+  assert.deepStrictEqual(block.argv({ resumeId: 'R', sessionId: 'S', fork: true }), [...STREAM_HEAD, '--resume', 'R', '--fork-session']);
+  assert.deepStrictEqual(block.argv({ resumeId: 'R', sessionId: 'S', fork: false }), [...STREAM_HEAD, '--resume', 'R']);
+});
+
+test('t1171: streamFor is null for codex, muse and unknown types', () => {
+  assert.strictEqual(streamFor('codex'), null);
+  assert.strictEqual(streamFor('muse'), null);
+  assert.strictEqual(streamFor('bash'), null);
+  assert.strictEqual(streamFor(undefined), null);
+});
+
+test('t1171: capsFor(type).streamIo is the renderer gate, true only for claude', () => {
+  const rows = [
+    ['claude', true],
+    ['codex', false],
+    ['muse', false],
+    ['bash', false],
+  ];
+  for (const [type, want] of rows) assert.strictEqual(capsFor(type).streamIo, want, type);
+});
+
+test('t1171: renderer gates the stream-transport controls on capsFor(type).streamIo, never on a claude literal', () => {
+  const lines = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8').split('\n');
+  const anchor = /streamIo|StreamIo|args-stream-io/;
+  const anchors = lines.map((l, i) => (anchor.test(l) ? i : -1)).filter((i) => i >= 0);
+  assert.ok(anchors.length >= 8, `ENTER: the stream-io controls are found (${anchors.length})`);
+  const hits = [];
+  for (const i of anchors) {
+    for (let j = Math.max(0, i - 3); j <= Math.min(lines.length - 1, i + 3); j += 1) {
+      if (lines[j].includes("type === 'claude'")) hits.push(`${j + 1}: ${lines[j].trim()}`);
+    }
+  }
+  assert.deepStrictEqual([...new Set(hits)], []);
 });

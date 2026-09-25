@@ -20728,7 +20728,7 @@ test('t1099 onUndelivered: a unit whose seat DIES mid-settle is re-parked stampe
     'stamped from the closure\'s own session: after _cleanup neither the map nor persistence knows the name, and an unstamped entry would reach the next seat of that name');
 });
 
-function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, holdDm = null, hintArm = null, selectionArm = null } = {}) {
+function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, holdDm = null, hintArm = null, selectionArm = null, streamFor = null, loadStreamCodec = null } = {}) {
   const os = require('node:os');
   const fs = require('node:fs');
   const path = require('node:path');
@@ -20840,11 +20840,13 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, hold
     arm: { onContextReset: () => {} },
     ...(hintArm ? { hintArm, isHumanPtyInput: require('../proxy-util').isHumanPtyInput, draftChunkSignal: require('../proxy-util').draftChunkSignal } : {}),
     ...(selectionArm ? { selectionArm } : {}),
+    ...(streamFor ? { streamFor } : {}),
+    ...(loadStreamCodec ? { loadStreamCodec } : {}),
   });
   const m = new SessionManager();
   m._sendToSession = () => {};
   m._broadcast = () => {};
-  const create = (name, resumeId = null, io = 'stream') => m.create(name, 'claude', os.tmpdir(), [], resumeId, 'ws', null, false, null,
+  const create = (name, resumeId = null, io = 'stream', type = 'claude') => m.create(name, type, os.tmpdir(), [], resumeId, 'ws', null, false, null,
     [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, io);
   const line = (name, obj) => handles[handles.length - 1].opts.onLine(obj);
   const stopAll = () => {
@@ -21575,4 +21577,47 @@ test('stream seat arm (d): a pty seat Enter goes through the same final arm, sub
     ['selection.onSubmit', 'sa6'],
   ]);
   assert.deepStrictEqual(written, ['foo', '\r']);
+});
+
+test('t1171: a codex seat asking for the stream transport is refused by the adapter table, before anything spawns', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await assert.rejects(h.create('stc1', null, 'stream', 'codex'), { message: 'stream transport is not supported for codex' });
+  await assert.rejects(h.create('stc2', null, 'stream', 'muse'), { message: 'stream transport is not supported for muse' });
+  assert.strictEqual(h.spawns.length, 0);
+});
+
+test('t1171: _streamWrite and _onStreamEvent go through the seat codec the adapter names, not the claude module', async (t) => {
+  const claudeCodec = require('../stream-codec-claude');
+  const origEncode = claudeCodec.encodeUser;
+  const origDecode = claudeCodec.decode;
+  const claudeCalls = [];
+  claudeCodec.encodeUser = (...a) => { claudeCalls.push('encode'); return origEncode(...a); };
+  claudeCodec.decode = (...a) => { claudeCalls.push('decode'); return origDecode(...a); };
+  t.after(() => { claudeCodec.encodeUser = origEncode; claudeCodec.decode = origDecode; });
+  const { streamFor: realStreamFor } = require('../cli-adapters');
+  const encoded = [];
+  const decoded = [];
+  const stub = {
+    encodeUser: (text, images) => { encoded.push([text, images.length]); return { stub: text }; },
+    decode: (line) => { decoded.push(line); return { kind: 'result' }; },
+  };
+  const loads = [];
+  const h = mkStreamSeatManager({
+    streamFor: (type) => (type === 'claude' ? { ...realStreamFor('claude'), codec: 'stub-codec' } : null),
+    loadStreamCodec: (id) => { loads.push(id); return stub; },
+  });
+  t.after(() => h.stopAll());
+  await h.create('stc3');
+  assert.deepStrictEqual(loads, ['stub-codec']);
+  const s = h.m.sessions.get('stc3');
+  assert.strictEqual(s.streamCodec, stub);
+  assert.deepStrictEqual(h.m.seatSend('stc3', 'hello'), { ok: true, queued: 0 });
+  assert.deepStrictEqual(encoded, [['hello', 0]]);
+  assert.deepStrictEqual(h.handles[0].sent, [{ stub: 'hello' }]);
+  assert.strictEqual(s.streamBusy, true);
+  h.line('stc3', { anything: 1 });
+  assert.deepStrictEqual(decoded, [{ anything: 1 }]);
+  assert.strictEqual(s.streamBusy, false, 'the stub decoded a result, so the turn ended');
+  assert.deepStrictEqual(claudeCalls, []);
 });
