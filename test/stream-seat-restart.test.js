@@ -115,11 +115,18 @@ test('applySessionArgs with io:stream and no restart persists it for the next re
   assert.strictEqual(eng.stores.persistence.get('io-later').io, 'stream');
 });
 
-test('applySessionArgs refuses io:stream on a non-claude seat and keeps its transport', async () => {
+test('applySessionArgs refuses io:stream on a seat whose adapter declares no stream transport and keeps its transport', async () => {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert({ ...PTY_ENTRY('io-muse'), type: 'muse' });
+  await eng.applySessionArgs('io-muse', { extraArgs: [], restart: false, io: 'stream' }, 'default');
+  assert.strictEqual(eng.stores.persistence.get('io-muse').io, 'pty');
+});
+
+test('t1172: applySessionArgs accepts io:stream on a codex seat', async () => {
   const eng = mkEngine();
   eng.stores.persistence.upsert({ ...PTY_ENTRY('io-codex'), type: 'codex' });
   await eng.applySessionArgs('io-codex', { extraArgs: [], restart: false, io: 'stream' }, 'default');
-  assert.strictEqual(eng.stores.persistence.get('io-codex').io, 'pty');
+  assert.strictEqual(eng.stores.persistence.get('io-codex').io, 'stream');
 });
 
 after(() => { setImmediate(() => process.exit(0)); });

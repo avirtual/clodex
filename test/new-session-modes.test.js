@@ -883,6 +883,7 @@ test('t1077: a CODEX form emits every EDITOR_OWNED key its platform lacks WITH i
     execCommands: ['exec-a'],
     intents: ['dm'],
     plugins: ['p1'],
+    io: 'stream',
     denyBuiltins: [],
     disabledTools: [],
     disabledSkills: [],

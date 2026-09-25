@@ -190,6 +190,12 @@ bundle), whose packaged form is the Docker image under
   records (`init`, `result`, `conversation_reset`, `compact_boundary`,
   `system/status`, `permission_denied`) and `encodeUser`. Content records are
   not decoded: the transcript file carries them.
+- **stream-codec-codex.js** — `create(ctx)` returns a stateful codec for
+  `codex app-server` JSON-RPC: the `open()` handshake (initialize, thread/start
+  or thread/resume with the seat's posture), `decode` into the claude record
+  kinds, approval requests declined through `send`, `encodeUser` (turn/start,
+  text only), `encodeContext` (thread/compact/start, a fresh thread/start) and
+  `encodeInterrupt` (turn/interrupt).
 - **stream-reap.js** — the reap-before-resume decision (`kill` / `recycled` /
   `dead` from liveness + a start-time match) and `reapBeforeResume`, which
   applies it (SIGTERM the group, wait, SIGKILL) before a stream seat resumes,

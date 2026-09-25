@@ -39,7 +39,7 @@ test('t749: codex gets exactly the two settings it honours', () => {
     autoCompact: false,
     noWire: false,
     accounts: false,
-    streamIo: false,
+    streamIo: true,
   });
 });
 
@@ -379,17 +379,24 @@ test('t1171: streamFor(claude) builds the stream-json argv; a fresh seat gets --
   assert.deepStrictEqual(block.argv({ resumeId: 'R', sessionId: 'S', fork: false }), [...STREAM_HEAD, '--resume', 'R']);
 });
 
-test('t1171: streamFor is null for codex, muse and unknown types', () => {
-  assert.strictEqual(streamFor('codex'), null);
+test('t1172: streamFor(codex) runs app-server over stdio; resume rides the wire, not the argv', () => {
+  const block = streamFor('codex');
+  assert.deepStrictEqual({ ...block, argv: undefined }, { codec: 'stream-codec-codex', argv: undefined, toolBoundary: 'hook', transcriptRepoint: 'record' });
+  assert.deepStrictEqual(block.argv({ resumeId: null, sessionId: 'S', fork: false }), ['app-server']);
+  assert.deepStrictEqual(block.argv({ resumeId: 'R', sessionId: 'S', fork: true }), ['app-server']);
+  assert.strictEqual(capsFor('codex').streamIo, true);
+});
+
+test('t1171: streamFor is null for muse and unknown types', () => {
   assert.strictEqual(streamFor('muse'), null);
   assert.strictEqual(streamFor('bash'), null);
   assert.strictEqual(streamFor(undefined), null);
 });
 
-test('t1171: capsFor(type).streamIo is the renderer gate, true only for claude', () => {
+test('t1171: capsFor(type).streamIo is the renderer gate, true for claude and codex', () => {
   const rows = [
     ['claude', true],
-    ['codex', false],
+    ['codex', true],
     ['muse', false],
     ['bash', false],
   ];

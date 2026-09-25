@@ -64,7 +64,12 @@ const ADAPTERS = {
     instructions: 'model-instructions-file',
     transcript: { reader: 'codex', link: 'hook' },
     caps: { park: false, transcript: true, warmth: false },
-    stream: null,
+    stream: {
+      codec: 'stream-codec-codex',
+      argv: () => ['app-server'],
+      toolBoundary: 'hook',
+      transcriptRepoint: 'record',
+    },
     ui: {
       injectSkills: true,
       skillRoster: false,
@@ -75,7 +80,7 @@ const ADAPTERS = {
       autoCompact: false,
       noWire: false,
       accounts: false,
-      streamIo: false,
+      streamIo: true,
     },
   },
   muse: {
