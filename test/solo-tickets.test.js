@@ -214,6 +214,19 @@ test('solo add: no git repo → refuses, naming why, and writes no board', () =>
   assert.ok(!fsReal.existsSync(f.boardPath(bare)), 'no board minted outside a repo');
 });
 
+test('solo add on a malformed board replies the refusal and leaves the board bytes intact', () => {
+  const f = mkSolo();
+  const s = f.seat('solo');
+  const file = f.boardPath(f.repo);
+  fsReal.mkdirSync(pathReal.dirname(file), { recursive: true });
+  fsReal.writeFileSync(file, '{ not json');
+
+  assert.doesNotThrow(() => f.m._handleTask(s, { type: 'task', sub: 'add', who: null, id: null, body: 'lost?' }));
+
+  assert.strictEqual(f.last(), `[agent:task] error: task add failed: tickets board at ${file} is not valid JSON; refusing to overwrite`);
+  assert.strictEqual(fsReal.readFileSync(file, 'utf-8'), '{ not json');
+});
+
 test('solo assign: the target names a LIVE SESSION (no roles exist to match)', () => {
   const f = mkSolo();
   const s = f.seat('solo');

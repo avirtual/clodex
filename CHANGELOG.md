@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Tickets board writes refuse to overwrite a board that could not be read (malformed, unreadable, or not an array) instead of replacing it with a fresh one; a missing board is still created.
 
 - Stream seats: Esc in the message box interrupts the running turn on claude, codex and muse seats, the way it does in the terminal.
 - Muse stream seats: allowing a compound shell command (segments joined by ; or |) on the permission card now approves every segment; before, only the first was decided and the seat sat waiting on the rest.
