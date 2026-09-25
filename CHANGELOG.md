@@ -85,6 +85,7 @@ blocks a release.
 - Voice: a second dictation right after the first now records; the hidden recorder's input line kept the previous sentence and swallowed the record key as a typed space, so it is cleared before each start.
 - Voice: the note that tells a seat a message was dictated now says the message is above it, which is where the proxy puts it; it used to say 'the message that follows'.
 - Stream seat composer: Ctrl-U, Ctrl-K, Ctrl-W, Ctrl-A and Ctrl-E edit the line the way they do in a terminal (clear to line start, clear to line end, delete the previous word, jump to line start or end).
+- The stream transport checkbox in New Session and Edit Session describes the option as headless over the CLI's stream protocol instead of naming `claude -p`, since codex and muse seats take it too; the stale 'no dms, intents or permission prompts yet' note is gone, as stream seats now take all three.
 
 ## 5.86.0 — 2026-09-23
 

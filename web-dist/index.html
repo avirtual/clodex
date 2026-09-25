@@ -9721,7 +9721,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <label id="stream-io-row">Stream transport (experimental)
             <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
               <input type="checkbox" id="input-stream-io" style="margin: 0;">
-              <span class="hint-text" style="margin: 0;">Run the seat as <code>claude -p</code> over stream-json with no terminal: the transcript is its view and a composer below it is its input. It survives a Clodex relaunch. No dms, intents or permission prompts yet.</span>
+              <span class="hint-text" style="margin: 0;">Run the seat headless over the CLI's stream protocol, with no terminal: the transcript pane is its view and a composer below it is its input. It survives a Clodex relaunch.</span>
             </label>
           </label>
           </label>
@@ -9877,7 +9877,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
       <label id="args-stream-io-row">Stream transport (experimental)
         <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
           <input type="checkbox" id="args-stream-io" style="margin: 0;">
-          <span class="hint-text" style="margin: 0;">Run the seat as <code>claude -p</code> over stream-json. Takes effect at the next restart.</span>
+          <span class="hint-text" style="margin: 0;">Run the seat headless over the CLI's stream protocol. Takes effect at the next restart.</span>
         </label>
       </label>
       <details id="args-append-section" class="dialog-section">
