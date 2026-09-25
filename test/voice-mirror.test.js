@@ -203,6 +203,42 @@ test('after released() completes a dictation, a typed trigger word no longer sen
   assert.equal(ta.value, 'x enter');
 });
 
+test('after released() ends a dictation the quiet window never stopped, a typed trigger word no longer sends', () => {
+  const ta = fakeTextarea();
+  const clock = fakeClock();
+  const sent = [];
+  const sub = attachTriggerSubmit(ta, {
+    getConfig: () => ({ enabled: true, phrase: 'enter' }),
+    markOrigin: () => {},
+    send: () => { sent.push(ta.value); ta.value = ''; },
+    holdsFire: () => false,
+    quietMs: 1200,
+    timers: clock.timers,
+  });
+  sub.draft('hello world');
+  clock.advance(1200);
+  sub.released();
+  ta.type('hello world press enter');
+  assert.deepEqual(sent, []);
+  assert.equal(ta.value, 'hello world press enter');
+});
+
+test('a timer whose clear throws is traced as timer failed and rethrown', () => {
+  const ta = fakeTextarea();
+  const traces = [];
+  const sub = attachTriggerSubmit(ta, {
+    getConfig: () => ({ enabled: true, phrase: 'enter' }),
+    markOrigin: () => {},
+    send: () => {},
+    quietMs: 1200,
+    timers: { set: () => 1, clear: () => { throw new TypeError('Illegal invocation'); } },
+    trace: (l) => traces.push(l),
+  });
+  sub.draft('hello');
+  assert.throws(() => sub.draft('hello there'), /Illegal invocation/);
+  assert.deepEqual(traces, ['timer failed: Illegal invocation']);
+});
+
 test('a mirrored utterance sends once: the trigger waits out the repaint, then stops and disarms', () => {
   const t = fakeTerminal([`${HEAD}`]);
   const ta = fakeTextarea();
@@ -539,4 +575,13 @@ test('a pty seat: an empty dictation writes nothing', () => {
   const f = ptyFixture();
   f.sink.released();
   assert.deepEqual(f.writes, []);
+});
+
+test('a pty seat: a release before the quiet window strips the trigger phrase from what it writes', () => {
+  const f = ptyFixture();
+  f.mirror.arm();
+  f.t.paint([`${HEAD}ship it over and out`]);
+  f.mirror.release();
+  f.t.paint([`${HEAD}`]);
+  assert.deepStrictEqual(f.writes, ['\x1b[200~ship it\x1b[201~', '\r']);
 });

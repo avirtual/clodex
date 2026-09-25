@@ -148,7 +148,7 @@ function attachTriggerSubmit(composer, {
   };
   composer.addEventListener('input', onInput);
   return {
-    check: onInput,
+    check: () => fire(false),
     draft(text) {
       const next = applyDraft(composer.value, span, text);
       composer.value = next.value;
@@ -157,10 +157,11 @@ function attachTriggerSubmit(composer, {
     },
     released() {
       note(`released stopping=${stopping}`);
-      if (!stopping) return;
-      settle();
-      cancelQuiet();
-      fire(true);
+      if (stopping) {
+        settle();
+        cancelQuiet();
+        fire(true);
+      }
       span = null;
     },
     resetSpan() { span = null; stopping = false; stopFails = 0; trigger.reset(); },
