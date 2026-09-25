@@ -2413,7 +2413,7 @@ function registerIpcHandlers(deps) {
     if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };
     if (!['start', 'stop', 'toggle'].includes(action)) return { ok: false, error: 'action must be start, stop or toggle' };
     const seen = observed && typeof observed === 'object'
-      ? { recording: observed.recording === true, processing: observed.processing === true }
+      ? { recording: observed.recording === true, processing: observed.processing === true, text: observed.text === true }
       : null;
     return manager.voiceRecord(s.name, action, { workspaceId: s.workspaceId, observed: seen });
   });

@@ -81,6 +81,7 @@ blocks a release.
 - Terminal: Preferences ▸ Appearance gains a GPU-accelerated terminal (WebGL) option, off by default; a lost or refused WebGL context falls back to the DOM renderer silently.
 - The transcript pane shows pasted text inline in your prompt instead of a "Pasted text #n" chip that had to be clicked open.
 - Voice dictation now sends on the trigger word without a keystroke: the quiet-window timer was never armed in the app (a setTimeout receiver error the tests could not see), and typing the trigger word in an ordinary message no longer truncates it, since the typed-text check runs only while a dictation is in progress.
+- Voice: a second dictation right after the first now records; the hidden recorder's input line kept the previous sentence and swallowed the record key as a typed space, so it is cleared before each start.
 
 ## 5.86.0 — 2026-09-23
 

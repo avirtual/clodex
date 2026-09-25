@@ -5104,13 +5104,15 @@ function createSessionManager(deps) {
         }
       }
       const plan = voiceEngineSpec.planRecord({ mode, action, recording: engine.recording });
-      log.info('voice', `${armedBy.name} record ${action} mode=${mode} observed=${observed ? JSON.stringify(observed) : 'none'} tracked=${tracked} plan=${JSON.stringify(plan)}${plan && plan.write ? ' RECORD_KEY written' : ''}`);
+      const clearRow = !!(plan && plan.write && plan.recording === true && sameWindow && observed && typeof observed === 'object' && observed.text === true);
+      log.info('voice', `${armedBy.name} record ${action} mode=${mode} observed=${observed ? JSON.stringify(observed) : 'none'} tracked=${tracked} plan=${JSON.stringify(plan)}${plan && plan.write ? ' RECORD_KEY written' : ''}${clearRow ? ' row cleared' : ''}`);
       const { RECORD_KEY } = voiceEngineSpec;
       const prevWs = engine.armedBy && engine.armedBy.workspaceId;
       engine.armedBy = armedBy;
       if (armedBy.workspaceId && armedBy.workspaceId !== prevWs && !engine.dead) {
         try { await this._repaintVoiceEngine(engine); } catch {}
       }
+      if (clearRow) engine.pty.write('\x15');
       if (plan.write) engine.pty.write(RECORD_KEY);
       engine.recording = plan.recording;
       return { ok: true, recording: plan.recording, engine: engine.name };

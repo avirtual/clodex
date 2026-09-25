@@ -264,7 +264,11 @@ test('voice:record passes a pty seat and a stream seat alike, carrying no mode o
     ['st', 'toggle', { workspaceId: 'ws-1', observed: null }],
   ]);
   await f.record('st', 'start', { recording: 1, processing: true, extra: 'x' });
-  assert.deepEqual(f.calls[2], ['st', 'start', { workspaceId: 'ws-1', observed: { recording: false, processing: true } }]);
+  assert.deepEqual(f.calls[2], ['st', 'start', { workspaceId: 'ws-1', observed: { recording: false, processing: true, text: false } }]);
+  await f.record('st', 'start', { recording: false, processing: false, text: true });
+  assert.deepEqual(f.calls[3], ['st', 'start', { workspaceId: 'ws-1', observed: { recording: false, processing: false, text: true } }]);
+  await f.record('st', 'start', { text: 'yes' });
+  assert.deepEqual(f.calls[4], ['st', 'start', { workspaceId: 'ws-1', observed: { recording: false, processing: false, text: false } }]);
 });
 
 test('voiceRecord on an OFF seat writes nothing, spawns nothing and refuses', async () => {
@@ -335,6 +339,32 @@ test('a recorder the CLI stopped on its own: the next toggle starts it rather th
   assert.deepEqual(res, { ok: true, recording: true, engine: VOICE_ENGINE_NAME });
   assert.deepEqual(h.writes, [' ', ' ']);
   assert.deepEqual(h.logs, [{ type: 'voice-engine-resync', agent: 'st', tracked: true, observed: false }]);
+  h.m.killVoiceEngine();
+});
+
+test('a start over a row still holding text clears it with Ctrl-U before the record key', async () => {
+  const h = resyncFixture();
+  await h.tap('stop', null);
+  const res = await h.tap('start', { recording: false, processing: false, text: true });
+  assert.deepEqual(res, { ok: true, recording: true, engine: VOICE_ENGINE_NAME });
+  assert.deepEqual(h.writes, ['\x15', ' ']);
+  h.m.killVoiceEngine();
+});
+
+test('a start over an empty row writes only the record key', async () => {
+  const h = resyncFixture();
+  await h.tap('stop', null);
+  await h.tap('start', { recording: false, processing: false, text: false });
+  assert.deepEqual(h.writes, [' ']);
+  h.m.killVoiceEngine();
+});
+
+test('a stop never clears the row, even when it holds text', async () => {
+  const h = resyncFixture();
+  await h.tap('stop', null);
+  await h.tap('start', { recording: false, processing: false, text: false });
+  await h.tap('stop', { recording: true, processing: false, text: true });
+  assert.deepEqual(h.writes, [' ', ' ']);
   h.m.killVoiceEngine();
 });
 
