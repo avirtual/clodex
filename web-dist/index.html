@@ -10007,7 +10007,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         <p class="hint-text">Claude seats on this desktop show their conversation from the transcript above a live strip of the terminal from the composer down. Dialogs and menus fall back to the full terminal.</p>
       </details>
       <details class="prefs-group" data-group="voice">
-        <summary><h4>Voice input</h4><span class="prefs-group-sub">Off, tap-to-talk, or hold-to-talk</span></summary>
+        <summary><h4>Voice input</h4><span class="prefs-group-sub">Off or on</span></summary>
         <p class="hint-text">Applies as soon as you pick it — Cancel does not undo it. The mode belongs to the focused seat, and the voice button on that seat’s bar is the same control.</p>
         <div class="prefs-row">
           <span>Mode</span>
@@ -29678,8 +29678,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
           phrase: normalizePhrase(raw.voiceSubmitPhrase) || DEFAULT_SUBMIT_PHRASE
         };
       }
-      function spaceTriggerAction({ data, typedSinceEnter, voiceOn, recording, hasSink } = {}) {
-        if (data !== " " || typedSinceEnter || !voiceOn || !hasSink) return null;
+      function spaceTriggerAction({ data, typedSinceEnter, voiceOn, recording, hasSink, agentSeat, altScreen } = {}) {
+        if (data !== " " || typedSinceEnter || !voiceOn || !hasSink || !agentSeat || altScreen) return null;
         return recording ? "stop" : "start";
       }
       function ptyTypedSinceEnter(prev, data) {
@@ -38546,7 +38546,7 @@ void main() {
             const mark = i.mode === mode ? "\u25CF" : "\u25CB";
             return `<div class="voice-row${on}${dead}"${dead ? "" : ` data-mode="${i.mode}"`}><span class="voice-row-mark">${mark}</span><span class="voice-row-main"><span class="voice-row-name">${esc(i.name)}</span><span class="voice-row-desc">${esc(i.desc)}</span></span></div>`;
           }).join("");
-          const note = snap.capable === false ? `Voice input is unavailable on this machine: ${esc(snap.cause || "this node\u2019s Claude CLI cannot record")}` : snap.pending ? `Switching to ${esc(snap.pending)}\u2026` : "This seat\u2019s voice mode.";
+          const note = snap.capable === false ? `Voice input is unavailable on this machine: ${esc(snap.cause || "this node\u2019s Claude CLI cannot record")}` : snap.pending ? `Switching to ${snap.pending === "off" ? "off" : "on"}\u2026` : "This seat\u2019s voice mode.";
           body.innerHTML = `<div class="voice-rows">${rows}</div><div class="rec-host">${recorderHtml()}</div><div class="cost-note">${note}</div><div class="speak-host">${speakHtml()}</div>`;
           lastReading = readingKey();
           refreshSpeakSection();
@@ -46109,7 +46109,7 @@ ${detail}` });
           });
         };
         composer.addEventListener("keydown", (e) => {
-          if (e.key === " " && !e.isComposing && !composer.value && seatVoiceMode(name, "tap")) {
+          if (e.key === " " && !e.repeat && !e.isComposing && !composer.value && seatVoiceMode(name, "tap")) {
             e.preventDefault();
             seatVoiceRecord(name, voiceRecordingSeat === name ? "stop" : "start");
             return;
@@ -46249,7 +46249,11 @@ ${detail}` });
         const intentHighlight = createIntentHighlight(terminal);
         const ptyVoice = peer ? null : createPtyVoiceDraft({
           getConfig: () => voiceSubmitConfig,
-          write: (data) => window.api.writeToSession(name, data),
+          write: (data) => {
+            const seat = sessions.get(name);
+            if (seat) seat.typedSinceEnter = ptyTypedSinceEnter(seat.typedSinceEnter, data);
+            window.api.writeToSession(name, data);
+          },
           markOrigin: () => window.api.markVoiceOrigin(name),
           onVoiceFire: () => seatVoiceFired(name),
           holdsFire: () => voiceRecordingSeat === name && seatVoiceMode(name, "tap"),
@@ -46291,7 +46295,9 @@ ${detail}` });
             typedSinceEnter: !!(seat && seat.typedSinceEnter),
             voiceOn: seatVoiceMode(name, "tap"),
             recording: voiceRecordingSeat === name,
-            hasSink: !!voiceSinkFor(name)
+            hasSink: !!voiceSinkFor(name),
+            agentSeat: isAgentType(sessionTypeOf(name)),
+            altScreen: terminal.buffer.active.type === "alternate"
           });
           if (act) {
             seatVoiceRecord(name, act);
