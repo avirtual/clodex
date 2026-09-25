@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- A headless seat whose CLI never answers the codec's opening handshake is flagged after 60 seconds (log line with the stderr tail, attention state) instead of showing 'thinking' forever; queued messages stay queued and nothing is resent.
 - Stream seats: Esc in the message box interrupts the running turn on claude, codex and muse seats, the way it does in the terminal.
 - Muse stream seats: allowing a compound shell command (segments joined by ; or |) on the permission card now approves every segment; before, only the first was decided and the seat sat waiting on the rest.
 - Sandbox: muse logs in inside a box without a keychain (the box exports TBH_CREDENTIAL_BACKEND=file), and muse's sessions and caches land on a persistent host-bound data dir instead of the container's overlay.
