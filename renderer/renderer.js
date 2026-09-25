@@ -50,6 +50,7 @@ const { accountRowView, buildAccountRow, modelOptions } = require('./lib/account
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
+const { composerReadlineEdit } = require('./lib/composer-keys');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
 const { renderAppendChecklist, collectAppendChecklist, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
@@ -1742,6 +1743,17 @@ function createStreamSeatPane(name, wrapperEl) {
     });
   };
   composer.addEventListener('keydown', (e) => {
+    const edit = !e.isComposing && composerReadlineEdit({
+      key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey,
+      value: composer.value, selectionStart: composer.selectionStart, selectionEnd: composer.selectionEnd,
+    });
+    if (edit) {
+      e.preventDefault();
+      composer.value = edit.value;
+      composer.setSelectionRange(edit.cursor, edit.cursor);
+      composer.dispatchEvent(new Event('input', { bubbles: true }));
+      return;
+    }
     if (e.key === ' ' && !e.repeat && !e.isComposing && !composer.value && seatVoiceMode(name, 'tap')) {
       e.preventDefault();
       seatVoiceRecord(name, voiceRecordingSeat === name ? 'stop' : 'start');
