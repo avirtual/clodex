@@ -1055,6 +1055,23 @@ test('t1167 (c): a compact completed before the restart is still a cold boundary
   assert.deepStrictEqual(cuts, [{ sticky: 0, expanded: 2 }]);
 });
 
+test('t1190: close() writes a pending drop before the server closes — the next proxy loads no record, sticky 0, expanded 2', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const store = fakeShownStore();
+  const clock = { t: 1_000_000 };
+  const { first, bodyOf, all } = await twoRequestsThenRestart(root, store, clock);
+  assert.deepStrictEqual(first, [{ sticky: 0, expanded: 2 }, { sticky: 2, expanded: 3 }]);
+  assert.deepStrictEqual(store.saved.tester.shown.length, 3, 'ENTER: the set reached the store');
+  const proxy = new WireProxy({ upstreams: { anthropic: 'http://127.0.0.1:1' }, now: () => clock.t, spillShownStore: store });
+  await proxy.listen();
+  proxy._dropSpillShownRecord('tester');
+  await proxy.close();
+  const next = new WireProxy({ upstreams: { anthropic: 'http://127.0.0.1:1' }, now: () => clock.t, spillShownStore: store });
+  assert.deepStrictEqual(Object.keys(next._spillShownRecords), []);
+  const { cuts } = await afterRestart(root, store, clock, bodyOf(all));
+  assert.deepStrictEqual(cuts, [{ sticky: 0, expanded: 2 }]);
+});
+
 test('t1167 (d): unregisterAgent removes the agent record from the store', async () => {
   const root = mkTmpRoot('clodex-spill-');
   const store = fakeShownStore();
