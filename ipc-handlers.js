@@ -2392,6 +2392,14 @@ function registerIpcHandlers(deps) {
     return manager.seatSend(s.name, typeof text === 'string' ? text : '', checked.images);
   });
 
+  on('seat:draft', (e, name, text) => {
+    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
+    if (surface !== 'desktop') return;
+    const s = manager.sessions.get(String(name || ''));
+    if (!s || s.workspaceId !== workspaceOfSender(e)) return;
+    manager.seatDraft(s.name, typeof text === 'string' ? text : '');
+  });
+
   handle('voice:record', (e, name, action, observed = null) => {
     const s = manager.sessions.get(String(name || ''));
     if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };

@@ -20728,7 +20728,7 @@ test('t1099 onUndelivered: a unit whose seat DIES mid-settle is re-parked stampe
     'stamped from the closure\'s own session: after _cleanup neither the map nor persistence knows the name, and an unstamped entry would reach the next seat of that name');
 });
 
-function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, holdDm = null } = {}) {
+function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, holdDm = null, hintArm = null, selectionArm = null } = {}) {
   const os = require('node:os');
   const fs = require('node:fs');
   const path = require('node:path');
@@ -20838,6 +20838,8 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, hold
     memLoad: { noteDigest: () => {}, noteSession: () => {} },
     tiersOf: () => ({}),
     arm: { onContextReset: () => {} },
+    ...(hintArm ? { hintArm, isHumanPtyInput: require('../proxy-util').isHumanPtyInput, draftChunkSignal: require('../proxy-util').draftChunkSignal } : {}),
+    ...(selectionArm ? { selectionArm } : {}),
   });
   const m = new SessionManager();
   m._sendToSession = () => {};
@@ -21451,4 +21453,126 @@ test('stream seat team (c): a pty team seat arms the replay fallback and a strea
   assert.notStrictEqual(pty._replayFallbackTimer, null);
   assert.deepStrictEqual({ timer: stream._replayFallbackTimer, pending: stream._replayTicketsPending, atInit: stream._replayAtInit },
     { timer: undefined, pending: true, atInit: true });
+});
+
+function mkArmRecorder({ held = () => false, landed = () => undefined } = {}) {
+  const calls = [];
+  const hintArm = {
+    onDraft: (key, draft, ctx, opts) => { calls.push(['onDraft', key, draft, opts || null, ctx]); return landed(); },
+    onSubmit: (key) => calls.push(['onSubmit', key]),
+    disarm: (key, ctx) => calls.push(['disarm', key, ctx]),
+    onContextReset: () => {}, forget: () => {},
+    holding: () => held(),
+  };
+  const selectionArm = {
+    onSubmit: (key) => { calls.push(['selection.onSubmit', key]); return true; },
+    forget: () => {}, arm: () => {}, release: () => {}, inspect: () => {},
+  };
+  return { calls, hintArm, selectionArm };
+}
+
+test('stream seat arm (a): seatSend runs the final draft arm, the submit and the selection submit, in that order, before stdin', async (t) => {
+  const rec = mkArmRecorder();
+  const h = mkStreamSeatManager({ hintArm: rec.hintArm, selectionArm: rec.selectionArm });
+  t.after(() => h.stopAll());
+  await h.create('sa1');
+  const sent = [];
+  h.m._sendToSession = (...a) => sent.push(a);
+  assert.deepStrictEqual(h.m.seatSend('sa1', 'what does foo do'), { ok: true, queued: 0 });
+  assert.deepStrictEqual(rec.calls.map((c) => c.slice(0, 4)), [
+    ['onDraft', 'sa1', 'what does foo do', { final: true, overflow: false, desync: false }],
+    ['onSubmit', 'sa1'],
+    ['selection.onSubmit', 'sa1'],
+  ]);
+  assert.deepStrictEqual(rec.calls[0][4], { base: 'http://127.0.0.1:9999', route: 'agent-x', agent: 'sa1' });
+  assert.deepStrictEqual(sent.filter((a) => a[1] === 'selection-sent'), [['sa1', 'selection-sent', 'sa1']]);
+  assert.deepStrictEqual(h.handles[0].sent, [{ type: 'user', message: { role: 'user', content: 'what does foo do' } }]);
+});
+
+test('stream seat arm (b): an idle seatSend defers the stdin write while the hint arm holds, and delivers when it clears', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  let held = true;
+  const rec = mkArmRecorder({ held: () => held });
+  const h = mkStreamSeatManager({ hintArm: rec.hintArm, selectionArm: rec.selectionArm });
+  t.after(() => h.stopAll());
+  await h.create('sa2');
+  const seat = h.handles[0];
+  assert.deepStrictEqual(h.m.seatSend('sa2', 'what does foo do'), { ok: true, queued: 1 });
+  t.mock.timers.tick(200);
+  assert.deepStrictEqual(seat.sent, [], 'held: nothing reached stdin');
+  held = false;
+  t.mock.timers.tick(50);
+  assert.deepStrictEqual(seat.sent, [{ type: 'user', message: { role: 'user', content: 'what does foo do' } }]);
+  assert.deepStrictEqual(h.m.sessions.get('sa2').outbox, []);
+});
+
+test('stream seat arm (b): a hold that never clears is capped and the message is delivered', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  const rec = mkArmRecorder({ held: () => true });
+  const h = mkStreamSeatManager({ hintArm: rec.hintArm, selectionArm: rec.selectionArm });
+  t.after(() => h.stopAll());
+  await h.create('sa3');
+  const seat = h.handles[0];
+  h.m.seatSend('sa3', 'what does foo do');
+  const { HOLD_MAX_MS } = require('../hint-arm');
+  t.mock.timers.tick(HOLD_MAX_MS - 100);
+  assert.deepStrictEqual(seat.sent, [], 'still inside the cap');
+  t.mock.timers.tick(200);
+  assert.deepStrictEqual(seat.sent, [{ type: 'user', message: { role: 'user', content: 'what does foo do' } }]);
+});
+
+test('stream seat arm (b): seatSend waits for the final rank the arm returns, then delivers', async (t) => {
+  let land;
+  const rec = mkArmRecorder({ landed: () => new Promise((r) => { land = r; }) });
+  const h = mkStreamSeatManager({ hintArm: rec.hintArm, selectionArm: rec.selectionArm });
+  t.after(() => h.stopAll());
+  await h.create('sa4');
+  const seat = h.handles[0];
+  assert.deepStrictEqual(h.m.seatSend('sa4', 'what does foo do'), { ok: true, queued: 1 });
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(seat.sent, [], 'the rank has not landed');
+  land();
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(seat.sent, [{ type: 'user', message: { role: 'user', content: 'what does foo do' } }]);
+});
+
+test('stream seat arm (c): seat:draft offers the typed draft to the arm non-final and disarms on empty', async (t) => {
+  const rec = mkArmRecorder();
+  const h = mkStreamSeatManager({ hintArm: rec.hintArm, selectionArm: rec.selectionArm });
+  t.after(() => h.stopAll());
+  await h.create('sa5');
+  const handlers = new Map();
+  require('../ipc-handlers').registerIpcHandlers({
+    handle: (ch, fn) => handlers.set(ch, fn),
+    on: (ch, fn) => handlers.set(ch, fn),
+    manager: h.m,
+    surfaceOfSender: () => 'desktop',
+    workspaceOfSender: () => 'ws',
+    log: { info() {}, error() {}, warn() {} },
+  });
+  handlers.get('seat:draft')({}, 'sa5', 'what does foo');
+  handlers.get('seat:draft')({}, 'sa5', '  ');
+  assert.deepStrictEqual(rec.calls.map((c) => c.slice(0, 3).concat(c[0] === 'onDraft' ? [c[3]] : [])), [
+    ['onDraft', 'sa5', 'what does foo', null],
+    ['disarm', 'sa5', { base: 'http://127.0.0.1:9999', route: 'agent-x', agent: 'sa5' }],
+  ]);
+  assert.deepStrictEqual(h.handles[0].sent, [], 'a draft never reaches stdin');
+});
+
+test('stream seat arm (d): a pty seat Enter goes through the same final arm, submit and selection submit', async (t) => {
+  const rec = mkArmRecorder();
+  const written = [];
+  const fakePty = { pid: 8003, onData: () => {}, onExit: () => {}, write: (d) => written.push(d), resize: () => {}, kill: () => {} };
+  const h = mkStreamSeatManager({ fakePty, hintArm: rec.hintArm, selectionArm: rec.selectionArm });
+  t.after(() => h.stopAll());
+  await h.create('sa6', null, 'pty');
+  h.m.write('sa6', 'foo');
+  rec.calls.length = 0;
+  h.m.write('sa6', '\r');
+  assert.deepStrictEqual(rec.calls.map((c) => c.slice(0, 4)), [
+    ['onDraft', 'sa6', 'foo', { final: true, overflow: false, desync: false }],
+    ['onSubmit', 'sa6'],
+    ['selection.onSubmit', 'sa6'],
+  ]);
+  assert.deepStrictEqual(written, ['foo', '\r']);
 });
