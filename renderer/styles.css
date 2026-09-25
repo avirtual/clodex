@@ -5976,24 +5976,6 @@ body.web-frontend #sidebar-header {
   -webkit-line-clamp: 3;
   overflow: hidden;
 }
-.tr-prompt { flex-wrap: wrap; }
-.tr-paste-chip {
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  background: var(--surface-selected);
-  border-radius: var(--radius-md);
-  padding: 0 var(--sp-1);
-  cursor: pointer;
-}
-.tr-paste-body {
-  flex-basis: 100%;
-  margin: 0;
-  white-space: pre-wrap;
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  color: var(--text-secondary);
-}
-.tr-paste-more { flex-basis: 100%; }
 .tr-command { font-family: var(--font-mono); font-size: var(--fs-sm); }
 .tr-sender { display: inline; white-space: normal; }
 .tr-sender-glyph {

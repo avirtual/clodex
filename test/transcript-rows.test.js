@@ -406,24 +406,21 @@ test('a Bash line shows argShown with the raw command in its title, and a pendin
   assert.deepStrictEqual([row.childNodes[2].textContent, row.childNodes[2].title, row.childNodes[3].textContent], ['npm test', 'cd /r; npm test', 'Run the suite']);
 });
 
-test('a prompt with a paste renders a chip in place of the marker, and a click opens the paste body under the row', () => {
+test('a prompt with a paste shows the pasted text inline in the head text, with no chip and no paste body', () => {
   const m = mount();
   const body = 'line one\nline two\nline three';
   m.render([{ ...prompt, text: 'see\n[Pasted text #1 +3 lines]', pastes: [{ n: 1, lines: 3, text: body }] }]);
   const row = m.pane.childNodes[0].childNodes[0];
   const find = (node, cls) => (node.className || '').split(' ').includes(cls) ? [node] : (node.childNodes || []).flatMap((k) => find(k, cls));
-  const [head] = find(row, 'tr-head-text');
-  const chips = find(row, 'tr-paste-chip');
-  assert.strictEqual(chips.length, 1);
-  assert.match(chips[0].textContent, /Pasted text #1 · 3 lines/);
-  assert.strictEqual(chips[0].dataset.paste, '1');
-  assert.ok(!head.textContent.includes('[Pasted text #1'));
+  assert.strictEqual(find(row, 'tr-paste-chip').length, 0);
   assert.strictEqual(find(row, 'tr-paste-body').length, 0);
-  chips[0].listeners.click();
-  const [pre] = find(row, 'tr-paste-body');
-  assert.ok(pre.textContent.startsWith('line one'));
-  assert.strictEqual(pre.dataset.paste, '1');
-  assert.strictEqual(find(row, 'intent-card-more')[0].textContent, '+ 1 more line');
-  chips[0].listeners.click();
-  assert.strictEqual(find(row, 'tr-paste-body').length, 0);
+  assert.strictEqual(find(row, 'tr-head-text')[0].textContent, 'see\nline one\nline two\nline three');
+});
+
+test('a prompt that is only a paste marker shows exactly the pasted text', () => {
+  const m = mount();
+  m.render([{ ...prompt, text: '[Pasted text #1 +2 lines]', pastes: [{ n: 1, lines: 2, text: 'alpha\nbeta' }] }]);
+  const row = m.pane.childNodes[0].childNodes[0];
+  const find = (node, cls) => (node.className || '').split(' ').includes(cls) ? [node] : (node.childNodes || []).flatMap((k) => find(k, cls));
+  assert.strictEqual(find(row, 'tr-head-text')[0].textContent, 'alpha\nbeta');
 });
