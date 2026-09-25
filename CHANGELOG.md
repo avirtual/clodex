@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 - Muse slash commands (/model, /usage, …) appear as command rows in the transcript pane.
+- The transcript pane works on Muse and Codex terminal seats too: the pane sits above each CLI's own input strip, and the CLI's slash menu, command output and pickers show in that strip.
 - Tickets board writes refuse to overwrite a board that could not be read (malformed, unreadable, or not an array) instead of replacing it with a fresh one; a missing board is still created.
 
 - A headless seat whose CLI never answers the codec's opening handshake is flagged after 60 seconds (log line with the stderr tail, attention state) instead of showing 'thinking' forever; queued messages stay queued and nothing is resent.

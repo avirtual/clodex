@@ -30327,21 +30327,45 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const r = row.trimEnd();
         return composerIsEmpty(r) || composerHasDraft(r);
       }
-      function isAnchorAt(rows, i, cols) {
-        return isRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]);
+      var LABELED_RULE = /^─+( \S.*? )?─+$/u;
+      var CODEX_COMPOSER = /^›[ \u00a0]/u;
+      var CODEX_PICKER_ROW = /^›[ \u00a0]\d+\.\s/u;
+      var CODEX_MENU_ROW = /^(\s{2}\/\S|›[ \u00a0])/u;
+      var isBlank = (row) => !/\S/u.test(row || "");
+      function isLabeledRuleRow(row, cols) {
+        if (typeof row !== "string") return false;
+        const r = row.trimEnd();
+        return r.length >= cols - 1 && LABELED_RULE.test(r);
       }
-      function findAnchor(rows, cursorY, cols) {
-        if (!Array.isArray(rows) || rows.length < 2) return -1;
+      function isCodexComposerRow(row) {
+        return typeof row === "string" && CODEX_COMPOSER.test(row) && !CODEX_PICKER_ROW.test(row);
+      }
+      function codexStripTop(rows, i) {
+        let j = i - 1;
+        if (j >= 0 && isBlank(rows[j])) j--;
+        if (j < 0 || typeof rows[j] !== "string" || !CODEX_MENU_ROW.test(rows[j])) return i;
+        while (j > 0 && typeof rows[j - 1] === "string" && CODEX_MENU_ROW.test(rows[j - 1])) j--;
+        return j;
+      }
+      var ANCHORS = {
+        claude: { at: (rows, i, cols) => isRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]), top: (rows, i) => i },
+        muse: { at: (rows, i, cols) => isLabeledRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]), top: (rows, i) => i },
+        codex: { at: (rows, i) => isCodexComposerRow(rows[i]), top: codexStripTop }
+      };
+      function findAnchor(rows, cursorY, cols, platform = "claude") {
+        const anchor = ANCHORS[platform];
+        if (!anchor || !Array.isArray(rows) || rows.length < 2) return -1;
         const start = Math.max(0, Math.min(rows.length - 1, Number.isInteger(cursorY) ? cursorY : rows.length - 1));
-        for (let i = start; i >= 0; i--) if (isAnchorAt(rows, i, cols)) return i;
-        for (let i = start + 1; i < rows.length - 1; i++) if (isAnchorAt(rows, i, cols)) return i;
+        for (let i = start; i >= 0; i--) if (anchor.at(rows, i, cols)) return i;
+        for (let i = start + 1; i < rows.length - 1; i++) if (anchor.at(rows, i, cols)) return i;
         return -1;
       }
-      function measureSplit(rows, cursorY, cols) {
-        const top = findAnchor(rows, cursorY, cols);
-        if (top < 0) return { mode: "full", top: -1, bottom: -1 };
+      function measureSplit(rows, cursorY, cols, platform = "claude") {
+        const at = findAnchor(rows, cursorY, cols, platform);
+        if (at < 0) return { mode: "full", top: -1, bottom: -1 };
+        const top = ANCHORS[platform].top(rows, at);
         let bottom = rows.length - 1;
-        while (bottom > top + 1 && !/\S/u.test(rows[bottom] || "")) bottom--;
+        while (bottom > at + 1 && isBlank(rows[bottom])) bottom--;
         if (Number.isInteger(cursorY)) bottom = Math.max(bottom, Math.min(cursorY, rows.length - 1));
         return { mode: "split", top, bottom };
       }
@@ -30386,6 +30410,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         SPLIT_EXIT_MS,
         isRuleRow,
         isComposerRow,
+        isLabeledRuleRow,
+        isCodexComposerRow,
         findAnchor,
         measureSplit,
         initialSplitState,
@@ -31236,7 +31262,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         rows.render(records);
       }
-      function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null }) {
+      function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => "claude", pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null }) {
         const paneEl = document.createElement("div");
         paneEl.className = "transcript-pane";
         paneEl.hidden = true;
@@ -31327,7 +31353,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (!raw && isEligible()) {
             pull();
             const buf = terminal.buffer.active;
-            if (available && buf.type === "normal") measured = measureSplit(screenRows(), buf.cursorY, terminal.cols);
+            if (available) measured = measureSplit(screenRows(), buf.cursorY, terminal.cols, platform());
           }
           const prev = state;
           state = reduceSplit(state, measured, now(), void 0, raw ? 0 : void 0);
@@ -46486,7 +46512,8 @@ ${detail}` });
         });
         const echoRewrite = peer ? (chunk) => chunk : createEchoRewriter(currentEchoPalette);
         const liveSplit = peer || window.__CLODEX_WEB__ ? null : createLiveSplitView(terminal, wrapperEl, {
-          isEligible: () => transcriptPaneEnabled && sessionTypeOf(name) === "claude",
+          isEligible: () => transcriptPaneEnabled && isAgentType(sessionTypeOf(name)),
+          platform: () => sessionTypeOf(name),
           pullTranscript: () => window.api.transcriptPull(name),
           seatName: name,
           onTranscriptChanged: (cb) => {
