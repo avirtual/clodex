@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+const MENUS_SRC = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'popovers', 'session-menus.js'), 'utf8');
 
 // flushPending refuses with reason `busy` / `compact-window` / `dialog-blocked`
 // (session-manager.js flushPending, via _injectHoldReason). A refusal the badge
@@ -29,16 +30,17 @@ test('the ✉ badge click handler carries a tip for every reason flushPending ca
   assert.ok(/r\.ok === false/.test(src), 'the tip is set on the refusal verdict, not unconditionally');
 });
 
-for (const [label, anchor] of [
+for (const [label, anchor, src = SRC] of [
   ['restartSessionWithReattach', /function restartSessionWithReattach\(name\) \{[\s\S]*?\n\}\n/],
   ['moveSessionWithPicker', /function moveSessionWithPicker\(name\) \{[\s\S]*?\n\}\n/],
   ['moveSessionToPeerWithDialog respawn', /if \(res\.respawned\) \{[\s\S]*?switchSession\(name\);/],
   ['Edit Session save restart', /if \(res\.restarted\) \{\n    if \(source\) source\.onRestarted\(\);[\s\S]*?switchSession\(name\);/],
   ['failed-row retry', /function addFailedSessionToSidebar\(entry\) \{[\s\S]*?\n\}\n/],
   ['archived-row unarchive', /function addArchivedSessionToSidebar\(entry\) \{[\s\S]*?\n\}\n/],
+  ['session-menu fresh restart', /async function doHardRestart\(name\) \{[\s\S]*?\n  \}\n/, MENUS_SRC],
 ]) {
   test(`${label} marks the seat's io before createTerminal, so a stream seat is not rebuilt as an xterm`, () => {
-    const m = SRC.match(anchor);
+    const m = src.match(anchor);
     assert.ok(m, `ENTER: ${label} is still found by this anchor`);
     const at = m[0].indexOf('createTerminal(');
     assert.ok(at > 0, `ENTER: ${label} still calls createTerminal`);

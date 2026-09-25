@@ -41369,7 +41369,7 @@ You can add it back from this popover.` : "";
         strip: '#proxy-bar [data-act="strip-menu"]',
         session: '#proxy-bar [data-act="session-menu"]'
       };
-      function initSessionMenus({ getActiveSession, proxyState, sessionList, createTerminal, addSessionToSidebar, switchSession }) {
+      function initSessionMenus({ getActiveSession, proxyState, sessionList, createTerminal, addSessionToSidebar, switchSession, markSeatIo }) {
         let warmMenu = null;
         function closeWarmMenu() {
           if (warmMenu) {
@@ -41590,6 +41590,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             alert(`Hard restart failed: ${rr && rr.error ? rr.error : "unknown error"}`);
             return;
           }
+          markSeatIo(name, rr.io || "pty");
           if (snapType) {
             createTerminal(name);
             addSessionToSidebar(name, snapType, snapCwd, null);
@@ -48533,7 +48534,8 @@ Click for live activity`;
         sessionList,
         createTerminal,
         addSessionToSidebar,
-        switchSession
+        switchSession,
+        markSeatIo
       });
       function routeSessionAction(act, anchor) {
         if (!activeSession) return;

@@ -23,7 +23,7 @@ const BAR_ANCHOR = {
   session: '#proxy-bar [data-act="session-menu"]',
 };
 
-function initSessionMenus({ getActiveSession, proxyState, sessionList, createTerminal, addSessionToSidebar, switchSession }) {
+function initSessionMenus({ getActiveSession, proxyState, sessionList, createTerminal, addSessionToSidebar, switchSession, markSeatIo }) {
   // --- Keep-warm duration dropdown ----------------------------------------
   // The fire button in the bottom bar opens this; items arm/extend a hold
   // (1h/4h/8h) or stop it. Floats above the button, dismissed on outside-click.
@@ -289,6 +289,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
     const snapCwd = el ? el.dataset.cwd : null;
     const rr = await window.api.restartSession(name, { fresh: true });
     if (!rr || !rr.ok) { alert(`Hard restart failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
+    markSeatIo(name, rr.io || 'pty');
     if (snapType) { createTerminal(name); addSessionToSidebar(name, snapType, snapCwd, null); switchSession(name); }
   }
 
