@@ -913,7 +913,6 @@ function createSessionManager(deps) {
       this._voiceEngine = null;
       this._voiceEnginePending = null;
       this._voiceOp = Promise.resolve();
-      this._voiceSleep = (ms) => new Promise((r) => setTimeout(r, ms));
       this._shadow = null;     // wire-vs-jsonl intent differ
       this._wireTelemetry = null; // W2 step-4 dark bridge (wire-telemetry.js)
       const { IntentDeduper, ActivityTracker } = require('./wire-intents');
@@ -4968,6 +4967,10 @@ function createSessionManager(deps) {
         try { s.pty.kill(); } catch {}
       }
       this.killVoiceEngine();
+    }
+
+    _voiceSleep(ms) {
+      return new Promise((r) => setTimeout(r, ms));
     }
 
     voiceEngineTimings() {
