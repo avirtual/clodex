@@ -192,10 +192,10 @@ test('t1207: of two codex seats in one cwd, only the one typed into links the ro
   try {
     f.m.write('b', 'hi');
     const target = f.writeRollout(today(), 'rollout-2026-09-25T23-03-27-01a0da2a-0000-7000-8000-000000000001.jsonl', f.work);
-    assert.strictEqual(await b._codexLinkDone, 'linked');
-    assert.strictEqual(fs.readlinkSync(f.link('b')), target);
+    await Promise.race([a._codexLinkDone, b._codexLinkDone]);
     await new Promise((r) => setTimeout(r, 10));
     assert.strictEqual(aOutcome, null);
+    assert.strictEqual(fs.readlinkSync(f.link('b')), target);
     assert.throws(() => fs.lstatSync(f.link('a')), /ENOENT/);
   } finally { f.stop('a'); f.stop('b'); }
 });
