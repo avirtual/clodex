@@ -18,3 +18,14 @@
 ## oldestMuseTranscript
 - The deadline fallback for a seat whose registry record never lands (the `/private/tmp` refusal above): the OLDEST `session.jsonl` under `<data>/muse/sessions/**` created at or after the seat's `spawnedAt`, minus every path another live Muse seat's `run/<name>/transcript.jsonl` already points at. Measured on 1.3.0 the file lands ~0.25 s after spawn. The key is the creation stamp — `birthtimeMs` where the filesystem reports one, `mtimeMs` where it reports 0 (Linux without statx birthtime) — never the last write: the file is appended for the whole run, so its mtime tracks the latest turn, not the spawn. Both bounds get 1 s of slack because filesystems with 1-second timestamp granularity truncate a write made 0.25 s after the spawn to a second before it: a file is a candidate from `spawnedAt - 1000`, and `untilMs`, the earliest `spawnedAt` of any OTHER live Muse seat spawned after this one, excludes everything born at or after `untilMs - 1000` (that file may be that seat's). Among the survivors the oldest wins: a file born between this spawn and the next is this seat's, whereas the newest write is whichever seat spoke last.
 - macOS APFS moves a file's birthtime BACK when `utimes` sets an mtime earlier than it (birthtime never exceeds mtime) and leaves it alone when the mtime set is later. The tests key on this to plant a creation stamp.
+
+## findCodexRollout
+
+Measured on Codex 0.157.0 (`--no-daemon --no-alt-screen` TUI, 2026-09-25): a fresh
+seat writes NO rollout until its first user prompt — nothing after 10 s idle; the file
+(`sessions/<Y>/<M>/<D>/rollout-<start ts>-<id>.jsonl`, date and ts of TUI start, local
+time) is born when the first prompt is submitted, which is why the session-manager link
+poll never stops while the seat lives. `session_meta.payload.cwd` is the realpath of the spawn cwd
+(`/tmp/x` → `/private/tmp/x`). `codex resume <id>` mints no new file: it appends to the
+existing rollout, whose first line keeps the same `session_meta` id, so a resumed seat
+links by id at once and needs no repoint.

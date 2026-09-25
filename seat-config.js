@@ -107,6 +107,61 @@ function oldestMuseTranscript(deps, dataHome, sinceMs, excludePaths, untilMs) {
   return best ? best.path : null;
 }
 
+function codexRolloutMetaCwd(fs, p) {
+  let text;
+  try { text = fs.readFileSync(p, 'utf-8'); } catch { return null; }
+  const nl = text.indexOf('\n');
+  let rec;
+  try { rec = JSON.parse(nl === -1 ? text : text.slice(0, nl)); } catch { return null; }
+  if (!isPlainObject(rec) || rec.type !== 'session_meta' || !isPlainObject(rec.payload)) return null;
+  return typeof rec.payload.cwd === 'string' ? rec.payload.cwd : null;
+}
+
+function findCodexRollout(deps, codexHome, opts) {
+  const { fs, path } = deps;
+  const { sessionId, cwd, sinceMs, excludePaths } = opts;
+  const root = path.join(codexHome, 'sessions');
+  if (sessionId) {
+    const suffix = `-${sessionId}.jsonl`;
+    for (const y of listDir(fs, root)) {
+      for (const m of listDir(fs, path.join(root, y))) {
+        for (const d of listDir(fs, path.join(root, y, m))) {
+          for (const f of listDir(fs, path.join(root, y, m, d))) {
+            if (f.startsWith('rollout-') && f.endsWith(suffix)) return path.join(root, y, m, d, f);
+          }
+        }
+      }
+    }
+    return null;
+  }
+  const cwds = new Set([cwd]);
+  try { cwds.add(fs.realpathSync(cwd)); } catch {}
+  const skip = new Set(excludePaths || []);
+  const floor = new Date(sinceMs - 86400000).toISOString().slice(0, 10).replace(/-/g, '/');
+  let best = null;
+  for (const y of listDir(fs, root)) {
+    for (const m of listDir(fs, path.join(root, y))) {
+      for (const d of listDir(fs, path.join(root, y, m))) {
+        if (`${y}/${m}/${d}` < floor) continue;
+        for (const f of listDir(fs, path.join(root, y, m, d))) {
+          if (!f.startsWith('rollout-') || !f.endsWith('.jsonl')) continue;
+          const p = path.join(root, y, m, d, f);
+          if (skip.has(p)) continue;
+          let st;
+          try { st = fs.statSync(p); } catch { continue; }
+          if (!st.isFile()) continue;
+          const born = st.birthtimeMs > 0 ? st.birthtimeMs : st.mtimeMs;
+          if (born < sinceMs - 1000) continue;
+          if (best && born <= best.born) continue;
+          if (!cwds.has(codexRolloutMetaCwd(fs, p))) continue;
+          best = { path: p, born };
+        }
+      }
+    }
+  }
+  return best ? best.path : null;
+}
+
 function museRegistryFor(deps, dataHome, pid) {
   const { fs, path } = deps;
   const dir = path.join(dataHome, 'muse', 'runtime', 'muse', 'sessions');
@@ -132,6 +187,6 @@ function linkTranscript(deps, linkPath, target) {
 }
 
 module.exports = {
-  uuidv7, deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, museRegistryFor, linkTranscript,
+  uuidv7, deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, findCodexRollout, museRegistryFor, linkTranscript,
   REQUIRED_MUSE_FILES, DEFAULT_MUSE_SETTINGS,
 };

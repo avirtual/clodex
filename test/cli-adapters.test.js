@@ -89,7 +89,7 @@ test('m0: the table rows declare posture, cwdDir, transcript and warmth literall
   assert.strictEqual(ADAPTERS.claude.cwdDir, null);
   assert.strictEqual(ADAPTERS.codex.cwdDir, '.codex');
   assert.deepStrictEqual(ADAPTERS.claude.transcript, { reader: 'claude', link: 'hook' });
-  assert.deepStrictEqual(ADAPTERS.codex.transcript, { reader: 'codex', link: 'hook' });
+  assert.deepStrictEqual(ADAPTERS.codex.transcript, { reader: 'codex', link: 'clodex' });
   assert.deepStrictEqual(ADAPTERS.claude.caps, { park: true, transcript: true, warmth: true });
   assert.deepStrictEqual(ADAPTERS.codex.caps, { park: false, transcript: true, warmth: false });
   assert.deepStrictEqual(ADAPTERS.muse.posture, { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'] });
