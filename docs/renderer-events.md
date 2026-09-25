@@ -70,8 +70,8 @@ reattach — a web host needs the same replay-on-connect for a reloaded tab.
 | `session:context-action` | `msg` object `{action, name, …}` (`reattach`/`spawn` path) | session-manager |
 | `session-peer-control` | `name, holder` (control-holder tag or null) | remote-wiring |
 | `voice-tap` | `name` (ensure-on request from an outside script for a seat whose voice mode is `tap`; the renderer asks main to start the voice engine's recorder for that seat over `voice:record`) | session-manager `voiceTap` |
-| `seat-voice` | `name, mode` — a seat's voice mode (`off`, `tap`, `hold`) changed in its record; broadcast to every window | session-manager `setVoice` |
-| `voice-engine-stopped` | `name` — the voice engine's hold cap ended a recording this seat armed, so its recording light goes out — **direct handle** on the arming workspace's window (`windowForWorkspace`) | session-manager `_endVoiceHoldAtCap` |
+| `seat-voice` | `name, mode` — a seat's voice mode (`off`, `tap`) changed in its record; broadcast to every window | session-manager `setVoice` |
+| `voice-engine-stopped` | `name` — the voice engine's recorder stopped itself on a recording this seat armed, so its recording light goes out — **direct handle** on the arming workspace's window (`windowForWorkspace`) | session-manager `_voiceEngineSelfStopped` |
 
 ## B. Broadcast channels (via `_broadcast`)
 

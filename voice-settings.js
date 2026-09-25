@@ -2,12 +2,11 @@ const path = require('path');
 const os = require('os');
 const { readJsonSafe } = require('./fs-util');
 
-const VOICE_MODES = ['off', 'tap', 'hold'];
+const VOICE_MODES = ['off', 'tap'];
 const DEFAULT_VOICE_MODE = 'tap';
 
 function voiceModeOf(record) {
-  const v = record && record.voice;
-  return VOICE_MODES.includes(v) ? v : DEFAULT_VOICE_MODE;
+  return record && record.voice === 'off' ? 'off' : DEFAULT_VOICE_MODE;
 }
 
 // The key that arms the CLI's recorder, read from `~/.claude/keybindings.json`.

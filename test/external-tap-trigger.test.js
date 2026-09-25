@@ -174,11 +174,11 @@ test('an OFF seat is declined by the route, and a tap sends it nothing', () => {
   assert.deepStrictEqual(win.sent, []);
 });
 
-test('a HOLD seat is not tapped', () => {
+test('a seat persisted as hold reads as on and IS tapped', () => {
   const { m } = mkSeatModes({ s: 'hold' });
   const win = seat(m, 's');
-  assert.strictEqual(m.voiceTap('s').ok, false);
-  assert.deepStrictEqual(win.sent, []);
+  assert.deepStrictEqual(m.voiceTap('s'), { ok: true, name: 's' });
+  assert.deepStrictEqual(win.sent.filter((f) => f[0] === 'voice-tap'), [['voice-tap', 's']]);
 });
 
 test('MODE: the spoken mode verb sets the FOCUSED seat\u2019s record and broadcasts it', () => {
@@ -188,17 +188,18 @@ test('MODE: the spoken mode verb sets the FOCUSED seat\u2019s record and broadca
   const sent = [];
   m._broadcast = (...a) => sent.push(a);
   reportFrom(m, win, 'a');
-  assert.deepStrictEqual(m.voiceMode('hold'), { ok: true, name: 'a', mode: 'hold' });
-  assert.strictEqual(records.get('a').voice, 'hold');
+  assert.deepStrictEqual(m.voiceMode('off'), { ok: true, name: 'a', mode: 'off' });
+  assert.strictEqual(records.get('a').voice, 'off');
   assert.strictEqual(records.get('b').voice, 'tap');
-  assert.deepStrictEqual(sent.filter((f) => f[0] === 'seat-voice'), [['seat-voice', 'a', 'hold']]);
+  assert.deepStrictEqual(sent.filter((f) => f[0] === 'seat-voice'), [['seat-voice', 'a', 'off']]);
   assert.strictEqual(m.voiceMode('loud').ok, false);
-  assert.strictEqual(records.get('a').voice, 'hold');
+  assert.strictEqual(m.voiceMode('hold').ok, false);
+  assert.strictEqual(records.get('a').voice, 'off');
 });
 
 test('MODE: with nothing focused the mode verb declines', () => {
   const { m } = mkSeatModes({});
-  assert.strictEqual(m.voiceMode('hold').ok, false);
+  assert.strictEqual(m.voiceMode('off').ok, false);
 });
 
 test('MODE: the socket arm dispatches voice-mode to the focused seat, the mode only as a string', () => {
@@ -333,10 +334,9 @@ test('MIC: a tap that DECLINES does not move the microphone', () => {
     ['unknown name', 'ghost', () => {}],
     ['dead seat', 'D', (m) => m.sessions.set('D', { name: 'D', agentType: 'claude', workspaceId: 'ws1', _dead: true })],
     ['off seat', 'O', (m) => m.sessions.set('O', { name: 'O', agentType: null, workspaceId: 'ws1' })],
-    ['hold seat', 'H', (m) => m.sessions.set('H', { name: 'H', agentType: 'codex', workspaceId: 'ws1' })],
     ['no window', 'X', (m) => m.sessions.set('X', { name: 'X', agentType: 'claude', workspaceId: 'ws-closed' })],
   ]) {
-    const { m } = mkSeatModes({ O: 'off', H: 'hold' });
+    const { m } = mkSeatModes({ O: 'off' });
     const { a } = twoWindows(m);
     setup(m);
     reportFrom(m, a, 'A');
@@ -754,8 +754,9 @@ test('VERBS: the explicit verb forms build the envelopes the socket decodes', ()
     { type: 'voice-select', from: 'voice-tap', target: 'wirescope' });
   assert.deepStrictEqual(envelopeFor(['mode', 'tap']),
     { type: 'voice-mode', from: 'voice-tap', mode: 'tap' });
-  assert.deepStrictEqual(envelopeFor(['mode', 'hold']),
-    { type: 'voice-mode', from: 'voice-tap', mode: 'hold' });
+  assert.deepStrictEqual(envelopeFor(['mode', 'off']),
+    { type: 'voice-mode', from: 'voice-tap', mode: 'off' });
+  assert.match(envelopeFor(['mode', 'hold']).error, /off\|tap/);
   assert.deepStrictEqual(envelopeFor(['speech', 'on']),
     { type: 'voice-speech', from: 'voice-tap', state: 'on' });
   assert.deepStrictEqual(envelopeFor(['speech', 'off']),
@@ -768,7 +769,7 @@ test('VERBS: an unknown verb and a bad mode are refused, not sent', () => {
   const { envelopeFor } = require('../scripts/clodex-voice-tap.js');
   assert.match(envelopeFor(['reboot', 'now']).error, /unknown verb "reboot"/);
   assert.match(envelopeFor(['speech', 'loud']).error, /on\|off/);
-  assert.match(envelopeFor(['mode', 'loud']).error, /tap\|hold/);
+  assert.match(envelopeFor(['mode', 'loud']).error, /off\|tap/);
   // No envelope is built on either path — an `error` key and nothing to send.
   assert.strictEqual(envelopeFor(['mode', 'loud']).type, undefined);
 });

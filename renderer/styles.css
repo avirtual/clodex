@@ -1985,6 +1985,7 @@ html, body {
 /* Off is the same glyph dimmed — there is no muted-microphone codepoint in
    Unicode, so the word carries the precise state and this carries the glance. */
 #proxy-actions .px-action.px-voice-off { opacity: 0.45; }
+#proxy-actions .px-action.px-voice-live { color: var(--ok); opacity: 1; }
 /* Dimmed exactly like the off state and NOT via :disabled: the button stays
    clickable so the popover can say why, and a disabled control would receive
    neither the click nor the tooltip's mouseover. */

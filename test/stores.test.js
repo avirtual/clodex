@@ -923,16 +923,17 @@ test('persistence: setVoice round-trips each seat mode and refuses anything else
     stores.persistence.upsert({ name: 'a', type: 'codex', workspaceId: 'default' });
     stores.persistence.upsert({ name: 'b', type: 'bash', workspaceId: 'default' });
     assert.strictEqual(voiceModeOf(stores.persistence.get('a')), 'tap', 'a seat with no value reads as tap');
-    for (const m of ['off', 'hold', 'tap']) {
+    for (const m of ['off', 'tap']) {
       assert.strictEqual(stores.persistence.setVoice('a', m), true);
       assert.strictEqual(stores.persistence.get('a').voice, m);
       assert.strictEqual(voiceModeOf(stores.persistence.get('a')), m);
     }
     stores.persistence.setVoice('a', 'off');
     assert.strictEqual(stores.persistence.setVoice('a', 'loud'), false);
+    assert.strictEqual(stores.persistence.setVoice('a', 'hold'), false);
     assert.strictEqual(stores.persistence.get('a').voice, 'off');
     assert.strictEqual(stores.persistence.get('b').voice, undefined, 'one seat\u2019s mode is not another\u2019s');
-    assert.strictEqual(stores.persistence.setVoice('missing', 'hold'), false);
+    assert.strictEqual(stores.persistence.setVoice('missing', 'tap'), false);
     assert.strictEqual(stores.persistence.get('missing'), null);
   } finally { cleanup(); }
 });

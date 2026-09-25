@@ -80,7 +80,7 @@ function harness({ paint } = {}) {
   const core = {
     subscribe(fn) { subscriber = fn; return () => {}; },
     snapshot: () => snap(),
-    isMode: (m) => ['off', 'tap', 'hold'].includes(m),
+    isMode: (m) => ['off', 'tap'].includes(m),
     choose() {},
   };
 
@@ -125,11 +125,11 @@ test('no throw: the gate still suppresses no-change emits, and the repaint count
     for (let i = 0; i < 30; i++) h.emit(snap());
     assert.strictEqual(h.paintCount(), 1, 'a fresh object with identical FIELDS is still a no-change emit');
 
-    h.emit(snap({ pending: 'hold' }));
+    h.emit(snap({ pending: 'off' }));
     assert.strictEqual(h.paintCount(), 2, 'a real transition must repaint');
-    h.emit(snap({ pending: 'hold', mode: 'hold' }));
+    h.emit(snap({ pending: 'off', mode: 'off' }));
     assert.strictEqual(h.paintCount(), 3, 'and so must the next one');
-    for (let i = 0; i < 30; i++) h.emit(snap({ pending: 'hold', mode: 'hold' }));
+    for (let i = 0; i < 30; i++) h.emit(snap({ pending: 'off', mode: 'off' }));
     assert.strictEqual(h.paintCount(), 3, 'settling back to no-change re-suppresses');
   } finally { h.restore(); }
 });
@@ -180,7 +180,7 @@ test('permanent throw: the console diagnostic is bounded, not silenced', () => {
     // A REAL state change is still allowed through, and still reports. This is
     // the recovery path: the latch suppresses only IDENTICAL emits, so it can
     // never wedge the surface shut against a change it has not painted yet.
-    assert.ok(h.emit(snap({ pending: 'hold' })) instanceof Error,
+    assert.ok(h.emit(snap({ pending: 'off' })) instanceof Error,
       'a changed key must still attempt a paint on a latched, still-broken painter');
     assert.strictEqual(h.paintCount(), 3);
 
@@ -192,7 +192,7 @@ test('permanent throw: the console diagnostic is bounded, not silenced', () => {
     // instead of twice that, while a painter that heals resets the streak on its
     // first successful paint and gets its retry back.
     let escapedAfter = 0;
-    for (let i = 0; i < 60; i++) if (h.emit(snap({ pending: 'hold' }))) escapedAfter++;
+    for (let i = 0; i < 60; i++) if (h.emit(snap({ pending: 'off' }))) escapedAfter++;
     assert.strictEqual(escapedAfter, 0, 'identical emits after the new key are gated away entirely');
     assert.strictEqual(h.paintCount(), 3, 'the changed key cost exactly one attempt, and no more');
   } finally { h.restore(); }

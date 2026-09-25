@@ -990,15 +990,14 @@
         <p class="hint-text">Claude seats on this desktop show their conversation from the transcript above a live strip of the terminal from the composer down. Dialogs and menus fall back to the full terminal.</p>
       </details>
       <details class="prefs-group" data-group="voice">
-        <summary><h4>Voice input</h4><span class="prefs-group-sub">Off, tap-to-talk, or hold-to-talk</span></summary>
+        <summary><h4>Voice input</h4><span class="prefs-group-sub">Off or on</span></summary>
         <p class="hint-text">Applies as soon as you pick it — Cancel does not undo it. The mode belongs to the focused seat, and the voice button on that seat’s bar is the same control.</p>
         <div class="prefs-row">
           <span>Mode</span>
           <select id="prefs-voice-mode" style="flex: none;">
             <option value="">Not set</option>
             <option value="off">Off — no voice input</option>
-            <option value="tap">Tap — tap to start dictating, tap again to stop</option>
-            <option value="hold">Hold — hold the key while speaking, release to send</option>
+            <option value="tap">On — press space on an empty prompt to dictate</option>
           </select>
         </div>
         <span id="prefs-voice-state" class="hint-text" style="display: block; margin-top: 6px;"></span>

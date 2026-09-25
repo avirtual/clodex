@@ -12,9 +12,7 @@ with the pty unfocused and nothing visible, so a hidden seat can record.
 
 Tap: one space starts recording (`⏺ REC · tap to send`), a second stops it.
 The second tap SUBMITS even with `voice.autoSubmit: false`, which is why the
-engine's wire answers every request locally. Hold: spaces written as an
-auto-repeat stream (every ~30ms) show `keep holding…`; when they stop the CLI
-shows `Voice: processing…`. The transcription is painted into the input row
+engine's wire answers every request locally. The transcription is painted into the input row
 while speaking (an interim word followed by a U+2588 block), then replaced by
 the final sentence.
 
@@ -25,8 +23,6 @@ Tap: `❯ ▁`..`❯ █` (meter only), `❯ Hello█`, `❯ Hello▇`..`❯ Hel
 `❯ Hello world▂`, `❯ Hello world enter.▂` (then `.▅`, `.▆`, `.▇`, `.█`, ...
 for as long as the room is not silent); on the stop tap `❯ Hello world enter.`,
 `❯ Hello world, enter.`, then the row clears (the CLI submits) to `❯`.
-Hold: the same interim rows, `❯ Hello world enter.▄`, and after the spaces stop
-`❯ Hello world enter.`, `❯ Hello, world, enter.`; the row is not cleared.
 
 `recording` is reconciled from the engine screen before every tap: the CLI's tap recorder stops itself after its silence timeout (`No speech detected`) with no signal to the pty owner (observed 2026-09-25 01:40; one tap out of phase silenced every later sentence).
 
@@ -39,7 +35,7 @@ engine's base URL at the wire costs the recorder nothing.
 The engine is the only CLI on the box that receives a voice section, and it
 receives it inline in its `--settings` JSON (`voice.mode`, `voiceEnabled`);
 Clodex no longer reads or writes `~/.claude/settings.json` for voice. A seat's
-mode lives in its own record, and a change of mode respawns the engine.
+mode lives in its own record.
 
 ## REPAINT_MAX_MS
 

@@ -9,8 +9,8 @@ const voiceSettings = require('../voice-settings');
 const { readVoiceTrigger, VOICE_MODES, DEFAULT_VOICE_MODE, voiceModeOf } = voiceSettings;
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-test('the modes offered are exactly the three /voice accepts', () => {
-  assert.deepStrictEqual(VOICE_MODES, ['off', 'tap', 'hold']);
+test('a seat\u2019s voice is on or off: exactly two modes', () => {
+  assert.deepStrictEqual(VOICE_MODES, ['off', 'tap']);
 });
 
 test('a seat record with no voice mode reads as tap', () => {
@@ -21,7 +21,14 @@ test('a seat record with no voice mode reads as tap', () => {
 });
 
 test('a seat record carries its own voice mode', () => {
-  for (const m of VOICE_MODES) assert.strictEqual(voiceModeOf({ name: 'a', voice: m }), m);
+  assert.strictEqual(voiceModeOf({ name: 'a', voice: 'off' }), 'off');
+  assert.strictEqual(voiceModeOf({ name: 'a', voice: 'tap' }), 'tap');
+});
+
+test('a record persisted as hold reads as on (tap), with no migration', () => {
+  const rec = { name: 'a', voice: 'hold' };
+  assert.strictEqual(voiceModeOf(rec), 'tap');
+  assert.strictEqual(rec.voice, 'hold');
 });
 
 test('the settings-file voice read and write are gone', () => {
