@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Voice: the tap-mode re-arm and dictation-submit preferences are gone; voice mode is per seat since the previous entry, and the renderer watcher that served those preferences is deleted.
+
 - Stream transport seam: which CLI supports the headless transport is now declared by its adapter, so a codex or muse headless seat is one codec module away. No change for claude stream seats.
 - Voice on every seat: each seat has its own voice mode (off, tap, hold) in its record, the statusbar voice control is the same on claude, codex and shell seats, and a dictated sentence reaches a terminal seat as typed text. Clodex no longer reads or writes ~/.claude/settings.json for voice; only the hidden engine carries a voice setting, inline.
 - Stream seats now get contextual and selection hints: a composer send arms them the way a typed Enter does on a terminal seat.

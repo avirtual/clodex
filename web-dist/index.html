@@ -9973,16 +9973,6 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <input type="text" id="prefs-voice-submit-phrase" placeholder="over and out" spellcheck="false" autocomplete="off" style="flex: 1;">
         </div>
         <span class="hint-text" style="display: block; margin-top: 6px;">Matched at the end of what you have dictated, ignoring case and any punctuation dictation adds. Pick something you would never say mid-sentence — a short one like &ldquo;send it&rdquo; will fire while you are still talking. Clear the box to go back to the default.</span>
-        <label class="prefs-check" style="margin-top: 6px;">
-          <input type="checkbox" id="prefs-voice-submit-composition">
-          <span>Also submit while macOS dictation is still holding the words</span>
-        </label>
-        <span class="hint-text" style="display: block; margin-top: 6px;">macOS dictation keeps what you said <em>underlined and uncommitted</em> until you press a key or click — the words never reach the session, so the setting above cannot see them and nothing happens until you touch the machine. With this on, Clodex reads the words while they are still pending and commits them for you when they end with the phrase. The trade: it is acting on a transcript you have not accepted yet, so if dictation puts the phrase in mid-sentence it will submit early, and there is no undo. Needs the box above ticked.</span>
-        <label class="prefs-check" style="margin-top: 6px;">
-          <input type="checkbox" id="prefs-voice-submit-rearm">
-          <span>Re-arm tap mode when a session finishes its turn</span>
-        </label>
-        <span class="hint-text" style="display: block; margin-top: 6px;">In the CLI&rsquo;s <strong>tap</strong> mode the recorder stops inserting what you say while the agent is working, and only a keypress starts it again &mdash; so after every answer you have to walk over and tap. With this on, Clodex presses the push-to-talk key for you once the agent has finished and the screen has stopped repainting, and you can keep dictating from where you are. It presses nothing if you have started typing in the box, if the session is asking permission, or if push-to-talk is bound to a key combination rather than a single character. Needs the CLI&rsquo;s voice mode set to tap, and the box above ticked.</span>
         <h5>Spoken replies</h5>
         <p class="hint-text">Reads the agent&rsquo;s final answer aloud when it finishes a turn &mdash; the prose only, with code, paths, tables and diffs dropped rather than spelled out, and long replies cut at a sentence. Synthesized on this machine by <code>say</code>: no audio and no text leave the box. It stays quiet while you are dictating, and stops mid-sentence if you tap the microphone. The same settings live on the &#127908; button in the session bar.</p>
         <label class="prefs-check">
@@ -10646,11 +10636,6 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "setSettings", kind: "invoke", channel: "settings:set" },
         { name: "getSetupState", kind: "invoke", channel: "setup:state" },
         { name: "completeSetup", kind: "invoke", channel: "setup:complete" },
-        // Playback of a spoken reply started or ended, box-wide. The re-arm lives in
-        // the renderer and the `say` child in main, so this is the only way the
-        // recorder can be held off until the narration it would otherwise transcribe
-        // has finished.
-        { name: "onSpeakerBusy", kind: "on", channel: "speaker-busy" },
         { name: "onZoomNudge", kind: "on", channel: "zoom-nudge" },
         { name: "setDefaultToolDeny", kind: "invoke", channel: "defaults:setToolDeny" },
         { name: "setDefaultSkillDeny", kind: "invoke", channel: "defaults:setSkillDeny" },
@@ -10857,29 +10842,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         // this terminal's own screen says that is safe. The DECISION is the
         // renderer's because only it can read the recorder; main routes.
         { name: "onVoiceTap", kind: "on", channel: "voice-tap" },
-        // WHICH SEAT HOLDS THE MICROPHONE, box-wide. Main owns the answer for the
-        // reason it owns the speaker flag above: `activeSession` is PER-WINDOW, so
-        // with two workspace windows open two seats are each active in their own and
-        // a locally-evaluated "am I allowed to arm?" answers yes in both.
-        //
-        // Broadcast to every window rather than sent to the holder, because the
-        // windows that LOST it are the ones that have to stop arming.
-        { name: "onMicTarget", kind: "on", channel: "mic-target" },
-        // The pull that pairs with it. A window opened or reloaded mid-dictation has
-        // missed the broadcast, and the target does not change again while he keeps
-        // talking to the seat he already picked — so without this read the new
-        // window's seat could never arm, however long he waited.
         { name: "micTarget", kind: "invoke", channel: "voice:micTarget" },
-        // Whether CLODEX is the frontmost APPLICATION — the second condition on the
-        // automatic re-arm, independent of the target above. A renderer cannot answer
-        // it: `document.hasFocus()` is about the WINDOW, and a window can be the
-        // focused window of an app sitting behind a browser, which is the case that
-        // transcribed video audio into a composer.
-        //
-        // Broadcast plus catch-up pull, the same pair and for the same reason as the
-        // target: a window that opened while the app was already frontmost missed the
-        // edge, and there is no poll to correct it.
-        { name: "onAppFocused", kind: "on", channel: "app-focused" },
         { name: "appFocused", kind: "invoke", channel: "voice:appFocused" },
         { name: "listWorkspaces", kind: "invoke", channel: "workspace:list" },
         { name: "currentWorkspace", kind: "invoke", channel: "workspace:current" },
@@ -29650,8 +29613,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const enabled = raw.voiceSubmit === true;
         return {
           enabled,
-          composition: enabled && raw.voiceSubmitComposition === true,
-          rearm: enabled && raw.voiceSubmitRearm === true,
           phrase: normalizePhrase(raw.voiceSubmitPhrase) || DEFAULT_SUBMIT_PHRASE
         };
       }
@@ -48827,8 +48788,6 @@ Click for live activity`;
       var voiceCore = createVoiceCore({ showToast, getSeat: () => activeSession });
       var voiceSubmitConfig = {
         enabled: false,
-        composition: false,
-        rearm: false,
         phrase: DEFAULT_SUBMIT_PHRASE
       };
       async function refreshVoiceSubmitConfig() {
@@ -49251,8 +49210,6 @@ Click for live activity`;
       var prefsSemanticHints = document.getElementById("prefs-semantic-hints");
       var prefsSelectionHints = document.getElementById("prefs-selection-hints");
       var prefsVoiceSubmit = document.getElementById("prefs-voice-submit");
-      var prefsVoiceSubmitComposition = document.getElementById("prefs-voice-submit-composition");
-      var prefsVoiceSubmitRearm = document.getElementById("prefs-voice-submit-rearm");
       var prefsVoiceSubmitPhrase = document.getElementById("prefs-voice-submit-phrase");
       var prefsSpeakReplies = document.getElementById("prefs-speak-replies");
       var prefsSpeakVoice = document.getElementById("prefs-speak-voice");
@@ -51749,8 +51706,6 @@ ${res.stderr}` : "");
         if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
         if (prefsSelectionHints) prefsSelectionHints.checked = !!s.selectionHints;
         if (prefsVoiceSubmit) prefsVoiceSubmit.checked = s.voiceSubmit === true;
-        if (prefsVoiceSubmitComposition) prefsVoiceSubmitComposition.checked = s.voiceSubmitComposition === true;
-        if (prefsVoiceSubmitRearm) prefsVoiceSubmitRearm.checked = s.voiceSubmitRearm === true;
         if (prefsVoiceSubmitPhrase) prefsVoiceSubmitPhrase.value = s.voiceSubmitPhrase || "";
         setSpeakSettings(s);
         setCtxThresholds(s);
@@ -51860,8 +51815,6 @@ ${res.stderr}` : "");
           semanticHints: prefsSemanticHints ? prefsSemanticHints.checked : false,
           selectionHints: prefsSelectionHints ? prefsSelectionHints.checked : false,
           voiceSubmit: prefsVoiceSubmit ? prefsVoiceSubmit.checked : false,
-          voiceSubmitComposition: prefsVoiceSubmitComposition ? prefsVoiceSubmitComposition.checked : false,
-          voiceSubmitRearm: prefsVoiceSubmitRearm ? prefsVoiceSubmitRearm.checked : false,
           voiceSubmitPhrase: prefsVoiceSubmitPhrase ? prefsVoiceSubmitPhrase.value.trim() : "",
           speakReplies: prefsSpeakReplies ? prefsSpeakReplies.checked : false,
           // Both omitted rather than sent blank when the control is missing: the store

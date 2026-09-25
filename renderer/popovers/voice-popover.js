@@ -3,7 +3,7 @@
 //
 // Self-contained island: it owns its DOM handles and dismiss wiring, and gets
 // every piece of voice state from the shared core in voice-control.js. It holds
-// NO state of its own — a second copy of the box-wide mode is exactly what the
+// NO state of its own — a second copy of the mode is exactly what the
 // core exists to prevent.
 //
 // It also carries the OUTPUT half: whether Clodex reads the final reply
@@ -23,9 +23,6 @@
 const { esc } = require('../lib/format');
 const { VOICE_ITEMS } = require('../voice-control');
 
-// Read on OPEN rather than cached at init: the file is the truth for the input
-// half and must be for this half too, or a Preferences change would leave the
-// checkbox asserting a value the store contradicts.
 async function readSpeakSettings() {
   try {
     const s = await window.api.getSettings();
@@ -55,11 +52,6 @@ const SPEAK_RATES = [
 const DEFAULT_SPEAK_RATE = 210;
 
 
-// How often the open popover re-reads the recorder state. Matched to the
-// watcher's own composition poll, which is what actually moves the value: a
-// faster tick re-reads a getter that cannot have changed, a slower one shows a
-// state the gates have already left.
-//
 // Only ever running while the popover is OPEN, and it writes a class and a
 // string on ONE node — never innerHTML on the bar. An indicator on the session
 // bar would repaint #proxy-actions on this timer, which is the measured
@@ -111,9 +103,6 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
     try { return getRecorderReading(); } catch { return 'out'; }
   }
 
-  // Answered off the SAME predicate as the state above on both branches — the
-  // watcher samples its cause beside its reading on one poll, the capability
-  // cause rides the one snapshot — so it cannot describe a different reading.
   function cause() {
     if (!capable()) return unavailableCause();
     try { return (getRecorderCause && getRecorderCause()) || null; } catch { return null; }
@@ -168,8 +157,6 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
   function actionHtml() {
     const snap = core.snapshot();
     const mode = snap.pending || snap.mode;
-    // Unknown is not a mode: before the first read lands there is nothing to
-    // claim, and guessing "off" would name a state the file may contradict.
     const known = core.isMode(mode);
     const label = known ? mode : 'voice';
     const dim = known && mode === 'off' ? ' px-voice-off' : '';
@@ -258,9 +245,6 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
     if (host) host.innerHTML = speakHtml();
   }
 
-  // Write-through, then re-read. The store sanitizes (a blank voice resolves to
-  // the default), so echoing the local guess would show a value the file may
-  // not hold.
   async function saveSpeak(partial) {
     try { await window.api.setSettings(partial); } catch { /* leave the read to correct it */ }
     await refreshSpeakSection();
@@ -288,10 +272,6 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
   }
 
   body.addEventListener('click', (e) => {
-    // The indicator is a control only where there is something to stop. The
-    // watcher decides that for itself — this must not pre-judge it from the
-    // painted state, which is one tick old and would let a click through into a
-    // recorder that stopped in the meantime.
     if (e.target.closest('[data-rec]')) {
       let stopped = false;
       try { stopped = tapOffRecorder() === true; } catch {}
@@ -299,12 +279,6 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
       // indicator is where he watches it land. Closing would hide the one
       // surface that says whether the click did anything.
       paintRecorder();
-      // A decline is SHOWN, not merely not-done. The watcher declines silently
-      // (a draft in the composer, a screen it cannot read), and paintRecorder
-      // alone renders nothing new in that case because the reading has not
-      // moved — so a click that did nothing would be indistinguishable from one
-      // that worked. The class is transient and self-clearing: it must not
-      // survive into the next reading, which the tick would then contradict.
       if (!stopped) {
         const host = body.querySelector('[data-rec]');
         if (host) {
@@ -322,20 +296,6 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
 
   // Repaint the open list and the bar label together: a pick lands as `pending`
   // and the operator must see it queued rather than see nothing happen.
-  //
-  // GATED ON AN ACTUAL CHANGE, and the gate must live HERE rather than in the
-  // core. The poll and every window focus emit whether or not the file moved, so
-  // an unconditional repaint rebuilds #proxy-actions via innerHTML on emits that
-  // change nothing, destroying every .px-action between a mousedown and its
-  // mouseup and silently eating clicks across the bar — the "3 clicks to open"
-  // mechanism.
-  //
-  // Not in `emit()`: only a SURFACE knows whether it declined to paint. The
-  // Preferences row skips its `sel.value` write while the picker holds focus and
-  // repaints on blur, so its DOM is stale while the snapshot key is unchanged —
-  // a core-level gate would swallow that emit and leave the select showing a
-  // value the file contradicts, which is the exact bug its blur listener exists
-  // to fix.
   let lastKey = null;
   // Consecutive-failure latch. The subscriber has no try/catch of its own by
   // default: a throw from either painter escapes to the core's per-listener

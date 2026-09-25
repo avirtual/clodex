@@ -2,285 +2,11 @@
 
 // external-tap-trigger.test.js — the ensure-on tap an OUTSIDE script asks for,
 // and the seat it lands on.
-//
-// Its own file rather than cases in voice-submit.test.js: the routing half needs
-// a SessionManager and the decision half needs a fake terminal, and the two
-// halves are what this feature is. The predicates they lean on are pinned where
-// they live; nothing here re-asserts those.
-//
-// EVERY DECISION ASSERTION IS ON THE BYTES THAT REACHED THE PTY, never on a
-// predicate's return. A gate can be deleted and leave every function in
-// lib/voice-submit.js still answering correctly while the character goes out
-// anyway — which is the failure this whole subsystem is shaped around.
 
-const { test, afterEach } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { createVoiceSubmitWatcher, STOP_SETTLE_MS } = require('../renderer/voice-submit-watcher');
 const { API_CONTRACT } = require('../api-contract');
-
-// Measured off a live seat 2026-08-31 (CLI 2.1.251), same literals as
-// voice-submit.test.js: the separator is a NON-BREAKING space, and spelling it
-// as an ASCII one is what once left a rule returning false on every real
-// composer with the suite green. Duplicated rather than exported from that
-// file — a shared fixture would let one edit move both sides of every
-// assertion at once.
-// Spelled as escapes so an editor cannot silently "fix" the separator: it is a
-// NON-BREAKING space, and an ASCII one here makes every empty-composer fixture
-// read as a draft — the feature dead and the suite green.
-const EMPTY_COMPOSER = '\u276f\u00a0';
-const REC_ROW = ' agents \u23fa\u0020REC \u00b7 tap to send';
-const IDLE_ROW = ' agents \u00b7 tap to talk';
-
-// Cursor on the LAST row unless a row carries `cursor: true` — so a fixture
-// that paints the composer with an indicator BELOW it must mark the composer
-// row explicitly, or the cursor lands on the indicator and the composer read
-// looks at the wrong line entirely.
-//
-// `indicatorUnreadable` throws from the ROW COUNT, which is the one thing the
-// indicator scan reads and the composer read does not — the only way to put the
-// watcher in "cannot see the recorder, can see the composer", which is the state
-// the polarity rule is about.
-function fakeTerminal({ rows = [''], type = 'normal', indicatorUnreadable = false } = {}) {
-  const state = { rows: rows.map((r) => (typeof r === 'string' ? { text: r } : r)), type, cursorXThrows: false };
-  const cursorIndex = () => {
-    const marked = state.rows.findIndex((r) => r && r.cursor);
-    return marked === -1 ? state.rows.length - 1 : marked;
-  };
-  return {
-    get rows() {
-      if (indicatorUnreadable) throw new Error('screen unreadable');
-      return state.rows.length;
-    },
-    buffer: {
-      get active() {
-        return {
-          type: state.type,
-          baseY: 0,
-          get cursorY() { return cursorIndex(); },
-          get cursorX() {
-            // THE ONLY SEAM that reaches `cursorRow`'s throw. `indicatorRows`
-            // swallows its own exceptions and returns null, so a fixture that
-            // throws from the row count or the cursor ROW declines at the
-            // unreadable-indicator gate above and never consults the composer
-            // read at all — passing for the wrong reason. `cursorX` is read by
-            // `cursorRow` and by nothing else on this path.
-            if (state.cursorXThrows) throw new Error('cursor unreadable');
-            const r = state.rows[cursorIndex()];
-            return typeof r.cursorX === 'number' ? r.cursorX : r.text.length;
-          },
-          getLine: (y) => {
-            const r = state.rows[y];
-            if (!r) return null;
-            return {
-              translateToString: (_trim, start, end) =>
-                r.text.slice(start ?? 0, end ?? r.text.length),
-            };
-          },
-        };
-      },
-    },
-    onWriteParsed() { return { dispose() {} }; },
-    _state: state,
-  };
-}
-
-// Every watcher holds the composition poll's setInterval, so an assertion that
-// throws jumps over its own dispose() and the surviving interval would hang the
-// run on a timeout instead of naming the failure.
-const live = [];
-afterEach(() => { while (live.length) live.pop().dispose(); });
-
-function tapHarness({
-  // `cursor: true` is REQUIRED on the composer row of any multi-row paint: the
-  // fake puts the cursor on the LAST row, and the real footer paints the
-  // indicator BELOW the composer. Without it the composer read reads the
-  // indicator row and every case here passes for the wrong reason.
-  rows = [{ text: EMPTY_COMPOSER, cursor: true }, IDLE_ROW],
-  type = 'normal',
-  attention = null,
-  voiceMode = 'tap',
-  trigger = ' ',
-  indicatorUnreadable = false,
-  // The real settle is 1.5s of wall clock. Shortened here so the deferral cases
-  // do not each cost that: what they assert is the ORDERING across the wait —
-  // nothing written before it, gates read after it — and neither depends on the
-  // duration. The NUMBER itself is a measured claim about the CLI's watcher and
-  // is pinned as source below, where no fixture can drift it.
-  modeSettleMs = 5,
-} = {}) {
-  const writes = [];
-  const env = { attention, voiceMode, trigger, writeThrows: false };
-  const term = fakeTerminal({ rows, type, indicatorUnreadable });
-  // A CONTROLLED CLOCK, so the repaint band can be crossed without sleeping
-  // through it and without making the assertion depend on wall-clock timing.
-  const clock = { t: 1_000_000 };
-  const watcher = createVoiceSubmitWatcher(term, {
-    now: () => clock.t,
-    // The external tap is deliberately NOT gated on the hands-free-submit
-    // config, so this returns one enabled: a harness that switched it off would
-    // pass every silence assertion below for the wrong reason.
-    getConfig: () => ({ enabled: true, rearm: true, phrase: 'over and out' }),
-    getAttention: () => env.attention,
-    getVoiceMode: () => env.voiceMode,
-    getTriggerKey: () => env.trigger,
-    write: (d) => {
-      if (env.writeThrows) throw new Error('pty gone');
-      writes.push(d);
-    },
-    modeSettleMs,
-  });
-  live.push(watcher);
-  return {
-    watcher, writes, env, clock,
-    // Arms the cursor read to throw, for the one case that needs a gate to fail
-    // AFTER the settle wait rather than before it.
-    throwFromCursor: () => { term._state.cursorXThrows = true; },
-    // Arms the WRITE to throw, which is the other side of the guard the sync
-    // path draws: the read declines, the write must still propagate.
-    throwFromWrite: () => { env.writeThrows = true; },
-  };
-}
-
-// ---------------------------------------------------------------- the polarity
-
-// THE TRAP THIS FEATURE WAS DESIGNED AROUND, and the reason it does not reuse
-// `recordingObserved` as its gate.
-//
-// That predicate answers FALSE for an unreadable screen — right where it feeds
-// the voice-origin marker, fatal here. The obvious `if (!recordingObserved(rows))
-// tap()` therefore takes the WRITE branch on a screen nobody can read, and if
-// the recorder was in fact lit that character STOPS it, mid-sentence.
-//
-// The errors are not symmetric, which is the whole argument: declining while
-// the mic was dark costs one repeated wake word, writing while it was lit costs
-// the sentence being spoken. So the null is tested here explicitly.
-//
-// REACHING THE STATE IT NAMES took a specific fixture, and the obvious one does
-// not. On the ALTERNATE buffer both reads decline, so the composer gate blocks
-// the write and the null branch is never consulted — that version of this test
-// passed against the trap implementation, i.e. pinned nothing. This one fails
-// the indicator read ALONE: `indicatorRows` walks `terminal.rows` inside its
-// try/catch and `cursorRow` never touches it, so the composer still reads clean
-// and empty. That is the only shape where the null branch is what decides.
-test('THE POLARITY: an unreadable INDICATOR is never written to, even with a clean composer', () => {
-  const h = tapHarness({ indicatorUnreadable: true });
-  assert.strictEqual(h.watcher.externalTap(), false);
-  assert.deepStrictEqual(h.writes, [],
-    'a character written here would STOP a recording that may well be live');
-  assert.strictEqual(h.watcher.externalTapCount(), 0);
-});
-
-test('the ALTERNATE buffer is not written to either', () => {
-  // A full-screen program is up: neither read means anything. Blocked by the
-  // composer gate rather than by the null branch above — kept as its own case
-  // precisely so the two reasons stay distinguishable.
-  const h = tapHarness({ type: 'alternate' });
-  assert.strictEqual(h.watcher.externalTap(), false);
-  assert.deepStrictEqual(h.writes, []);
-});
-
-// THE PROCESSING WINDOW, and it sits on this feature's HAPPY PATH rather than
-// in a corner. t587's stop-at-submit writes the key at the end of a dictated
-// turn, the recorder enters processing, and processing is the first moment
-// Voice Control can hear a wake word again — so the tap this feature exists to
-// deliver is aimed straight into this window. The two features compose into the
-// bug.
-//
-// The CLI REPLACES the lit indicator with this row rather than adding to it, so
-// `recordingObserved` reads NOT-LIT for the whole window while the composer is
-// still clean. Measured in 2.1.251: the tap handler's processing arm returns
-// WITHOUT swallowing a single-character binding, so the byte falls through as a
-// LITERAL into the composer — and from then on `composerIsEmpty` is false, which
-// blocks every later re-arm AND every later external tap. A permanently stuck
-// mic that only a manual composer clear escapes.
-//
-// NOT VACUOUS, by the same bar the null case had to clear: the composer reads
-// clean here and no permission dialog is up, so every earlier guard PASSES and
-// the processing gate is the only thing that can decline. A fixture an earlier
-// guard already rejects would pin nothing.
-//
-// Both spellings, for the reason t587's table gives: the CLI's real bytes carry
-// a single U+2026, and a rule anchored on that ellipsis would pass the first row
-// and fail the ASCII form a normalisation produces.
-test('THE PROCESSING WINDOW gets no character — the byte would land as a literal', () => {
-  for (const row of [
-    ' agents Voice: processing\u2026',
-    ' agents Voice: processing...',
-  ]) {
-    const h = tapHarness({ rows: [{ text: EMPTY_COMPOSER, cursor: true }, row] });
-    assert.strictEqual(h.watcher.externalTap(), false, JSON.stringify(row));
-    assert.deepStrictEqual(h.writes, [], JSON.stringify(row));
-    assert.strictEqual(h.watcher.externalTapCount(), 0, JSON.stringify(row));
-  }
-});
-
-test('a recorder already LIT is left alone — ensure-on, never toggle', () => {
-  const h = tapHarness({ rows: [{ text: EMPTY_COMPOSER, cursor: true }, REC_ROW] });
-  assert.strictEqual(h.watcher.externalTap(), false);
-  assert.deepStrictEqual(h.writes, [], 'the byte would STOP the live recording');
-  assert.strictEqual(h.watcher.externalTapCount(), 0);
-});
-
-// Without this row the two above pass for a gate that blocks unconditionally:
-// the feature would be dead and the suite green. It is the only case here that
-// asserts a byte WAS written.
-test('a DARK recorder and an empty composer gets the trigger character', () => {
-  const h = tapHarness();
-  assert.strictEqual(h.watcher.externalTap(), true);
-  assert.deepStrictEqual(h.writes, [' ']);
-  assert.strictEqual(h.watcher.externalTapCount(), 1);
-});
-
-test('the character written is the CONFIGURED one, not a hardcoded space', () => {
-  const h = tapHarness({ trigger: 'k' });
-  h.watcher.externalTap();
-  assert.deepStrictEqual(h.writes, ['k']);
-});
-
-test('no single character is bound to push-to-talk: nothing is written', () => {
-  // A modifier chord resolves to null upstream, and a space written in hope
-  // would just type into the draft.
-  const h = tapHarness({ trigger: null });
-  assert.strictEqual(h.watcher.externalTap(), false);
-  assert.deepStrictEqual(h.writes, []);
-});
-
-test('HOLD mode is not tapped', () => {
-  // The swallow-and-toggle measured in the CLI is the tap branch specifically;
-  // in hold mode one written character cannot reach the auto-repeat threshold,
-  // so it lands in the draft as a literal and arms nothing.
-  const h = tapHarness({ voiceMode: 'hold' });
-  assert.strictEqual(h.watcher.externalTap(), false);
-  assert.deepStrictEqual(h.writes, []);
-});
-
-test('a NON-EMPTY composer is not tapped', () => {
-  // The CLI's tap handler bails on a non-empty composer BEFORE it swallows the
-  // key, so the character would be inserted into the operator's draft — and the
-  // now-non-empty composer blocks every later re-arm too.
-  const h = tapHarness({ rows: [{ text: '❯ half a thought', cursor: true }, IDLE_ROW] });
-  assert.strictEqual(h.watcher.externalTap(), false);
-  assert.deepStrictEqual(h.writes, []);
-});
-
-test('a seat showing a PERMISSION dialog is not tapped', () => {
-  // Any byte written into an open dialog ANSWERS it. This gate cannot be
-  // inherited from the re-arm's: that one additionally requires hands-free
-  // submit to be switched on, and this feature is not that one.
-  const h = tapHarness({ attention: 'permission' });
-  assert.strictEqual(h.watcher.externalTap(), false);
-  assert.deepStrictEqual(h.writes, []);
-});
-
-test('a disposed watcher writes nothing', () => {
-  const h = tapHarness();
-  h.watcher.dispose();
-  assert.strictEqual(h.watcher.externalTap(), false);
-  assert.deepStrictEqual(h.writes, []);
-});
-
-// ------------------------------------------------------------------ the routing
 
 // The REAL manager, from the real factory, with the deps voiceTap's path
 // touches. Source-shape assertions were the alternative and are strictly
@@ -360,17 +86,12 @@ test('an explicit target is preferred over the focused seat', () => {
   assert.deepStrictEqual(m.voiceTap('named'), { ok: true, name: 'named' });
   // The whole frame: a tap that reached the right seat over the wrong channel
   // is as dead as one that reached nobody.
-  //
-  // THE RETARGET RIDES AHEAD OF THE TAP, and the order is the assertion:
-  // the seat must not receive its own tap while another seat is still recorded
-  // as holding the microphone. A tap NAMES a seat, so it takes the microphone;
-  // the automatic re-arm names nobody and never does.
+
   // NO raise here: the app is already frontmost, which is what `reportFrom`
   // establishes. The backgrounded case, where the tap DOES raise, is pinned in
   // the FOCUS block below.
   assert.deepStrictEqual(win.sent,
-    [['app-focused', true], ['mic-target', 'watched'], ['mic-target', 'named'],
-      ['voice-tap', 'named']],
+    [['voice-tap', 'named']],
     'a script can address a seat the operator is not looking at');
 });
 
@@ -382,7 +103,7 @@ test('no target falls back to the focused seat', () => {
   // — the idempotence guard is what keeps a second frame off the wire here.
   assert.deepStrictEqual(m.voiceTap(), { ok: true, name: 'watched' });
   assert.deepStrictEqual(win.sent,
-    [['app-focused', true], ['mic-target', 'watched'], ['voice-tap', 'watched']]);
+    [['voice-tap', 'watched']]);
 });
 
 test('no target and nothing focused declines rather than guessing a seat', () => {
@@ -405,7 +126,7 @@ test('a cleared focus stops routing at the seat that went away', () => {
   // it: a target left pointing at the seat that went away would let that seat's
   // window go on believing it may arm.
   assert.deepStrictEqual(win.sent,
-    [['app-focused', true], ['mic-target', 'watched'], ['mic-target', null]],
+    [],
     'no tap frame — and the target was cleared, not merely left behind');
 });
 
@@ -511,7 +232,7 @@ test('the socket arm dispatches voice-tap and delivers it to NO transcript', () 
   m._onIncoming('courier', { type: 'voice-tap', from: 'voice-tap' });
 
   assert.deepStrictEqual(win.sent,
-    [['app-focused', true], ['mic-target', 'watched'], ['voice-tap', 'watched']],
+    [['voice-tap', 'watched']],
     'the socket it arrived on identifies the app, not the seat');
 });
 
@@ -525,8 +246,7 @@ test('the socket arm honours an explicit target on the envelope', () => {
   m._onIncoming('courier', { type: 'voice-tap', from: 'voice-tap', target: 'named' });
   // The focus put the microphone on 'courier'; the NAMED target takes it away.
   assert.deepStrictEqual(win.sent,
-    [['app-focused', true], ['mic-target', 'courier'], ['mic-target', 'named'],
-      ['voice-tap', 'named']]);
+    [['voice-tap', 'named']]);
 });
 
 // ----------------------------------------------- the microphone has ONE target
@@ -536,15 +256,7 @@ test('the socket arm honours an explicit target on the envelope', () => {
 // per-WINDOW, so two workspace windows each have a seat that is "active" and a
 // locally-evaluated permission answers yes in both. That is how the operator's
 // dictation reached two composers at once.
-//
-// The asymmetry between the two writers is the design and is pinned below: a
-// TAP names a seat, so it may take the microphone; the automatic re-arm names
-// nobody, so it may only ever arm whoever already holds it (that half is
-// enforced in the renderer and pinned in voice-submit.test.js).
 
-// A second workspace window, which is what makes the box-wide claim testable at
-// all: a value delivered only to the holder's window leaves the LOSER believing
-// it may still arm, and the loser is the seat that caused this bug.
 function twoWindows(m) {
   const a = fakeWin();
   const b = fakeWin();
@@ -563,17 +275,13 @@ function reportFrom(m, win, name, { appFocused = true } = {}) {
   m.noteFocusedSession(name, win);
 }
 
-test('MIC: the focus report sets the target, and EVERY window is told', () => {
+test('MIC: the focus report sets the target and sends no window a frame', () => {
   const m = mk();
   const { a, b } = twoWindows(m);
   reportFrom(m, a, 'A');
   assert.strictEqual(m.micTarget(), 'A');
-  // BOTH windows, and B's frame is the load-bearing one: B's seat has to learn
-  // it does NOT hold the microphone, which is the only thing that stops it
-  // arming when its own turn ends.
-  assert.deepStrictEqual(a.sent, [['app-focused', true], ['mic-target', 'A']]);
-  assert.deepStrictEqual(b.sent, [['app-focused', true], ['mic-target', 'A']],
-    'the losing window is told too');
+  assert.deepStrictEqual(a.sent, []);
+  assert.deepStrictEqual(b.sent, []);
 });
 
 test('MIC: switching focus moves it, so two seats can never both hold it', () => {
@@ -584,23 +292,17 @@ test('MIC: switching focus moves it, so two seats can never both hold it', () =>
   a.focused = false;
   reportFrom(m, b, 'B');
   assert.strictEqual(m.micTarget(), 'B');
-  // The frames in order: the SECOND is what takes it off A. A design that only
-  // ever added a holder would leave both live, which is the bug.
-  assert.deepStrictEqual(a.sent,
-    [['app-focused', true], ['mic-target', 'A'], ['mic-target', 'B']]);
+  assert.deepStrictEqual(a.sent, []);
 });
 
-test('MIC: a repeated report of the SAME seat broadcasts once', () => {
-  // The renderer reports on every window focus, so this repeats whenever the
-  // operator alt-tabs. Without the equality guard each one puts a frame on
-  // every window for a value that did not change.
+test('MIC: a repeated report of the SAME seat keeps it and sends nothing', () => {
   const m = mk();
   const { a, b } = twoWindows(m);
   reportFrom(m, a, 'A');
   reportFrom(m, a, 'A');
   reportFrom(m, a, 'A');
-  assert.deepStrictEqual(a.sent, [['app-focused', true], ['mic-target', 'A']]);
-  assert.deepStrictEqual(b.sent, [['app-focused', true], ['mic-target', 'A']]);
+  assert.deepStrictEqual(a.sent, []);
+  assert.deepStrictEqual(b.sent, []);
 });
 
 test('MIC: an EXPLICIT tap takes the microphone from the focused seat', () => {
@@ -618,9 +320,9 @@ test('MIC: an EXPLICIT tap takes the microphone from the focused seat', () => {
   assert.strictEqual(m._focusedSession, 'A',
     'the tap moves the microphone and leaves the focus record alone');
   assert.deepStrictEqual(a.sent,
-    [['app-focused', true], ['mic-target', 'A'], ['mic-target', 'B']]);
+    []);
   assert.deepStrictEqual(b.sent,
-    [['app-focused', true], ['mic-target', 'A'], ['mic-target', 'B'], ['voice-tap', 'B']]);
+    [['voice-tap', 'B']]);
 });
 
 test('MIC: a tap that DECLINES does not move the microphone', () => {
@@ -640,8 +342,7 @@ test('MIC: a tap that DECLINES does not move the microphone', () => {
     reportFrom(m, a, 'A');
     assert.strictEqual(m.voiceTap(target).ok, false, `${label}: declined`);
     assert.strictEqual(m.micTarget(), 'A', `${label}: A still holds it`);
-    assert.deepStrictEqual(a.sent, [['app-focused', true], ['mic-target', 'A']],
-      `${label}: no second frame`);
+    assert.deepStrictEqual(a.sent, [], label);
   }
 });
 
@@ -651,12 +352,8 @@ test('MIC: nothing focused releases the microphone rather than stranding it', ()
   reportFrom(m, a, 'A');
   reportFrom(m, a, null);
   assert.strictEqual(m.micTarget(), null);
-  // The null has to REACH the windows: a holder left recorded on a seat that
-  // went away is a seat whose window still believes it may arm.
-  assert.deepStrictEqual(a.sent,
-    [['app-focused', true], ['mic-target', 'A'], ['mic-target', null]]);
-  assert.deepStrictEqual(b.sent,
-    [['app-focused', true], ['mic-target', 'A'], ['mic-target', null]]);
+  assert.deepStrictEqual(a.sent, []);
+  assert.deepStrictEqual(b.sent, []);
 });
 
 test('MIC: it starts held by NOBODY', () => {
@@ -666,26 +363,19 @@ test('MIC: it starts held by NOBODY', () => {
   assert.strictEqual(m.micTarget(), null);
 });
 
-test('MIC: the pull answers what a window that opened mid-dictation missed', () => {
-  // The broadcast is an EDGE and the target does not move again while he keeps
-  // talking to the seat he already picked, so a window opened after it would
-  // never learn the holder without this read — and its seat could never arm.
+test('MIC: a window that opens later reads the holder through the pull', () => {
   const m = mk();
   const { a } = twoWindows(m);
   reportFrom(m, a, 'A');
   const late = fakeWin();
   m.registerWindow('ws3', late);
-  assert.deepStrictEqual(late.sent, [], 'it missed the broadcast, by construction');
-  assert.strictEqual(m.micTarget(), 'A', 'and the pull is how it catches up');
+  assert.deepStrictEqual(late.sent, []);
+  assert.strictEqual(m.micTarget(), 'A');
 });
 
-test('MIC: the contract carries both halves with the kinds each relies on', () => {
+test('MIC: the contract carries the pull and no mic-target event', () => {
   const rows = new Map(API_CONTRACT.map((r) => [r.name, r]));
-  // The WHOLE row: an `on` that became `invoke` would silently stop delivering
-  // the broadcast, and the losing window would go on believing it holds the
-  // microphone — which is the failure with no visible symptom until he speaks.
-  assert.deepStrictEqual(rows.get('onMicTarget'),
-    { name: 'onMicTarget', kind: 'on', channel: 'mic-target' });
+  assert.strictEqual(rows.get('onMicTarget'), undefined);
   assert.deepStrictEqual(rows.get('micTarget'),
     { name: 'micTarget', kind: 'invoke', channel: 'voice:micTarget' });
 });
@@ -735,7 +425,7 @@ test('REPORTER: a background window reports its seat and takes NOTHING', () => {
 
   assert.strictEqual(m.micTarget(), 'A',
     'the seat he is dictating into keeps the microphone');
-  assert.deepStrictEqual(a.sent, [], 'no mic-target frame went out at all');
+  assert.deepStrictEqual(a.sent, []);
   assert.deepStrictEqual(b.sent, []);
   // ROUTING still moved, and must: an external tap naming no seat follows the
   // last report even from a background window — that is the whole point of
@@ -759,7 +449,7 @@ test('REPORTER: the same report from the FRONT window DOES move it', () => {
   m.noteFocusedSession('C', b);
 
   assert.strictEqual(m.micTarget(), 'C', 'he switched to that window himself');
-  assert.deepStrictEqual(a.sent, [['mic-target', 'C']]);
+  assert.deepStrictEqual(a.sent, []);
 });
 
 test('REPORTER: a report while the APP is backgrounded takes nothing either', () => {
@@ -810,46 +500,28 @@ test('REPORTER: a window whose isFocused THROWS takes nothing', () => {
 // Clodex behind it; an agent's turn ended, the re-arm fired, and the CLI
 // transcribed the VIDEO into that seat's composer. The seat WAS the target, so
 // the invariant above passes — nobody was talking to it.
-//
-// ONE RULE, not an asymmetric pair: no path arms the recorder from the
-// background. What differs between the two paths is what they do about it — the
-// re-arm declines (it names nobody, so it has no window it could justify
-// raising), while the tap names a seat and therefore RAISES it.
 
 test('FOCUS: it starts backgrounded, so nothing arms before the host reports', () => {
   const m = mk();
   assert.strictEqual(m.appFocused(), false);
 });
 
-test('FOCUS: the host report is mirrored and broadcast to every window', () => {
+test('FOCUS: the host report is mirrored and sends no window a frame', () => {
   const m = mk();
   const { a, b } = twoWindows(m);
   m.noteAppFocused(true);
   assert.strictEqual(m.appFocused(), true);
-  assert.deepStrictEqual(a.sent, [['app-focused', true]]);
-  assert.deepStrictEqual(b.sent, [['app-focused', true]], 'every window, like the target');
+  assert.deepStrictEqual(a.sent, []);
+  assert.deepStrictEqual(b.sent, []);
 });
 
-test('FOCUS: going to the background broadcasts the FALSE edge', () => {
-  // The edge that matters: without it every seat goes on believing the app is
-  // in front, which is the state that recorded.
+test('FOCUS: going to the background clears the flag', () => {
   const m = mk();
   const { a } = twoWindows(m);
   m.noteAppFocused(true);
   m.noteAppFocused(false);
   assert.strictEqual(m.appFocused(), false);
-  assert.deepStrictEqual(a.sent, [['app-focused', true], ['app-focused', false]]);
-});
-
-test('FOCUS: a repeated report of the same state broadcasts once', () => {
-  // Window focus churns between sibling windows without the APP's
-  // frontmost-ness changing, and both Electron edges call this.
-  const m = mk();
-  const { a } = twoWindows(m);
-  m.noteAppFocused(true);
-  m.noteAppFocused(true);
-  m.noteAppFocused(true);
-  assert.deepStrictEqual(a.sent, [['app-focused', true]]);
+  assert.deepStrictEqual(a.sent, []);
 });
 
 test('FOCUS: exactly true, not merely truthy', () => {
@@ -867,9 +539,6 @@ test('FOCUS: a tap from the BACKGROUND raises the window, then arms', () => {
   // background-recording hole.
   const m = mk();
   const { b } = twoWindows(m);
-  // No 'app-focused' frame below: the flag ALREADY starts false, and the
-  // idempotence guard is what keeps a redundant edge off the wire. Windows
-  // default to backgrounded for the same reason, so nothing is missed.
   m.noteAppFocused(false);
   assert.deepStrictEqual(m.voiceTap('B'), { ok: true, name: 'B' });
   assert.deepStrictEqual(b.raised, ['show', 'focus'], 'the window was brought forward');
@@ -877,7 +546,7 @@ test('FOCUS: a tap from the BACKGROUND raises the window, then arms', () => {
   // holds the microphone before its window comes forward, and the tap frame
   // goes out last.
   assert.deepStrictEqual(b.sent,
-    [['mic-target', 'B'], ['#show'], ['#focus'], ['voice-tap', 'B']]);
+    [['#show'], ['#focus'], ['voice-tap', 'B']]);
 });
 
 test('FOCUS: a tap with the app ALREADY in front does not re-raise it', () => {
@@ -890,7 +559,7 @@ test('FOCUS: a tap with the app ALREADY in front does not re-raise it', () => {
   assert.deepStrictEqual(m.voiceTap('B'), { ok: true, name: 'B' });
   assert.deepStrictEqual(b.raised, [], 'already frontmost: nothing to raise');
   assert.deepStrictEqual(b.sent,
-    [['app-focused', true], ['mic-target', 'B'], ['voice-tap', 'B']]);
+    [['voice-tap', 'B']]);
 });
 
 test('FOCUS: a host that cannot raise still routes the tap', () => {
@@ -919,10 +588,9 @@ test('FOCUS: a DECLINED tap neither raises a window nor moves the microphone', (
   assert.strictEqual(m.micTarget(), 'A');
 });
 
-test('FOCUS: the contract carries both halves with the kinds each relies on', () => {
+test('FOCUS: the contract carries the pull and no app-focused event', () => {
   const rows = new Map(API_CONTRACT.map((r) => [r.name, r]));
-  assert.deepStrictEqual(rows.get('onAppFocused'),
-    { name: 'onAppFocused', kind: 'on', channel: 'app-focused' });
+  assert.strictEqual(rows.get('onAppFocused'), undefined);
   assert.deepStrictEqual(rows.get('appFocused'),
     { name: 'appFocused', kind: 'invoke', channel: 'voice:appFocused' });
 });
@@ -1175,8 +843,8 @@ test('SELECT: selects the named seat, then arms it, in that order', () => {
   // Clodex frontmost this fixture once asserted no raise at all, which pinned
   // the very no-op that made select useless across windows.
   assert.deepStrictEqual(b.sent,
-    [['app-focused', true], ['request-switch-session', 'B'],
-      ['mic-target', 'B'], ['#show'], ['#focus'], ['voice-tap', 'B']]);
+    [['request-switch-session', 'B'],
+      ['#show'], ['#focus'], ['voice-tap', 'B']]);
 });
 
 // THE CASE THE VERB EXISTS FOR, and it was covered nowhere: he is looking at
@@ -1217,7 +885,7 @@ test('SELECT: a select with the whole APP backgrounded raises that seat\'s windo
   assert.deepStrictEqual(m.voiceSelect('B'), { ok: true, name: 'B' });
   assert.deepStrictEqual(b.raised, ['show', 'focus'], 'B\'s window came forward');
   assert.deepStrictEqual(b.sent,
-    [['request-switch-session', 'B'], ['mic-target', 'B'], ['#show'], ['#focus'],
+    [['request-switch-session', 'B'], ['#show'], ['#focus'],
       ['voice-tap', 'B']]);
   // voiceTap's raise, REUSED rather than duplicated: A's window is untouched, which
   // a second raise mechanism firing on the manager's own idea of "the window"
@@ -1318,8 +986,8 @@ test('SELECT: the socket arm dispatches voice-select', () => {
   // Raise included: the socket arm is the real entry point, so it must show the
   // same window-forward behaviour the direct call does.
   assert.deepStrictEqual(b.sent,
-    [['app-focused', true], ['request-switch-session', 'B'],
-      ['mic-target', 'B'], ['#show'], ['#focus'], ['voice-tap', 'B']]);
+    [['request-switch-session', 'B'],
+      ['#show'], ['#focus'], ['voice-tap', 'B']]);
 });
 
 // The one hop nothing else covers, extended to the new verbs: the script builds
@@ -1505,176 +1173,4 @@ test('SPEECH: his legacy invocations are STILL byte-identical with three verbs p
   assert.deepStrictEqual(envelopeFor(['speech']),
     { type: 'voice-tap', from: 'voice-tap', target: 'speech' },
     'a seat named `speech` is still addressable by the legacy shape');
-});
-
-// ------------------------------------------- the tap works from ANY voice mode
-
-// THE PROPERTY: the spoken tap arms a usable recorder whatever mode the settings
-// file was in when it arrived. In `hold` it did not — that arm expects a HELD
-// key, so one synthetic keystroke starts a recording and the auto-repeat
-// fallback stops it again before he can speak.
-//
-// Asserted in the two halves the feature is: main sets the mode and says it did,
-// and the renderer's watcher waits for the CLI to observe it and then writes.
-
-// The renderer half. The watcher is what actually writes the byte, and under a
-// mode change it must WAIT before doing so — the CLI needs ~1s to observe the
-// new mode, measured, and a key written earlier is handled under the old one.
-test('MODE-INDEPENDENT: the watcher DEFERS its byte while the mode is settling', async () => {
-  const h = tapHarness();
-  const pending = h.watcher.externalTap(true);
-  // The wait is the assertion: a byte on the wire here is one the CLI handles
-  // under the mode it has not yet dropped.
-  assert.deepStrictEqual(h.writes, [], 'nothing is written while the CLI is still on the old mode');
-  assert.strictEqual(await pending, true);
-  assert.deepStrictEqual(h.writes, [' '], 'and the byte follows once it has observed it');
-});
-
-test('MODE-INDEPENDENT: with no mode change the byte is written immediately', () => {
-  // Synchronously, not merely eventually: this is his every-day tap, and making
-  // it wait 1.5s for a change that did not happen is the cost this avoids.
-  const h = tapHarness();
-  assert.strictEqual(h.watcher.externalTap(false), true);
-  assert.deepStrictEqual(h.writes, [' ']);
-});
-
-test('MODE-INDEPENDENT: the gates are re-read AFTER the wait, not before it', async () => {
-  // 1.5s is long enough for the screen to change under us, so the gates must
-  // read it as it is when the key LANDS rather than as it was when the tap
-  // arrived. The recorder LIGHTS during the wait here: a byte written then
-  // stops the operator mid-sentence, which is the failure this file is shaped
-  // around, and gates evaluated up front would not see it.
-  const indicator = { text: IDLE_ROW };
-  const h = tapHarness({ rows: [{ text: EMPTY_COMPOSER, cursor: true }, indicator] });
-  const pending = h.watcher.externalTap(true);
-  // ENTER: dark at the moment the tap arrived, or the lit read below is what
-  // the gates would have seen anyway and the ordering is untested.
-  assert.strictEqual(indicator.text, IDLE_ROW);
-  indicator.text = REC_ROW;
-  assert.strictEqual(await pending, false, 'the recorder lit while we waited');
-  assert.deepStrictEqual(h.writes, [], 'so the byte that would have stopped him is not written');
-});
-
-test('MODE-INDEPENDENT: a gate that THROWS after the wait settles, never hangs', async () => {
-  // A throw anywhere under the recursive call used to leave the promise pending
-  // forever, and with it the handler awaiting it. Reached by making the composer
-  // read throw only AFTER the wait, which is the only window where this can
-  // happen at all.
-  //
-  // WHAT THIS PINS TODAY IS THE OUTCOME, NOT THE DEFERRED CATCH. The sync path
-  // now guards its own composer read, so this throw is intercepted there and
-  // returns false before the recursive call comes back — the deferred catch is
-  // never entered. Deleting that catch leaves this test green, which is why the
-  // write case below exists and must not be folded into this one.
-  const h = tapHarness();
-  const pending = h.watcher.externalTap(true);
-  h.throwFromCursor();
-  assert.strictEqual(await pending, false, 'it declines instead of hanging');
-  assert.deepStrictEqual(h.writes, []);
-});
-
-// THE DEFERRED CATCH'S OWN PIN, and the only one it has. Every other throw on
-// this path is now caught further in — the screen reads by their own guards, the
-// composer read by the sync path's — so the WRITE is the one throw that still
-// reaches this catch, and a write throws only after the wait has elapsed and
-// every gate has passed.
-//
-// IN THE RENDERER its failure is a HANG, not a wrong answer: a throw inside the
-// timer callback settles nothing, so the promise stays pending for the life of
-// the page and the `onVoiceTap` handler awaiting it never returns. Here it
-// surfaces faster — node's runner attributes the uncaught timer throw to
-// whichever test is in flight — so removing the catch fails this loudly rather
-// than stalling the file. The `timeout` is the backstop for the case where it
-// does not, since no assertion can fire on a promise that never resolves.
-test('MODE-INDEPENDENT: a WRITE that throws after the wait settles rather than hanging', { timeout: 5000 }, async () => {
-  const h = tapHarness();
-  h.throwFromWrite();
-  const pending = h.watcher.externalTap(true);
-  assert.strictEqual(await pending, false, 'the tap declines rather than hanging the handler');
-  assert.deepStrictEqual(h.writes, [], 'the byte never reached the pty');
-  assert.strictEqual(h.watcher.externalTapCount(), 0,
-    'and nothing is counted for a write that did not land');
-});
-
-// THE SYNCHRONOUS TWIN of the case above, and the one the deferred path's guard
-// did not cover. `onVoiceTap` in renderer.js awaits `externalTap(modeSettling)`
-// unguarded, so before this the throw rejected that handler: the tap was lost
-// AND every gate after the throwing read was skipped. The deferred branch had
-// its catch from the start; this path is the box-wide one — the wake word and
-// `scripts/clodex-voice-tap.js` both land on it with no mode change to defer.
-test('a composer read that THROWS on the SYNC path declines rather than escaping', () => {
-  const h = tapHarness();
-  // ENTER: the same harness taps successfully when the read does not throw, or
-  // the decline below is one this fixture would have produced anyway.
-  assert.strictEqual(h.watcher.externalTap(), true);
-  assert.deepStrictEqual(h.writes, [' ']);
-  // PAST THE REPAINT BAND that the tap above just opened. Without this the
-  // second call declines on `lastTriggerWriteAt` before it ever reaches the
-  // composer read, and this test passes against the unguarded version.
-  h.clock.t += STOP_SETTLE_MS + 1;
-
-  h.throwFromCursor();
-  assert.strictEqual(h.watcher.externalTap(), false, 'it declines instead of throwing');
-  assert.deepStrictEqual(h.writes, [' '], 'and writes nothing beyond the tap that already landed');
-  assert.strictEqual(h.watcher.externalTapCount(), 1);
-});
-
-// WHERE THE GUARD'S EDGE IS. The catch covers the screen read that GATES the
-// write, never the write itself: a `write` that throws means the byte did not go
-// out, and reporting `true` for it — or `false`, silently — would make the one
-// unrecoverable outcome on this path indistinguishable from a gate declining.
-test('a WRITE that throws is NOT swallowed by the read guard', () => {
-  const h = tapHarness();
-  h.throwFromWrite();
-  assert.throws(() => h.watcher.externalTap(), /pty gone/);
-  assert.strictEqual(h.watcher.externalTapCount(), 0,
-    'and nothing is counted for a byte that never reached the pty');
-});
-
-test('MODE-INDEPENDENT: a watcher disposed during the wait settles rather than hanging', async () => {
-  // Each waiting tap owns a promise a caller is awaiting, so dispose must SETTLE
-  // it, not merely drop the timer — an unresolved one leaves that await hanging
-  // for the life of the page.
-  const h = tapHarness();
-  const pending = h.watcher.externalTap(true);
-  h.watcher.dispose();
-  assert.strictEqual(await pending, false);
-  assert.deepStrictEqual(h.writes, [], 'a seat that went away during the wait writes nothing');
-});
-
-// THE COMPRESSION BAND the deferral opens, and the reason it is not academic.
-//
-// Tap 1 from `hold` waits out the mode settle. He sees nothing happen — which is
-// the whole reason he says the phrase again — so tap 2 arrives just after the
-// boundary and lands ~100ms behind tap 1's byte instead of the 1.5s later it was
-// spoken. The CLI has not repainted `⏺ REC` yet, so the indicator still reads
-// DARK and the ensure-on gate would happily write a second byte, which STOPS the
-// recording tap 1 just started. Worse than the blink this ticket removes: the
-// repeat phrase actively undoes the tap.
-test('MODE-INDEPENDENT: a tap in the REPAINT band after a written byte declines', async () => {
-  const h = tapHarness();
-  // Tap 1 writes, exactly as the deferred arm does when the settle ends.
-  assert.strictEqual(await h.watcher.externalTap(true), true);
-  assert.deepStrictEqual(h.writes, [' '], 'ENTER: a byte really did go out');
-
-  // Tap 2, inside the repaint window. The screen still shows the pre-byte state
-  // — that is the whole trap, and the fixture leaves it dark deliberately.
-  h.clock.t += 100;
-  assert.strictEqual(h.watcher.externalTap(), false,
-    'the screen cannot be trusted yet, so it must not write');
-  assert.deepStrictEqual(h.writes, [' '],
-    'no second byte — it would STOP the recording the first one started');
-});
-
-test('MODE-INDEPENDENT: once the repaint band has passed, a tap writes again', () => {
-  // The other half, or the pin above passes for a gate that blocks every tap
-  // after the first one forever — which would break the ordinary repeat.
-  const h = tapHarness();
-  assert.strictEqual(h.watcher.externalTap(), true);
-  assert.deepStrictEqual(h.writes, [' ']);
-
-  h.clock.t += 5000;
-  assert.strictEqual(h.watcher.externalTap(), true,
-    'well past the repaint, the screen is trustworthy again');
-  assert.deepStrictEqual(h.writes, [' ', ' ']);
 });

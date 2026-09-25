@@ -45,7 +45,7 @@ plus the transcript JSON schema. More in §9.
 
 - Code read: `jsonl-watcher.js`, `renderer/renderer.js` (createSession's
   terminal block), `renderer/intent-highlight.js`, `renderer/lib/prompt-echo.js`,
-  `renderer/voice-submit-watcher.js` + `renderer/lib/voice-submit.js` (composer
+  `renderer/lib/voice-submit.js` (composer
   rules), the `inject-queue.js` header, `docs/sessions.md` §3,
   `docs/renderer-events.md`. Also, because the question forced it:
   `wire-intents.js` (TranscriptSentinel), `wire/proxy.js` and `wire/sse.js`
@@ -243,8 +243,7 @@ composer 5, and the footer's height varies (bypass line, notices). The
 measurement runs on the normal buffer's visible screen, rows `baseY … baseY +
 rows - 1`, on every `onWriteParsed`:
 
-1. `buf.type !== 'normal'` → **FULL**. Same decline as intent-highlight and
-   voice-submit-watcher.
+1. `buf.type !== 'normal'` → **FULL**. Same decline as intent-highlight.
 2. Scan upward from the cursor row, then downward if nothing is found above, for
    the nearest **anchor**: a row that is a full-width U+2500 rule (at least
    `cols - 1` cells) **immediately followed** by a row the existing composer
@@ -307,8 +306,7 @@ candidate guard for a future "dialog without FULL" mode. v1 uses the anchor.
 
 `RAW` and `FULL` render identically. They differ only in whether the
 measurement runs. The **alternate screen** never occurs with the default
-renderer (fact 1). The CLI's opt-in fullscreen renderer (`/tui fullscreen`, see
-voice-submit-watcher's note) puts everything on the alternate buffer, and the
+renderer (fact 1). The CLI's opt-in fullscreen renderer (`/tui fullscreen`) puts everything on the alternate buffer, and the
 seat then stays FULL. That is the correct and only v1 behaviour.
 
 ## 4. Latency and ordering

@@ -302,26 +302,12 @@ const RENDERER_SCANNED_MODULES = [
   // one would ship green without this.
   'renderer/intent-highlight.js',
   'renderer/lib/term-webgl.js',
-  // The hands-free submit matcher and its watcher (t566). The watcher runs
-  // per-terminal inside createTerminal's scope exactly like intent-highlight,
-  // where `sessions` and `activeSession` are in easy reach — and this one WRITES
-  // to the pty, so a reach for a renderer.js name is the difference between a
-  // gate the caller can supply and one that cannot be tested at all.
   'renderer/lib/voice-submit.js',
-  'renderer/voice-submit-watcher.js',
   'renderer/lib/live-split.js',
   'renderer/lib/ansi-html.js',
   'renderer/live-split-view.js',
   'renderer/transcript-rows.js',
-  // The broadcast-beats-late-pull latch behind the mic-target and app-focused
-  // mirrors. A pure leaf read by renderer.js, which has no harness — the whole
-  // reason it was lifted out of it.
   'renderer/lib/mirror-latch.js',
-  // The mic-target handoff, which STOPS the losing seat's recorder. It resolves
-  // that seat's watcher through an injected lookup — `sessions` is the name in
-  // easy reach in renderer.js, and reaching it here is the difference between a
-  // stop the test can aim at a real watcher and one nothing can exercise.
-  'renderer/lib/mic-handoff.js',
   'renderer/lib/constants.js',
   'renderer/lib/format.js',
   'renderer/lib/render-html.js',

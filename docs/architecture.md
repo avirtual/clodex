@@ -1247,113 +1247,10 @@ Own state + DOM, `init*(deps)`:
   by record id and replaced only when their summary changes. No innerHTML.
   Paints intent segments as cards in an `.intent-stack` and a runtime reply as
   a verb-glyph row, attached (`↳`) when it directly follows its card.
-- **voice-submit-watcher.js** + **lib/voice-submit.js** — hands-free submit: one
-  watcher per local Claude terminal sends Enter when the composer ENDS with the
-  configured trigger phrase. The composer is read from `terminal.buffer.active`
-  (the CLI redraws its input box with ANSI, so the text is screen state and not
-  recoverable from the PTY stream). The read is ONE row — the cursor row,
-  truncated at the cursor column — and the phrase is matched against its TAIL:
-  the match is anchored at the end with a left word boundary, so nothing has to
-  locate the draft first. A wrapped draft needs no walk, since the utterance ends
-  with the phrase and the phrase is therefore on the last visual row. The erase
-  is bounded by the match, so the backspaces cannot reach past the phrase into
-  the prompt ornament. What distinguishes the operator's draft from AGENT OUTPUT
-  ending in the phrase is the CURSOR, which rests in the composer and not in
-  scrollback; the prompt character is not load-bearing and is not inspected.
-  Declines on the ALTERNATE
-  buffer for intent-highlight.js's reason. Fires only after a QUIET WINDOW, since
-  transcription streams in segments and an immediate fire submits half an
-  utterance. The gate — feature on and no permission dialog — is re-checked at
-  FIRE time, because the dialog can open during that window and the Enter would
-  ANSWER it; the 'permission' signal is attention.js's existing
-  classification carried on `el.dataset.attention`, never a second detector, and
-  both failure paths of that read resolve to 'permission'. The watcher also fires
-  only for the ACTIVE session: dictation reaches the focused composer only, so a
-  background seat can never be helped and can only misfire. A refused match still
-  latches — keyed on the composer CONTENT, so an identical repaint stays answered
-  (the stale-speech case) while a CHANGED draft re-arms, which is what lets a
-  second deliberate utterance of the phrase work. For the SUBMIT half the CLI's voice mode is NOT
-  consulted: gating on `tap` was a proxy for "the operator is dictating" that
-  refused macOS on-device dictation, where the CLI's mode reads `off`. The
-  RE-ARM half is the opposite and deliberately so: it fires on the turn-end edge
-  ONLY in `tap` mode, writes the configured trigger character, and is fenced by
-  the permission interlock and an empty composer — it is arming a recorder, not
-  submitting text, so it needs the mode the submit half must ignore. All the
-  deciding lives in the DOM-free leaf, which is what lets
-  `test/voice-submit.test.js` pin the interlock with no jsdom. Disposed BEFORE
-  its terminal.
-  A SECOND HALF covers composed input, where the buffer read above is blind: a
-  pending composition (macOS dictation, an IME) has not reached the pty, so the
-  buffer is empty and no write event fires — the words live in xterm's
-  `.composition-view` overlay and helper textarea instead. That half POLLS the
-  overlay and, when the text ends with the phrase and has been unchanged for the
-  quiet window, COMMITS the composition; the text then echoes as an ordinary
-  write and the buffer half above submits it unchanged. It never sends Enter
-  itself, so there is one submit path, not two. The commit is a synthetic Meta
-  keydown at `terminal.textarea`: `CompositionHelper.keydown` exempts only
-  229/Shift/Ctrl/Alt and finalizes on anything else, and Meta is the one key that
-  finalizes while contributing no byte of its own — a printable key would commit
-  AND type itself into the draft. The two xterm-facing steps are the injectable
-  `readComposition` / `commitComposition`, kept separate because both rest on
-  structure xterm can move; `readComposition` queries under `terminal.element`,
-  never the document, since there is one overlay PER TERMINAL and a document-wide
-  query would return another session's. Behind its own setting
-  (`voiceSubmitComposition`, ANDed with `voiceSubmit`), because it acts on words
-  the operator has not accepted: the quiet window is the only thing between a
-  transcriber that emits the phrase mid-utterance and a submit with no undo.
-  `commitComposition` EMPTIES the textarea immediately after the dispatch, and
-  the order is load-bearing in both directions: the finalize reads the words out
-  of `value` synchronously during `dispatchEvent`, so clearing first would send
-  nothing, while not clearing at all lets the platform's own later
-  `compositionend` — which takes the `waitForPropagation` branch and reads the
-  open-ended `substring(start)` — dispatch the same words a SECOND time.
-  `_dataAlreadySent` would dedup that, but it is written only from
-  `_handleAnyTextareaChanges`, which this path never reaches. That clear is why
-  there is no second anti-double-submit guard: the late read finds `''` and the
-  branch skips a zero-length input. That clear does NOT stop the OTHER re-send:
-  macOS keeps its own record of the dictation session and re-fills the
-  composition with everything said since it began, so each commit after the
-  first arrives carrying the utterances already submitted. A whole-text equality
-  latch cannot catch that — accumulating text never equals the previous sample —
-  so the watcher tracks a consumed PREFIX, matches the phrase on the REMAINDER,
-  and hands `commitComposition` what was already sent. THE PREFIX'S LIFETIME IS
-  THE DICTATION SESSION, NOT THE COMPOSITION, and that distinction is the whole
-  of it: a successful commit removes `.active` — `commitComposition` reports
-  success by observing exactly that — so a null overlay read after every commit
-  is guaranteed, and a prefix reset there is erased seconds before macOS refills
-  the composition with the words it described. `pending`/`pendingAt`/`committed`
-  reset on that null; `consumed`/`desynced` survive it and are cleared only by
-  the COMPOSITION checkbox going off and an idle expiry (`CONSUMED_IDLE_MS`,
-  provisional — nobody here can dictate, and the overlay is known to flap
-  mid-session, so it is deliberately long relative to a pause). The expiry
-  measures SILENCE, not time since the last submit: the stamp refreshes on every
-  live overlay read, above the quiet-window return so a still-growing utterance
-  refreshes too, since one long dictated sentence would otherwise age the prefix
-  out and resend on the next flap. A DESYNCED session stops refreshing and so
-  still expires, which is how the feature recovers. Neither the alt-screen
-  decline nor a NULL CONFIG clears it: a pager opening and closing leaves the
-  OS accumulation intact, and a null config is an out-of-scope seat rather
-  than a stop — `getConfig` returns one for every seat that is not the active
-  claude session AND whenever hands-free submit is off at all, so clicking
-  another sidebar row and back would otherwise resend the whole session. The
-  master switch therefore does NOT clear the prefix; only the composition
-  checkbox does. The alt-screen arm still declines to COMMIT while the program
-  is up. The asymmetry behind all of it: a surviving prefix at worst desyncs
-  and costs one repeatable utterance, while a cleared one resends what was
-  already submitted. The remainder is dispatched by
-  shortening `value` BEFORE the keydown: `_compositionPosition.start` is private
-  and fixed at `compositionstart`, but `substring` clamps its end, so a `value`
-  holding only the remainder sends only the remainder even though `end` still
-  points past it. When the accumulation stops extending what was consumed —
-  dictation revising its own transcript — the offset is meaningless and the
-  composition sends nothing further, since dropped words can be repeated and
-  re-submitted ones cannot be recalled. The alt-screen decline is asked on BOTH
-  paths (`onNormalBuffer`, hoisted out of the buffer read) since the composition
-  path never touches the buffer, and it FORGETS rather than returning, so words
-  composed before a full-screen program cannot come back already-stale. A commit
-  the boundary reports as failed is counted and NOT retried — retrying would
-  spray Meta keydowns at the terminal, and the failure it would answer (xterm no
-  longer finalizing on that key) is one a retry cannot fix.
+- **lib/voice-submit.js** — the DOM-free trigger-phrase matcher (`findSubmit`,
+  `shouldFire`) and the recorder-indicator predicates (`recordingObserved`,
+  `processingObserved`) the composer and pty voice paths share; pinned by
+  `test/voice-submit.test.js`.
 - **lib/mirror-latch.js** — a renderer-side mirror of a value MAIN owns, fed by
   a broadcast and by a catch-up pull the window fires on startup for the edge it
   was not open for. The pull resolves at an unspecified time, so it can land
@@ -1361,9 +1258,7 @@ Own state + DOM, `init*(deps)`:
   that a broadcast, once heard, wins over every later pull. Its own `heard` flag
   rather than comparing the value against its initial one, because for both
   users `null` is a legitimate released mic target and `false` a legitimate
-  backgrounded app — the value cannot double as the flag. Read by the two
-  microphone mirrors in renderer.js, which has no harness: that is why the rule
-  lives out here where `test/mirror-latch.test.js` can reach it.
+  backgrounded app — the value cannot double as the flag.
 - **lib/sidebar-filter-fold.js** — the sidebar Find bar's fold: which filter
   criteria a folded header names, and the class toggle that folds it. The
   summary lists only what DIFFERS from the defaults, in control order, so a
@@ -1383,20 +1278,9 @@ Own state + DOM, `init*(deps)`:
   recorder key into it for a stream seat; `planRecord` maps tap/hold onto keys.
 - **voice-mirror.js** + **lib/cursor-row.js** + **lib/composer-voice.js** — the
   renderer half: the engine's output feeds a hidden xterm, the mirror reads its
-  input row (the same cursor-row read voice-submit-watcher.js uses, shared in
-  `lib/cursor-row.js`) and hands each new draft to the stream composer, which
+  input row (the cursor-row read in `lib/cursor-row.js`) and hands each new draft to the stream composer, which
   replaces only the span it mirrored (`applyDraft`) and runs the trigger-phrase
   submit on it (`attachTriggerSubmit`).
-- **lib/mic-handoff.js** — what a window does when the microphone moves OFF one
-  of its seats: notes the mirror above, then STOPS that seat's recorder through
-  the watcher's ensure-off. The broadcast alone only made losers stop re-ARMING,
-  so a seat already recording kept streaming the room until the CLI's ~15s
-  silence auto-finish, in a window the operator had switched away from. The
-  mirror is noted BEFORE the stop, because the loser's re-arm timer can fire
-  during the handoff and decides on that same mirror — noting after would let it
-  re-light the recorder just stopped. Reuses `tapOff` rather than writing the
-  trigger byte itself, so the rule that only a LIT recorder over an empty
-  composer is written to is inherited rather than re-derived.
 - **plugin-host.js** — the renderer-side plugin host. Plugins hand it data or
   callbacks, NEVER HTML: everything user-supplied is escaped here, and every
   registered id becomes `"<pluginId>:<id>"` before it reaches the DOM, so a
