@@ -5185,7 +5185,7 @@ button, input, select, textarea { font-family: inherit; }
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
-textarea:not(.xterm-helper-textarea):focus-visible,
+textarea:not(.xterm-helper-textarea):not(.seat-composer):focus-visible,
 [tabindex]:not(.xterm):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
@@ -6138,9 +6138,9 @@ body.web-frontend #sidebar-header {
   flex: 0 0 auto;
   width: 100%;
   box-sizing: border-box;
-  min-height: 3.5em;
   max-height: 40%;
-  resize: vertical;
+  overflow-y: auto;
+  resize: none;
   padding: var(--sp-1) var(--sp-2);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -6153,6 +6153,7 @@ body.web-frontend #sidebar-header {
 
 .seat-composer:focus {
   outline: none;
+  box-shadow: none;
   border-color: var(--accent, var(--border));
 }
 

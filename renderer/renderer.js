@@ -50,7 +50,7 @@ const { accountRowView, buildAccountRow, modelOptions } = require('./lib/account
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
-const { composerReadlineEdit } = require('./lib/composer-keys');
+const { composerReadlineEdit, composerHeightFor } = require('./lib/composer-keys');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
 const { renderAppendChecklist, collectAppendChecklist, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
@@ -1510,7 +1510,7 @@ function createStreamSeatPane(name, wrapperEl) {
   wrapperEl.appendChild(paneEl);
   const composer = document.createElement('textarea');
   composer.className = 'seat-composer';
-  composer.rows = 3;
+  composer.rows = 1;
   composer.placeholder = 'Message — Enter sends, Shift+Enter for a new line';
   const attachEl = document.createElement('div');
   attachEl.className = 'seat-attachments';
@@ -1525,6 +1525,11 @@ function createStreamSeatPane(name, wrapperEl) {
   wrapperEl.appendChild(permEl);
   wrapperEl.appendChild(attachEl);
   wrapperEl.appendChild(composer);
+  const fitComposer = () => {
+    composer.style.height = 'auto';
+    const px = composerHeightFor({ scrollHeight: composer.scrollHeight, offsetHeight: composer.offsetHeight, clientHeight: composer.clientHeight });
+    composer.style.height = px == null ? '' : `${px}px`;
+  };
   const SEAT_PERMISSION_INPUT_MAX = 600;
   let permKey = '';
   const renderPermissions = (items) => {
@@ -1719,12 +1724,14 @@ function createStreamSeatPane(name, wrapperEl) {
     clearTimeout(draftTimer);
     draftTimer = null;
     composer.value = '';
+    fitComposer();
     triggerSubmit.resetSpan();
     pending = [];
     renderAttachments();
     follow = true;
     const restore = () => {
       if (!composer.value) composer.value = text;
+      fitComposer();
       if (!pending.length && images.length) {
         pending = images;
         renderAttachments();
@@ -1776,12 +1783,14 @@ function createStreamSeatPane(name, wrapperEl) {
     releaseMs: VOICE_RELEASE_MS,
     trace: (line) => voiceTrace(name, line),
   });
+  composer.addEventListener('input', fitComposer);
+  fitComposer();
   return {
-    focus: () => composer.focus(),
+    focus: () => { composer.focus(); fitComposer(); },
     refresh: () => pull(true),
-    voiceDraft(text) { triggerSubmit.draft(text); },
+    voiceDraft(text) { triggerSubmit.draft(text); fitComposer(); },
     voiceStart() { triggerSubmit.resetSpan(); },
-    voiceReleased() { triggerSubmit.released(); },
+    voiceReleased() { triggerSubmit.released(); fitComposer(); },
     setRecording(on) {
       voiceRecordingOn = !!on;
       composer.classList.toggle('voice-recording', !!on);
@@ -1795,6 +1804,7 @@ function createStreamSeatPane(name, wrapperEl) {
       clearInterval(timer);
       clearTimeout(draftTimer);
       composer.removeEventListener('input', onComposerInput);
+      composer.removeEventListener('input', fitComposer);
       transcriptChangedSubs.delete(onChanged);
       paneEl.removeEventListener('scroll', onScroll);
       permEl.replaceChildren();
