@@ -29679,8 +29679,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         };
       }
       function spaceTriggerAction({ data, typedSinceEnter, voiceOn, recording, hasSink, agentSeat, altScreen } = {}) {
-        if (data !== " " || typedSinceEnter || !voiceOn || !hasSink || !agentSeat || altScreen) return null;
-        return recording ? "stop" : "start";
+        if (data !== " " || !voiceOn || !hasSink || !agentSeat || altScreen) return null;
+        if (recording) return "stop";
+        return typedSinceEnter ? null : "start";
       }
       function ptyTypedSinceEnter(prev, data) {
         const text = String(data).replace(/\x1b\[[0-?]*[ -\/]*[@-~]|\x1bO./g, "");
@@ -30138,6 +30139,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
       }) {
         let value = "";
+        let written = "";
+        let frozen = false;
+        const note = (line) => {
+          try {
+            trace(line);
+          } catch {
+          }
+        };
         const composer = {
           get value() {
             return value;
@@ -30150,7 +30159,24 @@ ${m[2].replace(/^\r?\n/, "")}`;
           removeEventListener() {
           }
         };
-        const submit = () => {
+        const syncRow = () => {
+          if (frozen) return;
+          const had = Array.from(written);
+          const want = Array.from(value);
+          let prefix = 0;
+          while (prefix < had.length && prefix < want.length && had[prefix] === want[prefix]) prefix++;
+          const erase = had.length - prefix;
+          const suffix = want.slice(prefix).join("");
+          if (!erase && !suffix) return;
+          note(`pty row sync -${erase} +${JSON.stringify(want.slice(prefix, prefix + 40).join(""))}`);
+          write("\x7F".repeat(erase) + suffix);
+          written = value;
+        };
+        const clear = () => {
+          value = "";
+          written = "";
+        };
+        const paste = () => {
           const text = value.trim();
           value = "";
           if (!text) return;
@@ -30160,6 +30186,23 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           write(`${PASTE_OPEN}${text}${PASTE_CLOSE}`);
           write("\r");
+        };
+        const submit = () => {
+          if (frozen) {
+            clear();
+            return;
+          }
+          if (!written) {
+            paste();
+            return;
+          }
+          syncRow();
+          try {
+            markOrigin();
+          } catch {
+          }
+          write("\r");
+          clear();
         };
         const trigger = attachTriggerSubmit(composer, {
           getConfig,
@@ -30177,18 +30220,34 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return {
           draft(text) {
             trigger.draft(text);
+            syncRow();
           },
           released() {
             trigger.released();
             trigger.check();
-            submit();
+            if (frozen) {
+              clear();
+              return;
+            }
+            if (written) {
+              syncRow();
+              return;
+            }
+            paste();
+          },
+          userTyped() {
+            if (frozen) return;
+            frozen = true;
+            note("pty row frozen by keystroke");
           },
           resetSpan() {
             trigger.resetSpan();
+            clear();
+            frozen = false;
           },
           pending: () => value,
           dispose() {
-            value = "";
+            clear();
             trigger.dispose();
           }
         };
@@ -44408,7 +44467,7 @@ ${detail}` });
       var { clampSidebarWidth, effectiveSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require_sidebar_width();
       var { mergeMeta } = require_meta_tiers();
       var { PendingInput } = require_peer_input_queue();
-      var { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota } = require_proxy_util();
+      var { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota, isHumanPtyInput } = require_proxy_util();
       var { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require_constants();
       var { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require_format();
       var { renderDiffHtml, costStackBlock, bustRow } = require_render_html();
@@ -46329,6 +46388,7 @@ ${detail}` });
             seatVoiceRecord(name, act);
             return;
           }
+          if (ptyVoice && voiceRecordingSeat === name && isHumanPtyInput(data)) ptyVoice.userTyped();
           if (seat) seat.typedSinceEnter = ptyTypedSinceEnter(seat.typedSinceEnter, data);
           window.api.writeToSession(name, data);
         });
