@@ -436,8 +436,9 @@ function readVoiceSubmitSettings(settings) {
 }
 
 function spaceTriggerAction({ data, typedSinceEnter, voiceOn, recording, hasSink, agentSeat, altScreen } = {}) {
-  if (data !== ' ' || typedSinceEnter || !voiceOn || !hasSink || !agentSeat || altScreen) return null;
-  return recording ? 'stop' : 'start';
+  if (data !== ' ' || !voiceOn || !hasSink || !agentSeat || altScreen) return null;
+  if (recording) return 'stop';
+  return typedSinceEnter ? null : 'start';
 }
 
 function ptyTypedSinceEnter(prev, data) {

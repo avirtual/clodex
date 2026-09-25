@@ -178,13 +178,30 @@ function createPtyVoiceDraft({
   quietMs = 0, releaseMs = 0, timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id) }, trace = () => {},
 }) {
   let value = '';
+  let written = '';
+  let frozen = false;
+  const note = (line) => { try { trace(line); } catch {} };
   const composer = {
     get value() { return value; },
     set value(v) { value = typeof v === 'string' ? v : ''; },
     addEventListener() {},
     removeEventListener() {},
   };
-  const submit = () => {
+  const syncRow = () => {
+    if (frozen) return;
+    const had = Array.from(written);
+    const want = Array.from(value);
+    let prefix = 0;
+    while (prefix < had.length && prefix < want.length && had[prefix] === want[prefix]) prefix++;
+    const erase = had.length - prefix;
+    const suffix = want.slice(prefix).join('');
+    if (!erase && !suffix) return;
+    note(`pty row sync -${erase} +${JSON.stringify(want.slice(prefix, prefix + 40).join(''))}`);
+    write('\x7f'.repeat(erase) + suffix);
+    written = value;
+  };
+  const clear = () => { value = ''; written = ''; };
+  const paste = () => {
     const text = value.trim();
     value = '';
     if (!text) return;
@@ -192,19 +209,41 @@ function createPtyVoiceDraft({
     write(`${PASTE_OPEN}${text}${PASTE_CLOSE}`);
     write('\r');
   };
+  const submit = () => {
+    if (frozen) { clear(); return; }
+    if (!written) { paste(); return; }
+    syncRow();
+    try { markOrigin(); } catch {}
+    write('\r');
+    clear();
+  };
   const trigger = attachTriggerSubmit(composer, {
     getConfig, markOrigin: () => {}, send: submit, onVoiceFire, holdsFire, onVoiceStop, quietMs, releaseMs, timers, trace,
   });
   return {
-    draft(text) { trigger.draft(text); },
+    draft(text) {
+      trigger.draft(text);
+      syncRow();
+    },
     released() {
       trigger.released();
       trigger.check();
-      submit();
+      if (frozen) { clear(); return; }
+      if (written) { syncRow(); return; }
+      paste();
     },
-    resetSpan() { trigger.resetSpan(); },
+    userTyped() {
+      if (frozen) return;
+      frozen = true;
+      note('pty row frozen by keystroke');
+    },
+    resetSpan() {
+      trigger.resetSpan();
+      clear();
+      frozen = false;
+    },
     pending: () => value,
-    dispose() { value = ''; trigger.dispose(); },
+    dispose() { clear(); trigger.dispose(); },
   };
 }
 
