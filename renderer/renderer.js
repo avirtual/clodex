@@ -1757,6 +1757,7 @@ function createStreamSeatPane(name, wrapperEl) {
     onVoiceStop: () => seatVoiceRecord(name, 'stop'),
     quietMs: VOICE_QUIET_MS,
     releaseMs: VOICE_RELEASE_MS,
+    trace: (line) => voiceTrace(name, line),
   });
   return {
     focus: () => composer.focus(),
@@ -1914,6 +1915,7 @@ function createTerminal(name, peer = null) {
     onVoiceStop: () => seatVoiceRecord(name, 'stop'),
     quietMs: VOICE_QUIET_MS,
     releaseMs: VOICE_RELEASE_MS,
+    trace: (line) => voiceTrace(name, line),
   });
 
   const searchAddon = new SearchAddon();
@@ -3550,6 +3552,10 @@ function voiceSinkFor(name) {
   };
 }
 
+function voiceTrace(name, line) {
+  try { window.api.logVoice(name, line); } catch {}
+}
+
 function voiceEngine() {
   if (voiceEngineView) return voiceEngineView;
   const host = document.createElement('div');
@@ -3566,6 +3572,7 @@ function voiceEngine() {
       const sink = voiceSinkFor(voiceArmedSeat);
       if (sink) sink.released();
     },
+    trace: (line) => voiceTrace(voiceArmedSeat, line),
   });
   voiceEngineView = { terminal, mirror };
   return voiceEngineView;
@@ -3595,6 +3602,7 @@ async function seatVoiceRecord(name, action) {
   const view = voiceEngine();
   let res = null;
   try { res = await window.api.voiceRecord(name, action, observed); } catch (e) { res = { ok: false, error: e && e.message ? e.message : String(e) }; }
+  voiceTrace(name, `record ${action} observed=${JSON.stringify(observed)} -> ${JSON.stringify(res)}`);
   if (!res || res.ok !== true) {
     setSeatRecording(name, false);
     showToast(`Voice: ${(res && res.error) || 'recording failed'}`, { kind: 'error', name });
@@ -3621,6 +3629,7 @@ function seatVoiceFired(name) {
 }
 
 window.api.onVoiceEngineStopped((name) => {
+  voiceTrace(name, 'engine self-stopped');
   if (!voiceSinkFor(name)) return;
   if (voiceArmedSeat === name && voiceEngineView) voiceEngineView.mirror.release();
   setSeatRecording(name, false);

@@ -10895,6 +10895,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "noteVoiceRecording", kind: "send", channel: "voice:recording" },
         { name: "noteVoiceDraft", kind: "send", channel: "voice:draft" },
         { name: "voiceRecord", kind: "invoke", channel: "voice:record" },
+        { name: "logVoice", kind: "send", channel: "log:voice" },
         { name: "onVoiceEngineStopped", kind: "on", channel: "voice-engine-stopped" },
         // Which seat the operator is LOOKING at. Main has no other way to know: the
         // renderer owns `activeSession` and only WINDOW-level focus crosses today.
@@ -29749,12 +29750,19 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return null;
       }
       function createVoiceMirror(terminal, { onDraft, onRelease = () => {
-      }, readRows = () => readRowsToCursor(terminal) } = {}) {
+      }, readRows = () => readRowsToCursor(terminal), trace = () => {
+      } } = {}) {
         let armed = false;
         let disposed = false;
         let baseline = "";
         let last = null;
         let releasing = false;
+        const note = (line) => {
+          try {
+            trace(line);
+          } catch {
+          }
+        };
         function read() {
           try {
             if (terminal.buffer.active.type !== "normal") return null;
@@ -29769,17 +29777,29 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (draft === "" && releasing && last !== null) {
             armed = false;
             releasing = false;
+            note("mirror row cleared, released");
             try {
               onRelease();
             } catch {
             }
             return;
           }
+          if (draft === "" && baseline) {
+            note("mirror baseline dropped: row cleared");
+            baseline = "";
+          }
           if (!draft) return;
           let text = draft;
-          if (baseline && text.startsWith(baseline)) text = text.slice(baseline.length).trim();
+          if (baseline) {
+            if (text.startsWith(baseline)) text = text.slice(baseline.length).trim();
+            else {
+              note("mirror baseline dropped: row no longer extends it");
+              baseline = "";
+            }
+          }
           if (!text || text === last) return;
           last = text;
+          note(`mirror draft ${JSON.stringify(text)}`);
           try {
             onDraft(text);
           } catch {
@@ -29792,11 +29812,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
             last = null;
             releasing = false;
             armed = true;
+            note(`mirror arm baseline=${JSON.stringify(baseline)}`);
           },
           release() {
             if (armed) releasing = true;
+            note(`mirror release armed=${armed}`);
           },
           disarm() {
+            if (armed) note("mirror disarm");
             armed = false;
             releasing = false;
           },
@@ -29842,6 +29865,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { findSubmit, shouldFire } = require_voice_submit();
       var VOICE_QUIET_MS = 1200;
       var VOICE_RELEASE_MS = 2500;
+      var VOICE_STOP_TRIES = 2;
       var PASTE_OPEN = "\x1B[200~";
       var PASTE_CLOSE = "\x1B[201~";
       function applyDraft(value, span, text) {
@@ -29898,6 +29922,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
             }
             fired = value;
             return { text: value.slice(0, value.length - hit.erase) };
+          },
+          reset() {
+            fired = null;
           }
         };
       }
@@ -29913,16 +29940,30 @@ ${m[2].replace(/^\r?\n/, "")}`;
         },
         quietMs = 0,
         releaseMs = 0,
-        timers = { set: setTimeout, clear: clearTimeout }
+        timers = { set: setTimeout, clear: clearTimeout },
+        trace = () => {
+        }
       }) {
         const trigger = createComposerTrigger({ getConfig });
         let span = null;
         let quiet = null;
         let release = null;
         let stopping = false;
+        let stopFails = 0;
+        const note = (line) => {
+          try {
+            trace(line);
+          } catch {
+          }
+        };
         const fire = (fromVoice) => {
+          const traced = fromVoice || stopping || span !== null;
+          const how = fromVoice ? "voice" : "key";
           const hit = trigger.check(composer.value);
-          if (!hit) return;
+          if (!hit) {
+            if (traced) note(`fire ${how}: no match ${JSON.stringify(composer.value)}`);
+            return;
+          }
           composer.value = hit.text;
           if (fromVoice) {
             try {
@@ -29936,7 +29977,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
           } catch {
             images = false;
           }
-          if (!hit.text.trim() && !images) return;
+          if (!hit.text.trim() && !images) {
+            if (traced) note(`fire ${how}: empty`);
+            return;
+          }
+          if (traced) note(`fire ${how}: sent ${JSON.stringify(hit.text)}`);
           try {
             markOrigin();
           } catch {
@@ -29969,8 +30014,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const armRelease = () => {
           cancelRelease();
           if (!(releaseMs > 0)) return;
+          note(`release deadline armed ${releaseMs}ms`);
           release = timers.set(() => {
             release = null;
+            note(`release deadline fired stopping=${stopping}`);
             if (!stopping) return;
             stopping = false;
             cancelQuiet();
@@ -29980,7 +30027,16 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const stopFailed = () => {
           if (!stopping) return;
           stopping = false;
-          armQuiet();
+          stopFails++;
+          if (stopFails < VOICE_STOP_TRIES) {
+            note(`stop failed ${stopFails}/${VOICE_STOP_TRIES}, retrying`);
+            armQuiet();
+            return;
+          }
+          note(`stop failed ${stopFails}/${VOICE_STOP_TRIES}, sending anyway`);
+          stopFails = 0;
+          cancelQuiet();
+          fire(true);
         };
         const voiceFire = () => {
           let open = false;
@@ -29989,14 +30045,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
           } catch {
             open = false;
           }
+          const matched = trigger.matches(composer.value);
+          note(`quiet fire holdsFire=${open} matches=${matched} stopping=${stopping} ${JSON.stringify(composer.value)}`);
           if (!open) {
             settle();
             fire(true);
             return;
           }
-          if (stopping || !trigger.matches(composer.value)) return;
+          if (stopping || !matched) return;
           cancelRelease();
           stopping = true;
+          note("onVoiceStop called");
           let stopped;
           try {
             stopped = onVoiceStop();
@@ -30006,8 +30065,12 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (stopped && typeof stopped.then === "function") {
             stopped.then((ok) => {
+              note(`onVoiceStop resolved ${ok}`);
               if (ok === false) stopFailed();
-              else if (ok === true && stopping) armRelease();
+              else if (ok === true && stopping) {
+                stopFails = 0;
+                armRelease();
+              }
             }, stopFailed);
           }
         };
@@ -30025,6 +30088,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             armQuiet();
           },
           released() {
+            note(`released stopping=${stopping}`);
             if (!stopping) return;
             settle();
             cancelQuiet();
@@ -30033,6 +30097,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
           resetSpan() {
             span = null;
             stopping = false;
+            stopFails = 0;
+            trigger.reset();
           },
           dispose() {
             cancelQuiet();
@@ -30053,7 +30119,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         },
         quietMs = 0,
         releaseMs = 0,
-        timers = { set: setTimeout, clear: clearTimeout }
+        timers = { set: setTimeout, clear: clearTimeout },
+        trace = () => {
+        }
       }) {
         let value = "";
         const composer = {
@@ -30089,7 +30157,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
           onVoiceStop,
           quietMs,
           releaseMs,
-          timers
+          timers,
+          trace
         });
         return {
           draft(text) {
@@ -46089,7 +46158,8 @@ ${detail}` });
           holdsFire: () => voiceRecordingOn && seatVoiceMode(name, "tap"),
           onVoiceStop: () => seatVoiceRecord(name, "stop"),
           quietMs: VOICE_QUIET_MS,
-          releaseMs: VOICE_RELEASE_MS
+          releaseMs: VOICE_RELEASE_MS,
+          trace: (line) => voiceTrace(name, line)
         });
         return {
           focus: () => composer.focus(),
@@ -46215,7 +46285,8 @@ ${detail}` });
           holdsFire: () => voiceRecordingSeat === name && seatVoiceMode(name, "tap"),
           onVoiceStop: () => seatVoiceRecord(name, "stop"),
           quietMs: VOICE_QUIET_MS,
-          releaseMs: VOICE_RELEASE_MS
+          releaseMs: VOICE_RELEASE_MS,
+          trace: (line) => voiceTrace(name, line)
         });
         const searchAddon = new SearchAddon();
         terminal.loadAddon(searchAddon);
@@ -47756,6 +47827,12 @@ ${detail}` });
           }
         };
       }
+      function voiceTrace(name, line) {
+        try {
+          window.api.logVoice(name, line);
+        } catch {
+        }
+      }
       function voiceEngine() {
         if (voiceEngineView) return voiceEngineView;
         const host = document.createElement("div");
@@ -47771,7 +47848,8 @@ ${detail}` });
           onRelease: () => {
             const sink = voiceSinkFor(voiceArmedSeat);
             if (sink) sink.released();
-          }
+          },
+          trace: (line) => voiceTrace(voiceArmedSeat, line)
         });
         voiceEngineView = { terminal, mirror };
         return voiceEngineView;
@@ -47806,6 +47884,7 @@ ${detail}` });
         } catch (e) {
           res = { ok: false, error: e && e.message ? e.message : String(e) };
         }
+        voiceTrace(name, `record ${action} observed=${JSON.stringify(observed)} -> ${JSON.stringify(res)}`);
         if (!res || res.ok !== true) {
           setSeatRecording(name, false);
           showToast(`Voice: ${res && res.error || "recording failed"}`, { kind: "error", name });
@@ -47830,6 +47909,7 @@ ${detail}` });
         voiceEngineView.mirror.disarm();
       }
       window.api.onVoiceEngineStopped((name) => {
+        voiceTrace(name, "engine self-stopped");
         if (!voiceSinkFor(name)) return;
         if (voiceArmedSeat === name && voiceEngineView) voiceEngineView.mirror.release();
         setSeatRecording(name, false);

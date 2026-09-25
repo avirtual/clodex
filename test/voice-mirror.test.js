@@ -347,6 +347,45 @@ test('tap mode: a keystroke while the release is owed sends once and cancels the
   assert.equal(s.sent.length, 1);
 });
 
+test('tap mode: the same sentence dictated twice sends twice', async () => {
+  const s = tapStopped();
+  for (let i = 0; i < 2; i++) {
+    if (i) { s.recording = true; s.sub.resetSpan(); s.mirror.arm(); }
+    s.t.paint([`${HEAD}Hello world enter.`]);
+    s.clock.advance(1200);
+    await Promise.resolve();
+    s.t.paint([`${HEAD}`]);
+  }
+  assert.deepEqual(s.sent, ['Hello world', 'Hello world']);
+});
+
+test('tap mode: two refused stops send the sentence anyway, phrase stripped', async () => {
+  const s = streamSeat({ recording: true, onStop: () => Promise.resolve(false) });
+  s.t.paint([`${HEAD}Hello world enter.`]);
+  s.clock.advance(1200);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(s.sent, []);
+  s.clock.advance(1200);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(s.stops, 2);
+  assert.deepEqual(s.sent, ['Hello world']);
+  s.clock.advance(10000);
+  assert.equal(s.stops, 2);
+});
+
+test('the mirror drops a leftover baseline once the engine row clears, so a repeated sentence still mirrors', () => {
+  const t = fakeTerminal([`${HEAD}Hello world enter.`]);
+  const drafts = [];
+  const mirror = createVoiceMirror(t, { onDraft: (d) => drafts.push(d) });
+  mirror.arm();
+  t.paint([`${HEAD}`]);
+  t.paint([`${HEAD}Hello█`]);
+  t.paint([`${HEAD}Hello world enter.▂`]);
+  assert.deepEqual(drafts, ['Hello', 'Hello world enter.']);
+});
+
 test('engineObserved reads the recorder and processing indicators off the whole engine screen', () => {
   assert.equal(engineObserved(null), null);
   const lit = fakeTerminal([`${HEAD}`, '\u23fa REC  space to stop']);

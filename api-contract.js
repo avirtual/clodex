@@ -420,6 +420,7 @@ const API_CONTRACT = [
   { name: 'noteVoiceRecording', kind: 'send', channel: 'voice:recording' },
   { name: 'noteVoiceDraft', kind: 'send', channel: 'voice:draft' },
   { name: 'voiceRecord', kind: 'invoke', channel: 'voice:record' },
+  { name: 'logVoice', kind: 'send', channel: 'log:voice' },
   { name: 'onVoiceEngineStopped', kind: 'on', channel: 'voice-engine-stopped' },
   // Which seat the operator is LOOKING at. Main has no other way to know: the
   // renderer owns `activeSession` and only WINDOW-level focus crosses today.
