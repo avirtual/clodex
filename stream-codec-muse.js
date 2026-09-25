@@ -27,6 +27,19 @@ function approvalModeFor({ bypass, readOnly }) {
   return 'promptUnmatched';
 }
 
+function inputOf(rawArgs) {
+  try {
+    const parsed = JSON.parse(rawArgs);
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch {}
+  return { rawArgs };
+}
+
+function choiceKind(choice) {
+  if (choice.decision === 'abort') return 'deny';
+  return choice.scope === 'once' ? 'allow' : 'allow-always';
+}
+
 function transcriptPathOf(session, home) {
   const p = typeof session.path === 'string' ? session.path : '';
   if (!p) return null;
@@ -36,6 +49,7 @@ function transcriptPathOf(session, home) {
 function create({ cwd = null, resumeId = null, fork = false, bypass = false, readOnly = false, model = null, log = null, home = os.homedir() } = {}) {
   let nextId = 1;
   const pending = new Map();
+  const approvals = new Map();
   let sessionId = null;
   let turnId = null;
   const warned = new Set();
@@ -129,29 +143,63 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
           turnEnd: !turnId,
         };
       }
-      case 'approval/requested':
+      case 'approval/requested': {
+        if (bypass) {
+          return {
+            kind: 'other',
+            toolName: params.toolName || null,
+            send: [command('approval/decide', {
+              sessionId: params.sessionId || sessionId,
+              approvalId: params.approvalId,
+              choiceId: 'abort',
+              requirementId: params.currentRequirementId,
+            })],
+          };
+        }
+        const subject = params.subject || null;
+        const choices = (Array.isArray(params.availableChoices) ? params.availableChoices : [])
+          .filter((c) => c && typeof c.choiceId === 'string')
+          .map((c) => ({ id: c.choiceId, label: c.label, kind: choiceKind(c) }));
+        approvals.set(params.approvalId, {
+          sessionId: params.sessionId || sessionId,
+          requirementId: params.currentRequirementId,
+          choiceIds: new Set(choices.map((c) => c.id)),
+        });
         return {
-          kind: bypass ? 'other' : 'permission-denied',
-          toolName: params.toolName || null,
-          send: [command('approval/decide', {
-            sessionId: params.sessionId || sessionId,
-            approvalId: params.approvalId,
-            choiceId: 'abort',
-            requirementId: params.currentRequirementId,
-          })],
+          kind: 'permission-request',
+          id: params.approvalId,
+          toolName: params.toolName,
+          displayName: params.toolName,
+          description: subject && subject.workspaceRoot ? 'in ' + subject.workspaceRoot : null,
+          preview: (subject && subject.command) || null,
+          input: inputOf(params.rawArgs),
+          choices,
         };
+      }
       default:
         return { kind: 'other' };
     }
+  };
+
+  const dropApprovals = (rec) => {
+    if (rec.kind === 'result' || rec.kind === 'init') approvals.clear();
+    return rec;
   };
 
   const decode = (obj) => {
     if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { kind: 'other' };
     const hasId = obj.id !== undefined && obj.id !== null;
     if (hasId && typeof obj.method === 'string') return { kind: 'other' };
-    if (hasId) return onResponse(obj);
-    if (typeof obj.method === 'string') return onNotification(obj);
+    if (hasId) return dropApprovals(onResponse(obj));
+    if (typeof obj.method === 'string') return dropApprovals(onNotification(obj));
     return { kind: 'other' };
+  };
+
+  const encodePermission = (id, choiceId) => {
+    const entry = approvals.get(id);
+    if (!entry || !entry.choiceIds.has(choiceId)) return null;
+    approvals.delete(id);
+    return command('approval/decide', { sessionId: entry.sessionId, approvalId: id, choiceId, requirementId: entry.requirementId });
   };
 
   const encodeUser = (text, images = []) => {
@@ -179,7 +227,7 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
     return command('turn/interrupt', { sessionId, turnId });
   };
 
-  return { open, decode, encodeUser, encodeContext, encodeInterrupt };
+  return { open, decode, encodeUser, encodeContext, encodeInterrupt, encodePermission };
 }
 
 module.exports = { create, uuidv7 };

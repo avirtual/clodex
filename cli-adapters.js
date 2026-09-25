@@ -33,6 +33,7 @@ const ADAPTERS = {
       argv: ({ resumeId, sessionId, fork }) => [
         '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
         ...(resumeId ? ['--resume', resumeId, ...(fork ? ['--fork-session'] : [])] : ['--session-id', sessionId]),
+        '--permission-prompt-tool', 'stdio',
       ],
       toolBoundary: 'hook',
       transcriptRepoint: 'claude',

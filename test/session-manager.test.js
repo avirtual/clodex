@@ -20874,7 +20874,7 @@ test('stream seat (f): create(io:stream) builds the -p stream-json argv with a f
   assert.match(args[7], /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   const promptPath = require('../clodex-paths').pathFor(h.root, 'st1', 'appendPrompt');
   assert.deepStrictEqual([...args.slice(0, 7), '<uuid>', ...args.slice(8)], [
-    ...STREAM_HEAD, '--session-id', '<uuid>',
+    ...STREAM_HEAD, '--session-id', '<uuid>', '--permission-prompt-tool', 'stdio',
     '--settings', require('node:path').join(h.root, 'settings.json'),
     '--add-dir', require('node:path').join(h.root, 'messages'),
     '--append-system-prompt-file', promptPath,

@@ -184,18 +184,60 @@ test('encodeContext clear is a fresh session/start in the same approval mode who
   assert.strictEqual(opened().codec.encodeContext('compact'), null);
 });
 
-test('approval/requested decodes to permission-denied with an abort decide carrying the requirement id', () => {
+test('approval/requested decodes to a permission-request with the offered choices mapped 1:1, and no send', () => {
   const { codec } = started();
   const [req] = wire('approvals');
+  assert.deepStrictEqual(codec.decode(req), {
+    kind: 'permission-request',
+    id: '01a0d3ef-2e97-78f3-8f30-6ed16946292c',
+    toolName: 'bash',
+    displayName: 'bash',
+    description: 'in /private/tmp/t8-muse/work/D-approvals',
+    preview: 'touch cmd-b.txt',
+    input: { command: 'touch cmd-b.txt', description: 'Run touch cmd-b' },
+    choices: [
+      { id: 'allow_once', label: 'Allow once', kind: 'allow' },
+      { id: 'allow_local_prefix', label: 'Always allow in this workspace: touch ...', kind: 'allow-always' },
+      { id: 'abort', label: 'Reject', kind: 'deny' },
+    ],
+  });
+});
+
+test('rawArgs that do not parse as JSON ride input as { rawArgs }', () => {
+  const { codec } = started();
+  const [req] = wire('approvals');
+  const rec = codec.decode({ ...req, params: { ...req.params, rawArgs: 'not json' } });
+  assert.deepStrictEqual(rec.input, { rawArgs: 'not json' });
+});
+
+test('encodePermission sends approval/decide with the chosen choice and the requirement id as received, once', () => {
+  const [req] = wire('approvals');
   const [captured] = wire('approvals', 'out');
-  const rec = codec.decode(req);
-  assert.strictEqual(rec.kind, 'permission-denied');
-  assert.strictEqual(rec.toolName, 'bash');
-  assert.strictEqual(rec.send.length, 1);
-  assert.strictEqual(rec.send[0].method, 'approval/decide');
-  assert.match(rec.send[0].params.commandId, V7_RE);
-  assert.deepStrictEqual({ ...rec.send[0].params, commandId: null }, { ...captured.params, commandId: null });
-  assert.deepStrictEqual(codec.decode({ ...wire('approvals').find((m) => m.id !== undefined), id: rec.send[0].id }), { kind: 'other' });
+  for (const choiceId of ['allow_once', 'allow_local_prefix', 'abort']) {
+    const { codec } = started();
+    codec.decode(req);
+    const out = codec.encodePermission(req.params.approvalId, choiceId);
+    assert.strictEqual(out.method, 'approval/decide');
+    assert.match(out.params.commandId, V7_RE);
+    assert.deepStrictEqual({ ...out.params, commandId: null }, { ...captured.params, commandId: null, choiceId });
+    assert.strictEqual(codec.encodePermission(req.params.approvalId, choiceId), null, 'an answered id is no longer pending');
+  }
+  const { codec } = started();
+  codec.decode(req);
+  assert.strictEqual(codec.encodePermission('nope', 'abort'), null, 'an unknown id');
+  assert.strictEqual(codec.encodePermission(req.params.approvalId, 'allow_forever'), null, 'a choice the request did not offer');
+});
+
+test('a turn result or an init drops pending approvals without answering them', () => {
+  const [req] = wire('approvals');
+  const h = running();
+  h.codec.decode(req);
+  assert.deepStrictEqual(h.codec.decode({ jsonrpc: '2.0', method: 'turn/completed', params: { turnId: null, terminal: 'completed' } }), RESULT(false));
+  assert.strictEqual(h.codec.encodePermission(req.params.approvalId, 'abort'), null);
+  const { codec, open } = opened();
+  codec.decode(req);
+  assert.strictEqual(codec.decode({ ...response('handshake'), id: open[2].id }).kind, 'init');
+  assert.strictEqual(codec.encodePermission(req.params.approvalId, 'abort'), null);
 });
 
 test('under bypass an approval is other, but the abort still rides send', () => {
@@ -203,13 +245,15 @@ test('under bypass an approval is other, but the abort still rides send', () => 
   const rec = codec.decode(wire('approvals')[0]);
   assert.strictEqual(rec.kind, 'other');
   assert.strictEqual(rec.send[0].params.choiceId, 'abort');
+  assert.strictEqual(codec.encodePermission(wire('approvals')[0].params.approvalId, 'abort'), null);
 });
 
 test('-32051 approvalAlreadyResolved on a decide is other with no warning', () => {
   const { codec, warns } = started({ readOnly: true });
   const [req, err] = wire('approval-policy');
   const rec = codec.decode(req);
-  assert.deepStrictEqual(codec.decode({ ...err, id: rec.send[0].id }), { kind: 'other' });
+  const decide = codec.encodePermission(rec.id, 'abort');
+  assert.deepStrictEqual(codec.decode({ ...err, id: decide.id }), { kind: 'other' });
   assert.strictEqual(warns.length, 0);
 });
 

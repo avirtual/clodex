@@ -368,15 +368,16 @@ test('t749: the Edit save echoes a roster it never painted instead of clearing i
 });
 
 const STREAM_HEAD = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'];
+const PERMISSION_TAIL = ['--permission-prompt-tool', 'stdio'];
 
 test('t1171: streamFor(claude) builds the stream-json argv; a fresh seat gets --session-id, a resume --resume and --fork-session', () => {
   const block = streamFor('claude');
   assert.strictEqual(block.codec, 'stream-codec-claude');
   assert.strictEqual(block.toolBoundary, 'hook');
   assert.strictEqual(block.transcriptRepoint, 'claude');
-  assert.deepStrictEqual(block.argv({ resumeId: null, sessionId: 'S', fork: false }), [...STREAM_HEAD, '--session-id', 'S']);
-  assert.deepStrictEqual(block.argv({ resumeId: 'R', sessionId: 'S', fork: true }), [...STREAM_HEAD, '--resume', 'R', '--fork-session']);
-  assert.deepStrictEqual(block.argv({ resumeId: 'R', sessionId: 'S', fork: false }), [...STREAM_HEAD, '--resume', 'R']);
+  assert.deepStrictEqual(block.argv({ resumeId: null, sessionId: 'S', fork: false }), [...STREAM_HEAD, '--session-id', 'S', ...PERMISSION_TAIL]);
+  assert.deepStrictEqual(block.argv({ resumeId: 'R', sessionId: 'S', fork: true }), [...STREAM_HEAD, '--resume', 'R', '--fork-session', ...PERMISSION_TAIL]);
+  assert.deepStrictEqual(block.argv({ resumeId: 'R', sessionId: 'S', fork: false }), [...STREAM_HEAD, '--resume', 'R', ...PERMISSION_TAIL]);
 });
 
 test('t1172: streamFor(codex) runs app-server over stdio; resume rides the wire, not the argv', () => {

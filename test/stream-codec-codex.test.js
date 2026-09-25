@@ -85,21 +85,75 @@ test('item/completed contextCompaction decodes to compact with null token counts
   assert.deepStrictEqual(codec.decode(done), { kind: 'compact', pre: null, post: null });
 });
 
-test('approval requests decode to permission-denied with a decline reply carrying the server id', () => {
+test('a command approval decodes to a permission-request carrying the offered decisions in order, with no send', () => {
+  const { codec } = started();
+  const [req] = wire('approvals');
+  assert.deepStrictEqual(codec.decode(req), {
+    kind: 'permission-request',
+    id: '0',
+    toolName: 'commandExecution',
+    displayName: 'Shell command',
+    description: 'in /tmp/t4-codex/work/D-approvals',
+    preview: "/bin/zsh -lc 'touch cmd-a.txt'",
+    input: req.params,
+    choices: [
+      { id: 'accept', label: 'Allow', kind: 'allow' },
+      { id: 'accept-always', label: 'Always allow: touch cmd-a.txt', kind: 'allow-always' },
+      { id: 'cancel', label: 'Deny', kind: 'deny' },
+    ],
+  });
+});
+
+test('a file-change approval without availableDecisions offers accept and cancel', () => {
+  const { codec } = started();
+  const req = wire('approvals')[2];
+  assert.deepStrictEqual(codec.decode(req), {
+    kind: 'permission-request',
+    id: '2',
+    toolName: 'fileChange',
+    displayName: 'File change',
+    description: null,
+    preview: null,
+    input: req.params,
+    choices: [{ id: 'accept', label: 'Allow', kind: 'allow' }, { id: 'cancel', label: 'Deny', kind: 'deny' }],
+  });
+});
+
+test('encodePermission answers each choice kind with the numeric server id, once', () => {
   const { codec } = started();
   const reqs = wire('approvals');
-  const recs = reqs.map((r) => codec.decode(r));
-  assert.deepStrictEqual(recs.map((r) => [r.kind, r.toolName]), [
-    ['permission-denied', 'commandExecution'], ['permission-denied', 'commandExecution'],
-    ['permission-denied', 'fileChange'], ['permission-denied', 'fileChange'],
-  ]);
-  assert.deepStrictEqual(recs.map((r) => r.send), reqs.map((r) => [{ id: r.id, result: { decision: 'decline' } }]));
+  for (const r of reqs) codec.decode(r);
+  assert.deepStrictEqual(codec.encodePermission('0', 'accept'), { id: 0, result: { decision: 'accept' } });
+  assert.deepStrictEqual(codec.encodePermission('1', 'accept-always'),
+    { id: 1, result: { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['touch', 'cmd-b.txt'] } } } });
+  assert.deepStrictEqual(codec.encodePermission('2', 'cancel'), { id: 2, result: { decision: 'cancel' } });
+  assert.strictEqual(codec.encodePermission('2', 'cancel'), null, 'an answered id is no longer pending');
+  assert.strictEqual(codec.encodePermission('3', 'accept-always'), null, 'a choice the request did not offer');
+  assert.strictEqual(codec.encodePermission('99', 'accept'), null, 'an unknown id');
+  assert.deepStrictEqual(codec.encodePermission('3', 'accept'), { id: 3, result: { decision: 'accept' } });
+});
+
+test('a turn result drops pending approvals without answering them', () => {
+  const { codec } = started();
+  const [req] = wire('approvals');
+  codec.decode(req);
+  assert.strictEqual(codec.decode({ method: 'turn/completed', params: { turn: { status: 'completed' } } }).kind, 'result');
+  assert.strictEqual(codec.encodePermission('0', 'accept'), null);
+});
+
+test('an init drops pending approvals without answering them', () => {
+  const { codec, open } = opened();
+  codec.decode(wire('approvals')[0]);
+  const [threadStart] = wire('thread-start');
+  assert.strictEqual(codec.decode({ ...threadStart, id: open[2].id }).kind, 'init');
+  assert.strictEqual(codec.encodePermission('0', 'accept'), null);
 });
 
 test('under bypass an approval request is other, but the decline still rides send', () => {
   const { codec } = started({ bypass: true });
   const [req] = wire('approvals');
   assert.deepStrictEqual(codec.decode(req), { kind: 'other', toolName: 'commandExecution', send: [{ id: req.id, result: { decision: 'decline' } }] });
+  assert.strictEqual(codec.encodePermission('0', 'accept'), null);
 });
 
 test('an error for turn/start, compact or thread/start is an error result; for anything else it is other with one warning', () => {
