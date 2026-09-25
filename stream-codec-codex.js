@@ -7,6 +7,8 @@ const APPROVAL_TOOLS = {
   'item/commandExecution/requestApproval': 'commandExecution',
   'item/fileChange/requestApproval': 'fileChange',
 };
+const APPROVAL_NAMES = { commandExecution: 'Shell command', fileChange: 'File change' };
+const DEFAULT_DECISIONS = ['accept', 'cancel'];
 const TURN_REQUESTS = new Set(['turn/start', 'thread/compact/start']);
 const THREAD_REQUESTS = new Set(['thread/start', 'thread/resume']);
 const CONTEXT_TEXTS = new Set(['/compact', '/clear']);
@@ -23,6 +25,16 @@ function sessionIdOf(thread) {
   return base && UUID_TAIL_RE.test(base) ? base : (thread.id || null);
 }
 
+function choiceOf(decision) {
+  if (decision === 'accept') return { id: 'accept', label: 'Allow', kind: 'allow', decision };
+  if (decision === 'cancel') return { id: 'cancel', label: 'Deny', kind: 'deny', decision };
+  const amendment = decision && typeof decision === 'object' ? decision.acceptWithExecpolicyAmendment : null;
+  if (amendment && Array.isArray(amendment.execpolicy_amendment)) {
+    return { id: 'accept-always', label: 'Always allow: ' + amendment.execpolicy_amendment.join(' '), kind: 'allow-always', decision };
+  }
+  return null;
+}
+
 function postureFor({ bypass, readOnly }) {
   if (bypass) return { approvalPolicy: 'never', sandbox: 'danger-full-access' };
   if (readOnly) return { approvalPolicy: 'never', sandbox: 'read-only' };
@@ -32,6 +44,7 @@ function postureFor({ bypass, readOnly }) {
 function create({ cwd = null, resumeId = null, fork = false, bypass = false, readOnly = false, model = null, log = null, home = os.homedir() } = {}) {
   let nextId = 1;
   const pending = new Map();
+  const approvals = new Map();
   let threadId = null;
   let turnId = null;
   const warned = new Set();
@@ -103,11 +116,34 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
   const onServerRequest = (obj) => {
     const toolName = APPROVAL_TOOLS[obj.method];
     if (!toolName) return { kind: 'other' };
+    if (bypass) return { kind: 'other', toolName, send: [{ id: obj.id, result: { decision: 'decline' } }] };
+    const params = obj.params || {};
+    const decisions = Array.isArray(params.availableDecisions) ? params.availableDecisions : DEFAULT_DECISIONS;
+    const offered = decisions.map(choiceOf).filter(Boolean);
+    const id = String(obj.id);
+    approvals.set(id, { wireId: obj.id, decisions: new Map(offered.map((c) => [c.id, c.decision])) });
     return {
-      kind: bypass ? 'other' : 'permission-denied',
+      kind: 'permission-request',
+      id,
       toolName,
-      send: [{ id: obj.id, result: { decision: 'decline' } }],
+      displayName: APPROVAL_NAMES[toolName],
+      description: params.cwd ? 'in ' + params.cwd : null,
+      preview: (toolName === 'fileChange' ? params.reason : params.command) || null,
+      input: params,
+      choices: offered.map(({ id: choiceId, label, kind }) => ({ id: choiceId, label, kind })),
     };
+  };
+
+  const encodePermission = (id, choiceId) => {
+    const entry = approvals.get(String(id));
+    if (!entry || !entry.decisions.has(choiceId)) return null;
+    approvals.delete(String(id));
+    return { id: entry.wireId, result: { decision: entry.decisions.get(choiceId) } };
+  };
+
+  const dropApprovals = (rec) => {
+    if (rec.kind === 'result' || rec.kind === 'init') approvals.clear();
+    return rec;
   };
 
   const onNotification = (obj) => {
@@ -139,8 +175,8 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
     if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { kind: 'other' };
     const hasId = obj.id !== undefined && obj.id !== null;
     if (hasId && typeof obj.method === 'string') return onServerRequest(obj);
-    if (hasId) return onResponse(obj);
-    if (typeof obj.method === 'string') return onNotification(obj);
+    if (hasId) return dropApprovals(onResponse(obj));
+    if (typeof obj.method === 'string') return dropApprovals(onNotification(obj));
     return { kind: 'other' };
   };
 
@@ -170,7 +206,7 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
     return request('turn/interrupt', { threadId, turnId });
   };
 
-  return { open, decode, encodeUser, encodeContext, encodeInterrupt };
+  return { open, decode, encodeUser, encodeContext, encodeInterrupt, encodePermission };
 }
 
 module.exports = { create };

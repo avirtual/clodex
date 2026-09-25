@@ -4,10 +4,14 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { decode, encodeUser } = require('../stream-codec-claude');
+const { create, decode, encodeUser } = require('../stream-codec-claude');
 
 const LINES = fs.readFileSync(path.join(__dirname, 'fixtures', 'stream-claude', 'control-records.jsonl'), 'utf8')
   .trim().split('\n');
+
+const [CAN_USE_WRITE] = fs.readFileSync(path.join(__dirname, 'fixtures', 'stream-claude', 'permissions.jsonl'), 'utf8')
+  .trim().split('\n').map((l) => JSON.parse(l));
+const canUse = (request, id = 'req-1') => ({ type: 'control_request', request_id: id, request: { subtype: 'can_use_tool', ...request } });
 
 const INIT_SLASH = [
     'design', 'design-sync', 'dataviz', 'update-config', 'debug', 'batch',
@@ -85,4 +89,93 @@ test('encodeUser with images and empty text omits the text block; an empty image
     message: { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/gif', data: 'CCCC' } }] },
   });
   assert.deepStrictEqual(encodeUser('hello', []), { type: 'user', message: { role: 'user', content: 'hello' } });
+});
+
+test('decode: a can_use_tool control_request is a permission-request with the suggestion as allow-always', () => {
+  assert.deepStrictEqual(create().decode(CAN_USE_WRITE), {
+    kind: 'permission-request',
+    id: '52fcf84f-cb00-4fb3-b393-d0e6ecae1bb7',
+    toolName: 'Write',
+    displayName: 'Write',
+    description: 'hello.txt',
+    preview: CAN_USE_WRITE.request.input.file_path,
+    input: CAN_USE_WRITE.request.input,
+    choices: [
+      { id: 'allow', label: 'Allow', kind: 'allow' },
+      { id: 'allow-always', label: 'Accept edits for this session', kind: 'allow-always' },
+      { id: 'deny', label: 'Deny', kind: 'deny' },
+    ],
+  });
+});
+
+test('decode: preview is the command, path or url the tool acts on, else the description', () => {
+  const previews = [
+    canUse({ tool_name: 'Bash', input: { command: 'ls -la' }, description: 'List' }),
+    canUse({ tool_name: 'Edit', input: { file_path: '/a/b.js' } }),
+    canUse({ tool_name: 'NotebookEdit', input: { file_path: '/a/n.ipynb' } }),
+    canUse({ tool_name: 'Read', input: { file_path: '/a/r.txt' } }),
+    canUse({ tool_name: 'WebFetch', input: { url: 'https://x.test' } }),
+    canUse({ tool_name: 'Glob', input: { pattern: '*' }, description: 'Find files' }),
+    canUse({ tool_name: 'Glob', input: { pattern: '*' } }),
+  ].map((o) => decode(o).preview);
+  assert.deepStrictEqual(previews, ['ls -la', '/a/b.js', '/a/n.ipynb', '/a/r.txt', 'https://x.test', 'Find files', null]);
+});
+
+test('decode: no suggestions offers allow and deny only; addRules and unknown suggestions label allow-always', () => {
+  const kinds = (o) => decode(o).choices.map((c) => c.label);
+  assert.deepStrictEqual(kinds(canUse({ tool_name: 'Bash', input: { command: 'x' } })), ['Allow', 'Deny']);
+  assert.deepStrictEqual(kinds(canUse({ tool_name: 'Bash', input: { command: 'x' }, permission_suggestions: [] })), ['Allow', 'Deny']);
+  assert.deepStrictEqual(kinds(canUse({
+    tool_name: 'Bash',
+    input: { command: 'npm test' },
+    permission_suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test:*' }, { toolName: 'Read' }], behavior: 'allow', destination: 'localSettings' }],
+  })), ['Allow', 'Always allow Bash(npm test:*), Read', 'Deny']);
+  assert.deepStrictEqual(kinds(canUse({ tool_name: 'Bash', input: {}, permission_suggestions: [{ type: 'addDirectories' }] })), ['Allow', 'Always allow', 'Deny']);
+  const bare = decode(canUse({ tool_name: 'Glob' }));
+  assert.deepStrictEqual([bare.displayName, bare.description, bare.input], ['Glob', null, null]);
+});
+
+test('decode: any other control_request subtype is other', () => {
+  assert.deepStrictEqual(decode({ type: 'control_request', request_id: 'r', request: { subtype: 'hook_callback' } }), { kind: 'other' });
+});
+
+test('encodePermission answers allow, allow-always and deny in the control_response shape, once per id', () => {
+  const input = CAN_USE_WRITE.request.input;
+  const id = CAN_USE_WRITE.request_id;
+  const wrap = (response) => ({ type: 'control_response', response: { subtype: 'success', request_id: id, response } });
+  const rows = [
+    ['allow', { behavior: 'allow', updatedInput: input }],
+    ['allow-always', { behavior: 'allow', updatedInput: input, updatedPermissions: CAN_USE_WRITE.request.permission_suggestions }],
+    ['deny', { behavior: 'deny', message: 'Denied by the operator in Clodex.' }],
+  ];
+  for (const [choiceId, response] of rows) {
+    const codec = create();
+    codec.decode(CAN_USE_WRITE);
+    assert.deepStrictEqual(codec.encodePermission(id, choiceId), wrap(response), choiceId);
+    assert.strictEqual(codec.encodePermission(id, choiceId), null, `${choiceId}: an answered id is no longer pending`);
+  }
+});
+
+test('encodePermission is null for an unknown id or a choice the request did not offer', () => {
+  const codec = create();
+  codec.decode(canUse({ tool_name: 'Bash', input: { command: 'x' } }, 'r-bash'));
+  assert.strictEqual(codec.encodePermission('nope', 'allow'), null);
+  assert.strictEqual(codec.encodePermission('r-bash', 'allow-always'), null);
+  assert.strictEqual(codec.encodePermission('r-bash', 'bogus'), null);
+  assert.deepStrictEqual(codec.encodePermission('r-bash', 'deny').response.request_id, 'r-bash');
+});
+
+test('a result or an init drops pending requests without answering them', () => {
+  for (const idx of [0, 1]) {
+    const codec = create();
+    codec.decode(CAN_USE_WRITE);
+    assert.ok(['init', 'result'].includes(codec.decode(JSON.parse(LINES[idx])).kind));
+    assert.strictEqual(codec.encodePermission(CAN_USE_WRITE.request_id, 'allow'), null);
+  }
+});
+
+test('create() carries the module encodeUser and the same decode records', () => {
+  const codec = create({ cwd: '/w' });
+  assert.strictEqual(codec.encodeUser, encodeUser);
+  assert.deepStrictEqual(codec.decode(JSON.parse(LINES[7])), { kind: 'permission-denied', toolName: 'Write' });
 });
