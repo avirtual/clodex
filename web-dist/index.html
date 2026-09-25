@@ -41559,6 +41559,7 @@ The session restarts with --resume on ${sid.slice(0, 8)}\u2026. The current conv
               alert(`Resume failed: ${rr && rr.error ? rr.error : "unknown error"}`);
               return;
             }
+            markSeatIo(name, rr.io || "pty");
             if (snapType) {
               createTerminal(name);
               addSessionToSidebar(name, snapType, snapCwd, null);
