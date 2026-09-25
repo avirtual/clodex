@@ -121,7 +121,7 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
         return { kind: 'result', durationMs: null, costUsd: null, isError: params.terminal === 'failed' };
       case 'item/completed': {
         const item = params.item || {};
-        if (item.kind !== 'compaction') return { kind: 'other' };
+        if (item.kind !== 'compaction' || !sessionId) return { kind: 'other' };
         return {
           kind: 'compact',
           pre: typeof item.tokensBefore === 'number' ? item.tokensBefore : null,

@@ -153,6 +153,14 @@ test('item/completed compaction decodes to compact with the token counts and tur
   assert.deepStrictEqual(codec.decode(itemDone), { kind: 'compact', pre: itemDone.params.item.tokensBefore, post: itemDone.params.item.tokensAfter, turnEnd: true });
 });
 
+test('a compaction before any init decodes to other; after init the same item is compact', () => {
+  const { codec, open } = opened();
+  const itemDone = wire('compact').find((m) => m.method === 'item/completed');
+  assert.deepStrictEqual(codec.decode(itemDone), { kind: 'other' });
+  assert.strictEqual(codec.decode({ ...response('handshake'), id: open[2].id }).kind, 'init');
+  assert.strictEqual(codec.decode(itemDone).kind, 'compact');
+});
+
 test('a compaction inside a running turn does not end the turn; after turn/completed it does', () => {
   const { codec } = running();
   const itemDone = wire('compact').find((m) => m.method === 'item/completed');
