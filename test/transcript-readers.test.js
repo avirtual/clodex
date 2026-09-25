@@ -8,7 +8,7 @@ const { createJsonlWatcher } = require('../jsonl-watcher');
 
 const NONE = {
   text: '', isReply: false, rid: '', turnStart: false, turnEnd: false, interrupted: false,
-  inert: false, sessionEnd: false, compactSummary: false, prompt: '',
+  inert: false, sessionEnd: false, compactSummary: false, prompt: '', command: '',
 };
 
 function museRun(event, extra = {}) {
@@ -40,6 +40,11 @@ const MUSE_SESSION_END = {
   schema_version: 1, id: '684fd2d8-31ac-4d24-8d64-885ab775f7a5', sequence: 118, record_type: 'event',
   payload_type: 'session.end', payload_schema_version: 1,
   payload: { kind: 'session_end', record: { session_id: '01a0c9ab-0000-7000-8000-00000000ab01', exit_reason: 'clean', uptime_ms: 239927 } },
+};
+const MUSE_COMMAND = {
+  schema_version: 1, id: 'b7e1c0de-0000-4000-8000-000000000084', sequence: 84, record_type: 'event',
+  payload_type: 'command.invoked', payload_schema_version: 1,
+  payload: { kind: 'command_invoked', record: { schema_version: 1, session_id: '01a0d9b9-7ffc-7113-a4d9-4768bbf19388', command: '/model' } },
 };
 const MUSE_INERT_RUN_EVENTS = [
   'model_completed', 'goal_usage_attribution', 'context_block_diagnostic', 'context_block_updated',
@@ -89,6 +94,8 @@ test('muse classify table', () => {
     ['started', MUSE_STARTED, { ...NONE, turnStart: true }],
     ['user_intent.accepted', MUSE_PROMPT, { ...NONE, prompt: 'say hello\nthen stop' }],
     ['session.end', MUSE_SESSION_END, { ...NONE, sessionEnd: true }],
+    ['command.invoked', MUSE_COMMAND, { ...NONE, command: '/model', inert: true }],
+    ['command.invoked without record.command', { payload_type: 'command.invoked', payload: { kind: 'command_invoked', record: { schema_version: 1 } } }, { ...NONE, inert: true }],
     ['runtime.session.task', MUSE_TASK, { ...NONE, inert: true }],
     ['tool_batch.effect.started', MUSE_TOOL_BATCH, { ...NONE, inert: true }],
     ['run.model.configured', MUSE_MODEL_CONFIGURED, { ...NONE, inert: true }],

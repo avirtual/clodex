@@ -7,7 +7,7 @@ const CODEX_TYPES = ['event_msg', 'response_item', 'token_usage_record', 'sessio
 function blank() {
   return {
     text: '', isReply: false, rid: '', turnStart: false, turnEnd: false, interrupted: false,
-    inert: false, sessionEnd: false, compactSummary: false, prompt: '',
+    inert: false, sessionEnd: false, compactSummary: false, prompt: '', command: '',
   };
 }
 
@@ -155,6 +155,14 @@ function museClassify(obj) {
     const blocks = Array.isArray(payload.refill_blocks) ? payload.refill_blocks : [];
     c.prompt = blocks.filter(b => b && typeof b.text === 'string').map(b => b.text).join('\n');
     return c;
+  }
+  if (payloadType === 'command.invoked') {
+    const command = (payload.record || {}).command;
+    if (typeof command === 'string' && command) {
+      c.command = command;
+      c.inert = true;
+      return c;
+    }
   }
   if (payloadType === 'session.end') {
     c.sessionEnd = true;

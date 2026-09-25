@@ -37,6 +37,8 @@ Before the watcher's textless `turnEnd` returned a thinking seat to idle, such a
 run pinned the seat "working" for 3 h, parked every dm to it, and had three
 `[agent:reboot]` requests abandoned as "sessions never settled".
 
+A slash command is `payload_type:"command.invoked"`, `payload.record.command` (e.g. `/model`, `/usage`; measured 2026-09-25); `/status`'s card is TUI-only and never written. It stays `inert` so the watcher's flush is unchanged.
+
 ## museExpand
 
 A `retained_frame` line (`{retained_frame, frame_schema_version, transaction_id,

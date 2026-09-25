@@ -108,6 +108,21 @@ test('a muse turn read whole orders prompt, reply and turn-end in one turn', () 
   assert.deepStrictEqual(recordsOf(text).records.map((r) => [r.kind, r.turn]), [['prompt', 1], ['assistant', 1], ['turn-end', 1]]);
 });
 
+test('a muse command.invoked between prompt and reply is a command row on its own turn', () => {
+  const command = rec({
+    schema_version: 1, id: 'cmd-84', sequence: 84, recorded_at: 1790355830500000, record_type: 'event',
+    payload_type: 'command.invoked', payload_schema_version: 1,
+    payload: { kind: 'command_invoked', record: { schema_version: 1, session_id: '01a0d9b9-7ffc-7113-a4d9-4768bbf19388', command: '/model' } },
+  });
+  const text = [fixture('muse-intent'), `${command}\n`, fixture('muse-reply'), fixture('muse-terminal')].join('');
+  assert.deepStrictEqual(recordsOf(text).records, [
+    { id: 'cd97be52-9b71-41c4-b87f-cda3a0655d3e', kind: 'prompt', ts: 1790355829993, turn: 1, text: 'what model are you?', source: 'typed' },
+    { id: 'cmd-84', kind: 'command', ts: 1790355830500, turn: 2, name: '/model', args: '' },
+    { id: '1ad13435-28fa-486d-9f92-f44a561f177a', kind: 'assistant', ts: 1790355833129, turn: 2, text: "I'm Muse Code powered by Meta Muse Spark." },
+    { id: '1f300194-d519-4152-b815-3ff265a59094', kind: 'turn-end', ts: 1790355833271, turn: 2, durationMs: 3182, messageCount: null },
+  ]);
+});
+
 test('a codex event_msg user_message or agent_message is no row: the response_item carries the same text', () => {
   const lines = [
     rec({ timestamp: '2026-09-25T17:06:52.850Z', type: 'event_msg', payload: { type: 'user_message', message: 'there?' } }),
