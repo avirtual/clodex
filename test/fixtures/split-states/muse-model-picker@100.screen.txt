@@ -1,0 +1,30 @@
+│                 meta · native-basic                                                      │        
+│                                                                                          │        
+│  WORKSPACE      /private/var/folders/m4/r7y5zr_92c3c01nm71g33ql00000gn/T/cap-muse-LStQjU │        
+│                 trusted · not found                                                      │        
+│  ACCESS         Auto-review                                                              │        
+│                 Meta account                                                             │        
+│  ACCOUNT        Bogdan Ionescu (bogdan@opsguru.io)                                       │        
+│                                                                                          │        
+│  USAGE          0 tokens · 0 turns · 0 subagents                                         │        
+│  CONTEXT        not projected · 1008K limit                                              │        
+│                                                                                          │        
+│  SESSION        01a0da22-8aab-7301-8ade-df1bf1dad520                                     │        
+│  ACTIVITY       no tasks                                                                 │        
+│                 0 terminals · inbox clear                                                │        
+│                                                                                          │        
+│  BILLING        Subscription · Muse Code High Usage                                      │        
+└──────────────────────────────────────────────────────────────────────────────────────────┘        
+                                                                                                    
+── Voice input (⌥ + v to start) ────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Choose model
+
+  muse-spark-1.3              
+⟩ muse-spark-1.3-contributor  Your content, including inter-session messages, may be used for produ…
+  muse-spark-1.2              
+  muse-spark-1.2-contributor  Your content, including inter-session messages, may be used for produ…
+
+  ↑↓ move · enter confirm · esc go back
+

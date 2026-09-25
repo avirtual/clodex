@@ -16,7 +16,7 @@ function renderTranscript(doc, paneEl, records, ctx = {}) {
   rows.render(records);
 }
 
-function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null }) {
+function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null }) {
   const paneEl = document.createElement('div');
   paneEl.className = 'transcript-pane';
   paneEl.hidden = true;
@@ -111,7 +111,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, pullTranscript, 
     if (!raw && isEligible()) {
       pull();
       const buf = terminal.buffer.active;
-      if (available && buf.type === 'normal') measured = measureSplit(screenRows(), buf.cursorY, terminal.cols);
+      if (available) measured = measureSplit(screenRows(), buf.cursorY, terminal.cols, platform());
     }
     const prev = state;
     state = reduceSplit(state, measured, now(), undefined, raw ? 0 : undefined);

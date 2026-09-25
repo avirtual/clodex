@@ -1,0 +1,30 @@
+╭─────────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.0)                              │
+│                                                         │
+│ model:     GPT-6-Astra medium   /model to change        │
+│ directory: /private/var/folders/m4/…/T/cap-codex-ba5Yyo │
+╰─────────────────────────────────────────────────────────╯
+ 
+
+
+
+
+
+
+
+
+
+
+ 
+
+
+
+
+
+› /status      show current session configuration and token usage                                   
+  /statusline  configure which items appear in the status line
+
+› /status
+
+  Context 0% used · GPT-6-Astra · cap-codex-ba5Yyo · master · 5h 82% left
+

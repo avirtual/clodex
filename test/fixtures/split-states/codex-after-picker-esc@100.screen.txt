@@ -1,0 +1,30 @@
+│ model:     GPT-6-Astra medium   /model to change        │
+│ directory: /private/var/folders/m4/…/T/cap-codex-ba5Yyo │
+╰─────────────────────────────────────────────────────────╯
+ 
+/status
+ 
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  >_ OpenAI Codex (v0.157.0)                                                                      │
+│                                                                                                  │
+│ Visit https://chatgpt.com/codex/settings/usage for up-to-date                                    │
+│ information on rate limits and credits                                                           │
+│                                                                                                  │
+│  Model:                GPT-6-Astra (reasoning medium, summaries auto)                            │
+│  Model provider:       openai                                                                    │
+│  Directory:            /private/var/folders/m4/r7y5zr_92c3c01nm71g33ql00000gn/T/cap-codex-ba5Yyo │
+│  Permissions:          Read Only (never)                                                         │
+│  Agents.md:            <none>                                                                    │
+│  Account:              Plus                                                                      │
+│  Collaboration mode:   Default                                                                   │
+│  Session:              01a0da21-f3f7-7ac3-a0f4-886746cbe9de                                      │
+│                                                                                                  │
+│  5h limit:             [████████████████░░░░] 82% left (resets 01:06 on 26 Sep)                  │
+│  Weekly limit:         [████████████████░░░░] 80% left (resets 10:47 on 28 Sep)                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+                       Tip: Use /feedback to send logs to the maintainers when something looks off.
+
+› Ask Codex to do anything
+
+  Context 0% used · GPT-6-Astra · cap-codex-ba5Yyo · master · 5h 82% left
+  ? for shortcuts                                                          ⚠ 1 warning · f2 to view
