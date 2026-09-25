@@ -58,65 +58,32 @@ const FIXTURES = [
   ['trust@100', 15, 'full', -1, -1],
   ['trust@200', 13, 'full', -1, -1],
   ['trust@60', 19, 'full', -1, -1],
-  ['muse-idle@100', 7, 'split', 6, 9, 'muse'],
-  ['muse-draft@100', 7, 'split', 6, 9, 'muse'],
-  ['muse-slash-menu@100', 7, 'split', 6, 17, 'muse'],
-  ['muse-typed-status@100', 7, 'split', 6, 10, 'muse'],
-  ['muse-after-status@100', 27, 'split', 26, 29, 'muse'],
-  ['muse-model-picker@100', 28, 'split', 18, 28, 'muse'],
-  ['muse-after-picker-esc@100', 19, 'split', 18, 21, 'muse'],
-  ['codex-idle@100', 26, 'split', 26, 29, 'codex'],
-  ['codex-draft@100', 26, 'split', 26, 29, 'codex'],
-  ['codex-slash-menu@100', 26, 'split', 17, 28, 'codex'],
-  ['codex-typed-status@100', 26, 'split', 23, 28, 'codex'],
-  ['codex-after-status@100', 26, 'split', 26, 29, 'codex'],
-  ['codex-model-picker@100', 29, 'full', -1, -1, 'codex'],
-  ['codex-after-picker-esc@100', 26, 'split', 26, 29, 'codex'],
 ];
 
-const SCREEN_ROWS = { claude: 40, muse: 30, codex: 30 };
-
-function load(name, platform = 'claude') {
+function load(name) {
   const cols = Number(name.split('@')[1]);
-  const rows = fs.readFileSync(path.join(DIR, `${name}.screen.txt`), 'utf8').split('\n').slice(0, SCREEN_ROWS[platform]);
+  const rows = fs.readFileSync(path.join(DIR, `${name}.screen.txt`), 'utf8').split('\n').slice(0, 40);
   return { cols, rows };
 }
 
-test('ENTER: every captured screen in the fixture dir is a table row, and every table row loads a full screen', () => {
+test('ENTER: every captured screen in the fixture dir is a table row, and every table row loads a 40-row screen', () => {
   const onDisk = fs.readdirSync(DIR).filter((f) => f.endsWith('.screen.txt')).map((f) => f.replace('.screen.txt', '')).sort();
   const inTable = FIXTURES.map((r) => r[0]).sort();
   assert.deepStrictEqual(onDisk, inTable);
-  assert.strictEqual(FIXTURES.length, 60);
-  for (const [name, , , , , platform = 'claude'] of FIXTURES) {
-    const { rows, cols } = load(name, platform);
-    assert.strictEqual(rows.length, SCREEN_ROWS[platform], name);
+  assert.strictEqual(FIXTURES.length, 46);
+  for (const [name] of FIXTURES) {
+    const { rows, cols } = load(name);
+    assert.strictEqual(rows.length, 40, name);
     assert.ok([60, 100, 200].includes(cols), name);
   }
 });
 
-for (const [name, cursorY, mode, top, bottom, platform] of FIXTURES) {
+for (const [name, cursorY, mode, top, bottom] of FIXTURES) {
   test(`${name}: ${mode}${mode === 'split' ? ` rows ${top}..${bottom}` : ''}`, () => {
-    const { rows, cols } = load(name, platform);
-    const args = platform ? [rows, cursorY, cols, platform] : [rows, cursorY, cols];
-    assert.deepStrictEqual(measureSplit(...args), { mode, top, bottom });
+    const { rows, cols } = load(name);
+    assert.deepStrictEqual(measureSplit(rows, cursorY, cols), { mode, top, bottom });
   });
 }
-
-test('a Muse or Codex screen measured as Claude has no anchor, and an unknown platform never splits', () => {
-  for (const [name, cursorY] of [['muse-idle@100', 7], ['codex-idle@100', 26]]) {
-    const { rows, cols } = load(name, 'muse');
-    assert.strictEqual(measureSplit(rows, cursorY, cols).mode, 'full', name);
-  }
-  const { rows } = load('idle@100');
-  assert.strictEqual(measureSplit(rows, 6, 100, 'gemini').mode, 'full');
-});
-
-test('a Codex composer row with a menu block directly above it and no blank row still takes the block top', () => {
-  const rows = ['', '  /model  pick', '› /m', '', '  status'];
-  assert.deepStrictEqual(measureSplit(rows, 2, 40, 'codex'), { mode: 'split', top: 1, bottom: 4 });
-  const twoBlanks = ['  /model  pick', '', '', '› /m', ''];
-  assert.deepStrictEqual(measureSplit(twoBlanks, 3, 40, 'codex'), { mode: 'split', top: 3, bottom: 4 });
-});
 
 test('a permission dialog and an Edit diff are FULL at every width', () => {
   const dialogs = FIXTURES.filter(([n]) => /^(permission|edit-diff)@/.test(n));

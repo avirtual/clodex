@@ -18,51 +18,23 @@ function isComposerRow(row) {
   return composerIsEmpty(r) || composerHasDraft(r);
 }
 
-const LABELED_RULE = /^─+( \S.*? )?─+$/u;
-const CODEX_COMPOSER = /^›[ \u00a0]/u;
-const CODEX_PICKER_ROW = /^›[ \u00a0]\d+\.\s/u;
-const CODEX_MENU_ROW = /^(\s{2}\/\S|›[ \u00a0])/u;
-const isBlank = (row) => !/\S/u.test(row || '');
-
-function isLabeledRuleRow(row, cols) {
-  if (typeof row !== 'string') return false;
-  const r = row.trimEnd();
-  return r.length >= cols - 1 && LABELED_RULE.test(r);
+function isAnchorAt(rows, i, cols) {
+  return isRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]);
 }
 
-function isCodexComposerRow(row) {
-  return typeof row === 'string' && CODEX_COMPOSER.test(row) && !CODEX_PICKER_ROW.test(row);
-}
-
-function codexStripTop(rows, i) {
-  let j = i - 1;
-  if (j >= 0 && isBlank(rows[j])) j--;
-  if (j < 0 || typeof rows[j] !== 'string' || !CODEX_MENU_ROW.test(rows[j])) return i;
-  while (j > 0 && typeof rows[j - 1] === 'string' && CODEX_MENU_ROW.test(rows[j - 1])) j--;
-  return j;
-}
-
-const ANCHORS = {
-  claude: { at: (rows, i, cols) => isRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]), top: (rows, i) => i },
-  muse: { at: (rows, i, cols) => isLabeledRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]), top: (rows, i) => i },
-  codex: { at: (rows, i) => isCodexComposerRow(rows[i]), top: codexStripTop },
-};
-
-function findAnchor(rows, cursorY, cols, platform = 'claude') {
-  const anchor = ANCHORS[platform];
-  if (!anchor || !Array.isArray(rows) || rows.length < 2) return -1;
+function findAnchor(rows, cursorY, cols) {
+  if (!Array.isArray(rows) || rows.length < 2) return -1;
   const start = Math.max(0, Math.min(rows.length - 1, Number.isInteger(cursorY) ? cursorY : rows.length - 1));
-  for (let i = start; i >= 0; i--) if (anchor.at(rows, i, cols)) return i;
-  for (let i = start + 1; i < rows.length - 1; i++) if (anchor.at(rows, i, cols)) return i;
+  for (let i = start; i >= 0; i--) if (isAnchorAt(rows, i, cols)) return i;
+  for (let i = start + 1; i < rows.length - 1; i++) if (isAnchorAt(rows, i, cols)) return i;
   return -1;
 }
 
-function measureSplit(rows, cursorY, cols, platform = 'claude') {
-  const at = findAnchor(rows, cursorY, cols, platform);
-  if (at < 0) return { mode: 'full', top: -1, bottom: -1 };
-  const top = ANCHORS[platform].top(rows, at);
+function measureSplit(rows, cursorY, cols) {
+  const top = findAnchor(rows, cursorY, cols);
+  if (top < 0) return { mode: 'full', top: -1, bottom: -1 };
   let bottom = rows.length - 1;
-  while (bottom > at + 1 && isBlank(rows[bottom])) bottom--;
+  while (bottom > top + 1 && !/\S/u.test(rows[bottom] || '')) bottom--;
   if (Number.isInteger(cursorY)) bottom = Math.max(bottom, Math.min(cursorY, rows.length - 1));
   return { mode: 'split', top, bottom };
 }
@@ -110,8 +82,6 @@ module.exports = {
   SPLIT_EXIT_MS,
   isRuleRow,
   isComposerRow,
-  isLabeledRuleRow,
-  isCodexComposerRow,
   findAnchor,
   measureSplit,
   initialSplitState,

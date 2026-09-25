@@ -2019,8 +2019,7 @@ function createTerminal(name, peer = null) {
 
   const echoRewrite = peer ? (chunk) => chunk : createEchoRewriter(currentEchoPalette);
   const liveSplit = peer || window.__CLODEX_WEB__ ? null : createLiveSplitView(terminal, wrapperEl, {
-    isEligible: () => transcriptPaneEnabled && isAgentType(sessionTypeOf(name)),
-    platform: () => sessionTypeOf(name),
+    isEligible: () => transcriptPaneEnabled && sessionTypeOf(name) === 'claude',
     pullTranscript: () => window.api.transcriptPull(name),
     seatName: name,
     onTranscriptChanged: (cb) => { transcriptChangedSubs.add(cb); return () => transcriptChangedSubs.delete(cb); },

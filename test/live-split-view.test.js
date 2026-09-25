@@ -256,7 +256,7 @@ function mountView(extra = {}, { parser = true, geometry = false } = {}) {
     ...extra,
   });
   return {
-    view, calls, csi, pane, terminal,
+    view, calls, csi, pane,
     show: (rows) => { screen.length = 0; screen.push(...rows); },
     write: () => writes.forEach((cb) => cb()),
     change: (name) => listener && listener(name),
@@ -307,33 +307,6 @@ const RULE_ROW = '─'.repeat(20);
 const ANCHORED = [RULE_ROW, '❯ ', '', ''];
 const ANCHORED_TALL = [RULE_ROW, '❯ ', '  footer', ''];
 const STREAMING = ['partial reply', '─────', '', ''];
-
-test('a codex seat in the alternate buffer measures its composer and reaches split', async () => {
-  let t = 5000;
-  const m = mountView({ now: () => t, platform: () => 'codex' });
-  try {
-    m.terminal.buffer.active.type = 'alternate';
-    m.show(['', '› Ask Codex', '', '  status']);
-    m.write();
-    await settle();
-    t += 250;
-    m.write();
-    assert.deepStrictEqual([m.view.state().mode, m.view.state().top, m.view.state().bottom], ['split', 1, 3]);
-  } finally { m.view.dispose(); m.restore(); }
-});
-
-test('a seat with no platform getter measures as claude, so a codex composer stays full', async () => {
-  let t = 5000;
-  const m = mountView({ now: () => t });
-  try {
-    m.show(['', '› Ask Codex', '', '  status']);
-    m.write();
-    await settle();
-    t += 250;
-    m.write();
-    assert.strictEqual(m.view.state().mode, 'full');
-  } finally { m.view.dispose(); m.restore(); }
-});
 
 async function mountSplit(opts) {
   let t = 5000;

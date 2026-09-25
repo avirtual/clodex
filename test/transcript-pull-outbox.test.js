@@ -130,12 +130,9 @@ test('transcript:pull on a codex stream seat with no transcript link carries its
   });
 });
 
-test('transcript:pull on a codex pty seat with no transcript link carries its outbox and permission cards with no records', () => {
-  const { res, item } = seatPull({ name: 'cp', agentType: 'codex', io: 'pty', _dead: false });
-  assert.deepStrictEqual(res, {
-    ok: false, reason: 'unavailable', rev: '-:o2:p4', records: [],
-    outbox: [{ text: 'q', origin: 'operator', images: 0 }], permissions: [item],
-  });
+test('transcript:pull on a codex pty seat is the bare not-claude result', () => {
+  const { res } = seatPull({ name: 'cp', agentType: 'codex', io: 'pty', _dead: false });
+  assert.deepStrictEqual(res, { ok: false, reason: 'not-claude' });
 });
 
 const MUSE_TURN = ['muse-intent', 'muse-reply']
@@ -148,14 +145,7 @@ test('transcript:pull on a muse stream seat with a readable transcript serves it
   assert.deepStrictEqual(res.records.map((r) => [r.kind, r.text]), [['prompt', 'what model are you?'], ['assistant', "I'm Muse Code powered by Meta Muse Spark."]]);
 });
 
-test('transcript:pull on a muse pty seat with a readable transcript serves its records beside the outbox', () => {
+test('transcript:pull on a muse pty seat with a readable transcript is still the bare not-claude result', () => {
   const { res } = seatPull({ name: 'mp', agentType: 'muse', io: 'pty', _dead: false }, MUSE_TURN);
-  assert.strictEqual(res.ok, true);
-  assert.strictEqual(res.rev, '1:o2:p4');
-  assert.deepStrictEqual(res.records.map((r) => [r.kind, r.text]), [['prompt', 'what model are you?'], ['assistant', "I'm Muse Code powered by Meta Muse Spark."]]);
-});
-
-test('transcript:pull on a seat that is not an agent type is the bare not-agent result', () => {
-  const { res } = seatPull({ name: 'sh', agentType: 'shell', io: 'pty', _dead: false });
-  assert.deepStrictEqual(res, { ok: false, reason: 'not-agent' });
+  assert.deepStrictEqual(res, { ok: false, reason: 'not-claude' });
 });
