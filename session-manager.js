@@ -883,11 +883,7 @@ function createSessionManager(deps) {
       // one tap the two differ, and a later untargeted tap must still route by
       // the seat he is LOOKING at rather than the one he last named.
       this._micTarget = null;
-      // IS CLODEX THE FRONTMOST APPLICATION? The second condition on the
-      // automatic re-arm, and independent of the target: the operator browsed
-      // the web with Clodex behind it, a turn ended, the re-arm fired, and the
-      // CLI transcribed the VIDEO he was watching into that seat's composer.
-      // The seat legitimately held the microphone — nobody was talking to it.
+      // IS CLODEX THE FRONTMOST APPLICATION?
       //
       // Starts FALSE. Before any host has reported, no seat may arm: the
       // opposite default records the room at launch, which is the failure.

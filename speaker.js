@@ -129,33 +129,9 @@ function createVoiceCatalog({ execFileImpl = execFile, bin = SAY_BIN, lang = 'en
   return { list, refresh };
 }
 
-// `onBusy` is fired with true when playback STARTS and false when it ENDS, and
-// only on a change. It exists because the re-arm lives in the renderer, which
-// cannot see this process at all: the microphone re-arms at turn end and the
-// narration starts at the same instant, so without a signal crossing that seam
-// the recorder hears `say` and transcribes it into the composer.
-//
-// The false edge is execFile's own callback, which fires when the child exits —
-// and `say` BLOCKS until audio playback completes (measured: 5.2s for a ~5s
-// sentence). So this is a precise end-of-speech signal, and the reason no
-// consumer of it may fall back to a duration estimate or a poll.
-function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN, onBusy = null } = {}) {
+function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN } = {}) {
   let child = null;
-  let busy = false;
 
-  // Consume-only: the listener is a broadcast to every window, and a throw from
-  // it must not take down a kill path or an exec callback.
-  function setBusy(next) {
-    if (next === busy) return;
-    busy = next;
-    if (onBusy) { try { onBusy(next); } catch { /* observer-grade */ } }
-  }
-
-  // The kill WITHOUT the announcement, which is the half speak() needs. A
-  // replacement utterance must not emit a false edge on its way in: playback
-  // never actually stopped, and a consumer waiting on that edge — the turn-end
-  // re-arm — would take the gap as permission and arm into the narration that
-  // is about to start.
   function killChild() {
     if (!child) return false;
     const c = child;
@@ -167,12 +143,7 @@ function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN, onBusy = null }
   }
 
   function stop() {
-    if (!killChild()) return false;
-    // Announced HERE rather than left to the exit callback, which lands a tick
-    // or more later. A killed narration is over the moment it is killed, and a
-    // consumer waiting on the false edge would otherwise sit through the gap.
-    setBusy(false);
-    return true;
+    return killChild();
   }
 
   // The recorder just lit while a narration was playing. KILL IT: he tapped the
@@ -195,7 +166,6 @@ function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN, onBusy = null }
   // until it narrated the distant past.
   function speak(text, { voice = DEFAULT_VOICE, rate = DEFAULT_RATE } = {}) {
     if (!text) return false;
-    // The silent kill, never stop(): see killChild.
     killChild();
     const args = [];
     if (voice) args.push('-v', voice);
@@ -216,15 +186,13 @@ function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN, onBusy = null }
         // failure all arrive here, and none of them is worth interrupting the
         // operator over. Guarded against nulling a successor for the same
         // reason stop() clears first.
-        if (child === started) { child = null; setBusy(false); }
+        if (child === started) child = null;
       });
     } catch {
       child = null;
-      setBusy(false);
       return false;
     }
     child = started;
-    setBusy(true);
     return true;
   }
 

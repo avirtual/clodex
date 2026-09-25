@@ -437,8 +437,6 @@ const API_CONTRACT = [
   // this terminal's own screen says that is safe. The DECISION is the
   // renderer's because only it can read the recorder; main routes.
   { name: 'onVoiceTap', kind: 'on', channel: 'voice-tap' },
-  { name: 'micTarget', kind: 'invoke', channel: 'voice:micTarget' },
-  { name: 'appFocused', kind: 'invoke', channel: 'voice:appFocused' },
   { name: 'listWorkspaces', kind: 'invoke', channel: 'workspace:list' },
   { name: 'currentWorkspace', kind: 'invoke', channel: 'workspace:current' },
   { name: 'setWorkspaceName', kind: 'invoke', channel: 'workspace:setName' },
