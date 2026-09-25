@@ -23,6 +23,13 @@ function draftFromRows(rows) {
   return null;
 }
 
+function readInput(terminal, readRows = () => readRowsToCursor(terminal)) {
+  try {
+    if (terminal.buffer.active.type !== 'normal') return null;
+    return draftFromRows(readRows());
+  } catch { return null; }
+}
+
 function createVoiceMirror(terminal, { onDraft, onRelease = () => {}, readRows = () => readRowsToCursor(terminal), trace = () => {} } = {}) {
   let armed = false;
   let disposed = false;
@@ -31,12 +38,7 @@ function createVoiceMirror(terminal, { onDraft, onRelease = () => {}, readRows =
   let releasing = false;
   const note = (line) => { try { trace(line); } catch {} };
 
-  function read() {
-    try {
-      if (terminal.buffer.active.type !== 'normal') return null;
-      return draftFromRows(readRows());
-    } catch { return null; }
-  }
+  const read = () => readInput(terminal, readRows);
 
   function check() {
     if (!armed || disposed) return;
@@ -99,7 +101,7 @@ function engineObserved(view) {
   if (!view || !view.terminal) return null;
   const rows = readFooterRows(view.terminal);
   if (!rows) return null;
-  return { recording: recordingObserved(rows), processing: processingObserved(rows) };
+  return { recording: recordingObserved(rows), processing: processingObserved(rows), text: !!readInput(view.terminal) };
 }
 
-module.exports = { createVoiceMirror, draftFromRows, engineObserved };
+module.exports = { createVoiceMirror, draftFromRows, engineObserved, readInput };

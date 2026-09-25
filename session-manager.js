@@ -144,6 +144,7 @@ const MUSE_LINK_POLL_MS = 250;
 const MUSE_LINK_DEADLINE_MS = 60000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const voiceEngineSpec = require('./voice-engine');
+const { CTRLU_SETTLE_MS } = require('./inject-queue');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX } = require('./proxy-util');
 const {
@@ -4968,6 +4969,10 @@ function createSessionManager(deps) {
       this.killVoiceEngine();
     }
 
+    _voiceSleep(ms) {
+      return new Promise((r) => setTimeout(r, ms));
+    }
+
     voiceEngineTimings() {
       return {
         bootSettleMs: voiceEngineSpec.BOOT_SETTLE_MS,
@@ -5104,12 +5109,18 @@ function createSessionManager(deps) {
         }
       }
       const plan = voiceEngineSpec.planRecord({ mode, action, recording: engine.recording });
-      log.info('voice', `${armedBy.name} record ${action} mode=${mode} observed=${observed ? JSON.stringify(observed) : 'none'} tracked=${tracked} plan=${JSON.stringify(plan)}${plan && plan.write ? ' RECORD_KEY written' : ''}`);
+      const clearRow = !!(plan && plan.write && plan.recording === true && sameWindow && observed && typeof observed === 'object' && observed.text === true);
+      log.info('voice', `${armedBy.name} record ${action} mode=${mode} observed=${observed ? JSON.stringify(observed) : 'none'} tracked=${tracked} plan=${JSON.stringify(plan)}${plan && plan.write ? ' RECORD_KEY written' : ''}${clearRow ? ' row cleared' : ''}`);
       const { RECORD_KEY } = voiceEngineSpec;
       const prevWs = engine.armedBy && engine.armedBy.workspaceId;
       engine.armedBy = armedBy;
       if (armedBy.workspaceId && armedBy.workspaceId !== prevWs && !engine.dead) {
         try { await this._repaintVoiceEngine(engine); } catch {}
+      }
+      if (clearRow) {
+        engine.pty.write('\x15');
+        await this._voiceSleep(CTRLU_SETTLE_MS);
+        if (engine.dead || this._voiceEngine !== engine) return { ok: false, error: 'the recorder engine went away' };
       }
       if (plan.write) engine.pty.write(RECORD_KEY);
       engine.recording = plan.recording;

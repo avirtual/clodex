@@ -515,9 +515,13 @@ test('the mirror drops a leftover baseline once the engine row clears, so a repe
 test('engineObserved reads the recorder and processing indicators off the whole engine screen', () => {
   assert.equal(engineObserved(null), null);
   const lit = fakeTerminal([`${HEAD}`, '\u23fa REC  space to stop']);
-  assert.deepEqual(engineObserved({ terminal: lit }), { recording: true, processing: false });
-  assert.deepEqual(engineObserved({ terminal: fakeTerminal([`${HEAD}`, 'Voice: processing\u2026']) }), { recording: false, processing: true });
-  assert.deepEqual(engineObserved({ terminal: fakeTerminal([`${HEAD}`]) }), { recording: false, processing: false });
+  assert.deepEqual(engineObserved({ terminal: lit }), { recording: true, processing: false, text: false });
+  assert.deepEqual(engineObserved({ terminal: fakeTerminal([`${HEAD}`, 'Voice: processing\u2026']) }), { recording: false, processing: true, text: false });
+  assert.deepEqual(engineObserved({ terminal: fakeTerminal([`${HEAD}`]) }), { recording: false, processing: false, text: false });
+});
+
+test('engineObserved reports text when the engine input row still holds the previous dictation', () => {
+  assert.deepEqual(engineObserved({ terminal: fakeTerminal([`${HEAD}test enter`]) }), { recording: false, processing: false, text: true });
 });
 
 test('seatVoiceRecord passes the engine view it already had, read before the view is created', () => {

@@ -189,4 +189,4 @@ class InjectQueue {
   }
 }
 
-module.exports = { InjectQueue, shouldDeferInject, shouldWaitForReady, isInjectInFlight, canFireCompact };
+module.exports = { InjectQueue, shouldDeferInject, shouldWaitForReady, isInjectInFlight, canFireCompact, CTRLU_SETTLE_MS };
