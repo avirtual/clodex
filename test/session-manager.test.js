@@ -21581,10 +21581,10 @@ test('stream seat arm (d): a pty seat Enter goes through the same final arm, sub
   assert.deepStrictEqual(written, ['foo', '\r']);
 });
 
-test('t1171: a muse seat asking for the stream transport is refused by the adapter table, before anything spawns', async (t) => {
+test('t1171: a seat whose adapter declares no stream transport is refused by the adapter table, before anything spawns', async (t) => {
   const h = mkStreamSeatManager();
   t.after(() => h.stopAll());
-  await assert.rejects(h.create('stc2', null, 'stream', 'muse'), { message: 'stream transport is not supported for muse' });
+  await assert.rejects(h.create('stc2', null, 'stream', 'bash'), { message: 'stream transport is not supported for bash' });
   assert.strictEqual(h.spawns.length, 0);
 });
 
@@ -21857,8 +21857,7 @@ test('t1174: an [agent:context] compact dropped as in flight never calls encodeC
 test('t1174: the codec ctx carries home = dirname(CODEX_HOME) when a codex seat has an account dir', async (t) => {
   const fs = require('node:fs');
   const path = require('node:path');
-  const acct = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'clx-codex-acct-'));
-  t.after(() => fs.rmSync(acct, { recursive: true, force: true }));
+  const acct = mkTmpRoot('clx-stream-seat-');
   const created = [];
   const inst = { open: () => [], decode: () => ({ kind: 'other' }), encodeUser: () => null, encodeContext: () => null, encodeInterrupt: () => null };
   const h = mkStreamSeatManager({
