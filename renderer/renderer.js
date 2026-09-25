@@ -1743,7 +1743,7 @@ function createStreamSeatPane(name, wrapperEl) {
     });
   };
   composer.addEventListener('keydown', (e) => {
-    const edit = composerReadlineEdit({
+    const edit = !e.isComposing && composerReadlineEdit({
       key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey,
       value: composer.value, selectionStart: composer.selectionStart, selectionEnd: composer.selectionEnd,
     });

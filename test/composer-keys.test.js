@@ -17,6 +17,8 @@ const ROWS = [
   { name: 'e jumps to the end of a middle line', key: 'e', value: 'one\ntwo\nthree', start: 5, end: 5, want: { value: 'one\ntwo\nthree', cursor: 7 } },
   { name: 'u with a selection deletes only the selection', key: 'u', value: 'hello world', start: 2, end: 5, want: { value: 'he world', cursor: 2 } },
   { name: 'w with a selection deletes only the selection', key: 'w', value: 'hello world', start: 6, end: 11, want: { value: 'hello ', cursor: 6 } },
+  { name: 'u at 0 before a leading newline is a no-op', key: 'u', value: '\nabc', start: 0, end: 0, want: { value: '\nabc', cursor: 0 } },
+  { name: 'a at 0 before a leading newline stays at 0', key: 'a', value: '\nabc', start: 0, end: 0, want: { value: '\nabc', cursor: 0 } },
   { name: 'uppercase U under ctrl is the same key', key: 'U', value: 'abc', start: 3, end: 3, want: { value: '', cursor: 0 } },
 ];
 

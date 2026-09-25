@@ -26856,7 +26856,7 @@ ${i3.join("\n")}
       "use strict";
       var KEYS = /* @__PURE__ */ new Set(["u", "k", "w", "a", "e"]);
       function lineStart(value, pos) {
-        return value.lastIndexOf("\n", pos - 1) + 1;
+        return pos <= 0 ? 0 : value.lastIndexOf("\n", pos - 1) + 1;
       }
       function lineEnd(value, pos) {
         const i = value.indexOf("\n", pos);
@@ -46233,7 +46233,7 @@ ${detail}` });
           });
         };
         composer.addEventListener("keydown", (e) => {
-          const edit = composerReadlineEdit({
+          const edit = !e.isComposing && composerReadlineEdit({
             key: e.key,
             ctrlKey: e.ctrlKey,
             metaKey: e.metaKey,

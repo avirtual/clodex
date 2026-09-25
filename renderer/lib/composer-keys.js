@@ -3,7 +3,7 @@
 const KEYS = new Set(['u', 'k', 'w', 'a', 'e']);
 
 function lineStart(value, pos) {
-  return value.lastIndexOf('\n', pos - 1) + 1;
+  return pos <= 0 ? 0 : value.lastIndexOf('\n', pos - 1) + 1;
 }
 
 function lineEnd(value, pos) {
