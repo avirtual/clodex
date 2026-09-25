@@ -652,6 +652,8 @@ exit 0
     const settings = {
       trustedDirectories: [msgDir],
       statusLine: { type: 'command', command: statusPath },
+      voice: { enabled: false },
+      voiceEnabled: false,
       hooks: {
         SessionStart: [{
           matcher: '',

@@ -1152,3 +1152,15 @@ test('stream seat: hook.json runs the tool-boundary script on every tool and kee
   assert.ok(!JSON.stringify(pty.hooks).includes('tool-boundary'));
   assert.strictEqual(fs.existsSync(p('pt2', 'toolBoundaryScript')), false);
 });
+
+test('every claude seat settings turn the CLI recorder off so a user-level voice block cannot arm a second recorder', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('vs1', null, null, [], [], [], null, null, [], true);
+  h.setupClaudeHook('vp1');
+  for (const n of ['vs1', 'vp1']) {
+    const s = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, n, 'settings'), 'utf-8'));
+    assert.deepStrictEqual(s.voice, { enabled: false }, n);
+    assert.strictEqual(s.voiceEnabled, false, n);
+  }
+});
