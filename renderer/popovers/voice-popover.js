@@ -175,7 +175,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
     const note = snap.capable === false
       ? `Voice input is unavailable on this machine: ${esc(snap.cause || 'this node\u2019s Claude CLI cannot record')}`
       : (snap.pending
-        ? `Switching to ${esc(snap.pending)}…`
+        ? `Switching to ${snap.pending === 'off' ? 'off' : 'on'}…`
         : 'This seat\u2019s voice mode.');
     // The reading rides in its own host node so the tick can replace it without
     // touching the picker rows around it.

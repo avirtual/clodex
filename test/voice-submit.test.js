@@ -440,7 +440,7 @@ test('processingObserved is its OWN polarity, not either neighbour', () => {
 });
 
 test('spaceTriggerAction: a space on an empty prompt of a voice-on seat starts or stops dictation', () => {
-  const base = { data: ' ', typedSinceEnter: false, voiceOn: true, recording: false, hasSink: true };
+  const base = { data: ' ', typedSinceEnter: false, voiceOn: true, recording: false, hasSink: true, agentSeat: true, altScreen: false };
   const rows = [
     [{}, 'start'],
     [{ recording: true }, 'stop'],
@@ -448,6 +448,10 @@ test('spaceTriggerAction: a space on an empty prompt of a voice-on seat starts o
     [{ typedSinceEnter: true, recording: true }, null],
     [{ voiceOn: false }, null],
     [{ hasSink: false }, null],
+    [{ agentSeat: false }, null],
+    [{ agentSeat: false, recording: true }, null],
+    [{ altScreen: true }, null],
+    [{ altScreen: true, recording: true }, null],
     [{ data: 'a' }, null],
     [{ data: '  ' }, null],
     [{ data: '\r' }, null],

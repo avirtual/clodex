@@ -1742,7 +1742,7 @@ function createStreamSeatPane(name, wrapperEl) {
     });
   };
   composer.addEventListener('keydown', (e) => {
-    if (e.key === ' ' && !e.isComposing && !composer.value && seatVoiceMode(name, 'tap')) {
+    if (e.key === ' ' && !e.repeat && !e.isComposing && !composer.value && seatVoiceMode(name, 'tap')) {
       e.preventDefault();
       seatVoiceRecord(name, voiceRecordingSeat === name ? 'stop' : 'start');
       return;
@@ -1913,7 +1913,11 @@ function createTerminal(name, peer = null) {
 
   const ptyVoice = peer ? null : createPtyVoiceDraft({
     getConfig: () => voiceSubmitConfig,
-    write: (data) => window.api.writeToSession(name, data),
+    write: (data) => {
+      const seat = sessions.get(name);
+      if (seat) seat.typedSinceEnter = ptyTypedSinceEnter(seat.typedSinceEnter, data);
+      window.api.writeToSession(name, data);
+    },
     markOrigin: () => window.api.markVoiceOrigin(name),
     onVoiceFire: () => seatVoiceFired(name),
     holdsFire: () => voiceRecordingSeat === name && seatVoiceMode(name, 'tap'),
@@ -1965,6 +1969,8 @@ function createTerminal(name, peer = null) {
       voiceOn: seatVoiceMode(name, 'tap'),
       recording: voiceRecordingSeat === name,
       hasSink: !!voiceSinkFor(name),
+      agentSeat: isAgentType(sessionTypeOf(name)),
+      altScreen: terminal.buffer.active.type === 'alternate',
     });
     if (act) { seatVoiceRecord(name, act); return; }
     if (seat) seat.typedSinceEnter = ptyTypedSinceEnter(seat.typedSinceEnter, data);
