@@ -3291,47 +3291,20 @@ function createSessionManager(deps) {
     }
 
     // THE ONLY WRITER of the target, so the invariant is enforceable by reading
-    // one function: every path that moves the microphone comes through here and
-    // every window learns the same name.
-    //
-    // Broadcast to ALL windows, not sent to the target's: the losers are what
-    // makes this an invariant. A seat that has just STOPPED being the target
-    // has to hear so, or it goes on believing it may arm and the second live
-    // recorder — the whole bug — survives.
-    //
-    // Idempotent by the equality guard: the focus report repeats on every
-    // window focus, and re-broadcasting an unchanged name would put a frame on
-    // every window each time he alt-tabs.
+    // one function: every path that moves the microphone comes through here.
     _setMicTarget(name) {
-      const next = name || null;
-      if (this._micTarget === next) return;
-      this._micTarget = next;
-      this._broadcast('mic-target', next);
+      this._micTarget = name || null;
     }
 
-    // A window opened, or reloaded, and starts life believing it holds nothing.
-    // Without this it would stay that way until the target next CHANGED — and
-    // the target does not change while the operator is dictating into the seat
-    // he already picked, so the re-arm would be dead in a fresh window.
     micTarget() { return this._micTarget; }
 
     // The host telling us whether Clodex is the frontmost APPLICATION. Only a
     // host can answer it: a window reporting its own focus answers a different
     // question — a window can be the focused window of an app that is itself
     // behind a browser, which is exactly the case that recorded video audio.
-    //
-    // Same broadcast-plus-pull shape as the target above, and the same
-    // idempotence guard: window focus churns between sibling windows without
-    // the APP's frontmost-ness changing at all.
     noteAppFocused(focused) {
-      const next = focused === true;
-      // Set BEFORE the equality guard, or a host whose first report is `false`
-      // (the common desktop case: launched into the background) would be
-      // indistinguishable from a host that never reports at all.
       this._appFocusReported = true;
-      if (this._appFocused === next) return;
-      this._appFocused = next;
-      this._broadcast('app-focused', next);
+      this._appFocused = focused === true;
     }
 
     appFocused() { return this._appFocused; }

@@ -255,27 +255,3 @@ test('a host that wires no clearHints degrades to the TTL, it does not throw', (
   assert.strictEqual(arm.disarm(CTX), false);
   assert.deepStrictEqual(r.cleared, []);
 });
-
-// ------------------------------------------------------------------- the TTL
-
-test('the TTL outlasts the tap path\'s own wait, which is what the marker must survive', () => {
-  // THE FLOOR, and it is the counter-intuitive bound. The tap path stops the
-  // recorder, then waits for transcription before writing `\r`: a first read one
-  // STOP_SETTLE_MS after the key, then polling to SUBMIT_ABANDON_MS. A TTL under
-  // that expires the marker before the submit it belongs to goes out, losing the
-  // annotation on exactly the dictated messages the feature exists for.
-  //
-  // The watcher's constants are imported rather than restated: this bound is a
-  // RELATION between two modules, and a copied number would keep this passing
-  // after the watcher's own numbers moved.
-  const {
-    STOP_SETTLE_MS: STOP, SUBMIT_ABANDON_MS: ABANDON,
-  } = require('../renderer/voice-submit-watcher');
-  const worstCaseMs = STOP + ABANDON;
-  assert.ok(VOICE_TTL_S * 1000 > worstCaseMs,
-    `TTL ${VOICE_TTL_S}s must outlast the deferred submit's ${worstCaseMs}ms worst case`);
-  // And it is not so far above it that an abandoned marker whose DISARM failed
-  // sits on the register for minutes. The disarm is the primary bound; this is
-  // the backstop when the proxy never receives it.
-  assert.ok(VOICE_TTL_S <= 30, `TTL ${VOICE_TTL_S}s is the failed-disarm exposure window`);
-});

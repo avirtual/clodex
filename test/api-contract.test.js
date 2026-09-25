@@ -71,9 +71,6 @@ const PINNED_NAMES = [
   'onRequestOpenTemplatesDrawer', 'onRequestOpenIpcLog', 'onRequestToggleRawTerminal', 'getSettings', 'setTheme',
   'onSetTheme', 'setSettings', 'getSetupState', 'completeSetup', 'onZoomNudge', 'setDefaultToolDeny',
   'setDefaultSkillDeny', 'setDefaultBuiltinDeny',
-  // t598: playback of a spoken reply started/ended, so the renderer's turn-end
-  // re-arm can wait the narration out instead of transcribing it.
-  'onSpeakerBusy',
   'openWirescope', 'wirescopeStatus', 'wirescopeStart', 'wirescopeStop',
   'wirescopeRestart', 'wirescopePruneInfo', 'wirescopePrune', 'remoteStatus',
   'remoteSetToken',
@@ -137,14 +134,8 @@ const PINNED_NAMES = [
   // a trigger arriving from outside the app had no seat to aim at.
   'noteFocusedSession',
   'onVoiceTap',
-  // Which seat holds the microphone, box-wide. The broadcast plus the pull a
-  // window that opened mid-dictation needs, since the target does not move
-  // again while the operator keeps talking to the seat he already picked.
-  'onMicTarget', 'micTarget',
-  // Whether Clodex is the frontmost APPLICATION — the second condition on the
-  // automatic re-arm. Same broadcast-plus-pull pair, and it cannot be answered
-  // in the renderer: a window reports focus while the app sits behind a browser.
-  'onAppFocused', 'appFocused',
+  'micTarget',
+  'appFocused',
   'newWorkspace',
   // Managed Docker sandbox (sandbox-plan.md [internal design doc, not in this repo] M2) — appended deliberately as
   // the surface grew past the ffe1161 snapshot; the count below moved with it.
@@ -252,8 +243,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 324-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 324, 'pinned list is the full 324-method surface');
+test('contract covers exactly the pinned 321-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 321, 'pinned list is the full 321-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -277,7 +268,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 324, 'window.api has exactly 324 methods');
+    assert.equal(generated.length, 321, 'window.api has exactly 321 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

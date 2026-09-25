@@ -4821,7 +4821,7 @@ createInboxDrawer({ openFilePeek, showToast });
 const voiceCore = createVoiceCore({ showToast, getSeat: () => activeSession });
 
 let voiceSubmitConfig = {
-  enabled: false, composition: false, rearm: false, phrase: DEFAULT_SUBMIT_PHRASE,
+  enabled: false, phrase: DEFAULT_SUBMIT_PHRASE,
 };
 async function refreshVoiceSubmitConfig() {
   try { voiceSubmitConfig = readVoiceSubmitSettings(await window.api.getSettings()); } catch {}
@@ -5272,8 +5272,6 @@ const prefsContextHints = document.getElementById('prefs-context-hints');
 const prefsSemanticHints = document.getElementById('prefs-semantic-hints');
 const prefsSelectionHints = document.getElementById('prefs-selection-hints');
 const prefsVoiceSubmit = document.getElementById('prefs-voice-submit');
-const prefsVoiceSubmitComposition = document.getElementById('prefs-voice-submit-composition');
-const prefsVoiceSubmitRearm = document.getElementById('prefs-voice-submit-rearm');
 const prefsVoiceSubmitPhrase = document.getElementById('prefs-voice-submit-phrase');
 const prefsSpeakReplies = document.getElementById('prefs-speak-replies');
 const prefsSpeakVoice = document.getElementById('prefs-speak-voice');
@@ -7738,8 +7736,6 @@ async function openPrefs() {
   if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
   if (prefsSelectionHints) prefsSelectionHints.checked = !!s.selectionHints;
   if (prefsVoiceSubmit) prefsVoiceSubmit.checked = s.voiceSubmit === true;
-  if (prefsVoiceSubmitComposition) prefsVoiceSubmitComposition.checked = s.voiceSubmitComposition === true;
-  if (prefsVoiceSubmitRearm) prefsVoiceSubmitRearm.checked = s.voiceSubmitRearm === true;
   // The stored phrase, never the default, so an empty box is the operator
   // asking for the default back rather than a value they typed being hidden.
   if (prefsVoiceSubmitPhrase) prefsVoiceSubmitPhrase.value = s.voiceSubmitPhrase || '';
@@ -7851,8 +7847,6 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     semanticHints: prefsSemanticHints ? prefsSemanticHints.checked : false,
     selectionHints: prefsSelectionHints ? prefsSelectionHints.checked : false,
     voiceSubmit: prefsVoiceSubmit ? prefsVoiceSubmit.checked : false,
-    voiceSubmitComposition: prefsVoiceSubmitComposition ? prefsVoiceSubmitComposition.checked : false,
-    voiceSubmitRearm: prefsVoiceSubmitRearm ? prefsVoiceSubmitRearm.checked : false,
     voiceSubmitPhrase: prefsVoiceSubmitPhrase ? prefsVoiceSubmitPhrase.value.trim() : '',
     speakReplies: prefsSpeakReplies ? prefsSpeakReplies.checked : false,
     // Both omitted rather than sent blank when the control is missing: the store

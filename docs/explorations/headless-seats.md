@@ -718,9 +718,7 @@ textarea with these parts:
 - Chips for model and permission mode, and a Stop button.
 
 macOS dictation works natively in a textarea. **The CLI's own voice mode does
-not exist without the TUI.** `voice-control.js` and
-`voice-submit-watcher.js` drive the CLI's recorder and read its composer off
-the screen. For stream seats, voice becomes the OS dictation into Clodex's
+not exist without the TUI.** `voice-control.js` drives the CLI's recorder. For stream seats, voice becomes the OS dictation into Clodex's
 composer, and the trigger-phrase submit becomes a textarea check. That is a
 loss of the CLI's hold-to-talk stream, and it is listed in §9.
 

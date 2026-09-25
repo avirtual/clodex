@@ -1160,14 +1160,7 @@ function getHelpCorpus() {
 // One speaker for the whole app: `say` writes to the machine's single audio
 // output, so a per-session speaker would let two seats finishing together talk
 // over each other with nothing able to arbitrate.
-// Late-bound through a mutable holder because `manager` is built BELOW this
-// line and the callback fires only once a turn ends, long after both exist.
-// Broadcast to every window rather than sent to one: the speaker is box-wide,
-// so the seat whose re-arm has to wait is not necessarily the seat that spoke.
-let speakerBusyBroadcast = null;
-const speaker = createSpeaker({
-  onBusy: (busy) => { if (speakerBusyBroadcast) speakerBusyBroadcast(busy); },
-});
+const speaker = createSpeaker();
 // NOT warmed here. Building the engine must spawn NOTHING: every test that
 // constructs it would otherwise fork a real 650ms `say -v '?'`, and those
 // children outlive a test process that exits first — orphaned to pid 1 with
@@ -1389,7 +1382,6 @@ const manager = new SessionManager();
 const { deleteCheck: teamDeleteCheck, deleteGated: teamDeleteGated } = createTeamDelete({
   loadManifest, deleteTeam, getManager: () => manager, getSandboxManager: () => sandboxManager,
 });
-speakerBusyBroadcast = (busy) => { try { manager._broadcast('speaker-busy', busy); } catch {} };
 const proxyPoller = new ProxyPoller(manager);
 manager._proxyPoller = proxyPoller;
 

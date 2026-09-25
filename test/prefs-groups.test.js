@@ -24,8 +24,7 @@ function prefsMarkup() {
 const CONTROLS = [
   'prefs-overlay', 'prefs-dialog', 'prefs-theme', 'prefs-terminal-webgl', 'prefs-transcript-pane',
   'prefs-voice-mode', 'prefs-voice-state',
-  'prefs-voice-submit', 'prefs-voice-submit-phrase', 'prefs-voice-submit-composition',
-  'prefs-voice-submit-rearm',
+  'prefs-voice-submit', 'prefs-voice-submit-phrase',
   'prefs-speak-replies', 'prefs-speak-voice', 'prefs-speak-rate',
   'prefs-claude-components', 'prefs-claude-sl-cmd', 'prefs-codex-components',
   'prefs-proxy-enabled', 'ws-dot', 'ws-status-text', 'ws-restart-btn',

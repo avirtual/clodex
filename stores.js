@@ -87,8 +87,6 @@ const DEFAULT_UI_SETTINGS = {
   semanticHints: false,
   selectionHints: false,
   voiceSubmit: false,
-  voiceSubmitComposition: false,
-  voiceSubmitRearm: false,
   voiceSubmitPhrase: 'over and out',
   speakReplies: false,
   // A NAME, never a variant: `say -v Daniel` resolves to whichever Daniel is
@@ -1463,10 +1461,6 @@ function initStores(userDataPath, {
           semanticHints: typeof raw?.semanticHints === 'boolean' ? raw.semanticHints : DEFAULT_UI_SETTINGS.semanticHints,
           selectionHints: typeof raw?.selectionHints === 'boolean' ? raw.selectionHints : DEFAULT_UI_SETTINGS.selectionHints,
           voiceSubmit: typeof raw?.voiceSubmit === 'boolean' ? raw.voiceSubmit : DEFAULT_UI_SETTINGS.voiceSubmit,
-          voiceSubmitComposition: typeof raw?.voiceSubmitComposition === 'boolean'
-            ? raw.voiceSubmitComposition : DEFAULT_UI_SETTINGS.voiceSubmitComposition,
-          voiceSubmitRearm: typeof raw?.voiceSubmitRearm === 'boolean'
-            ? raw.voiceSubmitRearm : DEFAULT_UI_SETTINGS.voiceSubmitRearm,
           // A blank or non-string phrase resolves to the DEFAULT, never to '':
           // an empty trigger matches the end of every composer, so the value
           // that disarms the feature is `voiceSubmit`, never the phrase.
@@ -1554,10 +1548,6 @@ function initStores(userDataPath, {
         semanticHints: partial?.semanticHints ?? cur.semanticHints,
         selectionHints: partial?.selectionHints ?? cur.selectionHints,
         voiceSubmit: typeof partial?.voiceSubmit === 'boolean' ? partial.voiceSubmit : cur.voiceSubmit,
-        voiceSubmitComposition: typeof partial?.voiceSubmitComposition === 'boolean'
-          ? partial.voiceSubmitComposition : cur.voiceSubmitComposition,
-        voiceSubmitRearm: typeof partial?.voiceSubmitRearm === 'boolean'
-          ? partial.voiceSubmitRearm : cur.voiceSubmitRearm,
         // Key ABSENT means "no opinion" and keeps the current value; key present
         // and BLANK is the operator clearing the field, which Preferences offers
         // as the way back to the default. Collapsing those two makes that

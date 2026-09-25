@@ -411,9 +411,3 @@ test('a pty seat: an empty dictation writes nothing', () => {
   f.sink.released();
   assert.deepEqual(f.writes, []);
 });
-
-test('renderer.js no longer requires the pty voice-submit watcher', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
-  assert.doesNotMatch(src, /require\(['"][^'"]*voice-submit-watcher['"]\)/);
-  assert.doesNotMatch(src, /createVoiceSubmitWatcher/);
-});

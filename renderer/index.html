@@ -1013,16 +1013,6 @@
           <input type="text" id="prefs-voice-submit-phrase" placeholder="over and out" spellcheck="false" autocomplete="off" style="flex: 1;">
         </div>
         <span class="hint-text" style="display: block; margin-top: 6px;">Matched at the end of what you have dictated, ignoring case and any punctuation dictation adds. Pick something you would never say mid-sentence — a short one like &ldquo;send it&rdquo; will fire while you are still talking. Clear the box to go back to the default.</span>
-        <label class="prefs-check" style="margin-top: 6px;">
-          <input type="checkbox" id="prefs-voice-submit-composition">
-          <span>Also submit while macOS dictation is still holding the words</span>
-        </label>
-        <span class="hint-text" style="display: block; margin-top: 6px;">macOS dictation keeps what you said <em>underlined and uncommitted</em> until you press a key or click — the words never reach the session, so the setting above cannot see them and nothing happens until you touch the machine. With this on, Clodex reads the words while they are still pending and commits them for you when they end with the phrase. The trade: it is acting on a transcript you have not accepted yet, so if dictation puts the phrase in mid-sentence it will submit early, and there is no undo. Needs the box above ticked.</span>
-        <label class="prefs-check" style="margin-top: 6px;">
-          <input type="checkbox" id="prefs-voice-submit-rearm">
-          <span>Re-arm tap mode when a session finishes its turn</span>
-        </label>
-        <span class="hint-text" style="display: block; margin-top: 6px;">In the CLI&rsquo;s <strong>tap</strong> mode the recorder stops inserting what you say while the agent is working, and only a keypress starts it again &mdash; so after every answer you have to walk over and tap. With this on, Clodex presses the push-to-talk key for you once the agent has finished and the screen has stopped repainting, and you can keep dictating from where you are. It presses nothing if you have started typing in the box, if the session is asking permission, or if push-to-talk is bound to a key combination rather than a single character. Needs the CLI&rsquo;s voice mode set to tap, and the box above ticked.</span>
         <h5>Spoken replies</h5>
         <p class="hint-text">Reads the agent&rsquo;s final answer aloud when it finishes a turn &mdash; the prose only, with code, paths, tables and diffs dropped rather than spelled out, and long replies cut at a sentence. Synthesized on this machine by <code>say</code>: no audio and no text leave the box. It stays quiet while you are dictating, and stops mid-sentence if you tap the microphone. The same settings live on the &#127908; button in the session bar.</p>
         <label class="prefs-check">

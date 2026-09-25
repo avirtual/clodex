@@ -1229,8 +1229,6 @@ function registerIpcHandlers(deps) {
       semanticHints: s.semanticHints,
       selectionHints: s.selectionHints,
       voiceSubmit: s.voiceSubmit,
-      voiceSubmitComposition: s.voiceSubmitComposition,
-      voiceSubmitRearm: s.voiceSubmitRearm,
       voiceSubmitPhrase: s.voiceSubmitPhrase,
       speakReplies: s.speakReplies,
       speakVoice: s.speakVoice,
