@@ -427,3 +427,11 @@ test('a prompt with a paste renders a chip in place of the marker, and a click o
   chips[0].listeners.click();
   assert.strictEqual(find(row, 'tr-paste-body').length, 0);
 });
+
+test('the operator prompt row unclamps its head text while other head rows keep the three-line clamp', () => {
+  const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  const start = css.indexOf('.tr-prompt > .tr-head-text {');
+  assert.ok(start >= 0);
+  const rule = css.slice(start, css.indexOf('}', start));
+  assert.ok(rule.includes('-webkit-line-clamp: unset'));
+});
