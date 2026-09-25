@@ -237,6 +237,7 @@ const replay = (name, choiceId, { skip = () => false } = {}) => {
   for (const m of frames) {
     let msg = m;
     if (m.id !== undefined) {
+      if (!sent[responses]) continue;
       msg = { ...m, id: sent[responses].id };
       responses += 1;
     }
@@ -271,12 +272,16 @@ test('a compound command is decided stage by stage on approval/updated until the
     ['3 stages, neither terminal response nor resolved: still pending', 'stages-allow', 'allow_once', { skip: (m) => (m.id !== undefined && m.result.terminal === true) || m.method === 'approval/resolved' }, { frames: 6, responses: 2, cards: [ECHO], decides: [[DECIDE, 'allow_once', 0], [DECIDE, 'allow_once', 1], [DECIDE, 'allow_once', 2]], pendingAfter: true }],
     ['always-allow reuses the rule while its label holds, and re-presents the card when the stage names another prefix', 'stages-allow', 'allow_local_prefix', {}, { frames: 8, responses: 3, cards: [ECHO, CAT], decides: [[DECIDE, 'allow_local_prefix', 0], [DECIDE, 'allow_local_prefix', 1], [DECIDE, 'allow_once', 2]], pendingAfter: false }],
   ];
-  let entered = 0;
-  for (const [label, name, choiceId, opts, want] of rows) {
-    assert.deepStrictEqual(replay(name, choiceId, opts), want, label);
-    entered += 1;
-  }
-  assert.strictEqual(entered, 6);
+  const failed = rows.filter(([label, name, choiceId, opts, want]) => {
+    try {
+      assert.deepStrictEqual(replay(name, choiceId, opts), want);
+      return false;
+    } catch {
+      return true;
+    }
+  }).map(([label]) => label);
+  assert.deepStrictEqual(failed, []);
+  assert.strictEqual(rows.length, 6);
 });
 
 test('a second answer while the stages are being walked is stale', () => {
