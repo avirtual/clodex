@@ -29940,7 +29940,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         },
         quietMs = 0,
         releaseMs = 0,
-        timers = { set: setTimeout, clear: clearTimeout },
+        timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id) },
         trace = () => {
         }
       }) {
@@ -29988,22 +29988,38 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           send();
         };
+        const timerSet = (fn, ms) => {
+          try {
+            return timers.set(fn, ms);
+          } catch (e) {
+            note(`timer failed: ${e && e.message}`);
+            throw e;
+          }
+        };
+        const timerClear = (id) => {
+          try {
+            timers.clear(id);
+          } catch (e) {
+            note(`timer failed: ${e && e.message}`);
+            throw e;
+          }
+        };
         const cancelQuiet = () => {
           if (quiet !== null) {
-            timers.clear(quiet);
+            timerClear(quiet);
             quiet = null;
           }
         };
         const armQuiet = () => {
           cancelQuiet();
-          quiet = timers.set(() => {
+          quiet = timerSet(() => {
             quiet = null;
             voiceFire();
           }, quietMs);
         };
         const cancelRelease = () => {
           if (release !== null) {
-            timers.clear(release);
+            timerClear(release);
             release = null;
           }
         };
@@ -30015,7 +30031,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           cancelRelease();
           if (!(releaseMs > 0)) return;
           note(`release deadline armed ${releaseMs}ms`);
-          release = timers.set(() => {
+          release = timerSet(() => {
             release = null;
             note(`release deadline fired stopping=${stopping}`);
             if (!stopping) return;
@@ -30075,8 +30091,16 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
         };
         const onInput = () => {
+          let open = stopping || span !== null;
+          if (!open) {
+            try {
+              open = holdsFire() === true;
+            } catch {
+              open = false;
+            }
+          }
           if (stopping && trigger.matches(composer.value)) settle();
-          fire(false);
+          if (open) fire(false);
         };
         composer.addEventListener("input", onInput);
         return {
@@ -30093,6 +30117,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             settle();
             cancelQuiet();
             fire(true);
+            span = null;
           },
           resetSpan() {
             span = null;
@@ -30119,7 +30144,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         },
         quietMs = 0,
         releaseMs = 0,
-        timers = { set: setTimeout, clear: clearTimeout },
+        timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id) },
         trace = () => {
         }
       }) {
