@@ -20728,7 +20728,7 @@ test('t1099 onUndelivered: a unit whose seat DIES mid-settle is re-parked stampe
     'stamped from the closure\'s own session: after _cleanup neither the map nor persistence knows the name, and an unstamped entry would reach the next seat of that name');
 });
 
-function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, holdDm = null, hintArm = null, selectionArm = null, streamFor = null, loadStreamCodec = null } = {}) {
+function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, holdDm = null, hintArm = null, selectionArm = null, streamFor = null, loadStreamCodec = null, extraDeps = {} } = {}) {
   const os = require('node:os');
   const fs = require('node:fs');
   const path = require('node:path');
@@ -20802,6 +20802,7 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, hold
       info: (tag, msg) => logs.push(['info', tag, msg]),
       warn: (tag, msg) => logs.push(['warn', tag, msg]),
       error: (tag, msg) => logs.push(['error', tag, msg]),
+      debug: (tag, msg) => logs.push(['debug', tag, msg]),
     },
     WIRE_SHADOW: false,
     WIRE_INTENTS_LIVE: false,
@@ -20842,6 +20843,7 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, hold
     ...(selectionArm ? { selectionArm } : {}),
     ...(streamFor ? { streamFor } : {}),
     ...(loadStreamCodec ? { loadStreamCodec } : {}),
+    ...(typeof extraDeps === 'function' ? extraDeps(root) : extraDeps),
   });
   const m = new SessionManager();
   m._sendToSession = () => {};
@@ -21579,10 +21581,9 @@ test('stream seat arm (d): a pty seat Enter goes through the same final arm, sub
   assert.deepStrictEqual(written, ['foo', '\r']);
 });
 
-test('t1171: a codex seat asking for the stream transport is refused by the adapter table, before anything spawns', async (t) => {
+test('t1171: a muse seat asking for the stream transport is refused by the adapter table, before anything spawns', async (t) => {
   const h = mkStreamSeatManager();
   t.after(() => h.stopAll());
-  await assert.rejects(h.create('stc1', null, 'stream', 'codex'), { message: 'stream transport is not supported for codex' });
   await assert.rejects(h.create('stc2', null, 'stream', 'muse'), { message: 'stream transport is not supported for muse' });
   assert.strictEqual(h.spawns.length, 0);
 });
@@ -21620,4 +21621,133 @@ test('t1171: _streamWrite and _onStreamEvent go through the seat codec the adapt
   assert.deepStrictEqual(decoded, [{ anything: 1 }]);
   assert.strictEqual(s.streamBusy, false, 'the stub decoded a result, so the turn ended');
   assert.deepStrictEqual(claudeCalls, []);
+});
+
+function mkCodexStreamSeat({ extraArgs = [] } = {}) {
+  const { streamFor: realStreamFor } = require('../cli-adapters');
+  const created = [];
+  const inst = {
+    open: () => [{ id: 1, method: 'initialize' }, { method: 'initialized' }, { id: 2, method: 'thread/start' }],
+    decode: (line) => line.rec || { kind: 'other' },
+    encodeUser: (text) => (text === 'SWALLOW' ? null : { method: 'turn/start', text }),
+    encodeContext: (sub) => ({ method: `ctx/${sub}` }),
+    encodeInterrupt: () => null,
+  };
+  const mod = { create: (ctx) => { created.push(ctx); return inst; } };
+  const h = mkStreamSeatManager({
+    streamFor: (type) => (type === 'codex' ? realStreamFor('codex') : null),
+    loadStreamCodec: () => mod,
+    extraDeps: (root) => ({
+      mergeCodexInstructions: require('../argv-merge').mergeCodexInstructions,
+      isInjectInFlight: require('../inject-queue').isInjectInFlight,
+      setupCodexHook: (n) => require('node:fs').mkdirSync(require('../clodex-paths').runDirFor(root, n), { recursive: true }),
+    }),
+  });
+  const os = require('node:os');
+  const create = (name) => h.m.create(name, 'codex', os.tmpdir(), extraArgs, null, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream');
+  const sent = () => h.handles[h.handles.length - 1].sent;
+  const clearTimers = (s) => {
+    for (const k of ['_compactValveTimer', '_injectHoldTimer', '_postClearValveTimer', '_compactingValveTimer', '_resultHold']) clearTimeout(s[k]);
+  };
+  return { h, create, created, inst, sent, clearTimers };
+}
+
+test('t1172: a codex stream seat builds the codec instance from ctx and writes open() before any outbox item, busy until init turnEnd', async (t) => {
+  const c = mkCodexStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('cx1');
+  const s = c.h.m.sessions.get('cx1');
+  assert.strictEqual(s.streamCodec, c.inst);
+  const [{ log: ctxLog, ...ctx }] = c.created;
+  assert.deepStrictEqual(ctx, { cwd: require('node:os').tmpdir(), resumeId: null, fork: false, bypass: false, readOnly: false, model: null });
+  assert.strictEqual(typeof ctxLog.warn, 'function');
+  assert.deepStrictEqual(c.sent(), c.inst.open());
+  assert.strictEqual(s.streamBusy, true);
+  assert.deepStrictEqual(c.h.m.seatSend('cx1', 'hello'), { ok: true, queued: 1 });
+  assert.strictEqual(c.sent().length, 3, 'the outbox holds while the handshake runs');
+  c.h.line('cx1', { rec: { kind: 'init', sessionId: 'thr-1', model: null, slashCommands: [], turnEnd: true } });
+  assert.strictEqual(s.sessionId, 'thr-1');
+  assert.deepStrictEqual(c.sent().slice(3), [{ method: 'turn/start', text: 'hello' }]);
+  assert.strictEqual(s.streamBusy, true);
+});
+
+test('t1172: a codex stream argv is app-server with the refused TUI and posture flags stripped; bypass and model ride ctx', async (t) => {
+  const c = mkCodexStreamSeat({ extraArgs: ['--dangerously-bypass-approvals-and-sandbox', '--model', 'gpt-6-luna', '--add-dir', '/x'] });
+  t.after(() => c.h.stopAll());
+  await c.create('cx2');
+  const { args } = c.h.spawns[0];
+  assert.strictEqual(args[0], 'app-server');
+  for (const tok of ['--dangerously-bypass-approvals-and-sandbox', '--model', '--add-dir', '--no-alt-screen', 'resume', 'fork']) {
+    assert.ok(!args.includes(tok), `${tok} must not reach app-server: ${args.join(' ')}`);
+  }
+  assert.ok(!args.some((a) => /tui\.status_line/.test(a)));
+  assert.deepStrictEqual(args.slice(args.indexOf('--enable'), args.indexOf('--enable') + 2), ['--enable', 'hooks']);
+  assert.ok(args.includes('model="gpt-6-luna"'));
+  assert.ok(args.some((a) => /^model_instructions_file=/.test(a)));
+  assert.deepStrictEqual({ bypass: c.created[0].bypass, readOnly: c.created[0].readOnly, model: c.created[0].model }, { bypass: true, readOnly: false, model: 'gpt-6-luna' });
+});
+
+test('t1172: a decoded record\'s send objects are written in order before its kind is acted on', async (t) => {
+  const c = mkCodexStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('cx3');
+  const replies = [{ id: 5, result: { decision: 'decline' } }, { id: 6, result: { decision: 'decline' } }];
+  c.h.line('cx3', { rec: { kind: 'permission-denied', toolName: 'commandExecution', send: replies } });
+  assert.deepStrictEqual(c.sent().slice(3), replies);
+});
+
+test('t1172: [agent:context compact] on a codex stream seat writes the codec\'s encodeContext object, never the CONTEXT_COMMANDS text', async (t) => {
+  const c = mkCodexStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('cx4');
+  const s = c.h.m.sessions.get('cx4');
+  t.after(() => c.clearTimers(s));
+  c.h.line('cx4', { rec: { kind: 'init', sessionId: 'thr-4', turnEnd: true } });
+  assert.strictEqual(s.streamBusy, false);
+  c.h.m._handleContextIntent(s, 'compact', '');
+  assert.deepStrictEqual(c.sent().slice(3), [{ method: 'ctx/compact' }]);
+  assert.strictEqual(s.streamBusy, true);
+  c.h.m._handleContextIntent(s, 'clear', '');
+  assert.deepStrictEqual(c.sent().slice(3), [{ method: 'ctx/compact' }], 'the clear waits in the outbox behind the running compact');
+  c.h.line('cx4', { rec: { kind: 'result' } });
+  assert.deepStrictEqual(c.sent().slice(3), [{ method: 'ctx/compact' }, { method: 'ctx/clear' }]);
+  const texts = c.sent().filter((o) => o.text !== undefined).map((o) => o.text);
+  assert.deepStrictEqual(texts, []);
+});
+
+test('t1172: encodeUser returning null writes nothing and starts no turn', async (t) => {
+  const c = mkCodexStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('cx5');
+  const s = c.h.m.sessions.get('cx5');
+  c.h.line('cx5', { rec: { kind: 'init', sessionId: 'thr-5', turnEnd: true } });
+  assert.deepStrictEqual(c.h.m.seatSend('cx5', 'SWALLOW'), { ok: true, queued: 0 });
+  assert.strictEqual(c.sent().length, 3);
+  assert.strictEqual(s.streamBusy, false);
+});
+
+test('t1172: _repointStreamTranscript on a non-claude stream spec writes no transcript link', async (t) => {
+  const c = mkCodexStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('cx6');
+  const s = c.h.m.sessions.get('cx6');
+  c.h.line('cx6', { rec: { kind: 'init', sessionId: 'thr-6', turnEnd: true } });
+  c.h.m._repointStreamTranscript(s, 'thr-7');
+  const link = require('../clodex-paths').pathFor(c.h.root, 'cx6', 'transcript');
+  assert.throws(() => require('node:fs').lstatSync(link), { code: 'ENOENT' });
+});
+
+test('t1172: on a codex stream seat the codec\'s compact record fires the compact continuation', async (t) => {
+  const c = mkCodexStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('cx7');
+  const s = c.h.m.sessions.get('cx7');
+  t.after(() => c.clearTimers(s));
+  c.h.line('cx7', { rec: { kind: 'init', sessionId: 'thr-7', turnEnd: true } });
+  c.h.m._handleContextIntent(s, 'compact', 'CONT');
+  assert.strictEqual(s._compactContinuation, 'CONT');
+  c.h.line('cx7', { rec: { kind: 'compact', pre: null, post: null } });
+  assert.strictEqual(s._compactContinuation, null);
+  s._dead = true;
 });

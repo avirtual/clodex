@@ -630,7 +630,17 @@ worktree-removal failure is toasted by the renderer while the row goes.
 Which CLIs support the stream transport is declared per adapter (`stream` block
 in cli-adapters.js): `streamFor(type)` gives the argv, the codec module and the
 transcript repoint, and `capsFor(type).streamIo` gates the dialogs' Stream
-transport box. Today only claude declares one.
+transport box. Claude and codex declare one; codex runs `codex app-server` over
+stdio. A codec module either exports `decode`/`encodeUser` directly (claude) or
+`create(ctx)` returning an instance (codex, whose JSON-RPC needs a handshake,
+request ids and server-initiated approvals); `ctx` carries the seat's cwd,
+resume id, fork flag, bypass/read-only posture and model. An instance may add
+`open()`, wire objects sent at spawn, with the seat busy until the codec's first
+`init` record; any decoded record may carry `send`, objects written in order
+before its kind is acted on (codex declines approvals this way); an `init` with
+`turnEnd` ends the turn (the handshake and a clear); `encodeUser` may return
+null to write nothing; `encodeContext('compact'|'clear')` replaces the slash
+text for `[agent:context]`; and `encodeInterrupt()` backs `seatInterrupt`.
 
 **Move Session…** (right-click, agent rows only) changes a seat's cwd. A move is
 "same record, new cwd, restart": `manager.move(name, newCwd)` refuses an unknown

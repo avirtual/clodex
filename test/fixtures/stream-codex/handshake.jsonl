@@ -1,0 +1,3 @@
+{"t": 0.002, "d": "out", "m": {"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "probe", "title": null, "version": "0"}, "capabilities": {"experimentalApi": true, "requestAttestation": false}}}}
+{"t": 0.071, "d": "out", "m": {"method": "initialized"}}
+{"t": 0.071, "d": "out", "m": {"id": 2, "method": "thread/start", "params": {"cwd": "/tmp/t4-codex/work/A-baseline"}}}

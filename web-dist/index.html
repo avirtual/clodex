@@ -25397,7 +25397,12 @@ ${i3.join("\n")}
           instructions: "model-instructions-file",
           transcript: { reader: "codex", link: "hook" },
           caps: { park: false, transcript: true, warmth: false },
-          stream: null,
+          stream: {
+            codec: "stream-codec-codex",
+            argv: () => ["app-server"],
+            toolBoundary: "hook",
+            transcriptRepoint: null
+          },
           ui: {
             injectSkills: true,
             skillRoster: false,
@@ -25408,7 +25413,7 @@ ${i3.join("\n")}
             autoCompact: false,
             noWire: false,
             accounts: false,
-            streamIo: false
+            streamIo: true
           }
         },
         muse: {

@@ -272,6 +272,7 @@ const SCANNED_MODULES = [
   'stream-seat.js',
   'stream-reap.js',
   'stream-codec-claude.js',
+  'stream-codec-codex.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction

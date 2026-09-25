@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Codex headless seats: a codex seat with the stream transport runs `codex app-server` over stdio, so codex hands can be dispatched headless like claude ones. Approvals are declined on the wire (a stream seat has nobody to ask); run codex stream seats with bypass, as hands do.
 - Stream transport seam: which CLI supports the headless transport is now declared by its adapter, so a codex or muse headless seat is one codec module away. No change for claude stream seats.
 - Voice on every seat: each seat has its own voice mode (off, tap, hold) in its record, the statusbar voice control is the same on claude, codex and shell seats, and a dictated sentence reaches a terminal seat as typed text. Clodex no longer reads or writes ~/.claude/settings.json for voice; only the hidden engine carries a voice setting, inline.
 - Stream seats now get contextual and selection hints: a composer send arms them the way a typed Enter does on a terminal seat.

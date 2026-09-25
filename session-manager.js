@@ -178,7 +178,50 @@ function dupIdentity(intent) {
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
-const { isAgentType, adapterFor, streamFor: adapterStreamFor } = require('./cli-adapters');
+const { isAgentType, adapterFor, streamFor: adapterStreamFor, hasBypass, resolveModelId } = require('./cli-adapters');
+
+function streamCodecCtx(type, extraArgs) {
+  const a = adapterFor(type);
+  const argv = Array.isArray(extraArgs) ? extraArgs : [];
+  const roArgs = a && a.readOnlyCap && Array.isArray(a.readOnlyCap.args) ? a.readOnlyCap.args : [];
+  let model = null;
+  const flags = a ? a.model.flags : [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const tok = argv[i];
+    if (flags.includes(tok) && i + 1 < argv.length) model = argv[i + 1];
+    else if (typeof tok === 'string') {
+      const f = flags.find((fl) => fl.startsWith('--') && tok.startsWith(`${fl}=`));
+      if (f) model = tok.slice(f.length + 1);
+    }
+  }
+  return {
+    bypass: hasBypass(a, argv),
+    readOnly: roArgs.length > 0 && roArgs.every((tok) => argv.includes(tok)),
+    model: model ? resolveModelId(type, model) : null,
+  };
+}
+
+const CODEX_STREAM_REFUSED = new Map([
+  ['--dangerously-bypass-approvals-and-sandbox', 0], ['--no-alt-screen', 0],
+  ['--sandbox', 1], ['-s', 1], ['--ask-for-approval', 1], ['-a', 1], ['--model', 1], ['-m', 1], ['--add-dir', 1],
+]);
+
+function stripCodexStreamArgs(argv) {
+  const out = [];
+  const dropped = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const tok = argv[i];
+    if (CODEX_STREAM_REFUSED.has(tok)) {
+      dropped.push(tok);
+      i += CODEX_STREAM_REFUSED.get(tok);
+      continue;
+    }
+    const eq = typeof tok === 'string' ? tok.indexOf('=') : -1;
+    if (eq > 0 && tok.startsWith('--') && CODEX_STREAM_REFUSED.get(tok.slice(0, eq)) === 1) { dropped.push(tok.slice(0, eq)); continue; }
+    out.push(tok);
+  }
+  return { args: out, dropped };
+}
 const {
   SPILL_VERBS, SPILL_MIN_BYTES, HEAD_RE, isSpillVerb, pointerOf, pointerMatch, trailingPointerOf, spilledBodyOf, resolveSpill, spillDirFor, spillPathFor, verbKeyOf, writeSpill,
   receiptOf, resolveReceipt,
@@ -1585,9 +1628,16 @@ function createSessionManager(deps) {
         if (!st.isDirectory()) throw new Error(`Not a directory: ${cwd}`);
       }
       const streamIo = io === 'stream';
-      if (streamIo && !streamFor(type)) throw new Error(`stream transport is not supported for ${type}`);
       const streamSpec = streamIo ? streamFor(type) : null;
-      const streamCodec = streamSpec ? loadStreamCodec(streamSpec.codec) : null;
+      if (streamIo && !streamSpec) throw new Error(`stream transport is not supported for ${type}`);
+      const streamCtx = streamIo ? streamCodecCtx(type, extraArgs) : null;
+      let streamCodec = null;
+      if (streamSpec) {
+        const mod = loadStreamCodec(streamSpec.codec);
+        streamCodec = typeof mod.create === 'function'
+          ? mod.create({ cwd: cwd || process.env.HOME || os.homedir(), resumeId, fork, ...streamCtx, log })
+          : mod;
+      }
       if (streamIo && resumeId) {
         const prior = getPersistence().get(name);
         const record = prior && prior.streamPid ? prior.streamPid : null;
@@ -2037,14 +2087,20 @@ function createSessionManager(deps) {
             systemBody: codexSystemBody, appendBodies: codexAppendBodies, inlineBody: systemPromptBody || null,
           });
           args = [...cleaned];
+          if (streamIo) {
+            const stripped = stripCodexStreamArgs(args);
+            args = stripped.args;
+            if (stripped.dropped.length) log.info('session', `stream ${name}: codex app-server refuses ${[...new Set(stripped.dropped)].join(' ')}; posture and model ride the codec`);
+          }
           setupCodexHook(name, cwd);
           if (!args.includes('hooks') && !args.includes('codex_hooks')) args.push('--enable', 'hooks');
-          if (!args.includes('--no-alt-screen')) args.push('--no-alt-screen');
-          if (!args.some(a => a.startsWith('tui.status_line'))) {
+          if (!streamIo && !args.includes('--no-alt-screen')) args.push('--no-alt-screen');
+          if (!streamIo && !args.some(a => a.startsWith('tui.status_line'))) {
             args.push('-c', codexStatusLineArg(getUiSettings()));
           }
           ensureDir(MSG_DIR);
-          if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
+          if (!streamIo && !args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
+          if (streamIo && streamCtx.model && !args.some((a) => /^model=/.test(a))) args.push('-c', `model="${streamCtx.model}"`);
           const codexSkills = deliverSkills('codex', name, [...librarySkills, ...bundleSkills(seatBundles())]);
           const codexBody = codexSkills && codexSkills.instructions
             ? `${merged}\n\n${codexSkills.instructions}`
@@ -2056,7 +2112,9 @@ function createSessionManager(deps) {
           if (proxyBase && !args.some(a => a.startsWith('openai_base_url='))) {
             args.push('-c', `openai_base_url=${proxyBase}/agent/${proxyAgent || name}/openai/v1`);
           }
-          if (resumeId) {
+          if (streamIo) {
+            args.unshift(...streamSpec.argv({ resumeId, sessionId: null, fork }));
+          } else if (resumeId) {
             const uuidMatch = resumeId.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
             const uuid = uuidMatch ? uuidMatch[1] : resumeId;
             args.push(fork ? 'fork' : 'resume', uuid);
@@ -2690,6 +2748,12 @@ function createSessionManager(deps) {
       if (ptyProc) {
         ptyProc.onExit(onProcExit);
       } else {
+        const opening = typeof streamCodec.open === 'function' ? streamCodec.open() : null;
+        if (Array.isArray(opening) && opening.length) {
+          session.streamBusy = true;
+          this._emitActivity(name, 'thinking', false);
+          for (const obj of opening) this._streamSend(session, obj);
+        }
         streamRoute = (ev) => this._onStreamEvent(session, ev, onSessionId, onProcExit);
         for (const ev of streamEarly.splice(0)) streamRoute(ev);
       }
@@ -2881,6 +2945,11 @@ function createSessionManager(deps) {
       if (produce) Object.defineProperty(item, 'produce', { value: produce, enumerable: false });
       if (parkKey) Object.defineProperty(item, 'parkKey', { value: parkKey, enumerable: false });
       const held = !s.streamBusy && this._streamHintHeld(s);
+      if (!s.streamBusy && !held && item.wire) {
+        this._streamDeliver(s, { text: '', images: [], wire: item.wire });
+        this._streamSent([item]);
+        return 0;
+      }
       if (!s.streamBusy && !held) {
         const payload = this._streamJoin([item]);
         if (!payload.text.trim() && !payload.images.length) return 0;
@@ -2944,12 +3013,12 @@ function createSessionManager(deps) {
 
     _onStreamToolBoundary(s) {
       if (!s || s.io !== 'stream' || s._dead || !s.stream) return;
-      const sys = s.outbox.filter((q) => q.origin === 'system');
+      const sys = s.outbox.filter((q) => q.origin === 'system' && !q.wire);
       if (!sys.length) return;
       const now = Date.now();
       if (s._toolDrainAt != null && now - s._toolDrainAt < STREAM_TOOL_DRAIN_MIN_MS) return;
       s._toolDrainAt = now;
-      const keep = s.outbox.filter((q) => q.origin !== 'system');
+      const keep = s.outbox.filter((q) => q.origin !== 'system' || q.wire);
       s.outbox.splice(0, s.outbox.length, ...keep);
       const payload = this._streamJoin(sys);
       if (payload.text.trim() || payload.images.length) {
@@ -2961,16 +3030,43 @@ function createSessionManager(deps) {
     }
 
     _streamDeliver(s, payload) {
+      const wasBusy = s.streamBusy;
       s.streamBusy = true;
+      if (!this._streamWrite(s, payload)) {
+        s.streamBusy = wasBusy;
+        return false;
+      }
       this._emitActivity(s.name, 'thinking', false);
-      this._streamWrite(s, payload);
+      return true;
     }
 
-    _streamWrite(s, { text, images }) {
-      s.stream.send(s.streamCodec.encodeUser(text, images)).catch((e) => {
+    _streamWrite(s, { text, images, wire = null }) {
+      if (wire) {
+        this._streamSend(s, wire);
+        return true;
+      }
+      const obj = s.streamCodec.encodeUser(text, images);
+      if (!obj) return false;
+      s.stream.send(obj).catch((e) => {
         const imageBytes = images.reduce((n, img) => n + img.data.length, 0);
         log.warn('session', `stream send ${s.name} failed (${Buffer.byteLength(text)} bytes, ${images.length} images ${imageBytes} b64 bytes): ${e.message}`);
       });
+      return true;
+    }
+
+    _streamSend(s, obj) {
+      s.stream.send(obj).catch((e) => {
+        log.warn('session', `stream send ${s.name} failed (${(obj && obj.method) || `reply ${obj && obj.id}`}): ${e.message}`);
+      });
+    }
+
+    seatInterrupt(name) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead || s.io !== 'stream' || !s.stream) return { ok: false, error: 'not a live stream seat' };
+      const obj = typeof s.streamCodec.encodeInterrupt === 'function' ? s.streamCodec.encodeInterrupt() : null;
+      if (!obj) return { ok: false, error: 'no interruptible turn' };
+      this._streamSend(s, obj);
+      return { ok: true };
     }
 
     _clearStreamResultHold(s) {
@@ -2981,15 +3077,17 @@ function createSessionManager(deps) {
 
     _streamTurnEnd(s) {
       s.streamBusy = false;
-      const queued = s.outbox.splice(0);
-      const payload = queued.length ? this._streamJoin(queued) : null;
+      const w = s.outbox.findIndex((q) => q.wire);
+      const queued = s.outbox.splice(0, w === 0 ? 1 : (w > 0 ? w : s.outbox.length));
       if (queued.length) this._streamOutboxChanged(s);
-      if (payload && (payload.text.trim() || payload.images.length)) {
-        this._streamDeliver(s, payload);
+      const payload = !queued.length ? null
+        : (queued[0].wire ? { text: '', images: [], wire: queued[0].wire } : this._streamJoin(queued));
+      let delivered = false;
+      if (payload && (payload.wire || payload.text.trim() || payload.images.length)) {
+        delivered = this._streamDeliver(s, payload);
         this._streamSent(queued);
-      } else {
-        this._emitActivity(s.name, 'idle', true);
       }
+      if (!delivered) this._emitActivity(s.name, 'idle', true);
     }
 
     _onStreamEvent(s, ev, onSessionId, onProcExit) {
@@ -3003,6 +3101,7 @@ function createSessionManager(deps) {
         return;
       }
       const rec = s.streamCodec.decode(ev.line);
+      if (Array.isArray(rec.send)) for (const obj of rec.send) this._streamSend(s, obj);
       switch (rec.kind) {
         case 'init':
           this._clearStreamResultHold(s);
@@ -3011,6 +3110,7 @@ function createSessionManager(deps) {
             this._replayTicketsOnce(s);
             s._replayAtInit = !!s._replayTicketsPending;
           }
+          if (rec.turnEnd) this._streamTurnEnd(s);
           break;
         case 'result':
           this._clearStreamResultHold(s);
@@ -3025,7 +3125,8 @@ function createSessionManager(deps) {
           this._streamTurnEnd(s);
           break;
         case 'compact':
-          this._onCompactEnd(s, 'done');
+          if (typeof s.streamCodec.encodeContext === 'function') this._fireCompactContinuation(s);
+          else this._onCompactEnd(s, 'done');
           break;
         case 'reset':
           log.info('session', `stream ${s.name}: conversation reset (${rec.newConversationId}); the next init carries the resumable id`);
@@ -7364,7 +7465,8 @@ function createSessionManager(deps) {
         return;
       }
       const map = SessionManager.CONTEXT_COMMANDS[session.type];
-      const cmd = map && map[sub];
+      const wireCtx = session.io === 'stream' && session.streamCodec && typeof session.streamCodec.encodeContext === 'function';
+      const cmd = wireCtx ? session.streamCodec.encodeContext(sub) : (map && map[sub]);
       if (!cmd) {
         console.warn(`[agent:context ${sub}] from ${session.name}: unsupported for type ${session.type}`);
         this._injectText(session,
@@ -7421,7 +7523,8 @@ function createSessionManager(deps) {
       // latch. bypassHold: the intent often lands before the sender's own idle
       // event, and a queued bare slash command must never '\n'-join into a flush
       // batch (the command line would swallow the rest as garbage).
-      this._injectText(session, cmd, { bypassHold: true });
+      if (wireCtx) this._streamEnqueue(session, { text: '', images: [], origin: 'system', wire: cmd });
+      else this._injectText(session, cmd, { bypassHold: true });
       // The body is optional and only stored here — a bare clear stays exactly
       // what it was. Storing BEFORE the edge can fire is not a race worth
       // guarding: _injectText is asynchronous and the watcher polls the symlink
@@ -7431,9 +7534,10 @@ function createSessionManager(deps) {
         session._postClearContinuation = cont;
         this._armPostClearValve(session);
       }
-      log.info('intent', `${sub} ${session.name} → ${cmd}${cont ? ' (+continuation)' : ''}`);
+      const shown = wireCtx ? cmd.method : cmd;
+      log.info('intent', `${sub} ${session.name} → ${shown}${cont ? ' (+continuation)' : ''}`);
       this._broadcast('ipc-message', {
-        type: 'context', from: session.name, to: session.name, body: `context ${sub} → ${cmd}`,
+        type: 'context', from: session.name, to: session.name, body: `context ${sub} → ${shown}`,
       });
     }
 
@@ -8301,12 +8405,15 @@ function createSessionManager(deps) {
     _executeCompact(session, cmd, continuation) {
       session._compactContinuation = continuation;
       if (session.sentinel) session.sentinel.armCompact(() => this._fireCompactContinuation(session));
-      this._injectText(session, cmd, { bypassHold: true });
+      const wire = cmd && typeof cmd === 'object';
+      if (wire) this._streamEnqueue(session, { text: '', images: [], origin: 'system', wire: cmd });
+      else this._injectText(session, cmd, { bypassHold: true });
       this._armCompactGuard(session);
       this._armCompactValve(session);
-      log.info('intent', `compact ${session.name} → ${cmd}`);
+      const shown = wire ? cmd.method : cmd;
+      log.info('intent', `compact ${session.name} → ${shown}`);
       this._broadcast('ipc-message', {
-        type: 'context', from: session.name, to: session.name, body: `context compact → ${cmd}`,
+        type: 'context', from: session.name, to: session.name, body: `context compact → ${shown}`,
       });
     }
 
