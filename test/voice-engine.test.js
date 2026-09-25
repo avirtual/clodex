@@ -345,10 +345,20 @@ test('a recorder the CLI stopped on its own: the next toggle starts it rather th
 test('a start over a row still holding text clears it with Ctrl-U before the record key', async () => {
   const h = resyncFixture();
   await h.tap('stop', null);
+  h.m._voiceSleep = async (ms) => { h.writes.push(['sleep', ms]); };
   const res = await h.tap('start', { recording: false, processing: false, text: true });
   assert.deepEqual(res, { ok: true, recording: true, engine: VOICE_ENGINE_NAME });
-  assert.deepEqual(h.writes, ['\x15', ' ']);
+  assert.deepEqual(h.writes, ['\x15', ['sleep', 30], ' ']);
   h.m.killVoiceEngine();
+});
+
+test('an engine killed during the Ctrl-U settle gets no record key and the start reports failure', async () => {
+  const h = resyncFixture();
+  await h.tap('stop', null);
+  h.m._voiceSleep = async () => { h.m.killVoiceEngine(); };
+  const res = await h.tap('start', { recording: false, processing: false, text: true });
+  assert.deepEqual(res, { ok: false, error: 'the recorder engine went away' });
+  assert.deepEqual(h.writes, ['\x15']);
 });
 
 test('a start over an empty row writes only the record key', async () => {

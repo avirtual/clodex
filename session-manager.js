@@ -144,6 +144,7 @@ const MUSE_LINK_POLL_MS = 250;
 const MUSE_LINK_DEADLINE_MS = 60000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const voiceEngineSpec = require('./voice-engine');
+const { CTRLU_SETTLE_MS } = require('./inject-queue');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX } = require('./proxy-util');
 const {
@@ -912,6 +913,7 @@ function createSessionManager(deps) {
       this._voiceEngine = null;
       this._voiceEnginePending = null;
       this._voiceOp = Promise.resolve();
+      this._voiceSleep = (ms) => new Promise((r) => setTimeout(r, ms));
       this._shadow = null;     // wire-vs-jsonl intent differ
       this._wireTelemetry = null; // W2 step-4 dark bridge (wire-telemetry.js)
       const { IntentDeduper, ActivityTracker } = require('./wire-intents');
@@ -5112,7 +5114,11 @@ function createSessionManager(deps) {
       if (armedBy.workspaceId && armedBy.workspaceId !== prevWs && !engine.dead) {
         try { await this._repaintVoiceEngine(engine); } catch {}
       }
-      if (clearRow) engine.pty.write('\x15');
+      if (clearRow) {
+        engine.pty.write('\x15');
+        await this._voiceSleep(CTRLU_SETTLE_MS);
+        if (engine.dead || this._voiceEngine !== engine) return { ok: false, error: 'the recorder engine went away' };
+      }
       if (plan.write) engine.pty.write(RECORD_KEY);
       engine.recording = plan.recording;
       return { ok: true, recording: plan.recording, engine: engine.name };
