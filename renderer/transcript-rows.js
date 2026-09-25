@@ -291,49 +291,19 @@ function withTime(doc, row, rec) {
   return row;
 }
 
-function pasteBody(doc, paste, ctx) {
-  const body = el(doc, 'pre', 'tr-paste-body');
-  body.dataset.paste = String(paste.n);
-  appendProse(doc, body, paste.text, ctx);
-  const more = paste.text.split('\n').length - CLAMP_LINES;
-  if (more <= 0 && paste.text.length <= CLAMP_CHARS) return [body];
-  body.className += ' intent-card-clamped';
-  const foot = el(doc, 'div', 'intent-card-more tr-paste-more', more > 0 ? `+ ${countText(more, 'more line', 'more lines')}` : '+ more');
-  foot.dataset.paste = String(paste.n);
-  const expand = () => {
-    body.className = body.className.replace(' intent-card-clamped', '');
-    foot.hidden = true;
-  };
-  foot.addEventListener('click', expand);
-  body.addEventListener('click', expand);
-  return [body, foot];
-}
-
-function pasteChip(doc, row, paste, ctx) {
-  const chip = el(doc, 'span', 'tr-paste-chip', `⎘ Pasted text #${paste.n} · ${countText(paste.lines, 'line', 'lines')}`);
-  chip.dataset.paste = String(paste.n);
-  let open = null;
-  chip.addEventListener('click', () => {
-    if (open) {
-      for (const node of open) row.removeChild(node);
-      open = null;
-      return;
-    }
-    open = pasteBody(doc, paste, ctx);
-    for (const node of open) row.appendChild(node);
-  });
-  return chip;
-}
-
-function appendPrompt(doc, row, text, rec, ctx) {
+function appendPrompt(doc, text, rec, ctx) {
   const byN = new Map((rec.pastes || []).map((p) => [p.n, p]));
   let at = 0;
   for (const m of rec.text.matchAll(PASTE_MARK_RE)) {
     const paste = byN.get(Number(m[1]));
     if (!paste) continue;
-    if (m.index > at) appendProse(doc, text, rec.text.slice(at, m.index), ctx);
-    text.appendChild(pasteChip(doc, row, paste, ctx));
-    at = m.index + m[0].length;
+    const before = rec.text.slice(at, m.index);
+    const end = m.index + m[0].length;
+    const lead = m.index > 0 && !rec.text.slice(0, m.index).endsWith('\n') ? '\n' : '';
+    const tail = end < rec.text.length && rec.text[end] !== '\n' ? '\n' : '';
+    if (before || lead) appendProse(doc, text, before + lead, ctx);
+    appendProse(doc, text, paste.text + tail, ctx);
+    at = end;
   }
   if (at < rec.text.length || !at) appendProse(doc, text, rec.text.slice(at), ctx);
 }
@@ -341,7 +311,7 @@ function appendPrompt(doc, row, text, rec, ctx) {
 function promptRow(doc, rec, ctx) {
   const row = headRow(doc, 'tr-prompt', rec);
   const text = el(doc, 'span', 'tr-head-text');
-  if (rec.pastes) appendPrompt(doc, row, text, rec, ctx);
+  if (rec.pastes) appendPrompt(doc, text, rec, ctx);
   else appendProse(doc, text, rec.text, ctx);
   row.appendChild(text);
   return withTime(doc, row, rec);
