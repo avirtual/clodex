@@ -96,6 +96,7 @@ test('the trigger phrase strips, marks the origin and sends once per draft', () 
     getConfig: () => cfg,
     markOrigin: () => log.push('mark'),
     send: () => log.push(`send:${ta.value}`),
+    holdsFire: () => true,
   });
   ta.type('ship it');
   assert.deepEqual(log, []);
@@ -111,6 +112,95 @@ test('the trigger phrase strips, marks the origin and sends once per draft', () 
   cfg.enabled = false;
   ta.type('late over and out');
   assert.equal(log.length, 4, 'disabled in Preferences: never fires');
+});
+
+test('Chromium receiver: the default timers arm the quiet window when setTimeout rejects a foreign this', () => {
+  const realSet = globalThis.setTimeout;
+  const realClear = globalThis.clearTimeout;
+  const calls = [];
+  const traces = [];
+  globalThis.setTimeout = function (fn, ms) {
+    if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+    calls.push(ms);
+    return calls.length;
+  };
+  globalThis.clearTimeout = function () {
+    if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+  };
+  try {
+    const ta = fakeTextarea();
+    const sub = attachTriggerSubmit(ta, {
+      getConfig: () => ({ enabled: true, phrase: 'enter' }),
+      markOrigin: () => {},
+      send: () => {},
+      quietMs: 1200,
+      trace: (l) => traces.push(l),
+    });
+    assert.doesNotThrow(() => sub.draft('hello enter'));
+    assert.doesNotThrow(() => sub.draft('hello enter.'));
+    assert.deepEqual(calls, [1200, 1200]);
+    assert.deepEqual(traces, []);
+  } finally {
+    globalThis.setTimeout = realSet;
+    globalThis.clearTimeout = realClear;
+  }
+});
+
+test('a timer that throws is traced as timer failed and rethrown', () => {
+  const ta = fakeTextarea();
+  const traces = [];
+  const sub = attachTriggerSubmit(ta, {
+    getConfig: () => ({ enabled: true, phrase: 'enter' }),
+    markOrigin: () => {},
+    send: () => {},
+    quietMs: 1200,
+    timers: { set: () => { throw new TypeError('Illegal invocation'); }, clear: () => {} },
+    trace: (l) => traces.push(l),
+  });
+  assert.throws(() => sub.draft('hello'), /Illegal invocation/);
+  assert.deepEqual(traces, ['timer failed: Illegal invocation']);
+});
+
+test('typed trigger word outside a dictation is ordinary text; while recording it sends', () => {
+  const ta = fakeTextarea();
+  const sent = [];
+  let recording = false;
+  attachTriggerSubmit(ta, {
+    getConfig: () => ({ enabled: true, phrase: 'enter' }),
+    markOrigin: () => {},
+    send: () => sent.push(ta.value),
+    holdsFire: () => recording,
+  });
+  ta.type('please press enter');
+  assert.deepEqual(sent, []);
+  assert.equal(ta.value, 'please press enter');
+  recording = true;
+  ta.type('please press enter');
+  assert.deepEqual(sent, ['please press']);
+});
+
+test('after released() completes a dictation, a typed trigger word no longer sends', async () => {
+  const ta = fakeTextarea();
+  const clock = fakeClock();
+  const sent = [];
+  let recording = true;
+  const sub = attachTriggerSubmit(ta, {
+    getConfig: () => ({ enabled: true, phrase: 'enter' }),
+    markOrigin: () => {},
+    send: () => { sent.push(ta.value); ta.value = ''; },
+    holdsFire: () => recording,
+    onVoiceStop: () => { recording = false; return Promise.resolve(true); },
+    quietMs: 1200,
+    timers: clock.timers,
+  });
+  sub.draft('Hello world enter.');
+  clock.advance(1200);
+  await Promise.resolve();
+  sub.released();
+  assert.deepEqual(sent, ['Hello world']);
+  ta.type('x enter');
+  assert.deepEqual(sent, ['Hello world']);
+  assert.equal(ta.value, 'x enter');
 });
 
 test('a mirrored utterance sends once: the trigger waits out the repaint, then stops and disarms', () => {

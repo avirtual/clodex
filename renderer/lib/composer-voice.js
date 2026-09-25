@@ -60,7 +60,7 @@ function createComposerTrigger({ getConfig }) {
 
 function attachTriggerSubmit(composer, {
   getConfig, markOrigin, send, hasImages = () => false, onVoiceFire = () => {},
-  holdsFire = () => false, onVoiceStop = () => {}, quietMs = 0, releaseMs = 0, timers = { set: setTimeout, clear: clearTimeout },
+  holdsFire = () => false, onVoiceStop = () => {}, quietMs = 0, releaseMs = 0, timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id) },
   trace = () => {},
 }) {
   const trigger = createComposerTrigger({ getConfig });
@@ -84,18 +84,24 @@ function attachTriggerSubmit(composer, {
     try { markOrigin(); } catch {}
     send();
   };
-  const cancelQuiet = () => { if (quiet !== null) { timers.clear(quiet); quiet = null; } };
+  const timerSet = (fn, ms) => {
+    try { return timers.set(fn, ms); } catch (e) { note(`timer failed: ${e && e.message}`); throw e; }
+  };
+  const timerClear = (id) => {
+    try { timers.clear(id); } catch (e) { note(`timer failed: ${e && e.message}`); throw e; }
+  };
+  const cancelQuiet = () => { if (quiet !== null) { timerClear(quiet); quiet = null; } };
   const armQuiet = () => {
     cancelQuiet();
-    quiet = timers.set(() => { quiet = null; voiceFire(); }, quietMs);
+    quiet = timerSet(() => { quiet = null; voiceFire(); }, quietMs);
   };
-  const cancelRelease = () => { if (release !== null) { timers.clear(release); release = null; } };
+  const cancelRelease = () => { if (release !== null) { timerClear(release); release = null; } };
   const settle = () => { stopping = false; cancelRelease(); };
   const armRelease = () => {
     cancelRelease();
     if (!(releaseMs > 0)) return;
     note(`release deadline armed ${releaseMs}ms`);
-    release = timers.set(() => {
+    release = timerSet(() => {
       release = null;
       note(`release deadline fired stopping=${stopping}`);
       if (!stopping) return;
@@ -135,8 +141,10 @@ function attachTriggerSubmit(composer, {
     }
   };
   const onInput = () => {
+    let open = stopping || span !== null;
+    if (!open) { try { open = holdsFire() === true; } catch { open = false; } }
     if (stopping && trigger.matches(composer.value)) settle();
-    fire(false);
+    if (open) fire(false);
   };
   composer.addEventListener('input', onInput);
   return {
@@ -153,6 +161,7 @@ function attachTriggerSubmit(composer, {
       settle();
       cancelQuiet();
       fire(true);
+      span = null;
     },
     resetSpan() { span = null; stopping = false; stopFails = 0; trigger.reset(); },
     dispose() {
@@ -165,7 +174,7 @@ function attachTriggerSubmit(composer, {
 
 function createPtyVoiceDraft({
   getConfig, write, markOrigin = () => {}, onVoiceFire = () => {}, holdsFire = () => false, onVoiceStop = () => {},
-  quietMs = 0, releaseMs = 0, timers = { set: setTimeout, clear: clearTimeout }, trace = () => {},
+  quietMs = 0, releaseMs = 0, timers = { set: (fn, ms) => setTimeout(fn, ms), clear: (id) => clearTimeout(id) }, trace = () => {},
 }) {
   let value = '';
   const composer = {
