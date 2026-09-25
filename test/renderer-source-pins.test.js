@@ -56,3 +56,15 @@ test('session:retrySpawn returns the seat io, so a row built without one is stil
   assert.ok(m, 'ENTER: the retrySpawn handler is still found by this anchor');
   assert.ok(/return \{ ok: true, io: entry\.io \|\| 'pty' \};/.test(m[0]), 'retrySpawn reports the io it spawned with');
 });
+
+test('the stream seat pane mounts its permission cards before the composer and renders them from every pull', () => {
+  const pane = SRC.match(/function createStreamSeatPane\(name, wrapperEl\) \{[\s\S]*?\n\}\n/);
+  assert.ok(pane, 'ENTER: createStreamSeatPane is still found by this anchor');
+  const src = pane[0];
+  const permAt = src.indexOf('wrapperEl.appendChild(permEl);');
+  const composerAt = src.indexOf('wrapperEl.appendChild(composer);');
+  assert.ok(permAt > 0 && composerAt > permAt, '.seat-permissions is appended before the composer');
+  assert.ok(/permEl\.className = 'seat-permissions';/.test(src));
+  assert.ok(/if \(Array\.isArray\(res\.permissions\)\) renderPermissions\(res\.permissions\);/.test(src), 'the pull callback renders the pending prompts');
+  assert.ok(/window\.api\.seatPermission\(name, item\.id, choice\.id\)/.test(src), 'a choice answers through the seat:permission bridge');
+});

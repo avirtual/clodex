@@ -853,8 +853,10 @@ function registerIpcHandlers(deps) {
     const out = extra ? { ok: true, rev: `${res.rev}:${extra.rev}`, records: mergeCompactNotices(res.records, extra.notices) } : res;
     const box = manager.seatOutbox(name);
     if (!box) return out;
-    if (!out || !out.ok) return { ...out, rev: `-:o${box.rev}`, records: [], outbox: box.items };
-    return { ...out, rev: `${out.rev}:o${box.rev}`, outbox: box.items };
+    const perms = manager.seatPermissions(name);
+    const p = perms ? { suffix: `:p${perms.rev}`, fields: { permissions: perms.items } } : { suffix: '', fields: {} };
+    if (!out || !out.ok) return { ...out, rev: `-:o${box.rev}${p.suffix}`, records: [], outbox: box.items, ...p.fields };
+    return { ...out, rev: `${out.rev}:o${box.rev}${p.suffix}`, outbox: box.items, ...p.fields };
   });
 
   handle('proxy:snapshot', (_e, name) => proxyPoller.snapshot(name));
@@ -2388,6 +2390,14 @@ function registerIpcHandlers(deps) {
     const checked = validateSeatImages(images);
     if (!checked.ok) return checked;
     return manager.seatSend(s.name, typeof text === 'string' ? text : '', checked.images);
+  });
+
+  handle('seat:permission', (e, name, id, choiceId) => {
+    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
+    if (surface !== 'desktop') return { ok: false, error: 'seat:permission is local only' };
+    const s = manager.sessions.get(String(name || ''));
+    if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };
+    return manager.seatPermission(s.name, String(id), String(choiceId));
   });
 
   on('seat:draft', (e, name, text) => {

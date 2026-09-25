@@ -21922,3 +21922,136 @@ test('t1174: the codec ctx carries home = dirname(CODEX_HOME) when a codex seat 
     [], [], [], [], [], null, [], [], null, { CODEX_HOME: acct }, false, false, null, null, null, 'stream');
   assert.strictEqual(created[0].home, path.dirname(acct));
 });
+
+function mkPermStreamSeat({ answer = true } = {}) {
+  const c = mkMuseStreamSeat();
+  const encoded = [];
+  if (answer) {
+    c.inst.encodePermission = (id, choiceId) => {
+      encoded.push([id, choiceId]);
+      if (id === 'stale') return null;
+      return [{ id: 9, result: { id, choiceId } }, { method: 'perm/ack', id }];
+    };
+  }
+  const rec = (id, extra = {}) => ({
+    kind: 'permission-request', id, toolName: 'Bash', displayName: 'Run command', description: null,
+    preview: 'rm -rf build', input: { command: 'rm -rf build' },
+    choices: [{ id: 'y', label: 'Allow', kind: 'allow' }, { id: 'n', label: 'Deny', kind: 'deny' }],
+    ...extra,
+  });
+  return { ...c, encoded, rec };
+}
+
+test('t1180: a permission-request record holds the prompt, raises a permission attention and bumps the rev', async (t) => {
+  const c = mkPermStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('pm1');
+  const s = c.h.m.sessions.get('pm1');
+  t.after(() => { c.clearTimers(s); s._dead = true; });
+  const changed = [];
+  const bcast = [];
+  c.h.m._sendToSession = (n, ch) => changed.push(ch);
+  c.h.m._broadcast = (ch, msg) => bcast.push([ch, msg]);
+  c.h.line('pm1', { rec: { kind: 'init', sessionId: 'ms-1', turnEnd: true } });
+  assert.deepStrictEqual(c.h.m.seatPermissions('pm1'), { rev: 0, items: [] });
+  changed.length = 0;
+  c.h.line('pm1', { rec: c.rec('r1') });
+  assert.strictEqual(s.needsAttention.kind, 'permission');
+  assert.strictEqual(s.needsAttention.message, 'Run command: rm -rf build');
+  const got = c.h.m.seatPermissions('pm1');
+  assert.strictEqual(got.rev, 1);
+  assert.deepStrictEqual(got.items.map((i) => [i.id, i.toolName, i.choices.length, typeof i.ts]), [['r1', 'Bash', 2, 'number']]);
+  assert.deepStrictEqual(bcast, [['ipc-message', { type: 'attention', from: 'pm1', to: '', body: 'permission: Run command: rm -rf build' }]]);
+  assert.ok(changed.includes('transcript-changed'));
+  c.h.line('pm1', { rec: c.rec('r2', { preview: null }) });
+  assert.strictEqual(s.needsAttention.message, 'Run command');
+  assert.strictEqual(c.h.m.seatPermissions('pm1').rev, 2);
+});
+
+test('t1180: an activity tick while a stream permission is pending does not clear its attention', async (t) => {
+  const c = mkPermStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('pm2');
+  const s = c.h.m.sessions.get('pm2');
+  t.after(() => { c.clearTimers(s); s._dead = true; });
+  c.h.line('pm2', { rec: c.rec('r1') });
+  c.h.m._emitActivity('pm2', 'working', false);
+  assert.strictEqual(s.needsAttention && s.needsAttention.kind, 'permission');
+});
+
+test('t1180: seatPermission sends exactly what encodePermission returns, drops the entry and clears the attention', async (t) => {
+  const c = mkPermStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('pm3');
+  const s = c.h.m.sessions.get('pm3');
+  t.after(() => { c.clearTimers(s); s._dead = true; });
+  c.h.line('pm3', { rec: c.rec('r1') });
+  c.h.line('pm3', { rec: c.rec('stale') });
+  const before = c.sent().length;
+  assert.deepStrictEqual(c.h.m.seatPermission('pm3', 'nope', 'y'), { ok: false, error: 'no such request' });
+  assert.deepStrictEqual(c.h.m.seatPermission('pm3', 'r1', 'y'), { ok: true });
+  assert.deepStrictEqual(c.sent().slice(before), [{ id: 9, result: { id: 'r1', choiceId: 'y' } }, { method: 'perm/ack', id: 'r1' }]);
+  assert.strictEqual(s.needsAttention && s.needsAttention.kind, 'permission', 'one prompt still pending');
+  assert.deepStrictEqual(c.h.m.seatPermission('pm3', 'stale', 'n'), { ok: false, error: 'request is stale' });
+  assert.strictEqual(c.sent().length, before + 2);
+  assert.deepStrictEqual(c.h.m.seatPermissions('pm3').items, []);
+  assert.strictEqual(c.h.m.seatPermissions('pm3').rev, 4);
+  assert.strictEqual(s.needsAttention, null);
+  c.h.line('pm3', { rec: c.rec('r3') });
+  assert.deepStrictEqual(c.h.m.seatPermission('pm3', 'r3', 'n'), { ok: true });
+  assert.strictEqual(s.needsAttention, null);
+  assert.deepStrictEqual(c.h.m.seatPermission('ghost', 'r3', 'n'), { ok: false, error: 'no such session' });
+});
+
+test('t1180: a dm to a stream seat with a pending prompt is held as dialog and goes through after the answer', async (t) => {
+  const c = mkPermStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('pm4');
+  const s = c.h.m.sessions.get('pm4');
+  t.after(() => { c.clearTimers(s); s._dead = true; });
+  c.h.line('pm4', { rec: { kind: 'init', sessionId: 'ms-4', turnEnd: true } });
+  c.h.line('pm4', { rec: c.rec('r1') });
+  assert.strictEqual(c.h.m._injectHoldReason(s), 'dialog');
+  const held = c.h.m._gatedDeliver('pm4', 'bob', 'hello', true);
+  assert.match(held.held, /permission dialog/);
+  s._injectQueue = ['queued while blocked'];
+  c.h.m._maybeFlushInjectQueue(s);
+  assert.deepStrictEqual(c.h.m.seatPermission('pm4', 'r1', 'y'), { ok: true });
+  assert.notStrictEqual(c.h.m._injectHoldReason(s), 'dialog');
+  assert.deepStrictEqual(s._injectQueue, []);
+  assert.ok(c.sent().some((o) => o.method === 'turn/start' && o.text === 'queued while blocked'));
+});
+
+test('t1180: result, init, reset and close drop pending prompts without answering them', async (t) => {
+  for (const [i, end] of [{ kind: 'result' }, { kind: 'init', sessionId: 'ms-x' }, { kind: 'reset', newConversationId: 'c2' }, 'close'].entries()) {
+    const c = mkPermStreamSeat();
+    t.after(() => c.h.stopAll());
+    const name = `pm5${i}`;
+    await c.create(name);
+    const s = c.h.m.sessions.get(name);
+    t.after(() => { c.clearTimers(s); s._dead = true; });
+    c.h.line(name, { rec: c.rec('r1') });
+    const before = c.sent().length;
+    if (end === 'close') c.h.m._onStreamEvent(s, { close: { code: 0 } }, () => {}, () => {});
+    else c.h.line(name, { rec: end });
+    assert.deepStrictEqual(c.h.m.seatPermissions(name).items, [], `${end.kind || end} dropped the prompt`);
+    assert.strictEqual(s.needsAttention, null, `${end.kind || end} cleared the attention`);
+    assert.deepStrictEqual(c.encoded, []);
+    assert.ok(c.sent().slice(before).every((o) => !o || o.method !== 'perm/ack'));
+  }
+});
+
+test('t1180: a codec without encodePermission refuses to answer and a non-stream seat has no prompts', async (t) => {
+  const c = mkPermStreamSeat({ answer: false });
+  t.after(() => c.h.stopAll());
+  await c.create('pm6');
+  const s = c.h.m.sessions.get('pm6');
+  t.after(() => { c.clearTimers(s); s._dead = true; });
+  c.h.line('pm6', { rec: c.rec('r1') });
+  assert.deepStrictEqual(c.h.m.seatPermission('pm6', 'r1', 'y'), { ok: false, error: 'codec cannot answer' });
+  assert.strictEqual(c.h.m.seatPermissions('pm6').items.length, 1);
+  s.io = 'pty';
+  assert.deepStrictEqual(c.h.m.seatPermission('pm6', 'r1', 'y'), { ok: false, error: 'not a stream seat' });
+  assert.strictEqual(c.h.m.seatPermissions('pm6'), null);
+  s.io = 'stream';
+});

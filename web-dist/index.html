@@ -8768,6 +8768,83 @@ body.web-frontend #sidebar-header {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.seat-permissions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  max-height: 40%;
+  overflow-y: auto;
+}
+.seat-permissions[hidden] {
+  display: none;
+}
+.seat-permission {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+}
+.seat-permission-head {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: baseline;
+}
+.seat-permission-desc {
+  color: var(--text-secondary, var(--text-primary));
+  opacity: 0.7;
+  font-size: var(--fs-sm, var(--fs-md));
+}
+.seat-permission-preview {
+  margin: 0;
+  font-family: var(--font-mono, var(--font-ui));
+  font-size: var(--fs-sm, var(--fs-md));
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 8rem;
+  overflow-y: auto;
+}
+.seat-permission-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+.seat-permission-choice {
+  padding: 2px var(--sp-2);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.seat-permission-choice[data-kind=allow] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.seat-permission-choice[data-kind=allow-always] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.seat-permission-choice[data-kind=deny] {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+.seat-permission-choice:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.seat-permission-error {
+  color: var(--danger);
+  font-size: var(--fs-sm, var(--fs-md));
+}
+.seat-permission-error[hidden] {
+  display: none;
+}
 .seat-attachments {
   flex: 0 0 auto;
   display: flex;
@@ -10540,6 +10617,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "onTranscriptChanged", kind: "on", channel: "transcript-changed" },
         { name: "writeToSession", kind: "send", channel: "pty-input" },
         { name: "seatSend", kind: "invoke", channel: "seat:send" },
+        { name: "seatPermission", kind: "invoke", channel: "seat:permission" },
         { name: "seatDraft", kind: "send", channel: "seat:draft" },
         { name: "selectDirectory", kind: "invoke", channel: "dialog:selectDirectory" },
         { name: "confirmKill", kind: "invoke", channel: "dialog:confirmKill" },
@@ -45762,8 +45840,74 @@ ${detail}` });
         outboxEl.className = "seat-outbox";
         outboxEl.hidden = true;
         wrapperEl.appendChild(outboxEl);
+        const permEl = document.createElement("div");
+        permEl.className = "seat-permissions";
+        permEl.hidden = true;
+        wrapperEl.appendChild(permEl);
         wrapperEl.appendChild(attachEl);
         wrapperEl.appendChild(composer);
+        const SEAT_PERMISSION_INPUT_MAX = 600;
+        const renderPermissions = (items) => {
+          permEl.replaceChildren();
+          permEl.hidden = items.length === 0;
+          for (const item of items) {
+            const card = document.createElement("div");
+            card.className = "seat-permission";
+            const head = document.createElement("div");
+            head.className = "seat-permission-head";
+            const title = document.createElement("strong");
+            title.textContent = String(item.displayName || item.toolName || "");
+            head.appendChild(title);
+            if (item.description) {
+              const desc = document.createElement("span");
+              desc.className = "seat-permission-desc";
+              desc.textContent = String(item.description);
+              head.appendChild(desc);
+            }
+            card.appendChild(head);
+            let previewText = item.preview == null ? null : String(item.preview);
+            if (previewText == null && item.input != null) {
+              const json = JSON.stringify(item.input, null, 2) || "";
+              previewText = json.length > SEAT_PERMISSION_INPUT_MAX ? `${json.slice(0, SEAT_PERMISSION_INPUT_MAX)}\u2026` : json;
+            }
+            if (previewText) {
+              const pre = document.createElement("pre");
+              pre.className = "seat-permission-preview";
+              pre.textContent = previewText;
+              card.appendChild(pre);
+            }
+            const errEl = document.createElement("div");
+            errEl.className = "seat-permission-error";
+            errEl.hidden = true;
+            const row = document.createElement("div");
+            row.className = "seat-permission-choices";
+            const buttons = [];
+            for (const choice of Array.isArray(item.choices) ? item.choices : []) {
+              const btn = document.createElement("button");
+              btn.type = "button";
+              btn.className = "seat-permission-choice";
+              btn.dataset.kind = String(choice.kind || "");
+              btn.textContent = String(choice.label || choice.id || "");
+              btn.addEventListener("click", () => {
+                for (const b of buttons) b.disabled = true;
+                errEl.hidden = true;
+                const fail = (msg) => {
+                  for (const b of buttons) b.disabled = false;
+                  errEl.textContent = msg;
+                  errEl.hidden = false;
+                };
+                Promise.resolve(window.api.seatPermission(name, item.id, choice.id)).then((res) => {
+                  if (res && res.ok === false) fail(res.error || "unknown error");
+                }).catch((err) => fail(err && err.message ? err.message : String(err)));
+              });
+              buttons.push(btn);
+              row.appendChild(btn);
+            }
+            card.appendChild(row);
+            card.appendChild(errEl);
+            permEl.appendChild(card);
+          }
+        };
         const renderOutbox = (items) => {
           outboxEl.replaceChildren();
           outboxEl.hidden = items.length === 0;
@@ -45865,6 +46009,7 @@ ${detail}` });
             if (!res.ok && !Array.isArray(res.outbox)) return;
             rev = res.rev;
             renderOutbox(Array.isArray(res.outbox) ? res.outbox : []);
+            if (Array.isArray(res.permissions)) renderPermissions(res.permissions);
             if (!res.ok) return;
             renderTranscript(document, paneEl, res.records, {
               seatName: name,
@@ -45966,6 +46111,7 @@ ${detail}` });
             composer.removeEventListener("input", onComposerInput);
             transcriptChangedSubs.delete(onChanged);
             paneEl.removeEventListener("scroll", onScroll);
+            permEl.replaceChildren();
           }
         };
       }
