@@ -40,6 +40,17 @@ function choiceKind(choice) {
   return choice.scope === 'once' ? 'allow' : 'allow-always';
 }
 
+function choicesOf(params) {
+  return (Array.isArray(params.availableChoices) ? params.availableChoices : [])
+    .filter((c) => c && typeof c.choiceId === 'string')
+    .map((c) => ({ id: c.choiceId, label: c.label, kind: choiceKind(c) }));
+}
+
+function requirementKey(requirementId) {
+  if (requirementId && typeof requirementId === 'object' && requirementId.sourceIndex !== undefined) return String(requirementId.sourceIndex);
+  return JSON.stringify(requirementId === undefined ? null : requirementId);
+}
+
 function transcriptPathOf(session, home) {
   const p = typeof session.path === 'string' ? session.path : '';
   if (!p) return null;
@@ -50,6 +61,7 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
   let nextId = 1;
   const pending = new Map();
   const approvals = new Map();
+  const decides = new Map();
   let sessionId = null;
   let turnId = null;
   const warned = new Set();
@@ -69,6 +81,14 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
   };
 
   const command = (method, params) => request(method, { commandId: uuidv7(), ...params });
+
+  const decideStage = (approvalId, entry, choice) => {
+    entry.choice = choice;
+    entry.decided.add(requirementKey(entry.requirementId));
+    const msg = command('approval/decide', { sessionId: entry.sessionId, approvalId, choiceId: choice.id, requirementId: entry.requirementId });
+    decides.set(msg.id, approvalId);
+    return msg;
+  };
 
   const sessionStart = () => command('session/start', {
     ...(cwd ? { workspaceRoot: cwd } : {}),
@@ -95,6 +115,9 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
   const onResponse = (obj) => {
     const method = pending.get(obj.id);
     pending.delete(obj.id);
+    const decided = decides.get(obj.id);
+    decides.delete(obj.id);
+    if (decided !== undefined && (obj.error !== undefined || !obj.result || obj.result.terminal !== false)) approvals.delete(decided);
     if (obj.error !== undefined) {
       const detail = JSON.stringify(obj.error).slice(0, 300);
       if (method === 'approval/decide' && obj.error && obj.error.code === APPROVAL_ALREADY_RESOLVED) return { kind: 'other' };
@@ -156,16 +179,9 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
             })],
           };
         }
+        const choices = choicesOf(params);
         const subject = params.subject || null;
-        const choices = (Array.isArray(params.availableChoices) ? params.availableChoices : [])
-          .filter((c) => c && typeof c.choiceId === 'string')
-          .map((c) => ({ id: c.choiceId, label: c.label, kind: choiceKind(c) }));
-        approvals.set(params.approvalId, {
-          sessionId: params.sessionId || sessionId,
-          requirementId: params.currentRequirementId,
-          choiceIds: new Set(choices.map((c) => c.id)),
-        });
-        return {
+        const card = {
           kind: 'permission-request',
           id: params.approvalId,
           toolName: params.toolName,
@@ -173,16 +189,44 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
           description: subject && subject.workspaceRoot ? 'in ' + subject.workspaceRoot : null,
           preview: (subject && subject.command) || null,
           input: inputOf(params.rawArgs),
-          choices,
         };
+        approvals.set(params.approvalId, {
+          sessionId: params.sessionId || sessionId,
+          requirementId: params.currentRequirementId,
+          choices,
+          card,
+          choice: null,
+          decided: new Set(),
+        });
+        return { ...card, choices };
       }
+      case 'approval/updated': {
+        const entry = approvals.get(params.approvalId);
+        if (!entry) return { kind: 'other' };
+        if (Array.isArray(params.availableChoices)) entry.choices = choicesOf(params);
+        if (params.currentRequirementId) entry.requirementId = params.currentRequirementId;
+        if (!entry.choice || entry.decided.has(requirementKey(entry.requirementId))) return { kind: 'other' };
+        const prev = entry.choice;
+        const next = entry.choices.find((c) => c.id === prev.id);
+        if (next && (next.kind !== 'allow-always' || next.label === prev.label)) {
+          return { kind: 'other', send: [decideStage(params.approvalId, entry, next)] };
+        }
+        entry.choice = null;
+        return { ...entry.card, choices: entry.choices };
+      }
+      case 'approval/resolved':
+        approvals.delete(params.approvalId);
+        return { kind: 'other' };
       default:
         return { kind: 'other' };
     }
   };
 
   const dropApprovals = (rec) => {
-    if (rec.kind === 'result' || rec.kind === 'init') approvals.clear();
+    if (rec.kind === 'result' || rec.kind === 'init') {
+      approvals.clear();
+      decides.clear();
+    }
     return rec;
   };
 
@@ -197,9 +241,9 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
 
   const encodePermission = (id, choiceId) => {
     const entry = approvals.get(id);
-    if (!entry || !entry.choiceIds.has(choiceId)) return null;
-    approvals.delete(id);
-    return command('approval/decide', { sessionId: entry.sessionId, approvalId: id, choiceId, requirementId: entry.requirementId });
+    const choice = entry && !entry.choice ? entry.choices.find((c) => c.id === choiceId) : null;
+    if (!choice) return null;
+    return decideStage(id, entry, choice);
   };
 
   const encodeUser = (text, images = []) => {
