@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Stream seat voice, tap mode: a dictated sentence ending in the trigger word now sends on its own, a second tap dictates again, and every step of a dictation is traced in the log so a misfire can be read instead of guessed.
 - Scratch marks: a bare `[agent:scratch cancel]` now drops the most recent open mark, labeled or not, the same way a bare rewind targets it, and several labeled scratch intents in one reply are each answered instead of the second being swallowed as a duplicate.
 
 - Stream seats: `[agent:scratch begin]` and `[agent:scratch mark]` now open at once on a headless seat instead of waiting two minutes and refusing with a reason that blamed the reply for calling tools.

@@ -2422,6 +2422,10 @@ function registerIpcHandlers(deps) {
   // or the recorder); the proxy base and route live here. Carries no text — the
   // marker's wording is decided in voice-origin-arm.js, so a doctored payload
   // cannot choose what the agent is told.
+  on('log:voice', (_e, name, line) => {
+    log.info('voice', `${String(name || '-').slice(0, 64)} ${String(line || '')}`.slice(0, 300));
+  });
+
   on('voice:markOrigin', (_e, name) => {
     manager.markVoiceOrigin(String(name || ''));
   });

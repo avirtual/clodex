@@ -5106,15 +5106,20 @@ function createSessionManager(deps) {
       let engine;
       try { engine = await this.ensureVoiceEngine(armedBy, mode); } catch (e) { return { ok: false, error: e.message }; }
       const sameWindow = engine === prior && engine.armedBy && engine.armedBy.workspaceId === armedBy.workspaceId;
+      const tracked = engine.recording;
       if (observed && typeof observed === 'object' && sameWindow) {
         const seen = observed.recording === true;
         if (seen !== engine.recording) {
           this._shadowLog({ type: 'voice-engine-resync', agent: armedBy.name, tracked: engine.recording, observed: seen });
         }
         engine.recording = seen;
-        if (observed.processing === true && action !== 'stop') return { ok: false, error: 'the recorder is still transcribing' };
+        if (observed.processing === true && action !== 'stop') {
+          log.info('voice', `${armedBy.name} record ${action} refused: the recorder is still transcribing`);
+          return { ok: false, error: 'the recorder is still transcribing' };
+        }
       }
       const plan = voiceEngineSpec.planRecord({ mode, action, recording: engine.recording });
+      log.info('voice', `${armedBy.name} record ${action} mode=${mode} observed=${observed ? JSON.stringify(observed) : 'none'} tracked=${tracked} plan=${JSON.stringify(plan)}${plan && plan.write ? ' RECORD_KEY written' : ''}`);
       const { RECORD_KEY } = voiceEngineSpec;
       const t = this.voiceEngineTimings();
       const prevWs = engine.armedBy && engine.armedBy.workspaceId;

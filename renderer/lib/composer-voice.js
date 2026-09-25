@@ -4,6 +4,7 @@ const { findSubmit, shouldFire } = require('./voice-submit');
 
 const VOICE_QUIET_MS = 1200;
 const VOICE_RELEASE_MS = 2500;
+const VOICE_STOP_TRIES = 2;
 const PASTE_OPEN = '\x1b[200~';
 const PASTE_CLOSE = '\x1b[201~';
 
@@ -53,26 +54,33 @@ function createComposerTrigger({ getConfig }) {
       fired = value;
       return { text: value.slice(0, value.length - hit.erase) };
     },
+    reset() { fired = null; },
   };
 }
 
 function attachTriggerSubmit(composer, {
   getConfig, markOrigin, send, hasImages = () => false, onVoiceFire = () => {},
   holdsFire = () => false, onVoiceStop = () => {}, quietMs = 0, releaseMs = 0, timers = { set: setTimeout, clear: clearTimeout },
+  trace = () => {},
 }) {
   const trigger = createComposerTrigger({ getConfig });
   let span = null;
   let quiet = null;
   let release = null;
   let stopping = false;
+  let stopFails = 0;
+  const note = (line) => { try { trace(line); } catch {} };
   const fire = (fromVoice) => {
+    const traced = fromVoice || stopping || span !== null;
+    const how = fromVoice ? 'voice' : 'key';
     const hit = trigger.check(composer.value);
-    if (!hit) return;
+    if (!hit) { if (traced) note(`fire ${how}: no match ${JSON.stringify(composer.value)}`); return; }
     composer.value = hit.text;
     if (fromVoice) { try { onVoiceFire(); } catch {} }
     let images = false;
     try { images = hasImages() === true; } catch { images = false; }
-    if (!hit.text.trim() && !images) return;
+    if (!hit.text.trim() && !images) { if (traced) note(`fire ${how}: empty`); return; }
+    if (traced) note(`fire ${how}: sent ${JSON.stringify(hit.text)}`);
     try { markOrigin(); } catch {}
     send();
   };
@@ -86,8 +94,10 @@ function attachTriggerSubmit(composer, {
   const armRelease = () => {
     cancelRelease();
     if (!(releaseMs > 0)) return;
+    note(`release deadline armed ${releaseMs}ms`);
     release = timers.set(() => {
       release = null;
+      note(`release deadline fired stopping=${stopping}`);
       if (!stopping) return;
       stopping = false;
       cancelQuiet();
@@ -97,21 +107,30 @@ function attachTriggerSubmit(composer, {
   const stopFailed = () => {
     if (!stopping) return;
     stopping = false;
-    armQuiet();
+    stopFails++;
+    if (stopFails < VOICE_STOP_TRIES) { note(`stop failed ${stopFails}/${VOICE_STOP_TRIES}, retrying`); armQuiet(); return; }
+    note(`stop failed ${stopFails}/${VOICE_STOP_TRIES}, sending anyway`);
+    stopFails = 0;
+    cancelQuiet();
+    fire(true);
   };
   const voiceFire = () => {
     let open = false;
     try { open = holdsFire() === true; } catch { open = false; }
+    const matched = trigger.matches(composer.value);
+    note(`quiet fire holdsFire=${open} matches=${matched} stopping=${stopping} ${JSON.stringify(composer.value)}`);
     if (!open) { settle(); fire(true); return; }
-    if (stopping || !trigger.matches(composer.value)) return;
+    if (stopping || !matched) return;
     cancelRelease();
     stopping = true;
+    note('onVoiceStop called');
     let stopped;
     try { stopped = onVoiceStop(); } catch { stopFailed(); return; }
     if (stopped && typeof stopped.then === 'function') {
       stopped.then((ok) => {
+        note(`onVoiceStop resolved ${ok}`);
         if (ok === false) stopFailed();
-        else if (ok === true && stopping) armRelease();
+        else if (ok === true && stopping) { stopFails = 0; armRelease(); }
       }, stopFailed);
     }
   };
@@ -129,12 +148,13 @@ function attachTriggerSubmit(composer, {
       armQuiet();
     },
     released() {
+      note(`released stopping=${stopping}`);
       if (!stopping) return;
       settle();
       cancelQuiet();
       fire(true);
     },
-    resetSpan() { span = null; stopping = false; },
+    resetSpan() { span = null; stopping = false; stopFails = 0; trigger.reset(); },
     dispose() {
       cancelQuiet();
       cancelRelease();
@@ -145,7 +165,7 @@ function attachTriggerSubmit(composer, {
 
 function createPtyVoiceDraft({
   getConfig, write, markOrigin = () => {}, onVoiceFire = () => {}, holdsFire = () => false, onVoiceStop = () => {},
-  quietMs = 0, releaseMs = 0, timers = { set: setTimeout, clear: clearTimeout },
+  quietMs = 0, releaseMs = 0, timers = { set: setTimeout, clear: clearTimeout }, trace = () => {},
 }) {
   let value = '';
   const composer = {
@@ -163,7 +183,7 @@ function createPtyVoiceDraft({
     write('\r');
   };
   const trigger = attachTriggerSubmit(composer, {
-    getConfig, markOrigin: () => {}, send: submit, onVoiceFire, holdsFire, onVoiceStop, quietMs, releaseMs, timers,
+    getConfig, markOrigin: () => {}, send: submit, onVoiceFire, holdsFire, onVoiceStop, quietMs, releaseMs, timers, trace,
   });
   return {
     draft(text) { trigger.draft(text); },

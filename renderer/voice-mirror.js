@@ -23,12 +23,13 @@ function draftFromRows(rows) {
   return null;
 }
 
-function createVoiceMirror(terminal, { onDraft, onRelease = () => {}, readRows = () => readRowsToCursor(terminal) } = {}) {
+function createVoiceMirror(terminal, { onDraft, onRelease = () => {}, readRows = () => readRowsToCursor(terminal), trace = () => {} } = {}) {
   let armed = false;
   let disposed = false;
   let baseline = '';
   let last = null;
   let releasing = false;
+  const note = (line) => { try { trace(line); } catch {} };
 
   function read() {
     try {
@@ -43,14 +44,20 @@ function createVoiceMirror(terminal, { onDraft, onRelease = () => {}, readRows =
     if (draft === '' && releasing && last !== null) {
       armed = false;
       releasing = false;
+      note('mirror row cleared, released');
       try { onRelease(); } catch {}
       return;
     }
+    if (draft === '' && baseline) { note('mirror baseline dropped: row cleared'); baseline = ''; }
     if (!draft) return;
     let text = draft;
-    if (baseline && text.startsWith(baseline)) text = text.slice(baseline.length).trim();
+    if (baseline) {
+      if (text.startsWith(baseline)) text = text.slice(baseline.length).trim();
+      else { note('mirror baseline dropped: row no longer extends it'); baseline = ''; }
+    }
     if (!text || text === last) return;
     last = text;
+    note(`mirror draft ${JSON.stringify(text)}`);
     try { onDraft(text); } catch {}
   }
 
@@ -62,9 +69,10 @@ function createVoiceMirror(terminal, { onDraft, onRelease = () => {}, readRows =
       last = null;
       releasing = false;
       armed = true;
+      note(`mirror arm baseline=${JSON.stringify(baseline)}`);
     },
-    release() { if (armed) releasing = true; },
-    disarm() { armed = false; releasing = false; },
+    release() { if (armed) releasing = true; note(`mirror release armed=${armed}`); },
+    disarm() { if (armed) note('mirror disarm'); armed = false; releasing = false; },
     isArmed: () => armed,
     check,
     dispose() {
