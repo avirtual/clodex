@@ -2621,6 +2621,7 @@ function createSessionManager(deps) {
         const stop = (outcome) => { clearInterval(poll); clearInterval(slow); clearTimeout(deadline); linkDone(outcome); };
         const tick = () => {
           if (this.sessions.get(name) !== session) { stop('gone'); return; }
+          if (!codexLink.sessionId && !session.firstInputAt) return;
           const taken = [];
           if (!codexLink.sessionId) {
             for (const [other, s] of this.sessions) {
@@ -2629,7 +2630,7 @@ function createSessionManager(deps) {
             }
           }
           const target = findCodexRollout({ fs, path }, codexLink.home, {
-            sessionId: codexLink.sessionId, cwd: codexLink.cwd, sinceMs: session.spawnedAt, excludePaths: taken,
+            sessionId: codexLink.sessionId, cwd: codexLink.cwd, sinceMs: codexLink.sessionId ? session.spawnedAt : session.firstInputAt - 1000, excludePaths: taken,
           });
           if (!target) return;
           try {
@@ -3374,6 +3375,7 @@ function createSessionManager(deps) {
         // rather than a second predicate that can drift from this one.
         this._foldDraft(s, data, wasInPaste);
       }
+      if (!s.firstInputAt) s.firstInputAt = Date.now();
       try { s.pty.write(data); } catch {}
     }
 
@@ -5850,6 +5852,7 @@ function createSessionManager(deps) {
           return;
         }
         if (!session.pty) return;
+        if (!session.firstInputAt) session.firstInputAt = Date.now();
         try { session.pty.write('\r'); } catch {}
         log.info('inject', `boot-drain nudge for ${session.name} — no turn ${Date.now() - wroteAt}ms after a boot-window write, sent Enter`);
       };
@@ -9563,7 +9566,7 @@ function createSessionManager(deps) {
         // boot-settle machinery and must not be coupled to this.
         const isClaude = session.agentType === 'claude';
         session._injectPtyQueue = new InjectQueue({
-          write: (bytes) => { if (!session.pty) return; try { session.pty.write(bytes); } catch {} this._armBootNudge(session); },
+          write: (bytes) => { if (!session.pty) return; if (!session.firstInputAt) session.firstInputAt = Date.now(); try { session.pty.write(bytes); } catch {} this._armBootNudge(session); },
           settleMsFor: (t) => (t.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY),
           quietMs: INJECT_QUIET_MS,
           maxWaitMs: INJECT_QUIET_MAXWAIT,

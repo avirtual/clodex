@@ -1,6 +1,6 @@
 'use strict';
 
-const { test } = require('node:test');
+const { test, mock } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -41,7 +41,7 @@ function mkCodex({ pollMs = 1, deadlineMs = 60000, slowPollMs = 5000 } = {}) {
     pty: {
       spawn: (cmd, args, opts) => {
         spawns.push({ cmd, args, opts });
-        return { onData() {}, onExit() {}, pid: 999, kill() {} };
+        return { onData() {}, onExit() {}, pid: 999, kill() {}, write() {} };
       },
     },
     os,
@@ -58,6 +58,7 @@ function mkCodex({ pollMs = 1, deadlineMs = 60000, slowPollMs = 5000 } = {}) {
     mergeCodexInstructions: (a) => ({ cleaned: [...a], merged: '' }),
     deliverSkills: () => null,
     codexStatusLineArg: () => '',
+    isHumanPtyInput: () => false,
   });
   const m = new SessionManager();
   m._sendToSession = () => {};
@@ -94,6 +95,7 @@ test('t1205: a fresh codex pty seat is linked to the rollout its TUI writes unde
   await f.create('cx');
   const s = f.m.sessions.get('cx');
   try {
+    f.m.write('cx', 'hi');
     assert.throws(() => fs.lstatSync(f.link('cx')), /ENOENT/, 'no rollout yet, no link');
     f.writeRollout(today(), 'rollout-2026-09-25T23-03-26-01a0da2a-0000-7000-8000-000000000009.jsonl', '/somewhere/else');
     await new Promise((r) => setTimeout(r, 10));
@@ -125,6 +127,7 @@ test('t1205: a codex pty seat with no rollout by the deadline warns once, keeps 
   const s = f.m.sessions.get('cx');
   let outcome = null;
   s._codexLinkDone.then((o) => { outcome = o; });
+  f.m.write('cx', 'hi');
   try {
     await until(() => f.warns.length > 0);
     await new Promise((r) => setTimeout(r, 20));
@@ -145,4 +148,54 @@ test('t1205: the slow poll ends as gone when the seat goes, with no link', async
   f.stop('cx');
   assert.strictEqual(await s._codexLinkDone, 'gone');
   assert.throws(() => fs.lstatSync(f.link('cx')), /ENOENT/);
+});
+
+test('t1207: a rollout born after spawn but before the seat was first typed into is not linked', async () => {
+  const f = mkCodex();
+  await f.create('cx');
+  const s = f.m.sessions.get('cx');
+  let outcome = null;
+  s._codexLinkDone.then((o) => { outcome = o; });
+  try {
+    f.writeRollout(today(), 'rollout-2026-09-25T23-03-27-01a0da2a-0000-7000-8000-000000000001.jsonl', f.work);
+    await new Promise((r) => setTimeout(r, 10));
+    assert.strictEqual(outcome, null, 'an untyped seat links nothing');
+    mock.timers.enable({ apis: ['Date'], now: Date.now() + 5000 });
+    try { f.m.write('cx', 'hi'); } finally { mock.timers.reset(); }
+    assert.ok(s.firstInputAt > s.spawnedAt + 4000);
+    await new Promise((r) => setTimeout(r, 10));
+    assert.strictEqual(outcome, null, 'a rollout older than the first input is not this seat\'s');
+    assert.throws(() => fs.lstatSync(f.link('cx')), /ENOENT/);
+  } finally { f.stop('cx'); }
+});
+
+test('t1207: a rollout born after the seat was first typed into is linked', async () => {
+  const f = mkCodex();
+  await f.create('cx');
+  const s = f.m.sessions.get('cx');
+  try {
+    f.m.write('cx', 'hi');
+    const target = f.writeRollout(today(), 'rollout-2026-09-25T23-03-27-01a0da2a-0000-7000-8000-000000000001.jsonl', f.work);
+    assert.strictEqual(await s._codexLinkDone, 'linked');
+    assert.strictEqual(fs.readlinkSync(f.link('cx')), target);
+  } finally { f.stop('cx'); }
+});
+
+test('t1207: of two codex seats in one cwd, only the one typed into links the rollout', async () => {
+  const f = mkCodex();
+  await f.create('a');
+  await f.create('b');
+  const a = f.m.sessions.get('a');
+  const b = f.m.sessions.get('b');
+  let aOutcome = null;
+  a._codexLinkDone.then((o) => { aOutcome = o; });
+  try {
+    f.m.write('b', 'hi');
+    const target = f.writeRollout(today(), 'rollout-2026-09-25T23-03-27-01a0da2a-0000-7000-8000-000000000001.jsonl', f.work);
+    assert.strictEqual(await b._codexLinkDone, 'linked');
+    assert.strictEqual(fs.readlinkSync(f.link('b')), target);
+    await new Promise((r) => setTimeout(r, 10));
+    assert.strictEqual(aOutcome, null);
+    assert.throws(() => fs.lstatSync(f.link('a')), /ENOENT/);
+  } finally { f.stop('a'); f.stop('b'); }
 });
