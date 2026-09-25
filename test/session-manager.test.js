@@ -14788,12 +14788,10 @@ test('t771: a boot drain that CLAIMED NOTHING arms no timer (nothing reached the
   assert.strictEqual(s._bootNudgeTimer, undefined, 'so no timer was ever armed');
 });
 
-test('t771: a seat killed before the timer fires writes no Enter into a dead pty', async () => {
+test('t771: a seat killed before the timer fires writes no Enter into a dead pty', async (t) => {
   // Pins the _cleanup clear specifically. `_dead` is deliberately NOT set: the
   // fire-time `_dead` guard would carry this subject on its own and the clearTimeout
-  // beside _bootDrainTimer could be deleted with the suite still green. What must
-  // survive a reduction here is the clear in the cleanup path — asserted as the
-  // nulled field, observed right after _cleanup returns.
+  // beside _bootDrainTimer could be deleted with the suite still green.
   const p = mkNudgeProbe({
     bootNudgeMs: 30,
     registry: { unregister: () => {} },
@@ -14804,11 +14802,11 @@ test('t771: a seat killed before the timer fires writes no Enter into a dead pty
   // the cleanup has to happen before it elapses rather than after a second poll.
   // The arm is synchronous in the queue's write callback, so the timer is already
   // live when the drain's third byte is recorded.
-  const { s, writes } = await drainOnly(p, 'nudge-h', (sess) => {
+  const { writes } = await drainOnlyMocked(t, p, 'nudge-h', (sess) => {
     assert.ok(sess._bootNudgeTimer, 'armed before the kill — else the clear is asserted against nothing');
     p.m._cleanup('nudge-h');
   });
-  await new Promise((r) => setTimeout(r, 120));    // several fire windows
+  await tickFor(t, 120);
   assert.deepStrictEqual(writes, DRAINED, 'the retired seat took no keystroke after death');
 });
 
