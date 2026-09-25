@@ -179,3 +179,17 @@ test('create() carries the module encodeUser and the same decode records', () =>
   assert.strictEqual(codec.encodeUser, encodeUser);
   assert.deepStrictEqual(codec.decode(JSON.parse(LINES[7])), { kind: 'permission-denied', toolName: 'Write' });
 });
+
+test('encodeInterrupt is an interrupt control_request with a fresh request id per call', () => {
+  const codec = create();
+  assert.deepStrictEqual(codec.encodeInterrupt(), { type: 'control_request', request_id: 'clodex-interrupt-1', request: { subtype: 'interrupt' } });
+  assert.deepStrictEqual(codec.encodeInterrupt(), { type: 'control_request', request_id: 'clodex-interrupt-2', request: { subtype: 'interrupt' } });
+});
+
+test('decode: the control_response acknowledging an interrupt is other and keeps pending requests', () => {
+  const codec = create();
+  codec.decode(CAN_USE_WRITE);
+  const ack = { type: 'control_response', response: { subtype: 'success', request_id: 'clodex-interrupt-1', response: { still_queued: [] } } };
+  assert.deepStrictEqual(codec.decode(ack), { kind: 'other' });
+  assert.ok(codec.encodePermission(CAN_USE_WRITE.request_id, 'deny'));
+});

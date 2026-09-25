@@ -2400,6 +2400,14 @@ function registerIpcHandlers(deps) {
     return manager.seatPermission(s.name, String(id), String(choiceId));
   });
 
+  handle('seat:interrupt', (e, name) => {
+    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
+    if (surface !== 'desktop') return { ok: false, error: 'seat:interrupt is local only' };
+    const s = manager.sessions.get(String(name || ''));
+    if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };
+    return manager.seatInterrupt(s.name);
+  });
+
   on('seat:draft', (e, name, text) => {
     const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
     if (surface !== 'desktop') return;

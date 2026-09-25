@@ -70,3 +70,16 @@ test('the stream seat pane mounts its permission cards before the composer and r
   assert.strictEqual(src.match(/renderPermissions\(/g).length, 1, 'renderPermissions is called only behind the key guard');
   assert.ok(/window\.api\.seatPermission\(name, item\.id, choice\.id\)/.test(src), 'a choice answers through the seat:permission bridge');
 });
+
+test('t1199: Escape in the stream composer interrupts the seat before any other key handling, and the turn state drives the placeholder', () => {
+  const pane = SRC.match(/function createStreamSeatPane\(name, wrapperEl\) \{[\s\S]*?\n\}\n/);
+  assert.ok(pane, 'ENTER: createStreamSeatPane is still found by this anchor');
+  const src = pane[0];
+  const keydown = src.indexOf("composer.addEventListener('keydown', (e) => {");
+  const esc = src.indexOf("if (e.key === 'Escape' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {");
+  const call = src.indexOf('window.api.seatInterrupt(name)');
+  const readline = src.indexOf('composerReadlineEdit({');
+  assert.ok(keydown > 0 && esc > keydown && call > esc && readline > call, 'Escape is handled first in the composer keydown and calls seatInterrupt');
+  assert.ok(src.includes("? 'Message — Enter sends, Esc interrupts the turn'"), 'a running turn names Esc in the placeholder');
+  assert.ok(/window\.api\.onSessionActivity\(\(name, state\) => \{\n  const seat = sessions\.get\(name\);\n  if \(seat && seat\.stream\) seat\.stream\.setTurnRunning\(state === 'thinking'\);/.test(SRC), 'the activity feed tells the pane whether a turn is running');
+});

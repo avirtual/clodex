@@ -293,3 +293,11 @@ test('decode tolerates junk', () => {
     assert.deepStrictEqual(codec.decode(junk), { kind: 'other' });
   }
 });
+
+test('the turn/completed an interrupt produces drops a pending approval', () => {
+  const [req] = wire('approvals');
+  const h = running();
+  h.codec.decode(req);
+  assert.deepStrictEqual(h.codec.decode(wire('interrupt').find((m) => m.method === 'turn/completed')), RESULT(false));
+  assert.strictEqual(h.codec.encodePermission(req.params.approvalId, 'abort'), null);
+});

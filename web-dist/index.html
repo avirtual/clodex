@@ -10605,6 +10605,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "writeToSession", kind: "send", channel: "pty-input" },
         { name: "seatSend", kind: "invoke", channel: "seat:send" },
         { name: "seatPermission", kind: "invoke", channel: "seat:permission" },
+        { name: "seatInterrupt", kind: "invoke", channel: "seat:interrupt" },
         { name: "seatDraft", kind: "send", channel: "seat:draft" },
         { name: "selectDirectory", kind: "invoke", channel: "dialog:selectDirectory" },
         { name: "confirmKill", kind: "invoke", channel: "dialog:confirmKill" },
@@ -46245,6 +46246,12 @@ ${detail}` });
           });
         };
         composer.addEventListener("keydown", (e) => {
+          if (e.key === "Escape" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
+            e.preventDefault();
+            Promise.resolve(window.api.seatInterrupt(name)).catch(() => {
+            });
+            return;
+          }
           const edit = !e.isComposing && composerReadlineEdit({
             key: e.key,
             ctrlKey: e.ctrlKey,
@@ -46271,6 +46278,10 @@ ${detail}` });
           sendComposer();
         });
         let voiceRecordingOn = false;
+        let turnRunning = false;
+        const applyPlaceholder = () => {
+          composer.placeholder = voiceRecordingOn ? "Recording \u2014 your words appear here; Enter sends" : turnRunning ? "Message \u2014 Enter sends, Esc interrupts the turn" : "Message \u2014 Enter sends, Shift+Enter for a new line";
+        };
         const triggerSubmit = attachTriggerSubmit(composer, {
           getConfig: () => voiceSubmitConfig,
           markOrigin: () => window.api.markVoiceOrigin(name),
@@ -46305,7 +46316,11 @@ ${detail}` });
           setRecording(on) {
             voiceRecordingOn = !!on;
             composer.classList.toggle("voice-recording", !!on);
-            composer.placeholder = on ? "Recording \u2014 your words appear here; Enter sends" : "Message \u2014 Enter sends, Shift+Enter for a new line";
+            applyPlaceholder();
+          },
+          setTurnRunning(on) {
+            turnRunning = !!on;
+            applyPlaceholder();
           },
           dispose() {
             disposed = true;
@@ -46327,6 +46342,8 @@ ${detail}` });
           wrapperEl2.dataset.name = name;
           terminalContainer.appendChild(wrapperEl2);
           const stream = createStreamSeatPane(name, wrapperEl2);
+          const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+          if (row && row.dataset.activity === "thinking") stream.setTurnRunning(true);
           sessions.set(name, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl: wrapperEl2, peer: null, stream, liveSplit: null });
           updateWindowTitle();
           return { terminal: null, fitAddon: null, searchAddon: null, wrapperEl: wrapperEl2, echoRewrite: (chunk) => chunk };
@@ -48112,6 +48129,8 @@ ${detail}` });
       });
       window.api.onSelectionSent((name) => drawerHost.onSelectionSent(name));
       window.api.onSessionActivity((name, state) => {
+        const seat = sessions.get(name);
+        if (seat && seat.stream) seat.stream.setTurnRunning(state === "thinking");
         const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         if (!el) return;
         if (state === "thinking") {

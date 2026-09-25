@@ -274,3 +274,11 @@ test('encodeInterrupt is turn/interrupt for the running turn, null with no turn'
   codec.decode(turnCompleted);
   assert.strictEqual(codec.encodeInterrupt(), null);
 });
+
+test('the interrupted turn/completed drops a pending approval', () => {
+  const { codec } = started();
+  const [req] = wire('approvals');
+  codec.decode(req);
+  assert.strictEqual(codec.decode(wire('turn-interrupted')[0]).kind, 'result');
+  assert.strictEqual(codec.encodePermission('0', 'accept'), null);
+});

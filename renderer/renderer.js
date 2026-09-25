@@ -1750,6 +1750,11 @@ function createStreamSeatPane(name, wrapperEl) {
     });
   };
   composer.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
+      e.preventDefault();
+      Promise.resolve(window.api.seatInterrupt(name)).catch(() => {});
+      return;
+    }
     const edit = !e.isComposing && composerReadlineEdit({
       key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey,
       value: composer.value, selectionStart: composer.selectionStart, selectionEnd: composer.selectionEnd,
@@ -1771,6 +1776,14 @@ function createStreamSeatPane(name, wrapperEl) {
     sendComposer();
   });
   let voiceRecordingOn = false;
+  let turnRunning = false;
+  const applyPlaceholder = () => {
+    composer.placeholder = voiceRecordingOn
+      ? 'Recording — your words appear here; Enter sends'
+      : turnRunning
+        ? 'Message — Enter sends, Esc interrupts the turn'
+        : 'Message — Enter sends, Shift+Enter for a new line';
+  };
   const triggerSubmit = attachTriggerSubmit(composer, {
     getConfig: () => voiceSubmitConfig,
     markOrigin: () => window.api.markVoiceOrigin(name),
@@ -1794,9 +1807,11 @@ function createStreamSeatPane(name, wrapperEl) {
     setRecording(on) {
       voiceRecordingOn = !!on;
       composer.classList.toggle('voice-recording', !!on);
-      composer.placeholder = on
-        ? 'Recording — your words appear here; Enter sends'
-        : 'Message — Enter sends, Shift+Enter for a new line';
+      applyPlaceholder();
+    },
+    setTurnRunning(on) {
+      turnRunning = !!on;
+      applyPlaceholder();
     },
     dispose() {
       disposed = true;
@@ -1819,6 +1834,8 @@ function createTerminal(name, peer = null) {
     wrapperEl.dataset.name = name;
     terminalContainer.appendChild(wrapperEl);
     const stream = createStreamSeatPane(name, wrapperEl);
+    const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+    if (row && row.dataset.activity === 'thinking') stream.setTurnRunning(true);
     sessions.set(name, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, peer: null, stream, liveSplit: null });
     updateWindowTitle();
     return { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, echoRewrite: (chunk) => chunk };
@@ -3733,6 +3750,8 @@ window.api.onSessionExit((name, code, meta) => {
 window.api.onSelectionSent((name) => drawerHost.onSelectionSent(name));
 
 window.api.onSessionActivity((name, state) => {
+  const seat = sessions.get(name);
+  if (seat && seat.stream) seat.stream.setTurnRunning(state === 'thinking');
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!el) return;
   // Thinking-duration stamp: the amber dot alone makes a 3s turn and a wedged
