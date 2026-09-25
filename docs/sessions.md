@@ -638,7 +638,9 @@ resume id, fork flag, bypass/read-only posture and model. An instance may add
 `open()`, wire objects sent at spawn, with the seat busy until the codec's first
 `init` record; any decoded record may carry `send`, objects written in order
 before its kind is acted on (codex declines approvals this way); an `init` with
-`turnEnd` ends the turn (the handshake and a clear); `encodeUser` may return
+`turnEnd` ends the turn (the handshake and a clear), and one with
+`transcriptPath` is linked as the seat transcript when the spec's
+`transcriptRepoint` is `'record'` (codex: the thread's rollout file); `encodeUser` may return
 null to write nothing; `encodeContext('compact'|'clear')` replaces the slash
 text for `[agent:context]`; and `encodeInterrupt()` backs `seatInterrupt`.
 

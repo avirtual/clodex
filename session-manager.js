@@ -3008,7 +3008,7 @@ function createSessionManager(deps) {
       if (!s || s.io !== 'stream') return null;
       return {
         rev: s._outboxRev || 0,
-        items: (s.outbox || []).map((q) => ({ text: q.text, origin: q.origin, images: q.images.length })),
+        items: (s.outbox || []).map((q) => ({ text: q.wire ? q.wire.method : q.text, origin: q.origin, images: q.images.length })),
       };
     }
 
@@ -3106,6 +3106,7 @@ function createSessionManager(deps) {
       switch (rec.kind) {
         case 'init':
           this._clearStreamResultHold(s);
+          if (rec.transcriptPath) this._repointStreamTranscript(s, rec.sessionId, rec.transcriptPath);
           if (rec.sessionId && rec.sessionId !== s.sessionId) onSessionId(rec.sessionId);
           if (s._replayAtInit) {
             this._replayTicketsOnce(s);
@@ -3143,9 +3144,24 @@ function createSessionManager(deps) {
       }
     }
 
-    _repointStreamTranscript(s, sid) {
+    _repointStreamTranscript(s, sid, recordPath = null) {
       if (s.io !== 'stream' || !s.cwd) return;
-      if (streamFor(s.type)?.transcriptRepoint !== 'claude') {
+      const mode = streamFor(s.type)?.transcriptRepoint;
+      if (mode === 'record') {
+        if (!recordPath) return;
+        const link = pathFor(REGISTRY_DIR, s.name, 'transcript');
+        try {
+          let current = null;
+          try { current = fs.readlinkSync(link); } catch {}
+          if (current === recordPath) return;
+          ensureDir(runDirFor(REGISTRY_DIR, s.name));
+          linkTranscript({ fs }, link, recordPath);
+        } catch (e) {
+          log.warn('session', `stream ${s.name}: transcript link failed: ${e.message}`);
+        }
+        return;
+      }
+      if (mode !== 'claude') {
         if (!s._repointSkipLogged) {
           s._repointSkipLogged = true;
           log.debug('session', `stream ${s.name}: no transcript repoint for ${s.type}`);

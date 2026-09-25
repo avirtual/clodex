@@ -68,7 +68,7 @@ const ADAPTERS = {
       codec: 'stream-codec-codex',
       argv: () => ['app-server'],
       toolBoundary: 'hook',
-      transcriptRepoint: null,
+      transcriptRepoint: 'record',
     },
     ui: {
       injectSkills: true,

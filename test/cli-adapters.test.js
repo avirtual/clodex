@@ -381,7 +381,7 @@ test('t1171: streamFor(claude) builds the stream-json argv; a fresh seat gets --
 
 test('t1172: streamFor(codex) runs app-server over stdio; resume rides the wire, not the argv', () => {
   const block = streamFor('codex');
-  assert.deepStrictEqual({ ...block, argv: undefined }, { codec: 'stream-codec-codex', argv: undefined, toolBoundary: 'hook', transcriptRepoint: null });
+  assert.deepStrictEqual({ ...block, argv: undefined }, { codec: 'stream-codec-codex', argv: undefined, toolBoundary: 'hook', transcriptRepoint: 'record' });
   assert.deepStrictEqual(block.argv({ resumeId: null, sessionId: 'S', fork: false }), ['app-server']);
   assert.deepStrictEqual(block.argv({ resumeId: 'R', sessionId: 'S', fork: true }), ['app-server']);
   assert.strictEqual(capsFor('codex').streamIo, true);

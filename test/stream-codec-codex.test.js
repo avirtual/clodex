@@ -10,10 +10,11 @@ const FIX = path.join(__dirname, 'fixtures', 'stream-codex');
 const lines = (name) => fs.readFileSync(path.join(FIX, `${name}.jsonl`), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 const wire = (name, d = 'in') => lines(name).filter((l) => l.d === d).map((l) => l.m);
 const rolloutId = (thread) => path.basename(thread.path, '.jsonl');
+const homePath = (thread) => `/H${thread.path.slice(1)}`;
 
 const opened = (ctx = {}) => {
   const warns = [];
-  const codec = create({ cwd: '/w', log: { warn: (tag, msg) => warns.push([tag, msg]) }, ...ctx });
+  const codec = create({ cwd: '/w', home: '/H', log: { warn: (tag, msg) => warns.push([tag, msg]) }, ...ctx });
   const open = codec.open();
   return { codec, open, warns };
 };
@@ -58,13 +59,13 @@ test('a resume opens with thread/resume on the uuid; fork warns once and resumes
   const [resumed] = wire('thread-resume');
   const { codec } = opened({ resumeId: resumed.result.thread.id });
   const rec = codec.decode(resumed);
-  assert.deepStrictEqual(rec, { kind: 'init', sessionId: rolloutId(resumed.result.thread), model: resumed.result.model, slashCommands: [], turnEnd: true });
+  assert.deepStrictEqual(rec, { kind: 'init', sessionId: rolloutId(resumed.result.thread), model: resumed.result.model, slashCommands: [], turnEnd: true, transcriptPath: homePath(resumed.result.thread) });
 });
 
 test('the thread/start result decodes to init with the rollout-name id the transcript watcher reports, and turnEnd', () => {
   const [threadStart] = wire('thread-start');
   const { init } = started();
-  assert.deepStrictEqual(init, { kind: 'init', sessionId: rolloutId(threadStart.result.thread), model: threadStart.result.model, slashCommands: [], turnEnd: true });
+  assert.deepStrictEqual(init, { kind: 'init', sessionId: rolloutId(threadStart.result.thread), model: threadStart.result.model, slashCommands: [], turnEnd: true, transcriptPath: homePath(threadStart.result.thread) });
 });
 
 test('turn/started is status running; turn/completed is a result, failed only when the turn failed', () => {
@@ -101,7 +102,7 @@ test('under bypass an approval request is other, but the decline still rides sen
   assert.deepStrictEqual(codec.decode(req), { kind: 'other', toolName: 'commandExecution', send: [{ id: req.id, result: { decision: 'decline' } }] });
 });
 
-test('an error for turn/start or compact is an error result; for anything else it is other with one warning', () => {
+test('an error for turn/start, compact or thread/start is an error result; for anything else it is other with one warning', () => {
   const [err] = wire('error');
   const { codec, warns } = started();
   const turn = codec.encodeUser('hi', []);
@@ -110,8 +111,33 @@ test('an error for turn/start or compact is an error result; for anything else i
   assert.deepStrictEqual(codec.decode({ ...err, id: compact.id }), { kind: 'result', durationMs: null, costUsd: null, isError: true });
   assert.strictEqual(warns.length, 0);
   const h = opened();
-  assert.deepStrictEqual(h.codec.decode({ ...err, id: h.open[2].id }), { kind: 'other' });
+  assert.deepStrictEqual(h.codec.decode({ ...err, id: h.open[0].id }), { kind: 'other' });
   assert.strictEqual(h.warns.length, 1);
+  assert.deepStrictEqual(h.codec.decode({ ...err, id: h.open[2].id }), { kind: 'result', durationMs: null, costUsd: null, isError: true });
+});
+
+test('a failed thread/resume falls back to a fresh thread/start in send, whose result ends the handshake', () => {
+  const [err] = wire('error');
+  const [threadStart] = wire('thread-start');
+  const h = opened({ resumeId: '01a0d36f-d6a5-7371-8d9b-774875de6de3', bypass: true });
+  assert.strictEqual(h.open[2].method, 'thread/resume');
+  const rec = h.codec.decode({ ...err, id: h.open[2].id });
+  assert.strictEqual(rec.kind, 'other');
+  assert.strictEqual(rec.send.length, 1);
+  const [fresh] = rec.send;
+  assert.deepStrictEqual({ method: fresh.method, params: fresh.params }, { method: 'thread/start', params: { cwd: '/w', approvalPolicy: 'never', sandbox: 'danger-full-access' } });
+  assert.strictEqual(h.warns.length, 1);
+  assert.strictEqual(h.codec.decode({ ...threadStart, id: fresh.id }).kind, 'init');
+});
+
+test('the init record carries the thread\'s rollout path as transcriptPath, ~ expanded against home', () => {
+  const [threadStart] = wire('thread-start');
+  assert.match(threadStart.result.thread.path, /^~\//);
+  const { init } = started();
+  assert.strictEqual(init.transcriptPath, homePath(threadStart.result.thread));
+  const { codec, open } = opened();
+  const abs = { ...threadStart, id: open[2].id, result: { ...threadStart.result, thread: { ...threadStart.result.thread, path: '/abs/rollout-x.jsonl' } } };
+  assert.strictEqual(codec.decode(abs).transcriptPath, '/abs/rollout-x.jsonl');
 });
 
 test('a non-object line and an unknown notification are other', () => {
@@ -156,7 +182,7 @@ test('encodeContext: compact is thread/compact/start on the thread, clear a fres
   const clear = codec.encodeContext('clear');
   assert.deepStrictEqual({ method: clear.method, params: clear.params }, { method: 'thread/start', params: { cwd: '/w', approvalPolicy: 'never', sandbox: 'read-only' } });
   const fresh = { ...threadStart, id: clear.id, result: { ...threadStart.result, thread: { ...threadStart.result.thread, id: 'new-thread', path: undefined } } };
-  assert.deepStrictEqual(codec.decode(fresh), { kind: 'init', sessionId: 'new-thread', model: threadStart.result.model, slashCommands: [], turnEnd: true });
+  assert.deepStrictEqual(codec.decode(fresh), { kind: 'init', sessionId: 'new-thread', model: threadStart.result.model, slashCommands: [], turnEnd: true, transcriptPath: null });
   assert.strictEqual(codec.encodeUser('x', []).params.threadId, 'new-thread');
   assert.strictEqual(codec.encodeContext('reload'), null);
 });

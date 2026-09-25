@@ -1,5 +1,7 @@
 'use strict';
 
+const os = require('os');
+
 const UUID_TAIL_RE = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const APPROVAL_TOOLS = {
   'item/commandExecution/requestApproval': 'commandExecution',
@@ -8,6 +10,12 @@ const APPROVAL_TOOLS = {
 const TURN_REQUESTS = new Set(['turn/start', 'thread/compact/start']);
 const THREAD_REQUESTS = new Set(['thread/start', 'thread/resume']);
 const CONTEXT_TEXTS = new Set(['/compact', '/clear']);
+
+function transcriptPathOf(thread, home) {
+  const p = typeof thread.path === 'string' ? thread.path : '';
+  if (!p) return null;
+  return p.startsWith('~/') ? `${home}${p.slice(1)}` : p;
+}
 
 function sessionIdOf(thread) {
   const p = typeof thread.path === 'string' ? thread.path : '';
@@ -21,7 +29,7 @@ function postureFor({ bypass, readOnly }) {
   return { approvalPolicy: 'untrusted', sandbox: 'workspace-write' };
 }
 
-function create({ cwd = null, resumeId = null, fork = false, bypass = false, readOnly = false, model = null, log = null } = {}) {
+function create({ cwd = null, resumeId = null, fork = false, bypass = false, readOnly = false, model = null, log = null, home = os.homedir() } = {}) {
   let nextId = 1;
   const pending = new Map();
   let threadId = null;
@@ -64,6 +72,14 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
     pending.delete(obj.id);
     if (obj.error !== undefined) {
       if (TURN_REQUESTS.has(method)) return { kind: 'result', durationMs: null, costUsd: null, isError: true };
+      if (method === 'thread/resume') {
+        warnOnce('error:thread/resume', `thread/resume failed, starting a fresh thread: ${JSON.stringify(obj.error).slice(0, 300)}`);
+        return { kind: 'other', send: [threadStart()] };
+      }
+      if (method === 'thread/start') {
+        warnOnce('error:thread/start', `thread/start failed: ${JSON.stringify(obj.error).slice(0, 300)}`);
+        return { kind: 'result', durationMs: null, costUsd: null, isError: true };
+      }
       warnOnce(`error:${method}`, `${method || `request ${obj.id}`} failed: ${JSON.stringify(obj.error).slice(0, 300)}`);
       return { kind: 'other' };
     }
@@ -78,6 +94,7 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
         model: result.model || thread.model || null,
         slashCommands: [],
         turnEnd: true,
+        transcriptPath: transcriptPathOf(thread, home),
       };
     }
     return { kind: 'other' };
@@ -156,4 +173,4 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
   return { open, decode, encodeUser, encodeContext, encodeInterrupt };
 }
 
-module.exports = { create, postureFor };
+module.exports = { create };

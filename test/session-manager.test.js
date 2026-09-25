@@ -21623,7 +21623,7 @@ test('t1171: _streamWrite and _onStreamEvent go through the seat codec the adapt
   assert.deepStrictEqual(claudeCalls, []);
 });
 
-function mkCodexStreamSeat({ extraArgs = [] } = {}) {
+function mkCodexStreamSeat({ extraArgs = [], spec = null } = {}) {
   const { streamFor: realStreamFor } = require('../cli-adapters');
   const created = [];
   const inst = {
@@ -21635,7 +21635,7 @@ function mkCodexStreamSeat({ extraArgs = [] } = {}) {
   };
   const mod = { create: (ctx) => { created.push(ctx); return inst; } };
   const h = mkStreamSeatManager({
-    streamFor: (type) => (type === 'codex' ? realStreamFor('codex') : null),
+    streamFor: (type) => (type === 'codex' ? (spec || realStreamFor('codex')) : null),
     loadStreamCodec: () => mod,
     extraDeps: (root) => ({
       mergeCodexInstructions: require('../argv-merge').mergeCodexInstructions,
@@ -21727,15 +21727,28 @@ test('t1172: encodeUser returning null writes nothing and starts no turn', async
   assert.strictEqual(s.streamBusy, false);
 });
 
-test('t1172: _repointStreamTranscript on a non-claude stream spec writes no transcript link', async (t) => {
-  const c = mkCodexStreamSeat();
+test('t1172: _repointStreamTranscript on a stream spec with a null transcriptRepoint writes no transcript link', async (t) => {
+  const { streamFor: realStreamFor } = require('../cli-adapters');
+  const c = mkCodexStreamSeat({ spec: { ...realStreamFor('codex'), transcriptRepoint: null } });
   t.after(() => c.h.stopAll());
   await c.create('cx6');
   const s = c.h.m.sessions.get('cx6');
   c.h.line('cx6', { rec: { kind: 'init', sessionId: 'thr-6', turnEnd: true } });
-  c.h.m._repointStreamTranscript(s, 'thr-7');
+  c.h.m._repointStreamTranscript(s, 'thr-7', '/abs/rollout-thr-7.jsonl');
   const link = require('../clodex-paths').pathFor(c.h.root, 'cx6', 'transcript');
   assert.throws(() => require('node:fs').lstatSync(link), { code: 'ENOENT' });
+});
+
+test('t1172: an init record with transcriptPath links run/<name>/transcript.jsonl to it, and a clear repoints it', async (t) => {
+  const c = mkCodexStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('cx8');
+  const fs = require('node:fs');
+  const link = require('../clodex-paths').pathFor(c.h.root, 'cx8', 'transcript');
+  c.h.line('cx8', { rec: { kind: 'init', sessionId: 'rollout-a', turnEnd: true, transcriptPath: '/abs/rollout-a.jsonl' } });
+  assert.strictEqual(fs.readlinkSync(link), '/abs/rollout-a.jsonl');
+  c.h.line('cx8', { rec: { kind: 'init', sessionId: 'rollout-b', turnEnd: true, transcriptPath: '/abs/rollout-b.jsonl' } });
+  assert.strictEqual(fs.readlinkSync(link), '/abs/rollout-b.jsonl');
 });
 
 test('t1172: on a codex stream seat the codec\'s compact record fires the compact continuation', async (t) => {
