@@ -91,11 +91,11 @@ test('a resume opens with session/resume on the id; fork warns once and resumes;
   assert.deepStrictEqual(codec.decode({ ...res, id: o2[2].id }), { kind: 'init', sessionId: sent.params.sessionId, model: res.result.session.modelId, slashCommands: [], turnEnd: true, transcriptPath: homePath(res.result.session) });
 });
 
-test('the resume_reconcile cancel before the resume ack is a result, and the ack still ends in init', () => {
+test('the resume_reconcile cancel before the resume ack is other, so nothing drains before the session exists; the ack ends in init', () => {
   const [sent] = wire('resume-reconcile', 'out');
   const { codec, open } = opened({ resumeId: sent.params.sessionId });
   const [reconcile, ack] = wire('resume-reconcile');
-  assert.deepStrictEqual(codec.decode(reconcile), RESULT(false));
+  assert.deepStrictEqual(codec.decode(reconcile), { kind: 'other' });
   assert.strictEqual(codec.decode({ ...ack, id: open[2].id }).kind, 'init');
 });
 
@@ -151,6 +151,14 @@ test('item/completed compaction decodes to compact with the token counts and tur
   assert.deepStrictEqual(codec.decode({ ...ack, id: obj.id }), { kind: 'other' });
   assert.deepStrictEqual(codec.decode(itemStarted), { kind: 'other' });
   assert.deepStrictEqual(codec.decode(itemDone), { kind: 'compact', pre: itemDone.params.item.tokensBefore, post: itemDone.params.item.tokensAfter, turnEnd: true });
+});
+
+test('a compaction inside a running turn does not end the turn; after turn/completed it does', () => {
+  const { codec } = running();
+  const itemDone = wire('compact').find((m) => m.method === 'item/completed');
+  assert.strictEqual(codec.decode(itemDone).turnEnd, false);
+  codec.decode(wire('turn').find((m) => m.method === 'turn/completed'));
+  assert.strictEqual(codec.decode(itemDone).turnEnd, true);
 });
 
 test('encodeContext clear is a fresh session/start in the same approval mode whose result repoints to the new id and path', () => {

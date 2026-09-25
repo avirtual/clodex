@@ -199,8 +199,7 @@ bundle), whose packaged form is the Docker image under
 - **stream-codec-muse.js** — `create(ctx)` returns a stateful codec for
   `muse serve` JSON-RPC 2.0: UUIDv7 `commandId`s on every command, the `open()`
   handshake (initialize, session/start with the posture's approval mode, or
-  session/resume), `decode` into the claude record kinds (a `compact` carries
-  `turnEnd`), approval notifications aborted through `send`, `encodeUser`
+  session/resume), `decode` into the claude record kinds, approval notifications aborted through `send`, `encodeUser`
   (turn/start, text and image parts), `encodeContext` (session/compact, a fresh
   session/start) and `encodeInterrupt` (turn/interrupt).
 - **stream-reap.js** — the reap-before-resume decision (`kill` / `recycled` /

@@ -116,6 +116,7 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
     const params = obj.params || {};
     switch (obj.method) {
       case 'turn/completed':
+        if (!sessionId) return { kind: 'other' };
         if (!params.turnId || params.turnId === turnId) turnId = null;
         return { kind: 'result', durationMs: null, costUsd: null, isError: params.terminal === 'failed' };
       case 'item/completed': {
@@ -125,7 +126,7 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
           kind: 'compact',
           pre: typeof item.tokensBefore === 'number' ? item.tokensBefore : null,
           post: typeof item.tokensAfter === 'number' ? item.tokensAfter : null,
-          turnEnd: true,
+          turnEnd: !turnId,
         };
       }
       case 'approval/requested':
