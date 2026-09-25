@@ -425,6 +425,7 @@ function claudeShaped(rec) {
   const timestamp = stampOf(rec);
   const spoken = reader.id !== 'codex' || rec.type === 'response_item';
   const out = [];
+  if (c.command) out.push({ type: 'system', subtype: 'local_command', uuid: id, timestamp, content: `<command-name>${c.command}</command-name>` });
   if (spoken && c.prompt) out.push({ type: 'user', uuid: id, timestamp, message: { role: 'user', content: c.prompt } });
   if (spoken && c.isReply && c.text) out.push({ type: 'assistant', uuid: c.rid || id, timestamp, message: { role: 'assistant', content: [{ type: 'text', text: c.text }] } });
   if (c.turnEnd) {
