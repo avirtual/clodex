@@ -1518,8 +1518,74 @@ function createStreamSeatPane(name, wrapperEl) {
   outboxEl.className = 'seat-outbox';
   outboxEl.hidden = true;
   wrapperEl.appendChild(outboxEl);
+  const permEl = document.createElement('div');
+  permEl.className = 'seat-permissions';
+  permEl.hidden = true;
+  wrapperEl.appendChild(permEl);
   wrapperEl.appendChild(attachEl);
   wrapperEl.appendChild(composer);
+  const SEAT_PERMISSION_INPUT_MAX = 600;
+  const renderPermissions = (items) => {
+    permEl.replaceChildren();
+    permEl.hidden = items.length === 0;
+    for (const item of items) {
+      const card = document.createElement('div');
+      card.className = 'seat-permission';
+      const head = document.createElement('div');
+      head.className = 'seat-permission-head';
+      const title = document.createElement('strong');
+      title.textContent = String(item.displayName || item.toolName || '');
+      head.appendChild(title);
+      if (item.description) {
+        const desc = document.createElement('span');
+        desc.className = 'seat-permission-desc';
+        desc.textContent = String(item.description);
+        head.appendChild(desc);
+      }
+      card.appendChild(head);
+      let previewText = item.preview == null ? null : String(item.preview);
+      if (previewText == null && item.input != null) {
+        const json = JSON.stringify(item.input, null, 2) || '';
+        previewText = json.length > SEAT_PERMISSION_INPUT_MAX ? `${json.slice(0, SEAT_PERMISSION_INPUT_MAX)}…` : json;
+      }
+      if (previewText) {
+        const pre = document.createElement('pre');
+        pre.className = 'seat-permission-preview';
+        pre.textContent = previewText;
+        card.appendChild(pre);
+      }
+      const errEl = document.createElement('div');
+      errEl.className = 'seat-permission-error';
+      errEl.hidden = true;
+      const row = document.createElement('div');
+      row.className = 'seat-permission-choices';
+      const buttons = [];
+      for (const choice of Array.isArray(item.choices) ? item.choices : []) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'seat-permission-choice';
+        btn.dataset.kind = String(choice.kind || '');
+        btn.textContent = String(choice.label || choice.id || '');
+        btn.addEventListener('click', () => {
+          for (const b of buttons) b.disabled = true;
+          errEl.hidden = true;
+          const fail = (msg) => {
+            for (const b of buttons) b.disabled = false;
+            errEl.textContent = msg;
+            errEl.hidden = false;
+          };
+          Promise.resolve(window.api.seatPermission(name, item.id, choice.id)).then((res) => {
+            if (res && res.ok === false) fail(res.error || 'unknown error');
+          }).catch((err) => fail(err && err.message ? err.message : String(err)));
+        });
+        buttons.push(btn);
+        row.appendChild(btn);
+      }
+      card.appendChild(row);
+      card.appendChild(errEl);
+      permEl.appendChild(card);
+    }
+  };
   const renderOutbox = (items) => {
     outboxEl.replaceChildren();
     outboxEl.hidden = items.length === 0;
@@ -1617,6 +1683,7 @@ function createStreamSeatPane(name, wrapperEl) {
       if (!res.ok && !Array.isArray(res.outbox)) return;
       rev = res.rev;
       renderOutbox(Array.isArray(res.outbox) ? res.outbox : []);
+      if (Array.isArray(res.permissions)) renderPermissions(res.permissions);
       if (!res.ok) return;
       renderTranscript(document, paneEl, res.records, {
         seatName: name,
@@ -1710,6 +1777,7 @@ function createStreamSeatPane(name, wrapperEl) {
       composer.removeEventListener('input', onComposerInput);
       transcriptChangedSubs.delete(onChanged);
       paneEl.removeEventListener('scroll', onScroll);
+      permEl.replaceChildren();
     },
   };
 }

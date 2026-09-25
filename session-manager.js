@@ -3099,9 +3099,69 @@ function createSessionManager(deps) {
       if (!delivered) this._emitActivity(s.name, 'idle', true);
     }
 
+    _onStreamPermission(s, rec) {
+      if (!s.streamPermissions) s.streamPermissions = new Map();
+      const ts = Date.now();
+      s.streamPermissions.set(rec.id, { ...rec, ts });
+      s._streamPermRev = (s._streamPermRev || 0) + 1;
+      this._setAttention(s, { kind: 'permission', ts, message: rec.displayName + (rec.preview ? ': ' + rec.preview : '') });
+      this._broadcast('ipc-message', {
+        type: 'attention', from: s.name, to: '',
+        body: `permission: ${s.needsAttention.message || '(no message)'}`,
+      });
+      const owningWin = this.windowForSession(s.name);
+      if (!owningWin || !owningWin.isFocused()) {
+        try {
+          notifyOS({
+            title: `${s.name} needs you`,
+            body: s.needsAttention.message || 'Waiting on a dialog.',
+            silent: false,
+          });
+        } catch {}
+      }
+      this._sendToSession(s.name, 'transcript-changed', s.name);
+    }
+
+    _dropStreamPermissions(s) {
+      const had = !!(s.streamPermissions && s.streamPermissions.size);
+      if (had) {
+        s.streamPermissions.clear();
+        s._streamPermRev = (s._streamPermRev || 0) + 1;
+      }
+      if (s.needsAttention && s.needsAttention.kind === 'permission') this._setAttention(s, null);
+      if (had) this._sendToSession(s.name, 'transcript-changed', s.name);
+    }
+
+    seatPermission(name, id, choiceId) {
+      const s = this.sessions.get(name);
+      if (!s) return { ok: false, error: 'no such session' };
+      if (s.io !== 'stream') return { ok: false, error: 'not a stream seat' };
+      if (!s.streamPermissions || !s.streamPermissions.has(id)) return { ok: false, error: 'no such request' };
+      if (!s.streamCodec || typeof s.streamCodec.encodePermission !== 'function') return { ok: false, error: 'codec cannot answer' };
+      const wire = s.streamCodec.encodePermission(id, choiceId);
+      s.streamPermissions.delete(id);
+      s._streamPermRev = (s._streamPermRev || 0) + 1;
+      if (wire == null) {
+        if (!s.streamPermissions.size && s.needsAttention && s.needsAttention.kind === 'permission') this._setAttention(s, null);
+        this._sendToSession(s.name, 'transcript-changed', s.name);
+        return { ok: false, error: 'request is stale' };
+      }
+      for (const obj of Array.isArray(wire) ? wire : [wire]) this._streamSend(s, obj);
+      if (!s.streamPermissions.size) this._setAttention(s, null);
+      this._sendToSession(s.name, 'transcript-changed', s.name);
+      return { ok: true };
+    }
+
+    seatPermissions(name) {
+      const s = this.sessions.get(name);
+      if (!s || s.io !== 'stream') return null;
+      return { rev: s._streamPermRev || 0, items: s.streamPermissions ? [...s.streamPermissions.values()] : [] };
+    }
+
     _onStreamEvent(s, ev, onSessionId, onProcExit) {
       if (ev.close) {
         this._clearStreamResultHold(s);
+        this._dropStreamPermissions(s);
         const { code, signal } = ev.close;
         if (s.stream && s.stream.stderrTail && code) {
           log.warn('session', `stream ${s.name} stderr: ${s.stream.stderrTail.slice(-400)}`);
@@ -3114,6 +3174,7 @@ function createSessionManager(deps) {
       switch (rec.kind) {
         case 'init':
           this._clearStreamResultHold(s);
+          this._dropStreamPermissions(s);
           if (rec.transcriptPath) this._repointStreamTranscript(s, rec.sessionId, rec.transcriptPath);
           if (rec.sessionId && rec.sessionId !== s.sessionId) onSessionId(rec.sessionId);
           if (s._replayAtInit) {
@@ -3124,6 +3185,7 @@ function createSessionManager(deps) {
           break;
         case 'result':
           this._clearStreamResultHold(s);
+          this._dropStreamPermissions(s);
           if (s._toolDrainedInTurn) {
             s._toolDrainedInTurn = false;
             s._resultHold = setTimeout(() => {
@@ -3140,6 +3202,7 @@ function createSessionManager(deps) {
           if (rec.turnEnd) this._streamTurnEnd(s);
           break;
         case 'reset':
+          this._dropStreamPermissions(s);
           log.info('session', `stream ${s.name}: conversation reset (${rec.newConversationId}); the next init carries the resumable id`);
           break;
         case 'status':
@@ -3147,6 +3210,9 @@ function createSessionManager(deps) {
           break;
         case 'tool-boundary':
           this._onStreamToolBoundary(s);
+          break;
+        case 'permission-request':
+          this._onStreamPermission(s, rec);
           break;
         default:
           break;
@@ -5299,7 +5365,7 @@ function createSessionManager(deps) {
         s._bootNudgeTimer = null;
       }
       if (state !== 'idle') this._touchTicketActivity(name);
-      if (s && state !== 'idle' && s.needsAttention) this._setAttention(s, null);
+      if (s && state !== 'idle' && s.needsAttention && !(s.streamPermissions && s.streamPermissions.size)) this._setAttention(s, null);
       if (s && state === 'idle') { this._maybeFlushInjectQueue(s); this._drainPendingAtIdle(s); }
       // `notify` is TURN-END, not merely idle, and the renderer needs that
       // distinction: two emitters produce `idle` MID-TURN — the wire tracker's
