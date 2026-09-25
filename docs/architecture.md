@@ -1465,6 +1465,8 @@ and are not, which is why the judgement worth testing is pushed down here.
   intent reply glyph). Pure.
 - **drop-paths.js** — the string typed at the prompt when files are dropped on a
   session: each path shell-quoted, space-joined, one trailing space.
+- **composer-keys.js** — `composerReadlineEdit`: Ctrl-U/K/W/A/E on the stream
+  seat composer as the new value and cursor, per line of a multi-line draft. Pure.
 - **prompt-echo.js** — recolour the CLI's submitted-prompt echo on the wire,
   before `terminal.write`. The echo is truecolor SGR, which xterm renders as
   inline styles that `options.theme` cannot reach, so the bytes are rewritten
