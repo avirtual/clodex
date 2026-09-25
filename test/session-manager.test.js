@@ -21697,7 +21697,7 @@ test('t1171: _streamWrite and _onStreamEvent go through the seat codec the adapt
   assert.deepStrictEqual(claudeCalls, []);
 });
 
-function mkCodexStreamSeat({ extraArgs = [], spec = null } = {}) {
+function mkCodexStreamSeat({ extraArgs = [], spec = null, deps = {} } = {}) {
   const { streamFor: realStreamFor } = require('../cli-adapters');
   const created = [];
   const inst = {
@@ -21715,6 +21715,7 @@ function mkCodexStreamSeat({ extraArgs = [], spec = null } = {}) {
       mergeCodexInstructions: require('../argv-merge').mergeCodexInstructions,
       isInjectInFlight: require('../inject-queue').isInjectInFlight,
       setupCodexHook: (n) => require('node:fs').mkdirSync(require('../clodex-paths').runDirFor(root, n), { recursive: true }),
+      ...deps,
     }),
   });
   const os = require('node:os');
@@ -21744,6 +21745,63 @@ test('t1172: a codex stream seat builds the codec instance from ctx and writes o
   assert.strictEqual(s.sessionId, 'thr-1');
   assert.deepStrictEqual(c.sent().slice(3), [{ method: 'turn/start', text: 'hello' }]);
   assert.strictEqual(s.streamBusy, true);
+});
+
+function mkStalledInitSeat(t) {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const c = mkCodexStreamSeat({ deps: { streamInitTimeoutMs: 5000 } });
+  t.after(() => c.h.stopAll());
+  return c;
+}
+
+test('t1202: a stream seat whose CLI never answers the opening handshake is flagged after the init timeout, outbox kept, nothing resent', async (t) => {
+  const c = mkStalledInitSeat(t);
+  await c.create('si1');
+  const s = c.h.m.sessions.get('si1');
+  t.after(() => c.clearTimers(s));
+  s.stream.stderrTail = 'x'.repeat(100) + 'login failed: sandbox denied';
+  assert.deepStrictEqual(c.h.m.seatSend('si1', 'hello'), { ok: true, queued: 1 });
+  const attn = [];
+  c.h.m._sendToSession = (name, ch, n, a) => { if (ch === 'session-attention') attn.push(a); };
+  t.mock.timers.tick(4999);
+  assert.strictEqual(s.streamBusy, true);
+  t.mock.timers.tick(1);
+  const warns = c.h.logs.filter(([lvl, , msg]) => lvl === 'warn' && /never initialized/.test(msg)).map(([, tag, msg]) => [tag, msg]);
+  assert.deepStrictEqual(warns, [['session', `stream si1 never initialized after 5000ms; stderr: ${s.stream.stderrTail.slice(-400)}`]]);
+  assert.strictEqual(s.streamBusy, false);
+  assert.deepStrictEqual(s.outbox.map((q) => q.text), ['hello']);
+  assert.deepStrictEqual(c.sent(), c.inst.open(), 'the opening frames are not resent');
+  assert.strictEqual(s._streamInitTimer, null);
+  assert.deepStrictEqual(attn.map((a) => a && a.kind), ['other']);
+  assert.notStrictEqual(s.activityState, 'idle');
+  c.h.line('si1', { rec: { kind: 'init', sessionId: 'thr-late', turnEnd: true } });
+  assert.deepStrictEqual(c.sent().slice(3), [{ method: 'turn/start', text: 'hello' }], 'a late init still finds the parked item');
+  assert.strictEqual(s.needsAttention, null);
+});
+
+test('t1202: the init watchdog is cleared when init arrives before it fires', async (t) => {
+  const c = mkStalledInitSeat(t);
+  await c.create('si2');
+  const s = c.h.m.sessions.get('si2');
+  t.after(() => c.clearTimers(s));
+  assert.ok(s._streamInitTimer);
+  c.h.line('si2', { rec: { kind: 'init', sessionId: 'thr-2', turnEnd: true } });
+  assert.strictEqual(s._streamInitTimer, null);
+  t.mock.timers.tick(10000);
+  assert.deepStrictEqual(c.h.logs.filter(([, , msg]) => /never initialized/.test(msg)), []);
+  assert.strictEqual(s.needsAttention, null);
+});
+
+test('t1202: the init watchdog is cleared when the process exits before it fires', async (t) => {
+  const c = mkStalledInitSeat(t);
+  await c.create('si3');
+  const s = c.h.m.sessions.get('si3');
+  t.after(() => c.clearTimers(s));
+  assert.ok(s._streamInitTimer);
+  c.h.handles[0].opts.onClose(0, 'SIGTERM');
+  assert.strictEqual(s._streamInitTimer, null);
+  t.mock.timers.tick(10000);
+  assert.deepStrictEqual(c.h.logs.filter(([, , msg]) => /never initialized/.test(msg)), []);
 });
 
 test('t1172: a codex stream argv is app-server with the refused TUI and posture flags stripped; bypass and model ride ctx', async (t) => {

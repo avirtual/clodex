@@ -260,6 +260,7 @@ const STREAM_TOOL_DRAIN_MIN_MS = 2000;
 const STREAM_RESULT_HOLD_MS = 400;
 const STREAM_ARM_WAIT_MS = 1000;
 const STREAM_HINT_POLL_MS = 50;
+const STREAM_INIT_TIMEOUT_MS = 60 * 1000;
 const PENDING_DRAIN_KEY = '\0pending-drain';
 // ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
 // here: they moved with the spec-delivery verbs, and tests import them from this
@@ -832,6 +833,7 @@ function createSessionManager(deps) {
   const BOOT_NUDGE_QUIET_MS = Number.isFinite(deps.bootNudgeQuietMs) ? deps.bootNudgeQuietMs : 1000;
   const BOOT_REPLAY_POLL_MS = Number.isFinite(deps.bootReplayPollMs) ? deps.bootReplayPollMs : 250;
   const ROSTER_MAX_WAIT_MS = deps.rosterMaxWaitMs || 10000;
+  const STREAM_INIT_MS = Number.isFinite(deps.streamInitTimeoutMs) ? deps.streamInitTimeoutMs : STREAM_INIT_TIMEOUT_MS;
 
   // How long an INJECTED unit has to produce a turn edge before the write is
   // treated as lost. Not a stall threshold: it measures the FIRST turn after a
@@ -2763,6 +2765,7 @@ function createSessionManager(deps) {
           session.streamBusy = true;
           this._emitActivity(name, 'thinking', false);
           for (const obj of opening) this._streamSend(session, obj);
+          this._armStreamInitWatchdog(session);
         }
         streamRoute = (ev) => this._onStreamEvent(session, ev, onSessionId, onProcExit);
         for (const ev of streamEarly.splice(0)) streamRoute(ev);
@@ -3079,6 +3082,29 @@ function createSessionManager(deps) {
       return { ok: true };
     }
 
+    _armStreamInitWatchdog(s) {
+      this._clearStreamInitWatchdog(s);
+      const ms = STREAM_INIT_MS;
+      s._streamInitTimer = setTimeout(() => {
+        s._streamInitTimer = null;
+        if (s._dead) return;
+        const tail = s.stream && s.stream.stderrTail ? s.stream.stderrTail.slice(-400) : '';
+        log.warn('session', `stream ${s.name} never initialized after ${ms}ms; stderr: ${tail}`);
+        s.streamBusy = false;
+        s._streamInitStalled = true;
+        const message = `never answered the opening handshake after ${ms}ms`;
+        this._setAttention(s, { kind: 'other', ts: Date.now(), message });
+        this._broadcast('ipc-message', { type: 'attention', from: s.name, to: '', body: `other: ${message}` });
+      }, ms);
+      if (typeof s._streamInitTimer.unref === 'function') s._streamInitTimer.unref();
+    }
+
+    _clearStreamInitWatchdog(s) {
+      if (!s._streamInitTimer) return;
+      clearTimeout(s._streamInitTimer);
+      s._streamInitTimer = null;
+    }
+
     _clearStreamResultHold(s) {
       if (!s._resultHold) return;
       clearTimeout(s._resultHold);
@@ -3086,6 +3112,7 @@ function createSessionManager(deps) {
     }
 
     _streamTurnEnd(s) {
+      this._clearStreamInitWatchdog(s);
       s.streamBusy = false;
       const w = s.outbox.findIndex((q) => q.wire);
       const queued = s.outbox.splice(0, w === 0 ? 1 : (w > 0 ? w : s.outbox.length));
@@ -3162,6 +3189,7 @@ function createSessionManager(deps) {
     _onStreamEvent(s, ev, onSessionId, onProcExit) {
       if (ev.close) {
         this._clearStreamResultHold(s);
+        this._clearStreamInitWatchdog(s);
         this._dropStreamPermissions(s);
         const { code, signal } = ev.close;
         if (s.stream && s.stream.stderrTail && code) {
@@ -3175,6 +3203,11 @@ function createSessionManager(deps) {
       switch (rec.kind) {
         case 'init':
           this._clearStreamResultHold(s);
+          this._clearStreamInitWatchdog(s);
+          if (s._streamInitStalled) {
+            s._streamInitStalled = false;
+            if (s.needsAttention && s.needsAttention.kind === 'other') this._setAttention(s, null);
+          }
           this._dropStreamPermissions(s);
           if (rec.transcriptPath) this._repointStreamTranscript(s, rec.sessionId, rec.transcriptPath);
           if (rec.sessionId && rec.sessionId !== s.sessionId) onSessionId(rec.sessionId);
