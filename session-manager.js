@@ -1631,14 +1631,6 @@ function createSessionManager(deps) {
       const streamSpec = streamIo ? streamFor(type) : null;
       if (streamIo && !streamSpec) throw new Error(`stream transport is not supported for ${type}`);
       const streamCtx = streamIo ? streamCodecCtx(type, extraArgs) : null;
-      let streamCodec = null;
-      if (streamSpec) {
-        const mod = loadStreamCodec(streamSpec.codec);
-        const makeCodec = mod.create;
-        streamCodec = typeof makeCodec === 'function'
-          ? makeCodec({ cwd: cwd || process.env.HOME || os.homedir(), resumeId, fork, ...streamCtx, log })
-          : mod;
-      }
       if (streamIo && resumeId) {
         const prior = getPersistence().get(name);
         const record = prior && prior.streamPid ? prior.streamPid : null;
@@ -1677,6 +1669,15 @@ function createSessionManager(deps) {
         let ok = false;
         try { ok = fs.statSync(accountDir).isDirectory(); } catch { ok = false; }
         if (!ok) throw new Error(`account dir ${accountDir} does not exist`);
+      }
+      let streamCodec = null;
+      if (streamSpec) {
+        const mod = loadStreamCodec(streamSpec.codec);
+        const makeCodec = mod.create;
+        const codecHome = accountDir && accountEnvKey === 'CODEX_HOME' ? { home: path.dirname(accountDir) } : {};
+        streamCodec = typeof makeCodec === 'function'
+          ? makeCodec({ cwd: cwd || process.env.HOME || os.homedir(), resumeId, fork, ...streamCtx, ...codecHome, log })
+          : mod;
       }
       let seatConfigDir = null;
       let museSid = null;
@@ -2009,7 +2010,7 @@ function createSessionManager(deps) {
             }
           } catch {}
           if (streamIo) {
-            args.unshift(...streamSpec.argv({ resumeId, sessionId: randomUUID(), fork }));
+            args.unshift(...streamSpec.argv({ resumeId, sessionId: randomUUID(), fork, ...streamCtx }));
           } else if (resumeId && !args.includes('--resume') && !args.includes('-r')) {
             args.push('--resume', resumeId);
             if (fork && !args.includes('--fork-session')) args.push('--fork-session');
@@ -2114,7 +2115,7 @@ function createSessionManager(deps) {
             args.push('-c', `openai_base_url=${proxyBase}/agent/${proxyAgent || name}/openai/v1`);
           }
           if (streamIo) {
-            args.unshift(...streamSpec.argv({ resumeId, sessionId: null, fork }));
+            args.unshift(...streamSpec.argv({ resumeId, sessionId: null, fork, ...streamCtx }));
           } else if (resumeId) {
             const uuidMatch = resumeId.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
             const uuid = uuidMatch ? uuidMatch[1] : resumeId;
@@ -2149,7 +2150,12 @@ function createSessionManager(deps) {
           const museBaseUrl = museRouted ? ['--base-url', `${proxyBase}/agent/${proxyAgent || name}/meta`] : [];
           const museEnv = { ...mergedEnv, CLODEX_HOME: REGISTRY_DIR, MUSE_NO_AUTO_UPDATE: '1' };
           museData = museDataHome({ env: museEnv, os, path });
-          if (museSid) {
+          if (streamIo) {
+            ensureDir(runDirFor(REGISTRY_DIR, name));
+            if (museBaseUrl.length) warnings.push('muse serve takes no --base-url: this stream seat talks to Meta directly, unrouted.');
+            if (extraArgs.length) log.info('session', `stream ${name}: muse serve takes no TUI flags, dropped ${extraArgs.join(' ')}; posture and model ride the codec`);
+            args = streamSpec.argv({ resumeId, sessionId: museSid, fork, ...streamCtx });
+          } else if (museSid) {
             const museTranscript = findMuseTranscript({ fs, path }, museData, museSid);
             if (!museTranscript) {
               abandonHint();
@@ -3129,6 +3135,7 @@ function createSessionManager(deps) {
         case 'compact':
           if (typeof s.streamCodec.encodeContext === 'function') this._fireCompactContinuation(s);
           else this._onCompactEnd(s, 'done');
+          if (rec.turnEnd) this._streamTurnEnd(s);
           break;
         case 'reset':
           log.info('session', `stream ${s.name}: conversation reset (${rec.newConversationId}); the next init carries the resumable id`);
@@ -7456,12 +7463,15 @@ function createSessionManager(deps) {
       }
       const map = SessionManager.CONTEXT_COMMANDS[session.type];
       const wireCtx = session.io === 'stream' && session.streamCodec && typeof session.streamCodec.encodeContext === 'function';
-      const cmd = wireCtx ? session.streamCodec.encodeContext(sub) : (map && map[sub]);
-      if (!cmd) {
+      const unsupported = () => {
         console.warn(`[agent:context ${sub}] from ${session.name}: unsupported for type ${session.type}`);
         this._injectText(session,
           `[agent:context] unknown or unsupported sub-command "${sub}" for a ${session.type} session (use compact|clear|reload)`,
           { parkable: true });
+      };
+      const encode = () => (wireCtx ? session.streamCodec.encodeContext(sub) : (map && map[sub]));
+      if (wireCtx ? (sub !== 'compact' && sub !== 'clear') : !(map && map[sub])) {
+        unsupported();
         return;
       }
       if (sub === 'compact' && isInjectInFlight({ pending: session._compactPending, guard: session._compactGuard, continuation: session._compactContinuation })) {
@@ -7473,6 +7483,11 @@ function createSessionManager(deps) {
         return;
       }
       if (sub === 'compact') {
+        const cmd = encode();
+        if (!cmd) {
+          unsupported();
+          return;
+        }
         const cont = (body && body.trim()) ? body.trim() : DEFAULT_COMPACT_CONTINUATION;
         if (session.intentSource === 'wire') {
           session._compactPending = { cmd, continuation: cont };
@@ -7507,6 +7522,11 @@ function createSessionManager(deps) {
           type: 'context', from: name, to: name, body: 'context clear → cold respawn (prompt regenerated)',
         });
         this._shadowLog({ type: 'prompt-regen-at-clear', agent: name, bytes: regen.bytes });
+        return;
+      }
+      const cmd = encode();
+      if (!cmd) {
+        unsupported();
         return;
       }
       // Non-compact context command (clear): inject immediately — no guard, no

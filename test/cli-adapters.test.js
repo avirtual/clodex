@@ -136,15 +136,15 @@ test('m2: the muse row — Meta\'s CLI, XDG overlay bootstrap, user-scope AGENTS
     instructions: 'user-agents-md',
     transcript: { reader: 'muse', link: 'clodex' },
     caps: { park: false, transcript: true, warmth: false },
-    stream: null,
+    stream: { codec: 'stream-codec-muse', argv: ADAPTERS.muse.stream.argv, toolBoundary: 'hook', transcriptRepoint: 'record' },
     ui: {
       injectSkills: true, skillRoster: true, plugins: true, agents: false, tools: false,
-      strip: false, autoCompact: false, noWire: false, accounts: false, streamIo: false,
+      strip: false, autoCompact: false, noWire: false, accounts: false, streamIo: true,
     },
   });
   assert.deepStrictEqual(capsFor('muse'), {
     injectSkills: true, skillRoster: true, plugins: true, agents: false, tools: false,
-    strip: false, autoCompact: false, noWire: false, accounts: false, streamIo: false,
+    strip: false, autoCompact: false, noWire: false, accounts: false, streamIo: true,
   });
   assert.deepStrictEqual(stripModelArgs('muse', ['--model', 'x', 'y']), ['y']);
   assert.strictEqual(resolveModelId('muse', 'opus'), 'opus', 'no aliases: an alias word is not expanded, it passes through as an id');
@@ -387,17 +387,32 @@ test('t1172: streamFor(codex) runs app-server over stdio; resume rides the wire,
   assert.strictEqual(capsFor('codex').streamIo, true);
 });
 
-test('t1171: streamFor is null for muse and unknown types', () => {
-  assert.strictEqual(streamFor('muse'), null);
+test('t1174: streamFor(muse) runs muse serve with its sandbox posture per host; resume rides the wire, not the argv', () => {
+  const block = streamFor('muse');
+  assert.deepStrictEqual({ ...block, argv: undefined }, { codec: 'stream-codec-muse', argv: undefined, toolBoundary: 'hook', transcriptRepoint: 'record' });
+  const rows = [
+    [{ bypass: false, readOnly: false }, ['serve', '--trust-workspace']],
+    [{ bypass: true, readOnly: false }, ['serve', '--trust-workspace', '--disable-sandbox']],
+    [{ bypass: false, readOnly: true }, ['serve', '--trust-workspace', '--disable-write', '--disable-shell']],
+    [{ bypass: true, readOnly: true }, ['serve', '--trust-workspace', '--disable-sandbox']],
+  ];
+  for (const [posture, want] of rows) {
+    assert.deepStrictEqual(block.argv({ resumeId: 'R', sessionId: 'S', fork: true, model: 'm', ...posture }), want, JSON.stringify(posture));
+  }
+  assert.deepStrictEqual(block.argv(), ['serve', '--trust-workspace']);
+  assert.strictEqual(capsFor('muse').streamIo, true);
+});
+
+test('t1171: streamFor is null for unknown types', () => {
   assert.strictEqual(streamFor('bash'), null);
   assert.strictEqual(streamFor(undefined), null);
 });
 
-test('t1171: capsFor(type).streamIo is the renderer gate, true for claude and codex', () => {
+test('t1171: capsFor(type).streamIo is the renderer gate, true for claude, codex and muse', () => {
   const rows = [
     ['claude', true],
     ['codex', true],
-    ['muse', false],
+    ['muse', true],
     ['bash', false],
   ];
   for (const [type, want] of rows) assert.strictEqual(capsFor(type).streamIo, want, type);
