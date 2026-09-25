@@ -629,6 +629,13 @@ test('shadowIntentKey: every discriminator behind `sub` reaches the key', () => 
   }
 });
 
+test('shadowIntentKey: two scratch intents in one reply key by their label — different labels differ, the same label collapses', () => {
+  const key = (l) => shadowIntentKey('me', parseIntent(l));
+  assert.strictEqual(key('[agent:scratch cancel probe2]'), 'me|scratch|cancel/probe2|');
+  assert.strictEqual(key('[agent:scratch cancel probe]'), 'me|scratch|cancel/probe|');
+  assert.strictEqual(key('[agent:scratch cancel probe]'), key('[agent:scratch cancel probe]'));
+});
+
 // The key is a pure function of the parse output, so it must never read
 // anything a plugin's `parse` invented: an intent carrying a field outside the
 // allowlist (a timestamp is the dangerous shape) must key exactly as one
