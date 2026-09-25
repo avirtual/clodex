@@ -445,7 +445,7 @@ test('spaceTriggerAction: a space on an empty prompt of a voice-on seat starts o
     [{}, 'start'],
     [{ recording: true }, 'stop'],
     [{ typedSinceEnter: true }, null],
-    [{ typedSinceEnter: true, recording: true }, null],
+    [{ typedSinceEnter: true, recording: true }, 'stop'],
     [{ voiceOn: false }, null],
     [{ hasSink: false }, null],
     [{ agentSeat: false }, null],

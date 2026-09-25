@@ -17,6 +17,7 @@ blocks a release.
 - Stream seat voice, tap mode: a dictated sentence ending in the trigger word now sends on its own, a second tap dictates again, and every step of a dictation is traced in the log so a misfire can be read instead of guessed.
 - A stream seat's transcript pane no longer clamps your own typed prompt to three lines; long prompts show in full (replies and inbound messages still clamp).
 - Scratch marks: a bare `[agent:scratch cancel]` now drops the most recent open mark, labeled or not, the same way a bare rewind targets it, and several labeled scratch intents in one reply are each answered instead of the second being swallowed as a duplicate.
+- Voice on a terminal seat: the words you dictate now appear in the CLI's input as you speak, the same as on a stream seat; corrections rewrite the end of the line, the trigger word is removed before the message is sent, and typing while a dictation is running leaves the line to you.
 
 - Stream seats: `[agent:scratch begin]` and `[agent:scratch mark]` now open at once on a headless seat instead of waiting two minutes and refusing with a reason that blamed the reply for calling tools.
 - Stream seats: a permission prompt from the CLI (Claude, Codex, Muse) now shows as a card above the composer with the tool, what it wants to do and the CLI's own choices, badges the sidebar like a terminal seat's dialog, and holds incoming dms until it is answered, including on Codex and Muse seats.

@@ -529,46 +529,103 @@ test('seatVoiceRecord passes the engine view it already had, read before the vie
   assert.match(body, /window\.api\.voiceRecord\(name, action, observed\)/);
 });
 
-function ptyFixture(phrase = 'over and out') {
+function ptyFixture(phrase = 'over and out', { failWrites = 0 } = {}) {
   const t = fakeTerminal([`${HEAD}`]);
   const pending = [];
   const timers = { set: (fn) => { pending.push(fn); return pending.length; }, clear: (id) => { pending[id - 1] = null; } };
   const flush = () => { for (let i = 0; i < pending.length; i++) { const fn = pending[i]; pending[i] = null; if (fn) fn(); } };
   const writes = [];
+  const traces = [];
   let origins = 0;
+  let fails = failWrites;
   const sink = createPtyVoiceDraft({
     getConfig: () => ({ enabled: true, phrase }),
-    write: (d) => writes.push(d),
+    write: (d) => { if (fails > 0) { fails--; throw new Error('pty gone'); } writes.push(d); },
     markOrigin: () => { origins++; },
     quietMs: 1200,
     timers,
+    trace: (line) => traces.push(line),
   });
   const mirror = createVoiceMirror(t, { onDraft: (d) => sink.draft(d), onRelease: () => sink.released() });
-  return { t, sink, mirror, writes, flush, origins: () => origins };
+  return { t, sink, mirror, writes, traces, flush, origins: () => origins };
 }
 
-test('a pty seat: the release writes the bracketed text, then Enter, as two writes in that order', () => {
-  const f = ptyFixture();
-  f.mirror.arm();
-  f.t.paint([`${HEAD}first line`]);
-  f.t.paint([`${HEAD}First line. Second line.`]);
-  assert.deepEqual(f.writes, [], 'nothing reaches the pty while he is still speaking');
-  f.mirror.release();
-  f.t.paint([`${HEAD}`]);
-  assert.deepStrictEqual(f.writes, ['\x1b[200~First line. Second line.\x1b[201~', '\r']);
+test('a pty seat: each draft types into the row as he speaks, a correction backspaces only the changed tail', () => {
+  const f = ptyFixture('enter');
+  f.sink.draft('Okay.');
+  f.sink.draft('Okay. so');
+  f.sink.draft('Okay. So there');
+  assert.deepStrictEqual(f.writes, ['Okay.', ' so', '\x7f\x7fSo there']);
+  assert.ok(f.traces.includes('pty row sync -2 +"So there"'), f.traces.join('\n'));
+  assert.equal(f.origins(), 0);
+});
+
+test('a pty seat: the release after a trigger word backspaces the phrase, then Enter alone, no paste', () => {
+  const f = ptyFixture('enter');
+  f.sink.draft('Okay. So there was a problem. Enter.');
+  f.writes.length = 0;
+  f.sink.released();
+  assert.deepStrictEqual(f.writes, ['\x7f\x7f\x7f\x7f\x7f\x7f\x7f', '\r']);
   assert.equal(f.origins(), 1);
   assert.equal(f.sink.pending(), '');
 });
 
-test('a pty seat: the trigger phrase fires the draft without the phrase, once', () => {
+test('a pty seat: the quiet window after a trigger word sends the synced row once', () => {
   const f = ptyFixture();
   f.mirror.arm();
   f.t.paint([`${HEAD}ship it over and out`]);
   f.flush();
-  assert.deepStrictEqual(f.writes, ['\x1b[200~ship it\x1b[201~', '\r']);
+  assert.deepStrictEqual(f.writes, ['ship it over and out', '\x7f'.repeat(13), '\r']);
   f.mirror.release();
   f.t.paint([`${HEAD}`]);
-  assert.equal(f.writes.length, 2, 'the release after a fire sends nothing more');
+  assert.equal(f.writes.length, 3, 'the release after a fire sends nothing more');
+});
+
+test('a pty seat: a release with no trigger word leaves the typed text in the row, unsent', () => {
+  const f = ptyFixture();
+  f.mirror.arm();
+  f.t.paint([`${HEAD}first line`]);
+  f.t.paint([`${HEAD}First line. Second line.`]);
+  f.mirror.release();
+  f.t.paint([`${HEAD}`]);
+  assert.deepStrictEqual(f.writes, ['first line', '\x7f'.repeat(10) + 'First line. Second line.']);
+  assert.equal(f.origins(), 0);
+  f.sink.resetSpan();
+  f.sink.draft('more');
+  assert.deepStrictEqual(f.writes.slice(2), ['more'], 'the next dictation appends without erasing the row');
+});
+
+test('a pty seat: a release with nothing synced still writes the bracketed text, then Enter', () => {
+  const f = ptyFixture('over and out', { failWrites: 1 });
+  assert.throws(() => f.sink.draft('First line. Second line.'), /pty gone/);
+  assert.deepStrictEqual(f.writes, []);
+  f.sink.released();
+  assert.deepStrictEqual(f.writes, ['\x1b[200~First line. Second line.\x1b[201~', '\r']);
+  assert.equal(f.origins(), 1);
+});
+
+test('a pty seat: a keystroke during the dictation freezes the row, later drafts and the send write nothing', () => {
+  const f = ptyFixture('enter');
+  f.sink.draft('Okay.');
+  f.sink.userTyped();
+  f.sink.userTyped();
+  f.sink.draft('Okay. So there');
+  f.sink.draft('Okay. So there. Enter.');
+  f.sink.released();
+  f.flush();
+  assert.deepStrictEqual(f.writes, ['Okay.']);
+  assert.equal(f.origins(), 0);
+  assert.equal(f.traces.filter((l) => l === 'pty row frozen by keystroke').length, 1);
+  f.sink.resetSpan();
+  f.sink.draft('again');
+  assert.deepStrictEqual(f.writes, ['Okay.', 'again']);
+});
+
+test('a pty seat: a non-BMP character in a correction is one backspace', () => {
+  const f = ptyFixture();
+  f.sink.draft('go \u{1F600}');
+  f.sink.draft('go \u{1F44D}');
+  assert.deepStrictEqual(f.writes, ['go \u{1F600}', '\x7f\u{1F44D}']);
 });
 
 test('a pty seat: an empty dictation writes nothing', () => {
@@ -577,11 +634,19 @@ test('a pty seat: an empty dictation writes nothing', () => {
   assert.deepEqual(f.writes, []);
 });
 
-test('a pty seat: a release before the quiet window strips the trigger phrase from what it writes', () => {
+test('a pty seat: a dictation of only the trigger word erases it and sends nothing', () => {
+  const f = ptyFixture();
+  f.sink.draft('over and out');
+  f.sink.released();
+  assert.deepStrictEqual(f.writes, ['over and out', '\x7f'.repeat(12)]);
+  assert.equal(f.origins(), 0);
+});
+
+test('a pty seat: a release before the quiet window strips the trigger phrase from the row before Enter', () => {
   const f = ptyFixture();
   f.mirror.arm();
   f.t.paint([`${HEAD}ship it over and out`]);
   f.mirror.release();
   f.t.paint([`${HEAD}`]);
-  assert.deepStrictEqual(f.writes, ['\x1b[200~ship it\x1b[201~', '\r']);
+  assert.deepStrictEqual(f.writes, ['ship it over and out', '\x7f'.repeat(13), '\r']);
 });
