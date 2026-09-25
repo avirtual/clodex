@@ -3202,8 +3202,11 @@ function createSessionManager(deps) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
       if (s.io === 'stream') {
-        const text = String(data == null ? '' : data).replace(/[\r\n]+$/, '');
-        if (text.trim()) this.seatSend(name, text);
+        if (!s._ptyWriteWarned) {
+          s._ptyWriteWarned = true;
+          const buf = Buffer.from(String(data == null ? '' : data));
+          log.warn('inject', `${name}: stream seat has no pty — write() dropped ${buf.length} bytes: ${JSON.stringify(buf.subarray(0, 40).toString('utf8'))}`);
+        }
         return;
       }
       if (isHumanPtyInput(data)) {

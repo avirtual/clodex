@@ -4519,7 +4519,7 @@ const {
   openHistoryMenu, doHardRestart,
 } = initSessionMenus({
   getActiveSession: () => activeSession, proxyState, sessionList,
-  createTerminal, addSessionToSidebar, switchSession,
+  createTerminal, addSessionToSidebar, switchSession, markSeatIo,
 });
 
 function routeSessionAction(act, anchor) {

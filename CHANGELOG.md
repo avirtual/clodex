@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Stream seat: a fresh restart from the session menu brings the seat back with its composer and transcript pane instead of a blank terminal, and a stray keystroke can no longer be sent to a stream seat as a message.
 - Voice: the hands-free submit hint no longer promises dictation or typed-text triggers, and the unreachable 'Cannot read the screen' recorder state is gone.
 - Muse headless seats route through wirescope like the terminal ones: the proxy base url rides the seat settings, since `muse serve` takes no `--base-url` flag.
 - Muse headless seats: a muse seat with the stream transport runs `muse serve` over stdio, so muse hands can be dispatched headless like claude and codex ones. Approvals are aborted on the wire (a stream seat has nobody to ask); run muse stream seats with bypass, as hands do.

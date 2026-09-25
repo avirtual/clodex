@@ -20921,6 +20921,22 @@ test('stream seat (h): an init line on stdout updates the persisted sessionId', 
   assert.strictEqual(h.m.sessions.get('st3').sessionId, 'sid-new');
 });
 
+test('t1177: a raw write() to a stream seat is dropped, not sent as a message, and warns once per seat', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('st77');
+  const seat = h.handles[0];
+  const warns = () => h.logs.filter((l) => l[0] === 'warn' && l[1] === 'inject' && /write\(\) dropped/.test(l[2]));
+  h.m.write('st77', 'e');
+  assert.deepStrictEqual(seat.sent, []);
+  assert.deepStrictEqual(h.m.sessions.get('st77').outbox, []);
+  assert.strictEqual(warns().length, 1);
+  assert.match(warns()[0][2], /dropped 1 bytes: "e"/);
+  h.m.write('st77', 'hello\r');
+  assert.deepStrictEqual(seat.sent, []);
+  assert.strictEqual(warns().length, 1);
+});
+
 test('stream seat (i): two seatSends while busy become ONE joined message on result', async (t) => {
   const h = mkStreamSeatManager();
   t.after(() => h.stopAll());
