@@ -228,6 +228,70 @@ test('encodePermission sends approval/decide with the chosen choice and the requ
   assert.strictEqual(codec.encodePermission(req.params.approvalId, 'allow_forever'), null, 'a choice the request did not offer');
 });
 
+const replay = (name, choiceId, { skip = () => false } = {}) => {
+  const { codec } = started();
+  const frames = wire(name).filter((m, i) => !skip(m, i));
+  const sent = [];
+  const cards = [];
+  let responses = 0;
+  for (const m of frames) {
+    let msg = m;
+    if (m.id !== undefined) {
+      if (!sent[responses]) continue;
+      msg = { ...m, id: sent[responses].id };
+      responses += 1;
+    }
+    const rec = codec.decode(msg);
+    if (rec.kind === 'permission-request') {
+      cards.push(rec.choices.map((c) => c.label));
+      const out = codec.encodePermission(rec.id, cards.length === 1 ? choiceId : rec.choices[0].id);
+      sent.push(out);
+    }
+    for (const obj of rec.send || []) sent.push(obj);
+  }
+  const approvalId = frames[0].params.approvalId;
+  const after = codec.decode({ jsonrpc: '2.0', method: 'approval/updated', params: { approvalId, currentRequirementId: { approvalId, sourceIndex: 9 } } });
+  return {
+    frames: frames.length,
+    responses,
+    cards,
+    decides: sent.map((o) => [o.method, o.params.choiceId, o.params.requirementId.sourceIndex]),
+    pendingAfter: Boolean(after.send),
+  };
+};
+
+test('a compound command is decided stage by stage on approval/updated until the decide response is terminal', () => {
+  const DECIDE = 'approval/decide';
+  const ECHO = ['Allow once', 'Always allow in this workspace: echo ...', 'Reject'];
+  const CAT = ['Allow once', 'Always allow in this workspace: cat ...', 'Reject'];
+  const rows = [
+    ['single stage, terminal on the first decide', 'approvals', 'allow_once', {}, { frames: 2, responses: 1, cards: [['Allow once', 'Always allow in this workspace: touch ...', 'Reject']], decides: [[DECIDE, 'allow_once', 0]], pendingAfter: false }],
+    ['3 stages allowed once', 'stages-allow', 'allow_once', {}, { frames: 8, responses: 3, cards: [ECHO], decides: [[DECIDE, 'allow_once', 0], [DECIDE, 'allow_once', 1], [DECIDE, 'allow_once', 2]], pendingAfter: false }],
+    ['3 stages denied: abort is terminal on stage 0', 'stages-deny', 'abort', {}, { frames: 3, responses: 1, cards: [ECHO], decides: [[DECIDE, 'abort', 0]], pendingAfter: false }],
+    ['3 stages, no terminal response: the repeated stage-2 update decides nothing, approval/resolved closes it', 'stages-allow', 'allow_once', { skip: (m) => m.id !== undefined && m.result.terminal === true }, { frames: 7, responses: 2, cards: [ECHO], decides: [[DECIDE, 'allow_once', 0], [DECIDE, 'allow_once', 1], [DECIDE, 'allow_once', 2]], pendingAfter: false }],
+    ['3 stages, neither terminal response nor resolved: still pending', 'stages-allow', 'allow_once', { skip: (m) => (m.id !== undefined && m.result.terminal === true) || m.method === 'approval/resolved' }, { frames: 6, responses: 2, cards: [ECHO], decides: [[DECIDE, 'allow_once', 0], [DECIDE, 'allow_once', 1], [DECIDE, 'allow_once', 2]], pendingAfter: true }],
+    ['always-allow reuses the rule while its label holds, and re-presents the card when the stage names another prefix', 'stages-allow', 'allow_local_prefix', {}, { frames: 8, responses: 3, cards: [ECHO, CAT], decides: [[DECIDE, 'allow_local_prefix', 0], [DECIDE, 'allow_local_prefix', 1], [DECIDE, 'allow_once', 2]], pendingAfter: false }],
+  ];
+  const failed = rows.filter(([label, name, choiceId, opts, want]) => {
+    try {
+      assert.deepStrictEqual(replay(name, choiceId, opts), want);
+      return false;
+    } catch {
+      return true;
+    }
+  }).map(([label]) => label);
+  assert.deepStrictEqual(failed, []);
+  assert.strictEqual(rows.length, 6);
+});
+
+test('a second answer while the stages are being walked is stale', () => {
+  const { codec } = started();
+  const [req] = wire('stages-allow');
+  codec.decode(req);
+  assert.strictEqual(codec.encodePermission(req.params.approvalId, 'allow_once').method, 'approval/decide');
+  assert.strictEqual(codec.encodePermission(req.params.approvalId, 'abort'), null);
+});
+
 test('a turn result or an init drops pending approvals without answering them', () => {
   const [req] = wire('approvals');
   const h = running();
