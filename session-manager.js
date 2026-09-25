@@ -3097,7 +3097,6 @@ function createSessionManager(deps) {
         this._streamSent(queued);
       }
       if (!delivered) this._emitActivity(s.name, 'idle', true);
-      if (s._scratchPendingBegin) this._scratchWakePendingBegin(s, s._scratchPendingBegin);
     }
 
     _onStreamPermission(s, rec) {
@@ -7772,8 +7771,7 @@ function createSessionManager(deps) {
 
     _scratchBeginSettled(session, v) {
       if (v.state === 'behind') return false;
-      if (v.state === 'ok' && v.boundary.entry.type !== 'system' && session._flushTurnEnd === true
-        && (session.io !== 'stream' || session.streamBusy)) return false;
+      if (v.state === 'ok' && v.boundary.entry.type !== 'system' && session.io !== 'stream' && session._flushTurnEnd === true) return false;
       return true;
     }
 

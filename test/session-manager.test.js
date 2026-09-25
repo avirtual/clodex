@@ -19333,25 +19333,19 @@ test('scratch begin (stream): an idle stream seat marks on the end_turn record a
   assert.strictEqual(f.s._scratchPendingBegin, undefined, 'and no wait was armed');
 });
 
-test('scratch begin (stream): a begin scanned before the result record waits, and the stream turn end marks it', async () => {
+test('scratch begin (stream): a seat already busy on its next queued turn still marks at the end_turn record at once', () => {
   const f = mkScratch();
   f.s.io = 'stream';
   f.s.streamBusy = true;
-  f.s.outbox = [];
-  f.m._emitActivity = () => {};
   const tape = scratchPrefix(f);
   const asked = tape.prompt('now open an episode');
   tape.conv({ type: 'assistant', message: { role: 'assistant', id: 'msg_b', stop_reason: 'end_turn', content: [{ type: 'text', text: '[agent:scratch begin]' }] } });
   f.write(tape);
   f.s._flushTurnEnd = true;
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
-  await new Promise((r) => setImmediate(r));
-  assert.strictEqual(f.s._scratch, undefined, 'the result record has not arrived yet');
-  assert.ok(f.s._scratchPendingBegin);
-  f.m._streamTurnEnd(f.s);
-  assert.ok(f.s._scratch, 'the turn end settles the parked begin');
+  assert.ok(f.s._scratch, 'marked without waiting on streamBusy');
   assert.strictEqual(f.s._scratch.leafUuid, asked);
-  assert.strictEqual(f.s._scratchPendingBegin, null);
+  assert.strictEqual(f.s._scratchPendingBegin, undefined, 'and no wait was armed');
 });
 
 test('scratch cancel: drops the mark, cuts nothing, and says so', () => {
