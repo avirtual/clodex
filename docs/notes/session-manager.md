@@ -118,3 +118,14 @@ the engine would reach them.
 ## _handleShoutIntent
 
 The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `archive()`: archive kills the pty, and the renderer rebuilds a row as archived only for a name already stamped into `archivingSessions`. Sent late or not at all, the row is REMOVED. Precedent: `team-tickets.js` retire.
+
+## CODEX_LINK_DEADLINE_MS
+
+Measured on Codex 0.157.0 (`--no-daemon --no-alt-screen` TUI, 2026-09-25): a fresh
+seat writes NO rollout until its first user prompt — nothing after 10 s idle; the file
+(`sessions/<Y>/<M>/<D>/rollout-<start ts>-<id>.jsonl`, date and ts of TUI start, local
+time) is born when the first prompt is submitted. So a seat not prompted within the
+deadline is never linked. `session_meta.payload.cwd` is the realpath of the spawn cwd
+(`/tmp/x` → `/private/tmp/x`). `codex resume <id>` mints no new file: it appends to the
+existing rollout, whose first line keeps the same `session_meta` id, so a resumed seat
+links by id at once and needs no repoint.

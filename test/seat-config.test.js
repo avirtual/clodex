@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
-  uuidv7, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, museRegistryFor, linkTranscript, deepMerge,
+  uuidv7, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, findCodexRollout, museRegistryFor, linkTranscript, deepMerge,
 } = require('../seat-config');
 
 const deps = { fs, path, os };
@@ -252,4 +252,85 @@ test('linkTranscript: writes the symlink through a tmp+rename and repoints an ex
   linkTranscript(deps, link, '/b/session.jsonl');
   assert.strictEqual(fs.readlinkSync(link), '/b/session.jsonl');
   assert.deepStrictEqual(fs.readdirSync(root), ['transcript.jsonl'], 'no tmp link left behind');
+});
+
+function fakeCodexFs(files, realpaths = {}) {
+  const dirs = new Map();
+  for (const p of Object.keys(files)) {
+    let child = p;
+    for (let dir = path.dirname(p); child !== dir; child = dir, dir = path.dirname(dir)) {
+      if (!dirs.has(dir)) dirs.set(dir, new Set());
+      dirs.get(dir).add(path.basename(child));
+    }
+  }
+  const enoent = (p) => Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+  return {
+    readdirSync: (d) => { if (!dirs.has(d)) throw enoent(d); return [...dirs.get(d)].sort(); },
+    statSync: (p) => {
+      if (files[p]) return { isFile: () => true, birthtimeMs: files[p].born, mtimeMs: files[p].born };
+      if (dirs.has(p)) return { isFile: () => false, birthtimeMs: 0, mtimeMs: 0 };
+      throw enoent(p);
+    },
+    readFileSync: (p) => { if (!files[p]) throw enoent(p); return files[p].text; },
+    realpathSync: (p) => realpaths[p] || p,
+  };
+}
+
+const CX_SINCE = Date.parse('2026-09-25T20:03:24.000Z');
+const CX_ID = '01a0da2a-6469-7632-88a4-67b6ba1a041a';
+const cxMeta = (cwd) => `${JSON.stringify({ type: 'session_meta', payload: { id: 'x', cwd } })}\n{"type":"event_msg"}\n`;
+
+test('t1205: findCodexRollout finds a known id by file name alone, across date dirs, whatever its birth or cwd', () => {
+  const f = {
+    '/cx/sessions/2026/09/01/rollout-2026-09-01T10-00-00-01a0da2a-6469-7632-88a4-67b6ba1a041a.jsonl': { born: CX_SINCE - 86400000 * 24, text: cxMeta('/elsewhere') },
+    '/cx/sessions/2026/09/25/rollout-2026-09-25T23-03-26-01a0ffff-0000-7000-8000-000000000000.jsonl': { born: CX_SINCE + 5000, text: cxMeta('/w') },
+  };
+  const d = { fs: fakeCodexFs(f), path };
+  assert.strictEqual(findCodexRollout(d, '/cx', { sessionId: CX_ID, cwd: '/w', sinceMs: CX_SINCE, excludePaths: [] }),
+    '/cx/sessions/2026/09/01/rollout-2026-09-01T10-00-00-01a0da2a-6469-7632-88a4-67b6ba1a041a.jsonl');
+  assert.strictEqual(findCodexRollout(d, '/cx', { sessionId: '01a0dead-0000-7000-8000-000000000000', cwd: '/w', sinceMs: CX_SINCE, excludePaths: [] }), null);
+  assert.strictEqual(findCodexRollout({ fs: fakeCodexFs({}), path }, '/cx', { sessionId: CX_ID, cwd: '/w', sinceMs: CX_SINCE, excludePaths: [] }), null);
+});
+
+test('t1205: findCodexRollout with no id picks the newest rollout born after spawn whose session_meta cwd is the seat cwd or its realpath', () => {
+  const f = {
+    '/cx/sessions/2026/09/25/rollout-2026-09-25T23-03-26-01a0da2a-0000-7000-8000-000000000001.jsonl': { born: CX_SINCE + 1000, text: cxMeta('/private/tmp/w') },
+    '/cx/sessions/2026/09/25/rollout-2026-09-25T23-03-40-01a0da2a-0000-7000-8000-000000000002.jsonl': { born: CX_SINCE + 9000, text: cxMeta('/private/tmp/w') },
+    '/cx/sessions/2026/09/25/rollout-2026-09-25T23-03-50-01a0da2a-0000-7000-8000-000000000003.jsonl': { born: CX_SINCE + 20000, text: cxMeta('/other') },
+    '/cx/sessions/2026/09/25/rollout-2026-09-25T23-03-55-01a0da2a-0000-7000-8000-000000000004.jsonl': { born: CX_SINCE + 30000, text: '{"type":"event_msg","payload":{"cwd":"/private/tmp/w"}}\n' },
+  };
+  const d = { fs: fakeCodexFs(f, { '/tmp/w': '/private/tmp/w' }), path };
+  assert.strictEqual(findCodexRollout(d, '/cx', { sessionId: null, cwd: '/tmp/w', sinceMs: CX_SINCE, excludePaths: [] }),
+    '/cx/sessions/2026/09/25/rollout-2026-09-25T23-03-40-01a0da2a-0000-7000-8000-000000000002.jsonl');
+  assert.strictEqual(findCodexRollout(d, '/cx', { sessionId: null, cwd: '/private/tmp/w', sinceMs: CX_SINCE, excludePaths: [] }),
+    '/cx/sessions/2026/09/25/rollout-2026-09-25T23-03-40-01a0da2a-0000-7000-8000-000000000002.jsonl');
+  assert.strictEqual(findCodexRollout(d, '/cx', { sessionId: null, cwd: '/nowhere', sinceMs: CX_SINCE, excludePaths: [] }), null);
+});
+
+test('t1205: findCodexRollout with no id skips a rollout another codex seat already links', () => {
+  const f = {
+    '/cx/sessions/2026/09/25/rollout-2026-09-25T23-03-26-01a0da2a-0000-7000-8000-000000000001.jsonl': { born: CX_SINCE + 1000, text: cxMeta('/w') },
+    '/cx/sessions/2026/09/25/rollout-2026-09-25T23-03-40-01a0da2a-0000-7000-8000-000000000002.jsonl': { born: CX_SINCE + 9000, text: cxMeta('/w') },
+  };
+  const d = { fs: fakeCodexFs(f), path };
+  assert.strictEqual(findCodexRollout(d, '/cx', { sessionId: null, cwd: '/w', sinceMs: CX_SINCE,
+    excludePaths: ['/cx/sessions/2026/09/25/rollout-2026-09-25T23-03-40-01a0da2a-0000-7000-8000-000000000002.jsonl'] }),
+  '/cx/sessions/2026/09/25/rollout-2026-09-25T23-03-26-01a0da2a-0000-7000-8000-000000000001.jsonl');
+  assert.strictEqual(findCodexRollout(d, '/cx', { sessionId: null, cwd: '/w', sinceMs: CX_SINCE,
+    excludePaths: [
+      '/cx/sessions/2026/09/25/rollout-2026-09-25T23-03-26-01a0da2a-0000-7000-8000-000000000001.jsonl',
+      '/cx/sessions/2026/09/25/rollout-2026-09-25T23-03-40-01a0da2a-0000-7000-8000-000000000002.jsonl',
+    ] }), null);
+});
+
+test('t1205: findCodexRollout with no id skips a rollout born before spawn (1 s slack) and a date dir more than a day before it', () => {
+  const f = {
+    '/cx/sessions/2026/09/25/rollout-2026-09-25T22-00-00-01a0da2a-0000-7000-8000-000000000001.jsonl': { born: CX_SINCE - 1001, text: cxMeta('/w') },
+    '/cx/sessions/2026/09/20/rollout-2026-09-20T22-00-00-01a0da2a-0000-7000-8000-000000000002.jsonl': { born: CX_SINCE + 5000, text: cxMeta('/w') },
+  };
+  const d = { fs: fakeCodexFs(f), path };
+  assert.strictEqual(findCodexRollout(d, '/cx', { sessionId: null, cwd: '/w', sinceMs: CX_SINCE, excludePaths: [] }), null);
+  const g = { ...f, '/cx/sessions/2026/09/24/rollout-2026-09-24T23-59-59-01a0da2a-0000-7000-8000-000000000003.jsonl': { born: CX_SINCE - 1000, text: cxMeta('/w') } };
+  assert.strictEqual(findCodexRollout({ fs: fakeCodexFs(g), path }, '/cx', { sessionId: null, cwd: '/w', sinceMs: CX_SINCE, excludePaths: [] }),
+    '/cx/sessions/2026/09/24/rollout-2026-09-24T23-59-59-01a0da2a-0000-7000-8000-000000000003.jsonl');
 });

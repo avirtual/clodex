@@ -63,7 +63,7 @@ const ADAPTERS = {
     seatSettings: null,
     skills: null,
     instructions: 'model-instructions-file',
-    transcript: { reader: 'codex', link: 'hook' },
+    transcript: { reader: 'codex', link: 'clodex' },
     caps: { park: false, transcript: true, warmth: false },
     stream: {
       codec: 'stream-codec-codex',

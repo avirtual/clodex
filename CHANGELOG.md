@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Codex terminal seats get their transcript link from Clodex itself (the Codex hook does not fire in the TUI), so the transcript pane and turn tracking work on them.
 - Tickets board writes refuse to overwrite a board that could not be read (malformed, unreadable, or not an array) instead of replacing it with a fresh one; a missing board is still created.
 
 - A headless seat whose CLI never answers the codec's opening handshake is flagged after 60 seconds (log line with the stderr tail, attention state) instead of showing 'thinking' forever; queued messages stay queued and nothing is resent.

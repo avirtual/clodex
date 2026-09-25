@@ -138,10 +138,12 @@ const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { readerFor } = require('./transcript-readers');
 const { scanIntentLines } = require('./intent-segments');
-const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, museRegistryFor, linkTranscript } = require('./seat-config');
+const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, findCodexRollout, museRegistryFor, linkTranscript } = require('./seat-config');
 const { activationSettings } = require('./muse-skills');
 const MUSE_LINK_POLL_MS = 250;
 const MUSE_LINK_DEADLINE_MS = 60000;
+const CODEX_LINK_POLL_MS = 250;
+const CODEX_LINK_DEADLINE_MS = 60000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
@@ -1681,6 +1683,7 @@ function createSessionManager(deps) {
       let seatConfigDir = null;
       let museSid = null;
       let museData = null;
+      let codexLink = null;
       if (adapterFor(type)?.account.bootstrap === 'xdg-overlay') {
         seatConfigDir = pathFor(REGISTRY_DIR, name, 'seatConfig');
         const sourceConfig = accountDir || path.join(os.homedir(), '.config');
@@ -2119,6 +2122,13 @@ function createSessionManager(deps) {
             const uuidMatch = resumeId.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
             const uuid = uuidMatch ? uuidMatch[1] : resumeId;
             args.push(fork ? 'fork' : 'resume', uuid);
+          }
+          if (!streamIo) {
+            codexLink = {
+              home: mergedEnv.CODEX_HOME || path.join(os.homedir(), '.codex'),
+              sessionId: resumeId && !fork ? (resumeId.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i) || [null, resumeId])[1] : null,
+              cwd: cwd || process.env.HOME || os.homedir(),
+            };
           }
           break;
         }
@@ -2598,6 +2608,39 @@ function createSessionManager(deps) {
           stop('deadline');
           log.warn('muse', `${name}: no session registered for pid ${ptyProc.pid} within ${MUSE_LINK_DEADLINE_MS} ms — transcript link pending`);
         }, MUSE_LINK_DEADLINE_MS);
+        if (poll.unref) poll.unref();
+        if (deadline.unref) deadline.unref();
+      }
+
+      if (type === 'codex' && ptyProc && codexLink) {
+        let linkDone = null;
+        session._codexLinkDone = new Promise((resolve) => { linkDone = resolve; });
+        const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
+        const stop = (outcome) => { clearInterval(poll); clearTimeout(deadline); linkDone(outcome); };
+        const poll = setInterval(() => {
+          if (this.sessions.get(name) !== session) { stop('gone'); return; }
+          const taken = [];
+          if (!codexLink.sessionId) {
+            for (const [other, s] of this.sessions) {
+              if (other === name || s.agentType !== 'codex') continue;
+              try { taken.push(fs.readlinkSync(pathFor(REGISTRY_DIR, other, 'transcript'))); } catch {}
+            }
+          }
+          const target = findCodexRollout({ fs, path }, codexLink.home, {
+            sessionId: codexLink.sessionId, cwd: codexLink.cwd, sinceMs: session.spawnedAt, excludePaths: taken,
+          });
+          if (!target) return;
+          try {
+            ensureDir(runDirFor(REGISTRY_DIR, name));
+            linkTranscript({ fs }, linkPath, target);
+          } catch { return; }
+          stop('linked');
+        }, this._codexLinkPollMs ?? CODEX_LINK_POLL_MS);
+        const deadline = setTimeout(() => {
+          if (this.sessions.get(name) !== session) { stop('gone'); return; }
+          stop('deadline');
+          log.warn('codex', `${name}: no rollout under ${path.join(codexLink.home, 'sessions')} within ${CODEX_LINK_DEADLINE_MS} ms — transcript link pending`);
+        }, this._codexLinkDeadlineMs ?? CODEX_LINK_DEADLINE_MS);
         if (poll.unref) poll.unref();
         if (deadline.unref) deadline.unref();
       }
