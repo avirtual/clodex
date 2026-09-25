@@ -77,6 +77,7 @@ blocks a release.
 - Experimental: Preferences ▸ Appearance ▸ "Transcript pane" renders a Claude seat's conversation from its transcript above a live strip of the terminal from the composer down; off by default, desktop only.
 
 - Terminal: Preferences ▸ Appearance gains a GPU-accelerated terminal (WebGL) option, off by default; a lost or refused WebGL context falls back to the DOM renderer silently.
+- The transcript pane shows pasted text inline in your prompt instead of a "Pasted text #n" chip that had to be clicked open.
 
 ## 5.86.0 — 2026-09-23
 
