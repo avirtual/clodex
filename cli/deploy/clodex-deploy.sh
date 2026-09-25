@@ -323,6 +323,9 @@ else
       && log "muse installed" \
       || log "muse install failed (best-effort) — a Muse spawn will fail until it is installed"
   fi
+  for f in "$HOME/.profile" "$HOME/.bashrc"; do
+    grep -qs '^export TBH_CREDENTIAL_BACKEND=file$' "$f" || echo 'export TBH_CREDENTIAL_BACKEND=file' >> "$f"
+  done
   # Onboarding pre-seed (T42): a fresh claude shows a first-run wizard (theme/ANSI
   # prompt) before it is usable, which blinds a headless spawn. Seed ~/.claude.json
   # with onboarding-complete state IF ABSENT — never overwrite an existing file
@@ -367,6 +370,8 @@ WEB_DROPIN_DIR="$UNIT_DIR/clodex.service.d"
 mkdir -p "$WEB_DROPIN_DIR" || fail service "web-dropin-mkdir-failed"
 printf '[Service]\nEnvironment=CLODEX_WEB_PORT=%s\nEnvironment=CLODEX_WEB_HOST=127.0.0.1\n' "$WEB_PORT" > "$WEB_DROPIN_DIR/web.conf" \
   || fail service "web-dropin-write-failed"
+printf '[Service]\nEnvironment=TBH_CREDENTIAL_BACKEND=file\n' > "$WEB_DROPIN_DIR/muse.conf" \
+  || fail service "muse-dropin-write-failed"
 echo "::log web port $WEB_PORT"
 # Wirescope opt-out (T49): a drop-in pins CLODEX_WIRESCOPE=off in the service
 # env — the engine's autoStartWanted() honors it over the proxyEnabled pref.

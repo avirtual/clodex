@@ -378,7 +378,7 @@ test('generateCompose: a mount shadowing a reserved path THROWS (no broken box)'
 test('generateCompose: no mount binds when the list is empty or absent', () => {
   const empty = generateCompose({ image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null, mounts: [] });
   const absent = generateCompose({ image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null });
-  assert.doesNotMatch(empty, /\/home\/clodex\/(?!work|\.clodex|\.claude|\.config\/muse)/);
+  assert.doesNotMatch(empty, /\/home\/clodex\/(?!work|\.clodex|\.claude|\.config\/muse|\.local\/share)/);
   assert.strictEqual(empty, absent);   // omitting mounts === passing []
 });
 
@@ -1197,7 +1197,7 @@ test('writeComposeFile: creates the box state dirs 0700 under <registryDir>/boxe
   await sb.writeComposeFile();
   const base = path.join(reg, 'boxes', SANDBOX_PEER_ID);
   assert.strictEqual(sb.stateDir(), base);
-  for (const d of ['data', 'dot', 'claude', 'muse']) {
+  for (const d of ['data', 'dot', 'claude', 'muse', 'muse-data']) {
     const dir = path.join(base, d);
     assert.ok(fs.existsSync(dir), `${d} created`);
     assert.strictEqual(fs.statSync(dir).mode & 0o777, 0o700, `${d} is 0700`);
@@ -1231,6 +1231,27 @@ test('generateCompose: the per-agent run dir is an exec,mode=1777 tmpfs on the s
 test('generateCompose: the muse auth dir is a reserved mount target (a user mount there is refused)', () => {
   assert.ok(RESERVED_MOUNT_TARGETS.includes('/home/clodex/.config/muse'), 'the muse auth dir is not in the reserved set');
   assert.match(normalizeMounts([{ host: '/h', container: '/home/clodex/.config/muse' }]).error || '', /shadow/);
+});
+
+test('generateCompose: the muse data dir is a reserved mount target (a user mount there is refused)', () => {
+  assert.ok(RESERVED_MOUNT_TARGETS.includes('/home/clodex/.local/share'), 'the muse data dir is not in the reserved set');
+  assert.match(normalizeMounts([{ host: '/h', container: '/home/clodex/.local/share' }]).error || '', /shadow/);
+});
+
+test('generateCompose: the box env selects the file credential backend and the persistent data home', () => {
+  const yaml = generateCompose({ image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null });
+  const lines = yaml.split('\n');
+  const env = lines.indexOf('    environment:');
+  let end = env + 1;
+  while (end < lines.length && lines[end].startsWith('      ')) end++;
+  const block = lines.slice(env + 1, end);
+  assert.ok(block.includes('      TBH_CREDENTIAL_BACKEND: file'), `missing from:\n${block.join('\n')}`);
+  assert.ok(block.includes('      XDG_DATA_HOME: /home/clodex/.local/share'), `missing from:\n${block.join('\n')}`);
+});
+
+test('generateCompose: the muse data dir binds the host state dir right after the muse config mount', () => {
+  const yaml = generateCompose({ image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null });
+  assert.ok(yaml.includes(`      - "${path.join(STATE_DIR, 'muse')}:/home/clodex/.config/muse"\n      - "${path.join(STATE_DIR, 'muse-data')}:/home/clodex/.local/share"\n`), yaml);
 });
 
 test('generateCompose: a user mount at the run tmpfs target, or under it, is refused', () => {

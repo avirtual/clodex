@@ -15,6 +15,7 @@ blocks a release.
 
 - Stream seats: Esc in the message box interrupts the running turn on claude, codex and muse seats, the way it does in the terminal.
 - Muse stream seats: allowing a compound shell command (segments joined by ; or |) on the permission card now approves every segment; before, only the first was decided and the seat sat waiting on the rest.
+- Sandbox: muse logs in inside a box without a keychain (the box exports TBH_CREDENTIAL_BACKEND=file), and muse's sessions and caches land on a persistent host-bound data dir instead of the container's overlay.
 - The stream seat's message box starts at one line and grows as you type or add lines (up to 40% of the pane), and a focused box shows one thin accent border instead of the doubled red ring.
 - Stream seats on codex and muse now show their prompts and replies in the transcript pane; before, the pane served only Claude transcripts and a headless codex or muse seat stayed blank while it talked.
 - The session bar's voice button opens the voice menu again on every seat, stream or pty: voice on or off for that seat, and whether replies are read aloud. Hold mode is gone. Dictation starts from the external tap or by pressing space on an empty prompt when the seat's voice is on, and the button itself never records; it lights green while the recorder is listening.
