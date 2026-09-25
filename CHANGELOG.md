@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Muse headless seats: a muse seat with the stream transport runs `muse serve` over stdio, so muse hands can be dispatched headless like claude and codex ones. Approvals are aborted on the wire (a stream seat has nobody to ask); run muse stream seats with bypass, as hands do.
 - Voice: the tap-mode re-arm and dictation-submit preferences are gone; voice mode is per seat since the previous entry, and the renderer watcher that served those preferences is deleted.
 
 - Codex headless seats: a codex seat with the stream transport runs `codex app-server` over stdio, so codex hands can be dispatched headless like claude ones. Approvals are declined on the wire (a stream seat has nobody to ask); run codex stream seats with bypass, as hands do.

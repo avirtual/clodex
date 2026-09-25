@@ -21764,3 +21764,113 @@ test('t1172: on a codex stream seat the codec\'s compact record fires the compac
   assert.strictEqual(s._compactContinuation, null);
   s._dead = true;
 });
+
+function mkMuseStreamSeat({ extraArgs = [] } = {}) {
+  const { streamFor: realStreamFor } = require('../cli-adapters');
+  const created = [];
+  const calls = { encodeContext: [] };
+  const inst = {
+    open: () => [{ id: 1, method: 'initialize' }, { method: 'initialized' }, { id: 2, method: 'session/start' }],
+    decode: (line) => line.rec || { kind: 'other' },
+    encodeUser: (text) => ({ method: 'turn/start', text }),
+    encodeContext: (sub) => { calls.encodeContext.push(sub); return { method: `ctx/${sub}` }; },
+    encodeInterrupt: () => null,
+  };
+  const mod = { create: (c) => { created.push(c); return inst; } };
+  const h = mkStreamSeatManager({
+    streamFor: (type) => (type === 'muse' ? realStreamFor('muse') : null),
+    loadStreamCodec: () => mod,
+    extraDeps: {
+      isInjectInFlight: require('../inject-queue').isInjectInFlight,
+      mergeInstructionBodies: require('../argv-merge').mergeInstructionBodies,
+    },
+  });
+  h.m._museLinkPollMs = 1;
+  const os = require('node:os');
+  const create = (name, resumeId = null) => h.m.create(name, 'muse', os.tmpdir(), extraArgs, resumeId, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream');
+  const sent = () => h.handles[h.handles.length - 1].sent;
+  const clearTimers = (s) => {
+    for (const k of ['_compactValveTimer', '_injectHoldTimer', '_postClearValveTimer', '_compactingValveTimer', '_resultHold']) clearTimeout(s[k]);
+  };
+  return { h, create, created, inst, calls, sent, clearTimers };
+}
+
+test('t1174: a muse stream argv is serve with its flags after it and no resume positional; posture rides the argv and ctx', async (t) => {
+  const c = mkMuseStreamSeat({ extraArgs: ['--approval-mode', 'never', '--disable-sandbox', '--model', 'muse-spark-1.2'] });
+  t.after(() => c.h.stopAll());
+  await c.create('mu1', '01a0d3f2-659a-75d2-ad3e-1deb2086fe29');
+  const { cmd, args } = c.h.spawns[0];
+  assert.strictEqual(cmd, 'muse');
+  assert.deepStrictEqual(args, ['serve', '--trust-workspace', '--disable-sandbox']);
+  const [{ log: _log, ...ctx }] = c.created;
+  assert.deepStrictEqual(ctx, { cwd: require('node:os').tmpdir(), resumeId: '01a0d3f2-659a-75d2-ad3e-1deb2086fe29', fork: false, bypass: true, readOnly: false, model: 'muse-spark-1.2' });
+  assert.deepStrictEqual(c.sent(), c.inst.open());
+});
+
+test('t1174: the muse pid-registry poll is not armed on a muse stream seat', async (t) => {
+  const c = mkMuseStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('mu2');
+  assert.strictEqual(c.h.m.sessions.get('mu2')._museLinkDone, undefined);
+});
+
+test('t1174: a compact record with turnEnd ends the turn and drains the outbox; one without leaves the seat busy', async (t) => {
+  const c = mkMuseStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('mu3');
+  const s = c.h.m.sessions.get('mu3');
+  t.after(() => { c.clearTimers(s); s._dead = true; });
+  c.h.line('mu3', { rec: { kind: 'init', sessionId: 'ms-3', turnEnd: true } });
+  c.h.m._handleContextIntent(s, 'compact', 'CONT');
+  assert.deepStrictEqual(c.sent().slice(3), [{ method: 'ctx/compact' }]);
+  assert.deepStrictEqual(c.h.m.seatSend('mu3', 'queued'), { ok: true, queued: 1 });
+  c.h.line('mu3', { rec: { kind: 'compact', pre: 10, post: 5 } });
+  assert.strictEqual(s.streamBusy, true);
+  assert.strictEqual(s.outbox.length, 1);
+  c.h.line('mu3', { rec: { kind: 'compact', pre: 10, post: 5, turnEnd: true } });
+  assert.strictEqual(s.outbox.length, 0);
+  assert.deepStrictEqual(c.sent().slice(3), [{ method: 'ctx/compact' }, { method: 'turn/start', text: 'queued' }]);
+  c.h.line('mu3', { rec: { kind: 'result' } });
+  assert.strictEqual(s.streamBusy, false);
+  c.h.m._handleContextIntent(s, 'compact', '');
+  c.h.line('mu3', { rec: { kind: 'compact', pre: 10, post: 5, turnEnd: true } });
+  assert.strictEqual(s.streamBusy, false);
+});
+
+test('t1174: an [agent:context] compact dropped as in flight never calls encodeContext', async (t) => {
+  const c = mkMuseStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('mu4');
+  const s = c.h.m.sessions.get('mu4');
+  t.after(() => { c.clearTimers(s); s._dead = true; });
+  c.h.line('mu4', { rec: { kind: 'init', sessionId: 'ms-4', turnEnd: true } });
+  c.h.m._handleContextIntent(s, 'compact', '');
+  assert.deepStrictEqual(c.calls.encodeContext, ['compact']);
+  c.h.m._handleContextIntent(s, 'compact', '');
+  assert.deepStrictEqual(c.calls.encodeContext, ['compact']);
+  s._postClearContinuation = 'x';
+  c.h.m._handleContextIntent(s, 'clear', 'again');
+  assert.deepStrictEqual(c.calls.encodeContext, ['compact']);
+});
+
+test('t1174: the codec ctx carries home = dirname(CODEX_HOME) when a codex seat has an account dir', async (t) => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const acct = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'clx-codex-acct-'));
+  t.after(() => fs.rmSync(acct, { recursive: true, force: true }));
+  const created = [];
+  const inst = { open: () => [], decode: () => ({ kind: 'other' }), encodeUser: () => null, encodeContext: () => null, encodeInterrupt: () => null };
+  const h = mkStreamSeatManager({
+    streamFor: (type) => (type === 'codex' ? require('../cli-adapters').streamFor('codex') : null),
+    loadStreamCodec: () => ({ create: (c) => { created.push(c); return inst; } }),
+    extraDeps: (root) => ({
+      mergeCodexInstructions: require('../argv-merge').mergeCodexInstructions,
+      setupCodexHook: (n) => fs.mkdirSync(require('../clodex-paths').runDirFor(root, n), { recursive: true }),
+    }),
+  });
+  t.after(() => h.stopAll());
+  await h.m.create('cxh', 'codex', require('node:os').tmpdir(), [], null, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, { CODEX_HOME: acct }, false, false, null, null, null, 'stream');
+  assert.strictEqual(created[0].home, path.dirname(acct));
+});

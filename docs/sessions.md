@@ -630,15 +630,18 @@ worktree-removal failure is toasted by the renderer while the row goes.
 Which CLIs support the stream transport is declared per adapter (`stream` block
 in cli-adapters.js): `streamFor(type)` gives the argv, the codec module and the
 transcript repoint, and `capsFor(type).streamIo` gates the dialogs' Stream
-transport box. Claude and codex declare one; codex runs `codex app-server` over
-stdio. A codec module either exports `decode`/`encodeUser` directly (claude) or
+transport box. Claude, codex and muse declare one; codex runs `codex app-server` over
+stdio, and muse runs `muse serve` over stdio (its sandbox posture on the serve
+command line, its approval mode on the wire, its `--base-url` routing lost
+because serve accepts no provider flags). A codec module either exports `decode`/`encodeUser` directly (claude) or
 `create(ctx)` returning an instance (codex, whose JSON-RPC needs a handshake,
 request ids and server-initiated approvals); `ctx` carries the seat's cwd,
 resume id, fork flag, bypass/read-only posture and model. An instance may add
 `open()`, wire objects sent at spawn, with the seat busy until the codec's first
 `init` record; any decoded record may carry `send`, objects written in order
 before its kind is acted on (codex declines approvals this way); an `init` with
-`turnEnd` ends the turn (the handshake and a clear), and one with
+`turnEnd` ends the turn (the handshake and a clear), as does a `compact` with
+`turnEnd` (muse, whose compaction has no turn bracket), and one with
 `transcriptPath` is linked as the seat transcript when the spec's
 `transcriptRepoint` is `'record'` (codex: the thread's rollout file); `encodeUser` may return
 null to write nothing; `encodeContext('compact'|'clear')` replaces the slash

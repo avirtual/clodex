@@ -120,7 +120,15 @@ const ADAPTERS = {
     instructions: 'user-agents-md',
     transcript: { reader: 'muse', link: 'clodex' },
     caps: { park: false, transcript: true, warmth: false },
-    stream: null,
+    stream: {
+      codec: 'stream-codec-muse',
+      argv: ({ bypass = false, readOnly = false } = {}) => [
+        'serve', '--trust-workspace',
+        ...(bypass ? ['--disable-sandbox'] : (readOnly ? ['--disable-write', '--disable-shell'] : [])),
+      ],
+      toolBoundary: 'hook',
+      transcriptRepoint: 'record',
+    },
     ui: {
       injectSkills: true,
       skillRoster: true,
@@ -131,7 +139,7 @@ const ADAPTERS = {
       autoCompact: false,
       noWire: false,
       accounts: false,
-      streamIo: false,
+      streamIo: true,
     },
   },
 };

@@ -1,0 +1,2 @@
+{"t": 42.361, "d": "out", "m": {"jsonrpc": "2.0", "id": 11, "method": "session/rename", "params": {"commandId": "01a0d3e7-d743-7424-a4bb-e03ba2de163f", "sessionId": "01a0d3e7-3244-7ac2-98ea-1389a415c902", "name": "probe-b2"}}}
+{"t": 42.378, "d": "in", "m": {"jsonrpc": "2.0", "id": 11, "error": {"code": -32030, "message": "session/rename command 01a0d3e7-d743-7424-a4bb-e03ba2de163f rejected: name_taken", "data": {"kind": "commandRejected", "retryable": false, "commandId": "01a0d3e7-d743-7424-a4bb-e03ba2de163f", "reason": "name_taken"}}}}
