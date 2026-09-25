@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- A Codex terminal seat links only a transcript started after you first typed into it, so two seats in the same folder no longer pick up each other's conversation.
 - Muse slash commands (/model, /usage, …) appear as command rows in the transcript pane.
 - The transcript pane works on Muse and Codex terminal seats too: the pane sits above each CLI's own input strip, and the CLI's slash menu, command output and pickers show in that strip.
 - Codex terminal seats get their transcript link from Clodex itself (the Codex hook does not fire in the TUI), so the transcript pane and turn tracking work on them.
