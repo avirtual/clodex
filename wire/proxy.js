@@ -183,6 +183,7 @@ class WireProxy extends EventEmitter {
   }
 
   close() {
+    if (this._spillShownSavePending) this._flushSpillShown();
     return new Promise((resolve) => this.server.close(() => resolve()));
   }
 
@@ -250,17 +251,21 @@ class WireProxy extends EventEmitter {
     if (!this.spillShownStore || this._spillShownSavePending) return;
     this._spillShownSavePending = true;
     setImmediate(() => {
-      this._spillShownSavePending = false;
-      const cutoff = this.now() - SPILL_SHOWN_TTL_MS;
-      for (const [name, rec] of Object.entries(this._spillShownRecords)) {
-        if (!this._agentSpillShown.has(name) && !(rec.lastAt >= cutoff)) delete this._spillShownRecords[name];
-      }
-      try {
-        this.spillShownStore.save(this._spillShownRecords);
-      } catch (e) {
-        this._onSpillShownError(e.message);
-      }
+      if (this._spillShownSavePending) this._flushSpillShown();
     });
+  }
+
+  _flushSpillShown() {
+    this._spillShownSavePending = false;
+    const cutoff = this.now() - SPILL_SHOWN_TTL_MS;
+    for (const [name, rec] of Object.entries(this._spillShownRecords)) {
+      if (!this._agentSpillShown.has(name) && !(rec.lastAt >= cutoff)) delete this._spillShownRecords[name];
+    }
+    try {
+      this.spillShownStore.save(this._spillShownRecords);
+    } catch (e) {
+      this._onSpillShownError(e.message);
+    }
   }
 
   _persistSpillShown(agent) {
