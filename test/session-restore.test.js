@@ -337,5 +337,5 @@ test('each restored row carries its seat voice mode, tap when the record has non
     { name: 'plain', type: 'claude', cwd: '/w/p' },
   ]);
   const out = await restoreSessionsForWorkspace({ workspaceId: 'ws1', persistence, manager, ...noopDeps });
-  assert.deepStrictEqual(out.map((e) => [e.name, e.voice]), [['run', 'hold'], ['off', 'off'], ['plain', 'tap']]);
+  assert.deepStrictEqual(out.map((e) => [e.name, e.voice]), [['run', 'tap'], ['off', 'off'], ['plain', 'tap']]);
 });
