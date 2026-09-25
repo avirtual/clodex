@@ -65,6 +65,8 @@ test('the stream seat pane mounts its permission cards before the composer and r
   const composerAt = src.indexOf('wrapperEl.appendChild(composer);');
   assert.ok(permAt > 0 && composerAt > permAt, '.seat-permissions is appended before the composer');
   assert.ok(/permEl\.className = 'seat-permissions';/.test(src));
-  assert.ok(/if \(Array\.isArray\(res\.permissions\)\) renderPermissions\(res\.permissions\);/.test(src), 'the pull callback renders the pending prompts');
+  assert.ok(/const nextPermKey = Array\.isArray\(res\.permissions\) \? res\.permissions\.map\(\(i\) => i\.id\)\.join\('\\n'\) : permKey;/.test(src), 'the pull callback keys the pending prompts by id');
+  assert.ok(/if \(nextPermKey !== permKey\) \{ permKey = nextPermKey; renderPermissions\(res\.permissions\); \}/.test(src), 'the cards rebuild only when the set of pending ids changes');
+  assert.strictEqual(src.match(/renderPermissions\(/g).length, 1, 'renderPermissions is called only behind the key guard');
   assert.ok(/window\.api\.seatPermission\(name, item\.id, choice\.id\)/.test(src), 'a choice answers through the seat:permission bridge');
 });

@@ -8,7 +8,7 @@ const APPROVAL_TOOLS = {
   'item/fileChange/requestApproval': 'fileChange',
 };
 const APPROVAL_NAMES = { commandExecution: 'Shell command', fileChange: 'File change' };
-const DEFAULT_DECISIONS = ['accept', 'cancel'];
+const DEFAULT_DECISIONS = ['accept', 'decline', 'cancel'];
 const TURN_REQUESTS = new Set(['turn/start', 'thread/compact/start']);
 const THREAD_REQUESTS = new Set(['thread/start', 'thread/resume']);
 const CONTEXT_TEXTS = new Set(['/compact', '/clear']);
@@ -27,12 +27,22 @@ function sessionIdOf(thread) {
 
 function choiceOf(decision) {
   if (decision === 'accept') return { id: 'accept', label: 'Allow', kind: 'allow', decision };
-  if (decision === 'cancel') return { id: 'cancel', label: 'Deny', kind: 'deny', decision };
+  if (decision === 'acceptForSession') return { id: 'acceptForSession', label: 'Allow for this session', kind: 'allow-always', decision };
+  if (decision === 'decline') return { id: 'decline', label: 'Deny', kind: 'deny', decision };
+  if (decision === 'cancel') return { id: 'cancel', label: 'Deny and stop the turn', kind: 'deny', decision };
   const amendment = decision && typeof decision === 'object' ? decision.acceptWithExecpolicyAmendment : null;
   if (amendment && Array.isArray(amendment.execpolicy_amendment)) {
     return { id: 'accept-always', label: 'Always allow: ' + amendment.execpolicy_amendment.join(' '), kind: 'allow-always', decision };
   }
   return null;
+}
+
+function offeredChoices(decisions) {
+  const all = decisions.map(choiceOf).filter(Boolean);
+  const has = (id) => all.some((c) => c.id === id);
+  if (has('cancel') && !has('decline')) all.push(choiceOf('decline'));
+  const allows = all.filter((c) => c.kind !== 'deny');
+  return [...allows, ...all.filter((c) => c.id === 'decline'), ...all.filter((c) => c.id === 'cancel')];
 }
 
 function postureFor({ bypass, readOnly }) {
@@ -119,7 +129,7 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
     if (bypass) return { kind: 'other', toolName, send: [{ id: obj.id, result: { decision: 'decline' } }] };
     const params = obj.params || {};
     const decisions = Array.isArray(params.availableDecisions) ? params.availableDecisions : DEFAULT_DECISIONS;
-    const offered = decisions.map(choiceOf).filter(Boolean);
+    const offered = offeredChoices(decisions);
     const id = String(obj.id);
     approvals.set(id, { wireId: obj.id, decisions: new Map(offered.map((c) => [c.id, c.decision])) });
     return {

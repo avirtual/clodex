@@ -99,12 +99,13 @@ test('a command approval decodes to a permission-request carrying the offered de
     choices: [
       { id: 'accept', label: 'Allow', kind: 'allow' },
       { id: 'accept-always', label: 'Always allow: touch cmd-a.txt', kind: 'allow-always' },
-      { id: 'cancel', label: 'Deny', kind: 'deny' },
+      { id: 'decline', label: 'Deny', kind: 'deny' },
+      { id: 'cancel', label: 'Deny and stop the turn', kind: 'deny' },
     ],
   });
 });
 
-test('a file-change approval without availableDecisions offers accept and cancel', () => {
+test('a file-change approval without availableDecisions offers accept, decline and cancel', () => {
   const { codec } = started();
   const req = wire('approvals')[2];
   assert.deepStrictEqual(codec.decode(req), {
@@ -115,7 +116,11 @@ test('a file-change approval without availableDecisions offers accept and cancel
     description: null,
     preview: null,
     input: req.params,
-    choices: [{ id: 'accept', label: 'Allow', kind: 'allow' }, { id: 'cancel', label: 'Deny', kind: 'deny' }],
+    choices: [
+      { id: 'accept', label: 'Allow', kind: 'allow' },
+      { id: 'decline', label: 'Deny', kind: 'deny' },
+      { id: 'cancel', label: 'Deny and stop the turn', kind: 'deny' },
+    ],
   });
 });
 
@@ -131,6 +136,22 @@ test('encodePermission answers each choice kind with the numeric server id, once
   assert.strictEqual(codec.encodePermission('3', 'accept-always'), null, 'a choice the request did not offer');
   assert.strictEqual(codec.encodePermission('99', 'accept'), null, 'an unknown id');
   assert.deepStrictEqual(codec.encodePermission('3', 'accept'), { id: 3, result: { decision: 'accept' } });
+});
+
+test('encodePermission answers decline with the decline decision, which the command approval offers though its wire omits it', () => {
+  const { codec } = started();
+  const [req] = wire('approvals');
+  assert.ok(!req.params.availableDecisions.includes('decline'), 'ENTER: the recorded command approval does not list decline');
+  codec.decode(req);
+  assert.deepStrictEqual(codec.encodePermission('0', 'decline'), { id: 0, result: { decision: 'decline' } });
+});
+
+test('acceptForSession maps to an allow-always choice ordered before the denials', () => {
+  const { codec } = started();
+  const got = codec.decode({ id: 9, method: 'item/commandExecution/requestApproval', params: { availableDecisions: ['cancel', 'acceptForSession', 'decline', 'accept'] } });
+  assert.deepStrictEqual(got.choices.map((c) => [c.id, c.kind]), [
+    ['acceptForSession', 'allow-always'], ['accept', 'allow'], ['decline', 'deny'], ['cancel', 'deny'],
+  ]);
 });
 
 test('a turn result drops pending approvals without answering them', () => {
