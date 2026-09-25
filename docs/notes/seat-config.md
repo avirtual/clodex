@@ -24,8 +24,8 @@
 Measured on Codex 0.157.0 (`--no-daemon --no-alt-screen` TUI, 2026-09-25): a fresh
 seat writes NO rollout until its first user prompt — nothing after 10 s idle; the file
 (`sessions/<Y>/<M>/<D>/rollout-<start ts>-<id>.jsonl`, date and ts of TUI start, local
-time) is born when the first prompt is submitted. So a seat not prompted within `CODEX_LINK_DEADLINE_MS` of spawn
-is never linked. `session_meta.payload.cwd` is the realpath of the spawn cwd
+time) is born when the first prompt is submitted, which is why the session-manager link
+poll never stops while the seat lives. `session_meta.payload.cwd` is the realpath of the spawn cwd
 (`/tmp/x` → `/private/tmp/x`). `codex resume <id>` mints no new file: it appends to the
 existing rollout, whose first line keeps the same `session_meta` id, so a resumed seat
 links by id at once and needs no repoint.

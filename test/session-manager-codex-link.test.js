@@ -11,7 +11,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const RESUME_ID = '01a0da2a-6469-7632-88a4-67b6ba1a041a';
 
-function mkCodex({ pollMs = 1, deadlineMs = 60000 } = {}) {
+function mkCodex({ pollMs = 1, deadlineMs = 60000, slowPollMs = 5000 } = {}) {
   const root = mkTmpRoot('clx-codex-link-');
   const userData = mkTmpRoot('clx-codex-link-ud-');
   const home = path.join(root, 'codex-home');
@@ -64,6 +64,7 @@ function mkCodex({ pollMs = 1, deadlineMs = 60000 } = {}) {
   m._broadcast = () => {};
   m._codexLinkPollMs = pollMs;
   m._codexLinkDeadlineMs = deadlineMs;
+  m._codexLinkSlowPollMs = slowPollMs;
   const create = (name, resumeId = null) => m.create(
     name, 'codex', work, [], resumeId, 'ws', null, false, null,
     [], [], [], [], [], null, [], [], null, { CODEX_HOME: home },
@@ -116,13 +117,32 @@ test('t1205: a resumed codex pty seat is linked to the existing rollout named by
   } finally { f.stop('cx'); }
 });
 
-test('t1205: a codex pty seat that never gets a rollout warns at the deadline and leaves no link', async () => {
-  const f = mkCodex({ deadlineMs: 20 });
+const until = async (pred) => { while (!pred()) await new Promise((r) => setTimeout(r, 2)); };
+
+test('t1205: a codex pty seat with no rollout by the deadline warns once, keeps polling, and links a rollout born after it', async () => {
+  const f = mkCodex({ deadlineMs: 20, slowPollMs: 3 });
   await f.create('cx');
   const s = f.m.sessions.get('cx');
+  let outcome = null;
+  s._codexLinkDone.then((o) => { outcome = o; });
   try {
-    assert.strictEqual(await s._codexLinkDone, 'deadline');
+    await until(() => f.warns.length > 0);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.strictEqual(outcome, null, 'the deadline does not settle the link');
     assert.throws(() => fs.lstatSync(f.link('cx')), /ENOENT/);
-    assert.deepStrictEqual(f.warns, [['codex', `cx: no rollout under ${path.join(f.home, 'sessions')} within 60000 ms — transcript link pending`]]);
+    assert.deepStrictEqual(f.warns, [['codex', `cx: no rollout under ${path.join(f.home, 'sessions')} after 60 s — still polling every 5 s`]]);
+    const target = f.writeRollout(today(), 'rollout-2026-09-25T23-03-27-01a0da2a-0000-7000-8000-000000000001.jsonl', f.work);
+    assert.strictEqual(await s._codexLinkDone, 'linked');
+    assert.strictEqual(fs.readlinkSync(f.link('cx')), target);
   } finally { f.stop('cx'); }
+});
+
+test('t1205: the slow poll ends as gone when the seat goes, with no link', async () => {
+  const f = mkCodex({ deadlineMs: 5, slowPollMs: 3 });
+  await f.create('cx');
+  const s = f.m.sessions.get('cx');
+  await until(() => f.warns.length > 0);
+  f.stop('cx');
+  assert.strictEqual(await s._codexLinkDone, 'gone');
+  assert.throws(() => fs.lstatSync(f.link('cx')), /ENOENT/);
 });

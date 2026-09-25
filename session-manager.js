@@ -144,6 +144,7 @@ const MUSE_LINK_POLL_MS = 250;
 const MUSE_LINK_DEADLINE_MS = 60000;
 const CODEX_LINK_POLL_MS = 250;
 const CODEX_LINK_DEADLINE_MS = 60000;
+const CODEX_LINK_SLOW_POLL_MS = 5000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
@@ -2616,8 +2617,9 @@ function createSessionManager(deps) {
         let linkDone = null;
         session._codexLinkDone = new Promise((resolve) => { linkDone = resolve; });
         const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
-        const stop = (outcome) => { clearInterval(poll); clearTimeout(deadline); linkDone(outcome); };
-        const poll = setInterval(() => {
+        let slow = null;
+        const stop = (outcome) => { clearInterval(poll); clearInterval(slow); clearTimeout(deadline); linkDone(outcome); };
+        const tick = () => {
           if (this.sessions.get(name) !== session) { stop('gone'); return; }
           const taken = [];
           if (!codexLink.sessionId) {
@@ -2635,11 +2637,14 @@ function createSessionManager(deps) {
             linkTranscript({ fs }, linkPath, target);
           } catch { return; }
           stop('linked');
-        }, this._codexLinkPollMs ?? CODEX_LINK_POLL_MS);
+        };
+        const poll = setInterval(tick, this._codexLinkPollMs ?? CODEX_LINK_POLL_MS);
         const deadline = setTimeout(() => {
+          clearInterval(poll);
           if (this.sessions.get(name) !== session) { stop('gone'); return; }
-          stop('deadline');
-          log.warn('codex', `${name}: no rollout under ${path.join(codexLink.home, 'sessions')} within ${CODEX_LINK_DEADLINE_MS} ms — transcript link pending`);
+          log.warn('codex', `${name}: no rollout under ${path.join(codexLink.home, 'sessions')} after ${CODEX_LINK_DEADLINE_MS / 1000} s — still polling every ${CODEX_LINK_SLOW_POLL_MS / 1000} s`);
+          slow = setInterval(tick, this._codexLinkSlowPollMs ?? CODEX_LINK_SLOW_POLL_MS);
+          if (slow.unref) slow.unref();
         }, this._codexLinkDeadlineMs ?? CODEX_LINK_DEADLINE_MS);
         if (poll.unref) poll.unref();
         if (deadline.unref) deadline.unref();
