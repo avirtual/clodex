@@ -235,6 +235,16 @@ test('m2: a fresh muse seat spawns at once; the registry poller links its transc
   } finally { await f.stop('seat'); }
 });
 
+test('t1176: a routed muse pty seat keeps --base-url and its overlay settings gain no endpoint_transport', async () => {
+  const f = mkMuse();
+  await f.create('seat');
+  try {
+    assert.ok(f.spawns[0].args.includes('--base-url'));
+    const settings = JSON.parse(fsReal.readFileSync(pathReal.join(pathForReal(f.root, 'seat', 'seatConfig'), 'muse', 'settings.json'), 'utf-8'));
+    assert.strictEqual(settings.endpoint_transport, undefined);
+  } finally { await f.stop('seat'); }
+});
+
 test('m2: no capabilities.muse on the proxy → direct to Meta, no --base-url, one warning', async () => {
   const f = mkMuse({ probeAnswer: { capabilities: { accounts: true } } });
   const res = await f.create('seat');

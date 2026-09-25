@@ -8,6 +8,6 @@ A `session/resume` after the host process was killed mid-turn emits `turn/comple
 
 ## create
 
-`session/compact` is never bracketed by `turn/started`/`turn/completed` (case B2): the `compaction` item is the only end signal. The captured item carries `trigger: "manual"`, so other triggers exist. The session object names its id `sessionId` and items their type `kind`.
+`session/compact` is never bracketed by `turn/started`/`turn/completed` (case B2): the `compaction` item is the only end signal. The captured item carries `trigger: "manual"`. The session object names its id `sessionId` and items their type `kind`.
 
 `muse serve` refuses every top-level flag: `--provider` and `--base-url` before `serve` make muse parse the TUI options, after it they are `unknown option` (Muse Code 1.3.0), so a stream seat cannot be routed through wirescope by argv.

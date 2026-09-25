@@ -2143,12 +2143,18 @@ function createSessionManager(deps) {
           if (proxyBase && !museRouted) {
             warnings.push(`muse: wirescope at ${proxyBase} does not report capabilities.muse — this seat talks to Meta directly, unrouted.`);
           }
-          const museBaseUrl = museRouted ? ['--base-url', `${proxyBase}/agent/${proxyAgent || name}/meta`] : [];
+          const museRoute = museRouted ? `${proxyBase}/agent/${proxyAgent || name}/meta` : null;
+          const museBaseUrl = museRoute ? ['--base-url', museRoute] : [];
           const museEnv = { ...mergedEnv, CLODEX_HOME: REGISTRY_DIR, MUSE_NO_AUTO_UPDATE: '1' };
           museData = museDataHome({ env: museEnv, os, path });
           if (streamIo) {
             ensureDir(runDirFor(REGISTRY_DIR, name));
-            if (museBaseUrl.length) warnings.push('muse serve takes no --base-url: this stream seat talks to Meta directly, unrouted.');
+            if (museRoute) {
+              const museSettingsPath = path.join(seatConfigDir, 'muse', 'settings.json');
+              const museSettings = JSON.parse(fs.readFileSync(museSettingsPath, 'utf-8'));
+              fs.writeFileSync(museSettingsPath,
+                `${JSON.stringify(deepMerge(museSettings, { endpoint_transport: { base_url: museRoute } }), null, 2)}\n`, { mode: 0o600 });
+            }
             if (extraArgs.length) log.info('session', `stream ${name}: muse serve takes no TUI flags, dropped ${extraArgs.join(' ')}; posture and model ride the codec`);
             args = streamSpec.argv({ resumeId, sessionId: museSid, fork, ...streamCtx });
           } else if (museSid) {

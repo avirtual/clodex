@@ -21808,6 +21808,39 @@ test('t1174: a muse stream argv is serve with its flags after it and no resume p
   assert.deepStrictEqual(c.sent(), c.inst.open());
 });
 
+test('t1176: a routed muse stream seat carries the wirescope route in its overlay settings, not in argv, and warns nothing', async (t) => {
+  const { streamFor: realStreamFor } = require('../cli-adapters');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const inst = { open: () => [], decode: () => ({ kind: 'other' }), encodeUser: () => null, encodeContext: () => null, encodeInterrupt: () => null };
+  let source = null;
+  const h = mkStreamSeatManager({
+    streamFor: (type) => (type === 'muse' ? realStreamFor('muse') : null),
+    loadStreamCodec: () => ({ create: () => inst }),
+    extraDeps: (root) => {
+      source = path.join(root, 'src-config');
+      fs.mkdirSync(path.join(source, 'muse'), { recursive: true });
+      fs.writeFileSync(path.join(source, 'muse', 'auth.json'), '{}\n');
+      fs.writeFileSync(path.join(source, 'muse', 'trust.json'), '{}\n');
+      fs.writeFileSync(path.join(source, 'muse', 'settings.json'), '{"schema_version":1,"endpoint_transport":{"proxy":"keep"}}\n');
+      return {
+        mergeInstructionBodies: require('../argv-merge').mergeInstructionBodies,
+        getEnvScopes: () => ({ all: () => ({ global: { XDG_CONFIG_HOME: source }, workspaces: {} }) }),
+        ProxyClient: { spawnerHint: () => Promise.resolve(), probe: () => Promise.resolve({ capabilities: { muse: true } }) },
+      };
+    },
+  });
+  t.after(() => h.stopAll());
+  const res = await h.m.create('mu9', 'muse', require('node:os').tmpdir(), [], null, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream');
+  const settingsFile = path.join(h.m.sessions.get('mu9').accountDir, 'muse', 'settings.json');
+  const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
+  assert.deepStrictEqual(settings.endpoint_transport, { proxy: 'keep', base_url: 'http://127.0.0.1:9999/agent/agent-x/meta' });
+  assert.strictEqual(fs.statSync(settingsFile).mode & 0o777, 0o600);
+  assert.ok(!h.spawns[0].args.includes('--base-url'));
+  assert.deepStrictEqual(res.warnings, undefined);
+});
+
 test('t1174: the muse pid-registry poll is not armed on a muse stream seat', async (t) => {
   const c = mkMuseStreamSeat();
   t.after(() => c.h.stopAll());
