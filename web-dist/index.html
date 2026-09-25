@@ -2743,6 +2743,10 @@ body {
 #proxy-actions .px-action.px-voice-off {
   opacity: 0.45;
 }
+#proxy-actions .px-action.px-voice-live {
+  color: var(--ok);
+  opacity: 1;
+}
 #proxy-actions .px-action.px-voice-dead {
   opacity: 0.45;
   cursor: not-allowed;
@@ -38495,7 +38499,7 @@ void main() {
         off: { cls: "rec-off", text: "Not recording", hint: "Clodex sees no recorder running" },
         unavailable: { cls: "rec-unavailable", text: "No microphone on this machine", hint: "This node\u2019s Claude CLI cannot record, so voice input cannot work here whatever the mode says" }
       };
-      function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorderCause, tapOffRecorder }) {
+      function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorderCause, tapOffRecorder, isRecording = () => false }) {
         const pop = document.getElementById("voice-popover");
         const body = document.getElementById("voice-popover-body");
         if (!pop || !body) return { actionHtml: () => "", closeVoicePopover() {
@@ -38573,6 +38577,9 @@ void main() {
             return `<button class="px-action${dim} px-voice-dead" data-act="voice" aria-disabled="true" data-tip="${esc(why)}">\u{1F3A4} ${esc(label)}</button>`;
           }
           const tip = snap.pending ? `Voice input: switching to ${label}` : "click to change voice settings";
+          if (isRecording()) {
+            return `<button class="px-action px-voice-live" data-act="voice" data-tip="${esc(tip)}">\u{1F3A4} listening</button>`;
+          }
           return `<button class="px-action${dim}" data-act="voice" data-tip="${esc(tip)}">\u{1F3A4} ${esc(label)}</button>`;
         }
         function renderRows() {
@@ -47893,6 +47900,7 @@ ${detail}` });
         else if (voiceRecordingSeat === name) voiceRecordingSeat = null;
         const sink = voiceSinkFor(name);
         if (sink) sink.setRecording(on);
+        if (name === activeSession) renderProxyBar();
       }
       async function seatVoiceRecord(name, action) {
         const sink = voiceSinkFor(name);
@@ -49053,6 +49061,7 @@ Click for live activity`;
         renderProxyBar,
         getRecorderReading: () => activeSession && voiceRecordingSeat === activeSession ? "lit" : "off",
         getRecorderCause: () => null,
+        isRecording: () => !!activeSession && voiceRecordingSeat === activeSession,
         tapOffRecorder: () => {
           if (!activeSession || voiceRecordingSeat !== activeSession) return false;
           seatVoiceRecord(activeSession, "stop");
