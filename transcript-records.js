@@ -7,6 +7,7 @@ const { headOf, replyGlyphFor } = require('./intent-glyphs');
 const { pointerMatch, receiptOf } = require('./intent-spill');
 const { FILED_POINTER_RE } = require('./spill-grammar');
 const { DEFAULT_MAX_BYTES } = require('./exec-schema');
+const { sniffReader } = require('./transcript-readers');
 
 const RECORD_CAP = 400;
 const PROMPT_CAP = 4096;
@@ -410,16 +411,46 @@ function isTypedEcho(prompt, name) {
   return prompt.text === name || prompt.text.startsWith(`${name} `);
 }
 
+function stampOf(rec) {
+  if (typeof rec.timestamp === 'string') return rec.timestamp;
+  return Number.isFinite(rec.recorded_at) ? new Date(Math.floor(rec.recorded_at / 1000)).toISOString() : null;
+}
+
+function claudeShaped(rec) {
+  const reader = sniffReader(rec);
+  if (reader.id === 'claude') return [rec];
+  const c = reader.classify(rec);
+  const payload = rec.payload || {};
+  const id = rec.id || rec.uuid || payload.id;
+  const timestamp = stampOf(rec);
+  const spoken = reader.id !== 'codex' || rec.type === 'response_item';
+  const out = [];
+  if (spoken && c.prompt) out.push({ type: 'user', uuid: id, timestamp, message: { role: 'user', content: c.prompt } });
+  if (spoken && c.isReply && c.text) out.push({ type: 'assistant', uuid: c.rid || id, timestamp, message: { role: 'assistant', content: [{ type: 'text', text: c.text }] } });
+  if (c.turnEnd) {
+    const ms = (payload.event || {}).turn_duration_ms;
+    out.push({ type: 'system', subtype: 'turn_duration', uuid: id, timestamp, durationMs: Number.isFinite(ms) ? ms : null });
+  }
+  return out;
+}
+
 function recordsOf(text, max = RECORD_CAP) {
   const tools = new Map();
   const all = [];
   let turn = 0;
   let lastPromptId = null;
+  const lines = [];
   for (const line of String(text).split('\n')) {
     if (!line.trim()) continue;
-    let rec;
-    try { rec = JSON.parse(line); } catch { continue; }
-    if (!rec || typeof rec !== 'object' || rec.isSidechain) continue;
+    let obj;
+    try { obj = JSON.parse(line); } catch { continue; }
+    if (!obj || typeof obj !== 'object') continue;
+    for (const one of sniffReader(obj).expand(obj)) {
+      if (one && typeof one === 'object') lines.push(...claudeShaped(one));
+    }
+  }
+  for (const rec of lines) {
+    if (rec.isSidechain) continue;
     const echoed = echoedCommand(rec);
     const prev = all[all.length - 1];
     if (echoed && prev && prev.kind === 'prompt' && rec.promptId && lastPromptId === rec.promptId && isTypedEcho(prev, echoed)) {

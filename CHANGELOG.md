@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Stream seats on codex and muse now show their prompts and replies in the transcript pane; before, the pane served only Claude transcripts and a headless codex or muse seat stayed blank while it talked.
 - The session bar's voice button opens the voice menu again on every seat, stream or pty: voice on or off for that seat, and whether replies are read aloud. Hold mode is gone. Dictation starts from the external tap or by pressing space on an empty prompt when the seat's voice is on, and the button itself never records; it lights green while the recorder is listening.
 - Claude seats no longer inherit the voice settings from ~/.claude/settings.json: every seat Clodex spawns has the CLI's own recorder off, so only Clodex's voice engine records.
 - Stream seat voice, tap mode: a dictated sentence ending in the trigger word now sends on its own, a second tap dictates again, and every step of a dictation is traced in the log so a misfire can be read instead of guessed.

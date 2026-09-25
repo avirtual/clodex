@@ -3,7 +3,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
+const fs = require('node:fs');
+const path = require('node:path');
+
 const { registerIpcHandlers } = require('../ipc-handlers');
+const { pathFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 test('transcript:pull on a stream seat with no transcript yet still carries its queued outbox rows', () => {
@@ -76,14 +80,20 @@ test('seat:permission refuses a non-desktop surface and a foreign workspace, and
   assert.deepStrictEqual(f.calls, [['st', '5', 'y']]);
 });
 
-function seatPull(seat) {
+function seatPull(seat, transcriptText = null) {
   const handlers = new Map();
+  const reg = mkTmpRoot('ipc-tpull-');
+  if (transcriptText != null) {
+    const link = pathFor(reg, seat.name, 'transcript');
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.writeFileSync(link, transcriptText);
+  }
   const item = { id: 'r1', toolName: 'commandExecution', displayName: 'Shell command', description: null, preview: 'ls', input: null, choices: [], ts: 1 };
   registerIpcHandlers({
     handle: (ch, fn) => handlers.set(ch, fn),
     on: (ch, fn) => handlers.set(ch, fn),
     log: { info() {}, error() {}, warn() {}, debug() {} },
-    REGISTRY_DIR: mkTmpRoot('ipc-tpull-'),
+    REGISTRY_DIR: reg,
     manager: {
       sessions: new Map([[seat.name, seat]]),
       seatOutbox: () => ({ rev: 2, items: [{ text: 'q', origin: 'operator', images: 0 }] }),
@@ -92,18 +102,38 @@ function seatPull(seat) {
       _sendToSession() {},
     },
   });
-  return { res: handlers.get('transcript:pull')(null, seat.name), item };
+  const res = handlers.get('transcript:pull')(null, seat.name);
+  const live = seat._dead;
+  seat._dead = true;
+  handlers.get('transcript:pull')(null, seat.name);
+  seat._dead = live;
+  return { res, item };
 }
 
-test('transcript:pull on a codex stream seat carries its outbox and permission cards with no records', () => {
+test('transcript:pull on a codex stream seat with no transcript link carries its outbox and permission cards with no records', () => {
   const { res, item } = seatPull({ name: 'cx', agentType: 'codex', io: 'stream', _dead: false });
   assert.deepStrictEqual(res, {
-    ok: false, reason: 'not-claude', rev: '-:o2:p4', records: [],
+    ok: false, reason: 'unavailable', rev: '-:o2:p4', records: [],
     outbox: [{ text: 'q', origin: 'operator', images: 0 }], permissions: [item],
   });
 });
 
 test('transcript:pull on a codex pty seat is the bare not-claude result', () => {
   const { res } = seatPull({ name: 'cp', agentType: 'codex', io: 'pty', _dead: false });
+  assert.deepStrictEqual(res, { ok: false, reason: 'not-claude' });
+});
+
+const MUSE_TURN = ['muse-intent', 'muse-reply']
+  .map((f) => fs.readFileSync(path.join(__dirname, 'fixtures', 'transcript-records', `${f}.jsonl`), 'utf8')).join('');
+
+test('transcript:pull on a muse stream seat with a readable transcript serves its records beside the outbox', () => {
+  const { res } = seatPull({ name: 'muse', agentType: 'muse', io: 'stream', _dead: false }, MUSE_TURN);
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.rev, '1:o2:p4');
+  assert.deepStrictEqual(res.records.map((r) => [r.kind, r.text]), [['prompt', 'what model are you?'], ['assistant', "I'm Muse Code powered by Meta Muse Spark."]]);
+});
+
+test('transcript:pull on a muse pty seat with a readable transcript is still the bare not-claude result', () => {
+  const { res } = seatPull({ name: 'mp', agentType: 'muse', io: 'pty', _dead: false }, MUSE_TURN);
   assert.deepStrictEqual(res, { ok: false, reason: 'not-claude' });
 });
