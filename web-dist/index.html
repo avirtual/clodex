@@ -2786,13 +2786,6 @@ body {
 .rec-busy {
   color: var(--warn);
 }
-.rec-unreadable {
-  color: var(--warn);
-}
-.rec-unreadable .rec-dot {
-  background: none;
-  border: 1px solid currentColor;
-}
 .rec-unavailable {
   color: var(--warn);
 }
@@ -9963,7 +9956,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         </div>
         <span id="prefs-voice-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
         <h5>Hands-free submit</h5>
-        <p class="hint-text">End what you are saying with the phrase below and Clodex erases the phrase and presses Enter for you. The CLI submits on its own only when the last transcribed chunk runs to three words or more, so trailing off leaves your sentence sitting in the box — this is the way out of that. It does not care <em>how</em> the words got there: it works with the CLI's own voice mode, with macOS dictation, and it will also fire on text you typed by hand ending in the phrase. Never fires while a session is asking permission for something (Enter would answer the dialog), and a phrase spoken then is dropped rather than sent once the dialog clears. Applies to Claude sessions on this machine.</p>
+        <p class="hint-text">End what you are saying with the phrase below and Clodex erases the phrase and presses Enter for you. The CLI submits on its own only when the last transcribed chunk runs to three words or more, so trailing off leaves your sentence sitting in the box — this is the way out of that. Never fires while a session is asking permission for something (Enter would answer the dialog), and a phrase spoken then is dropped rather than sent once the dialog clears.</p>
         <label class="prefs-check">
           <input type="checkbox" id="prefs-voice-submit">
           <span>Submit when I say the phrase</span>
@@ -10842,8 +10835,6 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         // this terminal's own screen says that is safe. The DECISION is the
         // renderer's because only it can read the recorder; main routes.
         { name: "onVoiceTap", kind: "on", channel: "voice-tap" },
-        { name: "micTarget", kind: "invoke", channel: "voice:micTarget" },
-        { name: "appFocused", kind: "invoke", channel: "voice:appFocused" },
         { name: "listWorkspaces", kind: "invoke", channel: "workspace:list" },
         { name: "currentWorkspace", kind: "invoke", channel: "workspace:current" },
         { name: "setWorkspaceName", kind: "invoke", channel: "workspace:setName" },
@@ -38351,12 +38342,6 @@ void main() {
       var RECORDER_STATES = {
         lit: { cls: "rec-lit", text: "Recording", hint: "Clodex sees the recorder running \u2014 click to stop it (declines while a draft is in the composer, since the key would SEND it)" },
         busy: { cls: "rec-busy", text: "Processing", hint: "The CLI is finishing the last utterance \u2014 Clodex will not write to it now" },
-        // The REMEDY, not just the cause: the alternate-buffer cause is usually the
-        // CLI's own fullscreen renderer, which is sticky across restarts, so an
-        // operator reading only the mechanism has no reason to suspect a setting he
-        // can change and every reason to think the feature is broken. Measured on a
-        // live seat: it cost hours.
-        unreadable: { cls: "rec-unreadable", text: "Cannot read the screen", hint: "Clodex cannot see the indicator, so it will not write \u2014 a re-arm is blocked while this shows. If the CLI is in fullscreen mode (/tui fullscreen), /tui switches back" },
         off: { cls: "rec-off", text: "Not recording", hint: "Clodex sees no recorder running" },
         unavailable: { cls: "rec-unavailable", text: "No microphone on this machine", hint: "This node\u2019s Claude CLI cannot record, so voice input cannot work here whatever the mode says" }
       };

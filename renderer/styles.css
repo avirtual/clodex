@@ -1993,9 +1993,7 @@ html, body {
 /* What CLODEX believes the recorder is doing — the same predicates the voice
    gates read, never a second detector.
 
-   The states must stay visually distinct: 'unreadable' is a blocked re-arm and
-   it is the state this surface was built to expose, so painting it like 'off'
-   would return the operator to the blindness the display ends. Colour is not
+   Colour is not
    the only carrier — each row also spells its state in words, since the dim
    states differ by hue alone and a colour-blind reader gets nothing from that.
 
@@ -2025,8 +2023,6 @@ html, body {
 .rec-busy { color: var(--warn); }
 /* Hollow, not filled: an outline reads as "no reading taken" where a solid dot
    in any colour reads as a measurement. */
-.rec-unreadable { color: var(--warn); }
-.rec-unreadable .rec-dot { background: none; border: 1px solid currentColor; }
 .rec-unavailable { color: var(--warn); }
 .rec-unavailable .rec-dot { background: none; border: 1px solid currentColor; }
 .rec-off { color: var(--text-dim); }

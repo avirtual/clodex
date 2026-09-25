@@ -309,7 +309,6 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/ansi-html.js',
   'renderer/live-split-view.js',
   'renderer/transcript-rows.js',
-  'renderer/lib/mirror-latch.js',
   'renderer/lib/constants.js',
   'renderer/lib/format.js',
   'renderer/lib/render-html.js',

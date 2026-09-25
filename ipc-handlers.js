@@ -2464,14 +2464,6 @@ function registerIpcHandlers(deps) {
     );
   });
 
-  // What a window that opened or reloaded mid-dictation missed. Read-only: the
-  // target moves on a focus report or an external tap, never on being asked.
-  handle('voice:micTarget', () => manager.micTarget());
-
-  // The same catch-up read for the frontmost-app condition. Read-only: the flag
-  // moves on the host's focus/blur events, never on being asked.
-  handle('voice:appFocused', () => manager.appFocused());
-
   handle('app:restore-sessions', (e) => restoreSessionsForWorkspace(workspaceOfSender(e)));
 
   handle('session:retrySpawn', async (e, name) => {

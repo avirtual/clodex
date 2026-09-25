@@ -255,3 +255,7 @@ test('a host that wires no clearHints degrades to the TTL, it does not throw', (
   assert.strictEqual(arm.disarm(CTX), false);
   assert.deepStrictEqual(r.cleared, []);
 });
+
+test('VOICE_TTL_S stays within the failed-disarm exposure bound', () => {
+  assert.ok(VOICE_TTL_S <= 30, `VOICE_TTL_S is ${VOICE_TTL_S}`);
+});

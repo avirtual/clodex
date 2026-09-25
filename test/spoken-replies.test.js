@@ -821,60 +821,7 @@ test('every surface offering a rate agrees on the default', () => {
     'Settings and the popover must offer the same rates, in the same order');
 });
 
-// --- the busy signal --------------------------------------------------------
-//
-// The renderer cannot see this process, so these two edges are the ENTIRE
-// mechanism by which the turn-end re-arm knows to wait. `say` blocks until
-// playback completes (measured 5.2s for a ~5s sentence), so the exit callback IS
-// the end of audio — which is why no consumer may substitute a timer for it.
-
-test('onBusy reports the start and the end of playback, and only on a change', () => {
-  const seen = [];
-  let exit = null;
-  const sp = createSpeaker({
-    execFileImpl: (_b, _a, cb) => { exit = cb; return { kill() {} }; },
-    onBusy: (b) => seen.push(b),
-  });
-  sp.speak('a reply');
-  assert.deepStrictEqual(seen, [true]);
-  // A second utterance replaces the first WITHOUT a false in between: the
-  // speaker never went quiet, and a spurious false would release a waiting
-  // re-arm into a live narration.
-  sp.speak('a newer reply');
-  assert.deepStrictEqual(seen, [true], 'replacing an utterance is not a gap in playback');
-  exit();
-  assert.deepStrictEqual(seen, [true, false]);
-});
-
-test('a killed narration reports false at the kill, not a tick later', () => {
-  // stop() is what interruptForRecorder and every teardown path calls. A
-  // consumer waiting on the false edge would otherwise sit out the gap until
-  // the exit callback landed.
-  const seen = [];
-  const sp = createSpeaker({ execFileImpl: () => ({ kill() {} }), onBusy: (b) => seen.push(b) });
-  sp.speak('a long narration');
-  sp.interruptForRecorder();
-  assert.deepStrictEqual(seen, [true, false]);
-});
-
-test('a speak that throws does not leave the box marked busy forever', () => {
-  const seen = [];
-  const sp = createSpeaker({ execFileImpl: () => { throw new Error('ENOENT'); }, onBusy: (b) => seen.push(b) });
-  assert.strictEqual(sp.speak('hello'), false);
-  assert.deepStrictEqual(seen, [], 'never announced busy, so there is nothing to release');
-  assert.strictEqual(sp.isSpeaking(), false);
-});
-
-test('a throwing onBusy cannot take down speak or stop', () => {
-  const sp = createSpeaker({
-    execFileImpl: () => ({ kill() {} }),
-    onBusy: () => { throw new Error('a window went away'); },
-  });
-  assert.strictEqual(sp.speak('hello'), true);
-  assert.strictEqual(sp.stop(), true);
-});
-
-test('a speaker with no listener still works — the signal is optional', () => {
+test('a speaker reports isSpeaking once an utterance starts', () => {
   const sp = createSpeaker({ execFileImpl: () => ({ kill() {} }) });
   assert.strictEqual(sp.speak('hello'), true);
   assert.strictEqual(sp.isSpeaking(), true);

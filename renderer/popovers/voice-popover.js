@@ -60,22 +60,12 @@ const DEFAULT_SPEAK_RATE = 210;
 const RECORDER_TICK_MS = 300;
 
 // What CLODEX believes, in the words of the predicate that produced it.
-// 'unreadable' is the one this whole surface exists for: it silently blocks
-// every re-arm and is indistinguishable from 'off' on screen today, which is
-// how a U+00A0-vs-U+0020 scrape mismatch once left it dead with a green suite.
-//
 // 'out' is not a recorder state and paints nothing: the scan does not run on a
 // seat that is not the active Claude one, so there is no reading to report and
 // claiming 'off' would be a measurement nobody took.
 const RECORDER_STATES = {
   lit: { cls: 'rec-lit', text: 'Recording', hint: 'Clodex sees the recorder running — click to stop it (declines while a draft is in the composer, since the key would SEND it)' },
   busy: { cls: 'rec-busy', text: 'Processing', hint: 'The CLI is finishing the last utterance — Clodex will not write to it now' },
-  // The REMEDY, not just the cause: the alternate-buffer cause is usually the
-  // CLI's own fullscreen renderer, which is sticky across restarts, so an
-  // operator reading only the mechanism has no reason to suspect a setting he
-  // can change and every reason to think the feature is broken. Measured on a
-  // live seat: it cost hours.
-  unreadable: { cls: 'rec-unreadable', text: 'Cannot read the screen', hint: 'Clodex cannot see the indicator, so it will not write — a re-arm is blocked while this shows. If the CLI is in fullscreen mode (/tui fullscreen), /tui switches back' },
   off: { cls: 'rec-off', text: 'Not recording', hint: 'Clodex sees no recorder running' },
   unavailable: { cls: 'rec-unavailable', text: 'No microphone on this machine', hint: 'This node\u2019s Claude CLI cannot record, so voice input cannot work here whatever the mode says' },
 };
@@ -108,9 +98,6 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
     try { return (getRecorderCause && getRecorderCause()) || null; } catch { return null; }
   }
 
-  // The cause moves while the reading does not — three causes share the one
-  // 'unreadable' state — so a repaint keyed on the state alone would leave the
-  // first cause on screen describing the second.
   function readingKey() {
     return `${reading()}|${cause() || ''}`;
   }

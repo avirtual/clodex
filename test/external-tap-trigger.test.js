@@ -363,7 +363,7 @@ test('MIC: it starts held by NOBODY', () => {
   assert.strictEqual(m.micTarget(), null);
 });
 
-test('MIC: a window that opens later reads the holder through the pull', () => {
+test('MIC: a window that opens later is sent nothing and the holder stands', () => {
   const m = mk();
   const { a } = twoWindows(m);
   reportFrom(m, a, 'A');
@@ -371,29 +371,6 @@ test('MIC: a window that opens later reads the holder through the pull', () => {
   m.registerWindow('ws3', late);
   assert.deepStrictEqual(late.sent, []);
   assert.strictEqual(m.micTarget(), 'A');
-});
-
-test('MIC: the contract carries the pull and no mic-target event', () => {
-  const rows = new Map(API_CONTRACT.map((r) => [r.name, r]));
-  assert.strictEqual(rows.get('onMicTarget'), undefined);
-  assert.deepStrictEqual(rows.get('micTarget'),
-    { name: 'micTarget', kind: 'invoke', channel: 'voice:micTarget' });
-});
-
-test('MIC: the voice:micTarget handler is registered and returns the target', () => {
-  // The REGISTERED handler, for the reason its neighbour below gives: a test
-  // calling the method directly stays green if the channel was never wired.
-  const { registerIpcHandlers } = require('../ipc-handlers');
-  const handlers = new Map();
-  registerIpcHandlers({
-    handle: (ch, fn) => handlers.set(ch, fn),
-    on: () => {},
-    manager: { micTarget: () => 'A' },
-    log: { info() {}, error() {} },
-  });
-  const fn = handlers.get('voice:micTarget');
-  assert.ok(fn, 'voice:micTarget is registered');
-  assert.strictEqual(fn({}), 'A');
 });
 
 // A REPORT FROM A BACKGROUND WINDOW takes nothing. This is the third door onto
@@ -586,27 +563,6 @@ test('FOCUS: a DECLINED tap neither raises a window nor moves the microphone', (
   assert.strictEqual(m.voiceTap('ghost').ok, false);
   assert.deepStrictEqual(a.raised, [], 'no window came forward for a tap that went nowhere');
   assert.strictEqual(m.micTarget(), 'A');
-});
-
-test('FOCUS: the contract carries the pull and no app-focused event', () => {
-  const rows = new Map(API_CONTRACT.map((r) => [r.name, r]));
-  assert.strictEqual(rows.get('onAppFocused'), undefined);
-  assert.deepStrictEqual(rows.get('appFocused'),
-    { name: 'appFocused', kind: 'invoke', channel: 'voice:appFocused' });
-});
-
-test('FOCUS: the voice:appFocused handler is registered and returns the flag', () => {
-  const { registerIpcHandlers } = require('../ipc-handlers');
-  const handlers = new Map();
-  registerIpcHandlers({
-    handle: (ch, fn) => handlers.set(ch, fn),
-    on: () => {},
-    manager: { appFocused: () => true },
-    log: { info() {}, error() {} },
-  });
-  const fn = handlers.get('voice:appFocused');
-  assert.ok(fn, 'voice:appFocused is registered');
-  assert.strictEqual(fn({}), true);
 });
 
 test('FOCUS: main reports the APP’s focus, not a window’s', () => {

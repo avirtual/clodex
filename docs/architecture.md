@@ -1263,14 +1263,6 @@ Own state + DOM, `init*(deps)`:
   `shouldFire`) and the recorder-indicator predicates (`recordingObserved`,
   `processingObserved`) the composer and pty voice paths share; pinned by
   `test/voice-submit.test.js`.
-- **lib/mirror-latch.js** — a renderer-side mirror of a value MAIN owns, fed by
-  a broadcast and by a catch-up pull the window fires on startup for the edge it
-  was not open for. The pull resolves at an unspecified time, so it can land
-  after a broadcast has already delivered a newer answer; the latch is the rule
-  that a broadcast, once heard, wins over every later pull. Its own `heard` flag
-  rather than comparing the value against its initial one, because for both
-  users `null` is a legitimate released mic target and `false` a legitimate
-  backgrounded app — the value cannot double as the flag.
 - **lib/sidebar-filter-fold.js** — the sidebar Find bar's fold: which filter
   criteria a folded header names, and the class toggle that folds it. The
   summary lists only what DIFFERS from the defaults, in control order, so a
