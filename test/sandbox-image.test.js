@@ -32,3 +32,19 @@ test('the image bakes /home/clodex/.gitconfig trusting every repo in the box', (
     'the baked gitconfig needs a [safe] section whose next entry is exactly `directory = *`',
   );
 });
+
+const BOX_DOCKERFILE = fs.readFileSync(path.join(__dirname, '..', 'docker', 'Dockerfile'), 'utf8');
+
+for (const [name, text] of [['docker/web/Dockerfile', DOCKERFILE], ['docker/Dockerfile', BOX_DOCKERFILE]]) {
+  test(`${name} exports the muse file credential backend and XDG data home`, () => {
+    const envs = instructions(text).filter((i) => /^ENV\b/.test(i)).join('\n');
+    assert.match(envs, /\bTBH_CREDENTIAL_BACKEND=file\b/);
+    assert.match(envs, /\bXDG_DATA_HOME=\/home\/clodex\/\.local\/share\b/);
+  });
+
+  test(`${name} pre-creates the muse data dir so a fresh volume inherits clodex ownership`, () => {
+    const mk = instructions(text).filter((i) => /^RUN mkdir -p [^\n]*\/home\/clodex\/\.config\/muse/.test(i));
+    assert.strictEqual(mk.length, 1);
+    assert.match(mk[0], /^RUN mkdir -p [^\n&]*\/home\/clodex\/\.local\/share(\s|$)/);
+  });
+}

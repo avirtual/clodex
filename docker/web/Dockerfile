@@ -92,13 +92,15 @@ COPY --from=builder /build/web-dist ./web-dist
 # the "trust this folder?" dialog is pure friction on every new session. The
 # file sits OUTSIDE the volumes on purpose — it's derived state, and baking it
 # means every recreate starts onboarded + trusted.
-RUN mkdir -p /data /home/clodex/.clodex /home/clodex/.claude /home/clodex/.config/muse /home/clodex/work \
+RUN mkdir -p /data /home/clodex/.clodex /home/clodex/.claude /home/clodex/.config/muse /home/clodex/.local/share /home/clodex/work \
  && printf '{"hasCompletedOnboarding": true, "projects": {"/": {"hasTrustDialogAccepted": true}}}' > /home/clodex/.claude.json \
  && printf '[safe]\n\tdirectory = *\n' > /home/clodex/.gitconfig \
  && chown -R clodex:clodex /app /data /home/clodex
 
 ENV HOME=/home/clodex \
     SHELL=/bin/bash \
+    TBH_CREDENTIAL_BACKEND=file \
+    XDG_DATA_HOME=/home/clodex/.local/share \
     CLODEX_DATA_DIR=/data \
     CLODEX_WEB_PORT=8080 \
     # Widen the wirescope + peer-wire binds to 0.0.0.0 INSIDE the container so

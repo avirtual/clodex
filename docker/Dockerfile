@@ -132,6 +132,8 @@ WORKDIR /home/clodex
 # a login shell and the systemd unit find them. You still authenticate ONCE
 # inside the container after first boot (see the header).
 ENV PATH=/home/clodex/.npm-global/bin:/home/clodex/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV TBH_CREDENTIAL_BACKEND=file
+ENV XDG_DATA_HOME=/home/clodex/.local/share
 # Install the CLIs in SEPARATE steps and VERIFY the bin shims resolve. A
 # single `npm install -g pkgA pkgB` was observed to leave claude's bin symlink as
 # a dangling staging name (~/.npm-global/bin/.claude-<hash> instead of `claude`)
@@ -159,7 +161,7 @@ RUN mkdir -p /home/clodex/.local/bin \
 # dir didn't exist here it'd mount root-owned and the CLIs (uid 1001) couldn't
 # write their tokens, so you'd re-auth on every container recreation. Creating
 # them as clodex is what lets the one-time OAuth survive up/down/rebuild.
-RUN mkdir -p /home/clodex/.claude /home/clodex/.codex /home/clodex/.config/muse
+RUN mkdir -p /home/clodex/.claude /home/clodex/.codex /home/clodex/.config/muse /home/clodex/.local/share
 
 # Bake Clodex itself: clone + npm install + electron binary + electron-rebuild.
 # This is the slow part of a cold deploy (npm install + the ~100MB Electron

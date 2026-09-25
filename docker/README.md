@@ -112,6 +112,7 @@ SUID `chrome-sandbox` fix, `ui-settings.json`, the systemd unit — but does it 
 Docker volumes** (`clodex-peer-claude`, `clodex-peer-codex`, `clodex-peer-muse`),
 so your one-time OAuth survives
 `up`/`down`/rebuild. Only `reset` (or `docker volume rm`) clears them.
+Muse's sessions and caches (`~/.local/share`) persist the same way in `clodex-peer-muse-data`.
 
 **Host keys.** Every rebuild regenerates the container's SSH host keys. `up`
 runs `ssh-keygen -R "[localhost]:2222"` first so your Mac re-learns the new key

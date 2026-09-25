@@ -90,12 +90,13 @@ case "$cmd" in
       -v "${NAME}-claude:/home/clodex/.claude" \
       -v "${NAME}-codex:/home/clodex/.codex" \
       -v "${NAME}-muse:/home/clodex/.config/muse" \
+      -v "${NAME}-muse-data:/home/clodex/.local/share" \
       "$IMAGE"
     echo "up: ssh -p $SSH_PORT clodex@localhost   (run 'docker/run.sh host' for an ssh-config block)"
     ;;
   down)  docker rm -f "$NAME" >/dev/null 2>&1 && echo "removed $NAME (auth volumes kept; 'reset' to wipe)" || echo "not running" ;;
   reset) docker rm -f "$NAME" >/dev/null 2>&1 || true
-         docker volume rm "${NAME}-claude" "${NAME}-codex" "${NAME}-muse" >/dev/null 2>&1 \
+         docker volume rm "${NAME}-claude" "${NAME}-codex" "${NAME}-muse" "${NAME}-muse-data" >/dev/null 2>&1 \
            && echo "removed $NAME + auth volumes (next 'up' needs fresh OAuth)" \
            || echo "no auth volumes to remove" ;;
   logs)  docker logs -f "$NAME" ;;
