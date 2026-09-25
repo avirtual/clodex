@@ -7911,9 +7911,13 @@ function createSessionManager(deps) {
     }
 
     _scratchCancel(session, reply, intent = {}) {
-      const label = typeof intent.label === 'string' && intent.label ? intent.label : null;
+      let label = typeof intent.label === 'string' && intent.label ? intent.label : null;
       this._scratchDropPendingBegin(session, label);
       session._scratchVoid = null;
+      if (!label) {
+        const best = this._scratchRewindTarget(session, null);
+        if (best && best.label) label = best.label;
+      }
       if (label) {
         const marks = session._scratchMarks;
         const named = (marks instanceof Map && marks.get(label)) || null;

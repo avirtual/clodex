@@ -20501,6 +20501,33 @@ test('scratch cancel <label>: drops that mark ONLY, records a cancelled row with
   assert.deepStrictEqual(f.order, []);
 });
 
+test('scratch cancel (bare): drops the most recent open mark like a bare rewind targets it — a lone labeled mark, and a labeled mark younger than an unlabeled episode', () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  const p = scratchNamed(f, tape, 'probe2').mark;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', label: null, replay: false, body: '' });
+  assert.strictEqual(f.injected[f.injected.length - 1],
+    `[agent:scratch] mark probe2 dropped · mark ${p.nonce}. Nothing was cut; everything you read since it stays in your transcript as ordinary history.`);
+  assert.strictEqual(f.s._scratchMarks.has('probe2'), false);
+
+  const g = mkScratch();
+  const gt = scratchPrefix(g);
+  g.m._handleScratchIntent(g.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
+  const ep = g.s._scratch;
+  scratchResearch(g, 'read one');
+  const b = scratchNamed(g, gt, 'b').mark;
+  assert.ok(b.sizeAtBegin > ep.sizeAtBegin);
+  g.m._handleScratchIntent(g.s, { type: 'scratch', sub: 'cancel', label: null, replay: false, body: '' });
+  assert.strictEqual(g.injected[g.injected.length - 1],
+    `[agent:scratch] mark b dropped · mark ${b.nonce}. Nothing was cut; everything you read since it stays in your transcript as ordinary history.`);
+  assert.strictEqual(g.s._scratchMarks.has('b'), false);
+  assert.strictEqual(g.s._scratch, ep, 'the older unlabeled episode stays open');
+  g.m._handleScratchIntent(g.s, { type: 'scratch', sub: 'cancel', label: null, replay: false, body: '' });
+  assert.strictEqual(g.injected[g.injected.length - 1],
+    `[agent:scratch] episode cancelled · mark ${ep.nonce} is dropped. Nothing was cut; everything you read since begin stays in your transcript as ordinary history.`);
+  assert.strictEqual(g.s._scratch, null);
+});
+
 test('scratch rewind: an unknown label lists the open marks most recent first; a bare rewind with nothing open says how to set one', () => {
   const f = mkScratch();
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'rewind', label: null, replay: false, body: '' });
