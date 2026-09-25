@@ -40,7 +40,7 @@ function pullFixture(perms) {
     handle: (ch, fn) => handlers.set(ch, fn),
     on: (ch, fn) => handlers.set(ch, fn),
     log: { info() {}, error() {}, warn() {}, debug() {} },
-    REGISTRY_DIR: mkTmpRoot('ipc-tperm-'),
+    REGISTRY_DIR: mkTmpRoot('ipc-tpull-'),
     surfaceOfSender: (e) => e.surface,
     workspaceOfSender: (e) => e.ws,
     manager: {
