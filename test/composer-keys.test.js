@@ -2,7 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { composerReadlineEdit } = require('../renderer/lib/composer-keys');
+const fs = require('node:fs');
+const path = require('node:path');
+const { composerReadlineEdit, composerHeightFor } = require('../renderer/lib/composer-keys');
 
 const ROWS = [
   { name: 'u mid-line deletes before the cursor', key: 'u', value: 'hello world', start: 5, end: 5, want: { value: ' world', cursor: 0 } },
@@ -43,3 +45,29 @@ for (const r of NULL_ROWS) {
     assert.strictEqual(got, null);
   });
 }
+
+const HEIGHTS = [
+  { name: 'no border delta keeps scrollHeight', m: { scrollHeight: 22, offsetHeight: 22, clientHeight: 22 }, want: 22 },
+  { name: 'a 2px border delta is added', m: { scrollHeight: 22, offsetHeight: 24, clientHeight: 22 }, want: 24 },
+  { name: 'three wrapped lines grow the box', m: { scrollHeight: 60, offsetHeight: 24, clientHeight: 22 }, want: 62 },
+  { name: 'an unlaid-out box yields null', m: { scrollHeight: 0, offsetHeight: 0, clientHeight: 0 }, want: null },
+];
+
+for (const r of HEIGHTS) {
+  test(`composerHeightFor: ${r.name}`, () => {
+    assert.strictEqual(composerHeightFor(r.m), r.want);
+  });
+}
+
+test('stream composer starts at one row and fits on input', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  assert.ok(src.includes('composer.rows = 1;'));
+  assert.ok(!src.includes('composer.rows = 3;'));
+  assert.ok(src.includes("composer.addEventListener('input', fitComposer);"));
+});
+
+test('global textarea focus-visible ring excludes the stream composer', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  assert.ok(css.includes('textarea:not(.xterm-helper-textarea):not(.seat-composer):focus-visible'));
+  assert.ok(!css.includes('textarea:not(.xterm-helper-textarea):focus-visible'));
+});

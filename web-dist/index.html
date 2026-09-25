@@ -6970,7 +6970,7 @@ textarea {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
-textarea:not(.xterm-helper-textarea):focus-visible,
+textarea:not(.xterm-helper-textarea):not(.seat-composer):focus-visible,
 [tabindex]:not(.xterm):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
@@ -8695,9 +8695,9 @@ body.web-frontend #sidebar-header {
   flex: 0 0 auto;
   width: 100%;
   box-sizing: border-box;
-  min-height: 3.5em;
   max-height: 40%;
-  resize: vertical;
+  overflow-y: auto;
+  resize: none;
   padding: var(--sp-1) var(--sp-2);
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -8709,6 +8709,7 @@ body.web-frontend #sidebar-header {
 }
 .seat-composer:focus {
   outline: none;
+  box-shadow: none;
   border-color: var(--accent, var(--border));
 }
 .seat-composer.voice-recording {
@@ -26883,7 +26884,11 @@ ${i3.join("\n")}
         }
         return { value: text.slice(0, from) + text.slice(to), cursor: from };
       }
-      module.exports = { composerReadlineEdit };
+      function composerHeightFor({ scrollHeight, offsetHeight, clientHeight }) {
+        if (!(scrollHeight > 0)) return null;
+        return scrollHeight + Math.max(0, (offsetHeight || 0) - (clientHeight || 0));
+      }
+      module.exports = { composerReadlineEdit, composerHeightFor };
     }
   });
 
@@ -44552,7 +44557,7 @@ ${detail}` });
       var { isToolInstallSession } = require_tool_doctor();
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
-      var { composerReadlineEdit } = require_composer_keys();
+      var { composerReadlineEdit, composerHeightFor } = require_composer_keys();
       var { turnSeg, reqSeg, costSeg } = require_turn_stat();
       var { renderAppendChecklist, collectAppendChecklist, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
@@ -45989,7 +45994,7 @@ ${detail}` });
         wrapperEl.appendChild(paneEl);
         const composer = document.createElement("textarea");
         composer.className = "seat-composer";
-        composer.rows = 3;
+        composer.rows = 1;
         composer.placeholder = "Message \u2014 Enter sends, Shift+Enter for a new line";
         const attachEl = document.createElement("div");
         attachEl.className = "seat-attachments";
@@ -46004,6 +46009,11 @@ ${detail}` });
         wrapperEl.appendChild(permEl);
         wrapperEl.appendChild(attachEl);
         wrapperEl.appendChild(composer);
+        const fitComposer = () => {
+          composer.style.height = "auto";
+          const px = composerHeightFor({ scrollHeight: composer.scrollHeight, offsetHeight: composer.offsetHeight, clientHeight: composer.clientHeight });
+          composer.style.height = px == null ? "" : `${px}px`;
+        };
         const SEAT_PERMISSION_INPUT_MAX = 600;
         let permKey = "";
         const renderPermissions = (items) => {
@@ -46209,12 +46219,14 @@ ${detail}` });
           clearTimeout(draftTimer);
           draftTimer = null;
           composer.value = "";
+          fitComposer();
           triggerSubmit.resetSpan();
           pending = [];
           renderAttachments();
           follow = true;
           const restore = () => {
             if (!composer.value) composer.value = text;
+            fitComposer();
             if (!pending.length && images.length) {
               pending = images;
               renderAttachments();
@@ -46271,17 +46283,24 @@ ${detail}` });
           releaseMs: VOICE_RELEASE_MS,
           trace: (line) => voiceTrace(name, line)
         });
+        composer.addEventListener("input", fitComposer);
+        fitComposer();
         return {
-          focus: () => composer.focus(),
+          focus: () => {
+            composer.focus();
+            fitComposer();
+          },
           refresh: () => pull(true),
           voiceDraft(text) {
             triggerSubmit.draft(text);
+            fitComposer();
           },
           voiceStart() {
             triggerSubmit.resetSpan();
           },
           voiceReleased() {
             triggerSubmit.released();
+            fitComposer();
           },
           setRecording(on) {
             voiceRecordingOn = !!on;
@@ -46294,6 +46313,7 @@ ${detail}` });
             clearInterval(timer);
             clearTimeout(draftTimer);
             composer.removeEventListener("input", onComposerInput);
+            composer.removeEventListener("input", fitComposer);
             transcriptChangedSubs.delete(onChanged);
             paneEl.removeEventListener("scroll", onScroll);
             permEl.replaceChildren();

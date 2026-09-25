@@ -33,4 +33,9 @@ function composerReadlineEdit({ key, ctrlKey, metaKey, altKey, value, selectionS
   return { value: text.slice(0, from) + text.slice(to), cursor: from };
 }
 
-module.exports = { composerReadlineEdit };
+function composerHeightFor({ scrollHeight, offsetHeight, clientHeight }) {
+  if (!(scrollHeight > 0)) return null;
+  return scrollHeight + Math.max(0, (offsetHeight || 0) - (clientHeight || 0));
+}
+
+module.exports = { composerReadlineEdit, composerHeightFor };
