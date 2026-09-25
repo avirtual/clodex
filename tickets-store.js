@@ -29,9 +29,29 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
     }
   }
 
+  function refuseReason(file) {
+    let raw;
+    try {
+      raw = fs.readFileSync(file, 'utf-8');
+    } catch (e) {
+      if (e && e.code === 'ENOENT') return null;
+      return `unreadable (${(e && e.code) || 'error'})`;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return 'not valid JSON';
+    }
+    return Array.isArray(parsed) ? null : 'not an array';
+  }
+
   function save(projectRoot, tickets) {
+    const file = ticketsPath(projectRoot);
+    const reason = refuseReason(file);
+    if (reason) throw new Error(`tickets board at ${file} is ${reason}; refusing to overwrite`);
     ensureDir(boardDir(projectRoot));
-    atomicWriteFileSync(ticketsPath(projectRoot), JSON.stringify(tickets, null, 2));
+    atomicWriteFileSync(file, JSON.stringify(tickets, null, 2));
   }
 
   return { load, save, ticketsPath };

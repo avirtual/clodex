@@ -75,6 +75,45 @@ test('tickets-store: a corrupt registry loads as empty, not a throw', () => {
   assert.deepStrictEqual(store.load(root), []);
 });
 
+const SAVE_REFUSAL_ROWS = [
+  { name: 'malformed', bytes: '{ not json', mode: null, reason: 'not valid JSON' },
+  { name: 'non-array', bytes: '{}', mode: null, reason: 'not an array' },
+  { name: 'unreadable', bytes: '[{"id":"t1"}]', mode: 0o000, reason: 'unreadable (EACCES)', skip: typeof process.getuid === 'function' && process.getuid() === 0 },
+];
+
+for (const row of SAVE_REFUSAL_ROWS) {
+  test(`tickets-store: save refuses to overwrite a ${row.name} board and leaves its bytes intact`, { skip: row.skip }, (t) => {
+    const home = tmpHome();
+    const root = tmpRoot();
+    const store = createTicketsStore({ clodexHome: home });
+    const file = store.ticketsPath(root);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, row.bytes);
+    if (row.mode !== null) {
+      fs.chmodSync(file, row.mode);
+      t.after(() => fs.chmodSync(file, 0o600));
+    }
+    const before = Buffer.from(row.bytes);
+    if (row.mode === null) assert.ok(fs.readFileSync(file).equals(before), 'ENTER: the fixture board holds the row bytes');
+    assert.throws(
+      () => store.save(root, [{ id: 't2' }]),
+      (e) => e.message === `tickets board at ${file} is ${row.reason}; refusing to overwrite`,
+    );
+    fs.chmodSync(file, 0o600);
+    assert.ok(fs.readFileSync(file).equals(before), `${row.name}: board bytes changed`);
+  });
+}
+
+test('tickets-store: save on a missing board creates it with the given array', () => {
+  const home = tmpHome();
+  const root = tmpRoot();
+  const store = createTicketsStore({ clodexHome: home });
+  const file = store.ticketsPath(root);
+  assert.strictEqual(fs.existsSync(file), false);
+  store.save(root, [{ id: 't1' }, { id: 't2' }]);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf-8')), [{ id: 't1' }, { id: 't2' }]);
+});
+
 // Three states, not two. A later refactor that reads `parked` as "the same as
 // unassigned" collapses the middle one, and the record on disk is the only place
 // the distinction lives: `parked` is written ONLY when true, so absent-vs-false

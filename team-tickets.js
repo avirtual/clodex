@@ -3350,24 +3350,29 @@ function createTicketMethods(deps, shared) {
         if (!team) { reply(`error: this session is not on a team and is not inside a git repository — a ticket needs a project to belong to${this._spillRejectedPayload(session, `task ${intent.sub}`, String(intent.body == null ? '' : intent.body).trim())}`); return; }
       }
       try { stale = this._hostIsThisTeamsCode(team) ? this._staleHostSuffix() : ''; } catch { stale = ''; }
-      switch (intent.sub) {
-        case 'add': this._taskAdd(session, team, intent, reply); break;
-        case 'assign': this._taskAssign(session, team, intent, reply); break;
-        case 'start': this._taskStart(session, team, intent, reply); break;
-        case 'done': this._taskDone(session, team, intent, reply); break;
-        case 'reject': this._taskReject(session, team, intent, reply); break;
-        case 'respec': this._taskRespec(session, team, intent, reply); break;
-        case 'cancel': this._taskCancel(session, team, intent, reply); break;
-        // Async alone among the verbs: the merge gate is a git call and every
-        // destructive step is downstream of its answer. Caught here for the same
-        // reason team-retire's is — a floating rejection tears nothing down and
-        // tells no one, leaving the lead waiting on a confirmation that never comes.
-        case 'accept': this._taskAccept(session, team, intent, reply).catch((e) => {
-          log.warn('intent', `task accept ${intent.id} by ${session.name} failed: ${e.message}`);
-          reply(`error: accept ${intent.id || ''} failed: ${e.message} — nothing was removed`);
-        }); break;
-        case 'park': this._taskPark(session, team, intent, reply); break;
-        case 'list': this._taskList(session, team, intent, reply); break;
+      try {
+        switch (intent.sub) {
+          case 'add': this._taskAdd(session, team, intent, reply); break;
+          case 'assign': this._taskAssign(session, team, intent, reply); break;
+          case 'start': this._taskStart(session, team, intent, reply); break;
+          case 'done': this._taskDone(session, team, intent, reply); break;
+          case 'reject': this._taskReject(session, team, intent, reply); break;
+          case 'respec': this._taskRespec(session, team, intent, reply); break;
+          case 'cancel': this._taskCancel(session, team, intent, reply); break;
+          // Async alone among the verbs: the merge gate is a git call and every
+          // destructive step is downstream of its answer. Caught here for the same
+          // reason team-retire's is — a floating rejection tears nothing down and
+          // tells no one, leaving the lead waiting on a confirmation that never comes.
+          case 'accept': this._taskAccept(session, team, intent, reply).catch((e) => {
+            log.warn('intent', `task accept ${intent.id} by ${session.name} failed: ${e.message}`);
+            reply(`error: accept ${intent.id || ''} failed: ${e.message} — nothing was removed`);
+          }); break;
+          case 'park': this._taskPark(session, team, intent, reply); break;
+          case 'list': this._taskList(session, team, intent, reply); break;
+        }
+      } catch (e) {
+        log.warn('intent', `task ${intent.sub} ${intent.id || ''} by ${session.name} failed: ${e.message}`);
+        reply(`error: task ${intent.sub} failed: ${e.message}`);
       }
     },
 
