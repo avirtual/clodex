@@ -93,6 +93,7 @@ function encodeUser(text, images = []) {
 
 function create() {
   const pending = new Map();
+  let interrupts = 0;
 
   const decodeTracked = (obj) => {
     const rec = decode(obj);
@@ -117,7 +118,9 @@ function create() {
     return { type: 'control_response', response: { subtype: 'success', request_id: id, response } };
   };
 
-  return { decode: decodeTracked, encodeUser, encodePermission };
+  const encodeInterrupt = () => ({ type: 'control_request', request_id: `clodex-interrupt-${++interrupts}`, request: { subtype: 'interrupt' } });
+
+  return { decode: decodeTracked, encodeUser, encodePermission, encodeInterrupt };
 }
 
 module.exports = { create, decode, encodeUser };

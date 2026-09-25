@@ -22113,3 +22113,21 @@ test('t1180: a codec without encodePermission refuses to answer and a non-stream
   assert.strictEqual(c.h.m.seatPermissions('pm6'), null);
   s.io = 'stream';
 });
+
+test('t1199: seatInterrupt sends the codec frame on a live stream seat and refuses a pty seat, a dead seat and a null frame', async (t) => {
+  const c = mkMuseStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('si1');
+  const s = c.h.m.sessions.get('si1');
+  t.after(() => { c.clearTimers(s); s._dead = true; });
+  const before = c.sent().length;
+  assert.deepStrictEqual(c.h.m.seatInterrupt('si1'), { ok: false, error: 'no interruptible turn' });
+  assert.strictEqual(c.sent().length, before);
+  c.inst.encodeInterrupt = () => ({ method: 'turn/interrupt', id: 7 });
+  assert.deepStrictEqual(c.h.m.seatInterrupt('si1'), { ok: true });
+  assert.deepStrictEqual(c.sent().slice(before), [{ method: 'turn/interrupt', id: 7 }]);
+  c.h.m.sessions.set('pty1', { name: 'pty1', io: 'pty', _dead: false });
+  assert.deepStrictEqual(c.h.m.seatInterrupt('pty1'), { ok: false, error: 'not a live stream seat' });
+  assert.deepStrictEqual(c.h.m.seatInterrupt('ghost'), { ok: false, error: 'not a live stream seat' });
+  c.h.m.sessions.delete('pty1');
+});

@@ -12,6 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+- Stream seats: Esc in the message box interrupts the running turn on claude, codex and muse seats, the way it does in the terminal.
 - The stream seat's message box starts at one line and grows as you type or add lines (up to 40% of the pane), and a focused box shows one thin accent border instead of the doubled red ring.
 - Stream seats on codex and muse now show their prompts and replies in the transcript pane; before, the pane served only Claude transcripts and a headless codex or muse seat stayed blank while it talked.
 - The session bar's voice button opens the voice menu again on every seat, stream or pty: voice on or off for that seat, and whether replies are read aloud. Hold mode is gone. Dictation starts from the external tap or by pressing space on an empty prompt when the seat's voice is on, and the button itself never records; it lights green while the recorder is listening.
