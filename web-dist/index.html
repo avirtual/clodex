@@ -10027,8 +10027,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <select id="prefs-voice-mode" style="flex: none;">
             <option value="">Not set</option>
             <option value="off">Off — no voice input</option>
-            <option value="tap">Tap — tap to start dictating, tap again to stop</option>
-            <option value="hold">Hold — hold the key while speaking, release to send</option>
+            <option value="tap">On — press space on an empty prompt to dictate</option>
           </select>
         </div>
         <span id="prefs-voice-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
@@ -28490,9 +28489,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_voice_control = __commonJS({
     "renderer/voice-control.js"(exports, module) {
       var VOICE_ITEMS = [
-        { mode: "off", name: "Off", desc: "No voice input" },
-        { mode: "tap", name: "Tap", desc: "Tap to start dictating, tap again to stop" },
-        { mode: "hold", name: "Hold", desc: "Hold the key while speaking, release to send" }
+        { mode: "off", name: "Off", desc: "No voice input on this seat" },
+        { mode: "tap", name: "On", desc: "Press space on an empty prompt to dictate; say the trigger word to send" }
       ];
       var POLL_MS = 15e3;
       var CHOICE_DEBOUNCE_MS = 250;
@@ -29534,8 +29532,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
       "use strict";
       var VOICE_ENGINE_NAME = "clodex-voice-engine";
       var RECORD_KEY = " ";
-      var HOLD_REPEAT_MS = 30;
-      var HOLD_MAX_MS = 12e4;
       var BOOT_SETTLE_MS = 600;
       var BOOT_MAX_MS = 2e4;
       var REPAINT_MAX_MS = 1500;
@@ -29545,24 +29541,19 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var PROCESSING_INDICATOR = /Voice:\s*processing/i;
       var NO_SPEECH = /No speech detected/;
       var SCREEN_RESET = "\x1B[H\x1B[2J\x1B[3J";
-      function engineSettings(wireBase, mode) {
+      function engineSettings(wireBase) {
         if (typeof wireBase !== "string" || !wireBase) throw new Error("voice engine needs a wire base");
-        if (mode !== "tap" && mode !== "hold") throw new Error(`voice engine needs a tap or hold mode, not ${mode}`);
-        return { env: { ANTHROPIC_BASE_URL: `${wireBase}/anthropic` }, voice: { mode }, voiceEnabled: true };
+        return { env: { ANTHROPIC_BASE_URL: `${wireBase}/anthropic` }, voice: { mode: "tap" }, voiceEnabled: true };
       }
-      function engineArgs(wireBase, mode) {
-        return ["--settings", JSON.stringify(engineSettings(wireBase, mode))];
+      function engineArgs(wireBase) {
+        return ["--settings", JSON.stringify(engineSettings(wireBase))];
       }
       function planRecord({ mode, action, recording } = {}) {
         if (!RECORD_ACTIONS.includes(action)) return null;
-        if (mode !== "tap" && mode !== "hold") return null;
+        if (mode !== "tap") return null;
         const was = recording === true;
         const want = action === "toggle" ? !was : action === "start";
-        if (mode === "tap") {
-          const write = action === "toggle" || want !== was;
-          return { write, hold: null, recording: want };
-        }
-        return { write: false, hold: want ? "start" : "stop", recording: want };
+        return { write: action === "toggle" || want !== was, recording: want };
       }
       function recorderSelfStopped(chunk) {
         const text = String(chunk);
@@ -29571,8 +29562,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
       module.exports = {
         VOICE_ENGINE_NAME,
         RECORD_KEY,
-        HOLD_REPEAT_MS,
-        HOLD_MAX_MS,
         BOOT_SETTLE_MS,
         BOOT_MAX_MS,
         REPAINT_MAX_MS,
@@ -29702,6 +29691,16 @@ ${m[2].replace(/^\r?\n/, "")}`;
           phrase: normalizePhrase(raw.voiceSubmitPhrase) || DEFAULT_SUBMIT_PHRASE
         };
       }
+      function spaceTriggerAction({ data, typedSinceEnter, voiceOn, recording, hasSink } = {}) {
+        if (data !== " " || typedSinceEnter || !voiceOn || !hasSink) return null;
+        return recording ? "stop" : "start";
+      }
+      function ptyTypedSinceEnter(prev, data) {
+        const text = String(data).replace(/\x1b\[[0-?]*[ -\/]*[@-~]|\x1bO./g, "");
+        const cut = Math.max(text.lastIndexOf("\r"), text.lastIndexOf("\x1B"), text.lastIndexOf(""));
+        if (cut !== -1) return cut < text.length - 1;
+        return text.length > 0 ? true : prev === true;
+      }
       module.exports = {
         DEFAULT_SUBMIT_PHRASE,
         foldConfusables,
@@ -29720,7 +29719,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         recordingObserved,
         processingObserved,
         resolveTriggerKey,
-        readVoiceSubmitSettings
+        readVoiceSubmitSettings,
+        spaceTriggerAction,
+        ptyTypedSinceEnter
       };
     }
   });
@@ -38565,13 +38566,13 @@ void main() {
           const snap = core.snapshot();
           const mode = snap.pending || snap.mode;
           const known = core.isMode(mode);
-          const label = known ? mode : "voice";
+          const label = known ? mode === "off" ? "off" : "on" : "voice";
           const dim = known && mode === "off" ? " px-voice-off" : "";
           if (snap.capable === false) {
             const why = `Voice input is unavailable on this machine: ${snap.cause || "this node\u2019s Claude CLI cannot record"}`;
             return `<button class="px-action${dim} px-voice-dead" data-act="voice" aria-disabled="true" data-tip="${esc(why)}">\u{1F3A4} ${esc(label)}</button>`;
           }
-          const tip = snap.pending ? `Voice input: switching to ${snap.pending}` : mode === "tap" || mode === "hold" ? "Voice input for this seat \u2014 click to change; click records, right-click changes" : "Voice input for this seat \u2014 click to change";
+          const tip = snap.pending ? `Voice input: switching to ${label}` : "click to change voice settings";
           return `<button class="px-action${dim}" data-act="voice" data-tip="${esc(tip)}">\u{1F3A4} ${esc(label)}</button>`;
         }
         function renderRows() {
@@ -44485,7 +44486,9 @@ ${detail}` });
       var { VOICE_ENGINE_NAME } = require_voice_engine();
       var {
         DEFAULT_SUBMIT_PHRASE,
-        readVoiceSubmitSettings
+        readVoiceSubmitSettings,
+        spaceTriggerAction,
+        ptyTypedSinceEnter
       } = require_voice_submit();
       var { createLiveSplitView, renderTranscript, TRANSCRIPT_PULL_MS } = require_live_split_view();
       var { initBanners } = require_banners();
@@ -46144,6 +46147,11 @@ ${detail}` });
           });
         };
         composer.addEventListener("keydown", (e) => {
+          if (e.key === " " && !e.isComposing && !composer.value && seatVoiceMode(name, "tap")) {
+            e.preventDefault();
+            seatVoiceRecord(name, voiceRecordingSeat === name ? "stop" : "start");
+            return;
+          }
           if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
           e.preventDefault();
           sendComposer();
@@ -46315,6 +46323,19 @@ ${detail}` });
             typeToTakeControl(name, data);
             return;
           }
+          const seat = sessions.get(name);
+          const act = spaceTriggerAction({
+            data,
+            typedSinceEnter: !!(seat && seat.typedSinceEnter),
+            voiceOn: seatVoiceMode(name, "tap"),
+            recording: voiceRecordingSeat === name,
+            hasSink: !!voiceSinkFor(name)
+          });
+          if (act) {
+            seatVoiceRecord(name, act);
+            return;
+          }
+          if (seat) seat.typedSinceEnter = ptyTypedSinceEnter(seat.typedSinceEnter, data);
           window.api.writeToSession(name, data);
         });
         const echoRewrite = peer ? (chunk) => chunk : createEchoRewriter(currentEchoPalette);
@@ -48698,10 +48719,8 @@ Click for live activity`;
               return;
             }
             if (action.dataset.act === "files") openFilesPopover(activeSession, action);
-            else if (action.dataset.act === "voice") {
-              if (seatVoiceMode(activeSession, "tap")) seatVoiceRecord(activeSession, "toggle");
-              else if (!seatVoiceMode(activeSession, "hold")) openVoicePopover(action);
-            } else if (action.dataset.act === "peer-edit") {
+            else if (action.dataset.act === "voice") openVoicePopover(action);
+            else if (action.dataset.act === "peer-edit") {
               openPeerArgs(activeSession);
             } else if (action.dataset.act === "session-menu") {
               if (isSessionMenuOpen()) closeSessionMenu();
@@ -48724,31 +48743,6 @@ Click for live activity`;
         };
         bar.addEventListener("mousedown", openPopoverOnPress);
         bar.addEventListener("click", runBarActionOnClick);
-        bar.addEventListener("contextmenu", (e) => {
-          const voiceBtn = e.target.closest('.px-action[data-act="voice"]');
-          if (!voiceBtn || !activeSession) return;
-          if (!seatVoiceMode(activeSession, "tap") && !seatVoiceMode(activeSession, "hold")) return;
-          e.preventDefault();
-          openVoicePopover(voiceBtn);
-        });
-        let voiceHeld = null;
-        bar.addEventListener("pointerdown", (e) => {
-          if (e.button !== 0 || !activeSession) return;
-          if (!e.target.closest('.px-action[data-act="voice"]')) return;
-          if (!seatVoiceMode(activeSession, "hold")) return;
-          e.preventDefault();
-          voiceHeld = activeSession;
-          seatVoiceRecord(voiceHeld, "start");
-        });
-        const releaseVoiceHold = () => {
-          if (!voiceHeld) return;
-          const held = voiceHeld;
-          voiceHeld = null;
-          seatVoiceRecord(held, "stop");
-        };
-        document.addEventListener("pointerup", releaseVoiceHold);
-        document.addEventListener("pointercancel", releaseVoiceHold);
-        window.addEventListener("blur", releaseVoiceHold);
       })();
       var {
         openWarmMenu,
