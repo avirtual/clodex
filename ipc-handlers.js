@@ -32,6 +32,7 @@ const { wireSeatFor } = require('./peer-shell');
 const { readBashConsole, RECORD_NAME_RE } = require('./bash-console');
 const { createTranscriptSpikeReader } = require('./transcript-spike');
 const { mergeCompactNotices } = require('./compact-notices');
+const { isAgentType } = require('./cli-adapters');
 // The shipped thresholds, read from the module that DECIDES with them rather
 // than restated here: Preferences shows them as the values in force when the
 // operator has set nothing, and a second copy would show a number the reminder
@@ -847,7 +848,7 @@ function registerIpcHandlers(deps) {
   });
   handle('transcript:pull', (_e, name) => {
     const s = manager.sessions.get(name);
-    if (!s || s._dead || (s.agentType !== 'claude' && s.io !== 'stream')) { transcriptSpike.drop(name); return { ok: false, reason: 'not-claude' }; }
+    if (!s || s._dead || !isAgentType(s.agentType)) { transcriptSpike.drop(name); return { ok: false, reason: 'not-agent' }; }
     const res = transcriptSpike.pull(name);
     const extra = res && res.ok && manager.compactNoticesFor(name);
     const out = extra ? { ok: true, rev: `${res.rev}:${extra.rev}`, records: mergeCompactNotices(res.records, extra.notices) } : res;
