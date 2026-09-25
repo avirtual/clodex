@@ -1448,3 +1448,15 @@ test('remote-wiring passes voiceCapable as a boolean read off the machine', () =
   assert.strictEqual(typeof opts.voiceCapable, 'boolean',
     'remote-wiring must pass a boolean, not the capability object, which is truthy whatever it says');
 });
+
+test('sendInput refuses a stream seat instead of writing bytes the manager would drop', () => {
+  const { deps } = makeDeps();
+  const writes = [];
+  deps.manager.sessions.set('streamy', { name: 'streamy', type: 'claude', io: 'stream', workspaceId: 'ws-alpha' });
+  deps.manager.write = (name, data) => { writes.push([name, data]); };
+  const opts = captureOptions(deps);
+  assert.deepStrictEqual(opts.sendInput('streamy', 'hi'), { ok: false, error: 'stream seat takes no raw input' });
+  assert.deepStrictEqual(writes, []);
+  assert.deepStrictEqual(opts.sendInput('alice', 'hi'), { ok: true });
+  assert.deepStrictEqual(writes, [['alice', 'hi']]);
+});

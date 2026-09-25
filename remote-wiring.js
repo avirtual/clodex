@@ -632,6 +632,7 @@ function createRemoteWiring(deps) {
         sendInput: (name, data) => {
           const sess = manager.sessions.get(name);
           if (!sess || sess._dead) return { ok: false, error: 'Session not found' };
+          if (sess.io === 'stream') return { ok: false, error: 'stream seat takes no raw input' };
           manager.write(name, data);
           return { ok: true };
         },

@@ -38,6 +38,7 @@ for (const [label, anchor, src = SRC] of [
   ['failed-row retry', /function addFailedSessionToSidebar\(entry\) \{[\s\S]*?\n\}\n/],
   ['archived-row unarchive', /function addArchivedSessionToSidebar\(entry\) \{[\s\S]*?\n\}\n/],
   ['session-menu fresh restart', /async function doHardRestart\(name\) \{[\s\S]*?\n  \}\n/, MENUS_SRC],
+  ['session-menu history resume', /historyMenu\.addEventListener\('click', async \(e\) => \{[\s\S]*?switchSession\(name\); \}\n    \}\);/, MENUS_SRC],
 ]) {
   test(`${label} marks the seat's io before createTerminal, so a stream seat is not rebuilt as an xterm`, () => {
     const m = src.match(anchor);

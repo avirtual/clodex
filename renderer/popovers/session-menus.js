@@ -254,6 +254,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
       const snapCwd = el ? el.dataset.cwd : null;
       const rr = await window.api.restartSession(name, { resumeId: sid });
       if (!rr || !rr.ok) { alert(`Resume failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
+      markSeatIo(name, rr.io || 'pty');
       if (snapType) { createTerminal(name); addSessionToSidebar(name, snapType, snapCwd, null); switchSession(name); }
     });
     document.body.appendChild(historyMenu);
