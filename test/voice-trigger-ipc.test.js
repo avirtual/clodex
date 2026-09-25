@@ -44,7 +44,7 @@ function withHome(fn) {
 }
 
 function fakeManager() {
-  const modes = new Map([['seat-a', 'hold'], ['seat-b', 'off']]);
+  const modes = new Map([['seat-a', 'tap'], ['seat-b', 'off']]);
   return {
     sessions: new Map([['seat-a', {}], ['seat-b', {}]]),
     _focusedSession: 'seat-a',
@@ -75,8 +75,8 @@ test('settings:voiceMode carries the push-to-talk chord at trigger.binding — t
     assert.deepStrictEqual(payload, {
       ok: true,
       seat: 'seat-a',
-      mode: 'hold',
-      effective: 'hold',
+      mode: 'tap',
+      effective: 'tap',
       trigger: {
         file: path.join(home, '.claude', 'keybindings.json'),
         binding: PARSED,
@@ -94,8 +94,8 @@ test('settings:voiceMode carries the machine\u2019s capability — the whole pay
     assert.deepStrictEqual(payload, {
       ok: true,
       seat: 'seat-a',
-      mode: 'hold',
-      effective: 'hold',
+      mode: 'tap',
+      effective: 'tap',
       trigger: {
         file: path.join(home, '.claude', 'keybindings.json'),
         binding: PARSED,

@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- The session bar's voice button opens the voice menu again on every seat, stream or pty: voice on or off for that seat, and whether replies are read aloud. Hold mode is gone. Dictation starts from the external tap or by pressing space on an empty prompt when the seat's voice is on, and the button itself never records.
 - Claude seats no longer inherit the voice settings from ~/.claude/settings.json: every seat Clodex spawns has the CLI's own recorder off, so only Clodex's voice engine records.
 - Stream seat voice, tap mode: a dictated sentence ending in the trigger word now sends on its own, a second tap dictates again, and every step of a dictation is traced in the log so a misfire can be read instead of guessed.
 - Scratch marks: a bare `[agent:scratch cancel]` now drops the most recent open mark, labeled or not, the same way a bare rewind targets it, and several labeled scratch intents in one reply are each answered instead of the second being swallowed as a duplicate.

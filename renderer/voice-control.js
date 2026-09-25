@@ -1,10 +1,9 @@
-// voice-control.js — the voice-mode state machine (off · tap · hold) and the
+// voice-control.js — the voice-mode state machine and the
 // Preferences selector over it.
 
 const VOICE_ITEMS = [
-  { mode: 'off', name: 'Off', desc: 'No voice input' },
-  { mode: 'tap', name: 'Tap', desc: 'Tap to start dictating, tap again to stop' },
-  { mode: 'hold', name: 'Hold', desc: 'Hold the key while speaking, release to send' },
+  { mode: 'off', name: 'Off', desc: 'No voice input on this seat' },
+  { mode: 'tap', name: 'On', desc: 'Press space on an empty prompt to dictate; say the trigger word to send' },
 ];
 
 const POLL_MS = 15000;

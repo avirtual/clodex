@@ -3553,7 +3553,7 @@ function createSessionManager(deps) {
     }
 
     setVoice(name, mode) {
-      if (!VOICE_MODES.includes(mode)) return { ok: false, error: `unknown voice mode "${mode}" (use off|tap|hold)` };
+      if (!VOICE_MODES.includes(mode)) return { ok: false, error: `unknown voice mode "${mode}" (use off|tap)` };
       const s = this.sessions.get(name);
       if (!s) return { ok: false, error: `no session "${name}"` };
       const p = getPersistence();
@@ -3601,7 +3601,6 @@ function createSessionManager(deps) {
       const r = this._voiceRoute(target);
       if (!r.ok) return r;
       const { name, win } = r;
-      if (this.voiceModeFor(name) !== 'tap') return { ok: false, error: `"${name}" is in hold mode; a tap arms only a tap seat` };
       // THE TAP RETARGETS, and the automatic re-arm never does. That asymmetry
       // is the design: he NAMED this seat, so it takes the microphone from
       // whoever held it; a re-arm names nobody, so it gets no say in who holds
@@ -4971,29 +4970,24 @@ function createSessionManager(deps) {
 
     voiceEngineTimings() {
       return {
-        holdRepeatMs: voiceEngineSpec.HOLD_REPEAT_MS,
-        holdMaxMs: voiceEngineSpec.HOLD_MAX_MS,
         bootSettleMs: voiceEngineSpec.BOOT_SETTLE_MS,
         bootMaxMs: voiceEngineSpec.BOOT_MAX_MS,
         repaintMaxMs: voiceEngineSpec.REPAINT_MAX_MS,
       };
     }
 
-    ensureVoiceEngine(armedBy = null, mode = 'tap') {
+    ensureVoiceEngine(armedBy = null) {
       const live = this._voiceEngine;
-      if (live && !live.dead && live.mode === mode) return live.ready.then(() => live);
-      if (this._voiceEnginePending) {
-        return this._voiceEnginePending.then((e) => (e.mode === mode ? e : this.ensureVoiceEngine(armedBy, mode)));
-      }
-      if (live && !live.dead) this.killVoiceEngine();
-      const pending = this._spawnVoiceEngine(armedBy, mode).finally(() => {
+      if (live && !live.dead) return live.ready.then(() => live);
+      if (this._voiceEnginePending) return this._voiceEnginePending;
+      const pending = this._spawnVoiceEngine(armedBy).finally(() => {
         if (this._voiceEnginePending === pending) this._voiceEnginePending = null;
       });
       this._voiceEnginePending = pending;
       return pending;
     }
 
-    async _spawnVoiceEngine(armedBy = null, mode = 'tap') {
+    async _spawnVoiceEngine(armedBy = null) {
       const { VOICE_ENGINE_NAME, PROMPT_MARK, SCREEN_RESET, engineArgs } = voiceEngineSpec;
       const t = this.voiceEngineTimings();
       if (!WIRE_SHADOW) throw new Error('the voice engine needs the in-process wire, which is off');
@@ -5005,14 +4999,14 @@ function createSessionManager(deps) {
       const env = withUtf8Charset({ ...process.env, TERM: 'xterm-256color' });
       let proc;
       try {
-        proc = pty.spawn('claude', engineArgs(wireBase, mode), { name: 'xterm-256color', cols: 120, rows: 30, cwd, env });
+        proc = pty.spawn('claude', engineArgs(wireBase), { name: 'xterm-256color', cols: 120, rows: 30, cwd, env });
       } catch (e) {
         try { wire.unregisterAgent(VOICE_ENGINE_NAME); } catch {}
         throw e;
       }
       let markReady;
       const engine = {
-        name: VOICE_ENGINE_NAME, mode, pty: proc, cols: 120, rows: 30, recording: false, holdTimer: null, holdCap: null,
+        name: VOICE_ENGINE_NAME, pty: proc, cols: 120, rows: 30, recording: false,
         armedBy, promptWaiters: [], dead: false, ready: new Promise((r) => { markReady = r; }),
       };
       let seen = false;
@@ -5030,14 +5024,13 @@ function createSessionManager(deps) {
         const ws = engine.armedBy && engine.armedBy.workspaceId;
         const win = ws ? this.windowForWorkspace(ws) : null;
         if (win) win.webContents.send('pty-data', VOICE_ENGINE_NAME, data);
-        if (engine.recording && voiceEngineSpec.recorderSelfStopped(data)) this._endVoiceHoldAtCap(engine);
+        if (engine.recording && voiceEngineSpec.recorderSelfStopped(data)) this._voiceEngineSelfStopped(engine);
         if (marked) for (const wake of engine.promptWaiters.splice(0)) wake();
       });
       proc.onExit(() => {
         engine.dead = true;
         clearTimeout(cap);
         clearTimeout(settle);
-        this._stopVoiceHold(engine);
         for (const wake of engine.promptWaiters.splice(0)) wake();
         markReady();
         if (this._voiceEngine && this._voiceEngine !== engine) return;
@@ -5048,13 +5041,6 @@ function createSessionManager(deps) {
       await engine.ready;
       if (engine.dead) throw new Error('the voice engine exited while starting');
       return engine;
-    }
-
-    _stopVoiceHold(engine) {
-      clearInterval(engine.holdTimer);
-      clearTimeout(engine.holdCap);
-      engine.holdTimer = null;
-      engine.holdCap = null;
     }
 
     _voiceEnginePrompt(engine, ms) {
@@ -5080,8 +5066,7 @@ function createSessionManager(deps) {
       await back;
     }
 
-    _endVoiceHoldAtCap(engine) {
-      this._stopVoiceHold(engine);
+    _voiceEngineSelfStopped(engine) {
       engine.recording = false;
       const armedBy = engine.armedBy;
       const win = armedBy && armedBy.workspaceId ? this.windowForWorkspace(armedBy.workspaceId) : null;
@@ -5104,7 +5089,7 @@ function createSessionManager(deps) {
       if (mode === 'off') return { ok: false, error: 'voice is off for this seat' };
       const prior = this._voiceEngine;
       let engine;
-      try { engine = await this.ensureVoiceEngine(armedBy, mode); } catch (e) { return { ok: false, error: e.message }; }
+      try { engine = await this.ensureVoiceEngine(armedBy); } catch (e) { return { ok: false, error: e.message }; }
       const sameWindow = engine === prior && engine.armedBy && engine.armedBy.workspaceId === armedBy.workspaceId;
       const tracked = engine.recording;
       if (observed && typeof observed === 'object' && sameWindow) {
@@ -5121,19 +5106,12 @@ function createSessionManager(deps) {
       const plan = voiceEngineSpec.planRecord({ mode, action, recording: engine.recording });
       log.info('voice', `${armedBy.name} record ${action} mode=${mode} observed=${observed ? JSON.stringify(observed) : 'none'} tracked=${tracked} plan=${JSON.stringify(plan)}${plan && plan.write ? ' RECORD_KEY written' : ''}`);
       const { RECORD_KEY } = voiceEngineSpec;
-      const t = this.voiceEngineTimings();
       const prevWs = engine.armedBy && engine.armedBy.workspaceId;
       engine.armedBy = armedBy;
       if (armedBy.workspaceId && armedBy.workspaceId !== prevWs && !engine.dead) {
         try { await this._repaintVoiceEngine(engine); } catch {}
       }
       if (plan.write) engine.pty.write(RECORD_KEY);
-      if (plan.hold === 'start' && !engine.holdTimer) {
-        engine.pty.write(RECORD_KEY);
-        engine.holdTimer = setInterval(() => { try { engine.pty.write(RECORD_KEY); } catch {} }, t.holdRepeatMs);
-        engine.holdCap = setTimeout(() => this._endVoiceHoldAtCap(engine), t.holdMaxMs);
-      }
-      if (plan.hold === 'stop') this._stopVoiceHold(engine);
       engine.recording = plan.recording;
       return { ok: true, recording: plan.recording, engine: engine.name };
     }
@@ -5141,7 +5119,6 @@ function createSessionManager(deps) {
     killVoiceEngine() {
       const engine = this._voiceEngine;
       if (!engine) return;
-      this._stopVoiceHold(engine);
       this._voiceEngine = null;
       try { engine.pty.kill(); } catch {}
       if (this._wire) { try { this._wire.unregisterAgent(engine.name); } catch {} }

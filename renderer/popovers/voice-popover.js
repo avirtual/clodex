@@ -1,5 +1,5 @@
 // popovers/voice-popover.js — the session bar's voice-mode button and its
-// popover (off · tap · hold).
+// popover.
 //
 // Self-contained island: it owns its DOM handles and dismiss wiring, and gets
 // every piece of voice state from the shared core in voice-control.js. It holds
@@ -145,17 +145,15 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
     const snap = core.snapshot();
     const mode = snap.pending || snap.mode;
     const known = core.isMode(mode);
-    const label = known ? mode : 'voice';
+    const label = known ? (mode === 'off' ? 'off' : 'on') : 'voice';
     const dim = known && mode === 'off' ? ' px-voice-off' : '';
     if (snap.capable === false) {
       const why = `Voice input is unavailable on this machine: ${snap.cause || 'this node\u2019s Claude CLI cannot record'}`;
       return `<button class="px-action${dim} px-voice-dead" data-act="voice" aria-disabled="true" data-tip="${esc(why)}">🎤 ${esc(label)}</button>`;
     }
     const tip = snap.pending
-      ? `Voice input: switching to ${snap.pending}`
-      : (mode === 'tap' || mode === 'hold')
-        ? 'Voice input for this seat — click to change; click records, right-click changes'
-        : 'Voice input for this seat — click to change';
+      ? `Voice input: switching to ${label}`
+      : 'click to change voice settings';
     return `<button class="px-action${dim}" data-act="voice" data-tip="${esc(tip)}">🎤 ${esc(label)}</button>`;
   }
 

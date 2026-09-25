@@ -66,7 +66,7 @@ const { createVoiceMirror, engineObserved } = require('./voice-mirror');
 const { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require('./lib/composer-voice');
 const { VOICE_ENGINE_NAME } = require('../voice-engine');
 const {
-  DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings,
+  DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings, spaceTriggerAction, ptyTypedSinceEnter,
 } = require('./lib/voice-submit');
 const { createLiveSplitView, renderTranscript, TRANSCRIPT_PULL_MS } = require('./live-split-view');
 const { initBanners } = require('./banners');
@@ -1742,6 +1742,11 @@ function createStreamSeatPane(name, wrapperEl) {
     });
   };
   composer.addEventListener('keydown', (e) => {
+    if (e.key === ' ' && !e.isComposing && !composer.value && seatVoiceMode(name, 'tap')) {
+      e.preventDefault();
+      seatVoiceRecord(name, voiceRecordingSeat === name ? 'stop' : 'start');
+      return;
+    }
     if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
     e.preventDefault();
     sendComposer();
@@ -1953,6 +1958,16 @@ function createTerminal(name, peer = null) {
       typeToTakeControl(name, data);
       return;
     }
+    const seat = sessions.get(name);
+    const act = spaceTriggerAction({
+      data,
+      typedSinceEnter: !!(seat && seat.typedSinceEnter),
+      voiceOn: seatVoiceMode(name, 'tap'),
+      recording: voiceRecordingSeat === name,
+      hasSink: !!voiceSinkFor(name),
+    });
+    if (act) { seatVoiceRecord(name, act); return; }
+    if (seat) seat.typedSinceEnter = ptyTypedSinceEnter(seat.typedSinceEnter, data);
     window.api.writeToSession(name, data);
   });
 
@@ -4539,10 +4554,7 @@ setInterval(() => {
         return;
       }
       if (action.dataset.act === 'files') openFilesPopover(activeSession, action);
-      else if (action.dataset.act === 'voice') {
-        if (seatVoiceMode(activeSession, 'tap')) seatVoiceRecord(activeSession, 'toggle');
-        else if (!seatVoiceMode(activeSession, 'hold')) openVoicePopover(action);
-      }
+      else if (action.dataset.act === 'voice') openVoicePopover(action);
       else if (action.dataset.act === 'peer-edit') {
         openPeerArgs(activeSession);
       }
@@ -4564,31 +4576,6 @@ setInterval(() => {
   };
   bar.addEventListener('mousedown', openPopoverOnPress);
   bar.addEventListener('click', runBarActionOnClick);
-  bar.addEventListener('contextmenu', (e) => {
-    const voiceBtn = e.target.closest('.px-action[data-act="voice"]');
-    if (!voiceBtn || !activeSession) return;
-    if (!seatVoiceMode(activeSession, 'tap') && !seatVoiceMode(activeSession, 'hold')) return;
-    e.preventDefault();
-    openVoicePopover(voiceBtn);
-  });
-  let voiceHeld = null;
-  bar.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0 || !activeSession) return;
-    if (!e.target.closest('.px-action[data-act="voice"]')) return;
-    if (!seatVoiceMode(activeSession, 'hold')) return;
-    e.preventDefault();
-    voiceHeld = activeSession;
-    seatVoiceRecord(voiceHeld, 'start');
-  });
-  const releaseVoiceHold = () => {
-    if (!voiceHeld) return;
-    const held = voiceHeld;
-    voiceHeld = null;
-    seatVoiceRecord(held, 'stop');
-  };
-  document.addEventListener('pointerup', releaseVoiceHold);
-  document.addEventListener('pointercancel', releaseVoiceHold);
-  window.addEventListener('blur', releaseVoiceHold);
 })();
 
 const {

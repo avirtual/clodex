@@ -126,7 +126,7 @@ function managerFixture() {
     unregisterAgent: (name) => wireCalls.push(['unregister', name]),
   };
   m._broadcast = () => {};
-  m.voiceEngineTimings = () => ({ holdRepeatMs: 1, holdMaxMs: 1000, bootSettleMs: 0, bootMaxMs: 50, repaintMaxMs: 50 });
+  m.voiceEngineTimings = () => ({ bootSettleMs: 0, bootMaxMs: 50, repaintMaxMs: 50 });
   m.sessions.set('st', { name: 'st', type: 'claude', agentType: 'claude', io: 'stream', cwd: '/proj', workspaceId: 'ws-1', pty: { pid: 1 }, activityState: 'idle' });
   m.sessions.set('tt', { name: 'tt', type: 'claude', agentType: 'claude', io: 'pty', cwd: '/proj', workspaceId: 'ws-1', pty: { pid: 2 }, activityState: 'idle' });
   const setVoice = (n, mode) => records.set(n, { ...(records.get(n) || { name: n }), voice: mode });
@@ -140,7 +140,7 @@ test('the voice engine is a private claude pty: wire-sunk, never listed, never r
   assert.equal(h.spawns.length, 1);
   assert.equal(h.spawns[0].cmd, 'claude');
   assert.equal(h.spawns[0].opts.cwd, h.userData);
-  assert.deepEqual(h.spawns[0].args, engineArgs(`http://127.0.0.1:1/agent/${VOICE_ENGINE_NAME}/tok`, 'tap'));
+  assert.deepEqual(h.spawns[0].args, engineArgs(`http://127.0.0.1:1/agent/${VOICE_ENGINE_NAME}/tok`));
   assert.deepEqual(h.wireCalls[0], ['register', VOICE_ENGINE_NAME, { voiceSink: true }]);
   assert.equal(h.m.sessions.has(VOICE_ENGINE_NAME), false);
   assert.ok(!h.m.list().some((r) => r.name === VOICE_ENGINE_NAME), 'absent from list()');
@@ -170,17 +170,16 @@ test('voiceRecord writes the recorder key for a tap seat', async () => {
   h.m.killVoiceEngine();
 });
 
-test('a hold released while the engine boots ends stopped: voiceRecord runs in order', async () => {
+test('a stop sent while the engine boots ends stopped: voiceRecord runs in order', async () => {
   const h = managerFixture();
-  h.setVoice('st', 'hold');
-  const start = h.m.voiceRecord('st', 'start', { mode: 'hold' });
+  const start = h.m.voiceRecord('st', 'start');
   for (let i = 0; i < 50 && !h.m._voiceEngine; i++) await Promise.resolve();
   assert.ok(h.m._voiceEngine, 'the engine is assigned before it is ready');
-  const stop = h.m.voiceRecord('st', 'stop', { mode: 'hold' });
+  const stop = h.m.voiceRecord('st', 'stop');
   const [a, b] = await Promise.all([start, stop]);
   assert.equal(a.recording, true);
   assert.equal(b.recording, false);
-  assert.equal(h.m._voiceEngine.holdTimer, null);
+  assert.deepEqual(h.writes, [' ', ' ']);
   assert.equal(h.m._voiceEngine.recording, false);
   h.m.killVoiceEngine();
 });
@@ -212,32 +211,24 @@ test('engine output reaches only the window of the workspace that armed it', asy
   h.m.killVoiceEngine();
 });
 
-test('the hold cap stops the engine and tells the arming window so its light goes out', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
-  const h = managerFixture();
-  const got = [];
-  h.m.windows.set('ws-1', { isDestroyed: () => false, webContents: { send: (...a) => got.push(a) } });
-  h.setVoice('st', 'hold');
-  const start = h.m.voiceRecord('st', 'start', { mode: 'hold' });
-  let res = null;
-  start.then((r) => { res = r; });
-  for (let i = 0; i < 200 && !res; i++) { await Promise.resolve(); t.mock.timers.tick(1); }
-  assert.equal(res && res.recording, true);
-  assert.deepEqual(got.filter((a) => a[0] !== 'pty-data'), []);
-  t.mock.timers.tick(1000);
-  assert.deepEqual(got.filter((a) => a[0] !== 'pty-data'), [['voice-engine-stopped', 'st']]);
-  assert.equal(h.m._voiceEngine.recording, false);
-  assert.equal(h.m._voiceEngine.holdTimer, null);
-  h.m.killVoiceEngine();
-});
-
-test('planRecord: tap toggles with one key, hold starts and stops a repeat', () => {
-  assert.deepEqual(planRecord({ mode: 'tap', action: 'toggle', recording: false }), { write: true, hold: null, recording: true });
-  assert.deepEqual(planRecord({ mode: 'tap', action: 'start', recording: true }), { write: false, hold: null, recording: true });
-  assert.deepEqual(planRecord({ mode: 'hold', action: 'start', recording: false }), { write: false, hold: 'start', recording: true });
-  assert.deepEqual(planRecord({ mode: 'hold', action: 'stop', recording: true }), { write: false, hold: 'stop', recording: false });
+test('planRecord: tap toggles with one key and there is no hold arm', () => {
+  assert.deepEqual(planRecord({ mode: 'tap', action: 'toggle', recording: false }), { write: true, recording: true });
+  assert.deepEqual(planRecord({ mode: 'tap', action: 'toggle', recording: true }), { write: true, recording: false });
+  assert.deepEqual(planRecord({ mode: 'tap', action: 'start', recording: false }), { write: true, recording: true });
+  assert.deepEqual(planRecord({ mode: 'tap', action: 'start', recording: true }), { write: false, recording: true });
+  assert.deepEqual(planRecord({ mode: 'tap', action: 'stop', recording: true }), { write: true, recording: false });
+  assert.deepEqual(planRecord({ mode: 'tap', action: 'stop', recording: false }), { write: false, recording: false });
+  assert.equal(planRecord({ mode: 'hold', action: 'start', recording: false }), null);
   assert.equal(planRecord({ mode: 'off', action: 'toggle' }), null);
   assert.equal(planRecord({ mode: 'tap', action: 'send' }), null);
+});
+
+test('engineArgs takes no mode and always asks for the tap recorder', () => {
+  assert.equal(engineArgs.length, 1);
+  const args = engineArgs('http://127.0.0.1:1/agent/x/tok');
+  assert.equal(args[0], '--settings');
+  assert.match(args[1], /"voice":\{"mode":"tap"\}/);
+  assert.deepEqual(engineArgs('http://127.0.0.1:1/agent/x/tok', 'hold'), args);
 });
 
 function ipcFixture() {
@@ -301,21 +292,17 @@ test('a tap on a codex pty seat spawns the engine with the tap mode in its inlin
   h.m.killVoiceEngine();
 });
 
-test('arming a hold seat after a tap seat respawns the engine once, in hold', async () => {
+test('a seat persisted as hold arms the one tap engine without a respawn', async () => {
   const h = managerFixture();
   h.m.sessions.set('hd', { name: 'hd', type: 'bash', io: 'pty', cwd: '/proj', workspaceId: 'ws-1', pty: { pid: 6 }, activityState: 'idle' });
   h.setVoice('hd', 'hold');
   await h.m.voiceRecord('st', 'toggle', { workspaceId: 'ws-1' });
   await h.m.voiceRecord('st', 'toggle', { workspaceId: 'ws-1' });
-  assert.equal(h.spawns.length, 1);
   const start = await h.m.voiceRecord('hd', 'start', { workspaceId: 'ws-1' });
   assert.equal(start.recording, true);
-  assert.equal(h.spawns.length, 2);
-  assert.equal(h.spawns[0].killed, true);
-  assert.deepStrictEqual(JSON.parse(h.spawns[1].args[1]).voice, { mode: 'hold' });
-  assert.equal(h.m._voiceEngine.mode, 'hold');
-  await h.m.voiceRecord('hd', 'stop', { workspaceId: 'ws-1' });
-  assert.equal(h.spawns.length, 2, 'the same mode reuses the live engine');
+  assert.equal(h.spawns.length, 1);
+  assert.equal(h.spawns[0].killed, false);
+  assert.deepEqual(h.writes, [' ', ' ', ' ']);
   h.m.killVoiceEngine();
 });
 

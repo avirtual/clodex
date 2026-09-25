@@ -8,7 +8,7 @@
 //   node /path/to/clodex/scripts/clodex-voice-tap.js [seat-name]
 //   node /path/to/clodex/scripts/clodex-voice-tap.js tap [seat-name]
 //   node /path/to/clodex/scripts/clodex-voice-tap.js select <seat-name>
-//   node /path/to/clodex/scripts/clodex-voice-tap.js mode tap|hold
+//   node /path/to/clodex/scripts/clodex-voice-tap.js mode off|tap
 //   node /path/to/clodex/scripts/clodex-voice-tap.js speech on|off
 //
 // A VERB NEEDS ITS ARGUMENT TO BE A VERB — one bare token is always a seat
@@ -125,7 +125,7 @@ function envelopeFor(args) {
       return { type: 'voice-select', from: 'voice-tap', target: second };
     }
     if (first === 'mode') {
-      if (second !== 'tap' && second !== 'hold') return { error: `mode takes tap|hold, got "${second}"` };
+      if (second !== 'off' && second !== 'tap') return { error: `mode takes off|tap, got "${second}"` };
       return { type: 'voice-mode', from: 'voice-tap', mode: second };
     }
     if (first === 'speech') {

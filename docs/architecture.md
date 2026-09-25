@@ -280,15 +280,10 @@ bundle), whose packaged form is the Docker image under
   `process.env` with the settings layers the CLI loads (user < project < local),
   and classifying whether that env routes the CLI to a TEE-BLIND backend
   (Bedrock / Vertex) the wire tee cannot see.
-- **voice-settings.js** — the box-wide voice-input mode the Claude CLI persists
-  in `~/.claude/settings.json` (`voice.mode` / `voice.enabled`), behind the
-  Preferences voice selector, and the WRITE behind the `mode` voice verb and
-  both voice-mode UI surfaces (`writeVoiceMode` mirrors the CLI's own `/voice`
-  handler: read-modify-write preserving unrelated keys, atomic, with `enabled`
-  tracking the mode — `off` clears it and leaves `mode` alone). A running CLI
-  does pick up an external write — it reads the mode through a live selector and
-  watches the settings directory. The legacy `voiceEnabled` sibling is reported
-  and never merged.
+- **voice-settings.js** — the per-seat voice flag, which lives in sessions.json
+  (`entry.voice`, off|tap); every seat's own CLI recorder is disabled by its
+  generated settings, so the hidden voice engine is the only recorder, and
+  recording starts from the external tap or from space on an empty prompt.
 - **voice-capability.js** — whether the Claude CLI on THIS machine could capture
   audio at all, behind the disabled state of both voice surfaces and the `voice`
   cap on peer hello. `darwin` records through the system; everywhere else SoX
@@ -1222,7 +1217,7 @@ Own state + DOM, `init*(deps)`:
   plus `peekEditable` (the truncation guard) and `saveArgs` (the save always
   sends the mtime of the read the buffer came from). Tested by
   `test/side-pane-tabs.test.js`.
-- **voice-control.js** — the voice-mode state machine (off · tap · hold),
+- **voice-control.js** — the voice-mode state machine (off · tap),
   reading `voice-settings.js` over `getVoiceMode` and writing the settings file
   over `setVoiceMode`, which routes through the manager's `voiceMode` so the
   write stamps the voice-mode settle memo — no session in the path, so both
@@ -1280,7 +1275,7 @@ Own state + DOM, `init*(deps)`:
   absent from `list()`, `[agent:who]` and every roster; its wire registration
   carries `voiceSink`, so wire/proxy.js answers each request locally through
   **wire/voice-sink.js** and nothing reaches a model. `voice:record` writes the
-  recorder key into it for a stream seat; `planRecord` maps tap/hold onto keys.
+  recorder key into it for a stream seat; `planRecord` maps a tap onto keys.
 - **voice-mirror.js** + **lib/cursor-row.js** + **lib/composer-voice.js** — the
   renderer half: the engine's output feeds a hidden xterm, the mirror reads its
   input row (the cursor-row read in `lib/cursor-row.js`) and hands each new draft to the stream composer, which

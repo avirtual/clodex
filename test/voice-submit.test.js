@@ -9,7 +9,7 @@ const {
   DEFAULT_SUBMIT_PHRASE, normalizePhrase, findSubmit, matchTrigger,
   foldConfusables, shouldFire, readVoiceSubmitSettings,
   shouldRearm, composerIsEmpty, recorderBlocksRearm, recordingObserved, processingObserved,
-  resolveTriggerKey,
+  resolveTriggerKey, spaceTriggerAction, ptyTypedSinceEnter,
 } = require('../renderer/lib/voice-submit');
 
 test('the phrase is matched case-insensitively and through dictation punctuation', () => {
@@ -437,4 +437,43 @@ test('processingObserved is its OWN polarity, not either neighbour', () => {
   // nobody could read is the mistake that cannot be taken back.
   assert.strictEqual(processingObserved(null), true);
   assert.strictEqual(recordingObserved(null), false);
+});
+
+test('spaceTriggerAction: a space on an empty prompt of a voice-on seat starts or stops dictation', () => {
+  const base = { data: ' ', typedSinceEnter: false, voiceOn: true, recording: false, hasSink: true };
+  const rows = [
+    [{}, 'start'],
+    [{ recording: true }, 'stop'],
+    [{ typedSinceEnter: true }, null],
+    [{ typedSinceEnter: true, recording: true }, null],
+    [{ voiceOn: false }, null],
+    [{ hasSink: false }, null],
+    [{ data: 'a' }, null],
+    [{ data: '  ' }, null],
+    [{ data: '\r' }, null],
+  ];
+  for (const [over, want] of rows) {
+    assert.strictEqual(spaceTriggerAction({ ...base, ...over }), want, JSON.stringify(over));
+  }
+  assert.strictEqual(spaceTriggerAction(), null);
+});
+
+test('ptyTypedSinceEnter: typed text sets it, Enter, Esc and Ctrl-C clear it, terminal reports leave it alone', () => {
+  const rows = [
+    [false, 'a', true],
+    [true, '\r', false],
+    [true, '\x03', false],
+    [true, '\x1b', false],
+    [true, 'ab\rc', true],
+    [true, 'ab\r', false],
+    [false, '\x1b[I', false],
+    [true, '\x1b[O', true],
+    [true, '\x1b[<0;10;5M', true],
+    [false, '\x1b[A', false],
+    [false, '\x1b[200~hi\x1b[201~', true],
+    [false, '\x7f', true],
+  ];
+  for (const [prev, data, want] of rows) {
+    assert.strictEqual(ptyTypedSinceEnter(prev, data), want, JSON.stringify([prev, data]));
+  }
 });

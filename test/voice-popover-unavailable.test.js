@@ -45,7 +45,7 @@ function harness({ capable = true, cause = null, reading = 'off' } = {}) {
   const core = {
     subscribe() { return () => {}; },
     snapshot: () => ({ state: null, pending: null, mode: 'tap', capable, cause, force: false }),
-    isMode: (m) => ['off', 'tap', 'hold'].includes(m),
+    isMode: (m) => ['off', 'tap'].includes(m),
     choose() {},
   };
 
@@ -82,6 +82,21 @@ test('capable: the bar button reads as live — no aria-disabled, no dead class,
     assert.ok(!html.includes('aria-disabled'), 'a machine that can record must not mark its own button dead');
     assert.ok(!html.includes('px-voice-dead'));
     assert.ok(html.includes('click to change'), 'and keeps the tip that says the button does something');
+  } finally { h.restore(); }
+});
+
+test('capable tap seat: the button reads on, its tip says it opens the settings, and the rows are Off and On', () => {
+  const h = harness({ capable: true });
+  try {
+    const html = h.api.actionHtml();
+    assert.ok(html.includes('>🎤 on</button>'), html);
+    assert.ok(html.includes('data-tip="click to change voice settings"'), html);
+    assert.ok(!html.includes('right-click'));
+    const rows = h.rowsHtml();
+    assert.deepStrictEqual([...rows.matchAll(/data-mode="(\w+)"/g)].map((m) => m[1]), ['off', 'tap']);
+    assert.deepStrictEqual([...rows.matchAll(/voice-row-name">([^<]+)</g)].map((m) => m[1]), ['Off', 'On']);
+    assert.ok(rows.includes('No voice input on this seat'));
+    assert.ok(rows.includes('Press space on an empty prompt to dictate; say the trigger word to send'));
   } finally { h.restore(); }
 });
 

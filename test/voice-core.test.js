@@ -110,9 +110,9 @@ test('pending: the pick is published as pending and overrides the file\'s mode',
   const h = harness({ voice: fileSays('tap') });
   try {
     await h.core.refresh();
-    assert.strictEqual(h.core.choose('hold'), true);
+    assert.strictEqual(h.core.choose('off'), true);
     assert.deepStrictEqual(h.last(), {
-      state: fileSays('tap'), pending: 'hold', mode: 'hold', capable: true, cause: null, force: false,
+      state: fileSays('tap'), pending: 'off', mode: 'off', capable: true, cause: null, force: false,
     });
     // Nothing is written yet — the debounce owns that.
     assert.deepStrictEqual(h.calls.setVoiceMode, []);
@@ -126,13 +126,13 @@ test('a pick is accepted, shown as pending, and the debounced write goes out', a
   const h = harness({ voice: fileSays('tap') });
   try {
     await h.core.refresh();
-    assert.strictEqual(h.core.choose('hold'), true, 'the pick must be accepted');
-    assert.strictEqual(h.last().pending, 'hold', 'and shown as pending');
+    assert.strictEqual(h.core.choose('off'), true, 'the pick must be accepted');
+    assert.strictEqual(h.last().pending, 'off', 'and shown as pending');
     // Real timers: the debounce is the only thing between the pick and the
     // write, and this asserts the write actually GOES OUT rather than that
     // `choose` returned true.
     await new Promise((r) => setTimeout(r, CHOICE_DEBOUNCE_MS + 20));
-    assert.deepStrictEqual(h.calls.setVoiceMode, ['hold'], 'the write went out');
+    assert.deepStrictEqual(h.calls.setVoiceMode, ['off'], 'the write went out');
   } finally { h.restore(); }
 });
 
@@ -160,7 +160,7 @@ test('the debounce coalesces to the FINAL pick, and the successful write re-read
   try {
     await h.core.refresh();
     h.core.choose('tap');
-    h.core.choose('hold');
+    h.core.choose('off');
     h.core.choose('off');
     assert.deepStrictEqual(h.calls.setVoiceMode, [], 'nothing may be written before the debounce elapses');
     // The intermediate picks are the reason the debounce survives the swap: each
@@ -181,13 +181,13 @@ test('write failed: the pick is dropped, the operator is told, and the repaint i
   });
   try {
     await h.core.refresh();
-    h.core.choose('hold');
+    h.core.choose('off');
     t.mock.timers.tick(CHOICE_DEBOUNCE_MS);
     await flush();
     assert.deepStrictEqual(h.last(), {
       state: fileSays('tap'), pending: null, mode: 'tap', capable: true, cause: null, force: true,
     }, 'the row must fall back to the file, forced past a focused picker');
-    assert.deepStrictEqual(h.toasts, ['Setting voice to hold failed: settings.json has a syntax error']);
+    assert.deepStrictEqual(h.toasts, ['Setting voice to off failed: settings.json has a syntax error']);
 
     // And it re-reads NOTHING. The success path re-reads to retire the
     // affordance; the failure path has nothing to retire — it already dropped
@@ -210,11 +210,11 @@ test('the write threw: treated as a failure, not as a silently-successful write'
   });
   try {
     await h.core.refresh();
-    h.core.choose('hold');
+    h.core.choose('off');
     t.mock.timers.tick(CHOICE_DEBOUNCE_MS);
     await flush();
     assert.strictEqual(h.last().pending, null);
-    assert.deepStrictEqual(h.toasts, ['Setting voice to hold failed: socket closed']);
+    assert.deepStrictEqual(h.toasts, ['Setting voice to off failed: socket closed']);
   } finally { h.restore(); }
 });
 
@@ -226,7 +226,7 @@ test('a SLOW failed write may not wipe the pick a later choice already owns', as
   });
   try {
     await h.core.refresh();
-    h.core.choose('hold');
+    h.core.choose('off');
     t.mock.timers.tick(CHOICE_DEBOUNCE_MS);
     await flush();                      // the first write is now in flight
     h.core.choose('tap');               // operator moved on while it hung
@@ -242,16 +242,16 @@ test('the pending affordance stands until a read AGREES — a differing read is 
   const h = harness({ voice: fileSays('tap') });
   try {
     await h.core.refresh();
-    h.core.choose('hold');
+    h.core.choose('off');
     await h.core.refresh();             // a read that raced the write
     assert.deepStrictEqual(h.last(), {
-      state: fileSays('tap'), pending: 'hold', mode: 'hold', capable: true, cause: null, force: false,
+      state: fileSays('tap'), pending: 'off', mode: 'off', capable: true, cause: null, force: false,
     }, 'the write has not landed yet, which is not a refusal');
 
-    h.state.voice = fileSays('hold');   // the file caught up
+    h.state.voice = fileSays('off');   // the file caught up
     await h.core.refresh();
     assert.deepStrictEqual(h.last(), {
-      state: fileSays('hold'), pending: null, mode: 'hold', capable: true, cause: null, force: false,
+      state: fileSays('off'), pending: null, mode: 'off', capable: true, cause: null, force: false,
     }, 'an equal read retires the affordance');
   } finally { h.restore(); }
 });
@@ -455,7 +455,7 @@ test('a poll that says capable carries no cause, whatever the payload holds', as
 });
 
 test('a payload with no capability keys reads as capable, not as disabled', async () => {
-  const h = harness({ voice: fileSays('hold') });
+  const h = harness({ voice: fileSays('off') });
   try {
     await h.core.refresh();
     assert.strictEqual(h.last().capable, true);
