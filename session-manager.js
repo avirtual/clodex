@@ -7759,13 +7759,19 @@ function createSessionManager(deps) {
           + 'cannot be proven to be a turn boundary. Not marked.');
         return;
       }
+      if (state === 'behind') {
+        reply(`[agent:scratch] ${verb} refused: the transcript moved on before the turn end could be confirmed `
+          + `(the wait timed out after ${Math.round(SCRATCH_CLOSE_TIMEOUT / 1000)}s). Emit it again as the last line `
+          + 'of your next reply. Not marked.');
+        return;
+      }
       reply(`[agent:scratch] ${verb} refused: it must be the last line of a reply (your reply went on to `
         + 'call tools). Emit it alone and stop; the episode opens when Clodex acks it. Not marked.');
     }
 
     _scratchBeginSettled(session, v) {
       if (v.state === 'behind') return false;
-      if (v.state === 'ok' && v.boundary.entry.type !== 'system' && session._flushTurnEnd === true) return false;
+      if (v.state === 'ok' && v.boundary.entry.type !== 'system' && session.io !== 'stream' && session._flushTurnEnd === true) return false;
       return true;
     }
 
