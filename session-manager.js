@@ -178,7 +178,7 @@ function dupIdentity(intent) {
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
-const { isAgentType, adapterFor } = require('./cli-adapters');
+const { isAgentType, adapterFor, streamFor: adapterStreamFor } = require('./cli-adapters');
 const {
   SPILL_VERBS, SPILL_MIN_BYTES, HEAD_RE, isSpillVerb, pointerOf, pointerMatch, trailingPointerOf, spilledBodyOf, resolveSpill, spillDirFor, spillPathFor, verbKeyOf, writeSpill,
   receiptOf, resolveReceipt,
@@ -519,7 +519,6 @@ const { proseVerdictNeedsNudge, PROSE_VERDICT_NUDGE } = require('./verdict-nudge
 const { expandSkillsOff } = require('./skills-off');
 const { randomUUID } = require('crypto');
 const streamSeatLib = require('./stream-seat');
-const streamCodecClaude = require('./stream-codec-claude');
 const streamReap = require('./stream-reap');
 
 function dmContentKey(senderTag, body) {
@@ -720,6 +719,8 @@ function createSessionManager(deps) {
   } = deps;
   const spawnStreamSeat = deps.spawnStreamSeat || streamSeatLib.spawnStreamSeat;
   const reapBeforeResume = deps.reapBeforeResume || streamReap.reapBeforeResume;
+  const streamFor = deps.streamFor || adapterStreamFor;
+  const loadStreamCodec = deps.loadStreamCodec || ((id) => require(`./${id}`));
   const streamProc = deps.streamProc || {
     kill: streamSeatLib.groupKill,
     isAlive: streamSeatLib.isAlive,
@@ -1584,7 +1585,9 @@ function createSessionManager(deps) {
         if (!st.isDirectory()) throw new Error(`Not a directory: ${cwd}`);
       }
       const streamIo = io === 'stream';
-      if (streamIo && type !== 'claude') throw new Error(`stream transport is claude-only (got ${type})`);
+      if (streamIo && !streamFor(type)) throw new Error(`stream transport is not supported for ${type}`);
+      const streamSpec = streamIo ? streamFor(type) : null;
+      const streamCodec = streamSpec ? loadStreamCodec(streamSpec.codec) : null;
       if (streamIo && resumeId) {
         const prior = getPersistence().get(name);
         const record = prior && prior.streamPid ? prior.streamPid : null;
@@ -1955,10 +1958,7 @@ function createSessionManager(deps) {
             }
           } catch {}
           if (streamIo) {
-            const idArgs = resumeId
-              ? ['--resume', resumeId, ...(fork ? ['--fork-session'] : [])]
-              : ['--session-id', randomUUID()];
-            args.unshift('-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', ...idArgs);
+            args.unshift(...streamSpec.argv({ resumeId, sessionId: randomUUID(), fork }));
           } else if (resumeId && !args.includes('--resume') && !args.includes('-r')) {
             args.push('--resume', resumeId);
             if (fork && !args.includes('--fork-session')) args.push('--fork-session');
@@ -2250,6 +2250,7 @@ function createSessionManager(deps) {
         io: streamIo ? 'stream' : 'pty',
         ...(streamIo ? {
           stream: streamSeat,
+          streamCodec,
           outbox: [],
           streamPid: { pid: streamSeat.pid, startTime: streamSeat.startTime ?? streamSeat.startedAt },
         } : {}),
@@ -2966,7 +2967,7 @@ function createSessionManager(deps) {
     }
 
     _streamWrite(s, { text, images }) {
-      s.stream.send(streamCodecClaude.encodeUser(text, images)).catch((e) => {
+      s.stream.send(s.streamCodec.encodeUser(text, images)).catch((e) => {
         const imageBytes = images.reduce((n, img) => n + img.data.length, 0);
         log.warn('session', `stream send ${s.name} failed (${Buffer.byteLength(text)} bytes, ${images.length} images ${imageBytes} b64 bytes): ${e.message}`);
       });
@@ -3001,7 +3002,7 @@ function createSessionManager(deps) {
         onProcExit({ exitCode: code, signal: signal || undefined });
         return;
       }
-      const rec = streamCodecClaude.decode(ev.line);
+      const rec = s.streamCodec.decode(ev.line);
       switch (rec.kind) {
         case 'init':
           this._clearStreamResultHold(s);
@@ -3032,6 +3033,9 @@ function createSessionManager(deps) {
         case 'status':
           if (rec.status) this._emitActivity(s.name, 'thinking', false);
           break;
+        case 'tool-boundary':
+          this._onStreamToolBoundary(s);
+          break;
         default:
           break;
       }
@@ -3039,6 +3043,13 @@ function createSessionManager(deps) {
 
     _repointStreamTranscript(s, sid) {
       if (s.io !== 'stream' || !s.cwd) return;
+      if (streamFor(s.type)?.transcriptRepoint !== 'claude') {
+        if (!s._repointSkipLogged) {
+          s._repointSkipLogged = true;
+          log.debug('session', `stream ${s.name}: no transcript repoint for ${s.type}`);
+        }
+        return;
+      }
       const link = pathFor(REGISTRY_DIR, s.name, 'transcript');
       try {
         let current = null;

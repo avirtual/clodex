@@ -2,7 +2,7 @@
 
 const MODEL_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9.-]{0,63}(?:\[[a-z0-9]{1,8}\])?$/;
 
-const CAP_KEYS = ['injectSkills', 'skillRoster', 'plugins', 'agents', 'tools', 'strip', 'autoCompact', 'noWire', 'accounts'];
+const CAP_KEYS = ['injectSkills', 'skillRoster', 'plugins', 'agents', 'tools', 'strip', 'autoCompact', 'noWire', 'accounts', 'streamIo'];
 
 const ADAPTERS = {
   claude: {
@@ -28,6 +28,15 @@ const ADAPTERS = {
     instructions: 'append-system-prompt-file',
     transcript: { reader: 'claude', link: 'hook' },
     caps: { park: true, transcript: true, warmth: true },
+    stream: {
+      codec: 'stream-codec-claude',
+      argv: ({ resumeId, sessionId, fork }) => [
+        '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
+        ...(resumeId ? ['--resume', resumeId, ...(fork ? ['--fork-session'] : [])] : ['--session-id', sessionId]),
+      ],
+      toolBoundary: 'hook',
+      transcriptRepoint: 'claude',
+    },
     ui: {
       injectSkills: true,
       skillRoster: true,
@@ -38,6 +47,7 @@ const ADAPTERS = {
       autoCompact: true,
       noWire: true,
       accounts: true,
+      streamIo: true,
     },
   },
   codex: {
@@ -54,6 +64,7 @@ const ADAPTERS = {
     instructions: 'model-instructions-file',
     transcript: { reader: 'codex', link: 'hook' },
     caps: { park: false, transcript: true, warmth: false },
+    stream: null,
     ui: {
       injectSkills: true,
       skillRoster: false,
@@ -64,6 +75,7 @@ const ADAPTERS = {
       autoCompact: false,
       noWire: false,
       accounts: false,
+      streamIo: false,
     },
   },
   muse: {
@@ -103,6 +115,7 @@ const ADAPTERS = {
     instructions: 'user-agents-md',
     transcript: { reader: 'muse', link: 'clodex' },
     caps: { park: false, transcript: true, warmth: false },
+    stream: null,
     ui: {
       injectSkills: true,
       skillRoster: true,
@@ -113,6 +126,7 @@ const ADAPTERS = {
       autoCompact: false,
       noWire: false,
       accounts: false,
+      streamIo: false,
     },
   },
 };
@@ -146,6 +160,11 @@ function capsFor(type) {
   return a ? a.ui : NO_CAPS;
 }
 
+function streamFor(type) {
+  const a = adapterFor(type);
+  return a && a.stream ? a.stream : null;
+}
+
 function seatType(tpl, opener) {
   const t = tpl ? (tpl.type || DEFAULT_TYPE) : ((opener && opener.type) || DEFAULT_TYPE);
   if (!adapterFor(t)) throw new Error(`unknown seat type "${String(t)}" (known: ${PLATFORMS.join(', ')})`);
@@ -176,5 +195,5 @@ function stripModelArgs(type, extraArgs) {
 
 module.exports = {
   ADAPTERS, PLATFORMS, DEFAULT_TYPE, CAP_KEYS,
-  adapterFor, isAgentType, capsFor, seatType, resolveModelId, stripModelArgs, hasBypass,
+  adapterFor, isAgentType, capsFor, streamFor, seatType, resolveModelId, stripModelArgs, hasBypass,
 };

@@ -17,7 +17,7 @@ const { pathFor, runDirFor, defaultClodexHome, seatPathFor, claudeProjectSlug } 
 const { confine } = require('./path-confine');
 const { createSkillDelivery } = require('./skill-delivery');
 const { createSkillLister, skillAliases } = require('./muse-skills');
-const { adapterFor: adapterRowFor } = require('./cli-adapters');
+const { adapterFor: adapterRowFor, streamFor } = require('./cli-adapters');
 const { KINDS: PROMPT_KINDS, badStem, teamPromptFile, teamJsonFile, readTeamJson } = require('./team-prompt-dir');
 const { planGather, applyGather } = require('./team-gather');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
@@ -1705,7 +1705,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   persistence.setExecCommands(name, nextExec);
   persistence.setEnv(name, nextEnv);
   const priorIo = (beforeKill && beforeKill.io) || 'pty';
-  const nextIo = (patch.io === 'stream' || patch.io === 'pty') && beforeKill && beforeKill.type === 'claude'
+  const nextIo = (patch.io === 'stream' || patch.io === 'pty') && beforeKill && !!streamFor(beforeKill.type)
     ? patch.io : priorIo;
   if (nextIo !== priorIo) persistence.setIo(name, nextIo);
   if (!restart) return { ok: true, restarted: false };

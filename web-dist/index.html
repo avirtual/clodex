@@ -25331,7 +25331,7 @@ ${i3.join("\n")}
     "cli-adapters.js"(exports, module) {
       "use strict";
       var MODEL_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9.-]{0,63}(?:\[[a-z0-9]{1,8}\])?$/;
-      var CAP_KEYS = ["injectSkills", "skillRoster", "plugins", "agents", "tools", "strip", "autoCompact", "noWire", "accounts"];
+      var CAP_KEYS = ["injectSkills", "skillRoster", "plugins", "agents", "tools", "strip", "autoCompact", "noWire", "accounts", "streamIo"];
       var ADAPTERS = {
         claude: {
           id: "claude",
@@ -25356,6 +25356,20 @@ ${i3.join("\n")}
           instructions: "append-system-prompt-file",
           transcript: { reader: "claude", link: "hook" },
           caps: { park: true, transcript: true, warmth: true },
+          stream: {
+            codec: "stream-codec-claude",
+            argv: ({ resumeId, sessionId, fork }) => [
+              "-p",
+              "--input-format",
+              "stream-json",
+              "--output-format",
+              "stream-json",
+              "--verbose",
+              ...resumeId ? ["--resume", resumeId, ...fork ? ["--fork-session"] : []] : ["--session-id", sessionId]
+            ],
+            toolBoundary: "hook",
+            transcriptRepoint: "claude"
+          },
           ui: {
             injectSkills: true,
             skillRoster: true,
@@ -25365,7 +25379,8 @@ ${i3.join("\n")}
             strip: true,
             autoCompact: true,
             noWire: true,
-            accounts: true
+            accounts: true,
+            streamIo: true
           }
         },
         codex: {
@@ -25382,6 +25397,7 @@ ${i3.join("\n")}
           instructions: "model-instructions-file",
           transcript: { reader: "codex", link: "hook" },
           caps: { park: false, transcript: true, warmth: false },
+          stream: null,
           ui: {
             injectSkills: true,
             skillRoster: false,
@@ -25391,7 +25407,8 @@ ${i3.join("\n")}
             strip: false,
             autoCompact: false,
             noWire: false,
-            accounts: false
+            accounts: false,
+            streamIo: false
           }
         },
         muse: {
@@ -25431,6 +25448,7 @@ ${i3.join("\n")}
           instructions: "user-agents-md",
           transcript: { reader: "muse", link: "clodex" },
           caps: { park: false, transcript: true, warmth: false },
+          stream: null,
           ui: {
             injectSkills: true,
             skillRoster: true,
@@ -25440,7 +25458,8 @@ ${i3.join("\n")}
             strip: false,
             autoCompact: false,
             noWire: false,
-            accounts: false
+            accounts: false,
+            streamIo: false
           }
         }
       };
@@ -25466,6 +25485,10 @@ ${i3.join("\n")}
       function capsFor(type) {
         const a = adapterFor(type);
         return a ? a.ui : NO_CAPS;
+      }
+      function streamFor(type) {
+        const a = adapterFor(type);
+        return a && a.stream ? a.stream : null;
       }
       function seatType(tpl, opener) {
         const t = tpl ? tpl.type || DEFAULT_TYPE : opener && opener.type || DEFAULT_TYPE;
@@ -25503,6 +25526,7 @@ ${i3.join("\n")}
         adapterFor,
         isAgentType,
         capsFor,
+        streamFor,
         seatType,
         resolveModelId,
         stripModelArgs,
@@ -46324,7 +46348,7 @@ ${detail}` });
         if (stripRow) stripRow.style.display = caps.strip ? "" : "none";
         if (autoCompactRow) autoCompactRow.style.display = caps.autoCompact ? "" : "none";
         if (noWireRow) noWireRow.style.display = caps.noWire ? "" : "none";
-        if (streamIoRow) streamIoRow.style.display = type === "claude" ? "" : "none";
+        if (streamIoRow) streamIoRow.style.display = caps.streamIo ? "" : "none";
         if (accountRow) accountRow.style.display = caps.accounts ? "" : "none";
         if (toolsAllowRow) toolsAllowRow.style.display = authoring ? "" : "none";
         if (authoring && caps.tools && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, /* @__PURE__ */ new Set());
@@ -47271,7 +47295,7 @@ ${detail}` });
         const toolsAllow = dialogMode === "template" && caps.tools ? collectToolAllowChecklist(inputToolsAllowList) : [];
         const autoCompactOff = caps.autoCompact && inputAutoCompact && !inputAutoCompact.checked;
         const noWireOn = caps.noWire && inputNoWire && inputNoWire.checked;
-        const streamIoOn = type === "claude" && inputStreamIo && inputStreamIo.checked;
+        const streamIoOn = caps.streamIo && inputStreamIo && inputStreamIo.checked;
         return {
           type,
           cwd: expandPath(inputCwd.value.trim()) || homeDir,
@@ -47319,7 +47343,7 @@ ${detail}` });
           noWire,
           plugins
         } = cfg;
-        const io = type === "claude" && inputStreamIo && inputStreamIo.checked ? "stream" : "pty";
+        const io = capsFor(type).streamIo && inputStreamIo && inputStreamIo.checked ? "stream" : "pty";
         const env = collectDialogEnv();
         const supportsPrompts = isAgentType(type);
         const systemPromptBody = null;
@@ -52042,7 +52066,7 @@ ${res.stderr}` : "");
         argsAppendRow.style.display = isAgent ? "" : "none";
         argsAppendSection.style.display = isAgent ? "" : "none";
         const caps = capsFor(res.type);
-        const ioEditable = res.type === "claude" && !argsSource;
+        const ioEditable = caps.streamIo && !argsSource;
         if (argsStreamIoRow) argsStreamIoRow.style.display = ioEditable ? "" : "none";
         if (argsStreamIo) argsStreamIo.checked = ioEditable && res.io === "stream";
         argsAccountRow.style.display = caps.accounts ? "" : "none";
