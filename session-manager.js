@@ -1634,8 +1634,9 @@ function createSessionManager(deps) {
       let streamCodec = null;
       if (streamSpec) {
         const mod = loadStreamCodec(streamSpec.codec);
-        streamCodec = typeof mod.create === 'function'
-          ? mod.create({ cwd: cwd || process.env.HOME || os.homedir(), resumeId, fork, ...streamCtx, log })
+        const makeCodec = mod.create;
+        streamCodec = typeof makeCodec === 'function'
+          ? makeCodec({ cwd: cwd || process.env.HOME || os.homedir(), resumeId, fork, ...streamCtx, log })
           : mod;
       }
       if (streamIo && resumeId) {
