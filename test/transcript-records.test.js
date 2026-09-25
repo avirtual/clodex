@@ -71,6 +71,56 @@ for (const [name, file, expected] of ROWS) {
   });
 }
 
+const PLATFORM_ROWS = [
+  ['a muse accepted user intent is a typed prompt from its refill_blocks', 'muse-intent', /"payload_type":"runtime\.user_intent\.accepted"/, [
+    { id: 'cd97be52-9b71-41c4-b87f-cda3a0655d3e', kind: 'prompt', ts: 1790355829993, turn: 1, text: 'what model are you?', source: 'typed' },
+  ]],
+  ['a muse assistant_message_committed is an assistant row keyed by its message_id', 'muse-reply', /"kind":"assistant_message_committed"/, [
+    { id: '1ad13435-28fa-486d-9f92-f44a561f177a', kind: 'assistant', ts: 1790355833129, turn: 0, text: "I'm Muse Code powered by Meta Muse Spark." },
+  ]],
+  ['a muse terminal event is a turn-end carrying turn_duration_ms', 'muse-terminal', /"kind":"terminal"/, [
+    { id: '1f300194-d519-4152-b815-3ff265a59094', kind: 'turn-end', ts: 1790355833271, turn: 0, durationMs: 3182, messageCount: null },
+  ]],
+  ['a muse retained_frame is unwrapped: permission children yield nothing, a committed message child is its assistant row', 'muse-frame', /"retained_frame":"session_permission_transaction"/, [
+    { id: '1ad13435-28fa-486d-9f92-f44a561f177a', kind: 'assistant', ts: 1790355833129, turn: 0, text: "I'm Muse Code powered by Meta Muse Spark." },
+  ]],
+  ['a codex user response_item message is a typed prompt', 'codex-user', /"type":"response_item".*"role":"user"/, [
+    { id: 'msg_01a0d988-bf31-79f0-9416-45ccf176459b', kind: 'prompt', ts: 1790356012850, turn: 1, text: 'there?', source: 'typed' },
+  ]],
+  ['a codex assistant response_item message is an assistant row', 'codex-assistant', /"type":"response_item".*"role":"assistant"/, [
+    { id: 'msg_0f3b29233db1b3c9016ab6aa32ac3887d2852fccb9fa7369bb', kind: 'assistant', ts: 1790356019052, turn: 0, text: 'Here. Ready to review.' },
+  ]],
+  ['a Claude line keeps the records it produced before the platform readers', 'inbound', /"type":"user"/, [{
+    id: 'ad643390-44b6-4bab-8ef2-71bed3954517', kind: 'inbound', ts: 1790199337313, turn: 1, from: 'wirescope',
+    text: 'Message (1569 bytes) attached: @/repo/tmp/msg-35544-6.txt', attached: { path: '/repo/tmp/msg-35544-6.txt', bytes: 1569 },
+  }]],
+];
+
+for (const [name, file, shape, expected] of PLATFORM_ROWS) {
+  test(`platform fixture ${file}: ${name}`, () => {
+    assert.match(fixture(file), shape, 'ENTER: the fixture carries the platform shape it names');
+    assert.deepStrictEqual(recordsOf(fixture(file)).records, expected);
+  });
+}
+
+test('a muse turn read whole orders prompt, reply and turn-end in one turn', () => {
+  const text = ['muse-intent', 'muse-reply', 'muse-terminal'].map(fixture).join('');
+  assert.deepStrictEqual(recordsOf(text).records.map((r) => [r.kind, r.turn]), [['prompt', 1], ['assistant', 1], ['turn-end', 1]]);
+});
+
+test('a codex event_msg user_message or agent_message is no row: the response_item carries the same text', () => {
+  const lines = [
+    rec({ timestamp: '2026-09-25T17:06:52.850Z', type: 'event_msg', payload: { type: 'user_message', message: 'there?' } }),
+    rec({ timestamp: '2026-09-25T17:06:59.052Z', type: 'event_msg', payload: { type: 'agent_message', message: 'Here.' } }),
+  ].join('\n');
+  assert.deepStrictEqual(recordsOf(lines).records, []);
+});
+
+test('a codex task_complete is a turn-end with no duration', () => {
+  const line = rec({ timestamp: '2026-09-25T17:07:00.000Z', type: 'event_msg', payload: { type: 'task_complete', turn_id: 't1' } });
+  assert.deepStrictEqual(recordsOf(line).records.map((r) => [r.kind, r.durationMs, r.ts]), [['turn-end', null, 1790356020000]]);
+});
+
 test('ENTER: the Edit fixture really carries an originalFile, so its absence from the record is a drop', () => {
   assert.match(fixture('edit'), /"originalFile":"x\\n"/);
 });
