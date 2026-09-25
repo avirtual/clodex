@@ -650,3 +650,11 @@ test('a pty seat: a release before the quiet window strips the trigger phrase fr
   f.t.paint([`${HEAD}`]);
   assert.deepStrictEqual(f.writes, ['ship it over and out', '\x7f'.repeat(13), '\r']);
 });
+
+test('a pty seat: a keystroke after the stop but before the release still freezes the row', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const line = src.split('\n').find((l) => l.includes('ptyVoice.userTyped()'));
+  assert.ok(line);
+  assert.match(line, /voiceRecordingSeat === name \|\| \(voiceArmedSeat === name && voiceEngineView && voiceEngineView\.mirror\.isArmed\(\)\)/);
+  assert.match(line, /isHumanPtyInput\(data\)/);
+});

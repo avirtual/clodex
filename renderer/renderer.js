@@ -1973,7 +1973,7 @@ function createTerminal(name, peer = null) {
       altScreen: terminal.buffer.active.type === 'alternate',
     });
     if (act) { seatVoiceRecord(name, act); return; }
-    if (ptyVoice && voiceRecordingSeat === name && isHumanPtyInput(data)) ptyVoice.userTyped();
+    if (ptyVoice && (voiceRecordingSeat === name || (voiceArmedSeat === name && voiceEngineView && voiceEngineView.mirror.isArmed())) && isHumanPtyInput(data)) ptyVoice.userTyped();
     if (seat) seat.typedSinceEnter = ptyTypedSinceEnter(seat.typedSinceEnter, data);
     window.api.writeToSession(name, data);
   });
