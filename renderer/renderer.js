@@ -2206,6 +2206,7 @@ function createTerminal(name, peer = null) {
     toast: showToast,
     echoPalette: currentEchoPalette,
     composerEl,
+    sheet: true,
     onChange: () => { if (composerKit) composerKit.fit(); },
   });
   sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger });

@@ -5934,6 +5934,14 @@ body.web-frontend #sidebar-header {
   overflow: hidden;
 }
 
+.terminal-wrapper.live-sheet {
+  overflow: hidden;
+}
+
+.terminal-wrapper.live-sheet .transcript-pane {
+  border-bottom: 1px solid var(--border);
+}
+
 .transcript-pane {
   position: absolute;
   top: 4px;

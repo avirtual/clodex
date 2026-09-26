@@ -246,7 +246,8 @@ function mountView(extra = {}, { parser = true, geometry = false } = {}) {
   const calls = { pull: 0, unsubscribed: 0 };
   let listener = null;
   let rev = 0;
-  const wrapper = { appendChild() {}, clientHeight: WRAPPER_PX, classList: { add() {}, remove() {} } };
+  const classes = new Set();
+  const wrapper = { appendChild() {}, clientHeight: WRAPPER_PX, classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c), contains: (c) => classes.has(c) } };
   const view = createLiveSplitView(terminal, wrapper, {
     isEligible: () => true,
     pullTranscript: () => { calls.pull += 1; rev += 1; return { ok: true, rev, records: recordsAt(rev) }; },
@@ -256,7 +257,7 @@ function mountView(extra = {}, { parser = true, geometry = false } = {}) {
     ...extra,
   });
   return {
-    view, calls, csi, pane, terminal,
+    view, calls, csi, pane, terminal, wrapper,
     show: (rows) => { screen.length = 0; screen.push(...rows); },
     write: () => writes.forEach((cb) => cb()),
     change: (name) => listener && listener(name),
@@ -659,5 +660,94 @@ test('a draft row with a composer given keeps the composer', async () => {
     assert.strictEqual(m.view.state().mode, 'split');
     assert.strictEqual(m.view.composerVisible(), true);
     assert.strictEqual(m.terminal.element.style.visibility, 'hidden');
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+const PICKER = ['', '  Select model', '❯ 1. Opus', '  2. Sonnet'];
+
+async function mountSheet(rows, extra = {}) {
+  const composerEl = fakeComposer();
+  const m = mountView({ composerEl, sheet: true, ...extra }, { geometry: true });
+  m.show(rows);
+  m.write();
+  await settle();
+  return { ...m, composerEl };
+}
+
+test('a busy full screen with sheet on keeps the pane above the terminal\'s last rows as a bottom sheet', async () => {
+  const m = await mountSheet(PICKER);
+  try {
+    const el = m.terminal.element;
+    assert.strictEqual(m.view.state().mode, 'full');
+    assert.strictEqual(m.pane.hidden, false);
+    assert.strictEqual(m.pane.clientHeight, WRAPPER_PX - 2 * ROW_PX);
+    assert.strictEqual(m.composerEl.hidden, true);
+    assert.strictEqual(el.style.visibility, '');
+    assert.deepStrictEqual([el.style.transform, el.style.clipPath], [`translateY(${WRAPPER_PX - 4 * ROW_PX}px)`, `inset(${2 * ROW_PX}px 0 0px 0)`]);
+    assert.strictEqual(m.wrapper.classList.contains('live-sheet'), true);
+    assert.strictEqual(m.wrapper.classList.contains('live-split'), false);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a picker shorter than half the terminal takes only its own rows', async () => {
+  const m = await mountSheet(['', '', '', '  spinner']);
+  try {
+    assert.strictEqual(m.pane.clientHeight, WRAPPER_PX - ROW_PX);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a blank full screen with sheet on keeps the whole-terminal full view', async () => {
+  const m = await mountSheet(['', '', '', '']);
+  try {
+    assert.strictEqual(m.pane.hidden, true);
+    assert.strictEqual(m.wrapper.classList.contains('live-sheet'), false);
+    assert.ok(!m.terminal.element.style.transform);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a busy full screen with sheet off keeps the whole-terminal full view', async () => {
+  const m = await mountSheet(PICKER, { sheet: false });
+  try {
+    assert.strictEqual(m.pane.hidden, true);
+    assert.strictEqual(m.wrapper.classList.contains('live-sheet'), false);
+    assert.ok(!m.terminal.element.style.transform);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('entering the sheet from split hands composer focus to the terminal; returning to split hands it back', async () => {
+  const composerEl = fakeComposer();
+  const m = await mountSplit({ geometry: true }, { composerEl, sheet: true });
+  try {
+    let termFocus = 0;
+    m.terminal.textarea = { tag: 'xterm-helper' };
+    m.terminal.focus = () => { termFocus += 1; global.document.activeElement = m.terminal.textarea; };
+    global.document.activeElement = composerEl;
+    m.show(PICKER);
+    m.write();
+    m.tick(50);
+    m.write();
+    assert.strictEqual(m.wrapper.classList.contains('live-sheet'), true);
+    assert.strictEqual(termFocus, 1);
+    assert.strictEqual(global.document.activeElement, m.terminal.textarea);
+    const focused = composerEl.focused;
+    m.show(ANCHORED);
+    m.write();
+    m.tick(250);
+    m.write();
+    assert.strictEqual(m.view.state().mode, 'split');
+    assert.strictEqual(m.wrapper.classList.contains('live-sheet'), false);
+    assert.strictEqual(composerEl.focused, focused + 1);
+    assert.strictEqual(global.document.activeElement, composerEl);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('raw wins over the sheet: the whole terminal shows and the pane hides', async () => {
+  const m = await mountSheet(PICKER);
+  try {
+    assert.strictEqual(m.wrapper.classList.contains('live-sheet'), true);
+    m.view.setRaw(true);
+    assert.strictEqual(m.pane.hidden, true);
+    assert.strictEqual(m.wrapper.classList.contains('live-sheet'), false);
+    assert.deepStrictEqual([m.terminal.element.style.transform, m.terminal.element.style.clipPath], ['', '']);
   } finally { m.view.dispose(); m.restore(); }
 });

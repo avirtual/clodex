@@ -59,7 +59,7 @@ function findAnchor(rows, cursorY, cols, platform = 'claude') {
 
 function measureSplit(rows, cursorY, cols, platform = 'claude') {
   const at = findAnchor(rows, cursorY, cols, platform);
-  if (at < 0) return { mode: 'full', top: -1, bottom: -1 };
+  if (at < 0) return { mode: 'full', top: -1, bottom: -1, busy: Array.isArray(rows) && rows.some((r) => !isBlank(r)) };
   const top = ANCHORS[platform].top(rows, at);
   let bottom = rows.length - 1;
   while (bottom > at + 1 && isBlank(rows[bottom])) bottom--;
