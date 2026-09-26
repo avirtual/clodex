@@ -118,10 +118,14 @@ let activeSession = null;
 let terminalWebglEnabled = false;
 let transcriptPaneEnabled = false;
 let transcriptPaneInternals = true;
+let transcriptPaneTools = true;
 function refreshTranscriptPanes() {
   for (const entry of sessions.values()) {
     if (entry.liveSplit) entry.liveSplit.refresh();
-    if (entry.stream) entry.stream.setInternals(transcriptPaneInternals);
+    if (entry.stream) {
+      entry.stream.setInternals(transcriptPaneInternals);
+      entry.stream.setTools(transcriptPaneTools);
+    }
   }
 }
 function setTranscriptPaneInternals(on) {
@@ -129,11 +133,17 @@ function setTranscriptPaneInternals(on) {
   try { window.api.setSettings({ transcriptPaneInternals }); } catch {}
   refreshTranscriptPanes();
 }
+function setTranscriptPaneTools(on) {
+  transcriptPaneTools = !!on;
+  try { window.api.setSettings({ transcriptPaneTools }); } catch {}
+  refreshTranscriptPanes();
+}
 const terminalWebglReady = window.api.getSettings()
   .then((s) => {
     terminalWebglEnabled = !!(s && s.terminalWebgl === true);
     transcriptPaneEnabled = !!(s && s.transcriptPane === true);
     transcriptPaneInternals = !(s && s.transcriptPaneInternals === false);
+    transcriptPaneTools = !(s && s.transcriptPaneTools === false);
     refreshTranscriptPanes();
   })
   .catch(() => {});
@@ -1662,7 +1672,7 @@ function createStreamSeatPane(name, wrapperEl) {
   const paneEl = document.createElement('div');
   paneEl.className = 'transcript-pane transcript-pane-full';
   wrapperEl.appendChild(paneEl);
-  const internalsToggle = internalsBar(document, paneEl, transcriptPaneInternals, setTranscriptPaneInternals);
+  const internalsToggle = internalsBar(document, paneEl, transcriptPaneInternals, setTranscriptPaneInternals, transcriptPaneTools, setTranscriptPaneTools);
   const composer = document.createElement('textarea');
   const composerKit = attachComposer(composer, {
     onSend: () => sendComposer(),
@@ -1851,6 +1861,7 @@ function createStreamSeatPane(name, wrapperEl) {
     echoPalette: currentEchoPalette,
     lead: internalsToggle.bar,
     internals: transcriptPaneInternals,
+    tools: transcriptPaneTools,
   };
   const pull = (force = false) => {
     if (pulling || disposed) return;
@@ -2060,6 +2071,10 @@ function createStreamSeatPane(name, wrapperEl) {
     setInternals(on) {
       internalsToggle.box.checked = !!on;
       transcriptRowsFor(document, paneEl, rowsCtx).setInternals(on);
+    },
+    setTools(on) {
+      internalsToggle.toolsBox.checked = !!on;
+      transcriptRowsFor(document, paneEl, rowsCtx).setTools(on);
     },
     setTurnRunning(activity, since) {
       turnRunning = activity === 'thinking' || activity === 'attention';
@@ -2368,6 +2383,8 @@ function createTerminal(name, peer = null) {
     echoPalette: currentEchoPalette,
     internals: () => transcriptPaneInternals,
     onInternals: setTranscriptPaneInternals,
+    tools: () => transcriptPaneTools,
+    onTools: setTranscriptPaneTools,
     composerEl,
     menuMirror,
     sheet: true,

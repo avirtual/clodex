@@ -634,6 +634,64 @@ test('with internals off a turn of only injected rows is hidden and a turn with 
   assert.deepStrictEqual(turns().filter(([, h]) => h), []);
 });
 
+test('with tools off the tool blocks carry tr-hidden and the prompt, assistant and inbound rows do not; on again clears it', () => {
+  const m = mount();
+  m.render([
+    { id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' },
+    { id: 'u1', kind: 'inbound', ts: null, turn: 1, from: 'user', text: 'from the panel' },
+    { id: 'a1', kind: 'assistant', ts: null, turn: 1, text: 'on it' },
+    call('t1', 'Bash', 'ls'),
+    call('t2', 'Read', 'a.js'),
+  ]);
+  const hidden = () => m.pane.childNodes[0].childNodes.map((n) => [n.dataset.id, /\btr-hidden\b/.test(n.className)]);
+  m.rows.setTools(false);
+  assert.deepStrictEqual(hidden(), [['p1', false], ['u1', false], ['a1', false], ['tools:t1', true], ['tools:t2', true]]);
+  m.rows.setTools(true);
+  assert.deepStrictEqual(hidden().filter(([, h]) => h), []);
+});
+
+test('a turn of only tool calls and a turn-end is hidden with tools off and not with tools on', () => {
+  const m = mount();
+  m.render([
+    { id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' },
+    call('t1', 'Bash', 'ls', 'ok', { turn: 2 }),
+    { id: 'e1', kind: 'turn-end', ts: null, turn: 2, durationMs: 5, messageCount: 1 },
+  ]);
+  const turns = () => m.pane.childNodes.map((n) => [n.childNodes.map((c) => c.dataset.id).join(','), /\btr-hidden\b/.test(n.className)]);
+  assert.deepStrictEqual(turns(), [['p1', false], ['tools:t1,', false]]);
+  m.rows.setTools(false);
+  assert.deepStrictEqual(turns(), [['p1', false], ['tools:t1,', true]]);
+  m.rows.setTools(true);
+  assert.deepStrictEqual(turns().filter(([, h]) => h), []);
+});
+
+test('a turn of internal rows and tool calls is hidden only when both internals and tools are off', () => {
+  const m = mount();
+  m.render([
+    { id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'ticket-loop', text: 'ticket t1 accepted' },
+    call('t1', 'Bash', 'ls'),
+    { id: 'e1', kind: 'turn-end', ts: null, turn: 1, durationMs: 5, messageCount: 1 },
+  ]);
+  const turnHidden = () => /\btr-hidden\b/.test(m.pane.childNodes[0].className);
+  m.rows.setInternals(false);
+  assert.strictEqual(turnHidden(), false);
+  m.rows.setInternals(true);
+  m.rows.setTools(false);
+  assert.strictEqual(turnHidden(), false);
+  m.rows.setInternals(false);
+  assert.strictEqual(turnHidden(), true);
+  m.rows.setTools(true);
+  assert.strictEqual(turnHidden(), false);
+});
+
+test('a pane created with tools off hides the tool block on first render and setTools(true) clears it', () => {
+  const m = mount({ tools: false });
+  m.render([{ id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' }, call('t1', 'Bash', 'ls')]);
+  assert.ok(/\btr-hidden\b/.test(boxOf(m, 'tools:t1').className));
+  m.rows.setTools(true);
+  assert.ok(!/\btr-hidden\b/.test(boxOf(m, 'tools:t1').className));
+});
+
 test('a long attached reply folds to a head led by ↳ and an unattached one does not', () => {
   const long = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n');
   const m = mount();

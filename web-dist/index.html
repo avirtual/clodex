@@ -31652,10 +31652,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return turns;
       }
       function createTranscriptRows(doc, paneEl, ctx = {}) {
-        const deps = { lead: null, internals: true, seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
+        const deps = { lead: null, internals: true, tools: true, seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
         const turnCache = /* @__PURE__ */ new Map();
         const opened = /* @__PURE__ */ new Set();
         let showInternals = deps.internals !== false;
+        let showTools = deps.tools !== false;
         let lastRecords = [];
         let working = null;
         let workingEl = null;
@@ -31741,6 +31742,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
               c.key = key;
               c.tools = tools;
               paintBlock(c);
+              toggleClass(c.el, "tr-hidden", !showTools);
             }
           };
         }
@@ -31784,7 +31786,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             after: (c) => {
               if (!c.sub) c.sub = /* @__PURE__ */ new Map();
               reconcile(c.el, c.sub, rowItems(t.records, attached));
-              toggleClass(c.el, "tr-hidden", !showInternals && t.records.every((r) => isInternalRow(r) || r.kind === "turn-end"));
+              toggleClass(c.el, "tr-hidden", (!showInternals || !showTools) && t.records.every((r) => r.kind === "turn-end" || !showInternals && isInternalRow(r) || !showTools && r.kind === "tool"));
             }
           }));
           reconcile(paneEl, turnCache, items, deps.lead);
@@ -31796,7 +31798,12 @@ ${m[2].replace(/^\r?\n/, "")}`;
           showInternals = !!on;
           render(lastRecords);
         }
-        return { render, setWorking, setInternals };
+        function setTools(on) {
+          if (showTools === !!on) return;
+          showTools = !!on;
+          render(lastRecords);
+        }
+        return { render, setWorking, setInternals, setTools };
       }
       module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows };
     }
@@ -32133,9 +32140,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function renderTranscript(doc, paneEl, records, ctx = {}) {
         transcriptRowsFor(doc, paneEl, ctx).render(records);
       }
-      function internalsBar(doc, paneEl, checked, onChange) {
-        const bar = doc.createElement("div");
-        bar.className = "transcript-bar";
+      function barToggle(doc, bar, text, checked, onChange) {
         const label = doc.createElement("label");
         label.className = "transcript-bar-toggle";
         const box = doc.createElement("input");
@@ -32143,10 +32148,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
         box.checked = !!checked;
         box.addEventListener("change", () => onChange(!!box.checked));
         label.appendChild(box);
-        label.appendChild(doc.createTextNode("Internals"));
+        label.appendChild(doc.createTextNode(text));
         bar.appendChild(label);
+        return box;
+      }
+      function internalsBar(doc, paneEl, checked, onChange, toolsChecked = true, onToolsChange = NOOP) {
+        const bar = doc.createElement("div");
+        bar.className = "transcript-bar";
+        const box = barToggle(doc, bar, "Internals", checked, onChange);
+        const toolsBox = barToggle(doc, bar, "Tools", toolsChecked, onToolsChange);
         paneEl.insertBefore(bar, paneEl.firstChild);
-        return { bar, box };
+        return { bar, box, toolsBox };
       }
       function markedText(doc, text, spans) {
         const frag = [];
@@ -32183,7 +32195,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         el.hidden = rows.length === 0;
       }
-      function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => "claude", pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, internals = () => true, onInternals = NOOP }) {
+      function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => "claude", pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, internals = () => true, onInternals = NOOP, tools = () => true, onTools = NOOP }) {
         const paneEl = document.createElement("div");
         paneEl.className = "transcript-pane";
         paneEl.hidden = true;
@@ -32191,6 +32203,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const toggle = internalsBar(document, paneEl, internals(), (on) => {
           transcriptRowsFor(document, paneEl, rowsCtx).setInternals(on);
           onInternals(on);
+        }, tools(), (on) => {
+          transcriptRowsFor(document, paneEl, rowsCtx).setTools(on);
+          onTools(on);
         });
         const menuEl = menuMirror ? document.createElement("div") : null;
         if (menuEl) {
@@ -32222,7 +32237,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let tag = null;
         let fileHead = null;
         const bandKey = (b) => b ? `${b.top}:${b.bottom}` : "";
-        const rowsCtx = { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette, now, lead: toggle.bar, internals: internals() };
+        const rowsCtx = { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette, now, lead: toggle.bar, internals: internals(), tools: tools() };
         let turnRunning = false;
         let working = null;
         function stickToBottom() {
@@ -32496,6 +32511,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
             const on = !!internals();
             toggle.box.checked = on;
             transcriptRowsFor(document, paneEl, rowsCtx).setInternals(on);
+            const toolsOn = !!tools();
+            toggle.toolsBox.checked = toolsOn;
+            transcriptRowsFor(document, paneEl, rowsCtx).setTools(toolsOn);
             evaluate();
             layout();
           },
@@ -45769,10 +45787,14 @@ ${detail}` });
       var terminalWebglEnabled = false;
       var transcriptPaneEnabled = false;
       var transcriptPaneInternals = true;
+      var transcriptPaneTools = true;
       function refreshTranscriptPanes() {
         for (const entry of sessions.values()) {
           if (entry.liveSplit) entry.liveSplit.refresh();
-          if (entry.stream) entry.stream.setInternals(transcriptPaneInternals);
+          if (entry.stream) {
+            entry.stream.setInternals(transcriptPaneInternals);
+            entry.stream.setTools(transcriptPaneTools);
+          }
         }
       }
       function setTranscriptPaneInternals(on) {
@@ -45783,10 +45805,19 @@ ${detail}` });
         }
         refreshTranscriptPanes();
       }
+      function setTranscriptPaneTools(on) {
+        transcriptPaneTools = !!on;
+        try {
+          window.api.setSettings({ transcriptPaneTools });
+        } catch {
+        }
+        refreshTranscriptPanes();
+      }
       var terminalWebglReady = window.api.getSettings().then((s) => {
         terminalWebglEnabled = !!(s && s.terminalWebgl === true);
         transcriptPaneEnabled = !!(s && s.transcriptPane === true);
         transcriptPaneInternals = !(s && s.transcriptPaneInternals === false);
+        transcriptPaneTools = !(s && s.transcriptPaneTools === false);
         refreshTranscriptPanes();
       }).catch(() => {
       });
@@ -47290,7 +47321,7 @@ ${detail}` });
         const paneEl = document.createElement("div");
         paneEl.className = "transcript-pane transcript-pane-full";
         wrapperEl.appendChild(paneEl);
-        const internalsToggle = internalsBar(document, paneEl, transcriptPaneInternals, setTranscriptPaneInternals);
+        const internalsToggle = internalsBar(document, paneEl, transcriptPaneInternals, setTranscriptPaneInternals, transcriptPaneTools, setTranscriptPaneTools);
         const composer = document.createElement("textarea");
         const composerKit = attachComposer(composer, {
           onSend: () => sendComposer(),
@@ -47485,7 +47516,8 @@ ${detail}` });
           toast: showToast,
           echoPalette: currentEchoPalette,
           lead: internalsToggle.bar,
-          internals: transcriptPaneInternals
+          internals: transcriptPaneInternals,
+          tools: transcriptPaneTools
         };
         const pull = (force = false) => {
           if (pulling || disposed) return;
@@ -47717,6 +47749,10 @@ ${detail}` });
           setInternals(on) {
             internalsToggle.box.checked = !!on;
             transcriptRowsFor(document, paneEl, rowsCtx).setInternals(on);
+          },
+          setTools(on) {
+            internalsToggle.toolsBox.checked = !!on;
+            transcriptRowsFor(document, paneEl, rowsCtx).setTools(on);
           },
           setTurnRunning(activity, since) {
             turnRunning = activity === "thinking" || activity === "attention";
@@ -47986,6 +48022,8 @@ ${detail}` });
           echoPalette: currentEchoPalette,
           internals: () => transcriptPaneInternals,
           onInternals: setTranscriptPaneInternals,
+          tools: () => transcriptPaneTools,
+          onTools: setTranscriptPaneTools,
           composerEl,
           menuMirror,
           sheet: true,

@@ -1279,3 +1279,32 @@ test('a picker that hides the composer clears the pending tag, so a later block 
     assert.deepStrictEqual(m.outputs(), [CARD.join('\n')]);
   } finally { m.done(); }
 });
+
+test('the transcript bar renders Internals and Tools checkboxes; changing Tools reports through onTools and hides the tool block; refresh follows the tools getter', async () => {
+  let toolsOn = true;
+  const reported = [];
+  const m = await mountSplit(undefined, { tools: () => toolsOn, onTools: (on) => reported.push(on) });
+  try {
+    const bar = m.pane.childNodes.find((n) => n.className === 'transcript-bar');
+    const labels = bar.childNodes.map((l) => textOf(l));
+    assert.deepStrictEqual(labels, ['Internals', 'Tools']);
+    const toolsBox = bar.childNodes[1].childNodes[0];
+    assert.strictEqual(toolsBox.checked, true);
+    const block = () => m.pane.childNodes.find((n) => /\btr-turn\b/.test(n.className)).childNodes.find((n) => /\btr-tool-block\b/.test(n.className));
+    assert.ok(!/\btr-hidden\b/.test(block().className));
+    toolsBox.checked = false;
+    toolsBox.listeners.change();
+    assert.deepStrictEqual(reported, [false]);
+    assert.ok(/\btr-hidden\b/.test(block().className));
+    toolsBox.checked = true;
+    toolsBox.listeners.change();
+    toolsOn = false;
+    m.view.refresh();
+    assert.strictEqual(toolsBox.checked, false);
+    assert.ok(/\btr-hidden\b/.test(block().className));
+    toolsOn = true;
+    m.view.refresh();
+    assert.strictEqual(toolsBox.checked, true);
+    assert.ok(!/\btr-hidden\b/.test(block().className));
+  } finally { m.view.dispose(); m.restore(); }
+});

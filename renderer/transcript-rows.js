@@ -612,10 +612,11 @@ function groupTurns(records) {
 }
 
 function createTranscriptRows(doc, paneEl, ctx = {}) {
-  const deps = { lead: null, internals: true, seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
+  const deps = { lead: null, internals: true, tools: true, seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
   const turnCache = new Map();
   const opened = new Set();
   let showInternals = deps.internals !== false;
+  let showTools = deps.tools !== false;
   let lastRecords = [];
   let working = null;
   let workingEl = null;
@@ -707,6 +708,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         c.key = key;
         c.tools = tools;
         paintBlock(c);
+        toggleClass(c.el, 'tr-hidden', !showTools);
       },
     };
   }
@@ -752,7 +754,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
       after: (c) => {
         if (!c.sub) c.sub = new Map();
         reconcile(c.el, c.sub, rowItems(t.records, attached));
-        toggleClass(c.el, 'tr-hidden', !showInternals && t.records.every((r) => isInternalRow(r) || r.kind === 'turn-end'));
+        toggleClass(c.el, 'tr-hidden', (!showInternals || !showTools) && t.records.every((r) => r.kind === 'turn-end' || (!showInternals && isInternalRow(r)) || (!showTools && r.kind === 'tool')));
       },
     }));
     reconcile(paneEl, turnCache, items, deps.lead);
@@ -766,7 +768,13 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     render(lastRecords);
   }
 
-  return { render, setWorking, setInternals };
+  function setTools(on) {
+    if (showTools === !!on) return;
+    showTools = !!on;
+    render(lastRecords);
+  }
+
+  return { render, setWorking, setInternals, setTools };
 }
 
 module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows };
