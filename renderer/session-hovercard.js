@@ -10,11 +10,11 @@
 // the badges paint from (proxyState / ctxPct / ctxTokens), re-rendered every
 // second while visible so the warmth countdown ticks. A row removed from the
 // DOM mid-hover hides the card on the next tick.
-//
-// DOM-bound, so no unit tests per the R1 rule.
 
 const { esc, fmtCountdown, fmtTokens } = require('./lib/format');
 const { turnLine, reqLine, costLine } = require('./lib/turn-stat');
+
+const IO_KINDS = { stream: 'streamed', pty: 'terminal' };
 
 function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, proxyPollMs, typeGlyph }) {
   const HOVER_DELAY_MS = 350;
@@ -71,6 +71,7 @@ function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, prox
     const backend = item.dataset.backend || null;
     const cwd = item.dataset.cwd || '';
     const failed = item.dataset.failed === '1';
+    const io = IO_KINDS[item.dataset.io] ? item.dataset.io : null;
     const nameEl = item.querySelector('.session-name');
     const display = (nameEl && nameEl.textContent) || name;
     // A local row whose display text differs from the internal name is renamed;
@@ -78,14 +79,14 @@ function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, prox
     const renamed = type !== 'remote' && !failed && display !== name;
 
     const parts = [];
-    parts.push(`<div class="hovercard-head">
+    parts.push(`<div class="hovercard-head"${io ? ` data-io="${io}"` : ''}>
       <span class="session-chip" data-type="${esc(type)}"${backend ? ` data-backend="${esc(backend)}"` : ''}>${typeGlyph(type, backend)}</span>
       <div class="hovercard-title">
         <div class="hovercard-name">${esc(display)}</div>
         ${renamed ? `<div class="hovercard-sub">internal name: ${esc(name)}</div>` : ''}
       </div>
     </div>`);
-    parts.push(`<div class="hovercard-where"><span class="hovercard-type">${esc(type)}${backend ? ` · ${esc(backend)}` : ''}</span>${cwd ? `<span class="hovercard-path">${esc(cwd)}</span>` : ''}</div>`);
+    parts.push(`<div class="hovercard-where"><span class="hovercard-type">${esc(type)}${backend ? ` · ${esc(backend)}` : ''}${io ? ` · ${IO_KINDS[io]}` : ''}</span>${cwd ? `<span class="hovercard-path">${esc(cwd)}</span>` : ''}</div>`);
 
     if (failed) {
       parts.push(`<div class="hovercard-note hc-error">Restore failed: ${esc(item.dataset.error || 'unknown error')}</div>`);

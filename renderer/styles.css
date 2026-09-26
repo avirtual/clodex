@@ -506,7 +506,8 @@ html, body {
    GCP blue — brand-adjacent but clear of claude's terracotta. */
 .session-chip[data-backend="bedrock"] { --chip-color: #e6a23c; }
 .session-chip[data-backend="vertex"]  { --chip-color: #5b9bf5; }
-.session-item[data-io="stream"] .session-chip {
+.session-item[data-io="stream"] .session-chip,
+.hovercard-head[data-io="stream"] .session-chip {
   border-radius: 50%;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chip-color) 55%, transparent);
 }
