@@ -30466,10 +30466,23 @@ ${m[2].replace(/^\r?\n/, "")}`;
     "renderer/lib/pty-composer.js"(exports, module) {
       "use strict";
       var { PASTE_OPEN, PASTE_CLOSE } = require_composer_voice();
+      var IMAGE_CHIP_RE = /\[Image #\d+\] ?/gu;
       function ptyComposerWrites(text) {
         return [`${PASTE_OPEN}${String(text)}${PASTE_CLOSE}`, "\r"];
       }
-      module.exports = { ptyComposerWrites };
+      function pasteKind(items) {
+        const list = Array.from(items || []);
+        if (list.some((it) => it && it.kind === "string" && it.type === "text/plain")) return "text";
+        if (list.some((it) => it && it.kind === "file" && /^image\//u.test(String(it.type)))) return "image";
+        return "none";
+      }
+      function imageChip(n) {
+        return `[Image #${n}] `;
+      }
+      function stripImageChips(text) {
+        return String(text).replace(IMAGE_CHIP_RE, "");
+      }
+      module.exports = { ptyComposerWrites, pasteKind, imageChip, stripImageChips };
     }
   });
 
@@ -45188,7 +45201,7 @@ ${detail}` });
       var { createIntentHighlight } = require_intent_highlight();
       var { createVoiceMirror, engineObserved } = require_voice_mirror();
       var { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require_composer_voice();
-      var { ptyComposerWrites } = require_pty_composer();
+      var { ptyComposerWrites, pasteKind, imageChip, stripImageChips } = require_pty_composer();
       var { createMenuMirror } = require_menu_mirror();
       var { VOICE_ENGINE_NAME } = require_voice_engine();
       var {
@@ -47336,14 +47349,16 @@ ${detail}` });
         const splitOn = !peer;
         const composerEl = splitOn ? document.createElement("textarea") : null;
         const menuMirror = composerEl ? createMenuMirror() : null;
+        let pastedImages = 0;
         const sendPtyComposer = () => {
           const text = composerEl.value;
           if (!text.trim()) return;
           composerEl.value = "";
+          pastedImages = 0;
           composerKit.fit();
           composerTrigger.resetSpan();
           const mirrored = menuMirror.on() ? menuMirror.draft(text) : [];
-          const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(text);
+          const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(stripImageChips(text));
           for (const w of [...mirrored, ...writes]) writePty(w);
         };
         const syncMenuMirror = () => {
@@ -47394,6 +47409,16 @@ ${detail}` });
           composerEl.hidden = true;
           wrapperEl.appendChild(composerEl);
           composerEl.addEventListener("input", syncMenuMirror);
+          composerEl.addEventListener("paste", (e) => {
+            if (pasteKind(e.clipboardData && e.clipboardData.items) !== "image") return;
+            e.preventDefault();
+            writePty("");
+            pastedImages += 1;
+            composerEl.value += imageChip(pastedImages);
+            const end = composerEl.value.length;
+            composerEl.setSelectionRange(end, end);
+            composerKit.fit();
+          });
         }
         const liveSplit = !splitOn ? null : createLiveSplitView(terminal, wrapperEl, {
           isEligible: () => transcriptPaneEnabled && isAgentType(sessionTypeOf(name)),
