@@ -223,6 +223,50 @@ test('invoke round-trip + §C sender-token push', async () => {
   } finally { host.close(); }
 });
 
+test('transcript:pull over the web socket: the rev a tab sends back answers unchanged with no records', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { registerIpcHandlers } = require('../ipc-handlers');
+  const { pathFor } = require('../clodex-paths');
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const reg = mkTmpRoot('ipc-tpull-');
+  const link = pathFor(reg, 'rv', 'transcript');
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  fs.writeFileSync(link, fs.readFileSync(path.join(__dirname, 'fixtures', 'transcript-records', 'muse-intent.jsonl'), 'utf8'));
+  const seat = { name: 'rv', agentType: 'muse', io: 'stream', _dead: false };
+  let pullFn = null;
+  const registerHandlers = (deps) => registerIpcHandlers({
+    handle: (ch, fn) => { if (ch === 'transcript:pull') pullFn = fn; deps.handle(ch, fn); },
+    on: deps.handle,
+    log: { ...silentLog, debug() {} },
+    REGISTRY_DIR: reg,
+    manager: {
+      sessions: new Map([['rv', seat]]),
+      seatOutbox: () => ({ rev: 2, items: [] }),
+      seatPermissions: () => null,
+      compactNoticesFor: () => null,
+      _sendToSession() {},
+    },
+  });
+  const { host, port } = await startHost({ registerHandlers });
+  const c = connect(port);
+  try {
+    await helloWelcome(c, { workspaceId: 'default' });
+    c.send({ t: 'invoke', id: 20, channel: 'transcript:pull', args: ['rv', -1] });
+    const first = (await c.until((m) => m.t === 'reply' && m.id === 20)).value;
+    assert.strictEqual(first.rev, '1:o2');
+    assert.ok(first.records.length > 0);
+    c.send({ t: 'invoke', id: 21, channel: 'transcript:pull', args: ['rv', first.rev] });
+    const again = (await c.until((m) => m.t === 'reply' && m.id === 21)).value;
+    assert.deepStrictEqual(again, { ok: true, rev: '1:o2', unchanged: true });
+  } finally {
+    c.close();
+    seat._dead = true;
+    pullFn(null, 'rv');
+    host.close();
+  }
+});
+
 test('AsyncLocalStorage threads the connection into a token-less showMessageBox', async () => {
   const registerHandlers = (deps) => {
     // The handler takes no `e`-derived window — showMessageBox must recover the

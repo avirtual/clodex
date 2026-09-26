@@ -587,6 +587,25 @@ test('the pane leads with an Internals checkbox that stays first, and unticking 
   } finally { m.view.dispose(); m.restore(); }
 });
 
+test('each pull hands back the rev it last applied, and an unchanged answer leaves the pane untouched', async () => {
+  const seen = [];
+  const recs = [HEAD, { id: 'n1', kind: 'notice', ts: null, turn: 1, level: 'info', text: 'filed' }];
+  const pullTranscript = (since) => { seen.push(since); return since === 7 ? { ok: true, rev: 7, unchanged: true } : { ok: true, rev: 7, records: recs }; };
+  const m = mountView({ pullTranscript });
+  try {
+    m.write();
+    await settle();
+    const before = [...m.pane.childNodes];
+    const turn = before[1];
+    assert.ok(turn.childNodes.some((n) => n.dataset.id === 'n1'), 'ENTER: the first answer painted');
+    m.change('s1');
+    await settle();
+    assert.deepStrictEqual(seen, [-1, 7]);
+    assert.deepStrictEqual(m.pane.childNodes, before);
+    assert.ok(turn.childNodes.some((n) => n.dataset.id === 'n1'));
+  } finally { m.view.dispose(); m.restore(); }
+});
+
 test('the pane is a div, not a pre', () => {
   const m = mountView();
   try {
