@@ -623,12 +623,13 @@ test('with internals off a turn of only injected rows is hidden and a turn with 
     { id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' },
     { id: 'i0', kind: 'inbound', ts: null, turn: 1, from: 'ticket-loop', text: 'ticket t0 accepted' },
     { id: 'i1', kind: 'inbound', ts: null, turn: 2, from: 'ticket-loop', text: 'ticket t1 accepted' },
+    { id: 'e1', kind: 'turn-end', ts: null, turn: 2, durationMs: 5, messageCount: 1 },
     { id: 'i2', kind: 'inbound', ts: null, turn: 3, from: 'ticket-loop', text: 'ticket t2 accepted' },
     { id: 'a2', kind: 'assistant', ts: null, turn: 3, text: 'noted' },
   ]);
   const turns = () => m.pane.childNodes.map((n) => [n.childNodes.map((c) => c.dataset.id).join(','), /\btr-hidden\b/.test(n.className)]);
   m.rows.setInternals(false);
-  assert.deepStrictEqual(turns(), [['p1,i0', false], ['i1', true], ['i2,a2', false]]);
+  assert.deepStrictEqual(turns(), [['p1,i0', false], ['i1,', true], ['i2,a2', false]]);
   m.rows.setInternals(true);
   assert.deepStrictEqual(turns().filter(([, h]) => h), []);
 });
@@ -643,4 +644,10 @@ test('a long attached reply folds to a head led by ↳ and an unattached one doe
   m.render([{ id: 'a0', kind: 'assistant', ts: null, turn: 0, text: 'no card' }, replyRec('r1', 1, 'task', '⇄', 'task', long)]);
   const plain = boxHeadOf(m.pane.childNodes[1].childNodes[0]);
   assert.notStrictEqual(plain.childNodes[0].className, 'tr-reply-lead');
+});
+
+test('a turn separator follows only a visible turn, so a hidden leading turn leaves no line above the first visible one', () => {
+  const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  assert.match(css, /^\.tr-turn:not\(\.tr-hidden\) ~ \.tr-turn \{/mu);
+  assert.doesNotMatch(css, /\.tr-turn \+ \.tr-turn/u);
 });
