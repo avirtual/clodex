@@ -1794,6 +1794,9 @@ function createTicketMethods(deps, shared) {
       // long as a suite can take (the lock wait alone is 20 minutes) with
       // nothing in the log where a lead debugging the silence would look.
       this._mergePending = (this._mergePending || 0) + 1;
+      const held = { team: team.name, ticketId };
+      if (!Array.isArray(this._mergeHeld)) this._mergeHeld = [];
+      this._mergeHeld.push(held);
       if (this._mergePending > 1) {
         log.info('ticket', `auto-merge for ${ticketId} QUEUED behind ${this._mergePending - 1} other merge(s) — one is in flight and the rest are waiting, since one merge runs at a time process-wide and each holds the chain through its whole post-merge suite`);
       }
@@ -1805,8 +1808,69 @@ function createTicketMethods(deps, shared) {
         })
         // After the catch, so it runs on both arms: a counter that leaked on a
         // rejected merge would report a phantom queue forever after.
-        .then(() => { this._mergePending -= 1; });
+        .then(() => {
+          this._mergePending -= 1;
+          const i = this._mergeHeld.indexOf(held);
+          if (i >= 0) this._mergeHeld.splice(i, 1);
+        });
       return this._mergeChain;
+    },
+
+    inFlightMerges() {
+      const held = Array.isArray(this._mergeHeld) ? this._mergeHeld : [];
+      return held.map((h, i) => (i === 0
+        ? `ticket ${h.ticketId} auto-merge and its post-merge suite (team ${h.team})`
+        : `ticket ${h.ticketId} auto-merge queued behind it (team ${h.team})`));
+    },
+
+    inFlightRestartHolds() {
+      return [...this.inFlightExecRuns(), ...this.inFlightMerges()];
+    },
+
+    async _requeueWaitingMerges() {
+      let names = [];
+      try { names = typeof listTeams === 'function' ? listTeams() : []; } catch { names = []; }
+      const seen = new Set();
+      const queued = [];
+      for (const name of names) {
+        let team;
+        try { team = loadManifest(name); } catch { continue; }
+        if (!team || !team.root) continue;
+        let tickets;
+        try { tickets = ticketsStore.load(team.root); } catch { continue; }
+        for (const t of tickets) {
+          if (!t || t.mergeWaiting !== 'suite-in-flight' || t.state !== 'done' || t.closedOut) continue;
+          if (t.verdict !== 'ACCEPT') continue;
+          const branch = t.worktree && t.worktree.branch;
+          if (!branch) continue;
+          const key = `${team.root}\n${t.id}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const target = await gitWorktree.mergeTargetFor(team).catch(() => null);
+          if (target) {
+            const m = await gitWorktree.isMerged(team.root, branch, target).catch(() => null);
+            if (m && m.ok && m.merged) {
+              log.info('ticket', `boot: ${t.id} is stamped merge waiting (suite-in-flight) but ${branch} is already on ${target} — not requeued`);
+              continue;
+            }
+          }
+          const landedOn = { verdict: t.verdict, mustFix: t.mustFix == null ? null : t.mustFix, reviewRound: Number(t.reviewRound) || 1 };
+          let verdictText = null;
+          const round = Array.isArray(t.rounds) ? t.rounds.find((r) => r && Number(r.round) === landedOn.reviewRound) : null;
+          if (round && round.verdictFile) {
+            const dest = this._ticketDiffDest(team, t);
+            if (dest.ok) {
+              try { verdictText = fs.readFileSync(path.join(dest.dir, round.verdictFile), 'utf8'); } catch { verdictText = null; }
+            }
+          }
+          const from = verdictText == null ? 'rebuilt from the record\'s verdict and mustFix' : `read from ${round.verdictFile}`;
+          if (verdictText == null) verdictText = `VERDICT: ${t.verdict}\n\nMUST-FIX\n${t.mustFix || '(none)'}\n`;
+          log.info('ticket', `boot: requeued the auto-merge for ${t.id} (${team.name}) — it was deferred behind a running suite before the relaunch dropped its retry timer; attempt 0, the wait cap restarts now, verdict ${from}`);
+          this._queueAutoMerge(team, t.id, landedOn, verdictText, { attempt: 0, since: this._mergeRetryNow() });
+          queued.push(t.id);
+        }
+      }
+      return queued;
     },
 
     // Seams so a test can replace them without a real timer and without real
@@ -9527,6 +9591,7 @@ function createTicketMethods(deps, shared) {
       if (this._ticketWatchdogTimer) return;
       this._ticketWatchdogTimer = setInterval(() => { try { this._sweepTickets(); } catch (e) { log.error('ticket', `watchdog sweep failed: ${e.message}`); } }, intervalMs);
       if (this._ticketWatchdogTimer.unref) this._ticketWatchdogTimer.unref();
+      this._bootRequeue = this._requeueWaitingMerges().catch((e) => log.error('ticket', `boot requeue of waiting merges failed: ${e && e.message ? e.message : String(e)}`));
     },
 
     // Returns a promise resolving when every board's stall probe has finished.

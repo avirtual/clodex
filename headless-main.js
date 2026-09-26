@@ -166,7 +166,7 @@ const headlessRestart = createHeadlessRestart({
   getSessions: () => Array.from(engine.manager.sessions.values()),
   restart: restartNow,
   lastInputAt: () => engine.manager.lastOperatorInputAt(),
-  inFlightRuns: () => engine.manager.inFlightExecRuns(),
+  inFlightRuns: () => engine.manager.inFlightRestartHolds(),
 });
 log.info('app', headlessRestart.supervised
   ? 'restart capability: supervised — [agent:reboot] will exit 64 once every session and the keyboard are idle'

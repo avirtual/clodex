@@ -170,7 +170,7 @@ const idleWaiter = createIdleWaiter({
   clearTimer: (h) => clearTimeout(h),
   restart: () => restartClodex(),
   lastInputAt: () => manager.lastOperatorInputAt(),
-  inFlightRuns: () => manager.inFlightExecRuns(),
+  inFlightRuns: () => manager.inFlightRestartHolds(),
   log,
   notify: (asked) => {
     try {
