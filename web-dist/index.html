@@ -31721,7 +31721,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       "use strict";
       var PAINT_BLOCK_CAP = 200;
       var BUSY_ROW = /esc to interrupt/u;
-      var BUSY_SPAN = 4;
+      var BUSY_SPAN = 8;
       var isBlank = (row) => !/\S/u.test(row || "");
       var norm = (row) => String(row == null ? "" : row).trimEnd();
       function trimTrailingBlank(rows) {
@@ -31878,6 +31878,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let paintTimer = null;
         let sent = null;
         let tag = null;
+        let fileHead = null;
         const bandKey = (b) => b ? `${b.top}:${b.bottom}` : "";
         function stickToBottom() {
           if (!follow) return;
@@ -31913,9 +31914,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const commandText = (r) => `${r.name || ""}${r.args ? ` ${r.args}` : ""}`;
         function shownExtras() {
           const first = fileRecords.find((r) => typeof r.ts === "number");
-          if (first) {
+          if (first && fileHead != null && first.ts > fileHead) {
             for (let i = extraRecords.length - 1; i >= 0; i--) if (extraRecords[i].ts < first.ts) extraRecords.splice(i, 1);
           }
+          if (first) fileHead = first.ts;
           return extraRecords.filter((x) => x.kind !== "command" || !fileRecords.some((f) => f.kind === "command" && typeof f.ts === "number" && Math.abs(f.ts - x.ts) <= PAINT_TAG_MS && commandText(f) === commandText(x)));
         }
         function paint() {
@@ -31960,6 +31962,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (!PAINT_PLATFORMS.has(platform())) return;
           if (!rows || state.mode !== "split" || !composerVisible()) {
             delta.reset();
+            tag = null;
+            sent = null;
             return;
           }
           if (!measured || measured.mode !== "split") return;
