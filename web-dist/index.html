@@ -4169,12 +4169,10 @@ body.side-pane-dragging {
   font-weight: 600;
 }
 #sandbox-open-row.hidden,
-#sandbox-workdir-pick.hidden,
 #sandbox-ports-line.hidden {
   display: none;
 }
-#sandbox-mounts-restart.hidden,
-#sandbox-mounts-add.hidden {
+#sandbox-mounts-restart.hidden {
   display: none;
 }
 .sandbox-dot {
@@ -52768,10 +52766,6 @@ ${res.stderr}` : "");
         return true;
       }
       var sbWorkdirPick = document.getElementById("sandbox-workdir-pick");
-      if (window.__CLODEX_WEB__) {
-        sbWorkdirPick.classList.add("hidden");
-        sbMountsAdd.classList.add("hidden");
-      }
       sbWorkdirPick.addEventListener("click", async () => {
         const dir = await window.api.selectDirectory();
         if (dir) sbWorkdir.value = dir;

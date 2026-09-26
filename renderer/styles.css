@@ -2723,13 +2723,11 @@ body.side-pane-dragging { cursor: col-resize; user-select: none; }
 }
 /* Per-id hidden rules (project invariant: no generic .hidden — see
    css-hidden-invariant.test.js). #sandbox-open-row ships hidden until running;
-   #sandbox-workdir-pick is hidden via JS on the web frontend (text field only).
    #sandbox-ports-line ships hidden until running (shows the effective ports). */
-#sandbox-open-row.hidden, #sandbox-workdir-pick.hidden, #sandbox-ports-line.hidden { display: none; }
+#sandbox-open-row.hidden, #sandbox-ports-line.hidden { display: none; }
 /* Mounts restart-needed hint ships hidden (armed only after a running-box mount
-   edit); #sandbox-mounts-add is hidden via JS on the web frontend (no native
-   folder picker there). */
-#sandbox-mounts-restart.hidden, #sandbox-mounts-add.hidden { display: none; }
+   edit). */
+#sandbox-mounts-restart.hidden { display: none; }
 .sandbox-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 .sandbox-dot.ok { background: var(--ok); }
 .sandbox-dot.warn { background: var(--warn); }

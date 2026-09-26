@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Desktop app, terminal seats with the transcript pane: pasting an image into Clodex's message box now sends it to the CLI as an image, with an Image #N marker in the draft; before, the paste was lost and the pane had to be turned off.
+- Web UI: the sandbox dialog's Choose… (working directory) and Add Folder… (mounts) buttons work in the browser, taking a typed path on the host.
 - Web UI: the transcript pane (Preferences ▸ Appearance) now works on terminal seats in the browser too, with the same message box and terminal sheet as the desktop; it was desktop-only.
 - Seats have an effort level: set it on a template (Effort field in the editor) or per role with `[agent:team role-set <role> effort:<level>]`; the value is the CLI's own (claude low…max, codex and muse none…ultra) and `default` leaves the CLI's setting alone. Reviewers spawned by the ticket loop honour it.
 
