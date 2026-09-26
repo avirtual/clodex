@@ -1238,7 +1238,7 @@ Own state + DOM, `init*(deps)`:
   view translates and clips the unresized xterm into a bottom strip under a
   `<div>` pane. See docs/explorations/split-proof.md.
 - **lib/menu-rows.js** — pure reader for a CLI's own slash-command menu (t1212
-  measurement, not wired into the renderer): `readMenuRows(rows, cells, platform)`
+  measurement): `readMenuRows(rows, cells, platform)`
   finds the composer, collects the menu rows above it (Codex) or below it
   (Claude Code, Muse) and returns `{ rows: [{ name, description, selected,
   matchSpans }], anchor }` or null. `name` is the painted label, not the
@@ -1247,6 +1247,14 @@ Own state + DOM, `init*(deps)`:
   `{ x, n, fg?, bg?, bold?, dim?, inverse? }` per screen row, as
   scripts/explore/capture-menu.js reads them from `@xterm/headless`. See
   docs/notes/renderer-lib-menu-rows.md.
+- **lib/menu-cells.js** — pure `rowCells(line, cols)` and `colour(cell, fg)`:
+  one xterm buffer line to the attribute runs `readMenuRows` takes. Shared by
+  scripts/explore/capture-menu.js and live-split-view.js.
+- **lib/menu-mirror.js** — pure per-seat state machine for the pty composer's
+  slash menu (t1214): ON while the draft is a bare `/command`, `draft(text)` and
+  `key(e)` return the pty writes that keep the CLI's input equal to the draft;
+  live-split-view reads the CLI's menu with `readMenuRows` while it is ON and
+  renders it as the seat slash list. See docs/notes/renderer-lib-menu-mirror.md.
 - **lib/ansi-html.js** — pure SGR converter for the transcript pane: `ansiRuns`
   turns a local command's stdout into `{ text, style }` runs and strips every
   other escape sequence; the view builds the spans with `textContent`.
