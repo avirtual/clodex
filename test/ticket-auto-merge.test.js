@@ -2341,7 +2341,7 @@ test('t1234: a merge left WAITING on a suite is requeued once at boot, with a fr
   assert.strictEqual(calls.length, 1, 'the dropped retry timer is replaced by exactly one requeue');
   assert.strictEqual(calls[0].ticketId, 't1');
   assert.deepStrictEqual(calls[0].retry, { attempt: 0, since: 5_000_000 }, 'the ten-minute cap restarts at boot');
-  assert.deepStrictEqual(calls[0].landedOn, { verdict: 'ACCEPT', mustFix: null, reviewRound: 1 });
+  assert.deepStrictEqual(calls[0].landedOn, { verdict: 'ACCEPT', mustFix: null, reviewRound: 1, reworkRound: 0 });
   assert.match(calls[0].verdictText, /VERDICT: ACCEPT/);
   assert.strictEqual(f.logs.filter((l) => /boot: requeued the auto-merge for t1/.test(l.msg)).length, 1, 'one log line per requeued ticket');
 });
@@ -3701,4 +3701,36 @@ test('t1237: a merge of the branch tip adds no tip line', async () => {
   const notes = f.landed();
   assert.strictEqual(notes.length, 1, 'ENTER: the merge landed');
   assert.ok(!/NOT its tip/.test(notes[0].body), `Got:\n${notes[0].body}`);
+});
+
+test('t1237: a boot-requeued merge still waiting in the chain is cancelled by a reject, even once the rework is done again', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver: WAITING, bootTeams: true });
+  const before = f.masterHead();
+  let release;
+  f.m._mergeChain = new Promise((r) => { release = r; });
+  const queued = [];
+  const realQueue = f.m._queueAutoMerge.bind(f.m);
+  f.m._queueAutoMerge = (...args) => { const p = realQueue(...args); queued.push(p); return p; };
+
+  await f.m._requeueWaitingMerges();
+  assert.strictEqual(queued.length, 1, 'ENTER: the boot pass requeued the waiting merge');
+
+  const replies = [];
+  f.m._taskReject(f.m.sessions.get('lead'), f.team,
+    { id: 't1', body: 'the CHANGELOG line is false' }, (msg) => replies.push(msg));
+  assert.match(replies.join('\n'), /reopened \(rework\)/, 'ENTER: the reject landed while the requeued merge waited');
+  const rows = f.tstore.load(f.team.root);
+  Object.assign(rows[0], { state: 'done', loopStep: 'verify', closedAt: Date.now() });
+  f.tstore.save(f.team.root, rows);
+
+  release();
+  await queued[0];
+
+  assert.strictEqual(f.masterHead(), before, 'the stale ACCEPT merged nothing');
+  assert.deepStrictEqual(f.landed(), [], 'and no MERGED notice went out');
+  assert.ok(f.logs.some((l) => /auto-merge for t1 CANCELLED/.test(l.msg)),
+    `the skipped chain entry says why. Logs:\n${f.logs.map((l) => l.msg).join('\n')}`);
+  assert.strictEqual(f.one().loopStep, 'verify', 'the rework round is left to the loop');
 });

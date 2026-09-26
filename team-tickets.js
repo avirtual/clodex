@@ -1859,7 +1859,7 @@ function createTicketMethods(deps, shared) {
               continue;
             }
           }
-          const landedOn = { verdict: t.verdict, mustFix: t.mustFix == null ? null : t.mustFix, reviewRound: Number(t.reviewRound) || 1 };
+          const landedOn = { verdict: t.verdict, mustFix: t.mustFix == null ? null : t.mustFix, reviewRound: Number(t.reviewRound) || 1, reworkRound: Number(t.reworkRound) || 0 };
           let verdictText = null;
           const round = Array.isArray(t.rounds) ? t.rounds.find((r) => r && Number(r.round) === landedOn.reviewRound) : null;
           if (round && round.verdictFile) {
