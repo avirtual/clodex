@@ -611,7 +611,7 @@ test('the source line and the two buttons are driven by the row\'s own `source`'
     + 'must be the bare `source` test, not one that also asks for the desktop');
   assert.ok(src.indexOf('rowActions.appendChild(up)') > upTitle,
     'and the button is appended, not built and dropped');
-  assert.match(src, /if \(p\.linkedFrom\) \{/,
+  assert.match(src, /if \(p\.linkedFrom\) \{\s*const un = document\.createElement\('button'\);/,
     'a symlinked row keeps Unregister; `source` is null for it, so the two blocks never both fire');
 });
 
