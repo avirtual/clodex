@@ -8383,7 +8383,7 @@ body.web-frontend #sidebar-header {
   line-height: 1.45;
   word-break: break-word;
 }
-.tr-turn + .tr-turn {
+.tr-turn:not(.tr-hidden) ~ .tr-turn {
   margin-top: var(--sp-4);
   padding-top: var(--sp-2);
   border-top: 1px solid var(--border);
