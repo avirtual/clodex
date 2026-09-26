@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Transcript pane: while the agent is working, a pulsing row at the bottom of the pane shows the elapsed time and the CLI's own status line ("Brewing…", "Working"), and goes still with "Waiting for you" on a permission prompt; before, a running turn looked no different from an idle one.
 
 - Web UI: the transcript pane (Preferences ▸ Appearance) now works on terminal seats in the browser too, with the same message box and terminal sheet as the desktop; it was desktop-only.
 - Seats have an effort level: set it on a template (Effort field in the editor) or per role with `[agent:team role-set <role> effort:<level>]`; the value is the CLI's own (claude low…max, codex and muse none…ultra) and `default` leaves the CLI's setting alone. Reviewers spawned by the ticket loop honour it.

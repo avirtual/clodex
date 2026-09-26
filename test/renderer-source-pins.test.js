@@ -83,6 +83,16 @@ test('t1199: Escape in the stream composer interrupts the seat before any other 
   const readline = kit[0].indexOf('composerReadlineEdit({');
   assert.ok(keydown > 0 && esc > keydown && call > esc && readline > call, 'Escape is handled before the readline edits in the shared composer keydown');
   assert.ok(/attachComposer\(composer, \{[\s\S]*?onEscape: \(\) => \{ Promise\.resolve\(window\.api\.seatInterrupt\(name\)\)/.test(src), 'the stream composer escapes into seatInterrupt');
-  assert.ok(src.includes("? 'Message — Enter sends, Esc interrupts the turn'"), 'a running turn names Esc in the placeholder');
-  assert.ok(/window\.api\.onSessionActivity\(\(name, state\) => \{\n  const seat = sessions\.get\(name\);\n  if \(seat && seat\.stream\) seat\.stream\.setTurnRunning\(state === 'thinking'\);/.test(SRC), 'the activity feed tells the pane whether a turn is running');
+  assert.ok(src.includes('? COMPOSER_RUNNING_PLACEHOLDER'), 'a running turn names Esc in the placeholder');
+  assert.ok(SRC.includes("const COMPOSER_RUNNING_PLACEHOLDER = 'Message — Enter sends, Esc interrupts the turn';"));
+});
+
+test('the activity feed forwards the turn state and its start to both the stream seat and the pty seat\'s live split, and sets the pty composer placeholder', () => {
+  const handler = SRC.match(/window\.api\.onSessionActivity\(\(name, state\) => \{[\s\S]*?\n\}\);\n/);
+  assert.ok(handler, 'onSessionActivity handler found');
+  const src = handler[0];
+  assert.ok(src.includes('if (seat && seat.stream) seat.stream.setTurnRunning(state, since);'));
+  assert.ok(src.includes('if (seat && seat.liveSplit) seat.liveSplit.setTurnRunning(state, since);'));
+  assert.ok(src.includes("seat.composerEl.placeholder = state === 'thinking' ? COMPOSER_RUNNING_PLACEHOLDER : COMPOSER_PLACEHOLDER;"));
+  assert.ok(src.indexOf('setTurnRunning') < src.indexOf('if (!el) return;'), 'a seat with no sidebar row is still told');
 });

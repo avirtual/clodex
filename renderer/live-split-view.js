@@ -4,18 +4,23 @@ const { SPLIT_EXIT_MS, measureSplit, sheetBand, initialSplitState, reduceSplit }
 const { createTranscriptRows } = require('./transcript-rows');
 const { readMenuRows } = require('./lib/menu-rows');
 const { rowCells } = require('./lib/menu-cells');
+const { spinnerText } = require('./lib/working-row');
 
 const TRANSCRIPT_PULL_MS = 1000;
 const views = new WeakMap();
 const NOOP = () => {};
 
-function renderTranscript(doc, paneEl, records, ctx = {}) {
+function transcriptRowsFor(doc, paneEl, ctx = {}) {
   let rows = views.get(paneEl);
   if (!rows) {
     rows = createTranscriptRows(doc, paneEl, ctx);
     views.set(paneEl, rows);
   }
-  rows.render(records);
+  return rows;
+}
+
+function renderTranscript(doc, paneEl, records, ctx = {}) {
+  transcriptRowsFor(doc, paneEl, ctx).render(records);
 }
 
 function markedText(doc, text, spans) {
@@ -81,6 +86,9 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   let sheetRange = null;
   const composerVisible = () => !!composerEl && !composerEl.hidden;
   const bandKey = (b) => (b ? `${b.top}:${b.bottom}` : '');
+  const rowsCtx = { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette, now };
+  let turnRunning = false;
+  let working = null;
 
   function stickToBottom() {
     if (!follow) return;
@@ -107,7 +115,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       available = !!(res && res.ok);
       if (available && res.rev !== rev) {
         rev = res.rev;
-        renderTranscript(document, paneEl, res.records, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
+        renderTranscript(document, paneEl, res.records, rowsCtx);
         stickToBottom();
         evaluate();
       } else if (available !== was) evaluate();
@@ -232,6 +240,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     const prevSheet = sheetRange;
     state = reduceSplit(state, measured, now(), undefined, raw ? 0 : undefined);
     const menuRead = readMenu(rows);
+    if (turnRunning) showWorking(rows ? spinnerText(rows, state.top, platform()) : null);
     const busy = !menuRead && !!measured && (measured.mode === 'split' || !!measured.busy);
     sheetRange = busy ? sheetRowsOf(rows) : null;
     sheetRows = sheetRange ? sheetRange.bottom - sheetRange.top + 1 : 0;
@@ -277,8 +286,20 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     if (!sel || sel.isCollapsed) (composerVisible() ? composerEl : terminal).focus();
   });
 
+  function showWorking(text) {
+    const next = text || 'Working';
+    if (!working || working.text === next) return;
+    working = { ...working, text: next };
+    transcriptRowsFor(document, paneEl, rowsCtx).setWorking(working);
+  }
+
   return {
     refresh() { evaluate(); layout(); },
+    setTurnRunning(state, since) {
+      turnRunning = state === 'thinking';
+      working = turnRunning || state === 'attention' ? { state, since, text: turnRunning ? (working && working.text) || 'Working' : null } : null;
+      transcriptRowsFor(document, paneEl, rowsCtx).setWorking(working);
+    },
     setRaw(on) {
       if (raw === !!on) return;
       raw = !!on;
@@ -293,6 +314,8 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       for (const d of subs) { try { d.dispose(); } catch {} }
       if (typeof unsubTranscript === 'function') unsubTranscript();
       if (ro) ro.disconnect();
+      const rows = views.get(paneEl);
+      if (rows) rows.setWorking(null);
       paneEl.removeEventListener('scroll', onPaneScroll);
       paneEl.remove();
       if (menuEl) menuEl.remove();
@@ -300,4 +323,4 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   };
 }
 
-module.exports = { TRANSCRIPT_PULL_MS, renderTranscript, renderMenuMirror, createLiveSplitView };
+module.exports = { TRANSCRIPT_PULL_MS, transcriptRowsFor, renderTranscript, renderMenuMirror, createLiveSplitView };

@@ -432,3 +432,59 @@ test('the operator prompt row unclamps its head text while other head rows keep 
   const rule = css.slice(start, css.indexOf('}', start));
   assert.ok(rule.includes('-webkit-line-clamp: unset'));
 });
+
+function mountWorking() {
+  const doc = fakeDocument();
+  const pane = doc.createElement('div');
+  const clock = { t: 10000, ticks: [], cleared: [] };
+  const rows = createTranscriptRows(doc, pane, {
+    now: () => clock.t,
+    setInterval: (fn, ms) => { clock.ticks.push({ fn, ms }); return clock.ticks.length; },
+    clearInterval: (id) => clock.cleared.push(id),
+  });
+  const working = () => pane.childNodes.find((n) => String(n.className).includes('tr-working'));
+  return { pane, rows, clock, working };
+}
+
+test('setWorking thinking draws a pulsing row last in the pane with its text and an elapsed time that ticks once a second', () => {
+  const m = mountWorking();
+  m.rows.render([prompt, prose]);
+  m.rows.setWorking({ state: 'thinking', since: 7000, text: 'Brewing…' });
+  const row = m.working();
+  assert.strictEqual(m.pane.childNodes[m.pane.childNodes.length - 1], row);
+  assert.ok(row.className.includes('tr-working-pulse'));
+  assert.deepStrictEqual(row.childNodes.map((n) => [n.className, n.textContent]), [['tr-mark', ''], ['tr-working-text', 'Brewing…'], ['tr-working-elapsed', '3s']]);
+  assert.deepStrictEqual(m.clock.ticks.map((x) => x.ms), [1000]);
+  m.clock.t = 75000;
+  m.clock.ticks[0].fn();
+  assert.strictEqual(row.childNodes[2].textContent, '1m 8s');
+  m.rows.render([prompt, prose, { ...prompt, id: 'p2', turn: 2 }]);
+  assert.strictEqual(m.pane.childNodes[m.pane.childNodes.length - 1], row);
+  assert.strictEqual(m.clock.ticks.length, 1);
+});
+
+test('setWorking without a text reads "Working" and names the pending tool on a stream seat', () => {
+  const m = mountWorking();
+  m.rows.render([prompt, pending]);
+  m.rows.setWorking({ state: 'thinking', since: 10000 });
+  assert.strictEqual(m.working().childNodes[1].textContent, 'Working · Bash');
+  m.rows.render([prompt, done]);
+  assert.strictEqual(m.working().childNodes[1].textContent, 'Working');
+});
+
+test('setWorking attention is a still "Waiting for you" row with no pulse and no ticking; idle removes the row and stops the tick', () => {
+  const m = mountWorking();
+  m.rows.render([prompt]);
+  m.rows.setWorking({ state: 'thinking', since: 9000 });
+  m.rows.setWorking({ state: 'attention', since: null });
+  const row = m.working();
+  assert.ok(row.className.includes('tr-working-still'));
+  assert.ok(!row.className.includes('tr-working-pulse'));
+  assert.strictEqual(row.childNodes[1].textContent, 'Waiting for you');
+  assert.strictEqual(row.childNodes[2].textContent, '');
+  assert.deepStrictEqual(m.clock.cleared, [1]);
+  m.rows.setWorking({ state: 'thinking', since: 9000 });
+  m.rows.setWorking({ state: 'idle' });
+  assert.strictEqual(m.working(), undefined);
+  assert.deepStrictEqual(m.clock.cleared, [1, 2]);
+});
