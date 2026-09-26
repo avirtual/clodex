@@ -36,3 +36,20 @@ test('a non-boolean transcriptPane on disk normalises to false', () => {
   fs.writeFileSync(path.join(dir, 'ui-settings.json'), JSON.stringify({ transcriptPane: 'yes' }), { mode: 0o600 });
   assert.strictEqual(openStores(dir).uiSettings.get().transcriptPane, false);
 });
+
+test('transcriptPaneInternals defaults to true and survives set() then a reload from disk', () => {
+  const dir = mkTmpRoot('clodex-uisettings-');
+  const ui = openStores(dir).uiSettings;
+  assert.strictEqual(ui.get().transcriptPaneInternals, true);
+  ui.set({ transcriptPaneInternals: false });
+  assert.strictEqual(ui.get().transcriptPaneInternals, false);
+  assert.strictEqual(openStores(dir).uiSettings.get().transcriptPaneInternals, false);
+  ui.set({ transcriptPaneInternals: 'no' });
+  assert.strictEqual(ui.get().transcriptPaneInternals, false);
+});
+
+test('a non-boolean transcriptPaneInternals on disk normalises to true', () => {
+  const dir = mkTmpRoot('clodex-uisettings-');
+  fs.writeFileSync(path.join(dir, 'ui-settings.json'), JSON.stringify({ transcriptPaneInternals: 'no' }), { mode: 0o600 });
+  assert.strictEqual(openStores(dir).uiSettings.get().transcriptPaneInternals, true);
+});

@@ -545,7 +545,7 @@ test('the pane\'s own scroll to the bottom does not release follow when content 
 test('a render that replaces a changed row keeps the unchanged rows and leaves a scrolled-up pane where it was', async () => {
   const m = await mountSplit({ geometry: true });
   try {
-    const turn = m.pane.childNodes[0];
+    const turn = m.pane.childNodes[1];
     const [head, block] = turn.childNodes;
     const tool = block.childNodes[0];
     assert.strictEqual(tool.className, 'tr-row tr-tool tr-state-pending');
@@ -553,12 +553,37 @@ test('a render that replaces a changed row keeps the unchanged rows and leaves a
     m.pane.scrollHeight = 1400;
     m.change('s1');
     await settle();
-    assert.strictEqual(m.pane.childNodes[0], turn);
+    assert.strictEqual(m.pane.childNodes[1], turn);
     assert.strictEqual(turn.childNodes[0], head);
     assert.strictEqual(turn.childNodes[1], block);
     assert.notStrictEqual(block.childNodes[0], tool);
     assert.strictEqual(block.childNodes[0].className, 'tr-row tr-tool tr-state-ok');
     assert.strictEqual(m.pane.scrollTop, 100);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('the pane leads with an Internals checkbox that stays first, and unticking it hides injected rows and reports the choice', async () => {
+  let shown = true;
+  const reported = [];
+  const recs = [HEAD, { id: 'n1', kind: 'notice', ts: null, turn: 1, level: 'info', text: 'filed' }];
+  const m = mountView({ internals: () => shown, onInternals: (on) => reported.push(on), pullTranscript: () => ({ ok: true, rev: 1, records: recs }) });
+  try {
+    m.write();
+    await settle();
+    const [bar, turn] = m.pane.childNodes;
+    assert.strictEqual(bar.className, 'transcript-bar');
+    const label = bar.childNodes[0];
+    const box = label.childNodes[0];
+    assert.deepStrictEqual([box.tag, box.type, box.checked, label.textContent], ['input', 'checkbox', true, 'Internals']);
+    const notice = () => turn.childNodes.find((n) => n.dataset.id === 'n1');
+    assert.strictEqual(notice().className, 'tr-box');
+    box.checked = false;
+    box.listeners.change();
+    assert.deepStrictEqual(reported, [false]);
+    assert.strictEqual(notice().className, 'tr-box tr-hidden');
+    shown = true;
+    m.view.refresh();
+    assert.deepStrictEqual([box.checked, notice().className], [true, 'tr-box']);
   } finally { m.view.dispose(); m.restore(); }
 });
 

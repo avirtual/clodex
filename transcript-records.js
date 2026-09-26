@@ -8,6 +8,7 @@ const { pointerMatch, receiptOf } = require('./intent-spill');
 const { FILED_POINTER_RE } = require('./spill-grammar');
 const { DEFAULT_MAX_BYTES } = require('./exec-schema');
 const { sniffReader } = require('./transcript-readers');
+const { isInternalRow } = require('./transcript-internal');
 
 const RECORD_CAP = 400;
 const PROMPT_CAP = 4096;
@@ -470,4 +471,4 @@ function recordsOf(text, max = RECORD_CAP) {
   return { records: cutOnTurn(all, max) };
 }
 
-module.exports = { RECORD_CAP, PROMPT_CAP, PROSE_CAP, recordsOf, segmentsOf, toolInputLine };
+module.exports = { RECORD_CAP, PROMPT_CAP, PROSE_CAP, recordsOf, segmentsOf, toolInputLine, isInternalRow };

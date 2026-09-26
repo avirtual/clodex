@@ -5974,6 +5974,38 @@ body.web-frontend #sidebar-header {
 
 .tr-row { margin: 0; }
 .tr-turn > .tr-row:not(.tr-head) { margin-left: var(--sp-3); }
+.tr-hidden { display: none; }
+
+.transcript-bar {
+  position: sticky;
+  top: calc(-1 * var(--sp-1));
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  margin: calc(-1 * var(--sp-1)) 0 var(--sp-1);
+  padding: var(--sp-1) 0;
+  background: var(--bg);
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+}
+.transcript-bar-toggle { display: inline-flex; align-items: center; gap: var(--sp-1); cursor: pointer; user-select: none; }
+
+.tr-box { margin: 0; }
+.tr-box-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--surface-raised);
+  cursor: pointer;
+  user-select: none;
+}
+.tr-box-preview { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.tr-box:not(.tr-box-folded) .tr-box-preview { visibility: hidden; }
+.tr-box-chevron { color: var(--text-tertiary); }
+.tr-box-folded > .tr-box-body { display: none; }
+.tr-box-body > .tr-notice { margin-left: var(--sp-3); }
+.tr-box-head + .tr-box-body .tr-head-text { display: block; -webkit-line-clamp: unset; overflow: visible; }
 
 .tr-head {
   display: flex;
@@ -6073,7 +6105,7 @@ body.web-frontend #sidebar-header {
   border-left: 2px solid var(--border);
   padding: var(--sp-1) 0 var(--sp-1) var(--sp-2);
 }
-.tr-tool-head { font-family: var(--font-ui); color: var(--text-secondary); white-space: nowrap; }
+.tr-tool-head { font-family: var(--font-ui); color: var(--text-secondary); white-space: nowrap; cursor: pointer; user-select: none; }
 .tr-tool-count { color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
 
 .tr-mark {

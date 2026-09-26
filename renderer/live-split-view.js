@@ -23,6 +23,22 @@ function renderTranscript(doc, paneEl, records, ctx = {}) {
   transcriptRowsFor(doc, paneEl, ctx).render(records);
 }
 
+function internalsBar(doc, paneEl, checked, onChange) {
+  const bar = doc.createElement('div');
+  bar.className = 'transcript-bar';
+  const label = doc.createElement('label');
+  label.className = 'transcript-bar-toggle';
+  const box = doc.createElement('input');
+  box.type = 'checkbox';
+  box.checked = !!checked;
+  box.addEventListener('change', () => onChange(!!box.checked));
+  label.appendChild(box);
+  label.appendChild(doc.createTextNode('Internals'));
+  bar.appendChild(label);
+  paneEl.insertBefore(bar, paneEl.firstChild);
+  return { bar, box };
+}
+
 function markedText(doc, text, spans) {
   const frag = [];
   let at = 0;
@@ -60,11 +76,15 @@ function renderMenuMirror(doc, el, read) {
   el.hidden = rows.length === 0;
 }
 
-function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null }) {
+function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, internals = () => true, onInternals = NOOP }) {
   const paneEl = document.createElement('div');
   paneEl.className = 'transcript-pane';
   paneEl.hidden = true;
   wrapperEl.appendChild(paneEl);
+  const toggle = internalsBar(document, paneEl, internals(), (on) => {
+    transcriptRowsFor(document, paneEl, rowsCtx).setInternals(on);
+    onInternals(on);
+  });
   const menuEl = menuMirror ? document.createElement('div') : null;
   if (menuEl) {
     menuEl.className = 'seat-slash-menu seat-slash-menu-pty';
@@ -86,7 +106,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   let sheetRange = null;
   const composerVisible = () => !!composerEl && !composerEl.hidden;
   const bandKey = (b) => (b ? `${b.top}:${b.bottom}` : '');
-  const rowsCtx = { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette, now };
+  const rowsCtx = { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette, now, lead: toggle.bar, internals: internals() };
   let turnRunning = false;
   let working = null;
 
@@ -115,7 +135,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       available = !!(res && res.ok);
       if (available && res.rev !== rev) {
         rev = res.rev;
-        renderTranscript(document, paneEl, res.records, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
+        renderTranscript(document, paneEl, res.records, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette, lead: toggle.bar, internals: internals() });
         stickToBottom();
         evaluate();
       } else if (available !== was) evaluate();
@@ -294,7 +314,13 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   }
 
   return {
-    refresh() { evaluate(); layout(); },
+    refresh() {
+      const on = !!internals();
+      toggle.box.checked = on;
+      transcriptRowsFor(document, paneEl, rowsCtx).setInternals(on);
+      evaluate();
+      layout();
+    },
     setTurnRunning(activity, since) {
       turnRunning = activity === 'thinking';
       working = turnRunning || activity === 'attention' ? { state: activity, since, text: turnRunning ? (working && working.text) || 'Working' : null } : null;
@@ -324,4 +350,4 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   };
 }
 
-module.exports = { TRANSCRIPT_PULL_MS, transcriptRowsFor, renderTranscript, renderMenuMirror, createLiveSplitView };
+module.exports = { TRANSCRIPT_PULL_MS, transcriptRowsFor, renderTranscript, renderMenuMirror, internalsBar, createLiveSplitView };

@@ -1230,6 +1230,7 @@ function registerIpcHandlers(deps) {
       theme: s.theme,
       terminalWebgl: s.terminalWebgl,
       transcriptPane: s.transcriptPane,
+      transcriptPaneInternals: s.transcriptPaneInternals,
       sidebarWidth: s.sidebarWidth,
       sidePaneWidth: s.sidePaneWidth,
       remoteEnabled: s.remoteEnabled,

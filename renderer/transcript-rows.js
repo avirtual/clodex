@@ -6,14 +6,23 @@ const { classifySender } = require('./lib/sender-class');
 const { scanLinks } = require('./lib/path-scan');
 const { rewriteEchoSgr } = require('./lib/prompt-echo');
 const { isExternallyOpenable } = require('../external-link');
+const { isInternalRow } = require('../transcript-internal');
 
 const OUTPUT_LINE_CAP = 400;
 const CLAMP_LINES = 2;
 const CLAMP_CHARS = 240;
+const PREVIEW_CHARS = 120;
 const NOOP = () => {};
 const MINUS = '−';
 const TIMES = ' ×';
 const PASTE_MARK_RE = /\[Pasted text #(\d+) \+\d+ lines\]/g;
+
+function toggleClass(node, cls, on) {
+  const list = String(node.className || '').split(' ').filter((c) => c && c !== cls);
+  if (on) list.push(cls);
+  const next = list.join(' ');
+  if (node.className !== next) node.className = next;
+}
 
 function el(doc, tag, cls, text) {
   const node = doc.createElement(tag);
@@ -326,15 +335,19 @@ function senderBadge(doc, from) {
   return badge;
 }
 
-function replyRow(doc, rec, ctx, attached) {
-  const row = headRow(doc, `tr-reply${attached ? ' tr-reply-attached' : ''}`, rec);
-  const text = el(doc, 'span', 'tr-head-text');
-  if (attached) text.appendChild(el(doc, 'span', 'tr-reply-lead', '↳'));
+function appBadge(doc, rec) {
   const badge = el(doc, 'span', 'tr-sender tr-sender-app');
   badge.title = 'Clodex runtime';
   badge.appendChild(el(doc, 'span', 'tr-sender-glyph', rec.glyph));
   badge.appendChild(el(doc, 'span', 'tr-sender-name', rec.label));
-  text.appendChild(badge);
+  return badge;
+}
+
+function replyRow(doc, rec, ctx, attached) {
+  const row = headRow(doc, `tr-reply${attached ? ' tr-reply-attached' : ''}`, rec);
+  const text = el(doc, 'span', 'tr-head-text');
+  if (attached) text.appendChild(el(doc, 'span', 'tr-reply-lead', '↳'));
+  text.appendChild(appBadge(doc, rec));
   appendPlain(doc, text, rec.text, ctx);
   row.appendChild(text);
   return withTime(doc, row, rec);
@@ -362,6 +375,51 @@ function noticeRow(doc, rec, level, text, ctx) {
   appendLinked(doc, span, text, '', ctx);
   row.appendChild(span);
   return row;
+}
+
+function isLong(text) {
+  const s = String(text == null ? '' : text);
+  return s.split('\n').length > CLAMP_LINES || s.length > CLAMP_CHARS;
+}
+
+function previewText(text) {
+  const line = String(text == null ? '' : text).split('\n').find((l) => l.trim()) || '';
+  return line.length > PREVIEW_CHARS ? `${line.slice(0, PREVIEW_CHARS)}…` : line;
+}
+
+function boxHead(doc, rec) {
+  const head = el(doc, 'div', 'tr-box-head');
+  if (rec.kind === 'inbound') head.appendChild(senderBadge(doc, rec.from));
+  else if (rec.kind === 'reply') head.appendChild(appBadge(doc, rec));
+  else head.appendChild(el(doc, 'span', 'tr-mark'));
+  head.appendChild(el(doc, 'span', 'tr-box-preview', previewText(rec.text)));
+  head.appendChild(el(doc, 'span', 'tr-box-chevron'));
+  return head;
+}
+
+function internalBox(doc, rec, row, opened) {
+  const box = el(doc, 'div', 'tr-box');
+  box.dataset.id = rec.id;
+  if (isLong(rec.text)) {
+    const head = boxHead(doc, rec);
+    const chevron = head.childNodes[head.childNodes.length - 1];
+    const paint = () => {
+      const open = opened.has(rec.id);
+      toggleClass(box, 'tr-box-folded', !open);
+      chevron.textContent = open ? '▾' : '▸';
+    };
+    head.addEventListener('click', () => {
+      if (opened.has(rec.id)) opened.delete(rec.id);
+      else opened.add(rec.id);
+      paint();
+    });
+    box.appendChild(head);
+    paint();
+  }
+  const body = el(doc, 'div', 'tr-box-body');
+  body.appendChild(row);
+  box.appendChild(body);
+  return box;
 }
 
 function buildRow(doc, rec, ctx, attached) {
@@ -466,7 +524,7 @@ function buildFooter(doc, f, ctx) {
   return row;
 }
 
-function reconcile(parent, cache, items) {
+function reconcile(parent, cache, items, lead = null) {
   const seen = new Set();
   let prev = null;
   for (const it of items) {
@@ -478,7 +536,7 @@ function reconcile(parent, cache, items) {
       c = { sig: it.sig, el: node, sub: c ? c.sub : null };
       cache.set(it.key, c);
     }
-    const want = prev ? prev.nextSibling : parent.firstChild;
+    const want = prev ? prev.nextSibling : lead && lead.parentNode === parent ? lead.nextSibling : parent.firstChild;
     if (want !== c.el) parent.insertBefore(c.el, want || null);
     prev = c.el;
     if (it.after) it.after(c);
@@ -548,8 +606,10 @@ function groupTurns(records) {
 }
 
 function createTranscriptRows(doc, paneEl, ctx = {}) {
-  const deps = { seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
+  const deps = { lead: null, internals: true, seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
   const turnCache = new Map();
+  const opened = new Set();
+  let showInternals = deps.internals !== false;
   let lastRecords = [];
   let working = null;
   let workingEl = null;
@@ -596,30 +656,51 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     paintWorking();
   }
 
-  function toolBlockItem(tools) {
+  function paintBlock(c) {
+    const { key, tools } = c;
     const many = tools.length > 1;
+    const open = !many || opened.has(key);
+    c.el.className = `tr-row tr-tool-block${many ? ' tr-tool-many' : ''}${open ? '' : ' tr-tool-folded'}`;
+    const items = [];
+    if (many) {
+      items.push({ key: 'head', sig: String(tools.length), build: () => {
+        const head = el(doc, 'div', 'tr-tool-head');
+        head.appendChild(el(doc, 'span', 'tr-tool-head-name', tools[0].name));
+        head.appendChild(el(doc, 'span', 'tr-tool-count', `${TIMES}${tools.length}`));
+        head.appendChild(el(doc, 'span', 'tr-box-chevron'));
+        head.addEventListener('click', () => {
+          if (opened.has(key)) opened.delete(key);
+          else opened.add(key);
+          paintBlock(c);
+        });
+        return head;
+      } });
+    }
+    for (const r of open ? tools : tools.slice(-1)) items.push({ key: r.id, sig: JSON.stringify(r) + (many ? '' : '|named'), build: () => toolRow(doc, r, deps, !many) });
+    reconcile(c.el, c.sub, items);
+    if (many) {
+      const head = c.sub.get('head').el;
+      const chevron = head.childNodes[head.childNodes.length - 1];
+      const glyph = open ? '▾' : '▸';
+      if (chevron.textContent !== glyph) chevron.textContent = glyph;
+    }
+  }
+
+  function toolBlockItem(tools) {
+    const key = `tools:${tools[0].id}`;
     return {
-      key: `tools:${tools[0].id}`,
+      key,
       sig: 'tools',
       build: () => {
         const block = el(doc, 'div', 'tr-row tr-tool-block');
-        block.dataset.id = `tools:${tools[0].id}`;
+        block.dataset.id = key;
         return block;
       },
       after: (c) => {
         if (!c.sub) c.sub = new Map();
-        c.el.className = `tr-row tr-tool-block${many ? ' tr-tool-many' : ''}`;
-        const items = [];
-        if (many) {
-          items.push({ key: 'head', sig: String(tools.length), build: () => {
-            const head = el(doc, 'div', 'tr-tool-head');
-            head.appendChild(el(doc, 'span', 'tr-tool-head-name', tools[0].name));
-            head.appendChild(el(doc, 'span', 'tr-tool-count', `${TIMES}${tools.length}`));
-            return head;
-          } });
-        }
-        for (const r of tools) items.push({ key: r.id, sig: JSON.stringify(r) + (many ? '' : '|named'), build: () => toolRow(doc, r, deps, !many) });
-        reconcile(c.el, c.sub, items);
+        c.key = key;
+        c.tools = tools;
+        paintBlock(c);
       },
     };
   }
@@ -635,6 +716,15 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
       if (r.kind === 'turn-end') continue;
       const att = attached.has(r.id);
       const extra = r.kind === 'command-output' ? JSON.stringify(resolvePalette(deps) || null) : att ? '|attached' : '';
+      if (isInternalRow(r)) {
+        items.push({
+          key: r.id,
+          sig: JSON.stringify(r) + extra,
+          build: () => internalBox(doc, r, buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row'), opened),
+          after: (c) => toggleClass(c.el, 'tr-hidden', !showInternals),
+        });
+        continue;
+      }
       items.push({ key: r.id, sig: JSON.stringify(r) + extra, build: () => buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row') });
     }
     const footer = footerOf(records);
@@ -658,12 +748,18 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         reconcile(c.el, c.sub, rowItems(t.records, attached));
       },
     }));
-    reconcile(paneEl, turnCache, items);
+    reconcile(paneEl, turnCache, items, deps.lead);
     lastRecords = list;
     if (working) paintWorking();
   }
 
-  return { render, setWorking };
+  function setInternals(on) {
+    if (showInternals === !!on) return;
+    showInternals = !!on;
+    render(lastRecords);
+  }
+
+  return { render, setWorking, setInternals, internals: () => showInternals };
 }
 
 module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows };

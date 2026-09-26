@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { RECORD_CAP, PROMPT_CAP, PROSE_CAP, recordsOf, segmentsOf } = require('../transcript-records');
+const { RECORD_CAP, PROMPT_CAP, PROSE_CAP, recordsOf, segmentsOf, isInternalRow } = require('../transcript-records');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'transcript-records');
 const fixture = (name) => fs.readFileSync(path.join(FIXTURES, `${name}.jsonl`), 'utf8');
@@ -429,4 +429,25 @@ test('a Bash description rides the record as desc; other tools carry neither des
     { type: 'tool_use', id: 'r', name: 'Read', input: { file_path: `${CWD}/a.js`, description: 'x' } },
   ] } }));
   assert.deepStrictEqual(records.map((r) => [r.name, r.desc, r.argShown]), [['Bash', 'List files', undefined], ['Read', undefined, undefined]]);
+});
+
+test('isInternalRow is true for what Clodex injects and false for the operator and the agent', () => {
+  const rows = [
+    [{ kind: 'inbound', from: 'user', text: 'x' }, false],
+    [{ kind: 'inbound', from: 'ticket-loop', text: 'x' }, true],
+    [{ kind: 'inbound', from: 'reminder', text: 'x' }, true],
+    [{ kind: 'inbound', from: 'clodex-hand-12', text: 'x' }, true],
+    [{ kind: 'reply', verb: 'task', text: 'x' }, true],
+    [{ kind: 'notice', level: 'info', text: 'x' }, true],
+    [{ kind: 'notification', text: 'x' }, true],
+    [{ kind: 'prompt', text: 'x' }, false],
+    [{ kind: 'assistant', text: 'x' }, false],
+    [{ kind: 'assistant', text: 'API Error', apiError: true }, false],
+    [{ kind: 'tool', name: 'Bash' }, false],
+    [{ kind: 'command', name: '/context' }, false],
+    [{ kind: 'command-output', text: 'x' }, false],
+    [{ kind: 'boundary', what: 'compact' }, false],
+    [null, false],
+  ];
+  assert.deepStrictEqual(rows.map(([r]) => isInternalRow(r)), rows.map(([, want]) => want));
 });
