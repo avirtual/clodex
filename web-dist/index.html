@@ -30577,7 +30577,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
             return { writes: ["	"], draft: sent };
           }
           if (e.key === "Escape") return { writes: [ESCAPE] };
-          if (e.key === "Enter") return { writes: submit(), draft: "" };
+          if (e.key === "Enter") {
+            const row = hasRows() ? read.rows.find((r) => r.selected) : null;
+            const command = row ? completionOf(row.name) : sent;
+            return { writes: submit(), draft: "", command };
+          }
           return null;
         }
         return {
@@ -31846,16 +31850,91 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // renderer/lib/paint-delta.js
+  var require_paint_delta = __commonJS({
+    "renderer/lib/paint-delta.js"(exports, module) {
+      "use strict";
+      var PAINT_BLOCK_CAP = 200;
+      var BUSY_ROW = /esc to interrupt/u;
+      var BUSY_SPAN = 8;
+      var isBlank = (row) => !/\S/u.test(row || "");
+      var norm = (row) => String(row == null ? "" : row).trimEnd();
+      function trimTrailingBlank(rows) {
+        let end = rows.length;
+        while (end > 0 && isBlank(rows[end - 1])) end--;
+        return rows.slice(0, end);
+      }
+      function windowAt(prev, next, s) {
+        const len = Math.min(prev.length - s, next.length);
+        for (let k = 0; k < len; k++) if (prev[s + k] !== next[k]) return -1;
+        return len;
+      }
+      function createPaintDelta() {
+        let prev = null;
+        return {
+          feed(rowsAboveAnchor) {
+            const next = trimTrailingBlank((Array.isArray(rowsAboveAnchor) ? rowsAboveAnchor : []).map(norm));
+            const before = prev;
+            prev = next;
+            if (!before) return [];
+            for (let s = 0; s < before.length; s++) {
+              const len = windowAt(before, next, s);
+              if (len > 0) return next.slice(len);
+            }
+            return next.filter((r) => !isBlank(r));
+          },
+          reset() {
+            prev = null;
+          }
+        };
+      }
+      function mergeByTs(fileRecords, extraRecords) {
+        const a = Array.isArray(fileRecords) ? fileRecords : [];
+        const b = Array.isArray(extraRecords) ? extraRecords : [];
+        const out = [];
+        let i = 0;
+        let j = 0;
+        while (i < a.length && j < b.length) {
+          if (typeof a[i].ts !== "number" || typeof b[j].ts !== "number" || a[i].ts <= b[j].ts) out.push(a[i++]);
+          else out.push(b[j++]);
+        }
+        while (i < a.length) out.push(a[i++]);
+        while (j < b.length) out.push(b[j++]);
+        return out;
+      }
+      var isBusyScreen = (rows, top = Array.isArray(rows) ? rows.length : 0) => Array.isArray(rows) && rows.slice(Math.max(0, top - BUSY_SPAN), top).some((r) => BUSY_ROW.test(r || ""));
+      var stripMark = (row) => String(row || "").trim().replace(/^[›❯>][  ]?/u, "").trim();
+      function blockText(rows, dropped) {
+        const drop = new Set([...dropped].map(stripMark).filter(Boolean));
+        const all = rows.map(norm);
+        let lead = 0;
+        while (lead < all.length && (isBlank(all[lead]) || drop.has(stripMark(all[lead])))) lead++;
+        const kept = all.slice(lead);
+        let start = 0;
+        let end = kept.length;
+        while (start < end && isBlank(kept[start])) start++;
+        while (end > start && isBlank(kept[end - 1])) end--;
+        const body = kept.slice(start, end);
+        if (!body.length) return "";
+        return (body.length > PAINT_BLOCK_CAP ? ["\u2026", ...body.slice(-PAINT_BLOCK_CAP)] : body).join("\n");
+      }
+      module.exports = { PAINT_BLOCK_CAP, createPaintDelta, mergeByTs, isBusyScreen, blockText };
+    }
+  });
+
   // renderer/live-split-view.js
   var require_live_split_view = __commonJS({
     "renderer/live-split-view.js"(exports, module) {
       "use strict";
-      var { SPLIT_EXIT_MS, measureSplit, sheetBand, initialSplitState, reduceSplit } = require_live_split();
+      var { SPLIT_SETTLE_MS, SPLIT_EXIT_MS, measureSplit, sheetBand, initialSplitState, reduceSplit } = require_live_split();
       var { createTranscriptRows } = require_transcript_rows();
       var { spinnerText } = require_working_row();
       var { readMenuRows } = require_menu_rows();
       var { rowCells } = require_menu_cells();
+      var { createPaintDelta, mergeByTs, isBusyScreen, blockText } = require_paint_delta();
       var TRANSCRIPT_PULL_MS = 1e3;
+      var PAINT_TAG_MS = 1e4;
+      var PAINT_PLATFORMS = /* @__PURE__ */ new Set(["codex", "muse"]);
       var views = /* @__PURE__ */ new WeakMap();
       var NOOP = () => {
       };
@@ -31930,6 +32009,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let sheetRows = 0;
         let sheetRange = null;
         const composerVisible = () => !!composerEl && !composerEl.hidden;
+        const delta = createPaintDelta();
+        let fileRecords = [];
+        const extraRecords = [];
+        let paintSeq = 0;
+        let paintRows = [];
+        let paintTimer = null;
+        let sent = null;
+        let tag = null;
+        let fileHead = null;
         const bandKey = (b) => b ? `${b.top}:${b.bottom}` : "";
         const rowsCtx = { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette, now };
         let turnRunning = false;
@@ -31957,13 +32045,81 @@ ${m[2].replace(/^\r?\n/, "")}`;
             available = !!(res && res.ok);
             if (available && res.rev !== rev) {
               rev = res.rev;
-              renderTranscript(document, paneEl, res.records, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
-              stickToBottom();
+              fileRecords = Array.isArray(res.records) ? res.records : [];
+              paint();
               evaluate();
             } else if (available !== was) evaluate();
           }).catch(() => {
             pulling = false;
           });
+        }
+        const commandText = (r) => `${r.name || ""}${r.args ? ` ${r.args}` : ""}`;
+        function shownExtras() {
+          const first = fileRecords.find((r) => typeof r.ts === "number");
+          if (first && fileHead != null && first.ts > fileHead) {
+            for (let i = extraRecords.length - 1; i >= 0; i--) if (extraRecords[i].ts < first.ts) extraRecords.splice(i, 1);
+          }
+          if (first) fileHead = first.ts;
+          return extraRecords.filter((x) => x.kind !== "command" || !fileRecords.some((f) => f.kind === "command" && typeof f.ts === "number" && Math.abs(f.ts - x.ts) <= PAINT_TAG_MS && commandText(f) === commandText(x)));
+        }
+        function paint() {
+          const extras = shownExtras();
+          renderTranscript(document, paneEl, extras.length ? mergeByTs(fileRecords, extras) : fileRecords, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
+          stickToBottom();
+        }
+        function latestFileText() {
+          for (let i = fileRecords.length - 1; i >= 0; i--) {
+            const r = fileRecords[i];
+            if (r.kind === "command") return [commandText(r), String(r.name || "")];
+            if (r.kind === "prompt") return String(r.text || "").split("\n");
+          }
+          return [];
+        }
+        function dropPaint() {
+          clearTimeout(paintTimer);
+          paintTimer = null;
+          paintRows = [];
+        }
+        function closePaint() {
+          const rows = paintRows;
+          dropPaint();
+          if (disposed) return;
+          const t = now();
+          const latest = latestFileText();
+          const text = blockText(rows, [...sent ? sent.text.split("\n") : [], ...latest]);
+          sent = null;
+          if (!text) return;
+          const n = paintSeq += 1;
+          const head = tag && t - tag.at <= PAINT_TAG_MS ? tag.text.trim() : null;
+          tag = null;
+          const turn = `paint:${n}`;
+          if (head) {
+            const [name, ...args] = head.split(/\s+/u);
+            extraRecords.push({ kind: "command", name, args: args.join(" "), ts: t, id: `paint:${n}:cmd`, turn });
+          }
+          extraRecords.push({ kind: "command-output", text, ts: t, id: turn, turn });
+          paint();
+        }
+        function trackPaint(rows, measured) {
+          if (!PAINT_PLATFORMS.has(platform())) return;
+          if (!rows || state.mode !== "split" || !composerVisible()) {
+            delta.reset();
+            tag = null;
+            sent = null;
+            return;
+          }
+          if (!measured || measured.mode !== "split") return;
+          const top = Math.min(state.top, measured.top);
+          if (isBusyScreen(rows, top)) {
+            delta.reset();
+            dropPaint();
+            return;
+          }
+          const fresh = delta.feed(rows.slice(0, top));
+          if (!fresh.length) return;
+          paintRows.push(...fresh);
+          clearTimeout(paintTimer);
+          paintTimer = setTimeout(closePaint, SPLIT_SETTLE_MS);
         }
         function screenRows() {
           const buf = terminal.buffer.active;
@@ -32078,6 +32234,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           const menuRead = readMenu(rows);
           if (turnRunning) showWorking(rows ? spinnerText(rows, state.top, platform()) : null);
           const busy = !menuRead && !!measured && (measured.mode === "split" || !!measured.busy);
+          trackPaint(raw ? null : rows, measured);
           sheetRange = busy ? sheetRowsOf(rows) : null;
           sheetRows = sheetRange ? sheetRange.bottom - sheetRange.top + 1 : 0;
           if (state.wakeAt != null) wakeTimer = setTimeout(evaluate, Math.max(0, state.wakeAt - now()));
@@ -32102,6 +32259,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
             else if (!wakeTimer) wakeTimer = setTimeout(evaluate, SPLIT_EXIT_MS);
           }),
           terminal.onResize(() => {
+            delta.reset();
+            dropPaint();
             evaluate();
             layout();
           }),
@@ -32146,11 +32305,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
             evaluate();
           },
           raw: () => raw,
+          composerSent(text) {
+            const s = String(text || "");
+            sent = { text: s, at: now() };
+            tag = s.trim().startsWith("/") ? sent : null;
+          },
           state: () => state,
           composerVisible,
           dispose() {
             disposed = true;
             clearTimeout(wakeTimer);
+            dropPaint();
             for (const d of subs) {
               try {
                 d.dispose();
@@ -47509,6 +47674,7 @@ ${detail}` });
           const mirrored = menuMirror.on() ? menuMirror.draft(text) : [];
           const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(stripImageChips(text));
           for (const w of [...mirrored, ...writes]) writePty(w);
+          if (liveSplit) liveSplit.composerSent(text);
         };
         const syncMenuMirror = () => {
           if (!menuMirror) return;
@@ -47523,6 +47689,7 @@ ${detail}` });
           if (!hit) return false;
           e.preventDefault();
           for (const w of hit.writes) writePty(w);
+          if (hit.command && liveSplit) liveSplit.composerSent(hit.command);
           if (hit.draft !== void 0) {
             composerEl.value = hit.draft;
             composerEl.setSelectionRange(hit.draft.length, hit.draft.length);

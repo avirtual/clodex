@@ -58,8 +58,9 @@ const KEY_TABLE = [
   ['Tab with no row selected takes the first entry, alias dropped', [['draft', '/u'], ['key', 'Tab', UNSELECTED]], { writes: ['\t'], draft: '/usage' }, true],
   ['Tab with no rows (Codex sends the draft on it) is swallowed', [['draft', '/co'], ['key', 'Tab', null]], { writes: [] }, true],
   ['Escape forwards ESC and mode stays ON', [['draft', '/co'], ['key', 'Escape', MENU]], { writes: ['\x1b'] }, true],
-  ['Enter forwards CR, clears the draft and turns OFF', [['draft', '/co'], ['key', 'Enter', MENU]], { writes: ['\r'], draft: '' }, false],
-  ['Enter with no rows still forwards CR and turns OFF', [['draft', '/nope'], ['key', 'Enter', null]], { writes: ['\r'], draft: '' }, false],
+  ['Enter forwards CR, clears the draft, turns OFF and names the selected entry as the command', [['draft', '/co'], ['key', 'Enter', MENU]], { writes: ['\r'], draft: '', command: '/copy' }, false],
+  ['Enter with no row selected names the typed draft as the command', [['draft', '/u'], ['key', 'Enter', UNSELECTED]], { writes: ['\r'], draft: '', command: '/u' }, false],
+  ['Enter with no rows still forwards CR, turns OFF and names the draft', [['draft', '/nope'], ['key', 'Enter', null]], { writes: ['\r'], draft: '', command: '/nope' }, false],
   ['a plain letter key is left to the input path', [['draft', '/co'], ['key', 'a', MENU]], null, true],
   ['keys while OFF are never handled', [['draft', 'hello'], ['key', 'Enter', MENU]], null, false],
 ];

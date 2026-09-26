@@ -71,7 +71,11 @@ function createMenuMirror() {
       return { writes: ['\t'], draft: sent };
     }
     if (e.key === 'Escape') return { writes: [ESCAPE] };
-    if (e.key === 'Enter') return { writes: submit(), draft: '' };
+    if (e.key === 'Enter') {
+      const row = hasRows() ? read.rows.find((r) => r.selected) : null;
+      const command = row ? completionOf(row.name) : sent;
+      return { writes: submit(), draft: '', command };
+    }
     return null;
   }
 

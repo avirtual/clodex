@@ -2268,6 +2268,7 @@ function createTerminal(name, peer = null) {
     const mirrored = menuMirror.on() ? menuMirror.draft(text) : [];
     const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(stripImageChips(text));
     for (const w of [...mirrored, ...writes]) writePty(w);
+    if (liveSplit) liveSplit.composerSent(text);
   };
   const syncMenuMirror = () => {
     if (!menuMirror) return;
@@ -2282,6 +2283,7 @@ function createTerminal(name, peer = null) {
     if (!hit) return false;
     e.preventDefault();
     for (const w of hit.writes) writePty(w);
+    if (hit.command && liveSplit) liveSplit.composerSent(hit.command);
     if (hit.draft !== undefined) {
       composerEl.value = hit.draft;
       composerEl.setSelectionRange(hit.draft.length, hit.draft.length);

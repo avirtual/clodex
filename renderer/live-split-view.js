@@ -1,12 +1,15 @@
 'use strict';
 
-const { SPLIT_EXIT_MS, measureSplit, sheetBand, initialSplitState, reduceSplit } = require('./lib/live-split');
+const { SPLIT_SETTLE_MS, SPLIT_EXIT_MS, measureSplit, sheetBand, initialSplitState, reduceSplit } = require('./lib/live-split');
 const { createTranscriptRows } = require('./transcript-rows');
 const { spinnerText } = require('./lib/working-row');
 const { readMenuRows } = require('./lib/menu-rows');
 const { rowCells } = require('./lib/menu-cells');
+const { createPaintDelta, mergeByTs, isBusyScreen, blockText } = require('./lib/paint-delta');
 
 const TRANSCRIPT_PULL_MS = 1000;
+const PAINT_TAG_MS = 10000;
+const PAINT_PLATFORMS = new Set(['codex', 'muse']);
 const views = new WeakMap();
 const NOOP = () => {};
 
@@ -85,6 +88,15 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   let sheetRows = 0;
   let sheetRange = null;
   const composerVisible = () => !!composerEl && !composerEl.hidden;
+  const delta = createPaintDelta();
+  let fileRecords = [];
+  const extraRecords = [];
+  let paintSeq = 0;
+  let paintRows = [];
+  let paintTimer = null;
+  let sent = null;
+  let tag = null;
+  let fileHead = null;
   const bandKey = (b) => (b ? `${b.top}:${b.bottom}` : '');
   const rowsCtx = { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette, now };
   let turnRunning = false;
@@ -115,11 +127,84 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       available = !!(res && res.ok);
       if (available && res.rev !== rev) {
         rev = res.rev;
-        renderTranscript(document, paneEl, res.records, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
-        stickToBottom();
+        fileRecords = Array.isArray(res.records) ? res.records : [];
+        paint();
         evaluate();
       } else if (available !== was) evaluate();
     }).catch(() => { pulling = false; });
+  }
+
+  const commandText = (r) => `${r.name || ''}${r.args ? ` ${r.args}` : ''}`;
+
+  function shownExtras() {
+    const first = fileRecords.find((r) => typeof r.ts === 'number');
+    if (first && fileHead != null && first.ts > fileHead) for (let i = extraRecords.length - 1; i >= 0; i--) if (extraRecords[i].ts < first.ts) extraRecords.splice(i, 1);
+    if (first) fileHead = first.ts;
+    return extraRecords.filter((x) => x.kind !== 'command' || !fileRecords.some((f) => f.kind === 'command' && typeof f.ts === 'number' && Math.abs(f.ts - x.ts) <= PAINT_TAG_MS && commandText(f) === commandText(x)));
+  }
+
+  function paint() {
+    const extras = shownExtras();
+    renderTranscript(document, paneEl, extras.length ? mergeByTs(fileRecords, extras) : fileRecords, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
+    stickToBottom();
+  }
+
+  function latestFileText() {
+    for (let i = fileRecords.length - 1; i >= 0; i--) {
+      const r = fileRecords[i];
+      if (r.kind === 'command') return [commandText(r), String(r.name || '')];
+      if (r.kind === 'prompt') return String(r.text || '').split('\n');
+    }
+    return [];
+  }
+
+  function dropPaint() {
+    clearTimeout(paintTimer);
+    paintTimer = null;
+    paintRows = [];
+  }
+
+  function closePaint() {
+    const rows = paintRows;
+    dropPaint();
+    if (disposed) return;
+    const t = now();
+    const latest = latestFileText();
+    const text = blockText(rows, [...(sent ? sent.text.split('\n') : []), ...latest]);
+    sent = null;
+    if (!text) return;
+    const n = (paintSeq += 1);
+    const head = tag && t - tag.at <= PAINT_TAG_MS ? tag.text.trim() : null;
+    tag = null;
+    const turn = `paint:${n}`;
+    if (head) {
+      const [name, ...args] = head.split(/\s+/u);
+      extraRecords.push({ kind: 'command', name, args: args.join(' '), ts: t, id: `paint:${n}:cmd`, turn });
+    }
+    extraRecords.push({ kind: 'command-output', text, ts: t, id: turn, turn });
+    paint();
+  }
+
+  function trackPaint(rows, measured) {
+    if (!PAINT_PLATFORMS.has(platform())) return;
+    if (!rows || state.mode !== 'split' || !composerVisible()) {
+      delta.reset();
+      tag = null;
+      sent = null;
+      return;
+    }
+    if (!measured || measured.mode !== 'split') return;
+    const top = Math.min(state.top, measured.top);
+    if (isBusyScreen(rows, top)) {
+      delta.reset();
+      dropPaint();
+      return;
+    }
+    const fresh = delta.feed(rows.slice(0, top));
+    if (!fresh.length) return;
+    paintRows.push(...fresh);
+    clearTimeout(paintTimer);
+    paintTimer = setTimeout(closePaint, SPLIT_SETTLE_MS);
   }
 
   function screenRows() {
@@ -242,6 +327,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     const menuRead = readMenu(rows);
     if (turnRunning) showWorking(rows ? spinnerText(rows, state.top, platform()) : null);
     const busy = !menuRead && !!measured && (measured.mode === 'split' || !!measured.busy);
+    trackPaint(raw ? null : rows, measured);
     sheetRange = busy ? sheetRowsOf(rows) : null;
     sheetRows = sheetRange ? sheetRange.bottom - sheetRange.top + 1 : 0;
     if (state.wakeAt != null) wakeTimer = setTimeout(evaluate, Math.max(0, state.wakeAt - now()));
@@ -266,7 +352,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       if (!cursorHidden) evaluate();
       else if (!wakeTimer) wakeTimer = setTimeout(evaluate, SPLIT_EXIT_MS);
     }),
-    terminal.onResize(() => { evaluate(); layout(); }),
+    terminal.onResize(() => { delta.reset(); dropPaint(); evaluate(); layout(); }),
     terminal.onScroll(() => {
       if (state.mode !== 'split' && !(sheetRows > 0)) return;
       const buf = terminal.buffer.active;
@@ -307,11 +393,17 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       evaluate();
     },
     raw: () => raw,
+    composerSent(text) {
+      const s = String(text || '');
+      sent = { text: s, at: now() };
+      tag = s.trim().startsWith('/') ? sent : null;
+    },
     state: () => state,
     composerVisible,
     dispose() {
       disposed = true;
       clearTimeout(wakeTimer);
+      dropPaint();
       for (const d of subs) { try { d.dispose(); } catch {} }
       if (typeof unsubTranscript === 'function') unsubTranscript();
       if (ro) ro.disconnect();
