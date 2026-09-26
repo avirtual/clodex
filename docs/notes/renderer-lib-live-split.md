@@ -12,3 +12,6 @@ Muse Code 1.4.0 puts a label in the rule above its composer (`── Voice input
 
 ## measureSplit
 `busy` on an unanchored screen means some row carries text (a picker, dialog or spinner is drawn); a blank screen is a CLI still booting, which has nothing to show in a sheet, so it keeps the whole-terminal view.
+
+## museStripIsIdle
+Muse Code 1.4.0 keeps its input strip while a picker such as `/model` is open and draws the picker below the bottom rule, so more than the status row below that rule is not an idle prompt.

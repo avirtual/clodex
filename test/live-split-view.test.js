@@ -804,6 +804,26 @@ test('a Codex picker opened with a past prompt in the history shows in the sheet
   } finally { m.view.dispose(); m.restore(); }
 });
 
+test('a Muse picker drawn below the kept strip shows in the sheet with the composer hidden', async () => {
+  const rows = fs.readFileSync(path.join(__dirname, 'fixtures', 'split-states', 'muse-model-picker@100.screen.txt'), 'utf8').split('\n').slice(0, 30);
+  const composerEl = fakeComposer();
+  let t = 5000;
+  const m = mountView({ composerEl, sheet: true, now: () => t, platform: () => 'muse' }, { geometry: true });
+  Object.assign(m.terminal, { rows: 30, cols: 100, element: fakeTermElement(30) });
+  m.terminal.buffer.active.cursorY = 28;
+  m.show(rows);
+  m.write();
+  await settle();
+  t += 250;
+  m.write();
+  await settle();
+  try {
+    assert.strictEqual(m.view.state().mode, 'full');
+    assert.strictEqual(m.wrapper.classList.contains('live-sheet'), true);
+    assert.strictEqual(composerEl.hidden, true);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
 test('a band that moves from the top rows to the bottom rows at the same length re-lays the sheet out', async () => {
   const m = await mountSheet(['  banner', '', '', '']);
   try {

@@ -63,7 +63,7 @@ const FIXTURES = [
   ['muse-slash-menu@100', 7, 'split', 6, 17, 'muse'],
   ['muse-typed-status@100', 7, 'split', 6, 10, 'muse'],
   ['muse-after-status@100', 27, 'split', 26, 29, 'muse'],
-  ['muse-model-picker@100', 28, 'split', 18, 28, 'muse'],
+  ['muse-model-picker@100', 28, 'full', -1, -1, 'muse'],
   ['muse-after-picker-esc@100', 19, 'split', 18, 21, 'muse'],
   ['codex-idle@100', 26, 'split', 26, 29, 'codex'],
   ['codex-draft@100', 26, 'split', 26, 29, 'codex'],
@@ -305,6 +305,16 @@ test('a Codex picker opened over a history prompt row is full and busy, and its 
   assert.deepStrictEqual(measureSplit(rows, 12, cols, 'codex'), { mode: 'full', top: -1, bottom: -1, busy: true });
   assert.deepStrictEqual(sheetBand(rows, 20), { top: 20, bottom: 39 });
 });
+
+const MUSE_RULE = `── Voice input ${'─'.repeat(85)}`;
+for (const [name, rows, want] of [
+  ['a strip with only the status row below the bottom rule', ['text', MUSE_RULE, '❯ ', '─'.repeat(100), '  muse-spark · max'], 1],
+  ['a strip with a picker below the bottom rule', [MUSE_RULE, '❯ ', '─'.repeat(100), '  Choose model', '', '⟩ muse-spark', '  muse-spark-1.2', '  ↑↓ move · enter confirm'], -1],
+]) {
+  test(`findAnchor on Muse: ${name}`, () => {
+    assert.strictEqual(findAnchor(rows, rows.length - 1, 100, 'muse'), want);
+  });
+}
 
 for (const [name, rows, want] of [
   ['a composer with its Context footer two rows down', ['› Ask Codex', '', '  Context 0% used · GPT', '  ? for shortcuts'], 0],
