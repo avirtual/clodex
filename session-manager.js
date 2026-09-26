@@ -9523,8 +9523,9 @@ function createSessionManager(deps) {
       target._parkCapTimer = setTimeout(() => {
         target._parkCapTimer = null;
         const oldest = typeof oldestActiveParkTs === 'function' ? oldestActiveParkTs(PENDING_DIR, target.name) : null;
+        if (oldest === null && typeof oldestActiveParkTs === 'function' && countPending(PENDING_DIR, target.name) > 0) return;
         const left = oldest === null ? 0 : INJECT_QUIET_MAXWAIT - (Date.now() - oldest);
-        if (left > 0) { this._armParkCap(target, left); return; }
+        if (left > 0) { this._armParkCap(target, Math.min(left, INJECT_QUIET_MAXWAIT)); return; }
         this._flushParkedNow(target, `cap.${process.pid}`, 'park-cap');
       }, delay);
     }
