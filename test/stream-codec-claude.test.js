@@ -33,6 +33,7 @@ const ROWS = [
   ['system/init', 0, {
     kind: 'init', sessionId: 'cc887621-34fe-485b-a555-12bddec12af1', model: 'claude-haiku-4-5-20251001',
     slashCommands: INIT_SLASH,
+    terminalSlashCommands: ['doctor', 'color', 'focus', 'reload-plugins'],
   }],
   ['result/success', 1, { kind: 'result', durationMs: 1330, costUsd: 0.008299500000000001, isError: false }],
   ['result/error_during_execution', 2, { kind: 'result', durationMs: 0, costUsd: 0, isError: true }],
@@ -54,6 +55,10 @@ for (const [label, idx, want] of ROWS) {
     assert.deepStrictEqual(decode(JSON.parse(LINES[idx])), want);
   });
 }
+
+test('decode: an init without terminal_slash_commands reports an empty terminal set', () => {
+  assert.deepStrictEqual(decode({ type: 'system', subtype: 'init', session_id: 's', slash_commands: ['compact'] }).terminalSlashCommands, []);
+});
 
 test('decode: assistant and user content records are not decoded', () => {
   assert.deepStrictEqual(

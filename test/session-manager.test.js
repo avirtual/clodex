@@ -21745,6 +21745,79 @@ test('t1172: a codex stream seat builds the codec instance from ctx and writes o
   assert.strictEqual(s.streamBusy, true);
 });
 
+const SEAT_CONTROLS = [
+  { name: '/compact', kind: 'control', description: 'Compact the context' },
+  { name: '/clear', kind: 'control', description: 'Start a fresh context' },
+  { name: '/stop', kind: 'control', description: 'Interrupt the running turn' },
+];
+
+test('t1208: seatCommands on a claude seat before init offers the three controls', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('scm1');
+  assert.deepStrictEqual(h.m.seatCommands('scm1'), { ok: true, commands: SEAT_CONTROLS });
+});
+
+test('t1208: seatCommands on a claude seat after init lists its slash commands minus the terminal set, described built-ins first', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('scm2');
+  h.line('scm2', { type: 'system', subtype: 'init', session_id: 'sid-c', model: 'm',
+    slash_commands: ['zeta', 'doctor', 'context', 'alpha', 'compact', 'color'], terminal_slash_commands: ['doctor', 'color'] });
+  const res = h.m.seatCommands('scm2');
+  assert.strictEqual(res.ok, true);
+  assert.deepStrictEqual(res.commands.map((c) => [c.name, c.kind, !!c.description]), [
+    ['/compact', 'text', true], ['/context', 'text', true], ['/alpha', 'text', false], ['/zeta', 'text', false],
+  ]);
+});
+
+function mkRealCodexSeat() {
+  const { streamFor: realStreamFor } = require('../cli-adapters');
+  const h = mkStreamSeatManager({
+    streamFor: (type) => (type === 'codex' ? realStreamFor('codex') : null),
+    loadStreamCodec: () => require('../stream-codec-codex'),
+    extraDeps: (root) => ({
+      mergeCodexInstructions: require('../argv-merge').mergeCodexInstructions,
+      isInjectInFlight: require('../inject-queue').isInjectInFlight,
+      setupCodexHook: (n) => require('node:fs').mkdirSync(require('../clodex-paths').runDirFor(root, n), { recursive: true }),
+    }),
+  });
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const [threadStart] = fs.readFileSync(path.join(__dirname, 'fixtures', 'stream-codex', 'thread-start.jsonl'), 'utf8')
+    .split('\n').filter(Boolean).map((l) => JSON.parse(l)).filter((l) => l.d === 'in').map((l) => l.m);
+  const start = (name) => h.line(name, { ...threadStart, id: h.handles[h.handles.length - 1].sent[2].id });
+  const clearTimers = (s) => {
+    for (const k of ['_compactValveTimer', '_injectHoldTimer', '_postClearValveTimer', '_compactingValveTimer', '_resultHold']) clearTimeout(s[k]);
+  };
+  return { h, start, clearTimers };
+}
+
+test('t1208: seatCommands on a codex seat offers the three controls, and seatControl compact sends thread/compact/start', async (t) => {
+  const { h, start, clearTimers } = mkRealCodexSeat();
+  t.after(() => h.stopAll());
+  await h.create('scx1', null, 'stream', 'codex');
+  const s = h.m.sessions.get('scx1');
+  t.after(() => clearTimers(s));
+  start('scx1');
+  assert.deepStrictEqual(h.m.seatCommands('scx1'), { ok: true, commands: SEAT_CONTROLS });
+  const sent = h.handles[0].sent;
+  const before = sent.length;
+  assert.deepStrictEqual(h.m.seatControl('scx1', 'compact'), { ok: true });
+  assert.deepStrictEqual(sent.slice(before).map((o) => o.method), ['thread/compact/start']);
+  assert.deepStrictEqual(h.m.seatControl('scx1', 'compact'), { ok: false, error: 'a compact is already in flight' });
+});
+
+test('t1208: seatCommands and seatControl refuse a seat that is not a live stream seat', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  h.m.sessions.set('pty1', { name: 'pty1', io: 'pty', pty: {}, stream: null });
+  for (const name of ['pty1', 'ghost']) {
+    assert.strictEqual(h.m.seatCommands(name).ok, false);
+    assert.strictEqual(h.m.seatControl(name, 'compact').ok, false);
+  }
+});
+
 function mkStalledInitSeat(t) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const c = mkCodexStreamSeat({ deps: { streamInitTimeoutMs: 5000 } });

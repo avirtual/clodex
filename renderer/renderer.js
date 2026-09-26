@@ -51,6 +51,7 @@ const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
 const { composerReadlineEdit, composerHeightFor } = require('./lib/composer-keys');
+const { slashQuery, filterCommands, slashMenuKey } = require('./lib/composer-slash');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
 const { renderAppendChecklist, collectAppendChecklist, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
@@ -1524,6 +1525,10 @@ function createStreamSeatPane(name, wrapperEl) {
   permEl.hidden = true;
   wrapperEl.appendChild(permEl);
   wrapperEl.appendChild(attachEl);
+  const slashEl = document.createElement('div');
+  slashEl.className = 'seat-slash-menu';
+  slashEl.hidden = true;
+  wrapperEl.appendChild(slashEl);
   wrapperEl.appendChild(composer);
   const fitComposer = () => {
     composer.style.height = 'auto';
@@ -1749,7 +1754,116 @@ function createStreamSeatPane(name, wrapperEl) {
       restore();
     });
   };
+  let slashList = null;
+  let slashStale = true;
+  let slashFetching = false;
+  let slashItems = [];
+  let slashIndex = 0;
+  let slashRange = null;
+  const closeSlash = () => {
+    slashRange = null;
+    slashItems = [];
+    slashIndex = 0;
+    slashEl.hidden = true;
+    slashEl.replaceChildren();
+  };
+  const renderSlash = () => {
+    slashEl.replaceChildren();
+    slashItems.forEach((item, i) => {
+      const row = document.createElement('div');
+      row.className = i === slashIndex ? 'seat-slash-item active' : 'seat-slash-item';
+      const label = document.createElement('span');
+      label.className = 'seat-slash-name';
+      label.textContent = String(item.name || '');
+      row.appendChild(label);
+      if (item.description) {
+        const desc = document.createElement('span');
+        desc.className = 'seat-slash-desc';
+        desc.textContent = String(item.description);
+        row.appendChild(desc);
+      }
+      row.addEventListener('mousedown', (ev) => {
+        ev.preventDefault();
+        slashIndex = i;
+        pickSlash(true);
+      });
+      slashEl.appendChild(row);
+    });
+    slashEl.hidden = slashItems.length === 0;
+    const active = slashEl.children[slashIndex];
+    if (active && typeof active.scrollIntoView === 'function') active.scrollIntoView({ block: 'nearest' });
+  };
+  const fetchSlash = () => {
+    if (slashFetching) return;
+    slashFetching = true;
+    Promise.resolve(window.api.seatCommands(name)).then((res) => {
+      slashFetching = false;
+      if (disposed || !res || res.ok === false || !Array.isArray(res.commands)) return;
+      slashList = res.commands;
+      slashStale = res.commands.every((c) => c && c.kind === 'control');
+      if (slashRange) updateSlash(false);
+    }).catch(() => { slashFetching = false; });
+  };
+  const updateSlash = (resetIndex = true) => {
+    const q = slashQuery(composer.value, composer.selectionStart);
+    if (!q) {
+      closeSlash();
+      return;
+    }
+    if (!slashRange && (!slashList || slashStale)) fetchSlash();
+    slashRange = q;
+    if (!slashList) return;
+    slashItems = filterCommands(slashList, q.query);
+    if (resetIndex || slashIndex >= slashItems.length) slashIndex = 0;
+    renderSlash();
+  };
+  const pickSlash = (run) => {
+    const item = slashItems[slashIndex];
+    const range = slashRange;
+    closeSlash();
+    if (!item || !range) return;
+    const value = composer.value;
+    if (item.kind === 'control' && run) {
+      composer.value = '';
+      composer.dispatchEvent(new Event('input', { bubbles: true }));
+      Promise.resolve(window.api.seatControl(name, String(item.name).replace(/^\//, ''))).then((res) => {
+        if (res && res.ok === false) showToast(`${item.name} failed: ${res.error || 'unknown error'}`, { kind: 'error', name });
+        else pull(true);
+      }).catch((err) => {
+        showToast(`${item.name} failed: ${err && err.message ? err.message : err}`, { kind: 'error', name });
+      });
+      return;
+    }
+    const whole = !value.slice(0, range.start).trim() && !value.slice(range.end).trim();
+    if (run && whole) {
+      composer.value = item.name;
+      sendComposer();
+      return;
+    }
+    const insert = item.kind === 'control' ? item.name : `${item.name} `;
+    const tail = value.slice(range.end).replace(/^ /, '');
+    composer.value = value.slice(0, range.start) + insert + tail;
+    const cursor = range.start + insert.length;
+    composer.setSelectionRange(cursor, cursor);
+    composer.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  composer.addEventListener('input', () => updateSlash());
+  composer.addEventListener('blur', closeSlash);
   composer.addEventListener('keydown', (e) => {
+    const slashKey = !e.isComposing && slashMenuKey({
+      key: e.key, open: !slashEl.hidden, index: slashIndex, count: slashItems.length,
+      shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey,
+    });
+    if (slashKey) {
+      e.preventDefault();
+      if (slashKey.close) closeSlash();
+      else if (slashKey.pick) pickSlash(e.key === 'Enter');
+      else {
+        slashIndex = slashKey.index;
+        renderSlash();
+      }
+      return;
+    }
     if (e.key === 'Escape' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
       e.preventDefault();
       Promise.resolve(window.api.seatInterrupt(name)).catch(() => {});

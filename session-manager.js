@@ -262,6 +262,30 @@ const { COMPACTING_VALVE_MS, COMPACT_NOTICE_CAP, noticeTextFor } = require('./co
 const STREAM_TOOL_DRAIN_MIN_MS = 2000;
 const STREAM_RESULT_HOLD_MS = 400;
 const STREAM_ARM_WAIT_MS = 1000;
+const SEAT_CONTROL_COMMANDS = Object.freeze([
+  { name: '/compact', kind: 'control', description: 'Compact the context' },
+  { name: '/clear', kind: 'control', description: 'Start a fresh context' },
+  { name: '/stop', kind: 'control', description: 'Interrupt the running turn' },
+]);
+const CLAUDE_SLASH_DESCRIPTIONS = Object.freeze({
+  compact: 'Summarize the conversation to free context',
+  clear: 'Start a fresh conversation',
+  context: 'Show context window usage',
+  model: 'Show or switch the model',
+  effort: 'Set the reasoning effort',
+  usage: 'Show plan usage limits',
+  cost: 'Show the session cost',
+  status: 'Show the seat status',
+  help: 'List the available commands',
+  mcp: 'Show MCP server status',
+  skills: 'List the available skills',
+  agents: 'List the configured subagents',
+  config: 'Show the configuration',
+  init: 'Write a CLAUDE.md for this project',
+  memory: 'Edit the memory files',
+  review: 'Review a pull request',
+  rename: 'Rename the conversation',
+});
 const STREAM_HINT_POLL_MS = 50;
 const STREAM_INIT_TIMEOUT_MS = 60 * 1000;
 const PENDING_DRAIN_KEY = '\0pending-drain';
@@ -2968,6 +2992,49 @@ function createSessionManager(deps) {
       return { ok: true, queued: this._streamEnqueue(s, { text: body, images: imgs, origin: 'operator' }) };
     }
 
+    seatCommands(name) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead || s.io !== 'stream' || !s.stream) return { ok: false, error: 'not a live stream seat' };
+      if (s.agentType !== 'claude' || !Array.isArray(s._slashCommands)) return { ok: true, commands: SEAT_CONTROL_COMMANDS.map((c) => ({ ...c })) };
+      const hidden = new Set(s._terminalSlashCommands || []);
+      const described = [];
+      const rest = [];
+      for (const cmd of new Set(s._slashCommands)) {
+        if (hidden.has(cmd)) continue;
+        const description = CLAUDE_SLASH_DESCRIPTIONS[cmd] || '';
+        (description ? described : rest).push({ name: `/${cmd}`, kind: 'text', description });
+      }
+      const order = Object.keys(CLAUDE_SLASH_DESCRIPTIONS);
+      described.sort((a, b) => order.indexOf(a.name.slice(1)) - order.indexOf(b.name.slice(1)));
+      rest.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+      return { ok: true, commands: [...described, ...rest] };
+    }
+
+    seatControl(name, sub) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead || s.io !== 'stream' || !s.stream) return { ok: false, error: 'not a live stream seat' };
+      if (sub === 'stop') return this.seatInterrupt(name);
+      if (sub !== 'compact' && sub !== 'clear') return { ok: false, error: `unknown control "${sub}"` };
+      if (s._reloadInFlight) return { ok: false, error: 'a reload is already in flight' };
+      if (sub === 'compact' && isInjectInFlight({ pending: s._compactPending, guard: s._compactGuard, continuation: s._compactContinuation })) {
+        return { ok: false, error: 'a compact is already in flight' };
+      }
+      if (sub === 'clear' && s._postClearContinuation) return { ok: false, error: 'a clear is already in flight' };
+      const wireCtx = typeof s.streamCodec.encodeContext === 'function';
+      const map = SessionManager.CONTEXT_COMMANDS[s.type];
+      const cmd = wireCtx ? s.streamCodec.encodeContext(sub) : (map && map[sub]);
+      if (!cmd) return { ok: false, error: `${sub} is not available on this seat yet` };
+      this._lastOperatorInputAt = Date.now();
+      if (sub === 'compact') {
+        this._executeCompact(s, cmd, '');
+        return { ok: true };
+      }
+      if (wireCtx) this._streamEnqueue(s, { text: '', images: [], origin: 'system', wire: cmd });
+      else this._injectText(s, cmd, { bypassHold: true });
+      log.info('session', `clear ${s.name} → ${wireCtx ? cmd.method : cmd} (operator control)`);
+      return { ok: true };
+    }
+
     seatDraft(name, text) {
       const s = this.sessions.get(name);
       if (!s || s._dead || s.io !== 'stream') return;
@@ -3258,6 +3325,8 @@ function createSessionManager(deps) {
             if (s.needsAttention && s.needsAttention.kind === 'other') this._setAttention(s, null);
           }
           this._dropStreamPermissions(s);
+          if (Array.isArray(rec.slashCommands)) s._slashCommands = rec.slashCommands.filter((c) => typeof c === 'string');
+          if (Array.isArray(rec.terminalSlashCommands)) s._terminalSlashCommands = rec.terminalSlashCommands.filter((c) => typeof c === 'string');
           if (rec.transcriptPath) this._repointStreamTranscript(s, rec.sessionId, rec.transcriptPath);
           if (rec.sessionId && rec.sessionId !== s.sessionId) onSessionId(rec.sessionId);
           if (s._replayAtInit) {

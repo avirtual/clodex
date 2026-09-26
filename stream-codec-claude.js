@@ -65,6 +65,7 @@ function decode(obj) {
         sessionId: obj.session_id || null,
         model: obj.model || null,
         slashCommands: Array.isArray(obj.slash_commands) ? obj.slash_commands : [],
+        terminalSlashCommands: Array.isArray(obj.terminal_slash_commands) ? obj.terminal_slash_commands : [],
       };
     case 'compact_boundary': {
       const meta = obj.compact_metadata || {};
