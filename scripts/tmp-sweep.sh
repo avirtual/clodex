@@ -81,6 +81,8 @@ clodex-eoo-
 clodex-eoo2-
 clodex-escape-
 clodex-exec-
+clodex-exited-
+clodex-exited-store-
 clodex-fake-plugin-
 clodex-far-hist-
 clodex-first-run-

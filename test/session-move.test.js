@@ -307,7 +307,7 @@ test('move marks the exit EXPECTED via _moving before killing the pty', async ()
   assert.strictEqual(flagAtKill, true, '_moving was already set when the pty was killed');
   assert.deepStrictEqual(
     exitDisposition({ agentType: 'claude', moving: true }),
-    { expected: true, dropRecord: false },
+    { expected: true, dropRecord: false, stampExited: false },
     'and that flag is what makes the exit expected',
   );
 });
