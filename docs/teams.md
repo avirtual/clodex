@@ -331,7 +331,7 @@ schema vocabulary.
 
 `timeoutMs` above is a placeholder, not a recommendation. A command that runs a
 whole test suite needs far more than two minutes — the shipped
-`clodex-run-tests` sits at twenty-five — and the failure it prevents is not the one it
+`clodex-run-tests` sits at thirty-six — and the failure it prevents is not the one it
 looks like: the wrapper is killed at the ceiling while the work carries on, so a
 run that SUCCEEDED loses its report and keeps holding whatever lock it took.
 
