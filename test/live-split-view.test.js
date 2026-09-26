@@ -787,10 +787,14 @@ test('a Codex upgrade prompt painted at the top shows its own rows in the sheet,
 test('a Codex picker opened with a past prompt in the history shows in the sheet with the composer hidden', async () => {
   const rows = fs.readFileSync(path.join(__dirname, 'fixtures', 'split-states', 'codex-picker-with-history@100.screen.txt'), 'utf8').split('\n').slice(0, 40);
   const composerEl = fakeComposer();
-  const m = mountView({ composerEl, sheet: true, platform: () => 'codex' }, { geometry: true });
+  let t = 5000;
+  const m = mountView({ composerEl, sheet: true, now: () => t, platform: () => 'codex' }, { geometry: true });
   Object.assign(m.terminal, { rows: 40, cols: 100, element: fakeTermElement(40) });
   m.terminal.buffer.active.cursorY = 12;
   m.show(rows);
+  m.write();
+  await settle();
+  t += 250;
   m.write();
   await settle();
   try {
