@@ -66,7 +66,7 @@ const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
 const { createVoiceMirror, engineObserved } = require('./voice-mirror');
 const { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require('./lib/composer-voice');
-const { ptyComposerWrites } = require('./lib/pty-composer');
+const { ptyComposerWrites, pasteKind, imageChip, stripImageChips } = require('./lib/pty-composer');
 const { createMenuMirror } = require('./lib/menu-mirror');
 const { VOICE_ENGINE_NAME } = require('../voice-engine');
 const {
@@ -2252,14 +2252,16 @@ function createTerminal(name, peer = null) {
   const splitOn = !peer;
   const composerEl = splitOn ? document.createElement('textarea') : null;
   const menuMirror = composerEl ? createMenuMirror() : null;
+  let pastedImages = 0;
   const sendPtyComposer = () => {
     const text = composerEl.value;
     if (!text.trim()) return;
     composerEl.value = '';
+    pastedImages = 0;
     composerKit.fit();
     composerTrigger.resetSpan();
     const mirrored = menuMirror.on() ? menuMirror.draft(text) : [];
-    const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(text);
+    const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(stripImageChips(text));
     for (const w of [...mirrored, ...writes]) writePty(w);
   };
   const syncMenuMirror = () => {
@@ -2310,6 +2312,21 @@ function createTerminal(name, peer = null) {
     composerEl.hidden = true;
     wrapperEl.appendChild(composerEl);
     composerEl.addEventListener('input', syncMenuMirror);
+    composerEl.addEventListener('paste', (e) => {
+      if (pasteKind(e.clipboardData && e.clipboardData.items) !== 'image') return;
+      e.preventDefault();
+      if (window.__CLODEX_WEB__ || !window.require) {
+        showToast('Pasting images needs the desktop app — the CLI reads its own machine\'s clipboard, not this browser\'s.', { kind: 'peer-ui' });
+        return;
+      }
+      pastedImages += 1;
+      composerEl.value += imageChip(pastedImages);
+      if (menuMirror.on()) syncMenuMirror();
+      writePty('\x16');
+      const end = composerEl.value.length;
+      composerEl.setSelectionRange(end, end);
+      composerKit.fit();
+    });
   }
   const liveSplit = !splitOn ? null : createLiveSplitView(terminal, wrapperEl, {
     isEligible: () => transcriptPaneEnabled && isAgentType(sessionTypeOf(name)),
