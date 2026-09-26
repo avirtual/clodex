@@ -838,7 +838,7 @@ function registerIpcHandlers(deps) {
     if (!res || !res.ok) return box ? { ...res, rev: `-:o${box.rev}${p.suffix}`, records: [], outbox: box.items, ...p.fields } : res;
     let rev = extra ? `${res.rev}:${extra.rev}` : res.rev;
     if (box) rev = `${rev}:o${box.rev}${p.suffix}`;
-    if (since !== undefined && since === rev) return { ok: true, rev, unchanged: true };
+    if (since === rev) return { ok: true, rev, unchanged: true };
     const records = extra ? mergeCompactNotices(res.records, extra.notices) : res.records;
     return box ? { ok: true, rev, records, outbox: box.items, ...p.fields } : { ok: true, rev, records };
   });

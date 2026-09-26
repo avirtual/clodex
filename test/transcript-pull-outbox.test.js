@@ -174,7 +174,7 @@ test('transcript:pull on a seat that is not an agent type is the bare not-agent 
   assert.deepStrictEqual(res, { ok: false, reason: 'not-agent' });
 });
 
-function revPull(box) {
+function revPull(box, notices) {
   const handlers = new Map();
   const reg = mkTmpRoot('ipc-tpull-');
   const link = pathFor(reg, 'rv', 'transcript');
@@ -190,7 +190,7 @@ function revPull(box) {
       sessions: new Map([['rv', seat]]),
       seatOutbox: () => box,
       seatPermissions: () => null,
-      compactNoticesFor: () => ({ rev: 5, notices: [] }),
+      compactNoticesFor: () => notices,
       _sendToSession() {},
     },
   });
@@ -198,9 +198,10 @@ function revPull(box) {
   return { pull, close: () => { seat._dead = true; pull(); } };
 }
 
-for (const [label, box, rev] of [['with an outbox', { rev: 2, items: [] }, '1:5:o2'], ['with no outbox', null, '1:5']]) {
+const NOTICES = { rev: 5, notices: [] };
+for (const [label, box, notices, rev] of [['with an outbox', { rev: 2, items: [] }, NOTICES, '1:5:o2'], ['with no outbox', null, NOTICES, '1:5'], ['with no outbox or notices', null, null, 1]]) {
   test(`transcript:pull ${label}: the caller's own rev answers unchanged with no records, any other rev or none answers the records`, (t) => {
-    const { pull, close } = revPull(box);
+    const { pull, close } = revPull(box, notices);
     t.after(close);
     const first = pull();
     assert.strictEqual(first.rev, rev);
