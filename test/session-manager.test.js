@@ -10950,6 +10950,10 @@ test('t1222: role-set reviewer effort:xhigh derives templates/reviewer.json from
     pathReal.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-reviewer.json'), 'utf-8'));
   fsReal.mkdirSync(pathReal.dirname(f.tplFile('clodex-team-reviewer')), { recursive: true });
   fsReal.writeFileSync(f.tplFile('clodex-team-reviewer'), JSON.stringify(shippedReviewer));
+  const teamJson = pathReal.join(f.teamDir, 'team.json');
+  const raw = JSON.parse(fsReal.readFileSync(teamJson, 'utf-8'));
+  delete raw.roles.reviewer.template;
+  fsReal.writeFileSync(teamJson, JSON.stringify(raw, null, 2));
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'reviewer', effort: 'xhigh', body: '' });
   assert.ok(/role "reviewer" updated on team — template "reviewer" derived from clodex-team-reviewer with effort xhigh/.test(f.last()), f.last());
   assert.deepStrictEqual(f.readTpl('reviewer'), { type: 'claude', ...shippedReviewer, name: 'reviewer', effort: 'xhigh' });
