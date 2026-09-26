@@ -693,6 +693,7 @@ function createSessionManager(deps) {
     draftChunkSignal,
     drainPending,
     countPending,
+    oldestActiveParkTs,
     peekPending,
     enqueueOutbox,
     ensureDir,
@@ -9517,16 +9518,15 @@ function createSessionManager(deps) {
       return true;
     }
 
-    _armParkCap(target) {
-      if (target._parkCapTimer && countPending(PENDING_DIR, target.name) === 1) {
-        clearTimeout(target._parkCapTimer);
-        target._parkCapTimer = null;
-      }
+    _armParkCap(target, delay = INJECT_QUIET_MAXWAIT) {
       if (target._parkCapTimer) return;         // earliest-parked deadline governs
       target._parkCapTimer = setTimeout(() => {
         target._parkCapTimer = null;
+        const oldest = typeof oldestActiveParkTs === 'function' ? oldestActiveParkTs(PENDING_DIR, target.name) : null;
+        const left = oldest === null ? 0 : INJECT_QUIET_MAXWAIT - (Date.now() - oldest);
+        if (left > 0) { this._armParkCap(target, left); return; }
         this._flushParkedNow(target, `cap.${process.pid}`, 'park-cap');
-      }, INJECT_QUIET_MAXWAIT);
+      }, delay);
     }
 
     _flushParkedNow(target, tag, kind = 'park-flush') {

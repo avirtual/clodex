@@ -862,7 +862,7 @@ const { extractFileTouches, noteFileTouches, vetFileIntent } = require('./file-t
 const { createSubagentStore, noteSubagentTurn, feedSince } = require('./subagent-ring');
 const { classifyNotification } = require('./attention');
 const { InjectQueue, isInjectInFlight, canFireCompact } = require('./inject-queue');
-const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, parkedTexts, parkIdInUse, claimParkedById, claimParkedByKey } = require('./pending-store');
+const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, parkIdInUse, claimParkedById, claimParkedByKey } = require('./pending-store');
 const { createTeamDelete } = require('./team-delete');
 const { createTeamManifest } = require('./team-manifest');
 const {
@@ -1251,6 +1251,7 @@ const SessionManager = createSessionManager({
     draftChunkSignal,
     drainPending,
     countPending,
+    oldestActiveParkTs,
     peekPending,
     parkedTexts,
     enqueueOutbox,

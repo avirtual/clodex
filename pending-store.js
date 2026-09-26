@@ -180,6 +180,19 @@ function peekPending(root, name, { max = 5, snipLen = 60 } = {}) {
   return out;
 }
 
+function oldestActiveParkTs(root, name) {
+  let files;
+  try { files = fs.readdirSync(agentDir(root, name)); } catch { return null; }
+  let oldest = null;
+  for (const f of files) {
+    if (!f.endsWith('.json') || f.startsWith('.') || f.endsWith('.passive.json')) continue;
+    const ts = Number(f.split('.')[0]);
+    const at = Number.isFinite(ts) ? ts : 0;
+    if (oldest === null || at < oldest) oldest = at;
+  }
+  return oldest;
+}
+
 function parkedTexts(root, name) {
   let files;
   try { files = fs.readdirSync(agentDir(root, name)); } catch { return []; }
@@ -299,4 +312,4 @@ function claimParkedByKey(root, name, key) {
   return { ids, claimed };
 }
 
-module.exports = { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir };
+module.exports = { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir };

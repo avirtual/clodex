@@ -1672,19 +1672,21 @@ test('t1246: a unit typed into a seat already working opens no turn-start window
 
 test('t1246: a park after a hook drain gets its own park-cap deadline, not the drained park\'s', async () => {
   const ps = require('../pending-store');
-  const app = boot({ deps: { INJECT_QUIET_MAXWAIT: 300_000, countPending: ps.countPending } });
+  const app = boot({ deps: { INJECT_QUIET_MAXWAIT: 300_000, countPending: ps.countPending, oldestActiveParkTs: ps.oldestActiveParkTs } });
   try {
     await app.spawn('target');
     const target = app.m.sessions.get('target');
     target.activityState = 'thinking';
     const flushes = [];
     app.m._flushParkedNow = (t, tag, kind) => { flushes.push({ kind, parked: app.parked('target', /PARK/) }); return { ok: true, count: 0 }; };
-    mock.timers.enable({ apis: ['setTimeout'] });
+    mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
     try {
       assert.ok(app.m._maybeParkDelivery(target, 'FIRST PARK'), 'ENTER: the first delivery parks at a busy seat');
       mock.timers.tick(100_000);
       ps.drainPending(app.pendingDir, 'target', 'hook.test');
       assert.strictEqual(app.parked('target', /PARK/), 0, 'ENTER: the hook drain emptied the park');
+      app.m._deliverPassive('target', 'team', 'ROSTER DELTA', 'dm');
+      assert.strictEqual(app.parked('target', /ROSTER DELTA/), 1, 'ENTER: an uncapped passive entry sits in the mailbox');
       assert.ok(app.m._maybeParkDelivery(target, 'SECOND PARK'), 'ENTER: the second delivery parks');
       mock.timers.tick(200_001);
       assert.deepStrictEqual(flushes, [],
