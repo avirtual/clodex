@@ -1870,37 +1870,46 @@ function createTicketMethods(deps, shared) {
         }
       }
       if (!candidates.length) return [];
-      await this._awaitBootLeads([...new Set(candidates.map((c) => c.team.lead).filter(Boolean))]);
-      const queued = [];
-      for (const { team, id } of candidates) {
-        const t = this._loadTicket(team, id);
-        if (!isWaiting(t)) continue;
-        const branch = t.worktree.branch;
-        const target = await gitWorktree.mergeTargetFor(team).catch(() => null);
-        if (target) {
-          const m = await gitWorktree.isMerged(team.root, branch, target).catch(() => null);
-          if (m && m.ok && m.merged) {
-            this._stampMergeWaiting(team, t.id, null);
-            log.info('ticket', `boot: ${t.id} is stamped merge waiting (suite-in-flight) but ${branch} is already on ${target} — not requeued, stamp cleared`);
-            continue;
-          }
-        }
-        const landedOn = { verdict: t.verdict, mustFix: t.mustFix == null ? null : t.mustFix, reviewRound: Number(t.reviewRound) || 1, reworkRound: Number(t.reworkRound) || 0 };
-        let verdictText = null;
-        const round = Array.isArray(t.rounds) ? t.rounds.find((r) => r && Number(r.round) === landedOn.reviewRound) : null;
-        if (round && round.verdictFile) {
-          const dest = this._ticketDiffDest(team, t);
-          if (dest.ok) {
-            try { verdictText = fs.readFileSync(path.join(dest.dir, round.verdictFile), 'utf8'); } catch { verdictText = null; }
-          }
-        }
-        const from = verdictText == null ? 'rebuilt from the record\'s verdict and mustFix' : `read from ${round.verdictFile}`;
-        if (verdictText == null) verdictText = `VERDICT: ${t.verdict}\n\nMUST-FIX\n${t.mustFix || '(none)'}\n`;
-        log.info('ticket', `boot: requeued the auto-merge for ${t.id} (${team.name}) — it was deferred behind a running suite before the relaunch dropped its retry timer; attempt 0, the wait cap restarts now, verdict ${from}`);
-        this._queueAutoMerge(team, t.id, landedOn, verdictText, { attempt: 0, since: this._mergeRetryNow() });
-        queued.push(t.id);
+      const byTeam = new Map();
+      for (const c of candidates) {
+        if (!byTeam.has(c.team)) byTeam.set(c.team, []);
+        byTeam.get(c.team).push(c.id);
       }
+      const queued = [];
+      await Promise.all([...byTeam].map(async ([team, ids]) => {
+        await this._awaitBootLeads(team.lead ? [team.lead] : []);
+        for (const id of ids) await this._requeueOneWaiting(team, id, isWaiting, queued);
+      }));
       return queued;
+    },
+
+    async _requeueOneWaiting(team, id, isWaiting, queued) {
+      const t = this._loadTicket(team, id);
+      if (!isWaiting(t)) return;
+      const branch = t.worktree.branch;
+      const target = await gitWorktree.mergeTargetFor(team).catch(() => null);
+      if (target) {
+        const m = await gitWorktree.isMerged(team.root, branch, target).catch(() => null);
+        if (m && m.ok && m.merged) {
+          this._stampMergeWaiting(team, t.id, null);
+          log.info('ticket', `boot: ${t.id} is stamped merge waiting (suite-in-flight) but ${branch} is already on ${target} — not requeued, stamp cleared`);
+          return;
+        }
+      }
+      const landedOn = { verdict: t.verdict, mustFix: t.mustFix == null ? null : t.mustFix, reviewRound: Number(t.reviewRound) || 1, reworkRound: Number(t.reworkRound) || 0 };
+      let verdictText = null;
+      const round = Array.isArray(t.rounds) ? t.rounds.find((r) => r && Number(r.round) === landedOn.reviewRound) : null;
+      if (round && round.verdictFile) {
+        const dest = this._ticketDiffDest(team, t);
+        if (dest.ok) {
+          try { verdictText = fs.readFileSync(path.join(dest.dir, round.verdictFile), 'utf8'); } catch { verdictText = null; }
+        }
+      }
+      const from = verdictText == null ? 'rebuilt from the record\'s verdict and mustFix' : `read from ${round.verdictFile}`;
+      if (verdictText == null) verdictText = `VERDICT: ${t.verdict}\n\nMUST-FIX\n${t.mustFix || '(none)'}\n`;
+      log.info('ticket', `boot: requeued the auto-merge for ${t.id} (${team.name}) — it was deferred behind a running suite before the relaunch dropped its retry timer; attempt 0, the wait cap restarts now, verdict ${from}`);
+      this._queueAutoMerge(team, t.id, landedOn, verdictText, { attempt: 0, since: this._mergeRetryNow() });
+      queued.push(t.id);
     },
 
     // Seams so a test can replace them without a real timer and without real
@@ -1948,8 +1957,9 @@ function createTicketMethods(deps, shared) {
         const tickets = ticketsStore.load(team.root);
         const rec = tickets.find((t) => t.id === ticketId);
         if (!rec) return;
-        if (!step) { if (!('mergeError' in rec)) return; delete rec.mergeError; }
+        if (!step) { if (!('mergeError' in rec) && !('escalationUndelivered' in rec)) return; delete rec.mergeError; }
         else rec.mergeError = step;
+        delete rec.escalationUndelivered;
         rec.lastActivityAt = Date.now();
         ticketsStore.save(team.root, tickets);
       } catch (e) {
@@ -8178,11 +8188,10 @@ function createTicketMethods(deps, shared) {
         } else {
           const why = (r && (r.error || r.held)) || 'unknown delivery failure';
           // log.error, not info: this is the arm where a human must eventually
-          // look, and the ticket is deliberately left marked in-flight so the
-          // stall sweep keeps it visible until the lead can be reached.
-          const parked = /^no such agent/.test(String(why)) && this._stampEscalationUndelivered(team, ticketId, step);
+          // look.
+          const parked = this._stampEscalationUndelivered(team, ticketId, step, body);
           log.error('ticket', parked
-            ? `ticket ${ticketId} escalation at ${step} did NOT reach ${team.lead} (${why}) — stamped escalationUndelivered so the stall sweep re-surfaces its mergeError once ${team.lead} is live`
+            ? `ticket ${ticketId} escalation at ${step} did NOT reach ${team.lead} (${why}) — stamped escalationUndelivered so the stall sweep re-surfaces it once ${team.lead} is reachable`
             : `ticket ${ticketId} escalation at ${step} did NOT reach ${team.lead} (${why}) — loopStep kept so the watchdog re-surfaces it`);
         }
         this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} escalated: ${step}` });
@@ -10121,12 +10130,12 @@ function createTicketMethods(deps, shared) {
       return worst;
     },
 
-    _stampEscalationUndelivered(team, ticketId, step) {
+    _stampEscalationUndelivered(team, ticketId, step, body) {
       try {
         const tickets = ticketsStore.load(team.root);
         const rec = tickets.find((t) => t.id === ticketId);
         if (!rec || !rec.mergeError) return false;
-        rec.escalationUndelivered = step;
+        rec.escalationUndelivered = { step, body };
         ticketsStore.save(team.root, tickets);
         return true;
       } catch (e) {
@@ -10137,10 +10146,12 @@ function createTicketMethods(deps, shared) {
 
     _sweepUndeliveredMergeErrors(team, tickets) {
       for (const t of tickets) {
-        if (!t.mergeError || !t.escalationUndelivered) continue;
+        const u = t.escalationUndelivered;
+        if (!t.mergeError || !u || typeof u.body !== 'string') continue;
+        if (t.state !== 'done' || t.closedOut) continue;
         const tid = t.id;
-        const step = t.escalationUndelivered;
-        const body = `[ticket ${tid} ESCALATED] the loop stopped at: ${step} — this escalation could not be delivered when it fired (no live seat for ${team.lead}). Nothing was merged; the ticket is stamped mergeError: ${t.mergeError}.`;
+        const step = u.step;
+        const body = `${u.body}\n\n(re-sent by the stall sweep: this escalation did not reach ${team.lead} when it fired)`;
         const r = this._gatedDeliver(team.lead, 'ticket-watchdog', body, true, `[ticket ${tid} ESCALATED]`);
         if (!(r && (r.queued || r.parked))) continue;
         try {

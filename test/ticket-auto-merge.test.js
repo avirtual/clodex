@@ -2407,31 +2407,76 @@ test('t1238: with no lead seat ever restored the boot requeue still queues the m
   assert.ok(f.logs.some((l) => /waited 300s and lead seat\(s\) lead are still not live — requeuing anyway/.test(l.msg)));
 });
 
-test('t1238: an escalation that finds no lead seat is stamped, and the stall sweep re-surfaces it once the lead is live', async () => {
+test('t1238: a merge escalation that finds no lead seat is stamped, and the stall sweep re-sends it verbatim once the lead is reachable', async () => {
   const repo = mkRepo();
-  const f = mkMerge({ repo, ticketOver: { ...WAITING, mergeWaiting: undefined } });
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver: { loopStep: undefined } });
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'base.txt'), 'someone was editing\n');
   const realDeliver = f.m._gatedDeliver;
-  f.m._gatedDeliver = () => ({ error: 'no such agent "lead"' });
-  f.m._stampMergeError(f.team, 't1', 'conflict');
-  f.m._escalateTicket(f.team, 't1', 'merge: conflict', 'CONFLICT (content): work.txt', 'nothing');
+  const dropped = [];
+  f.m._gatedDeliver = (target, sender, body) => { dropped.push(body); return { error: 'no such agent "lead"' }; };
 
-  assert.strictEqual(f.one().escalationUndelivered, 'merge: conflict', 'the undelivered escalation is on the board');
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.strictEqual(dropped.length, 1, 'ENTER: the clean-tree escalation fired into no seat');
+  const u = f.one().escalationUndelivered;
+  assert.strictEqual(u && u.step, 'merge: clean-tree', 'the undelivered escalation is on the board');
+  assert.strictEqual(u.body, dropped[0], 'with the body it could not deliver');
   assert.ok(f.logs.some((l) => /stamped escalationUndelivered so the stall sweep re-surfaces/.test(l.msg)));
   assert.ok(!f.logs.some((l) => /t1 escalation .* loopStep kept/.test(l.msg)), 'not the loopStep line, which is false for a merge');
 
   await f.m._sweepTeamTickets(f.team, Date.now());
-  assert.strictEqual(f.one().escalationUndelivered, 'merge: conflict', 'a sweep that still cannot reach the lead keeps the stamp');
+  assert.ok(f.one().escalationUndelivered, 'a sweep that still cannot reach the lead keeps the stamp');
 
   f.m._gatedDeliver = realDeliver;
   await f.m._sweepTeamTickets(f.team, Date.now());
   const esc = f.esc();
   assert.strictEqual(esc.length, 1, 'the sweep delivered the escalation');
   assert.strictEqual(esc[0].target, 'lead');
-  assert.match(esc[0].body, /merge: conflict/);
+  assert.ok(esc[0].body.startsWith(dropped[0]), 'the original body, EVIDENCE and ALREADY TRIED included');
+  assert.match(esc[0].body, /did not reach lead when it fired/);
   assert.ok(!('escalationUndelivered' in f.one()), 'and cleared the stamp');
 
   await f.m._sweepTeamTickets(f.team, Date.now());
   assert.strictEqual(f.esc().length, 1, 'once');
+});
+
+test('t1238: a re-surfaced revert-blocked escalation keeps the revert command and claims nothing about the trunk', async () => {
+  const repo = mkRepo();
+  const f = mkMerge({ repo, ticketOver: { loopStep: undefined } });
+  const realDeliver = f.m._gatedDeliver;
+  f.m._gatedDeliver = () => ({ error: 'no such agent "lead"' });
+  f.m._stampMergeError(f.team, 't1', 'revert-blocked');
+  f.m._escalateTicket(f.team, 't1', 'merge: revert-blocked', 'master carries the red merge; undo with: git revert -m 1 abc1234', 'nothing');
+  f.m._gatedDeliver = realDeliver;
+
+  await f.m._sweepTeamTickets(f.team, Date.now());
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: the sweep re-surfaced it');
+  assert.match(esc[0].body, /git revert -m 1 abc1234/);
+  assert.ok(!/Nothing was merged/.test(esc[0].body), 'the trunk may be carrying the merge');
+});
+
+test('t1238: a cleared mergeError or a closed-out row drops the undelivered escalation', async () => {
+  const repo = mkRepo();
+  const f = mkMerge({ repo, ticketOver: { loopStep: undefined } });
+  const realDeliver = f.m._gatedDeliver;
+  f.m._gatedDeliver = () => ({ error: 'no such agent "lead"' });
+  f.m._stampMergeError(f.team, 't1', 'conflict');
+  f.m._escalateTicket(f.team, 't1', 'merge: conflict', 'CONFLICT', 'nothing');
+  assert.ok(f.one().escalationUndelivered, 'ENTER: stamped');
+  f.m._stampMergeError(f.team, 't1', null);
+  assert.ok(!('escalationUndelivered' in f.one()), 'the green path clears it with the mergeError');
+
+  f.m._stampMergeError(f.team, 't1', 'conflict');
+  f.m._escalateTicket(f.team, 't1', 'merge: conflict', 'CONFLICT', 'nothing');
+  const rows = f.tstore.load(f.team.root);
+  rows[0].closedOut = true;
+  f.tstore.save(f.team.root, rows);
+  f.m._gatedDeliver = realDeliver;
+  await f.m._sweepTeamTickets(f.team, Date.now());
+  assert.deepStrictEqual(f.esc(), [], 'a closed-out row is not re-surfaced');
 });
 
 test('t1238: a reject landing between the top gate and the defer arm leaves no WAITING stamp', async () => {
