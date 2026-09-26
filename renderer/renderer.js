@@ -2041,10 +2041,11 @@ function createStreamSeatPane(name, wrapperEl) {
       composer.classList.toggle('voice-recording', !!on);
       applyPlaceholder();
     },
-    setTurnRunning(state, since) {
-      turnRunning = state === 'thinking';
+    setTurnRunning(activity, since) {
+      turnRunning = activity === 'thinking' || activity === 'attention';
       applyPlaceholder();
-      transcriptRowsFor(document, paneEl, rowsCtx).setWorking({ state, since });
+      transcriptRowsFor(document, paneEl, rowsCtx).setWorking({ state: activity, since });
+      if (follow) paneEl.scrollTop = paneEl.scrollHeight;
     },
     dispose() {
       disposed = true;
@@ -2069,7 +2070,7 @@ function createTerminal(name, peer = null) {
     terminalContainer.appendChild(wrapperEl);
     const stream = createStreamSeatPane(name, wrapperEl);
     const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-    if (row && row.dataset.activity) stream.setTurnRunning(row.dataset.activity, Number(row.dataset.thinkingSince) || null);
+    if (row && (row.dataset.attention || row.dataset.activity)) stream.setTurnRunning(seatActivity(row), Number(row.dataset.thinkingSince) || null);
     sessions.set(name, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, peer: null, stream, liveSplit: null });
     updateWindowTitle();
     return { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, echoRewrite: (chunk) => chunk };
@@ -2332,9 +2333,10 @@ function createTerminal(name, peer = null) {
     onChange: () => { if (composerKit) composerKit.fit(); },
   });
   const activityRow = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-  if (activityRow && activityRow.dataset.activity) {
-    if (liveSplit) liveSplit.setTurnRunning(activityRow.dataset.activity, Number(activityRow.dataset.thinkingSince) || null);
-    if (composerEl && activityRow.dataset.activity === 'thinking') composerEl.placeholder = COMPOSER_RUNNING_PLACEHOLDER;
+  if (activityRow && (activityRow.dataset.attention || activityRow.dataset.activity)) {
+    const activity = seatActivity(activityRow);
+    if (liveSplit) liveSplit.setTurnRunning(activity, Number(activityRow.dataset.thinkingSince) || null);
+    if (composerEl && activity !== 'idle') composerEl.placeholder = COMPOSER_RUNNING_PLACEHOLDER;
   }
   sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger, menuMirror, syncMenuMirror });
   updateWindowTitle();
@@ -4100,13 +4102,22 @@ window.api.onSessionExit((name, code, meta) => {
 
 window.api.onSelectionSent((name) => drawerHost.onSelectionSent(name));
 
+function seatActivity(row) {
+  return row.dataset.attention ? 'attention' : row.dataset.activity || 'idle';
+}
+
+function forwardSeatActivity(seat, activity, since) {
+  if (!seat) return;
+  if (seat.stream) seat.stream.setTurnRunning(activity, since);
+  if (seat.liveSplit) seat.liveSplit.setTurnRunning(activity, since);
+  if (seat.composerEl) seat.composerEl.placeholder = activity === 'thinking' || activity === 'attention' ? COMPOSER_RUNNING_PLACEHOLDER : COMPOSER_PLACEHOLDER;
+}
+
 window.api.onSessionActivity((name, state) => {
   const seat = sessions.get(name);
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   const since = state !== 'thinking' ? null : el && el.dataset.activity === 'thinking' && el.dataset.thinkingSince ? Number(el.dataset.thinkingSince) : Date.now();
-  if (seat && seat.stream) seat.stream.setTurnRunning(state, since);
-  if (seat && seat.liveSplit) seat.liveSplit.setTurnRunning(state, since);
-  if (seat && seat.composerEl) seat.composerEl.placeholder = state === 'thinking' ? COMPOSER_RUNNING_PLACEHOLDER : COMPOSER_PLACEHOLDER;
+  forwardSeatActivity(seat, el && el.dataset.attention ? 'attention' : state, since);
   if (!el) return;
   // Thinking-duration stamp: the amber dot alone makes a 3s turn and a wedged
   // agent look identical. Stamp the ENTRY into thinking (not every repeat
@@ -4131,6 +4142,8 @@ window.api.onSessionCompacting((name, c) => {
 
 window.api.onSessionAttention((name, attn) => {
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  const activity = attn ? 'attention' : (el && el.dataset.activity) || 'idle';
+  forwardSeatActivity(sessions.get(name), activity, activity === 'thinking' ? Number(el.dataset.thinkingSince) || Date.now() : null);
   if (!el) return;
   if (attn) {
     el.dataset.attention = attn.kind;

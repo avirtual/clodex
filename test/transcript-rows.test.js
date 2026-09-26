@@ -488,3 +488,10 @@ test('setWorking attention is a still "Waiting for you" row with no pulse and no
   assert.strictEqual(m.working(), undefined);
   assert.deepStrictEqual(m.clock.cleared, [1, 2]);
 });
+
+test('a tool left pending in an earlier turn does not label the working row of a later turn', () => {
+  const m = mountWorking();
+  m.rows.render([prompt, pending, { ...prompt, id: 'p2', turn: 2 }]);
+  m.rows.setWorking({ state: 'thinking', since: 10000 });
+  assert.strictEqual(m.working().childNodes[1].textContent, 'Working');
+});

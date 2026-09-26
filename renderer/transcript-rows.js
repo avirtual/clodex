@@ -415,9 +415,11 @@ function elapsedText(ms) {
 }
 
 function pendingToolName(records) {
+  const last = records[records.length - 1];
   for (let i = records.length - 1; i >= 0; i--) {
     const r = records[i];
-    if (r && r.kind === 'tool' && r.state === 'pending') return r.name || null;
+    if (!r || r.turn !== last.turn) break;
+    if (r.kind === 'tool' && r.state === 'pending') return r.name || null;
   }
   return null;
 }

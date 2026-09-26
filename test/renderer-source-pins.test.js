@@ -87,12 +87,17 @@ test('t1199: Escape in the stream composer interrupts the seat before any other 
   assert.ok(SRC.includes("const COMPOSER_RUNNING_PLACEHOLDER = 'Message — Enter sends, Esc interrupts the turn';"));
 });
 
-test('the activity feed forwards the turn state and its start to both the stream seat and the pty seat\'s live split, and sets the pty composer placeholder', () => {
-  const handler = SRC.match(/window\.api\.onSessionActivity\(\(name, state\) => \{[\s\S]*?\n\}\);\n/);
-  assert.ok(handler, 'onSessionActivity handler found');
-  const src = handler[0];
-  assert.ok(src.includes('if (seat && seat.stream) seat.stream.setTurnRunning(state, since);'));
-  assert.ok(src.includes('if (seat && seat.liveSplit) seat.liveSplit.setTurnRunning(state, since);'));
-  assert.ok(src.includes("seat.composerEl.placeholder = state === 'thinking' ? COMPOSER_RUNNING_PLACEHOLDER : COMPOSER_PLACEHOLDER;"));
-  assert.ok(src.indexOf('setTurnRunning') < src.indexOf('if (!el) return;'), 'a seat with no sidebar row is still told');
+test('the activity and attention feeds both forward the seat state to the stream seat, the pty live split and the pty composer placeholder, attention winning', () => {
+  const fwd = SRC.match(/function forwardSeatActivity\(seat, activity, since\) \{[\s\S]*?\n\}\n/);
+  assert.ok(fwd, 'forwardSeatActivity found');
+  assert.ok(fwd[0].includes('if (seat.stream) seat.stream.setTurnRunning(activity, since);'));
+  assert.ok(fwd[0].includes('if (seat.liveSplit) seat.liveSplit.setTurnRunning(activity, since);'));
+  assert.ok(fwd[0].includes("seat.composerEl.placeholder = activity === 'thinking' || activity === 'attention' ? COMPOSER_RUNNING_PLACEHOLDER : COMPOSER_PLACEHOLDER;"));
+  const act = SRC.match(/window\.api\.onSessionActivity\(\(name, state\) => \{[\s\S]*?\n\}\);\n/)[0];
+  assert.ok(act.includes("forwardSeatActivity(seat, el && el.dataset.attention ? 'attention' : state, since);"), 'an activity event during a prompt keeps the still row');
+  assert.ok(act.indexOf('forwardSeatActivity') < act.indexOf('if (!el) return;'), 'a seat with no sidebar row is still told');
+  const attn = SRC.match(/window\.api\.onSessionAttention\(\(name, attn\) => \{[\s\S]*?\n\}\);\n/)[0];
+  assert.ok(attn.includes("const activity = attn ? 'attention' : (el && el.dataset.activity) || 'idle';"));
+  assert.ok(attn.indexOf('forwardSeatActivity(sessions.get(name), activity,') >= 0 && attn.indexOf('forwardSeatActivity') < attn.indexOf('if (!el) return;'), 'a prompt forwards attention to the seat');
+  assert.ok(SRC.includes("return row.dataset.attention ? 'attention' : row.dataset.activity || 'idle';"), 'a mount prefers attention over activity');
 });

@@ -2,9 +2,9 @@
 
 const { SPLIT_EXIT_MS, measureSplit, sheetBand, initialSplitState, reduceSplit } = require('./lib/live-split');
 const { createTranscriptRows } = require('./transcript-rows');
+const { spinnerText } = require('./lib/working-row');
 const { readMenuRows } = require('./lib/menu-rows');
 const { rowCells } = require('./lib/menu-cells');
-const { spinnerText } = require('./lib/working-row');
 
 const TRANSCRIPT_PULL_MS = 1000;
 const views = new WeakMap();
@@ -115,7 +115,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       available = !!(res && res.ok);
       if (available && res.rev !== rev) {
         rev = res.rev;
-        renderTranscript(document, paneEl, res.records, rowsCtx);
+        renderTranscript(document, paneEl, res.records, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
         stickToBottom();
         evaluate();
       } else if (available !== was) evaluate();
@@ -295,10 +295,11 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
 
   return {
     refresh() { evaluate(); layout(); },
-    setTurnRunning(state, since) {
-      turnRunning = state === 'thinking';
-      working = turnRunning || state === 'attention' ? { state, since, text: turnRunning ? (working && working.text) || 'Working' : null } : null;
+    setTurnRunning(activity, since) {
+      turnRunning = activity === 'thinking';
+      working = turnRunning || activity === 'attention' ? { state: activity, since, text: turnRunning ? (working && working.text) || 'Working' : null } : null;
       transcriptRowsFor(document, paneEl, rowsCtx).setWorking(working);
+      stickToBottom();
     },
     setRaw(on) {
       if (raw === !!on) return;
