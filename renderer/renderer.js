@@ -7012,7 +7012,7 @@ async function renderPluginsDialog() {
       });
       rowActions.appendChild(retry);
     }
-    if (p.linkedFrom && !window.__CLODEX_WEB__) {
+    if (p.linkedFrom) {
       const un = document.createElement('button');
       un.type = 'button';
       un.className = 'secondary';

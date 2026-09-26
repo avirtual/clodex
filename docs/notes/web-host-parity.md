@@ -16,7 +16,6 @@ One row per gate site, in source order. Symbols, not line numbers; `test/web-par
 | renderer/renderer.js | `webNotifier` | mention raises a browser `Notification` while the tab is unfocused | KEPT: substitute — same as the attention row |
 | renderer/renderer.js | `altChordAction` | Alt+T/W/1-9 mirror Cmd+T/W/1-9 | KEPT: inability — the browser reserves Cmd+T/W/1-9 for its own tabs |
 | renderer/renderer.js | `webNotifier` | asks for Notification permission on the first gesture | KEPT: inability — browser notifications need a permission grant, Electron's do not |
-| renderer/renderer.js | `linkedFrom` | plugins dialog hides Unregister on a linked plugin | KEPT pending FOLLOW-UP: the button's `_host` `plugins.unregister` call is in `HOST_DESKTOP_ONLY` (plugin-host-engine.js) and answers the web surface `not on this surface`; un-gating needs a security ruling to drop `plugins.unregister` from that set (it takes a plugin id, not a host path) |
 | renderer/renderer.js | `pluginsRegisterBtn` | Register Plugin… is hidden | KEPT: host refuses — `plugins.validateCandidate`/`plugins.register` are in `HOST_DESKTOP_ONLY` (they load code from a caller-named host path); the folder picker itself works on web as a typed-path dialog |
 | renderer/renderer.js | `warningText` | install warning says the code runs on the host the browser is connected to | KEPT: wording — the browser need not be on the host |
 | renderer/renderer.js | `warningText` | update warning, same wording | KEPT: wording — same as the row above |
@@ -28,8 +27,9 @@ One row per gate site, in source order. Symbols, not line numbers; `test/web-par
 | renderer/side-pane.js | `showOpen` | file tabs hide Open | KEPT: inability — a browser has no default app to open a host path with; on web `file:open` only toasts |
 | renderer/side-pane.js | `sidePaneFits` | no "widen the window" toast | KEPT: layout — the sheet row above replaces it |
 
-Counts: 21 sites audited — 19 kept with a named reason (inability, substitute, layout, wording or host refusal), 1 removed, 1 kept pending FOLLOW-UP (Unregister).
+Counts: 21 sites audited — 19 kept with a named reason (inability, substitute, layout, wording or host refusal), 2 removed.
 
 Removed (the gate is gone, so the rows above no longer carry it):
 
 - renderer/renderer.js, sandbox dialog `sbWorkdirPick` / `sbMountsAdd`: Choose… (working directory) and Add Folder… (mounts) were hidden on web. `selectDirectory` is served on web as a typed-path dialog, checked on the host, as new-session Browse already uses.
+- renderer/renderer.js, plugins dialog `linkedFrom`: Unregister was hidden on a linked plugin. `plugins.unregister` takes a plugin id, not a host path, so it left `HOST_DESKTOP_ONLY` (plugin-host-engine.js) and answers the web surface.

@@ -807,7 +807,7 @@ function createPluginHostEngine(deps) {
   };
 
   const HOST_DESKTOP_ONLY = new Set([
-    'plugins.validateCandidate', 'plugins.register', 'plugins.unregister',
+    'plugins.validateCandidate', 'plugins.register',
   ]);
 
   const api = {
