@@ -3328,9 +3328,6 @@ function createTicketMethods(deps, shared) {
       if (intent.sub === 'role-set' && !roles[name]) return { ok: false, error: `role "${name}" not found on team "${team.name}" — use role-add (${team.file})` };
       if (intent.sub === 'role-add' && roles[name]) return { ok: false, error: `role "${name}" already exists on team "${team.name}" — use role-set` };
       const current = roles[name] && typeof roles[name] === 'object' ? roles[name].template : null;
-      if (reviewerOnly && current && current !== name) {
-        return { ok: false, error: `reviewer names template "${current}" explicitly; set Effort on that template in the editor (${team.file})` };
-      }
       const stem = intent.template || current || (reviewerOnly ? DEFAULT_REVIEWER_TEMPLATE : 'clodex-team-hand');
       let base = readTeamJson({ fs, path }, team, 'templates', stem);
       if (!base) {
@@ -3338,6 +3335,11 @@ function createTicketMethods(deps, shared) {
         catch { base = null; }
       }
       if (!base) return { ok: false, error: `no template "${stem}" to derive from` };
+      const rolePrompt = roles[name] && typeof roles[name].prompt === 'string' ? roles[name].prompt : null;
+      if (reviewerOnly && current && current !== name && rolePrompt
+          && typeof base.systemPromptFile === 'string' && base.systemPromptFile && base.systemPromptFile !== rolePrompt) {
+        return { ok: false, error: `reviewer names template "${current}" explicitly; set Effort on that template in the editor (${team.file})` };
+      }
       const baseType = base.type || DEFAULT_TYPE;
       if (!adapterFor(baseType)) return { ok: false, error: `template "${stem}" names type "${base.type}" — known: ${PLATFORMS.join(', ')}` };
       const effort = resolveEffort(baseType, intent.effort);

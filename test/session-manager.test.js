@@ -10950,12 +10950,14 @@ test('t1222: role-set reviewer effort:xhigh derives templates/reviewer.json from
     pathReal.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-reviewer.json'), 'utf-8'));
   fsReal.mkdirSync(pathReal.dirname(f.tplFile('clodex-team-reviewer')), { recursive: true });
   fsReal.writeFileSync(f.tplFile('clodex-team-reviewer'), JSON.stringify(shippedReviewer));
+  const promptBefore = f.m.resolveSeatShape(f.tm.loadManifest('team'), 'reviewer', 'review', { name: 'lead', type: 'claude' }).systemPromptFile;
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'reviewer', effort: 'xhigh', body: '' });
   assert.ok(/role "reviewer" updated on team — template "reviewer" derived from clodex-team-reviewer with effort xhigh/.test(f.last()), f.last());
   assert.deepStrictEqual(f.readTpl('reviewer'), { type: 'claude', ...shippedReviewer, name: 'reviewer', effort: 'xhigh' });
   assert.strictEqual(f.tm.loadManifest('team').roles.reviewer.template, 'reviewer');
   const shape = f.m.resolveSeatShape(f.tm.loadManifest('team'), 'reviewer', 'review', { name: 'lead', type: 'claude' });
   assert.strictEqual(shape.effort, 'xhigh');
+  assert.strictEqual(shape.systemPromptFile, promptBefore, 'the stock seed names its own prompt, so repointing flips nothing');
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'reviewer', effort: 'default', body: '' });
   assert.ok(!('effort' in f.readTpl('reviewer')));
   assert.throws(() => f.tm.setRole('team', 'reviewer', { template: 'reviewer' }), /operator-owned topology/,
