@@ -186,54 +186,28 @@ test('lock: an interrupted run releases the lock via its trap', async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// The wait cap and the exec's timeoutMs are two numbers that must stay related,
-// and STRICTLY so. They shipped EQUAL (120s vs 120000ms), which is the one
-// relationship that guarantees the message never arrives: the exec's timer
-// SIGKILLs the child at the instant the script would print "another suite run is
-// already going", so the caller sees "timed out after 120000ms" and never learns
-// a second run was the cause. Three timeouts were misdiagnosed that way.
-//
-// READ FROM THE SHIPPED DEF, never restated here (t440). A copy of the ceiling
-// is correct on the day it is written and silently wrong afterwards — and the
-// direction that matters is the one that cannot be seen: a def RAISED past a
-// stale copy leaves this test passing about a number nobody ships.
 const execTimeoutMs = () => JSON.parse(fs.readFileSync(
   path.join(__dirname, '..', 'resources', 'library', 'exec', 'clodex-run-tests.json'), 'utf-8')).timeoutMs;
 
-test('lock: the script gives up waiting STRICTLY before the exec entry kills it', () => {
-  const src = fs.readFileSync(SCRIPT, 'utf-8');
-  const m = /waited" -ge (\d+)/.exec(src);
-  // ENTER: a renamed variable or reshaped condition must fail loudly here rather
-  // than skip the comparison below and leave this test asserting nothing.
-  assert.ok(m, 'the script still caps its wait with a `waited" -ge <n>` guard');
-  const capMs = Number(m[1]) * 1000;
+test('lock: the exec ceiling outlasts the wrapper lock wait plus the runner ceiling', () => {
+  const wrapperSrc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'clodex-run-tests.js'), 'utf-8');
+  const runnerSrc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'run-tests.js'), 'utf-8');
+  const wait = /const LOCK_WAIT_MS = ([^;]+);/.exec(wrapperSrc);
+  const run = /const RUN_TIMEOUT_MS = ([^;]+);/.exec(runnerSrc);
+  assert.ok(wait, 'ENTER: scripts/clodex-run-tests.js still declares LOCK_WAIT_MS with a literal expression');
+  assert.ok(run, 'ENTER: scripts/run-tests.js still declares RUN_TIMEOUT_MS with a literal expression');
+  // eslint-disable-next-line no-new-func
+  const waitMs = Function(`"use strict";return ${wait[1]};`)();
+  // eslint-disable-next-line no-new-func
+  const runMs = Function(`"use strict";return ${run[1]};`)();
+  assert.ok(Number.isFinite(waitMs) && waitMs > 0, `ENTER: LOCK_WAIT_MS did not evaluate to a duration (${waitMs})`);
+  assert.ok(Number.isFinite(runMs) && runMs > 0, `ENTER: RUN_TIMEOUT_MS did not evaluate to a duration (${runMs})`);
   const execMs = execTimeoutMs();
   assert.ok(typeof execMs === 'number' && execMs > 0,
-    `ENTER: the def must carry a real timeoutMs, got ${JSON.stringify(execMs)} — otherwise the `
-    + 'comparison below is against undefined and passes vacuously');
-  assert.ok(capMs < execMs,
-    `the script waits up to ${capMs}ms but the exec entry kills it at ${execMs}ms — `
-    + 'equal or greater means the caller gets an uninformative timeout instead of the lock message');
-});
-
-test('lock: the exec ceiling clears a WHOLE run plus a whole lock wait, with room to grow', () => {
-  // The script's own lock wait (up to 30s) is spent INSIDE the ceiling. That is how a SUCCESSFUL
-  // run lost its report: the wrapper is SIGKILLed while the suite keeps running
-  // and keeps holding the lock, and the digest, which exists only on the killed
-  // wrapper's stderr, is never delivered.
-  //
-  // So the floor asserted here is a whole run PLUS a whole lock wait, times a
-  // growth factor.
-  const MEASURED_WALL_MS = 74000;
-  const src = fs.readFileSync(SCRIPT, 'utf-8');
-  const m = /waited" -ge (\d+)/.exec(src);
-  assert.ok(m, 'ENTER: the lock wait must be readable — it is part of the budget asserted here');
-  const floor = (MEASURED_WALL_MS + Number(m[1]) * 1000) * 3;
-  assert.ok(execTimeoutMs() >= floor,
-    `the run-tests ceiling is ${execTimeoutMs()}ms but a run (${MEASURED_WALL_MS}ms) plus a full lock `
-    + `wait (${Number(m[1]) * 1000}ms) needs at least ${floor}ms to leave any growth room — a ceiling `
-    + 'this tight kills successful runs and loses their digest, which teaches hands to use the '
-    + 'UNLOCKED `node scripts/run-tests.js` instead, and two of those deadlock');
+    `ENTER: the def must carry a real timeoutMs, got ${JSON.stringify(execMs)}`);
+  assert.ok(execMs > waitMs + runMs,
+    `the run-tests exec kills its wrapper at ${execMs}ms, but a queued run may wait ${waitMs}ms for the lock `
+    + `and then run up to ${runMs}ms — the exec fires first, the suite keeps holding the lock, and the digest is lost`);
 });
 
 test('lock: the refusal names the holder and how long it has been running', () => {

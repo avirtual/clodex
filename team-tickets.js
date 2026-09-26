@@ -7232,8 +7232,11 @@ function createTicketMethods(deps, shared) {
       const all = [...String(res.stdout || '').matchAll(/TOTALS: (\d+) pass, (\d+) fail, (\d+) tests/g)];
       const totals = all.length ? all[all.length - 1] : null;
       if (!totals) {
+        const hung = String(res.stderr || '').split('\n').filter((l) => /^run-tests: TIMEOUT after .* in .+$/.test(l)).pop();
         const last = String(res.stdout || '').trim().split('\n').filter((l) => l.trim()).pop() || '(no stdout)';
-        out.error = `the runner printed no "TOTALS: <n> pass, <n> fail, <n> tests" line on stdout (exit ${res.code}) — last stdout line: ${last.slice(0, 300)}`;
+        out.error = hung
+          ? `the runner printed no "TOTALS: <n> pass, <n> fail, <n> tests" line on stdout (exit ${res.code}) — ${hung.slice(0, 300)}`
+          : `the runner printed no "TOTALS: <n> pass, <n> fail, <n> tests" line on stdout (exit ${res.code}) — last stdout line: ${last.slice(0, 300)}`;
         out.output = text;
         return out;
       }

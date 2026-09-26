@@ -6,7 +6,7 @@
   ],
   "cwd": "${TEAM_ROOT}",
   "description": "Suite digest: runs scripts/run-tests.js. Measures the TEAM ROOT unless `tree` names a worktree. scope: own = branch tests + repo-wide shape checks, no lock; full (default) = the merge gate's run.",
-  "timeoutMs": 1500000,
+  "timeoutMs": 2160000,
   "maxBytes": 1024,
   "replyStderr": true,
   "schema": {
