@@ -9,7 +9,7 @@ function mount() {
   const doc = fakeDocument();
   const pane = doc.createElement('div');
   const rows = createTranscriptRows(doc, pane, {});
-  return { pane, render: (records) => rows.render(records) };
+  return { pane, rows, render: (records) => rows.render(records) };
 }
 
 const prompt = { id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' };
@@ -18,6 +18,7 @@ const pending = { id: 't1', kind: 'tool', ts: null, turn: 1, name: 'Bash', arg: 
 const done = { ...pending, state: 'ok', sum: { exit: 0, lines: 1, interrupted: false, background: false, persisted: null, only: 'Wed Sep 24 10:42:13 2026' } };
 const bash = (sum, state = 'ok') => ({ kind: 'tool', name: 'Bash', state, sum: { exit: 0, lines: 0, interrupted: false, background: false, persisted: null, only: null, ...sum } });
 const text = (parts) => parts.map(([t]) => t).join('');
+const unbox = (n) => (/\btr-box\b/.test(n.className) ? n.childNodes.find((k) => k.className === 'tr-box-body').childNodes[0] : n);
 
 test('a changed sig replaces only its own element; the turn block and its other rows keep their nodes', () => {
   const m = mount();
@@ -123,7 +124,7 @@ test('a turn with a turn-end gets a footer of duration, tool count, errors and f
 test('an inbound delivery renders as a sender card: the badge leads the text span, then byte size and the attachment as a path link', () => {
   const m = mount();
   m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'wirescope', text: 'Message (1569 bytes) attached: @/r/msg-6.txt', attached: { path: '/r/msg-6.txt', bytes: 1569 } }]);
-  const card = m.pane.childNodes[0].childNodes[0];
+  const card = unbox(m.pane.childNodes[0].childNodes[0]);
   assert.strictEqual(card.className, 'tr-row tr-head tr-inbound');
   assert.deepStrictEqual(card.childNodes.map((n) => n.className), ['tr-head-text']);
   const text = card.childNodes[0];
@@ -136,7 +137,7 @@ test('an inbound delivery renders as a sender card: the badge leads the text spa
 test('an inbound from a system sender draws a system badge inline at the head of its text, not the wire\'s "from X" text', () => {
   const m = mount();
   m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'reminder', text: 'continue: t1 build' }]);
-  const card = m.pane.childNodes[0].childNodes[0];
+  const card = unbox(m.pane.childNodes[0].childNodes[0]);
   assert.deepStrictEqual(card.childNodes.map((n) => n.className), ['tr-head-text']);
   const badge = card.childNodes[0].childNodes[0];
   assert.strictEqual(badge.className, 'tr-sender tr-sender-system');
@@ -148,7 +149,7 @@ test('an inbound from a system sender draws a system badge inline at the head of
 test('an inbound from a seat named clodex draws a seat badge, never a system one', () => {
   const m = mount();
   m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'clodex', text: 'plan attached' }]);
-  const badge = m.pane.childNodes[0].childNodes[0].childNodes[0].childNodes[0];
+  const badge = unbox(m.pane.childNodes[0].childNodes[0]).childNodes[0].childNodes[0];
   assert.strictEqual(badge.className, 'tr-sender tr-sender-seat');
   assert.deepStrictEqual(badge.childNodes.map((n) => [n.className, n.textContent]), [['tr-sender-glyph', 'C'], ['tr-sender-name', 'clodex']]);
 });
@@ -156,7 +157,7 @@ test('an inbound from a seat named clodex draws a seat badge, never a system one
 test('an inbound from a seat draws a seat badge inline: role initial, team prefix dropped, full token in the title', () => {
   const m = mount();
   m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'clodex-hand-1138-r2', text: 'done' }]);
-  const card = m.pane.childNodes[0].childNodes[0];
+  const card = unbox(m.pane.childNodes[0].childNodes[0]);
   assert.deepStrictEqual(card.childNodes.map((n) => n.className), ['tr-head-text']);
   const badge = card.childNodes[0].childNodes[0];
   assert.strictEqual(badge.className, 'tr-sender tr-sender-seat');
@@ -167,7 +168,7 @@ test('an inbound from a seat draws a seat badge inline: role initial, team prefi
 test('a two-paragraph inbound renders the badge once, first in the text span, with the prose following in the same span', () => {
   const m = mount();
   m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'reminder', text: 'first para\n\nsecond para' }]);
-  const card = m.pane.childNodes[0].childNodes[0];
+  const card = unbox(m.pane.childNodes[0].childNodes[0]);
   assert.deepStrictEqual(card.childNodes.map((n) => n.className), ['tr-head-text']);
   const text = card.childNodes[0];
   assert.deepStrictEqual(text.childNodes.map((n) => n.className), ['tr-sender tr-sender-system', undefined, undefined, undefined, undefined]);
@@ -200,7 +201,7 @@ test('a notice row links the path in its text, and clicking it resolves the path
     openFilePeek: (...args) => calls.push(['openFilePeek', ...args]),
   };
   createTranscriptRows(doc, pane, ctx).render([{ id: 'n1', kind: 'notice', ts: null, turn: 1, level: 'info', text: '882 B of prose filed at /Users/b/.clodex/spill/w/3160.md' }]);
-  const notice = pane.childNodes[0].childNodes[0];
+  const notice = unbox(pane.childNodes[0].childNodes[0]);
   assert.strictEqual(notice.className, 'tr-row tr-notice tr-notice-info');
   assert.deepStrictEqual(notice.childNodes.map((n) => n.className), ['tr-mark', 'tr-notice-text']);
   const parts = notice.childNodes[1].childNodes;
@@ -311,7 +312,7 @@ test('a two-line body is not clamped; an exec body is monospace; a bodyless inte
 test('a runtime reply row is the verb glyph and label in an app badge, titled Clodex runtime, with no seat name', () => {
   const m = mount();
   m.render([replyRec('r1', 1, 'task', '⇄', 'task', 'ticket t1 created')]);
-  const row = m.pane.childNodes[0].childNodes[0];
+  const row = unbox(m.pane.childNodes[0].childNodes[0]);
   assert.strictEqual(row.className, 'tr-row tr-head tr-reply');
   const badge = row.childNodes[0].childNodes[0];
   assert.strictEqual(badge.className, 'tr-sender tr-sender-app');
@@ -324,13 +325,13 @@ test('a reply directly after the turn holding its card is attached with ↳; a r
   const tool = { id: 't1', kind: 'tool', ts: null, turn: 0, name: 'Bash', arg: 'x', state: 'ok', sum: { lines: 1 } };
   const m = mount();
   m.render([said('a1', 0, '[agent:task done t4] ok'), tool, replyRec('r1', 1, 'task', '⇄', 'task', 'closed')]);
-  const reply = m.pane.childNodes[1].childNodes[0];
+  const reply = unbox(m.pane.childNodes[1].childNodes[0]);
   assert.strictEqual(reply.className, 'tr-row tr-head tr-reply tr-reply-attached');
   assert.strictEqual(reply.childNodes[0].childNodes[0].textContent, '↳');
-  assert.strictEqual(reply.parentNode.parentNode, m.pane);
+  assert.strictEqual(reply.parentNode.parentNode.parentNode.parentNode, m.pane);
   const plain = { id: 'a0', kind: 'assistant', ts: null, turn: 0, text: 'no card' };
   m.render([plain, replyRec('r1', 1, 'task', '⇄', 'task', 'closed')]);
-  assert.strictEqual(m.pane.childNodes[1].childNodes[0].className, 'tr-row tr-head tr-reply');
+  assert.strictEqual(unbox(m.pane.childNodes[1].childNodes[0]).className, 'tr-row tr-head tr-reply');
 });
 
 test('attachedReplies pairs by verb within a run and attaches nothing for a verb whose counts disagree', () => {
@@ -351,13 +352,14 @@ const blocksOf = (m) => m.pane.childNodes[0].childNodes.filter((n) => /\btr-tool
 const linesOf = (block) => block.childNodes.filter((n) => /\btr-tool-line\b/.test(n.className));
 const headOf = (block) => block.childNodes.find((n) => n.className === 'tr-tool-head');
 
-test('three consecutive Bash calls fold into one block headed Bash ×3 with three lines of mark, argument and summary', () => {
+test('three consecutive Bash calls fold into one block headed Bash ×3; expanded it shows three lines of mark, argument and summary', () => {
   const m = mount();
   m.render([prompt, call('b1', 'Bash', 'ls'), call('b2', 'Bash', 'pwd'), call('b3', 'Bash', 'date')]);
   const blocks = blocksOf(m);
   assert.strictEqual(blocks.length, 1);
+  headOf(blocks[0]).listeners.click();
   assert.strictEqual(blocks[0].className, 'tr-row tr-tool-block tr-tool-many');
-  assert.strictEqual(headOf(blocks[0]).textContent, 'Bash ×3');
+  assert.strictEqual(headOf(blocks[0]).textContent, 'Bash ×3▾');
   assert.deepStrictEqual(linesOf(blocks[0]).map((l) => l.childNodes.map((n) => n.className)), [
     ['tr-mark', 'tr-tool-arg', 'tr-tool-sum'], ['tr-mark', 'tr-tool-arg', 'tr-tool-sum'], ['tr-mark', 'tr-tool-arg', 'tr-tool-sum'],
   ]);
@@ -382,12 +384,25 @@ test('a pending call joining a block keeps the block node and its dataset.id, an
   m.render([prompt, b1, b2]);
   const [block] = blocksOf(m);
   const id = block.dataset.id;
-  const [l1, l2] = linesOf(block);
+  assert.deepStrictEqual(linesOf(block).map((l) => l.childNodes[1].textContent), ['pwd']);
   m.render([prompt, b1, b2, call('b3', 'Bash', 'date', 'pending')]);
   assert.strictEqual(blocksOf(m).length, 1);
   assert.strictEqual(blocksOf(m)[0], block);
   assert.strictEqual(block.dataset.id, id);
-  assert.strictEqual(headOf(block).textContent, 'Bash ×3');
+  assert.strictEqual(headOf(block).textContent, 'Bash ×3▸');
+  assert.deepStrictEqual(linesOf(block).map((l) => l.childNodes[1].textContent), ['date']);
+});
+
+test('an expanded block keeps its earlier line nodes when a pending call joins it', () => {
+  const m = mount();
+  const b1 = call('b1', 'Bash', 'ls');
+  const b2 = call('b2', 'Bash', 'pwd');
+  m.render([prompt, b1, b2]);
+  const [block] = blocksOf(m);
+  headOf(block).listeners.click();
+  const [l1, l2] = linesOf(block);
+  m.render([prompt, b1, b2, call('b3', 'Bash', 'date', 'pending')]);
+  assert.strictEqual(blocksOf(m)[0], block);
   const lines = linesOf(block);
   assert.deepStrictEqual([lines.length, lines[0] === l1, lines[1] === l2], [3, true, true]);
 });
@@ -494,4 +509,80 @@ test('a tool left pending in an earlier turn does not label the working row of a
   m.rows.render([prompt, pending, { ...prompt, id: 'p2', turn: 2 }]);
   m.rows.setWorking({ state: 'thinking', since: 10000 });
   assert.strictEqual(m.working().childNodes[1].textContent, 'Working');
+});
+
+const boxOf = (m, id) => m.pane.childNodes[0].childNodes.find((n) => n.dataset.id === id);
+const boxHeadOf = (box) => box.childNodes.find((n) => n.className === 'tr-box-head');
+
+test('a 30-line task reply folds to a head of badge, first line and chevron; a click opens it and a rebuilt node stays open', () => {
+  const m = mount();
+  const list = Array.from({ length: 30 }, (_, i) => `t${i + 1} open hand`).join('\n');
+  const rec = replyRec('r1', 1, 'task', '⇄', 'task', `tickets on clodex:\n${list}`);
+  m.render([rec]);
+  const box = boxOf(m, 'r1');
+  assert.strictEqual(box.className, 'tr-box tr-box-folded');
+  const head = boxHeadOf(box);
+  assert.deepStrictEqual(head.childNodes.map((n) => [n.className, n.textContent]), [
+    ['tr-sender tr-sender-app', '⇄task'], ['tr-box-preview', 'tickets on clodex:'], ['tr-box-chevron', '▸'],
+  ]);
+  head.listeners.click();
+  assert.strictEqual(box.className, 'tr-box');
+  assert.strictEqual(head.childNodes[2].textContent, '▾');
+  m.render([{ ...rec, text: `${rec.text}\nt31 open hand` }]);
+  const rebuilt = boxOf(m, 'r1');
+  assert.notStrictEqual(rebuilt, box);
+  assert.strictEqual(rebuilt.className, 'tr-box');
+  assert.strictEqual(boxHeadOf(rebuilt).childNodes[2].textContent, '▾');
+});
+
+test('a one-line reply renders open, as a box body with no head and no chevron', () => {
+  const m = mount();
+  m.render([replyRec('r1', 1, 'task', '⇄', 'task', 'ticket t1 created')]);
+  const box = boxOf(m, 'r1');
+  assert.strictEqual(box.className, 'tr-box');
+  assert.deepStrictEqual(box.childNodes.map((n) => n.className), ['tr-box-body']);
+  assert.ok(!/[▸▾]/.test(m.pane.textContent));
+});
+
+test('a folded head clips a long first line to 120 characters', () => {
+  const m = mount();
+  m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'reminder', text: 'x'.repeat(300) }]);
+  const preview = boxHeadOf(boxOf(m, 'i1')).childNodes[1];
+  assert.strictEqual(preview.textContent, `${'x'.repeat(120)}…`);
+});
+
+test('a 13-call Bash block shows its header and only the last call; a click on the header shows all 13 and a re-render keeps them', () => {
+  const m = mount();
+  const calls = Array.from({ length: 13 }, (_, i) => call(`b${i + 1}`, 'Bash', `cmd${i + 1}`));
+  m.render([prompt, ...calls]);
+  const [block] = blocksOf(m);
+  assert.strictEqual(block.className, 'tr-row tr-tool-block tr-tool-many tr-tool-folded');
+  assert.strictEqual(headOf(block).textContent, 'Bash ×13▸');
+  assert.deepStrictEqual(linesOf(block).map((l) => l.childNodes[1].textContent), ['cmd13']);
+  headOf(block).listeners.click();
+  assert.strictEqual(linesOf(block).length, 13);
+  assert.strictEqual(headOf(block).textContent, 'Bash ×13▾');
+  m.render([prompt, ...calls]);
+  assert.strictEqual(linesOf(block).length, 13);
+});
+
+test('with internals off the injected rows carry tr-hidden and the operator, agent and tool rows do not; on again clears it', () => {
+  const m = mount();
+  m.render([
+    { id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' },
+    { id: 'u1', kind: 'inbound', ts: null, turn: 1, from: 'user', text: 'from the panel' },
+    { id: 'a1', kind: 'assistant', ts: null, turn: 1, text: 'on it' },
+    replyRec('r1', 1, 'task', '⇄', 'task', 'ticket t1 created'),
+    { id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'ticket-loop', text: 'ticket t1 accepted' },
+    { id: 'n1', kind: 'notice', ts: null, turn: 1, level: 'info', text: 'filed' },
+    call('t1', 'Bash', 'ls'),
+    call('t2', 'Bash', 'pwd'),
+  ]);
+  const hidden = () => m.pane.childNodes[0].childNodes.map((n) => [n.dataset.id, /\btr-hidden\b/.test(n.className)]);
+  m.rows.setInternals(false);
+  assert.deepStrictEqual(hidden(), [
+    ['p1', false], ['u1', false], ['a1', false], ['r1', true], ['i1', true], ['n1', true], ['tools:t1', false],
+  ]);
+  m.rows.setInternals(true);
+  assert.deepStrictEqual(hidden().filter(([, h]) => h), []);
 });

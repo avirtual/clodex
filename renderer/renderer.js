@@ -72,7 +72,7 @@ const { VOICE_ENGINE_NAME } = require('../voice-engine');
 const {
   DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings, spaceTriggerAction, ptyTypedSinceEnter,
 } = require('./lib/voice-submit');
-const { createLiveSplitView, renderTranscript, transcriptRowsFor, TRANSCRIPT_PULL_MS } = require('./live-split-view');
+const { createLiveSplitView, renderTranscript, transcriptRowsFor, internalsBar, TRANSCRIPT_PULL_MS } = require('./live-split-view');
 const { initBanners } = require('./banners');
 const { initThemes } = require('./themes');
 const { createEchoRewriter } = require('./lib/prompt-echo');
@@ -117,11 +117,24 @@ function markSeatIo(name, io) {
 let activeSession = null;
 let terminalWebglEnabled = false;
 let transcriptPaneEnabled = false;
+let transcriptPaneInternals = true;
+function refreshTranscriptPanes() {
+  for (const entry of sessions.values()) {
+    if (entry.liveSplit) entry.liveSplit.refresh();
+    if (entry.stream) entry.stream.setInternals(transcriptPaneInternals);
+  }
+}
+function setTranscriptPaneInternals(on) {
+  transcriptPaneInternals = !!on;
+  try { window.api.setSettings({ transcriptPaneInternals }); } catch {}
+  refreshTranscriptPanes();
+}
 const terminalWebglReady = window.api.getSettings()
   .then((s) => {
     terminalWebglEnabled = !!(s && s.terminalWebgl === true);
     transcriptPaneEnabled = !!(s && s.transcriptPane === true);
-    for (const entry of sessions.values()) if (entry.liveSplit) entry.liveSplit.refresh();
+    transcriptPaneInternals = !(s && s.transcriptPaneInternals === false);
+    refreshTranscriptPanes();
   })
   .catch(() => {});
 
@@ -1649,6 +1662,7 @@ function createStreamSeatPane(name, wrapperEl) {
   const paneEl = document.createElement('div');
   paneEl.className = 'transcript-pane transcript-pane-full';
   wrapperEl.appendChild(paneEl);
+  const internalsToggle = internalsBar(document, paneEl, transcriptPaneInternals, setTranscriptPaneInternals);
   const composer = document.createElement('textarea');
   const composerKit = attachComposer(composer, {
     onSend: () => sendComposer(),
@@ -1835,6 +1849,8 @@ function createStreamSeatPane(name, wrapperEl) {
     openExternal: (url) => window.api.openExternal(url),
     toast: showToast,
     echoPalette: currentEchoPalette,
+    lead: internalsToggle.bar,
+    internals: transcriptPaneInternals,
   };
   const pull = (force = false) => {
     if (pulling || disposed) return;
@@ -2040,6 +2056,10 @@ function createStreamSeatPane(name, wrapperEl) {
       voiceRecordingOn = !!on;
       composer.classList.toggle('voice-recording', !!on);
       applyPlaceholder();
+    },
+    setInternals(on) {
+      internalsToggle.box.checked = !!on;
+      transcriptRowsFor(document, paneEl, rowsCtx).setInternals(on);
     },
     setTurnRunning(activity, since) {
       turnRunning = activity === 'thinking' || activity === 'attention';
@@ -2346,6 +2366,8 @@ function createTerminal(name, peer = null) {
     openExternal: (url) => window.api.openExternal(url),
     toast: showToast,
     echoPalette: currentEchoPalette,
+    internals: () => transcriptPaneInternals,
+    onInternals: setTranscriptPaneInternals,
     composerEl,
     menuMirror,
     sheet: true,

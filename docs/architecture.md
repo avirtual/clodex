@@ -1281,6 +1281,10 @@ Own state + DOM, `init*(deps)`:
   An assistant record holding an intent line also carries `segments` from
   `segmentsOf`, each intent's card head computed here, main-side.
   See docs/explorations/pane-app-view.md §1 and intent-cards.md §4.
+- **transcript-internal.js** — `isInternalRow(rec)`, the one predicate for which
+  transcript records Clodex injected (non-operator inbound, reply, notice,
+  notification). Dependency-free so the renderer and the web bundle can require it;
+  re-exported by transcript-records.js.
 - **transcript-rows.js** — DOM builders per record kind and the keyed reconcile
   behind the transcript pane: turn blocks keyed by their first record, rows keyed
   by record id and replaced only when their summary changes. No innerHTML.

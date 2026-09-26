@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Transcript pane: messages Clodex injects into a seat (ticket replies, loop notices, reminders, exec results, dms from other agents) fold into one-line boxes you click to open, a run of tool calls shows only its latest call until you expand it, and an "Internals" checkbox at the top of the pane hides all of them so a recap reads as just your prompts and the agent's replies.
 - Codex and Muse terminal seats with the transcript pane: the output of inline commands such as /status, /diff and /mcp now shows in the pane as a command output row; it was painted under the message box and never seen.
 
 - Web UI: a plugin registered from a folder can be unregistered from Manage Plugins in the browser, as on the desktop; before, the Unregister button was hidden on the web.
