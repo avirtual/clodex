@@ -1126,7 +1126,7 @@ test('an escalation the lead never RECEIVED keeps the hold, so the watchdog re-s
 test('a HELD delivery that never parked also keeps the hold', async () => {
   // The second reachable failure: shouldHoldDm holds and the target cannot park
   // (a codex lead, or one _dead mid-restart), so _gatedDeliver returns {held}
-  // with no parkId — nobody was reached. A park IS durable and does count.
+  // with no parkId — nobody was reached.
   const repo = mkRepo();
   const f = mkLoop({ repo });
   f.m._gatedDeliver = (target, sender, body) => { f.gated.push({ target, sender, body }); return { held: 'busy' }; };
