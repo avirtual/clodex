@@ -284,9 +284,15 @@ const runTimeoutMs = Number(process.env.CLODEX_TEST_RUN_TIMEOUT_MS) > 0
   ? Number(process.env.CLODEX_TEST_RUN_TIMEOUT_MS)
   : RUN_TIMEOUT_MS;
 
+const PER_TEST_MS = 120000;
+const perTestMs = Number(process.env.CLODEX_TEST_PER_TEST_MS) > 0
+  ? Number(process.env.CLODEX_TEST_PER_TEST_MS)
+  : PER_TEST_MS;
+
 const runStart = Date.now();
 const run = spawnSync(process.execPath, [
   '--test',
+  `--test-timeout=${perTestMs}`,
   `--test-reporter=${reporter}`, '--test-reporter-destination=stdout',
   '--test-reporter=tap', `--test-reporter-destination=${tapFile}`,
   ...passthrough,
@@ -317,7 +323,8 @@ const counter = (name) => {
 };
 const tests = counter('tests');
 const pass = counter('pass');
-const fail = counter('fail');
+const failed = counter('fail');
+const fail = failed === null ? null : failed + (counter('cancelled') || 0);
 if (tests === null || pass === null || fail === null) {
   die('the run produced no summary — the suite did not complete');
 }
@@ -426,12 +433,14 @@ for (const line of tap.split('\n')) {
   if (dur && pending !== null) {
     points.push({ name: pending, ms: Number(dur[1]) });
     pending = null;
+    continue;
   }
+  if (/^ *failureType: *'testTimeoutFailure' *$/.test(line) && points.length) points[points.length - 1].timedOut = true;
 }
 
 const bodies = points.filter((p) => !fs.existsSync(path.resolve(ROOT, p.name)));
 const seen = new Set(bodies.map((p) => p.name));
-const offenders = bodies.filter((p) => p.ms > slowLimit && !Object.hasOwn(allow, p.name));
+const offenders = bodies.filter((p) => p.ms > slowLimit && !p.timedOut && !Object.hasOwn(allow, p.name));
 const stale = sweeping && !filters.length
   ? Object.keys(allow).filter((n) => !seen.has(n))
   : [];

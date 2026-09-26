@@ -331,3 +331,83 @@ test('timeout: a run that wedges is cut off with a TIMEOUT line naming the file 
     assert.notStrictEqual(res.status, 0);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+function runWithArgvProbe(extraEnv) {
+  const root = fs.realpathSync(mkTmpRoot('clx-t279-'));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  for (const f of ['run-tests.js', 'test-escapes.js']) {
+    fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
+  }
+  fs.writeFileSync(path.join(root, 'stub.test.js'), STUB);
+  const seen = path.join(root, 'argv.json');
+  const probe = path.join(root, 'argv-probe.js');
+  fs.writeFileSync(probe, [
+    "const cp = require('node:child_process');",
+    'const real = cp.spawnSync;',
+    'cp.spawnSync = function (cmd, args, ...rest) {',
+    "  if (cmd === process.execPath && Array.isArray(args) && args[0] === '--test') {",
+    `    require('node:fs').writeFileSync(${JSON.stringify(seen)}, JSON.stringify(args));`,
+    '  }',
+    '  return real.call(this, cmd, args, ...rest);',
+    '};',
+  ].join('\n'));
+  const env = { ...process.env, ...extraEnv };
+  delete env.NODE_TEST_CONTEXT;
+  delete env.NODE_OPTIONS;
+  if (!('CLODEX_TEST_PER_TEST_MS' in extraEnv)) delete env.CLODEX_TEST_PER_TEST_MS;
+  try {
+    const res = spawnSync(
+      process.execPath,
+      ['--require', probe, path.join(root, 'scripts', 'run-tests.js'), 'stub.test.js'],
+      { encoding: 'utf-8', cwd: root, timeout: 120000, env },
+    );
+    const out = `${res.stdout || ''}${res.stderr || ''}`;
+    assert.ok(fs.existsSync(seen), `ENTER: the probe never saw the node --test spawn:\n${out.slice(-600)}`);
+    return JSON.parse(fs.readFileSync(seen, 'utf-8'));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+
+test('per-test timeout: the node --test argv carries --test-timeout=120000 by default', () => {
+  const argv = runWithArgvProbe({});
+  assert.ok(argv.includes('--test-timeout=120000'),
+    `a hung test must fail by name inside the run, not stall it to the 20-minute ceiling: ${JSON.stringify(argv)}`);
+  assert.strictEqual(argv.filter((a) => a.startsWith('--test-timeout')).length, 1);
+});
+
+test('per-test timeout: CLODEX_TEST_PER_TEST_MS overrides the default in the argv', () => {
+  const argv = runWithArgvProbe({ CLODEX_TEST_PER_TEST_MS: '4321' });
+  assert.ok(argv.includes('--test-timeout=4321'), JSON.stringify(argv));
+  assert.ok(!argv.includes('--test-timeout=120000'), JSON.stringify(argv));
+});
+
+test('per-test timeout: a test that never finishes (its fixture releases its timer when cancelled) fails by name, counts as a fail, and is not called slow', () => {
+  const root = fs.realpathSync(mkTmpRoot('clx-t279-'));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  for (const f of ['run-tests.js', 'test-escapes.js']) {
+    fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
+  }
+  fs.writeFileSync(path.join(root, 'hang.test.js'), [
+    "const { test } = require('node:test');",
+    "test('polls a predicate that never turns true', (t) => new Promise(() => {",
+    '  const iv = setInterval(() => {}, 10);',
+    "  t.signal.addEventListener('abort', () => clearInterval(iv));",
+    '}));',
+    "test('a neighbour still runs', () => {});",
+  ].join('\n'));
+  const env = { ...process.env, CLODEX_TEST_PER_TEST_MS: '300', CLODEX_TEST_RUN_TIMEOUT_MS: '10000', CLODEX_TEST_SLOW_MS: '100' };
+  delete env.NODE_TEST_CONTEXT;
+  delete env.CLODEX_TEST_SLOW_ADVISORY;
+  try {
+    const res = spawnSync(
+      process.execPath,
+      [path.join(root, 'scripts', 'run-tests.js'), 'hang.test.js'],
+      { encoding: 'utf-8', cwd: root, timeout: 120000, env },
+    );
+    const out = `${res.stdout || ''}${res.stderr || ''}`;
+    assert.ok(!/TIMEOUT after/.test(out), `the hang reached the run ceiling instead of failing by name:\n${out.slice(-600)}`);
+    assert.match(out, /TOTALS: 1 pass, 1 fail, 2 tests/, out.slice(-600));
+    assert.match(out, /^✖ polls a predicate that never turns true \([\d.]+ms\)$/m, 'the hung test is named in the shape the failure collectors parse');
+    assert.ok(!/SLOW.*polls a predicate/.test(out), `a timed-out test is not a slow test to allowlist:\n${out.slice(-600)}`);
+    assert.notStrictEqual(res.status, 0);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
