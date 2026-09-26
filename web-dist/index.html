@@ -30560,7 +30560,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var CODEX_COMPOSER = /^›[ \u00a0]/u;
       var CODEX_PICKER_ROW = /^›[ \u00a0]\d+\.\s/u;
       var CODEX_MENU_ROW = /^(\s{2}\/\S|›[ \u00a0])/u;
-      var CODEX_STATUS_ROW = /^\s{2}Context \d+% used\b/u;
+      var CODEX_STATUS_ROW = /^\s{2}(?:Context \d+% used\b|\? for shortcuts)/u;
       var isBlank = (row) => !/\S/u.test(row || "");
       function isLabeledRuleRow(row, cols) {
         if (typeof row !== "string") return false;
@@ -30570,7 +30570,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function isCodexComposerRow(rows, i) {
         const row = rows[i];
         if (typeof row !== "string" || !CODEX_COMPOSER.test(row) || CODEX_PICKER_ROW.test(row)) return false;
-        return rows.slice(i + 1, i + 4).some((r) => typeof r === "string" && CODEX_STATUS_ROW.test(r));
+        for (const r of rows.slice(i + 1, i + 7)) {
+          if (typeof r !== "string" || CODEX_COMPOSER.test(r)) return false;
+          if (CODEX_STATUS_ROW.test(r)) return true;
+        }
+        return false;
       }
       function codexStripTop(rows, i) {
         let j = i - 1;
@@ -31495,7 +31499,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var LABEL_AT = 2;
       var PROMPT_COMPOSER = /^❯[  ]\//u;
       var CODEX_COMPOSER = /^›[  ]\//u;
-      var CODEX_STATUS_ROW = /^\s{2}Context \d+% used\b/u;
+      var CODEX_STATUS_ROW = /^\s{2}(?:Context \d+% used\b|\? for shortcuts)/u;
       var RULE = /^─{3,}/u;
       var LABELED_RULE = /^──/u;
       var ENTRY = /^(?:›|\s)\s\/\S/u;
@@ -31522,12 +31526,19 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (!isBlank(row.slice(0, descAt)) || /\s/u.test(row[descAt])) return null;
         return row.slice(descAt).trimEnd();
       }
+      function codexFooterBelow(rows, i) {
+        for (const r of rows.slice(i + 1, i + 7)) {
+          if (typeof r !== "string" || /^›/u.test(r)) return false;
+          if (CODEX_STATUS_ROW.test(r)) return true;
+        }
+        return false;
+      }
       function findComposer(rows, platform) {
         for (let i = rows.length - 1; i >= 0; i--) {
           const row = rows[i];
           if (typeof row !== "string") continue;
           if (platform === "codex") {
-            if (CODEX_COMPOSER.test(row) && rows.slice(i + 1, i + 4).some((r) => CODEX_STATUS_ROW.test(r || ""))) return i;
+            if (CODEX_COMPOSER.test(row) && codexFooterBelow(rows, i)) return i;
           } else if (platform === "claude") {
             if (PROMPT_COMPOSER.test(row) && RULE.test(rows[i - 1] || "") && RULE.test(rows[i + 1] || "")) return i;
           } else if (platform === "muse") {

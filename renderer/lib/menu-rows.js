@@ -6,7 +6,7 @@ const LABEL_AT = 2;
 
 const PROMPT_COMPOSER = /^❯[  ]\//u;
 const CODEX_COMPOSER = /^›[  ]\//u;
-const CODEX_STATUS_ROW = /^\s{2}Context \d+% used\b/u;
+const CODEX_STATUS_ROW = /^\s{2}(?:Context \d+% used\b|\? for shortcuts)/u;
 const RULE = /^─{3,}/u;
 const LABELED_RULE = /^──/u;
 const ENTRY = /^(?:›|\s)\s\/\S/u;
@@ -37,12 +37,20 @@ function continuationOf(row, descAt) {
   return row.slice(descAt).trimEnd();
 }
 
+function codexFooterBelow(rows, i) {
+  for (const r of rows.slice(i + 1, i + 7)) {
+    if (typeof r !== 'string' || /^›/u.test(r)) return false;
+    if (CODEX_STATUS_ROW.test(r)) return true;
+  }
+  return false;
+}
+
 function findComposer(rows, platform) {
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i];
     if (typeof row !== 'string') continue;
     if (platform === 'codex') {
-      if (CODEX_COMPOSER.test(row) && rows.slice(i + 1, i + 4).some((r) => CODEX_STATUS_ROW.test(r || ''))) return i;
+      if (CODEX_COMPOSER.test(row) && codexFooterBelow(rows, i)) return i;
     } else if (platform === 'claude') {
       if (PROMPT_COMPOSER.test(row) && RULE.test(rows[i - 1] || '') && RULE.test(rows[i + 1] || '')) return i;
     } else if (platform === 'muse') {

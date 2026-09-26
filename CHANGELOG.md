@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Codex terminal seats no longer flick into the sheet while the model is still loading or when the typed draft wraps to several rows.
 - Codex terminal seats with the transcript pane: pickers such as /model now show in the sheet when the conversation has history; a past prompt was being mistaken for the input row and the picker stayed hidden.
 - Sidebar: a streamed (headless) seat shows a round session chip with a thin ring, a terminal seat keeps the square one; hover the chip to read which it is.
 - The terminal sheet on agent seats now shows the part of the screen the CLI actually painted: a startup banner, an upgrade prompt or a trust dialog at the top of the screen is visible in the sheet instead of a blank bottom half.

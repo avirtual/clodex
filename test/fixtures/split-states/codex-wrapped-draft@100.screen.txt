@@ -1,0 +1,30 @@
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.1)                         │
+│                                                    │
+│ model:       GPT-6-Astra medium   /model to change │
+│ directory:   /private/tmp/t1219-scratch            │
+│ permissions: YOLO mode                             │
+╰────────────────────────────────────────────────────╯
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› the quick brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick
+  brown fox jumps over the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox
+  jumps over the lazy dog the quick brown fox jumps over
+
+  Context 0% used · GPT-6-Astra · t1219-scratch · master · 5h 94% left
+  tab to queue message

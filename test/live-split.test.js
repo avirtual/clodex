@@ -75,6 +75,8 @@ const FIXTURES = [
   ['codex-upgrade-prompt@100', 9, 'full', -1, -1, 'codex'],
   ['codex-picker-with-history@100', 12, 'full', -1, -1, 'codex'],
   ['codex-idle-with-history@100', 36, 'split', 36, 39, 'codex'],
+  ['codex-boot@100', 26, 'split', 26, 29, 'codex'],
+  ['codex-wrapped-draft@100', 26, 'split', 24, 29, 'codex'],
 ];
 
 const SCREEN_ROWS = { claude: 40, muse: 30, codex: 30 };
@@ -90,7 +92,7 @@ test('ENTER: every captured screen in the fixture dir is a table row, and every 
   const onDisk = fs.readdirSync(DIR).filter((f) => f.endsWith('.screen.txt')).map((f) => f.replace('.screen.txt', '')).sort();
   const inTable = FIXTURES.map((r) => r[0]).sort();
   assert.deepStrictEqual(onDisk, inTable);
-  assert.strictEqual(FIXTURES.length, 63);
+  assert.strictEqual(FIXTURES.length, 65);
   for (const [name, , , , , platform = 'claude'] of FIXTURES) {
     const { rows, cols } = load(name, platform);
     assert.strictEqual(rows.length, screenRows(name, platform), name);
@@ -306,7 +308,9 @@ test('a Codex picker opened over a history prompt row is full and busy, and its 
 
 for (const [name, rows, want] of [
   ['a composer with its Context footer two rows down', ['› Ask Codex', '', '  Context 0% used · GPT', '  ? for shortcuts'], 0],
-  ['a history prompt row with no footer within three rows', ['› reply pong', '', '', '', '  Context 0% used', '  Select Model'], -1],
+  ['a history prompt row followed by six rows of reply', ['› reply pong', '', '• pong', '', '  done', '', '  more', '  Context 0% used'], -1],
+  ['a composer whose footer sits five rows down', ['› the quick', '  brown fox', '  jumps over', '  the dog', '', '  Context 0% used'], 0],
+  ['a history prompt row whose window reaches the composer footer below', ['› reply pong', '• pong', '', '› Ask Codex', '', '  Context 0% used'], 3],
   ['a picker row with the footer beneath it', ['› 1. GPT-6-Astra (current)', '  Context 0% used'], -1],
 ]) {
   test(`findAnchor on Codex: ${name}`, () => {

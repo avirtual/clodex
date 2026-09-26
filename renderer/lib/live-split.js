@@ -22,7 +22,7 @@ const LABELED_RULE = /^─+( \S.*? )?─+$/u;
 const CODEX_COMPOSER = /^›[ \u00a0]/u;
 const CODEX_PICKER_ROW = /^›[ \u00a0]\d+\.\s/u;
 const CODEX_MENU_ROW = /^(\s{2}\/\S|›[ \u00a0])/u;
-const CODEX_STATUS_ROW = /^\s{2}Context \d+% used\b/u;
+const CODEX_STATUS_ROW = /^\s{2}(?:Context \d+% used\b|\? for shortcuts)/u;
 const isBlank = (row) => !/\S/u.test(row || '');
 
 function isLabeledRuleRow(row, cols) {
@@ -34,7 +34,11 @@ function isLabeledRuleRow(row, cols) {
 function isCodexComposerRow(rows, i) {
   const row = rows[i];
   if (typeof row !== 'string' || !CODEX_COMPOSER.test(row) || CODEX_PICKER_ROW.test(row)) return false;
-  return rows.slice(i + 1, i + 4).some((r) => typeof r === 'string' && CODEX_STATUS_ROW.test(r));
+  for (const r of rows.slice(i + 1, i + 7)) {
+    if (typeof r !== 'string' || CODEX_COMPOSER.test(r)) return false;
+    if (CODEX_STATUS_ROW.test(r)) return true;
+  }
+  return false;
 }
 
 function codexStripTop(rows, i) {
