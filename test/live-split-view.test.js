@@ -342,6 +342,29 @@ test('a seat with no platform getter measures as claude, so a codex composer sta
   } finally { m.view.dispose(); m.restore(); }
 });
 
+test('a running turn mirrors the CLI spinner above the anchor into the working row, and idle removes it', async () => {
+  let t = 5000;
+  const m = mountView({ now: () => t });
+  try {
+    m.terminal.buffer.active.cursorY = 2;
+    m.show(['✻ Percolating… (7s · thinking)', RULE_ROW, '❯ ', '']);
+    m.view.setTurnRunning('thinking', 1000);
+    const row = () => m.pane.childNodes.find((n) => String(n.className).includes('tr-working'));
+    assert.strictEqual(row().childNodes[1].textContent, 'Working');
+    m.write();
+    await settle();
+    t += 250;
+    m.write();
+    assert.strictEqual(m.view.state().mode, 'split');
+    assert.strictEqual(row().childNodes[1].textContent, 'Percolating… · thinking');
+    assert.strictEqual(row().childNodes[2].textContent, '4s');
+    m.view.setTurnRunning('attention', null);
+    assert.strictEqual(row().childNodes[1].textContent, 'Waiting for you');
+    m.view.setTurnRunning('idle', null);
+    assert.strictEqual(row(), undefined);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
 async function mountSplit(opts, extra = {}) {
   let t = 5000;
   const changes = [];
@@ -997,25 +1020,3 @@ test('ENTER: the web UI differs from the desktop only where the browser cannot, 
   assert.doesNotMatch(gate[1], /__CLODEX_WEB__/u);
 });
 
-test('a running turn mirrors the CLI spinner above the anchor into the working row, and idle removes it', async () => {
-  let t = 5000;
-  const m = mountView({ now: () => t });
-  try {
-    m.terminal.buffer.active.cursorY = 2;
-    m.show(['✻ Percolating… (7s · thinking)', RULE_ROW, '❯ ', '']);
-    m.view.setTurnRunning('thinking', 1000);
-    const row = () => m.pane.childNodes.find((n) => String(n.className).includes('tr-working'));
-    assert.strictEqual(row().childNodes[1].textContent, 'Working');
-    m.write();
-    await settle();
-    t += 250;
-    m.write();
-    assert.strictEqual(m.view.state().mode, 'split');
-    assert.strictEqual(row().childNodes[1].textContent, 'Percolating… · thinking');
-    assert.strictEqual(row().childNodes[2].textContent, '4s');
-    m.view.setTurnRunning('attention', null);
-    assert.strictEqual(row().childNodes[1].textContent, 'Waiting for you');
-    m.view.setTurnRunning('idle', null);
-    assert.strictEqual(row(), undefined);
-  } finally { m.view.dispose(); m.restore(); }
-});
