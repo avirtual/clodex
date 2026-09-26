@@ -36,7 +36,7 @@ function createTranscriptSpikeReader({ linkPathFor, watch = fs.watch, onChange =
     let c = cache.get(name);
     if (c && c.path !== real) { drop(name); c = null; }
     if (!c) {
-      c = { path: real, rev: 0, dirty: true, records: [], watcher: null, changeTimer: null };
+      c = { path: real, rev: 0, dirty: true, text: null, records: [], watcher: null, changeTimer: null };
       try {
         c.watcher = watch(real, () => changed(name, c));
         if (c.watcher && typeof c.watcher.on === 'function') c.watcher.on('error', () => changed(name, c));
@@ -46,9 +46,12 @@ function createTranscriptSpikeReader({ linkPathFor, watch = fs.watch, onChange =
     if (c.dirty || !c.watcher) {
       let text;
       try { text = fs.readFileSync(real, 'utf8'); } catch { drop(name); return { ok: false, reason: 'unreadable' }; }
-      c.records = parseTranscript(text);
       c.dirty = false;
-      c.rev += 1;
+      if (text !== c.text) {
+        c.text = text;
+        c.records = parseTranscript(text);
+        c.rev += 1;
+      }
     }
     return { ok: true, rev: c.rev, records: c.records };
   }

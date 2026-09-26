@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Transcript pane: the once-a-second refresh no longer re-downloads the whole transcript when nothing changed, on the desktop and in the web UI.
 - Transcript pane: an image pasted into a prompt shows as a small inline thumbnail (click to see it full width) instead of the bare [Image #n] marker; images over 1 MB show a size chip.
 - Ticket loop: rejecting an ACCEPT verdict now cancels the merge that verdict had queued and sends the rework through a second review, instead of merging the pre-rework commit.
 - Transcript pane: a Tools checkbox beside Internals hides the tool-call blocks, so a recap reads as prompts and replies only; the choice is remembered across restarts like Internals.

@@ -102,3 +102,19 @@ test('drop cancels a pending onChange', () => {
   r.flush();
   assert.deepStrictEqual(r.changes, []);
 });
+
+test('a reader with no watcher re-reads every pull but keeps its rev until the bytes change', (t) => {
+  const root = mkTmpRoot('clodex-tspike-');
+  const file = path.join(root, 'a.jsonl');
+  fs.writeFileSync(file, `${LINES[0]}\n`);
+  const watch = () => { throw new Error('no watch'); };
+  const reader = createTranscriptSpikeReader({ linkPathFor: () => file, watch });
+  t.after(() => reader.dispose());
+  assert.strictEqual(reader.pull('s').rev, 1);
+  assert.strictEqual(reader.pull('s').rev, 1);
+  fs.appendFileSync(file, `${LINES[1]}\n`);
+  const next = reader.pull('s');
+  assert.strictEqual(next.rev, 2);
+  assert.deepStrictEqual(texts(next.records), ['run the tests', 'Running them now.', 'Bash(npm test)']);
+  assert.strictEqual(reader.pull('s').rev, 2);
+});

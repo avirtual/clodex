@@ -173,3 +173,44 @@ test('transcript:pull on a seat that is not an agent type is the bare not-agent 
   const { res } = seatPull({ name: 'sh', agentType: 'shell', io: 'pty', _dead: false });
   assert.deepStrictEqual(res, { ok: false, reason: 'not-agent' });
 });
+
+function revPull(box) {
+  const handlers = new Map();
+  const reg = mkTmpRoot('ipc-tpull-');
+  const link = pathFor(reg, 'rv', 'transcript');
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  fs.writeFileSync(link, MUSE_TURN);
+  const seat = { name: 'rv', agentType: 'muse', io: 'stream', _dead: false };
+  registerIpcHandlers({
+    handle: (ch, fn) => handlers.set(ch, fn),
+    on: (ch, fn) => handlers.set(ch, fn),
+    log: { info() {}, error() {}, warn() {}, debug() {} },
+    REGISTRY_DIR: reg,
+    manager: {
+      sessions: new Map([['rv', seat]]),
+      seatOutbox: () => box,
+      seatPermissions: () => null,
+      compactNoticesFor: () => ({ rev: 5, notices: [] }),
+      _sendToSession() {},
+    },
+  });
+  const pull = (...a) => handlers.get('transcript:pull')(null, 'rv', ...a);
+  return { pull, close: () => { seat._dead = true; pull(); } };
+}
+
+for (const [label, box, rev] of [['with an outbox', { rev: 2, items: [] }, '1:5:o2'], ['with no outbox', null, '1:5']]) {
+  test(`transcript:pull ${label}: the caller's own rev answers unchanged with no records, any other rev or none answers the records`, (t) => {
+    const { pull, close } = revPull(box);
+    t.after(close);
+    const first = pull();
+    assert.strictEqual(first.rev, rev);
+    assert.strictEqual(first.records.length, 2);
+    assert.deepStrictEqual(pull(rev), { ok: true, rev, unchanged: true });
+    const stale = pull('0:5:o2');
+    assert.strictEqual(stale.rev, rev);
+    assert.strictEqual(stale.records.length, 2);
+    assert.strictEqual('unchanged' in stale, false);
+    assert.strictEqual(pull(null).records.length, 2);
+    assert.strictEqual(pull().records.length, 2);
+  });
+}
