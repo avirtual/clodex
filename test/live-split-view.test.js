@@ -996,3 +996,151 @@ test('ENTER: the web UI differs from the desktop only where the browser cannot, 
   assert.match(gate[1], /\bpeer\b/u);
   assert.doesNotMatch(gate[1], /__CLODEX_WEB__/u);
 });
+
+const { PAINT_BLOCK_CAP, createPaintDelta, mergeByTs, blockText } = require('../renderer/lib/paint-delta');
+
+test('paint delta: the first feed is a baseline and a scrolled screen returns only the rows after the overlap', () => {
+  const d = createPaintDelta();
+  assert.deepStrictEqual(d.feed(['a', 'b', 'c']), []);
+  assert.deepStrictEqual(d.feed(['b', 'c', 'd', 'e']), ['d', 'e']);
+  assert.deepStrictEqual(d.feed(['b', 'c', 'd', 'e', '', 'f']), ['', 'f']);
+});
+
+test('paint delta: a redraw of the same screen, or a shrink of the region, returns nothing', () => {
+  const d = createPaintDelta();
+  d.feed(['a', 'b', 'c', '']);
+  assert.deepStrictEqual(d.feed(['a', 'b', 'c   ', '', '']), []);
+  assert.deepStrictEqual(d.feed(['a', 'b']), []);
+});
+
+test('paint delta: a cleared screen returns nothing, then its new rows are all new; reset makes the next feed a baseline', () => {
+  const d = createPaintDelta();
+  d.feed(['a', 'b']);
+  assert.deepStrictEqual(d.feed(['', '', '']), []);
+  assert.deepStrictEqual(d.feed(['x', '', 'y']), ['x', 'y']);
+  d.reset();
+  assert.deepStrictEqual(d.feed(['p', 'q']), []);
+});
+
+test('paint merge orders by ts, keeps file order on ties and keeps untimed file records in place', () => {
+  const f = [{ id: 'a', ts: null }, { id: 'b', ts: 10 }, { id: 'c', ts: 30 }];
+  const x = [{ id: 'x', ts: 10 }, { id: 'y', ts: 20 }, { id: 'z', ts: 40 }];
+  assert.deepStrictEqual(mergeByTs(f, x).map((r) => r.id), ['a', 'b', 'x', 'y', 'c', 'z']);
+});
+
+test(`a paint block over ${PAINT_BLOCK_CAP} rows keeps the last ${PAINT_BLOCK_CAP} behind an ellipsis`, () => {
+  const rows = Array.from({ length: PAINT_BLOCK_CAP + 5 }, (_, i) => `r${i}`);
+  const lines = blockText(rows, []).split('\n');
+  assert.deepStrictEqual([lines.length, lines[0], lines[1], lines[PAINT_BLOCK_CAP]], [PAINT_BLOCK_CAP + 1, '…', 'r5', `r${PAINT_BLOCK_CAP + 4}`]);
+});
+
+const CARD = ['╭ status', '│ model  gpt', '│ dir    /x', '│ perms  ro', '│ limit  82%', '╰────────'];
+const PAINT_ROWS = 12;
+const codexScreen = (history) => {
+  const strip = ['› Ask Codex to do anything', '', '  Context 0% used · gpt'];
+  const top = [...history, ''];
+  return [...Array(Math.max(0, PAINT_ROWS - strip.length - top.length)).fill(''), ...top, ...strip].slice(-PAINT_ROWS);
+};
+const LRULE = `── Voice input ${'─'.repeat(25)}`;
+const museScreen = (history) => [...history, ...Array(PAINT_ROWS - 4 - history.length).fill(''), LRULE, '❯ ', '─'.repeat(40), '  muse-spark · max'];
+
+async function mountPaint(platform, before, rows = PAINT_ROWS, cols = 40) {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  let t = 5000;
+  const composerEl = fakeComposer();
+  const m = mountView({ composerEl, now: () => t, platform: () => platform }, { geometry: true });
+  Object.assign(m.terminal, { rows, cols, element: fakeTermElement(rows) });
+  m.terminal.buffer.active.cursorY = before.findIndex((r) => /^[›❯]/u.test(r));
+  m.show(before);
+  m.write();
+  await settle();
+  t += 250;
+  m.write();
+  m.write();
+  const outputs = () => m.pane.childNodes.flatMap((turn) => turn.childNodes).filter((n) => /tr-output|tr-command/u.test(n.className)).map((n) => (/tr-command/u.test(n.className) ? n.childNodes[0].textContent : n.textContent));
+  const paintNext = (rows) => {
+    m.terminal.buffer.active.cursorY = rows.findIndex((r) => /^[›❯] /u.test(r) && !r.includes('/status'));
+    m.show(rows);
+    m.write();
+    mock.timers.tick(250);
+  };
+  return { ...m, composerEl, outputs, paintNext, tick: (ms) => { t += ms; }, done: () => { m.view.dispose(); m.restore(); mock.timers.reset(); } };
+}
+
+test('a codex /status card painted above the composer becomes one command-output row tagged /status, the echo dropped', async () => {
+  const m = await mountPaint('codex', codexScreen(['  banner 1', '  banner 2']));
+  try {
+    assert.deepStrictEqual([m.view.state().mode, m.view.composerVisible()], ['split', true]);
+    m.view.composerSent('/status');
+    m.paintNext(codexScreen(['  banner 2', '', '/status', '', ...CARD]));
+    assert.deepStrictEqual(m.outputs(), ['❯ /status', CARD.join('\n')]);
+  } finally { m.done(); }
+});
+
+test('a codex echo row with the › mark is dropped from the block too', async () => {
+  const m = await mountPaint('codex', codexScreen(['  banner 1']));
+  try {
+    m.view.composerSent('/status');
+    m.paintNext(codexScreen(['  banner 1', '› /status', ...CARD]));
+    assert.deepStrictEqual(m.outputs(), ['❯ /status', CARD.join('\n')]);
+  } finally { m.done(); }
+});
+
+test('a muse /status card painted above the labeled rule becomes one command-output row tagged /status', async () => {
+  const m = await mountPaint('muse', museScreen(['  Muse Code 1.4.0']));
+  try {
+    assert.deepStrictEqual([m.view.state().mode, m.view.composerVisible()], ['split', true]);
+    m.view.composerSent('/status');
+    m.paintNext(museScreen(['  Muse Code 1.4.0', '', ...CARD]));
+    assert.deepStrictEqual(m.outputs(), ['❯ /status', CARD.join('\n')]);
+  } finally { m.done(); }
+});
+
+test('a paint block with no slash command sent in the last 10s is emitted untagged', async () => {
+  const m = await mountPaint('codex', codexScreen(['  banner 1']));
+  try {
+    m.view.composerSent('/status');
+    m.tick(10001);
+    m.paintNext(codexScreen(['  banner 1', ...CARD]));
+    assert.deepStrictEqual(m.outputs(), [CARD.join('\n')]);
+  } finally { m.done(); }
+});
+
+test('rows painted while the codex turn is running are never collected', async () => {
+  const m = await mountPaint('codex', codexScreen(['  banner 1', '• Working (1s • esc to interrupt)']));
+  try {
+    m.paintNext(codexScreen(['  banner 1', ...CARD, '• Working (2s • esc to interrupt)']));
+    m.paintNext(codexScreen(['  banner 1', ...CARD, 'done']));
+    assert.deepStrictEqual(m.outputs(), []);
+  } finally { m.done(); }
+});
+
+test('a claude seat never feeds the paint delta: new rows above its anchor add no row', async () => {
+  const m = await mountPaint('claude', ['  banner', ...Array(8).fill(''), RULE_ROW + '─'.repeat(20), '❯ ', '']);
+  try {
+    assert.deepStrictEqual([m.view.state().mode, m.view.composerVisible()], ['split', true]);
+    m.view.composerSent('/status');
+    m.paintNext(['  banner', '', ...CARD, '', RULE_ROW + '─'.repeat(20), '❯ ', '']);
+    assert.deepStrictEqual(m.outputs(), []);
+  } finally { m.done(); }
+});
+
+for (const cli of ['codex', 'muse']) {
+  test(`the captured ${cli} /status screens yield the card as one tagged command-output row`, async () => {
+    const screen = (name) => fs.readFileSync(path.join(__dirname, 'fixtures', 'split-states', `${cli}-${name}@100.screen.txt`), 'utf8').split('\n').slice(0, 30);
+    const before = screen('typed-status');
+    const after = screen('after-status');
+    const m = await mountPaint(cli, before, 30, 100);
+    try {
+      assert.deepStrictEqual([m.view.state().mode, m.view.composerVisible()], ['split', true]);
+      m.view.composerSent('/status');
+      m.paintNext(after);
+      const [head, body] = m.outputs();
+      assert.strictEqual(head, '❯ /status');
+      const lines = body.split('\n');
+      assert.match(lines[0], /^[╭┌]─+[╮┐]$/u);
+      assert.ok(!lines.some((l) => l.trim() === '/status' || /Model set to|directory:/u.test(l)));
+      assert.match(lines.join('\n'), cli === 'codex' ? /Weekly limit/u : /BILLING/u);
+    } finally { m.done(); }
+  });
+}

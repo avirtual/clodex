@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Codex and Muse terminal seats with the transcript pane: the output of inline commands such as /status, /diff and /mcp now shows in the pane as a command output row; it was painted under the message box and never seen.
 
 - Web UI: the transcript pane (Preferences ▸ Appearance) now works on terminal seats in the browser too, with the same message box and terminal sheet as the desktop; it was desktop-only.
 - Seats have an effort level: set it on a template (Effort field in the editor) or per role with `[agent:team role-set <role> effort:<level>]`; the value is the CLI's own (claude low…max, codex and muse none…ultra) and `default` leaves the CLI's setting alone. Reviewers spawned by the ticket loop honour it.

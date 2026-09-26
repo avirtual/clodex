@@ -2261,6 +2261,7 @@ function createTerminal(name, peer = null) {
     const mirrored = menuMirror.on() ? menuMirror.draft(text) : [];
     const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(text);
     for (const w of [...mirrored, ...writes]) writePty(w);
+    if (liveSplit) liveSplit.composerSent(text);
   };
   const syncMenuMirror = () => {
     if (!menuMirror) return;

@@ -1,11 +1,14 @@
 'use strict';
 
-const { SPLIT_EXIT_MS, measureSplit, sheetBand, initialSplitState, reduceSplit } = require('./lib/live-split');
+const { SPLIT_SETTLE_MS, SPLIT_EXIT_MS, measureSplit, sheetBand, initialSplitState, reduceSplit } = require('./lib/live-split');
 const { createTranscriptRows } = require('./transcript-rows');
 const { readMenuRows } = require('./lib/menu-rows');
 const { rowCells } = require('./lib/menu-cells');
+const { createPaintDelta, mergeByTs, isBusyScreen, blockText } = require('./lib/paint-delta');
 
 const TRANSCRIPT_PULL_MS = 1000;
+const PAINT_TAG_MS = 10000;
+const PAINT_PLATFORMS = new Set(['codex', 'muse']);
 const views = new WeakMap();
 const NOOP = () => {};
 
@@ -80,6 +83,14 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   let sheetRows = 0;
   let sheetRange = null;
   const composerVisible = () => !!composerEl && !composerEl.hidden;
+  const delta = createPaintDelta();
+  let fileRecords = [];
+  const extraRecords = [];
+  let paintSeq = 0;
+  let paintRows = [];
+  let paintTimer = null;
+  let sent = null;
+  let tag = null;
   const bandKey = (b) => (b ? `${b.top}:${b.bottom}` : '');
 
   function stickToBottom() {
@@ -107,11 +118,66 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       available = !!(res && res.ok);
       if (available && res.rev !== rev) {
         rev = res.rev;
-        renderTranscript(document, paneEl, res.records, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
-        stickToBottom();
+        fileRecords = Array.isArray(res.records) ? res.records : [];
+        paint();
         evaluate();
       } else if (available !== was) evaluate();
     }).catch(() => { pulling = false; });
+  }
+
+  function paint() {
+    renderTranscript(document, paneEl, extraRecords.length ? mergeByTs(fileRecords, extraRecords) : fileRecords, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
+    stickToBottom();
+  }
+
+  function latestFileText() {
+    for (let i = fileRecords.length - 1; i >= 0; i--) {
+      const r = fileRecords[i];
+      if (r.kind === 'command') return [`${r.name || ''}${r.args ? ` ${r.args}` : ''}`, String(r.name || '')];
+      if (r.kind === 'prompt') return String(r.text || '').split('\n');
+    }
+    return [];
+  }
+
+  function dropPaint() {
+    clearTimeout(paintTimer);
+    paintTimer = null;
+    paintRows = [];
+  }
+
+  function closePaint() {
+    const rows = paintRows;
+    dropPaint();
+    if (disposed) return;
+    const t = now();
+    const latest = latestFileText();
+    const text = blockText(rows, [...(sent ? sent.text.split('\n') : []), ...latest]);
+    if (!text) return;
+    const n = (paintSeq += 1);
+    const head = tag && t - tag.at <= PAINT_TAG_MS ? tag.text.trim() : null;
+    tag = null;
+    const turn = `paint:${n}`;
+    if (head && !latest.includes(head)) {
+      const [name, ...args] = head.split(/\s+/u);
+      extraRecords.push({ kind: 'command', name, args: args.join(' '), ts: t, id: `paint:${n}:cmd`, turn });
+    }
+    extraRecords.push({ kind: 'command-output', text, ts: t, id: turn, turn });
+    paint();
+  }
+
+  function trackPaint(rows, measured) {
+    if (!PAINT_PLATFORMS.has(platform())) return;
+    if (isBusyScreen(rows)) {
+      delta.reset();
+      dropPaint();
+      return;
+    }
+    if (state.mode !== 'split' || !measured || measured.mode !== 'split' || !composerVisible()) return;
+    const fresh = delta.feed(rows.slice(0, Math.min(state.top, measured.top)));
+    if (!fresh.length) return;
+    paintRows.push(...fresh);
+    clearTimeout(paintTimer);
+    paintTimer = setTimeout(closePaint, SPLIT_SETTLE_MS);
   }
 
   function screenRows() {
@@ -233,6 +299,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     state = reduceSplit(state, measured, now(), undefined, raw ? 0 : undefined);
     const menuRead = readMenu(rows);
     const busy = !menuRead && !!measured && (measured.mode === 'split' || !!measured.busy);
+    if (rows && !raw) trackPaint(rows, measured);
     sheetRange = busy ? sheetRowsOf(rows) : null;
     sheetRows = sheetRange ? sheetRange.bottom - sheetRange.top + 1 : 0;
     if (state.wakeAt != null) wakeTimer = setTimeout(evaluate, Math.max(0, state.wakeAt - now()));
@@ -257,7 +324,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       if (!cursorHidden) evaluate();
       else if (!wakeTimer) wakeTimer = setTimeout(evaluate, SPLIT_EXIT_MS);
     }),
-    terminal.onResize(() => { evaluate(); layout(); }),
+    terminal.onResize(() => { delta.reset(); dropPaint(); evaluate(); layout(); }),
     terminal.onScroll(() => {
       if (state.mode !== 'split' && !(sheetRows > 0)) return;
       const buf = terminal.buffer.active;
@@ -285,11 +352,17 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       evaluate();
     },
     raw: () => raw,
+    composerSent(text) {
+      const s = String(text || '');
+      sent = { text: s, at: now() };
+      tag = s.trim().startsWith('/') ? sent : null;
+    },
     state: () => state,
     composerVisible,
     dispose() {
       disposed = true;
       clearTimeout(wakeTimer);
+      dropPaint();
       for (const d of subs) { try { d.dispose(); } catch {} }
       if (typeof unsubTranscript === 'function') unsubTranscript();
       if (ro) ro.disconnect();
