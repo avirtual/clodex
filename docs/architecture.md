@@ -1467,6 +1467,9 @@ and are not, which is why the judgement worth testing is pushed down here.
   session: each path shell-quoted, space-joined, one trailing space.
 - **composer-keys.js** — `composerReadlineEdit`: Ctrl-U/K/W/A/E on the stream
   seat composer as the new value and cursor, per line of a multi-line draft. Pure.
+- **composer-slash.js** — the stream seat composer's slash menu: `slashQuery` (is the
+  cursor in a leading `/token`), `filterCommands` (prefix then substring) and
+  `slashMenuKey` (arrow/Tab/Enter/Escape while the menu is open). Pure.
 - **prompt-echo.js** — recolour the CLI's submitted-prompt echo on the wire,
   before `terminal.write`. The echo is truecolor SGR, which xterm renders as
   inline styles that `options.theme` cannot reach, so the bytes are rewritten
