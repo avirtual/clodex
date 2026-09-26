@@ -573,6 +573,21 @@ function initStores(userDataPath, {
       else delete entry.archivedAt;
       this._save(all, name);
     },
+    setExited(name, exit) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (!entry) return;
+      if (!exit && !('exitedAt' in entry) && !('exitCode' in entry) && !('exitSignal' in entry)) return;
+      delete entry.exitedAt;
+      delete entry.exitCode;
+      delete entry.exitSignal;
+      if (exit) {
+        entry.exitedAt = Date.now();
+        entry.exitCode = typeof exit.exitCode === 'number' ? exit.exitCode : null;
+        if (exit.signal) entry.exitSignal = exit.signal;
+      }
+      this._save(all, name);
+    },
     setExtraArgs(name, extraArgs) {
       const all = this._load();
       const entry = all.find(s => s.name === name);

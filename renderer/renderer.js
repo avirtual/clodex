@@ -656,6 +656,85 @@ function addArchivedSessionToSidebar(entry) {
   });
 }
 
+function exitedLabel(entry) {
+  const why = entry.exitSignal ? `signal ${entry.exitSignal}` : `code ${entry.exitCode ?? '?'}`;
+  return `exited (${why}) — click to resume`;
+}
+
+function exitedRowSnapshot(name, code, meta) {
+  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (!item) return null;
+  const nameEl = item.querySelector('.session-name');
+  const displayed = nameEl ? nameEl.textContent : name;
+  return {
+    name,
+    type: item.dataset.type,
+    cwd: item.dataset.cwd || '',
+    label: displayed && displayed !== name ? displayed : null,
+    backend: item.dataset.backend || null,
+    team: item.dataset.team || null,
+    noWire: item.dataset.noWire === '1',
+    io: streamSeatNames.has(name) ? 'stream' : 'pty',
+    createdAt: (sidebarMeta.get(name) || {}).createdAt || null,
+    exitCode: typeof code === 'number' ? code : null,
+    exitSignal: (meta && meta.signal) || null,
+  };
+}
+
+function addExitedSessionToSidebar(entry) {
+  if (sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`)) return;
+  const item = document.createElement('div');
+  item.className = 'session-item exited';
+  item.dataset.name = entry.name;
+  item.dataset.monogram = classifySender(entry.name).glyph;
+  item.dataset.cwd = entry.cwd || '';
+  item.dataset.type = entry.type;
+  if (entry.backend) item.dataset.backend = entry.backend;
+  if (entry.team) item.dataset.team = entry.team;
+  const displayName = entry.label || entry.name;
+  item.innerHTML = `
+    <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''}>${typeGlyph(entry.type, entry.backend)}</span>
+    <div class="session-info">
+      <div class="session-name">${esc(displayName)}</div>
+      <div class="session-meta">
+        <span class="session-exited-label">${esc(exitedLabel(entry))}</span>
+      </div>
+    </div>
+    <button class="session-close" data-tip="Forget session">&times;</button>
+  `;
+
+  item.addEventListener('click', async (e) => {
+    if (e.target.closest('.session-close')) return;
+    const res = await window.api.retrySpawnSession(entry.name);
+    if (!res || !res.ok) { alert(`Resume failed: ${(res && res.error) || 'unknown error'}`); return; }
+    item.remove();
+    sidebarMeta.delete(entry.name);
+    markSeatIo(entry.name, res.io || entry.io);
+    createTerminal(entry.name);
+    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
+    if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
+    switchSession(entry.name);
+    refreshSidebarView();
+  });
+
+  item.querySelector('.session-close').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (confirm(`Forget session "${displayName}"? It isn't running — this just removes the saved entry.`)) {
+      await window.api.forgetSession(entry.name);
+      item.remove();
+      sidebarMeta.delete(entry.name);
+      refreshSidebarView();
+    }
+  });
+
+  insertLocalSessionRow(item);
+  sidebarMeta.set(entry.name, {
+    ...(sidebarMeta.get(entry.name) || {}),
+    lastActivityTs: entry.exitedAt || Date.now(),
+    createdAt: entry.createdAt || null,
+  });
+}
+
 // The reshaped ✕ / ⌘W gesture: archive (stop the PTY, keep the record) and swap
 // the live row for an archived placeholder. The swap can't happen synchronously
 // — archiveSession triggers a session-exit — so we stash the row's identity here
@@ -3957,6 +4036,10 @@ window.api.onSessionExit((name, code, meta) => {
   }
   const archivedEntry = archivingSessions.get(name);
   const movedFailedEntry = movingFailed.get(name);
+  const exitedEntry = !archivedEntry && !movedFailedEntry && meta && meta.agentType && !meta.expected
+    && !(sessions.get(name) || {}).peer
+    ? exitedRowSnapshot(name, code, meta)
+    : null;
   removeSession(name);
   if (archivedEntry) {
     archivingSessions.delete(name);
@@ -3969,6 +4052,10 @@ window.api.onSessionExit((name, code, meta) => {
     addFailedSessionToSidebar(movedFailedEntry);
     refreshSidebarView();
     return;
+  }
+  if (exitedEntry) {
+    addExitedSessionToSidebar({ ...exitedEntry, exitedAt: Date.now() });
+    refreshSidebarView();
   }
   // Deliberate exits (expected:true) and clean self-exits stay silent. AGENT-ONLY on
   // purpose: intent-spawned bash that fast-fails at code≠0 would otherwise storm toasts.
@@ -8650,6 +8737,7 @@ window.api.onSessionMovedIn((entry) => {
   if (!entry || !entry.name) return;
   markSeatIo(entry.name, entry.io);
   if (entry.archived) addArchivedSessionToSidebar(entry);
+  else if (entry.exited) addExitedSessionToSidebar(entry);
   else mountRestoredSession(entry);
   refreshSidebarView();
 });
@@ -8665,6 +8753,10 @@ window.api.onSessionMovedIn((entry) => {
       markSeatIo(entry.name, entry.io);
       if (entry.archived) {
         addArchivedSessionToSidebar(entry);
+        continue;
+      }
+      if (entry.exited) {
+        addExitedSessionToSidebar(entry);
         continue;
       }
       if (entry.failed) {

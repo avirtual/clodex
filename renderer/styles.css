@@ -5412,6 +5412,9 @@ body.web-frontend #sidebar-header {
   color: var(--text-tertiary);
 }
 
+#session-list .session-item.exited .session-name { color: var(--text-tertiary); font-weight: 500; }
+#session-list .session-item.exited .session-chip { opacity: 0.55; }
+#session-list .session-item.exited .session-exited-label { font-size: var(--fs-xs); color: var(--text-tertiary); }
 #session-list .session-item.failed .session-failed-label { font-size: var(--fs-xs); color: var(--error); }
 #session-list .session-item.failed .session-chip::after { background: var(--error); }
 .session-item[data-remote-control] .session-name::after { font-size: 10px; }

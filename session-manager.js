@@ -257,7 +257,7 @@ const { SCRATCH_COST_FILE, scratchCostRecord } = require('./team-cost');
 const { SCRATCH_LABEL_RE } = require('./intent-catalog');
 const { SEGMENT_RE: IMPORT_SEGMENT_RE, SESSION_ID_RE: IMPORT_SESSION_ID_RE } = require('./seat-import');
 const { effectiveModel } = require('./accounts');
-const { liveSnapshotFor, archivedSnapshotFor, stampConfigFlags } = require('./session-restore');
+const { liveSnapshotFor, archivedSnapshotFor, exitedSnapshotFor, stampConfigFlags } = require('./session-restore');
 const { COMPACTING_VALVE_MS, COMPACT_NOTICE_CAP, noticeTextFor } = require('./compact-notices');
 const STREAM_TOOL_DRAIN_MIN_MS = 2000;
 const STREAM_RESULT_HOLD_MS = 400;
@@ -473,7 +473,7 @@ function isStaleRegistration(existingPid, ownPid, isAlive) {
 
 function exitDisposition({ agentType, userKilled, shuttingDown, archived, moving }) {
   const expected = !!(userKilled || shuttingDown || archived || moving);
-  return { expected, dropRecord: !agentType && !expected };
+  return { expected, dropRecord: !agentType && !expected, stampExited: !!agentType && !expected };
 }
 
 // node-pty's execvp failure in the forked child is silent (no stderr) — it
@@ -599,7 +599,7 @@ function dmContentKey(senderTag, body) {
 }
 
 const MOVE_TO_PEER_OMIT = [
-  'execCommands', 'worktree', 'archivedAt', 'failed', 'movedTo',
+  'execCommands', 'worktree', 'archivedAt', 'exitedAt', 'exitCode', 'exitSignal', 'failed', 'movedTo',
   'ephemeral', 'reviewFor', 'reviewTicket', 'reviewerTemplate', 'pluginGrants',
   'wireLabel', 'ticketId', 'holdUntil', 'rosterSentAt', 'streamPid',
 ];
@@ -2520,6 +2520,7 @@ function createSessionManager(deps) {
           return Object.keys(clean).length ? { env: clean } : {};
         })(),
       });
+      if (existingEntry && existingEntry.exitedAt) getPersistence().setExited(name, null);
 
       const onSessionId = (sessionId) => {
         const priorSid = session.sessionId;
@@ -2801,7 +2802,7 @@ function createSessionManager(deps) {
         // aborts the whole app (SIGABRT). Mark dead so deferred ops bail.
         session._dead = true;
         log.info('session', `exit ${name} code=${exitCode}${signal ? ` signal=${signal}` : ''}`);
-        const { expected, dropRecord } = exitDisposition({
+        const { expected, dropRecord, stampExited } = exitDisposition({
           agentType,
           userKilled: session._userKilled,
           shuttingDown: session._shuttingDown,
@@ -2824,6 +2825,9 @@ function createSessionManager(deps) {
         try { this._stampSeatCost(session, 'exit'); } catch {}
         if (dropRecord) {
           getPersistence().remove(name);
+        }
+        if (stampExited) {
+          try { getPersistence().setExited(name, { exitCode, signal: signal || null }); } catch {}
         }
         try { getPluginHooks && getPluginHooks() && getPluginHooks().fireExit(name); } catch {}
         this._cleanup(name);
@@ -4182,7 +4186,9 @@ function createSessionManager(deps) {
             readCtxFor: readCtxFor || (() => ({ ctx: null, ctxTok: null, ctxSize: null, ctxCost: null, ctxModel: null })),
             proxyPoller: this._proxyPoller || { snapshot: () => null },
           })
-          : archivedSnapshotFor({ manager: this, entry: record });
+          : (record.exitedAt && !record.archivedAt
+            ? exitedSnapshotFor({ manager: this, entry: record })
+            : archivedSnapshotFor({ manager: this, entry: record }));
         destWin.webContents.send('session:moved-in', stampConfigFlags(row, record));
       }
       log.info('session', `move-to-workspace ${name} ${oldId} → ${workspaceId}`);

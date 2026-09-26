@@ -40,19 +40,19 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 // complements by construction in the shipped leaf, so asserting only one of them
 // would pass against a version that computed the other wrong.
 for (const row of [
-  { what: 'a bash row exiting on its own', in: { agentType: null }, expected: false, dropRecord: true },
-  { what: 'an agent exiting on its own', in: { agentType: 'claude' }, expected: false, dropRecord: false },
-  { what: 'a user-killed bash row', in: { agentType: null, userKilled: true }, expected: true, dropRecord: false },
-  { what: 'an archived bash row', in: { agentType: null, archived: true }, expected: true, dropRecord: false },
-  { what: 'a bash row at app quit', in: { agentType: null, shuttingDown: true }, expected: true, dropRecord: false },
+  { what: 'a bash row exiting on its own', in: { agentType: null }, expected: false, dropRecord: true, stampExited: false },
+  { what: 'an agent exiting on its own', in: { agentType: 'claude' }, expected: false, dropRecord: false, stampExited: true },
+  { what: 'a user-killed bash row', in: { agentType: null, userKilled: true }, expected: true, dropRecord: false, stampExited: false },
+  { what: 'an archived bash row', in: { agentType: null, archived: true }, expected: true, dropRecord: false, stampExited: false },
+  { what: 'a bash row at app quit', in: { agentType: null, shuttingDown: true }, expected: true, dropRecord: false, stampExited: false },
   // The move rows. A bash row cannot reach the menu today, but the leaf is
   // where the two questions are answered, and answering only the agent one
   // leaves the record-drop half unguarded the day the menu widens.
-  { what: 'a MOVING agent seat', in: { agentType: 'claude', moving: true }, expected: true, dropRecord: false },
-  { what: 'a MOVING bash row', in: { agentType: null, moving: true }, expected: true, dropRecord: false },
+  { what: 'a MOVING agent seat', in: { agentType: 'claude', moving: true }, expected: true, dropRecord: false, stampExited: false },
+  { what: 'a MOVING bash row', in: { agentType: null, moving: true }, expected: true, dropRecord: false, stampExited: false },
 ]) {
-  test(`exitDisposition: ${row.what} → expected=${row.expected} dropRecord=${row.dropRecord}`, () => {
-    assert.deepStrictEqual(exitDisposition(row.in), { expected: row.expected, dropRecord: row.dropRecord });
+  test(`exitDisposition: ${row.what} → expected=${row.expected} dropRecord=${row.dropRecord} stampExited=${row.stampExited}`, () => {
+    assert.deepStrictEqual(exitDisposition(row.in), { expected: row.expected, dropRecord: row.dropRecord, stampExited: row.stampExited });
   });
 }
 

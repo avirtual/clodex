@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- An agent seat whose CLI exits on its own (for example Codex after upgrading itself) stays in the sidebar as an exited row; click it to resume the same session instead of waiting for the next Clodex launch.
+
 - Slash commands on terminal agent seats: typing `/` in the composer shows the CLI's own command menu as Clodex's list, with the same keys as the stream composer (arrows, Tab, Escape, Enter); the terminal itself no longer needs to be visible for it.
 - On terminal seats with the transcript pane, pickers, dialogs and running turns now show the terminal as a sheet at the bottom instead of replacing the whole view; the transcript stays on screen.
 - Enter in the terminal seat's message box now submits the prompt; it was being inserted as a newline into the CLI's input.
