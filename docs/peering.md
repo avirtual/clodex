@@ -37,7 +37,8 @@ Endpoints: phone page (`/`), `GET /api/sessions|events`
 `{ok, version, resources}`, now `version: 2`, filtered to what this node's
 injected callbacks actually serve; advertised as the `resources` cap, which is
 unconditional),
-`GET /api/sessions/:name` (one session, `{ok, session}`; 404 unknown or dead),
+`GET /api/sessions/:name` (one session, `{ok, session}`; 404 unknown or dead; every
+session row carries `io: 'stream'|'pty'`),
 `GET /api/sessions/:name/transcript?limit&since` (the message list),
 and `GET /api/sessions?workspace=<name or id>` (the list narrowed to one
 workspace; an unknown value is an empty list), `GET /api/workspaces` (this
@@ -88,7 +89,16 @@ this server read only the seat's resolved cwd, `<REGISTRY_DIR>/spill/<seat>/`,
 symlink inside cwd cannot escape; the `filed` cap string advertises all of
 this),
 `POST /api/sessions/:name/dm` (operator message — the session is named by the
-PATH; a `name` key in the body is ignored), `POST /api/restart` (app relaunch —
+PATH; a `name` key in the body is ignored; body `{text, images?}` with
+`images: [{mediaType, data}]`, at most 5, `image/png|jpeg|gif|webp`, base64
+`data` of at most 5 MB decoded each, checked by `validateSeatImages` in
+seat-images.js — a bad array is a 400 with its error string, and an empty `text`
+is allowed when images are present; this route's body cap is `DM_MAX_BODY`
+(five 5 MB images in base64 plus 64 KB; 413 above it) where every other route
+stays at 64 KB; a stream seat gets the images inline, a pty seat gets each one
+written to `<REGISTRY_DIR>/messages/<seat>/img-<ms>-<n>.<ext>` and one
+`Image #n: <path>` line per file appended to the delivered text; advertised as
+the unconditional `images` cap), `POST /api/restart` (app relaunch —
 response written before the restart fires), `POST /api/sessions`,
 `DELETE /api/sessions/:name`, `POST /api/sessions/:name/restart` (remote
 create/kill/restart — all under the `create` cap, shipped together),

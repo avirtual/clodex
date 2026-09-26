@@ -1,0 +1,4 @@
+# seat-images.js
+
+## SEAT_IMAGE_EXT
+Measured 2026-09-26 in a tmux pty with `tmux paste-buffer -p` (bracketed paste): codex 0.157.1 and muse 1.4.0 each turn a paste that is exactly one PNG path into an `[Image #1]` chip, and leave `Image #1: /path.png` (the path inside a longer line) as plain text. The pty dm delivery pastes the whole message, so on those two seats the `Image #n:` lines arrive as paths the agent opens with a tool.
