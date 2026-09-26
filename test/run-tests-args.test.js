@@ -380,7 +380,7 @@ test('per-test timeout: CLODEX_TEST_PER_TEST_MS overrides the default in the arg
   assert.ok(!argv.includes('--test-timeout=120000'), JSON.stringify(argv));
 });
 
-test('per-test timeout: a test that polls forever fails by its own name and the run reports totals', () => {
+test('per-test timeout: a test that never finishes (its fixture releases its timer when cancelled) fails by name, counts as a fail, and is not called slow', () => {
   const root = fs.realpathSync(mkTmpRoot('clx-t279-'));
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const f of ['run-tests.js', 'test-escapes.js']) {
@@ -394,8 +394,9 @@ test('per-test timeout: a test that polls forever fails by its own name and the 
     '}));',
     "test('a neighbour still runs', () => {});",
   ].join('\n'));
-  const env = { ...process.env, CLODEX_TEST_PER_TEST_MS: '300', CLODEX_TEST_RUN_TIMEOUT_MS: '10000' };
+  const env = { ...process.env, CLODEX_TEST_PER_TEST_MS: '300', CLODEX_TEST_RUN_TIMEOUT_MS: '10000', CLODEX_TEST_SLOW_MS: '100' };
   delete env.NODE_TEST_CONTEXT;
+  delete env.CLODEX_TEST_SLOW_ADVISORY;
   try {
     const res = spawnSync(
       process.execPath,
@@ -405,7 +406,8 @@ test('per-test timeout: a test that polls forever fails by its own name and the 
     const out = `${res.stdout || ''}${res.stderr || ''}`;
     assert.ok(!/TIMEOUT after/.test(out), `the hang reached the run ceiling instead of failing by name:\n${out.slice(-600)}`);
     assert.match(out, /TOTALS: 1 pass, 1 fail, 2 tests/, out.slice(-600));
-    assert.match(out, /polls a predicate that never turns true/, 'the hung test is named in the output');
+    assert.match(out, /^✖ polls a predicate that never turns true \([\d.]+ms\)$/m, 'the hung test is named in the shape the failure collectors parse');
+    assert.ok(!/SLOW.*polls a predicate/.test(out), `a timed-out test is not a slow test to allowlist:\n${out.slice(-600)}`);
     assert.notStrictEqual(res.status, 0);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

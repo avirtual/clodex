@@ -14641,14 +14641,10 @@ const DRAINED = ['\x15', '[agent:from clodex] the box rebooted', '\r'];
 // Boot the seat, fire the real rising edge, and return once the drain's three bytes
 // are on the pane. A POSITIVE observable, so a subject that reduces to "the drain
 // never ran" fails here rather than passing an absence vacuously.
-//
-// `onDrained` runs the instant those bytes land, INSIDE the helper, for the two
-// subjects that must act before the nudge window elapses.
-async function drainOnly(p, name, onDrained = null) {
+async function drainOnly(p, name) {
   const { s, writes } = await nudgeSeat(p, name);
   p.fireData('\x1b[?2004h');                    // the real rising edge → deferred drain
   await waitFor(() => writes.length >= 3);
-  if (onDrained) onDrained(s, writes);
   return { s, writes };
 }
 
@@ -14786,11 +14782,7 @@ test('t771: pty output at fire time RE-ARMS the nudge, which lands once the seat
   // chunks is what drives it.
   //
   // The re-arm is asserted as observed state, not as "not yet": what proves the hold
-  // is that the timer is a LIVE object with the recorder still at three bytes — a
-  // reading that stays true however long the box takes to get here. The paint starts
-  // the INSTANT those bytes land, inside the helper before any await, so the quiet
-  // gate is already shut when the first (30ms) fire window elapses; starting it
-  // after a second poll would race that window.
+  // is that the timer is a LIVE object with the recorder still at three bytes.
   const p = mkNudgeProbe({ bootNudgeMs: 30 });
   let paint = null;
   const { s, writes } = await drainOnlyMocked(t, p, 'nudge-d', () => {

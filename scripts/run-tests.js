@@ -433,12 +433,14 @@ for (const line of tap.split('\n')) {
   if (dur && pending !== null) {
     points.push({ name: pending, ms: Number(dur[1]) });
     pending = null;
+    continue;
   }
+  if (/^ *failureType: *'testTimeoutFailure' *$/.test(line) && points.length) points[points.length - 1].timedOut = true;
 }
 
 const bodies = points.filter((p) => !fs.existsSync(path.resolve(ROOT, p.name)));
 const seen = new Set(bodies.map((p) => p.name));
-const offenders = bodies.filter((p) => p.ms > slowLimit && !Object.hasOwn(allow, p.name));
+const offenders = bodies.filter((p) => p.ms > slowLimit && !p.timedOut && !Object.hasOwn(allow, p.name));
 const stale = sweeping && !filters.length
   ? Object.keys(allow).filter((n) => !seen.has(n))
   : [];
