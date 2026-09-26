@@ -518,6 +518,8 @@ function createTicketMethods(deps, shared) {
     loadManifest,
     log,
     withoutPrivilegedIntentsFor,
+    PENDING_DIR,
+    parkedTexts,
   } = deps;
   const seedFetch = deps.fetch || ((...a) => globalThis.fetch(...a));
   const accountStore = () => {
@@ -3869,8 +3871,8 @@ function createTicketMethods(deps, shared) {
         // itself, so a throw here reaches nobody. The write still lands, but no
         // latch is armed — the spec goes out unwatched, which is the one fault
         // mode this mechanism presupposes. It must not be invisible too.
-        (disposition) => {
-          try { this._armSpecConfirm(seat, ticket.id, disposition); }
+        (disposition, why) => {
+          try { this._armSpecConfirm(seat, ticket.id, disposition, null, why); }
           catch (e) { log.error('intent', `spec latch arm failed for ${seat} on ${ticket.id}: ${e.message}`); }
           finally { if (onWrite) { try { onWrite(disposition, seat); } catch {} } }
         });
@@ -3915,10 +3917,18 @@ function createTicketMethods(deps, shared) {
     // rebuild it with. The four properties that make the spec retry safe hold
     // verbatim at those sites — see _redirectDeliveryText — so this is one latch
     // with two kinds, not two latches.
-    _armSpecConfirm(seatName, ticketId, disposition, redirect = null) {
+    _armSpecConfirm(seatName, ticketId, disposition, redirect = null, divertedBy = null) {
       const s = this.sessions.get(seatName);
       if (!s || !s.agentType || s._dead) return;
       const kind = redirect ? 'redirect' : 'spec';
+      const live = s._specUnconfirmed;
+      if (disposition === 'parked' && divertedBy === 'window' && live && live.ticketId === ticketId
+          && live.kind === kind && live.retried && !live.windowRearmed) {
+        live.retried = false;
+        live.windowRearmed = true;
+        log.info('intent', `${kind} replay of ${ticketId} parked by the turn-start window on ${seatName} — latch kept for one typed redelivery`);
+        return;
+      }
       if (disposition !== 'injected') {
         // A PARK ends this ticket's displacement episode, so the redelivery budget
         // is released here as it is at the two receipt exits. Keyed on THIS call's
@@ -3969,6 +3979,7 @@ function createTicketMethods(deps, shared) {
       // direction without changing REPLACE-not-stack first.
       const prior = s._specUnconfirmed;
       const retried = !!(prior && prior.ticketId === ticketId && prior.kind === kind && prior.retried);
+      const rearmed = !!(prior && prior.ticketId === ticketId && prior.kind === kind && prior.windowRearmed);
       // A prior latch for a DIFFERENT ticket is not a stale watcher being tidied
       // up — it is a loss that is already COMPLETE at this line, and knowable here
       // and nowhere else. This write's leading Ctrl-U has destroyed that ticket's
@@ -4003,6 +4014,7 @@ function createTicketMethods(deps, shared) {
       s._specUnconfirmed = redirect
         ? { ticketId, kind, at: Date.now(), retried, since, ...redirect }
         : { ticketId, kind, at: Date.now(), retried, since };
+      if (rearmed) s._specUnconfirmed.windowRearmed = true;
       this._armSpecConfirmTimer(s);
     },
 
@@ -8201,6 +8213,21 @@ function createTicketMethods(deps, shared) {
       try { rec = ticketsStore.load(team.root).find((t) => t.id === ticketId) || null; } catch {}
       if (!rec || !rec.loopStep) return;
       (lead._parkedEscalations || (lead._parkedEscalations = new Map())).set(ticketId, { team, step: rec.loopStep });
+    },
+
+    _releaseDrainedEscalations(s) {
+      if (typeof parkedTexts !== 'function') return;
+      const texts = parkedTexts(PENDING_DIR, s.name);
+      for (const [ticketId, { team, step }] of Array.from(s._parkedEscalations)) {
+        const tag = `[ticket ${ticketId} ESCALATED]`;
+        if (texts.some((t) => t.includes(tag))) continue;
+        s._parkedEscalations.delete(ticketId);
+        let rec = null;
+        try { rec = ticketsStore.load(team.root).find((t) => t.id === ticketId) || null; } catch {}
+        if (!rec || rec.loopStep !== step) continue;
+        this._setLoopStep(team, ticketId, null);
+        log.info('ticket', `ticket ${ticketId} parked escalation drained by ${s.name} — loopStep ${step} released`);
+      }
     },
 
     // Which seat's ledger a closing ticket's cost belongs to.

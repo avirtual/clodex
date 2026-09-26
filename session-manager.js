@@ -694,7 +694,6 @@ function createSessionManager(deps) {
     drainPending,
     countPending,
     peekPending,
-    parkedTexts,
     enqueueOutbox,
     ensureDir,
     execBodyCap,
@@ -5911,7 +5910,7 @@ function createSessionManager(deps) {
         }
         return texts.join('\n\n');
       };
-      this._injectQueueFor(session).enqueue('', { produce });
+      this._injectQueueFor(session).enqueue('', { produce, divert: this._parkDivertFor(session) });
     }
 
     _replayWhenQueueEmpty(session) {
@@ -9397,7 +9396,7 @@ function createSessionManager(deps) {
           // a write, and an observer keying on consumption must see that difference.
           ...(fire ? {
             produce: () => { try { fire('injected'); } catch {} return finalText; },
-            onDivert: () => { try { fire('parked'); } catch {} },
+            onDivert: (why) => { try { fire('parked', why); } catch {} },
           } : {}),
         });
       } else if (fire) {
@@ -9487,7 +9486,7 @@ function createSessionManager(deps) {
 
     _parkBehindQueue(target, senderTag, body, tag, key = null) {
       if (!target || target.agentType !== 'claude' || target.io === 'stream' || target._dead) return false;
-      if (!(target._injectPtyQueue && target._injectPtyQueue.length > 0)) return false;
+      if (!(target._injectPtyQueue && target._injectPtyQueue.length > 0) && !this._turnStartPending(target)) return false;
       try {
         parkDelivery(PENDING_DIR, target.name, this._buildDeliveryText(target, senderTag, body, 'dm', tag), this._nextParkSeq(), null, false, this._bornFor(target.name), key);
       } catch (e) {
@@ -9519,6 +9518,10 @@ function createSessionManager(deps) {
     }
 
     _armParkCap(target) {
+      if (target._parkCapTimer && countPending(PENDING_DIR, target.name) === 1) {
+        clearTimeout(target._parkCapTimer);
+        target._parkCapTimer = null;
+      }
       if (target._parkCapTimer) return;         // earliest-parked deadline governs
       target._parkCapTimer = setTimeout(() => {
         target._parkCapTimer = null;
@@ -9631,7 +9634,7 @@ function createSessionManager(deps) {
       const divert = (baseDivert && onDivert)
         ? (t) => {
           const claimed = baseDivert(t);
-          if (claimed) { try { onDivert(); } catch {} }
+          if (claimed) { try { onDivert(claimed); } catch {} }
           return claimed;
         }
         : baseDivert;
@@ -9668,21 +9671,6 @@ function createSessionManager(deps) {
       return Date.now() - (session.lastVoiceDraftTs || 0) < INJECT_VOICE_DRAFT_STALE_MS;
     }
 
-    _releaseDrainedEscalations(s) {
-      if (typeof parkedTexts !== 'function') return;
-      const texts = parkedTexts(PENDING_DIR, s.name);
-      for (const [ticketId, { team, step }] of Array.from(s._parkedEscalations)) {
-        const tag = `[ticket ${ticketId} ESCALATED]`;
-        if (texts.some((t) => t.includes(tag))) continue;
-        s._parkedEscalations.delete(ticketId);
-        let rec = null;
-        try { rec = ticketsStore.load(team.root).find((t) => t.id === ticketId) || null; } catch {}
-        if (!rec || rec.loopStep !== step) continue;
-        this._setLoopStep(team, ticketId, null);
-        log.info('ticket', `ticket ${ticketId} parked escalation drained by ${s.name} — loopStep ${step} released`);
-      }
-    }
-
     _turnStartPending(session) {
       if (!session || session.agentType !== 'claude' || session.io === 'stream') return false;
       const since = session._awaitingTurnSince;
@@ -9704,7 +9692,7 @@ function createSessionManager(deps) {
         this._armParkCap(session);
         const why = churn ? 'previous unit\'s turn not started yet' : isDraftOpen(session) ? 'draft open' : 'dictated draft open';
         log.info('inject', `diverted to park: ${why} (${session.name})`);
-        return true;
+        return churn ? 'window' : 'draft';
       };
     }
 

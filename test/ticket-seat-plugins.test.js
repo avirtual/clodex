@@ -230,6 +230,7 @@ function mkWorld({ tplPlugins } = {}) {
     fencedLines: require('../intent-scanner').fencedLines,
     childProcess: require('node:child_process'),
     countPending: require('../pending-store').countPending,
+    parkedTexts: require('../pending-store').parkedTexts,
     drainPending: require('../pending-store').drainPending,
     hasActivePending: require('../pending-store').hasActivePending,
     isDraftOpen: require('../proxy-util').isDraftOpen,

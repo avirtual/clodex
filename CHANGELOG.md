@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Messaging: a delivery diverted by the turn-start window is never mistaken for a delivered one; a replayed ticket spec, a second park after a hook drain, and the boot-time drain all follow the same rule.
 - Transcript pane: after a /clear the pane now switches to the new transcript at once instead of showing the old one until the next change.
 - Test runner: a test that never finishes now fails by name within two minutes; the session-manager suite's hang under load is fixed.
 - Messages: a second message arriving at a seat in the moment its previous one is being submitted is no longer lost in the turn start; it is delivered with that turn, for every kind of message.
