@@ -118,6 +118,3 @@ the engine would reach them.
 ## _handleShoutIntent
 
 The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `archive()`: archive kills the pty, and the renderer rebuilds a row as archived only for a name already stamped into `archivingSessions`. Sent late or not at all, the row is REMOVED. Precedent: `team-tickets.js` retire.
-
-## _writeImageFiles
-Measured 2026-09-26 in a tmux pty with `tmux paste-buffer -p` (bracketed paste): codex 0.157.1 and muse 1.4.0 each turn a paste that is exactly one PNG path into an `[Image #1]` chip, and leave `Image #1: /path.png` (the path inside a longer line) as plain text. The pty dm delivery pastes the whole message, so on those two seats the `Image #n:` lines arrive as paths the agent opens with a tool.
