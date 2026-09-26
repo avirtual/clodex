@@ -326,10 +326,10 @@ test('_host holds exactly these nineteen methods, and no twentieth by inheritanc
   } finally { b.cleanup(); }
 });
 
-test('the three _host methods taking a caller-supplied path are desktop-only', async () => {
+test('the two _host methods taking a caller-supplied path are desktop-only', async () => {
   // Registration symlinks a caller-named host directory into the plugin root and
   // then loads code from it. Reachable from a browser that would be remote code
-  // execution by path, so these three carve out of the `_host` exemption — while
+  // execution by path, so these two carve out of the `_host` exemption — while
   // the plumbing the web plugin UI needs keeps answering, which is the half that
   // proves the carve-out is a carve-out and not a table that stopped working.
   const b = bootBothSurfaces();
@@ -338,7 +338,6 @@ test('the three _host methods taking a caller-supplied path are desktop-only', a
     const calls = [
       ['plugins.validateCandidate', [scratch]],
       ['plugins.register', [scratch]],
-      ['plugins.unregister', ['workbench']],
     ];
     for (const [method, args] of calls) {
       assert.strictEqual(typeof b.host._hostMethodNames().find((n) => n === method), 'string',
@@ -356,6 +355,9 @@ test('the three _host methods taking a caller-supplied path are desktop-only', a
       'and gets the VALIDATOR\'s answer about the empty folder, not a surface refusal');
     const status = await b.web('_host', 'plugins.status', []);
     assert.strictEqual(status.ok, true, 'the web surface still has the plugin UI plumbing');
+    assert.deepStrictEqual(await b.web('_host', 'plugins.unregister', ['workbench']),
+      { ok: false, error: 'no user plugin root configured' },
+      'plugins.unregister takes a plugin id, not a path, so the web surface reaches the loader');
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
     b.cleanup();
