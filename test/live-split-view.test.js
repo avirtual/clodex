@@ -1019,4 +1019,3 @@ test('ENTER: the web UI differs from the desktop only where the browser cannot, 
   assert.match(gate[1], /\bpeer\b/u);
   assert.doesNotMatch(gate[1], /__CLODEX_WEB__/u);
 });
-
