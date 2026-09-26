@@ -1255,6 +1255,11 @@ Own state + DOM, `init*(deps)`:
   `key(e)` return the pty writes that keep the CLI's input equal to the draft;
   live-split-view reads the CLI's menu with `readMenuRows` while it is ON and
   renders it as the seat slash list. See docs/notes/renderer-lib-menu-mirror.md.
+- **lib/paint-delta.js** — pure helpers for Codex and Muse pty seats (t1224):
+  `createPaintDelta` returns the rows newly painted above the input strip
+  between two screens, `blockText` turns a settled run of them into one
+  `command-output` record's text, `mergeByTs` interleaves those records with
+  the transcript file's. See docs/notes/renderer-lib-paint-delta.md.
 - **lib/ansi-html.js** — pure SGR converter for the transcript pane: `ansiRuns`
   turns a local command's stdout into `{ text, style }` runs and strips every
   other escape sequence; the view builds the spans with `textContent`.
