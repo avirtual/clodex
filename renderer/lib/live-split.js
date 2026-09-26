@@ -67,6 +67,16 @@ function measureSplit(rows, cursorY, cols, platform = 'claude') {
   return { mode: 'split', top, bottom };
 }
 
+function sheetBand(rows, maxRows) {
+  if (!Array.isArray(rows)) return null;
+  const top = rows.findIndex((r) => !isBlank(r));
+  if (top < 0) return null;
+  let bottom = rows.length - 1;
+  while (bottom > top && isBlank(rows[bottom])) bottom--;
+  const cap = Math.max(1, maxRows | 0);
+  return { top: Math.max(top, bottom - cap + 1), bottom };
+}
+
 function initialSplitState() {
   return { mode: 'full', top: -1, bottom: -1, pending: null, wakeAt: null };
 }
@@ -114,6 +124,7 @@ module.exports = {
   isCodexComposerRow,
   findAnchor,
   measureSplit,
+  sheetBand,
   initialSplitState,
   reduceSplit,
 };

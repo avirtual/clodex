@@ -1,0 +1,30 @@
+╭─────────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.0)                              │
+│                                                         │
+│ model:     GPT-6-Astra medium   /model to change        │
+│ directory: /private/var/folders/m4/…/T/cap-codex-ba5Yyo │
+╰─────────────────────────────────────────────────────────╯
+
+  ✨ Update available! 0.157.0 -> 0.157.1
+
+› 1. Update now (runs `npm install -g @openai/codex`)
+  2. Skip
+  3. Skip until next version
+
+  Press enter to continue
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

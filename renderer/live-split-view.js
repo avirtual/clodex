@@ -1,6 +1,6 @@
 'use strict';
 
-const { SPLIT_EXIT_MS, measureSplit, initialSplitState, reduceSplit } = require('./lib/live-split');
+const { SPLIT_EXIT_MS, measureSplit, sheetBand, initialSplitState, reduceSplit } = require('./lib/live-split');
 const { createTranscriptRows } = require('./transcript-rows');
 const { readMenuRows } = require('./lib/menu-rows');
 const { rowCells } = require('./lib/menu-cells');
@@ -78,6 +78,9 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   let pinnedTop = null;
   let raw = false;
   let sheetRows = 0;
+  let sheetRange = null;
+  const composerVisible = () => !!composerEl && !composerEl.hidden;
+  const bandKey = (b) => (b ? `${b.top}:${b.bottom}` : '');
 
   function stickToBottom() {
     if (!follow) return;
@@ -130,7 +133,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
 
   function readMenu(rows) {
     if (!menuMirror) return null;
-    const read = menuMirror.on() ? readMenuRows(rows || screenRows(), screenCells(), platform()) : null;
+    const read = !raw && state.mode === 'split' && composerVisible() && menuMirror.on() ? readMenuRows(rows || screenRows(), screenCells(), platform()) : null;
     menuMirror.setRead(read);
     if (!read && menuEl.hidden) return null;
     if (read && composerEl) menuEl.style.bottom = `${(composerEl.offsetHeight || 0) + 8}px`;
@@ -150,10 +153,8 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   }
 
   function sheetRowsOf(rows) {
-    if (!sheet || !composerEl || state.mode !== 'full') return 0;
-    const first = rows.findIndex((r) => /\S/u.test(r || ''));
-    if (first < 0) return 0;
-    return Math.min(rows.length - first, terminal.rows, Math.max(1, Math.floor(terminal.rows / 2)));
+    if (!sheet || !composerEl || state.mode !== 'full') return null;
+    return sheetBand(rows, Math.max(1, Math.floor(terminal.rows / 2)));
   }
 
   function placeStrip(el, screen, rowPx, top, bottom, padBottom) {
@@ -186,7 +187,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     const padBottom = parseFloat(cs.paddingBottom) || 0;
     if (inSheet) {
       showComposer(false);
-      const stripTop = placeStrip(el, screen, rowPx, terminal.rows - sheetRows, terminal.rows - 1, padBottom);
+      const stripTop = placeStrip(el, screen, rowPx, sheetRange.top, sheetRange.bottom, padBottom);
       wrapperEl.classList.remove('live-split');
       wrapperEl.classList.add('live-sheet');
       paneEl.style.height = `${Math.max(0, Math.round(stripTop - padTop))}px`;
@@ -228,13 +229,14 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       }
     }
     const prev = state;
-    const prevSheet = sheetRows;
+    const prevSheet = sheetRange;
     state = reduceSplit(state, measured, now(), undefined, raw ? 0 : undefined);
     const menuRead = readMenu(rows);
     const busy = !menuRead && !!measured && (measured.mode === 'split' || !!measured.busy);
-    sheetRows = busy ? sheetRowsOf(rows) : 0;
+    sheetRange = busy ? sheetRowsOf(rows) : null;
+    sheetRows = sheetRange ? sheetRange.bottom - sheetRange.top + 1 : 0;
     if (state.wakeAt != null) wakeTimer = setTimeout(evaluate, Math.max(0, state.wakeAt - now()));
-    if (prevSheet !== sheetRows && prev.mode === state.mode && prev.top === state.top && prev.bottom === state.bottom) layout();
+    if (bandKey(prevSheet) !== bandKey(sheetRange) && prev.mode === state.mode && prev.top === state.top && prev.bottom === state.bottom) layout();
     else if (prev.mode !== state.mode || prev.top !== state.top || prev.bottom !== state.bottom) {
       layout();
       if (onChange) onChange(state);
@@ -270,7 +272,6 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => layout()) : null;
   if (ro) ro.observe(wrapperEl);
   if (ro && composerEl) ro.observe(composerEl);
-  const composerVisible = () => !!composerEl && !composerEl.hidden;
   paneEl.addEventListener('mouseup', () => {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed) (composerVisible() ? composerEl : terminal).focus();

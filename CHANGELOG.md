@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- The terminal sheet on agent seats now shows the part of the screen the CLI actually painted: a startup banner, an upgrade prompt or a trust dialog at the top of the screen is visible in the sheet instead of a blank bottom half.
 - Slash commands on terminal agent seats: typing `/` in the composer shows the CLI's own command menu as Clodex's list, with the same keys as the stream composer (arrows, Tab, Escape, Enter); the terminal itself no longer needs to be visible for it.
 - On terminal seats with the transcript pane, pickers, dialogs and running turns now show the terminal as a sheet at the bottom instead of replacing the whole view; the transcript stays on screen.
 - Enter in the terminal seat's message box now submits the prompt; it was being inserted as a newline into the CLI's input.
