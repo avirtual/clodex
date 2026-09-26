@@ -307,6 +307,8 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/voice-submit.js',
   'renderer/lib/live-split.js',
   'renderer/lib/menu-rows.js',
+  'renderer/lib/menu-cells.js',
+  'renderer/lib/menu-mirror.js',
   'renderer/lib/ansi-html.js',
   'renderer/live-split-view.js',
   'renderer/transcript-rows.js',
