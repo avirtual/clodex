@@ -100,7 +100,8 @@ reset once the body is cut off, so encode without escaping `/` — Swift's
 route stays at 64 KB; a stream seat gets the images inline, a pty seat gets each one
 written to `<REGISTRY_DIR>/messages/<seat>/img-<ms>-<n>.<ext>` and one
 `Image #n: <path>` line per file appended to the delivered text; advertised as
-the unconditional `images` cap), `POST /api/restart` (app relaunch —
+the unconditional `images` cap; a delivery that fails on the box is a 500
+`{ok:false, error}`, and only a missing seat is a 404), `POST /api/restart` (app relaunch —
 response written before the restart fires), `POST /api/sessions`,
 `DELETE /api/sessions/:name`, `POST /api/sessions/:name/restart` (remote
 create/kill/restart — all under the `create` cap, shipped together),

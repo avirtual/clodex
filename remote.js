@@ -790,7 +790,7 @@ class RemoteServer {
       const text = String((msg && msg.text) || '').trim();
       if (!text && !checked.images.length) return this._json(res, 400, { ok: false, error: 'empty message' });
       const out = this._send(name, text, checked.images);
-      return this._json(res, out.ok ? 200 : 404, out);
+      return this._json(res, out.ok ? 200 : (out.code || 404), out);
     }, DM_MAX_BODY);
   }
 

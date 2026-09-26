@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { utf8CutAt } = require('./file-peek');
+const { seatImageHead } = require('./seat-images');
 
 const FILED_CAP = 50;
 const HEAD_MAX_BYTES = 120;
@@ -92,7 +93,7 @@ function seedFiledRing(ring, dirs) {
   }
   found.sort((a, b) => a.ts - b.ts);
   const take = found.slice(Math.max(0, found.length - ring.cap));
-  for (const e of take) ring.note({ ...e, head: firstLineOf(e.path) });
+  for (const e of take) ring.note({ ...e, head: seatImageHead(path.basename(e.path)) || firstLineOf(e.path) });
   return take.length;
 }
 

@@ -70,6 +70,21 @@ test('filed ring: seeding lists the spill dir (intent) and the messages dir (mes
   assert.strictEqual(ring.has(s1), false);
 });
 
+test('seedFiledRing names a phone image by its seat-image head, never its raw bytes; a text message still seeds with its first line', () => {
+  const root = mkTmpRoot('clx-fileview-');
+  const msgs = path.join(root, 'messages', 'seat');
+  fs.mkdirSync(msgs, { recursive: true });
+  const img = path.join(msgs, 'img-1800000000000-1.png');
+  fs.writeFileSync(img, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0xff, 0xfe, 0x0a, 0xc3, 0x28]));
+  fs.utimesSync(img, 2, 2);
+  const txt = writeAt(msgs, 'msg-1-1.txt', 'From: lead\n\nbody', 1000);
+  const ring = createFiledRing();
+  assert.strictEqual(seedFiledRing(ring, [{ dir: msgs, kind: 'message' }]), 2);
+  const heads = Object.fromEntries(ring.list().map((e) => [path.basename(e.path), e.head]));
+  assert.deepStrictEqual(heads, { 'img-1800000000000-1.png': 'Image #1 (image/png)', 'msg-1-1.txt': 'From: lead' });
+  assert.ok(ring.has(img) && ring.has(txt));
+});
+
 test('head is at most 120 UTF-8 bytes, cut back to a character boundary, never a replacement character', () => {
   const head = `${'é'.repeat(59)}日本`;
   assert.ok(Buffer.byteLength(head) > HEAD_MAX_BYTES, 'ENTER: the head overflows the cap');

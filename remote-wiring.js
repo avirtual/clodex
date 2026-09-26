@@ -413,7 +413,7 @@ function createRemoteWiring(deps) {
             else manager._deliverMessage(name, 'user', text, 'dm');
           } catch (e) {
             log.error('remote', `dm to ${name} failed: ${e.message}`);
-            return { ok: false, error: `delivery failed: ${e.message}` };
+            return { ok: false, code: 500, error: `delivery failed: ${e.message}` };
           }
           return { ok: true };
         },
