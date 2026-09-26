@@ -2287,7 +2287,7 @@ test('a merge WAITS rather than dying when a LIVE pid holds the root suite lock'
   assert.strictEqual(f.masterHead(), before, 'ENTER: nothing was merged on this pass');
   assert.strictEqual(r.scheduled.length, 1, 'a retry was armed instead');
   assert.strictEqual(r.scheduled[0].ms, 30000,
-    'and it waits ~a third of a suite run — long enough to be a different sample of the lock');
+    'and it waits long enough to be a different sample of the lock');
   // The board must NOT show a merge error while the loop is merely waiting its
   // turn: `mergeError` is read as "this ticket needs a human".
   assert.ok(!('mergeError' in f.one()), 'a waiting merge is not stamped as a failure');
@@ -2714,8 +2714,7 @@ test('t538: an accept that closed the ticket out abandons a merge still waiting 
 // observes can be the retry's. What it cannot see is the window BETWEEN the
 // accept returning and the retry waking: 30s per attempt, with the whole retry
 // state in one unref'd timer closure. A crash or an
-// [agent:reboot] in there freezes the stamp on the row for good, because
-// nothing re-examines the field at boot.
+// [agent:reboot] in there freezes the stamp on the row for good.
 //
 // So this asserts with the retry ARMED AND UNFIRED. That is the only state in
 // which the accept's own clear is the thing being measured.

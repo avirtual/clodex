@@ -2260,7 +2260,7 @@ test('seed: the lead prompt qualifies the downgrade — the archive is condition
 // t525, item 3: the dispatch self-reminder and the loop's stall nudge overlap,
 // and the prompt said nothing about which covers what — so a lead could not tell
 // whether its reminder was the only net. Deliberately pinned WITHOUT a duration:
-// `TICKET_STALL_MS` is 30m while `TICKET_SUITE_TIMEOUT_MS` derives to 35m, and a
+// `TICKET_STALL_MS` is 30m while `TICKET_SUITE_TIMEOUT_MS` derives to 41m, and a
 // prompt quoting either number goes stale the moment one moves.
 test('seed: the lead prompt splits the stall nudge from the dispatch reminder', () => {
   const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');

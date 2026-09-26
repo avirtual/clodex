@@ -15,9 +15,7 @@
 // disagree. The 2026-08-01 raise was a cap covering for a MISSING mutex, so it
 // bought longer deadlocks. The lock now makes concurrent runs impossible, so
 // the cap no longer decides whether runs collide — only whether a run that
-// legitimately took its turn lives long enough to REPORT. Against a suite
-// measured at ~74s, the old 120s cap killed successful runs and threw their
-// digest away.
+// legitimately took its turn lives long enough to REPORT.
 //
 // These tests run the lock protocol against a stub command rather than the real
 // suite: a test that shells out to the whole suite would be the slowest thing in
@@ -219,20 +217,14 @@ test('lock: the script gives up waiting STRICTLY before the exec entry kills it'
 });
 
 test('lock: the exec ceiling clears a WHOLE run plus a whole lock wait, with room to grow', () => {
-  // MEASURED, not guessed (t440, 2026-08-19): the full suite runs in 73s wall at
-  // root fe8e152 and 74s from a worktree at c1e1b8e, 6000 and 6004 tests. The
-  // ceiling that shipped was 120000ms, which cleared that by 46s — and the
-  // script's own lock wait (up to 30s) is spent INSIDE it, so the real headroom
-  // was 16s and a single queued run blew the ceiling. That is how a SUCCESSFUL
+  // The script's own lock wait (up to 30s) is spent INSIDE the ceiling, so a
+  // single queued run can blow it. That is how a SUCCESSFUL
   // run lost its report: the wrapper is SIGKILLed while the suite keeps running
   // and keeps holding the lock, and the digest, which exists only on the killed
   // wrapper's stderr, is never delivered.
   //
   // So the floor asserted here is a whole run PLUS a whole lock wait, times a
-  // growth factor. At 420000ms the def tolerates roughly 5x today's wall time
-  // (~74s -> ~390s) before it can trip again, i.e. the suite quintupling at
-  // today's cost per test. A ceiling chosen to just clear today's number trips
-  // again within weeks, because the suite grows monotonically.
+  // growth factor.
   const MEASURED_WALL_MS = 74000;
   const src = fs.readFileSync(SCRIPT, 'utf-8');
   const m = /waited" -ge (\d+)/.exec(src);

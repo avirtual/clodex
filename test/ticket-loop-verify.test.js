@@ -2476,6 +2476,9 @@ test('the kill cap is strictly GREATER than the lock wait, or the wait is dead c
   assert.ok(waitMs < timeoutMs,
     `the loop waits up to ${waitMs}ms for the lock but kills the child at ${timeoutMs}ms — equal or `
     + 'less means a queued run is reported as a wedge and the wait constant can never be reached');
+  assert.ok(timeoutMs - waitMs > 20 * 60 * 1000,
+    `the loop kills a run ${timeoutMs - waitMs}ms after the lock wait, not past the runner's own `
+    + '20 * 60 * 1000 RUN_TIMEOUT_MS ceiling, so a hung file is reported as a bare wedge instead of by name');
 });
 
 // ── the harness cannot verify this branch: escalate, never reject ──────────
