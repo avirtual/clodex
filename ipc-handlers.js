@@ -827,18 +827,20 @@ function registerIpcHandlers(deps) {
     linkPathFor: (name) => pathFor(REGISTRY_DIR, name, 'transcript'),
     onChange: (name) => manager._sendToSession(name, 'transcript-changed', name),
   });
-  handle('transcript:pull', (_e, name) => {
+  handle('transcript:pull', (_e, name, since) => {
     const s = manager.sessions.get(name);
     if (!s || s._dead || !isAgentType(s.agentType)) { transcriptSpike.drop(name); return { ok: false, reason: 'not-agent' }; }
     const res = transcriptSpike.pull(name);
     const extra = res && res.ok && manager.compactNoticesFor(name);
-    const out = extra ? { ok: true, rev: `${res.rev}:${extra.rev}`, records: mergeCompactNotices(res.records, extra.notices) } : res;
     const box = manager.seatOutbox(name);
-    if (!box) return out;
-    const perms = manager.seatPermissions(name);
+    const perms = box && manager.seatPermissions(name);
     const p = perms ? { suffix: `:p${perms.rev}`, fields: { permissions: perms.items } } : { suffix: '', fields: {} };
-    if (!out || !out.ok) return { ...out, rev: `-:o${box.rev}${p.suffix}`, records: [], outbox: box.items, ...p.fields };
-    return { ...out, rev: `${out.rev}:o${box.rev}${p.suffix}`, outbox: box.items, ...p.fields };
+    if (!res || !res.ok) return box ? { ...res, rev: `-:o${box.rev}${p.suffix}`, records: [], outbox: box.items, ...p.fields } : res;
+    let rev = extra ? `${res.rev}:${extra.rev}` : res.rev;
+    if (box) rev = `${rev}:o${box.rev}${p.suffix}`;
+    if (since === rev) return { ok: true, rev, unchanged: true };
+    const records = extra ? mergeCompactNotices(res.records, extra.notices) : res.records;
+    return box ? { ok: true, rev, records, outbox: box.items, ...p.fields } : { ok: true, rev, records };
   });
 
   handle('proxy:snapshot', (_e, name) => proxyPoller.snapshot(name));
