@@ -9964,12 +9964,12 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         <input type="text" id="args-model" placeholder="(CLI default) — e.g. opus, sonnet" spellcheck="false">
         <span class="hint-text">The model Clodex launches (and relaunches) this session with. An in-CLI <code>/model</code> change is runtime-only and isn't saved here.</span>
       </label>
+      <label>Extra CLI args
+        <input type="text" id="args-input" placeholder="(none)">
+      </label>
       <label id="args-effort-row">Effort
         <input type="text" id="args-effort" placeholder="(CLI default)" spellcheck="false">
         <span class="hint-text">The reasoning effort level, in the CLI's own words. Empty leaves the CLI's setting alone.</span>
-      </label>
-      <label>Extra CLI args
-        <input type="text" id="args-input" placeholder="(none)">
       </label>
       <label id="args-stream-io-row">Stream transport (experimental)
         <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
