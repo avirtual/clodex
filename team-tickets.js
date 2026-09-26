@@ -1431,7 +1431,7 @@ function createTicketMethods(deps, shared) {
       // Badges are recomputed on the next mutation; a stranded seat is not.
       try { this._reconcileTickets(team); }
       catch (e) { log.error('intent', `ticket ${ticketId}: verdict saved but reconcile failed: ${e.message}`); }
-      return { verdict: ticket.verdict, mustFix: ticket.mustFix, reviewRound: ticket.reviewRound };
+      return { verdict: ticket.verdict, mustFix: ticket.mustFix, reviewRound: ticket.reviewRound, reworkRound: Number(ticket.reworkRound) || 0 };
     },
 
     // The verdict prose, written beside the diff it reviewed. Shares
@@ -1816,6 +1816,11 @@ function createTicketMethods(deps, shared) {
       return this._mergeChain;
     },
 
+    _verdictRejectedSince(ticket, landedOn) {
+      if (!ticket || !landedOn || landedOn.reworkRound == null) return false;
+      return (Number(ticket.reworkRound) || 0) !== Number(landedOn.reworkRound);
+    },
+
     inFlightMerges() {
       const held = Array.isArray(this._mergeHeld) ? this._mergeHeld : [];
       return held.map((h, i) => (i === 0
@@ -1854,7 +1859,7 @@ function createTicketMethods(deps, shared) {
               continue;
             }
           }
-          const landedOn = { verdict: t.verdict, mustFix: t.mustFix == null ? null : t.mustFix, reviewRound: Number(t.reviewRound) || 1 };
+          const landedOn = { verdict: t.verdict, mustFix: t.mustFix == null ? null : t.mustFix, reviewRound: Number(t.reviewRound) || 1, reworkRound: Number(t.reworkRound) || 0 };
           let verdictText = null;
           const round = Array.isArray(t.rounds) ? t.rounds.find((r) => r && Number(r.round) === landedOn.reviewRound) : null;
           if (round && round.verdictFile) {
@@ -1993,6 +1998,10 @@ function createTicketMethods(deps, shared) {
         // decided is not finished. Silent, like the no-branch case — the lead who
         // reopened it does not need to be told the loop noticed.
         if (ticket.state !== 'done') return;
+        if (this._verdictRejectedSince(ticket, landedOn)) {
+          log.info('ticket', `auto-merge for ${ticketId} CANCELLED: the round ${landedOn.reviewRound} ACCEPT that queued it was rejected by the lead (rework round ${ticket.reworkRound}) — nothing was merged; the rework goes through review again`);
+          return;
+        }
         // The lead ACCEPTED it in that same gap, and an accept that closed the
         // ticket out ends the merge the loop was told to perform. `state` cannot
         // see this: accept leaves it at `done`, so the gate above passes and a
@@ -2236,9 +2245,10 @@ function createTicketMethods(deps, shared) {
         // a condition an await could have changed is exactly what an await here
         // would break.
         const stillDone = this._loadTicket(team, ticketId);
-        if (!stillDone || stillDone.state !== 'done' || stillDone.closedOut) {
+        if (!stillDone || stillDone.state !== 'done' || stillDone.closedOut || this._verdictRejectedSince(stillDone, landedOn)) {
           const why = !stillDone ? 'gone'
             : stillDone.state !== 'done' ? `${stillDone.state}, not done`
+            : this._verdictRejectedSince(stillDone, landedOn) ? `back from a rejection of this ACCEPT (rework round ${stillDone.reworkRound})`
             : 'still done but ACCEPTED and closed out';
           log.info('ticket', `auto-merge for ${ticketId} ABANDONED at the merge step: the ticket is ${why} — nothing was merged`);
           return;
@@ -2410,7 +2420,8 @@ function createTicketMethods(deps, shared) {
           const fresh = ticketsStore.load(team.root);
           const row = fresh.find((t) => t.id === ticketId);
           // `state` FIRST: a reopened row can still carry an older `acceptedAt`.
-          const reopened = row && row.state !== 'done';
+          const rejectedSince = !!row && this._verdictRejectedSince(row, landedOn);
+          const reopened = row && (row.state !== 'done' || rejectedSince);
           const acceptedInFlight = !reopened && row && (row.acceptedAt || row.closedOut);
           // `closedOut`, NOT the stamp, picks that accept's SENTENCE: `!m.ok` and
           // `!m.merged` stamp and keep a tree that, called a close-out, is never
@@ -2425,8 +2436,8 @@ function createTicketMethods(deps, shared) {
           closeOut = !row
             ? { ok: false, closedOut: false, text: `the ticket row for ${ticketId} could not be re-read after the merge` }
             : reopened
-              ? { ok: false, closedOut: false, reopened: true, state: row.state,
-                text: `the ticket was reopened (${row.state}) while the post-merge suite ran, so the seat, worktree and branch were left alone` }
+              ? { ok: false, closedOut: false, reopened: true, state: rejectedSince ? `rejected, rework round ${row.reworkRound}` : row.state,
+                text: `the ticket was reopened (${rejectedSince ? `rejected, rework round ${row.reworkRound}` : row.state}) while the post-merge suite ran, so the seat, worktree and branch were left alone` }
               : finishedInFlight
                 ? { ok: true, closedOut: true, already: true,
                   text: `ticket ${ticketId} accepted — ${who} accepted it while the post-merge suite ran` }
@@ -2439,8 +2450,10 @@ function createTicketMethods(deps, shared) {
           log.error('ticket', `loop close-out for ${ticketId} failed after a green merge: ${e.message}`);
           closeOut = { ok: false, closedOut: false, text: `the loop's close-out threw (${e.message})` };
         }
+        const mergedTip = await gitWorktree.revParse(team.root, `${merged.sha}^2`).catch(() => null);
+        const branchTip = await gitWorktree.revParse(team.root, branch).catch(() => null);
         this._notifyMergeLanded(team, ticketId, {
-          branch, target, sha: merged.sha, rounds, summary: suite.summary, changelog, unioned: merged.unioned, closeOut,
+          branch, target, sha: merged.sha, rounds, summary: suite.summary, changelog, unioned: merged.unioned, closeOut, mergedTip, branchTip,
           slow: slowPass ? suite.slow : null,
         });
       } catch (e) {
@@ -2552,7 +2565,7 @@ function createTicketMethods(deps, shared) {
     // and `closedOut` are all read; every other shape falls to the step line, so
     // a forgotten argument cannot report a teardown that never ran. A REOPEN
     // renders no verb anywhere in the body, reassurance line included.
-    _notifyMergeLanded(team, ticketId, { branch, target = null, sha, rounds, summary, changelog, unioned, closeOut = null, slow = null }) {
+    _notifyMergeLanded(team, ticketId, { branch, target = null, sha, rounds, summary, changelog, unioned, closeOut = null, slow = null, mergedTip = null, branchTip = null }) {
       try {
         const into = target || gitWorktree.mergeTargetForSync(team);
         // Collapsed and capped BEFORE it reaches the array. git stderr is routinely
@@ -2600,6 +2613,9 @@ function createTicketMethods(deps, shared) {
               + `The loop could not close it out: ${wideLine(closeOutDetail(ticketId, (closeOut && closeOut.text) || 'it did not run'))}`;
         const body = [
           `[ticket ${ticketId} MERGED] ${branch} → ${into} as ${sha}`,
+          ...(mergedTip && branchTip && mergedTip !== branchTip
+            ? [`Merged ${branch} at ${mergedTip}, NOT its tip: the branch is now at ${branchTip}, and the commits after ${mergedTip.slice(0, 8)} are not on ${into}.`]
+            : []),
           '',
           stepLine,
           '',
@@ -8417,6 +8433,8 @@ function createTicketMethods(deps, shared) {
       // on a ticket that is being worked, in a body that tells the hand to re-close.
       delete ticket.verifyHold;
       delete ticket.mergedNudgedAt;
+      const cancelsMerge = ticket.verdict === 'ACCEPT';
+      delete ticket.mergeWaiting;
       const seat = this._ticketAssigneeSeat(team, ticket);
       const rework = (seat && seat !== team.lead)
         ? this._reworkSeatFor(team, ticket, seat, this._redirectDeliveryText(ticket.id, 'rejected', reason))
@@ -8439,6 +8457,7 @@ function createTicketMethods(deps, shared) {
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} rejected${replaced}` });
       log.info('intent', `task reject ${ticket.id} by ${session.name} → reopened${replaced}`);
+      if (cancelsMerge) log.info('ticket', `task reject ${ticket.id}: the round ${ticket.reviewRound} ACCEPT is stale — its queued auto-merge will not run, and the rework's next task done is reviewed again`);
       reply(`ticket ${ticket.id} reopened (rework) → ${ticket.role || ticket.assignee || 'unassigned'}${replaced}`);
     },
 

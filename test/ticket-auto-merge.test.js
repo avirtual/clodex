@@ -2341,7 +2341,7 @@ test('t1234: a merge left WAITING on a suite is requeued once at boot, with a fr
   assert.strictEqual(calls.length, 1, 'the dropped retry timer is replaced by exactly one requeue');
   assert.strictEqual(calls[0].ticketId, 't1');
   assert.deepStrictEqual(calls[0].retry, { attempt: 0, since: 5_000_000 }, 'the ten-minute cap restarts at boot');
-  assert.deepStrictEqual(calls[0].landedOn, { verdict: 'ACCEPT', mustFix: null, reviewRound: 1 });
+  assert.deepStrictEqual(calls[0].landedOn, { verdict: 'ACCEPT', mustFix: null, reviewRound: 1, reworkRound: 0 });
   assert.match(calls[0].verdictText, /VERDICT: ACCEPT/);
   assert.strictEqual(f.logs.filter((l) => /boot: requeued the auto-merge for t1/.test(l.msg)).length, 1, 'one log line per requeued ticket');
 });
@@ -3607,4 +3607,130 @@ test('bare [agent:team trunk] reports the derived value when none is set', async
   const replies = [];
   await f.m._handleTeamTrunk(f.team, { type: 'team', sub: 'trunk', branch: null }, (msg) => replies.push(msg));
   assert.match(replies[0], /trunk of team is "main" \(derived from the repo's default branch; not set/);
+});
+
+test('t1237: a reject after ACCEPT cancels the merge that verdict queued, even once the rework is done again', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver: { verdict: 'ACCEPT', reviewRound: 1 } });
+  const before = f.masterHead();
+  let release;
+  f.m._mergeChain = new Promise((r) => { release = r; });
+  const chain = f.m._queueAutoMerge(f.team, 't1', { ...LANDED, reworkRound: 0 }, ACCEPT);
+
+  const replies = [];
+  f.m._taskReject(f.m.sessions.get('lead'), f.team,
+    { id: 't1', body: 'the CHANGELOG line is false' }, (msg) => replies.push(msg));
+  assert.match(replies.join('\n'), /reopened \(rework\)/, 'ENTER: the reject landed while the merge was queued');
+  const rows = f.tstore.load(f.team.root);
+  Object.assign(rows[0], { state: 'done', loopStep: 'verify', closedAt: Date.now() });
+  f.tstore.save(f.team.root, rows);
+
+  release();
+  await chain;
+
+  assert.strictEqual(f.masterHead(), before, 'the stale ACCEPT merged nothing');
+  assert.deepStrictEqual(f.landed(), [], 'and no MERGED notice went out');
+  assert.ok(f.logs.some((l) => /auto-merge for t1 CANCELLED/.test(l.msg)),
+    `the skipped chain entry says why. Logs:\n${f.logs.map((l) => l.msg).join('\n')}`);
+  assert.strictEqual(f.one().loopStep, 'verify', 'the rework round is left to the loop');
+});
+
+test('t1237: a task done after a reject that landed mid-merge goes back to review, not to a close-out', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver: { verdict: 'ACCEPT', reviewRound: 1 } });
+  const realCloseOut = f.m._closeOutMergedTicket.bind(f.m);
+  let closeOutCalls = 0;
+  f.m._closeOutMergedTicket = async (...args) => { closeOutCalls += 1; return realCloseOut(...args); };
+  const loops = [];
+  f.m._runTicketLoop = (team, id) => { loops.push(id); };
+
+  const realSuite = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = async (...args) => {
+    const out = await realSuite(...args);
+    const replies = [];
+    f.m._taskReject(f.m.sessions.get('lead'), f.team,
+      { id: 't1', body: 'round 2: the report over-states the claim' }, (msg) => replies.push(msg));
+    assert.match(replies.join('\n'), /reopened \(rework\)/, 'ENTER: the reject landed mid-suite');
+    f.m._taskDone(f.m.sessions.get('team-hand'), f.team,
+      { id: 't1', body: 'reworked; suite green' }, (msg) => replies.push(msg));
+    return out;
+  };
+
+  await f.m._autoMergeTicket(f.team, 't1', { ...LANDED, reworkRound: 0 }, ACCEPT);
+
+  const t = f.one();
+  assert.strictEqual(t.state, 'done', 'ENTER: the rework was closed again before the close-out');
+  assert.deepStrictEqual(loops, ['t1'], 'ENTER: the task done started the loop for round 2');
+  assert.strictEqual(closeOutCalls, 0, 'the stale ACCEPT does not close out the rework round');
+  assert.strictEqual(t.loopStep, 'verify', 'the rework is still on its way to review round 2');
+  assert.ok(!t.closedOut && !t.loopClosedOut && t.acceptedBy === undefined, 'nothing accepted the rework');
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: the in-flight merge itself stands and is reported');
+  assert.ok(notes[0].body.includes('Reopened by rework (rejected, rework round 1) during the post-merge suite'),
+    `the notice says the rework round is live. Got:\n${notes[0].body}`);
+});
+
+test('t1237: a merge whose branch moved past the merged sha names both in the MERGED notice', async () => {
+  const repo = mkRepo();
+  const mergedTip = commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  let tip = null;
+  const realSuite = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = async (...args) => {
+    const out = await realSuite(...args);
+    tip = git(repo.dir, ['commit-tree', `${mergedTip}^{tree}`, '-p', mergedTip, '-m', 'rework']);
+    git(repo.dir, ['update-ref', 'refs/heads/tl-1', tip]);
+    return out;
+  };
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: the merge landed');
+  assert.ok(notes[0].body.includes(`Merged tl-1 at ${mergedTip}, NOT its tip: the branch is now at ${tip}`),
+    `the notice names the merged sha and the tip. Got:\n${notes[0].body}`);
+});
+
+test('t1237: a merge of the branch tip adds no tip line', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: the merge landed');
+  assert.ok(!/NOT its tip/.test(notes[0].body), `Got:\n${notes[0].body}`);
+});
+
+test('t1237: a boot-requeued merge still waiting in the chain is cancelled by a reject, even once the rework is done again', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver: WAITING, bootTeams: true });
+  const before = f.masterHead();
+  let release;
+  f.m._mergeChain = new Promise((r) => { release = r; });
+  const queued = [];
+  const realQueue = f.m._queueAutoMerge.bind(f.m);
+  f.m._queueAutoMerge = (...args) => { const p = realQueue(...args); queued.push(p); return p; };
+
+  await f.m._requeueWaitingMerges();
+  assert.strictEqual(queued.length, 1, 'ENTER: the boot pass requeued the waiting merge');
+
+  const replies = [];
+  f.m._taskReject(f.m.sessions.get('lead'), f.team,
+    { id: 't1', body: 'the CHANGELOG line is false' }, (msg) => replies.push(msg));
+  assert.match(replies.join('\n'), /reopened \(rework\)/, 'ENTER: the reject landed while the requeued merge waited');
+  const rows = f.tstore.load(f.team.root);
+  Object.assign(rows[0], { state: 'done', loopStep: 'verify', closedAt: Date.now() });
+  f.tstore.save(f.team.root, rows);
+
+  release();
+  await queued[0];
+
+  assert.strictEqual(f.masterHead(), before, 'the stale ACCEPT merged nothing');
+  assert.deepStrictEqual(f.landed(), [], 'and no MERGED notice went out');
+  assert.ok(f.logs.some((l) => /auto-merge for t1 CANCELLED/.test(l.msg)),
+    `the skipped chain entry says why. Logs:\n${f.logs.map((l) => l.msg).join('\n')}`);
+  assert.strictEqual(f.one().loopStep, 'verify', 'the rework round is left to the loop');
 });

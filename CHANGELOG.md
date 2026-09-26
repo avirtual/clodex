@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Ticket loop: rejecting an ACCEPT verdict now cancels the merge that verdict had queued and sends the rework through a second review, instead of merging the pre-rework commit.
 - Transcript pane: a Tools checkbox beside Internals hides the tool-call blocks, so a recap reads as prompts and replies only; the choice is remembered across restarts like Internals.
 - Transcript pane: with Internals unchecked, a turn made only of Clodex-injected rows no longer leaves an empty separator line, and a folded attached reply keeps its ↳ lead.
 - Ticket loop: a merge deferred behind a running suite is picked up again after an app relaunch instead of waiting on a timer the relaunch dropped, and a lead's reboot now waits for an in-flight merge and its post-merge suite.
