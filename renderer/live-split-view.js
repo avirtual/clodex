@@ -26,9 +26,7 @@ function renderTranscript(doc, paneEl, records, ctx = {}) {
   transcriptRowsFor(doc, paneEl, ctx).render(records);
 }
 
-function internalsBar(doc, paneEl, checked, onChange) {
-  const bar = doc.createElement('div');
-  bar.className = 'transcript-bar';
+function barToggle(doc, bar, text, checked, onChange) {
   const label = doc.createElement('label');
   label.className = 'transcript-bar-toggle';
   const box = doc.createElement('input');
@@ -36,10 +34,18 @@ function internalsBar(doc, paneEl, checked, onChange) {
   box.checked = !!checked;
   box.addEventListener('change', () => onChange(!!box.checked));
   label.appendChild(box);
-  label.appendChild(doc.createTextNode('Internals'));
+  label.appendChild(doc.createTextNode(text));
   bar.appendChild(label);
+  return box;
+}
+
+function internalsBar(doc, paneEl, checked, onChange, toolsChecked = true, onToolsChange = NOOP) {
+  const bar = doc.createElement('div');
+  bar.className = 'transcript-bar';
+  const box = barToggle(doc, bar, 'Internals', checked, onChange);
+  const toolsBox = barToggle(doc, bar, 'Tools', toolsChecked, onToolsChange);
   paneEl.insertBefore(bar, paneEl.firstChild);
-  return { bar, box };
+  return { bar, box, toolsBox };
 }
 
 function markedText(doc, text, spans) {
@@ -79,7 +85,7 @@ function renderMenuMirror(doc, el, read) {
   el.hidden = rows.length === 0;
 }
 
-function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, internals = () => true, onInternals = NOOP }) {
+function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, internals = () => true, onInternals = NOOP, tools = () => true, onTools = NOOP }) {
   const paneEl = document.createElement('div');
   paneEl.className = 'transcript-pane';
   paneEl.hidden = true;
@@ -87,6 +93,9 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   const toggle = internalsBar(document, paneEl, internals(), (on) => {
     transcriptRowsFor(document, paneEl, rowsCtx).setInternals(on);
     onInternals(on);
+  }, tools(), (on) => {
+    transcriptRowsFor(document, paneEl, rowsCtx).setTools(on);
+    onTools(on);
   });
   const menuEl = menuMirror ? document.createElement('div') : null;
   if (menuEl) {
@@ -118,7 +127,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   let tag = null;
   let fileHead = null;
   const bandKey = (b) => (b ? `${b.top}:${b.bottom}` : '');
-  const rowsCtx = { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette, now, lead: toggle.bar, internals: internals() };
+  const rowsCtx = { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette, now, lead: toggle.bar, internals: internals(), tools: tools() };
   let turnRunning = false;
   let working = null;
 
@@ -404,6 +413,9 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       const on = !!internals();
       toggle.box.checked = on;
       transcriptRowsFor(document, paneEl, rowsCtx).setInternals(on);
+      const toolsOn = !!tools();
+      toggle.toolsBox.checked = toolsOn;
+      transcriptRowsFor(document, paneEl, rowsCtx).setTools(toolsOn);
       evaluate();
       layout();
     },
