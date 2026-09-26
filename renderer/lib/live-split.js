@@ -49,9 +49,16 @@ function codexStripTop(rows, i) {
   return j;
 }
 
+function museStripIsIdle(rows, i, cols) {
+  let j = i + 2;
+  while (j < rows.length && !isRuleRow(rows[j], cols)) j++;
+  if (j >= rows.length) return true;
+  return rows.slice(j + 1).filter((r) => !isBlank(r)).length <= 1;
+}
+
 const ANCHORS = {
   claude: { at: (rows, i, cols) => isRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]), top: (rows, i) => i },
-  muse: { at: (rows, i, cols) => isLabeledRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]), top: (rows, i) => i },
+  muse: { at: (rows, i, cols) => isLabeledRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]) && museStripIsIdle(rows, i, cols), top: (rows, i) => i },
   codex: { at: (rows, i) => isCodexComposerRow(rows, i), top: codexStripTop },
 };
 

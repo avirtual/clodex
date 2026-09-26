@@ -30583,9 +30583,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
         while (j > 0 && typeof rows[j - 1] === "string" && CODEX_MENU_ROW.test(rows[j - 1])) j--;
         return j;
       }
+      function museStripIsIdle(rows, i, cols) {
+        let j = i + 2;
+        while (j < rows.length && !isRuleRow(rows[j], cols)) j++;
+        if (j >= rows.length) return true;
+        return rows.slice(j + 1).filter((r) => !isBlank(r)).length <= 1;
+      }
       var ANCHORS = {
         claude: { at: (rows, i, cols) => isRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]), top: (rows, i) => i },
-        muse: { at: (rows, i, cols) => isLabeledRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]), top: (rows, i) => i },
+        muse: { at: (rows, i, cols) => isLabeledRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]) && museStripIsIdle(rows, i, cols), top: (rows, i) => i },
         codex: { at: (rows, i) => isCodexComposerRow(rows, i), top: codexStripTop }
       };
       function findAnchor(rows, cursorY, cols, platform = "claude") {
