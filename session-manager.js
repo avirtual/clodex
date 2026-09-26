@@ -8804,7 +8804,7 @@ function createSessionManager(deps) {
     // `onWrite` (see _deliverMessage) fires once the text is DURABLE — parked, or
     // released by the queue. A caller that persists "this seat has been told" must
     // use it rather than the return, which is only a queue acceptance.
-    _gatedDeliver(targetName, senderTag, body, urgent, tag = '', onWrite = null) {
+    _gatedDeliver(targetName, senderTag, body, urgent, tag = '', onWrite = null, opts = {}) {
       const target = this.sessions.get(targetName);
       if (!target || !target.agentType) return { error: `no such agent "${targetName}"` };
       const key = dmContentKey(senderTag, body);
@@ -8831,6 +8831,10 @@ function createSessionManager(deps) {
           : { held: verdict.reason, noUrgent: verdict.noUrgent };
       }
       const superseded = urgent === true ? claimParkedByKey(PENDING_DIR, targetName, key) : null;
+      if (opts && opts.parkBehindQueue === true && this._parkBehindQueue(target, senderTag, body, tag, key)) {
+        if (typeof onWrite === 'function') { try { onWrite('parked'); } catch {} }
+        return { queued: true };
+      }
       this._deliverMessage(targetName, senderTag, body, 'dm', tag, onWrite, key);
       // `queued`, not `delivered`: _deliverMessage returns once the text is parked
       // or handed to the inject queue, and the queue writes it later — within one
@@ -9477,6 +9481,20 @@ function createSessionManager(deps) {
       return id;
     }
 
+    _parkBehindQueue(target, senderTag, body, tag, key = null) {
+      if (!target || target.agentType !== 'claude' || target.io === 'stream' || target._dead) return false;
+      if (!(target._injectPtyQueue && target._injectPtyQueue.length > 0)) return false;
+      try {
+        parkDelivery(PENDING_DIR, target.name, this._buildDeliveryText(target, senderTag, body, 'dm', tag), this._nextParkSeq(), null, false, this._bornFor(target.name), key);
+      } catch (e) {
+        log.error('inject', `park-behind-queue failed for ${target.name}: ${e.message} — injecting instead`);
+        return false;
+      }
+      this._armParkCap(target);
+      this._sendToSession(target.name, 'session-mention', target.name, 'dm', senderTag);
+      return true;
+    }
+
     _maybeParkDelivery(target, finalText, key = null) {
       if (!target || target.agentType !== 'claude' || target._dead) return false;
       const typing = Date.now() - (target.lastUserInputTs || 0) < INJECT_QUIET_MS;
@@ -9484,8 +9502,7 @@ function createSessionManager(deps) {
       // deliver it mid-loop (an external script can't see the in-memory queue).
       // The idle-edge Node drain is the fallback for a turn that ends with no tool
       // call (pure-text reply).
-      const queued = !!(target._injectPtyQueue && target._injectPtyQueue.length > 0);
-      const busy = target.activityState === 'thinking' || !!target._recycling || queued;
+      const busy = target.activityState === 'thinking' || !!target._recycling;
       if (!typing && !busy) return false;
       try {
         parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), null, false, this._bornFor(target.name), key);

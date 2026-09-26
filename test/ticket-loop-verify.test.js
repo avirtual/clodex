@@ -5617,8 +5617,8 @@ test('t1235: a merge escalation that PARKED keeps loopStep; one that was injecte
   const f = mkLoop({ repo });
   const run = (disposition) => {
     f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'merge', report: 'r', reportedBy: 'team-hand' }]);
-    f.m._gatedDeliver = (target, sender, body, urgent, tag, onWrite) => {
-      f.gated.push({ target, sender, body });
+    f.m._gatedDeliver = (target, sender, body, urgent, tag, onWrite, opts) => {
+      f.gated.push({ target, sender, body, opts });
       if (disposition === 'parked' && typeof onWrite === 'function') onWrite('parked');
       return { queued: true };
     };
@@ -5628,4 +5628,6 @@ test('t1235: a merge escalation that PARKED keeps loopStep; one that was injecte
   assert.strictEqual(run('parked'), 'merge',
     'a parked escalation has not been seen yet: clearing loopStep on it drops the ticket out of the watchdog');
   assert.strictEqual(run('injected'), undefined, 'an injected one releases the hold as before');
+  assert.ok(f.gated.every((g) => g.opts && g.opts.parkBehindQueue === true),
+    'the escalation asks to park behind a queued unit rather than be written into the turn that unit starts');
 });

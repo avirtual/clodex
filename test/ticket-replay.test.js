@@ -1361,6 +1361,10 @@ test('t349: a stranded ticket that resolves to no live seat escalates instead of
     // resolves to nobody. Dropping this alongside the reassignment case would be
     // silent in exactly the shape this ticket exists to report: an open ticket whose
     // spec reached no one, and no one told.
+    const leadQ = () => (app.m.sessions.get('lead')._injectPtyQueue || { length: 0 }).length;
+    for (let i = 0; i < 400 && leadQ() > 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.strictEqual(leadQ(), 0,
+      'ENTER: the lead\'s own dispatch replies must have drained, or the escalation parks behind them');
     app.m.sessions.delete('team-hand');
     fireConfirm(app, s);
     const leadSaw = await settled(app, 'lead', /ESCALATED/);

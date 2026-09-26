@@ -8065,7 +8065,7 @@ function createTicketMethods(deps, shared) {
           ...(recovery ? ['', `RECOVERY: ${recovery}`] : []),
         ].join('\n');
         let disposition = null;
-        const r = this._gatedDeliver(team.lead, 'ticket-loop', body, true, `[ticket ${ticketId} ESCALATED]`, (d) => { disposition = d || 'injected'; });
+        const r = this._gatedDeliver(team.lead, 'ticket-loop', body, true, `[ticket ${ticketId} ESCALATED]`, (d) => { disposition = d || 'injected'; }, { parkBehindQueue: true });
         const parked = !!(r && (r.parked || (r.queued && disposition === 'parked')));
         const reached = !!(r && r.queued) && !parked;
         // Two independent reasons to keep the hold, deliberately not collapsed

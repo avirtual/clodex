@@ -1559,7 +1559,7 @@ test('t616: the anchor is the NEWEST ripe baseline, so old growth cannot vouch f
   } finally { app.stop(); }
 });
 
-test('t1235: an urgent delivery landing behind a queued unit parks, and reaches the seat exactly once', async () => {
+test('t1235: an escalation landing behind a queued unit parks, and reaches the seat exactly once', async () => {
   const app = boot({ deps: { specConfirmMs: 60_000 } });
   try {
     await app.spawn('lead');
@@ -1568,7 +1568,7 @@ test('t1235: an urgent delivery landing behind a queued unit parks, and reaches 
     app.m._deliverMessage('lead', 'ticket-loop', 'ACCEPT ON TICKET T1', 'dm');
     assert.ok(lead._injectPtyQueue && lead._injectPtyQueue.length > 0,
       'ENTER: the first unit must still be in the queue when the escalation arrives');
-    const r = app.m._gatedDeliver('lead', 'ticket-loop', 'ESCALATED AT MERGE', true, '[ticket t1 ESCALATED]');
+    const r = app.m._gatedDeliver('lead', 'ticket-loop', 'ESCALATED AT MERGE', true, '[ticket t1 ESCALATED]', null, { parkBehindQueue: true });
     assert.ok(r && r.queued, 'ENTER: the delivery was accepted');
     await settled(app, 'lead', /ACCEPT ON TICKET T1/);
     await complete(app, 'lead');
