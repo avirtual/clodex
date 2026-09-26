@@ -43,6 +43,9 @@ function loadRowBuilder(name, free, extra = {}) {
     scheduleSidebarRelayout() {},
     applyFixChip() {},
     classifySender,
+    streamSeatNames: new Set(),
+    SEAT_IO_TIPS: { stream: 'stream', pty: 'pty' },
+    seatIoKind: (io) => (io === 'stream' ? 'stream' : 'pty'),
     ...extra,
   };
   const names = Object.keys(env).concat(free);

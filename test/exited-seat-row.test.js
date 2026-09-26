@@ -251,6 +251,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
   };
   const names = Object.keys(env).filter((k) => k !== 'exitHandler' && k !== 'movedInHandler');
   const body = [
+    slice('const SEAT_IO_TIPS', ';\n'), slice('const seatIoKind', ';\n'),
     fnSrc('exitedLabel'), fnSrc('exitedRowSnapshot'), fnSrc('addExitedSessionToSidebar'),
     slice('window.api.onSessionExit((name, code, meta) => {', '\n});\n'),
     slice('window.api.onSessionMovedIn((entry) => {', '\n});\n'),

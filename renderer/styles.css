@@ -506,6 +506,10 @@ html, body {
    GCP blue — brand-adjacent but clear of claude's terracotta. */
 .session-chip[data-backend="bedrock"] { --chip-color: #e6a23c; }
 .session-chip[data-backend="vertex"]  { --chip-color: #5b9bf5; }
+.session-item[data-io="stream"] .session-chip {
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chip-color) 55%, transparent);
+}
 
 /* Activity dot rides the chip's corner (was a standalone left-column dot).
    The ring matches the sidebar bg so the dot reads as punched through. */
