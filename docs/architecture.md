@@ -1250,6 +1250,10 @@ Own state + DOM, `init*(deps)`:
 - **lib/menu-cells.js** — pure `rowCells(line, cols)` and `colour(cell, fg)`:
   one xterm buffer line to the attribute runs `readMenuRows` takes. Shared by
   scripts/explore/capture-menu.js and live-split-view.js.
+- **lib/working-row.js** — pure `spinnerText(rows, top, platform)` (t1227):
+  the CLI's own spinner line among the rows above the split anchor, with its
+  elapsed stripped, or null. live-split-view feeds it to the transcript pane's
+  working row while a turn runs. Shapes in docs/notes/renderer-lib-working-row.md.
 - **lib/menu-mirror.js** — pure per-seat state machine for the pty composer's
   slash menu (t1214): ON while the draft is a bare `/command`, `draft(text)` and
   `key(e)` return the pty writes that keep the CLI's input equal to the draft;
