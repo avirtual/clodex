@@ -7878,7 +7878,6 @@ async function saveSandboxConfig() {
 }
 
 const sbWorkdirPick = document.getElementById('sandbox-workdir-pick');
-if (window.__CLODEX_WEB__) { sbWorkdirPick.classList.add('hidden'); sbMountsAdd.classList.add('hidden'); }
 sbWorkdirPick.addEventListener('click', async () => {
   const dir = await window.api.selectDirectory();
   if (dir) sbWorkdir.value = dir;
