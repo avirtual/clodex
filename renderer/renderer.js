@@ -66,7 +66,7 @@ const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
 const { createVoiceMirror, engineObserved } = require('./voice-mirror');
 const { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require('./lib/composer-voice');
-const { ptyComposerBytes } = require('./lib/pty-composer');
+const { ptyComposerWrites } = require('./lib/pty-composer');
 const { VOICE_ENGINE_NAME } = require('../voice-engine');
 const {
   DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings, spaceTriggerAction, ptyTypedSinceEnter,
@@ -2167,7 +2167,7 @@ function createTerminal(name, peer = null) {
     composerEl.value = '';
     composerKit.fit();
     composerTrigger.resetSpan();
-    writePty(ptyComposerBytes(text));
+    for (const w of ptyComposerWrites(text)) writePty(w);
   };
   const composerKit = composerEl ? attachComposer(composerEl, {
     onSend: sendPtyComposer,

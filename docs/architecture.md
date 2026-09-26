@@ -1470,8 +1470,8 @@ and are not, which is why the judgement worth testing is pushed down here.
 - **composer-slash.js** — the stream seat composer's slash menu: `slashQuery` (is the
   cursor in a leading `/token`), `filterCommands` (prefix then substring) and
   `slashMenuKey` (arrow/Tab/Enter/Escape while the menu is open). Pure.
-- **pty-composer.js** — `ptyComposerBytes`: a pty seat composer draft as the bytes
-  written to the CLI, each newline as the ESC CR chord, then CR to submit. Pure.
+- **pty-composer.js** — `ptyComposerWrites`: a pty seat composer draft as the
+  writes sent to the CLI, the text as a bracketed paste, then CR as its own write. Pure.
 - **prompt-echo.js** — recolour the CLI's submitted-prompt echo on the wire,
   before `terminal.write`. The echo is truecolor SGR, which xterm renders as
   inline styles that `options.theme` cannot reach, so the bytes are rewritten

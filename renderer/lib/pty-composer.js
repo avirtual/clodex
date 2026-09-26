@@ -1,9 +1,9 @@
 'use strict';
 
-const PTY_NEWLINE = '\x1b\r';
+const { PASTE_OPEN, PASTE_CLOSE } = require('./composer-voice');
 
-function ptyComposerBytes(text) {
-  return `${String(text).replace(/\r\n|\r|\n/g, PTY_NEWLINE)}\r`;
+function ptyComposerWrites(text) {
+  return [`${PASTE_OPEN}${String(text)}${PASTE_CLOSE}`, '\r'];
 }
 
-module.exports = { PTY_NEWLINE, ptyComposerBytes };
+module.exports = { ptyComposerWrites };

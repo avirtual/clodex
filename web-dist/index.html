@@ -30405,11 +30405,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_pty_composer = __commonJS({
     "renderer/lib/pty-composer.js"(exports, module) {
       "use strict";
-      var PTY_NEWLINE = "\x1B\r";
-      function ptyComposerBytes(text) {
-        return `${String(text).replace(/\r\n|\r|\n/g, PTY_NEWLINE)}\r`;
+      var { PASTE_OPEN, PASTE_CLOSE } = require_composer_voice();
+      function ptyComposerWrites(text) {
+        return [`${PASTE_OPEN}${String(text)}${PASTE_CLOSE}`, "\r"];
       }
-      module.exports = { PTY_NEWLINE, ptyComposerBytes };
+      module.exports = { ptyComposerWrites };
     }
   });
 
@@ -44731,7 +44731,7 @@ ${detail}` });
       var { createIntentHighlight } = require_intent_highlight();
       var { createVoiceMirror, engineObserved } = require_voice_mirror();
       var { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require_composer_voice();
-      var { ptyComposerBytes } = require_pty_composer();
+      var { ptyComposerWrites } = require_pty_composer();
       var { VOICE_ENGINE_NAME } = require_voice_engine();
       var {
         DEFAULT_SUBMIT_PHRASE,
@@ -46797,7 +46797,7 @@ ${detail}` });
           composerEl.value = "";
           composerKit.fit();
           composerTrigger.resetSpan();
-          writePty(ptyComposerBytes(text));
+          for (const w of ptyComposerWrites(text)) writePty(w);
         };
         const composerKit = composerEl ? attachComposer(composerEl, {
           onSend: sendPtyComposer,
