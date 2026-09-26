@@ -138,6 +138,7 @@ function boot(opts = {}) {
     INJECT_BOOT_MAXWAIT: 0, INJECT_QUIET_MAXWAIT: 0, INJECT_QUIET_MS: 0,
     SHORT_TEXT_DELAY: 0, LONG_TEXT_DELAY: 0, LONG_TEXT_THRESHOLD: 1e9,
     INJECT_HOLD_TIMEOUT: 60_000,
+    turnStartWindowMs: 0,
     ...opts.deps,
   });
   const m = new SessionManager();
@@ -1582,3 +1583,66 @@ test('t1235: an escalation landing behind a queued unit parks instead of being w
       'it parks instead, so the first unit\'s UserPromptSubmit hook drains it into the turn it starts');
   } finally { app.stop(); }
 });
+test('t1240: a plain dm landing in the turn-start window of the previous unit parks for that turn', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000, turnStartWindowMs: 60_000 } });
+  try {
+    await app.spawn('target');
+    const target = app.m.sessions.get('target');
+    target.activityState = 'idle';
+    target.activityTs = Date.now();
+    app.m._gatedDeliver('target', 'alice', 'FIRST PLAIN DM', false);
+    await settled(app, 'target', /FIRST PLAIN DM/);
+    await complete(app, 'target');
+    const r = app.m._gatedDeliver('target', 'bob', 'SECOND PLAIN DM', false);
+    assert.ok(r && r.queued, 'ENTER: the second dm was accepted, not held');
+    await new Promise((res) => setTimeout(res, 60));
+    assert.strictEqual((app.seen('target').match(/FIRST PLAIN DM/g) || []).length, 1,
+      'ENTER: the first dm was written once, as its own unit');
+    assert.strictEqual((app.seen('target').match(/SECOND PLAIN DM/g) || []).length, 0,
+      'a unit written after another unit\'s Enter and before that unit\'s turn starts lands in the turn-start '
+      + 'churn, where its Enter is swallowed; a plain dm must not be typed there any more than an escalation');
+    assert.strictEqual(app.parked('target', /SECOND PLAIN DM/), 1,
+      'it parks as its own unit, so the first unit\'s UserPromptSubmit hook drains it into the turn it starts');
+  } finally { app.stop(); }
+});
+
+test('t1240: a plain dm queued behind a unit still in the queue parks at its turn in the queue', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000, turnStartWindowMs: 60_000 } });
+  try {
+    await app.spawn('target');
+    const target = app.m.sessions.get('target');
+    target.activityState = 'idle';
+    target.activityTs = Date.now();
+    app.m._gatedDeliver('target', 'alice', 'FIRST PLAIN DM', false);
+    app.m._gatedDeliver('target', 'bob', 'SECOND PLAIN DM', false);
+    await settled(app, 'target', /FIRST PLAIN DM/);
+    await complete(app, 'target');
+    await target._injectPtyQueue.settled();
+    assert.strictEqual((app.seen('target').match(/SECOND PLAIN DM/g) || []).length, 0,
+      'the second unit reaches the head of the queue straight after the first unit\'s Enter, so it must not be typed');
+    assert.strictEqual(app.parked('target', /SECOND PLAIN DM/), 1, 'it parks for the first unit\'s turn instead');
+  } finally { app.stop(); }
+});
+
+test('t1240: a dm arriving after the previous unit\'s turn was observed to start is injected normally', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000, turnStartWindowMs: 60_000 } });
+  try {
+    await app.spawn('target');
+    const target = app.m.sessions.get('target');
+    target.activityState = 'idle';
+    target.activityTs = Date.now();
+    app.m._gatedDeliver('target', 'alice', 'FIRST PLAIN DM', false);
+    await settled(app, 'target', /FIRST PLAIN DM/);
+    await complete(app, 'target');
+    app.m._emitActivity('target', 'thinking');
+    app.m._emitActivity('target', 'idle');
+    target.activityTs = Date.now();
+    app.m._gatedDeliver('target', 'bob', 'SECOND PLAIN DM', false);
+    await settled(app, 'target', /SECOND PLAIN DM/);
+    await complete(app, 'target');
+    assert.strictEqual((app.seen('target').match(/SECOND PLAIN DM/g) || []).length, 1,
+      'the first unit\'s turn started, so its churn is over and the next unit is typed as before');
+    assert.strictEqual(app.parked('target', /SECOND PLAIN DM/), 0, 'and nothing is parked');
+  } finally { app.stop(); }
+});
+

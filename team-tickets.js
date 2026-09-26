@@ -8186,6 +8186,7 @@ function createTicketMethods(deps, shared) {
         if (reached) {
           if (!keepHold) this._setLoopStep(team, ticketId, null);
         } else if (parked) {
+          if (!keepHold) this._watchParkedEscalation(team, ticketId);
           log.info('ticket', `ticket ${ticketId} escalation at ${step} parked for ${team.lead}`);
         } else {
           const why = (r && (r.error || r.held)) || 'unknown delivery failure';
@@ -8201,6 +8202,15 @@ function createTicketMethods(deps, shared) {
       } catch (e) {
         log.error('ticket', `escalation for ${ticketId} failed: ${e.message}`);
       }
+    },
+
+    _watchParkedEscalation(team, ticketId) {
+      const lead = this.sessions.get(team.lead);
+      if (!lead) return;
+      let rec = null;
+      try { rec = ticketsStore.load(team.root).find((t) => t.id === ticketId) || null; } catch {}
+      if (!rec || !rec.loopStep) return;
+      (lead._parkedEscalations || (lead._parkedEscalations = new Map())).set(ticketId, { team, step: rec.loopStep });
     },
 
     // Which seat's ledger a closing ticket's cost belongs to.

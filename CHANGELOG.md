@@ -15,6 +15,7 @@ blocks a release.
 
 - Transcript pane: after a /clear the pane now switches to the new transcript at once instead of showing the old one until the next change.
 - Test runner: a test that never finishes now fails by name within two minutes; the session-manager suite's hang under load is fixed.
+- Messages: a second message arriving at a seat in the moment its previous one is being submitted is no longer lost in the turn start; it is delivered with that turn, for every kind of message.
 - Agent prompt: the `[agent:remind …]` row now says its text is a greedy body closed by `[agent:end]`, so a reminder no longer swallows the prose written after it.
 - Transcript pane: the once-a-second refresh no longer re-downloads the whole transcript when nothing changed, on the desktop and in the web UI.
 - Transcript pane: an image pasted into a prompt shows as a small inline thumbnail (click to see it full width) instead of the bare [Image #n] marker; images over 1 MB show a size chip.

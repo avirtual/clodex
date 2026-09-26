@@ -180,6 +180,20 @@ function peekPending(root, name, { max = 5, snipLen = 60 } = {}) {
   return out;
 }
 
+function parkedTexts(root, name) {
+  let files;
+  try { files = fs.readdirSync(agentDir(root, name)); } catch { return []; }
+  const out = [];
+  for (const f of files) {
+    if (!f.endsWith('.json') || f.startsWith('.')) continue;
+    try {
+      const obj = JSON.parse(fs.readFileSync(path.join(agentDir(root, name), f), 'utf8'));
+      if (obj && typeof obj.text === 'string') out.push(obj.text);
+    } catch {}
+  }
+  return out;
+}
+
 // Read-only. The caller is the spill GC: a delivery over the spill threshold was
 // parked as a POINTER to a file in ~/.clodex/messages/, and age-based collection
 // would delete that file out from under the still-parked pointer. Returning raw
@@ -190,16 +204,7 @@ function allParkedTexts(root) {
   try { names = fs.readdirSync(root); } catch { return out; }
   for (const name of names) {
     if (isClaimEntry(name)) continue;
-    const dir = path.join(root, name);
-    let files;
-    try { files = fs.readdirSync(dir); } catch { continue; }
-    for (const f of files) {
-      if (!f.endsWith('.json') || f.startsWith('.')) continue;
-      try {
-        const obj = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
-        if (obj && typeof obj.text === 'string') out.push(obj.text);
-      } catch { /* corrupt/vanished entry — skip, same as every other reader */ }
-    }
+    out.push(...parkedTexts(root, name));
   }
   return out;
 }
@@ -294,4 +299,4 @@ function claimParkedByKey(root, name, key) {
   return { ids, claimed };
 }
 
-module.exports = { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir };
+module.exports = { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir };

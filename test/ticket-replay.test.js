@@ -163,6 +163,7 @@ function boot(world, opts = {}) {
     INJECT_BOOT_MAXWAIT: 0, INJECT_QUIET_MAXWAIT: 0, INJECT_QUIET_MS: 0,
     SHORT_TEXT_DELAY: 0, LONG_TEXT_DELAY: 0, LONG_TEXT_THRESHOLD: 1e9,
     INJECT_HOLD_TIMEOUT: 60_000,
+    turnStartWindowMs: 0,
     ...opts.deps,
   });
   const m = new SessionManager();
