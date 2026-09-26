@@ -2249,7 +2249,7 @@ function createTerminal(name, peer = null) {
   });
 
   const echoRewrite = peer ? (chunk) => chunk : createEchoRewriter(currentEchoPalette);
-  const splitOn = !peer && !window.__CLODEX_WEB__;
+  const splitOn = !peer;
   const composerEl = splitOn ? document.createElement('textarea') : null;
   const menuMirror = composerEl ? createMenuMirror() : null;
   const sendPtyComposer = () => {
