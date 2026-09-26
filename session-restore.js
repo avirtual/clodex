@@ -36,6 +36,22 @@ function archivedSnapshotFor({ manager, entry }) {
   };
 }
 
+function exitedSnapshotFor({ manager, entry }) {
+  return {
+    name: entry.name,
+    type: entry.type,
+    cwd: entry.cwd,
+    label: entry.label || null,
+    backend: entry.backend || null,
+    team: manager.teamNameFor(entry.cwd),
+    exited: true,
+    exitedAt: entry.exitedAt,
+    exitCode: typeof entry.exitCode === 'number' ? entry.exitCode : null,
+    exitSignal: entry.exitSignal || null,
+    createdAt: entry.createdAt || null,
+  };
+}
+
 function liveSnapshotFor({ manager, entry, session, readCtxFor, proxyPoller }) {
   const replay = session.pendingOutput || null;
   session.pendingOutput = '';
@@ -80,6 +96,10 @@ async function restoreSessionsForWorkspace({
     // something to show and the operator can resume them on demand.
     if (entry.archivedAt && !manager.sessions.has(entry.name)) {
       restored.push(archivedSnapshotFor({ manager, entry }));
+      continue;
+    }
+    if (entry.exitedAt && !manager.sessions.has(entry.name)) {
+      restored.push(exitedSnapshotFor({ manager, entry }));
       continue;
     }
     if (manager.sessions.has(entry.name)) {
@@ -164,5 +184,5 @@ async function restoreSessionsForWorkspace({
 }
 
 module.exports = {
-  restoreSessionsForWorkspace, liveSnapshotFor, archivedSnapshotFor, stampConfigFlags,
+  restoreSessionsForWorkspace, liveSnapshotFor, archivedSnapshotFor, exitedSnapshotFor, stampConfigFlags,
 };
