@@ -2237,22 +2237,24 @@ function clearLock(repo) {
 }
 
 // Captures the retry seam instead of arming a real timer. NO REAL SECONDS: the
-// delay between attempts is 30s and the cap is 10 of them, so a subject that
-// waited would be five minutes of suite time to prove a branch that is pure
+// delay between attempts is 30s and the cap is 40 of them, so a subject that
+// waited would be twenty minutes of suite time to prove a branch that is pure
 // arithmetic. What the fixture must not do is stub _autoMergeTicket or
 // _suiteLockHolder — the deferral being tested lives inside the first and reads
 // the second, so replacing either would step over the code under test.
 function captureRetries(f) {
   const scheduled = [];
-  f.m._scheduleMergeRetry = (fn, ms) => { scheduled.push({ fn, ms }); return null; };
+  const delays = [];
+  f.m._scheduleMergeRetry = (fn, ms) => { scheduled.push({ fn, ms }); delays.push(ms); return null; };
   return {
     scheduled,
+    delays,
     // Runs the pending retries in order, awaiting the merge chain each time so
     // the re-entry really completes before the next one is fired. Bounded: a
     // retry loop that never terminates is the failure this ticket's whole
     // second half is about, and a drain that spun forever would hang the suite
     // rather than report it.
-    drain: async (max = 40) => {
+    drain: async (max = 100) => {
       let ran = 0;
       while (scheduled.length && ran < max) {
         ran += 1;
@@ -2919,7 +2921,7 @@ test('an exhausted retry escalates with the manual merge command intact', async 
   // The ATTEMPT BOUND is what terminated this, and it must be the constant
   // rather than whatever the loop happened to do: a retry that stopped after two
   // because of an unrelated bug would satisfy every assertion below.
-  assert.strictEqual(attempts, 10, 'ten retries, the attempt cap, and then it stops');
+  assert.strictEqual(attempts, 40, 'forty retries, the attempt cap, and then it stops');
   assert.deepStrictEqual(r.scheduled, [], 'nothing is left armed after the last one');
 
   const esc = f.esc();
@@ -2935,7 +2937,7 @@ test('an exhausted retry escalates with the manual merge command intact', async 
   // retries are spent nothing else re-drives this merge, so the escalation must
   // not promise a mechanism that has stopped.
   assert.match(esc[0].body, /will NOT retry/, 'the lead is told plainly that no retry is coming');
-  assert.match(esc[0].body, /already retried 10 times/, 'and that waiting was already tried');
+  assert.match(esc[0].body, /already retried 40 times/, 'and that waiting was already tried');
   assert.ok(!/re-run the accept/.test(esc[0].body),
     'and is NOT pointed at a recovery the loop cannot perform');
   // includes, not match: the root is a real tmpdir path and regex-escaping it
@@ -2963,9 +2965,9 @@ test('an exhausted retry escalates with the manual merge command intact', async 
 test('the TOTAL wait bounds the retry even when the attempt count has not run out', async () => {
   // Two bounds, two different failure shapes. The attempt cap alone is not
   // enough: the retries re-enter through the merge chain, so a busy chain can
-  // stretch ten attempts over hours, and a ticket pending that long is
+  // stretch forty attempts over hours, and a ticket pending that long is
   // indistinguishable from a lost one. The clock is injected — a subject that
-  // waited ten real minutes for this branch is not a test anyone would run.
+  // waited twenty real minutes for this branch is not a test anyone would run.
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const f = mkMerge({ repo });
@@ -2976,17 +2978,45 @@ test('the TOTAL wait bounds the retry even when the attempt count has not run ou
 
   await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
   assert.strictEqual(r.scheduled.length, 1, 'ENTER: the first pass really did defer');
-  // Past the 10-minute ceiling, on attempt TWO of ten: the deadline is the bound
+  // Past the 20-minute ceiling, on attempt TWO of forty: the deadline is the bound
   // under test and the attempt cap must not be what stops this.
-  now += 11 * 60 * 1000;
+  now += 21 * 60 * 1000;
   const attempts = await r.drain();
 
   assert.strictEqual(attempts, 1, 'the second pass gave up — the attempt cap was nowhere near spent');
   const esc = f.esc();
   assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation');
   assert.match(esc[0].body, /suite-in-flight/, 'the same step, reached by the other bound');
-  assert.match(esc[0].body, /already retried 1 time over 660s/,
+  assert.match(esc[0].body, /already retried 1 time over 1260s/,
     'and the message reports the real elapsed wait, not the attempt count dressed up as one');
+});
+
+test('a merge meeting a running suite waits at least twenty minutes before it escalates', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  let now = 1_000_000;
+  f.m._mergeRetryNow = () => now;
+  plantLock(repo);
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  let ran = 0;
+  while (r.scheduled.length && ran < 100) {
+    ran += 1;
+    const next = r.scheduled.shift();
+    now += next.ms;
+    next.fn();
+    await f.m._mergeChain;
+  }
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: the retries ran out and escalated');
+  assert.match(esc[0].body, /suite-in-flight/);
+  assert.strictEqual(f.one().mergeError, 'suite-in-flight');
+  const total = r.delays.reduce((sum, ms) => sum + ms, 0);
+  assert.ok(total >= 1_200_000,
+    `the scheduled wait before escalating is ${total}ms, shorter than one suite at the runner's twenty-minute ceiling`);
 });
 
 test('a NON-suite-in-flight failure is still terminal on the FIRST try', async () => {

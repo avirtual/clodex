@@ -130,18 +130,9 @@ const TICKET_SUITE_TIMEOUT_MS = TICKET_SUITE_LOCK_WAIT_MS + 15 * 60 * 1000;
 // ticket can sit unmerged. Either alone is unsound — attempts alone let a retry
 // re-entering a busy merge chain stretch to hours, a deadline alone lets a fast
 // lock flap spin the timer hundreds of times.
-//
-// Sized against ONE suite run: 73s wall at master fe8e152, 74s from a worktree
-// at c1e1b8e, measured 2026-08-19. A delay well under that burns attempts inside
-// a single run without outliving it; a delay near it samples the lock just as
-// the next run takes it. 10 x 30s covers ~5 minutes of continuous contention —
-// three back-to-back runs, which is the realistic shape here, since a hand
-// verifying its worktree takes the ROOT's lock and a team of hands serializes
-// through it. Past that the escalation is the honest answer, and it deliberately
-// does not conclude the lock is wedged.
 const MERGE_RETRY_DELAY_MS = 30 * 1000;
-const MERGE_RETRY_MAX_ATTEMPTS = 10;
-const MERGE_RETRY_MAX_WAIT_MS = 10 * 60 * 1000;
+const MERGE_RETRY_MAX_WAIT_MS = 20 * 60 * 1000;
+const MERGE_RETRY_MAX_ATTEMPTS = Math.ceil(MERGE_RETRY_MAX_WAIT_MS / MERGE_RETRY_DELAY_MS);
 const BOOT_REQUEUE_LEAD_WAIT_MS = 5 * 60 * 1000;
 const BOOT_REQUEUE_LEAD_POLL_MS = 2 * 1000;
 
@@ -1972,7 +1963,7 @@ function createTicketMethods(deps, shared) {
     // Why it needs one at all: by the time a merge runs, _landVerdictOnTicket has
     // already deleted `loopStep`, so ticketInFlight is false and the stall sweep
     // never looks at this ticket again. A deferred merge holds its entire retry
-    // state in ONE unref'd setTimeout closure for up to ten minutes — a crash in
+    // state in ONE unref'd setTimeout closure — a crash in
     // that window drops the merge with nothing on the record and no DM.
     //
     // Why a SEPARATE field: mergeError reads as "this ticket needs a human". A
@@ -2161,8 +2152,7 @@ function createTicketMethods(deps, shared) {
           // same thing later. This one names a condition that is transient BY
           // CONSTRUCTION: the suite lock is box-wide (scripts/test-digest.sh
           // locks the ROOT even when it measures a worktree), so any hand
-          // verifying its own branch holds it for the length of a run, and the
-          // merge is refused for a reason that resolves itself in ~74s.
+          // verifying its own branch holds it for the length of a run.
           //
           // SCHEDULED, NOT SLEPT, and that distinction is the ticket. The retry
           // runs OUTSIDE this call: _autoMergeTicket returns, its link in
@@ -2195,8 +2185,8 @@ function createTicketMethods(deps, shared) {
             // its turn does not. The exhausted arm below stamps that one.
             //
             // But it IS stamped as WAITING, because the whole retry state lives
-            // in the timer closure above and a crash or a reboot in the next ten
-            // minutes would otherwise drop the merge with nothing on the board
+            // in the timer closure above and a crash or a reboot would
+            // otherwise drop the merge with nothing on the board
             // and no DM. `deferred` is what exempts this arm from the finally's
             // clear — set BEFORE the stamp so an exception between the two
             // cannot leave the field set with the flag false.

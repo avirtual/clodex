@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Ticket loop: a merge that finds a test suite running now waits up to 20 minutes for it (was 5), so an accept during another ticket's verify lands on its own instead of escalating.
 - Agent prompt: the `[agent:remind …]` row now says its text is a greedy body closed by `[agent:end]`, so a reminder no longer swallows the prose written after it.
 - Transcript pane: the once-a-second refresh no longer re-downloads the whole transcript when nothing changed, on the desktop and in the web UI.
 - Transcript pane: an image pasted into a prompt shows as a small inline thumbnail (click to see it full width) instead of the bare [Image #n] marker; images over 1 MB show a size chip.
