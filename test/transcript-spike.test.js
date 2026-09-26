@@ -103,7 +103,7 @@ test('drop cancels a pending onChange', () => {
   assert.deepStrictEqual(r.changes, []);
 });
 
-test('a reader with no watcher re-reads every pull but keeps its rev until the bytes change', (t) => {
+test('a reader with no watcher keeps its rev until the file changes', (t) => {
   const root = mkTmpRoot('clodex-tspike-');
   const file = path.join(root, 'a.jsonl');
   fs.writeFileSync(file, `${LINES[0]}\n`);
