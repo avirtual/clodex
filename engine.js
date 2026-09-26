@@ -1728,7 +1728,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     // Applied to the ASSEMBLED object, not to `beforeKill`: the spread is what
     // actually reaches the store, so stripping the source would be undone by it.
     // Same reason as restartSession's arm above (t491).
-    persistence.upsert(manager._stripClaimedTree({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? prunedArgs.intents : undefined, pluginGrants: prunedGrants, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined, io: nextIo }));
+    persistence.upsert(manager._stripClaimedTree({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? prunedArgs.intents : undefined, pluginGrants: prunedGrants, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined, io: nextIo, effort: nextEffort }));
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
   }
 }

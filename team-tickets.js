@@ -3328,6 +3328,9 @@ function createTicketMethods(deps, shared) {
       if (intent.sub === 'role-set' && !roles[name]) return { ok: false, error: `role "${name}" not found on team "${team.name}" — use role-add (${team.file})` };
       if (intent.sub === 'role-add' && roles[name]) return { ok: false, error: `role "${name}" already exists on team "${team.name}" — use role-set` };
       const current = roles[name] && typeof roles[name] === 'object' ? roles[name].template : null;
+      if (reviewerOnly && current && current !== name) {
+        return { ok: false, error: `reviewer names template "${current}" explicitly; set Effort on that template in the editor (${team.file})` };
+      }
       const stem = intent.template || current || (reviewerOnly ? DEFAULT_REVIEWER_TEMPLATE : 'clodex-team-hand');
       let base = readTeamJson({ fs, path }, team, 'templates', stem);
       if (!base) {
@@ -5042,19 +5045,6 @@ function createTicketMethods(deps, shared) {
       };
     },
 
-    // A role's `cwd` reduced to a USABLE relative path, or '' — the one place
-    // either consumer decides whether the field is honorable at all.
-    //
-    // Shared by _resolveRoleCwd (which joins it onto team.root) and
-    // _deliverTicketSpec's AREA line (which joins it onto the WORKTREE path).
-    // That is why the check here is lexical and takes no root: the two consumers
-    // resolve against DIFFERENT bases, so a root-taking helper could not serve
-    // both, and the second copy is exactly what let the AREA line hand a seat
-    // `<wt>/etc` for `cwd: "/etc"` while the resolver refused the same value.
-    //
-    // Returns the reason rather than a bare '' so the resolver can keep its
-    // distinct operator-facing clauses without re-deriving WHY it was rejected —
-    // a re-derivation is the divergence this helper exists to remove.
     _teamRoleEfforts(team) {
       const out = {};
       const roles = (team && team.roles && typeof team.roles === 'object') ? team.roles : {};
@@ -5069,7 +5059,20 @@ function createTicketMethods(deps, shared) {
       return out;
     },
 
-        _roleCwdRel(def) {
+    // A role's `cwd` reduced to a USABLE relative path, or '' — the one place
+    // either consumer decides whether the field is honorable at all.
+    //
+    // Shared by _resolveRoleCwd (which joins it onto team.root) and
+    // _deliverTicketSpec's AREA line (which joins it onto the WORKTREE path).
+    // That is why the check here is lexical and takes no root: the two consumers
+    // resolve against DIFFERENT bases, so a root-taking helper could not serve
+    // both, and the second copy is exactly what let the AREA line hand a seat
+    // `<wt>/etc` for `cwd: "/etc"` while the resolver refused the same value.
+    //
+    // Returns the reason rather than a bare '' so the resolver can keep its
+    // distinct operator-facing clauses without re-deriving WHY it was rejected —
+    // a re-derivation is the divergence this helper exists to remove.
+    _roleCwdRel(def) {
       const raw = def && typeof def.cwd === 'string' ? def.cwd.trim() : '';
       if (!raw) return { rel: '', raw: '', reason: null };
       if (path.isAbsolute(raw)) return { rel: '', raw, reason: 'absolute' };

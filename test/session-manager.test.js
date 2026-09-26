@@ -10962,6 +10962,29 @@ test('t1222: role-set reviewer effort:xhigh derives templates/reviewer.json from
     'the mutator still refuses a bare template patch on the reviewer');
 });
 
+test('t1222: effort on a reviewer that names its template explicitly is refused, so the prompt precedence cannot flip', () => {
+  const f = mkTeamModel();
+  const teamJson = pathReal.join(f.teamDir, 'team.json');
+  const raw = JSON.parse(fsReal.readFileSync(teamJson, 'utf-8'));
+  raw.roles.reviewer = { ...raw.roles.reviewer, prompt: 'reviewer', template: 'clodex-team-reviewer-shell' };
+  fsReal.writeFileSync(teamJson, JSON.stringify(raw, null, 2));
+  const shell = JSON.parse(fsReal.readFileSync(
+    pathReal.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-reviewer-shell.json'), 'utf-8'));
+  fsReal.mkdirSync(pathReal.dirname(f.tplFile('clodex-team-reviewer-shell')), { recursive: true });
+  fsReal.writeFileSync(f.tplFile('clodex-team-reviewer-shell'), JSON.stringify(shell));
+  fsReal.mkdirSync(pathReal.join(f.teamDir, 'prompts', 'system'), { recursive: true });
+  fsReal.writeFileSync(pathReal.join(f.teamDir, 'prompts', 'system', 'reviewer.md'), 'no shell for you\n');
+  const lead = { name: 'lead', type: 'claude' };
+  const before = f.m.resolveSeatShape(f.tm.loadManifest('team'), 'reviewer', 'review', lead).systemPromptFile;
+  const teamBefore = f.teamJsonBytes();
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'reviewer', effort: 'xhigh', body: '' });
+  assert.match(f.last(), /error: reviewer names template "clodex-team-reviewer-shell" explicitly; set Effort on that template in the editor/);
+  assert.strictEqual(fsReal.existsSync(f.tplFile('reviewer')), false);
+  assert.deepStrictEqual(f.teamJsonBytes(), teamBefore);
+  assert.strictEqual(f.m.resolveSeatShape(f.tm.loadManifest('team'), 'reviewer', 'review', lead).systemPromptFile, before);
+  assert.notStrictEqual(before, 'reviewer', 'ENTER: the explicit template keeps its own prompt over the team copy');
+});
+
 test('team: a NON-lead is bounced for every verb (D2 lead-gate)', () => {
   const f = mkTeamMut();
   f.seat('team-hand');

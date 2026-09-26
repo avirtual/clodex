@@ -90,6 +90,14 @@ function requesterCwd(payload) {
   return payload.cwd || null;
 }
 
+function roleEffort(teamName, stem) {
+  if (!stem || !/^[A-Za-z0-9._-]+$/.test(stem)) return null;
+  try {
+    const tpl = JSON.parse(fs.readFileSync(path.join(TEAMS_DIR, teamName, 'templates', `${stem}.json`), 'utf-8'));
+    return tpl && typeof tpl.effort === 'string' && tpl.effort ? tpl.effort : null;
+  } catch { return null; }
+}
+
 function doRoster(payload) {
   const cwd = requesterCwd(payload);
   if (!cwd) die(`cannot resolve your cwd — registry has no cwd field (app predates it); pass "cwd" in the payload`);
@@ -100,7 +108,9 @@ function doRoster(payload) {
     .map(([r, def]) => {
       const star = r === manifest.lead ? '*' : '';
       const tmpl = def && typeof def.template === 'string' ? def.template : null;
-      return `${r}${star}${tmpl ? `(tmpl=${tmpl})` : ''}`;
+      const effort = roleEffort(team.name, tmpl || (r === 'reviewer' ? 'clodex-team-reviewer' : null));
+      const notes = [tmpl ? `tmpl=${tmpl}` : null, effort ? `effort=${effort}` : null].filter(Boolean);
+      return `${r}${star}${notes.length ? `(${notes.join(',')})` : ''}`;
     })
     .join(' ') || '(none)';
   const live = [];
