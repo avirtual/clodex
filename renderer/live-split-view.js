@@ -125,15 +125,24 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     }).catch(() => { pulling = false; });
   }
 
+  const commandText = (r) => `${r.name || ''}${r.args ? ` ${r.args}` : ''}`;
+
+  function shownExtras() {
+    const first = fileRecords.find((r) => typeof r.ts === 'number');
+    if (first) for (let i = extraRecords.length - 1; i >= 0; i--) if (extraRecords[i].ts < first.ts) extraRecords.splice(i, 1);
+    return extraRecords.filter((x) => x.kind !== 'command' || !fileRecords.some((f) => f.kind === 'command' && typeof f.ts === 'number' && Math.abs(f.ts - x.ts) <= PAINT_TAG_MS && commandText(f) === commandText(x)));
+  }
+
   function paint() {
-    renderTranscript(document, paneEl, extraRecords.length ? mergeByTs(fileRecords, extraRecords) : fileRecords, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
+    const extras = shownExtras();
+    renderTranscript(document, paneEl, extras.length ? mergeByTs(fileRecords, extras) : fileRecords, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
     stickToBottom();
   }
 
   function latestFileText() {
     for (let i = fileRecords.length - 1; i >= 0; i--) {
       const r = fileRecords[i];
-      if (r.kind === 'command') return [`${r.name || ''}${r.args ? ` ${r.args}` : ''}`, String(r.name || '')];
+      if (r.kind === 'command') return [commandText(r), String(r.name || '')];
       if (r.kind === 'prompt') return String(r.text || '').split('\n');
     }
     return [];
@@ -152,12 +161,13 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     const t = now();
     const latest = latestFileText();
     const text = blockText(rows, [...(sent ? sent.text.split('\n') : []), ...latest]);
+    sent = null;
     if (!text) return;
     const n = (paintSeq += 1);
     const head = tag && t - tag.at <= PAINT_TAG_MS ? tag.text.trim() : null;
     tag = null;
     const turn = `paint:${n}`;
-    if (head && !latest.includes(head)) {
+    if (head) {
       const [name, ...args] = head.split(/\s+/u);
       extraRecords.push({ kind: 'command', name, args: args.join(' '), ts: t, id: `paint:${n}:cmd`, turn });
     }
@@ -167,13 +177,18 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
 
   function trackPaint(rows, measured) {
     if (!PAINT_PLATFORMS.has(platform())) return;
-    if (isBusyScreen(rows)) {
+    if (!rows || state.mode !== 'split' || !composerVisible()) {
+      delta.reset();
+      return;
+    }
+    if (!measured || measured.mode !== 'split') return;
+    const top = Math.min(state.top, measured.top);
+    if (isBusyScreen(rows, top)) {
       delta.reset();
       dropPaint();
       return;
     }
-    if (state.mode !== 'split' || !measured || measured.mode !== 'split' || !composerVisible()) return;
-    const fresh = delta.feed(rows.slice(0, Math.min(state.top, measured.top)));
+    const fresh = delta.feed(rows.slice(0, top));
     if (!fresh.length) return;
     paintRows.push(...fresh);
     clearTimeout(paintTimer);
@@ -299,7 +314,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     state = reduceSplit(state, measured, now(), undefined, raw ? 0 : undefined);
     const menuRead = readMenu(rows);
     const busy = !menuRead && !!measured && (measured.mode === 'split' || !!measured.busy);
-    if (rows && !raw) trackPaint(rows, measured);
+    trackPaint(raw ? null : rows, measured);
     sheetRange = busy ? sheetRowsOf(rows) : null;
     sheetRows = sheetRange ? sheetRange.bottom - sheetRange.top + 1 : 0;
     if (state.wakeAt != null) wakeTimer = setTimeout(evaluate, Math.max(0, state.wakeAt - now()));

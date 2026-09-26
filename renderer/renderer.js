@@ -2276,6 +2276,7 @@ function createTerminal(name, peer = null) {
     if (!hit) return false;
     e.preventDefault();
     for (const w of hit.writes) writePty(w);
+    if (hit.command && liveSplit) liveSplit.composerSent(hit.command);
     if (hit.draft !== undefined) {
       composerEl.value = hit.draft;
       composerEl.setSelectionRange(hit.draft.length, hit.draft.length);

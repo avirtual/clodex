@@ -1035,7 +1035,7 @@ test(`a paint block over ${PAINT_BLOCK_CAP} rows keeps the last ${PAINT_BLOCK_CA
 });
 
 const CARD = ['╭ status', '│ model  gpt', '│ dir    /x', '│ perms  ro', '│ limit  82%', '╰────────'];
-const PAINT_ROWS = 12;
+const PAINT_ROWS = 14;
 const codexScreen = (history) => {
   const strip = ['› Ask Codex to do anything', '', '  Context 0% used · gpt'];
   const top = [...history, ''];
@@ -1044,11 +1044,11 @@ const codexScreen = (history) => {
 const LRULE = `── Voice input ${'─'.repeat(25)}`;
 const museScreen = (history) => [...history, ...Array(PAINT_ROWS - 4 - history.length).fill(''), LRULE, '❯ ', '─'.repeat(40), '  muse-spark · max'];
 
-async function mountPaint(platform, before, rows = PAINT_ROWS, cols = 40) {
+async function mountPaint(platform, before, rows = PAINT_ROWS, cols = 40, extra = {}) {
   mock.timers.enable({ apis: ['setTimeout'] });
   let t = 5000;
   const composerEl = fakeComposer();
-  const m = mountView({ composerEl, now: () => t, platform: () => platform }, { geometry: true });
+  const m = mountView({ composerEl, now: () => t, platform: () => platform, ...extra }, { geometry: true });
   Object.assign(m.terminal, { rows, cols, element: fakeTermElement(rows) });
   m.terminal.buffer.active.cursorY = before.findIndex((r) => /^[›❯]/u.test(r));
   m.show(before);
@@ -1094,6 +1094,46 @@ test('a muse /status card painted above the labeled rule becomes one command-out
     m.paintNext(museScreen(['  Muse Code 1.4.0', '', ...CARD]));
     assert.deepStrictEqual(m.outputs(), ['❯ /status', CARD.join('\n')]);
   } finally { m.done(); }
+});
+
+test('rows painted while the view was raw are a new baseline, not command output', async () => {
+  const m = await mountPaint('codex', codexScreen(['  banner 1']));
+  try {
+    m.view.setRaw(true);
+    m.show(codexScreen(['  banner 1', '› hello', ...CARD]));
+    m.write();
+    m.view.setRaw(false);
+    await settle();
+    m.tick(250);
+    m.write();
+    m.write();
+    m.paintNext(codexScreen(['  banner 1', '› hello', ...CARD]));
+    assert.deepStrictEqual([m.view.state().mode, m.view.composerVisible()], ['split', true]);
+    assert.deepStrictEqual(m.outputs(), []);
+  } finally { m.done(); }
+});
+
+test('a paint header whose command the file records after the settle is dropped on the next pull', async () => {
+  let recorded = false;
+  let rev = 0;
+  const pullTranscript = () => ({ ok: true, rev: (rev += 1), records: recorded ? [{ ...HEAD, ts: 1000 }, { id: 'c1', kind: 'command', ts: 5260, turn: 2, name: '/usage', args: '' }] : [{ ...HEAD, ts: 1000 }] });
+  const m = await mountPaint('muse', museScreen(['  Muse Code 1.4.0']), PAINT_ROWS, 40, { pullTranscript });
+  try {
+    m.view.composerSent('/usage');
+    m.paintNext(museScreen(['  Muse Code 1.4.0', '', ...CARD]));
+    assert.deepStrictEqual(m.outputs(), ['❯ /usage', CARD.join('\n')]);
+    recorded = true;
+    m.change('s1');
+    await settle();
+    assert.deepStrictEqual(m.outputs(), [CARD.join('\n'), '❯ /usage']);
+  } finally { m.done(); }
+});
+
+test('ENTER: an Enter the menu mirror handles forwards the command it submits to the split view', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('const onMenuKey = ');
+  const body = src.slice(at, src.indexOf('const composerKit = ', at));
+  assert.match(body, /if \(hit\.command && liveSplit\) liveSplit\.composerSent\(hit\.command\);/u);
 });
 
 test('a paint block with no slash command sent in the last 10s is emitted untagged', async () => {
