@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
+const net = require('node:net');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -216,6 +217,27 @@ function req(port, pathname, opts = {}) {
     r.on('error', (e) => { if (!settled) { settled = true; reject(e); } });
     if (opts.body) r.write(opts.body);
     r.end();
+  });
+}
+
+function rawPostStatus(port, pathname, size) {
+  return new Promise((resolve) => {
+    const sock = net.connect(port, '127.0.0.1');
+    let got = '';
+    let sent = 0;
+    sock.on('data', (d) => { got += d; });
+    sock.on('error', () => {});
+    sock.on('close', () => resolve(got.split('\r\n')[0]));
+    sock.write(`POST ${pathname} HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: ${size}\r\n\r\n`);
+    const chunk = Buffer.alloc(16384, 120);
+    const pump = () => {
+      while (!got && sent < size) {
+        const n = Math.min(chunk.length, size - sent);
+        sent += n;
+        if (!sock.write(chunk.subarray(0, n))) return void sock.once('drain', pump);
+      }
+    };
+    pump();
   });
 }
 
@@ -673,11 +695,8 @@ test('POST /api/sessions/:name/dm: its own body cap fits five 5 MB images; above
     const full = await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: 't'.repeat(60 * 1024), images: [img, img, img, img, img] }));
     assert.strictEqual(full.status, 200);
     assert.strictEqual(fixture.calls.at(-1).images.length, 5);
-    const over = await post(port, '/api/sessions/alice/dm', 'x'.repeat(DM_MAX_BODY + 1));
-    assert.strictEqual(over.status, 413);
-    const text100k = JSON.stringify({ data: 'x'.repeat(100 * 1024) });
-    const other = await post(port, '/api/sessions/alice/input', text100k);
-    assert.strictEqual(other.status, 413);
+    assert.strictEqual(await rawPostStatus(port, '/api/sessions/alice/dm', DM_MAX_BODY + 1), 'HTTP/1.1 413 Payload Too Large');
+    assert.strictEqual(await rawPostStatus(port, '/api/sessions/alice/input', 100 * 1024), 'HTTP/1.1 413 Payload Too Large');
     const n = fixture.calls.length;
     const small = await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: 'y'.repeat(100 * 1024) }));
     assert.strictEqual(small.status, 200, 'a 100 KB text-only dm is under the dm cap');
