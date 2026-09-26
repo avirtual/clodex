@@ -229,7 +229,7 @@ test('transcript:pull over the web socket: the rev a tab sends back answers unch
   const { registerIpcHandlers } = require('../ipc-handlers');
   const { pathFor } = require('../clodex-paths');
   const { mkTmpRoot } = require('./lib/tmp-roots');
-  const reg = mkTmpRoot('web-tpull-');
+  const reg = mkTmpRoot('ipc-tpull-');
   const link = pathFor(reg, 'rv', 'transcript');
   fs.mkdirSync(path.dirname(link), { recursive: true });
   fs.writeFileSync(link, fs.readFileSync(path.join(__dirname, 'fixtures', 'transcript-records', 'muse-intent.jsonl'), 'utf8'));
