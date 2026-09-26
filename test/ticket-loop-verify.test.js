@@ -1137,10 +1137,8 @@ test('a HELD delivery that never parked also keeps the hold', async () => {
   assert.strictEqual(f.one().loopStep, 'verify', 'a held-but-unparked escalation reached nobody');
 });
 
-test('a PARKED escalation counts as REACHED, and is stamped like any other', async () => {
-  // The delivery classification this subject exists for is unchanged: a park is a
-  // written file the seat drains, so it counts as reached where a bare `held`
-  // does not. What changed with t345 is what "reached" DOES on a verify arm — it
+test('a PARKED verify-arm escalation keeps the hold and is stamped', async () => {
+  // What changed with t345 is what "reached" DOES on a verify arm — it
   // no longer releases the hold, so the observable is the stamp rather than the
   // absence of `loopStep`. Asserting the release here would re-pin the stranding.
   const repo = mkRepo();
@@ -5612,20 +5610,20 @@ test('t1130 (e): the not-yet-reported bounce says the loop resumes it at boot', 
   assert.match(f.injected.join('\n'), /checks have not reported yet;.*rather than rejecting it; if the host restarted since, the loop resumes it at boot\./);
 });
 
-test('t1235: a merge escalation that PARKED keeps loopStep; one that was injected releases it', () => {
+test('t1235: a review-spawn escalation that PARKED keeps loopStep; one that was injected releases it', () => {
   const repo = mkRepo();
   const f = mkLoop({ repo });
   const run = (disposition) => {
-    f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'merge', report: 'r', reportedBy: 'team-hand' }]);
+    f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'review', report: 'r', reportedBy: 'team-hand' }]);
     f.m._gatedDeliver = (target, sender, body, urgent, tag, onWrite, opts) => {
       f.gated.push({ target, sender, body, opts });
       if (disposition === 'parked' && typeof onWrite === 'function') onWrite('parked');
       return { queued: true };
     };
-    f.m._escalateTicket(f.team, 't1', 'merge', 'CONFLICT (content)', 'git merge --no-ff');
+    f.m._escalateTicket(f.team, 't1', 'review: spawn', 'the reviewer seat did not spawn', 'spawning a reviewer seat');
     return f.one().loopStep;
   };
-  assert.strictEqual(run('parked'), 'merge',
+  assert.strictEqual(run('parked'), 'review',
     'a parked escalation has not been seen yet: clearing loopStep on it drops the ticket out of the watchdog');
   assert.strictEqual(run('injected'), undefined, 'an injected one releases the hold as before');
   assert.ok(f.gated.every((g) => g.opts && g.opts.parkBehindQueue === true),

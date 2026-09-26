@@ -8028,8 +8028,7 @@ function createTicketMethods(deps, shared) {
     // exactly as they are, because the lead's first act on an escalation is to
     // look at them.
     //
-    // ORDER IS LOAD-BEARING: deliver FIRST, and clear `loopStep` only once the
-    // delivery is durable. Clearing it first drops the ticket out of the sweep's
+    // ORDER IS LOAD-BEARING: deliver FIRST, then clear `loopStep`. Clearing it first drops the ticket out of the sweep's
     // in-flight test, so an escalation the lead never received leaves a ticket
     // nobody is ever told about — no reviewer was spawned, no nudge can fire, and
     // the only trace is a log line. `_gatedDeliver` fails in two reachable ways:
@@ -8076,7 +8075,7 @@ function createTicketMethods(deps, shared) {
         if (reached) {
           if (!keepHold) this._setLoopStep(team, ticketId, null);
         } else if (parked) {
-          log.info('ticket', `ticket ${ticketId} escalation at ${step} parked for ${team.lead} — loopStep kept so the watchdog re-surfaces it`);
+          log.info('ticket', `ticket ${ticketId} escalation at ${step} parked for ${team.lead}`);
         } else {
           const why = (r && (r.error || r.held)) || 'unknown delivery failure';
           // log.error, not info: this is the arm where a human must eventually

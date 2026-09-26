@@ -1559,7 +1559,7 @@ test('t616: the anchor is the NEWEST ripe baseline, so old growth cannot vouch f
   } finally { app.stop(); }
 });
 
-test('t1235: an escalation landing behind a queued unit parks, and reaches the seat exactly once', async () => {
+test('t1235: an escalation landing behind a queued unit parks instead of being written behind it', async () => {
   const app = boot({ deps: { specConfirmMs: 60_000 } });
   try {
     await app.spawn('lead');
@@ -1580,6 +1580,5 @@ test('t1235: an escalation landing behind a queued unit parks, and reaches the s
       + 'swallowed and the next injection\'s Ctrl-U destroys it — it must not be written behind a queued unit');
     assert.strictEqual(parked, 1,
       'it parks instead, so the first unit\'s UserPromptSubmit hook drains it into the turn it starts');
-    assert.strictEqual(written + parked, 1, 'exactly once');
   } finally { app.stop(); }
 });

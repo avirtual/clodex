@@ -8833,7 +8833,7 @@ function createSessionManager(deps) {
       const superseded = urgent === true ? claimParkedByKey(PENDING_DIR, targetName, key) : null;
       if (opts && opts.parkBehindQueue === true && this._parkBehindQueue(target, senderTag, body, tag, key)) {
         if (typeof onWrite === 'function') { try { onWrite('parked'); } catch {} }
-        return { queued: true };
+        return superseded && superseded.claimed > 0 ? { queued: true, superseded } : { queued: true };
       }
       this._deliverMessage(targetName, senderTag, body, 'dm', tag, onWrite, key);
       // `queued`, not `delivered`: _deliverMessage returns once the text is parked
