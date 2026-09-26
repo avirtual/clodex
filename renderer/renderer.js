@@ -106,7 +106,6 @@ const { initPluginHost } = require('./plugin-host');
 const sessions = new Map(); // name -> { terminal, fitAddon, wrapperEl }
 const transcriptChangedSubs = new Set();
 const streamSeatNames = new Set();
-const SEAT_IO_TIPS = { stream: 'streamed seat (headless)', pty: 'terminal seat' };
 const seatIoKind = (io) => (io === 'stream' ? 'stream' : 'pty');
 function markSeatIo(name, io) {
   if (io === 'stream') streamSeatNames.add(name);
@@ -114,8 +113,6 @@ function markSeatIo(name, io) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!item) return;
   item.dataset.io = seatIoKind(io);
-  const chip = item.querySelector('.session-chip');
-  if (chip) chip.dataset.tip = SEAT_IO_TIPS[item.dataset.io];
 }
 let activeSession = null;
 let terminalWebglEnabled = false;
@@ -571,7 +568,7 @@ function addFailedSessionToSidebar(entry) {
   item.dataset.io = seatIoKind(entry.io);
   const displayName = entry.label || entry.name;
   item.innerHTML = `
-    <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''} data-tip="${SEAT_IO_TIPS[item.dataset.io]}">${typeGlyph(entry.type, entry.backend)}</span>
+    <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''}>${typeGlyph(entry.type, entry.backend)}</span>
     <div class="session-info">
       <div class="session-name">${esc(displayName)}</div>
       <div class="session-meta">
@@ -619,7 +616,7 @@ function addArchivedSessionToSidebar(entry) {
   item.dataset.io = seatIoKind(entry.io);
   const displayName = entry.label || entry.name;
   item.innerHTML = `
-    <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''} data-tip="${SEAT_IO_TIPS[item.dataset.io]}">${typeGlyph(entry.type, entry.backend)}</span>
+    <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''}>${typeGlyph(entry.type, entry.backend)}</span>
     <div class="session-info">
       <div class="session-name">${esc(displayName)}</div>
       <div class="session-meta">
@@ -703,7 +700,7 @@ function addExitedSessionToSidebar(entry) {
   item.dataset.io = seatIoKind(entry.io);
   const displayName = entry.label || entry.name;
   item.innerHTML = `
-    <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''} data-tip="${SEAT_IO_TIPS[item.dataset.io]}">${typeGlyph(entry.type, entry.backend)}</span>
+    <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''}>${typeGlyph(entry.type, entry.backend)}</span>
     <div class="session-info">
       <div class="session-name">${esc(displayName)}</div>
       <div class="session-meta">
@@ -809,7 +806,7 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
   const cwdLabel = cwd ? esc(baseName(cwd)) : '';
   const accountChip = account && account !== ACCOUNT_DEFAULT ? esc(account) : '';
   item.innerHTML = `
-    <span class="session-chip" data-type="${esc(type)}"${backend ? ` data-backend="${esc(backend)}"` : ''} data-tip="${SEAT_IO_TIPS[item.dataset.io]}">${typeGlyph(type, backend)}</span>
+    <span class="session-chip" data-type="${esc(type)}"${backend ? ` data-backend="${esc(backend)}"` : ''}>${typeGlyph(type, backend)}</span>
     <div class="session-info">
       <div class="session-name">${esc(displayName)}</div>
       <div class="session-meta">
