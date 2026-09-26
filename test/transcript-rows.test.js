@@ -290,7 +290,7 @@ test('a filed body becomes a link to the spill, opened through the file peek', a
 
 test('a body over two lines is clamped with a count of the rest, and a click expands it', () => {
   const m = mount();
-  m.render([said('a1', 0, '[agent:shout] one\ntwo\nthree\nfour')]);
+  m.render([said('a1', 0, '[agent:shout] one\ntwo\nthree\nfour\n[agent:end]')]);
   const card = m.pane.childNodes[0].childNodes[0].childNodes[0].childNodes[0];
   const [, body, foot] = card.childNodes;
   assert.strictEqual(body.className, 'intent-card-body intent-card-clamped');
@@ -298,6 +298,30 @@ test('a body over two lines is clamped with a count of the rest, and a click exp
   foot.listeners.click();
   assert.strictEqual(body.className, 'intent-card-body');
   assert.strictEqual(foot.hidden, true);
+});
+
+test('an unclosed body renders open and unclamped, with an unclosed warning chip last in the head', () => {
+  const m = mount();
+  m.render([said('a1', 0, '[agent:remind in 5m] watchdog\n\nUpdate as of 21:44:\n\nline three\nline four\nline five')]);
+  const card = m.pane.childNodes[0].childNodes[0].childNodes[0].childNodes[0];
+  assert.strictEqual(card.className, 'intent-card intent-card-open');
+  assert.deepStrictEqual(card.childNodes.map(cls), ['intent-card-head', 'intent-card-body']);
+  const head = card.childNodes[0];
+  const chip = head.childNodes[head.childNodes.length - 1];
+  assert.strictEqual(chip.className, 'intent-chip intent-chip-warn');
+  assert.strictEqual(chip.textContent, 'unclosed');
+  assert.strictEqual(chip.title, 'no [agent:end]: the rest of the reply was delivered as this body');
+});
+
+test('the same body closed with [agent:end] is clamped and carries no unclosed chip', () => {
+  const m = mount();
+  m.render([said('a1', 0, '[agent:remind in 5m] watchdog\n\nUpdate as of 21:44:\n\nline three\nline four\nline five\n[agent:end]')]);
+  const card = m.pane.childNodes[0].childNodes[0].childNodes[0].childNodes[0];
+  assert.strictEqual(card.className, 'intent-card');
+  const [head, body, foot] = card.childNodes;
+  assert.strictEqual(body.className, 'intent-card-body intent-card-clamped');
+  assert.strictEqual(foot.textContent, '+ 5 more lines');
+  assert.ok(!head.childNodes.some((n) => n.textContent === 'unclosed'));
 });
 
 test('a two-line body is not clamped; an exec body is monospace; a bodyless intent is its head alone', () => {

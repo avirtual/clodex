@@ -6074,6 +6074,8 @@ body.web-frontend #sidebar-header {
   border-radius: var(--radius-md);
   padding: 0 var(--sp-1);
 }
+.intent-chip-warn { color: var(--warn); border-color: var(--warn); }
+.intent-card-open { border-left: 2px solid var(--warn); }
 .intent-card-state { margin-left: auto; color: var(--warn); }
 .intent-card-body { white-space: pre-wrap; margin-left: calc(1em + var(--sp-2)); color: var(--text-secondary); }
 .intent-card-body-mono, .intent-card-raw { font-family: var(--font-mono); font-size: var(--fs-sm); }
