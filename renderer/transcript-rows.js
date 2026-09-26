@@ -407,6 +407,23 @@ function buildRow(doc, rec, ctx, attached) {
   }
 }
 
+function elapsedText(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+function pendingToolName(records) {
+  const last = records[records.length - 1];
+  for (let i = records.length - 1; i >= 0; i--) {
+    const r = records[i];
+    if (!r || r.turn !== last.turn) break;
+    if (r.kind === 'tool' && r.state === 'pending') return r.name || null;
+  }
+  return null;
+}
+
 function footerOf(records) {
   const end = records.find((r) => r.kind === 'turn-end');
   const boundary = records.find((r) => r.kind === 'boundary' && r.what === 'compact' && r.preTokens != null && r.postTokens != null);
@@ -531,8 +548,53 @@ function groupTurns(records) {
 }
 
 function createTranscriptRows(doc, paneEl, ctx = {}) {
-  const deps = { seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, ...ctx };
+  const deps = { seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
   const turnCache = new Map();
+  let lastRecords = [];
+  let working = null;
+  let workingEl = null;
+  let workingTimer = null;
+
+  function stopTick() {
+    if (workingTimer != null) deps.clearInterval(workingTimer);
+    workingTimer = null;
+  }
+
+  function setPart(i, text) {
+    const node = workingEl.childNodes[i];
+    if (node.textContent !== text) node.textContent = text;
+  }
+
+  function paintWorking() {
+    if (!working) {
+      stopTick();
+      if (workingEl && workingEl.parentNode) workingEl.parentNode.removeChild(workingEl);
+      workingEl = null;
+      return;
+    }
+    const waiting = working.state === 'attention';
+    if (!workingEl) {
+      workingEl = el(doc, 'div', '');
+      workingEl.appendChild(el(doc, 'span', 'tr-mark'));
+      workingEl.appendChild(el(doc, 'span', 'tr-working-text', ''));
+      workingEl.appendChild(el(doc, 'span', 'tr-working-elapsed', ''));
+    }
+    const cls = `tr-row tr-working ${waiting ? 'tr-working-still' : 'tr-working-pulse'}`;
+    if (workingEl.className !== cls) workingEl.className = cls;
+    const tool = pendingToolName(lastRecords);
+    setPart(1, waiting ? 'Waiting for you' : working.text || (tool ? `Working · ${tool}` : 'Working'));
+    const since = Number(working.since);
+    setPart(2, !waiting && since > 0 ? elapsedText(deps.now() - since) : '');
+    if (workingEl.parentNode !== paneEl || workingEl.nextSibling) paneEl.appendChild(workingEl);
+    if (waiting) stopTick();
+    else if (workingTimer == null) workingTimer = deps.setInterval(paintWorking, 1000);
+  }
+
+  function setWorking(w) {
+    const state = w && w.state;
+    working = state === 'thinking' || state === 'attention' ? { state, since: w.since, text: w.text || null } : null;
+    paintWorking();
+  }
 
   function toolBlockItem(tools) {
     const many = tools.length > 1;
@@ -597,9 +659,11 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
       },
     }));
     reconcile(paneEl, turnCache, items);
+    lastRecords = list;
+    if (working) paintWorking();
   }
 
-  return { render };
+  return { render, setWorking };
 }
 
 module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows };

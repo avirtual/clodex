@@ -72,7 +72,7 @@ const { VOICE_ENGINE_NAME } = require('../voice-engine');
 const {
   DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings, spaceTriggerAction, ptyTypedSinceEnter,
 } = require('./lib/voice-submit');
-const { createLiveSplitView, renderTranscript, TRANSCRIPT_PULL_MS } = require('./live-split-view');
+const { createLiveSplitView, renderTranscript, transcriptRowsFor, TRANSCRIPT_PULL_MS } = require('./live-split-view');
 const { initBanners } = require('./banners');
 const { initThemes } = require('./themes');
 const { createEchoRewriter } = require('./lib/prompt-echo');
@@ -1596,6 +1596,7 @@ function filePathFromUri(uri) {
 const SEAT_DRAFT_DEBOUNCE_MS = 300;
 
 const COMPOSER_PLACEHOLDER = 'Message — Enter sends, Shift+Enter for a new line';
+const COMPOSER_RUNNING_PLACEHOLDER = 'Message — Enter sends, Esc interrupts the turn';
 
 function attachComposer(composer, { onSend, onSlash = null, onEscape, onEmptySpace = null }) {
   composer.className = 'seat-composer';
@@ -1827,6 +1828,14 @@ function createStreamSeatPane(name, wrapperEl) {
   let follow = true;
   const onScroll = () => { follow = paneEl.scrollTop + paneEl.clientHeight >= paneEl.scrollHeight - 4; };
   paneEl.addEventListener('scroll', onScroll);
+  const rowsCtx = {
+    seatName: name,
+    resolveFile: (p) => window.api.fileResolve(name, p, null),
+    openFilePeek: (...args) => openFilePeek(...args),
+    openExternal: (url) => window.api.openExternal(url),
+    toast: showToast,
+    echoPalette: currentEchoPalette,
+  };
   const pull = (force = false) => {
     if (pulling || disposed) return;
     if (!force && !wrapperEl.classList.contains('visible')) return;
@@ -1840,14 +1849,7 @@ function createStreamSeatPane(name, wrapperEl) {
       const nextPermKey = Array.isArray(res.permissions) ? res.permissions.map((i) => i.id).join('\n') : permKey;
       if (nextPermKey !== permKey) { permKey = nextPermKey; renderPermissions(res.permissions); }
       if (!res.ok) return;
-      renderTranscript(document, paneEl, res.records, {
-        seatName: name,
-        resolveFile: (p) => window.api.fileResolve(name, p, null),
-        openFilePeek: (...args) => openFilePeek(...args),
-        openExternal: (url) => window.api.openExternal(url),
-        toast: showToast,
-        echoPalette: currentEchoPalette,
-      });
+      renderTranscript(document, paneEl, res.records, rowsCtx);
       if (follow) paneEl.scrollTop = paneEl.scrollHeight;
     }).catch(() => { pulling = false; });
   };
@@ -2012,7 +2014,7 @@ function createStreamSeatPane(name, wrapperEl) {
     composer.placeholder = voiceRecordingOn
       ? 'Recording — your words appear here; Enter sends'
       : turnRunning
-        ? 'Message — Enter sends, Esc interrupts the turn'
+        ? COMPOSER_RUNNING_PLACEHOLDER
         : COMPOSER_PLACEHOLDER;
   };
   const triggerSubmit = attachTriggerSubmit(composer, {
@@ -2039,12 +2041,15 @@ function createStreamSeatPane(name, wrapperEl) {
       composer.classList.toggle('voice-recording', !!on);
       applyPlaceholder();
     },
-    setTurnRunning(on) {
-      turnRunning = !!on;
+    setTurnRunning(activity, since) {
+      turnRunning = activity === 'thinking' || activity === 'attention';
       applyPlaceholder();
+      transcriptRowsFor(document, paneEl, rowsCtx).setWorking({ state: activity, since });
+      if (follow) paneEl.scrollTop = paneEl.scrollHeight;
     },
     dispose() {
       disposed = true;
+      transcriptRowsFor(document, paneEl, rowsCtx).setWorking(null);
       triggerSubmit.dispose();
       clearInterval(timer);
       clearTimeout(draftTimer);
@@ -2065,7 +2070,7 @@ function createTerminal(name, peer = null) {
     terminalContainer.appendChild(wrapperEl);
     const stream = createStreamSeatPane(name, wrapperEl);
     const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-    if (row && row.dataset.activity === 'thinking') stream.setTurnRunning(true);
+    if (row && (row.dataset.attention || row.dataset.activity)) stream.setTurnRunning(seatActivity(row), Number(row.dataset.thinkingSince) || null);
     sessions.set(name, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, peer: null, stream, liveSplit: null });
     updateWindowTitle();
     return { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, echoRewrite: (chunk) => chunk };
@@ -2344,6 +2349,12 @@ function createTerminal(name, peer = null) {
     sheet: true,
     onChange: () => { if (composerKit) composerKit.fit(); },
   });
+  const activityRow = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (activityRow && (activityRow.dataset.attention || activityRow.dataset.activity)) {
+    const activity = seatActivity(activityRow);
+    if (liveSplit) liveSplit.setTurnRunning(activity, Number(activityRow.dataset.thinkingSince) || null);
+    if (composerEl && activity !== 'idle') composerEl.placeholder = COMPOSER_RUNNING_PLACEHOLDER;
+  }
   sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger, menuMirror, syncMenuMirror });
   updateWindowTitle();
   return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
@@ -4108,17 +4119,29 @@ window.api.onSessionExit((name, code, meta) => {
 
 window.api.onSelectionSent((name) => drawerHost.onSelectionSent(name));
 
+function seatActivity(row) {
+  return row.dataset.attention ? 'attention' : row.dataset.activity || 'idle';
+}
+
+function forwardSeatActivity(seat, activity, since) {
+  if (!seat) return;
+  if (seat.stream) seat.stream.setTurnRunning(activity, since);
+  if (seat.liveSplit) seat.liveSplit.setTurnRunning(activity, since);
+  if (seat.composerEl) seat.composerEl.placeholder = activity === 'thinking' || activity === 'attention' ? COMPOSER_RUNNING_PLACEHOLDER : COMPOSER_PLACEHOLDER;
+}
+
 window.api.onSessionActivity((name, state) => {
   const seat = sessions.get(name);
-  if (seat && seat.stream) seat.stream.setTurnRunning(state === 'thinking');
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  const since = state !== 'thinking' ? null : el && el.dataset.activity === 'thinking' && el.dataset.thinkingSince ? Number(el.dataset.thinkingSince) : Date.now();
+  forwardSeatActivity(seat, el && el.dataset.attention ? 'attention' : state, since);
   if (!el) return;
   // Thinking-duration stamp: the amber dot alone makes a 3s turn and a wedged
   // agent look identical. Stamp the ENTRY into thinking (not every repeat
   // event) so the badge tick + hover card can show elapsed time; any other
   // state clears both.
   if (state === 'thinking') {
-    if (el.dataset.activity !== 'thinking') el.dataset.thinkingSince = String(Date.now());
+    if (el.dataset.activity !== 'thinking') el.dataset.thinkingSince = String(since);
   } else if (el.dataset.thinkingSince) {
     delete el.dataset.thinkingSince;
     applyThinkBadge(el);
@@ -4136,6 +4159,8 @@ window.api.onSessionCompacting((name, c) => {
 
 window.api.onSessionAttention((name, attn) => {
   const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  const activity = attn ? 'attention' : (el && el.dataset.activity) || 'idle';
+  forwardSeatActivity(sessions.get(name), activity, activity === 'thinking' ? Number(el.dataset.thinkingSince) || Date.now() : null);
   if (!el) return;
   if (attn) {
     el.dataset.attention = attn.kind;

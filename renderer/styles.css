@@ -6090,6 +6090,19 @@ body.web-frontend #sidebar-header {
 .tr-state-denied .tr-mark { background: var(--error); }
 .tr-state-interrupted .tr-mark { background: var(--warn); }
 @keyframes tr-pulse { 50% { opacity: 0.3; } }
+.tr-working {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+  padding-top: var(--sp-1);
+}
+.tr-working-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr-working-elapsed { font-variant-numeric: tabular-nums; }
+.tr-working-pulse .tr-mark { background: var(--info); animation: tr-pulse 1.2s ease-in-out infinite; }
+.tr-working-still .tr-mark { background: var(--warn); }
+.tr-working-still .tr-working-text { color: var(--warn); }
 
 .tr-add { color: var(--ok); }
 .tr-del,

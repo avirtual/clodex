@@ -8639,6 +8639,33 @@ body.web-frontend #sidebar-header {
     opacity: 0.3;
   }
 }
+.tr-working {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-tertiary);
+  padding-top: var(--sp-1);
+}
+.tr-working-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tr-working-elapsed {
+  font-variant-numeric: tabular-nums;
+}
+.tr-working-pulse .tr-mark {
+  background: var(--info);
+  animation: tr-pulse 1.2s ease-in-out infinite;
+}
+.tr-working-still .tr-mark {
+  background: var(--warn);
+}
+.tr-working-still .tr-working-text {
+  color: var(--warn);
+}
 .tr-add {
   color: var(--ok);
 }
@@ -31342,6 +31369,21 @@ ${m[2].replace(/^\r?\n/, "")}`;
             return null;
         }
       }
+      function elapsedText(ms) {
+        const s = Math.max(0, Math.floor(ms / 1e3));
+        if (s < 60) return `${s}s`;
+        const m = Math.floor(s / 60);
+        return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
+      }
+      function pendingToolName(records) {
+        const last = records[records.length - 1];
+        for (let i = records.length - 1; i >= 0; i--) {
+          const r = records[i];
+          if (!r || r.turn !== last.turn) break;
+          if (r.kind === "tool" && r.state === "pending") return r.name || null;
+        }
+        return null;
+      }
       function footerOf(records) {
         const end = records.find((r) => r.kind === "turn-end");
         const boundary = records.find((r) => r.kind === "boundary" && r.what === "compact" && r.preTokens != null && r.postTokens != null);
@@ -31459,8 +31501,49 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return turns;
       }
       function createTranscriptRows(doc, paneEl, ctx = {}) {
-        const deps = { seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, ...ctx };
+        const deps = { seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
         const turnCache = /* @__PURE__ */ new Map();
+        let lastRecords = [];
+        let working = null;
+        let workingEl = null;
+        let workingTimer = null;
+        function stopTick() {
+          if (workingTimer != null) deps.clearInterval(workingTimer);
+          workingTimer = null;
+        }
+        function setPart(i, text) {
+          const node = workingEl.childNodes[i];
+          if (node.textContent !== text) node.textContent = text;
+        }
+        function paintWorking() {
+          if (!working) {
+            stopTick();
+            if (workingEl && workingEl.parentNode) workingEl.parentNode.removeChild(workingEl);
+            workingEl = null;
+            return;
+          }
+          const waiting = working.state === "attention";
+          if (!workingEl) {
+            workingEl = el(doc, "div", "");
+            workingEl.appendChild(el(doc, "span", "tr-mark"));
+            workingEl.appendChild(el(doc, "span", "tr-working-text", ""));
+            workingEl.appendChild(el(doc, "span", "tr-working-elapsed", ""));
+          }
+          const cls = `tr-row tr-working ${waiting ? "tr-working-still" : "tr-working-pulse"}`;
+          if (workingEl.className !== cls) workingEl.className = cls;
+          const tool = pendingToolName(lastRecords);
+          setPart(1, waiting ? "Waiting for you" : working.text || (tool ? `Working \xB7 ${tool}` : "Working"));
+          const since = Number(working.since);
+          setPart(2, !waiting && since > 0 ? elapsedText(deps.now() - since) : "");
+          if (workingEl.parentNode !== paneEl || workingEl.nextSibling) paneEl.appendChild(workingEl);
+          if (waiting) stopTick();
+          else if (workingTimer == null) workingTimer = deps.setInterval(paintWorking, 1e3);
+        }
+        function setWorking(w) {
+          const state = w && w.state;
+          working = state === "thinking" || state === "attention" ? { state, since: w.since, text: w.text || null } : null;
+          paintWorking();
+        }
         function toolBlockItem(tools) {
           const many = tools.length > 1;
           return {
@@ -31522,10 +31605,51 @@ ${m[2].replace(/^\r?\n/, "")}`;
             }
           }));
           reconcile(paneEl, turnCache, items);
+          lastRecords = list;
+          if (working) paintWorking();
         }
-        return { render };
+        return { render, setWorking };
       }
       module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows };
+    }
+  });
+
+  // renderer/lib/working-row.js
+  var require_working_row = __commonJS({
+    "renderer/lib/working-row.js"(exports, module) {
+      "use strict";
+      var SCAN_ROWS = 4;
+      var ELAPSED = /^\d+[hms](?:\s+\d+[ms])*$/;
+      var SHAPES = {
+        claude: /^\s*\S\s+([A-Z][^\s(]*(?:\s+[^\s(]+)*…)\s*\(([^)]*)\)/,
+        codex: /^\s*•\s+(.+?)\s+\((\d+[hms][^)]*?)\s*•\s*esc to interrupt\)/,
+        muse: /^\s*[^\w\s]\s+([A-Z].*?)\s+\((\d+[hms][^)]*?)\s*·\s*esc to interrupt\)/
+      };
+      function claudeText(m) {
+        const parts = m[2].split("\xB7").map((p) => p.trim()).filter(Boolean);
+        if (!parts.some((p) => ELAPSED.test(p))) return null;
+        const rest = parts.filter((p) => !ELAPSED.test(p) && !/^esc to interrupt$/i.test(p));
+        return rest.length ? `${m[1]} \xB7 ${rest.join(" \xB7 ")}` : m[1];
+      }
+      function matchRow(row, platform) {
+        const shape = SHAPES[platform];
+        const m = shape && shape.exec(row);
+        if (!m) return null;
+        return platform === "claude" ? claudeText(m) : m[1];
+      }
+      function spinnerText(rows, top, platform) {
+        if (!Array.isArray(rows) || !Number.isInteger(top) || !SHAPES[platform]) return null;
+        let seen = 0;
+        for (let i = Math.min(top, rows.length) - 1; i >= 0 && seen < SCAN_ROWS; i--) {
+          const row = String(rows[i] || "");
+          if (!row.trim()) continue;
+          seen++;
+          const text = matchRow(row, platform);
+          if (text) return text;
+        }
+        return null;
+      }
+      module.exports = { spinnerText };
     }
   });
 
@@ -31728,19 +31852,23 @@ ${m[2].replace(/^\r?\n/, "")}`;
       "use strict";
       var { SPLIT_EXIT_MS, measureSplit, sheetBand, initialSplitState, reduceSplit } = require_live_split();
       var { createTranscriptRows } = require_transcript_rows();
+      var { spinnerText } = require_working_row();
       var { readMenuRows } = require_menu_rows();
       var { rowCells } = require_menu_cells();
       var TRANSCRIPT_PULL_MS = 1e3;
       var views = /* @__PURE__ */ new WeakMap();
       var NOOP = () => {
       };
-      function renderTranscript(doc, paneEl, records, ctx = {}) {
+      function transcriptRowsFor(doc, paneEl, ctx = {}) {
         let rows = views.get(paneEl);
         if (!rows) {
           rows = createTranscriptRows(doc, paneEl, ctx);
           views.set(paneEl, rows);
         }
-        rows.render(records);
+        return rows;
+      }
+      function renderTranscript(doc, paneEl, records, ctx = {}) {
+        transcriptRowsFor(doc, paneEl, ctx).render(records);
       }
       function markedText(doc, text, spans) {
         const frag = [];
@@ -31803,6 +31931,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let sheetRange = null;
         const composerVisible = () => !!composerEl && !composerEl.hidden;
         const bandKey = (b) => b ? `${b.top}:${b.bottom}` : "";
+        const rowsCtx = { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette, now };
+        let turnRunning = false;
+        let working = null;
         function stickToBottom() {
           if (!follow) return;
           paneEl.scrollTop = paneEl.scrollHeight;
@@ -31945,6 +32076,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           const prevSheet = sheetRange;
           state = reduceSplit(state, measured, now(), void 0, raw ? 0 : void 0);
           const menuRead = readMenu(rows);
+          if (turnRunning) showWorking(rows ? spinnerText(rows, state.top, platform()) : null);
           const busy = !menuRead && !!measured && (measured.mode === "split" || !!measured.busy);
           sheetRange = busy ? sheetRowsOf(rows) : null;
           sheetRows = sheetRange ? sheetRange.bottom - sheetRange.top + 1 : 0;
@@ -31991,10 +32123,22 @@ ${m[2].replace(/^\r?\n/, "")}`;
           const sel = window.getSelection();
           if (!sel || sel.isCollapsed) (composerVisible() ? composerEl : terminal).focus();
         });
+        function showWorking(text) {
+          const next = text || "Working";
+          if (!working || working.text === next) return;
+          working = { ...working, text: next };
+          transcriptRowsFor(document, paneEl, rowsCtx).setWorking(working);
+        }
         return {
           refresh() {
             evaluate();
             layout();
+          },
+          setTurnRunning(activity, since) {
+            turnRunning = activity === "thinking";
+            working = turnRunning || activity === "attention" ? { state: activity, since, text: turnRunning ? working && working.text || "Working" : null } : null;
+            transcriptRowsFor(document, paneEl, rowsCtx).setWorking(working);
+            stickToBottom();
           },
           setRaw(on) {
             if (raw === !!on) return;
@@ -32015,13 +32159,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
             }
             if (typeof unsubTranscript === "function") unsubTranscript();
             if (ro) ro.disconnect();
+            const rows = views.get(paneEl);
+            if (rows) rows.setWorking(null);
             paneEl.removeEventListener("scroll", onPaneScroll);
             paneEl.remove();
             if (menuEl) menuEl.remove();
           }
         };
       }
-      module.exports = { TRANSCRIPT_PULL_MS, renderTranscript, renderMenuMirror, createLiveSplitView };
+      module.exports = { TRANSCRIPT_PULL_MS, transcriptRowsFor, renderTranscript, renderMenuMirror, createLiveSplitView };
     }
   });
 
@@ -45208,7 +45354,7 @@ ${detail}` });
         spaceTriggerAction,
         ptyTypedSinceEnter
       } = require_voice_submit();
-      var { createLiveSplitView, renderTranscript, TRANSCRIPT_PULL_MS } = require_live_split_view();
+      var { createLiveSplitView, renderTranscript, transcriptRowsFor, TRANSCRIPT_PULL_MS } = require_live_split_view();
       var { initBanners } = require_banners();
       var { initThemes } = require_themes();
       var { createEchoRewriter } = require_prompt_echo();
@@ -46701,6 +46847,7 @@ ${detail}` });
       }
       var SEAT_DRAFT_DEBOUNCE_MS = 300;
       var COMPOSER_PLACEHOLDER = "Message \u2014 Enter sends, Shift+Enter for a new line";
+      var COMPOSER_RUNNING_PLACEHOLDER = "Message \u2014 Enter sends, Esc interrupts the turn";
       function attachComposer(composer, { onSend, onSlash = null, onEscape, onEmptySpace = null }) {
         composer.className = "seat-composer";
         composer.rows = 1;
@@ -46942,6 +47089,14 @@ ${detail}` });
           follow = paneEl.scrollTop + paneEl.clientHeight >= paneEl.scrollHeight - 4;
         };
         paneEl.addEventListener("scroll", onScroll);
+        const rowsCtx = {
+          seatName: name,
+          resolveFile: (p) => window.api.fileResolve(name, p, null),
+          openFilePeek: (...args) => openFilePeek(...args),
+          openExternal: (url) => window.api.openExternal(url),
+          toast: showToast,
+          echoPalette: currentEchoPalette
+        };
         const pull = (force = false) => {
           if (pulling || disposed) return;
           if (!force && !wrapperEl.classList.contains("visible")) return;
@@ -46958,14 +47113,7 @@ ${detail}` });
               renderPermissions(res.permissions);
             }
             if (!res.ok) return;
-            renderTranscript(document, paneEl, res.records, {
-              seatName: name,
-              resolveFile: (p) => window.api.fileResolve(name, p, null),
-              openFilePeek: (...args) => openFilePeek(...args),
-              openExternal: (url) => window.api.openExternal(url),
-              toast: showToast,
-              echoPalette: currentEchoPalette
-            });
+            renderTranscript(document, paneEl, res.records, rowsCtx);
             if (follow) paneEl.scrollTop = paneEl.scrollHeight;
           }).catch(() => {
             pulling = false;
@@ -47139,7 +47287,7 @@ ${detail}` });
         let voiceRecordingOn = false;
         let turnRunning = false;
         const applyPlaceholder = () => {
-          composer.placeholder = voiceRecordingOn ? "Recording \u2014 your words appear here; Enter sends" : turnRunning ? "Message \u2014 Enter sends, Esc interrupts the turn" : COMPOSER_PLACEHOLDER;
+          composer.placeholder = voiceRecordingOn ? "Recording \u2014 your words appear here; Enter sends" : turnRunning ? COMPOSER_RUNNING_PLACEHOLDER : COMPOSER_PLACEHOLDER;
         };
         const triggerSubmit = attachTriggerSubmit(composer, {
           getConfig: () => voiceSubmitConfig,
@@ -47176,12 +47324,15 @@ ${detail}` });
             composer.classList.toggle("voice-recording", !!on);
             applyPlaceholder();
           },
-          setTurnRunning(on) {
-            turnRunning = !!on;
+          setTurnRunning(activity, since) {
+            turnRunning = activity === "thinking" || activity === "attention";
             applyPlaceholder();
+            transcriptRowsFor(document, paneEl, rowsCtx).setWorking({ state: activity, since });
+            if (follow) paneEl.scrollTop = paneEl.scrollHeight;
           },
           dispose() {
             disposed = true;
+            transcriptRowsFor(document, paneEl, rowsCtx).setWorking(null);
             triggerSubmit.dispose();
             clearInterval(timer);
             clearTimeout(draftTimer);
@@ -47201,7 +47352,7 @@ ${detail}` });
           terminalContainer.appendChild(wrapperEl2);
           const stream = createStreamSeatPane(name, wrapperEl2);
           const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-          if (row && row.dataset.activity === "thinking") stream.setTurnRunning(true);
+          if (row && (row.dataset.attention || row.dataset.activity)) stream.setTurnRunning(seatActivity(row), Number(row.dataset.thinkingSince) || null);
           sessions.set(name, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl: wrapperEl2, peer: null, stream, liveSplit: null });
           updateWindowTitle();
           return { terminal: null, fitAddon: null, searchAddon: null, wrapperEl: wrapperEl2, echoRewrite: (chunk) => chunk };
@@ -47444,6 +47595,12 @@ ${detail}` });
             if (composerKit) composerKit.fit();
           }
         });
+        const activityRow = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+        if (activityRow && (activityRow.dataset.attention || activityRow.dataset.activity)) {
+          const activity = seatActivity(activityRow);
+          if (liveSplit) liveSplit.setTurnRunning(activity, Number(activityRow.dataset.thinkingSince) || null);
+          if (composerEl && activity !== "idle") composerEl.placeholder = COMPOSER_RUNNING_PLACEHOLDER;
+        }
         sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger, menuMirror, syncMenuMirror });
         updateWindowTitle();
         return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
@@ -49121,13 +49278,23 @@ ${detail}` });
         }
       });
       window.api.onSelectionSent((name) => drawerHost.onSelectionSent(name));
+      function seatActivity(row) {
+        return row.dataset.attention ? "attention" : row.dataset.activity || "idle";
+      }
+      function forwardSeatActivity(seat, activity, since) {
+        if (!seat) return;
+        if (seat.stream) seat.stream.setTurnRunning(activity, since);
+        if (seat.liveSplit) seat.liveSplit.setTurnRunning(activity, since);
+        if (seat.composerEl) seat.composerEl.placeholder = activity === "thinking" || activity === "attention" ? COMPOSER_RUNNING_PLACEHOLDER : COMPOSER_PLACEHOLDER;
+      }
       window.api.onSessionActivity((name, state) => {
         const seat = sessions.get(name);
-        if (seat && seat.stream) seat.stream.setTurnRunning(state === "thinking");
         const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+        const since = state !== "thinking" ? null : el && el.dataset.activity === "thinking" && el.dataset.thinkingSince ? Number(el.dataset.thinkingSince) : Date.now();
+        forwardSeatActivity(seat, el && el.dataset.attention ? "attention" : state, since);
         if (!el) return;
         if (state === "thinking") {
-          if (el.dataset.activity !== "thinking") el.dataset.thinkingSince = String(Date.now());
+          if (el.dataset.activity !== "thinking") el.dataset.thinkingSince = String(since);
         } else if (el.dataset.thinkingSince) {
           delete el.dataset.thinkingSince;
           applyThinkBadge(el);
@@ -49143,6 +49310,8 @@ ${detail}` });
       });
       window.api.onSessionAttention((name, attn) => {
         const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+        const activity = attn ? "attention" : el && el.dataset.activity || "idle";
+        forwardSeatActivity(sessions.get(name), activity, activity === "thinking" ? Number(el.dataset.thinkingSince) || Date.now() : null);
         if (!el) return;
         if (attn) {
           el.dataset.attention = attn.kind;
