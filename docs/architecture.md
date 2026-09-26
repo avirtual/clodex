@@ -375,6 +375,10 @@ bundle), whose packaged form is the Docker image under
   Deliberately tiny (type/required/maxLength/enum + `array` items/bounds + the
   `filename` token guard + a raw-body size cap) so it stays auditable; a full
   ajv would not be.
+- **seat-images.js** — `validateSeatImages`, the one image rule set for a seat
+  message (≤5, png/jpeg/gif/webp, base64, 5 MB decoded each), shared by the
+  desktop `seat:send` IPC and the phone `POST /api/sessions/:name/dm` route. Pure
+  leaf, no I/O, like clodex-paths.js; NOT in the leak-scanner lists.
 - **agent-transport.js** — per-agent registry (`run/<name>/agent.json`) +
   Unix-socket (`run/<name>/agent.sock`) transport; discovery iterates
   `run/*/agent.json`.

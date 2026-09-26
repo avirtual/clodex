@@ -8,7 +8,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { createRemoteWiring } = require('../remote-wiring');
-const { RemoteServer, RESOURCES } = require('../remote');
+const { RemoteServer, RESOURCES, DM_MAX_BODY } = require('../remote');
 const { createTicketsStore } = require('../tickets-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -119,7 +119,7 @@ function makeDeps() {
   const manager = {
     sessions: new Map([
       ['alice', { name: 'alice', type: 'claude', cwd: path.join(root, 'a'), workspaceId: 'ws-alpha' }],
-      ['bob', { name: 'bob', type: 'codex', cwd: path.join(root, 'b'), workspaceId: 'ws-beta' }],
+      ['bob', { name: 'bob', type: 'codex', cwd: path.join(root, 'b'), workspaceId: 'ws-beta', io: 'stream' }],
       ['ghost', { name: 'ghost', type: 'claude', cwd: path.join(root, 'g'), workspaceId: 'ws-alpha', _dead: true }],
     ]),
     create: async (...args) => { createCalls.push(args); return { name: args[0], type: args[1], pid: 7 }; },
@@ -263,8 +263,8 @@ function subresourceFixture() {
         calls.push({ route: 'query', name, kind, args });
         return name === 'ghost' ? { ok: false, error: 'no such session' } : QUERY_OUT;
       },
-      send: (name, text) => {
-        calls.push({ route: 'dm', name, text });
+      send: (name, text, images) => {
+        calls.push(images && images.length ? { route: 'dm', name, text, images } : { route: 'dm', name, text });
         return name === 'ghost' ? { ok: false, error: 'no such session' } : { ok: true };
       },
       killSession: (name) => {
@@ -643,6 +643,57 @@ test('POST /api/sessions/:name/dm: the path names the session — a body `name` 
   });
 });
 
+test('POST /api/sessions/:name/dm: images ride through validated, an images-only body is accepted, a bad one is the validator\'s 400', async () => {
+  const fixture = subresourceFixture();
+  const post = (port, p, body) => req(port, p, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
+  const png = { mediaType: 'image/png', data: 'UE5H' };
+  await withNode(fixture.opts, async (port) => {
+    const only = await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: '', images: [{ ...png, extra: 1 }] }));
+    assert.strictEqual(only.status, 200);
+    assert.deepStrictEqual(fixture.calls.at(-1), { route: 'dm', name: 'alice', text: '', images: [png] });
+    assert.strictEqual((await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: 'look', images: [png] }))).status, 200);
+    assert.deepStrictEqual(fixture.calls.at(-1), { route: 'dm', name: 'alice', text: 'look', images: [png] });
+    const n = fixture.calls.length;
+    const bad = await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: 'x', images: [{ mediaType: 'image/svg+xml', data: 'AAAA' }] }));
+    assert.strictEqual(bad.status, 400);
+    assert.deepStrictEqual(JSON.parse(bad.body), { ok: false, error: 'unsupported image type: image/svg+xml' });
+    assert.strictEqual((await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: 'x', images: 'nope' }))).status, 400);
+    assert.deepStrictEqual(JSON.parse((await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: ' ', images: [] }))).body),
+      { ok: false, error: 'empty message' });
+    assert.strictEqual(fixture.calls.length, n, 'a refused body never reaches send');
+  });
+});
+
+test('POST /api/sessions/:name/dm: its own body cap fits five 5 MB images; above it is 413, and every other route stays at 64 KB', async () => {
+  assert.strictEqual(DM_MAX_BODY, 5 * Math.ceil(5 * 1024 * 1024 / 3) * 4 + 64 * 1024);
+  const fixture = subresourceFixture();
+  const post = (port, p, body) => req(port, p, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
+  const img = { mediaType: 'image/png', data: Buffer.alloc(5 * 1024 * 1024).toString('base64') };
+  await withNode(fixture.opts, async (port) => {
+    const full = await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: 't'.repeat(60 * 1024), images: [img, img, img, img, img] }));
+    assert.strictEqual(full.status, 200);
+    assert.strictEqual(fixture.calls.at(-1).images.length, 5);
+    const over = await post(port, '/api/sessions/alice/dm', 'x'.repeat(DM_MAX_BODY + 1));
+    assert.strictEqual(over.status, 413);
+    const text100k = JSON.stringify({ data: 'x'.repeat(100 * 1024) });
+    const other = await post(port, '/api/sessions/alice/input', text100k);
+    assert.strictEqual(other.status, 413);
+    const n = fixture.calls.length;
+    const small = await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: 'y'.repeat(100 * 1024) }));
+    assert.strictEqual(small.status, 200, 'a 100 KB text-only dm is under the dm cap');
+    assert.strictEqual(fixture.calls.length, n + 1);
+  });
+});
+
+test('hello caps carry images, and /api/sessions rows say whether a seat is streamed or a terminal', async () => {
+  await withNode({}, async (port) => {
+    const caps = JSON.parse((await req(port, '/api/peer/hello')).body).caps;
+    assert.ok(caps.includes('images'), `hello caps lack 'images': ${JSON.stringify(caps)}`);
+    const list = JSON.parse((await req(port, '/api/sessions')).body).sessions;
+    assert.deepStrictEqual(list.map((r) => [r.name, r.io]), [['alice', 'pty'], ['bob', 'stream']]);
+  });
+});
+
 test('DELETE /api/sessions/:name and POST .../restart: the statuses the deleted kill/restart-session routes served', async () => {
   const fixture = subresourceFixture();
   const post = (port, p, body) => req(port, p, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
@@ -820,7 +871,7 @@ test('catalogs: absent from /api/resources when getCatalogs is not injected', as
 });
 
 const ALICE_ROW = {
-  name: 'alice', type: 'claude', workspace: 'Alpha', workspaceId: 'ws-alpha',
+  name: 'alice', type: 'claude', io: 'pty', workspace: 'Alpha', workspaceId: 'ws-alpha',
   stats: { model: null, cost: null, requests: null, ctxTok: null, ctxSize: null, ctxPct: null },
   activity: 'idle',
 };

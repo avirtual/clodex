@@ -11,6 +11,7 @@ const { makeTokenGate } = require('./auth-token');
 const { BOX_ID_RE } = require('./sandbox');
 const { maskSecrets } = require('./log-mask');
 const { IMPORT_CHUNK_MAX } = require('./seat-import');
+const { validateSeatImages, SEAT_IMAGE_MAX, SEAT_IMAGE_MAX_BYTES } = require('./seat-images');
 
 // A bind host counts as loopback when nothing off-box can reach it — the case
 // where "trust is the tunnel" still holds and no token is required. 0.0.0.0 / ::
@@ -110,6 +111,7 @@ const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const TICKET_ID_RE = /^t\d+$/;
 const TICKET_STATES = ['open', 'done', 'cancelled', 'all'];
 const MAX_BODY = 64 * 1024;          // matches the IPC message cap
+const DM_MAX_BODY = SEAT_IMAGE_MAX * Math.ceil(SEAT_IMAGE_MAX_BYTES / 3) * 4 + MAX_BODY;
 const IMPORT_ID_RE = /^[0-9a-f]{16}$/;
 const CONTENT_RANGE_RE = /^bytes\s+(\d+)-(\d+)\/\*$/i;
 const SSE_HEARTBEAT_MS = 25000;
@@ -783,11 +785,13 @@ class RemoteServer {
     return this._readBody(req, res, (body) => {
       let msg;
       try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
-      const text = String(msg.text || '').trim();
-      if (!text) return this._json(res, 400, { ok: false, error: 'empty message' });
-      const out = this._send(name, text);
+      const checked = validateSeatImages(msg && msg.images);
+      if (!checked.ok) return this._json(res, 400, checked);
+      const text = String((msg && msg.text) || '').trim();
+      if (!text && !checked.images.length) return this._json(res, 400, { ok: false, error: 'empty message' });
+      const out = this._send(name, text, checked.images);
       return this._json(res, out.ok ? 200 : 404, out);
-    });
+    }, DM_MAX_BODY);
   }
 
   _handleSessionDelete(name, res) {
@@ -1018,6 +1022,7 @@ class RemoteServer {
       if (this._voiceCapable) caps.push('voice');
       if (this._seatImport && this._importCreate) caps.push('import');
       caps.push('resources');
+      caps.push('images');
       return this._json(res, 200, {
         ok: true, app: 'clodex', host: this._hostLabel,
         version: this._version, caps,
@@ -1509,13 +1514,13 @@ class RemoteServer {
     req.on('close', () => this._clients.delete(res));
   }
 
-  _readBody(req, res, cb) {
+  _readBody(req, res, cb, max = MAX_BODY) {
     let body = '';
     let over = false;
     req.on('data', (chunk) => {
       if (over) return;
       body += chunk;
-      if (body.length > MAX_BODY) {
+      if (body.length > max) {
         over = true;
         this._json(res, 413, { ok: false, error: 'message too large' });
         req.destroy();
@@ -1534,5 +1539,5 @@ class RemoteServer {
 module.exports = {
   RemoteServer, RESOURCES, resolveRemoteBasePath, coerceRemoteBasePath, resolveRemoteBasePathSetting,
   REMOTE_BASE_PATH_ENV, DEFAULT_REMOTE_BASE_PATH, readLogTail, NODE_LOG_MAX_LINES,
-  IMPORT_CHUNK_MAX,
+  IMPORT_CHUNK_MAX, DM_MAX_BODY,
 };
