@@ -333,7 +333,7 @@ test('timeout: a run that wedges is cut off with a TIMEOUT line naming the file 
 });
 
 function runWithArgvProbe(extraEnv) {
-  const root = fs.realpathSync(mkTmpRoot('clx-t1242-'));
+  const root = fs.realpathSync(mkTmpRoot('clx-t279-'));
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const f of ['run-tests.js', 'test-escapes.js']) {
     fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
@@ -381,7 +381,7 @@ test('per-test timeout: CLODEX_TEST_PER_TEST_MS overrides the default in the arg
 });
 
 test('per-test timeout: a test that polls forever fails by its own name and the run reports totals', () => {
-  const root = fs.realpathSync(mkTmpRoot('clx-t1242-hang-'));
+  const root = fs.realpathSync(mkTmpRoot('clx-t279-'));
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const f of ['run-tests.js', 'test-escapes.js']) {
     fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
