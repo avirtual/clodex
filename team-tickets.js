@@ -36,8 +36,8 @@ const {
   readTeamJson, teamTemplatePath, teamTemplateSave, teamTemplateRemove, teamPromptSave, teamPromptRemove,
   teamPromptFile,
 } = require('./team-prompt-dir');
-const { resolveModelId, deriveModelTemplate } = require('./team-template-derive');
-const { seatType, adapterFor, DEFAULT_TYPE, PLATFORMS, hasBypass } = require('./cli-adapters');
+const { resolveModelId, deriveModelTemplate, deriveEffortTemplate } = require('./team-template-derive');
+const { seatType, adapterFor, DEFAULT_TYPE, PLATFORMS, hasBypass, resolveEffort } = require('./cli-adapters');
 const { readerFor } = require('./transcript-readers');
 const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
@@ -784,6 +784,7 @@ function createTicketMethods(deps, shared) {
             (tpl && tpl.noWire) === true,
             plugins, null, null,
             (tpl && tpl.io) === 'stream' ? 'stream' : 'pty',
+            (tpl && typeof tpl.effort === 'string' && tpl.effort) ? tpl.effort : null,
           );
           // AFTER create(), which is what mints the persistence entry: setWorktree
           // silently no-ops when no entry exists, so recording it earlier would
@@ -1302,7 +1303,7 @@ function createTicketMethods(deps, shared) {
             reviewBrief, false, session.proxy ?? null, shape.agents, shape.denyBuiltins, shape.disabledTools,
             shape.disabledSkills, shape.injectSkills,
             reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
-            false, shape.plugins, shape.shellDeny, null, shape.io || 'pty',
+            false, shape.plugins, shape.shellDeny, null, shape.io || 'pty', shape.effort || null,
           );
           // The rule is "reported ONCE", and this is the one caller that can
           // report twice: a reviewer whose prompt rides as system fails the
@@ -2930,6 +2931,14 @@ function createTicketMethods(deps, shared) {
               addClause = derived.clause;
               addUndo = derived.undo;
             }
+            if (intent.effort) {
+              const derivedE = this._deriveRoleEffortTemplate(team, name, intent.model ? { ...intent, template: name } : intent);
+              if (!derivedE.ok) { if (addUndo) addUndo(); reply(`error: ${derivedE.error}`); return; }
+              def.template = name;
+              addClause += derivedE.clause;
+              const priorUndo = addUndo;
+              addUndo = () => { derivedE.undo(); if (priorUndo) priorUndo(); };
+            }
             let added;
             try { added = addRole(team.name, name, def); }
             catch (err) { if (addUndo) addUndo(); throw err; }
@@ -2966,7 +2975,20 @@ function createTicketMethods(deps, shared) {
               setClause = derived.clause;
               setUndo = derived.undo;
             }
-            try { setRole(team.name, name, patch); }
+            let ownDerivedTemplate = false;
+            if (intent.effort) {
+              const derivedE = this._deriveRoleEffortTemplate(team, name, intent.model ? { ...intent, template: name } : intent);
+              if (!derivedE.ok) { if (setUndo) setUndo(); reply(`error: ${derivedE.error}`); return; }
+              patch.template = name;
+              ownDerivedTemplate = derivedE.reserved;
+              setClause += derivedE.clause;
+              const priorUndo = setUndo;
+              setUndo = () => { derivedE.undo(); if (priorUndo) priorUndo(); };
+            }
+            try {
+              if (ownDerivedTemplate) setRole(team.name, name, patch, { ownDerivedTemplate: true });
+              else setRole(team.name, name, patch);
+            }
             catch (err) { if (setUndo) setUndo(); throw err; }
             reply(`role "${name}" updated on ${team.name}${setClause}`);
             return;
@@ -3293,6 +3315,47 @@ function createTicketMethods(deps, shared) {
         this._refreshAppMenuQuietly();
       };
       return { ok: true, undo, clause: ` — template "${name}" derived from ${stem} with --model ${id} (${res.file})` };
+    },
+
+    _deriveRoleEffortTemplate(team, name, intent) {
+      const roles = (team && team.roles && typeof team.roles === 'object') ? team.roles : {};
+      if (!ROLE_RE.test(name)) return { ok: false, error: `role name "${name}" must match ${ROLE_RE} (${team.file})` };
+      const reviewerOnly = name === 'reviewer' && intent.sub === 'role-set'
+        && !intent.model && !intent.prompt && !intent.template && !intent.dispatch && !intent.cwd;
+      if (RESERVED_ROLE_KEYS.has(name) && !reviewerOnly) {
+        return { ok: false, error: `the "${name}" role is operator-owned topology; ${intent.sub === 'role-add' ? 'add' : 'edit'} it via the app, not an intent/mutator${name === 'reviewer' ? ' — effort: (with account:) is the only kv it takes alone' : ''} (${team.file})` };
+      }
+      if (intent.sub === 'role-set' && !roles[name]) return { ok: false, error: `role "${name}" not found on team "${team.name}" — use role-add (${team.file})` };
+      if (intent.sub === 'role-add' && roles[name]) return { ok: false, error: `role "${name}" already exists on team "${team.name}" — use role-set` };
+      const current = roles[name] && typeof roles[name] === 'object' ? roles[name].template : null;
+      const stem = intent.template || current || (reviewerOnly ? DEFAULT_REVIEWER_TEMPLATE : 'clodex-team-hand');
+      let base = readTeamJson({ fs, path }, team, 'templates', stem);
+      if (!base) {
+        try { base = allTemplates().find((t) => t && t.name === stem) || null; }
+        catch { base = null; }
+      }
+      if (!base) return { ok: false, error: `no template "${stem}" to derive from` };
+      const baseType = base.type || DEFAULT_TYPE;
+      if (!adapterFor(baseType)) return { ok: false, error: `template "${stem}" names type "${base.type}" — known: ${PLATFORMS.join(', ')}` };
+      const effort = resolveEffort(baseType, intent.effort);
+      if (effort && typeof effort === 'object') return { ok: false, error: effort.error };
+      const deps = this._teamFileDeps();
+      const target = teamTemplatePath(deps, team.name, name);
+      let prior = null;
+      try { prior = target ? fs.readFileSync(target) : null; } catch { prior = null; }
+      const res = teamTemplateSave(deps, team.name, name, deriveEffortTemplate(base, name, effort));
+      if (!res.ok) return { ok: false, error: res.error };
+      this._refreshAppMenuQuietly();
+      const undo = () => {
+        try {
+          if (prior != null) { fs.writeFileSync(res.file, prior); return; }
+          fs.unlinkSync(res.file);
+          try { fs.rmdirSync(path.dirname(res.file)); } catch {}
+        } catch {}
+        this._refreshAppMenuQuietly();
+      };
+      const what = effort ? `effort ${effort}` : 'no effort (the CLI default)';
+      return { ok: true, undo, reserved: RESERVED_ROLE_KEYS.has(name), clause: ` — template "${name}" derived from ${stem} with ${what} (${res.file})` };
     },
 
     _refreshAppMenuQuietly() {
@@ -4959,6 +5022,7 @@ function createTicketMethods(deps, shared) {
       return {
         tpl,
         extraArgs: (Array.isArray(tpl.extraArgs) && tpl.extraArgs.length) ? tpl.extraArgs : null,
+        effort: (typeof tpl.effort === 'string' && tpl.effort) ? tpl.effort : null,
         agents: tpl.agents || [],
         denyBuiltins: tpl.denyBuiltins || [],
         disabledTools: tpl.disabledTools || [],
@@ -4991,7 +5055,21 @@ function createTicketMethods(deps, shared) {
     // Returns the reason rather than a bare '' so the resolver can keep its
     // distinct operator-facing clauses without re-deriving WHY it was rejected —
     // a re-derivation is the divergence this helper exists to remove.
-    _roleCwdRel(def) {
+    _teamRoleEfforts(team) {
+      const out = {};
+      const roles = (team && team.roles && typeof team.roles === 'object') ? team.roles : {};
+      for (const [role, def] of Object.entries(roles)) {
+        const stem = (def && typeof def.template === 'string' && def.template)
+          ? def.template : (role === 'reviewer' ? DEFAULT_REVIEWER_TEMPLATE : null);
+        if (!stem) continue;
+        let shape = null;
+        try { shape = this._templateShape(stem, team); } catch { shape = null; }
+        if (shape && shape.effort) out[role] = shape.effort;
+      }
+      return out;
+    },
+
+        _roleCwdRel(def) {
       const raw = def && typeof def.cwd === 'string' ? def.cwd.trim() : '';
       if (!raw) return { rel: '', raw: '', reason: null };
       if (path.isAbsolute(raw)) return { rel: '', raw, reason: 'absolute' };
@@ -5147,6 +5225,7 @@ function createTicketMethods(deps, shared) {
           cwdFallback: roleCwd.fallback,
           tpl,
           extraArgs: (shape && shape.extraArgs) || postureArgs,
+          effort: (shape && shape.effort) || null,
           agents: (shape && shape.agents) || [],
           denyBuiltins: (shape && shape.denyBuiltins) || [],
           disabledTools: (shape && shape.disabledTools) || [],
@@ -5274,6 +5353,7 @@ function createTicketMethods(deps, shared) {
         // A --model that was present and refused. Carried, not re-derived at the
         // call site: re-parsing would put a second copy of the allowlist there.
         modelRefused: modelArgs.refused,
+        effort: (shape && shape.effort) || null,
         agents: [],
         denyBuiltins: [],
         disabledTools: capArgs ? [] : CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t)),
@@ -5588,7 +5668,7 @@ function createTicketMethods(deps, shared) {
             // wire that measures what this seat costs. It also cannot be dropped —
             // the plugin list after it is positional.
             { ...shape.env, CLODEX_TICKET: ticket.id }, true,
-            false, shape.plugins, null, null, shape.io || 'pty',
+            false, shape.plugins, null, null, shape.io || 'pty', shape.effort || null,
           );
           this._applyTemplatePersistence(seat.name, shape.tpl);
           // FIRST, before anything else that can throw. Between create() and this

@@ -164,9 +164,10 @@ function parseIntentLegacy(rawLine) {
     const cwdM = argStr.match(/\bcwd:(\S+)/);
     const modelM = argStr.match(/\bmodel:(\S+)/);
     const accountM = argStr.match(/\baccount:(\S+)/);
+    const effortM = argStr.match(/\beffort:(\S+)/);
     const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
     if (sub === 'role-add' || sub === 'role-set') {
-      return { type: 'team', sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, model: modelM ? modelM[1] : null, account: accountM ? accountM[1] : null, body };
+      return { type: 'team', sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, model: modelM ? modelM[1] : null, account: accountM ? accountM[1] : null, effort: effortM ? effortM[1] : null, body };
     }
     if (sub === 'role-rm' || sub === 'set-lead') return { type: 'team', sub, name: positional[0] || null, body: '' };
     if (sub === 'trunk') return { type: 'team', sub, branch: positional[0] || null, body: '' };

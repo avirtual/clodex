@@ -2,6 +2,8 @@
 
 const MODEL_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9.-]{0,63}(?:\[[a-z0-9]{1,8}\])?$/;
 
+const META_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+
 const CAP_KEYS = ['injectSkills', 'skillRoster', 'plugins', 'agents', 'tools', 'strip', 'autoCompact', 'noWire', 'accounts', 'streamIo'];
 
 const ADAPTERS = {
@@ -19,6 +21,7 @@ const ADAPTERS = {
       },
       idRe: MODEL_ID_RE,
     },
+    effort: { values: ['low', 'medium', 'high', 'xhigh', 'max'], apply: 'settings' },
     posture: { bypassArgs: ['--dangerously-skip-permissions'] },
     account: { envKey: 'CLAUDE_CONFIG_DIR', bootstrap: null },
     cwdDir: null,
@@ -56,6 +59,7 @@ const ADAPTERS = {
     label: 'Codex',
     cmd: 'codex',
     model: { flags: ['--model', '-m'], aliases: {}, idRe: MODEL_ID_RE },
+    effort: { values: [...META_EFFORTS], apply: 'config' },
     posture: { bypassArgs: ['--dangerously-bypass-approvals-and-sandbox'] },
     account: { envKey: 'CODEX_HOME', bootstrap: 'codex-home' },
     cwdDir: '.codex',
@@ -89,6 +93,7 @@ const ADAPTERS = {
     label: 'Muse Code',
     cmd: 'muse',
     model: { flags: ['--model'], aliases: {}, idRe: MODEL_ID_RE },
+    effort: { values: [...META_EFFORTS], apply: 'flag' },
     posture: { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'] },
     account: { envKey: 'XDG_CONFIG_HOME', bootstrap: 'xdg-overlay' },
     cwdDir: null,
@@ -193,6 +198,14 @@ function resolveModelId(type, v) {
   return a.model.idRe.test(v) ? v : null;
 }
 
+function resolveEffort(type, v) {
+  if (v == null || v === '' || v === 'default') return null;
+  const a = adapterFor(type);
+  if (!a || !a.effort) return { error: `seat type "${String(type)}" takes no effort level` };
+  if (typeof v === 'string' && a.effort.values.includes(v)) return v;
+  return { error: `effort "${String(v)}" is not one of ${a.effort.values.join(', ')} (${a.label}), or default` };
+}
+
 function stripModelArgs(type, extraArgs) {
   const a = adapterFor(type);
   const flags = a ? a.model.flags : [];
@@ -209,5 +222,5 @@ function stripModelArgs(type, extraArgs) {
 
 module.exports = {
   ADAPTERS, PLATFORMS, DEFAULT_TYPE, CAP_KEYS,
-  adapterFor, isAgentType, capsFor, streamFor, seatType, resolveModelId, stripModelArgs, hasBypass,
+  adapterFor, isAgentType, capsFor, streamFor, seatType, resolveModelId, resolveEffort, stripModelArgs, hasBypass,
 };

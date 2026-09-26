@@ -1599,7 +1599,7 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
     const preserveFields = ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt'];
     if (!(opts && opts.fresh)) preserveFields.push('rosterSentAt');
     manager._preserveAcrossRestart(name, entry, preserveFields);
-    const created = await manager.create(name, entry.type, manager.resumeCwdOf(entry), entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [], Array.isArray(entry.execCommands) ? entry.execCommands : [], Array.isArray(entry.intents) ? entry.intents : null, (entry.env && typeof entry.env === 'object') ? entry.env : null, false, entry.noWire === true, Array.isArray(entry.plugins) ? entry.plugins : null, Array.isArray(entry.shellDeny) ? entry.shellDeny : null, typeof entry.fixFor === 'string' ? entry.fixFor : null, entry.io || 'pty');
+    const created = await manager.create(name, entry.type, manager.resumeCwdOf(entry), entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [], Array.isArray(entry.execCommands) ? entry.execCommands : [], Array.isArray(entry.intents) ? entry.intents : null, (entry.env && typeof entry.env === 'object') ? entry.env : null, false, entry.noWire === true, Array.isArray(entry.plugins) ? entry.plugins : null, Array.isArray(entry.shellDeny) ? entry.shellDeny : null, typeof entry.fixFor === 'string' ? entry.fixFor : null, entry.io || 'pty', typeof entry.effort === 'string' ? entry.effort : null);
     // kill() removed the persistence entry (incl. stripLevel) and create()
     // re-wrote it from spawn args only — re-assert the session's OWN level so
     // a restart doesn't silently turn stripping off. (Birth-time agentDefaults
@@ -1667,6 +1667,7 @@ function readSessionArgs(name) {
     team: (() => { try { const t = resolveTeam(entry.cwd); return t ? t.name : null; } catch { return null; } })(),
     stripLevel: stripLevelOf(entry),
     io: entry.io === 'stream' ? 'stream' : 'pty',
+    effort: (typeof entry.effort === 'string' && entry.effort) ? entry.effort : null,
   } : { ok: false };
 }
 
@@ -1700,6 +1701,10 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   const nextIo = (patch.io === 'stream' || patch.io === 'pty') && beforeKill && !!streamFor(beforeKill.type)
     ? patch.io : priorIo;
   if (nextIo !== priorIo) persistence.setIo(name, nextIo);
+  const priorEffort = (beforeKill && typeof beforeKill.effort === 'string' && beforeKill.effort) ? beforeKill.effort : null;
+  const nextEffort = patch.effort === undefined ? priorEffort
+    : ((typeof patch.effort === 'string' && patch.effort.trim()) ? patch.effort.trim() : null);
+  if (nextEffort !== priorEffort) persistence.setEffort(name, nextEffort);
   if (!restart) return { ok: true, restarted: false };
   if (!beforeKill) return { ok: false, error: 'Session not found in persistence' };
   const restartIntents = Array.isArray(nextIntents) ? prunedArgs.intents : nextIntents;
@@ -1714,7 +1719,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
     }
     manager._preserveAcrossRestart(name, preservable, ['rosterSentAt', 'ephemeral', 'reviewFor', 'reviewTicket', 'createdAt']);
-    const created = await manager.create(name, beforeKill.type, manager.resumeCwdOf(beforeKill), extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, Array.isArray(beforeKill.execCommands) ? beforeKill.execCommands : [], restartIntents, (nextEnv && Object.keys(nextEnv).length) ? nextEnv : null, false, beforeKill.noWire === true, nextPlugins, Array.isArray(beforeKill.shellDeny) ? beforeKill.shellDeny : null, typeof beforeKill.fixFor === 'string' ? beforeKill.fixFor : null, nextIo);
+    const created = await manager.create(name, beforeKill.type, manager.resumeCwdOf(beforeKill), extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, Array.isArray(beforeKill.execCommands) ? beforeKill.execCommands : [], restartIntents, (nextEnv && Object.keys(nextEnv).length) ? nextEnv : null, false, beforeKill.noWire === true, nextPlugins, Array.isArray(beforeKill.shellDeny) ? beforeKill.shellDeny : null, typeof beforeKill.fixFor === 'string' ? beforeKill.fixFor : null, nextIo, nextEffort);
     const argsLvl = stripLevelOf(beforeKill);
     if (argsLvl >= 1) persistence.setStripLevel(name, argsLvl);
     if (beforeKill.label) persistence.setLabel(name, beforeKill.label);

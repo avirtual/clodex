@@ -10911,6 +10911,57 @@ test('t767: a role-set WITHOUT model: writes no template at all (every path byte
   assert.strictEqual(f.last(), '[agent:team] role "hand" updated on team', 'and the reply gains no clause');
 });
 
+test('t1222: role-set hand effort:xhigh derives templates/hand.json with the field and leaves extraArgs alone; effort:default clears it', () => {
+  const f = mkTeamModel();
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', effort: 'xhigh', body: '' });
+  assert.deepStrictEqual(f.readTpl('hand'), { ...f.shippedHand, name: 'hand', effort: 'xhigh' });
+  assert.strictEqual(f.tm.loadManifest('team').roles.hand.template, 'hand');
+  assert.ok(/derived from clodex-team-hand with effort xhigh/.test(f.last()), f.last());
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', effort: 'default', body: '' });
+  assert.deepStrictEqual(f.readTpl('hand'), { ...f.shippedHand, name: 'hand' }, 'default removes the key, nothing else moves');
+  assert.ok(/derived from hand with no effort/.test(f.last()), f.last());
+});
+
+test('t1222: model: and effort: on one role-set land in the same derived template', () => {
+  const f = mkTeamModel();
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'opus', effort: 'high', body: '' });
+  assert.deepStrictEqual(f.readTpl('hand'), { ...f.shippedHand, name: 'hand', extraArgs: ['--model', 'claude-opus-5-5[1m]'], effort: 'high' });
+});
+
+test('t1222: a bad effort, and effort on the lead, each write nothing', () => {
+  for (const [intentPatch, want] of [
+    [{ sub: 'role-set', name: 'hand', effort: 'ultra' }, /error: effort "ultra" is not one of low, medium, high, xhigh, max \(Claude Code\), or default/],
+    [{ sub: 'role-set', name: 'lead', effort: 'high' }, /error: the "lead" role is operator-owned topology/],
+    [{ sub: 'role-set', name: 'reviewer', effort: 'high', model: 'opus' }, /error: the "reviewer" role is operator-owned topology/],
+    [{ sub: 'role-set', name: 'hand', model: 'opus', effort: 'ultra' }, /error: effort "ultra"/],
+  ]) {
+    const f = mkTeamModel();
+    const before = f.teamJsonBytes();
+    f.m._handleTeam(f.seat, { type: 'team', body: '', ...intentPatch });
+    assert.match(f.last(), want);
+    assert.strictEqual(fsReal.existsSync(pathReal.join(f.teamDir, 'templates')), false, `no templates dir for ${JSON.stringify(intentPatch)}`);
+    assert.deepStrictEqual(f.teamJsonBytes(), before);
+  }
+});
+
+test('t1222: role-set reviewer effort:xhigh derives templates/reviewer.json from the default reviewer template and points the reserved role at it', () => {
+  const f = mkTeamModel();
+  const shippedReviewer = JSON.parse(fsReal.readFileSync(
+    pathReal.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-reviewer.json'), 'utf-8'));
+  fsReal.mkdirSync(pathReal.dirname(f.tplFile('clodex-team-reviewer')), { recursive: true });
+  fsReal.writeFileSync(f.tplFile('clodex-team-reviewer'), JSON.stringify(shippedReviewer));
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'reviewer', effort: 'xhigh', body: '' });
+  assert.ok(/role "reviewer" updated on team — template "reviewer" derived from clodex-team-reviewer with effort xhigh/.test(f.last()), f.last());
+  assert.deepStrictEqual(f.readTpl('reviewer'), { ...shippedReviewer, name: 'reviewer', effort: 'xhigh' });
+  assert.strictEqual(f.tm.loadManifest('team').roles.reviewer.template, 'reviewer');
+  const shape = f.m.resolveSeatShape(f.tm.loadManifest('team'), 'reviewer', 'review', { name: 'lead', type: 'claude' });
+  assert.strictEqual(shape.effort, 'xhigh');
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'reviewer', effort: 'default', body: '' });
+  assert.ok(!('effort' in f.readTpl('reviewer')));
+  assert.throws(() => f.tm.setRole('team', 'reviewer', { template: 'reviewer' }), /operator-owned topology/,
+    'the mutator still refuses a bare template patch on the reviewer');
+});
+
 test('team: a NON-lead is bounced for every verb (D2 lead-gate)', () => {
   const f = mkTeamMut();
   f.seat('team-hand');
@@ -21695,7 +21746,7 @@ test('t1171: _streamWrite and _onStreamEvent go through the seat codec the adapt
   assert.deepStrictEqual(claudeCalls, []);
 });
 
-function mkCodexStreamSeat({ extraArgs = [], spec = null, deps = {} } = {}) {
+function mkCodexStreamSeat({ extraArgs = [], spec = null, deps = {}, effort = null } = {}) {
   const { streamFor: realStreamFor } = require('../cli-adapters');
   const created = [];
   const inst = {
@@ -21718,7 +21769,7 @@ function mkCodexStreamSeat({ extraArgs = [], spec = null, deps = {} } = {}) {
   });
   const os = require('node:os');
   const create = (name) => h.m.create(name, 'codex', os.tmpdir(), extraArgs, null, 'ws', null, false, null,
-    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream');
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream', effort);
   const sent = () => h.handles[h.handles.length - 1].sent;
   const clearTimers = (s) => {
     for (const k of ['_compactValveTimer', '_injectHoldTimer', '_postClearValveTimer', '_compactingValveTimer', '_resultHold']) clearTimeout(s[k]);
@@ -21891,6 +21942,27 @@ test('t1172: a codex stream argv is app-server with the refused TUI and posture 
   assert.deepStrictEqual({ bypass: c.created[0].bypass, readOnly: c.created[0].readOnly, model: c.created[0].model }, { bypass: true, readOnly: false, model: 'gpt-6-luna' });
 });
 
+test('t1222: a codex seat with an effort carries -c model_reasoning_effort="high"; without one, no such arg', async (t) => {
+  const c = mkCodexStreamSeat({ effort: 'high' });
+  t.after(() => c.h.stopAll());
+  await c.create('cxe1');
+  const { args } = c.h.spawns[0];
+  const i = args.indexOf('model_reasoning_effort="high"');
+  assert.ok(i > 0 && args[i - 1] === '-c', args.join(' '));
+  const d = mkCodexStreamSeat();
+  t.after(() => d.h.stopAll());
+  await d.create('cxe2');
+  assert.ok(!d.h.spawns[0].args.some((a) => /model_reasoning_effort/.test(a)), d.h.spawns[0].args.join(' '));
+});
+
+test('t1222: an operator\'s own -c model_reasoning_effort= in extraArgs wins over the seat effort', async (t) => {
+  const c = mkCodexStreamSeat({ effort: 'high', extraArgs: ['-c', 'model_reasoning_effort=low'] });
+  t.after(() => c.h.stopAll());
+  await c.create('cxe3');
+  const got = c.h.spawns[0].args.filter((a) => /model_reasoning_effort/.test(a));
+  assert.deepStrictEqual(got, ['model_reasoning_effort=low']);
+});
+
 test('t1172: a decoded record\'s send objects are written in order before its kind is acted on', async (t) => {
   const c = mkCodexStreamSeat();
   t.after(() => c.h.stopAll());
@@ -22042,6 +22114,38 @@ test('t1176: a routed muse stream seat carries the wirescope route in its overla
   assert.strictEqual(fs.statSync(settingsFile).mode & 0o777, 0o600);
   assert.ok(!h.spawns[0].args.includes('--base-url'));
   assert.deepStrictEqual(res.warnings, undefined);
+});
+
+test('t1222: a muse stream seat takes its effort as reasoning_effort in the overlay settings, not argv', async (t) => {
+  const { streamFor: realStreamFor } = require('../cli-adapters');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const inst = { open: () => [], decode: () => ({ kind: 'other' }), encodeUser: () => null, encodeContext: () => null, encodeInterrupt: () => null };
+  const h = mkStreamSeatManager({
+    streamFor: (type) => (type === 'muse' ? realStreamFor('muse') : null),
+    loadStreamCodec: () => ({ create: () => inst }),
+    extraDeps: (root) => {
+      const source = path.join(root, 'src-config');
+      fs.mkdirSync(path.join(source, 'muse'), { recursive: true });
+      fs.writeFileSync(path.join(source, 'muse', 'auth.json'), '{}\n');
+      fs.writeFileSync(path.join(source, 'muse', 'trust.json'), '{}\n');
+      fs.writeFileSync(path.join(source, 'muse', 'settings.json'), '{"schema_version":1}\n');
+      return {
+        mergeInstructionBodies: require('../argv-merge').mergeInstructionBodies,
+        getEnvScopes: () => ({ all: () => ({ global: { XDG_CONFIG_HOME: source }, workspaces: {} }) }),
+        ProxyClient: { spawnerHint: () => Promise.resolve(), probe: () => Promise.resolve(null) },
+      };
+    },
+  });
+  t.after(() => h.stopAll());
+  const settingsOf = (n) => JSON.parse(fs.readFileSync(path.join(h.m.sessions.get(n).accountDir, 'muse', 'settings.json'), 'utf-8'));
+  await h.m.create('mue1', 'muse', require('node:os').tmpdir(), [], null, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream', 'xhigh');
+  assert.strictEqual(settingsOf('mue1').reasoning_effort, 'xhigh');
+  assert.ok(!h.spawns[0].args.includes('--reasoning-effort'));
+  await h.m.create('mue2', 'muse', require('node:os').tmpdir(), [], null, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream');
+  assert.strictEqual(settingsOf('mue2').reasoning_effort, undefined);
 });
 
 test('t1174: the muse pid-registry poll is not armed on a muse stream seat', async (t) => {

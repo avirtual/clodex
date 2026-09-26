@@ -9819,6 +9819,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <input type="text" id="input-model" placeholder="(CLI default)" spellcheck="false">
           <span class="hint-text"><span id="model-hint"></span> The model Clodex launches (and relaunches) this session with. An in-CLI <code>/model</code> change is runtime-only and isn't saved here.</span>
         </label>
+        <label id="effort-row">Effort
+          <input type="text" id="input-effort" placeholder="(CLI default)" spellcheck="false">
+          <span class="hint-text">The reasoning effort level, in the CLI's own words (Claude low…max; Codex and Muse none…ultra). Empty leaves the CLI's setting alone.</span>
+        </label>
         <label>Extra CLI args
           <input type="text" id="input-args" placeholder="(none)">
           <span class="hint-text" id="args-hint"></span>
@@ -9959,6 +9963,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
       <label id="args-model-row">Model
         <input type="text" id="args-model" placeholder="(CLI default) — e.g. opus, sonnet" spellcheck="false">
         <span class="hint-text">The model Clodex launches (and relaunches) this session with. An in-CLI <code>/model</code> change is runtime-only and isn't saved here.</span>
+      </label>
+      <label id="args-effort-row">Effort
+        <input type="text" id="args-effort" placeholder="(CLI default)" spellcheck="false">
+        <span class="hint-text">The reasoning effort level, in the CLI's own words. Empty leaves the CLI's setting alone.</span>
       </label>
       <label>Extra CLI args
         <input type="text" id="args-input" placeholder="(none)">
@@ -25442,6 +25450,7 @@ ${i3.join("\n")}
     "cli-adapters.js"(exports, module) {
       "use strict";
       var MODEL_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9.-]{0,63}(?:\[[a-z0-9]{1,8}\])?$/;
+      var META_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
       var CAP_KEYS = ["injectSkills", "skillRoster", "plugins", "agents", "tools", "strip", "autoCompact", "noWire", "accounts", "streamIo"];
       var ADAPTERS = {
         claude: {
@@ -25458,6 +25467,7 @@ ${i3.join("\n")}
             },
             idRe: MODEL_ID_RE
           },
+          effort: { values: ["low", "medium", "high", "xhigh", "max"], apply: "settings" },
           posture: { bypassArgs: ["--dangerously-skip-permissions"] },
           account: { envKey: "CLAUDE_CONFIG_DIR", bootstrap: null },
           cwdDir: null,
@@ -25501,6 +25511,7 @@ ${i3.join("\n")}
           label: "Codex",
           cmd: "codex",
           model: { flags: ["--model", "-m"], aliases: {}, idRe: MODEL_ID_RE },
+          effort: { values: [...META_EFFORTS], apply: "config" },
           posture: { bypassArgs: ["--dangerously-bypass-approvals-and-sandbox"] },
           account: { envKey: "CODEX_HOME", bootstrap: "codex-home" },
           cwdDir: ".codex",
@@ -25534,6 +25545,7 @@ ${i3.join("\n")}
           label: "Muse Code",
           cmd: "muse",
           model: { flags: ["--model"], aliases: {}, idRe: MODEL_ID_RE },
+          effort: { values: [...META_EFFORTS], apply: "flag" },
           posture: { bypassArgs: ["--approval-mode", "never", "--disable-sandbox"] },
           account: { envKey: "XDG_CONFIG_HOME", bootstrap: "xdg-overlay" },
           cwdDir: null,
@@ -25629,6 +25641,13 @@ ${i3.join("\n")}
         if (Object.prototype.hasOwnProperty.call(a.model.aliases, v)) return a.model.aliases[v];
         return a.model.idRe.test(v) ? v : null;
       }
+      function resolveEffort(type, v) {
+        if (v == null || v === "" || v === "default") return null;
+        const a = adapterFor(type);
+        if (!a || !a.effort) return { error: `seat type "${String(type)}" takes no effort level` };
+        if (typeof v === "string" && a.effort.values.includes(v)) return v;
+        return { error: `effort "${String(v)}" is not one of ${a.effort.values.join(", ")} (${a.label}), or default` };
+      }
       function stripModelArgs(type, extraArgs) {
         const a = adapterFor(type);
         const flags = a ? a.model.flags : [];
@@ -25656,6 +25675,7 @@ ${i3.join("\n")}
         streamFor,
         seatType,
         resolveModelId,
+        resolveEffort,
         stripModelArgs,
         hasBypass
       };
@@ -29095,9 +29115,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const cwdM = argStr.match(/\bcwd:(\S+)/);
         const modelM = argStr.match(/\bmodel:(\S+)/);
         const accountM = argStr.match(/\baccount:(\S+)/);
+        const effortM = argStr.match(/\beffort:(\S+)/);
         const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
         if (sub === "role-add" || sub === "role-set") {
-          return { type: "team", sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, model: modelM ? modelM[1] : null, account: accountM ? accountM[1] : null, body };
+          return { type: "team", sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, model: modelM ? modelM[1] : null, account: accountM ? accountM[1] : null, effort: effortM ? effortM[1] : null, body };
         }
         if (sub === "role-rm" || sub === "set-lead") return { type: "team", sub, name: positional[0] || null, body: "" };
         if (sub === "trunk") return { type: "team", sub, branch: positional[0] || null, body: "" };
@@ -29132,7 +29153,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       var NONE = () => "none";
       var GREEDY = () => "greedy";
-      var TEAM_ROLE_KV_KEYS = ["prompt", "template", "dispatch", "cwd", "model", "account"];
+      var TEAM_ROLE_KV_KEYS = ["prompt", "template", "dispatch", "cwd", "model", "account", "effort"];
       function teamBodyMode(intent) {
         if (intent.sub === "template-save" || intent.sub === "prompt-save") return "greedy";
         if (intent.sub === "role-add" || intent.sub === "role-set") {
@@ -45419,6 +45440,8 @@ ${detail}` });
       if (inputEnv) inputEnv.addEventListener("input", refreshEnvHint);
       bindAccountSelect(inputAccount, inputEnv, () => dialogAccounts);
       var inputModel = document.getElementById("input-model");
+      var inputEffort = document.getElementById("input-effort");
+      var effortRow = document.getElementById("effort-row");
       var modelRow = document.getElementById("model-row");
       var modelHint = document.getElementById("model-hint");
       var argsHint = document.getElementById("args-hint");
@@ -47599,8 +47622,10 @@ ${detail}` });
         const authoring = dialogMode === "template";
         const agentType = isAgentType(type);
         if (modelRow) modelRow.style.display = agentType ? "" : "none";
+        if (effortRow) effortRow.style.display = agentType ? "" : "none";
         if (modelHint) modelHint.textContent = modelAliasHint(type);
         if (!skipAsyncRefresh) inputModel.value = "";
+        if (!skipAsyncRefresh && inputEffort) inputEffort.value = "";
         systemPromptRow.style.display = agentType ? "" : "none";
         if (appendPromptsRow) appendPromptsRow.style.display = agentType ? "" : "none";
         if (!agentType) inputSystemPrompt.value = "";
@@ -48473,6 +48498,7 @@ ${detail}` });
           const { model, rest } = splitModelArg(t.extraArgs || []);
           inputModel.value = model;
           inputArgs.value = rest.join(" ");
+          if (inputEffort) inputEffort.value = typeof t.effort === "string" && t.effort || "";
         }
         argsHint.textContent = ARGS_HINTS[t.type] || "";
         applyTypeDefaults({ skipAsyncRefresh: true });
@@ -48563,6 +48589,7 @@ ${detail}` });
         const autoCompactOff = caps.autoCompact && inputAutoCompact && !inputAutoCompact.checked;
         const noWireOn = caps.noWire && inputNoWire && inputNoWire.checked;
         const streamIoOn = caps.streamIo && inputStreamIo && inputStreamIo.checked;
+        const effortVal = agentType && inputEffort ? inputEffort.value.trim() : "";
         return {
           type,
           cwd: expandPath(inputCwd.value.trim()) || homeDir,
@@ -48575,6 +48602,7 @@ ${detail}` });
           ...autoCompactOff ? { autoCompact: false } : {},
           ...noWireOn ? { noWire: true } : {},
           ...streamIoOn ? { io: "stream" } : {},
+          ...effortVal ? { effort: effortVal } : {},
           ...toolsAllow.length ? { tools: toolsAllow } : {},
           denyBuiltins: caps.agents ? collectBuiltinChecklist(inputBuiltinsList) : [],
           disabledTools: caps.tools ? collectToolChecklist(inputToolsList) : [],
@@ -48608,7 +48636,8 @@ ${detail}` });
           appendPromptFiles,
           intents,
           noWire,
-          plugins
+          plugins,
+          effort
         } = cfg;
         const io = capsFor(type).streamIo && inputStreamIo && inputStreamIo.checked ? "stream" : "pty";
         const env = collectDialogEnv();
@@ -48682,7 +48711,7 @@ ${detail}` });
           window.api.noteCwd(cwd);
           if (typeof proxy === "string") window.api.setSettings({ lastCustomProxyUrl: proxy });
           const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== "none";
-          const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins, io };
+          const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins, io, effort: effort || null };
           let result;
           if (teamOn && dialogTeamMode === "create") {
             const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
@@ -48692,7 +48721,7 @@ ${detail}` });
             const prompt2 = teamRoleSelect && teamRoleSelect.value === "hand" ? null : teamRolePromptSelect && teamRolePromptSelect.value || null;
             result = await window.api.teamJoin({ team: dialogTeamName, role, prompt: prompt2, ...seatParams });
           } else {
-            result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins, io);
+            result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins, io, effort || null);
           }
           if (!applyCreateResult(nameFieldEls(), result)) {
             if (worktree) {
@@ -48784,6 +48813,7 @@ ${detail}` });
           const { model, rest } = splitModelArg(tpl && tpl.extraArgs || []);
           inputModel.value = model;
           inputArgs.value = rest.join(" ");
+          if (inputEffort) inputEffort.value = tpl && typeof tpl.effort === "string" && tpl.effort || "";
         }
         argsHint.textContent = ARGS_HINTS[inputType.value] || "";
         if (inputStripLevel) inputStripLevel.value = String(tpl && tpl.stripLevel || 0);
@@ -53207,6 +53237,8 @@ ${res.stderr}` : "");
       var argsInput = document.getElementById("args-input");
       var argsModel = document.getElementById("args-model");
       var argsModelRow = document.getElementById("args-model-row");
+      var argsEffort = document.getElementById("args-effort");
+      var argsEffortRow = document.getElementById("args-effort-row");
       var argsTarget = document.getElementById("args-target");
       var argsRestart = document.getElementById("args-restart");
       var argsStreamIoRow = document.getElementById("args-stream-io-row");
@@ -53324,8 +53356,10 @@ ${res.stderr}` : "");
           argsModel.value = model;
           argsInput.value = rest.map((a) => /\s/.test(a) ? `"${a}"` : a).join(" ");
         }
+        if (argsEffort) argsEffort.value = typeof res.effort === "string" && res.effort || "";
         const isAgent = isAgentType(res.type);
         if (argsModelRow) argsModelRow.style.display = isAgent ? "" : "none";
+        if (argsEffortRow) argsEffortRow.style.display = isAgent && !argsSource ? "" : "none";
         argsProxyRow.style.display = isAgent ? "" : "none";
         setProxyControls(argsProxyMode, argsProxyUrl, res.proxy, settings?.lastCustomProxyUrl || settings?.proxyUrl);
         labelProxyDefault(argsProxyMode, settings);
@@ -53432,6 +53466,7 @@ ${res.stderr}` : "");
       document.getElementById("btn-args-save").addEventListener("click", async () => {
         if (!argsEditingName) return closeArgsDialog();
         const parsed = withModelArg(parseArgs(argsInput.value || ""), argsModel.value);
+        const effort = !argsEffortRow || argsEffortRow.style.display === "none" || !argsEffort ? void 0 : argsEffort.value.trim();
         const restart = argsRestart.checked;
         const proxy = argsProxyRow.style.display === "none" ? null : proxyValueFromControls(argsProxyMode, argsProxyUrl);
         const promptsHidden = argsPromptRow.style.display === "none";
@@ -53487,7 +53522,7 @@ ${res.stderr}` : "");
           systemPromptFile,
           appendPromptFiles,
           intents
-        }) : await window.api.setSessionArgs(name, parsed, restart, proxy, void 0, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io);
+        }) : await window.api.setSessionArgs(name, parsed, restart, proxy, void 0, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io, effort);
         if (!res || !res.ok) {
           alert(`Save settings failed: ${res && res.error ? res.error : "unknown error"}`);
           return;

@@ -604,6 +604,14 @@ function initStores(userDataPath, {
         this._save(all, name);
       }
     },
+    setEffort(name, effort) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (entry) {
+        entry.effort = (typeof effort === 'string' && effort) ? effort : null;
+        this._save(all, name);
+      }
+    },
     setVoice(name, mode) {
       if (!VOICE_MODES.includes(mode)) return false;
       const all = this._load();
@@ -798,7 +806,7 @@ function initStores(userDataPath, {
     'type', 'cwd', 'extraArgs', 'proxy', 'agents', 'execCommands', 'intents',
     'autoCompact', 'noWire', 'denyBuiltins', 'disabledTools', 'disabledSkills',
     'injectSkills', 'stripLevel', 'systemPromptFile', 'appendPromptFiles',
-    'plugins', 'tools', 'io',
+    'plugins', 'tools', 'io', 'effort',
   ]);
   const templates = {
     // Confines the SUFFIXED basename, not the bare name: `${name}.json` is what

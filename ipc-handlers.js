@@ -133,15 +133,15 @@ function registerIpcHandlers(deps) {
     const seedTools = (p.disabledTools === undefined) ? agentDefaults.getDefaultDeny() : p.disabledTools;
     const seedSkills = (p.disabledSkills === undefined) ? agentDefaults.getDefaultSkillDeny() : p.disabledSkills;
     const seedBuiltins = (p.denyBuiltins === undefined) ? agentDefaults.getDefaultBuiltinDeny() : p.denyBuiltins;
-    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], seedBuiltins || [], seedTools || [], seedSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null, true, p.noWire === true, Array.isArray(p.plugins) ? p.plugins : null, null, null, p.io === 'stream' ? 'stream' : 'pty');
+    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], seedBuiltins || [], seedTools || [], seedSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null, true, p.noWire === true, Array.isArray(p.plugins) ? p.plugins : null, null, null, p.io === 'stream' ? 'stream' : 'pty', (typeof p.effort === 'string' && p.effort.trim()) ? p.effort.trim() : null);
     const seedStrip = (p.stripLevel === 1 || p.stripLevel === 2) ? p.stripLevel : agentDefaults.getStrip(p.name);
     if (seedStrip === 1 || seedStrip === 2) persistence.setStripLevel(p.name, seedStrip);
     return { ok: true, session };
   }
 
-  handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire, plugins, io) => {
+  handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire, plugins, io, effort) => {
     try {
-      return await spawnFromParams(e, { name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire, plugins, io });
+      return await spawnFromParams(e, { name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire, plugins, io, effort });
     } catch (err) {
       return { ok: false, error: err.message };
     }
@@ -1196,11 +1196,11 @@ function registerIpcHandlers(deps) {
     return { ok: true, effective: readEffectiveToolState(cwd || null).overrides };
   });
 
-  handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env, plugins, io) =>
+  handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env, plugins, io, effort) =>
     applySessionArgs(name, {
       extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins,
       disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env,
-      plugins, io,
+      plugins, io, effort,
     }, workspaceOfSender(e)));
 
   handle('session:restart', async (e, name, opts = {}) =>
@@ -2536,6 +2536,7 @@ function registerIpcHandlers(deps) {
         Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
         typeof entry.fixFor === 'string' ? entry.fixFor : null,
         entry.io || 'pty',
+        typeof entry.effort === 'string' ? entry.effort : null,
       );
       return { ok: true, io: entry.io || 'pty' };
     } catch (err) {
