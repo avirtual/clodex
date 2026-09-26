@@ -8157,15 +8157,6 @@ function createTicketMethods(deps, shared) {
     // guard: nothing is written to `verdict`/`mustFix`, `reviewRound` stays 0,
     // and a later round 2 announces itself as round 1. The loop legitimately
     // still holds a ticket whose reviewer has not answered yet.
-    _watchParkedEscalation(team, ticketId) {
-      const lead = this.sessions.get(team.lead);
-      if (!lead) return;
-      let rec = null;
-      try { rec = ticketsStore.load(team.root).find((t) => t.id === ticketId) || null; } catch {}
-      if (!rec || !rec.loopStep) return;
-      (lead._parkedEscalations || (lead._parkedEscalations = new Map())).set(ticketId, { team, step: rec.loopStep });
-    },
-
     _escalateTicket(team, ticketId, step, evidence, tried, { keepHold = false, recovery = null } = {}) {
       try {
         const body = [
@@ -8211,6 +8202,15 @@ function createTicketMethods(deps, shared) {
       } catch (e) {
         log.error('ticket', `escalation for ${ticketId} failed: ${e.message}`);
       }
+    },
+
+    _watchParkedEscalation(team, ticketId) {
+      const lead = this.sessions.get(team.lead);
+      if (!lead) return;
+      let rec = null;
+      try { rec = ticketsStore.load(team.root).find((t) => t.id === ticketId) || null; } catch {}
+      if (!rec || !rec.loopStep) return;
+      (lead._parkedEscalations || (lead._parkedEscalations = new Map())).set(ticketId, { team, step: rec.loopStep });
     },
 
     // Which seat's ledger a closing ticket's cost belongs to.

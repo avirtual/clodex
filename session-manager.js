@@ -9754,7 +9754,7 @@ function createSessionManager(deps) {
           bracketedPaste: () => !!session._pasteModeOn,
           onSubmitted: (_t, meta) => {
             session.lastSubmitInjected = !(meta && meta.human);
-            if (isClaude) session._awaitingTurnSince = Date.now();
+            if (isClaude && session.activityState === 'idle') session._awaitingTurnSince = Date.now();
           },
           ready: isClaude ? () => !!session._bootReadySeen && Date.now() - (session._bootReadyAt || 0) >= BOOT_DRAIN_SETTLE_MS : undefined,
           readyMaxWaitMs: INJECT_BOOT_MAXWAIT,
