@@ -5,10 +5,10 @@ const assert = require('node:assert');
 const { summaryParts, footerOf, createTranscriptRows } = require('../renderer/transcript-rows');
 const { fakeDocument } = require('./lib/fake-dom');
 
-function mount() {
+function mount(ctx = {}) {
   const doc = fakeDocument();
   const pane = doc.createElement('div');
-  const rows = createTranscriptRows(doc, pane, {});
+  const rows = createTranscriptRows(doc, pane, ctx);
   return { pane, rows, render: (records) => rows.render(records) };
 }
 
@@ -609,4 +609,38 @@ test('with internals off the injected rows carry tr-hidden and the operator, age
   ]);
   m.rows.setInternals(true);
   assert.deepStrictEqual(hidden().filter(([, h]) => h), []);
+});
+
+test('a pane created with internals off hides a ticket-loop inbound on first render', () => {
+  const m = mount({ internals: false });
+  m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'ticket-loop', text: 'ticket t1 accepted' }]);
+  assert.ok(/\btr-hidden\b/.test(boxOf(m, 'i1').className));
+});
+
+test('with internals off a turn of only injected rows is hidden and a turn with a prompt or assistant row is not; on again clears it', () => {
+  const m = mount();
+  m.render([
+    { id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' },
+    { id: 'i0', kind: 'inbound', ts: null, turn: 1, from: 'ticket-loop', text: 'ticket t0 accepted' },
+    { id: 'i1', kind: 'inbound', ts: null, turn: 2, from: 'ticket-loop', text: 'ticket t1 accepted' },
+    { id: 'i2', kind: 'inbound', ts: null, turn: 3, from: 'ticket-loop', text: 'ticket t2 accepted' },
+    { id: 'a2', kind: 'assistant', ts: null, turn: 3, text: 'noted' },
+  ]);
+  const turns = () => m.pane.childNodes.map((n) => [n.childNodes.map((c) => c.dataset.id).join(','), /\btr-hidden\b/.test(n.className)]);
+  m.rows.setInternals(false);
+  assert.deepStrictEqual(turns(), [['p1,i0', false], ['i1', true], ['i2,a2', false]]);
+  m.rows.setInternals(true);
+  assert.deepStrictEqual(turns().filter(([, h]) => h), []);
+});
+
+test('a long attached reply folds to a head led by ↳ and an unattached one does not', () => {
+  const long = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n');
+  const m = mount();
+  m.render([said('a1', 0, '[agent:task done t4] ok'), replyRec('r1', 1, 'task', '⇄', 'task', long)]);
+  const head = boxHeadOf(m.pane.childNodes[1].childNodes[0]);
+  assert.strictEqual(head.childNodes[0].className, 'tr-reply-lead');
+  assert.strictEqual(head.childNodes[0].textContent, '↳');
+  m.render([{ id: 'a0', kind: 'assistant', ts: null, turn: 0, text: 'no card' }, replyRec('r1', 1, 'task', '⇄', 'task', long)]);
+  const plain = boxHeadOf(m.pane.childNodes[1].childNodes[0]);
+  assert.notStrictEqual(plain.childNodes[0].className, 'tr-reply-lead');
 });

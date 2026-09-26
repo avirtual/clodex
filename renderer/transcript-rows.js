@@ -392,8 +392,9 @@ function previewText(text) {
   return line.length > PREVIEW_CHARS ? `${line.slice(0, PREVIEW_CHARS)}…` : line;
 }
 
-function boxHead(doc, rec) {
+function boxHead(doc, rec, att) {
   const head = el(doc, 'div', 'tr-box-head');
+  if (att) head.appendChild(el(doc, 'span', 'tr-reply-lead', '↳'));
   if (rec.kind === 'inbound') head.appendChild(senderBadge(doc, rec.from));
   else if (rec.kind === 'reply') head.appendChild(appBadge(doc, rec));
   else head.appendChild(el(doc, 'span', 'tr-mark'));
@@ -402,11 +403,11 @@ function boxHead(doc, rec) {
   return head;
 }
 
-function internalBox(doc, rec, row, opened) {
+function internalBox(doc, rec, row, opened, att) {
   const box = el(doc, 'div', 'tr-box');
   box.dataset.id = rec.id;
   if (isLong(rec.text)) {
-    const head = boxHead(doc, rec);
+    const head = boxHead(doc, rec, att);
     const chevron = head.childNodes[head.childNodes.length - 1];
     const paint = () => {
       const open = opened.has(rec.id);
@@ -725,7 +726,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         items.push({
           key: r.id,
           sig: JSON.stringify(r) + extra,
-          build: () => internalBox(doc, r, buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row'), opened),
+          build: () => internalBox(doc, r, buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row'), opened, att),
           after: (c) => toggleClass(c.el, 'tr-hidden', !showInternals),
         });
         continue;
@@ -751,6 +752,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
       after: (c) => {
         if (!c.sub) c.sub = new Map();
         reconcile(c.el, c.sub, rowItems(t.records, attached));
+        toggleClass(c.el, 'tr-hidden', !showInternals && t.records.every((r) => isInternalRow(r) || r.kind === 'turn-end'));
       },
     }));
     reconcile(paneEl, turnCache, items, deps.lead);
@@ -764,7 +766,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     render(lastRecords);
   }
 
-  return { render, setWorking, setInternals, internals: () => showInternals };
+  return { render, setWorking, setInternals };
 }
 
 module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows };

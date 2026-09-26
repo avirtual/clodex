@@ -31441,8 +31441,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const line = String(text == null ? "" : text).split("\n").find((l) => l.trim()) || "";
         return line.length > PREVIEW_CHARS ? `${line.slice(0, PREVIEW_CHARS)}\u2026` : line;
       }
-      function boxHead(doc, rec) {
+      function boxHead(doc, rec, att) {
         const head = el(doc, "div", "tr-box-head");
+        if (att) head.appendChild(el(doc, "span", "tr-reply-lead", "\u21B3"));
         if (rec.kind === "inbound") head.appendChild(senderBadge(doc, rec.from));
         else if (rec.kind === "reply") head.appendChild(appBadge(doc, rec));
         else head.appendChild(el(doc, "span", "tr-mark"));
@@ -31450,11 +31451,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
         head.appendChild(el(doc, "span", "tr-box-chevron"));
         return head;
       }
-      function internalBox(doc, rec, row, opened) {
+      function internalBox(doc, rec, row, opened, att) {
         const box = el(doc, "div", "tr-box");
         box.dataset.id = rec.id;
         if (isLong(rec.text)) {
-          const head = boxHead(doc, rec);
+          const head = boxHead(doc, rec, att);
           const chevron = head.childNodes[head.childNodes.length - 1];
           const paint = () => {
             const open = opened.has(rec.id);
@@ -31758,7 +31759,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
               items.push({
                 key: r.id,
                 sig: JSON.stringify(r) + extra,
-                build: () => internalBox(doc, r, buildRow(doc, r, deps, att) || el(doc, "div", "tr-row"), opened),
+                build: () => internalBox(doc, r, buildRow(doc, r, deps, att) || el(doc, "div", "tr-row"), opened, att),
                 after: (c) => toggleClass(c.el, "tr-hidden", !showInternals)
               });
               continue;
@@ -31783,6 +31784,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             after: (c) => {
               if (!c.sub) c.sub = /* @__PURE__ */ new Map();
               reconcile(c.el, c.sub, rowItems(t.records, attached));
+              toggleClass(c.el, "tr-hidden", !showInternals && t.records.every((r) => isInternalRow(r) || r.kind === "turn-end"));
             }
           }));
           reconcile(paneEl, turnCache, items, deps.lead);
@@ -31794,7 +31796,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           showInternals = !!on;
           render(lastRecords);
         }
-        return { render, setWorking, setInternals, internals: () => showInternals };
+        return { render, setWorking, setInternals };
       }
       module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows };
     }
