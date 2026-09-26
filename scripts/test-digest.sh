@@ -93,7 +93,7 @@ fi
 # concurrent runs deadlock: both sit at 0% CPU and neither finishes. That
 # failure is indistinguishable from a slow suite, and the wrong lesson —
 # "raise the timeout" — makes the next collision longer instead of impossible.
-# The suite takes ~74s (measured 2026-08-19 at fe8e152), which is LONGER than
+# The suite takes 5 to 9 minutes at ~12,600 tests (2026-09-27), far longer than
 # the 30s wait below — so giving up is not evidence of a wedge. It routinely
 # means an ordinary run started before us and is still going. The refusal says
 # that rather than diagnosing; see lock_refusal.
@@ -243,9 +243,7 @@ while ! mkdir "$LOCK" 2>/dev/null; do
     # test/test-digest-lock.test.js pins the relation against the shipped def.
     #
     # 30s also beats waiting the full cap on purpose: the caller is an agent
-    # whose turn is billed while this blocks, and the suite runs in ~74s, so a
-    # holder is either nearly done or wedged. Long enough to inherit a finishing
-    # run, short enough that the answer arrives while it is still worth having.
+    # whose turn is billed while this blocks.
     lock_refusal
     exit 1
   fi

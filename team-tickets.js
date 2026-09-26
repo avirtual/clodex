@@ -120,10 +120,9 @@ const TICKET_SUITE_LOCK_WAIT_MS = 20 * 60 * 1000;
 // it. Shipped once the other way round (15m kill over a 20m wait), which makes
 // the wait unreachable and reports a queued run as `killed`: a wedge report for
 // a run that was only waiting its turn. test/test-digest-lock.test.js pins the
-// same relation for the other entry point. The margin is the run itself: the
-// suite takes ~74s (measured 2026-08-19 at fe8e152), so exceeding 15m of RUNNING
-// means a wedge, not a slow suite.
-const TICKET_SUITE_TIMEOUT_MS = TICKET_SUITE_LOCK_WAIT_MS + 15 * 60 * 1000;
+// same relation for the other entry point. The running margin must exceed
+// scripts/run-tests.js `RUN_TIMEOUT_MS`, so the runner names the hung file first.
+const TICKET_SUITE_TIMEOUT_MS = TICKET_SUITE_LOCK_WAIT_MS + 21 * 60 * 1000;
 
 // Bounded in BOTH directions, and the two bounds answer different questions: the
 // attempt count bounds how often the loop asks, the deadline bounds how long a
@@ -6437,7 +6436,7 @@ function createTicketMethods(deps, shared) {
         //
         // THE NUMBER THAT MAKES THIS NOT A CORNER CASE, and it is derived rather
         // than guessed: `TICKET_SUITE_TIMEOUT_MS` is `TICKET_SUITE_LOCK_WAIT_MS`
-        // (20m) + 15m = 35m, against `TICKET_STALL_MS` of 30m. The false window
+        // (20m) + 21m = 41m, against `TICKET_STALL_MS` of 30m. The false window
         // OUTLASTS THE STALL WINDOW, so the wrong alarm below is not a race that
         // needs an unlucky interleaving — it fires in ordinary operation whenever
         // the suite queues behind the box-wide lock. Both constants are named
@@ -8803,8 +8802,7 @@ function createTicketMethods(deps, shared) {
       // declines to clear on the deferring pass, so what a deferred merge waits for
       // is a LATER pass reaching it with the flag false — and that needs the retry
       // to wake. A crash or an [agent:reboot] inside that window freezes
-      // `(merge waiting: suite-in-flight)` onto an accepted row, and nothing
-      // re-examines the field at boot.
+      // `(merge waiting: suite-in-flight)` onto an accepted row.
       //
       // It does not weaken the invariant that finally states: that invariant is over
       // the EXITS OF `_autoMergeTicket`, and this clear is not one of them. Nor can a

@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Ticket loop: a verify suite that hangs is now killed after the test runner's own ceiling, so the report names the hung file instead of a bare wedge.
 - Transcript pane: after a /clear the pane now switches to the new transcript at once instead of showing the old one until the next change.
 - Test runner: a test that never finishes now fails by name within two minutes; the session-manager suite's hang under load is fixed.
 - Messages: a second message arriving at a seat in the moment its previous one is being submitted is no longer lost in the turn start; it is delivered with that turn, for every kind of message.

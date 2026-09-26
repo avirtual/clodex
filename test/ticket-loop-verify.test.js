@@ -2476,6 +2476,9 @@ test('the kill cap is strictly GREATER than the lock wait, or the wait is dead c
   assert.ok(waitMs < timeoutMs,
     `the loop waits up to ${waitMs}ms for the lock but kills the child at ${timeoutMs}ms — equal or `
     + 'less means a queued run is reported as a wedge and the wait constant can never be reached');
+  assert.ok(timeoutMs - waitMs > 20 * 60 * 1000,
+    `the loop kills a run ${timeoutMs - waitMs}ms after the lock wait, not past the runner's own `
+    + '20 * 60 * 1000 RUN_TIMEOUT_MS ceiling, so a hung file is reported as a bare wedge instead of by name');
 });
 
 // ── the harness cannot verify this branch: escalate, never reject ──────────
@@ -4704,8 +4707,7 @@ test('t345 r2: during a RE-VERIFY the team-review guard must still refuse — th
 
 test('t345 r2: a re-verify that OVERRUNS alarms as a stuck step, not as "waiting for someone to act"', async () => {
   // Someone HAS acted and the loop is running, so the held wording would be false.
-  // Reachable because a re-verify may legitimately run 35m
-  // (TICKET_SUITE_LOCK_WAIT_MS 20m + 15m running) against a 30m stall window.
+  // Reachable because TICKET_SUITE_TIMEOUT_MS outlasts TICKET_STALL_MS.
   //
   // THE AGE BELOW IS PLANTED, AND THAT IS THE POINT OF THIS SUBJECT — it forces
   // the sweep past its window to inspect the WORDING of an alarm that has been
