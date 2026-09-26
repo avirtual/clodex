@@ -15,6 +15,7 @@ blocks a release.
 
 - Agent prompt: the `[agent:remind …]` row now says its text is a greedy body closed by `[agent:end]`, so a reminder no longer swallows the prose written after it.
 - Transcript pane: an image pasted into a prompt shows as a small inline thumbnail (click to see it full width) instead of the bare [Image #n] marker; images over 1 MB show a size chip.
+- Ticket loop: a merge requeued at boot waits for the lead's seat before it can escalate, a merge that landed before the relaunch no longer shows as still waiting, and a reject that lands while the merge is being deferred is not lost across a relaunch.
 - Ticket loop: rejecting an ACCEPT verdict now cancels the merge that verdict had queued and sends the rework through a second review, instead of merging the pre-rework commit.
 - Transcript pane: a Tools checkbox beside Internals hides the tool-call blocks, so a recap reads as prompts and replies only; the choice is remembered across restarts like Internals.
 - Transcript pane: with Internals unchecked, a turn made only of Clodex-injected rows no longer leaves an empty separator line, and a folded attached reply keeps its ↳ lead.

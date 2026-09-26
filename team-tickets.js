@@ -142,6 +142,8 @@ const TICKET_SUITE_TIMEOUT_MS = TICKET_SUITE_LOCK_WAIT_MS + 15 * 60 * 1000;
 const MERGE_RETRY_DELAY_MS = 30 * 1000;
 const MERGE_RETRY_MAX_ATTEMPTS = 10;
 const MERGE_RETRY_MAX_WAIT_MS = 10 * 60 * 1000;
+const BOOT_REQUEUE_LEAD_WAIT_MS = 5 * 60 * 1000;
+const BOOT_REQUEUE_LEAD_POLL_MS = 2 * 1000;
 
 // The [agent:team-review] reviewer is sold as independent verification against a
 // confused lead — but team.json is agent-writable, so a lead could widen its own
@@ -1832,11 +1834,27 @@ function createTicketMethods(deps, shared) {
       return [...this.inFlightExecRuns(), ...this.inFlightMerges()];
     },
 
+    async _awaitBootLeads(leads) {
+      const missing = () => leads.filter((n) => { const s = this.sessions.get(n); return !s || !s.agentType; });
+      if (!missing().length) return;
+      const start = this._mergeRetryNow();
+      while (missing().length && this._mergeRetryNow() - start < BOOT_REQUEUE_LEAD_WAIT_MS) {
+        await new Promise((res) => this._scheduleMergeRetry(res, BOOT_REQUEUE_LEAD_POLL_MS));
+      }
+      const left = missing();
+      const waited = Math.round((this._mergeRetryNow() - start) / 1000);
+      log.info('ticket', left.length
+        ? `boot: requeue of waiting merges waited ${waited}s and lead seat(s) ${left.join(', ')} are still not live — requeuing anyway`
+        : `boot: requeue of waiting merges waited ${waited}s for lead seat(s) ${leads.join(', ')} to come back`);
+    },
+
     async _requeueWaitingMerges() {
       let names = [];
       try { names = typeof listTeams === 'function' ? listTeams() : []; } catch { names = []; }
       const seen = new Set();
-      const queued = [];
+      const candidates = [];
+      const isWaiting = (t) => !!t && t.mergeWaiting === 'suite-in-flight' && t.state === 'done' && !t.closedOut
+        && t.verdict === 'ACCEPT' && !!(t.worktree && t.worktree.branch);
       for (const name of names) {
         let team;
         try { team = loadManifest(name); } catch { continue; }
@@ -1844,38 +1862,54 @@ function createTicketMethods(deps, shared) {
         let tickets;
         try { tickets = ticketsStore.load(team.root); } catch { continue; }
         for (const t of tickets) {
-          if (!t || t.mergeWaiting !== 'suite-in-flight' || t.state !== 'done' || t.closedOut) continue;
-          if (t.verdict !== 'ACCEPT') continue;
-          const branch = t.worktree && t.worktree.branch;
-          if (!branch) continue;
+          if (!isWaiting(t)) continue;
           const key = `${team.root}\n${t.id}`;
           if (seen.has(key)) continue;
           seen.add(key);
-          const target = await gitWorktree.mergeTargetFor(team).catch(() => null);
-          if (target) {
-            const m = await gitWorktree.isMerged(team.root, branch, target).catch(() => null);
-            if (m && m.ok && m.merged) {
-              log.info('ticket', `boot: ${t.id} is stamped merge waiting (suite-in-flight) but ${branch} is already on ${target} — not requeued`);
-              continue;
-            }
-          }
-          const landedOn = { verdict: t.verdict, mustFix: t.mustFix == null ? null : t.mustFix, reviewRound: Number(t.reviewRound) || 1, reworkRound: Number(t.reworkRound) || 0 };
-          let verdictText = null;
-          const round = Array.isArray(t.rounds) ? t.rounds.find((r) => r && Number(r.round) === landedOn.reviewRound) : null;
-          if (round && round.verdictFile) {
-            const dest = this._ticketDiffDest(team, t);
-            if (dest.ok) {
-              try { verdictText = fs.readFileSync(path.join(dest.dir, round.verdictFile), 'utf8'); } catch { verdictText = null; }
-            }
-          }
-          const from = verdictText == null ? 'rebuilt from the record\'s verdict and mustFix' : `read from ${round.verdictFile}`;
-          if (verdictText == null) verdictText = `VERDICT: ${t.verdict}\n\nMUST-FIX\n${t.mustFix || '(none)'}\n`;
-          log.info('ticket', `boot: requeued the auto-merge for ${t.id} (${team.name}) — it was deferred behind a running suite before the relaunch dropped its retry timer; attempt 0, the wait cap restarts now, verdict ${from}`);
-          this._queueAutoMerge(team, t.id, landedOn, verdictText, { attempt: 0, since: this._mergeRetryNow() });
-          queued.push(t.id);
+          candidates.push({ team, id: t.id });
         }
       }
+      if (!candidates.length) return [];
+      const byTeam = new Map();
+      for (const c of candidates) {
+        if (!byTeam.has(c.team)) byTeam.set(c.team, []);
+        byTeam.get(c.team).push(c.id);
+      }
+      const queued = [];
+      await Promise.all([...byTeam].map(async ([team, ids]) => {
+        await this._awaitBootLeads(team.lead ? [team.lead] : []);
+        for (const id of ids) await this._requeueOneWaiting(team, id, isWaiting, queued);
+      }));
       return queued;
+    },
+
+    async _requeueOneWaiting(team, id, isWaiting, queued) {
+      const t = this._loadTicket(team, id);
+      if (!isWaiting(t)) return;
+      const branch = t.worktree.branch;
+      const target = await gitWorktree.mergeTargetFor(team).catch(() => null);
+      if (target) {
+        const m = await gitWorktree.isMerged(team.root, branch, target).catch(() => null);
+        if (m && m.ok && m.merged) {
+          this._stampMergeWaiting(team, t.id, null);
+          log.info('ticket', `boot: ${t.id} is stamped merge waiting (suite-in-flight) but ${branch} is already on ${target} — not requeued, stamp cleared`);
+          return;
+        }
+      }
+      const landedOn = { verdict: t.verdict, mustFix: t.mustFix == null ? null : t.mustFix, reviewRound: Number(t.reviewRound) || 1, reworkRound: Number(t.reworkRound) || 0 };
+      let verdictText = null;
+      const round = Array.isArray(t.rounds) ? t.rounds.find((r) => r && Number(r.round) === landedOn.reviewRound) : null;
+      if (round && round.verdictFile) {
+        const dest = this._ticketDiffDest(team, t);
+        if (dest.ok) {
+          try { verdictText = fs.readFileSync(path.join(dest.dir, round.verdictFile), 'utf8'); } catch { verdictText = null; }
+        }
+      }
+      const from = verdictText == null ? 'rebuilt from the record\'s verdict and mustFix' : `read from ${round.verdictFile}`;
+      if (verdictText == null) verdictText = `VERDICT: ${t.verdict}\n\nMUST-FIX\n${t.mustFix || '(none)'}\n`;
+      log.info('ticket', `boot: requeued the auto-merge for ${t.id} (${team.name}) — it was deferred behind a running suite before the relaunch dropped its retry timer; attempt 0, the wait cap restarts now, verdict ${from}`);
+      this._queueAutoMerge(team, t.id, landedOn, verdictText, { attempt: 0, since: this._mergeRetryNow() });
+      queued.push(t.id);
     },
 
     // Seams so a test can replace them without a real timer and without real
@@ -1923,8 +1957,9 @@ function createTicketMethods(deps, shared) {
         const tickets = ticketsStore.load(team.root);
         const rec = tickets.find((t) => t.id === ticketId);
         if (!rec) return;
-        if (!step) { if (!('mergeError' in rec)) return; delete rec.mergeError; }
+        if (!step) { if (!('mergeError' in rec) && !('escalationUndelivered' in rec)) return; delete rec.mergeError; }
         else rec.mergeError = step;
+        delete rec.escalationUndelivered;
         rec.lastActivityAt = Date.now();
         ticketsStore.save(team.root, tickets);
       } catch (e) {
@@ -1978,12 +2013,8 @@ function createTicketMethods(deps, shared) {
       // the same rule enforced by control flow.
       let deferred = false;
       const fail = (step, evidence, tried) => {
-        // Stamped BEFORE the DM, because the DM is the arm that can fail. An
-        // undelivered escalation is otherwise lost outright: _landVerdictOnTicket
-        // already deleted `loopStep`, so _escalateTicket's "loopStep kept so the
-        // watchdog re-surfaces it" is false here — ticketInFlight is false and
-        // the stall sweep never looks at this ticket again. The board carries
-        // what the DM may not.
+        // Stamped BEFORE the DM, because the DM is the arm that can fail. The
+        // board carries what the DM may not.
         this._stampMergeError(team, ticketId, step);
         this._escalateTicket(team, ticketId, `merge: ${step}`, evidence, tried);
       };
@@ -2188,7 +2219,7 @@ function createTicketMethods(deps, shared) {
             // a row in rework advertising a pending merge is the same false claim
             // by the other verb.
             const stillPending = this._loadTicket(team, ticketId);
-            if (stillPending && stillPending.state === 'done' && !stillPending.closedOut) {
+            if (stillPending && stillPending.state === 'done' && !stillPending.closedOut && !this._verdictRejectedSince(stillPending, landedOn)) {
               deferred = true;
               this._stampMergeWaiting(team, ticketId, 'suite-in-flight');
             }
@@ -8159,9 +8190,11 @@ function createTicketMethods(deps, shared) {
         } else {
           const why = (r && (r.error || r.held)) || 'unknown delivery failure';
           // log.error, not info: this is the arm where a human must eventually
-          // look, and the ticket is deliberately left marked in-flight so the
-          // stall sweep keeps it visible until the lead can be reached.
-          log.error('ticket', `ticket ${ticketId} escalation at ${step} did NOT reach ${team.lead} (${why}) — loopStep kept so the watchdog re-surfaces it`);
+          // look.
+          const parked = this._stampEscalationUndelivered(team, ticketId, step, body);
+          log.error('ticket', parked
+            ? `ticket ${ticketId} escalation at ${step} did NOT reach ${team.lead} (${why}) — stamped escalationUndelivered so the stall sweep re-surfaces it once ${team.lead} is reachable`
+            : `ticket ${ticketId} escalation at ${step} did NOT reach ${team.lead} (${why}) — loopStep kept so the watchdog re-surfaces it`);
         }
         this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} escalated: ${step}` });
         log.info('intent', `ticket ${ticketId} escalated at ${step}: ${evidence}`);
@@ -10099,6 +10132,39 @@ function createTicketMethods(deps, shared) {
       return worst;
     },
 
+    _stampEscalationUndelivered(team, ticketId, step, body) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec || !rec.mergeError) return false;
+        rec.escalationUndelivered = { step, body };
+        ticketsStore.save(team.root, tickets);
+        return true;
+      } catch (e) {
+        log.error('ticket', `undelivered escalation stamp for ${ticketId} failed: ${e.message}`);
+        return false;
+      }
+    },
+
+    _sweepUndeliveredMergeErrors(team, tickets) {
+      for (const t of tickets) {
+        const u = t.escalationUndelivered;
+        if (!t.mergeError || !u || typeof u.body !== 'string') continue;
+        if (t.state !== 'done' || t.closedOut) continue;
+        const tid = t.id;
+        const step = u.step;
+        const body = `${u.body}\n\n(re-sent by the stall sweep: this escalation did not reach ${team.lead} when it fired)`;
+        const r = this._gatedDeliver(team.lead, 'ticket-watchdog', body, true, `[ticket ${tid} ESCALATED]`);
+        if (!(r && (r.queued || r.parked))) continue;
+        try {
+          const fresh = ticketsStore.load(team.root);
+          const rec = fresh.find((x) => x.id === tid);
+          if (rec && rec.escalationUndelivered) { delete rec.escalationUndelivered; ticketsStore.save(team.root, fresh); }
+        } catch (e) { log.error('ticket', `undelivered escalation clear for ${tid} failed: ${e.message}`); }
+        log.info('ticket', `ticket ${tid}: re-surfaced the undelivered merge escalation (${step}) to ${team.lead}`);
+      }
+    },
+
     _sweepMergedUnaccepted(team, tickets, now) {
       for (const t of tickets) {
         if (typeof t.mergedAt !== 'number' || t.mergedNudgedAt) continue;
@@ -10137,6 +10203,9 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       try { this._sweepMergedUnaccepted(team, tickets, now); } catch (e) {
         log.error('ticket', `merged-unaccepted sweep failed: ${e.message}`);
+      }
+      try { this._sweepUndeliveredMergeErrors(team, tickets); } catch (e) {
+        log.error('ticket', `undelivered merge escalation sweep failed: ${e.message}`);
       }
       // Walked ONCE for the whole board, not once per ticket: the orphan test below
       // asks `_ticketAssigneeSeat` about every eligible ticket and each resolution

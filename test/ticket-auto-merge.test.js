@@ -2355,7 +2355,155 @@ test('t1234: a WAITING ticket whose branch already reached the trunk is not requ
 
   await bootLoop(f);
 
+  assert.ok(f.logs.some((l) => /t1 is stamped merge waiting .* not requeued/.test(l.msg)), 'ENTER: the boot scan reached the ticket');
   assert.deepStrictEqual(calls, [], 'a merged branch has nothing left to merge');
+  assert.ok(!('mergeWaiting' in f.one()), 'and the stale waiting stamp is cleared');
+});
+
+function bootWithoutLead(f) {
+  f.m.sessions.delete('lead');
+  let t = 1_000_000;
+  f.m._mergeRetryNow = () => t;
+  const polls = [];
+  f.m._scheduleMergeRetry = (fn, ms) => { polls.push(ms); t += ms; setImmediate(fn); return null; };
+  return { polls, now: () => t };
+}
+
+test('t1238: the boot requeue waits for the lead seat before it queues a merge', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver: WAITING, bootTeams: true });
+  const calls = spyQueue(f);
+  const clock = bootWithoutLead(f);
+  let seen = 0;
+  const realSchedule = f.m._scheduleMergeRetry;
+  f.m._scheduleMergeRetry = (fn, ms) => {
+    seen += 1;
+    assert.strictEqual(calls.length, 0, 'nothing is queued while the lead seat is missing');
+    if (seen === 3) f.seat('lead');
+    return realSchedule(fn, ms);
+  };
+
+  await bootLoop(f);
+
+  assert.strictEqual(seen, 3, 'it polled until the lead seat came back, and no longer');
+  assert.strictEqual(calls.length, 1, 'then requeued the merge');
+  assert.deepStrictEqual(calls[0].retry, { attempt: 0, since: clock.now() }, 'the wait cap starts after the wait');
+  assert.ok(f.logs.some((l) => /boot: requeue of waiting merges waited 6s for lead seat\(s\) lead/.test(l.msg)),
+    `one line says it waited. Logs:\n${f.logs.map((l) => l.msg).join('\n')}`);
+});
+
+test('t1238: with no lead seat ever restored the boot requeue still queues the merge after five minutes', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver: WAITING, bootTeams: true });
+  const calls = spyQueue(f);
+  const clock = bootWithoutLead(f);
+
+  await bootLoop(f);
+
+  assert.strictEqual(clock.polls.length, 150, 'it polled every 2s for the five-minute bound');
+  assert.strictEqual(calls.length, 1, 'and requeued regardless, so a headless host still merges');
+  assert.ok(f.logs.some((l) => /waited 300s and lead seat\(s\) lead are still not live — requeuing anyway/.test(l.msg)));
+});
+
+test('t1238: a merge escalation that finds no lead seat is stamped, and the stall sweep re-sends it verbatim once the lead is reachable', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver: { loopStep: undefined } });
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'base.txt'), 'someone was editing\n');
+  const realDeliver = f.m._gatedDeliver;
+  const dropped = [];
+  f.m._gatedDeliver = (target, sender, body) => { dropped.push(body); return { error: 'no such agent "lead"' }; };
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.strictEqual(dropped.length, 1, 'ENTER: the clean-tree escalation fired into no seat');
+  const u = f.one().escalationUndelivered;
+  assert.strictEqual(u && u.step, 'merge: clean-tree', 'the undelivered escalation is on the board');
+  assert.strictEqual(u.body, dropped[0], 'with the body it could not deliver');
+  assert.ok(f.logs.some((l) => /stamped escalationUndelivered so the stall sweep re-surfaces/.test(l.msg)));
+  assert.ok(!f.logs.some((l) => /t1 escalation .* loopStep kept/.test(l.msg)), 'not the loopStep line, which is false for a merge');
+
+  await f.m._sweepTeamTickets(f.team, Date.now());
+  assert.ok(f.one().escalationUndelivered, 'a sweep that still cannot reach the lead keeps the stamp');
+
+  f.m._gatedDeliver = realDeliver;
+  await f.m._sweepTeamTickets(f.team, Date.now());
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'the sweep delivered the escalation');
+  assert.strictEqual(esc[0].target, 'lead');
+  assert.ok(esc[0].body.startsWith(dropped[0]), 'the original body, EVIDENCE and ALREADY TRIED included');
+  assert.match(esc[0].body, /did not reach lead when it fired/);
+  assert.ok(!('escalationUndelivered' in f.one()), 'and cleared the stamp');
+
+  await f.m._sweepTeamTickets(f.team, Date.now());
+  assert.strictEqual(f.esc().length, 1, 'once');
+});
+
+test('t1238: a re-surfaced revert-blocked escalation keeps the revert command and claims nothing about the trunk', async () => {
+  const repo = mkRepo();
+  const f = mkMerge({ repo, ticketOver: { loopStep: undefined } });
+  const realDeliver = f.m._gatedDeliver;
+  f.m._gatedDeliver = () => ({ error: 'no such agent "lead"' });
+  f.m._stampMergeError(f.team, 't1', 'revert-blocked');
+  f.m._escalateTicket(f.team, 't1', 'merge: revert-blocked', 'master carries the red merge; undo with: git revert -m 1 abc1234', 'nothing');
+  f.m._gatedDeliver = realDeliver;
+
+  await f.m._sweepTeamTickets(f.team, Date.now());
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: the sweep re-surfaced it');
+  assert.match(esc[0].body, /git revert -m 1 abc1234/);
+  assert.ok(!/Nothing was merged/.test(esc[0].body), 'the trunk may be carrying the merge');
+});
+
+test('t1238: a cleared mergeError or a closed-out row drops the undelivered escalation', async () => {
+  const repo = mkRepo();
+  const f = mkMerge({ repo, ticketOver: { loopStep: undefined } });
+  const realDeliver = f.m._gatedDeliver;
+  f.m._gatedDeliver = () => ({ error: 'no such agent "lead"' });
+  f.m._stampMergeError(f.team, 't1', 'conflict');
+  f.m._escalateTicket(f.team, 't1', 'merge: conflict', 'CONFLICT', 'nothing');
+  assert.ok(f.one().escalationUndelivered, 'ENTER: stamped');
+  f.m._stampMergeError(f.team, 't1', null);
+  assert.ok(!('escalationUndelivered' in f.one()), 'the green path clears it with the mergeError');
+
+  f.m._stampMergeError(f.team, 't1', 'conflict');
+  f.m._escalateTicket(f.team, 't1', 'merge: conflict', 'CONFLICT', 'nothing');
+  const rows = f.tstore.load(f.team.root);
+  rows[0].closedOut = true;
+  f.tstore.save(f.team.root, rows);
+  f.m._gatedDeliver = realDeliver;
+  await f.m._sweepTeamTickets(f.team, Date.now());
+  assert.deepStrictEqual(f.esc(), [], 'a closed-out row is not re-surfaced');
+});
+
+test('t1238: a reject landing between the top gate and the defer arm leaves no WAITING stamp', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  let f;
+  const realGit = require('../git-worktree');
+  const gitOver = {
+    currentBranch: async (...a) => {
+      const replies = [];
+      f.m._taskReject(f.m.sessions.get('lead'), f.team, { id: 't1', body: 'the CHANGELOG line is false' }, (msg) => replies.push(msg));
+      assert.match(replies.join('\n'), /reopened \(rework\)/, 'ENTER: the reject landed inside the await window');
+      const rows = f.tstore.load(f.team.root);
+      Object.assign(rows[0], { state: 'done', closedAt: Date.now() });
+      delete rows[0].loopStep;
+      f.tstore.save(f.team.root, rows);
+      return realGit.currentBranch(...a);
+    },
+  };
+  f = mkMerge({ repo, ticketOver: { loopStep: undefined }, gitOver });
+  const r = captureRetries(f);
+  plantLock(repo);
+
+  await f.m._autoMergeTicket(f.team, 't1', { ...LANDED, reworkRound: 0 }, ACCEPT);
+
+  assert.strictEqual(r.scheduled.length, 1, 'ENTER: the pass reached the defer arm');
+  assert.ok(!('mergeWaiting' in f.one()), 'a row back from a reject does not advertise the stale ACCEPT merge');
 });
 
 test('t1234: a pending merge holds a lead reboot, the held line names the ticket, and the restart fires once it lands', async () => {
