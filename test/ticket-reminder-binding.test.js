@@ -194,7 +194,7 @@ function mkFixture() {
     childProcess: require('node:child_process'),
     countPending: require('../pending-store').countPending,
     parkedTexts: require('../pending-store').parkedTexts,
-    PENDING_DIR: mkTmpRoot('clodex-pending-'),
+    PENDING_DIR: mkTmpRoot('clodex-pend-'),
     isDraftOpen: require('../proxy-util').isDraftOpen,
     drainPending: require('../pending-store').drainPending,
     hasActivePending: require('../pending-store').hasActivePending,

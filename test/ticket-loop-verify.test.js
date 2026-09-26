@@ -5637,7 +5637,7 @@ test('t1235: a review-spawn escalation that PARKED keeps loopStep; one that was 
 
 test('t1246: an escalation the turn-start window diverts with an EMPTY queue parks and keeps loopStep', () => {
   const repo = mkRepo();
-  const pending = mkTmpRoot('clodex-loop-pending-');
+  const pending = mkTmpRoot('clodex-loop-');
   const ps = require('../pending-store');
   const f = mkLoop({ repo, extraDeps: {
     PENDING_DIR: pending,
