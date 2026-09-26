@@ -81,14 +81,15 @@ function textOf(content) {
 
 function imagesOf(content, text) {
   if (!Array.isArray(content)) return [];
-  const marks = [...text.matchAll(IMAGE_MARK_RE)].map((m) => Number(m[1]));
+  const marks = [...new Set([...text.matchAll(IMAGE_MARK_RE)].map((m) => Number(m[1])))];
   const blocks = content.filter((b) => b && b.type === 'image' && b.source && typeof b.source.data === 'string');
-  return blocks.map((b, k) => {
-    const n = k < marks.length ? marks[k] : k + 1;
+  return blocks.slice(0, marks.length).map((b, k) => {
+    const n = marks[k];
     const mediaType = b.source.media_type;
     const data = b.source.data;
-    if (data.length <= IMAGE_CAP) return { n, mediaType, data };
-    return { n, mediaType, bytes: Math.floor((data.length * 3) / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0) };
+    const bytes = Math.floor((data.length * 3) / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0);
+    if (bytes <= IMAGE_CAP) return { n, mediaType, data };
+    return { n, mediaType, bytes };
   });
 }
 

@@ -503,7 +503,7 @@ test('an image marker with no matching image stays literal text', () => {
   assert.strictEqual(findCls(head, 'tr-image-thumb').length, 1);
 });
 
-test('the prompt row signature carries no image data, and a changed image rebuilds the row', () => {
+test('the prompt row signature carries no image data, and a change in image size rebuilds the row', () => {
   const m = mount();
   const data = 'Q'.repeat(64);
   m.render([{ ...prompt, text: '[Image #1]', images: [{ n: 1, mediaType: 'image/png', data }] }]);

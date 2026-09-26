@@ -302,9 +302,25 @@ test('an image block takes its n from the marker the composer wrote, not its pos
 });
 
 test('an image over the cap ships its decoded size and no data', () => {
-  const big = 'A'.repeat(IMAGE_CAP + 4);
+  const big = 'A'.repeat(((IMAGE_CAP + 2) / 3) * 4);
   const [r] = promptOf([{ type: 'text', text: '[Image #1]' }, image(big, 'image/jpeg')]);
-  assert.deepStrictEqual(r.images, [{ n: 1, mediaType: 'image/jpeg', bytes: ((IMAGE_CAP + 4) / 4) * 3 }]);
+  assert.deepStrictEqual(r.images, [{ n: 1, mediaType: 'image/jpeg', bytes: IMAGE_CAP + 2 }]);
+});
+
+test('the cap is on the decoded size: an image whose base64 passes 1 MB but whose bytes do not still ships its data', () => {
+  const data = 'A'.repeat(IMAGE_CAP + 4);
+  const [r] = promptOf([{ type: 'text', text: '[Image #1]' }, image(data)]);
+  assert.deepStrictEqual(r.images, [{ n: 1, mediaType: 'image/png', data }]);
+});
+
+test('a repeated marker numbers one image, so two blocks under [Image #1] [Image #1] [Image #2] are n 1 and n 2', () => {
+  const [r] = promptOf([{ type: 'text', text: '[Image #1] a [Image #1] b [Image #2]' }, image('AAAA'), image('BBBB')]);
+  assert.deepStrictEqual(r.images.map((i) => [i.n, i.data]), [[1, 'AAAA'], [2, 'BBBB']]);
+});
+
+test('image blocks beyond the markers are not shipped', () => {
+  const [r] = promptOf([{ type: 'text', text: '[Image #3] only one' }, image('AAAA'), image('BBBB')]);
+  assert.deepStrictEqual(r.images, [{ n: 3, mediaType: 'image/png', data: 'AAAA' }]);
 });
 
 test('an inbound delivery with an image block carries no images', () => {
