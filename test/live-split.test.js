@@ -73,13 +73,16 @@ const FIXTURES = [
   ['codex-model-picker@100', 29, 'full', -1, -1, 'codex'],
   ['codex-after-picker-esc@100', 26, 'split', 26, 29, 'codex'],
   ['codex-upgrade-prompt@100', 9, 'full', -1, -1, 'codex'],
+  ['codex-picker-with-history@100', 12, 'full', -1, -1, 'codex'],
+  ['codex-idle-with-history@100', 36, 'split', 36, 39, 'codex'],
 ];
 
 const SCREEN_ROWS = { claude: 40, muse: 30, codex: 30 };
+const screenRows = (name, platform) => (/-with-history@/u.test(name) ? 40 : SCREEN_ROWS[platform]);
 
 function load(name, platform = 'claude') {
   const cols = Number(name.split('@')[1]);
-  const rows = fs.readFileSync(path.join(DIR, `${name}.screen.txt`), 'utf8').split('\n').slice(0, SCREEN_ROWS[platform]);
+  const rows = fs.readFileSync(path.join(DIR, `${name}.screen.txt`), 'utf8').split('\n').slice(0, screenRows(name, platform));
   return { cols, rows };
 }
 
@@ -87,10 +90,10 @@ test('ENTER: every captured screen in the fixture dir is a table row, and every 
   const onDisk = fs.readdirSync(DIR).filter((f) => f.endsWith('.screen.txt')).map((f) => f.replace('.screen.txt', '')).sort();
   const inTable = FIXTURES.map((r) => r[0]).sort();
   assert.deepStrictEqual(onDisk, inTable);
-  assert.strictEqual(FIXTURES.length, 61);
+  assert.strictEqual(FIXTURES.length, 63);
   for (const [name, , , , , platform = 'claude'] of FIXTURES) {
     const { rows, cols } = load(name, platform);
-    assert.strictEqual(rows.length, SCREEN_ROWS[platform], name);
+    assert.strictEqual(rows.length, screenRows(name, platform), name);
     assert.ok([60, 100, 200].includes(cols), name);
   }
 });
@@ -118,9 +121,9 @@ test('a Muse or Codex screen measured as Claude has no anchor, and an unknown pl
 });
 
 test('a Codex composer row with a menu block directly above it and no blank row still takes the block top', () => {
-  const rows = ['', '  /model  pick', '› /m', '', '  status'];
+  const rows = ['', '  /model  pick', '› /m', '', '  Context 0% used'];
   assert.deepStrictEqual(measureSplit(rows, 2, 40, 'codex'), { mode: 'split', top: 1, bottom: 4 });
-  const twoBlanks = ['  /model  pick', '', '', '› /m', ''];
+  const twoBlanks = ['  /model  pick', '', '', '› /m', '  Context 0% used'];
   assert.deepStrictEqual(measureSplit(twoBlanks, 3, 40, 'codex'), { mode: 'split', top: 3, bottom: 4 });
 });
 
@@ -292,6 +295,22 @@ for (const [name, rows, cap, band] of [
 ]) {
   test(`sheetBand: ${name}`, () => {
     assert.deepStrictEqual(sheetBand(rows, cap), band);
+  });
+}
+
+test('a Codex picker opened over a history prompt row is full and busy, and its sheet band is the picker', () => {
+  const { rows, cols } = load('codex-picker-with-history@100', 'codex');
+  assert.deepStrictEqual(measureSplit(rows, 12, cols, 'codex'), { mode: 'full', top: -1, bottom: -1, busy: true });
+  assert.deepStrictEqual(sheetBand(rows, 20), { top: 20, bottom: 39 });
+});
+
+for (const [name, rows, want] of [
+  ['a composer with its Context footer two rows down', ['› Ask Codex', '', '  Context 0% used · GPT', '  ? for shortcuts'], 0],
+  ['a history prompt row with no footer within three rows', ['› reply pong', '', '', '', '  Context 0% used', '  Select Model'], -1],
+  ['a picker row with the footer beneath it', ['› 1. GPT-6-Astra (current)', '  Context 0% used'], -1],
+]) {
+  test(`findAnchor on Codex: ${name}`, () => {
+    assert.strictEqual(findAnchor(rows, 0, 100, 'codex'), want);
   });
 }
 

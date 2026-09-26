@@ -125,6 +125,11 @@ test('codex marks matches bold only on unselected rows', () => {
   ]);
 });
 
+test('codex reads no menu from a past `› /…` prompt in the history when the composer below holds plain text', () => {
+  const rows = ['  /model  choose model', '', '› /tmp/notes explain this', '', '', '', '› hello', '', '  Context 0% used · GPT', '  ? for shortcuts'];
+  assert.strictEqual(readMenuRows(rows, [], 'codex'), null);
+});
+
 test('muse selection is the bold coloured name and carries no match spans', () => {
   const { rows, cells } = load('muse-arrow-down-2@100');
   const got = readMenuRows(rows, cells, 'muse');

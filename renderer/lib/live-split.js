@@ -22,6 +22,7 @@ const LABELED_RULE = /^─+( \S.*? )?─+$/u;
 const CODEX_COMPOSER = /^›[ \u00a0]/u;
 const CODEX_PICKER_ROW = /^›[ \u00a0]\d+\.\s/u;
 const CODEX_MENU_ROW = /^(\s{2}\/\S|›[ \u00a0])/u;
+const CODEX_STATUS_ROW = /^\s{2}Context \d+% used\b/u;
 const isBlank = (row) => !/\S/u.test(row || '');
 
 function isLabeledRuleRow(row, cols) {
@@ -30,8 +31,10 @@ function isLabeledRuleRow(row, cols) {
   return r.length >= cols - 1 && LABELED_RULE.test(r);
 }
 
-function isCodexComposerRow(row) {
-  return typeof row === 'string' && CODEX_COMPOSER.test(row) && !CODEX_PICKER_ROW.test(row);
+function isCodexComposerRow(rows, i) {
+  const row = rows[i];
+  if (typeof row !== 'string' || !CODEX_COMPOSER.test(row) || CODEX_PICKER_ROW.test(row)) return false;
+  return rows.slice(i + 1, i + 4).some((r) => typeof r === 'string' && CODEX_STATUS_ROW.test(r));
 }
 
 function codexStripTop(rows, i) {
@@ -45,7 +48,7 @@ function codexStripTop(rows, i) {
 const ANCHORS = {
   claude: { at: (rows, i, cols) => isRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]), top: (rows, i) => i },
   muse: { at: (rows, i, cols) => isLabeledRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]), top: (rows, i) => i },
-  codex: { at: (rows, i) => isCodexComposerRow(rows[i]), top: codexStripTop },
+  codex: { at: (rows, i) => isCodexComposerRow(rows, i), top: codexStripTop },
 };
 
 function findAnchor(rows, cursorY, cols, platform = 'claude') {
