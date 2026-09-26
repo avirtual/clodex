@@ -7,5 +7,5 @@
   "a headless host builds the manager unless it identifies as in-box": "builds FOUR full createEngine instances, each re-seeding the shipped resources/library into a fresh registryDir",
   "the engine const reads the env: CLODEX_LABEL reaches the wire as hostLabel": "four full createEngine builds through engineHostLabel, each re-seeding the shipped resources/library into a fresh tmp root with fsync'd writes",
   "32 concurrent far shells: every install line keeps its command word": "spawns 32 real local shells, nests a real far shell in each, and waits on the far side's own interrupt answer: the leading-byte loss it measures was seen at 2 in 192 only under this concurrency, so the load IS the subject",
-  "t955: the once-per-file seed dir does not leak reminders between fixtures": "the FIRST test of ticket-loop-verify and ticket-auto-merge: its first mkLoop pays initStores seeding the shipped library into the once-per-file seed dir, plus two real git-init repos, all synchronous spawnSync — the one-time seed cost IS the subject"
+  "t955: the once-per-file seed dir does not leak reminders between fixtures": "the FIRST test of ticket-loop-verify and ticket-auto-merge: its first mkLoop pays initStores seeding the shipped library into the once-per-file seed dir, plus two mkRepo calls of seven synchronous git spawns each — the one-time seed cost IS the subject"
 }
