@@ -320,7 +320,7 @@ test('a codex seat in the alternate buffer measures its composer and reaches spl
   const m = mountView({ now: () => t, platform: () => 'codex' });
   try {
     m.terminal.buffer.active.type = 'alternate';
-    m.show(['', '› Ask Codex', '', '  status']);
+    m.show(['', '› Ask Codex', '', '  Context 0% used']);
     m.write();
     await settle();
     t += 250;
@@ -781,6 +781,26 @@ test('a Codex upgrade prompt painted at the top shows its own rows in the sheet,
     assert.strictEqual(m.wrapper.classList.contains('live-sheet'), true);
     assert.deepStrictEqual([el.style.transform, el.style.clipPath], [`translateY(${WRAPPER_PX - 14 * ROW_PX}px)`, `inset(0px 0 ${16 * ROW_PX}px 0)`]);
     assert.strictEqual(m.pane.clientHeight, WRAPPER_PX - 14 * ROW_PX);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a Codex picker opened with a past prompt in the history shows in the sheet with the composer hidden', async () => {
+  const rows = fs.readFileSync(path.join(__dirname, 'fixtures', 'split-states', 'codex-picker-with-history@100.screen.txt'), 'utf8').split('\n').slice(0, 40);
+  const composerEl = fakeComposer();
+  let t = 5000;
+  const m = mountView({ composerEl, sheet: true, now: () => t, platform: () => 'codex' }, { geometry: true });
+  Object.assign(m.terminal, { rows: 40, cols: 100, element: fakeTermElement(40) });
+  m.terminal.buffer.active.cursorY = 12;
+  m.show(rows);
+  m.write();
+  await settle();
+  t += 250;
+  m.write();
+  await settle();
+  try {
+    assert.strictEqual(m.view.state().mode, 'full');
+    assert.strictEqual(m.wrapper.classList.contains('live-sheet'), true);
+    assert.strictEqual(composerEl.hidden, true);
   } finally { m.view.dispose(); m.restore(); }
 });
 

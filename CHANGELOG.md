@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Codex terminal seats with the transcript pane: pickers such as /model now show in the sheet when the conversation has history; a past prompt was being mistaken for the input row and the picker stayed hidden.
 - The terminal sheet on agent seats now shows the part of the screen the CLI actually painted: a startup banner, an upgrade prompt or a trust dialog at the top of the screen is visible in the sheet instead of a blank bottom half.
 - An agent seat whose CLI exits on its own (for example Codex after upgrading itself) stays in the sidebar as an exited row; click it to resume the same session instead of waiting for the next Clodex launch.
 
