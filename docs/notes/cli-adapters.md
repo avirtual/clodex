@@ -117,7 +117,3 @@ read-only: `filesystem.mode: managed`, rules `:minimal` / `:root` /
 `:workspace_roots` all `access: read`, `protected_metadata: true`, beside
 `local_command_network.mode: enabled`, `approval: allow_all`, `reviewer: none`.
 
-
-## resolveEffort
-
-`effort.values` are each CLI's own words, with no shared scale; `apply` names the carrier. Claude: settings key `effortLevel` (low|medium|high|xhigh|max) in the seat's generated `--settings` file, pty and stream alike. Codex: `-c model_reasoning_effort="<v>"`, skipped when the seat's extraArgs already carry one. Measured on codex-cli 0.157.1 (`codex -c model_reasoning_effort="<v>" exec 'say hi'`, model gpt-6-astra): low, medium, high, xhigh, max and ultra all answered; none and minimal were refused by the API (`unsupported_value`, "Supported values are: 'low', 'medium', 'high', 'xhigh', and 'max'"), and a bogus value is NOT refused at startup either — the banner echoes it and the API rejects the request, so the value list is the binary's, not a startup check. Muse pty: root flag `--reasoning-effort <v>`. Muse stream (`muse serve` refuses root options): top-level `reasoning_effort` in the seat overlay settings.json works — measured on Muse Code 1.4.0 with `MUSE_TRANSPORT_TRACE=1 muse exec`, the main request's `reasoning.effort` moved from `max` to `low`; the same key under `run` changed nothing, and a bad value logs `ignoring invalid reasoning_effort "bogus" in settings` and runs at the default. The skill-reminder and verify-reminder requests keep their own fixed efforts either way.

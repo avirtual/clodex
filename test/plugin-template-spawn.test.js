@@ -178,6 +178,7 @@ test('t679: a plugin template\'s appendPromptFiles reach create() ALONGSIDE its 
       null,
       null,
       'pty',
+      null,
     ], 'the namespaced append stem must arrive with the plugin that can resolve it');
   });
 });

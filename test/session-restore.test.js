@@ -241,7 +241,7 @@ test('t189: noWire reaches every row shape — running, restored, archived and f
   const NOWIRE_IDX = 19;
   const okArgs = createArgs.get('ok');
   assert.ok(okArgs, 'ENTER: the restored seat was actually spawned, so there are arguments to inspect');
-  assert.strictEqual(okArgs.length, 24, 'ENTER: every positional past name was passed, so the index below is the flag');
+  assert.strictEqual(okArgs.length, 25, 'ENTER: every positional past name was passed, so the index below is the flag');
   assert.strictEqual(okArgs[NOWIRE_IDX], true,
     'the restore respawn passes noWire through to create()');
   const wiredArgs = createArgs.get('wired');
@@ -318,8 +318,8 @@ test('io passes through to create() as the last positional, pty by default, and 
   ]);
   const out = await restoreSessionsForWorkspace({ workspaceId: 'ws1', persistence, manager, ...noopDeps });
   assert.deepStrictEqual([...createArgs.keys()], ['st', 'pty']);
-  assert.deepStrictEqual(createArgs.get('st').slice(3, 4).concat(createArgs.get('st').slice(23)), ['sid-1', 'stream']);
-  assert.deepStrictEqual(createArgs.get('pty').slice(23), ['pty']);
+  assert.deepStrictEqual(createArgs.get('st').slice(3, 4).concat(createArgs.get('st').slice(23)), ['sid-1', 'stream', null]);
+  assert.deepStrictEqual(createArgs.get('pty').slice(23), ['pty', null]);
   assert.deepStrictEqual(out.map((e) => [e.name, e.io]), [['run', 'stream'], ['st', 'stream'], ['arch', 'stream'], ['pty', undefined]]);
 });
 

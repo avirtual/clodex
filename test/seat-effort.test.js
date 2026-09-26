@@ -72,7 +72,7 @@ test('t1222: the roster names a role\'s effort beside its template, and the revi
 });
 
 function hooks() {
-  const root = mkTmpRoot('clodex-t1222-hooks-');
+  const root = mkTmpRoot('clodex-hooks-');
   const h = createCliHooks({
     REGISTRY_DIR: root,
     memoryStore: { list: () => [] },

@@ -10952,7 +10952,7 @@ test('t1222: role-set reviewer effort:xhigh derives templates/reviewer.json from
   fsReal.writeFileSync(f.tplFile('clodex-team-reviewer'), JSON.stringify(shippedReviewer));
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'reviewer', effort: 'xhigh', body: '' });
   assert.ok(/role "reviewer" updated on team — template "reviewer" derived from clodex-team-reviewer with effort xhigh/.test(f.last()), f.last());
-  assert.deepStrictEqual(f.readTpl('reviewer'), { ...shippedReviewer, name: 'reviewer', effort: 'xhigh' });
+  assert.deepStrictEqual(f.readTpl('reviewer'), { type: 'claude', ...shippedReviewer, name: 'reviewer', effort: 'xhigh' });
   assert.strictEqual(f.tm.loadManifest('team').roles.reviewer.template, 'reviewer');
   const shape = f.m.resolveSeatShape(f.tm.loadManifest('team'), 'reviewer', 'review', { name: 'lead', type: 'claude' });
   assert.strictEqual(shape.effort, 'xhigh');

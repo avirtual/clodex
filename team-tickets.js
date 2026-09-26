@@ -3343,7 +3343,7 @@ function createTicketMethods(deps, shared) {
       const target = teamTemplatePath(deps, team.name, name);
       let prior = null;
       try { prior = target ? fs.readFileSync(target) : null; } catch { prior = null; }
-      const res = teamTemplateSave(deps, team.name, name, deriveEffortTemplate(base, name, effort));
+      const res = teamTemplateSave(deps, team.name, name, deriveEffortTemplate({ ...base, type: baseType }, name, effort));
       if (!res.ok) return { ok: false, error: res.error };
       this._refreshAppMenuQuietly();
       const undo = () => {

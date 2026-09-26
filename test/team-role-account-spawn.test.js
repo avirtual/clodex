@@ -343,7 +343,7 @@ const HAND_TUPLE = (io) => [
   'team-hand-1', 'claude', '/proj', [], null, undefined, null, false, null,
   [], [], [], [], [], 'clodex-team-hand', [], [], null,
   { CLODEX_DISABLE_IPC_PROMPT: '1', FORCE_PROMPT_CACHING_5M: '1', CLODEX_TICKET: 't1' }, true,
-  false, null, null, null, io,
+  false, null, null, null, io, null,
 ];
 
 test('t1165: a hand template with io:stream spawns its ticket seat with io stream in the trailing slot', async () => {
@@ -368,6 +368,6 @@ for (const [label, tpl, want] of [
     f.m._handleTeamReview(f.m.sessions.get('lead'), 'review the diff');
     await settle();
     assert.strictEqual(f.created.length, 1, 'ENTER: the reviewer seat must have spawned');
-    assert.deepStrictEqual([f.created[0].length, f.created[0][23], f.created[0][24]], [25, null, want]);
+    assert.deepStrictEqual([f.created[0].length, f.created[0][23], f.created[0][24]], [26, null, want]);
   });
 }
