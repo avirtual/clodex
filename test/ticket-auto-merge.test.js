@@ -155,7 +155,7 @@ function commitOnBranch(dir, branch, file, body) {
 // before it starts needs an unresolvable branch, which step 2 rejects first. The
 // shape it returns is pinned against real git by the subject below it, so the
 // stub cannot drift into describing a merge git would never produce.
-function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAliveOver = null } = {}) {
+function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAliveOver = null, bootTeams = false } = {}) {
   fsReal.mkdirSync(pathReal.join(repo.dir, 'scripts'), { recursive: true });
   fsReal.mkdirSync(pathReal.join(repo.dir, 'node_modules'), { recursive: true });
   fsReal.writeFileSync(pathReal.join(repo.dir, 'scripts', 'run-tests.js'), SUITE_STUBS[suite]);
@@ -275,6 +275,10 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
     resolveTeam: (cwd) => (cwd && cwd.startsWith(repo.dir) ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(repo.dir) ? repo.dir : null),
   };
+  if (bootTeams) {
+    deps.listTeams = () => ['team'];
+    deps.loadManifest = (n) => { if (n !== 'team') throw new Error(`no team ${n}`); return team; };
+  }
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
   const created = [];
@@ -365,9 +369,7 @@ test('mkMerge injects every dep team-tickets.js reads', () => {
     // one here is about the ticket loop.
     // The team-metadata deps are optional in that same sense: createTeam,
     // kitCatalog and resolveKit are read only by _handleTeamCreate, setLead only
-    // by _handleTeam's set-lead case, teamsDir and listTeams only by its four
-    // template/prompt file verbs, loadManifest only by the read-only
-    // teamActivity channel (t785), and no subject here drives any of them.
+    // by _handleTeam's set-lead case, and no subject here drives any of them.
     // refreshAppMenu is optional in a STRONGER sense — the call site guards on
     // typeof, because a headless host wires no Electron menu at all.
       // getSandboxManager is optional in that same sense: it is read only by
@@ -2309,6 +2311,91 @@ test('a merge WAITS rather than dying when a LIVE pid holds the root suite lock'
 // ticket replaced. `mergeWaiting` is that record, and it is a SEPARATE field
 // from mergeError on purpose: mergeError reads as "needs a human", and a merge
 // that is going to happen by itself must not send the lead looking.
+
+const WAITING = { verdict: 'ACCEPT', mustFix: null, reviewRound: 1, loopStep: undefined, mergeWaiting: 'suite-in-flight' };
+
+function spyQueue(f) {
+  const calls = [];
+  f.m._queueAutoMerge = (team, ticketId, landedOn, verdictText, retry) => {
+    calls.push({ team: team.name, ticketId, landedOn, verdictText, retry });
+    return Promise.resolve();
+  };
+  return calls;
+}
+
+function bootLoop(f) {
+  f.m.startTicketWatchdog(3_600_000);
+  clearInterval(f.m._ticketWatchdogTimer);
+  return f.m._bootRequeue;
+}
+
+test('t1234: a merge left WAITING on a suite is requeued once at boot, with a fresh attempt 0', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver: WAITING, bootTeams: true });
+  f.m._mergeRetryNow = () => 5_000_000;
+  const calls = spyQueue(f);
+
+  await bootLoop(f);
+
+  assert.strictEqual(calls.length, 1, 'the dropped retry timer is replaced by exactly one requeue');
+  assert.strictEqual(calls[0].ticketId, 't1');
+  assert.deepStrictEqual(calls[0].retry, { attempt: 0, since: 5_000_000 }, 'the ten-minute cap restarts at boot');
+  assert.deepStrictEqual(calls[0].landedOn, { verdict: 'ACCEPT', mustFix: null, reviewRound: 1 });
+  assert.match(calls[0].verdictText, /VERDICT: ACCEPT/);
+  assert.strictEqual(f.logs.filter((l) => /boot: requeued the auto-merge for t1/.test(l.msg)).length, 1, 'one log line per requeued ticket');
+});
+
+test('t1234: a WAITING ticket whose branch already reached the trunk is not requeued at boot', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  git(repo.dir, ['merge', '-q', '--no-ff', '-m', 'landed', 'tl-1']);
+  const f = mkMerge({ repo, ticketOver: WAITING, bootTeams: true });
+  const calls = spyQueue(f);
+
+  await bootLoop(f);
+
+  assert.deepStrictEqual(calls, [], 'a merged branch has nothing left to merge');
+});
+
+test('t1234: a pending merge holds a lead reboot, the held line names the ticket, and the restart fires once it lands', async () => {
+  const { createIdleWaiter } = require('../restart-waiter');
+  const repo = mkRepo();
+  const f = mkMerge({ repo });
+  let release;
+  f.m._autoMergeTicket = () => new Promise((res) => { release = res; });
+  f.m._queueAutoMerge(f.team, 't1', LANDED, ACCEPT);
+
+  let t = 0;
+  let pending = null;
+  const events = [];
+  const held = [];
+  const waiter = createIdleWaiter({
+    getSessions: () => [{ name: 'lead', agentType: 'claude', activityState: 'idle' }],
+    now: () => t,
+    setTimer: (fn) => { pending = fn; return 1; },
+    clearTimer: () => { pending = null; },
+    restart: () => events.push('restart'),
+    notify: () => events.push('notify'),
+    lastInputAt: () => -1_000_000,
+    inFlightRuns: () => f.m.inFlightRestartHolds(),
+    log: { info: (_t, m) => held.push(m), warn: () => {} },
+  });
+  const advance = (ms) => { const end = t + ms; while (pending && t + 2000 <= end) { t += 2000; const fn = pending; pending = null; fn(); } t = end; };
+
+  waiter.arm();
+  advance(5 * 60_000);
+  assert.deepStrictEqual(events, [], 'an idle box with a merge in flight does not restart');
+  assert.strictEqual(held.length, 1);
+  assert.match(held[0], /ticket t1 auto-merge/, 'the held line names the ticket');
+
+  await new Promise((r) => setImmediate(r));
+  release();
+  await f.m._mergeChain;
+  assert.deepStrictEqual(f.m.inFlightMerges(), [], 'ENTER: the chain drained');
+  advance(12_000);
+  assert.deepStrictEqual(events, ['restart'], 'the merge landed, so the usual quiet window fires the restart');
+});
 
 test('a deferred merge leaves a WAITING trace on the board, distinct from an error', async () => {
   const repo = mkRepo();

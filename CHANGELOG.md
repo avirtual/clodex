@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Ticket loop: a merge deferred behind a running suite is picked up again after an app relaunch instead of waiting on a timer the relaunch dropped, and a lead's reboot now waits for an in-flight merge and its post-merge suite.
 - Transcript pane: an intent whose body was never closed with [agent:end] now shows its whole body open with an "unclosed" warning chip instead of folding it to two lines, so a reply the agent accidentally wrote inside the body is still readable.
 - Transcript pane: messages Clodex injects into a seat (ticket replies, loop notices, reminders, exec results, dms from other agents) fold into one-line boxes you click to open, a run of tool calls shows only its latest call until you expand it, and an "Internals" checkbox at the top of the pane hides all of them so a recap reads as just your prompts and the agent's replies.
 - Codex and Muse terminal seats with the transcript pane: the output of inline commands such as /status, /diff and /mcp now shows in the pane as a command output row; it was painted under the message box and never seen.

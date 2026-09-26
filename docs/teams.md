@@ -390,6 +390,8 @@ manual `git merge --no-ff` command. It does not hold the merge queue while it
 waits: other tickets merge past a waiting one. Only this one refusal retries; a
 dirty tree, a moved branch and a red suite still stop on the first try, because
 each of those is a state a human has to look at.
+A merge still waiting when the app relaunches is requeued at boot from its `mergeWaiting: suite-in-flight` stamp, with a fresh ten-minute cap.
+An `[agent:reboot]` holds while a merge or its post-merge suite is in flight, like an exec run, and the held line names the ticket.
 
 The rule that follows, for anyone reading a refusal: **a lock collision is not a
 wedge, and a lock is never cleared by hand.** A refusal names the pid holding
