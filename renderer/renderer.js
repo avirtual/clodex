@@ -2315,9 +2315,14 @@ function createTerminal(name, peer = null) {
     composerEl.addEventListener('paste', (e) => {
       if (pasteKind(e.clipboardData && e.clipboardData.items) !== 'image') return;
       e.preventDefault();
-      writePty('\x16');
+      if (window.__CLODEX_WEB__ || !window.require) {
+        showToast('Pasting images needs the desktop app — the CLI reads its own machine\'s clipboard, not this browser\'s.', { kind: 'peer-ui' });
+        return;
+      }
       pastedImages += 1;
       composerEl.value += imageChip(pastedImages);
+      if (menuMirror.on()) syncMenuMirror();
+      writePty('\x16');
       const end = composerEl.value.length;
       composerEl.setSelectionRange(end, end);
       composerKit.fit();

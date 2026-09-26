@@ -33,6 +33,7 @@ const html = { kind: 'string', type: 'text/html' };
 for (const [label, items, want] of [
   ['ENTER: an image alone is an image paste', [png], 'image'],
   ['an image with a text copy is a text paste', [html, plain, png], 'text'],
+  ['a browser Copy Image (html plus png) is an image paste', [html, png], 'image'],
   ['plain text is a text paste', [plain], 'text'],
   ['a non-image file is nothing', [{ kind: 'file', type: 'application/pdf' }], 'none'],
   ['html without plain text is nothing', [html], 'none'],
@@ -71,5 +72,7 @@ test('the pty composer registers a paste listener that routes an image paste thr
   assert.ok(m, 'renderer.js registers a paste listener on composerEl');
   assert.match(m[1], /pasteKind\(/u);
   assert.match(m[1], /writePty\('\\x16'\)/u);
+  assert.match(m[1], /if \(window\.__CLODEX_WEB__ \|\| !window\.require\) \{\s*showToast\([^\n]*\n\s*return;/u);
+  assert.ok(m[1].indexOf('syncMenuMirror()') < m[1].indexOf("writePty('\\x16')"), 'the slash mirror is synced before the CLI takes the image');
   assert.match(src, /ptyComposerWrites\(stripImageChips\(text\)\)/u);
 });
