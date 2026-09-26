@@ -30539,7 +30539,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
             return { writes: ["	"], draft: sent };
           }
           if (e.key === "Escape") return { writes: [ESCAPE] };
-          if (e.key === "Enter") return { writes: submit(), draft: "" };
+          if (e.key === "Enter") {
+            const row = hasRows() ? read.rows.find((r) => r.selected) : null;
+            const command = row ? completionOf(row.name) : sent;
+            return { writes: submit(), draft: "", command };
+          }
           return null;
         }
         return {
@@ -31717,6 +31721,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       "use strict";
       var PAINT_BLOCK_CAP = 200;
       var BUSY_ROW = /esc to interrupt/u;
+      var BUSY_SPAN = 4;
       var isBlank = (row) => !/\S/u.test(row || "");
       var norm = (row) => String(row == null ? "" : row).trimEnd();
       function trimTrailingBlank(rows) {
@@ -31762,11 +31767,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
         while (j < b.length) out.push(b[j++]);
         return out;
       }
-      var isBusyScreen = (rows) => Array.isArray(rows) && rows.some((r) => BUSY_ROW.test(r || ""));
+      var isBusyScreen = (rows, top = Array.isArray(rows) ? rows.length : 0) => Array.isArray(rows) && rows.slice(Math.max(0, top - BUSY_SPAN), top).some((r) => BUSY_ROW.test(r || ""));
       var stripMark = (row) => String(row || "").trim().replace(/^[›❯>][  ]?/u, "").trim();
       function blockText(rows, dropped) {
         const drop = new Set([...dropped].map(stripMark).filter(Boolean));
-        const kept = rows.map(norm).filter((r) => !drop.has(stripMark(r)));
+        const all = rows.map(norm);
+        let lead = 0;
+        while (lead < all.length && (isBlank(all[lead]) || drop.has(stripMark(all[lead])))) lead++;
+        const kept = all.slice(lead);
         let start = 0;
         let end = kept.length;
         while (start < end && isBlank(kept[start])) start++;
@@ -31902,14 +31910,23 @@ ${m[2].replace(/^\r?\n/, "")}`;
             pulling = false;
           });
         }
+        const commandText = (r) => `${r.name || ""}${r.args ? ` ${r.args}` : ""}`;
+        function shownExtras() {
+          const first = fileRecords.find((r) => typeof r.ts === "number");
+          if (first) {
+            for (let i = extraRecords.length - 1; i >= 0; i--) if (extraRecords[i].ts < first.ts) extraRecords.splice(i, 1);
+          }
+          return extraRecords.filter((x) => x.kind !== "command" || !fileRecords.some((f) => f.kind === "command" && typeof f.ts === "number" && Math.abs(f.ts - x.ts) <= PAINT_TAG_MS && commandText(f) === commandText(x)));
+        }
         function paint() {
-          renderTranscript(document, paneEl, extraRecords.length ? mergeByTs(fileRecords, extraRecords) : fileRecords, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
+          const extras = shownExtras();
+          renderTranscript(document, paneEl, extras.length ? mergeByTs(fileRecords, extras) : fileRecords, { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette });
           stickToBottom();
         }
         function latestFileText() {
           for (let i = fileRecords.length - 1; i >= 0; i--) {
             const r = fileRecords[i];
-            if (r.kind === "command") return [`${r.name || ""}${r.args ? ` ${r.args}` : ""}`, String(r.name || "")];
+            if (r.kind === "command") return [commandText(r), String(r.name || "")];
             if (r.kind === "prompt") return String(r.text || "").split("\n");
           }
           return [];
@@ -31926,12 +31943,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
           const t = now();
           const latest = latestFileText();
           const text = blockText(rows, [...sent ? sent.text.split("\n") : [], ...latest]);
+          sent = null;
           if (!text) return;
           const n = paintSeq += 1;
           const head = tag && t - tag.at <= PAINT_TAG_MS ? tag.text.trim() : null;
           tag = null;
           const turn = `paint:${n}`;
-          if (head && !latest.includes(head)) {
+          if (head) {
             const [name, ...args] = head.split(/\s+/u);
             extraRecords.push({ kind: "command", name, args: args.join(" "), ts: t, id: `paint:${n}:cmd`, turn });
           }
@@ -31940,13 +31958,18 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         function trackPaint(rows, measured) {
           if (!PAINT_PLATFORMS.has(platform())) return;
-          if (isBusyScreen(rows)) {
+          if (!rows || state.mode !== "split" || !composerVisible()) {
+            delta.reset();
+            return;
+          }
+          if (!measured || measured.mode !== "split") return;
+          const top = Math.min(state.top, measured.top);
+          if (isBusyScreen(rows, top)) {
             delta.reset();
             dropPaint();
             return;
           }
-          if (state.mode !== "split" || !measured || measured.mode !== "split" || !composerVisible()) return;
-          const fresh = delta.feed(rows.slice(0, Math.min(state.top, measured.top)));
+          const fresh = delta.feed(rows.slice(0, top));
           if (!fresh.length) return;
           paintRows.push(...fresh);
           clearTimeout(paintTimer);
@@ -32064,7 +32087,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           state = reduceSplit(state, measured, now(), void 0, raw ? 0 : void 0);
           const menuRead = readMenu(rows);
           const busy = !menuRead && !!measured && (measured.mode === "split" || !!measured.busy);
-          if (rows && !raw) trackPaint(rows, measured);
+          trackPaint(raw ? null : rows, measured);
           sheetRange = busy ? sheetRowsOf(rows) : null;
           sheetRows = sheetRange ? sheetRange.bottom - sheetRange.top + 1 : 0;
           if (state.wakeAt != null) wakeTimer = setTimeout(evaluate, Math.max(0, state.wakeAt - now()));
@@ -47498,6 +47521,7 @@ ${detail}` });
           if (!hit) return false;
           e.preventDefault();
           for (const w of hit.writes) writePty(w);
+          if (hit.command && liveSplit) liveSplit.composerSent(hit.command);
           if (hit.draft !== void 0) {
             composerEl.value = hit.draft;
             composerEl.setSelectionRange(hit.draft.length, hit.draft.length);
