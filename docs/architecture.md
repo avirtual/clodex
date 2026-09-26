@@ -378,7 +378,7 @@ bundle), whose packaged form is the Docker image under
 - **seat-images.js** — `validateSeatImages`, the one image rule set for a seat
   message (≤5, png/jpeg/gif/webp, base64, 5 MB decoded each), shared by the
   desktop `seat:send` IPC and the phone `POST /api/sessions/:name/dm` route. Pure
-  leaf, no I/O, like clodex-paths.js; NOT in the leak-scanner lists.
+  leaf, no I/O, like clodex-paths.js.
 - **agent-transport.js** — per-agent registry (`run/<name>/agent.json`) +
   Unix-socket (`run/<name>/agent.sock`) transport; discovery iterates
   `run/*/agent.json`.

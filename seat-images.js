@@ -5,6 +5,12 @@ const SEAT_IMAGE_MAX = 5;
 const SEAT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const SEAT_IMAGE_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
 
+const SEAT_IMAGE_FILE_PATTERN = `img-\\d+-\\d+\\.(?:${Object.values(SEAT_IMAGE_EXT).join('|')})`;
+
+function seatImageFileName(stamp, n, mediaType) {
+  return `img-${stamp}-${n}.${SEAT_IMAGE_EXT[mediaType] || 'png'}`;
+}
+
 function validateSeatImages(images) {
   if (images === undefined || images === null) return { ok: true, images: [] };
   if (!Array.isArray(images)) return { ok: false, error: 'images must be an array' };
@@ -21,4 +27,7 @@ function validateSeatImages(images) {
   return { ok: true, images: out };
 }
 
-module.exports = { validateSeatImages, SEAT_IMAGE_TYPES, SEAT_IMAGE_MAX, SEAT_IMAGE_MAX_BYTES, SEAT_IMAGE_EXT };
+module.exports = {
+  validateSeatImages, seatImageFileName, SEAT_IMAGE_FILE_PATTERN,
+  SEAT_IMAGE_TYPES, SEAT_IMAGE_MAX, SEAT_IMAGE_MAX_BYTES, SEAT_IMAGE_EXT,
+};

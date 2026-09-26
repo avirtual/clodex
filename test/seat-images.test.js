@@ -40,3 +40,12 @@ test('ipc-handlers carries no copy of the validator: the leaf is the one definit
   assert.ok(src.includes("require('./seat-images')"));
   assert.strictEqual(typeof ipc.registerIpcHandlers, 'function');
 });
+
+test('seatImageFileName mints the names SEAT_IMAGE_FILE_PATTERN matches, one extension per media type', () => {
+  const { seatImageFileName, SEAT_IMAGE_FILE_PATTERN } = require('../seat-images');
+  const re = new RegExp(`^${SEAT_IMAGE_FILE_PATTERN}$`);
+  const names = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].map((t, i) => seatImageFileName(1800000000000, i + 1, t));
+  assert.deepStrictEqual(names, ['img-1800000000000-1.png', 'img-1800000000000-2.jpg', 'img-1800000000000-3.gif', 'img-1800000000000-4.webp']);
+  for (const n of names) assert.ok(re.test(n), n);
+  assert.ok(!re.test('msg-1-2.txt'));
+});

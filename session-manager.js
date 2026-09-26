@@ -140,7 +140,7 @@ const { readerFor } = require('./transcript-readers');
 const { scanIntentLines } = require('./intent-segments');
 const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, findCodexRollout, museRegistryFor, linkTranscript } = require('./seat-config');
 const { activationSettings } = require('./muse-skills');
-const { SEAT_IMAGE_EXT } = require('./seat-images');
+const { seatImageFileName } = require('./seat-images');
 const MUSE_LINK_POLL_MS = 250;
 const MUSE_LINK_DEADLINE_MS = 60000;
 const CODEX_LINK_POLL_MS = 250;
@@ -9403,8 +9403,9 @@ function createSessionManager(deps) {
       fs.mkdirSync(dir, { recursive: true });
       const stamp = this._imgStamp = Math.max(Date.now(), (this._imgStamp || 0) + 1);
       return images.map((img, i) => {
-        const file = path.join(dir, `img-${stamp}-${i + 1}.${SEAT_IMAGE_EXT[img.mediaType] || 'png'}`);
+        const file = path.join(dir, seatImageFileName(stamp, i + 1, img.mediaType));
         fs.writeFileSync(file, Buffer.from(img.data, 'base64'));
+        this._noteFiled(seatName, filedEntry(file, 'message', `Image #${i + 1} (${img.mediaType})`));
         return file;
       });
     }

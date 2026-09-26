@@ -1544,4 +1544,6 @@ test('remote-wiring send threads dm images onto _deliverMessage, and a text-only
     ['carol', 'user', 'look', 'dm', '', null, null, [png]],
     ['carol', 'user', 'plain', 'dm'],
   ]);
+  deps.manager._deliverMessage = () => { throw new Error('ENOSPC: no space left on device'); };
+  assert.deepStrictEqual(opts.send('carol', 'look', [png]), { ok: false, error: 'delivery failed: ENOSPC: no space left on device' });
 });

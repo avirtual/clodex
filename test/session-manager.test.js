@@ -21141,7 +21141,7 @@ test('phone dm images: _deliverMessage with images to a pty seat writes one file
   const path = require('node:path');
   const h = mkStreamSeatManager();
   t.after(() => h.stopAll());
-  h.m.sessions.set('pi1', { name: 'pi1', agentType: 'claude', io: 'pty' });
+  h.m.sessions.set('pi1', { name: 'pi1', agentType: 'claude', io: 'pty', filedRing: require('../filed-ring').createFiledRing() });
   const injected = [];
   h.m._maybeParkDelivery = () => false;
   h.m._injectText = (_s, text) => injected.push(text);
@@ -21162,6 +21162,11 @@ test('phone dm images: _deliverMessage with images to a pty seat writes one file
   const lines = injected[0].split('\n');
   assert.strictEqual(lines[0], '[agent:from user] see these');
   assert.deepStrictEqual(lines.slice(1), files.map((f, i) => `Image #${i + 1}: ${path.join(dir, f)}`));
+  assert.deepStrictEqual(h.m.sessions.get('pi1').filedRing.list().map((e) => [e.path, e.kind, e.head]).reverse(), [
+    [path.join(dir, files[0]), 'message', 'Image #1 (image/png)'],
+    [path.join(dir, files[1]), 'message', 'Image #2 (image/jpeg)'],
+    [path.join(dir, files[2]), 'message', 'Image #3 (image/webp)'],
+  ]);
 });
 
 const RESULT = { type: 'result', subtype: 'success', duration_ms: 1, total_cost_usd: 0, is_error: false };

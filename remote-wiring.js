@@ -408,8 +408,13 @@ function createRemoteWiring(deps) {
         send: (name, text, images) => {
           const sess = manager.sessions.get(name);
           if (!sess || !sess.agentType || sess._dead) return { ok: false, error: 'Session not found' };
-          if (images && images.length) manager._deliverMessage(name, 'user', text, 'dm', '', null, null, images);
-          else manager._deliverMessage(name, 'user', text, 'dm');
+          try {
+            if (images && images.length) manager._deliverMessage(name, 'user', text, 'dm', '', null, null, images);
+            else manager._deliverMessage(name, 'user', text, 'dm');
+          } catch (e) {
+            log.error('remote', `dm to ${name} failed: ${e.message}`);
+            return { ok: false, error: `delivery failed: ${e.message}` };
+          }
           return { ok: true };
         },
         restartApp: () => {

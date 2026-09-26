@@ -94,8 +94,10 @@ PATH; a `name` key in the body is ignored; body `{text, images?}` with
 `data` of at most 5 MB decoded each, checked by `validateSeatImages` in
 seat-images.js — a bad array is a 400 with its error string, and an empty `text`
 is allowed when images are present; this route's body cap is `DM_MAX_BODY`
-(five 5 MB images in base64 plus 64 KB; 413 above it) where every other route
-stays at 64 KB; a stream seat gets the images inline, a pty seat gets each one
+(five 5 MB images in base64 plus 64 KB; 413 above it, delivered as a connection
+reset once the body is cut off, so encode without escaping `/` — Swift's
+`.withoutEscapingSlashes` — or five near-5 MB images overrun it) where every other
+route stays at 64 KB; a stream seat gets the images inline, a pty seat gets each one
 written to `<REGISTRY_DIR>/messages/<seat>/img-<ms>-<n>.<ext>` and one
 `Image #n: <path>` line per file appended to the delivered text; advertised as
 the unconditional `images` cap), `POST /api/restart` (app relaunch —
