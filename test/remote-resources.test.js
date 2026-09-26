@@ -1545,5 +1545,25 @@ test('remote-wiring send threads dm images onto _deliverMessage, and a text-only
     ['carol', 'user', 'plain', 'dm'],
   ]);
   deps.manager._deliverMessage = () => { throw new Error('ENOSPC: no space left on device'); };
-  assert.deepStrictEqual(opts.send('carol', 'look', [png]), { ok: false, error: 'delivery failed: ENOSPC: no space left on device' });
+  assert.deepStrictEqual(opts.send('carol', 'look', [png]), { ok: false, code: 500, error: 'delivery failed: ENOSPC: no space left on device' });
+});
+
+test('POST /api/sessions/:name/dm: a delivery that throws on the box answers 500, and only an unknown seat is 404', async () => {
+  const { deps } = makeDeps();
+  deps.manager.sessions.set('carol', { name: 'carol', type: 'claude', agentType: 'claude', workspaceId: 'ws-alpha' });
+  deps.manager._deliverMessage = () => { throw new Error('ENOSPC: no space left on device'); };
+  const fixture = subresourceFixture();
+  fixture.opts.send = captureOptions(deps).send;
+  const post = (port, p, body) => req(port, p, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
+  await withNode(fixture.opts, async (port) => {
+    const failed = await post(port, '/api/sessions/carol/dm', JSON.stringify({ text: 'hi' }));
+    assert.strictEqual(failed.status, 500);
+    const out = JSON.parse(failed.body);
+    assert.strictEqual(out.ok, false);
+    assert.strictEqual(out.code, 500);
+    assert.match(out.error, /delivery failed/);
+    const miss = await post(port, '/api/sessions/ghost/dm', JSON.stringify({ text: 'hi' }));
+    assert.strictEqual(miss.status, 404);
+    assert.deepStrictEqual(JSON.parse(miss.body), { ok: false, error: 'Session not found' });
+  });
 });

@@ -11,6 +11,14 @@ function seatImageFileName(stamp, n, mediaType) {
   return `img-${stamp}-${n}.${SEAT_IMAGE_EXT[mediaType] || 'png'}`;
 }
 
+const SEAT_IMAGE_TYPE_BY_EXT = Object.fromEntries(Object.entries(SEAT_IMAGE_EXT).map(([t, e]) => [e, t]));
+const SEAT_IMAGE_NAME_RE = new RegExp(`^img-\\d+-(\\d+)\\.(${Object.values(SEAT_IMAGE_EXT).join('|')})$`);
+
+function seatImageHead(fileName) {
+  const m = SEAT_IMAGE_NAME_RE.exec(String(fileName == null ? '' : fileName));
+  return m ? `Image #${Number(m[1])} (${SEAT_IMAGE_TYPE_BY_EXT[m[2]]})` : null;
+}
+
 function validateSeatImages(images) {
   if (images === undefined || images === null) return { ok: true, images: [] };
   if (!Array.isArray(images)) return { ok: false, error: 'images must be an array' };
@@ -28,6 +36,6 @@ function validateSeatImages(images) {
 }
 
 module.exports = {
-  validateSeatImages, seatImageFileName, SEAT_IMAGE_FILE_PATTERN,
+  validateSeatImages, seatImageFileName, seatImageHead, SEAT_IMAGE_FILE_PATTERN,
   SEAT_IMAGE_TYPES, SEAT_IMAGE_MAX, SEAT_IMAGE_MAX_BYTES, SEAT_IMAGE_EXT,
 };

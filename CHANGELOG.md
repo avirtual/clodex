@@ -12,6 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+- Phone access: image files a phone sent are listed by name in the seat's filed list after a relaunch instead of showing raw bytes, and a message the box could not write to disk answers 500 rather than 404, so a phone client does not mistake it for a missing seat.
 - Phone access: a message sent from the phone can carry up to five images (png, jpeg, gif, webp, 5 MB each); a streamed seat gets them inline, a terminal seat gets them as files with their paths in the message. The session list now says whether a seat is streamed or a terminal.
 - Transcript pane: while the agent is working, a pulsing row at the bottom of the pane shows the elapsed time and the CLI's own status line ("Brewing…", "Working"), and goes still with "Waiting for you" on a permission prompt; before, a running turn looked no different from an idle one.
 
