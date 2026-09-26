@@ -5,7 +5,7 @@ Codex draws its slash menu and typed-command completions ABOVE the composer (men
 
 ## isCodexComposerRow
 Codex runs in the alternate buffer in every captured state; its `/model` picker marks the selected row `› 1. …`, which is why a numbered `›` row is not a composer.
-Codex echoes every past prompt in its history as a `› text` row, so the composer is the `›` row with the `Context N% used` footer within three rows beneath it (Codex v0.157.1, 100x40).
+Codex echoes every past prompt in its history as a `› text` row, so the composer is the `›` row with a `Context N% used` or `? for shortcuts` footer within six rows beneath it; the boot screen has only `? for shortcuts` until the model loads, and a draft wrapped to four rows pushes the footer to i+5 (Codex v0.157.1, 100x40).
 
 ## isLabeledRuleRow
 Muse Code 1.4.0 puts a label in the rule above its composer (`── Voice input (⌥ + v to start) ───…`) and draws the slash menu below the composer, inside the closing rule.
