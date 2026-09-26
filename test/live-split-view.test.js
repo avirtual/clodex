@@ -1116,7 +1116,7 @@ test('rows painted while the view was raw are a new baseline, not command output
 test('a paint header whose command the file records after the settle is dropped on the next pull', async () => {
   let recorded = false;
   let rev = 0;
-  const pullTranscript = () => ({ ok: true, rev: (rev += 1), records: recorded ? [{ ...HEAD, ts: 1000 }, { id: 'c1', kind: 'command', ts: 5260, turn: 2, name: '/usage', args: '' }] : [{ ...HEAD, ts: 1000 }] });
+  const pullTranscript = () => ({ ok: true, rev: (rev += 1), records: recorded ? [{ ...HEAD, ts: 1000 }, { id: 'c1', kind: 'command', ts: 5240, turn: 2, name: '/usage', args: '' }] : [{ ...HEAD, ts: 1000 }] });
   const m = await mountPaint('muse', museScreen(['  Muse Code 1.4.0']), PAINT_ROWS, 40, { pullTranscript });
   try {
     m.view.composerSent('/usage');
@@ -1125,7 +1125,7 @@ test('a paint header whose command the file records after the settle is dropped 
     recorded = true;
     m.change('s1');
     await settle();
-    assert.deepStrictEqual(m.outputs(), [CARD.join('\n'), '❯ /usage']);
+    assert.deepStrictEqual(m.outputs(), ['❯ /usage', CARD.join('\n')]);
   } finally { m.done(); }
 });
 
@@ -1184,3 +1184,50 @@ for (const cli of ['codex', 'muse']) {
     } finally { m.done(); }
   });
 }
+
+test('the echo drop only strips the block\'s leading rows, so a later output line equal to the command stays', () => {
+  assert.strictEqual(blockText(['', '› /status', '/status', 'a', '/status'], ['/status']), 'a\n/status');
+});
+
+test('output painted before the file has a timed record survives the first prompt; a later file start prunes it', async () => {
+  let records = [];
+  let rev = 0;
+  const pullTranscript = () => ({ ok: true, rev: (rev += 1), records });
+  const m = await mountPaint('muse', museScreen(['  Muse Code 1.4.0']), PAINT_ROWS, 40, { pullTranscript });
+  try {
+    m.view.composerSent('/status');
+    m.paintNext(museScreen(['  Muse Code 1.4.0', '', ...CARD]));
+    assert.deepStrictEqual(m.outputs(), ['❯ /status', CARD.join('\n')]);
+    records = [{ ...HEAD, ts: 9000 }];
+    m.change('s1');
+    await settle();
+    assert.deepStrictEqual(m.outputs(), ['❯ /status', CARD.join('\n')]);
+    records = [{ ...HEAD, id: 'p2', ts: 9500 }];
+    m.change('s1');
+    await settle();
+    assert.deepStrictEqual(m.outputs(), []);
+  } finally { m.done(); }
+});
+
+test('a codex turn with a follow-up queued under its status row is still busy', async () => {
+  const m = await mountPaint('codex', codexScreen(['  banner 1', '• Working (1s • esc to interrupt)', '', '  ↳ queued: and then run the tests', '    ⌥ + ↑ edit']));
+  try {
+    m.paintNext(codexScreen(['  banner 1', ...CARD, '• Working (2s • esc to interrupt)', '', '  ↳ queued: and then run the tests', '    ⌥ + ↑ edit']));
+    assert.deepStrictEqual(m.outputs(), []);
+  } finally { m.done(); }
+});
+
+test('a picker that hides the composer clears the pending tag, so a later block is untagged', async () => {
+  const m = await mountPaint('codex', codexScreen(['  banner 1']));
+  try {
+    m.view.composerSent('/model');
+    m.view.setRaw(true);
+    m.view.setRaw(false);
+    await settle();
+    m.tick(250);
+    m.write();
+    m.write();
+    m.paintNext(codexScreen(['  banner 1', ...CARD]));
+    assert.deepStrictEqual(m.outputs(), [CARD.join('\n')]);
+  } finally { m.done(); }
+});

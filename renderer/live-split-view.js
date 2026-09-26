@@ -91,6 +91,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   let paintTimer = null;
   let sent = null;
   let tag = null;
+  let fileHead = null;
   const bandKey = (b) => (b ? `${b.top}:${b.bottom}` : '');
 
   function stickToBottom() {
@@ -129,7 +130,8 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
 
   function shownExtras() {
     const first = fileRecords.find((r) => typeof r.ts === 'number');
-    if (first) for (let i = extraRecords.length - 1; i >= 0; i--) if (extraRecords[i].ts < first.ts) extraRecords.splice(i, 1);
+    if (first && fileHead != null && first.ts > fileHead) for (let i = extraRecords.length - 1; i >= 0; i--) if (extraRecords[i].ts < first.ts) extraRecords.splice(i, 1);
+    if (first) fileHead = first.ts;
     return extraRecords.filter((x) => x.kind !== 'command' || !fileRecords.some((f) => f.kind === 'command' && typeof f.ts === 'number' && Math.abs(f.ts - x.ts) <= PAINT_TAG_MS && commandText(f) === commandText(x)));
   }
 
@@ -179,6 +181,8 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     if (!PAINT_PLATFORMS.has(platform())) return;
     if (!rows || state.mode !== 'split' || !composerVisible()) {
       delta.reset();
+      tag = null;
+      sent = null;
       return;
     }
     if (!measured || measured.mode !== 'split') return;

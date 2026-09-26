@@ -2,7 +2,7 @@
 
 const PAINT_BLOCK_CAP = 200;
 const BUSY_ROW = /esc to interrupt/u;
-const BUSY_SPAN = 4;
+const BUSY_SPAN = 8;
 
 const isBlank = (row) => !/\S/u.test(row || '');
 const norm = (row) => String(row == null ? '' : row).trimEnd();
