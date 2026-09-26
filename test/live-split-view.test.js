@@ -335,10 +335,10 @@ test('a seat with no platform getter measures as claude, so a codex composer sta
   } finally { m.view.dispose(); m.restore(); }
 });
 
-async function mountSplit(opts) {
+async function mountSplit(opts, extra = {}) {
   let t = 5000;
   const changes = [];
-  const m = mountView({ now: () => t, onChange: (st) => changes.push({ ...st }) }, opts);
+  const m = mountView({ now: () => t, onChange: (st) => changes.push({ ...st }), ...extra }, opts);
   m.show(ANCHORED);
   m.write();
   await settle();
@@ -562,4 +562,90 @@ test('setRaw(true) drops a split view to full at once and stops pulling; setRaw(
     assert.strictEqual(m.view.state().mode, 'split');
     assert.ok(m.calls.pull > pulls);
   } finally { m.view.dispose(); m.restore(); }
+});
+
+const COMPOSER_PX = 60;
+
+function fakeComposer() {
+  const c = { hidden: true, offsetHeight: COMPOSER_PX, focused: 0 };
+  c.focus = () => { c.focused += 1; global.document.activeElement = c; };
+  return c;
+}
+
+test('a composer in split hides the whole terminal, shows the composer and sizes the pane above it', async () => {
+  const composerEl = fakeComposer();
+  const m = await mountSplit({ geometry: true }, { composerEl });
+  try {
+    const el = m.terminal.element;
+    assert.strictEqual(el.style.visibility, 'hidden');
+    assert.strictEqual(composerEl.hidden, false);
+    assert.strictEqual(m.view.composerVisible(), true);
+    assert.strictEqual(m.pane.hidden, false);
+    assert.strictEqual(m.pane.clientHeight, WRAPPER_PX - COMPOSER_PX);
+    assert.deepStrictEqual([el.style.transform, el.style.clipPath], ['', '']);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a composer in full stays hidden and the terminal visible', async () => {
+  const composerEl = fakeComposer();
+  const m = await mountSplit({ geometry: true }, { composerEl });
+  try {
+    m.view.setRaw(true);
+    assert.strictEqual(m.view.state().mode, 'full');
+    assert.strictEqual(composerEl.hidden, true);
+    assert.strictEqual(m.terminal.element.style.visibility, '');
+    assert.strictEqual(m.view.composerVisible(), false);
+    assert.strictEqual(m.pane.hidden, true);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a transcript render while the composer is shown still sticks the pane to the bottom', async () => {
+  const composerEl = fakeComposer();
+  const m = await mountSplit({ geometry: true }, { composerEl });
+  try {
+    m.pane.scrollHeight = 1200;
+    m.change('s1');
+    await settle();
+    assert.strictEqual(m.view.composerVisible(), true);
+    assert.strictEqual(m.pane.scrollTop, bottomOf(m.pane));
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('entering split moves terminal focus to the composer; collapsing to full hands it back', async () => {
+  let t = 5000;
+  const composerEl = fakeComposer();
+  const m = mountView({ now: () => t, composerEl }, { geometry: true });
+  try {
+    let termFocus = 0;
+    m.terminal.textarea = { tag: 'xterm-helper' };
+    m.terminal.focus = () => { termFocus += 1; global.document.activeElement = m.terminal.textarea; };
+    global.document.activeElement = m.terminal.textarea;
+    m.show(ANCHORED);
+    m.write();
+    await settle();
+    t += 250;
+    m.write();
+    assert.strictEqual(m.view.state().mode, 'split');
+    assert.strictEqual(composerEl.focused, 1);
+    m.view.setRaw(true);
+    assert.strictEqual(termFocus, 1);
+    assert.strictEqual(global.document.activeElement, m.terminal.textarea);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a click in the pane focuses the composer while it is shown', async () => {
+  const composerEl = fakeComposer();
+  const m = await mountSplit({ geometry: true }, { composerEl });
+  const prevWindow = global.window;
+  global.window = { getSelection: () => ({ isCollapsed: true }) };
+  try {
+    let termFocus = 0;
+    m.terminal.focus = () => { termFocus += 1; };
+    m.pane.handlers.mouseup();
+    assert.deepStrictEqual([composerEl.focused, termFocus], [1, 0]);
+    m.view.setRaw(true);
+    assert.deepStrictEqual([composerEl.focused, termFocus], [1, 1]);
+    m.pane.handlers.mouseup();
+    assert.deepStrictEqual([composerEl.focused, termFocus], [1, 2]);
+  } finally { global.window = prevWindow; m.view.dispose(); m.restore(); }
 });

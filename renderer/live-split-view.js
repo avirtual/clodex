@@ -16,7 +16,7 @@ function renderTranscript(doc, paneEl, records, ctx = {}) {
   rows.render(records);
 }
 
-function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null }) {
+function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null }) {
   const paneEl = document.createElement('div');
   paneEl.className = 'transcript-pane';
   paneEl.hidden = true;
@@ -75,6 +75,17 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     return rows;
   }
 
+  function showComposer(on) {
+    const el = terminal.element;
+    const active = typeof document !== 'undefined' ? document.activeElement : null;
+    const hadTerminalFocus = !!active && active === terminal.textarea;
+    const hadComposerFocus = !!active && active === composerEl;
+    el.style.visibility = on ? 'hidden' : '';
+    composerEl.hidden = !on;
+    if (on && hadTerminalFocus) composerEl.focus();
+    else if (!on && hadComposerFocus) terminal.focus();
+  }
+
   function layout() {
     const el = terminal.element;
     if (!el) return;
@@ -85,11 +96,23 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       el.style.clipPath = '';
       wrapperEl.classList.remove('live-split');
       paneEl.hidden = true;
+      if (composerEl) showComposer(false);
       return;
     }
     const cs = getComputedStyle(wrapperEl);
     const padTop = parseFloat(cs.paddingTop) || 0;
     const padBottom = parseFloat(cs.paddingBottom) || 0;
+    if (composerEl) {
+      el.style.transform = '';
+      el.style.clipPath = '';
+      showComposer(true);
+      const composerTop = wrapperEl.clientHeight - padBottom - composerEl.offsetHeight;
+      wrapperEl.classList.add('live-split');
+      paneEl.style.height = `${Math.max(0, Math.round(composerTop - padTop))}px`;
+      paneEl.hidden = false;
+      stickToBottom();
+      return;
+    }
     const bottom = Math.min(state.bottom, terminal.rows - 1);
     const stripPx = (bottom - state.top + 1) * rowPx;
     const stripTop = wrapperEl.clientHeight - padBottom - stripPx;
@@ -150,9 +173,11 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   }) : null;
   const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => layout()) : null;
   if (ro) ro.observe(wrapperEl);
+  if (ro && composerEl) ro.observe(composerEl);
+  const composerVisible = () => !!composerEl && !composerEl.hidden;
   paneEl.addEventListener('mouseup', () => {
     const sel = window.getSelection();
-    if (!sel || sel.isCollapsed) terminal.focus();
+    if (!sel || sel.isCollapsed) (composerVisible() ? composerEl : terminal).focus();
   });
 
   return {
@@ -164,6 +189,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     },
     raw: () => raw,
     state: () => state,
+    composerVisible,
     dispose() {
       disposed = true;
       clearTimeout(wakeTimer);
