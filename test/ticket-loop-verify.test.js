@@ -171,6 +171,7 @@ const SUITE_STUBS = {
   // not start, a node crash. NOTHING was verified, so this escalates: the hand
   // cannot fix a run that never happened.
   crash: 'console.error("SyntaxError: Unexpected end of input");\nprocess.exit(1);\n',
+  hungfile: 'console.log("..");\nconsole.error("run-tests: TIMEOUT after 20m in test/wedged.test.js");\nprocess.exit(1);\n',
   // Ran, exited 0, but never printed a summary. The false green this guards.
   silent: 'process.exit(0);\n',
   totalsOnStderrOnly: 'console.error("TOTALS: 22 pass, 0 fail, 22 tests");\nprocess.exit(0);\n',
@@ -3892,6 +3893,22 @@ test('t375: a run that produced no TOTALS carries its capture, not just a last l
     'the error quotes the stdout side only — this fixture wrote its one line to stderr');
   assert.match(r.output, /SyntaxError: Unexpected end of input/,
     'the captured text comes out whole, for a caller that can preserve it');
+});
+
+test('t1247: a runner TIMEOUT on stderr names the hung file in the escalation', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'hungfile' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.esc().length, 1, 'ENTER: the no-TOTALS run escalated');
+  assert.match(f.esc()[0].body, /no "TOTALS: <n> pass, <n> fail, <n> tests" line/, 'ENTER: via the missing-summary path');
+  assert.match(f.esc()[0].body, /run-tests: TIMEOUT after 20m in test\/wedged\.test\.js/,
+    'the hung file named on stderr reaches the escalation, not only the preserved output');
+  assert.doesNotMatch(f.esc()[0].body, /last stdout line: \.\./, 'the stderr TIMEOUT line is preferred over the last stdout line');
 });
 
 test('t375: a TIMED-OUT run carries its capture too', async () => {

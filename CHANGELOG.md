@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Test runner: the run-tests command's ceiling now outlasts a full lock wait plus the runner's own ceiling, so a queued run is never killed mid-suite with its digest lost; a hung test file is named in the escalation itself.
+
 - Ticket loop: a verify suite that hangs is now killed after the test runner's own ceiling, so the report names the hung file instead of a bare wedge.
 - Transcript pane: after a /clear the pane now switches to the new transcript at once instead of showing the old one until the next change.
 - Test runner: a test that never finishes now fails by name within two minutes; the session-manager suite's hang under load is fixed.
