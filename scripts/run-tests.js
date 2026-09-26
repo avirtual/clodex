@@ -284,9 +284,15 @@ const runTimeoutMs = Number(process.env.CLODEX_TEST_RUN_TIMEOUT_MS) > 0
   ? Number(process.env.CLODEX_TEST_RUN_TIMEOUT_MS)
   : RUN_TIMEOUT_MS;
 
+const PER_TEST_MS = 120000;
+const perTestMs = Number(process.env.CLODEX_TEST_PER_TEST_MS) > 0
+  ? Number(process.env.CLODEX_TEST_PER_TEST_MS)
+  : PER_TEST_MS;
+
 const runStart = Date.now();
 const run = spawnSync(process.execPath, [
   '--test',
+  `--test-timeout=${perTestMs}`,
   `--test-reporter=${reporter}`, '--test-reporter-destination=stdout',
   '--test-reporter=tap', `--test-reporter-destination=${tapFile}`,
   ...passthrough,
@@ -317,7 +323,8 @@ const counter = (name) => {
 };
 const tests = counter('tests');
 const pass = counter('pass');
-const fail = counter('fail');
+const failed = counter('fail');
+const fail = failed === null ? null : failed + (counter('cancelled') || 0);
 if (tests === null || pass === null || fail === null) {
   die('the run produced no summary — the suite did not complete');
 }

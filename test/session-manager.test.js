@@ -14779,7 +14779,7 @@ test('t1103: the boot replay pass waits for a queue that never empties only unti
   t.mock.timers.reset();
 });
 
-test('t771: pty output at fire time RE-ARMS the nudge, which lands once the seat goes quiet', async () => {
+test('t771: pty output at fire time RE-ARMS the nudge, which lands once the seat goes quiet', async (t) => {
   // Output means the resume render is still painting. An Enter into that is the same
   // race one layer on, so the timer re-arms for BOOT_NUDGE_QUIET_MS rather than
   // firing. The stamp is written by the production onData handler, so feeding real
@@ -14793,14 +14793,14 @@ test('t771: pty output at fire time RE-ARMS the nudge, which lands once the seat
   // after a second poll would race that window.
   const p = mkNudgeProbe({ bootNudgeMs: 30 });
   let paint = null;
-  const { s, writes } = await drainOnly(p, 'nudge-d', () => {
+  const { s, writes } = await drainOnlyMocked(t, p, 'nudge-d', () => {
     paint = setInterval(() => p.fireData('.'), 5);
   });
-  await new Promise((r) => setTimeout(r, 120));  // several fire windows, all re-armed
+  await tickFor(t, 120);                         // several fire windows, all re-armed
   assert.deepStrictEqual(writes, DRAINED, 'held while output flowed — no Enter into a live repaint');
   assert.ok(s._bootNudgeTimer, 're-armed rather than spent');
   clearInterval(paint);                          // the seat finally goes quiet
-  await waitFor(() => writes.length >= 4);       // and only now is the fire observed
+  await tickUntil(t, () => writes.length >= 4);  // and only now is the fire observed
   assert.deepStrictEqual(writes, [...DRAINED, '\r'], 'the nudge lands on the quiet seat');
 });
 
