@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Enter in the terminal seat's message box now submits the prompt; it was being inserted as a newline into the CLI's input.
 - Terminal seats with the transcript pane now use Clodex's own message box instead of the CLI's input row while the CLI is waiting for input; Enter sends, Shift+Enter adds a line, Esc interrupts. Pickers and dialogs still show the terminal.
 - Typing / in a headless seat's composer opens a slash menu: Claude seats list the CLI's own commands, Codex and Muse seats offer compact, clear and stop as native controls.
 - A Codex terminal seat links only a transcript started after you first typed into it, so two seats in the same folder no longer pick up each other's conversation.

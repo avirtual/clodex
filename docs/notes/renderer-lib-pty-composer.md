@@ -1,4 +1,4 @@
 # renderer/lib/pty-composer.js
 
-## PTY_NEWLINE
-Measured on Claude Code v2.1.283 in tmux: `ESC CR` (`\x1b\r`) inserts a literal newline in the prompt, and one write of `reply ok\x1b\ronly\r` submitted a two-line prompt, so the chord survives inside a single burst.
+## ptyComposerWrites
+Measured on Claude Code v2.1.283 through node-pty on a bare pty (no tmux): writing `ESC[200~reply with exactly the word PONG ESC[201~` then `\r` as a separate write submitted one message (answer `PONG`); a paste carrying `first line is alpha\nsecond line is beta; …` then a separate `\r` arrived as one two-line prompt and was submitted (answer `alpha-beta`). A `\r` inside the same burst as the text is taken as pasted content, not Enter.
