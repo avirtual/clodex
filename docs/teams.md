@@ -385,12 +385,12 @@ hand verifying its own branch holds the lock for the whole run, so an unrelated
 ticket's merge can arrive to find the tree busy.
 
 That collision is transient and the loop treats it as such — it waits and
-retries, up to ten times and never more than ten minutes, then escalates with a
+retries every 30 seconds for up to twenty minutes, then escalates with a
 manual `git merge --no-ff` command. It does not hold the merge queue while it
 waits: other tickets merge past a waiting one. Only this one refusal retries; a
 dirty tree, a moved branch and a red suite still stop on the first try, because
 each of those is a state a human has to look at.
-A merge still waiting when the app relaunches is requeued at boot from its `mergeWaiting: suite-in-flight` stamp, with a fresh ten-minute cap.
+A merge still waiting when the app relaunches is requeued at boot from its `mergeWaiting: suite-in-flight` stamp, with a fresh twenty-minute cap.
 An `[agent:reboot]` holds while a merge or its post-merge suite is in flight, like an exec run, and the held line names the ticket.
 
 The rule that follows, for anyone reading a refusal: **a lock collision is not a

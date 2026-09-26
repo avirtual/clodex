@@ -2244,11 +2244,9 @@ function clearLock(repo) {
 // the second, so replacing either would step over the code under test.
 function captureRetries(f) {
   const scheduled = [];
-  const delays = [];
-  f.m._scheduleMergeRetry = (fn, ms) => { scheduled.push({ fn, ms }); delays.push(ms); return null; };
+  f.m._scheduleMergeRetry = (fn, ms) => { scheduled.push({ fn, ms }); return null; };
   return {
     scheduled,
-    delays,
     // Runs the pending retries in order, awaiting the merge chain each time so
     // the re-entry really completes before the next one is fired. Bounded: a
     // retry loop that never terminates is the failure this ticket's whole
@@ -2305,10 +2303,10 @@ test('a merge WAITS rather than dying when a LIVE pid holds the root suite lock'
 });
 
 // ── the deferred merge's trace on the board ────────────────────────────────
-// A deferred merge holds its whole retry state in ONE unref'd setTimeout for up
-// to ten minutes. loopStep is already deleted by the time a merge runs, so
+// A deferred merge holds its whole retry state in ONE unref'd setTimeout.
+// loopStep is already deleted by the time a merge runs, so
 // ticketInFlight is false and the stall sweep never revisits the ticket — a
-// crash or an [agent:reboot] in that window would drop the merge with nothing on
+// crash or an [agent:reboot] while it waits would drop the merge with nothing on
 // the record and no DM, which is strictly worse than the terminal refusal this
 // ticket replaced. `mergeWaiting` is that record, and it is a SEPARATE field
 // from mergeError on purpose: mergeError reads as "needs a human", and a merge
@@ -2342,7 +2340,7 @@ test('t1234: a merge left WAITING on a suite is requeued once at boot, with a fr
 
   assert.strictEqual(calls.length, 1, 'the dropped retry timer is replaced by exactly one requeue');
   assert.strictEqual(calls[0].ticketId, 't1');
-  assert.deepStrictEqual(calls[0].retry, { attempt: 0, since: 5_000_000 }, 'the ten-minute cap restarts at boot');
+  assert.deepStrictEqual(calls[0].retry, { attempt: 0, since: 5_000_000 }, 'the wait cap restarts at boot');
   assert.deepStrictEqual(calls[0].landedOn, { verdict: 'ACCEPT', mustFix: null, reviewRound: 1, reworkRound: 0 });
   assert.match(calls[0].verdictText, /VERDICT: ACCEPT/);
   assert.strictEqual(f.logs.filter((l) => /boot: requeued the auto-merge for t1/.test(l.msg)).length, 1, 'one log line per requeued ticket');
@@ -2642,7 +2640,7 @@ test('a ticket reopened during the wait leaves no WAITING stamp behind either', 
 });
 
 // ── t538: the lead accepting during the wait ENDS the merge ────────────────
-// The defer window is up to ten minutes wide and the board advertises it
+// The defer window is wide and the board advertises it
 // (`(merge waiting: suite-in-flight)`), so a lead landing the branch by hand and
 // accepting inside it is an ordinary move, not a race someone has to contrive.
 // `state` cannot see that accept — `finish()` leaves it at `done` — and accept
@@ -2714,8 +2712,8 @@ test('t538: an accept that closed the ticket out abandons a merge still waiting 
 // The subject above drains the retry before it looks, so it passes on a tree
 // where only `_autoMergeTicket`'s finally ever clears the field — the clear it
 // observes can be the retry's. What it cannot see is the window BETWEEN the
-// accept returning and the retry waking: 30s per attempt, ten minutes across
-// them, with the whole retry state in one unref'd timer closure. A crash or an
+// accept returning and the retry waking: 30s per attempt, with the whole retry
+// state in one unref'd timer closure. A crash or an
 // [agent:reboot] in there freezes the stamp on the row for good, because
 // nothing re-examines the field at boot.
 //
@@ -3002,9 +3000,11 @@ test('a merge meeting a running suite waits at least twenty minutes before it es
 
   await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
   let ran = 0;
+  let total = 0;
   while (r.scheduled.length && ran < 100) {
     ran += 1;
     const next = r.scheduled.shift();
+    total += next.ms;
     now += next.ms;
     next.fn();
     await f.m._mergeChain;
@@ -3014,7 +3014,6 @@ test('a merge meeting a running suite waits at least twenty minutes before it es
   assert.strictEqual(esc.length, 1, 'ENTER: the retries ran out and escalated');
   assert.match(esc[0].body, /suite-in-flight/);
   assert.strictEqual(f.one().mergeError, 'suite-in-flight');
-  const total = r.delays.reduce((sum, ms) => sum + ms, 0);
   assert.ok(total >= 1_200_000,
     `the scheduled wait before escalating is ${total}ms, shorter than one suite at the runner's twenty-minute ceiling`);
 });
@@ -3183,7 +3182,7 @@ test('a lead reject landing INSIDE the merge, after the gates have passed, still
 test('t542: a lead ACCEPT landing inside the merge, after the gates have passed, leaves no MERGE FAILED behind', async () => {
   // The t538 defect at its OTHER entry, and the one `state` cannot see. The top
   // gate's `closedOut` check covers the queue→start gap and the deferred retry;
-  // this covers the gates→merge gap, which is sub-second rather than ten minutes
+  // this covers the gates→merge gap, which is sub-second
   // and reachable on a FIRST run.
   //
   // Interleaved at `currentBranch` — the LAST await before the merge — through

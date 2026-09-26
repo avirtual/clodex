@@ -1963,8 +1963,8 @@ function createTicketMethods(deps, shared) {
     // Why it needs one at all: by the time a merge runs, _landVerdictOnTicket has
     // already deleted `loopStep`, so ticketInFlight is false and the stall sweep
     // never looks at this ticket again. A deferred merge holds its entire retry
-    // state in ONE unref'd setTimeout closure — a crash in
-    // that window drops the merge with nothing on the record and no DM.
+    // state in ONE unref'd setTimeout closure — a crash while it waits drops
+    // the merge with nothing on the record and no DM.
     //
     // Why a SEPARATE field: mergeError reads as "this ticket needs a human". A
     // ticket waiting its turn does not, and stamping it there would send the lead
@@ -2185,9 +2185,9 @@ function createTicketMethods(deps, shared) {
             // its turn does not. The exhausted arm below stamps that one.
             //
             // But it IS stamped as WAITING, because the whole retry state lives
-            // in the timer closure above and a crash or a reboot would
-            // otherwise drop the merge with nothing on the board
-            // and no DM. `deferred` is what exempts this arm from the finally's
+            // in the timer closure above and a crash or a reboot would otherwise
+            // drop the merge with nothing on the board and no DM. `deferred` is
+            // what exempts this arm from the finally's
             // clear — set BEFORE the stamp so an exception between the two
             // cannot leave the field set with the flag false.
             //
