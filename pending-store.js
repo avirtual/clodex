@@ -184,6 +184,20 @@ function peekPending(root, name, { max = 5, snipLen = 60 } = {}) {
 // parked as a POINTER to a file in ~/.clodex/messages/, and age-based collection
 // would delete that file out from under the still-parked pointer. Returning raw
 // text lets the GC see which files are still referenced.
+function parkedTexts(root, name) {
+  let files;
+  try { files = fs.readdirSync(agentDir(root, name)); } catch { return []; }
+  const out = [];
+  for (const f of files) {
+    if (!f.endsWith('.json') || f.startsWith('.')) continue;
+    try {
+      const obj = JSON.parse(fs.readFileSync(path.join(agentDir(root, name), f), 'utf8'));
+      if (obj && typeof obj.text === 'string') out.push(obj.text);
+    } catch {}
+  }
+  return out;
+}
+
 function allParkedTexts(root) {
   const out = [];
   let names;
@@ -294,4 +308,4 @@ function claimParkedByKey(root, name, key) {
   return { ids, claimed };
 }
 
-module.exports = { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir };
+module.exports = { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir };

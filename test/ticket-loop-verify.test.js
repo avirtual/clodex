@@ -309,6 +309,7 @@ function mkLoop({
   // leaves BYTES ON DISK and then throws — the ENOSPC/killed-mid-write shape —
   // which no real filesystem can be talked into from here on demand.
   wrapFs = (f) => f,
+  parkedTexts = null,
 } = {}) {
   stubSuite(repo, suite);
   const home = mkTmpRoot('clodex-loop-');
@@ -413,6 +414,7 @@ function mkLoop({
     // rather than a fixture-only one; only the hang subject overrides it.
     ...(suiteTimeoutMs == null ? {} : { ticketSuiteTimeoutMs: suiteTimeoutMs }),
     countPending: require('../pending-store').countPending,
+    ...(parkedTexts ? { parkedTexts } : {}),
     isDraftOpen: require('../proxy-util').isDraftOpen,
     drainPending: require('../pending-store').drainPending,
     hasActivePending: require('../pending-store').hasActivePending,
@@ -5628,4 +5630,29 @@ test('t1235: a review-spawn escalation that PARKED keeps loopStep; one that was 
   assert.strictEqual(run('injected'), undefined, 'an injected one releases the hold as before');
   assert.ok(f.gated.every((g) => g.opts && g.opts.parkBehindQueue === true),
     'the escalation asks to park behind a queued unit rather than be written into the turn that unit starts');
+});
+
+test('t1240: a parked escalation releases loopStep once the lead has drained it, not before', () => {
+  const repo = mkRepo();
+  let still = [];
+  const f = mkLoop({ repo, parkedTexts: () => still });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'review', report: 'r', reportedBy: 'team-hand' }]);
+  f.m._gatedDeliver = (target, sender, body, urgent, tag, onWrite) => {
+    if (typeof onWrite === 'function') onWrite('parked');
+    return { queued: true };
+  };
+  f.m._escalateTicket(f.team, 't1', 'review: spawn', 'the reviewer seat did not spawn', 'spawning a reviewer seat');
+  assert.strictEqual(f.one().loopStep, 'review', 'ENTER: the park keeps the hold, as t1235 pins');
+  still = ['[agent:from ticket-loop] [ticket t1 ESCALATED] the loop stopped at: review: spawn'];
+  f.m._emitActivity('lead', 'thinking');
+  assert.strictEqual(f.one().loopStep, 'review',
+    'a turn the lead starts while the escalation is still parked has not seen it, so the hold stays');
+  still = [];
+  f.m._emitActivity('lead', 'idle');
+  f.m._emitActivity('lead', 'thinking');
+  assert.strictEqual(f.one().loopStep, undefined,
+    'once the parked escalation is gone from the lead\'s mailbox the lead has it, and the hold is released '
+    + 'the way an injected escalation releases it, so the stall sweep does not nudge about a ticket already seen');
+  assert.strictEqual(f.logs.filter((l) => /t1 parked escalation drained by lead/.test(l.msg)).length, 1,
+    'one log line says so');
 });

@@ -694,6 +694,7 @@ function createSessionManager(deps) {
     drainPending,
     countPending,
     peekPending,
+    parkedTexts,
     enqueueOutbox,
     ensureDir,
     execBodyCap,
@@ -879,6 +880,7 @@ function createSessionManager(deps) {
   // 0 a check races the delivery it is meant to judge and reads a latch the
   // production ordering never produces. 90s in production.
   const SPEC_CONFIRM_MS = Number.isFinite(deps.specConfirmMs) ? deps.specConfirmMs : 90 * 1000;
+  const TURN_START_WINDOW_MS = Number.isFinite(deps.turnStartWindowMs) ? deps.turnStartWindowMs : 5000;
 
   // How many outstanding dm units one seat's latch remembers. A bound, not a
   // tuning: the latch reports rather than acts, so the only cost of a deep FIFO
@@ -5471,6 +5473,8 @@ function createSessionManager(deps) {
         if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
       }
       if (s && state !== 'idle') s.lastMainStop = null;
+      if (s && state !== 'idle') s._awaitingTurnSince = null;
+      if (s && state !== 'idle' && s._parkedEscalations && s._parkedEscalations.size) this._releaseDrainedEscalations(s);
       // A turn started — but a turn confirms THIS write only if this write caused
       // it, and on a fresh seat it frequently did not: a spec injected at spawn+1s
       // and wiped by the boot re-render, an unrelated roster park draining 12s
@@ -9664,11 +9668,33 @@ function createSessionManager(deps) {
       return Date.now() - (session.lastVoiceDraftTs || 0) < INJECT_VOICE_DRAFT_STALE_MS;
     }
 
+    _releaseDrainedEscalations(s) {
+      if (typeof parkedTexts !== 'function') return;
+      const texts = parkedTexts(PENDING_DIR, s.name);
+      for (const [ticketId, { team, step }] of Array.from(s._parkedEscalations)) {
+        const tag = `[ticket ${ticketId} ESCALATED]`;
+        if (texts.some((t) => t.includes(tag))) continue;
+        s._parkedEscalations.delete(ticketId);
+        let rec = null;
+        try { rec = ticketsStore.load(team.root).find((t) => t.id === ticketId) || null; } catch {}
+        if (!rec || rec.loopStep !== step) continue;
+        this._setLoopStep(team, ticketId, null);
+        log.info('ticket', `ticket ${ticketId} parked escalation drained by ${s.name} — loopStep ${step} released`);
+      }
+    }
+
+    _turnStartPending(session) {
+      if (!session || session.agentType !== 'claude' || session.io === 'stream') return false;
+      const since = session._awaitingTurnSince;
+      return typeof since === 'number' && Date.now() - since < TURN_START_WINDOW_MS;
+    }
+
     _parkDivertFor(session, id = null, key = null) {
       if (!session || session.agentType !== 'claude') return null;
       return (text) => {
         if (session._dead) return false;
-        if (!this._anyDraftOpen(session)) return false;
+        const churn = this._turnStartPending(session);
+        if (!churn && !this._anyDraftOpen(session)) return false;
         try {
           parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), id, false, this._bornFor(session.name), key);
         } catch (e) {
@@ -9676,7 +9702,7 @@ function createSessionManager(deps) {
           return false;
         }
         this._armParkCap(session);
-        const why = isDraftOpen(session) ? 'draft open' : 'dictated draft open';
+        const why = churn ? 'previous unit\'s turn not started yet' : isDraftOpen(session) ? 'draft open' : 'dictated draft open';
         log.info('inject', `diverted to park: ${why} (${session.name})`);
         return true;
       };
@@ -9726,7 +9752,10 @@ function createSessionManager(deps) {
             }
           },
           bracketedPaste: () => !!session._pasteModeOn,
-          onSubmitted: (_t, meta) => { session.lastSubmitInjected = !(meta && meta.human); },
+          onSubmitted: (_t, meta) => {
+            session.lastSubmitInjected = !(meta && meta.human);
+            if (isClaude) session._awaitingTurnSince = Date.now();
+          },
           ready: isClaude ? () => !!session._bootReadySeen && Date.now() - (session._bootReadyAt || 0) >= BOOT_DRAIN_SETTLE_MS : undefined,
           readyMaxWaitMs: INJECT_BOOT_MAXWAIT,
           onReadyCapFire: isClaude ? () => {

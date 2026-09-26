@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Messages: a second message arriving at a seat in the moment its previous one is being submitted is no longer lost in the turn start; it is delivered with that turn, for every kind of message.
 - Agent prompt: the `[agent:remind …]` row now says its text is a greedy body closed by `[agent:end]`, so a reminder no longer swallows the prose written after it.
 - Transcript pane: an image pasted into a prompt shows as a small inline thumbnail (click to see it full width) instead of the bare [Image #n] marker; images over 1 MB show a size chip.
 - Ticket loop: a merge requeued at boot waits for the lead's seat before it can escalate, a merge that landed before the relaunch no longer shows as still waiting, and a reject that lands while the merge is being deferred is not lost across a relaunch.
