@@ -8767,8 +8767,11 @@ body.web-frontend #sidebar-header {
   overflow: hidden;
 }
 .seat-slash-item.active {
-  background: var(--accent, var(--border));
-  color: var(--bg);
+  background: var(--surface-selected);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.seat-slash-item.active .seat-slash-name {
+  font-weight: 600;
 }
 .seat-slash-name {
   font-family: var(--font-mono, monospace);
