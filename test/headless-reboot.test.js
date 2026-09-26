@@ -263,8 +263,14 @@ for (const file of ['main.js', 'headless-main.js']) {
       `${file}'s deferred seam must reach the shared sustained-idle waiter, not a private timer`);
     assert.match(src, /lastInputAt:\s*\(\)\s*=>\s*(engine\.)?manager\.lastOperatorInputAt\(\)/,
       `${file} must hand the waiter the operator's last keystroke, or a reboot drops the windows mid-sentence`);
+    assert.match(src, /inFlightRuns:\s*\(\)\s*=>\s*(engine\.)?manager\.inFlightRestartHolds\(\)/,
+      `${file} must hand the waiter the merge-aware hold list; restart-waiter turns a missing method into [] silently`);
   });
 }
+
+test('the manager still defines the inFlightRestartHolds both hosts call', () => {
+  assert.match(seamNames('team-tickets.js'), /^\s{4}inFlightRestartHolds\(\)\s*\{/m);
+});
 
 test('both hosts defer the agent restart; only headless gates it on a declared supervisor', () => {
   const desktop = seamNames('main.js');
