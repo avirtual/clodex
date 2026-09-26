@@ -310,6 +310,7 @@ for (const [name, rows, want] of [
   ['a composer with its Context footer two rows down', ['› Ask Codex', '', '  Context 0% used · GPT', '  ? for shortcuts'], 0],
   ['a history prompt row followed by six rows of reply', ['› reply pong', '', '• pong', '', '  done', '', '  more', '  Context 0% used'], -1],
   ['a composer whose footer sits five rows down', ['› the quick', '  brown fox', '  jumps over', '  the dog', '', '  Context 0% used'], 0],
+  ['a history prompt row whose window reaches the composer footer below', ['› reply pong', '• pong', '', '› Ask Codex', '', '  Context 0% used'], 3],
   ['a picker row with the footer beneath it', ['› 1. GPT-6-Astra (current)', '  Context 0% used'], -1],
 ]) {
   test(`findAnchor on Codex: ${name}`, () => {

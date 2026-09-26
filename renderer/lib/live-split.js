@@ -34,7 +34,11 @@ function isLabeledRuleRow(row, cols) {
 function isCodexComposerRow(rows, i) {
   const row = rows[i];
   if (typeof row !== 'string' || !CODEX_COMPOSER.test(row) || CODEX_PICKER_ROW.test(row)) return false;
-  return rows.slice(i + 1, i + 7).some((r) => typeof r === 'string' && CODEX_STATUS_ROW.test(r));
+  for (const r of rows.slice(i + 1, i + 7)) {
+    if (typeof r !== 'string' || CODEX_COMPOSER.test(r)) return false;
+    if (CODEX_STATUS_ROW.test(r)) return true;
+  }
+  return false;
 }
 
 function codexStripTop(rows, i) {
