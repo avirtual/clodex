@@ -988,3 +988,11 @@ test('dispose removes the slash list', async () => {
   m.restore();
   assert.strictEqual(removed, 1);
 });
+
+test('ENTER: the web UI differs from the desktop only where the browser cannot, so the pane gate names peer and not __CLODEX_WEB__', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const gate = src.match(/const splitOn = ([^;]*);/u);
+  assert.ok(gate, 'renderer.js declares the splitOn gate');
+  assert.match(gate[1], /\bpeer\b/u);
+  assert.doesNotMatch(gate[1], /__CLODEX_WEB__/u);
+});
