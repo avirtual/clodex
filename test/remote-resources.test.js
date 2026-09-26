@@ -1530,3 +1530,18 @@ test('sendInput refuses a stream seat instead of writing bytes the manager would
   assert.deepStrictEqual(opts.sendInput('alice', 'hi'), { ok: true });
   assert.deepStrictEqual(writes, [['alice', 'hi']]);
 });
+
+test('remote-wiring send threads dm images onto _deliverMessage, and a text-only send keeps its old call shape', () => {
+  const { deps } = makeDeps();
+  const delivered = [];
+  deps.manager.sessions.set('carol', { name: 'carol', type: 'claude', agentType: 'claude', workspaceId: 'ws-alpha' });
+  deps.manager._deliverMessage = (...a) => { delivered.push(a); };
+  const opts = captureOptions(deps);
+  const png = { mediaType: 'image/png', data: 'UE5H' };
+  assert.deepStrictEqual(opts.send('carol', 'look', [png]), { ok: true });
+  assert.deepStrictEqual(opts.send('carol', 'plain', []), { ok: true });
+  assert.deepStrictEqual(delivered, [
+    ['carol', 'user', 'look', 'dm', '', null, null, [png]],
+    ['carol', 'user', 'plain', 'dm'],
+  ]);
+});
