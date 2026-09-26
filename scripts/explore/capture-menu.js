@@ -8,7 +8,7 @@ const { Terminal } = require('@xterm/headless');
 
 const COLS = 100;
 const ROWS = 40;
-const OUT_DIR = process.env.MENU_OUT || path.join(__dirname, '..', '..', 'test', 'fixtures', 'menu-states');
+const OUT_DIR = process.env.MENU_OUT || path.join(os.tmpdir(), 'clodex-menu-states');
 const LOG_DIR = process.env.MENU_LOG || path.join(os.tmpdir(), 'clodex-menu-capture');
 const CWD = process.env.MENU_CWD || process.cwd();
 const POLL_MS = 10;
@@ -21,9 +21,9 @@ const SESSION_VARS = ['CLAUDECODE', 'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SE
 const MENU_ONLY = ['arrow-down', 'arrow-down-2', 'arrow-up', 'backspace', 'retype', 'escape', 'escape-backspace', 'escape-retype', 'tab'];
 
 const PLATFORMS = {
-  claude: { bin: process.env.CLAUDE_BIN || '/Users/bogdan/.local/bin/claude', args: [], ready: /❯/u },
-  codex: { bin: process.env.CODEX_BIN || '/opt/homebrew/bin/codex', args: ['-c', 'check_for_update_on_startup=false'], ready: /^›/mu, busy: /Starting MCP servers/u, alt: 'co', skip: MENU_ONLY },
-  muse: { bin: process.env.MUSE_BIN || '/Users/bogdan/.local/bin/muse', args: [], ready: /[❯›>]/u, alt: 'co', skip: MENU_ONLY },
+  claude: { bin: process.env.CLAUDE_BIN || 'claude', args: [], ready: /❯/u },
+  codex: { bin: process.env.CODEX_BIN || 'codex', args: ['-c', 'check_for_update_on_startup=false'], ready: /^›/mu, busy: /Starting MCP servers/u, alt: 'co', skip: MENU_ONLY },
+  muse: { bin: process.env.MUSE_BIN || 'muse', args: [], ready: /[❯›>]/u, alt: 'co', skip: MENU_ONLY },
 };
 
 const BS = '\x7f';

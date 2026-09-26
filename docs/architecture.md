@@ -1241,7 +1241,9 @@ Own state + DOM, `init*(deps)`:
   measurement, not wired into the renderer): `readMenuRows(rows, cells, platform)`
   finds the composer, collects the menu rows above it (Codex) or below it
   (Claude Code, Muse) and returns `{ rows: [{ name, description, selected,
-  matchSpans }], anchor }` or null. `cells` is one array of attribute runs
+  matchSpans }], anchor }` or null. `name` is the painted label, not the
+  command: it can carry an alias (`/usage (cost)`) or a clipped source tag.
+  `cells` is one array of attribute runs
   `{ x, n, fg?, bg?, bold?, dim?, inverse? }` per screen row, as
   scripts/explore/capture-menu.js reads them from `@xterm/headless`. See
   docs/notes/renderer-lib-menu-rows.md.
