@@ -44,6 +44,8 @@ test('pull reads through the link, re-reads only after the watcher fires, and fo
   t.after(() => reader.dispose());
   const first = reader.pull('s');
   assert.deepStrictEqual([first.ok, first.rev, texts(first.records)], [true, 1, ['run the tests']]);
+  fires.get(fs.realpathSync(a))();
+  assert.strictEqual(reader.pull('s').rev, 1);
   fs.appendFileSync(a, `${LINES[1]}\n`);
   assert.strictEqual(reader.pull('s').rev, 1);
   fires.get(fs.realpathSync(a))();
@@ -53,6 +55,7 @@ test('pull reads through the link, re-reads only after the watcher fires, and fo
   fs.unlinkSync(link);
   fs.symlinkSync(b, link);
   const third = reader.pull('s');
+  assert.ok(third.rev > second.rev, `rev after repoint ${third.rev} > ${second.rev}`);
   assert.deepStrictEqual(texts(third.records), ['after clear']);
   assert.strictEqual(fires.has(fs.realpathSync(a)), false);
   fs.unlinkSync(link);
