@@ -8474,6 +8474,30 @@ body.web-frontend #sidebar-header {
   -webkit-line-clamp: unset;
   overflow: visible;
 }
+.tr-image-thumb {
+  height: 48px;
+  width: auto;
+  max-width: 160px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  vertical-align: middle;
+  cursor: pointer;
+}
+.tr-image-thumb.tr-image-open {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: var(--sp-1) 0;
+  object-fit: contain;
+}
+.tr-image-chip {
+  display: inline-block;
+  padding: 0 var(--sp-1);
+  border: 1px solid var(--border);
+  color: var(--text-tertiary);
+  font-size: var(--fs-sm);
+  vertical-align: middle;
+}
 .tr-command {
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
@@ -31089,12 +31113,16 @@ ${m[2].replace(/^\r?\n/, "")}`;
       };
       var MINUS = "\u2212";
       var TIMES = " \xD7";
-      var PASTE_MARK_RE = /\[Pasted text #(\d+) \+\d+ lines\]/g;
+      var PROMPT_MARK_RE = /\[Pasted text #(\d+) \+\d+ lines\]|\[Image #(\d+)\]/g;
       function toggleClass(node, cls, on) {
         const list = String(node.className || "").split(" ").filter((c) => c && c !== cls);
         if (on) list.push(cls);
         const next = list.join(" ");
         if (node.className !== next) node.className = next;
+      }
+      function recSig(r) {
+        if (!r.images) return JSON.stringify(r);
+        return JSON.stringify({ ...r, images: r.images.map((i) => i.n + ":" + (i.bytes || i.data.length)) });
       }
       function el(doc, tag, cls, text) {
         const node = doc.createElement(tag);
@@ -31363,14 +31391,31 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (t) row.appendChild(el(doc, "span", "tr-time", t));
         return row;
       }
+      function imageNode(doc, image) {
+        if (image.data == null) return el(doc, "span", "tr-image-chip", `Image #${image.n} \xB7 ${bytesText(image.bytes)}`);
+        const img = el(doc, "img", "tr-image-thumb");
+        img.src = `data:${image.mediaType};base64,${image.data}`;
+        img.alt = `Image #${image.n}`;
+        img.addEventListener("click", () => toggleClass(img, "tr-image-open", !/\btr-image-open\b/.test(img.className)));
+        return img;
+      }
       function appendPrompt(doc, text, rec, ctx) {
         const byN = new Map((rec.pastes || []).map((p) => [p.n, p]));
+        const imageByN = new Map((rec.images || []).map((i) => [i.n, i]));
         let at = 0;
-        for (const m of rec.text.matchAll(PASTE_MARK_RE)) {
+        for (const m of rec.text.matchAll(PROMPT_MARK_RE)) {
+          const end = m.index + m[0].length;
+          if (m[2] != null) {
+            const image = imageByN.get(Number(m[2]));
+            if (!image) continue;
+            if (m.index > at) appendProse(doc, text, rec.text.slice(at, m.index), ctx);
+            text.appendChild(imageNode(doc, image));
+            at = end;
+            continue;
+          }
           const paste = byN.get(Number(m[1]));
           if (!paste) continue;
           const before = rec.text.slice(at, m.index);
-          const end = m.index + m[0].length;
           const lead = m.index > 0 && !rec.text.slice(0, m.index).endsWith("\n") ? "\n" : "";
           const tail = end < rec.text.length && rec.text[end] !== "\n" ? "\n" : "";
           if (before || lead) appendProse(doc, text, before + lead, ctx);
@@ -31382,7 +31427,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function promptRow(doc, rec, ctx) {
         const row = headRow(doc, "tr-prompt", rec);
         const text = el(doc, "span", "tr-head-text");
-        if (rec.pastes) appendPrompt(doc, text, rec, ctx);
+        if (rec.pastes || rec.images) appendPrompt(doc, text, rec, ctx);
         else appendProse(doc, text, rec.text, ctx);
         row.appendChild(text);
         return withTime(doc, row, rec);
@@ -31760,13 +31805,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
             if (isInternalRow(r)) {
               items.push({
                 key: r.id,
-                sig: JSON.stringify(r) + extra,
+                sig: recSig(r) + extra,
                 build: () => internalBox(doc, r, buildRow(doc, r, deps, att) || el(doc, "div", "tr-row"), opened, att),
                 after: (c) => toggleClass(c.el, "tr-hidden", !showInternals)
               });
               continue;
             }
-            items.push({ key: r.id, sig: JSON.stringify(r) + extra, build: () => buildRow(doc, r, deps, att) || el(doc, "div", "tr-row") });
+            items.push({ key: r.id, sig: recSig(r) + extra, build: () => buildRow(doc, r, deps, att) || el(doc, "div", "tr-row") });
           }
           const footer = footerOf(records);
           if (footer) items.push({ key: "footer", sig: JSON.stringify(footer), build: () => buildFooter(doc, footer, deps) });

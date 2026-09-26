@@ -16,12 +16,18 @@ const NOOP = () => {};
 const MINUS = '−';
 const TIMES = ' ×';
 const PASTE_MARK_RE = /\[Pasted text #(\d+) \+\d+ lines\]/g;
+const PROMPT_MARK_RE = /\[Pasted text #(\d+) \+\d+ lines\]|\[Image #(\d+)\]/g;
 
 function toggleClass(node, cls, on) {
   const list = String(node.className || '').split(' ').filter((c) => c && c !== cls);
   if (on) list.push(cls);
   const next = list.join(' ');
   if (node.className !== next) node.className = next;
+}
+
+function recSig(r) {
+  if (!r.images) return JSON.stringify(r);
+  return JSON.stringify({ ...r, images: r.images.map((i) => i.n + ':' + (i.bytes || i.data.length)) });
 }
 
 function el(doc, tag, cls, text) {
@@ -305,14 +311,32 @@ function withTime(doc, row, rec) {
   return row;
 }
 
+function imageNode(doc, image) {
+  if (image.data == null) return el(doc, 'span', 'tr-image-chip', `Image #${image.n} · ${bytesText(image.bytes)}`);
+  const img = el(doc, 'img', 'tr-image-thumb');
+  img.src = `data:${image.mediaType};base64,${image.data}`;
+  img.alt = `Image #${image.n}`;
+  img.addEventListener('click', () => toggleClass(img, 'tr-image-open', !/\btr-image-open\b/.test(img.className)));
+  return img;
+}
+
 function appendPrompt(doc, text, rec, ctx) {
   const byN = new Map((rec.pastes || []).map((p) => [p.n, p]));
+  const imageByN = new Map((rec.images || []).map((i) => [i.n, i]));
   let at = 0;
-  for (const m of rec.text.matchAll(PASTE_MARK_RE)) {
+  for (const m of rec.text.matchAll(PROMPT_MARK_RE)) {
+    const end = m.index + m[0].length;
+    if (m[2] != null) {
+      const image = imageByN.get(Number(m[2]));
+      if (!image) continue;
+      if (m.index > at) appendProse(doc, text, rec.text.slice(at, m.index), ctx);
+      text.appendChild(imageNode(doc, image));
+      at = end;
+      continue;
+    }
     const paste = byN.get(Number(m[1]));
     if (!paste) continue;
     const before = rec.text.slice(at, m.index);
-    const end = m.index + m[0].length;
     const lead = m.index > 0 && !rec.text.slice(0, m.index).endsWith('\n') ? '\n' : '';
     const tail = end < rec.text.length && rec.text[end] !== '\n' ? '\n' : '';
     if (before || lead) appendProse(doc, text, before + lead, ctx);
@@ -325,7 +349,7 @@ function appendPrompt(doc, text, rec, ctx) {
 function promptRow(doc, rec, ctx) {
   const row = headRow(doc, 'tr-prompt', rec);
   const text = el(doc, 'span', 'tr-head-text');
-  if (rec.pastes) appendPrompt(doc, text, rec, ctx);
+  if (rec.pastes || rec.images) appendPrompt(doc, text, rec, ctx);
   else appendProse(doc, text, rec.text, ctx);
   row.appendChild(text);
   return withTime(doc, row, rec);
@@ -727,13 +751,13 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
       if (isInternalRow(r)) {
         items.push({
           key: r.id,
-          sig: JSON.stringify(r) + extra,
+          sig: recSig(r) + extra,
           build: () => internalBox(doc, r, buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row'), opened, att),
           after: (c) => toggleClass(c.el, 'tr-hidden', !showInternals),
         });
         continue;
       }
-      items.push({ key: r.id, sig: JSON.stringify(r) + extra, build: () => buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row') });
+      items.push({ key: r.id, sig: recSig(r) + extra, build: () => buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row') });
     }
     const footer = footerOf(records);
     if (footer) items.push({ key: 'footer', sig: JSON.stringify(footer), build: () => buildFooter(doc, footer, deps) });
