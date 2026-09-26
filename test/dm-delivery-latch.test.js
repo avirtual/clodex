@@ -1558,3 +1558,27 @@ test('t616: the anchor is the NEWEST ripe baseline, so old growth cannot vouch f
       + 'anchor means the whole set survives');
   } finally { app.stop(); }
 });
+
+test('t1235: an escalation landing behind a queued unit parks instead of being written behind it', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000 } });
+  try {
+    await app.spawn('lead');
+    const lead = app.m.sessions.get('lead');
+    lead.activityState = 'idle';
+    app.m._deliverMessage('lead', 'ticket-loop', 'ACCEPT ON TICKET T1', 'dm');
+    assert.ok(lead._injectPtyQueue && lead._injectPtyQueue.length > 0,
+      'ENTER: the first unit must still be in the queue when the escalation arrives');
+    const r = app.m._gatedDeliver('lead', 'ticket-loop', 'ESCALATED AT MERGE', true, '[ticket t1 ESCALATED]', null, { parkBehindQueue: true });
+    assert.ok(r && r.queued, 'ENTER: the delivery was accepted');
+    await settled(app, 'lead', /ACCEPT ON TICKET T1/);
+    await complete(app, 'lead');
+    await new Promise((res) => setTimeout(res, 60));
+    const written = (app.seen('lead').match(/ESCALATED AT MERGE/g) || []).length;
+    const parked = app.parked('lead', /ESCALATED AT MERGE/);
+    assert.strictEqual(written, 0,
+      'a unit written straight after another unit\'s Enter lands in the turn-start churn, where its Enter is '
+      + 'swallowed and the next injection\'s Ctrl-U destroys it — it must not be written behind a queued unit');
+    assert.strictEqual(parked, 1,
+      'it parks instead, so the first unit\'s UserPromptSubmit hook drains it into the turn it starts');
+  } finally { app.stop(); }
+});

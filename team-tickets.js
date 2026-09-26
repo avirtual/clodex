@@ -8108,15 +8108,13 @@ function createTicketMethods(deps, shared) {
     // exactly as they are, because the lead's first act on an escalation is to
     // look at them.
     //
-    // ORDER IS LOAD-BEARING: deliver FIRST, and clear `loopStep` only once the
-    // delivery is durable. Clearing it first drops the ticket out of the sweep's
+    // ORDER IS LOAD-BEARING: deliver FIRST, then clear `loopStep`. Clearing it first drops the ticket out of the sweep's
     // in-flight test, so an escalation the lead never received leaves a ticket
     // nobody is ever told about — no reviewer was spawned, no nudge can fire, and
     // the only trace is a log line. `_gatedDeliver` fails in two reachable ways:
     // `{error}` when the lead has no live session, and `{held}` with NO park when
     // the hold verdict lands on a target that cannot park (a codex lead, or one
-    // `_dead` mid-restart). A park IS durable — it is a written file the seat
-    // drains — so `parked` counts as reached and `held` does not.
+    // `_dead` mid-restart).
     //
     // On failure the hold STAYS, which is what hands the ticket to the watchdog:
     // it re-surfaces once the lead is reachable.
@@ -8145,8 +8143,10 @@ function createTicketMethods(deps, shared) {
           // moment it becomes available.
           ...(recovery ? ['', `RECOVERY: ${recovery}`] : []),
         ].join('\n');
-        const r = this._gatedDeliver(team.lead, 'ticket-loop', body, true, `[ticket ${ticketId} ESCALATED]`);
-        const reached = !!(r && (r.queued || r.parked));
+        let disposition = null;
+        const r = this._gatedDeliver(team.lead, 'ticket-loop', body, true, `[ticket ${ticketId} ESCALATED]`, (d) => { disposition = d || 'injected'; }, { parkBehindQueue: true });
+        const parked = !!(r && (r.parked || (r.queued && disposition === 'parked')));
+        const reached = !!(r && r.queued) && !parked;
         // Two independent reasons to keep the hold, deliberately not collapsed
         // into one branch: an undelivered escalation keeps it so the watchdog
         // re-surfaces the ticket, and `keepHold` keeps it because a live
@@ -8154,6 +8154,8 @@ function createTicketMethods(deps, shared) {
         // only the first logs one.
         if (reached) {
           if (!keepHold) this._setLoopStep(team, ticketId, null);
+        } else if (parked) {
+          log.info('ticket', `ticket ${ticketId} escalation at ${step} parked for ${team.lead}`);
         } else {
           const why = (r && (r.error || r.held)) || 'unknown delivery failure';
           // log.error, not info: this is the arm where a human must eventually
