@@ -1,0 +1,40 @@
+╭─────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.0)                          │
+│                                                     │
+│ model:       GPT-6-Astra medium   /model to change  │
+│ directory:   ~/.clodex/…/t-slash-menu-transport/cwd │
+│ permissions: YOLO mode                              │
+╰─────────────────────────────────────────────────────╯
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› /model         choose what model and reasoning effort to use                                      
+  /fast          2x speed, increased usage
+  /ide           include current selection, open files, and other context from your IDE
+  /permissions   choose what Codex is allowed to do
+  /keymap        remap TUI shortcuts
+  /vim           toggle Vim mode for the composer
+  /experimental  toggle experimental features
+  /approve       approve one retry of a recent auto-review denial
+
+› /
+
+  Context 0% used · GPT-6-Astra · cwd · master · 5h 96% left
+

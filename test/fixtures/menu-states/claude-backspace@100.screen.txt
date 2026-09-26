@@ -1,0 +1,40 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.283
+           Opus 5.5 (1M context) · Claude Max
+ ▘▘   ▝▝   ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/t-slash-menu-transport/cwd
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /cl
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  /clear                        Start a new session with empty context; previous session stays on
+                                disk (resumable with /resume)
+  /docs                         docs (living docs people share, comment on and edit; use only when
+                                the user asks for one: names a doc, document, page, memo, spec, P…
+  /update-config                Use this skill to configure the Claude Code harness via
+                                settings.json. Automated behaviors ("from now on when X", "each t…
+  /statusline                   Set up Claude Code's status line UI
+  /schedule                     Create, update, list, or run scheduled cloud agents (routines)
+                                that execute on a cron schedule.
+  /insights                     Generate a report analyzing your Claude Code sessions
+  /fewer-permission-prompts     Scan your transcripts for common read-only Bash and MCP tool
+                                calls, then add a prioritized allowlist to project .claude/settin…
+  /run                          Launch and drive this project's app to see a change working. Use
+                                when asked to run, start, or screenshot the app, or to confirm a …
+  /init                         Initialize a new CLAUDE.md file with codebase documentation
+  /doctor                       Health-check the user's Claude Code setup and fix issues: diagnose
+                                installation health — what the `claude doctor` terminal diagnosti…
+  /built-in-browser             Read this skill before the first step that uses the built-in
+                                browser, the browser pane inside the Claude desktop app (also cal…
+
+
+
+
+
+
+
+
+
+
+
+
+

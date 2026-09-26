@@ -1,0 +1,40 @@
+╭─────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.0)                          │
+│                                                     │
+│ model:       GPT-6-Astra medium   /model to change  │
+│ directory:   ~/.clodex/…/t-slash-menu-transport/cwd │
+│ permissions: YOLO mode                              │
+╰─────────────────────────────────────────────────────╯
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+
+
+
+ 
+
+  /compact  summarize conversation to prevent hitting the context limit
+› /copy     copy the last response or part of it                                                    
+
+› /co
+
+  Context 0% used · GPT-6-Astra · cwd · master · 5h 96% left
+

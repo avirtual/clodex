@@ -1237,6 +1237,14 @@ Own state + DOM, `init*(deps)`:
   finds the composer anchor on the visible screen and applies the hysteresis; the
   view translates and clips the unresized xterm into a bottom strip under a
   `<div>` pane. See docs/explorations/split-proof.md.
+- **lib/menu-rows.js** — pure reader for a CLI's own slash-command menu (t1212
+  measurement, not wired into the renderer): `readMenuRows(rows, cells, platform)`
+  finds the composer, collects the menu rows above it (Codex) or below it
+  (Claude Code, Muse) and returns `{ rows: [{ name, description, selected,
+  matchSpans }], anchor }` or null. `cells` is one array of attribute runs
+  `{ x, n, fg?, bg?, bold?, dim?, inverse? }` per screen row, as
+  scripts/explore/capture-menu.js reads them from `@xterm/headless`. See
+  docs/notes/renderer-lib-menu-rows.md.
 - **lib/ansi-html.js** — pure SGR converter for the transcript pane: `ansiRuns`
   turns a local command's stdout into `{ text, style }` runs and strips every
   other escape sequence; the view builds the spans with `textContent`.

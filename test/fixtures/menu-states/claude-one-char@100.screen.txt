@@ -1,0 +1,40 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.283
+           Opus 5.5 (1M context) · Claude Max
+ ▘▘   ▝▝   ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/t-slash-menu-transport/cwd
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /c
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  /cd                           Move this session to a new working directory
+  /copy                         Copy Claude's last response to clipboard (or /copy N for the
+                                Nth-latest)
+  /clear                        Start a new session with empty context; previous session stays on
+                                disk (resumable with /resume)
+  /color                        Set the prompt bar color for this session
+  /chrome                       Open Claude in Chrome settings
+  /config                       Open settings
+  /context                      Visualize current context usage as a colored grid
+  /compact                      Free up context by summarizing the conversation so far
+  /computer-use                 Read this skill before the first step of any request to do
+                                something in an app on the person's own computer (Notes, Finder, …
+  /chrome-browser               Read this skill before the first step that uses Claude in Chrome,
+                                the browser extension whose tools are named mcp__claude-in-chrome…
+  /usage (cost)                 Show session cost, plan usage, and activity stats
+  /doctor (checkup)             Health-check the user's Claude Code setup and fix issues: diagnose
+                                installation health — what the `claude doctor` terminal diagnosti…
+  /resume (continue)            Resume a previous conversation
+  /rewind (checkpoint)          Restore the code and/or conversation to a previous point
+
+
+
+
+
+
+
+
+
+
+
+
+
