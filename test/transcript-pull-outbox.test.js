@@ -215,3 +215,38 @@ for (const [label, box, notices, rev] of [['with an outbox', { rev: 2, items: []
     assert.strictEqual(pull().records.length, 2);
   });
 }
+
+test('transcript:pull after the transcript link repoints answers the new records to a caller holding the old rev', (t) => {
+  const handlers = new Map();
+  const reg = mkTmpRoot('ipc-tpull-');
+  const link = pathFor(reg, 'rp', 'transcript');
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  const a = path.join(reg, 'a.jsonl');
+  const b = path.join(reg, 'b.jsonl');
+  fs.writeFileSync(a, MUSE_TURN);
+  fs.writeFileSync(b, `${JSON.stringify({ type: 'user', message: { content: 'after clear' } })}\n`);
+  fs.symlinkSync(a, link);
+  const seat = { name: 'rp', agentType: 'muse', io: 'stream', _dead: false };
+  registerIpcHandlers({
+    handle: (ch, fn) => handlers.set(ch, fn),
+    on: (ch, fn) => handlers.set(ch, fn),
+    log: { info() {}, error() {}, warn() {}, debug() {} },
+    REGISTRY_DIR: reg,
+    manager: {
+      sessions: new Map([['rp', seat]]),
+      seatOutbox: () => null,
+      seatPermissions: () => null,
+      compactNoticesFor: () => null,
+      _sendToSession() {},
+    },
+  });
+  const pull = (...a2) => handlers.get('transcript:pull')(null, 'rp', ...a2);
+  t.after(() => { seat._dead = true; pull(); });
+  const before = pull();
+  assert.strictEqual(before.records.length, 2);
+  fs.unlinkSync(link);
+  fs.symlinkSync(b, link);
+  const after = pull(before.rev);
+  assert.strictEqual('unchanged' in after, false);
+  assert.deepStrictEqual(after.records.map((r) => r.text), ['after clear']);
+});

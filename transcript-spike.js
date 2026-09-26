@@ -13,6 +13,7 @@ const CHANGE_DEBOUNCE_MS = 100;
 
 function createTranscriptSpikeReader({ linkPathFor, watch = fs.watch, onChange = null, setTimer = setTimeout, clearTimer = clearTimeout }) {
   const cache = new Map();
+  let nextRev = 0;
 
   function drop(name) {
     const c = cache.get(name);
@@ -36,7 +37,7 @@ function createTranscriptSpikeReader({ linkPathFor, watch = fs.watch, onChange =
     let c = cache.get(name);
     if (c && c.path !== real) { drop(name); c = null; }
     if (!c) {
-      c = { path: real, rev: 0, dirty: true, sig: null, records: [], watcher: null, changeTimer: null };
+      c = { path: real, rev: nextRev, dirty: true, sig: null, records: [], watcher: null, changeTimer: null };
       try {
         c.watcher = watch(real, () => changed(name, c));
         if (c.watcher && typeof c.watcher.on === 'function') c.watcher.on('error', () => changed(name, c));
@@ -55,7 +56,7 @@ function createTranscriptSpikeReader({ linkPathFor, watch = fs.watch, onChange =
       if (text !== null) {
         c.sig = sig;
         c.records = parseTranscript(text);
-        c.rev += 1;
+        c.rev = ++nextRev;
       }
     }
     return { ok: true, rev: c.rev, records: c.records };
