@@ -67,6 +67,7 @@ const { createIntentHighlight } = require('./intent-highlight');
 const { createVoiceMirror, engineObserved } = require('./voice-mirror');
 const { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require('./lib/composer-voice');
 const { ptyComposerWrites } = require('./lib/pty-composer');
+const { createMenuMirror } = require('./lib/menu-mirror');
 const { VOICE_ENGINE_NAME } = require('../voice-engine');
 const {
   DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings, spaceTriggerAction, ptyTypedSinceEnter,
@@ -2161,16 +2162,42 @@ function createTerminal(name, peer = null) {
   const echoRewrite = peer ? (chunk) => chunk : createEchoRewriter(currentEchoPalette);
   const splitOn = !peer && !window.__CLODEX_WEB__;
   const composerEl = splitOn ? document.createElement('textarea') : null;
+  const menuMirror = composerEl ? createMenuMirror() : null;
   const sendPtyComposer = () => {
     const text = composerEl.value;
     if (!text.trim()) return;
     composerEl.value = '';
     composerKit.fit();
     composerTrigger.resetSpan();
-    for (const w of ptyComposerWrites(text)) writePty(w);
+    const mirrored = menuMirror.on() ? menuMirror.draft(text) : [];
+    const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(text);
+    for (const w of [...mirrored, ...writes]) writePty(w);
+  };
+  const syncMenuMirror = () => {
+    if (!menuMirror) return;
+    const writes = menuMirror.draft(composerEl.value);
+    for (const w of writes) writePty(w);
+    const end = composerEl.value.length;
+    if (menuMirror.on() && (composerEl.selectionStart !== end || composerEl.selectionEnd !== end)) composerEl.setSelectionRange(end, end);
+    if (writes.length && !menuMirror.on() && liveSplit) liveSplit.refresh();
+  };
+  const onMenuKey = (e) => {
+    const hit = menuMirror.key(e);
+    if (!hit) return false;
+    e.preventDefault();
+    for (const w of hit.writes) writePty(w);
+    if (hit.draft !== undefined) {
+      composerEl.value = hit.draft;
+      composerEl.setSelectionRange(hit.draft.length, hit.draft.length);
+      composerKit.fit();
+      if (!hit.draft) composerTrigger.resetSpan();
+      if (liveSplit) liveSplit.refresh();
+    }
+    return true;
   };
   const composerKit = composerEl ? attachComposer(composerEl, {
     onSend: sendPtyComposer,
+    onSlash: onMenuKey,
     onEscape: () => writePty('\x1b'),
     onEmptySpace: () => {
       if (!seatVoiceMode(name, 'tap')) return false;
@@ -2193,6 +2220,7 @@ function createTerminal(name, peer = null) {
     composerEl.classList.add('seat-composer-pty');
     composerEl.hidden = true;
     wrapperEl.appendChild(composerEl);
+    composerEl.addEventListener('input', syncMenuMirror);
   }
   const liveSplit = !splitOn ? null : createLiveSplitView(terminal, wrapperEl, {
     isEligible: () => transcriptPaneEnabled && isAgentType(sessionTypeOf(name)),
@@ -2206,10 +2234,11 @@ function createTerminal(name, peer = null) {
     toast: showToast,
     echoPalette: currentEchoPalette,
     composerEl,
+    menuMirror,
     sheet: true,
     onChange: () => { if (composerKit) composerKit.fit(); },
   });
-  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger });
+  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger, menuMirror, syncMenuMirror });
   updateWindowTitle();
   return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
 }
@@ -2406,6 +2435,7 @@ function removeSession(name, { keepPersisted = false } = {}) {
     if (s.liveSplit) s.liveSplit.dispose();
     if (s.composerKit) s.composerKit.dispose();
     if (s.composerTrigger) s.composerTrigger.dispose();
+    if (s.menuMirror) s.menuMirror.dispose();
     if (s.webgl) { try { s.webgl.dispose(); } catch {} }
     if (s.stream) s.stream.dispose();
     if (s.terminal) s.terminal.dispose();
@@ -3808,7 +3838,7 @@ function voiceSinkFor(name) {
   if (!entry.ptyVoice) return null;
   if (entry.composerTrigger && ptyComposerShown(entry)) {
     return {
-      draft: (text) => { entry.composerTrigger.draft(text); entry.composerKit.fit(); },
+      draft: (text) => { entry.composerTrigger.draft(text); entry.composerKit.fit(); entry.syncMenuMirror(); },
       released: () => { entry.composerTrigger.released(); entry.composerKit.fit(); },
       start: () => entry.composerTrigger.resetSpan(),
       setRecording: (on) => entry.composerEl.classList.toggle('voice-recording', !!on),

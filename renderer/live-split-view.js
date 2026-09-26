@@ -2,6 +2,8 @@
 
 const { SPLIT_EXIT_MS, measureSplit, initialSplitState, reduceSplit } = require('./lib/live-split');
 const { createTranscriptRows } = require('./transcript-rows');
+const { readMenuRows } = require('./lib/menu-rows');
+const { rowCells } = require('./lib/menu-cells');
 
 const TRANSCRIPT_PULL_MS = 1000;
 const views = new WeakMap();
@@ -16,11 +18,54 @@ function renderTranscript(doc, paneEl, records, ctx = {}) {
   rows.render(records);
 }
 
-function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false }) {
+function markedText(doc, text, spans) {
+  const frag = [];
+  let at = 0;
+  for (const s of [...spans].sort((a, b) => a.start - b.start)) {
+    if (s.start < at || s.end <= s.start) continue;
+    if (s.start > at) frag.push(doc.createTextNode(text.slice(at, s.start)));
+    const b = doc.createElement('b');
+    b.textContent = text.slice(s.start, s.end);
+    frag.push(b);
+    at = s.end;
+  }
+  if (at < text.length) frag.push(doc.createTextNode(text.slice(at)));
+  return frag;
+}
+
+function renderMenuMirror(doc, el, read) {
+  el.replaceChildren();
+  const rows = read && Array.isArray(read.rows) ? read.rows : [];
+  for (const r of rows) {
+    const spans = Array.isArray(r.matchSpans) ? r.matchSpans : [];
+    const row = doc.createElement('div');
+    row.className = r.selected ? 'seat-slash-item active' : 'seat-slash-item';
+    const name = doc.createElement('span');
+    name.className = 'seat-slash-name';
+    for (const n of markedText(doc, String(r.name || ''), spans.filter((s) => s.field === 'name'))) name.appendChild(n);
+    row.appendChild(name);
+    if (r.description) {
+      const desc = doc.createElement('span');
+      desc.className = 'seat-slash-desc';
+      for (const n of markedText(doc, String(r.description), spans.filter((s) => s.field === 'description'))) desc.appendChild(n);
+      row.appendChild(desc);
+    }
+    el.appendChild(row);
+  }
+  el.hidden = rows.length === 0;
+}
+
+function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null }) {
   const paneEl = document.createElement('div');
   paneEl.className = 'transcript-pane';
   paneEl.hidden = true;
   wrapperEl.appendChild(paneEl);
+  const menuEl = menuMirror ? document.createElement('div') : null;
+  if (menuEl) {
+    menuEl.className = 'seat-slash-menu seat-slash-menu-pty';
+    menuEl.hidden = true;
+    wrapperEl.appendChild(menuEl);
+  }
   let state = initialSplitState();
   let wakeTimer = null;
   let available = false;
@@ -74,6 +119,23 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       rows.push(line ? line.translateToString(true) : '');
     }
     return rows;
+  }
+
+  function screenCells() {
+    const buf = terminal.buffer.active;
+    const cells = [];
+    for (let i = 0; i < terminal.rows; i++) cells.push(rowCells(buf.getLine(buf.baseY + i), terminal.cols));
+    return cells;
+  }
+
+  function readMenu(rows) {
+    if (!menuMirror) return null;
+    const read = menuMirror.on() ? readMenuRows(rows || screenRows(), screenCells(), platform()) : null;
+    menuMirror.setRead(read);
+    if (!read && menuEl.hidden) return null;
+    if (read && composerEl) menuEl.style.bottom = `${(composerEl.offsetHeight || 0) + 8}px`;
+    renderMenuMirror(document, menuEl, read);
+    return read;
   }
 
   function showComposer(on) {
@@ -168,7 +230,8 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     const prev = state;
     const prevSheet = sheetRows;
     state = reduceSplit(state, measured, now(), undefined, raw ? 0 : undefined);
-    const busy = !!measured && (measured.mode === 'split' || !!measured.busy);
+    const menuRead = readMenu(rows);
+    const busy = !menuRead && !!measured && (measured.mode === 'split' || !!measured.busy);
     sheetRows = busy ? sheetRowsOf(rows) : 0;
     if (state.wakeAt != null) wakeTimer = setTimeout(evaluate, Math.max(0, state.wakeAt - now()));
     if (prevSheet !== sheetRows && prev.mode === state.mode && prev.top === state.top && prev.bottom === state.bottom) layout();
@@ -194,7 +257,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     }),
     terminal.onResize(() => { evaluate(); layout(); }),
     terminal.onScroll(() => {
-      if (state.mode !== 'split') return;
+      if (state.mode !== 'split' && !(sheetRows > 0)) return;
       const buf = terminal.buffer.active;
       if (buf.viewportY !== buf.baseY) terminal.scrollToBottom();
     }),
@@ -231,8 +294,9 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       if (ro) ro.disconnect();
       paneEl.removeEventListener('scroll', onPaneScroll);
       paneEl.remove();
+      if (menuEl) menuEl.remove();
     },
   };
 }
 
-module.exports = { TRANSCRIPT_PULL_MS, renderTranscript, createLiveSplitView };
+module.exports = { TRANSCRIPT_PULL_MS, renderTranscript, renderMenuMirror, createLiveSplitView };

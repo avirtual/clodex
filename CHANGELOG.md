@@ -12,6 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+- Slash commands on terminal agent seats: typing `/` in the composer shows the CLI's own command menu as Clodex's list, with the same keys as the stream composer (arrows, Tab, Escape, Enter); the terminal itself no longer needs to be visible for it.
 - On terminal seats with the transcript pane, pickers, dialogs and running turns now show the terminal as a sheet at the bottom instead of replacing the whole view; the transcript stays on screen.
 - Enter in the terminal seat's message box now submits the prompt; it was being inserted as a newline into the CLI's input.
 - Terminal seats with the transcript pane now use Clodex's own message box instead of the CLI's input row while the CLI is waiting for input; Enter sends, Shift+Enter adds a line, Esc interrupts. Pickers and dialogs still show the terminal.

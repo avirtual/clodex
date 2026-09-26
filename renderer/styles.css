@@ -6199,6 +6199,19 @@ body.web-frontend #sidebar-header {
   display: none;
 }
 
+.seat-slash-menu.seat-slash-menu-pty {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  max-height: 50%;
+  z-index: 3;
+}
+
+.seat-slash-name b,
+.seat-slash-desc b {
+  font-weight: 700;
+}
+
 .seat-slash-item {
   display: flex;
   gap: var(--sp-2);

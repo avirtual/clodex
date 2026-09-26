@@ -235,3 +235,47 @@ test('a shrink to a different height restarts the shrink hold', () => {
   st = reduceSplit(st, S(5, 12), 450);
   assert.strictEqual(st.bottom, 12);
 });
+
+const MENU_DIR = path.join(__dirname, 'fixtures', 'menu-states');
+const MENU_SPLITS = [
+  ['claude-arrow-down-2@100', 6, 'split'],
+  ['claude-arrow-down@100', 6, 'split'],
+  ['claude-arrow-up@100', 6, 'split'],
+  ['claude-backspace@100', 6, 'split'],
+  ['claude-idle-slash@100', 6, 'split'],
+  ['claude-one-char@100', 6, 'split'],
+  ['claude-paste@100', 6, 'split'],
+  ['claude-three-chars@100', 6, 'split'],
+  ['codex-arrow-down-2@100', 36, 'split'],
+  ['codex-arrow-down@100', 36, 'split'],
+  ['codex-arrow-up@100', 36, 'split'],
+  ['codex-backspace@100', 36, 'split'],
+  ['codex-co@100', 36, 'split'],
+  ['codex-idle-slash@100', 36, 'split'],
+  ['codex-paste@100', 36, 'split'],
+  ['muse-arrow-down-2@100', 7, 'split'],
+  ['muse-arrow-down@100', 7, 'split'],
+  ['muse-arrow-up@100', 7, 'split'],
+  ['muse-backspace@100', 7, 'split'],
+  ['muse-co@100', 7, 'split'],
+  ['muse-idle-slash@100', 7, 'split'],
+  ['muse-paste@100', 7, 'split'],
+  ['muse-tab@100', 7, 'split'],
+];
+
+for (const [name, cursorY, mode] of MENU_SPLITS) {
+  test(`measureSplit keeps the composer up over the open menu in ${name}`, () => {
+    const rows = fs.readFileSync(path.join(MENU_DIR, `${name}.screen.txt`), 'utf8').replace(/\n$/, '').split('\n');
+    assert.strictEqual(measureSplit(rows, cursorY, 100, name.split('-')[0]).mode, mode);
+  });
+}
+
+test('every menu fixture readMenuRows reads as a menu is in the split table', () => {
+  const { readMenuRows } = require('../renderer/lib/menu-rows');
+  const menus = fs.readdirSync(MENU_DIR).filter((f) => f.endsWith('.screen.txt')).map((f) => f.replace('.screen.txt', '')).filter((name) => {
+    const rows = fs.readFileSync(path.join(MENU_DIR, `${name}.screen.txt`), 'utf8').replace(/\n$/, '').split('\n');
+    const cells = JSON.parse(fs.readFileSync(path.join(MENU_DIR, `${name}.cells.json`), 'utf8'));
+    return readMenuRows(rows, cells, name.split('-')[0]) !== null;
+  }).sort();
+  assert.deepStrictEqual(MENU_SPLITS.map((r) => r[0]).sort(), menus);
+});
