@@ -5611,3 +5611,21 @@ test('t1130 (e): the not-yet-reported bounce says the loop resumes it at boot', 
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'again' });
   assert.match(f.injected.join('\n'), /checks have not reported yet;.*rather than rejecting it; if the host restarted since, the loop resumes it at boot\./);
 });
+
+test('t1235: a merge escalation that PARKED keeps loopStep; one that was injected releases it', () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const run = (disposition) => {
+    f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'merge', report: 'r', reportedBy: 'team-hand' }]);
+    f.m._gatedDeliver = (target, sender, body, urgent, tag, onWrite) => {
+      f.gated.push({ target, sender, body });
+      if (disposition === 'parked' && typeof onWrite === 'function') onWrite('parked');
+      return { queued: true };
+    };
+    f.m._escalateTicket(f.team, 't1', 'merge', 'CONFLICT (content)', 'git merge --no-ff');
+    return f.one().loopStep;
+  };
+  assert.strictEqual(run('parked'), 'merge',
+    'a parked escalation has not been seen yet: clearing loopStep on it drops the ticket out of the watchdog');
+  assert.strictEqual(run('injected'), undefined, 'an injected one releases the hold as before');
+});

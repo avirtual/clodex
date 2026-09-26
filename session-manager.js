@@ -9484,7 +9484,8 @@ function createSessionManager(deps) {
       // deliver it mid-loop (an external script can't see the in-memory queue).
       // The idle-edge Node drain is the fallback for a turn that ends with no tool
       // call (pure-text reply).
-      const busy = target.activityState === 'thinking' || !!target._recycling;
+      const queued = !!(target._injectPtyQueue && target._injectPtyQueue.length > 0);
+      const busy = target.activityState === 'thinking' || !!target._recycling || queued;
       if (!typing && !busy) return false;
       try {
         parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), null, false, this._bornFor(target.name), key);
