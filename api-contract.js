@@ -145,6 +145,8 @@ const API_CONTRACT = [
   { name: 'seatPermission', kind: 'invoke', channel: 'seat:permission' },
   { name: 'seatInterrupt', kind: 'invoke', channel: 'seat:interrupt' },
   { name: 'seatDraft', kind: 'send', channel: 'seat:draft' },
+  { name: 'seatCommands', kind: 'invoke', channel: 'seat:commands' },
+  { name: 'seatControl', kind: 'invoke', channel: 'seat:control' },
   { name: 'selectDirectory', kind: 'invoke', channel: 'dialog:selectDirectory' },
   { name: 'confirmKill', kind: 'invoke', channel: 'dialog:confirmKill' },
   { name: 'restoreSessions', kind: 'invoke', channel: 'app:restore-sessions' },

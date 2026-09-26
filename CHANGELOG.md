@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Typing / in a headless seat's composer opens a slash menu: Claude seats list the CLI's own commands, Codex and Muse seats offer compact, clear and stop as native controls.
 - A Codex terminal seat links only a transcript started after you first typed into it, so two seats in the same folder no longer pick up each other's conversation.
 - Muse slash commands (/model, /usage, …) appear as command rows in the transcript pane.
 - The transcript pane works on Muse and Codex terminal seats too: the pane sits above each CLI's own input strip, and the CLI's slash menu, command output and pickers show in that strip.

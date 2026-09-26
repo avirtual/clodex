@@ -6162,6 +6162,51 @@ body.web-frontend #sidebar-header {
   box-shadow: 0 0 0 1px var(--error);
 }
 
+.seat-slash-menu {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: 30%;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  font-size: var(--fs-sm, var(--fs-md));
+}
+
+.seat-slash-menu[hidden] {
+  display: none;
+}
+
+.seat-slash-item {
+  display: flex;
+  gap: var(--sp-2);
+  padding: 2px var(--sp-2);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.seat-slash-item.active {
+  background: var(--accent, var(--border));
+  color: var(--bg);
+}
+
+.seat-slash-name {
+  font-family: var(--font-mono, monospace);
+}
+
+.seat-slash-desc {
+  color: var(--text-secondary, var(--text-primary));
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.seat-slash-item.active .seat-slash-desc {
+  color: inherit;
+}
+
 .voice-engine-host {
   position: absolute;
   left: -10000px;

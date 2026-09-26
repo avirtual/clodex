@@ -8716,6 +8716,44 @@ body.web-frontend #sidebar-header {
   border-color: var(--error);
   box-shadow: 0 0 0 1px var(--error);
 }
+.seat-slash-menu {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: 30%;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  font-size: var(--fs-sm, var(--fs-md));
+}
+.seat-slash-menu[hidden] {
+  display: none;
+}
+.seat-slash-item {
+  display: flex;
+  gap: var(--sp-2);
+  padding: 2px var(--sp-2);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.seat-slash-item.active {
+  background: var(--accent, var(--border));
+  color: var(--bg);
+}
+.seat-slash-name {
+  font-family: var(--font-mono, monospace);
+}
+.seat-slash-desc {
+  color: var(--text-secondary, var(--text-primary));
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.seat-slash-item.active .seat-slash-desc {
+  color: inherit;
+}
 .voice-engine-host {
   position: absolute;
   left: -10000px;
@@ -10607,6 +10645,8 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "seatPermission", kind: "invoke", channel: "seat:permission" },
         { name: "seatInterrupt", kind: "invoke", channel: "seat:interrupt" },
         { name: "seatDraft", kind: "send", channel: "seat:draft" },
+        { name: "seatCommands", kind: "invoke", channel: "seat:commands" },
+        { name: "seatControl", kind: "invoke", channel: "seat:control" },
         { name: "selectDirectory", kind: "invoke", channel: "dialog:selectDirectory" },
         { name: "confirmKill", kind: "invoke", channel: "dialog:confirmKill" },
         { name: "restoreSessions", kind: "invoke", channel: "app:restore-sessions" },
@@ -26890,6 +26930,47 @@ ${i3.join("\n")}
         return scrollHeight + Math.max(0, (offsetHeight || 0) - (clientHeight || 0));
       }
       module.exports = { composerReadlineEdit, composerHeightFor };
+    }
+  });
+
+  // renderer/lib/composer-slash.js
+  var require_composer_slash = __commonJS({
+    "renderer/lib/composer-slash.js"(exports, module) {
+      "use strict";
+      function slashQuery(value, cursor) {
+        const text = String(value == null ? "" : value);
+        const pos = Math.max(0, Math.min(text.length, cursor == null ? text.length : cursor));
+        const start = pos <= 0 ? 0 : text.lastIndexOf("\n", pos - 1) + 1;
+        if (text[start] !== "/") return null;
+        const token = /^\/\S*/.exec(text.slice(start))[0];
+        const end = start + token.length;
+        if (pos <= start || pos > end) return null;
+        return { query: text.slice(start + 1, pos), start, end };
+      }
+      function filterCommands(list, query) {
+        const items = Array.isArray(list) ? list : [];
+        const q = String(query == null ? "" : query).toLowerCase();
+        if (!q) return items.slice();
+        const prefix = [];
+        const inner = [];
+        for (const item of items) {
+          const name = String(item && item.name || "").replace(/^\//, "").toLowerCase();
+          if (name.startsWith(q)) prefix.push(item);
+          else if (name.includes(q)) inner.push(item);
+        }
+        return prefix.concat(inner);
+      }
+      function slashMenuKey({ key, open, index, count, shiftKey, ctrlKey, metaKey, altKey }) {
+        if (!open || ctrlKey || metaKey || altKey) return null;
+        if (key === "Escape") return { close: true };
+        if (!(count > 0) || shiftKey) return null;
+        const at = Number.isInteger(index) ? index : 0;
+        if (key === "ArrowDown") return { index: (at + 1) % count };
+        if (key === "ArrowUp") return { index: (at - 1 + count) % count };
+        if (key === "Tab" || key === "Enter") return { pick: true };
+        return null;
+      }
+      module.exports = { slashQuery, filterCommands, slashMenuKey };
     }
   });
 
@@ -44585,6 +44666,7 @@ ${detail}` });
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
       var { composerReadlineEdit, composerHeightFor } = require_composer_keys();
+      var { slashQuery, filterCommands, slashMenuKey } = require_composer_slash();
       var { turnSeg, reqSeg, costSeg } = require_turn_stat();
       var { renderAppendChecklist, collectAppendChecklist, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
@@ -46035,6 +46117,10 @@ ${detail}` });
         permEl.hidden = true;
         wrapperEl.appendChild(permEl);
         wrapperEl.appendChild(attachEl);
+        const slashEl = document.createElement("div");
+        slashEl.className = "seat-slash-menu";
+        slashEl.hidden = true;
+        wrapperEl.appendChild(slashEl);
         wrapperEl.appendChild(composer);
         const fitComposer = () => {
           composer.style.height = "auto";
@@ -46271,7 +46357,124 @@ ${detail}` });
             restore();
           });
         };
+        let slashList = null;
+        let slashStale = true;
+        let slashFetching = false;
+        let slashItems = [];
+        let slashIndex = 0;
+        let slashRange = null;
+        const closeSlash = () => {
+          slashRange = null;
+          slashItems = [];
+          slashIndex = 0;
+          slashEl.hidden = true;
+          slashEl.replaceChildren();
+        };
+        const renderSlash = () => {
+          slashEl.replaceChildren();
+          slashItems.forEach((item, i) => {
+            const row = document.createElement("div");
+            row.className = i === slashIndex ? "seat-slash-item active" : "seat-slash-item";
+            const label = document.createElement("span");
+            label.className = "seat-slash-name";
+            label.textContent = String(item.name || "");
+            row.appendChild(label);
+            if (item.description) {
+              const desc = document.createElement("span");
+              desc.className = "seat-slash-desc";
+              desc.textContent = String(item.description);
+              row.appendChild(desc);
+            }
+            row.addEventListener("mousedown", (ev) => {
+              ev.preventDefault();
+              slashIndex = i;
+              pickSlash(true);
+            });
+            slashEl.appendChild(row);
+          });
+          slashEl.hidden = slashItems.length === 0;
+          const active = slashEl.children[slashIndex];
+          if (active && typeof active.scrollIntoView === "function") active.scrollIntoView({ block: "nearest" });
+        };
+        const fetchSlash = () => {
+          if (slashFetching) return;
+          slashFetching = true;
+          Promise.resolve(window.api.seatCommands(name)).then((res) => {
+            slashFetching = false;
+            if (disposed || !res || res.ok === false || !Array.isArray(res.commands)) return;
+            slashList = res.commands;
+            slashStale = res.commands.every((c) => c && c.kind === "control");
+            if (slashRange) updateSlash(false);
+          }).catch(() => {
+            slashFetching = false;
+          });
+        };
+        const updateSlash = (resetIndex = true) => {
+          const q = slashQuery(composer.value, composer.selectionStart);
+          if (!q) {
+            closeSlash();
+            return;
+          }
+          if (!slashRange && (!slashList || slashStale)) fetchSlash();
+          slashRange = q;
+          if (!slashList) return;
+          slashItems = filterCommands(slashList, q.query);
+          if (resetIndex || slashIndex >= slashItems.length) slashIndex = 0;
+          renderSlash();
+        };
+        const pickSlash = (run) => {
+          const item = slashItems[slashIndex];
+          const range = slashRange;
+          closeSlash();
+          if (!item || !range) return;
+          const value = composer.value;
+          if (item.kind === "control" && run) {
+            composer.value = "";
+            composer.dispatchEvent(new Event("input", { bubbles: true }));
+            Promise.resolve(window.api.seatControl(name, String(item.name).replace(/^\//, ""))).then((res) => {
+              if (res && res.ok === false) showToast(`${item.name} failed: ${res.error || "unknown error"}`, { kind: "error", name });
+              else pull(true);
+            }).catch((err) => {
+              showToast(`${item.name} failed: ${err && err.message ? err.message : err}`, { kind: "error", name });
+            });
+            return;
+          }
+          const whole = !value.slice(0, range.start).trim() && !value.slice(range.end).trim();
+          if (run && whole) {
+            composer.value = item.name;
+            sendComposer();
+            return;
+          }
+          const insert = item.kind === "control" ? item.name : `${item.name} `;
+          const tail = value.slice(range.end).replace(/^ /, "");
+          composer.value = value.slice(0, range.start) + insert + tail;
+          const cursor = range.start + insert.length;
+          composer.setSelectionRange(cursor, cursor);
+          composer.dispatchEvent(new Event("input", { bubbles: true }));
+        };
+        composer.addEventListener("input", () => updateSlash());
+        composer.addEventListener("blur", closeSlash);
         composer.addEventListener("keydown", (e) => {
+          const slashKey = !e.isComposing && slashMenuKey({
+            key: e.key,
+            open: !slashEl.hidden,
+            index: slashIndex,
+            count: slashItems.length,
+            shiftKey: e.shiftKey,
+            ctrlKey: e.ctrlKey,
+            metaKey: e.metaKey,
+            altKey: e.altKey
+          });
+          if (slashKey) {
+            e.preventDefault();
+            if (slashKey.close) closeSlash();
+            else if (slashKey.pick) pickSlash(e.key === "Enter");
+            else {
+              slashIndex = slashKey.index;
+              renderSlash();
+            }
+            return;
+          }
           if (e.key === "Escape" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
             e.preventDefault();
             Promise.resolve(window.api.seatInterrupt(name)).catch(() => {

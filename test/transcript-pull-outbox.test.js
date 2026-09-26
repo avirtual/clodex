@@ -53,6 +53,8 @@ function pullFixture(perms) {
       seatPermissions: () => perms,
       seatPermission: (...a) => { calls.push(a); return { ok: true }; },
       seatInterrupt: (...a) => { calls.push(['interrupt', ...a]); return { ok: true }; },
+      seatCommands: (...a) => { calls.push(['commands', ...a]); return { ok: true, commands: [] }; },
+      seatControl: (...a) => { calls.push(['control', ...a]); return { ok: true }; },
       compactNoticesFor: () => null,
       _sendToSession() {},
     },
@@ -91,6 +93,18 @@ test('seat:interrupt refuses a non-desktop surface and a foreign workspace, else
   assert.deepStrictEqual(interrupt({ surface: 'desktop', ws: 'ws-1' }, 'st'), { ok: true });
   assert.deepStrictEqual(f.calls, [['interrupt', 'st']]);
 });
+
+for (const [channel, args, call] of [['seat:commands', [], ['commands', 'st']], ['seat:control', ['compact'], ['control', 'st', 'compact']]]) {
+  test(`${channel} refuses a non-desktop surface and a foreign workspace, else answers from the manager`, () => {
+    const f = pullFixture(null);
+    const fn = f.handlers.get(channel);
+    assert.deepStrictEqual(fn({ surface: 'web', ws: 'ws-1' }, 'st', ...args), { ok: false, error: `${channel} is local only` });
+    assert.deepStrictEqual(fn({ surface: 'desktop', ws: 'ws-2' }, 'st', ...args), { ok: false, error: 'no such session in this workspace' });
+    assert.deepStrictEqual(f.calls, []);
+    assert.strictEqual(fn({ surface: 'desktop', ws: 'ws-1' }, 'st', ...args).ok, true);
+    assert.deepStrictEqual(f.calls, [call]);
+  });
+}
 
 function seatPull(seat, transcriptText = null) {
   const handlers = new Map();

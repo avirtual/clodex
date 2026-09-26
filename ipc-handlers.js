@@ -2393,6 +2393,22 @@ function registerIpcHandlers(deps) {
     return manager.seatSend(s.name, typeof text === 'string' ? text : '', checked.images);
   });
 
+  handle('seat:commands', (e, name) => {
+    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
+    if (surface !== 'desktop') return { ok: false, error: 'seat:commands is local only' };
+    const s = manager.sessions.get(String(name || ''));
+    if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };
+    return manager.seatCommands(s.name);
+  });
+
+  handle('seat:control', (e, name, sub) => {
+    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
+    if (surface !== 'desktop') return { ok: false, error: 'seat:control is local only' };
+    const s = manager.sessions.get(String(name || ''));
+    if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };
+    return manager.seatControl(s.name, String(sub || ''));
+  });
+
   handle('seat:permission', (e, name, id, choiceId) => {
     const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
     if (surface !== 'desktop') return { ok: false, error: 'seat:permission is local only' };
