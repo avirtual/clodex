@@ -8802,8 +8802,7 @@ function createTicketMethods(deps, shared) {
       // declines to clear on the deferring pass, so what a deferred merge waits for
       // is a LATER pass reaching it with the flag false — and that needs the retry
       // to wake. A crash or an [agent:reboot] inside that window freezes
-      // `(merge waiting: suite-in-flight)` onto an accepted row, and nothing
-      // re-examines the field at boot.
+      // `(merge waiting: suite-in-flight)` onto an accepted row.
       //
       // It does not weaken the invariant that finally states: that invariant is over
       // the EXITS OF `_autoMergeTicket`, and this clear is not one of them. Nor can a

@@ -4707,8 +4707,7 @@ test('t345 r2: during a RE-VERIFY the team-review guard must still refuse — th
 
 test('t345 r2: a re-verify that OVERRUNS alarms as a stuck step, not as "waiting for someone to act"', async () => {
   // Someone HAS acted and the loop is running, so the held wording would be false.
-  // Reachable because a re-verify may legitimately run 35m
-  // (TICKET_SUITE_LOCK_WAIT_MS 20m + 15m running) against a 30m stall window.
+  // Reachable because TICKET_SUITE_TIMEOUT_MS outlasts TICKET_STALL_MS.
   //
   // THE AGE BELOW IS PLANTED, AND THAT IS THE POINT OF THIS SUBJECT — it forces
   // the sweep past its window to inspect the WORDING of an alarm that has been

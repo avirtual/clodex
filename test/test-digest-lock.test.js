@@ -217,8 +217,7 @@ test('lock: the script gives up waiting STRICTLY before the exec entry kills it'
 });
 
 test('lock: the exec ceiling clears a WHOLE run plus a whole lock wait, with room to grow', () => {
-  // The script's own lock wait (up to 30s) is spent INSIDE the ceiling, so a
-  // single queued run can blow it. That is how a SUCCESSFUL
+  // The script's own lock wait (up to 30s) is spent INSIDE the ceiling. That is how a SUCCESSFUL
   // run lost its report: the wrapper is SIGKILLed while the suite keeps running
   // and keeps holding the lock, and the digest, which exists only on the killed
   // wrapper's stderr, is never delivered.
