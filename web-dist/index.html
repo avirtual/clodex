@@ -32301,7 +32301,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (pulling || t - lastPull < TRANSCRIPT_PULL_MS) return;
           pulling = true;
           lastPull = t;
-          Promise.resolve(pullTranscript(rev)).then((res) => {
+          Promise.resolve(pullTranscript()).then((res) => {
             pulling = false;
             if (disposed) return;
             const was = available;
@@ -47568,7 +47568,7 @@ ${detail}` });
           if (pulling || disposed) return;
           if (!force && !wrapperEl.classList.contains("visible")) return;
           pulling = true;
-          Promise.resolve(window.api.transcriptPull(name, rev)).then((res) => {
+          Promise.resolve(window.api.transcriptPull(name)).then((res) => {
             pulling = false;
             if (disposed || !res || res.rev === rev) return;
             if (!res.ok && !Array.isArray(res.outbox)) return;
@@ -48054,7 +48054,7 @@ ${detail}` });
         const liveSplit = !splitOn ? null : createLiveSplitView(terminal, wrapperEl, {
           isEligible: () => transcriptPaneEnabled && isAgentType(sessionTypeOf(name)),
           platform: () => sessionTypeOf(name),
-          pullTranscript: (since) => window.api.transcriptPull(name, since),
+          pullTranscript: () => window.api.transcriptPull(name),
           seatName: name,
           onTranscriptChanged: (cb) => {
             transcriptChangedSubs.add(cb);

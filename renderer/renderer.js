@@ -1867,7 +1867,7 @@ function createStreamSeatPane(name, wrapperEl) {
     if (pulling || disposed) return;
     if (!force && !wrapperEl.classList.contains('visible')) return;
     pulling = true;
-    Promise.resolve(window.api.transcriptPull(name, rev)).then((res) => {
+    Promise.resolve(window.api.transcriptPull(name)).then((res) => {
       pulling = false;
       if (disposed || !res || res.rev === rev) return;
       if (!res.ok && !Array.isArray(res.outbox)) return;
@@ -2373,7 +2373,7 @@ function createTerminal(name, peer = null) {
   const liveSplit = !splitOn ? null : createLiveSplitView(terminal, wrapperEl, {
     isEligible: () => transcriptPaneEnabled && isAgentType(sessionTypeOf(name)),
     platform: () => sessionTypeOf(name),
-    pullTranscript: (since) => window.api.transcriptPull(name, since),
+    pullTranscript: () => window.api.transcriptPull(name),
     seatName: name,
     onTranscriptChanged: (cb) => { transcriptChangedSubs.add(cb); return () => transcriptChangedSubs.delete(cb); },
     resolveFile: (p) => window.api.fileResolve(name, p, null),

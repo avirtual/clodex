@@ -149,7 +149,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     if (pulling || t - lastPull < TRANSCRIPT_PULL_MS) return;
     pulling = true;
     lastPull = t;
-    Promise.resolve(pullTranscript(rev)).then((res) => {
+    Promise.resolve(pullTranscript()).then((res) => {
       pulling = false;
       if (disposed) return;
       const was = available;

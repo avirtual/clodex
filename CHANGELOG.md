@@ -14,7 +14,6 @@ blocks a release.
 ## Unreleased
 
 - Agent prompt: the `[agent:remind …]` row now says its text is a greedy body closed by `[agent:end]`, so a reminder no longer swallows the prose written after it.
-- Transcript pane: the once-a-second refresh no longer re-downloads the whole transcript when nothing changed, on the desktop and in the web UI.
 - Transcript pane: an image pasted into a prompt shows as a small inline thumbnail (click to see it full width) instead of the bare [Image #n] marker; images over 1 MB show a size chip.
 - Ticket loop: a merge requeued at boot waits for the lead's seat before it can escalate, a merge that landed before the relaunch no longer shows as still waiting, and a reject that lands while the merge is being deferred is not lost across a relaunch.
 - Ticket loop: rejecting an ACCEPT verdict now cancels the merge that verdict had queued and sends the rework through a second review, instead of merging the pre-rework commit.
