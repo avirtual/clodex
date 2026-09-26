@@ -63,7 +63,7 @@ test('stream composer starts at one row and fits on input', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   assert.ok(src.includes('composer.rows = 1;'));
   assert.ok(!src.includes('composer.rows = 3;'));
-  assert.ok(src.includes("composer.addEventListener('input', fitComposer);"));
+  assert.ok(src.includes("composer.addEventListener('input', fit);"));
 });
 
 test('global textarea focus-visible ring excludes the stream composer', () => {

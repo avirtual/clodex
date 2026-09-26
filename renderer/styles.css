@@ -6162,6 +6162,19 @@ body.web-frontend #sidebar-header {
   box-shadow: 0 0 0 1px var(--error);
 }
 
+.seat-composer.seat-composer-pty {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  width: auto;
+  z-index: 2;
+}
+
+.seat-composer[hidden] {
+  display: none;
+}
+
 .seat-slash-menu {
   flex: 0 0 auto;
   display: flex;

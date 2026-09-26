@@ -8716,6 +8716,17 @@ body.web-frontend #sidebar-header {
   border-color: var(--error);
   box-shadow: 0 0 0 1px var(--error);
 }
+.seat-composer.seat-composer-pty {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  width: auto;
+  z-index: 2;
+}
+.seat-composer[hidden] {
+  display: none;
+}
 .seat-slash-menu {
   flex: 0 0 auto;
   display: flex;
@@ -30390,6 +30401,18 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // renderer/lib/pty-composer.js
+  var require_pty_composer = __commonJS({
+    "renderer/lib/pty-composer.js"(exports, module) {
+      "use strict";
+      var PTY_NEWLINE = "\x1B\r";
+      function ptyComposerBytes(text) {
+        return `${String(text).replace(/\r\n|\r|\n/g, PTY_NEWLINE)}\r`;
+      }
+      module.exports = { PTY_NEWLINE, ptyComposerBytes };
+    }
+  });
+
   // renderer/lib/live-split.js
   var require_live_split = __commonJS({
     "renderer/lib/live-split.js"(exports, module) {
@@ -31343,7 +31366,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         rows.render(records);
       }
-      function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => "claude", pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null }) {
+      function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => "claude", pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null }) {
         const paneEl = document.createElement("div");
         paneEl.className = "transcript-pane";
         paneEl.hidden = true;
@@ -31399,6 +31422,16 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           return rows;
         }
+        function showComposer(on) {
+          const el = terminal.element;
+          const active = typeof document !== "undefined" ? document.activeElement : null;
+          const hadTerminalFocus = !!active && active === terminal.textarea;
+          const hadComposerFocus = !!active && active === composerEl;
+          el.style.visibility = on ? "hidden" : "";
+          composerEl.hidden = !on;
+          if (on && hadTerminalFocus) composerEl.focus();
+          else if (!on && hadComposerFocus) terminal.focus();
+        }
         function layout() {
           const el = terminal.element;
           if (!el) return;
@@ -31409,11 +31442,23 @@ ${m[2].replace(/^\r?\n/, "")}`;
             el.style.clipPath = "";
             wrapperEl.classList.remove("live-split");
             paneEl.hidden = true;
+            if (composerEl) showComposer(false);
             return;
           }
           const cs = getComputedStyle(wrapperEl);
           const padTop = parseFloat(cs.paddingTop) || 0;
           const padBottom = parseFloat(cs.paddingBottom) || 0;
+          if (composerEl) {
+            el.style.transform = "";
+            el.style.clipPath = "";
+            showComposer(true);
+            const composerTop = wrapperEl.clientHeight - padBottom - composerEl.offsetHeight;
+            wrapperEl.classList.add("live-split");
+            paneEl.style.height = `${Math.max(0, Math.round(composerTop - padTop))}px`;
+            paneEl.hidden = false;
+            stickToBottom();
+            return;
+          }
           const bottom = Math.min(state.bottom, terminal.rows - 1);
           const stripPx = (bottom - state.top + 1) * rowPx;
           const stripTop = wrapperEl.clientHeight - padBottom - stripPx;
@@ -31475,9 +31520,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }) : null;
         const ro = typeof ResizeObserver === "function" ? new ResizeObserver(() => layout()) : null;
         if (ro) ro.observe(wrapperEl);
+        if (ro && composerEl) ro.observe(composerEl);
+        const composerVisible = () => !!composerEl && !composerEl.hidden;
         paneEl.addEventListener("mouseup", () => {
           const sel = window.getSelection();
-          if (!sel || sel.isCollapsed) terminal.focus();
+          if (!sel || sel.isCollapsed) (composerVisible() ? composerEl : terminal).focus();
         });
         return {
           refresh() {
@@ -31491,6 +31538,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           },
           raw: () => raw,
           state: () => state,
+          composerVisible,
           dispose() {
             disposed = true;
             clearTimeout(wakeTimer);
@@ -44683,6 +44731,7 @@ ${detail}` });
       var { createIntentHighlight } = require_intent_highlight();
       var { createVoiceMirror, engineObserved } = require_voice_mirror();
       var { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require_composer_voice();
+      var { ptyComposerBytes } = require_pty_composer();
       var { VOICE_ENGINE_NAME } = require_voice_engine();
       var {
         DEFAULT_SUBMIT_PHRASE,
@@ -46096,15 +46145,76 @@ ${detail}` });
         }
       }
       var SEAT_DRAFT_DEBOUNCE_MS = 300;
+      var COMPOSER_PLACEHOLDER = "Message \u2014 Enter sends, Shift+Enter for a new line";
+      function attachComposer(composer, { onSend, onSlash = null, onEscape, onEmptySpace = null }) {
+        composer.className = "seat-composer";
+        composer.rows = 1;
+        composer.placeholder = COMPOSER_PLACEHOLDER;
+        const fit = () => {
+          composer.style.height = "auto";
+          const px = composerHeightFor({ scrollHeight: composer.scrollHeight, offsetHeight: composer.offsetHeight, clientHeight: composer.clientHeight });
+          composer.style.height = px == null ? "" : `${px}px`;
+        };
+        const onKeydown = (e) => {
+          if (onSlash && !e.isComposing && onSlash(e)) return;
+          if (e.key === "Escape" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
+            e.preventDefault();
+            onEscape();
+            return;
+          }
+          const edit = !e.isComposing && composerReadlineEdit({
+            key: e.key,
+            ctrlKey: e.ctrlKey,
+            metaKey: e.metaKey,
+            altKey: e.altKey,
+            value: composer.value,
+            selectionStart: composer.selectionStart,
+            selectionEnd: composer.selectionEnd
+          });
+          if (edit) {
+            e.preventDefault();
+            composer.value = edit.value;
+            composer.setSelectionRange(edit.cursor, edit.cursor);
+            composer.dispatchEvent(new Event("input", { bubbles: true }));
+            return;
+          }
+          if (onEmptySpace && e.key === " " && !e.repeat && !e.isComposing && !composer.value && onEmptySpace()) {
+            e.preventDefault();
+            return;
+          }
+          if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+          e.preventDefault();
+          onSend(composer.value);
+        };
+        composer.addEventListener("keydown", onKeydown);
+        composer.addEventListener("input", fit);
+        return {
+          fit,
+          dispose() {
+            composer.removeEventListener("keydown", onKeydown);
+            composer.removeEventListener("input", fit);
+          }
+        };
+      }
       function createStreamSeatPane(name, wrapperEl) {
         wrapperEl.classList.add("stream-seat");
         const paneEl = document.createElement("div");
         paneEl.className = "transcript-pane transcript-pane-full";
         wrapperEl.appendChild(paneEl);
         const composer = document.createElement("textarea");
-        composer.className = "seat-composer";
-        composer.rows = 1;
-        composer.placeholder = "Message \u2014 Enter sends, Shift+Enter for a new line";
+        const composerKit = attachComposer(composer, {
+          onSend: () => sendComposer(),
+          onSlash: (e) => onSlashKey(e),
+          onEscape: () => {
+            Promise.resolve(window.api.seatInterrupt(name)).catch(() => {
+            });
+          },
+          onEmptySpace: () => {
+            if (!seatVoiceMode(name, "tap")) return false;
+            seatVoiceRecord(name, voiceRecordingSeat === name ? "stop" : "start");
+            return true;
+          }
+        });
         const attachEl = document.createElement("div");
         attachEl.className = "seat-attachments";
         attachEl.hidden = true;
@@ -46122,11 +46232,7 @@ ${detail}` });
         slashEl.hidden = true;
         wrapperEl.appendChild(slashEl);
         wrapperEl.appendChild(composer);
-        const fitComposer = () => {
-          composer.style.height = "auto";
-          const px = composerHeightFor({ scrollHeight: composer.scrollHeight, offsetHeight: composer.offsetHeight, clientHeight: composer.clientHeight });
-          composer.style.height = px == null ? "" : `${px}px`;
-        };
+        const fitComposer = composerKit.fit;
         const SEAT_PERMISSION_INPUT_MAX = 600;
         let permKey = "";
         const renderPermissions = (items) => {
@@ -46454,8 +46560,8 @@ ${detail}` });
         };
         composer.addEventListener("input", () => updateSlash());
         composer.addEventListener("blur", closeSlash);
-        composer.addEventListener("keydown", (e) => {
-          const slashKey = !e.isComposing && slashMenuKey({
+        const onSlashKey = (e) => {
+          const slashKey = slashMenuKey({
             key: e.key,
             open: !slashEl.hidden,
             index: slashIndex,
@@ -46465,51 +46571,20 @@ ${detail}` });
             metaKey: e.metaKey,
             altKey: e.altKey
           });
-          if (slashKey) {
-            e.preventDefault();
-            if (slashKey.close) closeSlash();
-            else if (slashKey.pick) pickSlash(e.key === "Enter");
-            else {
-              slashIndex = slashKey.index;
-              renderSlash();
-            }
-            return;
-          }
-          if (e.key === "Escape" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
-            e.preventDefault();
-            Promise.resolve(window.api.seatInterrupt(name)).catch(() => {
-            });
-            return;
-          }
-          const edit = !e.isComposing && composerReadlineEdit({
-            key: e.key,
-            ctrlKey: e.ctrlKey,
-            metaKey: e.metaKey,
-            altKey: e.altKey,
-            value: composer.value,
-            selectionStart: composer.selectionStart,
-            selectionEnd: composer.selectionEnd
-          });
-          if (edit) {
-            e.preventDefault();
-            composer.value = edit.value;
-            composer.setSelectionRange(edit.cursor, edit.cursor);
-            composer.dispatchEvent(new Event("input", { bubbles: true }));
-            return;
-          }
-          if (e.key === " " && !e.repeat && !e.isComposing && !composer.value && seatVoiceMode(name, "tap")) {
-            e.preventDefault();
-            seatVoiceRecord(name, voiceRecordingSeat === name ? "stop" : "start");
-            return;
-          }
-          if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+          if (!slashKey) return false;
           e.preventDefault();
-          sendComposer();
-        });
+          if (slashKey.close) closeSlash();
+          else if (slashKey.pick) pickSlash(e.key === "Enter");
+          else {
+            slashIndex = slashKey.index;
+            renderSlash();
+          }
+          return true;
+        };
         let voiceRecordingOn = false;
         let turnRunning = false;
         const applyPlaceholder = () => {
-          composer.placeholder = voiceRecordingOn ? "Recording \u2014 your words appear here; Enter sends" : turnRunning ? "Message \u2014 Enter sends, Esc interrupts the turn" : "Message \u2014 Enter sends, Shift+Enter for a new line";
+          composer.placeholder = voiceRecordingOn ? "Recording \u2014 your words appear here; Enter sends" : turnRunning ? "Message \u2014 Enter sends, Esc interrupts the turn" : COMPOSER_PLACEHOLDER;
         };
         const triggerSubmit = attachTriggerSubmit(composer, {
           getConfig: () => voiceSubmitConfig,
@@ -46523,7 +46598,6 @@ ${detail}` });
           releaseMs: VOICE_RELEASE_MS,
           trace: (line) => voiceTrace(name, line)
         });
-        composer.addEventListener("input", fitComposer);
         fitComposer();
         return {
           focus: () => {
@@ -46557,7 +46631,7 @@ ${detail}` });
             clearInterval(timer);
             clearTimeout(draftTimer);
             composer.removeEventListener("input", onComposerInput);
-            composer.removeEventListener("input", fitComposer);
+            composerKit.dispose();
             transcriptChangedSubs.delete(onChanged);
             paneEl.removeEventListener("scroll", onScroll);
             permEl.replaceChildren();
@@ -46653,13 +46727,14 @@ ${detail}` });
           }
         });
         const intentHighlight = createIntentHighlight(terminal);
+        const writePty = (data) => {
+          const seat = sessions.get(name);
+          if (seat) seat.typedSinceEnter = ptyTypedSinceEnter(seat.typedSinceEnter, data);
+          window.api.writeToSession(name, data);
+        };
         const ptyVoice = peer ? null : createPtyVoiceDraft({
           getConfig: () => voiceSubmitConfig,
-          write: (data) => {
-            const seat = sessions.get(name);
-            if (seat) seat.typedSinceEnter = ptyTypedSinceEnter(seat.typedSinceEnter, data);
-            window.api.writeToSession(name, data);
-          },
+          write: writePty,
           markOrigin: () => window.api.markVoiceOrigin(name),
           onVoiceFire: () => seatVoiceFired(name),
           holdsFire: () => voiceRecordingSeat === name && seatVoiceMode(name, "tap"),
@@ -46714,7 +46789,42 @@ ${detail}` });
           window.api.writeToSession(name, data);
         });
         const echoRewrite = peer ? (chunk) => chunk : createEchoRewriter(currentEchoPalette);
-        const liveSplit = peer || window.__CLODEX_WEB__ ? null : createLiveSplitView(terminal, wrapperEl, {
+        const splitOn = !peer && !window.__CLODEX_WEB__;
+        const composerEl = splitOn ? document.createElement("textarea") : null;
+        const sendPtyComposer = () => {
+          const text = composerEl.value;
+          if (!text.trim()) return;
+          composerEl.value = "";
+          composerKit.fit();
+          composerTrigger.resetSpan();
+          writePty(ptyComposerBytes(text));
+        };
+        const composerKit = composerEl ? attachComposer(composerEl, {
+          onSend: sendPtyComposer,
+          onEscape: () => writePty("\x1B"),
+          onEmptySpace: () => {
+            if (!seatVoiceMode(name, "tap")) return false;
+            seatVoiceRecord(name, voiceRecordingSeat === name ? "stop" : "start");
+            return true;
+          }
+        }) : null;
+        const composerTrigger = composerEl ? attachTriggerSubmit(composerEl, {
+          getConfig: () => voiceSubmitConfig,
+          markOrigin: () => window.api.markVoiceOrigin(name),
+          send: sendPtyComposer,
+          onVoiceFire: () => seatVoiceFired(name),
+          holdsFire: () => voiceRecordingSeat === name && seatVoiceMode(name, "tap"),
+          onVoiceStop: () => seatVoiceRecord(name, "stop"),
+          quietMs: VOICE_QUIET_MS,
+          releaseMs: VOICE_RELEASE_MS,
+          trace: (line) => voiceTrace(name, line)
+        }) : null;
+        if (composerEl) {
+          composerEl.classList.add("seat-composer-pty");
+          composerEl.hidden = true;
+          wrapperEl.appendChild(composerEl);
+        }
+        const liveSplit = !splitOn ? null : createLiveSplitView(terminal, wrapperEl, {
           isEligible: () => transcriptPaneEnabled && isAgentType(sessionTypeOf(name)),
           platform: () => sessionTypeOf(name),
           pullTranscript: () => window.api.transcriptPull(name),
@@ -46727,9 +46837,13 @@ ${detail}` });
           openFilePeek: (...args) => openFilePeek(...args),
           openExternal: (url) => window.api.openExternal(url),
           toast: showToast,
-          echoPalette: currentEchoPalette
+          echoPalette: currentEchoPalette,
+          composerEl,
+          onChange: () => {
+            if (composerKit) composerKit.fit();
+          }
         });
-        sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit });
+        sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger });
         updateWindowTitle();
         return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
       }
@@ -46759,6 +46873,16 @@ ${detail}` });
           }
         }), style);
         if (!text) return;
+        if (ptyComposerShown(entry)) {
+          const el = entry.composerEl;
+          const start = el.selectionStart == null ? el.value.length : el.selectionStart;
+          const end = el.selectionEnd == null ? start : el.selectionEnd;
+          el.value = el.value.slice(0, start) + text + el.value.slice(end);
+          el.setSelectionRange(start + text.length, start + text.length);
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          focusPtySeat(entry);
+          return;
+        }
         window.api.writeToSession(activeSession, text);
         if (entry.terminal) entry.terminal.focus();
       });
@@ -46820,8 +46944,15 @@ ${detail}` });
           }
           fitAddon.fit();
           window.api.resizeSession(name, terminal.cols, terminal.rows);
-          terminal.focus();
+          focusPtySeat(entry);
         });
+      }
+      function ptyComposerShown(entry) {
+        return !!(entry && entry.liveSplit && entry.composerEl && entry.liveSplit.composerVisible());
+      }
+      function focusPtySeat(entry) {
+        if (ptyComposerShown(entry)) entry.composerEl.focus();
+        else entry.terminal.focus();
       }
       async function switchToNewSession(name, { agentInitiated = false } = {}) {
         const { focus } = await planNewSession({
@@ -46871,6 +47002,8 @@ ${detail}` });
           if (s.intentHighlight) s.intentHighlight.dispose();
           if (s.ptyVoice) s.ptyVoice.dispose();
           if (s.liveSplit) s.liveSplit.dispose();
+          if (s.composerKit) s.composerKit.dispose();
+          if (s.composerTrigger) s.composerTrigger.dispose();
           if (s.webgl) {
             try {
               s.webgl.dispose();
@@ -48216,11 +48349,26 @@ ${detail}` });
           };
         }
         if (!entry.ptyVoice) return null;
+        if (entry.composerTrigger && ptyComposerShown(entry)) {
+          return {
+            draft: (text) => {
+              entry.composerTrigger.draft(text);
+              entry.composerKit.fit();
+            },
+            released: () => {
+              entry.composerTrigger.released();
+              entry.composerKit.fit();
+            },
+            start: () => entry.composerTrigger.resetSpan(),
+            setRecording: (on) => entry.composerEl.classList.toggle("voice-recording", !!on)
+          };
+        }
         return {
           draft: (text) => entry.ptyVoice.draft(text),
           released: () => entry.ptyVoice.released(),
           start: () => entry.ptyVoice.resetSpan(),
-          setRecording: () => {
+          setRecording: (on) => {
+            if (entry.composerEl) entry.composerEl.classList.toggle("voice-recording", !!on);
           }
         };
       }
@@ -49320,7 +49468,7 @@ Click for live activity`;
         getFiles: (name) => filesState.get(name),
         focusTerminal: () => {
           const s = sessions.get(activeSession);
-          if (s && s.terminal) s.terminal.focus();
+          if (s && s.terminal) focusPtySeat(s);
           else if (s && s.stream) s.stream.focus();
         }
       });
