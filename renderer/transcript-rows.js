@@ -139,6 +139,11 @@ function cardHead(doc, seg, ctx) {
     head.appendChild(target);
   }
   for (const chip of h.chips) head.appendChild(el(doc, 'span', 'intent-chip', chip));
+  if (seg.open) {
+    const warn = el(doc, 'span', 'intent-chip intent-chip-warn', 'unclosed');
+    warn.title = 'no [agent:end]: the rest of the reply was delivered as this body';
+    head.appendChild(warn);
+  }
   return head;
 }
 
@@ -147,7 +152,7 @@ function cardBody(doc, seg, ctx) {
   const body = el(doc, 'div', `intent-card-body${seg.verb === 'exec' ? ' intent-card-body-mono' : ''}`);
   appendPlain(doc, body, seg.body, ctx);
   const more = lines.length - CLAMP_LINES;
-  if (more <= 0 && seg.body.length <= CLAMP_CHARS) return [body];
+  if (seg.open || (more <= 0 && seg.body.length <= CLAMP_CHARS)) return [body];
   body.className += ' intent-card-clamped';
   const foot = el(doc, 'div', 'intent-card-more', more > 0 ? `+ ${countText(more, 'more line', 'more lines')}` : '+ more');
   const expand = () => {
@@ -168,7 +173,7 @@ function intentCard(doc, seg, ctx) {
     card.appendChild(el(doc, 'div', 'intent-card-raw', seg.text));
     return card;
   }
-  const card = el(doc, 'div', `intent-card${seg.state === 'filed' ? ' intent-card-filed' : ''}`);
+  const card = el(doc, 'div', `intent-card${seg.state === 'filed' ? ' intent-card-filed' : ''}${seg.open ? ' intent-card-open' : ''}`);
   card.dataset.verb = seg.verb;
   card.appendChild(cardHead(doc, seg, ctx));
   if (seg.state === 'filed' && seg.spill) {
