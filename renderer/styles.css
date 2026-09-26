@@ -6024,6 +6024,9 @@ body.web-frontend #sidebar-header {
   overflow: hidden;
 }
 .tr-prompt > .tr-head-text { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.tr-image-thumb { height: 48px; width: auto; max-width: 160px; object-fit: cover; border: 1px solid var(--border); vertical-align: middle; cursor: pointer; }
+.tr-image-thumb.tr-image-open { display: block; max-width: 100%; height: auto; margin: var(--sp-1) 0; object-fit: contain; }
+.tr-image-chip { display: inline-block; padding: 0 var(--sp-1); border: 1px solid var(--border); color: var(--text-tertiary); font-size: var(--fs-sm); vertical-align: middle; }
 .tr-command { font-family: var(--font-mono); font-size: var(--fs-sm); }
 .tr-sender { display: inline; white-space: normal; }
 .tr-sender-glyph {

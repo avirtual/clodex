@@ -464,6 +464,56 @@ test('a prompt that is only a paste marker shows exactly the pasted text', () =>
   assert.strictEqual(find(row, 'tr-head-text')[0].textContent, 'alpha\nbeta');
 });
 
+const findCls = (node, cls) => (node.className || '').split(' ').includes(cls) ? [node] : (node.childNodes || []).flatMap((k) => findCls(k, cls));
+
+test('a prompt with a pasted image shows a thumbnail in place of its marker, followed by the text', () => {
+  const m = mount();
+  m.render([{ ...prompt, text: '[Image #1]look at this', images: [{ n: 1, mediaType: 'image/png', data: 'iVBORw0KGgo=' }] }]);
+  const head = findCls(m.pane.childNodes[0].childNodes[0], 'tr-head-text')[0];
+  const [img] = findCls(head, 'tr-image-thumb');
+  assert.strictEqual(img.tag, 'img');
+  assert.ok(img.src.startsWith('data:image/png;base64,iVBORw0KGgo='));
+  assert.strictEqual(head.childNodes[0], img);
+  assert.strictEqual(head.textContent, 'look at this');
+});
+
+test('a capped image shows a size chip in place of its marker', () => {
+  const m = mount();
+  m.render([{ ...prompt, text: 'see [Image #2]', images: [{ n: 2, mediaType: 'image/png', bytes: 2.1 * 1024 * 1024 }] }]);
+  const head = findCls(m.pane.childNodes[0].childNodes[0], 'tr-head-text')[0];
+  assert.strictEqual(findCls(head, 'tr-image-chip')[0].textContent, 'Image #2 · 2.1 MB');
+  assert.strictEqual(head.textContent, 'see Image #2 · 2.1 MB');
+});
+
+test('a click on the thumbnail opens it full width and a second click closes it', () => {
+  const m = mount();
+  m.render([{ ...prompt, text: '[Image #1]', images: [{ n: 1, mediaType: 'image/png', data: 'AAAA' }] }]);
+  const [img] = findCls(m.pane, 'tr-image-thumb');
+  img.listeners.click();
+  assert.ok(img.className.split(' ').includes('tr-image-open'));
+  img.listeners.click();
+  assert.ok(!img.className.split(' ').includes('tr-image-open'));
+});
+
+test('an image marker with no matching image stays literal text', () => {
+  const m = mount();
+  m.render([{ ...prompt, text: '[Image #2] and [Image #1]', images: [{ n: 1, mediaType: 'image/png', data: 'AAAA' }] }]);
+  const head = findCls(m.pane.childNodes[0].childNodes[0], 'tr-head-text')[0];
+  assert.strictEqual(head.textContent, '[Image #2] and ');
+  assert.strictEqual(findCls(head, 'tr-image-thumb').length, 1);
+});
+
+test('the prompt row signature carries no image data, and a change in image size rebuilds the row', () => {
+  const m = mount();
+  const data = 'Q'.repeat(64);
+  m.render([{ ...prompt, text: '[Image #1]', images: [{ n: 1, mediaType: 'image/png', data }] }]);
+  const first = m.pane.childNodes[0].childNodes[0];
+  m.render([{ ...prompt, text: '[Image #1]', images: [{ n: 1, mediaType: 'image/png', data: 'R'.repeat(64) }] }]);
+  assert.strictEqual(m.pane.childNodes[0].childNodes[0], first);
+  m.render([{ ...prompt, text: '[Image #1]', images: [{ n: 1, mediaType: 'image/png', data: data + 'QQQQ' }] }]);
+  assert.notStrictEqual(m.pane.childNodes[0].childNodes[0], first);
+});
+
 test('the operator prompt row unclamps its head text while other head rows keep the three-line clamp', () => {
   const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
   const start = css.indexOf('.tr-prompt > .tr-head-text {');

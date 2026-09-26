@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { RECORD_CAP, PROMPT_CAP, PROSE_CAP, recordsOf, segmentsOf, isInternalRow } = require('../transcript-records');
+const { RECORD_CAP, PROMPT_CAP, PROSE_CAP, IMAGE_CAP, recordsOf, segmentsOf, isInternalRow } = require('../transcript-records');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'transcript-records');
 const fixture = (name) => fs.readFileSync(path.join(FIXTURES, `${name}.jsonl`), 'utf8');
@@ -286,6 +286,47 @@ test('a paste longer than PROMPT_CAP does not truncate the typed text and is kep
   assert.strictEqual(r.truncated, undefined);
   assert.strictEqual(r.text, `${'i'.repeat(30)}\n[Pasted text #1 +1 lines]`);
   assert.deepStrictEqual(r.pastes, [{ n: 1, lines: 1, text: big }]);
+});
+
+const image = (data, mediaType = 'image/png') => ({ type: 'image', source: { type: 'base64', media_type: mediaType, data } });
+
+test('a prompt with a pasted image block carries it in images, numbered like its marker', () => {
+  assert.deepStrictEqual(promptOf([{ type: 'text', text: '[Image #1]look at this' }, image('iVBORw0KGgo=')]), [
+    { id: 'u', kind: 'prompt', ts: null, turn: 1, text: '[Image #1]look at this', source: 'typed', images: [{ n: 1, mediaType: 'image/png', data: 'iVBORw0KGgo=' }] },
+  ]);
+});
+
+test('an image block takes its n from the marker the composer wrote, not its position in the entry', () => {
+  const [r] = promptOf([{ type: 'text', text: '[Image #3]the filter' }, image('AAAA')]);
+  assert.deepStrictEqual(r.images, [{ n: 3, mediaType: 'image/png', data: 'AAAA' }]);
+});
+
+test('an image over the cap ships its decoded size and no data', () => {
+  const big = 'A'.repeat(((IMAGE_CAP + 2) / 3) * 4);
+  const [r] = promptOf([{ type: 'text', text: '[Image #1]' }, image(big, 'image/jpeg')]);
+  assert.deepStrictEqual(r.images, [{ n: 1, mediaType: 'image/jpeg', bytes: IMAGE_CAP + 2 }]);
+});
+
+test('the cap is on the decoded size: an image whose base64 passes 1 MB but whose bytes do not still ships its data', () => {
+  const data = 'A'.repeat(IMAGE_CAP + 4);
+  const [r] = promptOf([{ type: 'text', text: '[Image #1]' }, image(data)]);
+  assert.deepStrictEqual(r.images, [{ n: 1, mediaType: 'image/png', data }]);
+});
+
+test('a repeated marker numbers one image, so two blocks under [Image #1] [Image #1] [Image #2] are n 1 and n 2', () => {
+  const [r] = promptOf([{ type: 'text', text: '[Image #1] a [Image #1] b [Image #2]' }, image('AAAA'), image('BBBB')]);
+  assert.deepStrictEqual(r.images.map((i) => [i.n, i.data]), [[1, 'AAAA'], [2, 'BBBB']]);
+});
+
+test('image blocks beyond the markers are not shipped', () => {
+  const [r] = promptOf([{ type: 'text', text: '[Image #3] only one' }, image('AAAA'), image('BBBB')]);
+  assert.deepStrictEqual(r.images, [{ n: 3, mediaType: 'image/png', data: 'AAAA' }]);
+});
+
+test('an inbound delivery with an image block carries no images', () => {
+  const [r] = promptOf([{ type: 'text', text: '[agent:from bob] see [Image #1]' }, image('AAAA')]);
+  assert.strictEqual(r.kind, 'inbound');
+  assert.strictEqual(r.images, undefined);
 });
 
 test('a runtime reply Clodex injects is a reply record with its verb and no sender; an agent:from delivery keeps its sender; a mid-line bracket stays a typed prompt', () => {

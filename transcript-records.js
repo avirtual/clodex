@@ -13,6 +13,8 @@ const { isInternalRow } = require('./transcript-internal');
 const RECORD_CAP = 400;
 const PROMPT_CAP = 4096;
 const PROSE_CAP = 65536;
+const IMAGE_CAP = 1024 * 1024;
+const IMAGE_MARK_RE = /\[Image #(\d+)\]/g;
 const NOTE_CAP = 300;
 const ONLY_MAX = 80;
 const INPUT_KEYS = ['command', 'file_path', 'path', 'pattern', 'url', 'query', 'description', 'prompt'];
@@ -75,6 +77,20 @@ function textOf(content) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n');
+}
+
+function imagesOf(content, text) {
+  if (!Array.isArray(content)) return [];
+  const marks = [...new Set([...text.matchAll(IMAGE_MARK_RE)].map((m) => Number(m[1])))];
+  const blocks = content.filter((b) => b && b.type === 'image' && b.source && typeof b.source.data === 'string');
+  return blocks.slice(0, marks.length).map((b, k) => {
+    const n = marks[k];
+    const mediaType = b.source.media_type;
+    const data = b.source.data;
+    const bytes = Math.floor((data.length * 3) / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0);
+    if (bytes <= IMAGE_CAP) return { n, mediaType, data };
+    return { n, mediaType, bytes };
+  });
 }
 
 function tagBody(text, tag) {
@@ -242,7 +258,9 @@ function userRecords(rec, base, tools) {
   const pasted = pastesOf(text);
   const out = capped(fields, 'text', pasted.text, PROMPT_CAP);
   const source = rec.promptSource === 'queued' ? 'queued' : 'typed';
-  return [pasted.pastes.length ? { ...out, source, pastes: pasted.pastes } : { ...out, source }];
+  const prompt = pasted.pastes.length ? { ...out, source, pastes: pasted.pastes } : { ...out, source };
+  const images = imagesOf(content, text);
+  return [images.length ? { ...prompt, images } : prompt];
 }
 
 const SIZE_RE = /^(\d+(?:\.\d)?) (B|KB)/;
@@ -471,4 +489,4 @@ function recordsOf(text, max = RECORD_CAP) {
   return { records: cutOnTurn(all, max) };
 }
 
-module.exports = { RECORD_CAP, PROMPT_CAP, PROSE_CAP, recordsOf, segmentsOf, toolInputLine, isInternalRow };
+module.exports = { RECORD_CAP, PROMPT_CAP, PROSE_CAP, IMAGE_CAP, recordsOf, segmentsOf, toolInputLine, isInternalRow };
