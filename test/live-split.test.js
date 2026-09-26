@@ -98,9 +98,14 @@ for (const [name, cursorY, mode, top, bottom, platform] of FIXTURES) {
   test(`${name}: ${mode}${mode === 'split' ? ` rows ${top}..${bottom}` : ''}`, () => {
     const { rows, cols } = load(name, platform);
     const args = platform ? [rows, cursorY, cols, platform] : [rows, cursorY, cols];
-    assert.deepStrictEqual(measureSplit(...args), { mode, top, bottom });
+    assert.deepStrictEqual(measureSplit(...args), mode === 'split' ? { mode, top, bottom } : { mode, top, bottom, busy: true });
   });
 }
+
+test('an unanchored screen is busy when any row carries text and not busy when every row is blank', () => {
+  assert.deepStrictEqual(measureSplit(['', '  Select model', '', '❯ 1. Opus'], 3, 20), { mode: 'full', top: -1, bottom: -1, busy: true });
+  assert.deepStrictEqual(measureSplit(['', '   ', '', ''], 0, 20), { mode: 'full', top: -1, bottom: -1, busy: false });
+});
 
 test('a Muse or Codex screen measured as Claude has no anchor, and an unknown platform never splits', () => {
   for (const [name, cursorY] of [['muse-idle@100', 7], ['codex-idle@100', 26]]) {

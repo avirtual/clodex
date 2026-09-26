@@ -16,7 +16,7 @@ function renderTranscript(doc, paneEl, records, ctx = {}) {
   rows.render(records);
 }
 
-function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null }) {
+function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false }) {
   const paneEl = document.createElement('div');
   paneEl.className = 'transcript-pane';
   paneEl.hidden = true;
@@ -32,6 +32,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   let follow = true;
   let pinnedTop = null;
   let raw = false;
+  let sheetRows = 0;
 
   function stickToBottom() {
     if (!follow) return;
@@ -86,15 +87,34 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     else if (!on && hadComposerFocus) terminal.focus();
   }
 
+  function sheetRowsOf(rows) {
+    if (!sheet || !composerEl || state.mode !== 'full') return 0;
+    const first = rows.findIndex((r) => /\S/u.test(r || ''));
+    if (first < 0) return 0;
+    return Math.min(rows.length - first, terminal.rows, Math.max(1, Math.floor(terminal.rows / 2)));
+  }
+
+  function placeStrip(el, screen, rowPx, top, bottom, padBottom) {
+    const stripPx = (bottom - top + 1) * rowPx;
+    const stripTop = wrapperEl.clientHeight - padBottom - stripPx;
+    const rowInEl = screen.offsetTop + top * rowPx;
+    const endInEl = screen.offsetTop + (bottom + 1) * rowPx;
+    el.style.transform = `translateY(${Math.round(stripTop - el.offsetTop - rowInEl)}px)`;
+    el.style.clipPath = `inset(${rowInEl}px 0 ${Math.max(0, el.offsetHeight - endInEl)}px 0)`;
+    return stripTop;
+  }
+
   function layout() {
     const el = terminal.element;
     if (!el) return;
     const screen = el.querySelector('.xterm-screen');
     const rowPx = screen && terminal.rows ? screen.offsetHeight / terminal.rows : 0;
-    if (state.mode !== 'split' || !rowPx) {
+    const inSheet = state.mode === 'full' && sheetRows > 0 && !!rowPx;
+    if ((state.mode !== 'split' && !inSheet) || !rowPx) {
       el.style.transform = '';
       el.style.clipPath = '';
       wrapperEl.classList.remove('live-split');
+      wrapperEl.classList.remove('live-sheet');
       paneEl.hidden = true;
       if (composerEl) showComposer(false);
       return;
@@ -102,6 +122,17 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     const cs = getComputedStyle(wrapperEl);
     const padTop = parseFloat(cs.paddingTop) || 0;
     const padBottom = parseFloat(cs.paddingBottom) || 0;
+    if (inSheet) {
+      showComposer(false);
+      const stripTop = placeStrip(el, screen, rowPx, terminal.rows - sheetRows, terminal.rows - 1, padBottom);
+      wrapperEl.classList.remove('live-split');
+      wrapperEl.classList.add('live-sheet');
+      paneEl.style.height = `${Math.max(0, Math.round(stripTop - padTop))}px`;
+      paneEl.hidden = false;
+      stickToBottom();
+      return;
+    }
+    wrapperEl.classList.remove('live-sheet');
     if (composerEl) {
       el.style.transform = '';
       el.style.clipPath = '';
@@ -113,13 +144,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       stickToBottom();
       return;
     }
-    const bottom = Math.min(state.bottom, terminal.rows - 1);
-    const stripPx = (bottom - state.top + 1) * rowPx;
-    const stripTop = wrapperEl.clientHeight - padBottom - stripPx;
-    const rowInEl = screen.offsetTop + state.top * rowPx;
-    const endInEl = screen.offsetTop + (bottom + 1) * rowPx;
-    el.style.transform = `translateY(${Math.round(stripTop - el.offsetTop - rowInEl)}px)`;
-    el.style.clipPath = `inset(${rowInEl}px 0 ${Math.max(0, el.offsetHeight - endInEl)}px 0)`;
+    const stripTop = placeStrip(el, screen, rowPx, state.top, Math.min(state.bottom, terminal.rows - 1), padBottom);
     wrapperEl.classList.add('live-split');
     paneEl.style.height = `${Math.max(0, Math.round(stripTop - padTop))}px`;
     paneEl.hidden = false;
@@ -131,15 +156,23 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     clearTimeout(wakeTimer);
     wakeTimer = null;
     let measured = null;
+    let rows = null;
     if (!raw && isEligible()) {
       pull();
       const buf = terminal.buffer.active;
-      if (available) measured = measureSplit(screenRows(), buf.cursorY, terminal.cols, platform());
+      if (available) {
+        rows = screenRows();
+        measured = measureSplit(rows, buf.cursorY, terminal.cols, platform());
+      }
     }
     const prev = state;
+    const prevSheet = sheetRows;
     state = reduceSplit(state, measured, now(), undefined, raw ? 0 : undefined);
+    const busy = !!measured && (measured.mode === 'split' || !!measured.busy);
+    sheetRows = busy ? sheetRowsOf(rows) : 0;
     if (state.wakeAt != null) wakeTimer = setTimeout(evaluate, Math.max(0, state.wakeAt - now()));
-    if (prev.mode !== state.mode || prev.top !== state.top || prev.bottom !== state.bottom) {
+    if (prevSheet !== sheetRows && prev.mode === state.mode && prev.top === state.top && prev.bottom === state.bottom) layout();
+    else if (prev.mode !== state.mode || prev.top !== state.top || prev.bottom !== state.bottom) {
       layout();
       if (onChange) onChange(state);
     }
