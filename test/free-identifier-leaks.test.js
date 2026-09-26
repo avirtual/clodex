@@ -306,6 +306,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/term-webgl.js',
   'renderer/lib/voice-submit.js',
   'renderer/lib/live-split.js',
+  'renderer/lib/menu-rows.js',
   'renderer/lib/ansi-html.js',
   'renderer/live-split-view.js',
   'renderer/transcript-rows.js',

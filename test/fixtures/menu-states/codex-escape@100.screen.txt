@@ -1,0 +1,40 @@
+╭─────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.0)                          │
+│                                                     │
+│ model:       GPT-6-Astra medium   /model to change  │
+│ directory:   ~/.clodex/…/t-slash-menu-transport/cwd │
+│ permissions: YOLO mode                              │
+╰─────────────────────────────────────────────────────╯
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+
+
+
+ 
+
+ 
+ 
+
+› /co
+
+  Context 0% used · GPT-6-Astra · cwd · master · 5h 96% left
+                                                                          ⚠ 2 warnings · f2 to view

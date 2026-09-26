@@ -1,0 +1,40 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.283
+           Opus 5.5 (1M context) · Claude Max
+ ▘▘   ▝▝   ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/t-slash-menu-transport/cwd
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /clo
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  /schedule                     Create, update, list, or run scheduled cloud agents (routines)
+                                that execute on a cron schedule.
+  /ultrareview                  3 free left · Start a cloud agent that finds and verifies bugs in
+                                your branch (~15-25 min, $5-$25 USD) · Runs in a cloud session. S…
+  /remote-env                   Choose the default environment for cloud agents
+  /web-setup                    Set up cloud sessions with your GitHub account
+  /teleport                     Send this session to the cloud, or resume one from claude.ai
+  /built-in-browser             Read this skill before the first step that uses the built-in
+                                browser, the browser pane inside the Claude desktop app (also cal…
+  /computer-use                 Read this skill before the first step of any request to do
+                                something in an app on the person's own computer (Notes, Finder, …
+                                
+
+                                
+
+
+                                
+
+                                
+
+
+
+
+
+
+
+
+
+
+
+
+
