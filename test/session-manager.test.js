@@ -21123,6 +21123,52 @@ test('stream seat (i2): queued images concatenate in order and ride the joined m
   ] } });
 });
 
+test('phone dm images: _deliverMessage with images to a busy stream seat enqueues them on the item', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('si1');
+  const png = { mediaType: 'image/png', data: 'UE5H' };
+  const jpg = { mediaType: 'image/jpeg', data: 'SlBH' };
+  h.m.seatSend('si1', 'go');
+  h.m._deliverMessage('si1', 'user', 'look', 'dm', '', null, null, [png, jpg]);
+  assert.deepStrictEqual(h.m.sessions.get('si1').outbox, [
+    { text: '[agent:from user] look', images: [png, jpg], origin: 'operator' },
+  ]);
+});
+
+test('phone dm images: _deliverMessage with images to a pty seat writes one file each and lists their paths', (t) => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  h.m.sessions.set('pi1', { name: 'pi1', agentType: 'claude', io: 'pty', filedRing: require('../filed-ring').createFiledRing() });
+  const injected = [];
+  h.m._maybeParkDelivery = () => false;
+  h.m._injectText = (_s, text) => injected.push(text);
+  h.m._sendToSession = () => {};
+  const images = [
+    { mediaType: 'image/png', data: Buffer.from('PNGBYTES').toString('base64') },
+    { mediaType: 'image/jpeg', data: Buffer.from('JPGBYTES').toString('base64') },
+    { mediaType: 'image/webp', data: Buffer.from('WEBPBYTES').toString('base64') },
+  ];
+  h.m._deliverMessage('pi1', 'user', 'see these', 'dm', '', null, null, images);
+  const dir = path.join(h.root, 'messages', 'pi1');
+  const files = fs.readdirSync(dir).sort();
+  assert.strictEqual(files.length, 3);
+  assert.deepStrictEqual(files.map((f) => path.extname(f)), ['.png', '.jpg', '.webp']);
+  for (const f of files) assert.match(f, /^img-\d+-[123]\.(png|jpg|webp)$/);
+  assert.deepStrictEqual(files.map((f) => fs.readFileSync(path.join(dir, f), 'utf8')), ['PNGBYTES', 'JPGBYTES', 'WEBPBYTES']);
+  assert.strictEqual(injected.length, 1);
+  const lines = injected[0].split('\n');
+  assert.strictEqual(lines[0], '[agent:from user] see these');
+  assert.deepStrictEqual(lines.slice(1), files.map((f, i) => `Image #${i + 1}: ${path.join(dir, f)}`));
+  assert.deepStrictEqual(h.m.sessions.get('pi1').filedRing.list().map((e) => [e.path, e.kind, e.head]).reverse(), [
+    [path.join(dir, files[0]), 'message', 'Image #1 (image/png)'],
+    [path.join(dir, files[1]), 'message', 'Image #2 (image/jpeg)'],
+    [path.join(dir, files[2]), 'message', 'Image #3 (image/webp)'],
+  ]);
+});
+
 const RESULT = { type: 'result', subtype: 'success', duration_ms: 1, total_cost_usd: 0, is_error: false };
 const userMsg = (content) => ({ type: 'user', message: { role: 'user', content } });
 

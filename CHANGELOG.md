@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Phone access: a message sent from the phone can carry up to five images (png, jpeg, gif, webp, 5 MB each); a streamed seat gets them inline, a terminal seat gets them as files with their paths in the message. The session list now says whether a seat is streamed or a terminal.
 - Transcript pane: while the agent is working, a pulsing row at the bottom of the pane shows the elapsed time and the CLI's own status line ("Brewing…", "Working"), and goes still with "Waiting for you" on a permission prompt; before, a running turn looked no different from an idle one.
 
 - Desktop app, terminal seats with the transcript pane: pasting an image into Clodex's message box now sends it to the CLI as an image, with an Image #N marker in the draft; before, the paste was lost and the pane had to be turned off.

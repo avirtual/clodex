@@ -3,12 +3,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
+const net = require('node:net');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { createRemoteWiring } = require('../remote-wiring');
-const { RemoteServer, RESOURCES } = require('../remote');
+const { RemoteServer, RESOURCES, DM_MAX_BODY } = require('../remote');
 const { createTicketsStore } = require('../tickets-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -119,7 +120,7 @@ function makeDeps() {
   const manager = {
     sessions: new Map([
       ['alice', { name: 'alice', type: 'claude', cwd: path.join(root, 'a'), workspaceId: 'ws-alpha' }],
-      ['bob', { name: 'bob', type: 'codex', cwd: path.join(root, 'b'), workspaceId: 'ws-beta' }],
+      ['bob', { name: 'bob', type: 'codex', cwd: path.join(root, 'b'), workspaceId: 'ws-beta', io: 'stream' }],
       ['ghost', { name: 'ghost', type: 'claude', cwd: path.join(root, 'g'), workspaceId: 'ws-alpha', _dead: true }],
     ]),
     create: async (...args) => { createCalls.push(args); return { name: args[0], type: args[1], pid: 7 }; },
@@ -219,6 +220,27 @@ function req(port, pathname, opts = {}) {
   });
 }
 
+function rawPostStatus(port, pathname, size) {
+  return new Promise((resolve) => {
+    const sock = net.connect(port, '127.0.0.1');
+    let got = '';
+    let sent = 0;
+    sock.on('data', (d) => { got += d; });
+    sock.on('error', () => {});
+    sock.on('close', () => resolve(got.split('\r\n')[0]));
+    sock.write(`POST ${pathname} HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: ${size}\r\n\r\n`);
+    const chunk = Buffer.alloc(16384, 120);
+    const pump = () => {
+      while (!got && sent < size) {
+        const n = Math.min(chunk.length, size - sent);
+        sent += n;
+        if (!sock.write(chunk.subarray(0, n))) return void sock.once('drain', pump);
+      }
+    };
+    pump();
+  });
+}
+
 async function withNode(extra, fn) {
   const { deps, createCalls, nodeLog } = makeDeps();
   const s = new RemoteServer({ ...captureOptions(deps), ...extra });
@@ -263,8 +285,8 @@ function subresourceFixture() {
         calls.push({ route: 'query', name, kind, args });
         return name === 'ghost' ? { ok: false, error: 'no such session' } : QUERY_OUT;
       },
-      send: (name, text) => {
-        calls.push({ route: 'dm', name, text });
+      send: (name, text, images) => {
+        calls.push(images && images.length ? { route: 'dm', name, text, images } : { route: 'dm', name, text });
         return name === 'ghost' ? { ok: false, error: 'no such session' } : { ok: true };
       },
       killSession: (name) => {
@@ -643,6 +665,54 @@ test('POST /api/sessions/:name/dm: the path names the session — a body `name` 
   });
 });
 
+test('POST /api/sessions/:name/dm: images ride through validated, an images-only body is accepted, a bad one is the validator\'s 400', async () => {
+  const fixture = subresourceFixture();
+  const post = (port, p, body) => req(port, p, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
+  const png = { mediaType: 'image/png', data: 'UE5H' };
+  await withNode(fixture.opts, async (port) => {
+    const only = await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: '', images: [{ ...png, extra: 1 }] }));
+    assert.strictEqual(only.status, 200);
+    assert.deepStrictEqual(fixture.calls.at(-1), { route: 'dm', name: 'alice', text: '', images: [png] });
+    assert.strictEqual((await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: 'look', images: [png] }))).status, 200);
+    assert.deepStrictEqual(fixture.calls.at(-1), { route: 'dm', name: 'alice', text: 'look', images: [png] });
+    const n = fixture.calls.length;
+    const bad = await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: 'x', images: [{ mediaType: 'image/svg+xml', data: 'AAAA' }] }));
+    assert.strictEqual(bad.status, 400);
+    assert.deepStrictEqual(JSON.parse(bad.body), { ok: false, error: 'unsupported image type: image/svg+xml' });
+    assert.strictEqual((await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: 'x', images: 'nope' }))).status, 400);
+    assert.deepStrictEqual(JSON.parse((await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: ' ', images: [] }))).body),
+      { ok: false, error: 'empty message' });
+    assert.strictEqual(fixture.calls.length, n, 'a refused body never reaches send');
+  });
+});
+
+test('POST /api/sessions/:name/dm: its own body cap fits five 5 MB images; above it is 413, and every other route stays at 64 KB', async () => {
+  assert.strictEqual(DM_MAX_BODY, 5 * Math.ceil(5 * 1024 * 1024 / 3) * 4 + 64 * 1024);
+  const fixture = subresourceFixture();
+  const post = (port, p, body) => req(port, p, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
+  const img = { mediaType: 'image/png', data: Buffer.alloc(5 * 1024 * 1024).toString('base64') };
+  await withNode(fixture.opts, async (port) => {
+    const full = await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: 't'.repeat(60 * 1024), images: [img, img, img, img, img] }));
+    assert.strictEqual(full.status, 200);
+    assert.strictEqual(fixture.calls.at(-1).images.length, 5);
+    assert.strictEqual(await rawPostStatus(port, '/api/sessions/alice/dm', DM_MAX_BODY + 1), 'HTTP/1.1 413 Payload Too Large');
+    assert.strictEqual(await rawPostStatus(port, '/api/sessions/alice/input', 100 * 1024), 'HTTP/1.1 413 Payload Too Large');
+    const n = fixture.calls.length;
+    const small = await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: 'y'.repeat(100 * 1024) }));
+    assert.strictEqual(small.status, 200, 'a 100 KB text-only dm is under the dm cap');
+    assert.strictEqual(fixture.calls.length, n + 1);
+  });
+});
+
+test('hello caps carry images, and /api/sessions rows say whether a seat is streamed or a terminal', async () => {
+  await withNode({}, async (port) => {
+    const caps = JSON.parse((await req(port, '/api/peer/hello')).body).caps;
+    assert.ok(caps.includes('images'), `hello caps lack 'images': ${JSON.stringify(caps)}`);
+    const list = JSON.parse((await req(port, '/api/sessions')).body).sessions;
+    assert.deepStrictEqual(list.map((r) => [r.name, r.io]), [['alice', 'pty'], ['bob', 'stream']]);
+  });
+});
+
 test('DELETE /api/sessions/:name and POST .../restart: the statuses the deleted kill/restart-session routes served', async () => {
   const fixture = subresourceFixture();
   const post = (port, p, body) => req(port, p, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
@@ -820,7 +890,7 @@ test('catalogs: absent from /api/resources when getCatalogs is not injected', as
 });
 
 const ALICE_ROW = {
-  name: 'alice', type: 'claude', workspace: 'Alpha', workspaceId: 'ws-alpha',
+  name: 'alice', type: 'claude', io: 'pty', workspace: 'Alpha', workspaceId: 'ws-alpha',
   stats: { model: null, cost: null, requests: null, ctxTok: null, ctxSize: null, ctxPct: null },
   activity: 'idle',
 };
@@ -1459,4 +1529,21 @@ test('sendInput refuses a stream seat instead of writing bytes the manager would
   assert.deepStrictEqual(writes, []);
   assert.deepStrictEqual(opts.sendInput('alice', 'hi'), { ok: true });
   assert.deepStrictEqual(writes, [['alice', 'hi']]);
+});
+
+test('remote-wiring send threads dm images onto _deliverMessage, and a text-only send keeps its old call shape', () => {
+  const { deps } = makeDeps();
+  const delivered = [];
+  deps.manager.sessions.set('carol', { name: 'carol', type: 'claude', agentType: 'claude', workspaceId: 'ws-alpha' });
+  deps.manager._deliverMessage = (...a) => { delivered.push(a); };
+  const opts = captureOptions(deps);
+  const png = { mediaType: 'image/png', data: 'UE5H' };
+  assert.deepStrictEqual(opts.send('carol', 'look', [png]), { ok: true });
+  assert.deepStrictEqual(opts.send('carol', 'plain', []), { ok: true });
+  assert.deepStrictEqual(delivered, [
+    ['carol', 'user', 'look', 'dm', '', null, null, [png]],
+    ['carol', 'user', 'plain', 'dm'],
+  ]);
+  deps.manager._deliverMessage = () => { throw new Error('ENOSPC: no space left on device'); };
+  assert.deepStrictEqual(opts.send('carol', 'look', [png]), { ok: false, error: 'delivery failed: ENOSPC: no space left on device' });
 });

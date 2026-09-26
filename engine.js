@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const pty = require('node-pty');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
 const { pathFor, runDirFor, defaultClodexHome, seatPathFor, claudeProjectSlug } = require('./clodex-paths');
+const { SEAT_IMAGE_FILE_PATTERN } = require('./seat-images');
 const { confine } = require('./path-confine');
 const { createSkillDelivery } = require('./skill-delivery');
 const { createSkillLister, skillAliases } = require('./muse-skills');
@@ -92,10 +93,7 @@ function diagLines(d = {}) {
   return lines;
 }
 
-// Spill filenames minted by spillToFile (inside createEngine): the pointer
-// grammar the reference scan below recognizes. The two must move together — a
-// change to one shape without the other silently reopens the GC hole.
-const SPILL_NAME_RE = /msg-\d+-\d+\.txt/g;
+const SPILL_NAME_RE = new RegExp(`msg-\\d+-\\d+\\.txt|${SEAT_IMAGE_FILE_PATTERN}`, 'g');
 
 // Parking has no expiry; spill files do — and the spill file is the only copy of
 // an over-threshold dm body, so an unexempted sweep loses it silently.

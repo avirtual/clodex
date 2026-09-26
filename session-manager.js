@@ -140,6 +140,7 @@ const { readerFor } = require('./transcript-readers');
 const { scanIntentLines } = require('./intent-segments');
 const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, findCodexRollout, museRegistryFor, linkTranscript } = require('./seat-config');
 const { activationSettings } = require('./muse-skills');
+const { seatImageFileName } = require('./seat-images');
 const MUSE_LINK_POLL_MS = 250;
 const MUSE_LINK_DEADLINE_MS = 60000;
 const CODEX_LINK_POLL_MS = 250;
@@ -9365,14 +9366,16 @@ function createSessionManager(deps) {
     // out-of-process hook mid-loop, and a seat already `thinking` produces no fresh
     // activity edge for it. A caller that waits for such an edge must therefore arm
     // on 'injected' only.
-    _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null, parkKey = null) {
+    _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null, parkKey = null, images = null) {
       const target = this.sessions.get(targetName);
       if (!target) return;
       if (this._refuseStreamInject(target, body, `${mtype || 'message'} from ${senderName}`)) return;
-      const finalText = this._buildDeliveryText(target, senderName, body, mtype, tag);
+      const pics = Array.isArray(images) ? images : [];
+      let finalText = this._buildDeliveryText(target, senderName, body, mtype, tag);
       const fire = typeof onWrite === 'function' ? onWrite : null;
+      if (target.io !== 'stream' && pics.length) finalText += this._writeImageFiles(target.name, pics).map((p, i) => `\nImage #${i + 1}: ${p}`).join('');
       if (target.io === 'stream') {
-        this._streamEnqueue(target, { text: finalText, images: [], origin: senderName === 'user' ? 'operator' : 'system' },
+        this._streamEnqueue(target, { text: finalText, images: pics, origin: senderName === 'user' ? 'operator' : 'system' },
           fire ? () => fire('injected') : null, null, parkKey);
       } else if (!this._maybeParkDelivery(target, finalText, parkKey)) {
         this._injectText(target, finalText, {
@@ -9393,6 +9396,18 @@ function createSessionManager(deps) {
         try { fire('parked'); } catch {}   // parked to disk = durable; the stamp is honest
       }
       this._sendToSession(targetName, 'session-mention', targetName, mtype, senderName);
+    }
+
+    _writeImageFiles(seatName, images) {
+      const dir = path.join(MSG_DIR, seatName);
+      fs.mkdirSync(dir, { recursive: true });
+      const stamp = this._imgStamp = Math.max(Date.now(), (this._imgStamp || 0) + 1);
+      return images.map((img, i) => {
+        const file = path.join(dir, seatImageFileName(stamp, i + 1, img.mediaType));
+        fs.writeFileSync(file, Buffer.from(img.data, 'base64'));
+        this._noteFiled(seatName, filedEntry(file, 'message', `Image #${i + 1} (${img.mediaType})`));
+        return file;
+      });
     }
 
     _deliverReminder(agent, body) {

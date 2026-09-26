@@ -114,6 +114,7 @@ function createRemoteWiring(deps) {
     return {
       name: sess.name,
       type: sess.type,
+      io: sess.io === 'stream' ? 'stream' : 'pty',
       cwd: sess.cwd,
       workspace: (getWorkspaces().get(sess.workspaceId) || {}).name || '',
       workspaceId: sess.workspaceId || null,
@@ -404,10 +405,16 @@ function createRemoteWiring(deps) {
           try { return { ok: true, ...sliceSince(cachedMessages(jsonlPath), since, limit, after) }; }
           catch (e) { return { ok: false, error: e.message }; }
         },
-        send: (name, text) => {
+        send: (name, text, images) => {
           const sess = manager.sessions.get(name);
           if (!sess || !sess.agentType || sess._dead) return { ok: false, error: 'Session not found' };
-          manager._deliverMessage(name, 'user', text, 'dm');
+          try {
+            if (images && images.length) manager._deliverMessage(name, 'user', text, 'dm', '', null, null, images);
+            else manager._deliverMessage(name, 'user', text, 'dm');
+          } catch (e) {
+            log.error('remote', `dm to ${name} failed: ${e.message}`);
+            return { ok: false, error: `delivery failed: ${e.message}` };
+          }
           return { ok: true };
         },
         restartApp: () => {
