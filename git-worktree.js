@@ -337,6 +337,11 @@ async function headSha(dir) {
   return r.ok ? (r.stdout.trim() || null) : null;
 }
 
+async function revParse(cwd, ref) {
+  const r = await git(cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+  return r.ok ? (r.stdout.trim() || null) : null;
+}
+
 function headShaSync(dir) {
   if (!dir || !fs.existsSync(dir)) return null;
   try {
@@ -737,5 +742,5 @@ module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
   defaultBranch, defaultBranchSync, mergeTargetFor, mergeTargetForSync, localBranches, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch,
   diffText, diffNames, fileAt, currentBranch, mergeNoFf, revertCommit, initRepo, hasCommit,
-  checkoutDetached, headSha, headShaSync, headLogSync,
+  checkoutDetached, headSha, headShaSync, headLogSync, revParse,
 };
