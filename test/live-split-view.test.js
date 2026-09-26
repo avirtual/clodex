@@ -766,6 +766,35 @@ test('the boot screen that already measures split pins live-sheet before the set
   } finally { m.view.dispose(); m.restore(); }
 });
 
+test('a Codex upgrade prompt painted at the top shows its own rows in the sheet, from row 0', async () => {
+  const rows = fs.readFileSync(path.join(__dirname, 'fixtures', 'split-states', 'codex-upgrade-prompt@100.screen.txt'), 'utf8').split('\n').slice(0, 30);
+  const composerEl = fakeComposer();
+  const m = mountView({ composerEl, sheet: true, platform: () => 'codex' }, { geometry: true });
+  Object.assign(m.terminal, { rows: 30, cols: 100, element: fakeTermElement(30) });
+  m.terminal.buffer.active.cursorY = 9;
+  m.show(rows);
+  m.write();
+  await settle();
+  try {
+    const el = m.terminal.element;
+    assert.strictEqual(m.view.state().mode, 'full');
+    assert.strictEqual(m.wrapper.classList.contains('live-sheet'), true);
+    assert.deepStrictEqual([el.style.transform, el.style.clipPath], [`translateY(${WRAPPER_PX - 14 * ROW_PX}px)`, `inset(0px 0 ${16 * ROW_PX}px 0)`]);
+    assert.strictEqual(m.pane.clientHeight, WRAPPER_PX - 14 * ROW_PX);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a band that moves from the top rows to the bottom rows at the same length re-lays the sheet out', async () => {
+  const m = await mountSheet(['  banner', '', '', '']);
+  try {
+    const el = m.terminal.element;
+    assert.deepStrictEqual([el.style.transform, el.style.clipPath], [`translateY(${WRAPPER_PX - ROW_PX}px)`, `inset(0px 0 ${3 * ROW_PX}px 0)`]);
+    m.show(['', '', '', '  spinner']);
+    m.write();
+    assert.deepStrictEqual([el.style.transform, el.style.clipPath], [`translateY(${WRAPPER_PX - 4 * ROW_PX}px)`, `inset(${3 * ROW_PX}px 0 0px 0)`]);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
 test('a terminal scrolled up while the sheet shows snaps back to the bottom', async () => {
   const m = await mountSheet(PICKER);
   try {
@@ -788,12 +817,21 @@ function menuFixture(name) {
 async function mountMenu(name, platform, extra = {}) {
   const menuMirror = createMenuMirror();
   const composerEl = fakeComposer();
-  const m = mountView({ platform: () => platform, menuMirror, composerEl, ...extra }, { geometry: true });
+  let t = 5000;
+  const m = mountView({ platform: () => platform, menuMirror, composerEl, now: () => t, ...extra }, { geometry: true });
   const { rows, cells } = menuFixture(name);
   Object.assign(m.terminal, { rows: rows.length, cols: 100 });
   m.show(rows, cells);
   const menuEl = m.appended.find((el) => el.className === 'seat-slash-menu seat-slash-menu-pty');
-  return { ...m, menuMirror, menuEl, composerEl };
+  const enter = async () => {
+    m.write();
+    await settle();
+    t += 250;
+    m.write();
+    assert.deepStrictEqual([m.view.state().mode, m.view.composerVisible()], ['split', true]);
+    m.write();
+  };
+  return { ...m, menuMirror, menuEl, composerEl, enter };
 }
 
 const itemsOf = (el) => el.childNodes.map((row) => [row.className, ...row.childNodes.map((span) => [span.className, span.childNodes.map((n) => (n.tag === 'b' ? `<b>${textOf(n)}</b>` : n.data)).join('')])]);
@@ -802,8 +840,7 @@ test('while the mirror is ON each evaluate reads the CLI menu into the slash lis
   const m = await mountMenu('claude-one-char@100', 'claude');
   try {
     m.menuMirror.draft('/c');
-    m.write();
-    await settle();
+    await m.enter();
     assert.strictEqual(m.menuEl.hidden, false);
     assert.strictEqual(m.menuMirror.hasRows(), true);
     const items = itemsOf(m.menuEl);
@@ -818,8 +855,7 @@ test('a claude menu with no selected row renders no active row', async () => {
   const m = await mountMenu('claude-three-chars@100', 'claude');
   try {
     m.menuMirror.draft('/clo');
-    m.write();
-    await settle();
+    await m.enter();
     const items = itemsOf(m.menuEl);
     assert.strictEqual(items.length, 7);
     assert.deepStrictEqual(items.filter((r) => r[0] !== 'seat-slash-item'), []);
@@ -830,8 +866,7 @@ test('a codex menu reads with its selected row active and no description spans o
   const m = await mountMenu('codex-arrow-down@100', 'codex');
   try {
     m.menuMirror.draft('/co');
-    m.write();
-    await settle();
+    await m.enter();
     assert.deepStrictEqual(itemsOf(m.menuEl), [
       ['seat-slash-item', ['seat-slash-name', '/<b>co</b>mpact'], ['seat-slash-desc', 'summarize conversation to prevent hitting the context limit']],
       ['seat-slash-item active', ['seat-slash-name', '/copy'], ['seat-slash-desc', 'copy the last response or part of it']],
@@ -843,8 +878,7 @@ test('a null read hides and empties the list; mode OFF hides and empties it', as
   const m = await mountMenu('claude-one-char@100', 'claude');
   try {
     m.menuMirror.draft('/c');
-    m.write();
-    await settle();
+    await m.enter();
     assert.strictEqual(m.menuEl.hidden, false);
     m.show(menuFixture('claude-escape@100').rows, menuFixture('claude-escape@100').cells);
     m.write();
@@ -867,16 +901,34 @@ test('with the mirror OFF the menu on screen is not read', async () => {
   } finally { m.view.dispose(); m.restore(); }
 });
 
-test('a screen whose menu read returned rows is not busy: no sheet before the settle tick', async () => {
+test('with the mirror ON a full state does not read the menu: the list stays hidden and the sheet shows', async () => {
   const m = await mountMenu('claude-one-char@100', 'claude', { sheet: true });
   try {
     m.menuMirror.draft('/c');
     m.write();
     await settle();
     assert.strictEqual(m.view.state().mode, 'full');
-    assert.strictEqual(m.menuMirror.hasRows(), true);
-    assert.strictEqual(m.wrapper.classList.contains('live-sheet'), false);
+    assert.deepStrictEqual([m.menuEl.hidden, m.menuEl.childNodes.length, m.menuMirror.read()], [true, 0, null]);
+    assert.strictEqual(m.wrapper.classList.contains('live-sheet'), true);
   } finally { m.view.dispose(); m.restore(); }
+});
+
+test('raw mode hides and empties the list while the mirror is ON and the menu is on screen', async () => {
+  const m = await mountMenu('claude-one-char@100', 'claude');
+  try {
+    m.menuMirror.draft('/c');
+    await m.enter();
+    assert.strictEqual(m.menuEl.hidden, false);
+    m.view.setRaw(true);
+    assert.deepStrictEqual([m.menuEl.hidden, m.menuEl.childNodes.length, m.menuMirror.read()], [true, 0, null]);
+    m.write();
+    assert.deepStrictEqual([m.menuEl.hidden, m.menuEl.childNodes.length, m.menuMirror.read()], [true, 0, null]);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('the pty slash rows carry the default cursor, not the pointer the composer list uses', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  assert.match(css, /\.seat-slash-menu-pty \.seat-slash-item \{\s*cursor: default;\s*\}/u);
 });
 
 test('the same menu screen with the mirror OFF shows the sheet before the settle tick', async () => {

@@ -6221,6 +6221,10 @@ body.web-frontend #sidebar-header {
   overflow: hidden;
 }
 
+.seat-slash-menu-pty .seat-slash-item {
+  cursor: default;
+}
+
 .seat-slash-item.active {
   background: var(--surface-selected);
   box-shadow: inset 2px 0 0 var(--accent);

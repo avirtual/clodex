@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  SPLIT_SETTLE_MS, SPLIT_EXIT_MS, isRuleRow, findAnchor, measureSplit, initialSplitState, reduceSplit,
+  SPLIT_SETTLE_MS, SPLIT_EXIT_MS, isRuleRow, findAnchor, measureSplit, sheetBand, initialSplitState, reduceSplit,
 } = require('../renderer/lib/live-split');
 
 const DIR = path.join(__dirname, 'fixtures', 'split-states');
@@ -72,6 +72,7 @@ const FIXTURES = [
   ['codex-after-status@100', 26, 'split', 26, 29, 'codex'],
   ['codex-model-picker@100', 29, 'full', -1, -1, 'codex'],
   ['codex-after-picker-esc@100', 26, 'split', 26, 29, 'codex'],
+  ['codex-upgrade-prompt@100', 9, 'full', -1, -1, 'codex'],
 ];
 
 const SCREEN_ROWS = { claude: 40, muse: 30, codex: 30 };
@@ -86,7 +87,7 @@ test('ENTER: every captured screen in the fixture dir is a table row, and every 
   const onDisk = fs.readdirSync(DIR).filter((f) => f.endsWith('.screen.txt')).map((f) => f.replace('.screen.txt', '')).sort();
   const inTable = FIXTURES.map((r) => r[0]).sort();
   assert.deepStrictEqual(onDisk, inTable);
-  assert.strictEqual(FIXTURES.length, 60);
+  assert.strictEqual(FIXTURES.length, 61);
   for (const [name, , , , , platform = 'claude'] of FIXTURES) {
     const { rows, cols } = load(name, platform);
     assert.strictEqual(rows.length, SCREEN_ROWS[platform], name);
@@ -278,4 +279,24 @@ test('every menu fixture readMenuRows reads as a menu is in the split table', ()
     return readMenuRows(rows, cells, name.split('-')[0]) !== null;
   }).sort();
   assert.deepStrictEqual(MENU_SPLITS.map((r) => r[0]).sort(), menus);
+});
+
+const paint = (n, from, to) => Array.from({ length: n }, (_, i) => (i >= from && i <= to ? `row ${i}` : ''));
+
+for (const [name, rows, cap, band] of [
+  ['a top-anchored screen', paint(40, 0, 5), 20, { top: 0, bottom: 5 }],
+  ['a bottom-anchored screen', paint(40, 30, 39), 20, { top: 30, bottom: 39 }],
+  ['a band longer than the cap keeps its last rows', paint(40, 2, 37), 20, { top: 18, bottom: 37 }],
+  ['a blank screen', paint(40, 1, 0), 20, null],
+  ['a single painted row', paint(40, 12, 12), 20, { top: 12, bottom: 12 }],
+]) {
+  test(`sheetBand: ${name}`, () => {
+    assert.deepStrictEqual(sheetBand(rows, cap), band);
+  });
+}
+
+test('the Codex upgrade prompt paints at the top: full and busy, and its sheet band starts at row 0', () => {
+  const { rows, cols } = load('codex-upgrade-prompt@100', 'codex');
+  assert.deepStrictEqual(measureSplit(rows, 9, cols, 'codex'), { mode: 'full', top: -1, bottom: -1, busy: true });
+  assert.deepStrictEqual(sheetBand(rows, Math.floor(rows.length / 2)), { top: 0, bottom: 13 });
 });

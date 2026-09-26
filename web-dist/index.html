@@ -8766,6 +8766,9 @@ body.web-frontend #sidebar-header {
   white-space: nowrap;
   overflow: hidden;
 }
+.seat-slash-menu-pty .seat-slash-item {
+  cursor: default;
+}
 .seat-slash-item.active {
   background: var(--surface-selected);
   box-shadow: inset 2px 0 0 var(--accent);
@@ -30580,6 +30583,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (Number.isInteger(cursorY)) bottom = Math.max(bottom, Math.min(cursorY, rows.length - 1));
         return { mode: "split", top, bottom };
       }
+      function sheetBand(rows, maxRows) {
+        if (!Array.isArray(rows)) return null;
+        const top = rows.findIndex((r) => !isBlank(r));
+        if (top < 0) return null;
+        let bottom = rows.length - 1;
+        while (bottom > top && isBlank(rows[bottom])) bottom--;
+        const cap = Math.max(1, maxRows | 0);
+        return { top: Math.max(top, bottom - cap + 1), bottom };
+      }
       function initialSplitState() {
         return { mode: "full", top: -1, bottom: -1, pending: null, wakeAt: null };
       }
@@ -30625,6 +30637,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         isCodexComposerRow,
         findAnchor,
         measureSplit,
+        sheetBand,
         initialSplitState,
         reduceSplit
       };
@@ -31644,7 +31657,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_live_split_view = __commonJS({
     "renderer/live-split-view.js"(exports, module) {
       "use strict";
-      var { SPLIT_EXIT_MS, measureSplit, initialSplitState, reduceSplit } = require_live_split();
+      var { SPLIT_EXIT_MS, measureSplit, sheetBand, initialSplitState, reduceSplit } = require_live_split();
       var { createTranscriptRows } = require_transcript_rows();
       var { readMenuRows } = require_menu_rows();
       var { rowCells } = require_menu_cells();
@@ -31718,6 +31731,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let pinnedTop = null;
         let raw = false;
         let sheetRows = 0;
+        let sheetRange = null;
+        const composerVisible = () => !!composerEl && !composerEl.hidden;
+        const bandKey = (b) => b ? `${b.top}:${b.bottom}` : "";
         function stickToBottom() {
           if (!follow) return;
           paneEl.scrollTop = paneEl.scrollHeight;
@@ -31766,7 +31782,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         function readMenu(rows) {
           if (!menuMirror) return null;
-          const read = menuMirror.on() ? readMenuRows(rows || screenRows(), screenCells(), platform()) : null;
+          const read = !raw && state.mode === "split" && composerVisible() && menuMirror.on() ? readMenuRows(rows || screenRows(), screenCells(), platform()) : null;
           menuMirror.setRead(read);
           if (!read && menuEl.hidden) return null;
           if (read && composerEl) menuEl.style.bottom = `${(composerEl.offsetHeight || 0) + 8}px`;
@@ -31784,10 +31800,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
           else if (!on && hadComposerFocus) terminal.focus();
         }
         function sheetRowsOf(rows) {
-          if (!sheet || !composerEl || state.mode !== "full") return 0;
-          const first = rows.findIndex((r) => /\S/u.test(r || ""));
-          if (first < 0) return 0;
-          return Math.min(rows.length - first, terminal.rows, Math.max(1, Math.floor(terminal.rows / 2)));
+          if (!sheet || !composerEl || state.mode !== "full") return null;
+          return sheetBand(rows, Math.max(1, Math.floor(terminal.rows / 2)));
         }
         function placeStrip(el, screen, rowPx, top, bottom, padBottom) {
           const stripPx = (bottom - top + 1) * rowPx;
@@ -31818,7 +31832,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           const padBottom = parseFloat(cs.paddingBottom) || 0;
           if (inSheet) {
             showComposer(false);
-            const stripTop2 = placeStrip(el, screen, rowPx, terminal.rows - sheetRows, terminal.rows - 1, padBottom);
+            const stripTop2 = placeStrip(el, screen, rowPx, sheetRange.top, sheetRange.bottom, padBottom);
             wrapperEl.classList.remove("live-split");
             wrapperEl.classList.add("live-sheet");
             paneEl.style.height = `${Math.max(0, Math.round(stripTop2 - padTop))}px`;
@@ -31859,13 +31873,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
             }
           }
           const prev = state;
-          const prevSheet = sheetRows;
+          const prevSheet = sheetRange;
           state = reduceSplit(state, measured, now(), void 0, raw ? 0 : void 0);
           const menuRead = readMenu(rows);
           const busy = !menuRead && !!measured && (measured.mode === "split" || !!measured.busy);
-          sheetRows = busy ? sheetRowsOf(rows) : 0;
+          sheetRange = busy ? sheetRowsOf(rows) : null;
+          sheetRows = sheetRange ? sheetRange.bottom - sheetRange.top + 1 : 0;
           if (state.wakeAt != null) wakeTimer = setTimeout(evaluate, Math.max(0, state.wakeAt - now()));
-          if (prevSheet !== sheetRows && prev.mode === state.mode && prev.top === state.top && prev.bottom === state.bottom) layout();
+          if (bandKey(prevSheet) !== bandKey(sheetRange) && prev.mode === state.mode && prev.top === state.top && prev.bottom === state.bottom) layout();
           else if (prev.mode !== state.mode || prev.top !== state.top || prev.bottom !== state.bottom) {
             layout();
             if (onChange) onChange(state);
@@ -31903,7 +31918,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const ro = typeof ResizeObserver === "function" ? new ResizeObserver(() => layout()) : null;
         if (ro) ro.observe(wrapperEl);
         if (ro && composerEl) ro.observe(composerEl);
-        const composerVisible = () => !!composerEl && !composerEl.hidden;
         paneEl.addEventListener("mouseup", () => {
           const sel = window.getSelection();
           if (!sel || sel.isCollapsed) (composerVisible() ? composerEl : terminal).focus();
