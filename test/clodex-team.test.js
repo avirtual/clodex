@@ -108,6 +108,20 @@ test('roster: per-role template annotation (spawn-by-template)', async () => {
   assert.match(r.err, /roles: lead\* worker\(tmpl=hand\) reviewer runner\(tmpl=haiku-run\) \(\*=lead\)/, r.err);
 });
 
+test('t1222: roster names a role\'s effort from its team template, the reviewer\'s default stem included', async () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, worker: { template: 'hand' }, reviewer: {} } });
+  const tdir = path.join(home, 'teams', 'proj', 'templates');
+  fs.mkdirSync(tdir, { recursive: true });
+  fs.writeFileSync(path.join(tdir, 'hand.json'), JSON.stringify({ type: 'claude', effort: 'high' }));
+  fs.writeFileSync(path.join(tdir, 'clodex-team-reviewer.json'), JSON.stringify({ type: 'claude', effort: 'xhigh' }));
+  reg(home, 'alead', proj);
+  const r = await launch(home, { action: 'roster', agent: 'alead' });
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.err, /roles: lead\* worker\(tmpl=hand,effort=high\) reviewer\(effort=xhigh\) \(\*=lead\)/, r.err);
+});
+
 // The property the roster must hold, not just the string it happens to emit:
 // this script parses team.json ITSELF instead of routing through loadManifest,
 // so it is the one reader that can still SEE a field the schema cut. t292

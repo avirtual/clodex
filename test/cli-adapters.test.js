@@ -68,13 +68,14 @@ test('t749: the dialog may not offer skills to a provider main cannot deliver to
   assert.deepStrictEqual(offered.sort(), [...deliverable].sort());
 });
 
-const ENTRY_KEYS = ['id', 'label', 'cmd', 'model', 'posture', 'account', 'cwdDir', 'readOnlyCap', 'seatSettings', 'skills', 'instructions', 'transcript', 'caps', 'stream', 'ui'];
+const ENTRY_KEYS = ['id', 'label', 'cmd', 'model', 'effort', 'posture', 'account', 'cwdDir', 'readOnlyCap', 'seatSettings', 'skills', 'instructions', 'transcript', 'caps', 'stream', 'ui'];
 
 test('every adapter entry carries the whole entry key set', () => {
   for (const [type, entry] of Object.entries(ADAPTERS)) {
     assert.deepStrictEqual(Object.keys(entry), ENTRY_KEYS, `${type} must declare every entry key, in order`);
     assert.strictEqual(entry.id, type);
     assert.deepStrictEqual(Object.keys(entry.model), ['flags', 'aliases', 'idRe']);
+    assert.deepStrictEqual(Object.keys(entry.effort), ['values', 'apply']);
     assert.deepStrictEqual(Object.keys(entry.caps), ['park', 'transcript', 'warmth']);
     assert.deepStrictEqual(Object.keys(entry.transcript), ['reader', 'link']);
     assert.deepStrictEqual(Object.keys(entry.posture), ['bypassArgs']);
@@ -104,6 +105,7 @@ test('m2: the muse row — Meta\'s CLI, XDG overlay bootstrap, user-scope AGENTS
     label: 'Muse Code',
     cmd: 'muse',
     model: { flags: ['--model'], aliases: {}, idRe: ADAPTERS.claude.model.idRe },
+    effort: { values: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'], apply: 'flag' },
     posture: { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'] },
     account: { envKey: 'XDG_CONFIG_HOME', bootstrap: 'xdg-overlay' },
     cwdDir: null,

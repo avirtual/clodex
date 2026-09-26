@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Seats have an effort level: set it on a template (Effort field in the editor) or per role with `[agent:team role-set <role> effort:<level>]`; the value is the CLI's own (claude low…max, codex and muse none…ultra) and `default` leaves the CLI's setting alone. Reviewers spawned by the ticket loop honour it.
+
 - Muse terminal seats: a picker such as /model now shows in the sheet with the transcript pane on; it was hidden under the message box.
 
 - Codex terminal seats no longer flick into the sheet while the model is still loading or when the typed draft wraps to several rows.

@@ -491,6 +491,7 @@ test('a far refusal respawns locally and leaves the record byte-identical', asyn
     null,
     null,
     'pty',
+    null,
   ], 'the same positional list a failed local move would use, mint=false');
 });
 

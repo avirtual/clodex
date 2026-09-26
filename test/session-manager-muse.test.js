@@ -168,9 +168,10 @@ function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true 
     return s._museLinkDone;
   };
   const env = { XDG_CONFIG_HOME: source, XDG_DATA_HOME: dataHome };
-  const create = (name, { extraArgs = [], resumeId = null, fork = false, sessionEnv = env, disabledSkills = [], injectSkills = [] } = {}) => m.create(
+  const create = (name, { extraArgs = [], resumeId = null, fork = false, sessionEnv = env, disabledSkills = [], injectSkills = [], effort = null } = {}) => m.create(
     name, 'muse', osReal.tmpdir(), extraArgs, resumeId, 'ws', null, fork, null,
     [], [], [], disabledSkills, injectSkills, null, [], [], null, sessionEnv,
+    false, false, null, null, null, 'pty', effort,
   );
   const link = (name) => pathForReal(root, name, 'transcript');
   return { m, root, source, dataHome, env, order, execs, spawns, watchers, warns, infos, linkFail, rosterCalls, create, stop, link };
@@ -254,6 +255,14 @@ test('m2: no capabilities.muse on the proxy → direct to Meta, no --base-url, o
     assert.deepStrictEqual(res.warnings, [
       `muse: wirescope at ${PROXY} does not report capabilities.muse — this seat talks to Meta directly, unrouted.`,
     ]);
+  } finally { await f.stop('seat'); }
+});
+
+test('t1222: a muse pty seat with an effort carries --reasoning-effort high ahead of its own flags', async () => {
+  const f = mkMuse({ proxyBase: null, probeAnswer: null });
+  await f.create('seat', { effort: 'high' });
+  try {
+    assert.deepStrictEqual(f.spawns[0].args, ['--reasoning-effort', 'high', '--trust-workspace', '--provider', 'meta']);
   } finally { await f.stop('seat'); }
 });
 

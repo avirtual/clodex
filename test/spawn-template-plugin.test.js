@@ -86,6 +86,6 @@ for (const [label, extra, want] of [['io:stream', { io: 'stream' }, 'stream'], [
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
     assert.strictEqual(calls.length, 1);
-    assert.deepStrictEqual([calls[0].length, calls[0][22], calls[0][23], calls[0][24]], [25, null, null, want]);
+    assert.deepStrictEqual([calls[0].length, calls[0][22], calls[0][23], calls[0][24]], [26, null, null, want]);
   });
 }

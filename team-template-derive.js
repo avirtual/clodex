@@ -25,4 +25,13 @@ function deriveModelTemplate(base, roleName, modelId) {
   return out;
 }
 
-module.exports = { resolveModelId, deriveModelTemplate, LISTING_KEYS };
+function deriveEffortTemplate(base, roleName, effort) {
+  const out = { ...base };
+  for (const k of LISTING_KEYS) delete out[k];
+  out.name = roleName;
+  if (effort == null || effort === '' || effort === 'default') delete out.effort;
+  else out.effort = effort;
+  return out;
+}
+
+module.exports = { resolveModelId, deriveModelTemplate, deriveEffortTemplate, LISTING_KEYS };

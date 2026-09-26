@@ -289,6 +289,8 @@ function bindAccountSelect(sel, textarea, getAccounts) {
 if (inputEnv) inputEnv.addEventListener('input', refreshEnvHint);
 bindAccountSelect(inputAccount, inputEnv, () => dialogAccounts);
 const inputModel = document.getElementById('input-model');
+const inputEffort = document.getElementById('input-effort');
+const effortRow = document.getElementById('effort-row');
 const modelRow = document.getElementById('model-row');
 const modelHint = document.getElementById('model-hint');
 const argsHint = document.getElementById('args-hint');
@@ -2576,8 +2578,10 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   const authoring = dialogMode === 'template';
   const agentType = isAgentType(type);
   if (modelRow) modelRow.style.display = agentType ? '' : 'none';
+  if (effortRow) effortRow.style.display = agentType ? '' : 'none';
   if (modelHint) modelHint.textContent = modelAliasHint(type);
   if (!skipAsyncRefresh) inputModel.value = '';
+  if (!skipAsyncRefresh && inputEffort) inputEffort.value = '';
   systemPromptRow.style.display = agentType ? '' : 'none';
   if (appendPromptsRow) appendPromptsRow.style.display = agentType ? '' : 'none';
   if (!agentType) inputSystemPrompt.value = '';
@@ -3471,6 +3475,7 @@ inputTemplate.addEventListener('change', async () => {
     const { model, rest } = splitModelArg(t.extraArgs || []);
     inputModel.value = model;
     inputArgs.value = rest.join(' ');
+    if (inputEffort) inputEffort.value = (typeof t.effort === 'string' && t.effort) || '';
   }
   argsHint.textContent = ARGS_HINTS[t.type] || '';
   applyTypeDefaults({ skipAsyncRefresh: true });
@@ -3572,6 +3577,7 @@ function collectFormConfig() {
   const autoCompactOff = caps.autoCompact && inputAutoCompact && !inputAutoCompact.checked;
   const noWireOn = caps.noWire && inputNoWire && inputNoWire.checked;
   const streamIoOn = caps.streamIo && inputStreamIo && inputStreamIo.checked;
+  const effortVal = (agentType && inputEffort) ? inputEffort.value.trim() : '';
   // NOTE (maintained-list coupling): the keys this returns are the EDITOR_OWNED
   // set in stores.js `save()` — the dialog fully controls them, so an OMITTED
   // owned key on save means "removed", not "preserve the stored value". Keep the
@@ -3589,6 +3595,7 @@ function collectFormConfig() {
     ...(autoCompactOff ? { autoCompact: false } : {}),
     ...(noWireOn ? { noWire: true } : {}),
     ...(streamIoOn ? { io: 'stream' } : {}),
+    ...(effortVal ? { effort: effortVal } : {}),
     ...(toolsAllow.length ? { tools: toolsAllow } : {}),
     denyBuiltins: caps.agents ? collectBuiltinChecklist(inputBuiltinsList) : [],
     disabledTools: caps.tools ? collectToolChecklist(inputToolsList) : [],
@@ -3610,7 +3617,7 @@ async function doCreate() {
   const cfg = collectFormConfig();
   const { type, cwd, extraArgs, proxy, agents, execCommands, denyBuiltins,
           disabledTools, disabledSkills, injectSkills, stripLevel,
-          systemPromptFile, appendPromptFiles, intents, noWire, plugins } = cfg;
+          systemPromptFile, appendPromptFiles, intents, noWire, plugins, effort } = cfg;
   const io = capsFor(type).streamIo && inputStreamIo && inputStreamIo.checked ? 'stream' : 'pty';
   const env = collectDialogEnv();
 
@@ -3694,7 +3701,7 @@ async function doCreate() {
     // could abandon the managed wirescope when the port stops matching).
     if (typeof proxy === 'string') window.api.setSettings({ lastCustomProxyUrl: proxy });
     const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== 'none';
-    const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins, io };
+    const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins, io, effort: effort || null };
     let result;
     if (teamOn && dialogTeamMode === 'create') {
       const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
@@ -3704,7 +3711,7 @@ async function doCreate() {
       const prompt = (teamRoleSelect && teamRoleSelect.value === 'hand') ? null : ((teamRolePromptSelect && teamRolePromptSelect.value) || null);
       result = await window.api.teamJoin({ team: dialogTeamName, role, prompt, ...seatParams });
     } else {
-      result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins, io);
+      result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins, io, effort || null);
     }
     if (!applyCreateResult(nameFieldEls(), result)) {
       if (worktree) {
@@ -3804,6 +3811,7 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
     const { model, rest } = splitModelArg((tpl && tpl.extraArgs) || []);
     inputModel.value = model;
     inputArgs.value = rest.join(' ');
+    if (inputEffort) inputEffort.value = (tpl && typeof tpl.effort === 'string' && tpl.effort) || '';
   }
   argsHint.textContent = ARGS_HINTS[inputType.value] || '';
   if (inputStripLevel) inputStripLevel.value = String((tpl && tpl.stripLevel) || 0);
@@ -8391,6 +8399,8 @@ const argsOverlay = document.getElementById('args-overlay');
 const argsInput = document.getElementById('args-input');
 const argsModel = document.getElementById('args-model');
 const argsModelRow = document.getElementById('args-model-row');
+const argsEffort = document.getElementById('args-effort');
+const argsEffortRow = document.getElementById('args-effort-row');
 const argsTarget = document.getElementById('args-target');
 const argsRestart = document.getElementById('args-restart');
 const argsStreamIoRow = document.getElementById('args-stream-io-row');
@@ -8504,8 +8514,10 @@ async function openArgsDialog(name, argsSource = null) {
     argsModel.value = model;
     argsInput.value = rest.map(a => /\s/.test(a) ? `"${a}"` : a).join(' ');
   }
+  if (argsEffort) argsEffort.value = (typeof res.effort === 'string' && res.effort) || '';
   const isAgent = isAgentType(res.type);
   if (argsModelRow) argsModelRow.style.display = isAgent ? '' : 'none';
+  if (argsEffortRow) argsEffortRow.style.display = (isAgent && !argsSource) ? '' : 'none';
   argsProxyRow.style.display = isAgent ? '' : 'none';
   setProxyControls(argsProxyMode, argsProxyUrl, res.proxy, settings?.lastCustomProxyUrl || settings?.proxyUrl);
   labelProxyDefault(argsProxyMode, settings);
@@ -8609,6 +8621,8 @@ argsOverlay.addEventListener('mousedown', (e) => { if (e.target === argsOverlay)
 document.getElementById('btn-args-save').addEventListener('click', async () => {
   if (!argsEditingName) return closeArgsDialog();
   const parsed = withModelArg(parseArgs(argsInput.value || ''), argsModel.value);
+  const effort = (!argsEffortRow || argsEffortRow.style.display === 'none' || !argsEffort)
+    ? undefined : argsEffort.value.trim();
   const restart = argsRestart.checked;
   const proxy = argsProxyRow.style.display === 'none'
     ? null : proxyValueFromControls(argsProxyMode, argsProxyUrl);
@@ -8672,7 +8686,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
         extraArgs: parsed, restart, proxy, systemPrompt: undefined, agents, denyBuiltins,
         disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents,
       })
-    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io);
+    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io, effort);
   if (!res || !res.ok) {
     alert(`Save settings failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;

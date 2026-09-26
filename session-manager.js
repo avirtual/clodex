@@ -182,7 +182,7 @@ function dupIdentity(intent) {
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
-const { isAgentType, adapterFor, streamFor: adapterStreamFor, hasBypass, resolveModelId } = require('./cli-adapters');
+const { isAgentType, adapterFor, streamFor: adapterStreamFor, hasBypass, resolveModelId, resolveEffort } = require('./cli-adapters');
 
 function streamCodecCtx(type, extraArgs) {
   const a = adapterFor(type);
@@ -1632,7 +1632,7 @@ function createSessionManager(deps) {
       }
     }
 
-    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty') {
+    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty', effort = null) {
       if (this.sessions.has(name) || this._creating.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
@@ -1645,7 +1645,7 @@ function createSessionManager(deps) {
       }
     }
 
-    async _createReserved(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty') {
+    async _createReserved(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty', effort = null) {
       const freshBake = this._freshBakeOnce.delete(name);
       if (cwd) {
         let st = null;
@@ -1755,6 +1755,9 @@ function createSessionManager(deps) {
       const shell = process.env.SHELL || '/bin/bash';
       const warnings = [];
       const agentType = isAgentType(type) ? type : null;
+      const effortResolved = agentType ? resolveEffort(type, effort) : null;
+      if (effortResolved && typeof effortResolved === 'object') warnings.push(`${effortResolved.error}; spawned at the CLI's default effort.`);
+      const effortLevel = typeof effortResolved === 'string' ? effortResolved : null;
       let intentSource = 'jsonl';
       let wireRouted = false;
       let spillArmedForRecord = false;
@@ -1955,10 +1958,11 @@ function createSessionManager(deps) {
               known: Array.isArray(disabledSkills) && disabledSkills.includes('*') ? knownSkillNames() : [],
               injectSkills,
             });
-            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo);
+            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortLevel);
             args.push('--settings', settingsPath);
             hookInstalled = true;
           }
+          if (!hookInstalled && effortLevel) warnings.push(`effort ${effortLevel} not applied: the seat's extra args carry their own --settings.`);
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
           if (getUiSettings().get().disableClaudeDesignMcp
@@ -2127,6 +2131,9 @@ function createSessionManager(deps) {
           if (!streamIo && !args.some(a => a.startsWith('tui.status_line'))) {
             args.push('-c', codexStatusLineArg(getUiSettings()));
           }
+          if (effortLevel && !args.some((a) => typeof a === 'string' && a.startsWith('model_reasoning_effort='))) {
+            args.push('-c', `model_reasoning_effort="${effortLevel}"`);
+          }
           ensureDir(MSG_DIR);
           if (!streamIo && !args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
           if (streamIo && streamCtx.model && !args.some((a) => /^model=/.test(a))) args.push('-c', `model="${streamCtx.model}"`);
@@ -2183,15 +2190,21 @@ function createSessionManager(deps) {
           }
           const museRoute = museRouted ? `${proxyBase}/agent/${proxyAgent || name}/meta` : null;
           const museBaseUrl = museRoute ? ['--base-url', museRoute] : [];
+          const museEffortArgs = (effortLevel && !extraArgs.some((a) => typeof a === 'string' && (a === '--reasoning-effort' || a.startsWith('--reasoning-effort='))))
+            ? ['--reasoning-effort', effortLevel] : [];
           const museEnv = { ...mergedEnv, CLODEX_HOME: REGISTRY_DIR, MUSE_NO_AUTO_UPDATE: '1' };
           museData = museDataHome({ env: museEnv, os, path });
           if (streamIo) {
             ensureDir(runDirFor(REGISTRY_DIR, name));
-            if (museRoute) {
+            const museSeatPatch = {
+              ...(museRoute ? { endpoint_transport: { base_url: museRoute } } : {}),
+              ...(effortLevel ? { reasoning_effort: effortLevel } : {}),
+            };
+            if (Object.keys(museSeatPatch).length) {
               const museSettingsPath = path.join(seatConfigDir, 'muse', 'settings.json');
               const museSettings = JSON.parse(fs.readFileSync(museSettingsPath, 'utf-8'));
               fs.writeFileSync(museSettingsPath,
-                `${JSON.stringify(deepMerge(museSettings, { endpoint_transport: { base_url: museRoute } }), null, 2)}\n`, { mode: 0o600 });
+                `${JSON.stringify(deepMerge(museSettings, museSeatPatch), null, 2)}\n`, { mode: 0o600 });
             }
             if (extraArgs.length) log.info('session', `stream ${name}: muse serve takes no TUI flags, dropped ${extraArgs.join(' ')}; posture and model ride the codec`);
             args = streamSpec.argv({ resumeId, sessionId: museSid, fork, ...streamCtx });
@@ -2204,10 +2217,10 @@ function createSessionManager(deps) {
             ensureDir(runDirFor(REGISTRY_DIR, name));
             linkTranscript({ fs }, pathFor(REGISTRY_DIR, name, 'transcript'), museTranscript);
             if (fork) warnings.push(`muse has no fork: resuming session ${museSid} instead.`);
-            args = [...extraArgs, '--trust-workspace', '--provider', 'meta', ...museBaseUrl, 'resume', museSid];
+            args = [...extraArgs, ...museEffortArgs, '--trust-workspace', '--provider', 'meta', ...museBaseUrl, 'resume', museSid];
           } else {
             ensureDir(runDirFor(REGISTRY_DIR, name));
-            args = [...extraArgs, '--trust-workspace', '--provider', 'meta', ...museBaseUrl];
+            args = [...extraArgs, ...museEffortArgs, '--trust-workspace', '--provider', 'meta', ...museBaseUrl];
           }
           break;
         }
@@ -2486,6 +2499,7 @@ function createSessionManager(deps) {
         noWire: wireOff,
         intentSpill: spillArmedForRecord && wireRouted,
         io: streamIo ? 'stream' : 'pty',
+        effort: effortLevel,
         streamPid: streamIo ? { pid: streamSeat.pid, startTime: streamSeat.startTime ?? streamSeat.startedAt } : null,
         ...(fixHost ? { fixFor: fixHost } : {}),
         denyBuiltins: Array.isArray(denyBuiltins) ? denyBuiltins : [],
@@ -4049,6 +4063,7 @@ function createSessionManager(deps) {
             Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
             typeof entry.fixFor === 'string' ? entry.fixFor : null,
             entry.io || 'pty',
+            typeof entry.effort === 'string' ? entry.effort : null,
           );
         } catch (err) {
           const kept = { ...entry, name: newName };
@@ -4134,6 +4149,7 @@ function createSessionManager(deps) {
             Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
             typeof entry.fixFor === 'string' ? entry.fixFor : null,
             entry.io || 'pty',
+            typeof entry.effort === 'string' ? entry.effort : null,
           );
         } catch (err) {
           getPersistence().upsert(this._stripClaimedTree({ ...entry, cwd: newCwd }));
@@ -4376,6 +4392,7 @@ function createSessionManager(deps) {
             Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
             typeof entry.fixFor === 'string' ? entry.fixFor : null,
             entry.io || 'pty',
+            typeof entry.effort === 'string' ? entry.effort : null,
           );
         } catch (err) {
           getPersistence().upsert(this._stripClaimedTree({ ...entry }));
@@ -4657,7 +4674,7 @@ function createSessionManager(deps) {
       if (!cwd) return null;
       let team; try { team = resolveTeam(cwd); } catch { return null; }
       if (!team) return null;
-      return formatRoster(team, this._teamLiveSeats(team.root), { seat: name, grants: this._seatGrants(name) });
+      return formatRoster(team, this._teamLiveSeats(team.root), { seat: name, grants: this._seatGrants(name), efforts: this._teamRoleEfforts(team) });
     }
 
     _rebakeDigest(name) {
@@ -4797,7 +4814,7 @@ function createSessionManager(deps) {
     _injectRoster(session, team) {
       try {
         if (session.agentType === 'claude') {
-          this._deliverPassive(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name, grants: this._seatGrants(session.name) }), 'dm');
+          this._deliverPassive(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name, grants: this._seatGrants(session.name), efforts: this._teamRoleEfforts(team) }), 'dm');
           // Both paths are needed and neither is redundant. setupClaudeHook
           // writes the digest BEFORE this seat exists in the map or in
           // persistence, so a fresh seat's pre-spawn digest cannot contain a
@@ -4842,7 +4859,7 @@ function createSessionManager(deps) {
           // promise chain, then the quiet gate, and an inject hold parks it for up to
           // INJECT_HOLD_TIMEOUT — all inside the boot window this function runs in,
           // where a seat that dies early hits the _dead early-returns instead.
-          this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name, grants: this._seatGrants(session.name) }), 'dm',
+          this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name, grants: this._seatGrants(session.name), efforts: this._teamRoleEfforts(team) }), 'dm',
             '', () => this._markRosterSent(session));
         } catch (e) {
           log.error('inject', `roster flush failed for ${session.name}: ${e.message}`);
@@ -7624,6 +7641,7 @@ function createSessionManager(deps) {
             Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
             typeof entry.fixFor === 'string' ? entry.fixFor : null,
             entry.io || 'pty',
+            typeof entry.effort === 'string' ? entry.effort : null,
           );
           const lvl = stripLevelOf(entry);
           if (lvl >= 1) getPersistence().setStripLevel(name, lvl);
@@ -8253,6 +8271,7 @@ function createSessionManager(deps) {
         Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
         typeof entry.fixFor === 'string' ? entry.fixFor : null,
         entry.io || 'pty',
+        typeof entry.effort === 'string' ? entry.effort : null,
       );
       const fresh = this.sessions.get(name);
       const lvl = stripLevelOf(entry);

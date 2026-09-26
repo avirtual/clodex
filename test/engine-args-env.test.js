@@ -47,7 +47,7 @@ test('args-edit restart threads the persisted env into create() (19th positional
   assert.strictEqual(res.ok, true);
   assert.strictEqual(res.restarted, true);
   assert.strictEqual(captured.length, 1, 'create was called once');
-  assert.strictEqual(captured[0].length, 25, 'create got the full 25-positional signature');
+  assert.strictEqual(captured[0].length, 26, 'create got the full 26-positional signature');
   assert.deepStrictEqual(captured[0][18], { AWS_PROFILE: 'acct', DB: 'x' }, 'the persisted env is threaded as the 19th arg — not dropped');
   assert.strictEqual(captured[0][20], false,
     'and the 21st is noWire, resolved off the persisted entry — an args edit must not un-wire an ordinary seat');

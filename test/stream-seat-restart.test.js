@@ -71,7 +71,7 @@ for (const [label, run] of [
 const PTY_ENTRY = (name) => ({ name, type: 'claude', cwd: '/tmp', workspaceId: 'default', sessionId: 's-1', io: 'pty' });
 const RESTART_TUPLE = (name, io) => [
   name, 'claude', '/tmp', [], 's-1', 'default', null, false, null, [], [], [], [], [], null, [], [], null, null,
-  false, false, null, null, null, io,
+  false, false, null, null, null, io, null,
 ];
 
 test('restartSession after setIo(stream) respawns the seat as a stream seat', async () => {

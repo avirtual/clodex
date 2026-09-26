@@ -84,6 +84,7 @@ test('ticket purpose: the whole shape, with no template', () => {
     toolsMalformed: false,
     shellDeny: null,
     modelRefused: null,
+    effort: null,
     systemPromptFile: 'hand-brief',
     appendPromptFiles: [],
     execCommands: [],
@@ -128,6 +129,7 @@ test('review purpose: the whole shape, with no template', () => {
     toolsMalformed: false,
     shellDeny: null,
     modelRefused: null,
+    effort: null,
     systemPromptFile: 'clodex-team-reviewer',
     appendPromptFiles: [],
     execCommands: [],
@@ -205,6 +207,7 @@ test('review purpose: the whole shape, WITH a template (the production config)',
     toolsMalformed: false,
     shellDeny: null,
     modelRefused: null,
+    effort: null,
     systemPromptFile: 'rv-brief',
     appendPromptFiles: [],
     execCommands: [],
@@ -264,6 +267,7 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     toolsMalformed: false,
     shellDeny: null,
     modelRefused: null,
+    effort: null,
     beyondCap: [],
     capNote: null,
     toolsIgnored: false,
@@ -806,6 +810,21 @@ test('a reviewer template CANNOT contribute extraArgs', () => {
   );
 });
 
+test('t1222: a reviewer template\'s effort rides the recipe as its own field; the argv is what it was without it', () => {
+  const tpl = { name: 'rv', type: 'claude', cwd: '/repo', extraArgs: ['--foo', '--model', 'opus', '--allowedTools', 'Bash'] };
+  const plain = managerWith([tpl], { leadArgs: ['--dangerously-skip-permissions'] });
+  const withEffort = managerWith([{ ...tpl, effort: 'xhigh' }], { leadArgs: ['--dangerously-skip-permissions'] });
+  const team = teamWith({ reviewer: { template: 'rv' } });
+  const a = plain.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  const b = withEffort.resolveSeatShape(team, 'reviewer', 'review', LEAD);
+  assert.strictEqual(b.effort, 'xhigh');
+  assert.strictEqual(a.effort, null);
+  assert.deepStrictEqual(b.extraArgs, a.extraArgs);
+  assert.deepStrictEqual(b.extraArgs, ['--dangerously-skip-permissions', '--model', 'opus']);
+  const hand = withEffort.resolveSeatShape(teamWith({ hand: { template: 'rv' } }), 'hand', 'ticket', LEAD);
+  assert.strictEqual(hand.effort, 'xhigh', 'the ticket arm carries it too');
+});
+
 // --- t386: --model is the ONE allowlisted template arg on the review path ---
 //
 // The cap above stays: the review arm still refuses raw template argv. `--model`
@@ -1059,6 +1078,7 @@ test('role cwd: the ticket arm resolves the role subdirectory of the main checko
     toolsMalformed: false,
     shellDeny: null,
     modelRefused: null,
+    effort: null,
     systemPromptFile: 'hand-brief',
     appendPromptFiles: [],
     execCommands: [],
@@ -1101,6 +1121,7 @@ test('role cwd: a role WITHOUT one still resolves to the team root — whole sha
     toolsMalformed: false,
     shellDeny: null,
     modelRefused: null,
+    effort: null,
     systemPromptFile: 'hand-brief',
     appendPromptFiles: [],
     execCommands: [],
@@ -1146,6 +1167,7 @@ test('role cwd: the REVIEW arm honors it too (D4) — whole shape', () => {
     toolsMalformed: false,
     shellDeny: null,
     modelRefused: null,
+    effort: null,
     systemPromptFile: 'clodex-team-reviewer',
     appendPromptFiles: [],
     execCommands: [],

@@ -144,6 +144,7 @@ async function restoreSessionsForWorkspace({
         Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
         typeof entry.fixFor === 'string' ? entry.fixFor : null,
         entry.io || 'pty',
+        typeof entry.effort === 'string' ? entry.effort : null,
       );
       restored.push({
         name: entry.name,

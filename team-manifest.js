@@ -827,13 +827,14 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return { ...loadManifest(teamName), templatesCopied, promptsCopied, accountCarried };
   }
 
-  function setRole(teamName, roleName, patch) {
+  function setRole(teamName, roleName, patch, opts = {}) {
     const team = loadManifest(teamName); // throws if the team is missing
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
       throw new Error(`setRole patch must be an object (${team.file})`);
     }
     if (RESERVED_ROLE_KEYS.has(roleName)) {
-      const outside = Object.keys(patch).filter((k) => !RESERVED_ROLE_PATCH_FIELDS.has(k));
+      const ownDerived = (k) => k === 'template' && !!(opts && opts.ownDerivedTemplate) && patch.template === roleName;
+      const outside = Object.keys(patch).filter((k) => !RESERVED_ROLE_PATCH_FIELDS.has(k) && !ownDerived(k));
       if (outside.length) {
         throw new Error(`the "${roleName}" role is operator-owned topology; edit it via the app, not an intent/mutator — only ${[...RESERVED_ROLE_PATCH_FIELDS].join(', ')} may be patched here, not ${outside.join(', ')} (${team.file})`);
       }
@@ -1087,7 +1088,7 @@ function retiredFieldLines(team, role) {
 
 // The label is never computed here — team-manifest is a pure leaf and warmth is a
 // wire-layer property, so it arrives as data.
-function formatRoster(team, liveSeats = [], { seat = null, grants = null } = {}) {
+function formatRoster(team, liveSeats = [], { seat = null, grants = null, efforts = null } = {}) {
   const byRole = new Map();
   const roleless = [];
   for (const entry of liveSeats) {
@@ -1118,7 +1119,8 @@ function formatRoster(team, liveSeats = [], { seat = null, grants = null } = {})
       ? ` · live: ${live.join(', ')}`
       : ' · no live seat — role definition only, not addressable';
     const account = (def && typeof def.account === 'string' && def.account) ? ` · account: ${def.account}` : '';
-    lines.push(`- ${role} (${cls}${tmpl})${account}${brief}${liveStr}`);
+    const effortStr = (efforts && typeof efforts[role] === 'string' && efforts[role]) ? ` · effort ${efforts[role]}` : '';
+    lines.push(`- ${role} (${cls}${tmpl})${effortStr}${account}${brief}${liveStr}`);
     for (const l of retiredFieldLines(team, role)) lines.push(l);
   }
   if (roleless.length) lines.push(`also live, no role: ${roleless.join(', ')}`);
