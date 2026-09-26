@@ -649,3 +649,15 @@ test('a click in the pane focuses the composer while it is shown', async () => {
     assert.deepStrictEqual([composerEl.focused, termFocus], [1, 2]);
   } finally { global.window = prevWindow; m.view.dispose(); m.restore(); }
 });
+
+test('a draft row with a composer given keeps the composer', async () => {
+  const composerEl = fakeComposer();
+  const m = await mountSplit({ geometry: true }, { composerEl });
+  try {
+    m.show([RULE_ROW, '❯ dictated words', '', '']);
+    m.write();
+    assert.strictEqual(m.view.state().mode, 'split');
+    assert.strictEqual(m.view.composerVisible(), true);
+    assert.strictEqual(m.terminal.element.style.visibility, 'hidden');
+  } finally { m.view.dispose(); m.restore(); }
+});

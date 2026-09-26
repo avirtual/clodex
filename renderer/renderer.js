@@ -2161,14 +2161,33 @@ function createTerminal(name, peer = null) {
   const echoRewrite = peer ? (chunk) => chunk : createEchoRewriter(currentEchoPalette);
   const splitOn = !peer && !window.__CLODEX_WEB__;
   const composerEl = splitOn ? document.createElement('textarea') : null;
+  const sendPtyComposer = () => {
+    const text = composerEl.value;
+    if (!text.trim()) return;
+    composerEl.value = '';
+    composerKit.fit();
+    composerTrigger.resetSpan();
+    writePty(ptyComposerBytes(text));
+  };
   const composerKit = composerEl ? attachComposer(composerEl, {
-    onSend: (text) => {
-      if (!text.trim()) return;
-      composerEl.value = '';
-      composerKit.fit();
-      writePty(ptyComposerBytes(text));
-    },
+    onSend: sendPtyComposer,
     onEscape: () => writePty('\x1b'),
+    onEmptySpace: () => {
+      if (!seatVoiceMode(name, 'tap')) return false;
+      seatVoiceRecord(name, voiceRecordingSeat === name ? 'stop' : 'start');
+      return true;
+    },
+  }) : null;
+  const composerTrigger = composerEl ? attachTriggerSubmit(composerEl, {
+    getConfig: () => voiceSubmitConfig,
+    markOrigin: () => window.api.markVoiceOrigin(name),
+    send: sendPtyComposer,
+    onVoiceFire: () => seatVoiceFired(name),
+    holdsFire: () => voiceRecordingSeat === name && seatVoiceMode(name, 'tap'),
+    onVoiceStop: () => seatVoiceRecord(name, 'stop'),
+    quietMs: VOICE_QUIET_MS,
+    releaseMs: VOICE_RELEASE_MS,
+    trace: (line) => voiceTrace(name, line),
   }) : null;
   if (composerEl) {
     composerEl.classList.add('seat-composer-pty');
@@ -2189,7 +2208,7 @@ function createTerminal(name, peer = null) {
     composerEl,
     onChange: () => { if (composerKit) composerKit.fit(); },
   });
-  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit });
+  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger });
   updateWindowTitle();
   return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
 }
@@ -2219,6 +2238,16 @@ terminalContainer.addEventListener('drop', (e) => {
     try { return webUtils.getPathForFile(f); } catch { return null; }
   }), style);
   if (!text) return;
+  if (ptyComposerShown(entry)) {
+    const el = entry.composerEl;
+    const start = el.selectionStart == null ? el.value.length : el.selectionStart;
+    const end = el.selectionEnd == null ? start : el.selectionEnd;
+    el.value = el.value.slice(0, start) + text + el.value.slice(end);
+    el.setSelectionRange(start + text.length, start + text.length);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    focusPtySeat(entry);
+    return;
+  }
   window.api.writeToSession(activeSession, text);
   if (entry.terminal) entry.terminal.focus();
 });
@@ -2305,8 +2334,12 @@ function switchSession(name) {
   });
 }
 
+function ptyComposerShown(entry) {
+  return !!(entry && entry.liveSplit && entry.composerEl && entry.liveSplit.composerVisible());
+}
+
 function focusPtySeat(entry) {
-  if (entry.liveSplit && entry.composerEl && entry.liveSplit.composerVisible()) entry.composerEl.focus();
+  if (ptyComposerShown(entry)) entry.composerEl.focus();
   else entry.terminal.focus();
 }
 
@@ -2371,6 +2404,7 @@ function removeSession(name, { keepPersisted = false } = {}) {
     if (s.ptyVoice) s.ptyVoice.dispose();
     if (s.liveSplit) s.liveSplit.dispose();
     if (s.composerKit) s.composerKit.dispose();
+    if (s.composerTrigger) s.composerTrigger.dispose();
     if (s.webgl) { try { s.webgl.dispose(); } catch {} }
     if (s.stream) s.stream.dispose();
     if (s.terminal) s.terminal.dispose();
@@ -3771,11 +3805,19 @@ function voiceSinkFor(name) {
     };
   }
   if (!entry.ptyVoice) return null;
+  if (entry.composerTrigger && ptyComposerShown(entry)) {
+    return {
+      draft: (text) => { entry.composerTrigger.draft(text); entry.composerKit.fit(); },
+      released: () => { entry.composerTrigger.released(); entry.composerKit.fit(); },
+      start: () => entry.composerTrigger.resetSpan(),
+      setRecording: (on) => entry.composerEl.classList.toggle('voice-recording', !!on),
+    };
+  }
   return {
     draft: (text) => entry.ptyVoice.draft(text),
     released: () => entry.ptyVoice.released(),
     start: () => entry.ptyVoice.resetSpan(),
-    setRecording: () => {},
+    setRecording: (on) => { if (entry.composerEl) entry.composerEl.classList.toggle('voice-recording', !!on); },
   };
 }
 
