@@ -394,7 +394,7 @@ test('per-test timeout: a test that polls forever fails by its own name and the 
     '}));',
     "test('a neighbour still runs', () => {});",
   ].join('\n'));
-  const env = { ...process.env, CLODEX_TEST_PER_TEST_MS: '300' };
+  const env = { ...process.env, CLODEX_TEST_PER_TEST_MS: '300', CLODEX_TEST_RUN_TIMEOUT_MS: '10000' };
   delete env.NODE_TEST_CONTEXT;
   try {
     const res = spawnSync(
