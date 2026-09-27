@@ -1850,6 +1850,8 @@ test('t1250: more must-fixes parked by the turn-start window after a typed redel
     const t = world.tickets().find((x) => x.id === 't1');
     assert.ok(t.state === 'open' && Number(t.reworkRound) > 0, 'ENTER: the next reject routes to the FOLLOW-UP path');
 
+    for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(app.seen('team-hand').endsWith('\r'), 'ENTER: the redelivery write is complete before the baseline');
     s._awaitingTurnSince = Date.now();
     const beforeFollow = app.seen('team-hand');
     app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
