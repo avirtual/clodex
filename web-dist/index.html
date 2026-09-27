@@ -39141,7 +39141,7 @@ void main() {
       var { renderDoc } = require_render_doc();
       var { parseDoc, buildSearchIndex, search } = require_doc_parse();
       var { isExternallyOpenable } = require_external_link();
-      var DEFAULT_PAGE = "how-to";
+      var DEFAULT_PAGE = "at-a-glance";
       var SEARCH_MIN = 2;
       var SEARCH_LIMIT = 30;
       var REPO_BLOB = "https://github.com/avirtual/clodex/blob/master/";
@@ -55016,7 +55016,7 @@ ${res.stderr}` : "");
       prefsRemoteTokenClear.addEventListener("click", () => saveRemoteToken(""));
       window.api.onRequestOpenPreferences(() => openPrefs());
       function openHelp(name, slug) {
-        openHelpPanel(name || "how-to", slug || null);
+        openHelpPanel(name || null, slug || null);
       }
       window.api.onRequestOpenHelp((name, slug) => openHelp(name, slug));
       var argsOverlay = document.getElementById("args-overlay");

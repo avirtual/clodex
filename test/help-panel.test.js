@@ -505,8 +505,8 @@ test('renderer.js wires the panel into Escape, the opener and the subscription',
     'the island takes window.api injected, never read as a global inside it');
   const stub = rendererSrc.match(/^function openHelp\(.*$/m);
   assert.ok(stub, 'ENTER: no openHelp definition found in renderer.js');
-  assert.match(stub[0], /openHelpPanel\(name \|\| 'how-to', slug \|\| null\)/,
-    'the S3 stub must now open the panel, defaulting to how-to');
+  assert.match(stub[0], /openHelpPanel\(name \|\| null, slug \|\| null\)/,
+    'the S3 stub must open the panel and leave the default page to it');
   assert.match(rendererSrc, /window\.api\.onRequestOpenHelp\(\(name, slug\) => openHelp\(name, slug\)\);/,
     'the S3 menu subscription must survive');
 });
@@ -532,4 +532,21 @@ test('index.html ships the overlay empty, after #report-overlay and before the s
   assert.ok(help < script, '#help-overlay must sit before the renderer.js script tag');
   assert.match(htmlSrc, /<nav id="help-nav"><\/nav>/, '#help-nav ships empty — every row is built at runtime');
   assert.match(htmlSrc, /<div id="help-body" class="help-doc"><\/div>/, '#help-body ships empty');
+});
+
+test('with no page the panel opens on at-a-glance, and openHelp(null) reaches the same default', async () => {
+  const ctx = mount();
+  await withDocument(ctx, () => ctx.panel.openHelpPanel());
+  assert.deepStrictEqual(ctx.calls.page, ['at-a-glance'], 'openHelpPanel() must fetch the at-a-glance page');
+  assert.strictEqual(ctx.byId.get('help-title').textContent, 'Clodex Help — Clodex at a glance');
+
+  const fn = rendererSrc.match(/^function openHelp\(name, slug\) \{[^\n]*\}$/m);
+  assert.ok(fn, 'ENTER: renderer.js must define openHelp on one line');
+  const seen = [];
+  const openHelp = new Function('openHelpPanel', `${fn[0]}\nreturn openHelp;`)((...args) => { seen.push(args); });
+  openHelp(null, undefined);
+  assert.deepStrictEqual(seen, [[null, null]], 'openHelp must defer to the panel default, not name a page');
+  const fresh = mount();
+  await withDocument(fresh, () => fresh.panel.openHelpPanel(...seen[0]));
+  assert.deepStrictEqual(fresh.calls.page, ['at-a-glance'], 'openHelp(null) must land on the panel default');
 });

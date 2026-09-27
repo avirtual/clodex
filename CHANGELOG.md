@@ -15,6 +15,7 @@ blocks a release.
 
 - **One bar per seat**: the status chips (mode, with Codex's Bypass / Read-only folded in, tasks, warnings, effort), the Conversation · Internals switch, a ? to the help page and a **Terminal** toggle sit on the seat's bar; the strip under the composer is gone. The view is per seat, and ⌘⇧T toggles the active seat's Terminal.
 - **Agent seats open in the conversation view by default**; Preferences ▸ Appearance ▸ "Agent seats open in" (Conversation, Internals or Terminal) sets where new seats start and applies to open ones when saved. Voice is set per seat with the 🎤 button; the Prefs mode selector is gone.
+- **Help opens on "Clodex at a glance"**, one screen on seats, views, the message box and tickets (F1).
 - Transcript pane: an intent whose body is a single short line (a reminder, a one-line dm, a filed report) now shows it on the same line as its label instead of on a second row; longer bodies keep the clamped block.
 - Transcript pane: every ticket phase — a notice from the loop or a hand, a runtime reply, the seat's own task verb — now reads the same way: ticket number, state, one-line message, with the full text behind a click when there is more.
 - **Tickets is on by default, with a Feed**: the board of open and recently closed tickets, and a time-ordered feed of every filing, review, merge and acceptance, filterable, in the desktop app and the browser. An install that already turned the plugin off stays off.

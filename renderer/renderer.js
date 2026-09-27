@@ -8498,7 +8498,7 @@ prefsRemoteTokenClear.addEventListener('click', () => saveRemoteToken(''));
 
 window.api.onRequestOpenPreferences(() => openPrefs());
 
-function openHelp(name, slug) { openHelpPanel(name || 'how-to', slug || null); }
+function openHelp(name, slug) { openHelpPanel(name || null, slug || null); }
 window.api.onRequestOpenHelp((name, slug) => openHelp(name, slug));
 
 

@@ -4,7 +4,7 @@ const { renderDoc } = require('../lib/render-doc');
 const { parseDoc, buildSearchIndex, search } = require('../../doc-parse');
 const { isExternallyOpenable } = require('../../external-link');
 
-const DEFAULT_PAGE = 'how-to';
+const DEFAULT_PAGE = 'at-a-glance';
 const SEARCH_MIN = 2;
 const SEARCH_LIMIT = 30;
 const REPO_BLOB = 'https://github.com/avirtual/clodex/blob/master/';
