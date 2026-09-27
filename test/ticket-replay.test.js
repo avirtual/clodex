@@ -261,6 +261,10 @@ async function until(fn) {
   while (!fn() && Date.now() - t0 < WAIT_MS) await new Promise((r) => setTimeout(r, 5));
 }
 
+async function leadDrained(app) {
+  await until(() => !(app.m.sessions.get('lead')._injectPtyQueue || []).length);
+}
+
 // The one-shot is spent exactly when the replay pass has run, so it is the
 // deterministic anchor for asserting ABSENCE. A bare sleep asserts nothing was
 // delivered at a moment that may simply be BEFORE the pass, which passes on a loaded
@@ -2533,6 +2537,7 @@ async function collided(world, opts = {}) {
   // it is UNCHANGED, and a baseline taken mid-unit sees the trailing Enter land a
   // tick later as a write this fix did not make.
   await writeComplete(app, 'team-hand');
+  await leadDrained(app);
   return { app, s, lead };
 }
 
@@ -3202,6 +3207,7 @@ test('t447: an ESCALATION does not restore the budget — repeated displacement 
     // later. A baseline taken here would be mid-unit, and the second-escalation
     // check below would be satisfiable by one pending byte of the first.
     await writeComplete(app, 'lead');
+    await leadDrained(app);
     const leadSawOne = app.seen('lead');
     assert.match(leadSawOne, /t1/,
       'ENTER: the first escalation must have happened and must name t1 — it is the event whose prune-or-not '
