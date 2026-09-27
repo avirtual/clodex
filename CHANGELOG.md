@@ -17,6 +17,7 @@ blocks a release.
 - The Tickets pane's quiet refresh keeps keyboard focus on the Feed's Refresh button and the Closed list's Newer/Older pager, and never repaints the Closed or Feed view over an edit you started while it was loading.
 - The Files toggle in the sidebar footer lights whenever the side pane is on screen, even when it shows another seat's file (an [agent:file view] from a peer), closes what is showing on a click, and clears when the last seat closes.
 - A test run killed at the runner's ceiling no longer names a quoted glob or a directory as the interrupted file.
+- clodexctl: `describe node` prints the stored fields at once and the live version after the dial, keeps the tunnel's full reason in an unreachable line, honours --token/CLODEX_TOKEN as `--test` does, and refuses `--current --versions` instead of ignoring the flag.
 
 ## 5.88.0 — 2026-09-28 — Layout round 2: a Files toggle, drawer and dock sizing, the Tickets pane as a pane, clodexctl node versions
 - clodexctl: `describe node <name>` shows the Clodex version and host the node is running (fetched live; "(unreachable: …)" when it cannot be reached), and `get nodes --versions` adds a VERSION column; the plain listing stays offline.
