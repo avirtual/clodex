@@ -12,7 +12,7 @@ const MANIFEST = JSON.parse(fs.readFileSync(
   path.join(__dirname, '..', 'plugins', 'tickets-viewer', 'manifest.json'), 'utf8'));
 
 function bootStub() {
-  const dir = mkTmpRoot('clodex-tickets-web-writes-');
+  const dir = mkTmpRoot('clodex-plugin-test-');
   const engine = createPluginHostEngine({
     manager: {
       sessions: new Map(), list: () => [], listForWorkspace: () => [],
