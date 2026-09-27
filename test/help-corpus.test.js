@@ -126,7 +126,7 @@ const FIXTURE_TWO = '# Two\n\n## Gamma\n\nalpha shows up on the second page too.
 test('manifest: every page path exists, names are unique and legal, each page has one H1', () => {
   assert.strictEqual(manifest.version, 1);
   assert.deepStrictEqual(manifest.sections.map((s) => s.title), ['Using Clodex', 'Recipes', 'Reference']);
-  assert.strictEqual(PAGES.length, 18, `manifest lists ${PAGES.length} pages`);
+  assert.strictEqual(PAGES.length, 19, `manifest lists ${PAGES.length} pages`);
   assert.ok(BY_NAME.has('how-to'), 'ENTER: how-to did not survive the manifest read');
   assert.strictEqual(BY_NAME.size, PAGES.length, 'manifest page names are not unique');
 
@@ -140,6 +140,18 @@ test('manifest: every page path exists, names are unique and legal, each page ha
     const h1 = parseDoc(read(page.path)).headings.filter((h) => h.level === 1);
     assert.strictEqual(h1.length, 1, `${page.path} has ${h1.length} H1 headings, expected exactly 1`);
   }
+});
+
+test('at-a-glance is the first Using Clodex page and resolves and indexes', () => {
+  assert.deepStrictEqual(manifest.sections[0].pages[0], { name: 'at-a-glance', path: 'docs/at-a-glance.md' });
+  const corpus = loadHelpCorpus(ROOT);
+  const page = corpus.get('at-a-glance');
+  assert.ok(page, 'at-a-glance must resolve');
+  assert.strictEqual(page.title, 'Clodex at a glance');
+  assert.ok(corpus.section('at-a-glance', 'views'), 'the Views heading must keep the slug the seat bar opens');
+  assert.strictEqual(corpus.index().sections[0].pages[0].name, 'at-a-glance');
+  const hits = corpus.search('stream seat');
+  assert.ok(hits.some((h) => h.name === 'at-a-glance'), 'the search index must reach at-a-glance');
 });
 
 test('every docs markdown file is listed or excluded, and docs/notes and docs/explorations are never listed', () => {
@@ -369,7 +381,7 @@ test('two roots do not share a cache', () => {
 test('the real corpus loads and exposes nothing outside the manifest', () => {
   const corpus = loadHelpCorpus(ROOT);
   const listed = corpus.list();
-  assert.strictEqual(listed.length, 18);
+  assert.strictEqual(listed.length, 19);
   assert.deepStrictEqual(listed.map((p) => p.name), PAGES.map((p) => p.name));
   assert.ok(listed.some((p) => p.name === 'how-to'), 'ENTER: how-to did not survive the corpus load');
   for (const page of listed) assert.ok(page.title, `${page.name} has no title`);

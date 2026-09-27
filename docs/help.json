@@ -4,6 +4,7 @@
     {
       "title": "Using Clodex",
       "pages": [
+        { "name": "at-a-glance", "path": "docs/at-a-glance.md" },
         { "name": "how-to", "path": "docs/how-to.md" },
         { "name": "sessions", "path": "docs/sessions.md" },
         { "name": "messaging", "path": "docs/messaging.md" },
