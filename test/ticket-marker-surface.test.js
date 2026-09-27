@@ -15,7 +15,7 @@ const SPILL = '/tmp/clodex-spill/msg-1.txt';
 const THRESHOLD = 500;
 
 function mkLoop() {
-  const home = mkTmpRoot('clodex-marker-');
+  const home = mkTmpRoot('clodex-t817-');
   const root = pathReal.join(home, 'proj');
   fsReal.mkdirSync(root, { recursive: true });
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
