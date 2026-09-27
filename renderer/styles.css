@@ -6017,6 +6017,9 @@ body.web-frontend #sidebar-header {
 .tr-ticket { border-left: 2px solid var(--accent); }
 .tr-ticket:not(.tr-hidden) { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--sp-2); }
 .tr-ticket > .tr-box-head { flex: 1 1 100%; }
+.tr-ticket .tr-box-head { align-items: baseline; }
+.tr-ticket > .tr-box-head:only-child { cursor: default; user-select: text; }
+.tr-ticket > .tr-box-head:only-child .tr-box-preview { visibility: visible; }
 .tr-ticket > .tr-box-body { flex: 1 1 0; min-width: 0; }
 .tr-ticket > .tr-box-head + .tr-box-body { flex-basis: 100%; }
 .tr-ticket-chip { flex: none; padding: 0 var(--sp-1); border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--text-primary); font-size: var(--fs-xs); white-space: nowrap; }
@@ -6093,6 +6096,7 @@ body.web-frontend #sidebar-header {
 .intent-card-glyph { color: var(--text-secondary); min-width: 1em; text-align: center; }
 .intent-card-label { font-weight: 600; }
 .intent-card-target { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; }
+.intent-card-inline { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 auto; }
 .intent-chip {
   font-size: var(--fs-xs);
   color: var(--text-tertiary);
@@ -6113,6 +6117,7 @@ body.web-frontend #sidebar-header {
   overflow: hidden;
   cursor: pointer;
 }
+.intent-card-rest { display: none; }
 .intent-card-more { margin-left: calc(1em + var(--sp-2)); font-size: var(--fs-xs); color: var(--text-tertiary); cursor: pointer; }
 
 .tr-tool {
