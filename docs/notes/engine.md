@@ -98,3 +98,8 @@ No spill branch since t1065: the stub carries the file's absolute path, which
 `resolveDisplayedPath` opens like any other, so a click reads the file from any
 pane (reading is unconfined by design, `file-resolve.js`). The old `@spill:<id>`
 token is an ordinary path miss. Pinned by `test/engine-spill-resolve.test.js`.
+
+## sweepSpilledMessages
+
+Seat image files (`img-<stamp>-<n>.<ext>`) age out after 24 h because a browser draft holds an uploaded image with nothing on disk naming it until send, so no parked pointer protects it.
+Text spill files keep the 30-minute age.

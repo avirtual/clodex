@@ -172,3 +172,30 @@ test('phone dm images: an image file named by a parked Image #n line survives th
   sweepSpilledMessages(msgDir, pendingDir, MAX_AGE, NOW);
   assert.strictEqual(fs.existsSync(fpath), true);
 });
+
+test('t1265: an unreferenced seat image younger than imgMaxAgeSec survives a sweep that collects text of the same age', () => {
+  const { msgDir, pendingDir } = tmpDirs();
+  const img = spill(msgDir, 'alice', 'img-1700000000000-1.png', OLD);
+  const txt = spill(msgDir, 'alice', 'msg-55910-40.txt', OLD);
+  sweepSpilledMessages(msgDir, pendingDir, MAX_AGE, NOW, 24 * 3600);
+  assert.strictEqual(fs.existsSync(txt), false, 'ENTER: a text spill file of this age is collected by the same call');
+  assert.strictEqual(fs.existsSync(img), true);
+});
+
+test('t1265: a seat image older than imgMaxAgeSec is collected', () => {
+  const { msgDir, pendingDir } = tmpDirs();
+  const img = spill(msgDir, 'alice', 'img-1700000000000-1.png', NOW - (24 * 3600 + 60) * 1000);
+  sweepSpilledMessages(msgDir, pendingDir, MAX_AGE, NOW, 24 * 3600);
+  assert.strictEqual(fs.existsSync(img), false);
+});
+
+test('t1265: with imgMaxAgeSec omitted a seat image ages out at maxAgeSec', () => {
+  const { msgDir, pendingDir } = tmpDirs();
+  const img = spill(msgDir, 'alice', 'img-1700000000000-1.png', OLD);
+  sweepSpilledMessages(msgDir, pendingDir, MAX_AGE, NOW);
+  assert.strictEqual(fs.existsSync(img), false);
+});
+
+test('t1265: IMG_MAX_AGE is 24 hours', () => {
+  assert.strictEqual(require('../engine').IMG_MAX_AGE, 86400);
+});

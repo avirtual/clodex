@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Web: an image pasted into a seat's composer now stays on the Clodex host for 24 hours instead of 30 minutes, so a draft sent later still carries it.
 - Sidebar: hovering a seat now shows its reasoning effort level — the level it was spawned with, or `default` when none was set.
 - Transcript pane: a message you type while the agent is still working now shows as your own row, marked mid-turn, with a delivered / read state — the CLI folds it into the running turn and never echoed it before.
 - Web UI: pasting an image into a pty seat's composer now uploads it to the Clodex host and hands the seat the file path, instead of refusing with a toast. Desktop paste is unchanged.
