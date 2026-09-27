@@ -218,6 +218,18 @@ module.exports.activate = (rhost) => {
   let view = null;
   let poll = null;
 
+  async function activeSeat() {
+    try {
+      const s = rhost.sessions;
+      const name = s && s.active();
+      if (!name) return null;
+      const rows = await s.listWorkspace(rhost.workspaceId);
+      return (Array.isArray(rows) && rows.find((r) => r && r.name === name)) || null;
+    } catch {
+      return null;
+    }
+  }
+
   function tick() {
     if (view && !view.busy()) view.refresh({ quiet: true });
   }
@@ -229,7 +241,7 @@ module.exports.activate = (rhost) => {
     tip: 'The project ticket board',
     mount(rootEl) { view = wire(rootEl); },
     onShow() {
-      if (view) view.refresh();
+      if (view) view.refresh({ follow: true });
       if (poll === null) poll = rhost.setInterval(tick, POLL_MS);
     },
     onHide() {
@@ -1150,7 +1162,25 @@ module.exports.activate = (rhost) => {
       renderBoard(res, cost);
     }
 
-    function renderProjects(res, quiet) {
+    function followKey(list, seat) {
+      if (!seat) return null;
+      if (seat.team) {
+        const t = list.find((p) => p.team === seat.team);
+        if (t) return t.key;
+      }
+      const cwd = typeof seat.cwd === 'string' ? seat.cwd : '';
+      if (!cwd) return null;
+      let best = null;
+      for (const p of list) {
+        if (typeof p.root !== 'string' || !p.root) continue;
+        const base = p.root.replace(/\/+$/, '');
+        if (cwd !== p.root && !cwd.startsWith(`${base}/`)) continue;
+        if (!best || base.length > best.base.length) best = { key: p.key, base };
+      }
+      return best ? best.key : null;
+    }
+
+    function renderProjects(res, quiet, seat) {
       projectsPane.innerHTML = '';
       if (!res.ok) {
         projectsPane.appendChild(el('div', 'tv-error', `Could not read the projects directory: ${res.error || 'unknown error'}`));
@@ -1164,8 +1194,9 @@ module.exports.activate = (rhost) => {
         boardPane.appendChild(el('div', 'tv-empty', 'A board appears here once a project has its first ticket.'));
         return;
       }
-      const kept = !!selected && list.some((p) => p.key === selected);
-      if (!kept) selected = list[0].key;
+      const followed = followKey(list, seat);
+      const kept = !!selected && (followed === null || followed === selected) && list.some((p) => p.key === selected);
+      if (!kept) selected = followed || list[0].key;
       for (const p of list) {
         const row = el('div', p.key === selected ? 'tv-team-row tv-selected' : 'tv-team-row');
         row.dataset.tvProject = p.key;
@@ -1219,12 +1250,12 @@ module.exports.activate = (rhost) => {
       selectProject(selected, quiet).catch((e) => rhost.log.error('select failed', e));
     }
 
-    async function reload(quiet) {
+    async function reload(quiet, follow) {
       const my = ++reloadSeq;
       if (!projectsPane.firstChild) projectsPane.appendChild(el('div', 'tv-empty', 'Loading…'));
-      const res = await ask('projects');
+      const [res, seat] = await Promise.all([ask('projects'), follow ? activeSeat() : null]);
       if (!alive() || my !== reloadSeq) return;
-      renderProjects(res, quiet);
+      renderProjects(res, quiet, seat);
     }
 
     cancelPending = () => { if (searchTimer !== null) { clearTimeout(searchTimer); searchTimer = null; } };
@@ -1237,7 +1268,7 @@ module.exports.activate = (rhost) => {
     }
 
     return {
-      refresh: (opts) => { reload(!!(opts && opts.quiet)).catch((e) => rhost.log.error('reload failed', e)); },
+      refresh: (opts) => { reload(!!(opts && opts.quiet), !!(opts && opts.follow)).catch((e) => rhost.log.error('reload failed', e)); },
       busy,
     };
   }
