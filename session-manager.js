@@ -8821,8 +8821,13 @@ function createSessionManager(deps) {
       });
       if (verdict.hold) {
         const canPark = adapterFor(target.agentType)?.caps.park === true && !target._dead;
+        let parkBody = null;
+        if (canPark && opts && typeof opts.rebody === 'function') {
+          try { parkBody = opts.rebody('parked'); } catch { parkBody = null; }
+        }
         const parkId = canPark
-          ? this._parkHeldDelivery(target, this._buildDeliveryText(target, senderTag, body, 'dm', tag), key)
+          ? this._parkHeldDelivery(target, this._buildDeliveryText(target, senderTag,
+            typeof parkBody === 'string' && parkBody ? parkBody : body, 'dm', tag), key)
           : null;
         // A park IS durable, so it fires onWrite; a bare `held` reached nobody and
         // must not — that asymmetry is the same one the nudge/replay stamps encode.
@@ -9380,17 +9385,27 @@ function createSessionManager(deps) {
       if (!target) return;
       if (this._refuseStreamInject(target, body, `${mtype || 'message'} from ${senderName}`)) return;
       const pics = Array.isArray(images) ? images : [];
-      let finalText = this._buildDeliveryText(target, senderName, body, mtype, tag);
       const fire = typeof onWrite === 'function' ? onWrite : null;
       const imageTail = target.io !== 'stream' && pics.length
         ? this._writeImageFiles(target.name, pics).map((p, i) => `\nImage #${i + 1}: ${p}`).join('')
         : '';
-      finalText += imageTail;
+      let finalText = null;
+      const plainText = () => {
+        if (finalText === null) finalText = this._buildDeliveryText(target, senderName, body, mtype, tag) + imageTail;
+        return finalText;
+      };
+      const textFor = (disposition) => {
+        let b = null;
+        if (rebody) { try { b = rebody(disposition); } catch { b = null; } }
+        return typeof b === 'string' && b
+          ? this._buildDeliveryText(target, senderName, b, mtype, tag) + imageTail
+          : plainText();
+      };
       if (target.io === 'stream') {
-        this._streamEnqueue(target, { text: finalText, images: pics, origin: senderName === 'user' ? 'operator' : 'system' },
+        this._streamEnqueue(target, { text: plainText(), images: pics, origin: senderName === 'user' ? 'operator' : 'system' },
           fire ? () => fire('injected') : null, null, parkKey);
-      } else if (!this._maybeParkDelivery(target, finalText, parkKey)) {
-        this._injectText(target, finalText, {
+      } else if (!this._maybeParkDelivery(target, () => textFor('parked'), parkKey)) {
+        this._injectText(target, fire && rebody ? '' : plainText(), {
           parkable: true,
           parkKey,
           human: senderName === 'user',
@@ -9402,11 +9417,7 @@ function createSessionManager(deps) {
           ...(fire ? {
             produce: () => {
               try { fire('injected'); } catch {}
-              let b = null;
-              if (rebody) { try { b = rebody(); } catch { b = null; } }
-              return typeof b === 'string' && b
-                ? this._buildDeliveryText(target, senderName, b, mtype, tag) + imageTail
-                : finalText;
+              return textFor('injected');
             },
             onDivert: (why) => { try { fire('parked', why); } catch {} },
           } : {}),
@@ -9520,7 +9531,8 @@ function createSessionManager(deps) {
       const busy = target.activityState === 'thinking' || !!target._recycling;
       if (!typing && !busy) return false;
       try {
-        parkDelivery(PENDING_DIR, target.name, finalText, this._nextParkSeq(), null, false, this._bornFor(target.name), key);
+        const text = typeof finalText === 'function' ? finalText() : finalText;
+        parkDelivery(PENDING_DIR, target.name, text, this._nextParkSeq(), null, false, this._bornFor(target.name), key);
       } catch (e) {
         log.error('inject', `park failed for ${target.name}: ${e.message} — injecting instead`);
         return false;

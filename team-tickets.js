@@ -3929,6 +3929,13 @@ function createTicketMethods(deps, shared) {
         return;
       }
       if (disposition !== 'injected') {
+        if (disposition === 'parked' && redirect && redirect.carried && live
+            && live.ticketId === ticketId && live.kind === kind) {
+          this._pruneOwedSpent(s, { ticketId, kind });
+          s._specUnconfirmed = { ...live, ...redirect };
+          log.info('intent', `${kind} write of ${ticketId} parked on ${seatName} carrying the unconfirmed ${live.label || 'rejection'} — latch kept`);
+          return s._specUnconfirmed;
+        }
         // A PARK ends this ticket's displacement episode, so the redelivery budget
         // is released here as it is at the two receipt exits. Keyed on THIS call's
         // ticket+kind rather than on the latch cleared below, and that is the whole
@@ -4010,23 +4017,23 @@ function createTicketMethods(deps, shared) {
       // unanchored search is the correct one.
       const size = this._seatTranscriptSize(seatName);
       const since = size < 0 ? 0 : size;
-      let carry = null;
-      if (redirect && prior && prior.ticketId === ticketId && prior.kind === 'redirect'
-          && typeof prior.reason === 'string' && prior.reason) {
-        if (prior.reason === redirect.reason) {
-          if (prior.carried) carry = { reason: prior.reason, carried: true };
-        } else if (this._seatTranscriptHas(seatName, ticketId, prior.since) !== true) {
-          const first = prior.carried ? prior.reason
-            : `[ticket ${ticketId} ${prior.label || 'rejected'}] ${prior.reason}`;
-          carry = { reason: `${first}\n[ticket ${ticketId} ${redirect.label}] ${redirect.reason}`, carried: true };
-        }
-      }
+      const carry = this._redirectCarry(seatName, ticketId, prior, redirect);
       s._specUnconfirmed = redirect
         ? { ticketId, kind, at: Date.now(), retried, since, ...redirect, ...carry }
         : { ticketId, kind, at: Date.now(), retried, since };
       if (rearmed) s._specUnconfirmed.windowRearmed = true;
       this._armSpecConfirmTimer(s);
       return s._specUnconfirmed;
+    },
+
+    _redirectCarry(seatName, ticketId, prior, redirect) {
+      if (!(redirect && prior && prior.ticketId === ticketId && prior.kind === 'redirect'
+          && typeof prior.reason === 'string' && prior.reason)) return null;
+      if (prior.reason === redirect.reason) return prior.carried ? { reason: prior.reason, carried: true } : null;
+      if (this._seatTranscriptHas(seatName, ticketId, prior.since) === true) return null;
+      const first = prior.carried ? prior.reason
+        : `[ticket ${ticketId} ${prior.label || 'rejected'}] ${prior.reason}`;
+      return { reason: `${first}\n[ticket ${ticketId} ${redirect.label}] ${redirect.reason}`, carried: true };
     },
 
     // The bytes of a seat-bound ticket REDIRECT — a rejection or a follow-up set
@@ -4649,7 +4656,7 @@ function createTicketMethods(deps, shared) {
         (disposition, why) => {
           try {
             this._armSpecConfirm(seatName, ticket.id, disposition,
-              { label: u.label, reason: u.reason, from: u.from, ...(u.carried ? { carried: true } : {}) }, why);
+              { label: u.label, reason: u.reason, from: u.from, ...(u.carried && disposition === 'injected' ? { carried: true } : {}) }, why);
           } catch (e) { log.error('intent', `redirect latch arm failed for ${seatName} on ${ticket.id}: ${e.message}`); }
           finally { if (onWrite) { try { onWrite(disposition); } catch {} } }
         });
@@ -7561,18 +7568,28 @@ function createTicketMethods(deps, shared) {
       }
       const rework = this._reworkSeatFor(team, ticket, seat,
         this._redirectDeliveryText(ticket.id, 'more must-fixes', reason));
+      const redirect = { label: 'more must-fixes', reason, from: session.name };
       let armed = null;
+      let parkCarry = null;
       const r = rework.replaced
         ? { queued: true }
         : this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'more must-fixes', reason), true,
           `[ticket ${ticket.id} more must-fixes] close with ${ticketCloseVerb(ticket.id)}`,
           (disposition, why) => {
-            armed = this._armSpecConfirm(seat, ticket.id, disposition,
-              { label: 'more must-fixes', reason, from: session.name }, why) || null;
+            const carried = disposition === 'parked' && parkCarry ? { ...redirect, ...parkCarry } : redirect;
+            parkCarry = null;
+            armed = this._armSpecConfirm(seat, ticket.id, disposition, carried, why) || null;
           },
-          { rebody: () => (armed && armed.carried && typeof armed.reason === 'string'
-            ? this._redirectDeliveryText(ticket.id, 'more must-fixes', armed.reason)
-            : null) });
+          { rebody: (disposition) => {
+            if (disposition === 'parked') {
+              const live = this.sessions.get(seat);
+              parkCarry = live ? this._redirectCarry(seat, ticket.id, live._specUnconfirmed, redirect) : null;
+              return parkCarry ? this._redirectDeliveryText(ticket.id, 'more must-fixes', parkCarry.reason) : null;
+            }
+            return armed && armed.carried && typeof armed.reason === 'string'
+              ? this._redirectDeliveryText(ticket.id, 'more must-fixes', armed.reason)
+              : null;
+          } });
       if (!(r && (r.queued || r.parked))) {
         reply(`error: ${ticket.id} is already open for rework and the follow-up did NOT reach ${rework.seat} `
           + `(${(r && (r.error || r.held)) || 'unknown delivery failure'})`
