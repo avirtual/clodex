@@ -9,6 +9,11 @@ function initialSeatView({ transcriptPane, transcriptPaneMode, io }) {
   return paneMode(transcriptPaneMode);
 }
 
+function rememberedSeatView(remembered, settings) {
+  if (SEAT_VIEWS.includes(remembered) && !(remembered === 'terminal' && settings.io === 'stream')) return remembered;
+  return initialSeatView(settings);
+}
+
 function seatViewSettings(view, currentMode) {
   if (view === 'terminal') return { transcriptPane: false, transcriptPaneMode: paneMode(currentMode) };
   return { transcriptPane: true, transcriptPaneMode: paneMode(view) };
@@ -24,6 +29,7 @@ function applySeatView(entry, view) {
   if (view === 'terminal' && !entry.liveSplit) return;
   entry.view = view;
   if (view !== 'terminal') entry.lastView = view;
+  if (typeof entry.onView === 'function') entry.onView(view);
   if (entry.liveSplit) {
     entry.liveSplit.setRaw(view === 'terminal');
     entry.liveSplit.refresh();
@@ -45,4 +51,4 @@ function seatViewDeps(entry, { onHelp = null } = {}) {
   };
 }
 
-module.exports = { SEAT_VIEWS, initialSeatView, seatViewSettings, createSeatView, applySeatView, toggleSeatTerminal, seatViewDeps };
+module.exports = { SEAT_VIEWS, initialSeatView, rememberedSeatView, seatViewSettings, createSeatView, applySeatView, toggleSeatTerminal, seatViewDeps };

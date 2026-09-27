@@ -513,6 +513,7 @@ function recordsOf(text, max = RECORD_CAP) {
   let unread = [];
   let queued = [];
   let enqueues = 0;
+  let pushed = 0;
   const lines = [];
   for (const line of String(text).split('\n')) {
     if (!line.trim()) continue;
@@ -537,7 +538,7 @@ function recordsOf(text, max = RECORD_CAP) {
       turn -= 1;
       typedPrompt = null;
     }
-    const base = { id: rec.uuid || `line:${all.length}`, kind: '', ts: tsOf(rec), turn };
+    const base = { id: rec.uuid || `line:${pushed}`, kind: '', ts: tsOf(rec), turn };
     const produced = recordsOfLine(rec, base, tools);
     for (const r of produced) {
       if (r.kind === 'prompt' && r.source !== 'mid-turn') typedPrompt = { at: all.length, promptId: rec.promptId || null, record: r };
@@ -550,6 +551,7 @@ function recordsOf(text, max = RECORD_CAP) {
       }
       if (midTurn && r.kind === 'prompt') unread.push(r);
       all.push(r);
+      pushed += 1;
     }
   }
   queued.forEach((q) => {

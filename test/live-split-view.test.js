@@ -1314,7 +1314,7 @@ test('a picker that hides the composer clears the pending tag, so a later block 
   } finally { m.done(); }
 });
 
-test('the transcript bar renders the chips slot, then Conversation, Internals, ? and Terminal; Conversation reports through onMode and hides the tool block; refresh follows the mode getter', async () => {
+test('the transcript bar renders the chips slot, then Conversation, Internals, ? and Screen; Conversation reports through onMode and hides the tool block; refresh follows the mode getter', async () => {
   let current = 'internals';
   const reported = [];
   const m = await mountSplit(undefined, { mode: () => current, onMode: (next) => reported.push(next), onHelp: () => {} });
@@ -1715,7 +1715,7 @@ const modeButtons = (m) => viewsOf(m).childNodes[0].childNodes;
 const terminalButton = (m) => viewsOf(m).childNodes.find((n) => /\btranscript-terminal-btn\b/.test(n.className));
 const pressed = (m) => [...modeButtons(m), terminalButton(m)].map((b) => b.getAttribute('aria-pressed'));
 
-test('the bar Terminal toggle turns raw on, keeps the bar showing over an inset terminal, stops the pull, and turns it off again', async () => {
+test('the bar Screen toggle turns raw on, keeps the bar showing over an inset terminal, stops the pull, and turns it off again', async () => {
   const m = await mountSplit({ geometry: true });
   try {
     m.pane.offsetTop = 4;
@@ -1735,7 +1735,7 @@ test('the bar Terminal toggle turns raw on, keeps the bar showing over an inset 
   } finally { m.view.dispose(); m.restore(); }
 });
 
-test('a seat put in Terminal before its first write never pulls the transcript', async () => {
+test('a seat put in Screen before its first write never pulls the transcript', async () => {
   const m = mountView({}, { geometry: true });
   try {
     m.view.setRaw(true);
@@ -1773,7 +1773,7 @@ test('two seats: Internals clicked on B changes only B, and nothing is written t
   }
 });
 
-test('the toggle ⌘⇧T calls takes Internals to Terminal and back to Internals, the same as the bar button', async () => {
+test('the toggle ⌘⇧T calls takes Internals to Screen and back to Internals, the same as the bar button', async () => {
   const { entry, m } = await mountSeat('internals');
   try {
     toggleSeatTerminal(entry);

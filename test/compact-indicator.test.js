@@ -182,6 +182,23 @@ test('mergeCompactNotices: a finished notice folds into the compact boundary at 
   assert.deepStrictEqual(recs[1], { id: 'b1', kind: 'boundary', ts: 40, turn: 1, what: 'compact', trigger: 'manual', preTokens: 100, postTokens: 10 });
 });
 
+test('mergeCompactNotices: a notice spliced in ahead of a folded boundary does not let a later notice fold into that boundary again', () => {
+  const recs = [
+    { id: 'b1', kind: 'boundary', ts: 10, turn: 1, what: 'compact' },
+    { id: 'b2', kind: 'boundary', ts: 20, turn: 1, what: 'compact' },
+  ];
+  const out = mergeCompactNotices(recs, [
+    { id: 'c5', ts: 5, ms: 1000, outcome: 'done', text: 'Compacted in 1s' },
+    { id: 'c1', ts: 1, outcome: 'timeout', text: 'Compact did not report back' },
+    { id: 'c6', ts: 6, ms: 2000, outcome: 'done', text: 'Compacted in 2s' },
+  ]);
+  assert.deepStrictEqual(out, [
+    { id: 'c1', kind: 'notice', level: 'info', ts: 1, turn: 1, text: 'Compact did not report back' },
+    { id: 'b1', kind: 'boundary', ts: 10, turn: 1, what: 'compact', elapsedMs: 1000 },
+    { id: 'b2', kind: 'boundary', ts: 20, turn: 1, what: 'compact', elapsedMs: 2000 },
+  ]);
+});
+
 test('renderer: listens on onSessionCompacting and ticks the compacting rows', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   assert.match(src, /window\.api\.onSessionCompacting\(\(name, c\) => \{[\s\S]{0,200}applyCompacting\(el, c\)/);

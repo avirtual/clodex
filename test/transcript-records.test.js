@@ -183,6 +183,19 @@ test('a typed /compact whose echo lands after the compact_boundary is no prompt 
   assert.doesNotMatch(JSON.stringify(records), /\/compact/);
 });
 
+test('a record with no uuid after a spliced echo mints a fresh line id, never one a shifted record already holds', () => {
+  const { records } = recordsOf([
+    typed(undefined, 'P', '/compact'),
+    rec({ type: 'system', subtype: 'compact_boundary', compactMetadata: { trigger: 'manual', preTokens: 100, postTokens: 10 } }),
+    typed(undefined, 'P', '<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>'),
+    typed(undefined, 'Q', 'next thing'),
+  ].join('\n'));
+  assert.deepStrictEqual(records, [
+    { id: 'line:1', kind: 'boundary', ts: null, turn: 0, what: 'compact', trigger: 'manual', preTokens: 100, postTokens: 10 },
+    { id: 'line:2', kind: 'prompt', ts: null, turn: 1, text: 'next thing', source: 'typed' },
+  ]);
+});
+
 test('an echo matches only the last typed prompt: an earlier /compact with the same promptId stays a row', () => {
   const { records } = recordsOf([
     typed('p1', 'P', '/compact'),
