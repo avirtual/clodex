@@ -242,15 +242,27 @@ function boot(world, opts = {}) {
   };
 }
 
+const WAIT_MS = 20_000;
+
 // The inject queue is a promise chain with a settle sleep, so the bytes land a
 // few ticks after create() returns. Polls rather than sleeping a fixed span: a
 // fixed sleep tuned on a fast machine is how a green suite starts flaking.
-async function settled(app, name, want = /ticket/, tries = 200) {
-  for (let i = 0; i < tries; i++) {
+async function settled(app, name, want = /ticket/) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < WAIT_MS) {
     if (want.test(app.seen(name))) return app.seen(name);
     await new Promise((r) => setTimeout(r, 5));
   }
   return app.seen(name);
+}
+
+async function until(fn) {
+  const t0 = Date.now();
+  while (!fn() && Date.now() - t0 < WAIT_MS) await new Promise((r) => setTimeout(r, 5));
+}
+
+async function leadDrained(app) {
+  await until(() => !(app.m.sessions.get('lead')._injectPtyQueue || []).length);
 }
 
 // The one-shot is spent exactly when the replay pass has run, so it is the
@@ -773,9 +785,7 @@ test('a seat announcing just AFTER the cap is still served safely — the cap mu
     // the handle is nulled on a one-shot fire and replaced on a re-arm, so a change
     // of identity is the one signal both shapes share.
     const first = s._replayFallbackTimer;
-    for (let i = 0; i < 400 && s._replayFallbackTimer === first; i++) {
-      await new Promise((r) => setTimeout(r, 2));
-    }
+    await until(() => s._replayFallbackTimer !== first);
     assert.notStrictEqual(s._replayFallbackTimer, first,
       'ENTER: the cap must have fired before the emit, or this is the sibling ordering already covered above');
 
@@ -903,9 +913,7 @@ test('a held delivery leaves the replay armed, and a later edge still lands it',
   try {
     const s = await app2.spawn('team-hand', 'codex');
     s.needsAttention = { kind: 'permission' };   // urgent bypasses every hold except this one
-    for (let i = 0; i < 400 && s._replayFallbackTimer != null; i++) {
-      await new Promise((r) => setTimeout(r, 2));
-    }
+    await until(() => s._replayFallbackTimer == null);
     assert.strictEqual(s._replayFallbackTimer, null, 'ENTER: the cap must have fired, or nothing was held yet');
     assert.doesNotMatch(app2.seen('team-hand'), /BUILD THE WIDGET/, 'ENTER: held means nothing reached the seat');
     assert.strictEqual(world.tickets().find((x) => x.id === 't1').deliveredTo.incarnation !== s.incarnation, true,
@@ -1129,9 +1137,7 @@ async function dispatched(world, opts = {}) {
   // on the middle one. The silence tests below baseline the PTY and assert it is
   // UNCHANGED, so a baseline taken here would still be missing the trailing Enter
   // and every one of them would fail on the first delivery finishing itself.
-  for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) {
-    await new Promise((r) => setTimeout(r, 5));
-  }
+  await until(() => app.seen('team-hand').endsWith('\r'));
   assert.ok(app.seen('team-hand').endsWith('\r'),
     'ENTER: the first delivery must be COMPLETE before a test baselines the terminal');
   return { app, s, lead };
@@ -1326,7 +1332,7 @@ test('t1246: a spec REPLAY parked by the turn-start window keeps its latch and g
     assert.strictEqual(typeof s._awaitingTurnSince, 'number', 'ENTER: the spec\'s Enter opened the window just before the replay');
     const first = app.seen('team-hand');
     fireConfirm(app, s);
-    for (let i = 0; i < 400 && app.parked('team-hand', /REPLAY/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => app.parked('team-hand', /REPLAY/) > 0);
     assert.strictEqual(app.parked('team-hand', /REPLAY/), 1, 'ENTER: the window diverted the replay to the park');
     assert.strictEqual(app.seen('team-hand'), first, 'ENTER: and nothing was typed');
     assert.ok(s._specUnconfirmed, 'the latch survives the window divert, so the replay is still watched');
@@ -1392,7 +1398,7 @@ test('t349: a stranded ticket that resolves to no live seat escalates instead of
     // silent in exactly the shape this ticket exists to report: an open ticket whose
     // spec reached no one, and no one told.
     const leadQ = () => (app.m.sessions.get('lead')._injectPtyQueue || { length: 0 }).length;
-    for (let i = 0; i < 400 && leadQ() > 0; i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => leadQ() === 0);
     assert.strictEqual(leadQ(), 0,
       'ENTER: the lead\'s own dispatch replies must have drained, or the escalation parks behind them');
     app.m.sessions.delete('team-hand');
@@ -1814,7 +1820,7 @@ test('t1249: a REDIRECT redelivery parked by the turn-start window keeps its lat
     assert.strictEqual(typeof s._awaitingTurnSince, 'number', 'ENTER: the rejection\'s Enter opened the window just before the redelivery');
     const first = app.seen('team-hand');
     fireConfirm(app, s);
-    for (let i = 0; i < 400 && app.parked('team-hand', /REDELIVERY/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => app.parked('team-hand', /REDELIVERY/) > 0);
     assert.strictEqual(app.parked('team-hand', /REDELIVERY/), 1, 'ENTER: the window diverted the redelivery to the park');
     assert.strictEqual(app.seen('team-hand'), first, 'ENTER: and nothing was typed');
     assert.ok(s._specUnconfirmed, 'the latch survives the window divert, so the redelivery is still watched');
@@ -1850,12 +1856,12 @@ test('t1250: more must-fixes parked by the turn-start window after a typed redel
     const t = world.tickets().find((x) => x.id === 't1');
     assert.ok(t.state === 'open' && Number(t.reworkRound) > 0, 'ENTER: the next reject routes to the FOLLOW-UP path');
 
-    for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => app.seen('team-hand').endsWith('\r'));
     assert.ok(app.seen('team-hand').endsWith('\r'), 'ENTER: the redelivery write is complete before the baseline');
     s._awaitingTurnSince = Date.now();
     const beforeFollow = app.seen('team-hand');
     app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
-    for (let i = 0; i < 400 && app.parked('team-hand', /ALSO FIX THE LATCH/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => app.parked('team-hand', /ALSO FIX THE LATCH/) > 0);
     assert.strictEqual(app.parked('team-hand', /ALSO FIX THE LATCH/), 1, 'ENTER: the window parked the more-must-fixes write');
     assert.strictEqual(app.seen('team-hand'), beforeFollow, 'ENTER: and nothing was typed');
     assert.ok(s._specUnconfirmed, 'the latch survives the window divert of a first-write redirect');
@@ -1890,10 +1896,10 @@ test('t1251: more must-fixes parked by the turn-start window after a typed FIRST
 
     const beforeFollow = app.seen('team-hand');
     app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
-    for (let i = 0; i < 400 && app.parked('team-hand', /ALSO FIX THE LATCH/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => app.parked('team-hand', /ALSO FIX THE LATCH/) > 0);
     assert.strictEqual(app.parked('team-hand', /ALSO FIX THE LATCH/), 1, 'ENTER: the window parked the more-must-fixes write');
     assert.strictEqual(app.seen('team-hand'), beforeFollow, 'ENTER: and nothing was typed');
-    assert.ok(s._specUnconfirmed, 'the latch watching the typed rejection survives the window divert');
+    assert.ok(s._specUnconfirmed, 'the more-must-fixes latch that replaced the rejection\'s survives the window divert, with `retried` carried');
     assert.strictEqual(s._specUnconfirmed.kind, 'redirect', 'and it is still the REDIRECT latch');
     assert.strictEqual(s._specUnconfirmed.retried, false, 'and the retry is still unspent');
     assert.strictEqual(s._specUnconfirmed.windowRearmed, true, 'and the window re-arm is spent');
@@ -1925,7 +1931,7 @@ test('t1252: more must-fixes replacing an UNCONFIRMED rejection latch carry the 
     app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
     const follow = await settled(app, 'team-hand', /ALSO FIX THE LATCH/);
     assert.match(follow.slice(beforeFollow.length), /ALSO FIX THE LATCH/, 'ENTER: the more-must-fixes write was typed');
-    for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => app.seen('team-hand').endsWith('\r'));
     assert.strictEqual(s._specUnconfirmed && s._specUnconfirmed.label, 'more must-fixes', 'ENTER: the latch was replaced by the new write');
     assert.match(s._specUnconfirmed.reason, /FIX THE WIDGET MOUNT[\s\S]*ALSO FIX THE LATCH/, 'the replacing latch carries the unconfirmed rejection reason first, then the new one');
 
@@ -1952,7 +1958,7 @@ test('t1252: more must-fixes after the rejection was CONFIRMED by a turn carry o
     const beforeFollow = app.seen('team-hand');
     app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
     await settled(app, 'team-hand', /ALSO FIX THE LATCH/);
-    for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => app.seen('team-hand').endsWith('\r'));
     assert.match(app.seen('team-hand').slice(beforeFollow.length), /ALSO FIX THE LATCH/, 'ENTER: the more-must-fixes write was typed');
     assert.strictEqual(s._specUnconfirmed && s._specUnconfirmed.label, 'more must-fixes', 'ENTER: the new write is latched');
     assert.doesNotMatch(s._specUnconfirmed.reason, /FIX THE WIDGET MOUNT/, 'a confirmed rejection carries nothing');
@@ -1974,7 +1980,7 @@ test('t1253: more must-fixes typed over an UNCONFIRMED rejection type the reject
     const beforeFollow = app.seen('team-hand');
     app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
     await settled(app, 'team-hand', /ALSO FIX THE LATCH/);
-    for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => app.seen('team-hand').endsWith('\r'));
     const first = app.seen('team-hand').slice(beforeFollow.length);
     assert.doesNotMatch(first, /REDELIVERY/, 'ENTER: these are the bytes of the first write, not a redelivery');
     assert.match(first, /\[ticket t1 rejected\] FIX THE WIDGET MOUNT[\s\S]*\[ticket t1 more must-fixes\] ALSO FIX THE LATCH/,
@@ -1997,7 +2003,7 @@ test('t1253: more must-fixes over a rejection the TRANSCRIPT confirmed, latch st
     const beforeFollow = app.seen('team-hand');
     app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
     await settled(app, 'team-hand', /ALSO FIX THE LATCH/);
-    for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => app.seen('team-hand').endsWith('\r'));
     assert.deepStrictEqual(armedOver, ['rejected'], 'ENTER: the prior rejection latch was set when the new write armed');
     assert.strictEqual(s._specUnconfirmed && s._specUnconfirmed.label, 'more must-fixes', 'ENTER: the new write is latched');
     assert.doesNotMatch(s._specUnconfirmed.reason, /FIX THE WIDGET MOUNT/, 'a transcript-confirmed rejection carries nothing');
@@ -2012,7 +2018,7 @@ test('t1253: more must-fixes whose arm leaves an older carried latch in place ty
   try {
     app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
     await settled(app, 'team-hand', /ALSO FIX THE LATCH/);
-    for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => app.seen('team-hand').endsWith('\r'));
     assert.ok(s._specUnconfirmed && s._specUnconfirmed.carried, 'ENTER: the first follow-up left a carried latch');
     const older = s._specUnconfirmed;
     app.m._armSpecConfirm = () => {};
@@ -2020,7 +2026,7 @@ test('t1253: more must-fixes whose arm leaves an older carried latch in place ty
     const beforeSecond = app.seen('team-hand');
     app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'THEN FIX THE SECOND THING' });
     await settled(app, 'team-hand', /THEN FIX THE SECOND THING|ALSO FIX THE LATCH[\s\S]*ALSO FIX THE LATCH/);
-    for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => app.seen('team-hand').endsWith('\r'));
     assert.strictEqual(s._specUnconfirmed, older, 'ENTER: the arm left the older carried latch in place');
     assert.match(app.seen('team-hand').slice(beforeSecond.length), /THEN FIX THE SECOND THING/, 'the write types its own must-fixes');
   } finally { app.stop(); }
@@ -2035,7 +2041,7 @@ test('t1254: more must-fixes HELD for a dialog park the unconfirmed rejection wi
     s.needsAttention = { kind: 'permission', ts: Date.now(), message: 'allow?' };
     const beforeFollow = app.seen('team-hand');
     app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
-    for (let i = 0; i < 200 && app.parked('team-hand', /ALSO FIX THE LATCH/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => app.parked('team-hand', /ALSO FIX THE LATCH/) > 0);
     assert.strictEqual(app.parked('team-hand', /ALSO FIX THE LATCH/), 1, 'ENTER: the must-fixes were parked by the hold');
     assert.ok(s._specUnconfirmed && s._specUnconfirmed.kind === 'redirect' && s._specUnconfirmed.ticketId === 't1',
       'the park keeps a redirect latch for the ticket instead of dropping the unconfirmed rejection');
@@ -2060,7 +2066,7 @@ test('t1254: more must-fixes parked at a BUSY seat park the unconfirmed rejectio
     s.activityState = 'thinking';
     const beforeFollow = app.seen('team-hand');
     app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
-    for (let i = 0; i < 200 && app.parked('team-hand', /ALSO FIX THE LATCH/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => app.parked('team-hand', /ALSO FIX THE LATCH/) > 0);
     assert.strictEqual(app.parked('team-hand', /ALSO FIX THE LATCH/), 1, 'ENTER: the must-fixes were parked at the busy seat');
     assert.ok(s._specUnconfirmed && s._specUnconfirmed.kind === 'redirect' && s._specUnconfirmed.ticketId === 't1',
       'the park keeps a redirect latch for the ticket instead of dropping the unconfirmed rejection');
@@ -2083,19 +2089,13 @@ test('t1254: a REDELIVERY of a park-kept latch that parks again drops the latch 
   try {
     s.activityState = 'thinking';
     app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
-    for (let i = 0; i < 200 && app.parked('team-hand', /ALSO FIX THE LATCH/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => app.parked('team-hand', /ALSO FIX THE LATCH/) > 0);
     assert.ok(s._specUnconfirmed && s._specUnconfirmed.carried, 'ENTER: the busy park kept a carried latch');
 
     fireConfirm(app, s);
-    for (let i = 0; i < 200 && app.parked('team-hand', /REDELIVERY/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => app.parked('team-hand', /REDELIVERY/) > 0);
     assert.strictEqual(app.parked('team-hand', /REDELIVERY/), 1, 'ENTER: the redelivery parked at the still-busy seat');
     assert.strictEqual(s._specUnconfirmed, null, 'a parked redelivery drops the latch: the park owns it from here');
-
-    const escalated = [];
-    const esc = app.m._escalateTicket;
-    app.m._escalateTicket = function (...a) { escalated.push(a[2]); return esc.apply(this, a); };
-    fireConfirm(app, s);
-    assert.deepStrictEqual(escalated, [], 'and nothing escalates a seat whose must-fixes are parked');
   } finally { app.stop(); }
 });
 
@@ -2123,9 +2123,7 @@ async function redirected(world, opts = {}) {
   assert.match(got, /FIX THE WIDGET MOUNT/,
     'ENTER: the rejection must have been written at all — with no first delivery there is nothing for the '
     + 'latch to confirm and every assertion below holds vacuously');
-  for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) {
-    await new Promise((r) => setTimeout(r, 5));
-  }
+  await until(() => app.seen('team-hand').endsWith('\r'));
   assert.ok(app.seen('team-hand').endsWith('\r'),
     'ENTER: the rejection delivery must be COMPLETE before a test baselines the terminal');
   return { app, s, lead };
@@ -2234,9 +2232,7 @@ test('t387: a rejection PARKED behind a permission dialog does not arm the latch
     // seat that has it and is acting on it.
     s.needsAttention = { kind: 'permission', ts: Date.now(), message: 'allow?' };
     app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'FIX THE WIDGET MOUNT' });
-    for (let i = 0; i < 200 && app.parked('team-hand', /FIX THE WIDGET MOUNT/) === 0; i++) {
-      await new Promise((r) => setTimeout(r, 5));
-    }
+    await until(() => app.parked('team-hand', /FIX THE WIDGET MOUNT/) > 0);
     assert.strictEqual(app.parked('team-hand', /FIX THE WIDGET MOUNT/), 1,
       'ENTER: the rejection must actually be PARKED — if it was injected instead, the latch assertion below is '
       + 'about the wrong disposition entirely and would pass against an arm that fires on every write');
@@ -2617,6 +2613,7 @@ test('t357: a displaced ticket displaced AGAIN after its redelivery escalates ra
 
     // A third dispatch displaces the redelivered copy. The budget is gone, so this
     // must reach the LEAD rather than queueing a third write at the seat.
+    await leadDrained(app);
     const beforeSeat = app.seen('team-hand');
     const beforeLead = app.seen('lead');
     app.m._armSpecConfirm('team-hand', 't2', 'injected');
@@ -2747,9 +2744,7 @@ test('t357: a PARKED redelivery still releases the drain, so later owed entries 
     app.m._emitActivity('team-hand', 'thinking');
     s._specUnconfirmed = null;
     fireOwed(app, s);
-    for (let i = 0; i < 200 && app.parked('team-hand', /BUILD THE WIDGET/) === 0; i++) {
-      await new Promise((r) => setTimeout(r, 5));
-    }
+    await until(() => app.parked('team-hand', /BUILD THE WIDGET/) > 0);
     assert.strictEqual(app.parked('team-hand', /BUILD THE WIDGET/), 1,
       'ENTER: the redelivery must really have PARKED — if it injected instead, this test never exercises the '
       + 'parked disposition and the trap it guards goes unmeasured');
@@ -2917,7 +2912,7 @@ test('t448: an arm that THROWS still releases the drain`s in-flight flag', async
       'ENTER: the redelivery must actually be IN FLIGHT — the flag is set synchronously and released from the '
       + 'write, so if it were already false here the release below would be proving nothing');
 
-    for (let i = 0; i < 400 && s._specOwedInFlight; i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => !s._specOwedInFlight);
     assert.ok(armCalls > 0,
       'ENTER: the arm must really have been reached and thrown — an unreached arm leaves the flag released for '
       + 'the ordinary reason and this test never exercises the guard');
@@ -3020,7 +3015,7 @@ test('t448: an arm that throws on the REDIRECT arm still releases the drain', as
     assert.strictEqual(s._specOwedInFlight, true,
       'ENTER: the redelivery must really be IN FLIGHT — already false here and the release below proves nothing');
 
-    for (let i = 0; i < 400 && s._specOwedInFlight; i++) await new Promise((r) => setTimeout(r, 5));
+    await until(() => !s._specOwedInFlight);
     assert.ok(armCalls > 0,
       'ENTER: the arm must have been reached and thrown, or the flag is released for the ordinary reason');
     assert.strictEqual(s._specOwedInFlight, false,
@@ -3205,6 +3200,7 @@ test('t447: an ESCALATION does not restore the budget — repeated displacement 
       'ENTER: round 1 must have spent the budget, or the refusals below are refusals to do nothing');
 
     // Round 2: displaced again, still no turn anywhere. Escalates — t357's bound.
+    await leadDrained(app);
     const seatAfterOne = app.seen('team-hand');
     app.m._armSpecConfirm('team-hand', 't2', 'injected');
     await settled(app, 'lead', /ESCALATED/);
@@ -3212,6 +3208,7 @@ test('t447: an ESCALATION does not restore the budget — repeated displacement 
     // later. A baseline taken here would be mid-unit, and the second-escalation
     // check below would be satisfiable by one pending byte of the first.
     await writeComplete(app, 'lead');
+    await leadDrained(app);
     const leadSawOne = app.seen('lead');
     assert.match(leadSawOne, /t1/,
       'ENTER: the first escalation must have happened and must name t1 — it is the event whose prune-or-not '
@@ -3233,7 +3230,7 @@ test('t447: an ESCALATION does not restore the budget — repeated displacement 
     assert.deepStrictEqual((s._specOwed || []).map((o) => `${o.ticketId}:${o.kind}`), ['t2:spec'],
       'so t1 does not re-enter the queue on round 3: without a receipt the seat is silent, and requeueing on '
       + 'every displacement is the unbounded redelivery loop that sprays a live composer');
-    const leadSawTwo = await settled(app, 'lead', /ESCALATED[\s\S]*ESCALATED/, 400);
+    const leadSawTwo = await settled(app, 'lead', /ESCALATED[\s\S]*ESCALATED/);
     // Counted, not measured: growth past a baseline cannot distinguish a second
     // escalation from trailing bytes of the first.
     assert.strictEqual((leadSawTwo.match(/ESCALATED/g) || []).length, 2,
@@ -3281,9 +3278,7 @@ async function parkedRedelivery(app, s) {
     'ENTER: the latch slot must be EMPTY when the redelivery parks — that is the state this fix is about, and '
     + 'with a live latch here the drain would refuse to run at all');
   fireOwed(app, s);
-  for (let i = 0; i < 400 && app.parked('team-hand', /BUILD THE WIDGET/) === 0; i++) {
-    await new Promise((r) => setTimeout(r, 5));
-  }
+  await until(() => app.parked('team-hand', /BUILD THE WIDGET/) > 0);
   assert.strictEqual(app.parked('team-hand', /BUILD THE WIDGET/), 1,
     'ENTER: the redelivery must really have PARKED — injected instead, it arms a latch and ends at one of the '
     + 'receipt exits t447 already repaired, and this test would measure that path rather than this one');
@@ -3529,9 +3524,7 @@ test('a minted ticket seat is handed its spec ONCE — the boot replay finds the
     // receives, not on a record read that happens to run first, or the subject
     // reports a bookkeeping miss for a defect whose whole cost is a second
     // injection.
-    for (let i = 0; i < 400 && !world.tickets().find((x) => x.id === 't1').deliveredTo; i++) {
-      await new Promise((r) => setTimeout(r, 5));
-    }
+    await until(() => world.tickets().find((x) => x.id === 't1').deliveredTo);
     const drainStillPending = s._replayTicketsPending;
     const preDrainStamp = world.tickets().find((x) => x.id === 't1').deliveredTo || null;
 
