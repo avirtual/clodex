@@ -237,7 +237,10 @@ const ROWS = [
       r.dock.onViewLoaded(() => { loaded += 1; });
       r.dock.setIntent('p:b', false);
       assert.strictEqual(loaded, 0, 'ENTER: the view has not loaded yet');
+      await Promise.resolve();
+      assert.deepStrictEqual(r.views, [], 'nothing is written before the view has loaded');
       await flush();
+      assert.deepStrictEqual(r.views, [{ panes: { 'p:a': true, 'p:b': false } }], 'the first write carries the merged map');
       assert.strictEqual(loaded, 1);
       assert.strictEqual(r.dock.intent('p:a'), true);
       assert.strictEqual(r.dock.intent('p:b'), false, 'the earlier untick wins over the loaded tick');

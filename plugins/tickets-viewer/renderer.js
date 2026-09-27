@@ -1103,8 +1103,10 @@ module.exports.activate = (rhost) => {
         boardPane.appendChild(el('div', 'tv-empty', 'A board appears here once a project has its first ticket.'));
         return;
       }
+      const kept = !!selected && list.some((p) => p.key === selected);
+      if (!kept) selected = list[0].key;
       for (const p of list) {
-        const row = el('div', 'tv-team-row');
+        const row = el('div', p.key === selected ? 'tv-team-row tv-selected' : 'tv-team-row');
         row.dataset.tvProject = p.key;
         const name = el('span', 'tv-team-name', projectLabel(p));
         // The key and root are the disambiguators when two checkouts share a
@@ -1149,11 +1151,10 @@ module.exports.activate = (rhost) => {
         });
         projectsPane.appendChild(row);
       }
-      if (selected && list.some((p) => p.key === selected)) {
+      if (kept) {
         goBack();
         return;
       }
-      selected = list[0].key;
       selectProject(selected).catch((e) => rhost.log.error('select failed', e));
     }
 
@@ -1168,7 +1169,9 @@ module.exports.activate = (rhost) => {
     cancelPending = () => { if (searchTimer !== null) { clearTimeout(searchTimer); searchTimer = null; } };
     function busy() {
       const focused = document.activeElement;
-      if (focused && typeof rootEl.contains === 'function' && rootEl.contains(focused)) return true;
+      const editable = focused && typeof focused.matches === 'function'
+        && focused.matches('input, textarea, select, [contenteditable]');
+      if (editable && typeof rootEl.contains === 'function' && rootEl.contains(focused)) return true;
       return !!editorEl || inDetail || mutating > 0 || searchTimer !== null || !!String(searchEl.value || '').trim();
     }
 

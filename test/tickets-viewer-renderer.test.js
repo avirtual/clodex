@@ -110,6 +110,7 @@ function fakeDom() {
         return c;
       },
       get firstChild() { return this.children[0] || null; },
+      matches(sel) { return String(sel).split(',').map((x) => x.trim()).includes(this.tag); },
       contains(n) {
         for (let x = n; x; x = x.parentNode) if (x === this) return true;
         return false;
@@ -1526,9 +1527,29 @@ test('the pane: a poll tick keeps the Feed view instead of snapping back to the 
     await settle();
     const active = () => allByClass(root, 'tv-filter-active').map((b) => b.textContent);
     assert.deepEqual(active(), ['Feed'], 'ENTER: the feed is showing');
+    assert.equal(allByClass(root, 'tv-selected').length, 1, 'ENTER: one project is highlighted');
     tick();
     await settle();
     assert.deepEqual(active(), ['Feed']);
+    assert.equal(allByClass(root, 'tv-selected').length, 1, 'the refreshed project list keeps the highlight');
+  });
+});
+
+test('the pane: focus on a button in the pane does not park the poll', async () => {
+  await withDom(crudAnswers(), async ({ rhost, root, calls, settle }) => {
+    const tick = [...rhost._intervals.values()][0].fn;
+    const projectsAsked = () => calls.filter((c) => c.method === 'projects').length;
+    const feed = buttonLabelled(root, 'Feed');
+    assert.ok(feed && root.contains(feed), 'ENTER: the Feed button is inside the pane');
+    const before = projectsAsked();
+    global.document.activeElement = feed;
+    try {
+      tick();
+      await settle();
+    } finally {
+      delete global.document.activeElement;
+    }
+    assert.equal(projectsAsked(), before + 1);
   });
 });
 

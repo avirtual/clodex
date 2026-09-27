@@ -79,9 +79,11 @@ function createDock({ showToast, getSettings, setSettings, loadView, saveView, d
   function setIntent(id, on) {
     intents = { ...intents, [id]: !!on };
     if (typeof saveView !== 'function') return;
-    Promise.resolve()
-      .then(() => saveView({ panes: { ...intents } }))
-      .catch(() => {});
+    onViewLoaded(() => {
+      Promise.resolve()
+        .then(() => saveView({ panes: { ...intents } }))
+        .catch(() => {});
+    });
   }
 
   function onViewLoaded(fn) {
