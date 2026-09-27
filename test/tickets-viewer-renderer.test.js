@@ -82,14 +82,21 @@ function fakeDom() {
       // Stripping for browser parity would blunt three live assertions to
       // sharpen none.
       set innerHTML(v) {
+        const doc = global.document;
+        const held = !!(doc && doc.activeElement && doc.activeElement !== this && this.contains(doc.activeElement));
         for (const c of this.children) { c._detachCount += 1; c.parentNode = null; }
         this.children.length = 0;
         const s = v == null ? '' : String(v);
         this._text = s;
-        if (!s) return;
+        if (!s) {
+          for (let x = this; x; x = x.parentNode) x.scrollTop = 0;
+          if (held) doc.activeElement = doc.body;
+          return;
+        }
         for (const m of s.matchAll(/<([a-zA-Z][a-zA-Z0-9]*)/g)) this.children.push(make(m[1].toLowerCase()));
       },
       _detachCount: 0,
+      scrollTop: 0,
       appendChild(c) { this.children.push(c); c.parentNode = this; return c; },
       removeChild(c) {
         const i = this.children.indexOf(c);
@@ -121,7 +128,7 @@ function fakeDom() {
       value: '',
       placeholder: '',
       parentNode: null,
-      focus() {},
+      focus() { global.document.activeElement = this; },
       addEventListener(ev, fn) { (this.listeners[ev] ||= []).push(fn); },
       setAttribute() {},
       classList: { toggle: () => {}, add: () => {}, remove: () => {} },
@@ -129,8 +136,9 @@ function fakeDom() {
       // Bare tag selectors only — the one question asked of it is whether a tag
       // in agent-authored text ever became a node.
       querySelector(sel) {
+        const key = /^\[data-tv-focus="(.*)"\]$/.exec(sel);
         for (const c of this.children) {
-          if (c.tag === sel) return c;
+          if (key ? c.dataset.tvFocus === key[1] : c.tag === sel) return c;
           const hit = c.querySelector(sel);
           if (hit) return hit;
         }
@@ -152,7 +160,7 @@ function fakeDom() {
     return node;
   };
   const prevDoc = global.document;
-  global.document = { createElement: make };
+  global.document = { createElement: make, body: make('body') };
   return { root: make('div'), restore: () => { global.document = prevDoc; } };
 }
 
@@ -1550,6 +1558,98 @@ test('the pane: focus on a button in the pane does not park the poll', async () 
       delete global.document.activeElement;
     }
     assert.equal(projectsAsked(), before + 1);
+  });
+});
+
+function heldBoard() {
+  const first = boardRes({ open: [shaped('t1', { title: 'first row' })], counts: { ...boardRes().counts, open: 1 } });
+  const held = { calls: 0, release: null };
+  held.answer = () => {
+    held.calls += 1;
+    if (held.calls === 1) return first;
+    return new Promise((resolve) => { held.release = resolve; });
+  };
+  return held;
+}
+
+test('the pane: a quiet tick keeps the old rows up until the new ones load, with no "Loading…"', async () => {
+  const held = heldBoard();
+  await withDom(crudAnswers({ board: held.answer }), async ({ rhost, root, settle }) => {
+    const tick = [...rhost._intervals.values()][0].fn;
+    const ids = () => allByClass(root, 'tv-id').map((n) => n.textContent);
+    assert.deepEqual(ids(), ['t1'], 'ENTER: the first board is painted');
+    tick();
+    await settle();
+    assert.ok(held.release, 'ENTER: the tick asked for the board and is waiting on it');
+    assert.deepEqual(ids(), ['t1']);
+    assert.doesNotMatch(textOf(root).join('\n'), /Loading…/);
+    held.release(boardRes({ open: [shaped('t2', { title: 'second row' })], counts: { ...boardRes().counts, open: 1 } }));
+    await settle();
+    assert.deepEqual(ids(), ['t2']);
+  });
+});
+
+test('the pane: a quiet board read that lands after the operator opened Feed does not paint over it', async () => {
+  const held = heldBoard();
+  await withDom(crudAnswers({ board: held.answer, feed: { ok: true, rows: [] } }), async ({ rhost, root, settle }) => {
+    const tick = [...rhost._intervals.values()][0].fn;
+    const active = () => allByClass(root, 'tv-filter-active').map((b) => b.textContent);
+    tick();
+    await settle();
+    assert.ok(held.release, 'ENTER: the tick is waiting on the board');
+    buttonLabelled(root, 'Feed').click();
+    await settle();
+    assert.deepEqual(active(), ['Feed'], 'ENTER: the feed is showing');
+    held.release(boardRes({ open: [shaped('t2')], counts: { ...boardRes().counts, open: 1 } }));
+    await settle();
+    assert.deepEqual(active(), ['Feed']);
+    assert.deepEqual(allByClass(root, 'tv-id').map((n) => n.textContent), []);
+  });
+});
+
+test('the pane: a quiet tick keeps the board\'s scroll position', async () => {
+  await withDom(crudAnswers(), async ({ rhost, root, calls, settle }) => {
+    const tick = [...rhost._intervals.values()][0].fn;
+    const board = allByClass(root, 'tv-board')[0];
+    board.scrollTop = 240;
+    const before = calls.filter((c) => c.method === 'board').length;
+    tick();
+    await settle();
+    assert.equal(calls.filter((c) => c.method === 'board').length, before + 1, 'ENTER: the tick re-read the board');
+    assert.equal(board.scrollTop, 240);
+  });
+});
+
+test('the pane: a quiet tick hands keyboard focus to the rebuilt control', async () => {
+  await withDom(crudAnswers(), async ({ rhost, root, calls, settle }) => {
+    const tick = [...rhost._intervals.values()][0].fn;
+    const old = buttonLabelled(root, 'Feed');
+    old.focus();
+    assert.equal(global.document.activeElement, old, 'ENTER: the Feed switch has focus');
+    const before = calls.filter((c) => c.method === 'board').length;
+    tick();
+    await settle();
+    assert.equal(calls.filter((c) => c.method === 'board').length, before + 1, 'ENTER: the tick re-read the board');
+    const now = global.document.activeElement;
+    assert.notEqual(now, global.document.body);
+    assert.notEqual(now, old);
+    assert.equal(now.tag, 'button');
+    assert.equal(now.textContent, 'Feed');
+    assert.equal(now.dataset.tvFocus, 'view:feed');
+    assert.ok(root.contains(now));
+  });
+});
+
+test('the pane: onShow still paints "Loading…" while the board is on its way', async () => {
+  const held = heldBoard();
+  await withDom(crudAnswers({ board: held.answer }), async ({ rhost, root, settle }) => {
+    assert.doesNotMatch(textOf(root).join('\n'), /Loading…/, 'ENTER: the first board is painted');
+    await rhost._pane.onShow();
+    await settle();
+    assert.ok(held.release, 'ENTER: onShow asked for the board and is waiting on it');
+    assert.match(textOf(root).join('\n'), /Loading…/);
+    held.release(boardRes());
+    await settle();
   });
 });
 

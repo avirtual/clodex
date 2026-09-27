@@ -13306,7 +13306,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         let view = null;
         let poll = null;
         function tick() {
-          if (view && !view.busy()) view.refresh();
+          if (view && !view.busy()) view.refresh({ quiet: true });
         }
         const pane = rhost.ui.surfaces.pane({
           id: "main",
@@ -13386,6 +13386,16 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
             boardPane.appendChild(searchEl);
             boardPane.appendChild(sectionsEl);
             shellMounted = true;
+          }
+          function swap(build) {
+            const top = boardPane.scrollTop;
+            const focused = document.activeElement;
+            const key = focused && focused.dataset && rootEl.contains(focused) ? focused.dataset.tvFocus : "";
+            build();
+            boardPane.scrollTop = top;
+            if (!key) return;
+            const next = rootEl.querySelector(`[data-tv-focus="${key}"]`);
+            if (next) next.focus({ preventScroll: true });
           }
           let liveSessions = [];
           function reselect() {
@@ -13509,21 +13519,27 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           function rowActions(t) {
             const bar = el("div", "tv-actions");
             bar.appendChild(assignControl(t));
-            bar.appendChild(button("tv-btn", "Edit spec", "Replace this ticket's spec", () => openEditSpec(t)));
-            bar.appendChild(button("tv-btn", "Close", "Mark this ticket done", async () => {
+            const edit = button("tv-btn", "Edit spec", "Replace this ticket's spec", () => openEditSpec(t));
+            edit.dataset.tvFocus = `ticket:${t.id}:edit`;
+            bar.appendChild(edit);
+            const close = button("tv-btn", "Close", "Mark this ticket done", async () => {
               if (!confirm(`Close ${t.id} as done?
 
 ${t.title}`)) return;
               await mutate("close", { project: selected, id: t.id });
-            }));
-            bar.appendChild(button("tv-btn tv-btn-danger", "Cancel", "Cancel this ticket", async () => {
+            });
+            close.dataset.tvFocus = `ticket:${t.id}:close`;
+            bar.appendChild(close);
+            const cancel = button("tv-btn tv-btn-danger", "Cancel", "Cancel this ticket", async () => {
               if (!confirm(`Cancel ${t.id}?
 
 ${t.title}
 
 Cancelled tickets are not counted as done.`)) return;
               await mutate("cancel", { project: selected, id: t.id });
-            }));
+            });
+            cancel.dataset.tvFocus = `ticket:${t.id}:cancel`;
+            bar.appendChild(cancel);
             return bar;
           }
           function specBlock(text, missing) {
@@ -13568,14 +13584,14 @@ Cancelled tickets are not counted as done.`)) return;
             }
             return box;
           }
-          function goBack() {
+          function goBack(quiet) {
             const q = String(searchEl.value || "").trim();
             if (!q && closedView) {
-              renderClosed(selected, closedView).catch((e) => rhost.log.error("closed failed", e));
+              renderClosed(selected, closedView, quiet).catch((e) => rhost.log.error("closed failed", e));
               return;
             }
             if (!q && feedView) {
-              renderFeed(selected).catch((e) => rhost.log.error("feed failed", e));
+              renderFeed(selected, quiet).catch((e) => rhost.log.error("feed failed", e));
               return;
             }
             if (q) {
@@ -13586,7 +13602,7 @@ Cancelled tickets are not counted as done.`)) return;
               runSearch(q).catch((e) => rhost.log.error("search failed", e));
               return;
             }
-            selectProject(selected).catch((e) => rhost.log.error("select failed", e));
+            selectProject(selected, quiet).catch((e) => rhost.log.error("select failed", e));
           }
           function renderTicket(t) {
             const wrap = el("div", "tv-detail");
@@ -13712,7 +13728,7 @@ Cancelled tickets are not counted as done.`)) return;
           }
           function viewSwitch(active) {
             const bar = el("div", "tv-view-switch");
-            bar.appendChild(button(
+            const board = button(
               active === "board" ? "tv-filter tv-filter-active" : "tv-filter",
               "Board",
               "Show the board of open and recently closed tickets",
@@ -13720,15 +13736,19 @@ Cancelled tickets are not counted as done.`)) return;
                 feedView = null;
                 selectProject(selected).catch((e) => rhost.log.error("select failed", e));
               }
-            ));
-            bar.appendChild(button(
+            );
+            board.dataset.tvFocus = "view:board";
+            bar.appendChild(board);
+            const feed = button(
               active === "feed" ? "tv-filter tv-filter-active" : "tv-filter",
               "Feed",
               "Show every ticket event on this board, newest first",
               () => {
                 renderFeed(selected).catch((e) => rhost.log.error("feed failed", e));
               }
-            ));
+            );
+            feed.dataset.tvFocus = "view:feed";
+            bar.appendChild(feed);
             return bar;
           }
           function renderBoard(res, cost) {
@@ -13750,12 +13770,14 @@ Cancelled tickets are not counted as done.`)) return;
               cell.title = "Everything this team has booked: tickets, review rounds and standing seats.";
               openHead.appendChild(cell);
             }
-            openHead.appendChild(button(
+            const add = button(
               "tv-btn tv-btn-primary tv-add",
               "+ New ticket",
               "Open a ticket on this board",
               () => openAdd()
-            ));
+            );
+            add.dataset.tvFocus = "add";
+            openHead.appendChild(add);
             sectionsEl.appendChild(openHead);
             if (!res.open.length) {
               sectionsEl.appendChild(el("div", "tv-empty", "No open tickets."));
@@ -13785,6 +13807,7 @@ Cancelled tickets are not counted as done.`)) return;
                 const line = el("div", "tv-summary tv-summary-link", summary);
                 line.setAttribute("role", "button");
                 line.tabIndex = 0;
+                line.dataset.tvFocus = "view:closed";
                 line.title = "Browse closed tickets";
                 line.addEventListener("click", () => {
                   renderClosed(selected, { state: "all", offset: 0 }).catch((e) => rhost.log.error("closed failed", e));
@@ -13871,34 +13894,51 @@ Cancelled tickets are not counted as done.`)) return;
             row.appendChild(meta);
             return row;
           }
-          async function renderClosed(project, view2) {
+          async function renderClosed(project, view2, quiet) {
             const state = view2 && view2.state ? view2.state : "all";
             const offset = view2 && view2.offset ? view2.offset : 0;
             closedView = { state, offset };
             const my = ++closedSeq;
             const mySelect = selectSeq;
             const myReload = reloadSeq;
-            mountBoardShell();
-            editorEl = null;
-            sectionsEl.innerHTML = "";
-            sectionsEl.appendChild(el("div", "tv-empty", "Loading\u2026"));
+            if (!quiet) {
+              mountBoardShell();
+              editorEl = null;
+              sectionsEl.innerHTML = "";
+              sectionsEl.appendChild(el("div", "tv-empty", "Loading\u2026"));
+            }
             const res = await ask("closed", { project, state, offset, limit: CLOSED_PAGE_SIZE });
             if (!alive() || my !== closedSeq || mySelect !== selectSeq || myReload !== reloadSeq) return;
+            if (quiet) {
+              swap(() => {
+                mountBoardShell();
+                editorEl = null;
+                paintClosed(project, state, res);
+              });
+              return;
+            }
+            paintClosed(project, state, res);
+          }
+          function paintClosed(project, state, res) {
             sectionsEl.innerHTML = "";
             const head = el("div", "tv-section-head tv-closed-head", "Closed tickets");
-            head.appendChild(button("tv-back", "\u2190 Back", "Back to the board", () => {
+            const back = button("tv-back", "\u2190 Back", "Back to the board", () => {
               closedView = null;
               goBack();
-            }));
+            });
+            back.dataset.tvFocus = "back";
+            head.appendChild(back);
             for (const [label, value] of [["All", "all"], ["Done", "done"], ["Cancelled", "cancelled"]]) {
-              head.appendChild(button(
+              const filter = button(
                 value === state ? "tv-filter tv-filter-active" : "tv-filter",
                 label,
                 `Show ${label.toLowerCase()} tickets`,
                 () => {
                   renderClosed(project, { state: value, offset: 0 }).catch((e) => rhost.log.error("closed failed", e));
                 }
-              ));
+              );
+              filter.dataset.tvFocus = `filter:${value}`;
+              head.appendChild(filter);
             }
             sectionsEl.appendChild(head);
             if (!res.ok) {
@@ -13929,6 +13969,7 @@ Cancelled tickets are not counted as done.`)) return;
           function feedRow(project, r) {
             const row = el("div", "tv-feed-row", feedRowText(r));
             row.dataset.tvKind = r.kind;
+            row.dataset.tvFocus = `ticket:${r.id}`;
             row.setAttribute("role", "button");
             row.tabIndex = 0;
             row.title = r.verdict ? `${r.title}
@@ -13945,7 +13986,7 @@ verdict: ${r.verdict}` : r.title;
             const chip = feedView && feedView.chip ? feedView.chip : null;
             const head = el("div", "tv-section-head tv-feed-head", "Feed");
             for (const [label] of FEED_CHIPS) {
-              head.appendChild(button(
+              const chipBtn = button(
                 label === chip ? "tv-filter tv-filter-active" : "tv-filter",
                 label,
                 label === chip ? "Show every event again" : `Show only ${label.toLowerCase()} events`,
@@ -13953,7 +13994,9 @@ verdict: ${r.verdict}` : r.title;
                   feedView = { chip: label === chip ? null : label };
                   paintFeed(project, res);
                 }
-              ));
+              );
+              chipBtn.dataset.tvFocus = `chip:${label}`;
+              head.appendChild(chipBtn);
             }
             head.appendChild(button("tv-btn tv-feed-refresh", "Refresh", "Read the feed again", () => {
               renderFeed(project).catch((e) => rhost.log.error("feed failed", e));
@@ -13985,19 +14028,28 @@ verdict: ${r.verdict}` : r.title;
             }
             sectionsEl.appendChild(list);
           }
-          async function renderFeed(project) {
+          async function renderFeed(project, quiet) {
             if (!feedView) feedView = { chip: null };
             closedView = null;
             const my = ++feedSeq;
             const mySelect = selectSeq;
             const myReload = reloadSeq;
-            mountBoardShell();
-            editorEl = null;
-            sectionsEl.innerHTML = "";
-            sectionsEl.appendChild(viewSwitch("feed"));
-            sectionsEl.appendChild(el("div", "tv-empty", "Loading\u2026"));
+            if (!quiet) {
+              mountBoardShell();
+              editorEl = null;
+              sectionsEl.innerHTML = "";
+              sectionsEl.appendChild(viewSwitch("feed"));
+              sectionsEl.appendChild(el("div", "tv-empty", "Loading\u2026"));
+            }
             const res = await ask("feed", { project });
             if (!alive() || my !== feedSeq || mySelect !== selectSeq || myReload !== reloadSeq) return;
+            if (quiet) {
+              swap(() => {
+                mountBoardShell();
+                paintFeed(project, res);
+              });
+              return;
+            }
             paintFeed(project, res);
           }
           async function runSearch(q) {
@@ -14021,7 +14073,7 @@ verdict: ${r.verdict}` : r.title;
               runSearch(q).catch((e) => rhost.log.error("search failed", e));
             }, SEARCH_DEBOUNCE_MS);
           });
-          async function selectProject(key) {
+          async function selectProject(key, quiet) {
             const my = ++selectSeq;
             const myReload = reloadSeq;
             selected = key;
@@ -14030,16 +14082,23 @@ verdict: ${r.verdict}` : r.title;
             for (const row of projectsPane.querySelectorAll(".tv-team-row")) {
               row.classList.toggle("tv-selected", row.dataset.tvProject === key);
             }
-            mountBoardShell();
-            editorEl = null;
-            sectionsEl.innerHTML = "";
-            sectionsEl.appendChild(el("div", "tv-empty", "Loading\u2026"));
+            if (!quiet) {
+              mountBoardShell();
+              editorEl = null;
+              sectionsEl.innerHTML = "";
+              sectionsEl.appendChild(el("div", "tv-empty", "Loading\u2026"));
+            }
             const [res, live, cost] = await Promise.all([ask("board", key), ask("sessions"), ask("teamCost", key)]);
             if (!alive() || my !== selectSeq || myReload !== reloadSeq) return;
             liveSessions = live.ok && Array.isArray(live.sessions) ? live.sessions : [];
+            if (quiet) {
+              if (busy() || feedView || closedView) return;
+              swap(() => renderBoard(res, cost));
+              return;
+            }
             renderBoard(res, cost);
           }
-          function renderProjects(res) {
+          function renderProjects(res, quiet) {
             projectsPane.innerHTML = "";
             if (!res.ok) {
               projectsPane.appendChild(el("div", "tv-error", `Could not read the projects directory: ${res.error || "unknown error"}`));
@@ -14095,17 +14154,17 @@ ${p.root}` : p.key;
               projectsPane.appendChild(row);
             }
             if (kept) {
-              goBack();
+              goBack(quiet);
               return;
             }
-            selectProject(selected).catch((e) => rhost.log.error("select failed", e));
+            selectProject(selected, quiet).catch((e) => rhost.log.error("select failed", e));
           }
-          async function reload() {
+          async function reload(quiet) {
             const my = ++reloadSeq;
             if (!projectsPane.firstChild) projectsPane.appendChild(el("div", "tv-empty", "Loading\u2026"));
             const res = await ask("projects");
             if (!alive() || my !== reloadSeq) return;
-            renderProjects(res);
+            renderProjects(res, quiet);
           }
           cancelPending = () => {
             if (searchTimer !== null) {
@@ -14120,8 +14179,8 @@ ${p.root}` : p.key;
             return !!editorEl || inDetail || mutating > 0 || searchTimer !== null || !!String(searchEl.value || "").trim();
           }
           return {
-            refresh: () => {
-              reload().catch((e) => rhost.log.error("reload failed", e));
+            refresh: (opts) => {
+              reload(!!(opts && opts.quiet)).catch((e) => rhost.log.error("reload failed", e));
             },
             busy
           };

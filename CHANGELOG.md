@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 - With Files and Tickets both open, drag the line between them to share the height; double-click it to even them out.
+- The Tickets pane's 15 s refresh is quiet now: it swaps in the new rows only once they have loaded and keeps your scroll position and keyboard focus, instead of flashing "Loading…" and jumping to the top.
 - Tickets is a pane now: the sidebar's Tickets button ticks a board + Feed pane on the right, beside the conversation instead of over it. It stays up while you work, refreshes itself while shown, and each window remembers whether it is on.
 - The Effort field in New Session, Edit Session and templates is a pick list of the levels the seat's CLI accepts (Claude low…max; Codex and Muse none…ultra) instead of a text box; a saved value the CLI no longer accepts stays selectable and is marked.
 - In Conversation, a context compact stands on its own between turns: the ticket or prompt before it no longer folds the compact row and its token drop into its block.
