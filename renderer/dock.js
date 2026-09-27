@@ -1,11 +1,9 @@
 'use strict';
 
 const { SIDE_PANE_REFIT_THROTTLE_MS, sidePaneFits, clampSidePaneWidth } = require('./lib/side-pane-tabs');
-const { clampFraction } = require('./lib/split');
+const { clampFraction, DOCK_SPLIT_MIN, DOCK_SPLIT_MAX } = require('./lib/split');
 const { attachSplitter } = require('./splitter');
 
-const DOCK_SPLIT_MIN = 0.2;
-const DOCK_SPLIT_MAX = 0.8;
 const DOCK_SPLIT_FALLBACK = 0.5;
 
 function createDock({ showToast, getSettings, setSettings, loadView, saveView, doc = document, win = window, now = () => Date.now() }) {

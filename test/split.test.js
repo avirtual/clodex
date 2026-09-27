@@ -2,7 +2,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { clampPx, sizeFromPointer, clampFraction } = require('../renderer/lib/split');
+const { clampPx, sizeFromPointer, clampFraction, DOCK_SPLIT_MIN, DOCK_SPLIT_MAX } = require('../renderer/lib/split');
 
 const BOUNDS = { min: 320, maxFraction: 0.6, defaultFraction: 0.4, containerPx: 1000 };
 
@@ -31,7 +31,6 @@ const POINTER_ROWS = [
   { name: "edge 'top' measures up from the rect's bottom", edge: 'top', pointer: { x: 0, y: 500 }, want: 200 },
   { name: "edge 'bottom' measures down from the rect's top", edge: 'bottom', pointer: { x: 0, y: 250 }, want: 150 },
   { name: "edge 'left' past the right edge goes negative", edge: 'left', pointer: { x: 950, y: 0 }, want: -50 },
-  { name: 'an unknown edge is NaN', edge: 'right', pointer: { x: 600, y: 250 }, want: NaN },
 ];
 
 for (const row of POINTER_ROWS) {
@@ -39,6 +38,15 @@ for (const row of POINTER_ROWS) {
     assert.strictEqual(sizeFromPointer({ edge: row.edge, rect: RECT, pointer: row.pointer }), row.want);
   });
 }
+
+test('sizeFromPointer: an unknown edge throws rather than returning NaN', () => {
+  assert.throws(() => sizeFromPointer({ edge: 'right', rect: RECT, pointer: { x: 600, y: 250 } }), /unknown edge right/);
+});
+
+test('the dock split bounds are exported as [0.2, 0.8]', () => {
+  assert.strictEqual(DOCK_SPLIT_MIN, 0.2);
+  assert.strictEqual(DOCK_SPLIT_MAX, 0.8);
+});
 
 const RANGE = { min: 0.2, max: 0.8, fallback: 0.5 };
 

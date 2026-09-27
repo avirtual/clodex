@@ -69,6 +69,12 @@
 // so only the pause after the operator stops dragging arms.
 const ARM_DEBOUNCE_MS = 300;
 
+const { attachSplitter } = require('./splitter');
+const { clampPx } = require('./lib/split');
+
+const DRAWER_MIN_H = 120;
+const DRAWER_MAX_FRACTION = 0.7;
+
 // Fixed order and the frozen id set: tab ids are part of the agent-facing
 // source grammar (`drawer:<tabId>`), so they are chosen once and an unknown id
 // is a programming error, not a new tab.
@@ -127,6 +133,22 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   const TALL_KEY = 'clodex-drawer-tall';
   let tall = false;
   try { tall = localStorage.getItem(TALL_KEY) === '1'; } catch {}
+  const HEIGHT_KEY = 'clodex-drawer-h';
+  const mainEl = document.getElementById('main');
+  let storedHeight = null;
+  try {
+    const saved = parseInt(localStorage.getItem(HEIGHT_KEY), 10);
+    if (Number.isInteger(saved) && saved >= DRAWER_MIN_H) storedHeight = saved;
+  } catch {}
+  const clampHeight = (px) => clampPx(px, {
+    min: DRAWER_MIN_H, maxFraction: DRAWER_MAX_FRACTION, defaultFraction: null, containerPx: mainEl.clientHeight,
+  });
+  function applyHeight() {
+    if (storedHeight == null) { mainEl.style.removeProperty('--drawer-h'); return; }
+    const px = mainEl.clientHeight > 0 ? clampHeight(storedHeight) : storedHeight;
+    mainEl.style.setProperty('--drawer-h', `${px}px`);
+  }
+  if (storedHeight != null) applyHeight();
   const isVisible = (id) => !isCollapsed() && activeId === id;
 
   function renderBadge(rec) {
@@ -657,6 +679,24 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   // Boot: a remembered tall flag has to reach the DOM, and the drawer boots
   // collapsed so this only sets the button state until the first expand.
   syncTall();
+
+  const resizeEl = document.getElementById('drawer-resize');
+  if (resizeEl) {
+    attachSplitter(resizeEl, {
+      edge: 'top',
+      rect: () => drawer.getBoundingClientRect(),
+      clamp: clampHeight,
+      apply: (px) => { setTall(false); storedHeight = px; applyHeight(); },
+      commit: (px) => { setTall(false); try { localStorage.setItem(HEIGHT_KEY, String(px)); } catch {} },
+      reset: () => {
+        storedHeight = null;
+        applyHeight();
+        try { localStorage.removeItem(HEIGHT_KEY); } catch {}
+      },
+      dragClass: 'drawer-dragging',
+    });
+  }
+  window.addEventListener('resize', () => { if (storedHeight != null) applyHeight(); });
 
   // Rule 3: the drawer's own geometry changes (window resize, collapse
   // transition) reach the active tenant. Nothing else observes this box.

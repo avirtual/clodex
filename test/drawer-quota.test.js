@@ -49,7 +49,7 @@ function withDom(fn) {
     addEventListener() {},
     activeElement: null,
   };
-  global.window = { api: { onRequestOpenIpcLog() {} } };
+  global.window = { api: { onRequestOpenIpcLog() {} }, addEventListener() {} };
   global.localStorage = { getItem: () => null, setItem() {} };
   global.ResizeObserver = class { observe() {} };
   try {

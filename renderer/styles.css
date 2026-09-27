@@ -2096,12 +2096,15 @@ body.dock-dragging { cursor: col-resize; user-select: none; }
 }
 #dock-split:hover, body.dock-split-dragging #dock-split { background: var(--accent); }
 body.dock-split-dragging { cursor: row-resize; user-select: none; }
+#dock-handle, #dock-split, #drawer-resize { touch-action: none; }
 body.dock-dragging #drawer, body.dock-dragging #work-row,
-body.dock-split-dragging #drawer, body.dock-split-dragging #work-row { transition: none; }
+body.dock-split-dragging #drawer, body.dock-split-dragging #work-row,
+body.drawer-dragging #drawer, body.drawer-dragging #work-row { transition: none; }
 .dock-pane { flex: 1 1 0; min-height: 0; }
 #dock > .dock-pane.dock-pane-hidden { display: none; }
 .plugin-pane { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 #dock > .dock-pane:not(.dock-pane-hidden) ~ .plugin-pane:not(.dock-pane-hidden) { border-top: 1px solid var(--border); }
+#dock > #dock-split:not(.dock-closed) + .plugin-pane { border-top: 0; }
 #side-pane { display: flex; flex-direction: column; min-width: 0; }
 #side-pane-head {
   flex: none; display: flex; align-items: center; gap: 6px;
@@ -3938,14 +3941,12 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
   z-index: 5;
   transition: height 0.2s ease, bottom 0.2s ease;
   height: var(--drawer-h);
-  max-height: 50%;
+  max-height: 70%;
   overflow: hidden;
 }
 /* The class is on #main, so the drawer is matched through its parent. */
 #main.has-proxy-bar #drawer { bottom: 24px; }
 
-/* Tall mode raises the cap with the height: the 50% above would otherwise clamp
-   this to half and the class would look like it did nothing. */
 #drawer.tall {
   height: var(--drawer-tall-h);
   max-height: var(--drawer-tall-h);
@@ -3963,6 +3964,19 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
 #drawer.collapsed #drawer-panes {
   visibility: hidden;
 }
+
+#drawer-resize {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 5px;
+  z-index: 1;
+  cursor: row-resize;
+}
+#drawer-resize:hover, body.drawer-dragging #drawer-resize { background: var(--accent); }
+body.drawer-dragging { cursor: row-resize; user-select: none; }
+#drawer.collapsed #drawer-resize { visibility: hidden; }
 
 #drawer-header {
   display: flex;

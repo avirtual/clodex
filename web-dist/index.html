@@ -2953,10 +2953,17 @@ body.dock-split-dragging {
   cursor: row-resize;
   user-select: none;
 }
+#dock-handle,
+#dock-split,
+#drawer-resize {
+  touch-action: none;
+}
 body.dock-dragging #drawer,
 body.dock-dragging #work-row,
 body.dock-split-dragging #drawer,
-body.dock-split-dragging #work-row {
+body.dock-split-dragging #work-row,
+body.drawer-dragging #drawer,
+body.drawer-dragging #work-row {
   transition: none;
 }
 .dock-pane {
@@ -2974,6 +2981,9 @@ body.dock-split-dragging #work-row {
 }
 #dock > .dock-pane:not(.dock-pane-hidden) ~ .plugin-pane:not(.dock-pane-hidden) {
   border-top: 1px solid var(--border);
+}
+#dock > #dock-split:not(.dock-closed) + .plugin-pane {
+  border-top: 0;
 }
 #side-pane {
   display: flex;
@@ -5714,7 +5724,7 @@ input.env-locked {
   z-index: 5;
   transition: height 0.2s ease, bottom 0.2s ease;
   height: var(--drawer-h);
-  max-height: 50%;
+  max-height: 70%;
   overflow: hidden;
 }
 #main.has-proxy-bar #drawer {
@@ -5729,6 +5739,26 @@ input.env-locked {
   max-height: var(--drawer-collapsed-h);
 }
 #drawer.collapsed #drawer-panes {
+  visibility: hidden;
+}
+#drawer-resize {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 5px;
+  z-index: 1;
+  cursor: row-resize;
+}
+#drawer-resize:hover,
+body.drawer-dragging #drawer-resize {
+  background: var(--accent);
+}
+body.drawer-dragging {
+  cursor: row-resize;
+  user-select: none;
+}
+#drawer.collapsed #drawer-resize {
   visibility: hidden;
 }
 #drawer-header {
@@ -10055,6 +10085,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
          register() calls, so a tenant's markup lives with the tenant and this
          stays a shell. -->
     <div id="drawer" class="collapsed">
+      <div id="drawer-resize"></div>
       <div id="drawer-header">
         <div id="drawer-tabs"></div>
         <div id="drawer-actions"></div>
@@ -28521,10 +28552,145 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // renderer/lib/split.js
+  var require_split = __commonJS({
+    "renderer/lib/split.js"(exports, module) {
+      "use strict";
+      var DOCK_SPLIT_MIN = 0.2;
+      var DOCK_SPLIT_MAX = 0.8;
+      function clampPx(px, { min, maxFraction, defaultFraction, containerPx }) {
+        const max = Math.max(min, Math.floor(containerPx * maxFraction));
+        const want = typeof px === "number" && Number.isFinite(px) ? Math.round(px) : Math.round(containerPx * defaultFraction);
+        return Math.min(max, Math.max(min, want));
+      }
+      function sizeFromPointer({ edge, rect, pointer }) {
+        if (edge === "left") return rect.right - pointer.x;
+        if (edge === "top") return rect.bottom - pointer.y;
+        if (edge === "bottom") return pointer.y - rect.top;
+        throw new Error(`sizeFromPointer: unknown edge ${edge}`);
+      }
+      function clampFraction(f, { min, max, fallback }) {
+        if (typeof f !== "number" || !Number.isFinite(f)) return fallback;
+        return Math.min(max, Math.max(min, f));
+      }
+      module.exports = { clampPx, sizeFromPointer, clampFraction, DOCK_SPLIT_MIN, DOCK_SPLIT_MAX };
+    }
+  });
+
+  // renderer/splitter.js
+  var require_splitter = __commonJS({
+    "renderer/splitter.js"(exports, module) {
+      "use strict";
+      var { sizeFromPointer } = require_split();
+      function attachSplitter(handleEl, {
+        edge,
+        rect,
+        clamp,
+        apply,
+        commit,
+        reset,
+        throttleMs = 0,
+        dragClass,
+        doc = document,
+        win = window,
+        now = () => Date.now()
+      }) {
+        let dragging = false;
+        let pending = null;
+        let rafId = 0;
+        let timer = null;
+        let lastApply = -Infinity;
+        const applyPending = () => {
+          timer = null;
+          if (pending == null) return;
+          lastApply = now();
+          apply(pending);
+        };
+        const onFrame = () => {
+          rafId = 0;
+          if (timer) return;
+          const wait = throttleMs - (now() - lastApply);
+          if (wait <= 0) applyPending();
+          else timer = win.setTimeout(applyPending, wait);
+        };
+        const onDown = (e) => {
+          if (e.button !== 0) return;
+          dragging = true;
+          pending = null;
+          if (dragClass) doc.body.classList.add(dragClass);
+          try {
+            handleEl.setPointerCapture(e.pointerId);
+          } catch {
+          }
+          e.preventDefault();
+        };
+        const onMove = (e) => {
+          if (!dragging) return;
+          pending = clamp(sizeFromPointer({ edge, rect: rect(), pointer: { x: e.clientX, y: e.clientY } }));
+          if (!rafId) rafId = win.requestAnimationFrame(onFrame);
+        };
+        const onUp = (e) => {
+          if (!dragging) return;
+          dragging = false;
+          if (dragClass) doc.body.classList.remove(dragClass);
+          try {
+            handleEl.releasePointerCapture(e.pointerId);
+          } catch {
+          }
+          if (rafId) {
+            win.cancelAnimationFrame(rafId);
+            rafId = 0;
+          }
+          if (timer) {
+            win.clearTimeout(timer);
+            timer = null;
+          }
+          const final = pending;
+          pending = null;
+          if (final == null) return;
+          apply(final);
+          commit(final);
+        };
+        const onDbl = () => {
+          if (typeof reset === "function") reset();
+        };
+        handleEl.addEventListener("pointerdown", onDown);
+        handleEl.addEventListener("pointermove", onMove);
+        handleEl.addEventListener("pointerup", onUp);
+        handleEl.addEventListener("pointercancel", onUp);
+        handleEl.addEventListener("dblclick", onDbl);
+        return {
+          dispose() {
+            handleEl.removeEventListener("pointerdown", onDown);
+            handleEl.removeEventListener("pointermove", onMove);
+            handleEl.removeEventListener("pointerup", onUp);
+            handleEl.removeEventListener("pointercancel", onUp);
+            handleEl.removeEventListener("dblclick", onDbl);
+            if (rafId) {
+              win.cancelAnimationFrame(rafId);
+              rafId = 0;
+            }
+            if (timer) {
+              win.clearTimeout(timer);
+              timer = null;
+            }
+            if (dragging && dragClass) doc.body.classList.remove(dragClass);
+            dragging = false;
+          }
+        };
+      }
+      module.exports = { attachSplitter };
+    }
+  });
+
   // renderer/drawer-host.js
   var require_drawer_host = __commonJS({
     "renderer/drawer-host.js"(exports, module) {
       var ARM_DEBOUNCE_MS = 300;
+      var { attachSplitter } = require_splitter();
+      var { clampPx } = require_split();
+      var DRAWER_MIN_H = 120;
+      var DRAWER_MAX_FRACTION = 0.7;
       var TAB_IDS = Object.freeze(["log", "activity", "console", "ctl", "term"]);
       var BADGE_MAX = 99;
       function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType = null, onArmChanged = null }) {
@@ -28572,6 +28738,29 @@ ${m[2].replace(/^\r?\n/, "")}`;
           tall = localStorage.getItem(TALL_KEY) === "1";
         } catch {
         }
+        const HEIGHT_KEY = "clodex-drawer-h";
+        const mainEl = document.getElementById("main");
+        let storedHeight = null;
+        try {
+          const saved = parseInt(localStorage.getItem(HEIGHT_KEY), 10);
+          if (Number.isInteger(saved) && saved >= DRAWER_MIN_H) storedHeight = saved;
+        } catch {
+        }
+        const clampHeight = (px) => clampPx(px, {
+          min: DRAWER_MIN_H,
+          maxFraction: DRAWER_MAX_FRACTION,
+          defaultFraction: null,
+          containerPx: mainEl.clientHeight
+        });
+        function applyHeight() {
+          if (storedHeight == null) {
+            mainEl.style.removeProperty("--drawer-h");
+            return;
+          }
+          const px = mainEl.clientHeight > 0 ? clampHeight(storedHeight) : storedHeight;
+          mainEl.style.setProperty("--drawer-h", `${px}px`);
+        }
+        if (storedHeight != null) applyHeight();
         const isVisible = (id) => !isCollapsed() && activeId === id;
         function renderBadge(rec) {
           rec.badgeEl.textContent = rec.unread > BADGE_MAX ? `${BADGE_MAX}+` : String(rec.unread);
@@ -28940,6 +29129,38 @@ ${m[2].replace(/^\r?\n/, "")}`;
           });
         }
         syncTall();
+        const resizeEl = document.getElementById("drawer-resize");
+        if (resizeEl) {
+          attachSplitter(resizeEl, {
+            edge: "top",
+            rect: () => drawer.getBoundingClientRect(),
+            clamp: clampHeight,
+            apply: (px) => {
+              setTall(false);
+              storedHeight = px;
+              applyHeight();
+            },
+            commit: (px) => {
+              setTall(false);
+              try {
+                localStorage.setItem(HEIGHT_KEY, String(px));
+              } catch {
+              }
+            },
+            reset: () => {
+              storedHeight = null;
+              applyHeight();
+              try {
+                localStorage.removeItem(HEIGHT_KEY);
+              } catch {
+              }
+            },
+            dragClass: "drawer-dragging"
+          });
+        }
+        window.addEventListener("resize", () => {
+          if (storedHeight != null) applyHeight();
+        });
         new ResizeObserver(() => {
           const rec = tenants.get(activeId);
           if (rec && isVisible(rec.id)) dispatchResize(rec);
@@ -40238,29 +40459,6 @@ void main() {
     }
   });
 
-  // renderer/lib/split.js
-  var require_split = __commonJS({
-    "renderer/lib/split.js"(exports, module) {
-      "use strict";
-      function clampPx(px, { min, maxFraction, defaultFraction, containerPx }) {
-        const max = Math.max(min, Math.floor(containerPx * maxFraction));
-        const want = typeof px === "number" && Number.isFinite(px) ? Math.round(px) : Math.round(containerPx * defaultFraction);
-        return Math.min(max, Math.max(min, want));
-      }
-      function sizeFromPointer({ edge, rect, pointer }) {
-        if (edge === "left") return rect.right - pointer.x;
-        if (edge === "top") return rect.bottom - pointer.y;
-        if (edge === "bottom") return pointer.y - rect.top;
-        return NaN;
-      }
-      function clampFraction(f, { min, max, fallback }) {
-        if (typeof f !== "number" || !Number.isFinite(f)) return fallback;
-        return Math.min(max, Math.max(min, f));
-      }
-      module.exports = { clampPx, sizeFromPointer, clampFraction };
-    }
-  });
-
   // renderer/lib/side-pane-tabs.js
   var require_side_pane_tabs = __commonJS({
     "renderer/lib/side-pane-tabs.js"(exports, module) {
@@ -40976,121 +41174,13 @@ void main() {
     }
   });
 
-  // renderer/splitter.js
-  var require_splitter = __commonJS({
-    "renderer/splitter.js"(exports, module) {
-      "use strict";
-      var { sizeFromPointer } = require_split();
-      function attachSplitter(handleEl, {
-        edge,
-        rect,
-        clamp,
-        apply,
-        commit,
-        reset,
-        throttleMs = 0,
-        dragClass,
-        doc = document,
-        win = window,
-        now = () => Date.now()
-      }) {
-        let dragging = false;
-        let pending = null;
-        let rafId = 0;
-        let timer = null;
-        let lastApply = -Infinity;
-        const applyPending = () => {
-          timer = null;
-          if (pending == null) return;
-          lastApply = now();
-          apply(pending);
-        };
-        const onFrame = () => {
-          rafId = 0;
-          if (timer) return;
-          const wait = throttleMs - (now() - lastApply);
-          if (wait <= 0) applyPending();
-          else timer = win.setTimeout(applyPending, wait);
-        };
-        const onDown = (e) => {
-          if (e.button !== 0) return;
-          dragging = true;
-          pending = null;
-          if (dragClass) doc.body.classList.add(dragClass);
-          try {
-            handleEl.setPointerCapture(e.pointerId);
-          } catch {
-          }
-          e.preventDefault();
-        };
-        const onMove = (e) => {
-          if (!dragging) return;
-          pending = clamp(sizeFromPointer({ edge, rect: rect(), pointer: { x: e.clientX, y: e.clientY } }));
-          if (!rafId) rafId = win.requestAnimationFrame(onFrame);
-        };
-        const onUp = (e) => {
-          if (!dragging) return;
-          dragging = false;
-          if (dragClass) doc.body.classList.remove(dragClass);
-          try {
-            handleEl.releasePointerCapture(e.pointerId);
-          } catch {
-          }
-          if (rafId) {
-            win.cancelAnimationFrame(rafId);
-            rafId = 0;
-          }
-          if (timer) {
-            win.clearTimeout(timer);
-            timer = null;
-          }
-          const final = pending;
-          pending = null;
-          if (final == null) return;
-          apply(final);
-          commit(final);
-        };
-        const onDbl = () => {
-          if (typeof reset === "function") reset();
-        };
-        handleEl.addEventListener("pointerdown", onDown);
-        handleEl.addEventListener("pointermove", onMove);
-        handleEl.addEventListener("pointerup", onUp);
-        handleEl.addEventListener("pointercancel", onUp);
-        handleEl.addEventListener("dblclick", onDbl);
-        return {
-          dispose() {
-            handleEl.removeEventListener("pointerdown", onDown);
-            handleEl.removeEventListener("pointermove", onMove);
-            handleEl.removeEventListener("pointerup", onUp);
-            handleEl.removeEventListener("pointercancel", onUp);
-            handleEl.removeEventListener("dblclick", onDbl);
-            if (rafId) {
-              win.cancelAnimationFrame(rafId);
-              rafId = 0;
-            }
-            if (timer) {
-              win.clearTimeout(timer);
-              timer = null;
-            }
-            if (dragging && dragClass) doc.body.classList.remove(dragClass);
-            dragging = false;
-          }
-        };
-      }
-      module.exports = { attachSplitter };
-    }
-  });
-
   // renderer/dock.js
   var require_dock = __commonJS({
     "renderer/dock.js"(exports, module) {
       "use strict";
       var { SIDE_PANE_REFIT_THROTTLE_MS, sidePaneFits, clampSidePaneWidth } = require_side_pane_tabs();
-      var { clampFraction } = require_split();
+      var { clampFraction, DOCK_SPLIT_MIN, DOCK_SPLIT_MAX } = require_split();
       var { attachSplitter } = require_splitter();
-      var DOCK_SPLIT_MIN = 0.2;
-      var DOCK_SPLIT_MAX = 0.8;
       var DOCK_SPLIT_FALLBACK = 0.5;
       function createDock({ showToast, getSettings, setSettings, loadView, saveView, doc = document, win = window, now = () => Date.now() }) {
         const dock = doc.getElementById("dock");
