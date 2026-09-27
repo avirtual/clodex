@@ -1,5 +1,7 @@
 'use strict';
 
+const TURN_KINDS = new Set(['prompt', 'inbound', 'reply', 'notification', 'command']);
+
 function isInternalRow(rec) {
   if (!rec) return false;
   switch (rec.kind) {
@@ -11,4 +13,4 @@ function isInternalRow(rec) {
   }
 }
 
-module.exports = { isInternalRow };
+module.exports = { TURN_KINDS, isInternalRow };

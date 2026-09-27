@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const crypto = require('crypto');
 const { RECORD_CAP, recordsOf } = require('./transcript-records');
 
 const MAX_ENTRIES = RECORD_CAP;
@@ -37,7 +38,7 @@ function createTranscriptSpikeReader({ linkPathFor, watch = fs.watch, onChange =
     let c = cache.get(name);
     if (c && c.path !== real) { drop(name); c = null; }
     if (!c) {
-      c = { path: real, rev: nextRev, dirty: true, sig: null, records: [], watcher: null, changeTimer: null };
+      c = { path: real, rev: nextRev, dirty: true, sig: null, epoch: 0, records: [], watcher: null, changeTimer: null };
       try {
         c.watcher = watch(real, () => changed(name, c));
         if (c.watcher && typeof c.watcher.on === 'function') c.watcher.on('error', () => changed(name, c));
@@ -51,6 +52,7 @@ function createTranscriptSpikeReader({ linkPathFor, watch = fs.watch, onChange =
         const st = fs.statSync(real);
         sig = `${st.size}:${st.mtimeMs}`;
         if (sig !== c.sig) text = fs.readFileSync(real, 'utf8');
+        if (c.sig !== null && st.size < Number(c.sig.split(':')[0])) c.epoch++;
       } catch { drop(name); return { ok: false, reason: 'unreadable' }; }
       c.dirty = false;
       if (text !== null) {
@@ -59,7 +61,7 @@ function createTranscriptSpikeReader({ linkPathFor, watch = fs.watch, onChange =
         c.rev = ++nextRev;
       }
     }
-    return { ok: true, rev: c.rev, records: c.records };
+    return { ok: true, rev: c.rev, records: c.records, source: `${crypto.createHash('sha1').update(real).digest('hex').slice(0, 16)}:${c.epoch}` };
   }
 
   function dispose() { for (const name of [...cache.keys()]) drop(name); }

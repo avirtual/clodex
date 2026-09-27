@@ -6,7 +6,7 @@ const { classifySender } = require('./lib/sender-class');
 const { scanLinks } = require('./lib/path-scan');
 const { rewriteEchoSgr } = require('./lib/prompt-echo');
 const { isExternallyOpenable } = require('../external-link');
-const { isInternalRow } = require('../transcript-internal');
+const { TURN_KINDS, isInternalRow } = require('../transcript-internal');
 const { surfaceOf, segmentSurface } = require('./lib/transcript-surface');
 
 const OUTPUT_LINE_CAP = 400;
@@ -552,15 +552,16 @@ function footerOf(records) {
   };
 }
 
-function buildFooter(doc, f, ctx) {
-  const row = el(doc, 'div', 'tr-row tr-footer');
+function footerParts(doc, row, f, ctx, linked) {
   const parts = [];
   if (f.durationMs != null) parts.push(() => row.appendChild(doc.createTextNode(durationText(f.durationMs))));
   if (f.tools) parts.push(() => row.appendChild(doc.createTextNode(countText(f.tools, 'tool', 'tools'))));
   if (f.errors) parts.push(() => row.appendChild(el(doc, 'span', 'tr-err', countText(f.errors, 'error', 'errors'))));
+  if (f.injected) parts.push(() => row.appendChild(doc.createTextNode(`${f.injected} injected`)));
   for (const file of f.files) {
     parts.push(() => {
-      row.appendChild(linkNode(doc, { kind: 'path', text: baseName(file.file), path: file.file }, '', ctx));
+      if (linked) row.appendChild(linkNode(doc, { kind: 'path', text: baseName(file.file), path: file.file }, '', ctx));
+      else row.appendChild(doc.createTextNode(baseName(file.file)));
       row.appendChild(doc.createTextNode(` +${file.add} ${MINUS}${file.del}`));
     });
   }
@@ -570,6 +571,38 @@ function buildFooter(doc, f, ctx) {
     add();
   });
   return row;
+}
+
+function buildFooter(doc, f, ctx) {
+  return footerParts(doc, el(doc, 'div', 'tr-row tr-footer'), f, ctx, true);
+}
+
+function runStatsOf(records) {
+  const ends = records.filter((r) => r.kind === 'turn-end');
+  const timed = ends.filter((r) => r.durationMs != null);
+  const tools = records.filter((r) => r.kind === 'tool');
+  const boundary = records.find((r) => r.kind === 'boundary' && r.what === 'compact' && r.preTokens != null && r.postTokens != null);
+  const files = new Map();
+  for (const r of tools) {
+    if (r.state !== 'ok' || !r.sum || !r.sum.file || r.sum.add == null) continue;
+    const f = files.get(r.sum.file) || { file: r.sum.file, add: 0, del: 0 };
+    f.add += r.sum.add;
+    f.del += r.sum.del;
+    files.set(r.sum.file, f);
+  }
+  return {
+    ended: ends.length > 0,
+    durationMs: timed.length ? timed.reduce((n, r) => n + r.durationMs, 0) : null,
+    tools: tools.length,
+    errors: tools.filter((r) => r.state === 'error' || r.state === 'denied').length,
+    injected: records.filter(isInternalRow).length,
+    files: [...files.values()],
+    compacted: boundary ? [boundary.preTokens, boundary.postTokens] : null,
+  };
+}
+
+function suppressesClosed(records) {
+  return records.some((r) => r.kind !== 'turn-end' && (!isTalk(r) || hasInternalSeg(r)));
 }
 
 function reconcile(parent, cache, items, lead = null) {
@@ -653,10 +686,30 @@ function groupTurns(records) {
   return turns;
 }
 
+function logicalHead(t) {
+  return t.records.find((r) => TURN_KINDS.has(r.kind)) || t.records[0];
+}
+
+function groupRuns(turns) {
+  const runs = [];
+  for (const t of turns) {
+    const head = logicalHead(t);
+    if (!runs.length || isTalk(head)) runs.push({ key: head.id, turns: [t] });
+    else runs[runs.length - 1].turns.push(t);
+  }
+  for (const run of runs) {
+    run.records = run.turns.flatMap((t) => t.records);
+    run.hosted = run.turns.some((t) => t.records.some(isTalk));
+  }
+  return runs;
+}
+
 function createTranscriptRows(doc, paneEl, ctx = {}) {
   const deps = { lead: null, mode: 'internals', seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
   const turnCache = new Map();
   const opened = new Set();
+  const openRuns = new Set();
+  let lastSource = null;
   let mode = deps.mode === 'conversation' ? 'conversation' : 'internals';
   let lastRecords = [];
   let working = null;
@@ -734,7 +787,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     }
   }
 
-  function toolBlockItem(tools) {
+  function toolBlockItem(tools, open) {
     const key = `tools:${tools[0].id}`;
     return {
       key,
@@ -749,25 +802,59 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         c.key = key;
         c.tools = tools;
         paintBlock(c);
-        toggleClass(c.el, 'tr-hidden', mode === 'conversation');
+        toggleClass(c.el, 'tr-hidden', mode === 'conversation' && !open);
       },
     };
   }
 
-  function rowItems(records, attached) {
+  function runToggleItem(run, open) {
+    const stats = runStatsOf(run.records);
+    if (suppressesClosed(run.records)) {
+      return {
+        key: 'run-toggle',
+        sig: `${run.key}|${JSON.stringify(stats)}`,
+        build: () => {
+          const btn = el(doc, 'button', 'tr-row tr-footer tr-run-toggle');
+          btn.type = 'button';
+          btn.appendChild(doc.createTextNode(''));
+          footerParts(doc, btn, stats, deps, false);
+          btn.addEventListener('click', () => {
+            const anchor = anchorOf();
+            if (openRuns.has(run.key)) openRuns.delete(run.key);
+            else openRuns.add(run.key);
+            render(lastRecords);
+            restore(anchor);
+          });
+          return btn;
+        },
+        after: (c) => {
+          const want = open ? 'true' : 'false';
+          if (c.el.getAttribute('aria-expanded') !== want) c.el.setAttribute('aria-expanded', want);
+          const glyph = open ? '▾ ' : '▸ ';
+          if (c.el.firstChild.textContent !== glyph) c.el.firstChild.textContent = glyph;
+        },
+      };
+    }
+    if (!stats.ended && !stats.compacted) return null;
+    return { key: 'footer', sig: JSON.stringify(stats), build: () => buildFooter(doc, stats, deps) };
+  }
+
+  function rowItems(records, attached, open, tail, live) {
     const items = [];
     for (const run of toolRuns(records)) {
       if (run.tools) {
-        items.push(toolBlockItem(run.tools));
+        live.add(`tools:${run.tools[0].id}`);
+        items.push(toolBlockItem(run.tools, open));
         continue;
       }
       const r = run.rec;
       if (r.kind === 'turn-end') continue;
       const att = attached.has(r.id);
       const extra = r.kind === 'command-output' ? JSON.stringify(resolvePalette(deps) || null) : att ? '|attached' : '';
-      const hidden = mode === 'conversation' && !isTalk(r);
+      const hidden = mode === 'conversation' && !open && !isTalk(r);
       const after = (c) => toggleClass(c.el, 'tr-hidden', hidden);
       if (isInternalRow(r)) {
+        live.add(r.id);
         items.push({
           key: r.id,
           sig: recSig(r) + extra,
@@ -779,36 +866,59 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         });
         continue;
       }
-      const full = mode === 'internals';
+      const full = mode === 'internals' || open;
       const omit = !full && hasInternalSeg(r);
       const view = omit ? { ...r, segments: r.segments.filter((s) => segmentSurface(s) === 'conversation') } : r;
       const sig = recSig(r) + extra + (hasInternalSeg(r) ? (full ? '|full' : '|conv') : '');
       items.push({ key: r.id, sig, build: () => buildRow(doc, view, deps, att) || el(doc, 'div', 'tr-row'), after });
     }
-    const footer = footerOf(records);
-    if (footer) items.push({ key: 'footer', sig: JSON.stringify(footer), build: () => buildFooter(doc, footer, deps) });
+    if (mode === 'internals') {
+      const footer = footerOf(records);
+      if (footer) items.push({ key: 'footer', sig: JSON.stringify(footer), build: () => buildFooter(doc, footer, deps) });
+    } else if (tail) items.push(tail);
     return items;
   }
 
-  function render(records) {
+  function render(records, source) {
     const list = Array.isArray(records) ? records : [];
-    const attached = attachedReplies(list);
-    const items = groupTurns(list).map((t) => ({
-      key: t.key,
-      sig: '',
-      build: () => {
-        const block = el(doc, 'div', 'tr-turn');
-        block.dataset.turn = t.key;
-        return block;
-      },
-      after: (c) => {
-        if (!c.sub) c.sub = new Map();
-        reconcile(c.el, c.sub, rowItems(t.records, attached));
-        toggleClass(c.el, 'tr-hidden', mode === 'conversation' && !t.records.some(isTalk));
-      },
-    }));
-    reconcile(paneEl, turnCache, items, deps.lead);
+    if (source != null) {
+      if (lastSource != null && source !== lastSource) {
+        for (const c of turnCache.values()) if (c.el.parentNode === paneEl) paneEl.removeChild(c.el);
+        turnCache.clear();
+        openRuns.clear();
+        opened.clear();
+      }
+      lastSource = source;
+    }
     lastRecords = list;
+    const attached = attachedReplies(list);
+    const runs = groupRuns(groupTurns(list));
+    const keys = new Set(runs.filter((run) => run.hosted).map((run) => run.key));
+    for (const k of [...openRuns]) if (!keys.has(k)) openRuns.delete(k);
+    const live = new Set();
+    const items = [];
+    for (const run of runs) {
+      const open = openRuns.has(run.key);
+      const host = open ? run.turns[run.turns.length - 1] : run.hosted ? run.turns.filter((t) => t.records.some(isTalk)).pop() : null;
+      run.turns.forEach((t, i) => items.push({
+        key: t.key,
+        sig: '',
+        build: () => {
+          const block = el(doc, 'div', 'tr-turn');
+          block.dataset.turn = t.key;
+          return block;
+        },
+        after: (c) => {
+          if (!c.sub) c.sub = new Map();
+          const tail = mode === 'conversation' && t === host ? runToggleItem(run, open) : null;
+          reconcile(c.el, c.sub, rowItems(t.records, attached, open, tail, live));
+          toggleClass(c.el, 'tr-hidden', mode === 'conversation' && !open && !t.records.some(isTalk));
+          toggleClass(c.el, 'tr-turn-cont', mode === 'conversation' && i > 0);
+        },
+      }));
+    }
+    reconcile(paneEl, turnCache, items, deps.lead);
+    for (const k of [...opened]) if (!live.has(k)) opened.delete(k);
     if (working) paintWorking();
   }
 

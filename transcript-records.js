@@ -8,7 +8,7 @@ const { pointerMatch, receiptOf } = require('./intent-spill');
 const { FILED_POINTER_RE } = require('./spill-grammar');
 const { DEFAULT_MAX_BYTES } = require('./exec-schema');
 const { sniffReader } = require('./transcript-readers');
-const { isInternalRow } = require('./transcript-internal');
+const { TURN_KINDS, isInternalRow } = require('./transcript-internal');
 
 const RECORD_CAP = 400;
 const PROMPT_CAP = 4096;
@@ -18,7 +18,6 @@ const IMAGE_MARK_RE = /\[Image #(\d+)\]/g;
 const NOTE_CAP = 300;
 const ONLY_MAX = 80;
 const INPUT_KEYS = ['command', 'file_path', 'path', 'pattern', 'url', 'query', 'description', 'prompt'];
-const TURN_KINDS = new Set(['prompt', 'inbound', 'reply', 'notification', 'command']);
 const INBOUND_RE = /^\[agent:from ([^\]\s]+)\][ \t]*/;
 const RUNTIME_RE = /^\[agent:([a-z-]+)\][ \t]*/;
 const ATTACHED_RE = /Message \((\d+) bytes\) attached: @(\S+)/;
