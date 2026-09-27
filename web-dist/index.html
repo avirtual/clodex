@@ -2914,7 +2914,8 @@ body {
   border-left: 1px solid var(--border);
 }
 #dock.dock-closed,
-#dock-handle.dock-closed {
+#dock-handle.dock-closed,
+#dock-split.dock-closed {
   display: none;
 }
 #dock.dock-sheet {
@@ -2937,6 +2938,26 @@ body.dock-dragging #dock-handle {
 body.dock-dragging {
   cursor: col-resize;
   user-select: none;
+}
+#dock-split {
+  flex: none;
+  height: 5px;
+  cursor: row-resize;
+  background: var(--border);
+}
+#dock-split:hover,
+body.dock-split-dragging #dock-split {
+  background: var(--accent);
+}
+body.dock-split-dragging {
+  cursor: row-resize;
+  user-select: none;
+}
+body.dock-dragging #drawer,
+body.dock-dragging #work-row,
+body.dock-split-dragging #drawer,
+body.dock-split-dragging #work-row {
+  transition: none;
 }
 .dock-pane {
   flex: 1 1 0;
@@ -9826,6 +9847,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           </div>
           <div id="side-pane-body"></div>
         </div>
+        <div id="dock-split" class="dock-closed"></div>
       </div>
     </div>
     <div id="peer-bar" class="hidden"></div>
@@ -40157,10 +40179,34 @@ void main() {
     }
   });
 
+  // renderer/lib/split.js
+  var require_split = __commonJS({
+    "renderer/lib/split.js"(exports, module) {
+      "use strict";
+      function clampPx(px, { min, maxFraction, defaultFraction, containerPx }) {
+        const max = Math.max(min, Math.floor(containerPx * maxFraction));
+        const want = typeof px === "number" && Number.isFinite(px) ? Math.round(px) : Math.round(containerPx * defaultFraction);
+        return Math.min(max, Math.max(min, want));
+      }
+      function sizeFromPointer({ edge, rect, pointer }) {
+        if (edge === "left") return rect.right - pointer.x;
+        if (edge === "top") return rect.bottom - pointer.y;
+        if (edge === "bottom") return pointer.y - rect.top;
+        return NaN;
+      }
+      function clampFraction(f, { min, max, fallback }) {
+        if (typeof f !== "number" || !Number.isFinite(f)) return fallback;
+        return Math.min(max, Math.max(min, f));
+      }
+      module.exports = { clampPx, sizeFromPointer, clampFraction };
+    }
+  });
+
   // renderer/lib/side-pane-tabs.js
   var require_side_pane_tabs = __commonJS({
     "renderer/lib/side-pane-tabs.js"(exports, module) {
       "use strict";
+      var { clampPx } = require_split();
       var SIDE_PANE_MAX_TABS = 12;
       var SIDE_PANE_MIN_PX = 320;
       var SIDE_PANE_DEFAULT_FRACTION = 0.4;
@@ -40178,9 +40224,7 @@ void main() {
         return windowPx >= SIDE_PANE_MIN_WINDOW_PX;
       }
       function clampSidePaneWidth(px, windowPx) {
-        const max = Math.max(SIDE_PANE_MIN_PX, Math.floor(windowPx * SIDE_PANE_MAX_FRACTION));
-        const want = typeof px === "number" && Number.isFinite(px) ? Math.round(px) : Math.round(windowPx * SIDE_PANE_DEFAULT_FRACTION);
-        return Math.min(max, Math.max(SIDE_PANE_MIN_PX, want));
+        return clampPx(px, { min: SIDE_PANE_MIN_PX, maxFraction: SIDE_PANE_MAX_FRACTION, defaultFraction: SIDE_PANE_DEFAULT_FRACTION, containerPx: windowPx });
       }
       function peekEditable(editable, peekRes) {
         return !!(editable && peekRes && peekRes.ok && !peekRes.binary && !peekRes.truncated);
@@ -40873,20 +40917,133 @@ void main() {
     }
   });
 
+  // renderer/splitter.js
+  var require_splitter = __commonJS({
+    "renderer/splitter.js"(exports, module) {
+      "use strict";
+      var { sizeFromPointer } = require_split();
+      function attachSplitter(handleEl, {
+        edge,
+        rect,
+        clamp,
+        apply,
+        commit,
+        reset,
+        throttleMs = 0,
+        dragClass,
+        doc = document,
+        win = window,
+        now = () => Date.now()
+      }) {
+        let dragging = false;
+        let pending = null;
+        let rafId = 0;
+        let timer = null;
+        let lastApply = -Infinity;
+        const applyPending = () => {
+          timer = null;
+          if (pending == null) return;
+          lastApply = now();
+          apply(pending);
+        };
+        const onFrame = () => {
+          rafId = 0;
+          if (timer) return;
+          const wait = throttleMs - (now() - lastApply);
+          if (wait <= 0) applyPending();
+          else timer = win.setTimeout(applyPending, wait);
+        };
+        const onDown = (e) => {
+          if (e.button !== 0) return;
+          dragging = true;
+          pending = null;
+          if (dragClass) doc.body.classList.add(dragClass);
+          try {
+            handleEl.setPointerCapture(e.pointerId);
+          } catch {
+          }
+          e.preventDefault();
+        };
+        const onMove = (e) => {
+          if (!dragging) return;
+          pending = clamp(sizeFromPointer({ edge, rect: rect(), pointer: { x: e.clientX, y: e.clientY } }));
+          if (!rafId) rafId = win.requestAnimationFrame(onFrame);
+        };
+        const onUp = (e) => {
+          if (!dragging) return;
+          dragging = false;
+          if (dragClass) doc.body.classList.remove(dragClass);
+          try {
+            handleEl.releasePointerCapture(e.pointerId);
+          } catch {
+          }
+          if (rafId) {
+            win.cancelAnimationFrame(rafId);
+            rafId = 0;
+          }
+          if (timer) {
+            win.clearTimeout(timer);
+            timer = null;
+          }
+          const final = pending;
+          pending = null;
+          if (final == null) return;
+          apply(final);
+          commit(final);
+        };
+        const onDbl = () => {
+          if (typeof reset === "function") reset();
+        };
+        handleEl.addEventListener("pointerdown", onDown);
+        handleEl.addEventListener("pointermove", onMove);
+        handleEl.addEventListener("pointerup", onUp);
+        handleEl.addEventListener("pointercancel", onUp);
+        handleEl.addEventListener("dblclick", onDbl);
+        return {
+          dispose() {
+            handleEl.removeEventListener("pointerdown", onDown);
+            handleEl.removeEventListener("pointermove", onMove);
+            handleEl.removeEventListener("pointerup", onUp);
+            handleEl.removeEventListener("pointercancel", onUp);
+            handleEl.removeEventListener("dblclick", onDbl);
+            if (rafId) {
+              win.cancelAnimationFrame(rafId);
+              rafId = 0;
+            }
+            if (timer) {
+              win.clearTimeout(timer);
+              timer = null;
+            }
+            if (dragging && dragClass) doc.body.classList.remove(dragClass);
+            dragging = false;
+          }
+        };
+      }
+      module.exports = { attachSplitter };
+    }
+  });
+
   // renderer/dock.js
   var require_dock = __commonJS({
     "renderer/dock.js"(exports, module) {
       "use strict";
       var { SIDE_PANE_REFIT_THROTTLE_MS, sidePaneFits, clampSidePaneWidth } = require_side_pane_tabs();
-      function createDock({ showToast, getSettings, setSettings, loadView, saveView, doc = document, win = window }) {
+      var { clampFraction } = require_split();
+      var { attachSplitter } = require_splitter();
+      var DOCK_SPLIT_MIN = 0.2;
+      var DOCK_SPLIT_MAX = 0.8;
+      var DOCK_SPLIT_FALLBACK = 0.5;
+      function createDock({ showToast, getSettings, setSettings, loadView, saveView, doc = document, win = window, now = () => Date.now() }) {
         const dock = doc.getElementById("dock");
         const handle = doc.getElementById("dock-handle");
+        const split = doc.getElementById("dock-split");
         const isWeb = !!win.__CLODEX_WEB__;
         const panes = /* @__PURE__ */ new Map();
         let shown = [];
         const front = () => shown[shown.length - 1] || null;
         let added = 0;
         let storedWidth = null;
+        let storedSplit = null;
         let intents = {};
         let viewLoaded = false;
         const viewWaiters = [];
@@ -40896,6 +41053,17 @@ void main() {
         function applyWidth() {
           dock.style.width = `${clampSidePaneWidth(storedWidth, win.innerWidth)}px`;
         }
+        const splitFraction = (f) => clampFraction(f, { min: DOCK_SPLIT_MIN, max: DOCK_SPLIT_MAX, fallback: DOCK_SPLIT_FALLBACK });
+        let splitUp = false;
+        function applySplit() {
+          const f = splitFraction(storedSplit);
+          const others = shown.filter((id) => id !== "files");
+          for (const [id, p] of panes) {
+            if (!splitUp) p.el.style.flex = "";
+            else if (id === "files") p.el.style.flex = `${f} 1 0px`;
+            else p.el.style.flex = others.includes(id) ? `${(1 - f) / others.length} 1 0px` : "";
+          }
+        }
         function render() {
           const up = onScreen();
           const sheet = up && isWeb && !sidePaneFits(win.innerWidth);
@@ -40904,6 +41072,16 @@ void main() {
           handle.classList.toggle("dock-closed", !up || sheet);
           const top = front();
           for (const [id, p] of panes) p.el.classList.toggle("dock-pane-hidden", sheet ? id !== top : !shown.includes(id));
+          splitUp = up && !sheet && shown.length >= 2 && shown.includes("files");
+          if (split) split.classList.toggle("dock-closed", !splitUp);
+          applySplit();
+        }
+        function placeSplit() {
+          const files = panes.get("files");
+          if (!split || !files) return;
+          const sorted = [...panes.values()].sort((a, b) => a.order - b.order || a.added - b.added);
+          const next = sorted[sorted.indexOf(files) + 1];
+          dock.insertBefore(split, next ? next.el : null);
         }
         function addPane(id, el, order = 0) {
           if (panes.has(id)) removePane(id);
@@ -40914,6 +41092,7 @@ void main() {
           const sorted = [...panes.values()].sort((a, b) => a.order - b.order || a.added - b.added);
           const i = sorted.indexOf(entry);
           dock.insertBefore(el, i + 1 < sorted.length ? sorted[i + 1].el : null);
+          placeSplit();
           render();
         }
         function removePane(id) {
@@ -40953,53 +41132,73 @@ void main() {
           if (viewLoaded) fn();
           else viewWaiters.push(fn);
         }
-        let dragging = false;
-        let pendingPx = null;
-        let lastApply = 0;
-        let timer = null;
-        function flushDrag() {
-          timer = null;
-          if (pendingPx == null) return;
-          storedWidth = pendingPx;
-          lastApply = Date.now();
-          applyWidth();
+        attachSplitter(handle, {
+          edge: "left",
+          rect: () => dock.getBoundingClientRect(),
+          clamp: (px) => clampSidePaneWidth(px, win.innerWidth),
+          apply: (px) => {
+            storedWidth = px;
+            applyWidth();
+          },
+          commit: (px) => {
+            try {
+              setSettings({ sidePaneWidth: px });
+            } catch {
+            }
+          },
+          reset: () => {
+            storedWidth = null;
+            applyWidth();
+            try {
+              setSettings({ sidePaneWidth: null });
+            } catch {
+            }
+          },
+          throttleMs: SIDE_PANE_REFIT_THROTTLE_MS,
+          dragClass: "dock-dragging",
+          doc,
+          win,
+          now
+        });
+        if (split) {
+          attachSplitter(split, {
+            edge: "bottom",
+            rect: () => (panes.get("files") || { el: dock }).el.getBoundingClientRect(),
+            clamp: (px) => splitFraction(px / dock.getBoundingClientRect().height),
+            apply: (f) => {
+              storedSplit = f;
+              applySplit();
+            },
+            commit: (f) => {
+              try {
+                setSettings({ dockSplit: f });
+              } catch {
+              }
+            },
+            reset: () => {
+              storedSplit = null;
+              applySplit();
+              try {
+                setSettings({ dockSplit: null });
+              } catch {
+              }
+            },
+            throttleMs: 0,
+            dragClass: "dock-split-dragging",
+            doc,
+            win,
+            now
+          });
         }
-        handle.addEventListener("mousedown", (e) => {
-          if (e.button !== 0) return;
-          e.preventDefault();
-          dragging = true;
-          doc.body.classList.add("dock-dragging");
-        });
-        win.addEventListener("mousemove", (e) => {
-          if (!dragging) return;
-          const right = dock.getBoundingClientRect().right;
-          pendingPx = clampSidePaneWidth(right - e.clientX, win.innerWidth);
-          const wait = SIDE_PANE_REFIT_THROTTLE_MS - (Date.now() - lastApply);
-          if (wait <= 0) flushDrag();
-          else if (!timer) timer = setTimeout(flushDrag, wait);
-        });
-        win.addEventListener("mouseup", () => {
-          if (!dragging) return;
-          dragging = false;
-          doc.body.classList.remove("dock-dragging");
-          if (timer) {
-            clearTimeout(timer);
-            timer = null;
-          }
-          flushDrag();
-          pendingPx = null;
-          try {
-            setSettings({ sidePaneWidth: storedWidth });
-          } catch {
-          }
-        });
         win.addEventListener("resize", () => {
           applyWidth();
           render();
         });
         Promise.resolve().then(() => getSettings()).then((s) => {
           if (s && typeof s.sidePaneWidth === "number") storedWidth = s.sidePaneWidth;
+          if (s && typeof s.dockSplit === "number") storedSplit = s.dockSplit;
           applyWidth();
+          applySplit();
         }).catch(() => {
         });
         Promise.resolve().then(() => typeof loadView === "function" ? loadView() : null).then((v) => {

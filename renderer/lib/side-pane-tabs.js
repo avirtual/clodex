@@ -1,5 +1,7 @@
 'use strict';
 
+const { clampPx } = require('./split');
+
 const SIDE_PANE_MAX_TABS = 12;
 const SIDE_PANE_MIN_PX = 320;
 const SIDE_PANE_DEFAULT_FRACTION = 0.4;
@@ -21,9 +23,7 @@ function sidePaneFits(windowPx) {
 }
 
 function clampSidePaneWidth(px, windowPx) {
-  const max = Math.max(SIDE_PANE_MIN_PX, Math.floor(windowPx * SIDE_PANE_MAX_FRACTION));
-  const want = (typeof px === 'number' && Number.isFinite(px)) ? Math.round(px) : Math.round(windowPx * SIDE_PANE_DEFAULT_FRACTION);
-  return Math.min(max, Math.max(SIDE_PANE_MIN_PX, want));
+  return clampPx(px, { min: SIDE_PANE_MIN_PX, maxFraction: SIDE_PANE_MAX_FRACTION, defaultFraction: SIDE_PANE_DEFAULT_FRACTION, containerPx: windowPx });
 }
 
 function peekEditable(editable, peekRes) {

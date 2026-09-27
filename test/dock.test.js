@@ -38,19 +38,45 @@ function fakeEl(id) {
       el.parent.children = el.parent.children.filter((c) => c !== el);
       el.parent = null;
     },
-    getBoundingClientRect: () => ({ right: 1000 }),
+    rect: { top: 0, right: 1000, bottom: 1000, height: 1000 },
+    getBoundingClientRect: () => el.rect,
   };
   return el;
 }
 
-function rig({ innerWidth = 1000, web = false, settings = {}, view } = {}) {
+function fakeClock(win) {
+  const clock = { t: 1000, frames: [], timers: [] };
+  win.requestAnimationFrame = (fn) => { clock.frames.push(fn); return clock.frames.length; };
+  win.cancelAnimationFrame = () => { clock.frames = []; };
+  win.setTimeout = (fn, ms) => { const h = { fn, at: clock.t + ms }; clock.timers.push(h); return h; };
+  win.clearTimeout = (h) => { clock.timers = clock.timers.filter((x) => x !== h); };
+  clock.frame = () => { for (const fn of clock.frames.splice(0)) fn(); };
+  clock.advance = (ms) => {
+    clock.t += ms;
+    for (const h of clock.timers.filter((x) => x.at <= clock.t)) {
+      clock.timers = clock.timers.filter((x) => x !== h);
+      h.fn();
+    }
+  };
+  return clock;
+}
+
+function rig({ innerWidth = 1000, web = false, settings = {}, view, split = false } = {}) {
   const dockEl = fakeEl('dock');
   const handle = fakeEl('dock-handle');
   dockEl.classList.add('dock-closed');
   handle.classList.add('dock-closed');
   const byId = { dock: dockEl, 'dock-handle': handle };
+  let splitEl = null;
+  if (split) {
+    splitEl = fakeEl('dock-split');
+    splitEl.classList.add('dock-closed');
+    dockEl.appendChild(splitEl);
+    byId['dock-split'] = splitEl;
+  }
   const doc = { getElementById: (id) => byId[id] || null, body: fakeEl('body') };
   const win = fakeEl('window');
+  const clock = fakeClock(win);
   win.innerWidth = innerWidth;
   if (web) win.__CLODEX_WEB__ = true;
   const toasts = [];
@@ -58,13 +84,14 @@ function rig({ innerWidth = 1000, web = false, settings = {}, view } = {}) {
   const views = [];
   const dock = createDock({
     doc, win,
+    now: () => clock.t,
     showToast: (text, opts) => toasts.push({ text, opts }),
     getSettings: () => settings,
     setSettings: (patch) => saved.push(patch),
     loadView: view === undefined ? undefined : () => view,
     saveView: (patch) => views.push(patch),
   });
-  return { dock, dockEl, handle, doc, win, toasts, saved, views };
+  return { dock, dockEl, handle, splitEl, doc, win, clock, toasts, saved, views };
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -151,22 +178,85 @@ const ROWS = [
     async run(r) {
       r.dock.addPane('files', fakeEl('side-pane'), 0);
       r.dock.setShown('files', true);
-      r.handle.fire('mousedown', { button: 0, preventDefault() {} });
+      r.handle.fire('pointerdown', { button: 0, pointerId: 1, preventDefault() {} });
       assert.ok(r.doc.body.classList.contains('dock-dragging'), 'ENTER: the drag started');
-      r.win.fire('mousemove', { clientX: 100 });
-      r.win.fire('mouseup');
+      r.handle.fire('pointermove', { clientX: 100, clientY: 0 });
+      r.handle.fire('pointerup', { pointerId: 1 });
       assert.strictEqual(r.doc.body.classList.contains('dock-dragging'), false);
       assert.deepStrictEqual(r.saved, [{ sidePaneWidth: 600 }]);
       assert.strictEqual(r.dockEl.style.width, '600px');
     },
   },
   {
-    name: 'a mouseup with no drag started persists nothing',
+    name: 'a pointerup with no drag started, or a press with no move, persists nothing',
     opts: { innerWidth: 1000 },
     async run(r) {
-      r.win.fire('mousemove', { clientX: 100 });
-      r.win.fire('mouseup');
+      r.dock.addPane('files', fakeEl('side-pane'), 0);
+      r.dock.setShown('files', true);
+      r.handle.fire('pointermove', { clientX: 100, clientY: 0 });
+      r.handle.fire('pointerup', { pointerId: 1 });
       assert.deepStrictEqual(r.saved, []);
+      r.handle.fire('pointerdown', { button: 0, pointerId: 1, preventDefault() {} });
+      r.handle.fire('pointerup', { pointerId: 1 });
+      assert.deepStrictEqual(r.saved, []);
+      r.handle.fire('pointerdown', { button: 2, pointerId: 1, preventDefault() {} });
+      r.handle.fire('pointermove', { clientX: 100, clientY: 0 });
+      r.handle.fire('pointerup', { pointerId: 1 });
+      assert.deepStrictEqual(r.saved, [], 'a right-button press is not a drag');
+    },
+  },
+  {
+    name: 'a drag applies the width live but persists only on release',
+    opts: { innerWidth: 1000 },
+    async run(r) {
+      r.dock.addPane('files', fakeEl('side-pane'), 0);
+      r.dock.setShown('files', true);
+      r.handle.fire('pointerdown', { button: 0, pointerId: 1, preventDefault() {} });
+      r.handle.fire('pointermove', { clientX: 500, clientY: 0 });
+      r.clock.frame();
+      assert.strictEqual(r.dockEl.style.width, '500px', 'ENTER: the move applied live');
+      r.clock.advance(200);
+      r.handle.fire('pointermove', { clientX: 550, clientY: 0 });
+      r.clock.frame();
+      assert.strictEqual(r.dockEl.style.width, '450px');
+      assert.deepStrictEqual(r.saved, [], 'nothing is persisted during the drag');
+      r.handle.fire('pointerup', { pointerId: 1 });
+      assert.deepStrictEqual(r.saved, [{ sidePaneWidth: 450 }]);
+    },
+  },
+  {
+    name: 'the width drag is throttled to one apply per 150 ms, the latest position trailing',
+    opts: { innerWidth: 1000 },
+    async run(r) {
+      r.dock.addPane('files', fakeEl('side-pane'), 0);
+      r.dock.setShown('files', true);
+      r.handle.fire('pointerdown', { button: 0, pointerId: 1, preventDefault() {} });
+      r.handle.fire('pointermove', { clientX: 500, clientY: 0 });
+      r.handle.fire('pointermove', { clientX: 520, clientY: 0 });
+      assert.strictEqual(r.clock.frames.length, 1, 'moves within one frame coalesce');
+      r.clock.frame();
+      assert.strictEqual(r.dockEl.style.width, '480px', 'ENTER: the first frame applies at once');
+      r.clock.advance(50);
+      r.handle.fire('pointermove', { clientX: 600, clientY: 0 });
+      r.clock.frame();
+      assert.strictEqual(r.dockEl.style.width, '480px', '50 ms after an apply, the next one waits');
+      r.clock.advance(99);
+      assert.strictEqual(r.dockEl.style.width, '480px', 'still inside the 150 ms window');
+      r.clock.advance(1);
+      assert.strictEqual(r.dockEl.style.width, '400px', 'the trailing apply lands at 150 ms');
+    },
+  },
+  {
+    name: 'double-click on the dock handle resets the width to 40% and persists null',
+    opts: { innerWidth: 1000, settings: { sidePaneWidth: 560 } },
+    async run(r) {
+      r.dock.addPane('files', fakeEl('side-pane'), 0);
+      r.dock.setShown('files', true);
+      await flush();
+      assert.strictEqual(r.dockEl.style.width, '560px', 'ENTER: the stored width applied');
+      r.handle.fire('dblclick', {});
+      assert.strictEqual(r.dockEl.style.width, '400px');
+      assert.deepStrictEqual(r.saved, [{ sidePaneWidth: null }]);
     },
   },
   {
@@ -219,9 +309,9 @@ const ROWS = [
     async run(r) {
       r.dock.addPane('files', fakeEl('side-pane'), 0);
       r.dock.setShown('files', true);
-      r.handle.fire('mousedown', { button: 0, preventDefault() {} });
-      r.win.fire('mousemove', { clientX: 100 });
-      r.win.fire('mouseup');
+      r.handle.fire('pointerdown', { button: 0, pointerId: 1, preventDefault() {} });
+      r.handle.fire('pointermove', { clientX: 100, clientY: 0 });
+      r.handle.fire('pointerup', { pointerId: 1 });
       assert.strictEqual(r.dockEl.style.width, '600px', 'ENTER: the drag stored 600');
       r.win.innerWidth = 800;
       r.dockEl.style.width = 'stale';
@@ -274,6 +364,84 @@ const ROWS = [
       r.win.fire('resize');
       assert.strictEqual(files.classList.contains('dock-pane-hidden'), false, 'at full width both show');
       assert.strictEqual(tickets.classList.contains('dock-pane-hidden'), false);
+    },
+  },
+  {
+    name: 'the split handle sits between Files and the plugin panes and shows only with two panes up',
+    opts: { innerWidth: 1000, split: true },
+    async run(r) {
+      const files = fakeEl('side-pane');
+      const tickets = fakeEl('tickets');
+      r.dock.addPane('files', files, 0);
+      r.dock.addPane('tickets', tickets, 1);
+      assert.deepStrictEqual(r.dockEl.children.map((c) => c.id), ['side-pane', 'dock-split', 'tickets']);
+      r.dock.setShown('files', true);
+      assert.ok(r.splitEl.classList.contains('dock-closed'), 'one pane shown → no split handle');
+      assert.strictEqual(files.style.flex, '');
+      r.dock.setShown('tickets', true);
+      assert.strictEqual(r.splitEl.classList.contains('dock-closed'), false, 'two panes shown → the split handle');
+      assert.strictEqual(files.style.flex, '0.5 1 0px');
+      assert.strictEqual(tickets.style.flex, '0.5 1 0px');
+      r.dock.setShown('files', false);
+      assert.ok(r.splitEl.classList.contains('dock-closed'), 'Tickets alone → no split handle');
+      assert.strictEqual(tickets.style.flex, '');
+    },
+  },
+  {
+    name: 'the split handle is absent on the web sheet',
+    opts: { innerWidth: 500, web: true, split: true },
+    async run(r) {
+      r.dock.addPane('files', fakeEl('side-pane'), 0);
+      r.dock.addPane('tickets', fakeEl('tickets'), 1);
+      r.dock.setShown('files', true);
+      r.dock.setShown('tickets', true);
+      assert.ok(r.dockEl.classList.contains('dock-sheet'), 'ENTER: the dock is a sheet');
+      assert.ok(r.splitEl.classList.contains('dock-closed'));
+      r.win.innerWidth = 1000;
+      r.win.fire('resize');
+      assert.strictEqual(r.splitEl.classList.contains('dock-closed'), false, 'at full width the split handle is back');
+    },
+  },
+  {
+    name: 'a split drag sets the Files fraction live, clamps it, persists on release; dblclick resets to null',
+    opts: { innerWidth: 1000, split: true },
+    async run(r) {
+      const files = fakeEl('side-pane');
+      const tickets = fakeEl('tickets');
+      r.dock.addPane('files', files, 0);
+      r.dock.addPane('tickets', tickets, 1);
+      r.dock.setShown('files', true);
+      r.dock.setShown('tickets', true);
+      r.splitEl.fire('pointerdown', { button: 0, pointerId: 2, preventDefault() {} });
+      assert.ok(r.doc.body.classList.contains('dock-split-dragging'), 'ENTER: the split drag started');
+      r.splitEl.fire('pointermove', { clientX: 0, clientY: 300 });
+      r.clock.frame();
+      assert.strictEqual(files.style.flex, '0.3 1 0px');
+      assert.strictEqual(tickets.style.flex, '0.7 1 0px');
+      assert.deepStrictEqual(r.saved, []);
+      r.splitEl.fire('pointermove', { clientX: 0, clientY: 950 });
+      r.splitEl.fire('pointerup', { pointerId: 2 });
+      assert.strictEqual(files.style.flex, '0.8 1 0px');
+      assert.deepStrictEqual(r.saved, [{ dockSplit: 0.8 }]);
+      assert.strictEqual(r.doc.body.classList.contains('dock-split-dragging'), false);
+      r.splitEl.fire('dblclick', {});
+      assert.strictEqual(files.style.flex, '0.5 1 0px');
+      assert.deepStrictEqual(r.saved, [{ dockSplit: 0.8 }, { dockSplit: null }]);
+    },
+  },
+  {
+    name: 'the boot read of dockSplit applies the Files fraction',
+    opts: { innerWidth: 1000, split: true, settings: { dockSplit: 0.25 } },
+    async run(r) {
+      const files = fakeEl('side-pane');
+      const tickets = fakeEl('tickets');
+      r.dock.addPane('files', files, 0);
+      r.dock.addPane('tickets', tickets, 1);
+      r.dock.setShown('files', true);
+      r.dock.setShown('tickets', true);
+      await flush();
+      assert.strictEqual(files.style.flex, '0.25 1 0px');
+      assert.strictEqual(tickets.style.flex, '0.75 1 0px');
     },
   },
 ];

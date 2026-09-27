@@ -114,6 +114,7 @@ const DEFAULT_UI_SETTINGS = {
   sidebarWidth: 220,
   sidebarFolded: false,
   sidePaneWidth: null,
+  dockSplit: null,
   remoteEnabled: false,
   remotePort: 7900,
   remoteBasePath: '',
@@ -143,6 +144,10 @@ const DEFAULT_UI_SETTINGS = {
 // touched settings. Pure JSON data, so the round-trip is the whole clone.
 function sanitizeSidePaneWidth(px) {
   return Number.isInteger(px) && px >= 320 && px <= 10000 ? px : null;
+}
+
+function sanitizeDockSplit(f) {
+  return typeof f === 'number' && f >= 0.2 && f <= 0.8 ? f : null;
 }
 
 function defaultUiSettings() { return JSON.parse(JSON.stringify(DEFAULT_UI_SETTINGS)); }
@@ -1516,6 +1521,7 @@ function initStores(userDataPath, {
           sidebarWidth: clampSidebarWidth(raw?.sidebarWidth),
           sidebarFolded: raw?.sidebarFolded === true,
           sidePaneWidth: sanitizeSidePaneWidth(raw?.sidePaneWidth),
+          dockSplit: sanitizeDockSplit(raw?.dockSplit),
           remoteEnabled: typeof raw?.remoteEnabled === 'boolean' ? raw.remoteEnabled : DEFAULT_UI_SETTINGS.remoteEnabled,
           remotePort: Number.isInteger(raw?.remotePort) ? raw.remotePort : DEFAULT_UI_SETTINGS.remotePort,
           remoteBasePath: coerceRemoteBasePath(raw?.remoteBasePath) ?? DEFAULT_UI_SETTINGS.remoteBasePath,
@@ -1611,6 +1617,7 @@ function initStores(userDataPath, {
         sidebarWidth: clampSidebarWidth(partial?.sidebarWidth ?? cur.sidebarWidth),
         sidebarFolded: typeof partial?.sidebarFolded === 'boolean' ? partial.sidebarFolded : cur.sidebarFolded,
         sidePaneWidth: (partial && 'sidePaneWidth' in partial) ? sanitizeSidePaneWidth(partial.sidePaneWidth) : cur.sidePaneWidth,
+        dockSplit: (partial && 'dockSplit' in partial) ? sanitizeDockSplit(partial.dockSplit) : cur.dockSplit,
         remoteEnabled: partial?.remoteEnabled ?? cur.remoteEnabled,
         remotePort: Number.isInteger(partial?.remotePort) ? partial.remotePort : cur.remotePort,
         remoteBasePath: (partial && 'remoteBasePath' in partial)

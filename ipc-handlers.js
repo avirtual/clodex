@@ -1235,6 +1235,7 @@ function registerIpcHandlers(deps) {
       transcriptPaneMode: s.transcriptPaneMode,
       sidebarWidth: s.sidebarWidth,
       sidePaneWidth: s.sidePaneWidth,
+      dockSplit: s.dockSplit,
       remoteEnabled: s.remoteEnabled,
       remotePort: s.remotePort,
       remoteBasePath: s.remoteBasePath,

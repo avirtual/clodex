@@ -421,6 +421,8 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/inbox-drawer.js',
   'renderer/side-pane.js',
   'renderer/dock.js',
+  'renderer/splitter.js',
+  'renderer/lib/split.js',
   'renderer/file-tab.js',
   'renderer/lib/side-pane-tabs.js',
   'renderer/term-search.js',

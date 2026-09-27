@@ -508,3 +508,31 @@ test('side-pane width: sidePaneWidth persists as an integer or not at all', () =
   fs.writeFileSync(path.join(bad, 'ui-settings.json'), JSON.stringify({ sidePaneWidth: 'wide' }), { mode: 0o600 });
   assert.strictEqual(open(bad).get().sidePaneWidth, null);
 });
+
+test('dock split: dockSplit persists as a Files fraction in [0.2, 0.8] or not at all', () => {
+  const open = (dir) => initStores(dir, {
+    log: { info: () => {}, error: () => {} },
+    registryDir: path.join(dir, 'registry'),
+    resourcesDir: path.join(dir, '__no_seed__'),
+  }).uiSettings;
+  const dir = mkTmpRoot('clodex-uisettings-');
+  assert.strictEqual(open(dir).get().dockSplit, null);
+  const ui = open(dir);
+  ui.set({ dockSplit: 0.3 });
+  assert.strictEqual(open(dir).get().dockSplit, 0.3);
+  ui.set({ theme: 'midnight' });
+  assert.strictEqual(open(dir).get().dockSplit, 0.3);
+  ui.set({ dockSplit: null });
+  assert.strictEqual(open(dir).get().dockSplit, null);
+  ui.set({ dockSplit: 0.8 });
+  assert.strictEqual(open(dir).get().dockSplit, 0.8);
+  for (const junk of [1.5, 0.1, NaN, '0.5']) {
+    ui.set({ dockSplit: junk });
+    assert.strictEqual(open(dir).get().dockSplit, null, `set(${String(junk)}) → null`);
+  }
+  for (const junk of ['wide', 1.5]) {
+    const bad = mkTmpRoot('clodex-uisettings-');
+    fs.writeFileSync(path.join(bad, 'ui-settings.json'), JSON.stringify({ dockSplit: junk }), { mode: 0o600 });
+    assert.strictEqual(open(bad).get().dockSplit, null, `a stored ${String(junk)} reads as null`);
+  }
+});
