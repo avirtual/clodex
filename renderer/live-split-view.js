@@ -170,7 +170,7 @@ function renderStatusChips(doc, el, read, effort, onChip = NOOP, platform = 'cla
   el.replaceChildren(...chips);
 }
 
-function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, statusChips = null, mode = () => 'internals', onMode = NOOP, onHelp = null, onTerminal = null, onInset = NOOP }) {
+function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, peekFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, statusChips = null, mode = () => 'internals', onMode = NOOP, onHelp = null, onTerminal = null, onInset = NOOP }) {
   const paneEl = document.createElement('div');
   paneEl.className = 'transcript-pane';
   paneEl.hidden = true;
@@ -217,7 +217,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   let tag = null;
   let fileHead = null;
   const bandKey = (b) => (b ? `${b.top}:${b.bottom}` : '');
-  const rowsCtx = { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette, now, lead: toggle.bar, mode: mode() };
+  const rowsCtx = { seatName, resolveFile, peekFile, openFilePeek, openExternal, toast, echoPalette, now, lead: toggle.bar, mode: mode() };
   let turnRunning = false;
   let working = null;
 

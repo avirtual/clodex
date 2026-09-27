@@ -15,6 +15,9 @@ const CLAMP_CHARS = 240;
 const PREVIEW_CHARS = 120;
 const INLINE_CHARS = 120;
 const FOLD_CHARS = 80;
+const SPILL_INLINE_BYTES = 16 * 1024;
+const SPILL_CACHE_CAP = 32;
+const spillCache = new Map();
 const NOOP = () => {};
 const MINUS = '−';
 const TIMES = ' ×';
@@ -48,7 +51,7 @@ function styled(doc, text, style) {
   return span;
 }
 
-function linkNode(doc, span, style, ctx) {
+function linkNode(doc, span, style, ctx, stop = false) {
   const a = doc.createElement('a');
   a.className = 'pane-link';
   a.href = '#';
@@ -58,6 +61,7 @@ function linkNode(doc, span, style, ctx) {
     a.dataset.path = span.path;
     a.addEventListener('click', (e) => {
       e.preventDefault();
+      if (stop) e.stopPropagation();
       Promise.resolve().then(() => ctx.resolveFile(span.path))
         .catch((err) => ({ ok: false, error: String(err) }))
         .then((res) => {
@@ -126,14 +130,78 @@ function appendPlain(doc, parent, text, ctx) {
   });
 }
 
-function filedLink(doc, spill, ctx) {
+function spillPeek(ctx, path) {
+  const cached = spillCache.get(path);
+  if (cached) return cached;
+  const hit = { done: false, res: null, promise: null };
+  hit.promise = Promise.resolve().then(() => ctx.peekFile(path)).catch(() => null).then((res) => {
+    const ok = Boolean(res && res.ok && !res.binary && typeof res.content === 'string');
+    hit.done = true;
+    hit.res = ok ? res : null;
+    if (!ok && spillCache.get(path) === hit) spillCache.delete(path);
+  });
+  spillCache.set(path, hit);
+  while (spillCache.size > SPILL_CACHE_CAP) spillCache.delete(spillCache.keys().next().value);
+  return hit;
+}
+
+function fillSpill(doc, body, res, spill, name, ctx) {
+  if (!res) {
+    body.textContent = `Could not read ${name}`;
+    return;
+  }
+  const size = typeof res.size === 'number' ? res.size : res.content.length;
+  const over = size > SPILL_INLINE_BYTES;
+  body.textContent = over ? res.content.slice(0, SPILL_INLINE_BYTES) : res.content;
+  if (!over) return;
+  const foot = el(doc, 'div', 'tr-spill-more');
+  foot.appendChild(linkNode(doc, { kind: 'path', text: `… ${bytesText(size - SPILL_INLINE_BYTES)} more — open the file`, path: spill.path }, '', ctx));
+  body.appendChild(foot);
+}
+
+function filedFold(doc, spill, ctx, host) {
   const wrap = el(doc, 'span', 'intent-card-filed-link');
   const size = spill.bytes != null ? `${bytesText(spill.bytes)} ` : '';
-  wrap.appendChild(doc.createTextNode(`▢ ${size}filed · `));
   const name = spill.title || (spill.path ? baseName(spill.path) : 'filed body');
-  if (spill.path) wrap.appendChild(linkNode(doc, { kind: 'path', text: name, path: spill.path }, '', ctx));
-  else wrap.appendChild(doc.createTextNode(name));
-  return wrap;
+  if (!spill.path) {
+    wrap.appendChild(doc.createTextNode(`▢ ${size}filed · `));
+    wrap.appendChild(doc.createTextNode(name));
+    return { head: wrap, mount: NOOP };
+  }
+  const key = `spill:${spill.path}`;
+  const opened = ctx.opened || new Set();
+  const label = el(doc, 'span', 'tr-spill-label');
+  wrap.appendChild(label);
+  wrap.appendChild(linkNode(doc, { kind: 'path', text: name, path: spill.path }, '', ctx, true));
+  const body = el(doc, 'div', 'tr-spill-body');
+  let filled = false;
+  const paint = () => {
+    const open = opened.has(key);
+    label.textContent = `${open ? '▾' : '▸'} ▢ ${size}filed · `;
+    toggleClass(wrap, 'tr-spill-open', open);
+    if (!open) {
+      if (body.parentNode) body.parentNode.removeChild(body);
+      return;
+    }
+    if (!body.parentNode) host.appendChild(body);
+    if (filled) return;
+    const hit = spillPeek(ctx, spill.path);
+    const fill = () => {
+      filled = true;
+      fillSpill(doc, body, hit.res, spill, name, ctx);
+    };
+    if (hit.done) fill();
+    else {
+      body.textContent = 'Loading…';
+      hit.promise.then(fill);
+    }
+  };
+  wrap.addEventListener('click', () => {
+    if (opened.has(key)) opened.delete(key);
+    else opened.add(key);
+    paint();
+  });
+  return { head: wrap, mount: paint };
 }
 
 function inlineBody(seg) {
@@ -165,7 +233,7 @@ function restBody(doc, seg, ctx) {
   return [body, foot];
 }
 
-function cardHead(doc, seg, ctx, inline) {
+function cardHead(doc, seg, ctx, inline, filed) {
   const head = el(doc, 'div', 'intent-card-head');
   const h = seg.head;
   head.appendChild(el(doc, 'span', 'intent-card-glyph', h.glyph));
@@ -180,7 +248,7 @@ function cardHead(doc, seg, ctx, inline) {
   if (seg.verb === 'task') head.appendChild(label);
   if (inline) {
     const span = el(doc, 'span', 'intent-card-inline');
-    if (seg.state === 'filed' && seg.spill) span.appendChild(filedLink(doc, seg.spill, ctx));
+    if (filed) span.appendChild(filed);
     else {
       appendPlain(doc, span, inline, ctx);
       span.title = inline;
@@ -225,15 +293,20 @@ function intentCard(doc, seg, ctx) {
   const card = el(doc, 'div', `intent-card${seg.state === 'filed' ? ' intent-card-filed' : ''}${seg.open ? ' intent-card-open' : ''}`);
   card.dataset.verb = seg.verb;
   const inline = inlineBody(seg);
-  card.appendChild(cardHead(doc, seg, ctx, inline));
+  const fold = seg.state === 'filed' && seg.spill ? filedFold(doc, seg.spill, ctx, card) : null;
+  card.appendChild(cardHead(doc, seg, ctx, inline, inline && fold ? fold.head : null));
   if (inline && seg.body && seg.body.includes('\n') && !(seg.state === 'filed' && seg.spill)) {
     for (const n of restBody(doc, seg, ctx)) card.appendChild(n);
   }
-  if (inline) return card;
-  if (seg.state === 'filed' && seg.spill) {
+  if (inline) {
+    if (fold) fold.mount();
+    return card;
+  }
+  if (fold) {
     const row = el(doc, 'div', 'intent-card-body');
-    row.appendChild(filedLink(doc, seg.spill, ctx));
+    row.appendChild(fold.head);
     card.appendChild(row);
+    fold.mount();
   } else if (seg.body) {
     for (const n of cardBody(doc, seg, ctx)) card.appendChild(n);
   }
@@ -253,8 +326,11 @@ function appendSegments(doc, row, segs, ctx) {
     }
     stack = null;
     const prose = el(doc, 'div', 'tr-seg-prose');
-    if (seg.spill) prose.appendChild(filedLink(doc, seg.spill, ctx));
-    else appendPlain(doc, prose, seg.text, ctx);
+    if (seg.spill) {
+      const fold = filedFold(doc, seg.spill, ctx, prose);
+      prose.appendChild(fold.head);
+      fold.mount();
+    } else appendPlain(doc, prose, seg.text, ctx);
     row.appendChild(prose);
   }
 }
@@ -865,9 +941,10 @@ function groupRuns(turns) {
 }
 
 function createTranscriptRows(doc, paneEl, ctx = {}) {
-  const deps = { lead: null, mode: 'internals', seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
+  const deps = { lead: null, mode: 'internals', seatName: null, resolveFile: NOOP, openFilePeek: NOOP, peekFile: () => null, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
   const turnCache = new Map();
   const opened = new Set();
+  deps.opened = opened;
   const openRuns = new Set();
   const openTurns = new Set();
   let lastSource = null;
@@ -1130,6 +1207,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
       }));
     }
     reconcile(paneEl, turnCache, items, deps.lead);
+    for (const r of list) for (const seg of r.segments || []) if (seg.spill && seg.spill.path) live.add(`spill:${seg.spill.path}`);
     for (const k of [...opened]) if (!live.has(k)) opened.delete(k);
     if (working) paintWorking();
   }
