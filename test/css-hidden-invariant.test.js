@@ -75,11 +75,7 @@ test('the footer-button [hidden] rule exists, or el.hidden silently no-ops', () 
     'ENTER: the footer button really is display:flex, which is what the UA [hidden] rule loses to');
 });
 
-// Inactive seats are hidden by `.terminal-wrapper { visibility: hidden }` (never
-// display:none — xterm). A descendant's `visibility: visible` overrides every
-// hidden ancestor, so a transcript-pane rule that sets it renders its element in
-// whichever seat is on screen (t1282: head-only ticket previews leaked into
-// every other seat). Transcript rules un-hide with `inherit` instead.
+
 test('no transcript-pane rule sets visibility:visible (it escapes the hidden seat wrapper)', () => {
   const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
     .map(([, sel, body]) => ({ sel: sel.replace(/\/\*[\s\S]*?\*\//g, '').trim(), body }));
