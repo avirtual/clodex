@@ -6194,6 +6194,7 @@ body.web-frontend #sidebar-header {
   border: none;
   background: none;
   font-family: inherit;
+  line-height: inherit;
   text-align: left;
   cursor: pointer;
 }

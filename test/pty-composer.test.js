@@ -89,13 +89,13 @@ test('clipboardImages reads each clipboard image item into { mediaType, data } b
   assert.deepStrictEqual(await clipboardImages(undefined, FakeReader), []);
 });
 
-function pasteRig({ web, reply }) {
+function pasteRig({ web, reply, upload = null }) {
   const log = { uploads: [], toasts: [], writes: [], draft: '', paths: {}, prevented: 0, order: [] };
   let n = 0;
   const handler = ptyImagePasteHandler({
     isWeb: () => web,
     readImages: (items) => clipboardImages(items, FakeReader),
-    upload: async (images) => { log.uploads.push(images); return reply; },
+    upload: upload || (async (images) => { log.uploads.push(images); return reply; }),
     toast: (m) => log.toasts.push(m),
     nextImage: () => { n += 1; return n; },
     append: (added) => { log.order.push('append'); for (const a of added) { log.draft += a.chip; if (a.path) log.paths[a.n] = a.path; } },
@@ -117,6 +117,14 @@ test('ENTER: on the web a pasted image uploads once and appends [Image #1] mappe
   assert.deepStrictEqual(log.writes, []);
   assert.deepStrictEqual(log.toasts, []);
   assert.strictEqual(log.prevented, 1);
+});
+
+test('on the web a rejecting upload toasts once and the paste handler does not throw', async () => {
+  const { log, paste } = pasteRig({ web: true, upload: async () => { throw new Error('network down'); } });
+  await assert.doesNotReject(paste());
+  assert.deepStrictEqual(log.toasts, ['network down']);
+  assert.strictEqual(log.draft, '');
+  assert.deepStrictEqual(log.writes, []);
 });
 
 test('on the web an { ok:false } upload toasts the error and appends nothing', async () => {
@@ -146,5 +154,6 @@ test('the pty composer wires its paste listener through ptyImagePasteHandler and
   assert.match(m[1], /upload: \(images\) => window\.api\.seatImageUpload\(name, images\)/u);
   assert.match(m[1], /readImages: \(items\) => clipboardImages\(items, FileReader\)/u);
   assert.match(m[1], /if \(menuMirror\.on\(\)\) syncMenuMirror\(\);/u);
+  assert.match(m[1], /if \(path\) pastedImagePaths\[n\] = path;/u);
   assert.match(src, /ptyComposerWrites\(expandImageChips\(text, imagePaths\)\)/u);
 });

@@ -270,3 +270,31 @@ test('a seat moved to a peer leaves an archived row whose entry carries its effo
   assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.effort]), [['s', 'xhigh']]);
   assert.match(h.rows[0].className, /archived/);
 });
+
+test('a peer move that fails but respawns the seat here keeps its effort level on the rebuilt row', async () => {
+  const api = {};
+  const h = mkRenderer({ window: { api } });
+  api.moveSessionToPeer = async () => { h.rows.length = 0; return { ok: false, kept: true, respawned: true, type: 'claude', cwd: '/w', error: 'far refused' }; };
+  h.addSessionToSidebar('s', 'claude', '/w');
+  h.markSeatEffort('s', 'xhigh');
+  h.moveSessionToPeerWithDialog('s', 'p1', 'far', '/w');
+  await h.env.pendingPeerMove.get('s')('/far');
+  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.effort]), [['s', 'xhigh']]);
+  assert.doesNotMatch(h.rows[0].className, /failed|archived/);
+});
+
+test('a failed move that keeps the seat without respawning carries its effort level on the failed row, on either path', async () => {
+  const failed = { ok: false, kept: true, type: 'claude', cwd: '/w', error: 'boom' };
+  const api = { selectDirectory: async () => '/new', moveSession: async () => failed, moveSessionToPeer: async () => failed };
+  const dir = mkRenderer({ window: { api } });
+  dir.addSessionToSidebar('s', 'claude', '/w');
+  dir.markSeatEffort('s', 'xhigh');
+  await dir.moveSessionWithPicker('s');
+  const peer = mkRenderer({ window: { api } });
+  peer.addSessionToSidebar('s', 'claude', '/w');
+  peer.markSeatEffort('s', 'high');
+  peer.moveSessionToPeerWithDialog('s', 'p1', 'far', '/w');
+  await peer.env.pendingPeerMove.get('s')('/far');
+  assert.deepStrictEqual([dir, peer].map((h) => h.rows.map((r) => [r.dataset.name, r.dataset.effort, /failed/.test(r.className)])),
+    [[['s', 'xhigh', true]], [['s', 'high', true]]]);
+});
