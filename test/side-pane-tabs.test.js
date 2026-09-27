@@ -160,6 +160,20 @@ const ACTIONS = [
     after: { ids: ['a', 'b'], active: 'b', open: false },
   },
   {
+    name: 'the Files toggle reopens the closed pane on the kept active tab',
+    before: set([tab('a'), tab('b')], 'b', { open: false }),
+    action: { type: 'openPane' },
+    effect: 'revalidate',
+    after: { ids: ['a', 'b'], active: 'b', open: true },
+  },
+  {
+    name: 'the Files toggle on a seat with no tabs changes nothing',
+    before: emptyTabSet(),
+    action: { type: 'openPane' },
+    effect: null,
+    after: { ids: [], active: null, open: false },
+  },
+  {
     name: 'the next open after a pane close restores the kept tabs',
     before: set([tab('a'), tab('b')], 'b', { open: false }),
     action: { type: 'open', id: 'c', path: '/w/c', preview: true },
@@ -380,7 +394,7 @@ for (const row of [...ACTIONS, ...MATRIX]) {
 }
 
 test('side-pane tabs: the table covers every section 3.2 action and the section 3.3 matrix', () => {
-  assert.strictEqual(ACTIONS.length, 17);
+  assert.strictEqual(ACTIONS.length, 19);
   assert.strictEqual(MATRIX.length, 27);
   assert.strictEqual(SIDE_PANE_MAX_TABS, 12);
 });

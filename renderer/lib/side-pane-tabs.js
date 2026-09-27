@@ -143,6 +143,7 @@ function reduceTabs(set, a) {
     case 'view': return { set: patchTab(set, a.id, { view: a.view }), effect: null };
     case 'dirty': return { set: patchTab(set, a.id, { dirty: !!a.dirty }), effect: null };
     case 'closePane': return { set: { ...set, open: false }, effect: null };
+    case 'openPane': return set.tabs.length ? { set: { ...set, open: true }, effect: 'revalidate' } : { set, effect: null };
     case 'changed': return agentChanged(set, a);
     case 'loaded': return loaded(set, a);
     case 'saved': return { set: patchTab(set, a.id, { mtime: a.mtime, dirty: false, banner: false, deleted: false }), effect: null };
