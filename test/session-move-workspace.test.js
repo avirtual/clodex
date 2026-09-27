@@ -130,6 +130,7 @@ test('a live move rewrites both fields, tells the OLD window moved-out and the N
     voice: 'tap',
     cwd: '/work',
     label: 'My Seat',
+    effort: null,
     backend: 'pty',
     team: null,
     replay: 'buffered bytes',
@@ -144,12 +145,13 @@ test('a live move rewrites both fields, tells the OLD window moved-out and the N
 });
 
 test('the moved-in row carries the persisted config flags the restore loop stamps', () => {
-  const { m, windows } = mkFixture({ entries: [{ ...LIVE_ENTRY, noWire: true, fixFor: 'host' }] });
+  const { m, windows } = mkFixture({ entries: [{ ...LIVE_ENTRY, noWire: true, fixFor: 'host', effort: 'low' }] });
   seedLive(m, 'seat');
   m.moveToWorkspace('seat', 'ws2');
   const [, row] = windows.ws2.received[0];
   assert.strictEqual(row.noWire, true, 'wire-off is persisted config, not derived from the session');
   assert.strictEqual(row.fixFor, 'host');
+  assert.strictEqual(row.effort, 'low', 'the level the seat was spawned with rides the moved-in row');
 });
 
 test('after the move _sendToSession reaches the NEW window', () => {

@@ -5011,6 +5011,7 @@ function createSessionManager(deps) {
         pid: this._procPid(s),
         io: s.io || 'pty',
         voice: voiceModeOf(records.get(s.name)),
+        effort: records.get(s.name)?.effort || null,
         cwd: s.cwd,
         workspaceId: s.workspaceId,
         team: teamFor(s.cwd),

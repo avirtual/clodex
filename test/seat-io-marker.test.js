@@ -56,9 +56,11 @@ function mkRenderer() {
   const names = Object.keys(env);
   const body = [
     slice('const seatIoKind', '\n}\n'),
+    fnSrc('markSeatEffort'),
+    fnSrc('exitedRowSnapshot'), fnSrc('archivedRowEntry'),
     fnSrc('addSessionToSidebar'), fnSrc('addArchivedSessionToSidebar'),
     fnSrc('addFailedSessionToSidebar'), fnSrc('addExitedSessionToSidebar'),
-    'return { markSeatIo, addSessionToSidebar, addArchivedSessionToSidebar, addFailedSessionToSidebar, addExitedSessionToSidebar };',
+    'return { markSeatIo, markSeatEffort, exitedRowSnapshot, archivedRowEntry, addSessionToSidebar, addArchivedSessionToSidebar, addFailedSessionToSidebar, addExitedSessionToSidebar };',
   ].join('\n');
   const fns = new Function(...names, body)(...names.map((n) => env[n]));
   return { rows, env, ...fns };
@@ -174,4 +176,48 @@ test('a pty row renders a hovercard whose head carries data-io="pty" and names i
 test('the kind follows the backend segment on the hovercard where-line', () => {
   const html = hoverCard({ io: 'stream', backend: 'bedrock' });
   assert.strictEqual(whereLine(html), 'claude · bedrock · streamed');
+});
+
+test('markSeatEffort stamps the level on an existing row and removes it on null', () => {
+  const h = mkRenderer();
+  h.addSessionToSidebar('s', 'claude', '/w');
+  h.markSeatEffort('s', 'high');
+  assert.strictEqual(h.rows[0].dataset.effort, 'high');
+  h.markSeatEffort('s', null);
+  assert.strictEqual('effort' in h.rows[0].dataset, false);
+});
+
+for (const kind of ['Archived', 'Failed', 'Exited']) {
+  test(`${kind.toLowerCase()} rows carry the entry's effort, none when absent`, () => {
+    const h = mkRenderer();
+    h[`add${kind}SessionToSidebar`]({ name: 'a', type: 'claude', cwd: '/w', effort: 'max' });
+    h[`add${kind}SessionToSidebar`]({ name: 'b', type: 'claude', cwd: '/w' });
+    assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.effort]), [['a', 'max'], ['b', undefined]]);
+  });
+}
+
+test('the hovercard of an agent row shows the effort level it was spawned with', () => {
+  const html = hoverCard({ type: 'claude', effort: 'xhigh' });
+  assert.ok(html.includes('<div class="hc-row"><span class="hc-k">effort</span><span class="hc-v">xhigh</span></div>'), html);
+});
+
+test('the hovercard of an agent row with no recorded level shows effort default', () => {
+  const html = hoverCard({ type: 'claude' });
+  assert.ok(html.includes('<div class="hc-row"><span class="hc-k">effort</span><span class="hc-v">default</span></div>'), html);
+});
+
+test('the hovercard of a bash row has no effort row', () => {
+  const html = hoverCard({ type: 'bash' });
+  assert.doesNotMatch(html, /<span class="hc-k">effort<\/span>/);
+});
+
+test('a seat that exits or is archived mid-session keeps its effort level on the rebuilt entry', () => {
+  const h = mkRenderer();
+  h.addSessionToSidebar('s', 'claude', '/w');
+  h.markSeatEffort('s', 'xhigh');
+  assert.strictEqual(h.exitedRowSnapshot('s', 1, {}).effort, 'xhigh');
+  assert.strictEqual(h.archivedRowEntry('s', h.rows[0]).effort, 'xhigh');
+  h.markSeatEffort('s', null);
+  assert.strictEqual(h.exitedRowSnapshot('s', 1, {}).effort, null);
+  assert.strictEqual(h.archivedRowEntry('s', h.rows[0]).effort, null);
 });

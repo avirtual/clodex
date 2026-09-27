@@ -238,6 +238,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     alert: rec('alert'),
     showToast: rec('showToast'),
     markSeatIo: rec('markSeatIo'),
+    markSeatEffort: rec('markSeatEffort'),
     createTerminal: rec('createTerminal'),
     addSessionToSidebar: rec('addSessionToSidebar'),
     switchSession: rec('switchSession'),
@@ -304,14 +305,15 @@ for (const row of [
 test('clicking the exited row resumes through retrySpawnSession and mounts the seat', async () => {
   const retried = [];
   const h = mkRenderer({ api: { retrySpawnSession: async (n) => { retried.push(n); return { ok: true, io: 'stream' }; } } });
-  h.liveRow('cx', { type: 'codex', cwd: '/w/c', team: 'T' });
+  h.liveRow('cx', { type: 'codex', cwd: '/w/c', team: 'T', effort: 'high' });
   h.env.exitHandler('cx', 0, { expected: false, signal: null, agentType: 'codex' });
   h.calls.length = 0;
   await h.rows[0].listeners.click({ target: { closest: () => null } });
   assert.deepStrictEqual(retried, ['cx']);
   assert.deepStrictEqual(h.rows, [], 'the exited row is replaced');
   assert.deepStrictEqual(h.calls.map((c) => c[0]),
-    ['markSeatIo', 'createTerminal', 'addSessionToSidebar', 'switchSession', 'refreshSidebarView']);
+    ['markSeatIo', 'createTerminal', 'addSessionToSidebar', 'markSeatEffort', 'switchSession', 'refreshSidebarView']);
+  assert.deepStrictEqual(h.calls[3], ['markSeatEffort', 'cx', 'high']);
   assert.deepStrictEqual(h.calls[0], ['markSeatIo', 'cx', 'stream']);
   assert.deepStrictEqual(h.calls[2], ['addSessionToSidebar', 'cx', 'codex', '/w/c', null, null, 'T', false]);
 });

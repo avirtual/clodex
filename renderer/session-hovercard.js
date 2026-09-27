@@ -5,8 +5,7 @@
 // so it cannot overlap or outlive a dialog or popover opening (popovers ride
 // z-index 200/300; the card stays below even the 50-tier panels at 49).
 //
-// Content is read fresh from the hovered row's datasets (name/type/cwd/
-// failed/error/attention/attentionMsg/remoteControl) plus the same live maps
+// Content is read fresh from the hovered row's datasets plus the same live maps
 // the badges paint from (proxyState / ctxPct / ctxTokens), re-rendered every
 // second while visible so the warmth countdown ticks. A row removed from the
 // DOM mid-hover hides the card on the next tick.
@@ -15,6 +14,7 @@ const { esc, fmtCountdown, fmtTokens } = require('./lib/format');
 const { turnLine, reqLine, costLine } = require('./lib/turn-stat');
 
 const IO_KINDS = { stream: 'streamed', pty: 'terminal' };
+const AGENT_TYPES = new Set(['claude', 'codex', 'muse']);
 
 function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, proxyPollMs, typeGlyph }) {
   const HOVER_DELAY_MS = 350;
@@ -109,6 +109,7 @@ function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, prox
     if (warm) rows.push(statRow('cache', esc(warm.text), ` data-state="${warm.state}"`));
     const ctx = contextText(name, p && p.linked ? p : null);
     if (ctx) rows.push(statRow('context', esc(ctx)));
+    if (AGENT_TYPES.has(type)) rows.push(statRow('effort', esc(item.dataset.effort || 'default')));
     if (p && p.linked) {
       if (p.model) rows.push(statRow('model', esc(p.model)));
       const cl = costLine(p);

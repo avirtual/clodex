@@ -13,7 +13,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { restoreSessionsForWorkspace } = require('../session-restore');
+const { restoreSessionsForWorkspace, stampConfigFlags } = require('../session-restore');
 
 // A persistence fake that records every method touched, so a test can assert the
 // failure path never mutates the store (only listForWorkspace is legitimate here).
@@ -338,4 +338,29 @@ test('each restored row carries its seat voice mode, tap when the record has non
   ]);
   const out = await restoreSessionsForWorkspace({ workspaceId: 'ws1', persistence, manager, ...noopDeps });
   assert.deepStrictEqual(out.map((e) => [e.name, e.voice]), [['run', 'tap'], ['off', 'off'], ['plain', 'tap']]);
+});
+
+test('each restored row carries the effort level its record was spawned with, null on a live row without one', async () => {
+  const manager = {
+    sessions: new Map([
+      ['run', { backend: null, pendingOutput: '' }],
+      ['plain', { backend: null, pendingOutput: '' }],
+    ]),
+    async create(name) { manager.sessions.set(name, { backend: null }); return { name }; },
+    resumeCwdOf: (e) => e.cwd,
+    pendingCountFor: () => 0,
+    teamNameFor: () => null,
+  };
+  const persistence = fakePersistence([
+    { name: 'run', type: 'claude', cwd: '/w/r', effort: 'low' },
+    { name: 'plain', type: 'claude', cwd: '/w/p' },
+    { name: 'arch', type: 'codex', cwd: '/w/a', effort: 'high', archivedAt: 1 },
+  ]);
+  const out = await restoreSessionsForWorkspace({ workspaceId: 'ws1', persistence, manager, ...noopDeps });
+  assert.deepStrictEqual(out.map((e) => [e.name, e.effort]), [['run', 'low'], ['plain', null], ['arch', 'high']]);
+});
+
+test('stampConfigFlags copies the entry effort onto the row', () => {
+  assert.strictEqual(stampConfigFlags({}, { effort: 'medium' }).effort, 'medium');
+  assert.strictEqual('effort' in stampConfigFlags({}, {}), false);
 });

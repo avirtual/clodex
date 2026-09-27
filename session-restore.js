@@ -60,6 +60,7 @@ function liveSnapshotFor({ manager, entry, session, readCtxFor, proxyPoller }) {
     type: entry.type,
     cwd: entry.cwd,
     label: entry.label || null,
+    effort: typeof entry.effort === 'string' && entry.effort ? entry.effort : null,
     backend: session.backend || null,
     team: manager.teamNameFor(entry.cwd),
     replay,
@@ -79,6 +80,7 @@ function liveSnapshotFor({ manager, entry, session, readCtxFor, proxyPoller }) {
 function stampConfigFlags(row, entry) {
   if (entry.noWire === true) row.noWire = true;
   if (entry.io === 'stream') row.io = 'stream';
+  if (typeof entry.effort === 'string' && entry.effort) row.effort = entry.effort;
   row.voice = voiceModeOf(entry);
   if (typeof entry.fixFor === 'string' && entry.fixFor) row.fixFor = entry.fixFor;
   return row;
