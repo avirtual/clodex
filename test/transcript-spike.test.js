@@ -129,7 +129,7 @@ const RUN = [
   rec({ type: 'assistant', message: { content: [{ type: 'text', text: 'Running.' }, { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'npm test' } }] } }),
 ];
 function sourceFixture(t, text) {
-  const root = mkTmpRoot('clodex-tsrc-');
+  const root = mkTmpRoot('clodex-tspike-');
   const file = path.join(root, 'session.jsonl');
   const link = path.join(root, 'transcript.jsonl');
   fs.writeFileSync(file, text);
