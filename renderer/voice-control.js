@@ -1,6 +1,3 @@
-// voice-control.js — the voice-mode state machine and the
-// Preferences selector over it.
-
 const VOICE_ITEMS = [
   { mode: 'off', name: 'Off', desc: 'No voice input on this seat' },
   { mode: 'tap', name: 'On', desc: 'Press space on an empty prompt to dictate; say the trigger word to send' },
@@ -97,9 +94,6 @@ function createVoiceCore({ showToast, getSeat = () => null }) {
     return true;
   }
 
-  // REFCOUNTED because the two surfaces have different lifetimes: Preferences
-  // holds only while its dialog is open, the bar holds for the life of the
-  // window.
   function start() {
     holds++;
     if (holds === 1 && !pollTimer) pollTimer = setInterval(refresh, POLL_MS);
@@ -135,47 +129,4 @@ function createVoiceCore({ showToast, getSeat = () => null }) {
   };
 }
 
-// The Preferences surface: a <select> plus a state line, over the shared core.
-function createVoiceControl({ core }) {
-  const sel = document.getElementById('prefs-voice-mode');
-  const stateEl = document.getElementById('prefs-voice-state');
-  // The same SHAPE as the real return below: a method present on one branch and
-  // missing on the other gets a TypeError only on the markup-missing path, which
-  // is the one nobody exercises.
-  if (!sel || !stateEl) return { start() {}, stop() {} };
-
-  function paint(snap) {
-    const { pending, mode, force } = snap;
-    // Never move the selection out from under an open/keyboard-driven picker:
-    // the 15s poll and a window-focus refresh fire this on their own schedule,
-    // and rewriting `value` mid-interaction would drag the operator's
-    // highlighted option elsewhere.
-    if (force || document.activeElement !== sel) {
-      sel.value = core.isMode(mode) ? mode : '';
-    }
-    if (pending) {
-      stateEl.textContent = `Switching to ${pending}…`;
-    } else if (!core.isMode(mode)) {
-      stateEl.textContent = 'No seat is focused — open a seat to set its voice mode.';
-    } else {
-      stateEl.textContent = '';
-    }
-  }
-
-  core.subscribe(paint);
-
-  sel.addEventListener('change', () => { core.choose(sel.value); });
-
-  sel.addEventListener('blur', () => core.repaint());
-
-  // start/stop ONLY. `refresh` and `render` were exported here with no caller in
-  // renderer.js; `render`'s `(force)` parameter was the r4 shape itself, a
-  // parameterised function sitting ready for a by-name registration to hand it
-  // an Event as `force`. Painting is driven by the core's subscription above.
-  return {
-    start: () => core.start(),
-    stop: () => core.stop(),
-  };
-}
-
-module.exports = { createVoiceCore, createVoiceControl, VOICE_ITEMS };
+module.exports = { createVoiceCore, VOICE_ITEMS };

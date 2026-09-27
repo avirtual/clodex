@@ -11,8 +11,6 @@
 //
 // NO jsdom, and none is needed: t517 extracted `createVoiceCore`, which never
 // touches `document`. Its whole environment is the one `window` stub below.
-// What that leaves untested is deliberate: everything `document`-bound lives in
-// `createVoiceControl`.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -136,15 +134,13 @@ test('a pick is accepted, shown as pending, and the debounced write goes out', a
   } finally { h.restore(); }
 });
 
-test('operator picks "Not set": nothing is written, but the repaint is FORCED', async () => {
+test('choosing no mode writes nothing, but the repaint is FORCED', async () => {
   const h = harness({ voice: fileSays('tap') });
   try {
     await h.core.refresh();
-    assert.strictEqual(h.core.choose(''), false, '"Not set" is a reading, not a mode');
+    assert.strictEqual(h.core.choose(''), false, 'an empty pick is not a mode');
     // `force` is the field that matters here: it is what lets the surface repaint
     // out of a selection the core refused, even while the picker holds focus.
-    // Without it the row keeps showing "Not set" beneath a line saying the value
-    // came from the file — the r2 defect, in the shape reachable from the picker.
     assert.deepStrictEqual(h.last(), {
       state: fileSays('tap'), pending: null, mode: 'tap', capable: true, cause: null, force: true,
     });

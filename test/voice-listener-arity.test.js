@@ -149,8 +149,6 @@ test('the voice island registers no DOM listener that accepts a parameter', () =
       'renderer/popovers/voice-popover.js addEventListener(click)',   // close button
       'renderer/popovers/voice-popover.js addEventListener(keydown)', // Escape dismiss
       'renderer/popovers/voice-popover.js addEventListener(mousedown)', // outside-click dismiss
-      'renderer/voice-control.js addEventListener(blur)',             // picker blur repaint
-      'renderer/voice-control.js addEventListener(change)',           // Preferences pick
       'renderer/voice-control.js addEventListener(focus)',            // window refocus refresh
     ],
     'the voice island\'s DOM registrations — add or remove one on purpose, and say which here',

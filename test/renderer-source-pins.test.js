@@ -58,7 +58,7 @@ test('session:retrySpawn returns the seat io, so a row built without one is stil
 });
 
 test('the stream seat pane mounts its permission cards before the composer and renders them from every pull', () => {
-  const pane = SRC.match(/function createStreamSeatPane\(name, wrapperEl\) \{[\s\S]*?\n\}\n/);
+  const pane = SRC.match(/function createStreamSeatPane\(name, wrapperEl, seat\) \{[\s\S]*?\n\}\n/);
   assert.ok(pane, 'ENTER: createStreamSeatPane is still found by this anchor');
   const src = pane[0];
   const permAt = src.indexOf('wrapperEl.appendChild(permEl);');
@@ -72,7 +72,7 @@ test('the stream seat pane mounts its permission cards before the composer and r
 });
 
 test('t1199: Escape in the stream composer interrupts the seat before any other key handling, and the turn state drives the placeholder', () => {
-  const pane = SRC.match(/function createStreamSeatPane\(name, wrapperEl\) \{[\s\S]*?\n\}\n/);
+  const pane = SRC.match(/function createStreamSeatPane\(name, wrapperEl, seat\) \{[\s\S]*?\n\}\n/);
   assert.ok(pane, 'ENTER: createStreamSeatPane is still found by this anchor');
   const src = pane[0];
   const kit = SRC.match(/function attachComposer\(composer, \{[^\n]*\) \{[\s\S]*?\n\}\n/);
@@ -100,4 +100,14 @@ test('the activity and attention feeds both forward the seat state to the stream
   assert.ok(attn.includes("const activity = attn ? 'attention' : (el && el.dataset.activity) || 'idle';"));
   assert.ok(attn.indexOf('forwardSeatActivity(sessions.get(name), activity,') >= 0 && attn.indexOf('forwardSeatActivity') < attn.indexOf('if (!el) return;'), 'a prompt forwards attention to the seat');
   assert.ok(SRC.includes("return row.dataset.attention ? 'attention' : row.dataset.activity || 'idle';"), 'a mount prefers attention over activity');
+});
+
+test('createTerminal gives every local pty seat its per-seat view without reading the sidebar row, which is added after it', () => {
+  const body = SRC.match(/\nfunction createTerminal\(name, peer = null\) \{[\s\S]*?\n\}\n/);
+  assert.ok(body, 'ENTER: createTerminal is still found by this anchor');
+  const src = body[0];
+  assert.ok(src.includes('  const agentSeat = !peer;\n'), 'agentSeat is decided from the peer alone');
+  assert.ok(src.includes("  const seat = agentSeat ? createSeatView(initialViewFor(name)) : {};\n"));
+  assert.ok(!/const agentSeat = [^\n]*sessionTypeOf\(/.test(src), 'no eager sessionTypeOf for agentSeat');
+  assert.ok(src.includes("if (seat.view === 'terminal' && liveSplit) liveSplit.setRaw(true);"));
 });

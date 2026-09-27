@@ -11,6 +11,7 @@ const { OUTPUT_LINE_CAP } = require('../renderer/transcript-rows');
 const { fakeDocument, textOf } = require('./lib/fake-dom');
 const { fakeLine } = require('./lib/fake-cells');
 const { createMenuMirror } = require('../renderer/lib/menu-mirror');
+const { createSeatView, seatViewDeps, toggleSeatTerminal } = require('../renderer/lib/seat-view');
 
 function fakeDoc() {
   return fakeDocument();
@@ -218,6 +219,15 @@ function fakeTermElement(rows) {
 const HEAD = { id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' };
 const recordsAt = (rev) => [HEAD, { id: 't1', kind: 'tool', ts: null, turn: 1, name: 'Bash', arg: 'make', state: rev > 1 ? 'ok' : 'pending', sum: rev > 1 ? { exit: 0, lines: rev, interrupted: false, background: false, persisted: null, only: null } : null }];
 
+function findByClass(nodes, cls) {
+  for (const n of nodes) {
+    if (String(n.className || '').split(' ').includes(cls)) return n;
+    const hit = findByClass(n.childNodes || [], cls);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 function mountView(extra = {}, { parser = true, geometry = false } = {}) {
   const prevDoc = global.document;
   const prevStyle = global.getComputedStyle;
@@ -252,7 +262,7 @@ function mountView(extra = {}, { parser = true, geometry = false } = {}) {
   let rev = 0;
   const classes = new Set();
   const appended = [];
-  const wrapper = { appendChild: (c) => appended.push(c), clientHeight: WRAPPER_PX, classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c), contains: (c) => classes.has(c) } };
+  const wrapper = { appendChild: (c) => appended.push(c), querySelector: (sel) => findByClass(appended, sel.slice(1)), style: {}, clientHeight: WRAPPER_PX, classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c), contains: (c) => classes.has(c) } };
   const view = createLiveSplitView(terminal, wrapper, {
     isEligible: () => true,
     pullTranscript: () => { calls.pull += 1; rev += 1; return { ok: true, rev, records: recordsAt(rev) }; },
@@ -262,7 +272,7 @@ function mountView(extra = {}, { parser = true, geometry = false } = {}) {
     ...extra,
   });
   return {
-    view, calls, csi, pane, terminal, wrapper, appended,
+    view, calls, csi, pane, terminal, wrapper, wrapperEl: wrapper, appended,
     show: (rows, cells = []) => { screen.length = 0; screen.push(...rows); screenCells.length = 0; screenCells.push(...cells); },
     scroll: () => scrolls.forEach((cb) => cb()),
     write: () => writes.forEach((cb) => cb()),
@@ -572,7 +582,7 @@ test('the pane leads with a Conversation / Internals mode control that stays fir
     await settle();
     const [bar, turn] = m.pane.childNodes;
     assert.strictEqual(bar.className, 'transcript-bar');
-    const control = bar.childNodes[0];
+    const control = bar.childNodes[1].childNodes[0];
     assert.strictEqual(control.className, 'transcript-mode');
     const [conv, internals] = control.childNodes;
     const pressed = () => control.childNodes.map((b) => [b.tag, b.type, b.textContent, b.getAttribute('aria-pressed')]);
@@ -665,7 +675,7 @@ test('a composer in split hides the whole terminal, shows the composer and sizes
   } finally { m.view.dispose(); m.restore(); }
 });
 
-test('a composer in full stays hidden and the terminal visible', async () => {
+test('a composer in raw stays hidden, the terminal visible and the pane down to its bar', async () => {
   const composerEl = fakeComposer();
   const m = await mountSplit({ geometry: true }, { composerEl });
   try {
@@ -674,7 +684,7 @@ test('a composer in full stays hidden and the terminal visible', async () => {
     assert.strictEqual(composerEl.hidden, true);
     assert.strictEqual(m.terminal.element.style.visibility, '');
     assert.strictEqual(m.view.composerVisible(), false);
-    assert.strictEqual(m.pane.hidden, true);
+    assert.deepStrictEqual([m.pane.hidden, m.pane.dataset.raw], [false, '1']);
   } finally { m.view.dispose(); m.restore(); }
 });
 
@@ -819,12 +829,12 @@ test('entering the sheet from split hands composer focus to the terminal; return
   } finally { m.view.dispose(); m.restore(); }
 });
 
-test('raw wins over the sheet: the whole terminal shows and the pane hides', async () => {
+test('raw wins over the sheet: the whole terminal shows and the pane is down to its bar', async () => {
   const m = await mountSheet(PICKER);
   try {
     assert.strictEqual(m.wrapper.classList.contains('live-sheet'), true);
     m.view.setRaw(true);
-    assert.strictEqual(m.pane.hidden, true);
+    assert.deepStrictEqual([m.pane.hidden, m.pane.dataset.raw], [false, '1']);
     assert.strictEqual(m.wrapper.classList.contains('live-sheet'), false);
     assert.deepStrictEqual([m.terminal.element.style.transform, m.terminal.element.style.clipPath], ['', '']);
   } finally { m.view.dispose(); m.restore(); }
@@ -1304,15 +1314,20 @@ test('a picker that hides the composer clears the pending tag, so a later block 
   } finally { m.done(); }
 });
 
-test('the transcript bar renders exactly the Conversation and Internals buttons; Conversation reports through onMode and hides the tool block; refresh follows the mode getter', async () => {
+test('the transcript bar renders the chips slot, then Conversation, Internals, ? and Terminal; Conversation reports through onMode and hides the tool block; refresh follows the mode getter', async () => {
   let current = 'internals';
   const reported = [];
-  const m = await mountSplit(undefined, { mode: () => current, onMode: (next) => reported.push(next) });
+  const m = await mountSplit(undefined, { mode: () => current, onMode: (next) => reported.push(next), onHelp: () => {} });
   try {
     const bar = m.pane.childNodes.find((n) => n.className === 'transcript-bar');
-    assert.strictEqual(bar.childNodes.length, 1);
-    const [conv, internals] = bar.childNodes[0].childNodes;
-    assert.deepStrictEqual(bar.childNodes[0].childNodes.map((b) => textOf(b)), ['Conversation', 'Internals']);
+    assert.deepStrictEqual(bar.childNodes.map((n) => n.className), ['transcript-bar-chips', 'transcript-bar-views']);
+    const views = bar.childNodes[1];
+    assert.deepStrictEqual(views.childNodes.map((n) => [n.className, textOf(n), n.title]), [
+      ['transcript-mode', 'ConversationInternals', ''],
+      ['transcript-help-btn', '?', 'Clodex at a glance'],
+      ['transcript-mode-btn transcript-terminal-btn', 'Terminal', 'Show the CLI\'s own screen (⌘⇧T)'],
+    ]);
+    const [conv, internals] = views.childNodes[0].childNodes;
     const block = () => m.pane.childNodes.find((n) => /\btr-turn\b/.test(n.className)).childNodes.find((n) => /\btr-tool-block\b/.test(n.className));
     assert.ok(!/\btr-hidden\b/.test(block().className));
     conv.listeners.click();
@@ -1331,10 +1346,10 @@ test('the transcript bar renders exactly the Conversation and Internals buttons;
 });
 
 const STATUS_DIR = path.join(__dirname, 'fixtures', 'status-states');
-const STATUS_PX = 22;
-const STATUS_CURSOR = { 'claude-bypass@100': 6, 'claude-shell@100': 16, 'codex-plan@100': 13, 'muse-auto-review@100': 7 };
+const STATUS_CURSOR = { 'claude-bypass@100': 6, 'claude-shell@100': 16, 'codex-plan@100': 13, 'codex-default@100': 13, 'muse-auto-review@100': 7 };
 const statusRowsOf = (name) => fs.readFileSync(path.join(STATUS_DIR, `${name}.screen.txt`), 'utf8').replace(/\n$/, '').split('\n');
-const stripOf = (m) => m.appended.find((el) => el.className === 'seat-status-strip');
+const barOf = (m) => m.pane.childNodes.find((n) => n.className === 'transcript-bar');
+const stripOf = (m) => barOf(m).childNodes.find((n) => n.className === 'transcript-bar-chips');
 const chips = (m) => stripOf(m).childNodes.map((c) => [c.tagName || c.tag, c.dataset.chip, textOf(c)]);
 const chipOf = (m, kind) => stripOf(m).childNodes.find((c) => c.dataset.chip === kind);
 const fakeEvent = () => { const e = { prevented: 0 }; e.preventDefault = () => { e.prevented += 1; }; return e; };
@@ -1350,7 +1365,6 @@ function mountStatus(name, platform, { effort = null, posture = null, ...extra }
   m.terminal.buffer.active.cursorY = STATUS_CURSOR[name];
   m.show(rows);
   const strip = stripOf(m);
-  strip.offsetHeight = STATUS_PX;
   strip.contains = (el) => strip.childNodes.includes(el);
   const enter = async () => {
     m.write();
@@ -1362,24 +1376,28 @@ function mountStatus(name, platform, { effort = null, posture = null, ...extra }
   return { ...m, rows, writes, box, composerEl, strip, enter, advance: (ms) => { t += ms; } };
 }
 
-test('a status strip is appended hidden at construction and marks the wrapper', () => {
+test('the chips slot sits first in the transcript bar, hidden at construction, and no status strip row exists under the composer', () => {
   const m = mountStatus('claude-bypass@100', 'claude');
   try {
     assert.strictEqual(stripOf(m).hidden, true);
-    assert.strictEqual(m.wrapper.classList.contains('has-status-strip'), true);
+    assert.strictEqual(barOf(m).childNodes[0], stripOf(m));
+    assert.strictEqual(m.wrapperEl.querySelector('.seat-status-strip'), null);
+    assert.strictEqual(m.wrapperEl.querySelector('.transcript-bar-chips'), stripOf(m));
   } finally { m.view.dispose(); m.restore(); }
 });
 
-test('the status strip shows in split and the pane sizes above the composer and the strip', async () => {
+test('the chips render inside .transcript-bar-chips in split and the pane sizes above the composer alone', async () => {
   const m = mountStatus('claude-bypass@100', 'claude');
   try {
     await m.enter();
     assert.strictEqual(stripOf(m).hidden, false);
-    assert.strictEqual(m.pane.clientHeight, WRAPPER_PX - COMPOSER_PX - STATUS_PX);
+    assert.deepStrictEqual(stripOf(m).childNodes.map((c) => c.dataset.chip), ['mode']);
+    assert.strictEqual(m.wrapperEl.querySelector('.seat-status-strip'), null);
+    assert.strictEqual(m.pane.clientHeight, WRAPPER_PX - COMPOSER_PX);
   } finally { m.view.dispose(); m.restore(); }
 });
 
-test('raw hides the status strip with the composer', async () => {
+test('raw hides the chips with the composer', async () => {
   const m = mountStatus('claude-bypass@100', 'claude');
   try {
     await m.enter();
@@ -1430,58 +1448,36 @@ test('an effort level of null or default renders no effort chip', async () => {
   } finally { m.view.dispose(); m.restore(); }
 });
 
-test('a codex bypass seat shows a danger Bypass posture chip right after the mode chip', async () => {
-  const m = mountStatus('codex-plan@100', 'codex', { posture: 'bypass' });
-  try {
-    await m.enter();
-    assert.deepStrictEqual(chips(m).slice(0, 2).map((c) => c[1]), ['mode', 'posture']);
-    const chip = chipOf(m, 'posture');
-    assert.deepStrictEqual([chip.tagName || chip.tag, textOf(chip), chip.dataset.tone], ['span', 'Bypass', 'danger']);
-  } finally { m.view.dispose(); m.restore(); }
-});
+const CODEX_APPROVALS = (posture) => `Approvals: ${posture}, set at launch. Collaboration mode — click to toggle Plan (shift+tab in the terminal)`;
+const FOLDED = [
+  { platform: 'codex', posture: 'bypass', screen: 'codex-plan@100', chips: [['mode', 'Bypass · Plan'], ['warnings', '⚠ 3']], tone: 'danger', title: CODEX_APPROVALS('Bypass') },
+  { platform: 'codex', posture: 'bypass', screen: 'codex-default@100', chips: [['mode', 'Bypass'], ['warnings', '⚠ 3']], tone: 'danger', title: CODEX_APPROVALS('Bypass') },
+  { platform: 'codex', posture: 'read-only', screen: 'codex-plan@100', chips: [['mode', 'Read-only · Plan'], ['warnings', '⚠ 3']], tone: 'info', title: CODEX_APPROVALS('Read-only') },
+  { platform: 'codex', posture: null, screen: 'codex-default@100', chips: [['mode', 'Default'], ['warnings', '⚠ 3']], tone: 'muted', title: 'Collaboration mode — click to toggle Plan (shift+tab in the terminal)' },
+  { platform: 'claude', posture: 'bypass', screen: 'claude-bypass@100', chips: [['mode', 'Bypass']], tone: 'danger', title: 'Permission mode — click to cycle (shift+tab in the terminal)' },
+  { platform: 'muse', posture: 'bypass', screen: 'muse-auto-review@100', chips: [['mode', 'Auto-review']], tone: 'muted', title: 'Approval posture (set at launch)' },
+];
+const kindText = (m) => stripOf(m).childNodes.map((c) => [c.dataset.chip, textOf(c)]);
 
-test('a codex read-only seat shows an info Read-only posture chip', async () => {
-  const m = mountStatus('codex-plan@100', 'codex', { posture: 'read-only' });
-  try {
-    await m.enter();
-    const chip = chipOf(m, 'posture');
-    assert.deepStrictEqual([textOf(chip), chip.dataset.tone], ['Read-only', 'info']);
-  } finally { m.view.dispose(); m.restore(); }
-});
+for (const c of FOLDED) {
+  test(`(${c.platform}, posture ${c.posture}, ${c.screen}) renders exactly ${JSON.stringify(c.chips)}`, async () => {
+    const m = mountStatus(c.screen, c.platform, { posture: c.posture });
+    try {
+      await m.enter();
+      assert.deepStrictEqual(kindText(m), c.chips);
+      assert.deepStrictEqual([chipOf(m, 'mode').dataset.tone, chipOf(m, 'mode').title], [c.tone, c.title]);
+    } finally { m.view.dispose(); m.restore(); }
+  });
+}
 
-test('a codex seat with no posture shows no posture chip', async () => {
+test('refreshStatus folds the posture into the mode chip once it arrives, without a pty write', async () => {
   const m = mountStatus('codex-plan@100', 'codex');
   try {
     await m.enter();
-    assert.strictEqual(chipOf(m, 'posture'), undefined);
-  } finally { m.view.dispose(); m.restore(); }
-});
-
-test('a claude bypass seat shows no posture chip because its mode chip already reads Bypass', async () => {
-  const m = mountStatus('claude-bypass@100', 'claude', { posture: 'bypass' });
-  try {
-    await m.enter();
-    assert.strictEqual(chipOf(m, 'posture'), undefined);
-    assert.strictEqual(textOf(chipOf(m, 'mode')), 'Bypass');
-  } finally { m.view.dispose(); m.restore(); }
-});
-
-test('a muse bypass seat shows no posture chip', async () => {
-  const m = mountStatus('muse-auto-review@100', 'muse', { posture: 'bypass' });
-  try {
-    await m.enter();
-    assert.strictEqual(chipOf(m, 'posture'), undefined);
-  } finally { m.view.dispose(); m.restore(); }
-});
-
-test('refreshStatus adds the posture chip once the posture arrives, without a pty write', async () => {
-  const m = mountStatus('codex-plan@100', 'codex');
-  try {
-    await m.enter();
-    assert.strictEqual(chipOf(m, 'posture'), undefined);
+    assert.deepStrictEqual(kindText(m), [['mode', 'Plan'], ['warnings', '⚠ 3']]);
     m.box.posture = 'bypass';
     m.view.refreshStatus();
-    assert.strictEqual(textOf(chipOf(m, 'posture')), 'Bypass');
+    assert.deepStrictEqual(kindText(m), [['mode', 'Bypass · Plan'], ['warnings', '⚠ 3']]);
     assert.deepStrictEqual(m.writes, []);
   } finally { m.view.dispose(); m.restore(); }
 });
@@ -1515,7 +1511,7 @@ test('the mode chip title follows the platform, not the label casing', () => {
     renderStatusChips(fakeDoc(), el, read, null, () => {}, platform);
     return el.childNodes[0].title;
   };
-  assert.strictEqual(titleFor('codex'), 'Collaboration mode — click to toggle (shift+tab in the terminal)');
+  assert.strictEqual(titleFor('codex'), 'Collaboration mode — click to toggle Plan (shift+tab in the terminal)');
   assert.strictEqual(titleFor('claude'), 'Permission mode — click to cycle (shift+tab in the terminal)');
 });
 
@@ -1673,32 +1669,28 @@ test('hiding the strip leaves focus outside the composer and the strip where it 
   } finally { m.view.dispose(); m.restore(); }
 });
 
-test('the slash list sits above the composer and the status strip', async () => {
+test('the slash list sits above the composer', async () => {
   const m = await mountMenu('claude-one-char@100', 'claude', { statusChips: { write: () => {}, effort: () => null } });
   try {
-    stripOf(m).offsetHeight = STATUS_PX;
     m.menuMirror.draft('/c');
     await m.enter();
     assert.strictEqual(m.menuMirror.on(), true);
     assert.strictEqual(m.menuEl.hidden, false);
     assert.strictEqual(itemsOf(m.menuEl).length, 14);
-    assert.strictEqual(m.menuEl.style.bottom, `${COMPOSER_PX + STATUS_PX + 8}px`);
+    assert.strictEqual(m.menuEl.style.bottom, `${COMPOSER_PX + 8}px`);
   } finally { m.view.dispose(); m.restore(); }
 });
 
-test('dispose removes the status strip and the wrapper class, and a later refreshStatus renders nothing', async () => {
+test('dispose removes the pane that holds the chips, and a later refreshStatus renders nothing', async () => {
   const m = mountStatus('claude-bypass@100', 'claude', { effort: 'high' });
   try {
     await m.enter();
-    const strip = stripOf(m);
-    assert.ok(strip);
-    assert.strictEqual(m.wrapper.classList.contains('has-status-strip'), true);
+    assert.ok(stripOf(m));
     let removed = 0;
-    strip.remove = () => { removed += 1; };
+    m.pane.remove = () => { removed += 1; };
     const before = chips(m);
     m.view.dispose();
     assert.strictEqual(removed, 1);
-    assert.strictEqual(m.wrapper.classList.contains('has-status-strip'), false);
     m.box.level = 'xhigh';
     m.view.refreshStatus();
     assert.deepStrictEqual(chips(m), before);
@@ -1717,3 +1709,80 @@ for (const [label, title] of [
     assert.strictEqual(btn.title, title);
   });
 }
+
+const viewsOf = (m) => barOf(m).childNodes[1];
+const modeButtons = (m) => viewsOf(m).childNodes[0].childNodes;
+const terminalButton = (m) => viewsOf(m).childNodes.find((n) => /\btranscript-terminal-btn\b/.test(n.className));
+const pressed = (m) => [...modeButtons(m), terminalButton(m)].map((b) => b.getAttribute('aria-pressed'));
+
+test('the bar Terminal toggle turns raw on, keeps the bar showing over an inset terminal, stops the pull, and turns it off again', async () => {
+  const m = await mountSplit({ geometry: true });
+  try {
+    m.pane.offsetTop = 4;
+    m.pane.offsetHeight = 24;
+    const pulls = m.calls.pull;
+    terminalButton(m).listeners.click();
+    assert.strictEqual(m.view.raw(), true);
+    assert.deepStrictEqual(pressed(m), ['false', 'false', 'true']);
+    assert.deepStrictEqual([m.pane.hidden, m.pane.dataset.raw, m.wrapper.classList.contains('live-raw'), m.wrapper.style.paddingTop], [false, '1', true, '28px']);
+    m.write();
+    m.change('s1');
+    await settle();
+    assert.strictEqual(m.calls.pull, pulls);
+    terminalButton(m).listeners.click();
+    assert.strictEqual(m.view.raw(), false);
+    assert.deepStrictEqual([m.pane.dataset.raw, m.wrapper.classList.contains('live-raw'), m.wrapper.style.paddingTop], [undefined, false, '']);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a seat put in Terminal before its first write never pulls the transcript', async () => {
+  const m = mountView({}, { geometry: true });
+  try {
+    m.view.setRaw(true);
+    m.show(ANCHORED);
+    m.write();
+    m.change('s1');
+    await settle();
+    assert.strictEqual(m.calls.pull, 0);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+async function mountSeat(view) {
+  const entry = createSeatView(view);
+  const m = await mountSplit(undefined, seatViewDeps(entry));
+  entry.liveSplit = m.view;
+  return { entry, m };
+}
+
+test('two seats: Internals clicked on B changes only B, and nothing is written to settings', async () => {
+  const prevWindow = global.window;
+  const setSettings = [];
+  global.window = { api: { setSettings: (patch) => { setSettings.push(patch); } } };
+  const a = await mountSeat('conversation');
+  const b = await mountSeat('conversation');
+  try {
+    assert.deepStrictEqual([a.m.view.state().mode, b.m.view.state().mode], ['split', 'split']);
+    modeButtons(b.m)[1].listeners.click();
+    assert.deepStrictEqual([a.entry.view, b.entry.view], ['conversation', 'internals']);
+    assert.deepStrictEqual([pressed(a.m), pressed(b.m)], [['true', 'false', 'false'], ['false', 'true', 'false']]);
+    assert.deepStrictEqual(setSettings, []);
+  } finally {
+    b.m.view.dispose(); b.m.restore();
+    a.m.view.dispose(); a.m.restore();
+    global.window = prevWindow;
+  }
+});
+
+test('the toggle ⌘⇧T calls takes Internals to Terminal and back to Internals, the same as the bar button', async () => {
+  const { entry, m } = await mountSeat('internals');
+  try {
+    toggleSeatTerminal(entry);
+    assert.deepStrictEqual([entry.view, m.view.raw(), pressed(m)], ['terminal', true, ['false', 'false', 'true']]);
+    toggleSeatTerminal(entry);
+    assert.deepStrictEqual([entry.view, m.view.raw(), pressed(m)], ['internals', false, ['false', 'true', 'false']]);
+    terminalButton(m).listeners.click();
+    assert.deepStrictEqual([entry.view, m.view.raw()], ['terminal', true]);
+    modeButtons(m)[0].listeners.click();
+    assert.deepStrictEqual([entry.view, entry.lastView, m.view.raw(), pressed(m)], ['conversation', 'conversation', false, ['true', 'false', 'false']]);
+  } finally { m.view.dispose(); m.restore(); }
+});
