@@ -6018,6 +6018,7 @@ body.web-frontend #sidebar-header {
   user-select: none;
 }
 .tr-box-preview { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.tr-box-head .tr-box-preview { user-select: text; }
 .tr-box-chevron { color: var(--text-tertiary); }
 .tr-box-folded > .tr-box-body { display: none; }
 .tr-box-body > .tr-notice { margin-left: var(--sp-3); }

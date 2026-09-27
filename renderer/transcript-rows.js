@@ -499,13 +499,20 @@ function restText(text) {
   return lines.slice(i + 1).join('\n').replace(/^\s*\n/, '');
 }
 
+function previewSpan(doc, text) {
+  const span = el(doc, 'span', 'tr-box-preview', previewText(text));
+  const line = String(text == null ? '' : text).split('\n').find((l) => l.trim()) || '';
+  if (line.length > PREVIEW_CHARS) span.title = line;
+  return span;
+}
+
 function boxHead(doc, rec, att) {
   const head = el(doc, 'div', 'tr-box-head');
   if (att) head.appendChild(el(doc, 'span', 'tr-reply-lead', '↳'));
   if (rec.kind === 'inbound') head.appendChild(inboundBadge(doc, rec));
   else if (rec.kind === 'reply') head.appendChild(appBadge(doc, rec));
   else head.appendChild(el(doc, 'span', 'tr-mark'));
-  head.appendChild(el(doc, 'span', 'tr-box-preview', previewText(rec.text)));
+  head.appendChild(previewSpan(doc, rec.text));
   head.appendChild(el(doc, 'span', 'tr-box-chevron'));
   return head;
 }
@@ -522,6 +529,8 @@ function internalBox(doc, rec, row, opened, att) {
       chevron.textContent = open ? '▾' : '▸';
     };
     head.addEventListener('click', () => {
+      const sel = doc.getSelection && doc.getSelection();
+      if (sel && !sel.isCollapsed) return;
       if (opened.has(rec.id)) opened.delete(rec.id);
       else opened.add(rec.id);
       paint();
@@ -565,7 +574,7 @@ function ticketBox(doc, rec, row, opened, att) {
   if (att) head.appendChild(el(doc, 'span', 'tr-reply-lead', '↳'));
   head.appendChild(el(doc, 'span', 'tr-ticket-chip', chip));
   head.appendChild(rec.kind === 'reply' ? appBadge(doc, rec) : inboundBadge(doc, rec));
-  head.appendChild(el(doc, 'span', 'tr-box-preview', previewText(message.trim())));
+  head.appendChild(previewSpan(doc, message.trim()));
   box.appendChild(head);
   if (ticketOpens(rec, message)) {
     const chevron = el(doc, 'span', 'tr-box-chevron');
@@ -576,6 +585,8 @@ function ticketBox(doc, rec, row, opened, att) {
       chevron.textContent = open ? '▾' : '▸';
     };
     head.addEventListener('click', () => {
+      const sel = doc.getSelection && doc.getSelection();
+      if (sel && !sel.isCollapsed) return;
       if (opened.has(rec.id)) opened.delete(rec.id);
       else opened.add(rec.id);
       paint();

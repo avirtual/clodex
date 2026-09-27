@@ -861,6 +861,31 @@ test('the pane modules never call array methods on childNodes, which is a NodeLi
   }
 });
 
+test('a box head preview stays selectable, and a click that ends a drag-select leaves the box as it was', () => {
+  const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  assert.match(css, /^\.tr-box-head \.tr-box-preview \{[^}]*user-select: text/m);
+  const doc = fakeDocument();
+  const pane = doc.createElement('div');
+  let selected = true;
+  doc.getSelection = () => ({ isCollapsed: !selected });
+  const rows = createTranscriptRows(doc, pane, {});
+  const long = Array.from({ length: 5 }, (_, i) => `line ${i}`).join('\n');
+  rows.render([replyRec('r1', 1, 'task', '⇄', 'task', long), inb('i1', 1, 'ticket-loop', `[ticket t7 MERGED] b → master as abc\n${long}`)]);
+  const boxes = pane.childNodes[0].childNodes;
+  for (const box of boxes) boxHeadOf(box).listeners.click();
+  assert.deepStrictEqual(boxes.map((b) => b.className), ['tr-box tr-box-folded', 'tr-box tr-box-folded tr-ticket']);
+  selected = false;
+  for (const box of boxes) boxHeadOf(box).listeners.click();
+  assert.deepStrictEqual(boxes.map((b) => b.className), ['tr-box', 'tr-box tr-ticket']);
+});
+
+test('a clipped head preview carries the full first line as its title; an unclipped one carries none', () => {
+  const m = mount();
+  m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'reminder', text: 'x'.repeat(300) }, taskReply('r1', 1, `ticket t1 accepted — ${'z'.repeat(130)}`), replyRec('r2', 1, 'task', '⇄', 'task', 'short\nb\nc')]);
+  const title = (id) => boxHeadOf(boxOf(m, id)).childNodes.find((n) => n.className === 'tr-box-preview').title;
+  assert.deepStrictEqual(['i1', 'r1', 'r2'].map(title), ['x'.repeat(300), 'z'.repeat(130), '']);
+});
+
 test('a hidden ticket row stays hidden: the ticket layout applies display only when the row is not tr-hidden', () => {
   const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
   assert.match(css, /^\.tr-ticket:not\(\.tr-hidden\) \{[^}]*display: flex/m);

@@ -8498,6 +8498,9 @@ body.web-frontend #sidebar-header {
   white-space: nowrap;
   color: var(--text-secondary);
 }
+.tr-box-head .tr-box-preview {
+  user-select: text;
+}
 .tr-box-chevron {
   color: var(--text-tertiary);
 }
@@ -32088,13 +32091,19 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (i < 0 || lines[i].length > PREVIEW_CHARS) return s;
         return lines.slice(i + 1).join("\n").replace(/^\s*\n/, "");
       }
+      function previewSpan(doc, text) {
+        const span = el(doc, "span", "tr-box-preview", previewText(text));
+        const line = String(text == null ? "" : text).split("\n").find((l) => l.trim()) || "";
+        if (line.length > PREVIEW_CHARS) span.title = line;
+        return span;
+      }
       function boxHead(doc, rec, att) {
         const head = el(doc, "div", "tr-box-head");
         if (att) head.appendChild(el(doc, "span", "tr-reply-lead", "\u21B3"));
         if (rec.kind === "inbound") head.appendChild(inboundBadge(doc, rec));
         else if (rec.kind === "reply") head.appendChild(appBadge(doc, rec));
         else head.appendChild(el(doc, "span", "tr-mark"));
-        head.appendChild(el(doc, "span", "tr-box-preview", previewText(rec.text)));
+        head.appendChild(previewSpan(doc, rec.text));
         head.appendChild(el(doc, "span", "tr-box-chevron"));
         return head;
       }
@@ -32110,6 +32119,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
             chevron.textContent = open ? "\u25BE" : "\u25B8";
           };
           head.addEventListener("click", () => {
+            const sel = doc.getSelection && doc.getSelection();
+            if (sel && !sel.isCollapsed) return;
             if (opened.has(rec.id)) opened.delete(rec.id);
             else opened.add(rec.id);
             paint();
@@ -32149,7 +32160,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (att) head.appendChild(el(doc, "span", "tr-reply-lead", "\u21B3"));
         head.appendChild(el(doc, "span", "tr-ticket-chip", chip));
         head.appendChild(rec.kind === "reply" ? appBadge(doc, rec) : inboundBadge(doc, rec));
-        head.appendChild(el(doc, "span", "tr-box-preview", previewText(message.trim())));
+        head.appendChild(previewSpan(doc, message.trim()));
         box.appendChild(head);
         if (ticketOpens(rec, message)) {
           const chevron = el(doc, "span", "tr-box-chevron");
@@ -32160,6 +32171,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
             chevron.textContent = open ? "\u25BE" : "\u25B8";
           };
           head.addEventListener("click", () => {
+            const sel = doc.getSelection && doc.getSelection();
+            if (sel && !sel.isCollapsed) return;
             if (opened.has(rec.id)) opened.delete(rec.id);
             else opened.add(rec.id);
             paint();
