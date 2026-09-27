@@ -1,0 +1,40 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.283
+           Fable 5.1 with high effort · Claude Max
+ ▘▘   ▝▝   ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/t-status-row-chips/probe/cwd
+
+
+❯ Start the shell command sleep 45 as a background task (run_in_background), do not wait for it,    
+  and reply with just the word ok.                                                                  
+  
+⏺ Bash(sleep 45)
+  ⎿  Running in the background (↓ to manage)
+
+⏺ ok
+
+✻ Worked for 7s · done 10:20 AM · 1 shell still running
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  [clodex:probe] Fable 5.1 ctx 5% $0.12 cwd
+  ⏵⏵ bypass permissions on · 1 shell · ← for agents
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

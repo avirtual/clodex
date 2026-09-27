@@ -1,0 +1,40 @@
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.1)                         │
+│                                                    │
+│ model:       GPT-6-Astra medium   /model to change │
+│ directory:   ~/.clodex/projects/…/probe/cwd        │
+│ permissions: YOLO mode                             │
+╰────────────────────────────────────────────────────╯
+
+  Tip: Try the Desktop app. Run 'codex app' or visit https://chatgpt.com/codex?app-landing-page=true
+
+⚠ Heads up, you have less than 50% of your 5h limit left. Run /status for a breakdown.
+ 
+ 
+› Ask Codex to do anything
+ 
+  Context 0% used · GPT-6-Astra · cwd · master · 5h 46% lef… Plan mode    ⚠ 3 warnings · f2 to view
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

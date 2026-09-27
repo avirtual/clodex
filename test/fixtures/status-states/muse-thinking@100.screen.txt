@@ -1,0 +1,40 @@
+Muse Code updated 1.4.0-R4161.1 -> 1.4.0-R4302.1
+                                                                                                    
+  Muse Code 1.4.0                                                                                   
+                                                                                                    
+  Model set to muse-spark-1.3-contributor                                                           
+  ⎿  Your content, including inter-session messages, may be used for product improvement.           
+                                                                                                    
+❯ Run the shell command `sleep 6 && echo done` and then reply with just the word ok.                
+
+◈ Thinking (2s · esc to interrupt)
+
+── Voice input (⌥ + v to start) ────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  muse-spark-1.3-contributor · max · ~/.c/p/w/t/t/probe/cwd · Launch overrides
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
