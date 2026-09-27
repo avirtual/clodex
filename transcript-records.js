@@ -418,7 +418,7 @@ function midTurnRecords(rec, base, tools) {
   const a = rec.attachment;
   if (!a || a.type !== 'queued_command' || !a.origin || a.origin.kind !== 'human') return [];
   const user = { type: 'user', uuid: rec.uuid, timestamp: rec.timestamp, message: { role: 'user', content: a.prompt } };
-  return userRecords(user, base, tools).map((r) => (r.kind === 'prompt' ? { ...r, source: 'mid-turn', state: 'delivered' } : { ...r, source: 'mid-turn' }));
+  return userRecords(user, base, tools).map((r) => (r.kind === 'prompt' ? { ...r, source: 'mid-turn', state: 'delivered' } : r));
 }
 
 function recordsOfLine(rec, base, tools) {
@@ -496,7 +496,7 @@ function recordsOf(text, max = RECORD_CAP) {
     if (rec.isSidechain) continue;
     const echoed = echoedCommand(rec);
     const prev = all[all.length - 1];
-    if (echoed && prev && prev.kind === 'prompt' && prev.source !== 'mid-turn' && rec.promptId && lastPromptId === rec.promptId && isTypedEcho(prev, echoed)) {
+    if (echoed && prev && prev.kind === 'prompt' && rec.promptId && lastPromptId === rec.promptId && isTypedEcho(prev, echoed)) {
       all.pop();
       turn -= 1;
     }
@@ -504,14 +504,14 @@ function recordsOf(text, max = RECORD_CAP) {
     const produced = recordsOfLine(rec, base, tools);
     if (produced.length) lastPromptId = rec.promptId || null;
     for (const r of produced) {
-      const midTurn = r.source === 'mid-turn';
+      const midTurn = r.kind === 'prompt' && r.source === 'mid-turn';
       if (TURN_KINDS.has(r.kind) && !midTurn) { turn += 1; unread = []; }
       r.turn = turn;
-      if ((r.kind === 'assistant' && !r.apiError) || r.kind === 'tool') {
+      if (r.kind === 'assistant' || r.kind === 'tool') {
         for (const u of unread) u.state = 'read';
         unread = [];
       }
-      if (midTurn && r.kind === 'prompt') unread.push(r);
+      if (midTurn) unread.push(r);
       all.push(r);
     }
   }
