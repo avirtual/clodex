@@ -2537,7 +2537,6 @@ async function collided(world, opts = {}) {
   // it is UNCHANGED, and a baseline taken mid-unit sees the trailing Enter land a
   // tick later as a write this fix did not make.
   await writeComplete(app, 'team-hand');
-  await leadDrained(app);
   return { app, s, lead };
 }
 
@@ -2614,6 +2613,7 @@ test('t357: a displaced ticket displaced AGAIN after its redelivery escalates ra
 
     // A third dispatch displaces the redelivered copy. The budget is gone, so this
     // must reach the LEAD rather than queueing a third write at the seat.
+    await leadDrained(app);
     const beforeSeat = app.seen('team-hand');
     const beforeLead = app.seen('lead');
     app.m._armSpecConfirm('team-hand', 't2', 'injected');
@@ -3200,6 +3200,7 @@ test('t447: an ESCALATION does not restore the budget — repeated displacement 
       'ENTER: round 1 must have spent the budget, or the refusals below are refusals to do nothing');
 
     // Round 2: displaced again, still no turn anywhere. Escalates — t357's bound.
+    await leadDrained(app);
     const seatAfterOne = app.seen('team-hand');
     app.m._armSpecConfirm('team-hand', 't2', 'injected');
     await settled(app, 'lead', /ESCALATED/);
