@@ -395,7 +395,13 @@ function replyRow(doc, rec, ctx, attached) {
 function inboundRow(doc, rec, ctx) {
   const row = headRow(doc, 'tr-inbound', rec);
   const text = el(doc, 'span', 'tr-head-text');
-  text.appendChild(senderBadge(doc, rec.from));
+  const badge = senderBadge(doc, rec.from);
+  if (rec.via === 'subagent') {
+    row.dataset.via = 'subagent';
+    badge.title = 'Report from a subagent of this seat — attached by the CLI, not typed';
+    badge.childNodes[1].textContent = String(rec.from);
+  }
+  text.appendChild(badge);
   if (rec.attached) {
     const lead = rec.text.slice(0, rec.text.indexOf('Message (')).trim();
     if (lead) appendProse(doc, text, `${lead} `, ctx);

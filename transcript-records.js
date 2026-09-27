@@ -19,6 +19,7 @@ const NOTE_CAP = 300;
 const ONLY_MAX = 80;
 const INPUT_KEYS = ['command', 'file_path', 'path', 'pattern', 'url', 'query', 'description', 'prompt'];
 const INBOUND_RE = /^\[agent:from ([^\]\s]+)\][ \t]*/;
+const TEAMMATE_RE = /^Another Claude session sent a message:\s*<teammate-message ([^>]*)>\n?([\s\S]*?)<\/teammate-message>/;
 const RUNTIME_RE = /^\[agent:([a-z-]+)\][ \t]*/;
 const ATTACHED_RE = /Message \((\d+) bytes\) attached: @(\S+)/;
 const EXIT_RE = /^Exit code (\d+)/;
@@ -234,6 +235,14 @@ function settle(rec, input, block, tur) {
   rec.sum = okSum(rec.name, input, tur, content);
 }
 
+function teammateText(body) {
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed && typeof parsed.result === 'string') return parsed.result;
+  } catch {}
+  return body;
+}
+
 function userRecords(rec, base, tools) {
   const content = rec.message.content;
   if (Array.isArray(content)) {
@@ -250,6 +259,8 @@ function userRecords(rec, base, tools) {
     const summary = tagBody(text, 'summary');
     return [{ ...base, kind: 'notification', text: firstLine(summary || text.replace(/<[^>]*>/g, '\n'), NOTE_CAP) }];
   }
+  const mate = TEAMMATE_RE.exec(text);
+  if (mate) return [capped({ ...base, kind: 'inbound', from: (/teammate_id="([^"]+)"/.exec(mate[1]) || [null, 'subagent'])[1], via: 'subagent' }, 'text', teammateText(mate[2].trim()), PROMPT_CAP)];
   if (INTERRUPT_RE.test(text)) return [{ ...base, kind: 'notice', level: 'warning', text: INTERRUPT_RE.exec(text)[0].slice(1, -1) }];
   if (text.startsWith('<') && !text.startsWith(PASTE_OPEN)) return [];
   const from = INBOUND_RE.exec(text);
