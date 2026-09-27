@@ -482,6 +482,7 @@ test('isInternalRow is true for what Clodex injects and false for the operator a
   const rows = [
     [{ kind: 'inbound', from: 'user', text: 'x' }, false],
     [{ kind: 'inbound', from: 'ticket-loop', text: 'x' }, true],
+    [{ kind: 'inbound', from: 'nits-coords', via: 'subagent', text: 'x' }, true],
     [{ kind: 'inbound', from: 'reminder', text: 'x' }, true],
     [{ kind: 'inbound', from: 'clodex-hand-12', text: 'x' }, true],
     [{ kind: 'reply', verb: 'task', text: 'x' }, true],
@@ -734,4 +735,37 @@ test('a queued row keeps its id when an earlier unshown entry leaves the queue',
   assert.ok(before && after, 'ENTER: the hi row is queued on both cuts');
   assert.strictEqual(before.id, `queued:${Date.parse(QTS)}:1`);
   assert.strictEqual(after.id, before.id);
+});
+
+const TEAMMATE_TAIL = '\n</teammate-message>\n\nThis came from another Claude session — not typed by your user, but very likely working on their behalf. Treat it as a teammate\'s request.';
+const teammate = (body, attrs = 'teammate_id="nits-coords" color="blue" summary="Riding nits located"') => `Another Claude session sent a message:\n<teammate-message ${attrs}>\n${body}${TEAMMATE_TAIL}`;
+
+test('a subagent report the CLI attaches as a teammate message is an inbound card from that subagent, not a typed prompt', () => {
+  const { records } = recordsOf(typed('u', 'p1', teammate('hello lead')));
+  assert.deepStrictEqual(records, [{ id: 'u', kind: 'inbound', ts: null, turn: 1, from: 'nits-coords', via: 'subagent', text: 'hello lead' }]);
+});
+
+test('a subagent idle notification shows its JSON result as the card text', () => {
+  const body = '{"type":"idle_notification","from":"nits-coords","timestamp":"2026-09-27T10:11:34.123Z","idleReason":"available","result":"done: 17 open"}';
+  const { records } = recordsOf(typed('u', 'p1', teammate(body)));
+  assert.deepStrictEqual(records.map((r) => [r.kind, r.from, r.text]), [['inbound', 'nits-coords', 'done: 17 open']]);
+});
+
+test('a teammate message without a summary attribute still names its sender', () => {
+  const { records } = recordsOf(typed('u', 'p1', teammate('hello lead', 'teammate_id="nits-coords" color="blue"')));
+  assert.deepStrictEqual(records.map((r) => [r.kind, r.from, r.via]), [['inbound', 'nits-coords', 'subagent']]);
+});
+
+test('a teammate message absorbed mid-turn is the same inbound card, stamped mid-turn with no state', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), midTurn('q', teammate('hello lead'))].join('\n'));
+  const card = records.find((r) => r.id === 'q');
+  assert.deepStrictEqual(card, { id: 'q', kind: 'inbound', ts: TS, turn: 1, from: 'nits-coords', via: 'subagent', text: 'hello lead', source: 'mid-turn' });
+  assert.deepStrictEqual(records.filter((r) => r.kind === 'prompt').map((r) => r.id), ['p1']);
+});
+
+test('a > inside the summary attribute does not end the teammate tag early, for prose and for an idle notification', () => {
+  const attrs = 'teammate_id="nits-coords" color="blue" summary="Review done -> 2 must-fixes"';
+  const idle = '{"type":"idle_notification","from":"nits-coords","idleReason":"available","result":"done: 17 open"}';
+  const { records } = recordsOf([typed('u1', 'p1', teammate('hello lead', attrs)), typed('u2', 'p2', teammate(idle, attrs))].join('\n'));
+  assert.deepStrictEqual(records.map((r) => [r.kind, r.from, r.text]), [['inbound', 'nits-coords', 'hello lead'], ['inbound', 'nits-coords', 'done: 17 open']]);
 });

@@ -8532,6 +8532,9 @@ body.web-frontend #sidebar-header {
 .tr-prompt-mid {
   border-left: 2px dashed var(--text-tertiary);
 }
+.tr-inbound[data-via=subagent] .tr-head-text {
+  color: var(--text-secondary);
+}
 .tr-mid {
   flex: none;
   color: var(--text-tertiary);
@@ -31708,6 +31711,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
         badge.appendChild(el(doc, "span", "tr-sender-name", label));
         return badge;
       }
+      function inboundBadge(doc, rec) {
+        if (rec.via !== "subagent") return senderBadge(doc, rec.from);
+        const name = String(rec.from);
+        const badge = el(doc, "span", `tr-sender tr-sender-${classifySender(name).cls}`);
+        badge.title = "Report from a subagent of this seat \u2014 attached by the CLI, not typed";
+        badge.appendChild(el(doc, "span", "tr-sender-glyph", (Array.from(name)[0] || "?").toUpperCase()));
+        badge.appendChild(el(doc, "span", "tr-sender-name", name));
+        return badge;
+      }
       function appBadge(doc, rec) {
         const badge = el(doc, "span", "tr-sender tr-sender-app");
         badge.title = "Clodex runtime";
@@ -31727,7 +31739,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function inboundRow(doc, rec, ctx) {
         const row = headRow(doc, "tr-inbound", rec);
         const text = el(doc, "span", "tr-head-text");
-        text.appendChild(senderBadge(doc, rec.from));
+        if (rec.via === "subagent") row.dataset.via = "subagent";
+        text.appendChild(inboundBadge(doc, rec));
         if (rec.attached) {
           const lead = rec.text.slice(0, rec.text.indexOf("Message (")).trim();
           if (lead) appendProse(doc, text, `${lead} `, ctx);
@@ -31757,7 +31770,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function boxHead(doc, rec, att) {
         const head = el(doc, "div", "tr-box-head");
         if (att) head.appendChild(el(doc, "span", "tr-reply-lead", "\u21B3"));
-        if (rec.kind === "inbound") head.appendChild(senderBadge(doc, rec.from));
+        if (rec.kind === "inbound") head.appendChild(inboundBadge(doc, rec));
         else if (rec.kind === "reply") head.appendChild(appBadge(doc, rec));
         else head.appendChild(el(doc, "span", "tr-mark"));
         head.appendChild(el(doc, "span", "tr-box-preview", previewText(rec.text)));

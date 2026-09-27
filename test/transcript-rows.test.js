@@ -134,6 +134,17 @@ test('an inbound delivery renders as a sender card: the badge leads the text spa
   assert.deepStrictEqual([link.tag, link.textContent, link.dataset.path], ['a', 'msg-6.txt', '/r/msg-6.txt']);
 });
 
+test('an inbound from a subagent of this seat is marked via subagent and its badge says the CLI attached it', () => {
+  const m = mount();
+  m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'nits-coords', via: 'subagent', text: 'hello' }]);
+  const card = unbox(m.pane.childNodes[0].childNodes[0]);
+  assert.strictEqual(card.className, 'tr-row tr-head tr-inbound');
+  assert.strictEqual(card.dataset.via, 'subagent');
+  const badge = card.childNodes[0].childNodes[0];
+  assert.strictEqual(badge.textContent, 'Nnits-coords');
+  assert.strictEqual(badge.title, 'Report from a subagent of this seat — attached by the CLI, not typed');
+});
+
 test('an inbound from a system sender draws a system badge inline at the head of its text, not the wire\'s "from X" text', () => {
   const m = mount();
   m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'reminder', text: 'continue: t1 build' }]);
@@ -1083,4 +1094,14 @@ test('runs: an expander with no footer parts carries an aria-label; one with foo
   const counted = mount({ mode: 'conversation' });
   counted.render(movingRun());
   assert.strictEqual(togglesOf(counted)[0].getAttribute('aria-label'), null);
+});
+
+test('a long subagent report folds under a box head whose badge matches the inner row badge in label, glyph and title', () => {
+  const m = mount();
+  m.render([{ id: 'i9', kind: 'inbound', ts: null, turn: 1, from: 'nits-coords', via: 'subagent', text: Array.from({ length: 5 }, (_, i) => `line ${i}`).join('\n') }]);
+  const box = boxOf(m, 'i9');
+  assert.strictEqual(box.className, 'tr-box tr-box-folded');
+  const badges = [boxHeadOf(box).childNodes[0], unbox(box).childNodes[0].childNodes[0]];
+  const want = ['tr-sender tr-sender-seat', 'Nnits-coords', 'Report from a subagent of this seat — attached by the CLI, not typed'];
+  assert.deepStrictEqual(badges.map((b) => [b.className, b.textContent, b.title]), [want, want]);
 });
