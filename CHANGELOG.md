@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Transcript pane: your own messages now sit on an accent-tinted row with a solid accent edge, so they stand apart from the agent's text on every theme (on Midnight the old raised-surface shade was nearly invisible); a mid-turn message keeps its dashed edge.
 - Transcript pane: an inline image thumbnail (and the `Image #n` chip that stands in for one) now keeps a little space from the text beside it instead of touching it.
 - Transcript pane: a message typed while the agent is mid-turn now appears the moment it is queued, marked `queued`; it turns `delivered` when the CLI hands it to the agent and `✓ read` when the agent's next action follows it.
 - Web: an image pasted into a seat's composer now stays on the Clodex host for 24 hours instead of 30 minutes, so a draft sent later still carries it.
