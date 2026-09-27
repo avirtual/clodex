@@ -19,6 +19,14 @@
     "value": "1800000",
     "note": "Raises the stream stall threshold to the CLI's maximum of 30 minutes; the CLI takes max(env, 300000) and skips its remote-config lookup once this is set."
   },
+  "CLAUDE_CODE_TOASTY_THIMBLE": {
+    "value": "off",
+    "note": "Drops the per-call \"list what you need next\" nudge; Clodex's own prompts say when a seat writes and what it requests."
+  },
+  "CLAUDE_CODE_GENTLE_PARASOL": {
+    "value": "off",
+    "note": "Drops the CLI's secondary server-supplied reminder for the same reason."
+  },
   "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS": {
     "value": "1",
     "note": "Removes the workflow skills the CLI ships in its own binary (init, review, simplify, security-review and the rest) from every seat's prompt; plugin skills, account-synced skills and .claude/skills/ stay."
