@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- **Help opens on "Clodex at a glance"**, one screen on seats, views, the message box and tickets (F1).
 - Transcript pane: an intent whose body is a single short line (a reminder, a one-line dm, a filed report) now shows it on the same line as its label instead of on a second row; longer bodies keep the clamped block.
 - Transcript pane: every ticket phase — a notice from the loop or a hand, a runtime reply, the seat's own task verb — now reads the same way: ticket number, state, one-line message, with the full text behind a click when there is more.
 - **Tickets is on by default, with a Feed**: the board of open and recently closed tickets, and a time-ordered feed of every filing, review, merge and acceptance, filterable, in the desktop app and the browser. An install that already turned the plugin off stays off.
