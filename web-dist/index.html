@@ -8388,6 +8388,11 @@ body.web-frontend #sidebar-header {
   padding-top: var(--sp-2);
   border-top: 1px solid var(--border);
 }
+.tr-turn:not(.tr-hidden) ~ .tr-turn.tr-turn-cont {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
 .tr-row {
   margin: 0;
 }
@@ -8848,6 +8853,22 @@ body.web-frontend #sidebar-header {
 }
 .tr-footer {
   padding-top: var(--sp-1);
+}
+.tr-run-toggle {
+  display: block;
+  padding: var(--sp-1) 0 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tr-run-toggle:hover {
+  color: var(--text-secondary);
+}
+.tr-run-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
 }
 .tr-boundary {
   display: flex;
@@ -31123,6 +31144,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_transcript_internal = __commonJS({
     "transcript-internal.js"(exports, module) {
       "use strict";
+      var TURN_KINDS = /* @__PURE__ */ new Set(["prompt", "inbound", "reply", "notification", "command"]);
       function isInternalRow(rec) {
         if (!rec) return false;
         switch (rec.kind) {
@@ -31136,7 +31158,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             return false;
         }
       }
-      module.exports = { isInternalRow };
+      module.exports = { TURN_KINDS, isInternalRow };
     }
   });
 
@@ -31199,7 +31221,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { scanLinks } = require_path_scan();
       var { rewriteEchoSgr } = require_prompt_echo();
       var { isExternallyOpenable } = require_external_link();
-      var { isInternalRow } = require_transcript_internal();
+      var { TURN_KINDS, isInternalRow } = require_transcript_internal();
       var { surfaceOf, segmentSurface } = require_transcript_surface();
       var OUTPUT_LINE_CAP = 400;
       var CLAMP_LINES = 2;
@@ -31711,15 +31733,16 @@ ${m[2].replace(/^\r?\n/, "")}`;
           compacted: boundary ? [boundary.preTokens, boundary.postTokens] : null
         };
       }
-      function buildFooter(doc, f, ctx) {
-        const row = el(doc, "div", "tr-row tr-footer");
+      function footerParts(doc, row, f, ctx, linked) {
         const parts = [];
         if (f.durationMs != null) parts.push(() => row.appendChild(doc.createTextNode(durationText(f.durationMs))));
         if (f.tools) parts.push(() => row.appendChild(doc.createTextNode(countText(f.tools, "tool", "tools"))));
         if (f.errors) parts.push(() => row.appendChild(el(doc, "span", "tr-err", countText(f.errors, "error", "errors"))));
+        if (f.injected) parts.push(() => row.appendChild(doc.createTextNode(`${f.injected} injected`)));
         for (const file of f.files) {
           parts.push(() => {
-            row.appendChild(linkNode(doc, { kind: "path", text: baseName(file.file), path: file.file }, "", ctx));
+            if (linked) row.appendChild(linkNode(doc, { kind: "path", text: baseName(file.file), path: file.file }, "", ctx));
+            else row.appendChild(doc.createTextNode(baseName(file.file)));
             row.appendChild(doc.createTextNode(` +${file.add} ${MINUS}${file.del}`));
           });
         }
@@ -31729,6 +31752,35 @@ ${m[2].replace(/^\r?\n/, "")}`;
           add();
         });
         return row;
+      }
+      function buildFooter(doc, f, ctx) {
+        return footerParts(doc, el(doc, "div", "tr-row tr-footer"), f, ctx, true);
+      }
+      function runStatsOf(records) {
+        const ends = records.filter((r) => r.kind === "turn-end");
+        const timed = ends.filter((r) => r.durationMs != null);
+        const tools = records.filter((r) => r.kind === "tool");
+        const boundary = records.find((r) => r.kind === "boundary" && r.what === "compact" && r.preTokens != null && r.postTokens != null);
+        const files = /* @__PURE__ */ new Map();
+        for (const r of tools) {
+          if (r.state !== "ok" || !r.sum || !r.sum.file || r.sum.add == null) continue;
+          const f = files.get(r.sum.file) || { file: r.sum.file, add: 0, del: 0 };
+          f.add += r.sum.add;
+          f.del += r.sum.del;
+          files.set(r.sum.file, f);
+        }
+        return {
+          ended: ends.length > 0,
+          durationMs: timed.length ? timed.reduce((n, r) => n + r.durationMs, 0) : null,
+          tools: tools.length,
+          errors: tools.filter((r) => r.state === "error" || r.state === "denied").length,
+          injected: records.filter(isInternalRow).length,
+          files: [...files.values()],
+          compacted: boundary ? [boundary.preTokens, boundary.postTokens] : null
+        };
+      }
+      function suppressesClosed(records) {
+        return records.some((r) => r.kind !== "turn-end" && (!isTalk(r) || hasInternalSeg(r)));
       }
       function reconcile(parent, cache, items, lead = null) {
         const seen = /* @__PURE__ */ new Set();
@@ -31806,10 +31858,28 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         return turns;
       }
+      function logicalHead(t) {
+        return t.records.find((r) => TURN_KINDS.has(r.kind)) || t.records[0];
+      }
+      function groupRuns(turns) {
+        const runs = [];
+        for (const t of turns) {
+          const head = logicalHead(t);
+          if (!runs.length || isTalk(head)) runs.push({ key: head.id, turns: [t] });
+          else runs[runs.length - 1].turns.push(t);
+        }
+        for (const run of runs) {
+          run.records = run.turns.flatMap((t) => t.records);
+          run.hosted = run.turns.some((t) => t.records.some(isTalk));
+        }
+        return runs;
+      }
       function createTranscriptRows(doc, paneEl, ctx = {}) {
         const deps = { lead: null, mode: "internals", seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
         const turnCache = /* @__PURE__ */ new Map();
         const opened = /* @__PURE__ */ new Set();
+        const openRuns = /* @__PURE__ */ new Set();
+        let lastSource = null;
         let mode = deps.mode === "conversation" ? "conversation" : "internals";
         let lastRecords = [];
         let working = null;
@@ -31881,7 +31951,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             if (chevron.textContent !== glyph) chevron.textContent = glyph;
           }
         }
-        function toolBlockItem(tools) {
+        function toolBlockItem(tools, open) {
           const key = `tools:${tools[0].id}`;
           return {
             key,
@@ -31896,24 +31966,57 @@ ${m[2].replace(/^\r?\n/, "")}`;
               c.key = key;
               c.tools = tools;
               paintBlock(c);
-              toggleClass(c.el, "tr-hidden", mode === "conversation");
+              toggleClass(c.el, "tr-hidden", mode === "conversation" && !open);
             }
           };
         }
-        function rowItems(records, attached) {
+        function runToggleItem(run, open) {
+          const stats = runStatsOf(run.records);
+          if (suppressesClosed(run.records)) {
+            return {
+              key: "run-toggle",
+              sig: `${run.key}|${JSON.stringify(stats)}`,
+              build: () => {
+                const btn = el(doc, "button", "tr-row tr-footer tr-run-toggle");
+                btn.type = "button";
+                btn.appendChild(el(doc, "span", "tr-run-glyph"));
+                footerParts(doc, btn, stats, deps, false);
+                btn.addEventListener("click", () => {
+                  const anchor = anchorOf();
+                  if (openRuns.has(run.key)) openRuns.delete(run.key);
+                  else openRuns.add(run.key);
+                  render(lastRecords);
+                  restore(anchor);
+                });
+                return btn;
+              },
+              after: (c) => {
+                const want = open ? "true" : "false";
+                if (c.el.getAttribute("aria-expanded") !== want) c.el.setAttribute("aria-expanded", want);
+                const glyph = open ? "\u25BE " : "\u25B8 ";
+                if (c.el.firstChild.textContent !== glyph) c.el.firstChild.textContent = glyph;
+              }
+            };
+          }
+          if (!stats.ended && !stats.compacted) return null;
+          return { key: "footer", sig: JSON.stringify(stats), build: () => buildFooter(doc, stats, deps) };
+        }
+        function rowItems(records, attached, open, tail, live) {
           const items = [];
           for (const run of toolRuns(records)) {
             if (run.tools) {
-              items.push(toolBlockItem(run.tools));
+              live.add(`tools:${run.tools[0].id}`);
+              items.push(toolBlockItem(run.tools, open));
               continue;
             }
             const r = run.rec;
             if (r.kind === "turn-end") continue;
             const att = attached.has(r.id);
             const extra = r.kind === "command-output" ? JSON.stringify(resolvePalette(deps) || null) : att ? "|attached" : "";
-            const hidden = mode === "conversation" && !isTalk(r);
+            const hidden = mode === "conversation" && !open && !isTalk(r);
             const after = (c) => toggleClass(c.el, "tr-hidden", hidden);
             if (isInternalRow(r)) {
+              live.add(r.id);
               items.push({
                 key: r.id,
                 sig: recSig(r) + extra,
@@ -31925,35 +32028,58 @@ ${m[2].replace(/^\r?\n/, "")}`;
               });
               continue;
             }
-            const full = mode === "internals";
+            const full = mode === "internals" || open;
             const omit = !full && hasInternalSeg(r);
             const view = omit ? { ...r, segments: r.segments.filter((s) => segmentSurface(s) === "conversation") } : r;
             const sig = recSig(r) + extra + (hasInternalSeg(r) ? full ? "|full" : "|conv" : "");
             items.push({ key: r.id, sig, build: () => buildRow(doc, view, deps, att) || el(doc, "div", "tr-row"), after });
           }
-          const footer = footerOf(records);
-          if (footer) items.push({ key: "footer", sig: JSON.stringify(footer), build: () => buildFooter(doc, footer, deps) });
+          if (mode === "internals") {
+            const footer = footerOf(records);
+            if (footer) items.push({ key: "footer", sig: JSON.stringify(footer), build: () => buildFooter(doc, footer, deps) });
+          } else if (tail) items.push(tail);
           return items;
         }
-        function render(records) {
+        function render(records, source) {
           const list = Array.isArray(records) ? records : [];
-          const attached = attachedReplies(list);
-          const items = groupTurns(list).map((t) => ({
-            key: t.key,
-            sig: "",
-            build: () => {
-              const block = el(doc, "div", "tr-turn");
-              block.dataset.turn = t.key;
-              return block;
-            },
-            after: (c) => {
-              if (!c.sub) c.sub = /* @__PURE__ */ new Map();
-              reconcile(c.el, c.sub, rowItems(t.records, attached));
-              toggleClass(c.el, "tr-hidden", mode === "conversation" && !t.records.some(isTalk));
+          if (source != null) {
+            if (lastSource != null && source !== lastSource) {
+              for (const c of turnCache.values()) if (c.el.parentNode === paneEl) paneEl.removeChild(c.el);
+              turnCache.clear();
+              openRuns.clear();
+              opened.clear();
             }
-          }));
-          reconcile(paneEl, turnCache, items, deps.lead);
+            lastSource = source;
+          }
           lastRecords = list;
+          const attached = attachedReplies(list);
+          const runs = groupRuns(groupTurns(list));
+          const keys = new Set(runs.filter((run) => run.hosted).map((run) => run.key));
+          for (const k of [...openRuns]) if (!keys.has(k)) openRuns.delete(k);
+          const live = /* @__PURE__ */ new Set();
+          const items = [];
+          for (const run of runs) {
+            const open = openRuns.has(run.key);
+            const host = open ? run.turns[run.turns.length - 1] : run.hosted ? run.turns.filter((t) => t.records.some(isTalk)).pop() : null;
+            run.turns.forEach((t, i) => items.push({
+              key: t.key,
+              sig: "",
+              build: () => {
+                const block = el(doc, "div", "tr-turn");
+                block.dataset.turn = t.key;
+                return block;
+              },
+              after: (c) => {
+                if (!c.sub) c.sub = /* @__PURE__ */ new Map();
+                const tail = mode === "conversation" && t === host ? runToggleItem(run, open) : null;
+                reconcile(c.el, c.sub, rowItems(t.records, attached, open, tail, live));
+                toggleClass(c.el, "tr-hidden", mode === "conversation" && !open && !t.records.some(isTalk));
+                toggleClass(c.el, "tr-turn-cont", mode === "conversation" && i > 0);
+              }
+            }));
+          }
+          reconcile(paneEl, turnCache, items, deps.lead);
+          for (const k of [...opened]) if (!live.has(k)) opened.delete(k);
           if (working) paintWorking();
         }
         function visibleTurns() {
@@ -32320,8 +32446,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         return rows;
       }
-      function renderTranscript(doc, paneEl, records, ctx = {}) {
-        transcriptRowsFor(doc, paneEl, ctx).render(records);
+      function renderTranscript(doc, paneEl, records, ctx = {}, source = null) {
+        transcriptRowsFor(doc, paneEl, ctx).render(records, source);
       }
       var TRANSCRIPT_MODES = [["conversation", "Conversation"], ["internals", "Internals"]];
       function modeBar(doc, paneEl, mode, onMode = NOOP) {
@@ -32418,6 +32544,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const composerVisible = () => !!composerEl && !composerEl.hidden;
         const delta = createPaintDelta();
         let fileRecords = [];
+        let fileSource = null;
         const extraRecords = [];
         let paintSeq = 0;
         let paintRows = [];
@@ -32453,6 +32580,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             if (available && res.rev !== rev) {
               rev = res.rev;
               fileRecords = Array.isArray(res.records) ? res.records : [];
+              fileSource = res.source == null ? null : res.source;
               paint();
               evaluate();
             } else if (available !== was) evaluate();
@@ -32471,7 +32599,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         function paint() {
           const extras = shownExtras();
-          renderTranscript(document, paneEl, extras.length ? mergeByTs(fileRecords, extras) : fileRecords, rowsCtx);
+          renderTranscript(document, paneEl, extras.length ? mergeByTs(fileRecords, extras) : fileRecords, rowsCtx, fileSource);
           stickToBottom();
         }
         function latestFileText() {
@@ -47707,7 +47835,7 @@ ${detail}` });
               renderPermissions(res.permissions);
             }
             if (!res.ok) return;
-            renderTranscript(document, paneEl, res.records, rowsCtx);
+            renderTranscript(document, paneEl, res.records, rowsCtx, res.source);
             if (follow) paneEl.scrollTop = paneEl.scrollHeight;
           }).catch(() => {
             pulling = false;

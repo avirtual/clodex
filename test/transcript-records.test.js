@@ -530,3 +530,15 @@ test('the cap clip drops the whole head turn when a later turn opens inside the 
   ];
   assert.deepStrictEqual(recordsOf(lines.join('\n'), 2).records.map((r) => r.id), ['r', 'b']);
 });
+
+test('id-less append stability: appending two lines leaves the first run head at its literal line:N id', () => {
+  const T = [
+    rec({ type: 'user', message: { content: 'hi' } }),
+    rec({ type: 'assistant', message: { content: [{ type: 'text', text: 'yo' }, { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }] } }),
+  ].join('\n');
+  const before = recordsOf(T).records;
+  assert.deepStrictEqual([before[0].id, before[0].kind], ['line:0', 'prompt']);
+  const after = recordsOf(`${T}\n${rec({ type: 'user', message: { content: 'again' } })}\n${rec({ type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] } })}`).records;
+  assert.strictEqual(after.length, before.length + 2, 'ENTER: the append parsed');
+  assert.deepStrictEqual(after.slice(0, before.length).map((r) => r.id), ['line:0', 'line:1', 't1']);
+});

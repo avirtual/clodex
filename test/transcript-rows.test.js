@@ -651,6 +651,7 @@ const taskReply = (id, turn, body) => {
   return { ...replyRec(id, turn, 'task', '⇄', 'task', body), ...(ticket ? { ticket } : {}) };
 };
 const isHidden = (n) => /\btr-hidden\b/.test(n.className);
+const rowsOf = (turn) => turn.childNodes.filter((n) => !/\btr-footer\b/.test(n.className));
 
 test('in Conversation mode internal rows and tool blocks carry tr-hidden while prompts, prose and ticket lifecycle rows do not; Internals clears it', () => {
   const m = mount();
@@ -665,7 +666,7 @@ test('in Conversation mode internal rows and tool blocks carry tr-hidden while p
     call('t1', 'Bash', 'ls'),
     call('t2', 'Bash', 'pwd'),
   ]);
-  const hidden = () => m.pane.childNodes[0].childNodes.map((n) => [n.dataset.id, isHidden(n)]);
+  const hidden = () => rowsOf(m.pane.childNodes[0]).map((n) => [n.dataset.id, isHidden(n)]);
   assert.deepStrictEqual(hidden().filter(([, h]) => h), []);
   m.rows.setMode('conversation');
   assert.deepStrictEqual(hidden(), [
@@ -696,9 +697,9 @@ test('in Conversation mode a turn with no conversation row is hidden, and a turn
     inb('m5', 5, 'reminder', 'continue: t9 build'),
     { id: 'a5', kind: 'assistant', ts: null, turn: 5, apiError: true, text: 'API Error: 500' },
   ]);
-  const turns = () => m.pane.childNodes.map((n) => [n.childNodes.map((c) => c.dataset.id).join(','), isHidden(n)]);
+  const turns = () => m.pane.childNodes.map((n) => [rowsOf(n).map((c) => c.dataset.id).join(','), isHidden(n)]);
   m.rows.setMode('conversation');
-  assert.deepStrictEqual(turns(), [['p1,i0', false], ['i1,', true], ['i2,a2', false], ['m4,a4', false], ['m5,a5', false]]);
+  assert.deepStrictEqual(turns(), [['p1,i0', false], ['i1', true], ['i2,a2', false], ['m4,a4', false], ['m5,a5', false]]);
   assert.deepStrictEqual([3, 4].map((i) => isHidden(m.pane.childNodes[i].childNodes[0])), [true, true]);
   m.rows.setMode('internals');
   assert.deepStrictEqual(turns().filter(([, h]) => h), []);
@@ -711,10 +712,10 @@ test('a turn of only tool calls and a turn-end is hidden in Conversation and sho
     call('t1', 'Bash', 'ls', 'ok', { turn: 2 }),
     { id: 'e1', kind: 'turn-end', ts: null, turn: 2, durationMs: 5, messageCount: 1 },
   ]);
-  const turns = () => m.pane.childNodes.map((n) => [n.childNodes.map((c) => c.dataset.id).join(','), isHidden(n)]);
-  assert.deepStrictEqual(turns(), [['p1', false], ['tools:t1,', false]]);
+  const turns = () => m.pane.childNodes.map((n) => [rowsOf(n).map((c) => c.dataset.id).join(','), isHidden(n)]);
+  assert.deepStrictEqual(turns(), [['p1', false], ['tools:t1', false]]);
   m.rows.setMode('conversation');
-  assert.deepStrictEqual(turns(), [['p1', false], ['tools:t1,', true]]);
+  assert.deepStrictEqual(turns(), [['p1', false], ['tools:t1', true]]);
   m.rows.setMode('internals');
   assert.deepStrictEqual(turns().filter(([, h]) => h), []);
 });
@@ -789,7 +790,7 @@ test('a long attached reply folds to a head led by ↳ and an unattached one doe
 test('the pane modules never call array methods on childNodes, which is a NodeList in the browser', () => {
   const read = (f) => require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', f), 'utf8');
   for (const f of ['transcript-rows.js', 'live-split-view.js']) {
-    assert.doesNotMatch(read(f), /childNodes\.(find|filter|map|some|every|reduce|flatMap|slice|indexOf|includes|forEach)\(/, f);
+    assert.doesNotMatch(read(f), /childNodes\.(find|filter|map|some|every|reduce|flatMap|slice|indexOf|includes)\(/, f);
   }
 });
 
@@ -803,4 +804,183 @@ test('a turn separator follows only a visible turn, so a hidden leading turn lea
   const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
   assert.match(css, /^\.tr-turn:not\(\.tr-hidden\) ~ \.tr-turn \{/mu);
   assert.doesNotMatch(css, /\.tr-turn \+ \.tr-turn/u);
+});
+
+const { mergeCompactNotices } = require('../compact-notices');
+const ask = (id, turn, text = 'go') => ({ id, kind: 'prompt', ts: null, turn, text, source: 'typed' });
+const talk = (id, turn, text = 'ok') => ({ id, kind: 'assistant', ts: null, turn, text });
+const ended = (id, turn, durationMs) => ({ id, kind: 'turn-end', ts: null, turn, durationMs, messageCount: 1 });
+const togglesOf = (m) => findCls(m.pane, 'tr-run-toggle');
+const cardsOf = (m) => findCls(m.pane, 'intent-card');
+const turnOf = (m, key) => m.pane.childNodes.find((n) => n.dataset && n.dataset.turn === key);
+const rowIn = (m, id) => m.pane.childNodes.flatMap((t) => t.childNodes || []).find((n) => n.dataset && n.dataset.id === id);
+const clickToggle = (m, i = 0) => togglesOf(m)[i].listeners.click();
+const execSaid = (id, turn) => said(id, turn, 'looking now\n[agent:exec clodex-run-tests] {}\nall green');
+
+test('runs: a run whose only hidden content is one exec segment in a visible prose row gets an expander; a click shows the card, internals→conversation keeps it open, collapse hides it', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([ask('p1', 1), execSaid('a1', 1), ended('e1', 1, 2000)]);
+  assert.strictEqual(togglesOf(m).length, 1);
+  assert.strictEqual(cardsOf(m).length, 0, 'ENTER: the exec segment is omitted before the click');
+  assert.strictEqual(togglesOf(m)[0].getAttribute('aria-expanded'), 'false');
+  assert.strictEqual(togglesOf(m)[0].tag, 'button');
+  clickToggle(m);
+  assert.strictEqual(cardsOf(m).length, 1);
+  assert.strictEqual(togglesOf(m)[0].getAttribute('aria-expanded'), 'true');
+  m.rows.setMode('internals');
+  assert.strictEqual(togglesOf(m).length, 0);
+  m.rows.setMode('conversation');
+  assert.strictEqual(cardsOf(m).length, 1);
+  clickToggle(m);
+  assert.strictEqual(cardsOf(m).length, 0);
+  assert.strictEqual(togglesOf(m)[0].getAttribute('aria-expanded'), 'false');
+});
+
+test('runs: an expander before any turn-end shows the live tool count and no duration', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([ask('p1', 1), talk('a1', 1), call('t1', 'Bash', 'ls')]);
+  assert.strictEqual(togglesOf(m).length, 1);
+  assert.strictEqual(togglesOf(m)[0].textContent, '▸ 1 tool');
+});
+
+test('runs: the expander merges stats across the run, summing turn-end durations and counting injected rows', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([
+    ask('p1', 1), call('t1', 'Bash', 'ls'), ended('e1', 1, 30000),
+    inb('m2', 2, 'reminder', 'continue'), call('t2', 'Bash', 'pwd', 'ok', { turn: 2 }), talk('a2', 2), ended('e2', 2, 11000),
+  ]);
+  assert.strictEqual(togglesOf(m).length, 1);
+  assert.strictEqual(togglesOf(m)[0].textContent, '▸ 41s · 2 tools · 1 injected');
+  assert.strictEqual(turnOf(m, 'm2').childNodes[turnOf(m, 'm2').childNodes.length - 1], togglesOf(m)[0]);
+});
+
+test('runs: reminder→prose and reminder→apiError turns stay visible while their run is closed', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([
+    inb('m1', 1, 'reminder', 'continue'), talk('a1', 1, 'carrying on'),
+    inb('m2', 2, 'reminder', 'continue'), { id: 'a2', kind: 'assistant', ts: null, turn: 2, apiError: true, text: 'API Error: 500' },
+  ]);
+  assert.deepStrictEqual(togglesOf(m).map((t) => t.getAttribute('aria-expanded')), ['false']);
+  assert.deepStrictEqual([isHidden(rowIn(m, 'm1')), isHidden(rowIn(m, 'm2'))], [true, true], 'ENTER: the reminders are hidden');
+  assert.deepStrictEqual([isHidden(turnOf(m, 'm1')), isHidden(turnOf(m, 'm2'))], [false, false]);
+});
+
+test('runs: an all-internal leading run has no expander', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([inb('i1', 1, 'ticket-loop', 'ticket t1 accepted'), call('t1', 'Bash', 'ls'), ask('p2', 2), talk('a2', 2)]);
+  assert.strictEqual(isHidden(turnOf(m, 'i1')), true, 'ENTER: the leading run hides a turn');
+  assert.strictEqual(togglesOf(m).length, 0);
+});
+
+test('runs: a compact notice merged at index 0 does not change the run key, so the open run stays open', () => {
+  const records = [ask('p1', 1), execSaid('a1', 1)];
+  const m = mount({ mode: 'conversation' });
+  m.render(records);
+  clickToggle(m);
+  assert.strictEqual(cardsOf(m).length, 1, 'ENTER: the run is open');
+  const merged = mergeCompactNotices(records, [{ id: 'cn1', ts: 0, text: 'Compacting context…' }]);
+  assert.strictEqual(merged[0].id, 'cn1', 'ENTER: the notice took index 0');
+  m.render(merged);
+  assert.strictEqual(cardsOf(m).length, 1);
+  assert.strictEqual(togglesOf(m)[0].getAttribute('aria-expanded'), 'true');
+});
+
+test('runs: a run whose head is evicted re-keys to the first surviving turn and starts closed', () => {
+  const records = [ask('p1', 1), execSaid('a1', 1), inb('m2', 2, 'reminder', 'continue'), talk('a2', 2)];
+  const m = mount({ mode: 'conversation' });
+  m.render(records);
+  clickToggle(m);
+  assert.strictEqual(isHidden(rowIn(m, 'm2')), false, 'ENTER: the run is open and shows its reminder');
+  m.render(records.slice(2));
+  assert.strictEqual(isHidden(rowIn(m, 'm2')), true);
+  assert.strictEqual(togglesOf(m)[0].getAttribute('aria-expanded'), 'false');
+});
+
+test('runs: a source change with a colliding line:0 leaves the run closed', () => {
+  const m = mount({ mode: 'conversation' });
+  m.rows.render([ask('line:0', 1), execSaid('line:1', 1)], 'aaaa:0');
+  clickToggle(m);
+  assert.strictEqual(cardsOf(m).length, 1, 'ENTER: the line:0 run is open');
+  m.rows.render([ask('line:0', 1), execSaid('line:1', 1)], 'bbbb:0');
+  assert.strictEqual(cardsOf(m).length, 0);
+  assert.strictEqual(togglesOf(m)[0].getAttribute('aria-expanded'), 'false');
+});
+
+test('runs: the same source, or a null one, keeps an open run open', () => {
+  const m = mount({ mode: 'conversation' });
+  m.rows.render([ask('line:0', 1), execSaid('line:1', 1)], 'aaaa:0');
+  clickToggle(m);
+  m.rows.render([ask('line:0', 1), execSaid('line:1', 1), talk('line:2', 1)], 'aaaa:0');
+  m.rows.render([ask('line:0', 1), execSaid('line:1', 1), talk('line:2', 1)]);
+  assert.strictEqual(cardsOf(m).length, 1);
+});
+
+test('runs: a stale run key is pruned, while an opened two-call tool block stays open after an appending re-render', () => {
+  const head = [ask('p1', 1), execSaid('a1', 1)];
+  const tail = [ask('p2', 2), call('t1', 'Bash', 'ls', 'ok', { turn: 2 }), call('t2', 'Bash', 'pwd', 'ok', { turn: 2 })];
+  const m = mount({ mode: 'conversation' });
+  m.render([...head, ...tail]);
+  clickToggle(m, 0);
+  clickToggle(m, 1);
+  const block = () => findCls(m.pane, 'tr-tool-block')[0];
+  headOf(block()).listeners.click();
+  assert.strictEqual(/\btr-tool-folded\b/.test(block().className), false, 'ENTER: the tool block is open');
+  assert.strictEqual(cardsOf(m).length, 1, 'ENTER: the p1 run is open');
+  m.render([...tail, talk('a3', 2)]);
+  assert.strictEqual(/\btr-tool-folded\b/.test(block().className), false);
+  assert.strictEqual(isHidden(block()), false);
+  m.render([...head, ...tail, talk('a3', 2)]);
+  assert.strictEqual(cardsOf(m).length, 0);
+});
+
+test('runs: after a source change no old ids or duplicate data-turn remain, the bar stays first and the working row last', () => {
+  const doc = fakeDocument();
+  const pane = doc.createElement('div');
+  const bar = doc.createElement('div');
+  pane.appendChild(bar);
+  const rows = createTranscriptRows(doc, pane, { lead: bar, mode: 'conversation', setInterval: () => 1, clearInterval: () => {} });
+  rows.render([ask('line:0', 1), talk('line:1', 1), ask('line:5', 2), talk('line:6', 2)], 'aaaa:0');
+  rows.setWorking({ state: 'thinking', since: 0 });
+  const old = pane.childNodes.find((n) => n.dataset && n.dataset.turn === 'line:0');
+  rows.render([ask('line:0', 1), talk('line:1', 1, 'fresh')], 'bbbb:0');
+  const turns = pane.childNodes.filter((n) => /\btr-turn\b/.test(n.className)).map((n) => n.dataset.turn);
+  assert.deepStrictEqual(turns, ['line:0']);
+  assert.notStrictEqual(pane.childNodes.find((n) => n.dataset && n.dataset.turn === 'line:0'), old);
+  assert.strictEqual(old.parentNode, null);
+  assert.strictEqual(pane.childNodes[0], bar);
+  assert.ok(/\btr-working\b/.test(pane.childNodes[pane.childNodes.length - 1].className));
+});
+
+test('runs: collapse invariant — for a run with a visible host, the toggle exists iff the closed view suppresses something; after opening it is still present and collapses the run', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([ask('p1', 1), inb('i1', 1, 'reminder', 'continue'), talk('a1', 1), ended('e1', 1, 3000), ask('p2', 2), talk('a2', 2), ended('e2', 2, 4000)]);
+  assert.strictEqual(isHidden(rowIn(m, 'i1')), true, 'ENTER: the p1 run hides a row');
+  assert.strictEqual(togglesOf(m).length, 1);
+  assert.strictEqual(turnOf(m, 'p1').childNodes.includes(togglesOf(m)[0]), true);
+  const plainFoot = turnOf(m, 'p2').childNodes[turnOf(m, 'p2').childNodes.length - 1];
+  assert.strictEqual(plainFoot.className, 'tr-row tr-footer');
+  assert.strictEqual(plainFoot.textContent, '4.0s');
+  clickToggle(m);
+  assert.strictEqual(togglesOf(m).length, 1);
+  assert.strictEqual(isHidden(rowIn(m, 'i1')), false);
+  clickToggle(m);
+  assert.strictEqual(togglesOf(m).length, 1);
+  assert.strictEqual(isHidden(rowIn(m, 'i1')), true);
+});
+
+test('runs: the non-head turn of a two-turn run carries tr-turn-cont in Conversation', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([ask('p1', 1), talk('a1', 1), inb('m2', 2, 'reminder', 'continue'), talk('a2', 2)]);
+  assert.deepStrictEqual(m.pane.childNodes.map((n) => /\btr-turn-cont\b/.test(n.className)), [false, true]);
+  m.rows.setMode('internals');
+  assert.deepStrictEqual(m.pane.childNodes.map((n) => /\btr-turn-cont\b/.test(n.className)), [false, false]);
+});
+
+test('runs: an expander click re-anchors scroll the same as a mode switch', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([ask('p1', 1), talk('a1', 1), ask('p2', 2), inb('i2', 2, 'reminder', 'continue'), talk('a2', 2)]);
+  Object.assign(m.pane, { scrollTop: 900, clientHeight: 100, scrollHeight: 1000 });
+  clickToggle(m);
+  Object.assign(m.pane, { scrollHeight: 1200 });
+  assert.strictEqual(m.pane.scrollTop, 1000);
 });

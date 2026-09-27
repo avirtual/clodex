@@ -1865,7 +1865,7 @@ function createStreamSeatPane(name, wrapperEl) {
       const nextPermKey = Array.isArray(res.permissions) ? res.permissions.map((i) => i.id).join('\n') : permKey;
       if (nextPermKey !== permKey) { permKey = nextPermKey; renderPermissions(res.permissions); }
       if (!res.ok) return;
-      renderTranscript(document, paneEl, res.records, rowsCtx);
+      renderTranscript(document, paneEl, res.records, rowsCtx, res.source);
       if (follow) paneEl.scrollTop = paneEl.scrollHeight;
     }).catch(() => { pulling = false; });
   };

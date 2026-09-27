@@ -250,3 +250,64 @@ test('transcript:pull after the transcript link repoints answers the new records
   assert.strictEqual('unchanged' in after, false);
   assert.deepStrictEqual(after.records.map((r) => r.text), ['after clear']);
 });
+
+for (const [label, box] of [['with an outbox', { rev: 2, items: [] }], ['with no outbox', null]]) {
+  test(`transcript:pull ${label} passes source through on the full response and omits it on unchanged`, (t) => {
+    const { pull, close } = revPull(box, null);
+    t.after(close);
+    const first = pull();
+    assert.match(first.source, /^[0-9a-f]{16}:0$/);
+    assert.strictEqual(Array.isArray(first.outbox), !!box, 'ENTER: the variant under test');
+    const same = pull(first.rev);
+    assert.strictEqual(same.unchanged, true);
+    assert.strictEqual('source' in same, false);
+  });
+}
+
+test('transcript:pull MF3 identity: repointing between two session.jsonl files changes source and the new line:0 run starts closed', (t) => {
+  const { fakeDocument } = require('./lib/fake-dom');
+  const { createTranscriptRows } = require('../renderer/transcript-rows');
+  const handlers = new Map();
+  const reg = mkTmpRoot('ipc-tpull-');
+  const link = pathFor(reg, 'mf', 'transcript');
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  const line = (o) => JSON.stringify(o);
+  const body = (said) => `${line({ type: 'user', message: { content: said } })}\n${line({ type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }, { type: 'tool_use', id: `t-${said}`, name: 'Bash', input: { command: 'ls' } }] } })}\n`;
+  for (const d of ['A', 'B']) {
+    fs.mkdirSync(path.join(reg, d));
+    fs.writeFileSync(path.join(reg, d, 'session.jsonl'), body(d));
+  }
+  fs.symlinkSync(path.join(reg, 'A', 'session.jsonl'), link);
+  const seat = { name: 'mf', agentType: 'claude', io: 'stream', _dead: false };
+  registerIpcHandlers({
+    handle: (ch, fn) => handlers.set(ch, fn),
+    on: (ch, fn) => handlers.set(ch, fn),
+    log: { info() {}, error() {}, warn() {}, debug() {} },
+    REGISTRY_DIR: reg,
+    manager: {
+      sessions: new Map([['mf', seat]]),
+      seatOutbox: () => null,
+      seatPermissions: () => null,
+      compactNoticesFor: () => null,
+      _sendToSession() {},
+    },
+  });
+  const pull = (...a) => handlers.get('transcript:pull')(null, 'mf', ...a);
+  t.after(() => { seat._dead = true; pull(); });
+  const doc = fakeDocument();
+  const pane = doc.createElement('div');
+  const rows = createTranscriptRows(doc, pane, { mode: 'conversation' });
+  const toggle = () => pane.childNodes.flatMap((n) => n.childNodes).find((n) => /\btr-run-toggle\b/.test(n.className));
+  const before = pull();
+  assert.strictEqual(before.records[0].id, 'line:0');
+  rows.render(before.records, before.source);
+  toggle().listeners.click();
+  assert.strictEqual(toggle().getAttribute('aria-expanded'), 'true', 'ENTER: the line:0 run was open before the repoint');
+  fs.unlinkSync(link);
+  fs.symlinkSync(path.join(reg, 'B', 'session.jsonl'), link);
+  const after = pull(before.rev);
+  assert.deepStrictEqual([after.records[0].id, after.records[0].text], ['line:0', 'B']);
+  assert.notStrictEqual(after.source, before.source);
+  rows.render(after.records, after.source);
+  assert.strictEqual(toggle().getAttribute('aria-expanded'), 'false');
+});

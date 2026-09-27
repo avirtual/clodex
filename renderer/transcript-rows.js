@@ -816,7 +816,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         build: () => {
           const btn = el(doc, 'button', 'tr-row tr-footer tr-run-toggle');
           btn.type = 'button';
-          btn.appendChild(doc.createTextNode(''));
+          btn.appendChild(el(doc, 'span', 'tr-run-glyph'));
           footerParts(doc, btn, stats, deps, false);
           btn.addEventListener('click', () => {
             const anchor = anchorOf();
