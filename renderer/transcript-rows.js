@@ -868,6 +868,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
           const glyph = btn.appendChild(el(doc, 'span', 'tr-run-glyph'));
           glyph.setAttribute('aria-hidden', 'true');
           footerParts(doc, btn, stats, deps, false);
+          btn.title = 'Show or hide the steps behind this reply';
           if (btn.childNodes.length === 1) btn.setAttribute('aria-label', 'Show or hide this run\'s steps');
           btn.addEventListener('click', () => {
             const focused = doc.activeElement === btn;

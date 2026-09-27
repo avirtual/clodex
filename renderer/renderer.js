@@ -1808,6 +1808,10 @@ function createStreamSeatPane(name, wrapperEl) {
       body.className = 'seat-outbox-text';
       body.textContent = row.images ? `${row.text} [${row.images} image${row.images === 1 ? '' : 's'}]` : row.text;
       el.appendChild(body);
+      const state = document.createElement('span');
+      state.className = 'seat-outbox-state';
+      state.textContent = 'queued';
+      el.appendChild(state);
       outboxEl.appendChild(el);
     }
   };

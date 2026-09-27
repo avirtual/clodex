@@ -9173,6 +9173,13 @@ button.seat-status-chip {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.seat-outbox-state {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  color: var(--warn);
+}
 .seat-permissions {
   flex: 0 0 auto;
   display: flex;
@@ -9749,7 +9756,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         <div id="side-pane-head">
           <div id="side-pane-tabs" class="side-strip"></div>
           <span id="side-pane-seat" hidden></span>
-          <button type="button" class="popover-close" id="side-pane-close" title="Close the pane (its tabs are kept)" aria-label="Close">&times;</button>
+          <button type="button" class="popover-close" id="side-pane-close" title="Close the side pane (its tabs are kept)" aria-label="Close">&times;</button>
         </div>
         <div id="side-pane-body"></div>
       </div>
@@ -10136,10 +10143,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
               <input type="checkbox" id="input-no-wire" style="margin: 0;">
               <span class="hint-text" style="margin: 0;">Spawn this seat with no <code>ANTHROPIC_BASE_URL</code> at all — no Clodex tee, no API proxy. Needed for Anthropic's remote access (attaching from the phone app), which refuses to run when that variable is set. Costs the wire-only features: warmth, wire telemetry and protocol-accurate activity. Intents and the touched-file list still work (both come from the transcript), but edits are no longer attributed to the subagent that made them. Wire-off seats show a <code>⊘</code> in the sidebar.</span>
             </label>
-          <label id="stream-io-row">Stream transport (experimental)
+          <label id="stream-io-row">Stream seat — no terminal
             <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
               <input type="checkbox" id="input-stream-io" style="margin: 0;">
-              <span class="hint-text" style="margin: 0;">Run the seat headless over the CLI's stream protocol, with no terminal: the transcript pane is its view and a composer below it is its input. It survives a Clodex relaunch.</span>
+              <span class="hint-text" style="margin: 0;">Clodex runs the CLI over its stream protocol instead of in a terminal. The seat is its conversation view and a message box: dms, permission prompts, slash commands, images and voice all go through them, and there is no terminal to fall back to. It survives a Clodex relaunch.</span>
             </label>
           </label>
           </label>
@@ -10300,10 +10307,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         <input type="text" id="args-effort" placeholder="(CLI default)" spellcheck="false">
         <span class="hint-text">The reasoning effort level, in the CLI's own words. Empty leaves the CLI's setting alone.</span>
       </label>
-      <label id="args-stream-io-row">Stream transport (experimental)
+      <label id="args-stream-io-row">Stream seat — no terminal
         <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
           <input type="checkbox" id="args-stream-io" style="margin: 0;">
-          <span class="hint-text" style="margin: 0;">Run the seat headless over the CLI's stream protocol. Takes effect at the next restart.</span>
+          <span class="hint-text" style="margin: 0;">Clodex runs the CLI over its stream protocol instead of in a terminal. The seat is its conversation view and a message box: dms, permission prompts, slash commands, images and voice all go through them, and there is no terminal to fall back to. It survives a Clodex relaunch. Takes effect at the next restart.</span>
         </label>
       </label>
       <details id="args-append-section" class="dialog-section">
@@ -10428,12 +10435,12 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         <p class="hint-text">Faster repaint on busy seats. Takes effect for terminals opened after saving.</p>
         <label class="prefs-check">
           <input type="checkbox" id="prefs-transcript-pane">
-          <span>Transcript pane (experimental)</span>
+          <span>Open agent seats in the conversation view</span>
         </label>
-        <p class="hint-text">Claude seats on this desktop show their conversation from the transcript above a live strip of the terminal from the composer down. Dialogs and menus fall back to the full terminal.</p>
+        <p class="hint-text">Claude, Codex and Muse terminal seats show their conversation, rendered from the CLI's own transcript, with a Clodex message box under it. When the CLI shows a picker, a dialog or a running turn, its terminal opens underneath; View ▸ Terminal (⌘⇧T) shows the whole terminal. Shell and peer seats always show the terminal.</p>
       </details>
       <details class="prefs-group" data-group="voice">
-        <summary><h4>Voice input</h4><span class="prefs-group-sub">Off or on</span></summary>
+        <summary><h4>Voice input</h4><span class="prefs-group-sub">Per seat</span></summary>
         <p class="hint-text">Applies as soon as you pick it — Cancel does not undo it. The mode belongs to the focused seat, and the voice button on that seat’s bar is the same control.</p>
         <div class="prefs-row">
           <span>Mode</span>
@@ -10445,7 +10452,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         </div>
         <span id="prefs-voice-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
         <h5>Hands-free submit</h5>
-        <p class="hint-text">End what you are saying with the phrase below and Clodex erases the phrase and presses Enter for you. The CLI submits on its own only when the last transcribed chunk runs to three words or more, so trailing off leaves your sentence sitting in the box — this is the way out of that. Never fires while a session is asking permission for something (Enter would answer the dialog), and a phrase spoken then is dropped rather than sent once the dialog clears.</p>
+        <p class="hint-text">End what you are saying with the phrase below and Clodex erases the phrase and presses Enter for you. Never fires while a session is asking permission for something (Enter would answer the dialog), and a phrase spoken then is dropped rather than sent once the dialog clears.</p>
         <label class="prefs-check">
           <input type="checkbox" id="prefs-voice-submit">
           <span>Submit when I say the phrase</span>
@@ -32246,6 +32253,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
                 const glyph = btn.appendChild(el(doc, "span", "tr-run-glyph"));
                 glyph.setAttribute("aria-hidden", "true");
                 footerParts(doc, btn, stats, deps, false);
+                btn.title = "Show or hide the steps behind this reply";
                 if (btn.childNodes.length === 1) btn.setAttribute("aria-label", "Show or hide this run's steps");
                 btn.addEventListener("click", () => {
                   const focused = doc.activeElement === btn;
@@ -32829,18 +32837,22 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function renderTranscript(doc, paneEl, records, ctx = {}, source = null) {
         transcriptRowsFor(doc, paneEl, ctx).render(records, source);
       }
-      var TRANSCRIPT_MODES = [["conversation", "Conversation"], ["internals", "Internals"]];
+      var TRANSCRIPT_MODES = [
+        ["conversation", "Conversation", "Your messages and the agent's replies. Machine traffic folds to one line."],
+        ["internals", "Internals", "Everything the seat did: tool calls, deliveries from Clodex and other seats, runtime notices."]
+      ];
       function modeBar(doc, paneEl, mode, onMode = NOOP) {
         const bar = doc.createElement("div");
         bar.className = "transcript-bar";
         const control = doc.createElement("div");
         control.className = "transcript-mode";
         let current = null;
-        const buttons = TRANSCRIPT_MODES.map(([value, label]) => {
+        const buttons = TRANSCRIPT_MODES.map(([value, label, title]) => {
           const btn = doc.createElement("button");
           btn.type = "button";
           btn.className = "transcript-mode-btn";
           btn.textContent = label;
+          btn.title = title;
           btn.addEventListener("click", () => {
             if (current === value) return;
             setMode(value);
@@ -37618,7 +37630,7 @@ void main() {
     "renderer/session-hovercard.js"(exports, module) {
       var { esc, fmtCountdown, fmtTokens } = require_format();
       var { turnLine, reqLine, costLine } = require_turn_stat();
-      var IO_KINDS = { stream: "streamed", pty: "terminal" };
+      var IO_KINDS = { stream: "stream", pty: "terminal" };
       var AGENT_TYPES = /* @__PURE__ */ new Set(["claude", "codex", "muse"]);
       function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, proxyPollMs, typeGlyph }) {
         const HOVER_DELAY_MS = 350;
@@ -48245,6 +48257,10 @@ ${detail}` });
             body.className = "seat-outbox-text";
             body.textContent = row.images ? `${row.text} [${row.images} image${row.images === 1 ? "" : "s"}]` : row.text;
             el.appendChild(body);
+            const state = document.createElement("span");
+            state.className = "seat-outbox-state";
+            state.textContent = "queued";
+            el.appendChild(state);
             outboxEl.appendChild(el);
           }
         };
