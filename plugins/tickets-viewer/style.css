@@ -155,11 +155,6 @@
   background: color-mix(in srgb, var(--warn) 8%, transparent);
 }
 
-/* Paired with the precedence in ticketRow's row-class expression, which is what
-   decides this edge is ever seen: a closed row in the recent block is usually
-   ALSO stalled — the window is 24h and the threshold 30m — so the amber above
-   would win by source order on exactly the rows a lead most needs to spot. The
-   red is the actionable one; the stall is its consequence. */
 .tv-ticket.tv-merge-failed {
   border-left-color: var(--error);
   background: color-mix(in srgb, var(--error) 8%, transparent);

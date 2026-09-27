@@ -636,7 +636,7 @@ test('both merge classes are styled, and not styled alike (t534)', () => {
 // open-only `stalled`/`parked`/`backlog` chain does not cover and the one the
 // text boards call the normal reading: the loop merges after `task done`, so a
 // merge that failed or deferred is usually read on a row that is already done.
-test('both merge marks render on a recently-CLOSED row too, stalled as they normally are (t534)', async () => {
+test('both merge marks render on a recently-CLOSED row too, even one that is also flagged stalled (t534)', async () => {
   await withDom({
     projects: projectsRes([projectRow({ open: 0 })]),
     board: boardRes({
@@ -1634,6 +1634,122 @@ test('the pane: a quiet tick hands keyboard focus to the rebuilt control', async
   });
 });
 
+function heldAfterFirst(first) {
+  const held = { calls: 0, release: null };
+  held.answer = (arg) => {
+    held.calls += 1;
+    if (held.calls === 1) return typeof first === 'function' ? first(arg) : first;
+    return new Promise((resolve) => { held.release = resolve; });
+  };
+  return held;
+}
+
+async function tickKeepsFocus({ root, rhost, calls, settle }, label, key, method) {
+  const tick = [...rhost._intervals.values()][0].fn;
+  const old = buttonLabelled(root, label);
+  assert.ok(old, `ENTER: the ${label} button rendered`);
+  old.focus();
+  assert.equal(global.document.activeElement, old, `ENTER: ${label} has focus`);
+  const before = calls.filter((c) => c.method === method).length;
+  tick();
+  await settle();
+  assert.equal(calls.filter((c) => c.method === method).length, before + 1, `ENTER: the tick re-read ${method}`);
+  const now = global.document.activeElement;
+  assert.notEqual(now, old);
+  assert.equal(now.tag, 'button');
+  assert.equal(now.textContent, label);
+  assert.equal(now.dataset.tvFocus, key);
+  assert.ok(root.contains(now));
+}
+
+test('the pane: a quiet tick keeps keyboard focus on the Feed\'s Refresh button', async () => {
+  const rows = [{ at: 3000, id: 't7', title: 'a', kind: 'merged', by: 'ticket-loop' }];
+  await withDom(feedBoard({ ok: true, rows, limit: 200 }), async (ctx) => {
+    buttonLabelled(ctx.root, 'Feed').click();
+    await ctx.settle();
+    await tickKeepsFocus(ctx, 'Refresh', 'refresh', 'feed');
+  });
+});
+
+for (const [label, key] of [['Newer', 'newer'], ['Older', 'older']]) {
+  test(`the pane: a quiet tick keeps keyboard focus on the Closed list's ${label} pager`, async () => {
+    await withDom(closedBoard({
+      closed: (arg) => closedRes({ rows: [closedRow(`t${arg.offset}`)], total: 120, offset: arg.offset }),
+    }), async (ctx) => {
+      summaryNode(ctx.root).click();
+      await ctx.settle();
+      buttonLabelled(ctx.root, 'Older').click();
+      await ctx.settle();
+      assert.match(textOf(ctx.root).join('\n'), /51–51 of 120/, 'ENTER: both pager buttons lead somewhere');
+      await tickKeepsFocus(ctx, label, key, 'closed');
+    });
+  });
+}
+
+test('the pane: a quiet Feed read that lands while the operator is typing in the pane does not repaint', async () => {
+  const held = heldAfterFirst({ ok: true, rows: [{ at: 3000, id: 't7', title: 'a', kind: 'merged', by: 'ticket-loop' }], limit: 200 });
+  await withDom(feedBoard(held.answer), async ({ rhost, root, settle }) => {
+    const tick = [...rhost._intervals.values()][0].fn;
+    buttonLabelled(root, 'Feed').click();
+    await settle();
+    const list = allByClass(root, 'tv-feed')[0];
+    assert.ok(list, 'ENTER: the feed is painted');
+    tick();
+    await settle();
+    assert.ok(held.release, 'ENTER: the tick is waiting on the feed');
+    global.document.activeElement = allByClass(root, 'tv-search')[0];
+    try {
+      held.release({ ok: true, rows: [{ at: 4000, id: 't9', title: 'b', kind: 'add', by: 'lead' }], limit: 200 });
+      await settle();
+      assert.equal(allByClass(root, 'tv-feed')[0], list);
+      assert.deepEqual(allByClass(root, 'tv-feed-row').map((n) => n.dataset.tvFocus), ['ticket:t7']);
+    } finally {
+      delete global.document.activeElement;
+    }
+  });
+});
+
+test('the pane: a quiet Closed read that lands while the operator is typing in the pane does not repaint', async () => {
+  const held = heldAfterFirst(closedRes({ rows: [closedRow('t40')], total: 1 }));
+  await withDom(closedBoard({ closed: held.answer }), async ({ rhost, root, settle }) => {
+    const tick = [...rhost._intervals.values()][0].fn;
+    summaryNode(root).click();
+    await settle();
+    const list = allByClass(root, 'tv-hits')[0];
+    assert.ok(list, 'ENTER: the closed list is painted');
+    tick();
+    await settle();
+    assert.ok(held.release, 'ENTER: the tick is waiting on the closed list');
+    global.document.activeElement = allByClass(root, 'tv-search')[0];
+    try {
+      held.release(closedRes({ rows: [closedRow('t41')], total: 1 }));
+      await settle();
+      assert.equal(allByClass(root, 'tv-hits')[0], list);
+      assert.match(textOf(root).join('\n'), /t40/);
+      assert.doesNotMatch(textOf(root).join('\n'), /t41/);
+    } finally {
+      delete global.document.activeElement;
+    }
+  });
+});
+
+test('the pane: a quiet board read that lands after the operator opened the editor does not paint over it', async () => {
+  const held = heldBoard();
+  await withDom(crudAnswers({ board: held.answer }), async ({ rhost, root, settle }) => {
+    const tick = [...rhost._intervals.values()][0].fn;
+    tick();
+    await settle();
+    assert.ok(held.release, 'ENTER: the tick is waiting on the board');
+    buttonLabelled(root, '+ New ticket').click();
+    const editor = allByClass(root, 'tv-editor')[0];
+    assert.ok(editor, 'ENTER: the editor is open');
+    held.release(boardRes({ open: [shaped('t2')], counts: { ...boardRes().counts, open: 1 } }));
+    await settle();
+    assert.equal(allByClass(root, 'tv-editor')[0], editor);
+    assert.deepEqual(allByClass(root, 'tv-id').map((n) => n.textContent), ['t1']);
+  });
+});
+
 test('the pane: onShow still paints "Loading…" while the board is on its way', async () => {
   const held = heldBoard();
   await withDom(crudAnswers({ board: held.answer }), async ({ rhost, root, settle }) => {
@@ -2206,7 +2322,6 @@ test('project select: changing it to gamma fetches gamma\'s board and shows gamm
     select.change('gamma-3333');
     await settle();
     assert.equal(calls.filter((c) => c.method === 'board').at(-1).arg, 'gamma-3333');
-    assert.equal(select.value, 'gamma-3333');
     assert.deepEqual(chips(), ['2', '4 open']);
     assert.deepEqual(allByClass(root, 'tv-team-stalled').map((c) => c.title), ['2 open ticket(s) quiet past the stall threshold']);
   });

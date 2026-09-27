@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - A filed body whose file could not be read the first time is read again when you unfold it again.
+- The Tickets pane's quiet refresh keeps keyboard focus on the Feed's Refresh button and the Closed list's Newer/Older pager, and never repaints the Closed or Feed view over an edit you started while it was loading.
 
 ## 5.88.0 — 2026-09-28 — Layout round 2: a Files toggle, drawer and dock sizing, the Tickets pane as a pane, clodexctl node versions
 - clodexctl: `describe node <name>` shows the Clodex version and host the node is running (fetched live; "(unreachable: …)" when it cannot be reached), and `get nodes --versions` adds a VERSION column; the plain listing stays offline.
