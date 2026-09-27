@@ -14,6 +14,7 @@ const { parseSkillFrontmatter } = require('./skills-util');
 // app may require cli/ because cli/ SHIPS (build.files, t32 step 0); the reverse
 // direction stays forbidden — cli/ is a leaf and never requires an app file.
 const { validateEntry } = require('./cli/src/contexts');
+const { DOCK_SPLIT_MIN, DOCK_SPLIT_MAX } = require('./renderer/lib/split');
 const { visibleTo } = require('./scope-util');
 const { clampSidebarWidth } = require('./sidebar-width');
 const { sanitizeCtxThresholds } = require('./ctx-reminder');
@@ -147,7 +148,7 @@ function sanitizeSidePaneWidth(px) {
 }
 
 function sanitizeDockSplit(f) {
-  return typeof f === 'number' && f >= 0.2 && f <= 0.8 ? f : null;
+  return typeof f === 'number' && f >= DOCK_SPLIT_MIN && f <= DOCK_SPLIT_MAX ? f : null;
 }
 
 function defaultUiSettings() { return JSON.parse(JSON.stringify(DEFAULT_UI_SETTINGS)); }

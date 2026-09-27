@@ -34,13 +34,23 @@ function el(tag = 'div') {
     remove() { e.parentNode = null; },
     contains: () => false,
     closest: () => null,
+    props: new Map(),
+    style: {
+      setProperty: (k, v) => e.props.set(k, v),
+      removeProperty: (k) => e.props.delete(k),
+    },
+    clientHeight: 0,
+    rect: { top: 0, right: 0, bottom: 0, left: 0 },
+    getBoundingClientRect: () => e.rect,
+    setPointerCapture() {},
+    releasePointerCapture() {},
     get textContent() { return e._text; },
     set textContent(v) { e._text = String(v); e.children = []; },
   };
   return e;
 }
 
-function harness(fn) {
+function harness(fn, { storage = {}, mainHeight = 1000 } = {}) {
   const had = {
     d: global.document, w: global.window, ls: global.localStorage,
     ro: global.ResizeObserver, raf: global.requestAnimationFrame,
@@ -56,13 +66,31 @@ function harness(fn) {
     addEventListener() {},
     activeElement: null,
   };
-  global.window = { api: { onRequestOpenIpcLog() {} } };
-  global.localStorage = { getItem: () => null, setItem() {} };
+  const body = el('body');
+  global.document.body = body;
+  const store = new Map(Object.entries(storage));
+  const winListeners = new Map();
+  const raf = (cb) => { frames.push(cb); return frames.length; };
+  global.window = {
+    api: { onRequestOpenIpcLog() {} },
+    addEventListener(type, cb) { winListeners.set(type, cb); },
+    requestAnimationFrame: raf,
+    cancelAnimationFrame() {},
+    setTimeout: (cb) => { frames.push(cb); return frames.length; },
+    clearTimeout() {},
+  };
+  global.localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+  };
   global.ResizeObserver = class { observe() {} };
-  global.requestAnimationFrame = (cb) => { frames.push(cb); return frames.length; };
+  global.requestAnimationFrame = raf;
 
   byId.set('drawer', el('div'));
   byId.get('drawer').classList.add('collapsed');
+  byId.set('main', el('div'));
+  byId.get('main').clientHeight = mainHeight;
 
   const flush = () => { const q = frames.splice(0); for (const cb of q) cb(); };
 
@@ -86,10 +114,23 @@ function harness(fn) {
     });
   };
 
+  const handle = byId.get('drawer-resize');
   const api = {
     host, flush, edges, types,
-    byId,
+    byId, store, body, winListeners, frames,
     tenant,
+    drawerH: () => byId.get('main').props.get('--drawer-h'),
+    tall: () => byId.get('drawer').classList.contains('tall'),
+    drag(...ys) {
+      byId.get('drawer').rect = { top: 0, right: 0, bottom: mainHeight, left: 0 };
+      handle.listeners.get('pointerdown')({ button: 0, pointerId: 1, preventDefault() {} });
+      for (const y of ys) {
+        handle.listeners.get('pointermove')({ clientX: 0, clientY: y });
+        flush();
+      }
+    },
+    release() { handle.listeners.get('pointerup')({ pointerId: 1 }); flush(); },
+    dblclick() { handle.listeners.get('dblclick')({}); },
     seatTo(name) { seat = name; host.onSessionChanged(); flush(); },
     firstSeat(name) { seat = name; host.syncSeatAvailability(); flush(); },
     collapsed: () => byId.get('drawer').classList.contains('collapsed'),
@@ -216,4 +257,104 @@ test('forgetSession drops the seat entry', () => {
     h.host.forgetSession('seat-a');
     assert.deepEqual(h.host.deckOf('seat-a'), { expanded: false, tab: null });
   });
+});
+
+function expanded(h) {
+  h.types.set('seat-a', 'claude');
+  h.tenant('log');
+  h.firstSeat('seat-a');
+  h.clickTab('log');
+  h.flush();
+  assert.equal(h.collapsed(), false);
+}
+
+test('drawer height: a drag applies --drawer-h live and writes clodex-drawer-h only on release', () => {
+  harness((h) => {
+    expanded(h);
+    h.drag(800, 700);
+    assert.equal(h.drawerH(), '300px');
+    assert.equal(h.body.classList.contains('drawer-dragging'), true);
+    assert.equal(h.store.has('clodex-drawer-h'), false);
+    h.release();
+    assert.equal(h.body.classList.contains('drawer-dragging'), false);
+    assert.equal(h.store.get('clodex-drawer-h'), '300');
+  });
+});
+
+test('drawer height: a drag clears tall', () => {
+  harness((h) => {
+    expanded(h);
+    assert.equal(h.tall(), true);
+    h.drag(600);
+    h.release();
+    assert.equal(h.tall(), false);
+    assert.equal(h.store.get('clodex-drawer-tall'), '0');
+    assert.equal(h.drawerH(), '400px');
+  }, { storage: { 'clodex-drawer-tall': '1' } });
+});
+
+test('drawer height: a double-click removes the inline height and the key', () => {
+  harness((h) => {
+    expanded(h);
+    h.drag(700);
+    h.release();
+    assert.equal(h.store.get('clodex-drawer-h'), '300');
+    h.dblclick();
+    assert.equal(h.drawerH(), undefined);
+    assert.equal(h.store.has('clodex-drawer-h'), false);
+  });
+});
+
+test('drawer height: a boot with the key set applies it synchronously, before any frame', () => {
+  harness((h) => {
+    assert.equal(h.frames.length, 0);
+    assert.equal(h.drawerH(), '333px');
+  }, { storage: { 'clodex-drawer-h': '333' } });
+});
+
+test('drawer height: a boot with no key or a junk key sets no inline height', () => {
+  harness((h) => assert.equal(h.drawerH(), undefined));
+  harness((h) => assert.equal(h.drawerH(), undefined), { storage: { 'clodex-drawer-h': 'tall' } });
+  harness((h) => assert.equal(h.drawerH(), undefined), { storage: { 'clodex-drawer-h': '40' } });
+});
+
+test('drawer height: a drag fires neither onShow nor onHide on the shown tenant', () => {
+  harness((h) => {
+    expanded(h);
+    assert.deepEqual(h.edges, ['show:log']);
+    h.edges.length = 0;
+    h.drag(900, 500, 300);
+    h.release();
+    h.dblclick();
+    h.flush();
+    assert.deepEqual(h.edges, []);
+  });
+});
+
+test('drawer height: the clamp floor is 120px and the ceiling 70% of #main', () => {
+  harness((h) => {
+    expanded(h);
+    h.drag(990);
+    assert.equal(h.drawerH(), '120px');
+    h.drag(10);
+    assert.equal(h.drawerH(), '700px');
+    h.release();
+    assert.equal(h.store.get('clodex-drawer-h'), '700');
+  });
+});
+
+test('drawer height: a window resize re-clamps the remembered height to the new #main', () => {
+  harness((h) => {
+    assert.equal(h.drawerH(), '600px');
+    h.byId.get('main').clientHeight = 500;
+    h.winListeners.get('resize')();
+    assert.equal(h.drawerH(), '350px');
+  }, { storage: { 'clodex-drawer-h': '600' } });
+});
+
+test('#drawer caps its height at 70%, the same ceiling the drag clamps to', () => {
+  const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  const block = css.match(/\n#drawer \{[^}]*\}/);
+  assert.ok(block, 'no #drawer block');
+  assert.match(block[0], /max-height: 70%;/);
 });
