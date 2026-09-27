@@ -2026,6 +2026,50 @@ test('t1253: more must-fixes whose arm leaves an older carried latch in place ty
   } finally { app.stop(); }
 });
 
+test('t1254: more must-fixes HELD for a dialog park the unconfirmed rejection with them and keep the latch', async () => {
+  const world = mkWorld();
+  const store = require('../pending-store');
+  const { app, s, lead } = await redirected(world, { deps: { drainPending: store.drainPending, countPending: store.countPending } });
+  try {
+    assert.ok(s._specUnconfirmed && s._specUnconfirmed.label === 'rejected', 'ENTER: the typed rejection is latched with no turn');
+    s.needsAttention = { kind: 'permission', ts: Date.now(), message: 'allow?' };
+    const beforeFollow = app.seen('team-hand');
+    app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
+    for (let i = 0; i < 200 && app.parked('team-hand', /ALSO FIX THE LATCH/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.strictEqual(app.parked('team-hand', /ALSO FIX THE LATCH/), 1, 'ENTER: the must-fixes were parked by the hold');
+    assert.ok(s._specUnconfirmed && s._specUnconfirmed.kind === 'redirect' && s._specUnconfirmed.ticketId === 't1',
+      'the park keeps a redirect latch for the ticket instead of dropping the unconfirmed rejection');
+
+    s.needsAttention = null;
+    app.m.flushPending('team-hand');
+    const typed = (await settled(app, 'team-hand', /ALSO FIX THE LATCH/)).slice(beforeFollow.length);
+    assert.match(typed, /FIX THE WIDGET MOUNT[\s\S]*ALSO FIX THE LATCH/, 'the drained park types the rejection first, then the new must-fixes');
+  } finally { app.stop(); }
+});
+
+test('t1254: more must-fixes parked at a BUSY seat park the unconfirmed rejection with them and keep the latch', async () => {
+  const world = mkWorld();
+  const store = require('../pending-store');
+  const { app, s, lead } = await redirected(world, {
+    deps: { drainPending: store.drainPending, countPending: store.countPending, INJECT_QUIET_MAXWAIT: 60_000 },
+  });
+  try {
+    assert.ok(s._specUnconfirmed && s._specUnconfirmed.label === 'rejected', 'ENTER: the typed rejection is latched with no turn');
+    s.activityState = 'thinking';
+    const beforeFollow = app.seen('team-hand');
+    app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
+    for (let i = 0; i < 200 && app.parked('team-hand', /ALSO FIX THE LATCH/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.strictEqual(app.parked('team-hand', /ALSO FIX THE LATCH/), 1, 'ENTER: the must-fixes were parked at the busy seat');
+    assert.ok(s._specUnconfirmed && s._specUnconfirmed.kind === 'redirect' && s._specUnconfirmed.ticketId === 't1',
+      'the park keeps a redirect latch for the ticket instead of dropping the unconfirmed rejection');
+
+    s.activityState = 'idle';
+    app.m.flushPending('team-hand');
+    const typed = (await settled(app, 'team-hand', /ALSO FIX THE LATCH/)).slice(beforeFollow.length);
+    assert.match(typed, /FIX THE WIDGET MOUNT[\s\S]*ALSO FIX THE LATCH/, 'the drained park types the rejection first, then the new must-fixes');
+  } finally { app.stop(); }
+});
+
 // A dispatched ticket whose spec latch has been RETIRED by a real turn, closed,
 // and then rejected by the lead — i.e. a seat holding a redirect and nothing
 // else. The turn matters: without it the spec latch is still armed and every
