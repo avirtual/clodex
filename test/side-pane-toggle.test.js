@@ -156,5 +156,5 @@ test('files toggle: unticking keeps a dirty edit tab and its buffer', async () =
   assert.ok(t.ids['side-pane-body'].children.includes(v.el), 'the edit view is still mounted');
   const tabEl = t.ids['side-pane-tabs'].children[0];
   assert.ok(tabEl.children.some((c) => c.className === 'file-peek-dirty'), 'the tab still shows unsaved changes');
-  for (const opts of v.setDataCalls) assert.strictEqual(opts.keepBuffer, true);
+  assert.strictEqual(v.setDataCalls.length, 0, 'the reopen did not push data over the dirty buffer');
 });

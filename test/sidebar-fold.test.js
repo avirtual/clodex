@@ -191,6 +191,12 @@ test('styles.css keeps every footer button as a glyph under the fold, pane toggl
     .flatMap(([, sel]) => sel.split(',').map((s) => s.trim()));
   assert.ok(folded.includes('#sidebar[data-folded="1"] .footer-label'), 'ENTER: the fold hides footer labels');
   assert.ok(folded.includes('#sidebar[data-folded="1"] .footer-badge'), 'the fold hides the footer badge');
+  const centred = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .filter(([, , body]) => /justify-content\s*:\s*center/.test(body))
+    .flatMap(([sel]) => sel.split(',').map((s) => s.trim()));
+  for (const btn of ['#files-toggle', '#inbox-open', '#sidebar-footer [data-plugin-footer]']) {
+    assert.ok(centred.includes(`#sidebar[data-folded="1"] ${btn}`), `${btn} is centred on the rail`);
+  }
   for (const sel of folded) {
     assert.doesNotMatch(sel, /data-plugin-footer|#files-toggle|#inbox-open/, `${sel} hides a footer button under the fold`);
   }

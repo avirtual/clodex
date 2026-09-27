@@ -471,6 +471,9 @@ test('web: the three drag handles get a 10px hit area from ::before while the vi
   assert.strictEqual(5 - px(s, 'top') - px(s, 'bottom'), 10);
   const d = rule('body.web-frontend #drawer-resize::before');
   assert.strictEqual(5 - px(d, 'top') - px(d, 'bottom'), 10);
+  const drawer = rule('body.web-frontend #drawer');
+  assert.match(drawer, /overflow:\s*clip/, 'the web drawer clips rather than hides, so the margin applies');
+  assert.ok(px(drawer, 'overflow-clip-margin') >= -px(d, 'top'), 'the drawer lets the handle reach past its top edge');
   assert.match(rule('body.web-frontend #dock-split'), /position:\s*relative/);
   assert.match(rule('#drawer-resize'), /touch-action:\s*none/);
 });

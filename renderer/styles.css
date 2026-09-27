@@ -2103,6 +2103,7 @@ body.web-frontend #drawer-resize::before { content: ''; position: absolute; }
 body.web-frontend #dock-handle::before { top: 0; bottom: 0; left: -3px; right: -2px; }
 body.web-frontend #dock-split::before { left: 0; right: 0; top: -3px; bottom: -2px; }
 body.web-frontend #drawer-resize::before { left: 0; right: 0; top: -5px; bottom: 0; }
+body.web-frontend #drawer { overflow: clip; overflow-clip-margin: 5px; }
 body.dock-dragging #drawer, body.dock-dragging #work-row,
 body.dock-split-dragging #drawer, body.dock-split-dragging #work-row,
 body.drawer-dragging #drawer, body.drawer-dragging #work-row { transition: none; }
@@ -6717,7 +6718,9 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main { top: var(--rail-t
   font-size: 10px;
 }
 #sidebar[data-folded="1"] #sidebar-footer { padding: var(--sp-1) 2px; }
-#sidebar[data-folded="1"] #inbox-open {
+#sidebar[data-folded="1"] #files-toggle,
+#sidebar[data-folded="1"] #inbox-open,
+#sidebar[data-folded="1"] #sidebar-footer [data-plugin-footer] {
   justify-content: center;
   gap: 2px;
   padding: 5px 0;

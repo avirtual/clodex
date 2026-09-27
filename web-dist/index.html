@@ -2992,6 +2992,10 @@ body.web-frontend #drawer-resize::before {
   top: -5px;
   bottom: 0;
 }
+body.web-frontend #drawer {
+  overflow: clip;
+  overflow-clip-margin: 5px;
+}
 body.dock-dragging #drawer,
 body.dock-dragging #work-row,
 body.dock-split-dragging #drawer,
@@ -9549,7 +9553,9 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
 #sidebar[data-folded="1"] #sidebar-footer {
   padding: var(--sp-1) 2px;
 }
-#sidebar[data-folded="1"] #inbox-open {
+#sidebar[data-folded="1"] #files-toggle,
+#sidebar[data-folded="1"] #inbox-open,
+#sidebar[data-folded="1"] #sidebar-footer [data-plugin-footer] {
   justify-content: center;
   gap: 2px;
   padding: 5px 0;
