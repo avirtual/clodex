@@ -10482,7 +10482,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
       </details>
       <details class="prefs-group" data-group="voice">
         <summary><h4>Voice input</h4><span class="prefs-group-sub">Per seat</span></summary>
-        <p class="hint-text">Voice is on or off per seat — use the 🎤 button on the seat's bar. The settings below apply to every seat.</p>
+        <p class="hint-text">Voice is on or off per seat — use the 🎤 button on the session bar. The settings below apply to every seat.</p>
         <h5>Hands-free submit</h5>
         <p class="hint-text">End what you are saying with the phrase below and Clodex erases the phrase and presses Enter for you. Never fires while a session is asking permission for something (Enter would answer the dialog), and a phrase spoken then is dropped rather than sent once the dialog clears.</p>
         <label class="prefs-check">
@@ -29336,6 +29336,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (io !== "stream" && transcriptPane !== true) return "terminal";
         return paneMode(transcriptPaneMode);
       }
+      function rememberedSeatView(remembered, settings) {
+        if (SEAT_VIEWS.includes(remembered) && !(remembered === "terminal" && settings.io === "stream")) return remembered;
+        return initialSeatView(settings);
+      }
       function seatViewSettings(view, currentMode) {
         if (view === "terminal") return { transcriptPane: false, transcriptPaneMode: paneMode(currentMode) };
         return { transcriptPane: true, transcriptPaneMode: paneMode(view) };
@@ -29349,6 +29353,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (view === "terminal" && !entry.liveSplit) return;
         entry.view = view;
         if (view !== "terminal") entry.lastView = view;
+        if (typeof entry.onView === "function") entry.onView(view);
         if (entry.liveSplit) {
           entry.liveSplit.setRaw(view === "terminal");
           entry.liveSplit.refresh();
@@ -29367,7 +29372,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           onHelp
         };
       }
-      module.exports = { SEAT_VIEWS, initialSeatView, seatViewSettings, createSeatView, applySeatView, toggleSeatTerminal, seatViewDeps };
+      module.exports = { SEAT_VIEWS, initialSeatView, rememberedSeatView, seatViewSettings, createSeatView, applySeatView, toggleSeatTerminal, seatViewDeps };
     }
   });
 
@@ -31758,11 +31763,12 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (seg.verb !== "task") return null;
         const lines = seg.body.split("\n");
         const at = lines.findIndex((l) => l.trim());
-        return at < 0 ? null : lines[at];
+        return at < 0 ? null : previewText(lines[at], INLINE_CHARS);
       }
       function restBody(doc, seg, ctx) {
         const lines = seg.body.split("\n");
-        const rest = lines.slice(lines.findIndex((l) => l.trim()) + 1).join("\n");
+        const at = lines.findIndex((l) => l.trim());
+        const rest = lines.slice(lines[at].length > INLINE_CHARS ? at : at + 1).join("\n");
         if (!rest.trim()) return [];
         const body = el(doc, "div", "intent-card-body intent-card-rest");
         appendPlain(doc, body, rest, ctx);
@@ -32056,7 +32062,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (rec.via === "subagent") row.dataset.via = "subagent";
         if (!boxed) text.appendChild(inboundBadge(doc, rec));
         if (rec.attached) {
-          const lead = boxed ? "" : rec.text.slice(0, rec.text.indexOf("Message (")).trim();
+          const cut = rec.text.indexOf("Message (");
+          const lead = (cut < 0 ? rec.text : rec.text.slice(0, cut)).trim();
           if (lead) appendProse(doc, text, `${lead} `, ctx);
           text.appendChild(el(doc, "span", "tr-dim", `${bytesText(rec.attached.bytes)} `));
           text.appendChild(linkNode(doc, { kind: "path", text: baseName(rec.attached.path), path: rec.attached.path }, "", ctx));
@@ -32130,10 +32137,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         });
         paint();
       }
-      function internalBox(doc, rec, row, opened, att) {
+      function internalBox(doc, rec, row, opened, att, opens) {
         const box = el(doc, "div", "tr-box");
         box.dataset.id = rec.id;
-        if (isLong(rec.text)) {
+        if (opens) {
           const head = boxHead(doc, rec, att);
           const chevron = head.childNodes[head.childNodes.length - 1];
           wireHead(doc, head, box, chevron, opened, rec.id);
@@ -32154,16 +32161,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return { chip: state ? `${id} ${state}` : id, message };
       }
       function ticketOpens(rec, message) {
-        return Boolean(rec.attached || rec.text.trim().includes("\n") || isLong(rec.text) || message.trim().length > PREVIEW_CHARS);
+        if (rec.attached) return true;
+        return Boolean((rec.text.trim().includes("\n") || isLong(rec.text) || message.trim().length > PREVIEW_CHARS) && restText(message.trim()));
       }
       function boxedView(rec) {
         if (rec.ticket && (rec.kind === "inbound" || rec.kind === "reply")) {
           const { message } = ticketParts(rec);
           return ticketOpens(rec, message) ? { ...rec, text: restText(message.trim()) } : null;
         }
-        return isLong(rec.text) ? { ...rec, text: restText(rec.text) } : null;
+        return isLong(rec.text) && restText(rec.text) ? { ...rec, text: restText(rec.text) } : null;
       }
-      function ticketBox(doc, rec, row, opened, att) {
+      function ticketBox(doc, rec, row, opened, att, ctx) {
         const box = el(doc, "div", "tr-box");
         box.dataset.id = rec.id;
         const { chip, message } = ticketParts(rec);
@@ -32171,9 +32179,12 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (att) head.appendChild(el(doc, "span", "tr-reply-lead", "\u21B3"));
         head.appendChild(el(doc, "span", "tr-ticket-chip", chip));
         head.appendChild(rec.kind === "reply" ? appBadge(doc, rec) : inboundBadge(doc, rec));
-        head.appendChild(previewSpan(doc, message.trim()));
+        const opens = ticketOpens(rec, message);
+        const preview = opens ? previewSpan(doc, message.trim()) : el(doc, "span", "tr-box-preview");
+        if (!opens) appendLinked(doc, preview, message.trim(), "", ctx);
+        head.appendChild(preview);
         box.appendChild(head);
-        if (ticketOpens(rec, message)) {
+        if (opens) {
           const chevron = el(doc, "span", "tr-box-chevron");
           head.appendChild(chevron);
           wireHead(doc, head, box, chevron, opened, rec.id);
@@ -32594,8 +32605,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
                 build: () => {
                   const view2 = r.kind === "inbound" || r.kind === "reply" ? boxedView(r) : null;
                   const row = buildRow(doc, view2 || r, deps, att, Boolean(view2)) || el(doc, "div", "tr-row");
-                  if (r.ticket && (r.kind === "inbound" || r.kind === "reply")) return ticketBox(doc, r, row, opened, att);
-                  return internalBox(doc, r, row, opened, att);
+                  if (r.ticket && (r.kind === "inbound" || r.kind === "reply")) return ticketBox(doc, r, row, opened, att, deps);
+                  return internalBox(doc, r, row, opened, att, r.kind === "inbound" || r.kind === "reply" ? Boolean(view2) : isLong(r.text));
                 },
                 after
               });
@@ -46869,7 +46880,7 @@ ${detail}` });
       var { createIpcLog } = require_ipc_log();
       var { createInboxDrawer } = require_inbox_drawer();
       var { createVoiceCore } = require_voice_control();
-      var { initialSeatView, seatViewSettings, createSeatView, applySeatView, toggleSeatTerminal, seatViewDeps } = require_seat_view();
+      var { initialSeatView, rememberedSeatView, seatViewSettings, createSeatView, applySeatView, toggleSeatTerminal, seatViewDeps } = require_seat_view();
       var { createTermSearch } = require_term_search();
       var { createIntentHighlight } = require_intent_highlight();
       var { createVoiceMirror, engineObserved } = require_voice_mirror();
@@ -46944,11 +46955,13 @@ ${detail}` });
       var terminalWebglEnabled = false;
       var transcriptPaneEnabled = true;
       var transcriptPaneMode = "conversation";
-      var initialViewFor = (name) => initialSeatView({ transcriptPane: transcriptPaneEnabled, transcriptPaneMode, io: streamSeatNames.has(name) ? "stream" : "pty" });
+      var seatViewMemory = /* @__PURE__ */ new Map();
+      var seatViewPrefs = (name) => ({ transcriptPane: transcriptPaneEnabled, transcriptPaneMode, io: streamSeatNames.has(name) ? "stream" : "pty" });
+      var initialViewFor = (name) => rememberedSeatView(seatViewMemory.get(name), seatViewPrefs(name));
       var openAtAGlance = () => openHelp("at-a-glance", "views");
       function refreshTranscriptPanes() {
         for (const [name, entry] of sessions) {
-          if (entry.view && isAgentType(sessionTypeOf(name))) applySeatView(entry, initialViewFor(name));
+          if (entry.view && isAgentType(sessionTypeOf(name))) applySeatView(entry, initialSeatView(seatViewPrefs(name)));
         }
       }
       var terminalWebglReady = window.api.getSettings().then((s) => {
@@ -47621,6 +47634,7 @@ ${detail}` });
       async function deleteSessionRow(name) {
         if (!await window.api.confirmKill(name)) return;
         movingFailed.delete(name);
+        seatViewMemory.delete(name);
         const res = await window.api.killSession(name);
         if (res && res.error) {
           showToast(`Worktree removal failed: ${res.error}`, { kind: "warn", duration: 12e3, name });
@@ -48058,6 +48072,7 @@ ${detail}` });
             removeSession(sessionName, { keepPersisted: true });
             markSeatIo(res.name, streamSeatNames.has(sessionName) ? "stream" : "pty");
             streamSeatNames.delete(sessionName);
+            seatViewMemory.delete(sessionName);
             createTerminal(res.name);
             addSessionToSidebar(res.name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, res.noWire === true, snapAccount);
             switchSession(res.name);
@@ -48941,6 +48956,7 @@ ${detail}` });
           wrapperEl2.dataset.name = name;
           terminalContainer.appendChild(wrapperEl2);
           const seat2 = createSeatView(initialViewFor(name));
+          seat2.onView = (v) => seatViewMemory.set(name, v);
           const stream = createStreamSeatPane(name, wrapperEl2, seat2);
           const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
           if (row && (row.dataset.attention || row.dataset.activity)) stream.setTurnRunning(seatActivity(row), Number(row.dataset.thinkingSince) || null);
@@ -49178,6 +49194,7 @@ ${detail}` });
         }
         const agentSeat = !peer;
         const seat = agentSeat ? createSeatView(initialViewFor(name)) : {};
+        if (agentSeat) seat.onView = (v) => seatViewMemory.set(name, v);
         const liveSplit = !splitOn ? null : createLiveSplitView(terminal, wrapperEl, {
           isEligible: () => isAgentType(sessionTypeOf(name)),
           platform: () => sessionTypeOf(name),
