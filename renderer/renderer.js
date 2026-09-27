@@ -1900,6 +1900,7 @@ function createStreamSeatPane(name, wrapperEl, seat) {
   const rowsCtx = {
     seatName: name,
     resolveFile: (p) => window.api.fileResolve(name, p, null),
+    peekFile: (p) => popoverApi(name).peek(p),
     openFilePeek: (...args) => openFilePeek(...args),
     openExternal: (url) => window.api.openExternal(url),
     toast: showToast,
@@ -2428,6 +2429,7 @@ function createTerminal(name, peer = null) {
     seatName: name,
     onTranscriptChanged: (cb) => { transcriptChangedSubs.add(cb); return () => transcriptChangedSubs.delete(cb); },
     resolveFile: (p) => window.api.fileResolve(name, p, null),
+    peekFile: (p) => popoverApi(name).peek(p),
     openFilePeek: (...args) => openFilePeek(...args),
     openExternal: (url) => window.api.openExternal(url),
     toast: showToast,

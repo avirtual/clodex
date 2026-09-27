@@ -334,10 +334,10 @@ test('a filed body becomes a link to the spill, opened through the file peek', a
   assert.strictEqual(card.className, 'intent-card intent-card-filed');
   assert.strictEqual(card.childNodes.length, 1);
   const inline = findCls(card.childNodes[0], 'intent-card-inline')[0];
-  assert.strictEqual(inline.textContent, '▢ 6.2 KB filed · Design saved');
+  assert.strictEqual(inline.textContent, '▸ ▢ 6.2 KB filed · Design saved');
   const link = inline.childNodes[0].childNodes[1];
   assert.strictEqual(link.dataset.path, FILED);
-  link.listeners.click({ preventDefault() {} });
+  link.listeners.click({ preventDefault() {}, stopPropagation() {} });
   await new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(opened, [['s', FILED, 'file', undefined]]);
 });
@@ -1374,7 +1374,7 @@ test('inline: a filed task done carries the filed link inside the inline span', 
   assert.strictEqual(card.className, 'intent-card intent-card-filed');
   assert.deepStrictEqual(card.childNodes.map(cls), ['intent-card-head']);
   const inline = findCls(card, 'intent-card-inline')[0];
-  assert.strictEqual(inline.textContent, '▢ 2.7 KB filed · Report');
+  assert.strictEqual(inline.textContent, '▸ ▢ 2.7 KB filed · Report');
   assert.strictEqual(inline.childNodes[0].childNodes[1].dataset.path, FILED);
   assert.deepStrictEqual(findCls(card, 'intent-card-body'), []);
 });
@@ -1535,4 +1535,136 @@ test('one ticket shape: an attached inbound whose lead outruns the preview keeps
   assert.strictEqual(boxHeadOf(box).childNodes[2].textContent, `${'w'.repeat(120)}…`);
   assert.strictEqual(bodyOf(box).textContent, `${lead} 2.3 KB msg-1-2.txt`);
   assert.ok(withPath(bodyOf(box)).some((n) => n.dataset.path === ATT));
+});
+
+const spillAt = (hex) => `/Users/x/.clodex/spill/clodex/${hex}.md`;
+const tick = () => new Promise((r) => setImmediate(r));
+const peeker = (res) => {
+  const calls = [];
+  return { calls, peekFile: (p) => { calls.push(p); return Promise.resolve(res); } };
+};
+const filedReport = (path) => said('a1', 0, `[agent:task done t1276] Report — 2.7 KB filed at ${path}\n[agent:end]`);
+const foldOf = (card) => findCls(card, 'intent-card-filed-link')[0];
+
+test('spill fold: a head click fetches the body once through peekFile, shows it under the card, and a second click folds it', async () => {
+  const path = spillAt('a000000000000001');
+  const p = peeker({ ok: true, size: 900, content: 'hello\nworld' });
+  const m = mount({ peekFile: p.peekFile });
+  m.render([filedReport(path)]);
+  const card = cardAt(m);
+  const head = foldOf(card);
+  assert.deepStrictEqual(findCls(card, 'tr-spill-body'), []);
+  head.listeners.click();
+  assert.strictEqual(findCls(card, 'tr-spill-body')[0].textContent, 'Loading…');
+  await tick();
+  assert.strictEqual(head.textContent, '▾ ▢ 2.7 KB filed · Report');
+  const bodies = findCls(card, 'tr-spill-body');
+  assert.strictEqual(bodies.length, 1);
+  assert.strictEqual(bodies[0].textContent, 'hello\nworld');
+  assert.deepStrictEqual(card.childNodes.map(cls), ['intent-card-head', 'tr-spill-body']);
+  assert.deepStrictEqual(p.calls, [path]);
+  head.listeners.click();
+  assert.strictEqual(head.textContent, '▸ ▢ 2.7 KB filed · Report');
+  assert.deepStrictEqual(findCls(card, 'tr-spill-body'), []);
+  head.listeners.click();
+  assert.strictEqual(findCls(card, 'tr-spill-body')[0].textContent, 'hello\nworld');
+  assert.deepStrictEqual(p.calls, [path]);
+});
+
+test('spill fold: a click on the file link opens the viewer and stops there, leaving the fold closed', async () => {
+  const path = spillAt('a000000000000002');
+  const p = peeker({ ok: true, size: 3, content: 'abc' });
+  const opened = [];
+  const m = mount({ seatName: 's', peekFile: p.peekFile, resolveFile: (q) => ({ ok: true, path: q }), openFilePeek: (...a) => opened.push(a) });
+  m.render([filedReport(path)]);
+  const head = foldOf(cardAt(m));
+  const link = head.childNodes[1];
+  let stopped = 0;
+  link.listeners.click({ preventDefault() {}, stopPropagation() { stopped += 1; } });
+  await tick();
+  assert.strictEqual(stopped, 1);
+  assert.deepStrictEqual(opened, [['s', path, 'file', undefined]]);
+  assert.strictEqual(head.textContent, '▸ ▢ 2.7 KB filed · Report');
+  assert.deepStrictEqual(p.calls, []);
+});
+
+test('spill fold: over 16 KB shows the first 16384 chars and a foot link to the rest', async () => {
+  const path = spillAt('a000000000000003');
+  const p = peeker({ ok: true, size: 40000, content: 'x'.repeat(20000), truncated: false });
+  const opened = [];
+  const m = mount({ seatName: 's', peekFile: p.peekFile, resolveFile: (q) => ({ ok: true, path: q }), openFilePeek: (...a) => opened.push(a) });
+  m.render([filedReport(path)]);
+  const card = cardAt(m);
+  foldOf(card).listeners.click();
+  await tick();
+  const body = findCls(card, 'tr-spill-body')[0];
+  assert.strictEqual(body.childNodes[0].data, 'x'.repeat(16384));
+  const foot = findCls(body, 'tr-spill-more')[0];
+  assert.strictEqual(foot.textContent, '… 23.1 KB more — open the file');
+  const link = foot.childNodes[0];
+  assert.strictEqual(link.className, 'pane-link');
+  assert.strictEqual(link.dataset.path, path);
+  link.listeners.click({ preventDefault() {}, stopPropagation() {} });
+  await tick();
+  assert.deepStrictEqual(opened, [['s', path, 'file', undefined]]);
+});
+
+test('spill fold: a failed peek says it could not read the file and keeps the link', async () => {
+  const path = spillAt('a000000000000004');
+  const p = peeker({ ok: false });
+  const m = mount({ peekFile: p.peekFile });
+  m.render([filedReport(path)]);
+  const card = cardAt(m);
+  const head = foldOf(card);
+  head.listeners.click();
+  await tick();
+  assert.strictEqual(findCls(card, 'tr-spill-body')[0].textContent, 'Could not read Report');
+  assert.strictEqual(head.childNodes[1].dataset.path, path);
+});
+
+test('spill fold: a rebuilt row that was open shows the fetched body again without a second peek', async () => {
+  const path = spillAt('a000000000000005');
+  const p = peeker({ ok: true, size: 5, content: 'kept!' });
+  const m = mount({ peekFile: p.peekFile });
+  m.render([filedReport(path)]);
+  const first = cardAt(m);
+  foldOf(first).listeners.click();
+  await tick();
+  m.render([{ ...filedReport(path), ts: 1 }]);
+  const card = cardAt(m);
+  assert.notStrictEqual(card, first);
+  assert.strictEqual(foldOf(card).textContent, '▾ ▢ 2.7 KB filed · Report');
+  assert.strictEqual(findCls(card, 'tr-spill-body')[0].textContent, 'kept!');
+  assert.deepStrictEqual(p.calls, [path]);
+});
+
+test('spill fold: open state is keyed by path, so opening one spill leaves another closed, prose spills included', async () => {
+  const a = spillAt('a000000000000006');
+  const b = spillAt('a000000000000007');
+  const p = peeker({ ok: true, size: 2, content: 'ok' });
+  const m = mount({ peekFile: p.peekFile });
+  m.render([said('a1', 0, `[agent:dm bob] One — 1.0 KB filed at ${a}\n[agent:end]\nNotes — 2.0 KB filed at ${b}`)]);
+  const row = m.pane.childNodes[0].childNodes[0];
+  const [one, two] = findCls(row, 'intent-card-filed-link');
+  assert.strictEqual(two.parentNode.className, 'tr-seg-prose');
+  two.listeners.click();
+  await tick();
+  assert.strictEqual(one.textContent, '▸ ▢ 1.0 KB filed · One');
+  assert.strictEqual(two.textContent, '▾ ▢ 2.0 KB filed · Notes');
+  assert.deepStrictEqual(findCls(row, 'tr-spill-body').map((n) => [n.parentNode.className, n.textContent]), [['tr-seg-prose', 'ok']]);
+  assert.deepStrictEqual(p.calls, [b]);
+});
+
+test('spill fold: an unclosed filed card keeps the fold in its body row with the text under it', async () => {
+  const path = spillAt('a000000000000008');
+  const p = peeker({ ok: true, size: 4, content: 'open' });
+  const m = mount({ peekFile: p.peekFile });
+  m.render([said('a1', 0, `[agent:dm bob] Open — 1.0 KB filed at ${path}`)]);
+  const card = cardAt(m);
+  const head = foldOf(card);
+  assert.strictEqual(head.parentNode.className, 'intent-card-body');
+  head.listeners.click();
+  await tick();
+  assert.deepStrictEqual(card.childNodes.map(cls), ['intent-card-head', 'intent-card-body', 'tr-spill-body']);
+  assert.strictEqual(card.childNodes[2].textContent, 'open');
 });
