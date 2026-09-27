@@ -7443,8 +7443,8 @@ function createTicketMethods(deps, shared) {
           ? { queued: true }
           : this._gatedDeliver(seat, 'ticket-loop', this._redirectDeliveryText(ticket.id, 'rejected', reason), true,
             `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`,
-            (disposition) => this._armSpecConfirm(seat, ticket.id, disposition,
-              { label: 'rejected', reason, from: 'ticket-loop' }));
+            (disposition, why) => this._armSpecConfirm(seat, ticket.id, disposition,
+              { label: 'rejected', reason, from: 'ticket-loop' }, why));
         const replaced = this._seatReplacedClause(rework);
         this._reconcileTickets(team);
         this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: ticket.assignee || rework.seat, body: `ticket ${ticket.id} rejected: ${cause}${replaced}` });
@@ -7553,8 +7553,8 @@ function createTicketMethods(deps, shared) {
         ? { queued: true }
         : this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'more must-fixes', reason), true,
           `[ticket ${ticket.id} more must-fixes] close with ${ticketCloseVerb(ticket.id)}`,
-          (disposition) => this._armSpecConfirm(seat, ticket.id, disposition,
-            { label: 'more must-fixes', reason, from: session.name }));
+          (disposition, why) => this._armSpecConfirm(seat, ticket.id, disposition,
+            { label: 'more must-fixes', reason, from: session.name }, why));
       if (!(r && (r.queued || r.parked))) {
         reply(`error: ${ticket.id} is already open for rework and the follow-up did NOT reach ${rework.seat} `
           + `(${(r && (r.error || r.held)) || 'unknown delivery failure'})`
@@ -8514,8 +8514,8 @@ function createTicketMethods(deps, shared) {
       if (seat && seat !== team.lead && !rework.replaced) {
         this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'rejected', reason), true,
           `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`,
-          (disposition) => this._armSpecConfirm(seat, ticket.id, disposition,
-            { label: 'rejected', reason, from: session.name }));
+          (disposition, why) => this._armSpecConfirm(seat, ticket.id, disposition,
+            { label: 'rejected', reason, from: session.name }, why));
       }
       const replaced = this._seatReplacedClause(rework);
       this._reconcileTickets(team);
