@@ -1933,31 +1933,34 @@ test('tickets-viewer: the engine registers its reads and its writes, and nothing
   } finally { cleanup(); }
 });
 
-test('tickets-viewer: the writers are NOT reachable from the web surface', async () => {
+test('tickets-viewer: the writers serve the web surface as they do the desktop', async () => {
   const { host, home, cleanup } = boot();
   try {
     const key = mkProject(home, '/solo/web');
-    writeTicketsAt(home, key, [ticket('t1')]);
-    const before = fs.readFileSync(boardFileFor(home, key), 'utf8');
+    writeTicketsAt(home, key, [ticket('t1'), ticket('t2'), ticket('t3')]);
+    assertWritesLandInFixture(home, key);
 
     for (const [method, payload] of [
       ['add', { project: key, spec: 'from a browser' }],
-      ['assign', { project: key, id: 't1', assignee: 'hand' }],
-      ['close', { project: key, id: 't1' }],
-      ['cancel', { project: key, id: 't1' }],
-      ['editSpec', { project: key, id: 't1', spec: 'x' }],
+      ['assign', { project: key, id: 't1', assignee: 'web-hand' }],
+      ['editSpec', { project: key, id: 't1', spec: 'edited from a browser' }],
+      ['close', { project: key, id: 't2' }],
+      ['cancel', { project: key, id: 't3' }],
     ]) {
       const res = await host.dispatch('tickets-viewer', method, [payload], 'web');
-      assert.equal(res.ok, false, `${method} must not serve the web surface`);
+      assert.equal(res.ok, true, `${method} must serve the web surface: ${JSON.stringify(res)}`);
     }
-    // The refusal must be a refusal to ACT, not merely a refusal to answer.
-    assert.equal(fs.readFileSync(boardFileFor(home, key), 'utf8'), before,
-      'a web-surface write changes nothing on disk');
+    const board = onDisk(home, key);
+    const byId = Object.fromEntries(board.map((t) => [t.id, t]));
+    assert.equal(board.length, 4, 'add from the web appends a ticket');
+    assert.ok(board.some((t) => t.spec === 'from a browser'), 'the added spec is on disk');
+    assert.equal(byId.t1.assignee, 'web-hand', 'assign from the web lands');
+    assert.equal(byId.t1.spec, 'edited from a browser', 'editSpec from the web lands');
+    assert.equal(byId.t2.state, 'done', 'close from the web lands');
+    assert.equal(byId.t3.state, 'cancelled', 'cancel from the web lands');
 
-    // The accept half: the reads ARE web-reachable, which is what makes the
-    // denials above meaningful rather than a blanket transport failure.
-    const board = await host.dispatch('tickets-viewer', 'board', [key], 'web');
-    assert.equal(board.ok, true, 'reads still serve the web surface');
+    const read = await host.dispatch('tickets-viewer', 'board', [key], 'web');
+    assert.equal(read.ok, true, 'reads still serve the web surface');
   } finally { cleanup(); }
 });
 

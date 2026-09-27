@@ -1316,9 +1316,6 @@ module.exports.activate = (h) => {
   host.ipc.handle('closed', (p) => closed(p));
   host.ipc.handle('feed', (p) => feed(p));
 
-  // Deliberately absent from manifest.json's `surfaces`, which is what keeps these
-  // desktop-only: a board reachable from a browser is one a browser can close
-  // tickets on.
   host.ipc.handle('add', (p) => add(p));
   host.ipc.handle('editSpec', (p) => editSpec(p));
   host.ipc.handle('assign', (p) => assign(p));

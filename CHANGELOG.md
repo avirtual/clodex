@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The Tickets viewer's write actions (new ticket, edit spec, assign, close, cancel) work from the browser as they do on the desktop; they used to render and then fail with "plugin method not available on this surface".
+
 ## 5.87.0 — 2026-09-27 — seats you can read
 
 ### Seats show their conversation

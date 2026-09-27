@@ -19,6 +19,11 @@
     "ticket": "any",
     "search": "any",
     "closed": "any",
-    "feed": "any"
+    "feed": "any",
+    "add": "any",
+    "editSpec": "any",
+    "assign": "any",
+    "close": "any",
+    "cancel": "any"
   }
 }
