@@ -24,7 +24,7 @@ const { parse } = require('./args');
 
 // Parser option spec shared by all verbs (a verb ignores flags it doesn't use).
 const PARSE_OPTS = {
-  booleans: ['force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'keep-ctx', 'keep-data', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'force-conflicts', 'all-workspaces', 'docker', 'helm', 'fargate', 'current', 'import', 'test', 'help', 'version', 'timestamps'],
+  booleans: ['force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'keep-ctx', 'keep-data', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'force-conflicts', 'all-workspaces', 'docker', 'helm', 'fargate', 'current', 'import', 'test', 'versions', 'help', 'version', 'timestamps'],
   multi: ['arg', 'ssh-opt', 'volume', 'env', 'set', 'values', 'param'],
   greedy: ['tunnel'],
   aliases: { h: 'help', V: 'version', f: 'follow', o: 'output', n: 'workspace', A: 'all-workspaces', q: 'query', 'remote-port': 'remotePort' },
@@ -270,13 +270,53 @@ function isNodeTarget(verb, rest) {
 async function dispatchNode(verb, args, flags, printer, io) {
   const store = contexts.load(io.contextsFile, { warn: (m) => (io.stderr || ((s) => process.stderr.write(s)))(`clodexctl: warning: ${m}\n`) });
   const saveStore = (s) => contexts.save(s, io.contextsFile);
+  if (verb === 'describe' && flags.versions) throw new CliError(EXIT.USAGE, 'describe node always shows the version');
   if (verb === 'describe' && flags.test) return await nodeTest(store, args, flags, printer, io);
   const handler = NODE_VERBS[verb];
   if (!handler) throw new CliError(EXIT.USAGE, `${verb} node is not supported`);
   return await handler({
     store, saveStore, printer, flags, args,
     env: io.env || process.env, prompt: io.prompt,
+    dialHello: (name) => dialNodeHello(store, name, io),
   }) ?? EXIT.OK;
+}
+
+const NODE_DIAL_TIMEOUT_MS = 10000;
+
+function oneLine(msg, token) {
+  const first = String(msg || 'unknown error').split('\n').map((l) => l.trim()).find(Boolean) || 'unknown error';
+  return token ? first.split(token).join('***') : first;
+}
+
+async function dialNodeHello(store, name, io) {
+  let ctx;
+  try {
+    ctx = contexts.resolve(store, { ctxName: name, env: {}, flags: {} });
+  } catch (e) {
+    return { hello: null, error: oneLine(e && e.message) };
+  }
+  const ms = io.dialTimeoutMs || NODE_DIAL_TIMEOUT_MS;
+  const ac = new AbortController();
+  let timer;
+  const expired = new Promise((_, reject) => {
+    timer = setTimeout(() => { ac.abort(); reject(new Error(`timed out after ${ms / 1000}s`)); }, ms);
+    if (timer.unref) timer.unref();
+  });
+  expired.catch(() => {});
+  const opening = Promise.resolve().then(() => (io.openTransport ? io.openTransport(ctx) : openTransport(ctx, { spawnFn: io.spawnFn })));
+  let t = null;
+  try {
+    t = await Promise.race([opening, expired]);
+    const client = new WireClient(t.baseUrl, ctx.token);
+    const hello = await Promise.race([client.get('/api/peer/hello', 'describe node', { signal: ac.signal }), expired]);
+    return { hello: hello || {}, error: null };
+  } catch (e) {
+    return { hello: null, error: oneLine(e && e.message, ctx.token) };
+  } finally {
+    clearTimeout(timer);
+    if (t) { try { t.close(); } catch {} }
+    else opening.then((late) => { try { late.close(); } catch {} }, () => {});
+  }
 }
 
 const DEPLOY_FLAVORS = [
@@ -320,6 +360,7 @@ async function nodeTest(store, args, flags, printer, io) {
     const client = new WireClient(t.baseUrl, ctx.token);
     const hello = await client.get('/api/peer/hello', 'describe node --test');
     printer.line(`OK — ${hello.app || 'clodex'} host=${hello.host || '?'} version=${hello.version || '?'} caps=[${(hello.caps || []).join(' ')}]`);
+    printer.line(V.helloLines({ hello, error: null }).join('\n'));
     return EXIT.OK;
   } finally {
     try { t.close(); } catch {}

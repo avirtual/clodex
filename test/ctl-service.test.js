@@ -294,7 +294,7 @@ test('get node <name> --current is a usage error, not a silently ignored name', 
 });
 
 test('describe node redacts the token, and the block is scrubbed besides', async (t) => {
-  const { svc } = mkService();
+  const svc = createCtlService({ contextsFile: tmpCtxFile(), env: {}, openTransport: fakeTransport({ fail: () => 'offline (test)' }) });
   t.after(() => svc.dispose());
   await svc.run('create node prod --url http://prod.example --token SUPERSECRET');
   const b = await svc.run('describe node prod');
@@ -941,11 +941,11 @@ test('helpIndex carries summaries and no credential material', (t) => {
   assert.doesNotMatch(JSON.stringify(idx), /token/i);
 });
 
-test('every node word runs in this tab and opens NO transport', async (t) => {
+test('every node word runs in this tab, and only describe node opens a transport', async (t) => {
   const opened = [];
   const svc = createCtlService({
     contextsFile: tmpCtxFile(), env: {},
-    openTransport: async (ctx) => { opened.push(ctx); throw new Error('DIALED — a node word must never reach the wire'); },
+    openTransport: async (ctx) => { opened.push(ctx); throw new Error('DIALED'); },
   });
   t.after(() => svc.dispose());
   const lines = [
@@ -961,7 +961,7 @@ test('every node word runs in this tab and opens NO transport', async (t) => {
     assert.strictEqual(b.exitCode, 0, `${line} -> ${b.exitCode}: ${b.output}`);
     assert.doesNotMatch(b.output, /refused|LOCAL record/, `${line} must RUN here, not refuse`);
   }
-  assert.deepStrictEqual(opened, [], 'a node word opened a transport');
+  assert.deepStrictEqual(opened.map((c) => c.url), ['http://h.example'], 'only describe node dials — for the version line — and no other node word opens a transport');
 });
 
 test('the node family is stateful on disk, and delete node really forgets', async (t) => {
@@ -1069,6 +1069,37 @@ test('describe node --test dials the INJECTED transport, never the real one', as
   assert.strictEqual(openTransport.opened[0].url, 'http://prod.example',
     'and it was dialed with the resolved node, not some other context');
   assert.doesNotMatch(b.output, /SUPERSECRET/, 'the token must not reach the renderer');
+});
+
+test('describe node (no --test) dials the INJECTED transport once and prints the version line', async (t) => {
+  const file = tmpCtxFile();
+  const openTransport = fakeTransport();
+  const svc = createCtlService({ contextsFile: file, env: {}, openTransport });
+  t.after(() => svc.dispose());
+  await svc.run('create node prod --url http://prod.example --token SUPERSECRET');
+
+  const b = await svc.run('describe node prod');
+  assert.strictEqual(b.exitCode, 0, b.output);
+  assert.strictEqual(openTransport.opened.length, 1, `the tab's injected transport must be the one dialed, once (${b.output})`);
+  assert.strictEqual(openTransport.opened[0].url, 'http://prod.example');
+  assert.match(b.output, /^version     \(unreachable: /m, 'the fake base URL refuses, so the line says so');
+  assert.match(b.output, /^token       \(set\)$/m);
+  assert.doesNotMatch(b.output, /SUPERSECRET/);
+});
+
+test('get nodes --versions dials every node through the INJECTED transport', async (t) => {
+  const openTransport = fakeTransport();
+  const svc = createCtlService({ contextsFile: tmpCtxFile(), env: {}, openTransport });
+  t.after(() => svc.dispose());
+  await svc.run('create node a --url http://a.example');
+  await svc.run('create node b --url http://b.example');
+  const plain = await svc.run('get nodes');
+  assert.strictEqual(plain.exitCode, 0, plain.output);
+  assert.strictEqual(openTransport.opened.length, 0, 'the plain listing never dials');
+  const b = await svc.run('get nodes --versions');
+  assert.strictEqual(b.exitCode, 0, b.output);
+  assert.deepStrictEqual(openTransport.opened.map((c) => c.url).sort(), ['http://a.example', 'http://b.example']);
+  assert.match(b.output, /VERSION/);
 });
 
 test('every ARRAY rule in ALLOWED names a verb the resource-word check re-judges', () => {

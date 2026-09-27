@@ -947,7 +947,22 @@ function nodeRows(store) {
 
 const NODE_EMPTY = '(no nodes — add one with `clodexctl create node <name> --url …`)';
 
-function nodeList({ store, printer, flags, args }) {
+const NODE_DIAL_CONCURRENCY = 4;
+
+async function dialAll(names, dialHello) {
+  const results = new Array(names.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < names.length) {
+      const i = next++;
+      results[i] = await dialHello(names[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(NODE_DIAL_CONCURRENCY, names.length) }, worker));
+  return results;
+}
+
+async function nodeList({ store, printer, flags, args, dialHello }) {
   const target = R.parseTarget(args, 'get');
   if (target.name && flags.current) {
     throw new CliError(EXIT.USAGE, `get node ${target.name} --current: --current prints the current node and takes no name (try: get nodes --current, or describe node ${target.name})`);
@@ -956,17 +971,30 @@ function nodeList({ store, printer, flags, args }) {
   if (target.name) {
     throw new CliError(EXIT.USAGE, `get nodes takes no name (try: describe node ${target.name})`);
   }
+  if (flags.versions && flags.output === 'name') {
+    throw new CliError(EXIT.USAGE, 'get nodes --versions -o name: name output has one column (drop --versions, or use -o json)');
+  }
   const rows = nodeRows(store);
+  if (flags.versions) {
+    const dialed = await dialAll(rows.map((r) => r.name), dialHello);
+    rows.forEach((r, i) => {
+      const d = dialed[i];
+      r.version = d.hello ? String(d.hello.version || '?') : null;
+      r.versionError = d.hello ? null : d.error;
+    });
+  }
+  const vcol = (r) => (flags.versions ? [r.version == null ? '(unreachable)' : r.version] : []);
+  const vhead = flags.versions ? ['VERSION'] : [];
   if (flags.json) { printer.json({ current: store.current, nodes: rows }); return; }
   if (flags.output === 'name') { printer.line(out.renderNames('node', rows)); return; }
   if (rows.length === 0) { printer.line(NODE_EMPTY); return; }
   if (flags.output === 'wide') {
-    printer.line(out.table(['', 'NAME', 'KIND', 'LOCATOR', 'REMOTE-PORT', 'TOKEN'],
-      rows.map((r) => [r.current ? '*' : '', r.name, r.kind, r.locator, r.remotePort || '', r.tokenSet ? '(set)' : '(none)'])));
+    printer.line(out.table(['', 'NAME', 'KIND', 'LOCATOR', 'REMOTE-PORT', 'TOKEN', ...vhead],
+      rows.map((r) => [r.current ? '*' : '', r.name, r.kind, r.locator, r.remotePort || '', r.tokenSet ? '(set)' : '(none)', ...vcol(r)])));
     return;
   }
-  printer.line(out.table(['', 'NAME', 'KIND', 'LOCATOR'],
-    rows.map((r) => [r.current ? '*' : '', r.name, r.kind, r.locator])));
+  printer.line(out.table(['', 'NAME', 'KIND', 'LOCATOR', ...vhead],
+    rows.map((r) => [r.current ? '*' : '', r.name, r.kind, r.locator, ...vcol(r)])));
 }
 
 function nodeCurrent({ store, printer }) {
@@ -981,17 +1009,24 @@ function nodeName(store, args, verb) {
   return name;
 }
 
-function nodeDescribe({ store, printer, args }) {
+function helloLines({ hello, error }) {
+  if (!hello) return [`version     (unreachable: ${error})`];
+  return [`version     ${hello.version || '?'}`, `host        ${hello.host || '?'}`];
+}
+
+async function nodeDescribe({ store, printer, args, dialHello }) {
   const name = nodeName(store, args, 'describe');
   const e = store.contexts[name];
   if (!e) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
   const r = nodeRow(name, e, store.current);
+  const dialed = await dialHello(name);
   printer.line([
     `name        ${name}${r.current ? ' (current)' : ''}`,
     `kind        ${r.kind}`,
     `locator     ${r.locator}`,
     r.remotePort ? `remotePort  ${r.remotePort}` : null,
     `token       ${r.tokenSet ? '(set)' : '(none)'}`,
+    ...helloLines(dialed),
   ].filter(Boolean).join('\n'));
 }
 
@@ -1114,7 +1149,7 @@ module.exports = {
   logs, query,
   create, createSession, dm, input, exec, execPty, sessionType,
   delete: del, deleteSession, restart, restartSession, restartNode, patch, patchSession,
-  nodeList, nodeCurrent, nodeDescribe, nodeCreate, nodeDelete, nodeUse,
+  nodeList, nodeCurrent, nodeDescribe, helloLines, nodeCreate, nodeDelete, nodeUse,
   entryKind, entryTarget,
   requireName, parseIntOr, QUERY_KINDS, SESSION_SUBRESOURCES, takeResourceWord, checkResourceWord, RESOURCE_VERBS, DEPLOYABLE,
   KIND_FIELDS,
