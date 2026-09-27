@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Transcript pane: a compact is one row — "compacted 156k → 16k tokens · manual · 27s" on the boundary — instead of the typed `/compact` echo, a "Compacting context…" notice and the boundary; the CLI's own progress line still shows in the working row while it runs. Codex and Muse seats, which write no boundary record, keep the "Compacted in 27s" row.
 - **Help opens on "Clodex at a glance"**, one screen on seats, views, the message box and tickets (F1).
 - Transcript pane: an intent whose body is a single short line (a reminder, a one-line dm, a filed report) now shows it on the same line as its label instead of on a second row; longer bodies keep the clamped block.
 - Transcript pane: every ticket phase — a notice from the loop or a hand, a runtime reply, the seat's own task verb — now reads the same way: ticket number, state, one-line message, with the full text behind a click when there is more.

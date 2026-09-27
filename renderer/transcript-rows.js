@@ -637,7 +637,7 @@ function buildRow(doc, rec, ctx, attached) {
       const row = el(doc, 'div', 'tr-row tr-boundary');
       row.dataset.id = rec.id;
       const label = rec.what === 'compact'
-        ? ['compacted', rec.preTokens != null && rec.postTokens != null ? `${tokensText(rec.preTokens)} → ${tokensText(rec.postTokens)} tokens` : null, rec.trigger].filter(Boolean).join(' · ')
+        ? ['compacted', rec.preTokens != null && rec.postTokens != null ? `${tokensText(rec.preTokens)} → ${tokensText(rec.postTokens)} tokens` : null, rec.trigger, typeof rec.elapsedMs === 'number' ? elapsedText(rec.elapsedMs) : null].filter(Boolean).join(' · ')
         : 'cleared';
       row.appendChild(el(doc, 'span', 'tr-boundary-label', label));
       return row;

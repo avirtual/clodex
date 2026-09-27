@@ -509,7 +509,7 @@ function recordsOf(text, max = RECORD_CAP) {
   const tools = new Map();
   const all = [];
   let turn = 0;
-  let lastPromptId = null;
+  let typedPrompt = null;
   let unread = [];
   let queued = [];
   let enqueues = 0;
@@ -531,15 +531,16 @@ function recordsOf(text, max = RECORD_CAP) {
       continue;
     }
     const echoed = echoedCommand(rec);
-    const prev = all[all.length - 1];
-    if (echoed && prev && prev.kind === 'prompt' && prev.source !== 'mid-turn' && rec.promptId && lastPromptId === rec.promptId && isTypedEcho(prev, echoed)) {
-      all.pop();
+    if (echoed && typedPrompt && rec.promptId && typedPrompt.promptId === rec.promptId && isTypedEcho(typedPrompt.record, echoed)) {
+      all.splice(typedPrompt.at, 1);
+      for (let i = typedPrompt.at; i < all.length; i += 1) all[i].turn -= 1;
       turn -= 1;
+      typedPrompt = null;
     }
     const base = { id: rec.uuid || `line:${all.length}`, kind: '', ts: tsOf(rec), turn };
     const produced = recordsOfLine(rec, base, tools);
-    if (produced.length) lastPromptId = rec.promptId || null;
     for (const r of produced) {
+      if (r.kind === 'prompt' && r.source !== 'mid-turn') typedPrompt = { at: all.length, promptId: rec.promptId || null, record: r };
       const midTurn = r.source === 'mid-turn';
       if (TURN_KINDS.has(r.kind) && !midTurn) { turn += 1; unread = []; queued = []; }
       r.turn = turn;

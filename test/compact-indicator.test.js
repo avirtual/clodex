@@ -57,11 +57,9 @@ test('start → end: sets the display state, sends it, notices the pane, and cle
   m._onCompactStart(s, 'manual');
   assert.deepStrictEqual(s.compacting, { since: 1_000_000, trigger: 'manual' });
   assert.deepStrictEqual(compactingSends(win), [['session-compacting', 'a', { since: 1_000_000, trigger: 'manual' }]]);
-  assert.ok(win.sent.some((x) => x[0] === 'transcript-changed'), 'the pane is told to re-pull');
+  assert.ok(!win.sent.some((x) => x[0] === 'transcript-changed'), 'nothing new for the pane to pull at start');
   assert.deepStrictEqual(broadcasts.map((b) => b[1].body), ['compact started (manual)']);
-  const before = m.compactNoticesFor('a');
-  assert.deepStrictEqual(before.notices.map((n) => n.text), ['Compacting context…']);
-  const rev0 = before.rev;
+  assert.strictEqual(m.compactNoticesFor('a'), null);
 
   t.mock.timers.tick(100_000);
   m._onCompactEnd(s);
@@ -70,8 +68,8 @@ test('start → end: sets the display state, sends it, notices the pane, and cle
   assert.deepStrictEqual(compactingSends(win).at(-1), ['session-compacting', 'a', null, { outcome: 'done', ms: 100_000 }]);
   assert.strictEqual(broadcasts.at(-1)[1].body, 'compact finished in 100s');
   const after = m.compactNoticesFor('a');
-  assert.deepStrictEqual(after.notices.map((n) => n.text), ['Compacted in 1m 40s'], 'the same row is rewritten, not a second one appended');
-  assert.notStrictEqual(after.rev, rev0);
+  assert.deepStrictEqual(after.notices, [{ id: 'compact:1000000', ts: 1000000, ms: 100000, outcome: 'done', text: 'Compacted in 1m 40s' }]);
+  assert.ok(win.sent.some((x) => x[0] === 'transcript-changed'), 'the pane is told to re-pull');
 
   const sends = win.sent.length;
   m._onCompactEnd(s);
@@ -89,7 +87,7 @@ test('SessionStart compact line alone ends the compact and rewrites the notice, 
   m._routeAttnEntry(s, { hook_event_name: 'SessionStart', source: 'compact' });
   assert.strictEqual(s.compacting, null);
   assert.deepStrictEqual(compactingSends(win).at(-1), ['session-compacting', 'a', null, { outcome: 'done', ms: 42_000 }]);
-  assert.deepStrictEqual(m.compactNoticesFor('a').notices.map((n) => n.text), ['Compacted in 42s']);
+  assert.deepStrictEqual(m.compactNoticesFor('a').notices, [{ id: 'compact:0', ts: 0, ms: 42000, outcome: 'done', text: 'Compacted in 42s' }]);
   m._routeAttnEntry(s, { hook_event_name: 'SessionStart', source: 'startup' });
   assert.deepStrictEqual(attns, [], 'SessionStart lines never reach _onAttention');
 });
@@ -165,10 +163,23 @@ test('mergeCompactNotices: places the notice after the last record at or before 
     { id: 'r3', kind: 'assistant', ts: 20, turn: 1 },
     { id: 'r4', kind: 'prompt', ts: 40, turn: 2 },
   ];
-  const out = mergeCompactNotices(recs, [{ id: 'compact:30', ts: 30, text: 'Compacting context…' }]);
+  const out = mergeCompactNotices(recs, [{ id: 'compact:30', ts: 30, ms: 10000, outcome: 'done', text: 'Compacted in 10s' }]);
   assert.deepStrictEqual(out.map((r) => r.id), ['r1', 'r2', 'r3', 'compact:30', 'r4']);
-  assert.deepStrictEqual(out[3], { id: 'compact:30', kind: 'notice', level: 'info', ts: 30, turn: 1, text: 'Compacting context…' });
+  assert.deepStrictEqual(out[3], { id: 'compact:30', kind: 'notice', level: 'info', ts: 30, turn: 1, text: 'Compacted in 10s' });
   assert.strictEqual(recs.length, 4, 'the reader cache is not mutated');
+});
+
+test('mergeCompactNotices: a finished notice folds into the compact boundary at or after its time as elapsedMs, with no notice row', () => {
+  const recs = [
+    { id: 'r1', kind: 'prompt', ts: 10, turn: 1 },
+    { id: 'b1', kind: 'boundary', ts: 40, turn: 1, what: 'compact', trigger: 'manual', preTokens: 100, postTokens: 10 },
+  ];
+  const out = mergeCompactNotices(recs, [{ id: 'compact:30', ts: 30, ms: 10000, outcome: 'done', text: 'Compacted in 10s' }]);
+  assert.deepStrictEqual(out, [
+    { id: 'r1', kind: 'prompt', ts: 10, turn: 1 },
+    { id: 'b1', kind: 'boundary', ts: 40, turn: 1, what: 'compact', trigger: 'manual', preTokens: 100, postTokens: 10, elapsedMs: 10000 },
+  ]);
+  assert.deepStrictEqual(recs[1], { id: 'b1', kind: 'boundary', ts: 40, turn: 1, what: 'compact', trigger: 'manual', preTokens: 100, postTokens: 10 });
 });
 
 test('renderer: listens on onSessionCompacting and ticks the compacting rows', () => {
