@@ -15,7 +15,7 @@ blocks a release.
 - The Tickets pane opens on the active session's project (its team's board, or the board whose root holds the session's folder) instead of the first project in the list; a project you pick afterwards stays until the pane is reopened.
 - A Files toggle in the sidebar footer reopens the side pane with the tabs you had; it is off when the seat has no files open.
 - With the sidebar folded (Cmd+B), the footer keeps every button as a glyph, so Files, Tickets and the other plugin buttons stay one click away like Inbox; a lit background shows which panes are on.
-- In the browser, the dock and drawer resize lines are easier to grab: a 10px hit area around the 5px line.
+- In the browser, the dock and drawer resize lines are easier to grab: a 10px hit area around the 5px line (Safari, which lacks overflow-clip-margin, keeps the drawer line at 2px).
 - The drawer's resize handle sits on its top edge and no longer covers the tabs beneath it.
 - The Tickets pane no longer marks closed tickets "stalled": the stall flag is computed for open tickets only, matching what the watchdog can nudge.
 - Drag the top edge of the bottom drawer to size it; the height is remembered, and the tall button still flips to 70%.
