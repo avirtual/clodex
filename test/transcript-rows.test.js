@@ -1554,6 +1554,7 @@ test('spill fold: a head click fetches the body once through peekFile, shows it 
   const card = cardAt(m);
   const head = foldOf(card);
   assert.deepStrictEqual(findCls(card, 'tr-spill-body'), []);
+  assert.deepStrictEqual(p.calls, []);
   head.listeners.click();
   assert.strictEqual(findCls(card, 'tr-spill-body')[0].textContent, 'Loading…');
   await tick();
@@ -1636,6 +1637,8 @@ test('spill fold: a rebuilt row that was open shows the fetched body again witho
   assert.strictEqual(foldOf(card).textContent, '▾ ▢ 2.7 KB filed · Report');
   assert.strictEqual(findCls(card, 'tr-spill-body')[0].textContent, 'kept!');
   assert.deepStrictEqual(p.calls, [path]);
+  m.render([{ ...filedReport(path), ts: 2 }]);
+  assert.strictEqual(findCls(cardAt(m), 'tr-spill-body')[0].textContent, 'kept!');
 });
 
 test('spill fold: open state is keyed by path, so opening one spill leaves another closed, prose spills included', async () => {
@@ -1652,6 +1655,12 @@ test('spill fold: open state is keyed by path, so opening one spill leaves anoth
   assert.strictEqual(one.textContent, '▸ ▢ 1.0 KB filed · One');
   assert.strictEqual(two.textContent, '▾ ▢ 2.0 KB filed · Notes');
   assert.deepStrictEqual(findCls(row, 'tr-spill-body').map((n) => [n.parentNode.className, n.textContent]), [['tr-seg-prose', 'ok']]);
+  assert.deepStrictEqual(p.calls, [b]);
+  const rec = said('a1', 0, `[agent:dm bob] One — 1.0 KB filed at ${a}\n[agent:end]\nNotes — 2.0 KB filed at ${b}`);
+  m.render([{ ...rec, ts: 1 }]);
+  const again = m.pane.childNodes[0].childNodes[0];
+  assert.notStrictEqual(again, row);
+  assert.deepStrictEqual(findCls(again, 'intent-card-filed-link').map((n) => n.textContent), ['▸ ▢ 1.0 KB filed · One', '▾ ▢ 2.0 KB filed · Notes']);
   assert.deepStrictEqual(p.calls, [b]);
 });
 
