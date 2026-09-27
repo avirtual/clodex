@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Ticket loop: a rejection redelivery parked by a seat's turn-start window is retried once more instead of escalating, the same as a spec replay.
+
 - Test runner: the run-tests command's ceiling now outlasts a full lock wait plus the runner's own ceiling, so a queued run is never killed mid-suite with its digest lost; a hung test file is named in the escalation itself.
 
 - Ticket loop: a verify suite that hangs is now killed after the test runner's own ceiling, so the report names the hung file instead of a bare wedge.
