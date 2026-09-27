@@ -141,12 +141,17 @@ function inlineBody(seg) {
   if (seg.state === 'filed' && seg.spill) return true;
   if (!seg.body || seg.verb === 'exec') return null;
   if (!seg.body.includes('\n')) return seg.body.trim().length <= INLINE_CHARS ? seg.body : null;
-  return seg.verb === 'task' ? seg.body.split('\n')[0] : null;
+  if (seg.verb !== 'task') return null;
+  const lines = seg.body.split('\n');
+  const at = lines.findIndex((l) => l.trim());
+  return at < 0 ? null : lines[at];
 }
 
 function restBody(doc, seg, ctx) {
-  const rest = seg.body.split('\n').slice(1).join('\n');
-  const body = el(doc, 'div', 'intent-card-body intent-card-clamped');
+  const lines = seg.body.split('\n');
+  const rest = lines.slice(lines.findIndex((l) => l.trim()) + 1).join('\n');
+  if (!rest.trim()) return [];
+  const body = el(doc, 'div', 'intent-card-body intent-card-rest');
   appendPlain(doc, body, rest, ctx);
   const more = rest.split('\n').length;
   const foot = el(doc, 'div', 'intent-card-more', `+ ${countText(more, 'more line', 'more lines')}`);
@@ -526,7 +531,7 @@ function ticketParts(rec) {
   const { id, tag } = rec.ticket;
   const text = rec.attached ? rec.text.slice(0, rec.text.indexOf('Message (')) : rec.text;
   if (rec.kind !== 'reply') return { chip: tag ? `${id} ${tag}` : id, message: text.replace(/^\[ticket [^\]]*\]\s*/, '') };
-  const m = /^ticket t\d+[ \t]*(\S*)[ \t]*/.exec(text);
+  const m = /^ticket t\d+[ \t]*([^\s:]*):?[ \t]*/.exec(text);
   const state = m ? m[1] : '';
   const message = (m ? text.slice(m[0].length) : text).replace(/^[—–:-][ \t]*/, '');
   return { chip: state ? `${id} ${state}` : id, message };
@@ -542,7 +547,7 @@ function ticketBox(doc, rec, row, opened, att) {
   head.appendChild(rec.kind === 'reply' ? appBadge(doc, rec) : inboundBadge(doc, rec));
   head.appendChild(el(doc, 'span', 'tr-box-preview', previewText(message.trim())));
   box.appendChild(head);
-  if (rec.attached || rec.text.trim().includes('\n') || isLong(rec.text)) {
+  if (rec.attached || rec.text.trim().includes('\n') || isLong(rec.text) || message.trim().length > PREVIEW_CHARS) {
     const chevron = el(doc, 'span', 'tr-box-chevron');
     head.appendChild(chevron);
     const paint = () => {
@@ -1000,8 +1005,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
           build: () => {
             const row = buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row');
             if (r.ticket && (r.kind === 'inbound' || r.kind === 'reply')) return ticketBox(doc, r, row, opened, att);
-            const box = internalBox(doc, r, row, opened, att);
-            return r.ticket ? ticketChip(doc, box, r.ticket) : box;
+            return internalBox(doc, r, row, opened, att);
           },
           after,
         });

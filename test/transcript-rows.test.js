@@ -1328,9 +1328,47 @@ test('one ticket shape: a multi-line task done puts the target before the label,
   assert.deepStrictEqual(headCls(card), ['intent-card-glyph', 'intent-card-target', 'intent-card-label', 'intent-card-inline']);
   assert.strictEqual(card.childNodes[0].childNodes[3].textContent, 'line one');
   const [, body, foot] = card.childNodes;
-  assert.strictEqual(body.className, 'intent-card-body intent-card-clamped');
+  assert.strictEqual(body.className, 'intent-card-body intent-card-rest');
   assert.strictEqual(body.textContent, 'line two');
   assert.strictEqual(foot.textContent, '+ 1 more line');
   foot.listeners.click();
   assert.strictEqual(body.className, 'intent-card-body');
+});
+
+test('one ticket shape: a bare task head takes its first non-blank line inline and the rest behind the count', () => {
+  const m = mount();
+  m.render([said('a1', 0, '[agent:task done t4]\nline one\nline two\nline three\n[agent:end]')]);
+  const card = cardAt(m);
+  assert.strictEqual(card.childNodes[0].childNodes[3].textContent, 'line one');
+  const [, body, foot] = card.childNodes;
+  assert.strictEqual(body.className, 'intent-card-body intent-card-rest');
+  assert.strictEqual(body.textContent, 'line two\nline three');
+  assert.strictEqual(foot.textContent, '+ 2 more lines');
+});
+
+test('one ticket shape: a one-line task body over 240 chars keeps the ordinary clamped block, not the hidden rest', () => {
+  const m = mount();
+  const long = 'y'.repeat(250);
+  m.render([said('a1', 0, `[agent:task add] ${long}\n[agent:end]`)]);
+  const card = cardAt(m);
+  assert.deepStrictEqual(findCls(card, 'intent-card-inline'), []);
+  assert.strictEqual(card.childNodes[1].className, 'intent-card-body intent-card-clamped');
+  assert.strictEqual(card.childNodes[1].textContent, long);
+});
+
+test('one ticket shape: a one-line reply whose message outruns the preview folds, keeping the full text in the body', () => {
+  const m = mount();
+  const msg = `merged into master as 9bdf06b5; ${'z'.repeat(120)}`;
+  m.render([taskReply('i1', 1, `ticket t1277 accepted — ${msg}`)]);
+  const box = boxOf(m, 'i1');
+  assert.strictEqual(box.className, 'tr-box tr-box-folded tr-ticket');
+  assert.strictEqual(boxHeadOf(box).childNodes[0].textContent, 't1277 accepted');
+  assert.ok(bodyOf(box).textContent.endsWith(msg));
+});
+
+test('one ticket shape: a colon after the ticket id is not a state word, and a trailing colon is dropped from one', () => {
+  const m = mount();
+  m.render([taskReply('i1', 1, 'ticket t5: its worktree is held'), taskReply('i2', 1, 'ticket t12 merged: a → b')]);
+  assert.deepStrictEqual(['i1', 'i2'].map((id) => boxHeadOf(boxOf(m, id)).childNodes.map((n) => n.textContent).slice(0, 1).concat(boxHeadOf(boxOf(m, id)).childNodes[2].textContent)),
+    [['t5', 'its worktree is held'], ['t12 merged', 'a → b']]);
 });
