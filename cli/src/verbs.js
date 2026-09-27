@@ -6,7 +6,7 @@ const { CliError, EXIT } = require('./errors');
 const out = require('./output');
 const imp = require('./import');
 const { validateEntry } = require('./contexts');
-const { openGuarded } = require('./sse-guard');
+const sseGuard = require('./sse-guard');
 const { parseDuration } = require('./args');
 const R = require('./resources');
 const { VERSION } = require('./help');
@@ -403,7 +403,11 @@ async function logsFollow({ client, printer, flags, name, initial, messages, unf
     if (term && term.onSignal) offSignal = term.onSignal(onSig);
     else { process.on('SIGINT', onSig); process.on('SIGTERM', onSig); offSignal = () => { process.off('SIGINT', onSig); process.off('SIGTERM', onSig); }; }
 
-    const guard = openGuarded(client, '/api/events', 'logs -f (events)', {
+    const seam = io.followGuard || {};
+    const guard = sseGuard.openGuarded(client, '/api/events', 'logs -f (events)', {
+      staleMs: sseGuard.STALE_MS,
+      backoff: seam.backoff || sseGuard.BACKOFF,
+      timers: seam.timers || { setTimeout, clearTimeout },
       // On (re)connect, silently advance the cursor so a reconnect
       // never re-prints old lines (no gap markers in v1).
       onOpen: async () => {
