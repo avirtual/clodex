@@ -70,7 +70,7 @@ const entry = (value) => ({ value, secret: false });
 
 // --- the shipped file itself -------------------------------------------------
 
-test('the shipped defaults file carries exactly the six keys Clodex promises, with a note each', () => {
+test('the shipped defaults file carries exactly the eight keys Clodex promises, with a note each', () => {
   // The DEFAULT source, deliberately: this is the one case that pins the real
   // resources/env-defaults.json rather than a fixture. Every other case below
   // would stay green if the file were emptied.
@@ -79,6 +79,8 @@ test('the shipped defaults file carries exactly the six keys Clodex promises, wi
     'CLAUDE_CODE_BASH_OUTPUT_AUDIENCE_NOTE',
     'CLAUDE_CODE_COZY_TEAPOT',
     'CLAUDE_CODE_DISABLE_BUNDLED_SKILLS',
+    'CLAUDE_CODE_GENTLE_PARASOL',
+    'CLAUDE_CODE_TOASTY_THIMBLE',
     'CLAUDE_CODE_TOTAL_TOKENS_REMINDER',
     'CLAUDE_CODE_TURN_UPDATES',
     'CLAUDE_STREAM_IDLE_TIMEOUT_MS',
@@ -90,6 +92,8 @@ test('the shipped defaults file carries exactly the six keys Clodex promises, wi
   assert.strictEqual(defaults.CLAUDE_CODE_TURN_UPDATES.value, 'false');
   assert.strictEqual(defaults.CLAUDE_CODE_COZY_TEAPOT.value, 'relaxed');
   assert.strictEqual(defaults.CLAUDE_CODE_DISABLE_BUNDLED_SKILLS.value, '1');
+  assert.strictEqual(defaults.CLAUDE_CODE_TOASTY_THIMBLE.value, 'off');
+  assert.strictEqual(defaults.CLAUDE_CODE_GENTLE_PARASOL.value, 'off');
   for (const [key, rec] of Object.entries(defaults)) {
     // The note is the GUI's whole explanation of the key — an empty one ships a
     // var the operator is asked to trust with no account of what it does.
@@ -422,4 +426,12 @@ test('planEnvSeed: a junk seeded list degrades to "nothing seeded yet", never th
       `a ${JSON.stringify(junk)} list must re-seed rather than crash the launch`);
     assert.deepStrictEqual(plan.seeded, ['ALPHA', 'BETA']);
   }
+});
+
+test('planEnvSeed over the shipped file seeds the harness nudge off', () => {
+  const plan = planEnvSeed({ defaults: loadEnvDefaults(SHIPPED), global: {}, seeded: [] });
+  const writes = Object.fromEntries(plan.writes.map((w) => [w.key, w.value]));
+  assert.strictEqual(writes.CLAUDE_CODE_TOASTY_THIMBLE, 'off');
+  assert.strictEqual(writes.CLAUDE_CODE_GENTLE_PARASOL, 'off');
+  assert.strictEqual(plan.writes.length, 8);
 });
