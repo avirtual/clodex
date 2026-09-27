@@ -94,6 +94,8 @@ function diagLines(d = {}) {
 }
 
 const SPILL_NAME_RE = new RegExp(`msg-\\d+-\\d+\\.txt|${SEAT_IMAGE_FILE_PATTERN}`, 'g');
+const SEAT_IMAGE_FILE_RE = new RegExp(`^${SEAT_IMAGE_FILE_PATTERN}$`);
+const IMG_MAX_AGE = 24 * 3600;
 
 // Parking has no expiry; spill files do — and the spill file is the only copy of
 // an over-threshold dm body, so an unexempted sweep loses it silently.
@@ -119,7 +121,7 @@ function linksToSeatDir(linkPath, seatPath) {
 // Deliberate: the alternative caps disk by destroying undelivered dms. If it
 // ever bites, add a `pending/` expiry — ONE policy for both lifetimes — rather
 // than a second policy here that disagrees with parking.
-function sweepSpilledMessages(msgDir, pendingDir, maxAgeSec, now = Date.now()) {
+function sweepSpilledMessages(msgDir, pendingDir, maxAgeSec, now = Date.now(), imgMaxAgeSec = maxAgeSec) {
   if (!fs.existsSync(msgDir)) return;
   const referenced = referencedSpillNames(pendingDir);
   // Spilled messages live one level deep, in a per-recipient subfolder.
@@ -134,7 +136,8 @@ function sweepSpilledMessages(msgDir, pendingDir, maxAgeSec, now = Date.now()) {
           try {
             if (referenced.has(fname)) continue;
             const fpath = path.join(epath, fname);
-            if ((now - fs.statSync(fpath).mtimeMs) / 1000 > maxAgeSec) fs.unlinkSync(fpath);
+            const limit = SEAT_IMAGE_FILE_RE.test(fname) ? imgMaxAgeSec : maxAgeSec;
+            if ((now - fs.statSync(fpath).mtimeMs) / 1000 > limit) fs.unlinkSync(fpath);
           } catch {}
         }
       } else if (!referenced.has(entry.name)
@@ -1098,7 +1101,7 @@ const sessionInfo = createSessionInfo({
 let msgCounter = 0;
 
 function cleanupOldMessages() {
-  sweepSpilledMessages(MSG_DIR, PENDING_DIR, MSG_MAX_AGE);
+  sweepSpilledMessages(MSG_DIR, PENDING_DIR, MSG_MAX_AGE, Date.now(), IMG_MAX_AGE);
 }
 
 function spillToFile(sender, body, recipient) {
@@ -2517,4 +2520,4 @@ const toolCache = createToolCache({ whichBin });
   };
 }
 
-module.exports = { createEngine, resolveRegistryDir, resolveSelfLabel, diagWarning, diagLines, sweepSpilledMessages };
+module.exports = { createEngine, resolveRegistryDir, resolveSelfLabel, diagWarning, diagLines, sweepSpilledMessages, IMG_MAX_AGE };
