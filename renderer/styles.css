@@ -6045,9 +6045,9 @@ body.web-frontend #sidebar-header {
 .tr-mid-state[data-state="delivered"] { color: var(--text-tertiary); opacity: 0.8; }
 .tr-mid-state[data-state="read"] { color: var(--accent); }
 .tr-mid-state[data-state="queued"] { color: var(--warn); }
-.tr-image-thumb { height: 48px; width: auto; max-width: 160px; object-fit: cover; border: 1px solid var(--border); vertical-align: middle; cursor: pointer; }
+.tr-image-thumb { height: 48px; width: auto; max-width: 160px; margin: 0 var(--sp-1); object-fit: cover; border: 1px solid var(--border); vertical-align: middle; cursor: pointer; }
 .tr-image-thumb.tr-image-open { display: block; max-width: 100%; height: auto; margin: var(--sp-1) 0; object-fit: contain; }
-.tr-image-chip { display: inline-block; padding: 0 var(--sp-1); border: 1px solid var(--border); color: var(--text-tertiary); font-size: var(--fs-sm); vertical-align: middle; }
+.tr-image-chip { display: inline-block; margin: 0 var(--sp-1); padding: 0 var(--sp-1); border: 1px solid var(--border); color: var(--text-tertiary); font-size: var(--fs-sm); vertical-align: middle; }
 .tr-command { font-family: var(--font-mono); font-size: var(--fs-sm); }
 .tr-sender { display: inline; white-space: normal; }
 .tr-sender-glyph {
