@@ -11,169 +11,69 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — seats you can read
 
-- Transcript pane: a compact is one row — "compacted 156k → 16k tokens · manual · 27s" on the boundary — instead of the typed `/compact` echo, a "Compacting context…" notice and the boundary; the CLI's own progress line still shows in the working row while it runs. Codex and Muse seats, which write no boundary record, keep the "Compacted in 27s" row.
-- **One bar per seat**: the status chips (mode, with Codex's Bypass / Read-only folded in, tasks, warnings, effort), the Conversation · Internals switch, a ? to the help page and a **Terminal** toggle sit on the seat's bar; the strip under the composer is gone. The view is per seat, and ⌘⇧T toggles the active seat's Terminal.
-- **Agent seats open in the conversation view by default**; Preferences ▸ Appearance ▸ "Agent seats open in" (Conversation, Internals or Terminal) sets where new seats start and applies to open ones when saved. Voice is set per seat with the 🎤 button; the Prefs mode selector is gone.
-- **Help opens on "Clodex at a glance"**, one screen on seats, views, the message box and tickets (F1).
-- Transcript pane: an intent whose body is a single short line (a reminder, a one-line dm, a filed report) now shows it on the same line as its label instead of on a second row; longer bodies keep the clamped block.
-- Transcript pane: every ticket phase — a notice from the loop or a hand, a runtime reply, the seat's own task verb — now reads the same way: ticket number, state, one-line message, with the full text behind a click when there is more.
+### Seats show their conversation
+
+- **Agent seats show their conversation.** Claude, Codex and Muse terminal seats open in the conversation view, rendered from the CLI's own transcript, on the desktop and in the browser. Preferences ▸ Appearance ▸ "Agent seats open in" (Conversation, Internals or Terminal) sets where new seats start and applies to open ones when saved. Your messages sit on an accent-tinted row; the agent's prose, code, file paths and links render as you would read them; images you pasted show as thumbnails (click for full width); local command output (/context, /cost, /status, /diff, /mcp) keeps its colours.
+- **One bar per seat.** Each agent seat's bar carries the CLI's status as chips on the left — the permission mode (click to cycle on Claude, to toggle Plan on Codex, with Codex's `Bypass` / `Read-only` posture folded into it), Claude's background-task count, Codex's startup warnings (click to open them) and the seat's effort level — and on the right the **Conversation · Internals** switch, a **?** that opens help, and a **Terminal** toggle. The view is per seat; ⌘⇧T (View ▸ Terminal) toggles the active seat's terminal.
+- **Conversation and Internals.** Conversation shows your messages, the agent's replies and the messages it sends, and ends each exchange with a one-line summary (time, tools, errors, files changed) that opens the tool calls behind it. A turn driven by a ticket notice, a hand's report, a reminder or another machine input folds to one line (sender, ticket chip, first line, duration · tools · injected); click to open it. A turn where the agent shouted or dm'd stays open. Internals shows everything: each tool call with its result, messages from Clodex and other seats as sender cards, the seat's own subagents' reports, and intents with their fire / inert / filed marks. Every ticket phase — a notice from the loop or a hand, a runtime reply, the seat's own task verb — reads the same way: ticket number, state, one-line message, with the full text behind a click; an intent whose body is one short line shows it beside its label.
+- **A Clodex message box replaces the CLI's input row** while the CLI is waiting for you: Enter sends, Shift+Enter adds a line, Esc interrupts, `/` shows the CLI's own command menu as a list, and a pasted image goes to the CLI as an image (in the browser it is uploaded to the Clodex host and kept for 24 hours). When the CLI shows a picker, a dialog or a running turn, its terminal opens under the conversation; the Terminal toggle on the seat's bar (⌘⇧T) shows the whole terminal.
+- **You can see that a message got through.** A message typed while the agent is working appears at once marked `queued`, turns `delivered` when the CLI hands it to the agent, and `✓ read` when the agent's next action follows it. While a turn runs, a row at the bottom shows the elapsed time and the CLI's own status line, and says "Waiting for you" on a permission prompt. A compact is one row — "compacted 156k → 16k tokens · manual · 27s" (Codex and Muse: "Compacted in 27s") — and the seat's sidebar row shows an hourglass with the elapsed time while it runs.
+- **Help opens on "Clodex at a glance"**, one screen on seats, views, the message box and tickets (F1, or the ? on a seat's bar).
+
+### Stream seats: an agent with no terminal
+
+- **New: stream seats.** Tick "Stream seat — no terminal" in New Session ▸ Advanced, in Edit Session (applies at the next restart), on a template, or per role with `[agent:team role-set …]`: Clodex runs Claude (`claude -p`), Codex (`codex app-server`) or Muse (`muse serve`) over the CLI's stream protocol, and the seat is its conversation view and a message box. It takes dms, ticket deliveries, reminders and exec results (queued behind what you typed and delivered when the turn ends or reaches a tool call), shows permission prompts as cards with the CLI's own choices, answers `/` with the CLI's commands (Codex and Muse: compact, clear and stop), takes pasted or dropped images, edits with the terminal's Ctrl-U / Ctrl-K / Ctrl-W / Ctrl-A / Ctrl-E, and survives restart, relaunch, unarchive, retry and resuming a past conversation. In the sidebar its chip is round; a terminal seat's is square.
+- A stream seat whose CLI never answers the opening handshake is flagged after 60 seconds, with the CLI's stderr in the log, instead of looking busy forever.
+- Ticket seats and reviewers can be spawned as stream seats; a stream seat receives its team roster and open tickets at boot like a terminal seat.
+
+### Teams and tickets
+
 - **Tickets is on by default, with a Feed**: the board of open and recently closed tickets, and a time-ordered feed of every filing, review, merge and acceptance, filterable, in the desktop app and the browser. An install that already turned the plugin off stays off.
-- Every ticket transition (filed, started, assigned, reported, verdict, rejected, respec'd, merged, merge-failed, verify-hold, nudged, accepted, cancelled) is now appended to the ticket record as an `events` list with who and when, and the Tickets viewer's ticket read returns it. Records from before this change have no list and gain one from their next transition.
-- Transcript pane, Conversation mode: a turn driven by a ticket notice, a hand's report, a reminder or another machine input now folds to one line (sender, ticket chip, first line, duration · tools · injected); click to open it. A turn where the agent shouted or dm'd stays open. Internals mode is unchanged. A message the CLI stored as pasted text (long multi-line injections) now keeps its sender badge and ticket chip instead of rendering as an operator paste.
-- Transcript pane: a message or subagent report longer than 4 KB now ends with a visible cut marker instead of stopping mid-sentence; a rename that fails no longer drops the seat's effort level from its sidebar row.
-- Transcript pane: a report from one of the seat's own subagents, which the CLI attaches to the request as a teammate message, now shows as an inbound card from that subagent under Internals instead of as a message you typed.
-- Transcript pane: activating a run's expander from the keyboard keeps focus on it after the pane re-renders, and a pasted image whose upload fails now shows one error toast instead of breaking the composer. Moving a seat to a peer keeps its effort level on the rebuilt or failed row.
-- Pty seats with the composer now show a row of chips under it: the CLI's mode (click to cycle permission mode on Claude or toggle Plan mode on Codex, as shift+tab does), Claude's background-shell count, Codex's startup-warning count (click to open Codex's warning list) and the seat's effort level. The CLI's own status and hint rows no longer compete for that space.
-- Transcript pane: your own messages now sit on an accent-tinted row with a solid accent edge, so they stand apart from the agent's text on every theme (on Midnight the old raised-surface shade was nearly invisible); a mid-turn message keeps its dashed edge.
-- Transcript pane: an inline image thumbnail (and the `Image #n` chip that stands in for one) now keeps a little space from the text beside it instead of touching it.
-- Transcript pane: a message typed while the agent is mid-turn now appears the moment it is queued, marked `queued`; it turns `delivered` when the CLI hands it to the agent and `✓ read` when the agent's next action follows it.
-- Web: an image pasted into a seat's composer now stays on the Clodex host for 24 hours instead of 30 minutes, so a draft sent later still carries it.
-- Sidebar: hovering a seat now shows its reasoning effort level — the level it was spawned with, or `default` when none was set.
-- Transcript pane: a message you type while the agent is still working now shows as your own row, marked mid-turn, with a delivered / read state — the CLI folds it into the running turn and never echoed it before.
-- Web UI: pasting an image into a pty seat's composer now uploads it to the Clodex host and hands the seat the file path, instead of refusing with a toast. Desktop paste is unchanged.
-- Transcript pane: a Conversation / Internals switch replaces the Internals/Tools checkboxes. Conversation, the new default (your previous checkbox choice is not carried over), shows your prompts, the agent's prose and messages, and ticket lifecycle. Internals shows the full trace.
-- Transcript pane, Conversation mode: each exchange ends with a one-line summary (time, tools, errors, files changed). Click it to show the tool calls and runtime traffic behind that exchange in place.
-- Ticket verdict messages now open with a `[ticket tN ACCEPT|REWORK]` marker, and done/cancel/reassign notices delivered as attachments keep their `[ticket tN …]` marker on the pointer line.
-- Ticket loop: must-fixes that have to wait for a busy seat keep the pending rejection's reasons with them, so a rejection whose Enter was eaten is not lost when the follow-up is parked.
-- Ticket loop: must-fixes added before a seat has taken its turn on a rejection are typed together with that rejection's reasons, so a rejection whose Enter was eaten is not lost even when the follow-up lands.
-- Ticket loop: when must-fixes are added before a seat has taken its turn on a rejection and the follow-up itself has to be redelivered, that redelivery carries the rejection's reasons too instead of only the new text.
-- Ticket loop: must-fixes added while a seat is still starting its turn on a just-typed rejection keep the delivery watcher instead of dropping it.
-- Ticket loop: a rejection or added must-fixes written inside a seat's turn-start window keeps its delivery watcher, the same as a rejection redelivery.
-- Ticket loop: a rejection redelivery parked by a seat's turn-start window is retried once more instead of escalating, the same as a spec replay.
+- **Every ticket keeps its history.** Each transition (filed, started, assigned, reported, verdict, rejected, respec'd, merged, merge-failed, verify-hold, nudged, accepted, cancelled) is recorded with who and when; the Tickets viewer's ticket read returns it. Tickets filed before this release gain the list from their next transition.
+- **The loop merges into the team's trunk**, not a hard-coded `master`: the repo's default branch unless set in the roles editor or with `[agent:team trunk <branch>]`.
+- **Seats have an effort level.** Set it in New Session, Edit Session, a template, or per role with `[agent:team role-set <role> effort:<level>]` — the CLI's own values (Claude low…max, Codex and Muse none…ultra); `default` leaves the CLI alone. Reviewers honour it; the sidebar hover card shows it.
+- `[agent:task add]` refuses a title that matches an open ticket and names it; add `dup` to open a second one deliberately.
+- Verdict messages open with `[ticket tN ACCEPT|REWORK]`, and done / cancel / reassign notices delivered as attachments keep their `[ticket tN …]` marker.
+- Rejecting an ACCEPT verdict cancels the merge it queued and sends the rework through a second review instead of merging the pre-rework commit.
+- A rejection and the must-fixes added after it reach the seat together, even when its Enter was eaten, the seat was busy, or the delivery had to be retried.
+- The loop survives a relaunch mid-flight: an interrupted verify resumes, a deferred merge is picked up again, a merge that already landed no longer shows as waiting, and a lead's reboot waits for an in-flight merge and its suite.
+- A merge that finds a suite running waits up to 20 minutes for it (was 5); a verify suite that hangs is killed and the report names the hung file.
+- A merge escalation sent to a lead whose queue already holds a message is parked and delivered instead of lost.
+- The tickets board refuses to overwrite a board file it could not read; a missing board is still created.
 
-- Test runner: the run-tests command's ceiling now outlasts a full lock wait plus the runner's own ceiling, so a queued run is never killed mid-suite with its digest lost; a hung test file is named in the escalation itself.
+### Voice
 
-- Ticket loop: a verify suite that hangs is now killed after the test runner's own ceiling, so the report names the hung file instead of a bare wedge.
-- Messaging: a delivery diverted by the turn-start window is never mistaken for a delivered one; a replayed ticket spec, a second park after a hook drain, and the boot-time drain all follow the same rule.
-- Transcript pane: after a /clear the pane now switches to the new transcript at once instead of showing the old one until the next change.
-- Test runner: a test that never finishes now fails by name within two minutes; the session-manager suite's hang under load is fixed.
-- Messages: a second message arriving at a seat in the moment its previous one is being submitted is no longer lost in the turn start; it is delivered with that turn, for every kind of message.
-- Ticket loop: a merge that finds a test suite running now waits up to 20 minutes for it (was 5), so an accept during another ticket's verify lands on its own instead of escalating.
-- Agent prompt: the `[agent:remind …]` row now says its text is a greedy body closed by `[agent:end]`, so a reminder no longer swallows the prose written after it.
-- Transcript pane: the once-a-second refresh no longer re-downloads the whole transcript when nothing changed, on the desktop and in the web UI.
-- Transcript pane: an image pasted into a prompt shows as a small inline thumbnail (click to see it full width) instead of the bare [Image #n] marker; images over 1 MB show a size chip.
-- Ticket loop: a merge requeued at boot waits for the lead's seat before it can escalate, a merge that landed before the relaunch no longer shows as still waiting, and a reject that lands while the merge is being deferred is not lost across a relaunch.
-- Ticket loop: rejecting an ACCEPT verdict now cancels the merge that verdict had queued and sends the rework through a second review, instead of merging the pre-rework commit.
-- Transcript pane: a Tools checkbox beside Internals hides the tool-call blocks, so a recap reads as prompts and replies only; the choice is remembered across restarts like Internals.
-- Transcript pane: with Internals unchecked, a turn made only of Clodex-injected rows no longer leaves an empty separator line, and a folded attached reply keeps its ↳ lead.
-- Ticket loop: a merge deferred behind a running suite is picked up again after an app relaunch instead of waiting on a timer the relaunch dropped, and a lead's reboot now waits for an in-flight merge and its post-merge suite.
-- Ticket loop: a merge escalation sent to a lead whose inject queue already holds a message is no longer lost — it parks and reaches the lead with the turn that message starts.
-- Transcript pane: an intent whose body was never closed with [agent:end] now shows its whole body open with an "unclosed" warning chip instead of folding it to two lines, so a reply the agent accidentally wrote inside the body is still readable.
-- Transcript pane: messages Clodex injects into a seat (ticket replies, loop notices, reminders, exec results, dms from other agents) fold into one-line boxes you click to open, a run of tool calls shows only its latest call until you expand it, and an "Internals" checkbox at the top of the pane hides all of them so a recap reads as just your prompts and the agent's replies.
-- Codex and Muse terminal seats with the transcript pane: the output of inline commands such as /status, /diff and /mcp now shows in the pane as a command output row; it was painted under the message box and never seen.
+- **Voice is per seat.** Each seat is on or off (Hold mode is gone, and so is the Preferences mode selector); the 🎤 button on the seat's bar sets it and whether replies are read aloud, on Claude, Codex, Muse, stream and shell seats alike. Clodex no longer reads or writes `~/.claude/settings.json` for voice, and every seat it spawns has the CLI's own recorder off.
+- Dictation starts from the external tap or by pressing space on an empty prompt; the words appear in the message box or the CLI's input as you speak, corrections rewrite the end of the line, and ending with the trigger word removes it and sends — with no keystroke. Typing during a dictation leaves the line to you.
+- A second dictation right after the first now records, and the dictated-message note an agent receives says the message is above it, where it actually is.
+- The "Re-arm tap mode when a session finishes its turn" and "Also submit while macOS dictation is still holding the words" preferences are gone; hands-free submit on a spoken phrase stays.
 
-- Web UI: a plugin registered from a folder can be unregistered from Manage Plugins in the browser, as on the desktop; before, the Unregister button was hidden on the web.
+### Sidebar, files and terminal
 
-- Phone access: image files a phone sent are listed by name in the seat's filed list after a relaunch instead of showing raw bytes, and a message the box could not write to disk answers 500 rather than 404, so a phone client does not mistake it for a missing seat.
-- Phone access: a message sent from the phone can carry up to five images (png, jpeg, gif, webp, 5 MB each); a streamed seat gets them inline, a terminal seat gets them as files with their paths in the message. The session list now says whether a seat is streamed or a terminal.
-- Transcript pane: while the agent is working, a pulsing row at the bottom of the pane shows the elapsed time and the CLI's own status line ("Brewing…", "Working"), and goes still with "Waiting for you" on a permission prompt; before, a running turn looked no different from an idle one.
+- **Files open in a side pane** instead of a popover: tabbed (up to 12 per seat), resizable with the width remembered. Every file link, the inbox, the IPC log and `[agent:file view]` land there; an operator's unsaved edit is never overwritten by an agent's change.
+- **Cmd+B folds the sidebar** to a rail of status dots and one-letter monograms; the fold is remembered.
+- An agent seat whose CLI exits on its own (Codex after upgrading itself) stays in the sidebar as an exited row; click it to resume.
+- Hovering a seat shows its effort level and approval posture, and whether it is a terminal or a stream seat.
+- Preferences ▸ Appearance ▸ "GPU-accelerated terminal (WebGL)", off by default; a lost WebGL context falls back silently.
+- A Codex terminal seat links only a transcript started after you first typed into it, so two seats in one folder no longer share a conversation.
 
-- Desktop app, terminal seats with the transcript pane: pasting an image into Clodex's message box now sends it to the CLI as an image, with an Image #N marker in the draft; before, the paste was lost and the pane had to be turned off.
-- Web UI: the sandbox dialog's Choose… (working directory) and Add Folder… (mounts) buttons work in the browser, taking a typed path on the host.
-- Web UI: the transcript pane (Preferences ▸ Appearance) now works on terminal seats in the browser too, with the same message box and terminal sheet as the desktop; it was desktop-only.
-- Seats have an effort level: set it on a template (Effort field in the editor) or per role with `[agent:team role-set <role> effort:<level>]`; the value is the CLI's own (claude low…max, codex and muse none…ultra) and `default` leaves the CLI's setting alone. Reviewers spawned by the ticket loop honour it.
+### Web UI and phone access
 
-- Muse terminal seats: a picker such as /model now shows in the sheet with the transcript pane on; it was hidden under the message box.
+- The browser gets the conversation view on terminal seats, image paste into a seat's message box (uploaded to the Clodex host), the sandbox dialog's Choose… and Add Folder… (typed host paths), and Unregister in Manage Plugins.
+- Phone access: a message can carry up to five images (png, jpeg, gif, webp, 5 MB each) — inline to a stream seat, as file paths to a terminal seat; the session list says which kind a seat is; filed images list by name after a relaunch; a write failure answers 500, not 404.
 
-- Codex terminal seats no longer flick into the sheet while the model is still loading or when the typed draft wraps to several rows.
-- Codex terminal seats with the transcript pane: pickers such as /model now show in the sheet when the conversation has history; a past prompt was being mistaken for the input row and the picker stayed hidden.
-- Sidebar: a streamed (headless) seat shows a round session chip with a thin ring, a terminal seat keeps the square one; the seat's hover card names the kind and draws the same chip.
-- The terminal sheet on agent seats now shows the part of the screen the CLI actually painted: a startup banner, an upgrade prompt or a trust dialog at the top of the screen is visible in the sheet instead of a blank bottom half.
-- An agent seat whose CLI exits on its own (for example Codex after upgrading itself) stays in the sidebar as an exited row; click it to resume the same session instead of waiting for the next Clodex launch.
+### Reliability
 
-- Slash commands on terminal agent seats: typing `/` in the composer shows the CLI's own command menu as Clodex's list, with the same keys as the stream composer (arrows, Tab, Escape, Enter); the terminal itself no longer needs to be visible for it.
-- On terminal seats with the transcript pane, pickers, dialogs and running turns now show the terminal as a sheet at the bottom instead of replacing the whole view; the transcript stays on screen.
-- Enter in the terminal seat's message box now submits the prompt; it was being inserted as a newline into the CLI's input.
-- Terminal seats with the transcript pane now use Clodex's own message box instead of the CLI's input row while the CLI is waiting for input; Enter sends, Shift+Enter adds a line, Esc interrupts. Pickers and dialogs still show the terminal.
-- Typing / in a headless seat's composer opens a slash menu: Claude seats list the CLI's own commands, Codex and Muse seats offer compact, clear and stop as native controls.
-- A Codex terminal seat links only a transcript started after you first typed into it, so two seats in the same folder no longer pick up each other's conversation.
-- Muse slash commands (/model, /usage, …) appear as command rows in the transcript pane.
-- The transcript pane works on Muse and Codex terminal seats too: the pane sits above each CLI's own input strip, and the CLI's slash menu, command output and pickers show in that strip.
-- Codex terminal seats get their transcript link from Clodex itself (the Codex hook does not fire in the TUI), so the transcript pane and turn tracking work on them.
-- Tickets board writes refuse to overwrite a board that could not be read (malformed, unreadable, or not an array) instead of replacing it with a fresh one; a missing board is still created.
-
-- A headless seat whose CLI never answers the codec's opening handshake is flagged after 60 seconds (log line with the stderr tail, attention state) instead of showing 'thinking' forever; queued messages stay queued and nothing is resent.
-- Stream seats: Esc in the message box interrupts the running turn on claude, codex and muse seats, the way it does in the terminal.
-- Muse stream seats: allowing a compound shell command (segments joined by ; or |) on the permission card now approves every segment; before, only the first was decided and the seat sat waiting on the rest.
-- Sandbox: muse logs in inside a box without a keychain (the box exports TBH_CREDENTIAL_BACKEND=file), and muse's sessions and caches land on a persistent host-bound data dir instead of the container's overlay.
-- The stream seat's message box starts at one line and grows as you type or add lines (up to 40% of the pane), and a focused box shows one thin accent border instead of the doubled red ring.
-- Stream seats on codex and muse now show their prompts and replies in the transcript pane; before, the pane served only Claude transcripts and a headless codex or muse seat stayed blank while it talked.
-- The session bar's voice button opens the voice menu again on every seat, stream or pty: voice on or off for that seat, and whether replies are read aloud. Hold mode is gone. Dictation starts from the external tap or by pressing space on an empty prompt when the seat's voice is on, and the button itself never records; it lights green while the recorder is listening.
-- Claude seats no longer inherit the voice settings from ~/.claude/settings.json: every seat Clodex spawns has the CLI's own recorder off, so only Clodex's voice engine records.
-- Stream seat voice, tap mode: a dictated sentence ending in the trigger word now sends on its own, a second tap dictates again, and every step of a dictation is traced in the log so a misfire can be read instead of guessed.
-- A stream seat's transcript pane no longer clamps your own typed prompt to three lines; long prompts show in full (replies and inbound messages still clamp).
-- Scratch marks: a bare `[agent:scratch cancel]` now drops the most recent open mark, labeled or not, the same way a bare rewind targets it, and several labeled scratch intents in one reply are each answered instead of the second being swallowed as a duplicate.
-- Voice on a terminal seat: the words you dictate now appear in the CLI's input as you speak, the same as on a stream seat; corrections rewrite the end of the line, the trigger word is removed before the message is sent, typing while a dictation is running leaves the line to you, and a dictation without the trigger word stays in the line for you to finish.
-
-- Stream seats: `[agent:scratch begin]` and `[agent:scratch mark]` now open at once on a headless seat instead of waiting two minutes and refusing with a reason that blamed the reply for calling tools.
-- Stream seats: a permission prompt from the CLI (Claude, Codex, Muse) now shows as a card above the composer with the tool, what it wants to do and the CLI's own choices, badges the sidebar like a terminal seat's dialog, and holds incoming dms until it is answered, including on Codex and Muse seats.
-- Stream seat: a fresh restart from the session menu brings the seat back with its composer and transcript pane instead of a blank terminal, and a stray keystroke can no longer be sent to a stream seat as a message.
-- Stream seat: resuming a past conversation from the history menu brings the seat back with its pane, and peer terminal input to a stream seat is refused instead of silently dropped.
-- Voice: the hands-free submit hint no longer promises dictation or typed-text triggers, and the unreachable 'Cannot read the screen' recorder state is gone.
-- Muse headless seats route through wirescope like the terminal ones: the proxy base url rides the seat settings, since `muse serve` takes no `--base-url` flag.
-- Muse headless seats: a muse seat with the stream transport runs `muse serve` over stdio, so muse hands can be dispatched headless like claude and codex ones. Approvals are aborted on the wire (a stream seat has nobody to ask); run muse stream seats with bypass, as hands do.
-- Voice: the tap-mode re-arm and dictation-submit preferences are gone; voice mode is per seat since the previous entry, and the renderer watcher that served those preferences is deleted.
-
-- Codex headless seats: a codex seat with the stream transport runs `codex app-server` over stdio, so codex hands can be dispatched headless like claude ones. Approvals are declined on the wire (a stream seat has nobody to ask); run codex stream seats with bypass, as hands do.
-- Stream transport seam: which CLI supports the headless transport is now declared by its adapter, so a codex or muse headless seat is one codec module away. No change for claude stream seats.
-- Voice on every seat: each seat has its own voice mode (off, tap, hold) in its record, the statusbar voice control is the same on claude, codex and shell seats, and a dictated sentence reaches a terminal seat as typed text. Clodex no longer reads or writes ~/.claude/settings.json for voice; only the hidden engine carries a voice setting, inline.
-- Stream seats now get contextual and selection hints: a composer send arms them the way a typed Enter does on a terminal seat.
-- Stream voice: a tap now reads the engine's own recorder indicator first, so a recording the CLI ended on its own (silence timeout) no longer leaves every later tap out of phase and the stream seat silent.
-- Wire spill cut: an expanded intent body now stays expanded across a Clodex restart; the sticky set is persisted per agent and reset only at a real cold boundary (session change, compact, or 60 minutes idle).
-- Stream transport is a seat property: a template can set it, ticket seats spawn with it, Edit Session can switch a seat and Restart applies it; a stream seat now receives its team roster and open tickets at boot, whether minted for the ticket or brought back by a restart or relaunch.
-- Stream seats: `[agent:context compact]` now ends on the stream's own compact boundary instead of timing out, and the transcript pane follows the seat across a `/clear`.
-
-- Stream seat voice, tap mode: a spoken sentence ending in the trigger word now sends by itself even when the recorder's own row never clears, instead of waiting for the next keystroke.
-- Transcript pane: text pasted into a claude seat shows as a `Pasted text #1 · N lines` chip that expands on click, instead of the raw `<pasted_content>` tags.
-- Transcript pane: the typed echo of a slash command (`/compact`, `/cost`) no longer shows as a prompt row; the CLI's own command record and the compact boundary are the row.
-- Stream seat: a message queued while the seat is working no longer shows twice, a re-sent ticket replaces its queued copy instead of adding one, and queued rows show from the first second of a seat's life.
-- Stream seat: dms, ticket deliveries, reminders and exec results now reach a stream seat. They queue behind what you typed and are delivered when the seat finishes its turn or reaches its next tool call; nothing is sent mid-turn.
-- Transcript pane: consecutive calls of the same tool fold under one label with a count, and a Bash command no longer starts with the worktree cd prefix, so the command itself is what you read.
-- Stream seat: unarchiving, or retrying a seat that failed to start, brings it back with its composer instead of an empty terminal.
-- Stream seat: Restart from the session menu brings the seat back with its composer and transcript instead of an empty terminal.
-
-- Stream seat voice: saying the trigger word at the end of a sentence strips it and sends, the same as on a terminal seat.
-- Stream seat voice: the words arrive in the composer for a second window too, tap mode sends the finished sentence rather than the words so far, the recording light goes out when the hold limit ends it, and right-click on the voice button still opens the mode picker.
-- Test suite: a failing test that skips its fixture teardown no longer hangs the run, and a run that wedges anyway is cut off before the tool ceiling with a line naming the file it was in.
-- Stream seat: the voice button records through a hidden terminal and the words appear in the composer as you speak, for you to send; saying the trigger phrase sends them.
-- Stream seat: paste or drop an image into the composer and it goes with the message; thumbnails show what is attached until you send.
-- Transcript pane: an intent renders as a card (glyph, verb, target, a clamped body) with the wire brackets hidden, and a Clodex runtime reply shows the verb's glyph instead of a badge for a seat named clodex.
-- Sidebar and transcript pane: a seat that is compacting its context shows an hourglass with elapsed time on its row and a "Compacting context…" notice in the pane, replaced by "Compacted in Ns" when it finishes, so a still terminal during a compact no longer looks hung.
-- Stream transport (experimental, New Session checkbox on claude seats): the seat runs `claude -p` over stream-json with no terminal, the transcript pane is its viewport and a composer its input; it survives a Clodex relaunch through --resume, and a child left running by a crash is stopped before the resume so two processes never write one transcript. No dms, intents or permission prompts yet.
-- Wire: a long intent body already shown to the model in full stays in full on later turns and is replaced by its stand-in only after a compact, a new session, or an hour idle, so the replacement no longer rewrites the cached conversation (measured 52-90k tokens per collapse before).
-- Transcript pane: head rows and intent marks lose their left bars (the raised row and the tinted mark carry the meaning).
-- Sidebar: Cmd+B (or the chevron in the toolbar) folds the sidebar to a narrow rail of status dots and one-letter monograms, so the terminal and the file pane get the width; the fold is remembered across relaunches. Unfold the same way.
-- Transcript pane: messages from Clodex itself (reminders, the ticket loop, reboot notices, exec results) and from other seats show a sender badge with a glyph and a short name instead of the wire's `from X` text.
-- Side pane: every file you open stays open in its own tab (up to 12; the least recently used untouched tab is closed to make room), and the single remaining tab no longer shows a close button next to the pane's own.
-- Teams: the ticket loop merges into the team's trunk instead of a hard-coded `master`; it defaults to the repo's default branch (`main` or `master`) and can be set per team in the roles editor or with `[agent:team trunk <branch>]`.
-- Transcript pane: typed records; each prompt heads a turn block with a footer (duration, tool count, files changed), each tool call is one row with its result summary (exit code, line counts, +/− lines), inbound deliveries render as sender cards, and Cmd+Shift+T (View ▸ Raw terminal) toggles the raw terminal.
-
-- Files open in a right-side pane instead of a popover: tabbed, resizable with the width remembered, one tab set per seat; every file link, the inbox, the IPC log and `[agent:file view]` land there. Unsaved operator edits are never overwritten by an agent's change; the tab shows a banner instead.
-
-- Transcript pane: the pane keeps following the bottom when the composer grows to a second line or the layout changes; scrolling up releases it, scrolling back down re-engages it.
-
-- Exec: `clodex-run-tests` waits for a running suite to finish (up to 15 minutes) and reports that it is queued, instead of failing after 30 seconds and asking the agent to set itself a reminder.
-- Spill: ticket hands and cold reviewers keep their newest long intent body in full, so a rework round has a real example of the verb it must write again.
-
-- Restart: a queued relaunch also waits for granted exec runs still in flight (up to 10 minutes), and a run that was in flight when the app restarted comes back to its seat as a failure line instead of vanishing.
-- Spill: each request carries a seat's two newest long intent bodies in full instead of the two oldest, so the most recent ticket or message in a seat's view is always a real body and not the runtime note.
-- Ticket loop: a verify step interrupted by a Clodex restart (suite or reviewer not yet reported) resumes when the app comes back, instead of sitting at verify until the watchdog alarms.
-- Transcript pane: `[agent:…]` intents carry the same fire/inert/filed marks as the terminal, file paths and URLs are clickable, and local-command output takes the theme's echo colours.
-- Transcript pane: the view no longer flickers between the pane and the raw terminal while a reply streams; a mid-redraw frame keeps the current layout, and the pane drops to the raw terminal only after a frame has stayed anchorless for 50 ms.
-- Transcript pane: the pane refreshes as soon as the transcript changes, so a local command's output (/context, /cost) appears without waiting for the next keystroke.
-- Tickets: `task add` refuses a spec whose title matches an open ticket and names it; add `dup` to the head line to open a second one deliberately.
-- Transcript pane: the output of local commands such as /context, /cost and /status shows in the pane with its colours instead of disappearing under it.
-- Experimental: Preferences ▸ Appearance ▸ "Transcript pane" renders a Claude seat's conversation from its transcript above a live strip of the terminal from the composer down; off by default, desktop only.
-
-- Terminal: Preferences ▸ Appearance gains a GPU-accelerated terminal (WebGL) option, off by default; a lost or refused WebGL context falls back to the DOM renderer silently.
-- The transcript pane shows pasted text inline in your prompt instead of a "Pasted text #n" chip that had to be clicked open.
-- Voice dictation now sends on the trigger word without a keystroke: the quiet-window timer was never armed in the app (a setTimeout receiver error the tests could not see), and typing the trigger word in an ordinary message no longer truncates it, since the typed-text check runs only while a dictation is in progress.
-- Voice: a second dictation right after the first now records; the hidden recorder's input line kept the previous sentence and swallowed the record key as a typed space, so it is cleared before each start.
-- Voice: the note that tells a seat a message was dictated now says the message is above it, which is where the proxy puts it; it used to say 'the message that follows'.
-- Stream seat composer: Ctrl-U, Ctrl-K, Ctrl-W, Ctrl-A and Ctrl-E edit the line the way they do in a terminal (clear to line start, clear to line end, delete the previous word, jump to line start or end).
-- The stream transport checkbox in New Session and Edit Session describes the option as headless over the CLI's stream protocol instead of naming `claude -p`, since codex and muse seats take it too; the stale 'no dms, intents or permission prompts yet' note is gone, as stream seats now take all three.
+- A second message arriving at a seat in the moment its previous one is submitted is delivered with that turn instead of lost, for every kind of message, and a delivery diverted by the turn-start window is never counted as delivered.
+- A restart waits for granted exec runs still in flight (up to 10 minutes); a run interrupted by the restart returns to its seat as a failure line.
+- `clodex-run-tests` queues behind a running suite (up to 15 minutes) instead of failing after 30 seconds, and a test that never finishes fails by name within two minutes.
+- Wire: a long intent body already shown to the model stays in full until a compact, a new session or an hour idle, so the cached conversation is no longer rewritten (52–90k tokens per collapse, measured); an expanded body stays expanded across a restart. Each request keeps a seat's two newest long bodies in full, and ticket hands and reviewers keep their newest one.
+- Scratch marks: a bare `[agent:scratch cancel]` drops the most recent open mark, and several labeled scratch intents in one reply are each answered. `[agent:scratch begin|mark]` open at once on a stream seat.
+- The agent prompt now says `[agent:remind …]` takes a greedy body closed by `[agent:end]`.
+- Sandbox: Muse logs in inside a box without a keychain and keeps its sessions and caches on a persistent host-bound data dir.
+- Muse stream and terminal seats route through wirescope.
 
 ## 5.86.0 — 2026-09-23
 

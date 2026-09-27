@@ -5,7 +5,7 @@ A **seat** (a session in the sidebar) is one agent (Claude, Codex or Muse) or a 
 Clodex runs for you. The corner dot says what it is doing: pulsing amber thinking, fast-pulsing
 orange waiting for you; green marks the seat you have open. A square chip is a **terminal
 seat**; a round one is a **stream seat**, which has no terminal. Hover a row for its effort
-and approvals, and its model when Clodex knows it.
+and approval posture, and its model when Clodex knows it.
 
 ## Views
 An agent seat shows one of three views:

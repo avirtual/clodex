@@ -515,7 +515,7 @@ test('t989: the browser Alt-chord handler carries a help arm that opens the pane
   const handler = rendererSrc.match(/if \(!window\.__CLODEX_WEB__\) return;[\s\S]*?\n\}, true\);/);
   assert.ok(handler, 'ENTER: no __CLODEX_WEB__ keydown handler found in renderer.js');
   assert.ok(handler[0].includes("if (action.type === 'help') { openHelp(); return; }"),
-    'Alt+Shift+/ must reach openHelp() with no page name, so the panel opens on how-to');
+    'Alt+Shift+/ must reach openHelp() with no page name, so the panel opens on its default page');
   const helpAt = handler[0].indexOf("action.type === 'help'");
   const gateAt = handler[0].indexOf('if (overlaysOpen) return;');
   assert.ok(gateAt > 0, 'ENTER: the overlay gate is still in the handler');
