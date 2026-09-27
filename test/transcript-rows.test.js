@@ -1037,7 +1037,7 @@ function mountFocusable(ctx = {}) {
   const doc = fakeDocument();
   const make = doc.createElement;
   doc.activeElement = null;
-  doc.createElement = (tag) => Object.assign(make(tag), { focus() { doc.activeElement = this; } });
+  doc.createElement = (tag) => Object.assign(make(tag), { focus(opts) { doc.activeElement = this; doc.focusOpts = opts; } });
   const pane = doc.createElement('div');
   const rows = createTranscriptRows(doc, pane, ctx);
   return { doc, pane, rows, render: (records) => rows.render(records) };
@@ -1056,6 +1056,7 @@ test('runs: a keyboard-activated expander whose toggle moves to another turn kee
   assert.notStrictEqual(after, before);
   assert.strictEqual(after.parentNode, turnOf(m, 'm2'));
   assert.strictEqual(m.doc.activeElement, after);
+  assert.deepStrictEqual(m.doc.focusOpts, { preventScroll: true });
 });
 
 test('runs: a click on an unfocused expander does not move focus to the rebuilt toggle', () => {
@@ -1073,4 +1074,13 @@ test('runs: the expander glyph is aria-hidden', () => {
   m.render(movingRun());
   const glyph = findCls(m.pane, 'tr-run-glyph')[0];
   assert.strictEqual(glyph.getAttribute('aria-hidden'), 'true');
+});
+
+test('runs: an expander with no footer parts carries an aria-label; one with footer text does not', () => {
+  const bare = mount({ mode: 'conversation' });
+  bare.render([ask('p1', 1), execSaid('a1', 1)]);
+  assert.strictEqual(togglesOf(bare)[0].getAttribute('aria-label'), "Show or hide this run's steps");
+  const counted = mount({ mode: 'conversation' });
+  counted.render(movingRun());
+  assert.strictEqual(togglesOf(counted)[0].getAttribute('aria-label'), null);
 });

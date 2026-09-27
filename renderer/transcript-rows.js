@@ -841,7 +841,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
             render(lastRecords);
             restore(anchor);
             const next = focused ? runToggleOf(run.key) : null;
-            if (next) next.focus();
+            if (next) next.focus({ preventScroll: true });
           });
           return btn;
         },

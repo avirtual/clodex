@@ -32143,7 +32143,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
                   render(lastRecords);
                   restore(anchor);
                   const next = focused ? runToggleOf(run.key) : null;
-                  if (next) next.focus();
+                  if (next) next.focus({ preventScroll: true });
                 });
                 return btn;
               },
