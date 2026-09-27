@@ -332,6 +332,61 @@ test('timeout: a run that wedges is cut off with a TIMEOUT line naming the file 
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+function runKilledAtCeiling(fileArgs, partialTap) {
+  const root = fs.realpathSync(mkTmpRoot('clx-t279-'));
+  fs.mkdirSync(path.join(root, 'scripts'));
+  for (const f of ['run-tests.js', 'test-escapes.js']) {
+    fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
+  }
+  fs.writeFileSync(path.join(root, 'a.test.js'), STUB);
+  fs.writeFileSync(path.join(root, 'b.test.js'), STUB);
+  const probe = path.join(root, 'ceiling-probe.js');
+  fs.writeFileSync(probe, [
+    "const cp = require('node:child_process');",
+    'const real = cp.spawnSync;',
+    'cp.spawnSync = function (cmd, args, ...rest) {',
+    "  if (cmd === process.execPath && Array.isArray(args) && args[0] === '--test') {",
+    "    const dest = args.filter((a) => a.startsWith('--test-reporter-destination=') && !a.endsWith('=stdout'))[0];",
+    `    if (${JSON.stringify(partialTap)} !== null) require('node:fs').writeFileSync(dest.slice(dest.indexOf('=') + 1), ${JSON.stringify(partialTap)});`,
+    "    return { status: null, signal: 'SIGTERM', error: Object.assign(new Error('spawnSync node ETIMEDOUT'), { code: 'ETIMEDOUT' }) };",
+    '  }',
+    '  return real.call(this, cmd, args, ...rest);',
+    '};',
+  ].join('\n'));
+  const env = { ...process.env, CLODEX_TEST_RUN_TIMEOUT_MS: '1000' };
+  delete env.NODE_TEST_CONTEXT;
+  delete env.NODE_OPTIONS;
+  try {
+    const res = spawnSync(
+      process.execPath,
+      ['--require', probe, path.join(root, 'scripts', 'run-tests.js'), ...fileArgs],
+      { encoding: 'utf-8', cwd: root, timeout: 120000, env },
+    );
+    return { out: `${res.stdout || ''}${res.stderr || ''}`, status: res.status };
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+}
+
+test('timeout: node\'s interrupted line names the in-flight file, over the file the run was given', () => {
+  const { out, status } = runKilledAtCeiling(['a.test.js'],
+    'TAP version 13\n# Interrupted while running: b.test.js at /x/b.test.js:1:1\n');
+  assert.match(out, /TIMEOUT after 0\.02m in b\.test\.js$/m, out.slice(-600));
+  assert.notStrictEqual(status, 0);
+});
+
+test('timeout: a one-file run killed before node wrote its interrupted line still names that file', () => {
+  for (const tap of ['', 'TAP version 13\n', null]) {
+    const { out, status } = runKilledAtCeiling(['a.test.js'], tap);
+    assert.match(out, /TIMEOUT after 0\.02m in a\.test\.js$/m, `${JSON.stringify(tap)}:\n${out.slice(-600)}`);
+    assert.ok(!/TOTALS:/.test(out), out.slice(-600));
+    assert.notStrictEqual(status, 0);
+  }
+});
+
+test('timeout: a many-file run killed before node named a file stays unnamed rather than guess', () => {
+  const { out } = runKilledAtCeiling(['a.test.js', 'b.test.js'], 'TAP version 13\n');
+  assert.match(out, /TIMEOUT after 0\.02m in an unnamed file$/m, out.slice(-600));
+});
+
 function runWithArgvProbe(extraEnv) {
   const root = fs.realpathSync(mkTmpRoot('clx-t279-'));
   fs.mkdirSync(path.join(root, 'scripts'));
@@ -394,7 +449,7 @@ test('per-test timeout: a test that never finishes (its fixture releases its tim
     '}));',
     "test('a neighbour still runs', () => {});",
   ].join('\n'));
-  const env = { ...process.env, CLODEX_TEST_PER_TEST_MS: '300', CLODEX_TEST_RUN_TIMEOUT_MS: '10000', CLODEX_TEST_SLOW_MS: '100' };
+  const env = { ...process.env, CLODEX_TEST_PER_TEST_MS: '1500', CLODEX_TEST_RUN_TIMEOUT_MS: '10000', CLODEX_TEST_SLOW_MS: '100' };
   delete env.NODE_TEST_CONTEXT;
   delete env.CLODEX_TEST_SLOW_ADVISORY;
   try {

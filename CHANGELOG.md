@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- A test run killed at the runner's ceiling names the file that was in flight even when node had not yet written its interrupted line.
 
 ## 5.87.0 — 2026-09-27 — seats you can read
 

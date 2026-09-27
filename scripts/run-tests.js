@@ -304,7 +304,9 @@ if (run.error && run.error.code === 'ETIMEDOUT') {
   try { partial = fs.readFileSync(tapFile, 'utf8'); } catch {}
   const inFlight = [...partial.matchAll(/^# Interrupted while running: (.+?) at \S+:\d+:\d+$/gm)].map((m) => m[1]);
   const minutes = Math.round((runTimeoutMs / 60000) * 100) / 100;
-  die(`TIMEOUT after ${minutes}m in ${inFlight.length ? inFlight.join(', ') : 'an unnamed file'}`);
+  const named = passthrough.filter((a) => !a.startsWith('-'));
+  const where = inFlight.length ? inFlight.join(', ') : named.length === 1 ? named[0] : 'an unnamed file';
+  die(`TIMEOUT after ${minutes}m in ${where}`);
 }
 if (run.error) die(`could not start node --test: ${run.error.message}`);
 
