@@ -2,7 +2,7 @@
 
 const { ansiRuns } = require('./lib/ansi-html');
 const { classifyRows } = require('./lib/intent-marks');
-const { classifySender } = require('./lib/sender-class');
+const { classifySender, initial } = require('./lib/sender-class');
 const { scanLinks } = require('./lib/path-scan');
 const { rewriteEchoSgr } = require('./lib/prompt-echo');
 const { isExternallyOpenable } = require('../external-link');
@@ -347,6 +347,10 @@ function appendPrompt(doc, text, rec, ctx) {
   if (at < rec.text.length || !at) appendProse(doc, text, rec.text.slice(at), ctx);
 }
 
+function cutMark(doc, text, rec) {
+  if (rec.truncated) text.appendChild(el(doc, 'span', 'tr-cut', ' … cut at 4 KB'));
+}
+
 function promptRow(doc, rec, ctx) {
   const mid = rec.source === 'mid-turn';
   const row = headRow(doc, mid ? 'tr-prompt tr-prompt-mid' : 'tr-prompt', rec);
@@ -354,6 +358,7 @@ function promptRow(doc, rec, ctx) {
   const text = el(doc, 'span', 'tr-head-text');
   if (rec.pastes || rec.images) appendPrompt(doc, text, rec, ctx);
   else appendProse(doc, text, rec.text, ctx);
+  cutMark(doc, text, rec);
   row.appendChild(text);
   withTime(doc, row, rec);
   if (mid) {
@@ -379,7 +384,7 @@ function inboundBadge(doc, rec) {
   const name = String(rec.from);
   const badge = el(doc, 'span', `tr-sender tr-sender-${classifySender(name).cls}`);
   badge.title = 'Report from a subagent of this seat — attached by the CLI, not typed';
-  badge.appendChild(el(doc, 'span', 'tr-sender-glyph', (Array.from(name)[0] || '?').toUpperCase()));
+  badge.appendChild(el(doc, 'span', 'tr-sender-glyph', initial(name)));
   badge.appendChild(el(doc, 'span', 'tr-sender-name', name));
   return badge;
 }
@@ -412,7 +417,10 @@ function inboundRow(doc, rec, ctx) {
     if (lead) appendProse(doc, text, `${lead} `, ctx);
     text.appendChild(el(doc, 'span', 'tr-dim', `${bytesText(rec.attached.bytes)} `));
     text.appendChild(linkNode(doc, { kind: 'path', text: baseName(rec.attached.path), path: rec.attached.path }, '', ctx));
-  } else appendProse(doc, text, rec.text, ctx);
+  } else {
+    appendProse(doc, text, rec.text, ctx);
+    cutMark(doc, text, rec);
+  }
   row.appendChild(text);
   return withTime(doc, row, rec);
 }

@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { classifySender, SYSTEM_GLYPHS } = require('../renderer/lib/sender-class');
+const { classifySender, initial, SYSTEM_GLYPHS } = require('../renderer/lib/sender-class');
 
 const TABLE = [
   ['reminder', { cls: 'system', label: 'reminder', glyph: '◷' }],
@@ -35,4 +35,8 @@ for (const [from, want] of TABLE) {
 
 test('SYSTEM_GLYPHS names exactly the known system senders', () => {
   assert.deepStrictEqual(Object.keys(SYSTEM_GLYPHS), ['reminder', 'reboot', 'ticket-loop', 'ticket-watchdog', 'monitor', 'memory', 'exec', 'terminal', 'team', 'clodex-team', 'wirescope']);
+});
+
+test('initial is the first character upper-cased, or ? for an empty name', () => {
+  assert.deepStrictEqual([initial('nits-coords'), initial(''), initial('éa')], ['N', '?', 'É']);
 });

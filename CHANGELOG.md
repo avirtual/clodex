@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Transcript pane: a message or subagent report longer than 4 KB now ends with a visible cut marker instead of stopping mid-sentence; a rename that fails no longer drops the seat's effort level from its sidebar row.
 - Transcript pane: a report from one of the seat's own subagents, which the CLI attaches to the request as a teammate message, now shows as an inbound card from that subagent under Internals instead of as a message you typed.
 - Transcript pane: activating a run's expander from the keyboard keeps focus on it after the pane re-renders, and a pasted image whose upload fails now shows one error toast instead of breaking the composer. Moving a seat to a peer keeps its effort level on the rebuilt or failed row.
 - Pty seats with the composer now show a row of chips under it: the CLI's mode (click to cycle permission mode on Claude or toggle Plan mode on Codex, as shift+tab does), Claude's background-shell count, Codex's startup-warning count (click to open Codex's warning list) and the seat's effort level. The CLI's own status and hint rows no longer compete for that space.

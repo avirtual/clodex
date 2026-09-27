@@ -145,6 +145,34 @@ test('an inbound from a subagent of this seat is marked via subagent and its bad
   assert.strictEqual(badge.title, 'Report from a subagent of this seat — attached by the CLI, not typed');
 });
 
+const headText = (m) => unbox(m.pane.childNodes[0].childNodes[0]).childNodes.find((n) => n.className === 'tr-head-text');
+
+test('a prompt capped at its limit ends with a cut marker after its text', () => {
+  const m = mount();
+  m.render([{ ...prompt, truncated: true }]);
+  const kids = headText(m).childNodes;
+  const last = kids[kids.length - 1];
+  assert.deepStrictEqual([last.className, last.textContent], ['tr-cut', ' … cut at 4 KB']);
+});
+
+test('a subagent report capped at its limit ends with the same cut marker', () => {
+  const m = mount();
+  m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'nits-coords', via: 'subagent', text: 'hello', truncated: true }]);
+  const kids = headText(m).childNodes;
+  const last = kids[kids.length - 1];
+  assert.deepStrictEqual([last.className, last.textContent], ['tr-cut', ' … cut at 4 KB']);
+});
+
+test('a prompt or inbound under its limit carries no cut marker', () => {
+  for (const rec of [prompt, { id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'nits-coords', via: 'subagent', text: 'hello' }]) {
+    const m = mount();
+    m.render([rec]);
+    const text = headText(m);
+    assert.ok(text && text.textContent.includes(rec.text), 'ENTER: the row rendered');
+    assert.strictEqual(text.childNodes.some((n) => n.className === 'tr-cut'), false);
+  }
+});
+
 test('an inbound from a system sender draws a system badge inline at the head of its text, not the wire\'s "from X" text', () => {
   const m = mount();
   m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'reminder', text: 'continue: t1 build' }]);
