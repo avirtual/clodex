@@ -1739,7 +1739,9 @@ test('t1246: a stale park cap leaves a passive-only mailbox parked', async () =>
       ps.drainPending(app.pendingDir, 'target', 'hook.test');
       app.m._deliverPassive('target', 'team', 'ROSTER DELTA', 'dm');
       assert.strictEqual(app.parked('target', /ROSTER DELTA/), 1, 'ENTER: only a passive entry is left in the mailbox');
+      assert.ok(target._parkCapTimer, 'ENTER: the drained park\'s cap is still armed');
       mock.timers.tick(200_001);
+      assert.strictEqual(target._parkCapTimer, null, 'the stale cap fired and armed nothing new for a passive-only mailbox');
       assert.deepStrictEqual(flushes, [],
         'the drained park\'s deadline must not type a passive-only mailbox: a passive entry never earns a turn');
       assert.strictEqual(app.parked('target', /ROSTER DELTA/), 1, 'the passive entry stays parked');

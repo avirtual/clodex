@@ -1807,6 +1807,36 @@ test('t349: a throw inside the confirmation check is contained, not raised into 
 // evidence, so each of those defences is asserted on the REDIRECT path below
 // rather than assumed from the spec path's coverage.
 
+test('t1249: a REDIRECT redelivery parked by the turn-start window keeps its latch and gets one typed redelivery', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await redirected(world, { deps: { turnStartWindowMs: 60_000 } });
+  try {
+    assert.strictEqual(typeof s._awaitingTurnSince, 'number', 'ENTER: the rejection\'s Enter opened the window just before the redelivery');
+    const first = app.seen('team-hand');
+    fireConfirm(app, s);
+    for (let i = 0; i < 400 && app.parked('team-hand', /REDELIVERY/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.strictEqual(app.parked('team-hand', /REDELIVERY/), 1, 'ENTER: the window diverted the redelivery to the park');
+    assert.strictEqual(app.seen('team-hand'), first, 'ENTER: and nothing was typed');
+    assert.ok(s._specUnconfirmed, 'the latch survives the window divert, so the redelivery is still watched');
+    assert.strictEqual(s._specUnconfirmed.kind, 'redirect', 'and it is still the REDIRECT latch');
+    assert.strictEqual(s._specUnconfirmed.retried, false,
+      'and the retry is not spent: a redelivery that was never typed has not had its attempt');
+
+    s._awaitingTurnSince -= 61_000;
+    fireConfirm(app, s);
+    const after = await settled(app, 'team-hand', /REDELIVERY/);
+    assert.match(after.slice(first.length), /REDELIVERY/, 'the next deadline types the redelivery once the window has closed');
+    assert.strictEqual(s._specUnconfirmed && s._specUnconfirmed.retried, true, 'and that attempt spends the retry');
+
+    lead._awaitingTurnSince = null;
+    const beforeLead = app.seen('lead');
+    fireConfirm(app, s);
+    const leadSaw = await settled(app, 'lead', /ESCALATED/);
+    assert.match(leadSaw.slice(beforeLead.length), /ESCALATED/,
+      'a typed redelivery with no turn after it escalates, so a window-parked redelivery can no longer go silent');
+  } finally { app.stop(); }
+});
+
 // A dispatched ticket whose spec latch has been RETIRED by a real turn, closed,
 // and then rejected by the lead — i.e. a seat holding a redirect and nothing
 // else. The turn matters: without it the spec latch is still armed and every

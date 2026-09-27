@@ -4634,10 +4634,10 @@ function createTicketMethods(deps, shared) {
         `[ticket ${ticket.id} ${u.label} REDELIVERY] close with ${ticketCloseVerb(ticket.id)}`,
         // Same `finally` as _deliverTicketSpec's, same reason: an arm that throws
         // must not strand the caller's in-flight flag set forever.
-        (disposition) => {
+        (disposition, why) => {
           try {
             this._armSpecConfirm(seatName, ticket.id, disposition,
-              { label: u.label, reason: u.reason, from: u.from });
+              { label: u.label, reason: u.reason, from: u.from }, why);
           } catch (e) { log.error('intent', `redirect latch arm failed for ${seatName} on ${ticket.id}: ${e.message}`); }
           finally { if (onWrite) { try { onWrite(disposition); } catch {} } }
         });
