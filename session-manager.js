@@ -183,7 +183,7 @@ function dupIdentity(intent) {
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
-const { isAgentType, adapterFor, streamFor: adapterStreamFor, hasBypass, resolveModelId, resolveEffort } = require('./cli-adapters');
+const { isAgentType, adapterFor, streamFor: adapterStreamFor, hasBypass, postureOf, resolveModelId, resolveEffort } = require('./cli-adapters');
 
 function streamCodecCtx(type, extraArgs) {
   const a = adapterFor(type);
@@ -5012,6 +5012,7 @@ function createSessionManager(deps) {
         io: s.io || 'pty',
         voice: voiceModeOf(records.get(s.name)),
         effort: records.get(s.name)?.effort || null,
+        posture: postureOf(adapterFor(s.type), records.get(s.name)?.extraArgs || []),
         cwd: s.cwd,
         workspaceId: s.workspaceId,
         team: teamFor(s.cwd),

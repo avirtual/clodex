@@ -148,6 +148,16 @@ test('snapshot: liveSnapshotFor carries compacting so a reopened window renders 
   assert.deepStrictEqual(row.compacting, { since: 5, trigger: 'auto' });
 });
 
+test('snapshot: liveSnapshotFor carries the approval posture of a codex bypass seat', () => {
+  const manager = { teamNameFor: () => null, pendingCountFor: () => 0, sessions: new Map() };
+  const row = liveSnapshotFor({
+    manager, entry: { name: 'a', type: 'codex', cwd: '/x', extraArgs: ['--dangerously-bypass-approvals-and-sandbox'] },
+    session: { name: 'a' },
+    readCtxFor: () => ({}), proxyPoller: { snapshot: () => null },
+  });
+  assert.strictEqual(row.posture, 'bypass');
+});
+
 test('mergeCompactNotices: places the notice after the last record at or before its time, in that turn', () => {
   const recs = [
     { id: 'r1', kind: 'prompt', ts: 10, turn: 1 },

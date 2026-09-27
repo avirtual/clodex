@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, streamFor, adapterFor, seatType, stripModelArgs, hasBypass, resolveModelId,
+  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, streamFor, adapterFor, seatType, stripModelArgs, hasBypass, postureOf, resolveModelId,
 } = require('../cli-adapters');
 const { createSkillDelivery } = require('../skill-delivery');
 
@@ -195,6 +195,24 @@ test('m0: hasBypass is a contiguous-subsequence match on posture.bypassArgs', ()
   ];
   for (const [adapter, argv, want] of rows) {
     assert.strictEqual(hasBypass(adapter, argv), want, `hasBypass(${adapter && JSON.stringify(adapter.posture)}, ${JSON.stringify(argv)})`);
+  }
+});
+
+test('postureOf reads bypass, then the full read-only cap, else default', () => {
+  const rows = [
+    [ADAPTERS.claude, ['--dangerously-skip-permissions'], 'bypass'],
+    [ADAPTERS.codex, ['--dangerously-bypass-approvals-and-sandbox'], 'bypass'],
+    [ADAPTERS.codex, ['--sandbox', 'read-only', '--ask-for-approval', 'never'], 'read-only'],
+    [ADAPTERS.codex, ['--sandbox', 'read-only'], 'default'],
+    [ADAPTERS.codex, ['--dangerously-bypass-approvals-and-sandbox', '--sandbox', 'read-only', '--ask-for-approval', 'never'], 'bypass'],
+    [ADAPTERS.muse, ['--approval-mode', 'never', '--disable-sandbox'], 'bypass'],
+    [ADAPTERS.muse, ['--permission-profile', 'reviewer'], 'read-only'],
+    [ADAPTERS.claude, [], 'default'],
+    [adapterFor('bash'), ['--dangerously-skip-permissions'], 'default'],
+    [ADAPTERS.codex, null, 'default'],
+  ];
+  for (const [adapter, argv, want] of rows) {
+    assert.strictEqual(postureOf(adapter, argv), want, `postureOf(${adapter && JSON.stringify(adapter.posture)}, ${JSON.stringify(argv)})`);
   }
 });
 

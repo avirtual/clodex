@@ -11790,6 +11790,19 @@ test('list: each row carries the team name for a cwd-in-team, null otherwise', (
   assert.strictEqual(byName.b.team, null, 'a teamless cwd gets null');
 });
 
+test('list: each row carries the approval posture its record argv implies', () => {
+  const recs = [
+    { name: 'yolo', extraArgs: ['--dangerously-bypass-approvals-and-sandbox'] },
+    { name: 'plain', extraArgs: [] },
+  ];
+  const m = mk({ getPersistence: () => ({ list: () => recs, get: (n) => recs.find((r) => r.name === n) || null }) });
+  m.sessions.set('yolo', fakeSession('yolo', '/w/y'));
+  m.sessions.set('plain', { ...fakeSession('plain', '/w/p'), type: 'claude', agentType: 'claude' });
+  const byName = Object.fromEntries(m.list().map((r) => [r.name, r]));
+  assert.strictEqual(byName.yolo.posture, 'bypass');
+  assert.strictEqual(byName.plain.posture, 'default');
+});
+
 test('list: resolveTeam is memoized per cwd within one call (seats sharing a dir share one scan)', () => {
   let calls = 0;
   const m = mk({ resolveTeam: (cwd) => { calls++; return cwd.startsWith('/proj') ? { name: 'shop' } : null; } });

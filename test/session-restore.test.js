@@ -65,7 +65,7 @@ test('restores a missing session — spawns it and returns its row', async () =>
   assert.strictEqual(created[0].name, 'alpha');
   assert.deepStrictEqual(out, [{
     name: 'alpha', type: 'claude', cwd: '/w/a', label: 'A',
-    backend: 'claude-code', team: 'shop', createdAt: null, ctx: 5, proxy: { pct: 12 }, voice: 'tap',
+    backend: 'claude-code', team: 'shop', createdAt: null, ctx: 5, proxy: { pct: 12 }, voice: 'tap', posture: 'default',
   }]);
   // No persistence mutation on the happy path.
   assert.deepStrictEqual(persistence.calls, [['listForWorkspace', 'ws1']]);
@@ -149,7 +149,7 @@ test('keeps a failed spawn in persistence and returns failed:true', async () => 
   assert.strictEqual(out.length, 1);
   assert.deepStrictEqual(out[0], {
     name: 'gamma', type: 'claude', cwd: '/w/g', label: 'G',
-    team: null, failed: true, error: 'boom: spawn refused', voice: 'tap',
+    team: null, failed: true, error: 'boom: spawn refused', voice: 'tap', posture: 'default',
   });
   // And the store was NEVER mutated — no upsert/remove/delete. Silently wiping a
   // failed entry was the "agents vanish after upgrade" bug (CLAUDE.md gotcha).
@@ -360,7 +360,29 @@ test('each restored row carries the effort level its record was spawned with, nu
   assert.deepStrictEqual(out.map((e) => [e.name, e.effort]), [['run', 'low'], ['plain', null], ['arch', 'high']]);
 });
 
+test('each restored row carries the approval posture its launch argv implies', async () => {
+  const manager = {
+    sessions: new Map(),
+    async create(name) { manager.sessions.set(name, { backend: null }); return { name }; },
+    resumeCwdOf: (e) => e.cwd,
+    pendingCountFor: () => 0,
+    teamNameFor: () => null,
+  };
+  const persistence = fakePersistence([
+    { name: 'yolo', type: 'codex', cwd: '/w/y', extraArgs: ['--dangerously-bypass-approvals-and-sandbox'] },
+    { name: 'rev', type: 'codex', cwd: '/w/r', extraArgs: ['--sandbox', 'read-only', '--ask-for-approval', 'never'] },
+    { name: 'plain', type: 'claude', cwd: '/w/p' },
+  ]);
+  const out = await restoreSessionsForWorkspace({ workspaceId: 'ws1', persistence, manager, ...noopDeps });
+  assert.deepStrictEqual(out.map((e) => [e.name, e.posture]), [['yolo', 'bypass'], ['rev', 'read-only'], ['plain', 'default']]);
+});
+
 test('stampConfigFlags copies the entry effort onto the row', () => {
   assert.strictEqual(stampConfigFlags({}, { effort: 'medium' }).effort, 'medium');
   assert.strictEqual('effort' in stampConfigFlags({}, {}), false);
+});
+
+test('stampConfigFlags stamps the approval posture from the entry argv', () => {
+  assert.strictEqual(stampConfigFlags({}, { type: 'codex', extraArgs: ['--dangerously-bypass-approvals-and-sandbox'] }).posture, 'bypass');
+  assert.strictEqual(stampConfigFlags({}, { type: 'claude' }).posture, 'default');
 });

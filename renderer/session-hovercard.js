@@ -110,6 +110,7 @@ function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, prox
     const ctx = contextText(name, p && p.linked ? p : null);
     if (ctx) rows.push(statRow('context', esc(ctx)));
     if (AGENT_TYPES.has(type)) rows.push(statRow('effort', esc(item.dataset.effort || 'default')));
+    if (AGENT_TYPES.has(type)) rows.push(statRow('posture', esc(item.dataset.posture || 'default')));
     if (p && p.linked) {
       if (p.model) rows.push(statRow('model', esc(p.model)));
       const cl = costLine(p);

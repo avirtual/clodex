@@ -123,6 +123,14 @@ function markSeatEffort(name, effort) {
   const seat = sessions.get(name);
   if (seat && seat.liveSplit) seat.liveSplit.refreshStatus();
 }
+function markSeatPosture(name, posture) {
+  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (!item) return;
+  if (typeof posture === 'string' && posture && posture !== 'default') item.dataset.posture = posture;
+  else delete item.dataset.posture;
+  const seat = sessions.get(name);
+  if (seat && seat.liveSplit) seat.liveSplit.refreshStatus();
+}
 let activeSession = null;
 let terminalWebglEnabled = false;
 let transcriptPaneEnabled = false;
@@ -591,6 +599,7 @@ function addFailedSessionToSidebar(entry) {
   if (entry.backend) item.dataset.backend = entry.backend;
   item.dataset.io = seatIoKind(entry.io);
   if (entry.effort) item.dataset.effort = entry.effort;
+  if (entry.posture && entry.posture !== 'default') item.dataset.posture = entry.posture;
   const displayName = entry.label || entry.name;
   item.innerHTML = `
     <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''}>${typeGlyph(entry.type, entry.backend)}</span>
@@ -615,6 +624,7 @@ function addFailedSessionToSidebar(entry) {
     createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
     markSeatEffort(entry.name, entry.effort);
+    markSeatPosture(entry.name, entry.posture);
     switchSession(entry.name);
   });
 
@@ -641,6 +651,7 @@ function addArchivedSessionToSidebar(entry) {
   if (entry.team) item.dataset.team = entry.team; // group-by-project team key
   item.dataset.io = seatIoKind(entry.io);
   if (entry.effort) item.dataset.effort = entry.effort;
+  if (entry.posture && entry.posture !== 'default') item.dataset.posture = entry.posture;
   const displayName = entry.label || entry.name;
   item.innerHTML = `
     <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''}>${typeGlyph(entry.type, entry.backend)}</span>
@@ -666,6 +677,7 @@ function addArchivedSessionToSidebar(entry) {
     createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
     markSeatEffort(entry.name, entry.effort);
+    markSeatPosture(entry.name, entry.posture);
     if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
     switchSession(entry.name);
     refreshSidebarView();
@@ -710,6 +722,7 @@ function exitedRowSnapshot(name, code, meta) {
     noWire: item.dataset.noWire === '1',
     io: streamSeatNames.has(name) ? 'stream' : 'pty',
     effort: item.dataset.effort || null,
+    posture: item.dataset.posture || null,
     createdAt: (sidebarMeta.get(name) || {}).createdAt || null,
     exitCode: typeof code === 'number' ? code : null,
     exitSignal: (meta && meta.signal) || null,
@@ -728,6 +741,7 @@ function addExitedSessionToSidebar(entry) {
   if (entry.team) item.dataset.team = entry.team;
   item.dataset.io = seatIoKind(entry.io);
   if (entry.effort) item.dataset.effort = entry.effort;
+  if (entry.posture && entry.posture !== 'default') item.dataset.posture = entry.posture;
   const displayName = entry.label || entry.name;
   item.innerHTML = `
     <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''}>${typeGlyph(entry.type, entry.backend)}</span>
@@ -750,6 +764,7 @@ function addExitedSessionToSidebar(entry) {
     createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
     markSeatEffort(entry.name, entry.effort);
+    markSeatPosture(entry.name, entry.posture);
     if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
     switchSession(entry.name);
     refreshSidebarView();
@@ -791,6 +806,7 @@ function archivedRowEntry(name, item) {
     backend: item.dataset.backend || null,
     team: item.dataset.team || null,
     effort: item.dataset.effort || null,
+    posture: item.dataset.posture || null,
     archivedAt: Date.now(),
     createdAt: meta.createdAt || null,
   };
@@ -950,6 +966,7 @@ function moveSessionWithPicker(name) {
   const snapAccount = accountOfRow(name);
   const snapIo = streamSeatNames.has(name) ? 'stream' : 'pty';
   const snapEffort = item ? item.dataset.effort || null : null;
+  const snapPosture = item ? item.dataset.posture || null : null;
   return window.api.selectDirectory().then((dir) => {
     if (!dir) return;
     return window.api.moveSession(name, dir).then((res) => {
@@ -957,7 +974,7 @@ function moveSessionWithPicker(name) {
         if (res && res.kept) {
           const row = {
             name, type: res.type || snapType, cwd: res.cwd,
-            error: res.error, team: res.team || null, backend: snapBackend, effort: snapEffort,
+            error: res.error, team: res.team || null, backend: snapBackend, effort: snapEffort, posture: snapPosture,
           };
           if (sessions.has(name)) {
             movingFailed.set(name, row);
@@ -974,6 +991,7 @@ function moveSessionWithPicker(name) {
         createTerminal(name);
         addSessionToSidebar(name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, snapNoWire, snapAccount);
         markSeatEffort(name, snapEffort);
+        markSeatPosture(name, snapPosture);
         switchSession(name);
       }
       showToast(`${name} moved to ${res.cwd}, restarting`, { name });
@@ -1011,6 +1029,7 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
   const snapAccount = accountOfRow(name);
   const snapIo = streamSeatNames.has(name) ? 'stream' : 'pty';
   const snapEffort = item ? item.dataset.effort || null : null;
+  const snapPosture = item ? item.dataset.posture || null : null;
   pendingPeerMove.set(name, async (farCwd) => {
     if (movingToPeer.has(name)) return { ok: false, error: 'move already in progress' };
     const toast = showToast(`Moving ${name} to ${peerLabel}…`, { sticky: true, name });
@@ -1027,7 +1046,7 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
       removeSession(name, { keepPersisted: true });
       addArchivedSessionToSidebar({
         name, type: snapType, cwd: snapCwd, label: snapLabel, backend: snapBackend,
-        team: snapTeam, effort: snapEffort, archivedAt: Date.now(), createdAt: snapCreatedAt,
+        team: snapTeam, effort: snapEffort, posture: snapPosture, archivedAt: Date.now(), createdAt: snapCreatedAt,
         movedTo: { peer: peerId, peerLabel: res.peer || peerLabel, farCwd: res.farCwd },
       });
       refreshSidebarView();
@@ -1041,11 +1060,12 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
         addSessionToSidebar(name, res.type || snapType, res.cwd, snapLabel,
           snapBackend, res.team || null, snapNoWire, snapAccount);
         markSeatEffort(name, snapEffort);
+        markSeatPosture(name, snapPosture);
         switchSession(name);
       } else {
         const row = {
           name, type: res.type || snapType, cwd: res.cwd,
-          error: res.error, team: res.team || null, backend: snapBackend, effort: snapEffort,
+          error: res.error, team: res.team || null, backend: snapBackend, effort: snapEffort, posture: snapPosture,
         };
         if (sessions.has(name)) {
           movingFailed.set(name, row);
@@ -1213,6 +1233,7 @@ function startRename(item, nameEl, sessionName) {
     if (!wanted) return;
     const snapType = item ? item.dataset.type || null : null;
     const snapEffort = item ? item.dataset.effort || null : null;
+    const snapPosture = item ? item.dataset.posture || null : null;
     const snapBackend = item ? item.dataset.backend || null : null;
     const snapAccount = accountOfRow(sessionName);
     window.api.renameSession(sessionName, wanted).then((res) => {
@@ -1222,6 +1243,7 @@ function startRename(item, nameEl, sessionName) {
             name: res.name, type: res.type || snapType, cwd: res.cwd,
             error: res.error, team: res.team || null, backend: snapBackend,
             effort: snapEffort,
+            posture: snapPosture,
           };
           if (res.name === sessionName && sessions.has(sessionName)) {
             newNameEl.textContent = current;
@@ -1547,7 +1569,7 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
   } catch {} finally { metaRefreshInFlight = false; }
   try {
     const live = await window.api.listSessions();
-    if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); }
+    if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); markSeatPosture(s.name, s.posture); }
   } catch {}
   refreshSidebarView();
   // Which footer buttons show is answered off sidebarMeta, which does not exist
@@ -2387,7 +2409,7 @@ function createTerminal(name, peer = null) {
     onMode: setTranscriptPaneMode,
     composerEl,
     menuMirror,
-    statusChips: composerEl ? { write: writePty, effort: () => { const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`); return (row && row.dataset.effort) || null; } } : null,
+    statusChips: composerEl ? { write: writePty, effort: () => { const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`); return (row && row.dataset.effort) || null; }, posture: () => { const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`); return (row && row.dataset.posture) || null; } } : null,
     sheet: true,
     onChange: () => { if (composerKit) composerKit.fit(); },
   });
@@ -8805,6 +8827,7 @@ function mountRestoredSession(entry) {
   const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
   addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true, null, entry.fixFor || null);
   markSeatEffort(entry.name, entry.effort);
+  markSeatPosture(entry.name, entry.posture);
   if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
   const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
   if (item) {
