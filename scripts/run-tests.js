@@ -305,7 +305,12 @@ if (run.error && run.error.code === 'ETIMEDOUT') {
   const inFlight = [...partial.matchAll(/^# Interrupted while running: (.+?) at \S+:\d+:\d+$/gm)].map((m) => m[1]);
   const minutes = Math.round((runTimeoutMs / 60000) * 100) / 100;
   const named = passthrough.filter((a) => !a.startsWith('-'));
-  const where = inFlight.length ? inFlight.join(', ') : named.length === 1 ? named[0] : 'an unnamed file';
+  const isOneRealFile = (a) => {
+    if (/[*?[\]{}]/.test(a)) return false;
+    try { return fs.statSync(path.resolve(ROOT, a)).isFile(); } catch { return false; }
+  };
+  const where = inFlight.length ? inFlight.join(', ')
+    : named.length === 1 && isOneRealFile(named[0]) ? named[0] : 'an unnamed file';
   die(`TIMEOUT after ${minutes}m in ${where}`);
 }
 if (run.error) die(`could not start node --test: ${run.error.message}`);

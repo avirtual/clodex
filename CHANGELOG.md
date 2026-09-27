@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A test run killed at the runner's ceiling no longer names a quoted glob or a directory as the interrupted file.
+
 ## 5.88.0 — 2026-09-28 — Layout round 2: a Files toggle, drawer and dock sizing, the Tickets pane as a pane, clodexctl node versions
 - clodexctl: `describe node <name>` shows the Clodex version and host the node is running (fetched live; "(unreachable: …)" when it cannot be reached), and `get nodes --versions` adds a VERSION column; the plain listing stays offline.
 - The Tickets pane picks its project from a dropdown at the top, in place of the side list that became a sideways-scrolling strip in a narrow pane; each entry carries its open, stalled, backlog and parked counts, and the chips beside the dropdown belong to the project on screen.

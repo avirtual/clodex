@@ -382,6 +382,15 @@ test('timeout: a one-file run killed before node wrote its interrupted line stil
   }
 });
 
+test('timeout: a one-arg run killed before node named a file never names a quoted glob or a directory', () => {
+  for (const arg of ['*.test.js', 'scripts']) {
+    const { out, status } = runKilledAtCeiling([arg], 'TAP version 13\n');
+    assert.match(out, /TIMEOUT after 0\.02m in an unnamed file$/m, `${arg}:\n${out.slice(-600)}`);
+    assert.ok(!out.includes(`in ${arg}`), `${arg}:\n${out.slice(-600)}`);
+    assert.notStrictEqual(status, 0);
+  }
+});
+
 test('timeout: a many-file run killed before node named a file stays unnamed rather than guess', () => {
   const { out } = runKilledAtCeiling(['a.test.js', 'b.test.js'], 'TAP version 13\n');
   assert.match(out, /TIMEOUT after 0\.02m in an unnamed file$/m, out.slice(-600));
