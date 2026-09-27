@@ -96,6 +96,7 @@ function diagLines(d = {}) {
 const SPILL_NAME_RE = new RegExp(`msg-\\d+-\\d+\\.txt|${SEAT_IMAGE_FILE_PATTERN}`, 'g');
 const SEAT_IMAGE_FILE_RE = new RegExp(`^${SEAT_IMAGE_FILE_PATTERN}$`);
 const IMG_MAX_AGE = 24 * 3600;
+const MSG_MAX_AGE = 1800;
 
 // Parking has no expiry; spill files do — and the spill file is the only copy of
 // an over-threshold dm body, so an unexempted sweep loses it silently.
@@ -146,6 +147,10 @@ function sweepSpilledMessages(msgDir, pendingDir, maxAgeSec, now = Date.now(), i
       }
     } catch {}
   }
+}
+
+function sweepSeatMessages(msgDir, pendingDir, now = Date.now()) {
+  sweepSpilledMessages(msgDir, pendingDir, MSG_MAX_AGE, now, IMG_MAX_AGE);
 }
 
 // The registry root, resolved as a pure function so a test can pin the
@@ -335,7 +340,6 @@ const OUTBOX_DIR = path.join(REGISTRY_DIR, 'peer-outbox');
 const SELF_LABEL = resolveSelfLabel(process.env, os.hostname(), log);
 const MAX_MSG = 65536;
 const MSG_SPILL_THRESHOLD = 500;
-const MSG_MAX_AGE = 1800;
 const MSG_CLEANUP_INTERVAL = 5 * 60 * 1000; // ms
 const DEPLOY_FIX_INJECT_DELAY_MS = 4000;
 
@@ -1101,7 +1105,7 @@ const sessionInfo = createSessionInfo({
 let msgCounter = 0;
 
 function cleanupOldMessages() {
-  sweepSpilledMessages(MSG_DIR, PENDING_DIR, MSG_MAX_AGE, Date.now(), IMG_MAX_AGE);
+  sweepSeatMessages(MSG_DIR, PENDING_DIR);
 }
 
 function spillToFile(sender, body, recipient) {
@@ -2520,4 +2524,4 @@ const toolCache = createToolCache({ whichBin });
   };
 }
 
-module.exports = { createEngine, resolveRegistryDir, resolveSelfLabel, diagWarning, diagLines, sweepSpilledMessages, IMG_MAX_AGE };
+module.exports = { createEngine, resolveRegistryDir, resolveSelfLabel, diagWarning, diagLines, sweepSpilledMessages, sweepSeatMessages, IMG_MAX_AGE };

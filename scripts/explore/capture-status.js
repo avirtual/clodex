@@ -6,7 +6,7 @@ const path = require('path');
 const pty = require('node-pty');
 const { Terminal } = require('@xterm/headless');
 const { rowCells } = require('../../renderer/lib/menu-cells');
-const { renderClaudeStatusScript } = require('../../statusline');
+const { renderClaudeStatusScript, codexStatusLineArg } = require('../../statusline');
 
 const [variant, colsArg, rowsArg, planArg] = process.argv.slice(2);
 const COLS = Number(colsArg || 100);
@@ -17,7 +17,7 @@ const CWD = process.env.STATUS_CWD || process.cwd();
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-status-capture-'));
 const REG = path.join(TMP, 'reg');
 
-const UI = { get: () => ({ statusline: { claude: ['model', 'context', 'cost', 'cwd'], claudeCommand: '', codex: [] } }) };
+const UI = { get: () => ({ statusline: { claude: ['model', 'context', 'cost', 'cwd'], claudeCommand: '', codex: ['context-used', 'model-name', 'project-root', 'git-branch', 'five-hour-limit', 'current-dir'] } }) };
 
 function statusSettings(headless) {
   const suffix = headless ? '-headless' : '';
@@ -32,8 +32,7 @@ fs.mkdirSync(path.join(REG, 'run', 'probe'), { recursive: true });
 const SETTINGS = statusSettings(false);
 const SETTINGS_HEADLESS = statusSettings(true);
 
-const CODEX_SL = 'tui.status_line=["context-used","model-name","project-root","git-branch","five-hour-limit","current-dir"]';
-const CODEX_ARGS = ['-c', 'check_for_update_on_startup=false', '--no-alt-screen', '-c', CODEX_SL];
+const CODEX_ARGS = ['-c', 'check_for_update_on_startup=false', '--no-alt-screen', '-c', codexStatusLineArg(UI)];
 const VARIANTS = {
   claude: { bin: process.env.CLAUDE_BIN || 'claude', args: ['--settings', SETTINGS, '--permission-mode', 'default'], ready: /❯/u },
   'claude-headless': { bin: process.env.CLAUDE_BIN || 'claude', args: ['--settings', SETTINGS_HEADLESS, '--permission-mode', 'default'], ready: /❯/u },
@@ -64,6 +63,7 @@ async function run() {
   const spec = VARIANTS[variant];
   if (!spec) {
     process.stdout.write(`unknown variant ${variant}; one of ${Object.keys(VARIANTS).join(', ')}\n`);
+    fs.rmSync(TMP, { recursive: true, force: true });
     process.exit(1);
   }
   fs.mkdirSync(OUT_DIR, { recursive: true });
@@ -182,4 +182,4 @@ async function run() {
   process.exit(0);
 }
 
-run();
+run().catch((e) => { fs.rmSync(TMP, { recursive: true, force: true }); throw e; });
