@@ -68,7 +68,7 @@ function modeBar(doc, paneEl, mode, onMode = NOOP, { onHelp = null, onTerminal =
   views.appendChild(control);
   const help = onHelp ? barButton(doc, 'transcript-help-btn', '?', HELP_TITLE, () => onHelp()) : null;
   if (help) views.appendChild(help);
-  const terminalBtn = onTerminal ? barButton(doc, 'transcript-mode-btn transcript-terminal-btn', 'Terminal', TERMINAL_TITLE, () => onTerminal()) : null;
+  const terminalBtn = onTerminal ? barButton(doc, 'transcript-mode-btn transcript-terminal-btn', 'Screen', TERMINAL_TITLE, () => onTerminal()) : null;
   if (terminalBtn) views.appendChild(terminalBtn);
   function paint() {
     TRANSCRIPT_MODES.forEach(([value], i) => buttons[i].setAttribute('aria-pressed', !rawOn && value === current ? 'true' : 'false'));

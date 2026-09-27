@@ -10478,7 +10478,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <select id="prefs-seat-view" style="flex: none;">
             <option value="conversation">Conversation</option>
             <option value="internals">Internals</option>
-            <option value="terminal">Terminal</option>
+            <option value="terminal">Screen</option>
           </select>
         </div>
         <p class="hint-text">Where Claude, Codex and Muse seats start. Switch any seat from its bar. When the CLI shows a picker or a dialog, its terminal opens under the conversation. Shell and peer seats always show the terminal.</p>
@@ -33149,7 +33149,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         views2.appendChild(control);
         const help = onHelp ? barButton(doc, "transcript-help-btn", "?", HELP_TITLE, () => onHelp()) : null;
         if (help) views2.appendChild(help);
-        const terminalBtn = onTerminal ? barButton(doc, "transcript-mode-btn transcript-terminal-btn", "Terminal", TERMINAL_TITLE, () => onTerminal()) : null;
+        const terminalBtn = onTerminal ? barButton(doc, "transcript-mode-btn transcript-terminal-btn", "Screen", TERMINAL_TITLE, () => onTerminal()) : null;
         if (terminalBtn) views2.appendChild(terminalBtn);
         function paint() {
           TRANSCRIPT_MODES.forEach(([value], i) => buttons[i].setAttribute("aria-pressed", !rawOn && value === current ? "true" : "false"));

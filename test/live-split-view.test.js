@@ -1325,7 +1325,7 @@ test('the transcript bar renders the chips slot, then Conversation, Internals, ?
     assert.deepStrictEqual(views.childNodes.map((n) => [n.className, textOf(n), n.title]), [
       ['transcript-mode', 'ConversationInternals', ''],
       ['transcript-help-btn', '?', 'Clodex at a glance'],
-      ['transcript-mode-btn transcript-terminal-btn', 'Terminal', 'Show the CLI\'s own screen (⌘⇧T)'],
+      ['transcript-mode-btn transcript-terminal-btn', 'Screen', 'Show the CLI\'s own screen (⌘⇧T)'],
     ]);
     const [conv, internals] = views.childNodes[0].childNodes;
     const block = () => m.pane.childNodes.find((n) => /\btr-turn\b/.test(n.className)).childNodes.find((n) => /\btr-tool-block\b/.test(n.className));

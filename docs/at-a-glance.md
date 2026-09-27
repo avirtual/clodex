@@ -12,7 +12,7 @@ An agent seat shows one of three views:
 - **Conversation** — your messages and the agent's replies. Turns driven by tickets,
   reports and reminders fold to one line.
 - **Internals** — everything: every tool call, every message from Clodex and other seats.
-- **Terminal** — the CLI's own screen. The Terminal button on the seat's bar switches to it and back (⌘⇧T does the same).
+- **Screen** — the CLI's own screen. The Screen button on the seat's bar switches to it and back (⌘⇧T does the same).
 
 A stream seat has Conversation and Internals only; there is no terminal to fall back to.
 When the CLI shows a menu, a picker or a dialog, its terminal opens under the conversation;
@@ -28,6 +28,6 @@ each one and the loop merges it. A seat working a ticket carries a ticket dot on
 The Tickets button at the bottom of the sidebar opens the board and its Feed.
 
 ## When something looks stuck
-Switch to Internals to see what the agent is doing, or to Terminal to see what the CLI is
+Switch to Internals to see what the agent is doing, or to Screen to see what the CLI is
 showing. ⧗ on a row means it is compacting its context; a number in minutes means a long
 think.
