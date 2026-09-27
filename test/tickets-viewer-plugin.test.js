@@ -599,6 +599,37 @@ test('tickets-viewer: lastActivityAt falls back to openedAt, as core measures it
   } finally { cleanup(); }
 });
 
+test('tickets-viewer: a DONE ticket quiet past the window is not stalled; the same ticket open is', async () => {
+  const { host, teams, cleanup } = boot();
+  try {
+    const dir = mkTeam(teams, 'alpha');
+    const now = Date.now();
+    const quiet = { assignee: 'hand', startedAt: now - 3 * HOUR, lastActivityAt: now - 2 * HOUR };
+    writeTickets(dir, [
+      ticket('d1', { ...quiet, state: 'done', closedAt: now - 2 * HOUR }),
+      ticket('o1', { ...quiet, state: 'open', closedAt: null }),
+    ]);
+    const res = await host.dispatch('tickets-viewer', 'board', [keyOfTeam(dir)], 'desktop');
+    const done = res.recent.find((t) => t.id === 'd1');
+    assert.ok(done, 'the done ticket is in the recent list');
+    assert.ok(done.quietMs >= 2 * HOUR - 5000);
+    assert.equal(done.stalled, false);
+    const open = res.open.find((t) => t.id === 'o1');
+    assert.ok(open, 'the open ticket is on the board');
+    assert.equal(open.stalled, true);
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: a CANCELLED ticket quiet past the window is not stalled', () => {
+  const now = Date.now();
+  const quiet = ticket('c1', {
+    assignee: 'hand', startedAt: now - 3 * HOUR, lastActivityAt: now - 2 * HOUR, closedAt: now - 2 * HOUR,
+  });
+  const stallMs = 30 * 60 * 1000;
+  assert.equal(viewerEngine._internals.shape({ ...quiet, state: 'cancelled' }, now, stallMs).stalled, false);
+  assert.equal(viewerEngine._internals.shape({ ...quiet, state: 'open', closedAt: null }, now, stallMs).stalled, true);
+});
+
 test('tickets-viewer: the stall threshold is the TEAM\'s watchdogMs, not a number of its own', async () => {
   const { host, teams, cleanup } = boot();
   try {

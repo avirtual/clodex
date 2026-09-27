@@ -575,11 +575,9 @@ function shape(t, now, stallMs, projectRoot = null) {
     ageMs: openedAt === null ? null : Math.max(0, now - openedAt),
     quietMs,
     nudged: num(t.nudgedAt) !== null,
-    // Three exemptions, each mirroring one _sweepTickets makes. Flagging any invents
-    // a stall core can neither produce nor clear. `ticketStarted` is the one
-    // `assignee` does not cover — `add <role>` writes the ROLE into `assignee`, so a
-    // never-dispatched ticket reads as assigned.
-    stalled: assignee !== '' && !t.parked && ticketStarted(t)
+    // `ticketStarted` is the exemption `assignee` does not cover — `add <role>`
+    // writes the ROLE into `assignee`, so a never-dispatched ticket reads as assigned.
+    stalled: t.state === 'open' && assignee !== '' && !t.parked && ticketStarted(t)
       && quietMs !== null && quietMs >= stallMs,
     // Kept OUT of the stalled count: a backlog ticket's age is worth seeing, and it
     // is not a stall.

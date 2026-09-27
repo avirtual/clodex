@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- The Tickets pane no longer marks closed tickets "stalled": the stall flag is computed for open tickets only, matching what the watchdog can nudge.
 - Drag the top edge of the bottom drawer to size it; the height is remembered, and the tall button still flips to 70%.
 - With Files and Tickets both open, drag the line between them to share the height; double-click it to even them out.
 - The Tickets pane's 15 s refresh is quiet now: it swaps in the new rows only once they have loaded and keeps your scroll position and keyboard focus, instead of flashing "Loading…" and jumping to the top.
