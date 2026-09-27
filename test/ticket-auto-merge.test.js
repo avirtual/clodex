@@ -115,7 +115,7 @@ const SUITE_STUBS = {
 // subject here would escalate at clean-tree and the assertions downstream would
 // be measuring that escalation instead of the merge.
 function seedRepo(trunk) {
-  const dir = mkTmpRoot('clodex-merge-repo-seed-');
+  const dir = mkTmpRoot('clodex-merge-repo-');
   git(dir, ['init', '-q', '-b', trunk]);
   git(dir, ['config', 'user.email', 't@t.t']);
   git(dir, ['config', 'user.name', 'T']);
