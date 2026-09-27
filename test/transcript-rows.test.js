@@ -861,22 +861,31 @@ test('the pane modules never call array methods on childNodes, which is a NodeLi
   }
 });
 
-test('a box head preview stays selectable, and a click that ends a drag-select leaves the box as it was', () => {
+test('a box head preview stays selectable; a press that drags out a new selection leaves the box as it was, one that leaves an older selection alone toggles', () => {
   const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
   assert.match(css, /^\.tr-box-head \.tr-box-preview \{[^}]*user-select: text/m);
   const doc = fakeDocument();
   const pane = doc.createElement('div');
-  let selected = true;
-  doc.getSelection = () => ({ isCollapsed: !selected });
+  let selected = '';
+  doc.getSelection = () => ({ isCollapsed: !selected, toString: () => selected });
   const rows = createTranscriptRows(doc, pane, {});
   const long = Array.from({ length: 5 }, (_, i) => `line ${i}`).join('\n');
   rows.render([replyRec('r1', 1, 'task', '⇄', 'task', long), inb('i1', 1, 'ticket-loop', `[ticket t7 MERGED] b → master as abc\n${long}`)]);
   const boxes = pane.childNodes[0].childNodes;
-  for (const box of boxes) boxHeadOf(box).listeners.click();
-  assert.deepStrictEqual(boxes.map((b) => b.className), ['tr-box tr-box-folded', 'tr-box tr-box-folded tr-ticket']);
-  selected = false;
-  for (const box of boxes) boxHeadOf(box).listeners.click();
-  assert.deepStrictEqual(boxes.map((b) => b.className), ['tr-box', 'tr-box tr-ticket']);
+  const press = (prior, during) => boxes.forEach((box) => {
+    const head = boxHeadOf(box);
+    selected = prior;
+    head.listeners.mousedown();
+    if (during !== undefined) selected = during;
+    head.listeners.click();
+  });
+  const shape = () => boxes.map((b) => b.className);
+  press('', 'abc');
+  assert.deepStrictEqual(shape(), ['tr-box tr-box-folded', 'tr-box tr-box-folded tr-ticket']);
+  press('abc');
+  assert.deepStrictEqual(shape(), ['tr-box', 'tr-box tr-ticket']);
+  press('');
+  assert.deepStrictEqual(shape(), ['tr-box tr-box-folded', 'tr-box tr-box-folded tr-ticket']);
 });
 
 test('a clipped head preview carries the full first line as its title; an unclipped one carries none', () => {

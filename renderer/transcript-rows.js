@@ -517,26 +517,37 @@ function boxHead(doc, rec, att) {
   return head;
 }
 
+function selectedText(doc) {
+  const sel = doc.getSelection && doc.getSelection();
+  return sel && !sel.isCollapsed ? String(sel) : '';
+}
+
+function wireHead(doc, head, box, chevron, opened, id) {
+  const paint = () => {
+    const open = opened.has(id);
+    toggleClass(box, 'tr-box-folded', !open);
+    chevron.textContent = open ? '▾' : '▸';
+  };
+  let before = '';
+  head.addEventListener('mousedown', () => { before = selectedText(doc); });
+  head.addEventListener('click', () => {
+    const now = selectedText(doc);
+    if (now && now !== before) return;
+    if (opened.has(id)) opened.delete(id);
+    else opened.add(id);
+    paint();
+  });
+  paint();
+}
+
 function internalBox(doc, rec, row, opened, att) {
   const box = el(doc, 'div', 'tr-box');
   box.dataset.id = rec.id;
   if (isLong(rec.text)) {
     const head = boxHead(doc, rec, att);
     const chevron = head.childNodes[head.childNodes.length - 1];
-    const paint = () => {
-      const open = opened.has(rec.id);
-      toggleClass(box, 'tr-box-folded', !open);
-      chevron.textContent = open ? '▾' : '▸';
-    };
-    head.addEventListener('click', () => {
-      const sel = doc.getSelection && doc.getSelection();
-      if (sel && !sel.isCollapsed) return;
-      if (opened.has(rec.id)) opened.delete(rec.id);
-      else opened.add(rec.id);
-      paint();
-    });
+    wireHead(doc, head, box, chevron, opened, rec.id);
     box.appendChild(head);
-    paint();
   }
   const body = el(doc, 'div', 'tr-box-body');
   body.appendChild(row);
@@ -579,19 +590,7 @@ function ticketBox(doc, rec, row, opened, att) {
   if (ticketOpens(rec, message)) {
     const chevron = el(doc, 'span', 'tr-box-chevron');
     head.appendChild(chevron);
-    const paint = () => {
-      const open = opened.has(rec.id);
-      toggleClass(box, 'tr-box-folded', !open);
-      chevron.textContent = open ? '▾' : '▸';
-    };
-    head.addEventListener('click', () => {
-      const sel = doc.getSelection && doc.getSelection();
-      if (sel && !sel.isCollapsed) return;
-      if (opened.has(rec.id)) opened.delete(rec.id);
-      else opened.add(rec.id);
-      paint();
-    });
-    paint();
+    wireHead(doc, head, box, chevron, opened, rec.id);
     const body = el(doc, 'div', 'tr-box-body');
     body.appendChild(row);
     box.appendChild(body);
