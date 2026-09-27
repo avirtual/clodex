@@ -659,7 +659,7 @@ test('a 30-line task reply folds to a head of badge, first line and chevron; a c
     ['tr-sender tr-sender-app', '⇄task'], ['tr-box-preview', 'tickets on clodex:'], ['tr-box-chevron', '▾'],
   ]);
   const inner = unbox(box);
-  assert.deepStrictEqual(['tr-sender', 'tr-reply-lead'].flatMap((c) => findCls(inner, c)), []);
+  assert.deepStrictEqual(['tr-sender', 'tr-reply-lead'].flatMap((c) => findCls(inner, c)).map(cls), []);
   assert.ok(inner.textContent.startsWith('t1 open hand'), inner.textContent);
   m.render([{ ...rec, text: `${rec.text}\nt31 open hand` }]);
   const rebuilt = boxOf(m, 'r1');
@@ -811,7 +811,7 @@ test('a ticket lifecycle row carries tr-ticket and a chip reading the id and tag
   assert.strictEqual(chip(boxOf(m, 'i8')).parentNode.className, 'tr-box-head');
   assert.strictEqual(chip(boxOf(m, 'i8')).textContent, 't8 REJECTED');
   const i8 = boxOf(m, 'i8').childNodes.find((n) => n.className === 'tr-box-body');
-  assert.deepStrictEqual(['tr-ticket-chip', 'tr-sender', 'tr-reply-lead'].flatMap((k) => findCls(i8, k)), []);
+  assert.deepStrictEqual(['tr-ticket-chip', 'tr-sender', 'tr-reply-lead'].flatMap((k) => findCls(i8, k)).map(cls), []);
   assert.ok(i8.textContent.startsWith('line 1\n'), i8.textContent);
   assert.strictEqual(chip(boxOf(m, 'r1')).textContent, 't1 created');
   assert.strictEqual(boxOf(m, 'i9').className, 'tr-box');
@@ -847,7 +847,7 @@ test('a long attached reply folds to a head led by ↳ and an unattached one doe
   assert.strictEqual(head.childNodes[0].className, 'tr-reply-lead');
   assert.strictEqual(head.childNodes[0].textContent, '↳');
   const inner = unbox(m.pane.childNodes[1].childNodes[0]);
-  assert.deepStrictEqual(findCls(inner, 'tr-reply-lead'), []);
+  assert.deepStrictEqual(findCls(inner, 'tr-reply-lead').map(cls), []);
   assert.ok(!inner.textContent.includes('↳'), inner.textContent);
   m.render([{ id: 'a0', kind: 'assistant', ts: null, turn: 0, text: 'no card' }, replyRec('r1', 1, 'task', '⇄', 'task', long)]);
   const plain = boxHeadOf(m.pane.childNodes[1].childNodes[0]);
@@ -1170,7 +1170,7 @@ test('a long subagent report folds under a box head that carries the subagent ba
   const badge = boxHeadOf(box).childNodes[0];
   assert.deepStrictEqual([badge.className, badge.textContent, badge.title],
     ['tr-sender tr-sender-seat', 'Nnits-coords', 'Report from a subagent of this seat — attached by the CLI, not typed']);
-  assert.deepStrictEqual(findCls(unbox(box), 'tr-sender'), []);
+  assert.deepStrictEqual(findCls(unbox(box), 'tr-sender').map(cls), []);
   assert.strictEqual(unbox(box).dataset.via, 'subagent');
   assert.strictEqual(unbox(box).textContent, 'line 1\nline 2\nline 3\nline 4');
 });
@@ -1346,7 +1346,7 @@ for (const c of ticketCases) {
     if (c.body === null) assert.strictEqual(body, undefined);
     if (c.body) assert.strictEqual(body.textContent, c.body);
     if (c.link) assert.ok(withPath(body).some((n) => n.dataset.path === c.link));
-    if (body) assert.deepStrictEqual(['tr-ticket-chip', 'tr-sender', 'tr-reply-lead'].flatMap((k) => findCls(body, k)), []);
+    if (body) assert.deepStrictEqual(['tr-ticket-chip', 'tr-sender', 'tr-reply-lead'].flatMap((k) => findCls(body, k)).map(cls), []);
     if (c.link) assert.ok(!body.textContent.includes(c.preview), body.textContent);
   });
 }
