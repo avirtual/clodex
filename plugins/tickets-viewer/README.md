@@ -15,16 +15,11 @@ Opens, edits a spec, assigns, closes and cancels. There is no `reject`, no
 `start` and no `respec` — the loop verbs stay with `[agent:task …]`, because
 they move a ticket through a state machine this surface does not drive.
 
-The write half is **desktop-only**, and the mechanism is that it is absent from
-`manifest.json`'s `surfaces`: a board reachable from a browser would be a board
-a browser can close tickets on. Adding a write verb there is the mistake this
-omission prevents. The reads are listed there and serve any surface — `projects`,
-`teams`, `board`, `sessions`, `teamCost`, and `ticket`, `search` and `closed`,
-which read past tickets' history — because reading a board from a browser closes
-nothing.
+Every method, the nine reads and the five writes, is listed `"any"` in
+`manifest.json`'s `surfaces`, so the board reads and writes from the browser
+exactly as it does on the desktop.
 
-`feed` is a read too, listed in `surfaces` and so reachable from the browser: it
-flattens the `events` of every ticket on the board, open and closed, into one
+`feed` is a read: it flattens the `events` of every ticket on the board, open and closed, into one
 newest-first list (`limit` 200 by default, 1000 at most) that the pane's
 `Board | Feed` switch shows with `Filed · Working · Review · Landed · Trouble`
 filters. Records written before events were recorded contribute no rows.

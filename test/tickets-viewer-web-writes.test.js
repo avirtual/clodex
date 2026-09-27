@@ -5,7 +5,6 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createPluginHostEngine } = require('../plugin-host-engine');
-const { HOST_API_VERSION } = require('../plugin-api');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const MANIFEST = JSON.parse(fs.readFileSync(
@@ -32,7 +31,7 @@ function bootStub() {
         host.ipc.handle(m, (p) => { calls.push({ method: m, payload: p }); return { ok: true, method: m }; });
       }
     },
-  }, { ...MANIFEST, hostApi: HOST_API_VERSION });
+  }, MANIFEST);
   return { engine, calls };
 }
 
