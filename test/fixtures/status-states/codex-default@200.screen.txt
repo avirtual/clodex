@@ -1,0 +1,40 @@
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.1)                         │
+│                                                    │
+│ model:       GPT-6-Astra medium   /model to change │
+│ directory:   ~/.clodex/projects/…/probe/cwd        │
+│ permissions: YOLO mode                             │
+╰────────────────────────────────────────────────────╯
+
+  Tip: New Use /fast to enable our fastest inference with increased plan usage.
+
+⚠ Heads up, you have less than 25% of your 5h limit left. Run /status for a breakdown.
+ 
+ 
+› Ask Codex to do anything
+ 
+  Context 0% used · GPT-6-Astra · cwd · master · 5h 20% left · ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/t-status-row-chips/probe/cwd                                      ⚠ 3 warnings · f2 to view
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

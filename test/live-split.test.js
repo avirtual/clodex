@@ -12,13 +12,13 @@ const {
 const DIR = path.join(__dirname, 'fixtures', 'split-states');
 
 const FIXTURES = [
-  ['accept-edits-idle@100', 26, 'split', 25, 28],
-  ['accept-edits-idle@200', 26, 'split', 25, 28],
-  ['accept-edits-idle@60', 28, 'split', 26, 30],
-  ['api-retry@100', 10, 'split', 9, 13],
-  ['bypass-idle@100', 6, 'split', 5, 9],
-  ['bypass-idle@200', 6, 'split', 5, 9],
-  ['bypass-idle@60', 6, 'split', 5, 10],
+  ['accept-edits-idle@100', 26, 'split', 25, 28, 'claude', 25],
+  ['accept-edits-idle@200', 26, 'split', 25, 28, 'claude', 25],
+  ['accept-edits-idle@60', 28, 'split', 26, 30, 'claude', 26],
+  ['api-retry@100', 10, 'split', 9, 13, 'claude', 9],
+  ['bypass-idle@100', 6, 'split', 5, 9, 'claude', 5],
+  ['bypass-idle@200', 6, 'split', 5, 9, 'claude', 5],
+  ['bypass-idle@60', 6, 'split', 5, 10, 'claude', 5],
   ['ctrl-o@100', 17, 'full', -1, -1],
   ['ctrl-o@200', 17, 'full', -1, -1],
   ['ctrl-o@60', 18, 'full', -1, -1],
@@ -28,9 +28,9 @@ const FIXTURES = [
   ['help@100', 8, 'full', -1, -1],
   ['help@200', 8, 'full', -1, -1],
   ['help@60', 8, 'full', -1, -1],
-  ['idle@100', 6, 'split', 5, 8],
-  ['idle@200', 6, 'split', 5, 8],
-  ['idle@60', 6, 'split', 5, 9],
+  ['idle@100', 6, 'split', 5, 8, 'claude', 5],
+  ['idle@200', 6, 'split', 5, 8, 'claude', 5],
+  ['idle@60', 6, 'split', 5, 9, 'claude', 5],
   ['model@100', 15, 'full', -1, -1],
   ['model@200', 14, 'full', -1, -1],
   ['model@60', 16, 'full', -1, -1],
@@ -40,43 +40,43 @@ const FIXTURES = [
   ['plan-approve@100', 32, 'full', -1, -1],
   ['plan-approve@200', 33, 'full', -1, -1],
   ['plan-approve@60', 32, 'full', -1, -1],
-  ['plan-idle@100', 26, 'split', 25, 28],
-  ['plan-idle@200', 26, 'split', 25, 28],
-  ['plan-idle@60', 28, 'split', 26, 30],
-  ['slash-menu@100', 6, 'split', 5, 26],
-  ['slash-menu@200', 6, 'split', 5, 27],
-  ['slash-menu@60', 6, 'split', 5, 26],
-  ['streaming@100', 16, 'split', 15, 18],
-  ['streaming@200', 13, 'split', 12, 15],
-  ['streaming@60', 21, 'split', 20, 24],
-  ['thinking@100', 31, 'split', 30, 33],
-  ['thinking@200', 31, 'split', 30, 33],
-  ['thinking@60', 34, 'split', 33, 36],
-  ['tool-running@100', 13, 'split', 12, 15],
-  ['tool-running@200', 13, 'split', 12, 15],
-  ['tool-running@60', 13, 'split', 12, 16],
+  ['plan-idle@100', 26, 'split', 25, 28, 'claude', 25],
+  ['plan-idle@200', 26, 'split', 25, 28, 'claude', 25],
+  ['plan-idle@60', 28, 'split', 26, 30, 'claude', 26],
+  ['slash-menu@100', 6, 'split', 5, 26, 'claude', 5],
+  ['slash-menu@200', 6, 'split', 5, 27, 'claude', 5],
+  ['slash-menu@60', 6, 'split', 5, 26, 'claude', 5],
+  ['streaming@100', 16, 'split', 15, 18, 'claude', 15],
+  ['streaming@200', 13, 'split', 12, 15, 'claude', 12],
+  ['streaming@60', 21, 'split', 20, 24, 'claude', 20],
+  ['thinking@100', 31, 'split', 30, 33, 'claude', 30],
+  ['thinking@200', 31, 'split', 30, 33, 'claude', 30],
+  ['thinking@60', 34, 'split', 33, 36, 'claude', 33],
+  ['tool-running@100', 13, 'split', 12, 15, 'claude', 12],
+  ['tool-running@200', 13, 'split', 12, 15, 'claude', 12],
+  ['tool-running@60', 13, 'split', 12, 16, 'claude', 12],
   ['trust@100', 15, 'full', -1, -1],
   ['trust@200', 13, 'full', -1, -1],
   ['trust@60', 19, 'full', -1, -1],
-  ['muse-idle@100', 7, 'split', 6, 9, 'muse'],
-  ['muse-draft@100', 7, 'split', 6, 9, 'muse'],
-  ['muse-slash-menu@100', 7, 'split', 6, 17, 'muse'],
-  ['muse-typed-status@100', 7, 'split', 6, 10, 'muse'],
-  ['muse-after-status@100', 27, 'split', 26, 29, 'muse'],
+  ['muse-idle@100', 7, 'split', 6, 9, 'muse', 6],
+  ['muse-draft@100', 7, 'split', 6, 9, 'muse', 6],
+  ['muse-slash-menu@100', 7, 'split', 6, 17, 'muse', 6],
+  ['muse-typed-status@100', 7, 'split', 6, 10, 'muse', 6],
+  ['muse-after-status@100', 27, 'split', 26, 29, 'muse', 26],
   ['muse-model-picker@100', 28, 'full', -1, -1, 'muse'],
-  ['muse-after-picker-esc@100', 19, 'split', 18, 21, 'muse'],
-  ['codex-idle@100', 26, 'split', 26, 29, 'codex'],
-  ['codex-draft@100', 26, 'split', 26, 29, 'codex'],
-  ['codex-slash-menu@100', 26, 'split', 17, 28, 'codex'],
-  ['codex-typed-status@100', 26, 'split', 23, 28, 'codex'],
-  ['codex-after-status@100', 26, 'split', 26, 29, 'codex'],
+  ['muse-after-picker-esc@100', 19, 'split', 18, 21, 'muse', 18],
+  ['codex-idle@100', 26, 'split', 26, 29, 'codex', 26],
+  ['codex-draft@100', 26, 'split', 26, 29, 'codex', 26],
+  ['codex-slash-menu@100', 26, 'split', 17, 28, 'codex', 26],
+  ['codex-typed-status@100', 26, 'split', 23, 28, 'codex', 26],
+  ['codex-after-status@100', 26, 'split', 26, 29, 'codex', 26],
   ['codex-model-picker@100', 29, 'full', -1, -1, 'codex'],
-  ['codex-after-picker-esc@100', 26, 'split', 26, 29, 'codex'],
+  ['codex-after-picker-esc@100', 26, 'split', 26, 29, 'codex', 26],
   ['codex-upgrade-prompt@100', 9, 'full', -1, -1, 'codex'],
   ['codex-picker-with-history@100', 12, 'full', -1, -1, 'codex'],
-  ['codex-idle-with-history@100', 36, 'split', 36, 39, 'codex'],
-  ['codex-boot@100', 26, 'split', 26, 29, 'codex'],
-  ['codex-wrapped-draft@100', 26, 'split', 24, 29, 'codex'],
+  ['codex-idle-with-history@100', 36, 'split', 36, 39, 'codex', 36],
+  ['codex-boot@100', 26, 'split', 26, 29, 'codex', 26],
+  ['codex-wrapped-draft@100', 26, 'split', 24, 29, 'codex', 24],
 ];
 
 const SCREEN_ROWS = { claude: 40, muse: 30, codex: 30 };
@@ -100,11 +100,11 @@ test('ENTER: every captured screen in the fixture dir is a table row, and every 
   }
 });
 
-for (const [name, cursorY, mode, top, bottom, platform] of FIXTURES) {
+for (const [name, cursorY, mode, top, bottom, platform, at] of FIXTURES) {
   test(`${name}: ${mode}${mode === 'split' ? ` rows ${top}..${bottom}` : ''}`, () => {
     const { rows, cols } = load(name, platform);
     const args = platform ? [rows, cursorY, cols, platform] : [rows, cursorY, cols];
-    assert.deepStrictEqual(measureSplit(...args), mode === 'split' ? { mode, top, bottom } : { mode, top, bottom, busy: true });
+    assert.deepStrictEqual(measureSplit(...args), mode === 'split' ? { mode, top, bottom, at } : { mode, top, bottom, busy: true });
   });
 }
 
@@ -124,9 +124,9 @@ test('a Muse or Codex screen measured as Claude has no anchor, and an unknown pl
 
 test('a Codex composer row with a menu block directly above it and no blank row still takes the block top', () => {
   const rows = ['', '  /model  pick', '› /m', '', '  Context 0% used'];
-  assert.deepStrictEqual(measureSplit(rows, 2, 40, 'codex'), { mode: 'split', top: 1, bottom: 4 });
+  assert.deepStrictEqual(measureSplit(rows, 2, 40, 'codex'), { mode: 'split', top: 1, bottom: 4, at: 2 });
   const twoBlanks = ['  /model  pick', '', '', '› /m', '  Context 0% used'];
-  assert.deepStrictEqual(measureSplit(twoBlanks, 3, 40, 'codex'), { mode: 'split', top: 3, bottom: 4 });
+  assert.deepStrictEqual(measureSplit(twoBlanks, 3, 40, 'codex'), { mode: 'split', top: 3, bottom: 4, at: 3 });
 });
 
 test('a permission dialog and an Edit diff are FULL at every width', () => {
@@ -162,8 +162,8 @@ test('the scan prefers the anchor at or above the cursor, then looks below it', 
 test('bottom is the last non-blank row but never above the cursor row', () => {
   const rule = '─'.repeat(60);
   const rows = [rule, '❯ ', rule, '  footer', '', '', ''];
-  assert.deepStrictEqual(measureSplit(rows, 1, 60), { mode: 'split', top: 0, bottom: 3 });
-  assert.deepStrictEqual(measureSplit(rows, 5, 60), { mode: 'split', top: 0, bottom: 5 });
+  assert.deepStrictEqual(measureSplit(rows, 1, 60), { mode: 'split', top: 0, bottom: 3, at: 0 });
+  assert.deepStrictEqual(measureSplit(rows, 5, 60), { mode: 'split', top: 0, bottom: 5, at: 0 });
 });
 
 const S = (top, bottom) => ({ mode: 'split', top, bottom });

@@ -1,0 +1,40 @@
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.1)                         │
+│                                                    │
+│ model:       GPT-6-Astra medium   /model to change │
+│ directory:   ~/.clodex/projects/…/probe/cwd        │
+│ permissions: YOLO mode                             │
+╰────────────────────────────────────────────────────╯
+
+  Tip: New Use /fast to enable our fastest inference with increased plan usage.
+
+⚠ Heads up, you have less than 50% of your 5h limit left. Run /status for a breakdown.
+
+
+› Run the shell command `sleep 6 && echo done` and then reply with just the word ok.
+
+
+• I’ll run the command now.
+ 
+• Working (6s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close
+ 
+ 
+› Ask Codex to do anything
+ 
+  Context 0% used · GPT-6-Astra · cwd · master · 5h 46% left · ~/.clode…  ⚠ 3 warnings · f2 to view
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

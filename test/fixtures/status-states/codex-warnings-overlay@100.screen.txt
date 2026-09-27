@@ -1,0 +1,40 @@
+╭────────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.157.1)                         │
+│                                                    │
+│ model:       GPT-6-Astra medium   /model to change │
+│ directory:   ~/.clodex/projects/…/probe/cwd        │
+│ permissions: YOLO mode                             │
+╰────────────────────────────────────────────────────╯
+
+  Tip: New Use /fast to enable our fastest inference with increased plan usage.
+
+⚠ Heads up, you have less than 50% of your 5h limit left. Run /status for a breakdown.
+ 
+  Warnings · 1 of 3 · Startup
+ 
+  Codex is ignoring 2 unrecognized configuration settings. Check for typos or deprecated settings.
+    user (/Users/bogdan/.codex/config.toml): `features.voice_transcription` is ignored.
+    user (/Users/bogdan/.codex/config.toml): `network_access` is ignored.
+ 
+ 
+ 
+ 
+ 
+ 
+  esc back · ctrl+o copy · ←/→ warning · ↓ scroll
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

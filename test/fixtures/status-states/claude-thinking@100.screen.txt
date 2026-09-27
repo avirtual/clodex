@@ -1,0 +1,40 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.283
+           Fable 5.1 with high effort · Claude Max
+ ▘▘   ▝▝   ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/t-status-row-chips/probe/cwd
+
+
+❯ Run the shell command sleep 6 && echo done and then reply with just the word ok.                  
+
+⏺ Bash(sleep 6 && echo done)
+  ⎿  Running…
+
+✶ Thinking… (6s · ↓ 21 tokens)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  [clodex:probe] Fable 5.1 ctx 5% $1.09 cwd
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,40 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.283
+           Fable 5.1 with high effort · Claude Max
+ ▘▘   ▝▝   ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/t-status-row-chips/probe/cwd
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  [clodex:probe] Fable 5.1 ctx 0% $0 cwd                                          ● high · /effort
+  ⏸ manual mode on · ← for agents
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

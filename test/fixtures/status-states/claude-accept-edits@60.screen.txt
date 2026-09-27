@@ -1,0 +1,30 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.283
+           Fable 5.1 with high effort · Claude Max
+ ▘▘   ▝▝   ~/…/tasks/t-status-row-chips/probe/cwd
+
+
+────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────
+  [clodex:probe] Fable 5.1 ctx 0% $0 cwd
+  ⏵⏵ accept edits on (shift+tab to cycle) · ← for agents
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

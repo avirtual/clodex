@@ -1251,6 +1251,11 @@ Own state + DOM, `init*(deps)`:
   `{ x, n, fg?, bg?, bold?, dim?, inverse? }` per screen row, as
   scripts/explore/capture-menu.js reads them from `@xterm/headless`. See
   docs/notes/renderer-lib-menu-rows.md.
+- **lib/status-rows.js** — pure `readStatusRows(rows, at, platform)`: the
+  rows Claude Code, Codex and Muse Code draw below their input, read from the
+  screen text at `measureSplit`'s `at`, to `{ mode: { key, label, cycles },
+  tasks, warnings }` or null (unreadable). See
+  docs/notes/renderer-lib-status-rows.md.
 - **lib/menu-cells.js** — pure `rowCells(line, cols)` and `colour(cell, fg)`:
   one xterm buffer line to the attribute runs `readMenuRows` takes. Shared by
   scripts/explore/capture-menu.js and live-split-view.js.

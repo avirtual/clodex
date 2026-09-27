@@ -78,7 +78,7 @@ function measureSplit(rows, cursorY, cols, platform = 'claude') {
   let bottom = rows.length - 1;
   while (bottom > at + 1 && isBlank(rows[bottom])) bottom--;
   if (Number.isInteger(cursorY)) bottom = Math.max(bottom, Math.min(cursorY, rows.length - 1));
-  return { mode: 'split', top, bottom };
+  return { mode: 'split', top, bottom, at };
 }
 
 function sheetBand(rows, maxRows) {
@@ -130,6 +130,7 @@ function reduceSplit(state, measured, now, settleMs = SPLIT_SETTLE_MS, exitMs = 
 }
 
 module.exports = {
+  CODEX_STATUS_ROW,
   SPLIT_SETTLE_MS,
   SPLIT_EXIT_MS,
   isRuleRow,
