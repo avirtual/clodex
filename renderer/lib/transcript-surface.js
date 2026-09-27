@@ -44,4 +44,26 @@ function surfaceOf(rec) {
   }
 }
 
-module.exports = { surfaceOf, segmentSurface };
+const DRIVER_KINDS = new Set(['prompt', 'inbound', 'reply', 'notification']);
+
+function turnDriver(records) {
+  if (!Array.isArray(records)) return null;
+  return records.find((r) => r && DRIVER_KINDS.has(r.kind)) || null;
+}
+
+function fromOperator(rec) {
+  return Boolean(rec) && (rec.kind === 'prompt' || (rec.kind === 'inbound' && rec.from === 'user'));
+}
+
+function talksBack(rec) {
+  return rec && rec.kind === 'assistant' && Array.isArray(rec.segments)
+    && rec.segments.some((s) => s && s.kind === 'intent' && TALK_VERBS.has(s.verb));
+}
+
+function turnFolds(records, mode) {
+  if (mode !== CONVERSATION) return false;
+  if (!turnDriver(records)) return false;
+  return !records.some((r) => fromOperator(r) || talksBack(r));
+}
+
+module.exports = { surfaceOf, segmentSurface, turnDriver, turnFolds };

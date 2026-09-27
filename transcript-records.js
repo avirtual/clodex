@@ -243,6 +243,13 @@ function teammateText(body) {
   return body;
 }
 
+function injectedPaste(text) {
+  const blocks = [...text.matchAll(PASTE_RE)];
+  if (blocks.length !== 1 || blocks[0][0].length !== text.length) return null;
+  const body = blocks[0][2].replace(/^\n+|\n+$/g, '');
+  return INBOUND_RE.test(body) || RUNTIME_RE.test(body) ? body : null;
+}
+
 function userRecords(rec, base, tools) {
   const content = rec.message.content;
   if (Array.isArray(content)) {
@@ -253,7 +260,7 @@ function userRecords(rec, base, tools) {
     }
   }
   if (rec.isMeta || rec.isCompactSummary) return [];
-  const text = textOf(content).trim();
+  let text = textOf(content).trim();
   if (!text) return [];
   if (rec.origin && rec.origin.kind === 'task-notification') {
     const summary = tagBody(text, 'summary');
@@ -263,6 +270,8 @@ function userRecords(rec, base, tools) {
   if (mate) return [capped({ ...base, kind: 'inbound', from: (/teammate_id="([^"]+)"/.exec(mate[1]) || [null, 'subagent'])[1], via: 'subagent' }, 'text', teammateText(mate[2].trim()), PROMPT_CAP)];
   if (INTERRUPT_RE.test(text)) return [{ ...base, kind: 'notice', level: 'warning', text: INTERRUPT_RE.exec(text)[0].slice(1, -1) }];
   if (text.startsWith('<') && !text.startsWith(PASTE_OPEN)) return [];
+  const unwrapped = injectedPaste(text);
+  if (unwrapped != null) text = unwrapped;
   const from = INBOUND_RE.exec(text);
   if (from) {
     const rest = text.slice(from[0].length);

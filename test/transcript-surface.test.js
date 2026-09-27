@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { surfaceOf, segmentSurface } = require('../renderer/lib/transcript-surface');
+const { surfaceOf, segmentSurface, turnDriver, turnFolds } = require('../renderer/lib/transcript-surface');
 
 const C = 'conversation';
 const I = 'internals';
@@ -112,4 +112,55 @@ test('segmentSurface: prose, blank prose, inert and a plugin verb', () => {
   assert.strictEqual(segmentSurface({ kind: 'inert', text: '[agent:nope' }), I);
   assert.strictEqual(segmentSurface(intent('branch')), I);
   assert.strictEqual(segmentSurface(intent('some-plugin-verb', 'x')), I);
+});
+
+const said2 = (...segments) => ({ kind: 'assistant', text: 'x', segments });
+const tool = { kind: 'tool', name: 'Bash' };
+const DRIVER_ROWS = [
+  ['prompt typed', { kind: 'prompt', text: 'go', source: 'typed' }, false],
+  ['prompt queued', { kind: 'prompt', text: 'later', source: 'queued' }, false],
+  ['inbound user', { kind: 'inbound', from: 'user', text: 'from the panel' }, false],
+  ['inbound seat', { kind: 'inbound', from: 'clodex-hand-12', text: 'report' }, true],
+  ['inbound ticket-loop', { kind: 'inbound', from: 'ticket-loop', text: '[ticket t1 MERGED] x', ticket: { id: 't1', tag: 'MERGED' } }, true],
+  ['inbound reminder', { kind: 'inbound', from: 'reminder', text: 'continue' }, true],
+  ['inbound subagent', { kind: 'inbound', from: 'locate', via: 'subagent', text: 'found' }, true],
+  ['reply task', { kind: 'reply', verb: 'task', text: 'ticket t9 accepted', ticket: { id: 't9', tag: null } }, true],
+  ['notification', { kind: 'notification', text: 'background task done' }, true],
+];
+
+test('turnDriver is the first prompt, inbound, reply or notification record of the turn', () => {
+  for (const [name, driver] of DRIVER_ROWS) assert.strictEqual(turnDriver([tool, driver, said2(prose('ok'))]), driver, name);
+  assert.strictEqual(turnDriver([tool, said2(prose('ok'))]), null);
+});
+
+test('turnFolds: one literal row per driver kind, in each mode; prose does not unfold a machine-driven turn', () => {
+  for (const [name, driver, folds] of DRIVER_ROWS) {
+    const records = [driver, tool, said2(prose('checked the branch, looks fine'))];
+    assert.strictEqual(turnFolds(records, C), folds, `${name} conversation`);
+    assert.strictEqual(turnFolds(records, I), false, `${name} internals`);
+  }
+});
+
+test('turnFolds: a shout or a dm in a machine-driven turn keeps it open; a non-talk intent does not', () => {
+  const report = { kind: 'inbound', from: 'clodex-hand-12', text: 'report' };
+  assert.strictEqual(turnFolds([report, said2(prose('reviewing'), intent('shout'))], C), false);
+  assert.strictEqual(turnFolds([report, said2(intent('dm'))], C), false);
+  assert.strictEqual(turnFolds([report, said2(intent('exec'), intent('remind'))], C), true);
+});
+
+test('turnFolds: a machine-driven turn holding the operator\'s mid-turn prompt or panel message never folds', () => {
+  const notice = { kind: 'inbound', from: 'ticket-loop', text: '[ticket t1 MERGED] x', ticket: { id: 't1', tag: 'MERGED' } };
+  assert.strictEqual(turnFolds([notice, tool, { kind: 'prompt', text: 'hi', source: 'mid-turn', state: 'queued' }], C), false);
+  assert.strictEqual(turnFolds([notice, tool, { kind: 'prompt', text: 'hi', source: 'mid-turn', state: 'delivered' }], C), false);
+  assert.strictEqual(turnFolds([notice, tool, { kind: 'inbound', from: 'user', text: 'from the panel' }], C), false);
+});
+
+test('ENTER: every record kind userRecords emits has a driver row', () => {
+  const text = src('transcript-records.js');
+  const body = text.slice(text.indexOf('function userRecords('), text.indexOf('\n}\n', text.indexOf('function userRecords(')));
+  const emitted = new Set([...body.matchAll(/kind: '([a-z-]+)'/g)].map((m) => m[1]));
+  assert.deepStrictEqual([...emitted].sort(), ['inbound', 'notice', 'notification', 'prompt', 'reply']);
+  emitted.delete('notice');
+  const covered = new Set(DRIVER_ROWS.map(([, r]) => r.kind));
+  for (const kind of emitted) assert.ok(covered.has(kind), `${kind} has a driver row`);
 });

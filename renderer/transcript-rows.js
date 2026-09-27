@@ -7,12 +7,13 @@ const { scanLinks } = require('./lib/path-scan');
 const { rewriteEchoSgr } = require('./lib/prompt-echo');
 const { isExternallyOpenable } = require('../external-link');
 const { TURN_KINDS, isInternalRow } = require('../transcript-internal');
-const { surfaceOf, segmentSurface } = require('./lib/transcript-surface');
+const { surfaceOf, segmentSurface, turnDriver, turnFolds } = require('./lib/transcript-surface');
 
 const OUTPUT_LINE_CAP = 400;
 const CLAMP_LINES = 2;
 const CLAMP_CHARS = 240;
 const PREVIEW_CHARS = 120;
+const FOLD_CHARS = 80;
 const NOOP = () => {};
 const MINUS = '−';
 const TIMES = ' ×';
@@ -440,9 +441,9 @@ function isLong(text) {
   return s.split('\n').length > CLAMP_LINES || s.length > CLAMP_CHARS;
 }
 
-function previewText(text) {
+function previewText(text, max = PREVIEW_CHARS) {
   const line = String(text == null ? '' : text).split('\n').find((l) => l.trim()) || '';
-  return line.length > PREVIEW_CHARS ? `${line.slice(0, PREVIEW_CHARS)}…` : line;
+  return line.length > max ? `${line.slice(0, max)}…` : line;
 }
 
 function boxHead(doc, rec, att) {
@@ -488,6 +489,21 @@ function ticketChip(doc, node, ticket) {
   if (head) head.insertBefore(chip, Array.from(head.childNodes).find((c) => c.className === 'tr-box-preview') || null);
   else node.insertBefore(chip, node.firstChild);
   return node;
+}
+
+function foldHead(doc, driver, stats) {
+  const head = el(doc, 'button', 'tr-row tr-turn-fold');
+  head.type = 'button';
+  head.appendChild(el(doc, 'span', 'tr-box-chevron'));
+  if (driver.kind === 'inbound') head.appendChild(inboundBadge(doc, driver));
+  else if (driver.kind === 'reply') head.appendChild(appBadge(doc, driver));
+  else head.appendChild(el(doc, 'span', 'tr-mark'));
+  const line = el(doc, 'span', 'tr-turn-fold-line');
+  line.appendChild(el(doc, 'span', 'tr-turn-fold-text', previewText(driver.text, FOLD_CHARS)));
+  if (driver.ticket) ticketChip(doc, line, driver.ticket);
+  head.appendChild(line);
+  head.appendChild(footerParts(doc, el(doc, 'span', 'tr-turn-fold-stats'), stats, null, false));
+  return head;
 }
 
 function isTalk(r) {
@@ -733,6 +749,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
   const turnCache = new Map();
   const opened = new Set();
   const openRuns = new Set();
+  const openTurns = new Set();
   let lastSource = null;
   let mode = deps.mode === 'conversation' ? 'conversation' : 'internals';
   let lastRecords = [];
@@ -811,7 +828,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     }
   }
 
-  function toolBlockItem(tools, open) {
+  function toolBlockItem(tools, open, m) {
     const key = `tools:${tools[0].id}`;
     return {
       key,
@@ -826,7 +843,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         c.key = key;
         c.tools = tools;
         paintBlock(c);
-        toggleClass(c.el, 'tr-hidden', mode === 'conversation' && !open);
+        toggleClass(c.el, 'tr-hidden', m === 'conversation' && !open);
       },
     };
   }
@@ -876,19 +893,19 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     return { key: 'footer', sig: JSON.stringify(stats), build: () => buildFooter(doc, stats, deps) };
   }
 
-  function rowItems(records, attached, open, tail, live) {
+  function rowItems(records, attached, open, tail, live, m) {
     const items = [];
     for (const run of toolRuns(records)) {
       if (run.tools) {
         live.add(`tools:${run.tools[0].id}`);
-        items.push(toolBlockItem(run.tools, open));
+        items.push(toolBlockItem(run.tools, open, m));
         continue;
       }
       const r = run.rec;
       if (r.kind === 'turn-end') continue;
       const att = attached.has(r.id);
       const extra = r.kind === 'command-output' ? JSON.stringify(resolvePalette(deps) || null) : att ? '|attached' : '';
-      const hidden = mode === 'conversation' && !open && !isTalk(r);
+      const hidden = m === 'conversation' && !open && !isTalk(r);
       const after = (c) => toggleClass(c.el, 'tr-hidden', hidden);
       if (isInternalRow(r)) {
         live.add(r.id);
@@ -903,17 +920,43 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         });
         continue;
       }
-      const full = mode === 'internals' || open;
+      const full = m === 'internals' || open;
       const omit = !full && hasInternalSeg(r);
       const view = omit ? { ...r, segments: r.segments.filter((s) => segmentSurface(s) === 'conversation') } : r;
       const sig = recSig(r) + extra + (hasInternalSeg(r) ? (full ? '|full' : '|conv') : '');
       items.push({ key: r.id, sig, build: () => buildRow(doc, view, deps, att) || el(doc, 'div', 'tr-row'), after });
     }
-    if (mode === 'internals') {
+    if (m === 'internals') {
       const footer = footerOf(records);
       if (footer) items.push({ key: 'footer', sig: JSON.stringify(footer), build: () => buildFooter(doc, footer, deps) });
     } else if (tail) items.push(tail);
     return items;
+  }
+
+  function foldItem(t, unfolded) {
+    const driver = turnDriver(t.records);
+    const stats = runStatsOf(t.records);
+    return {
+      key: 'turn-fold',
+      sig: `${driver.id}|${driver.text}|${JSON.stringify(driver.ticket || null)}|${JSON.stringify(stats)}`,
+      build: () => {
+        const head = foldHead(doc, driver, stats);
+        head.addEventListener('click', () => {
+          const anchor = anchorOf();
+          if (openTurns.has(t.key)) openTurns.delete(t.key);
+          else openTurns.add(t.key);
+          render(lastRecords);
+          restore(anchor);
+        });
+        return head;
+      },
+      after: (c) => {
+        const glyph = unfolded ? '▾' : '▸';
+        if (c.el.firstChild.textContent !== glyph) c.el.firstChild.textContent = glyph;
+        const want = unfolded ? 'true' : 'false';
+        if (c.el.getAttribute('aria-expanded') !== want) c.el.setAttribute('aria-expanded', want);
+      },
+    };
   }
 
   function render(records, source) {
@@ -923,6 +966,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         for (const c of turnCache.values()) if (c.el.parentNode === paneEl) paneEl.removeChild(c.el);
         turnCache.clear();
         openRuns.clear();
+        openTurns.clear();
         opened.clear();
       }
       lastSource = source;
@@ -936,7 +980,8 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     const items = [];
     for (const run of runs) {
       const open = openRuns.has(run.key);
-      const host = open ? run.turns[run.turns.length - 1] : run.hosted ? run.turns.filter((t) => t.records.some(isTalk)).pop() : null;
+      const hostable = run.turns.filter((t) => open || !turnFolds(t.records, mode));
+      const host = open ? hostable[hostable.length - 1] : run.hosted ? hostable.filter((t) => t.records.some(isTalk)).pop() : null;
       run.turns.forEach((t, i) => items.push({
         key: t.key,
         sig: '',
@@ -947,8 +992,13 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         },
         after: (c) => {
           if (!c.sub) c.sub = new Map();
-          const tail = mode === 'conversation' && t === host ? runToggleItem(run, open) : null;
-          reconcile(c.el, c.sub, rowItems(t.records, attached, open, tail, live));
+          const folds = turnFolds(t.records, mode) && !open;
+          const unfolded = folds && openTurns.has(t.key);
+          const m = unfolded ? 'internals' : mode;
+          const tail = m === 'conversation' && t === host ? runToggleItem(run, open) : null;
+          const rows = rowItems(t.records, attached, open, tail, live, m);
+          reconcile(c.el, c.sub, folds ? [foldItem(t, unfolded), ...(unfolded ? rows : [])] : rows);
+          toggleClass(c.el, 'tr-turn-folded', folds && !unfolded);
           toggleClass(c.el, 'tr-hidden', mode === 'conversation' && !open && !t.records.some(isTalk));
           toggleClass(c.el, 'tr-turn-cont', mode === 'conversation' && i > 0);
         },

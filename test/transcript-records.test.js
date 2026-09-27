@@ -294,6 +294,31 @@ test('a paste longer than PROMPT_CAP does not truncate the typed text and is kep
   assert.deepStrictEqual(r.pastes, [{ n: 1, lines: 1, text: big }]);
 });
 
+const MERGED = '[agent:from ticket-loop] [ticket t1272 MERGED] t1272-x → master as abc\n\nClosed out: …';
+
+test('a text that is exactly one pasted block whose body is an injected [agent:from …] line classifies as that inbound', () => {
+  assert.deepStrictEqual(promptOf(`\n\n${paste('2c29', MERGED)}\n`), [
+    { id: 'u', kind: 'inbound', ts: null, turn: 1, from: 'ticket-loop', ticket: { id: 't1272', tag: 'MERGED' }, text: '[ticket t1272 MERGED] t1272-x → master as abc\n\nClosed out: …' },
+  ]);
+});
+
+test('typed words around an injected-looking paste keep it an operator prompt with one paste', () => {
+  const [r] = promptOf(`look at this\n${paste('2c29', MERGED)}`);
+  assert.strictEqual(r.kind, 'prompt');
+  assert.deepStrictEqual(r.pastes, [{ n: 1, lines: 3, text: MERGED }]);
+});
+
+test('a paste whose body does not start with [agent: stays a prompt', () => {
+  const [r] = promptOf(paste('b7', 'hello [agent:from x] hi'));
+  assert.strictEqual(r.kind, 'prompt');
+  assert.deepStrictEqual(r.pastes, [{ n: 1, lines: 1, text: 'hello [agent:from x] hi' }]);
+});
+
+test('a paste wrapping a runtime [agent:task] reply classifies as that reply with its ticket', () => {
+  const [r] = promptOf(paste('d4', '[agent:task] ticket t9 accepted — merged'));
+  assert.deepStrictEqual({ kind: r.kind, verb: r.verb, ticket: r.ticket, text: r.text }, { kind: 'reply', verb: 'task', ticket: { id: 't9', tag: null }, text: 'ticket t9 accepted — merged' });
+});
+
 const image = (data, mediaType = 'image/png') => ({ type: 'image', source: { type: 'base64', media_type: mediaType, data } });
 
 test('a prompt with a pasted image block carries it in images, numbered like its marker', () => {
