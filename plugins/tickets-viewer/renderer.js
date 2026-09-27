@@ -120,6 +120,21 @@ function projectLabel(p) {
   return p.team ? `${p.leaf || p.key} · ${p.team}` : (p.leaf || p.key);
 }
 
+function projectOptionText(p) {
+  if (!p) return '';
+  const parts = [projectLabel(p)];
+  if (p.error) {
+    parts.push('!');
+    return parts.join(' · ');
+  }
+  parts.push(`${p.open} open`);
+  if (p.stalled) parts.push(`${p.stalled} stalled`);
+  if (p.backlog) parts.push(`${p.backlog} backlog`);
+  if (p.parked) parts.push(`${p.parked} parked`);
+  if (p.warning) parts.push('⚠');
+  return parts.join(' · ');
+}
+
 /**
  * What a write that changed the board but could not reach the seat should say.
  *
@@ -178,6 +193,7 @@ module.exports.ageLine = ageLine;
 module.exports.hitAgeText = hitAgeText;
 module.exports.summaryText = summaryText;
 module.exports.projectLabel = projectLabel;
+module.exports.projectOptionText = projectOptionText;
 module.exports.deliveryNote = deliveryNote;
 module.exports.money = money;
 module.exports.costText = costText;
@@ -277,7 +293,7 @@ module.exports.activate = (rhost) => {
     topbar.appendChild(closeBtn);
 
     const body = el('div', 'tv-body');
-    const projectsPane = el('div', 'tv-teams');
+    const projectsPane = el('div', 'tv-project-bar');
     const boardPane = el('div', 'tv-board');
     body.appendChild(projectsPane);
     body.appendChild(boardPane);
@@ -286,6 +302,9 @@ module.exports.activate = (rhost) => {
     rootEl.appendChild(modal);
 
     let selected = null;
+    let projectList = [];
+    let projectSelect = null;
+    let projectChipsEl = null;
     let selectSeq = 0;
     let reloadSeq = 0;
     let searchSeq = 0;
@@ -646,14 +665,6 @@ module.exports.activate = (rhost) => {
     }
 
     function ticketRow(t, opts) {
-      // The failed merge takes the row-level mark AHEAD of the stall, and the
-      // precedence is load-bearing rather than arbitrary: `stalled` is not
-      // gated on the row being open — shape() computes it for closed rows too —
-      // so a merge that failed and then sat past the threshold satisfies both,
-      // and the amber stall edge would otherwise hide the red one. Of the two
-      // the failure is the actionable claim: the stall is its consequence, and
-      // chasing the seat is not what clears it.
-      //
       // `mergeWaiting` deliberately gets no row mark at all — it resolves by
       // itself, and painting the row would recreate on this board the "looks
       // like it needs a human" confusion that made core keep the fields apart.
@@ -1137,9 +1148,8 @@ module.exports.activate = (rhost) => {
       selected = key;
       closedView = null;
       feedView = null;
-      for (const row of projectsPane.querySelectorAll('.tv-team-row')) {
-        row.classList.toggle('tv-selected', row.dataset.tvProject === key);
-      }
+      if (projectSelect) projectSelect.value = key;
+      paintProjectChips();
       if (!quiet) {
         mountBoardShell();
         editorEl = null;
@@ -1174,21 +1184,101 @@ module.exports.activate = (rhost) => {
       for (const p of list) {
         if (typeof p.root !== 'string' || !p.root) continue;
         const base = p.root.replace(/\/+$/, '');
-        if (cwd !== p.root && !cwd.startsWith(`${base}/`)) continue;
+        if (cwd !== base && !cwd.startsWith(`${base}/`)) continue;
         if (!best || base.length > best.base.length) best = { key: p.key, base };
       }
       return best ? best.key : null;
     }
 
-    function renderProjects(res, quiet, seat) {
-      projectsPane.innerHTML = '';
-      if (!res.ok) {
-        projectsPane.appendChild(el('div', 'tv-error', `Could not read the projects directory: ${res.error || 'unknown error'}`));
-        clearBoardPane();
-        return;
+    function projectChips(p) {
+      const chips = [];
+      if (p.error) {
+        // The project is still selectable — the board pane repeats the reason
+        // in full. What must not happen is this row looking like "0 open".
+        const bad = el('span', 'tv-team-error', '!');
+        bad.title = p.error;
+        chips.push(bad);
+        return chips;
       }
-      const list = Array.isArray(res.projects) ? res.projects : [];
-      if (!list.length) {
+      if (p.warning) {
+        // Distinct from the error marker above: the tickets ARE readable
+        // here, so the row keeps its count. Only the manifest is bad.
+        const warn = el('span', 'tv-team-warning', '⚠');
+        warn.title = p.warning;
+        chips.push(warn);
+      }
+      if (p.stalled) {
+        const st = el('span', 'tv-team-stalled', String(p.stalled));
+        st.title = `${p.stalled} open ticket(s) quiet past the stall threshold`;
+        chips.push(st);
+      }
+      if (p.backlog) {
+        // Its own chip, and deliberately not summed with the stalled one:
+        // these two numbers ask for different actions.
+        const b = el('span', 'tv-team-backlog', String(p.backlog));
+        b.title = `${p.backlog} open ticket(s) with no assignee — the watchdog never nudges these`;
+        chips.push(b);
+      }
+      if (p.parked) {
+        const pk = el('span', 'tv-team-backlog', String(p.parked));
+        pk.title = `${p.parked} open ticket(s) parked — assigned or not, held out of dispatch until released`;
+        chips.push(pk);
+      }
+      chips.push(el('span', 'tv-team-count', `${p.open} open`));
+      return chips;
+    }
+
+    function paintProjectChips() {
+      if (!projectChipsEl) return;
+      projectChipsEl.innerHTML = '';
+      const p = projectList.find((x) => x.key === selected);
+      if (!p) return;
+      for (const c of projectChips(p)) projectChipsEl.appendChild(c);
+    }
+
+    function projectOption(p) {
+      const o = el('option', '', projectOptionText(p));
+      o.value = p.key;
+      o.title = p.root ? `${p.key}\n${p.root}` : p.key;
+      return o;
+    }
+
+    function patchProjectSelect(list) {
+      const opts = projectSelect.children;
+      if (opts.length !== list.length || list.some((p, i) => opts[i].value !== p.key)) return false;
+      list.forEach((p, i) => {
+        const text = projectOptionText(p);
+        if (opts[i].textContent !== text) opts[i].textContent = text;
+        opts[i].title = p.root ? `${p.key}\n${p.root}` : p.key;
+      });
+      return true;
+    }
+
+    function buildProjectBar(list) {
+      projectsPane.innerHTML = '';
+      projectSelect = el('select', 'tv-project-select');
+      projectSelect.title = 'The project whose board is on screen';
+      for (const p of list) projectSelect.appendChild(projectOption(p));
+      projectSelect.addEventListener('change', () => {
+        selectProject(projectSelect.value).catch((e) => rhost.log.error('select failed', e));
+      });
+      projectChipsEl = el('span', 'tv-project-chips');
+      projectsPane.appendChild(projectSelect);
+      projectsPane.appendChild(projectChipsEl);
+    }
+
+    function renderProjects(res, quiet, seat) {
+      const list = res.ok && Array.isArray(res.projects) ? res.projects : [];
+      if (!res.ok || !list.length) {
+        projectsPane.innerHTML = '';
+        projectSelect = null;
+        projectChipsEl = null;
+        projectList = [];
+        if (!res.ok) {
+          projectsPane.appendChild(el('div', 'tv-error', `Could not read the projects directory: ${res.error || 'unknown error'}`));
+          clearBoardPane();
+          return;
+        }
         projectsPane.appendChild(el('div', 'tv-empty', 'No projects yet.'));
         clearBoardPane();
         boardPane.appendChild(el('div', 'tv-empty', 'A board appears here once a project has its first ticket.'));
@@ -1197,52 +1287,18 @@ module.exports.activate = (rhost) => {
       const followed = followKey(list, seat);
       const kept = !!selected && (followed === null || followed === selected) && list.some((p) => p.key === selected);
       if (!kept) selected = followed || list[0].key;
-      for (const p of list) {
-        const row = el('div', p.key === selected ? 'tv-team-row tv-selected' : 'tv-team-row');
-        row.dataset.tvProject = p.key;
-        const name = el('span', 'tv-team-name', projectLabel(p));
-        // The key and root are the disambiguators when two checkouts share a
-        // leaf name, and neither fits the row.
-        name.title = p.root ? `${p.key}\n${p.root}` : p.key;
-        row.appendChild(name);
-        if (p.error) {
-          // The project is still selectable — the board pane repeats the reason
-          // in full. What must not happen is this row looking like "0 open".
-          const bad = el('span', 'tv-team-error', '!');
-          bad.title = p.error;
-          row.appendChild(bad);
+      projectList = list;
+      const focused = !!projectSelect && document.activeElement === projectSelect && projectsPane.contains(projectSelect);
+      if (!(focused && patchProjectSelect(list))) {
+        if (focused) {
+          while (projectSelect.firstChild) projectSelect.removeChild(projectSelect.firstChild);
+          for (const p of list) projectSelect.appendChild(projectOption(p));
         } else {
-          if (p.warning) {
-            // Distinct from the error marker above: the tickets ARE readable
-            // here, so the row keeps its count. Only the manifest is bad.
-            const warn = el('span', 'tv-team-warning', '⚠');
-            warn.title = p.warning;
-            row.appendChild(warn);
-          }
-          if (p.stalled) {
-            const s = el('span', 'tv-team-stalled', String(p.stalled));
-            s.title = `${p.stalled} open ticket(s) quiet past the stall threshold`;
-            row.appendChild(s);
-          }
-          if (p.backlog) {
-            // Its own chip, and deliberately not summed with the stalled one:
-            // these two numbers ask for different actions.
-            const b = el('span', 'tv-team-backlog', String(p.backlog));
-            b.title = `${p.backlog} open ticket(s) with no assignee — the watchdog never nudges these`;
-            row.appendChild(b);
-          }
-          if (p.parked) {
-            const pk = el('span', 'tv-team-backlog', String(p.parked));
-            pk.title = `${p.parked} open ticket(s) parked — assigned or not, held out of dispatch until released`;
-            row.appendChild(pk);
-          }
-          row.appendChild(el('span', 'tv-team-count', `${p.open} open`));
+          buildProjectBar(list);
         }
-        row.addEventListener('click', () => {
-          selectProject(p.key).catch((e) => rhost.log.error('select failed', e));
-        });
-        projectsPane.appendChild(row);
       }
+      projectSelect.value = selected;
+      paintProjectChips();
       if (kept) {
         goBack(quiet);
         return;
@@ -1252,10 +1308,11 @@ module.exports.activate = (rhost) => {
 
     async function reload(quiet, follow) {
       const my = ++reloadSeq;
+      const was = selected;
       if (!projectsPane.firstChild) projectsPane.appendChild(el('div', 'tv-empty', 'Loading…'));
       const [res, seat] = await Promise.all([ask('projects'), follow ? activeSeat() : null]);
       if (!alive() || my !== reloadSeq) return;
-      renderProjects(res, quiet, seat);
+      renderProjects(res, quiet, selected === was ? seat : null);
     }
 
     cancelPending = () => { if (searchTimer !== null) { clearTimeout(searchTimer); searchTimer = null; } };
@@ -1263,7 +1320,7 @@ module.exports.activate = (rhost) => {
       const focused = document.activeElement;
       const editable = focused && typeof focused.matches === 'function'
         && focused.matches('input, textarea, select, [contenteditable]');
-      if (editable && typeof rootEl.contains === 'function' && rootEl.contains(focused)) return true;
+      if (editable && focused !== projectSelect && typeof rootEl.contains === 'function' && rootEl.contains(focused)) return true;
       return !!editorEl || inDetail || mutating > 0 || searchTimer !== null || !!String(searchEl.value || '').trim();
     }
 
