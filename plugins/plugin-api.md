@@ -1638,9 +1638,7 @@ The host creates `<div class="dock-pane plugin-pane" data-plugin="<yourId>"
 data-pane="<yourId>:<id>">` in the dock and calls `mount(rootEl)` **once, lazily,
 at the first show**. `onShow` and `onHide` strictly alternate — never two of
 either in a row — so a pane that polls only between them polls nothing while
-hidden. When the pane is already ticked, `mount` and `onShow` can run inside the
-registering `surfaces.pane(...)` call itself, so do not read the returned handle
-from them. Fill `rootEl` (it is a flex column); `container-type: inline-size` on
+hidden. Fill `rootEl` (it is a flex column); `container-type: inline-size` on
 your root lets you restyle a narrow dock with a container query.
 
 Whether the pane is ticked is the operator's, persisted per window
