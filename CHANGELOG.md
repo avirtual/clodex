@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Codex seats launched with approvals and the sandbox bypassed now show a `Bypass` chip under the composer (`Read-only` for a capped reviewer seat), since Codex's own status row does not say so; every agent seat's hovercard gains a `posture` row.
+- Transcript pane, Conversation mode: a turn driven by a ticket notice, a hand's report, a reminder or another machine input now folds to one line (sender, ticket chip, first line, duration · tools · injected); click to open it. A turn where the agent shouted or dm'd stays open. Internals mode is unchanged. A message the CLI stored as pasted text (long multi-line injections) now keeps its sender badge and ticket chip instead of rendering as an operator paste.
 - Transcript pane: a message or subagent report longer than 4 KB now ends with a visible cut marker instead of stopping mid-sentence; a rename that fails no longer drops the seat's effort level from its sidebar row.
 - Transcript pane: a report from one of the seat's own subagents, which the CLI attaches to the request as a teammate message, now shows as an inbound card from that subagent under Internals instead of as a message you typed.
 - Transcript pane: activating a run's expander from the keyboard keeps focus on it after the pane re-renders, and a pasted image whose upload fails now shows one error toast instead of breaking the composer. Moving a seat to a peer keeps its effort level on the rebuilt or failed row.
