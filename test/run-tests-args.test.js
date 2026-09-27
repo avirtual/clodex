@@ -332,7 +332,7 @@ test('timeout: a run that wedges is cut off with a TIMEOUT line naming the file 
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-function runKilledAtCeiling(fileArgs, partialTap) {
+function runKilledAtCeiling(fileArgs, partialTap, extraFiles = []) {
   const root = fs.realpathSync(mkTmpRoot('clx-t279-'));
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const f of ['run-tests.js', 'test-escapes.js']) {
@@ -340,6 +340,7 @@ function runKilledAtCeiling(fileArgs, partialTap) {
   }
   fs.writeFileSync(path.join(root, 'a.test.js'), STUB);
   fs.writeFileSync(path.join(root, 'b.test.js'), STUB);
+  for (const f of extraFiles) fs.writeFileSync(path.join(root, f), STUB);
   const probe = path.join(root, 'ceiling-probe.js');
   fs.writeFileSync(probe, [
     "const cp = require('node:child_process');",
@@ -378,6 +379,15 @@ test('timeout: a one-file run killed before node wrote its interrupted line stil
     const { out, status } = runKilledAtCeiling(['a.test.js'], tap);
     assert.match(out, /TIMEOUT after 0\.02m in a\.test\.js$/m, `${JSON.stringify(tap)}:\n${out.slice(-600)}`);
     assert.ok(!/TOTALS:/.test(out), out.slice(-600));
+    assert.notStrictEqual(status, 0);
+  }
+});
+
+test('timeout: a one-arg run killed before node named a file never names a quoted glob or a directory', () => {
+  for (const arg of ['*.test.js', 'scripts', '[ab].test.js']) {
+    const { out, status } = runKilledAtCeiling([arg], 'TAP version 13\n', ['[ab].test.js']);
+    assert.match(out, /TIMEOUT after 0\.02m in an unnamed file$/m, `${arg}:\n${out.slice(-600)}`);
+    assert.ok(!out.includes(`in ${arg}`), `${arg}:\n${out.slice(-600)}`);
     assert.notStrictEqual(status, 0);
   }
 });
