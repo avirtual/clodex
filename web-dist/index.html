@@ -14026,6 +14026,7 @@ Cancelled tickets are not counted as done.`)) return;
             const res = await ask("closed", { project, state, offset, limit: CLOSED_PAGE_SIZE });
             if (!alive() || my !== closedSeq || mySelect !== selectSeq || myReload !== reloadSeq) return;
             if (quiet) {
+              if (busy()) return;
               swap(() => {
                 mountBoardShell();
                 editorEl = null;
@@ -14073,10 +14074,12 @@ Cancelled tickets are not counted as done.`)) return;
             const newer = button("tv-pager-btn", "Newer", "The previous page", () => {
               renderClosed(project, { state, offset: Math.max(0, res.offset - res.limit) }).catch((e) => rhost.log.error("closed failed", e));
             });
+            newer.dataset.tvFocus = "newer";
             newer.disabled = res.offset <= 0;
             const older = button("tv-pager-btn", "Older", "The next page", () => {
               renderClosed(project, { state, offset: res.offset + res.limit }).catch((e) => rhost.log.error("closed failed", e));
             });
+            older.dataset.tvFocus = "older";
             older.disabled = res.offset + rows.length >= res.total;
             pager.appendChild(newer);
             pager.appendChild(older);
@@ -14114,9 +14117,11 @@ verdict: ${r.verdict}` : r.title;
               chipBtn.dataset.tvFocus = `chip:${label}`;
               head.appendChild(chipBtn);
             }
-            head.appendChild(button("tv-btn tv-feed-refresh", "Refresh", "Read the feed again", () => {
+            const refresh = button("tv-btn tv-feed-refresh", "Refresh", "Read the feed again", () => {
               renderFeed(project).catch((e) => rhost.log.error("feed failed", e));
-            }));
+            });
+            refresh.dataset.tvFocus = "refresh";
+            head.appendChild(refresh);
             sectionsEl.appendChild(head);
             if (!res.ok) {
               sectionsEl.appendChild(el("div", "tv-error", `Could not read this project's ticket events: ${res.error || "unknown error"}`));
@@ -14160,6 +14165,7 @@ verdict: ${r.verdict}` : r.title;
             const res = await ask("feed", { project });
             if (!alive() || my !== feedSeq || mySelect !== selectSeq || myReload !== reloadSeq) return;
             if (quiet) {
+              if (busy()) return;
               swap(() => {
                 mountBoardShell();
                 paintFeed(project, res);
