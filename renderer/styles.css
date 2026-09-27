@@ -6009,7 +6009,8 @@ body.web-frontend #sidebar-header {
 .tr-box-folded > .tr-box-body { display: none; }
 .tr-box-body > .tr-notice { margin-left: var(--sp-3); }
 .tr-box-head + .tr-box-body .tr-head-text { display: block; -webkit-line-clamp: unset; overflow: visible; }
-.tr-ticket { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--sp-2); border-left: 2px solid var(--accent); }
+.tr-ticket { border-left: 2px solid var(--accent); }
+.tr-ticket:not(.tr-hidden) { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--sp-2); }
 .tr-ticket > .tr-box-head { flex: 1 1 100%; }
 .tr-ticket > .tr-box-body { flex: 1 1 0; min-width: 0; }
 .tr-ticket > .tr-box-head + .tr-box-body { flex-basis: 100%; }

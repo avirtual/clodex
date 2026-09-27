@@ -456,8 +456,8 @@ function internalBox(doc, rec, row, opened, att) {
 function ticketChip(doc, node, ticket) {
   toggleClass(node, 'tr-ticket', true);
   const chip = el(doc, 'span', 'tr-ticket-chip', ticket.tag ? `${ticket.id} ${ticket.tag}` : ticket.id);
-  const head = node.childNodes.find((c) => c.className === 'tr-box-head');
-  if (head) head.insertBefore(chip, head.childNodes.find((c) => c.className === 'tr-box-preview') || null);
+  const head = Array.from(node.childNodes).find((c) => c.className === 'tr-box-head');
+  if (head) head.insertBefore(chip, Array.from(head.childNodes).find((c) => c.className === 'tr-box-preview') || null);
   else node.insertBefore(chip, node.firstChild);
   return node;
 }
@@ -467,7 +467,7 @@ function isTalk(r) {
 }
 
 function hasInternalSeg(r) {
-  return r.kind === 'assistant' && Array.isArray(r.segments) && isTalk(r) && r.segments.some((s) => segmentSurface(s) !== 'conversation');
+  return r.kind === 'assistant' && !r.apiError && Array.isArray(r.segments) && isTalk(r) && r.segments.some((s) => segmentSurface(s) !== 'conversation');
 }
 
 function buildRow(doc, rec, ctx, attached) {
@@ -813,14 +813,14 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
   }
 
   function visibleTurns() {
-    return paneEl.childNodes.filter((n) => /\btr-turn\b/.test(n.className) && !/\btr-hidden\b/.test(n.className));
+    return Array.from(paneEl.childNodes).filter((n) => /\btr-turn\b/.test(n.className) && !/\btr-hidden\b/.test(n.className));
   }
 
   function anchorOf() {
     const top = paneEl.scrollTop;
     if (typeof top !== 'number' || typeof paneEl.scrollHeight !== 'number') return null;
     if (top + (paneEl.clientHeight || 0) >= paneEl.scrollHeight - 4) return { bottom: true };
-    const turns = paneEl.childNodes.filter((n) => /\btr-turn\b/.test(n.className));
+    const turns = Array.from(paneEl.childNodes).filter((n) => /\btr-turn\b/.test(n.className));
     const at = turns.find((n) => !/\btr-hidden\b/.test(n.className) && typeof n.offsetTop === 'number' && n.offsetTop + (n.offsetHeight || 0) > top);
     if (!at) return null;
     return { turns: turns.slice(turns.indexOf(at)), offset: at.offsetTop - top };

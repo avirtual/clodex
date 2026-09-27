@@ -786,6 +786,19 @@ test('a long attached reply folds to a head led by ↳ and an unattached one doe
   assert.notStrictEqual(plain.childNodes[0].className, 'tr-reply-lead');
 });
 
+test('the pane modules never call array methods on childNodes, which is a NodeList in the browser', () => {
+  const read = (f) => require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', f), 'utf8');
+  for (const f of ['transcript-rows.js', 'live-split-view.js']) {
+    assert.doesNotMatch(read(f), /childNodes\.(find|filter|map|some|every|reduce|flatMap|slice|indexOf|includes|forEach)\(/, f);
+  }
+});
+
+test('a hidden ticket row stays hidden: the ticket layout applies display only when the row is not tr-hidden', () => {
+  const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  assert.match(css, /^\.tr-ticket:not\(\.tr-hidden\) \{[^}]*display: flex/m);
+  assert.doesNotMatch(css, /^\.tr-ticket \{[^}]*display:/m);
+});
+
 test('a turn separator follows only a visible turn, so a hidden leading turn leaves no line above the first visible one', () => {
   const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
   assert.match(css, /^\.tr-turn:not\(\.tr-hidden\) ~ \.tr-turn \{/mu);
