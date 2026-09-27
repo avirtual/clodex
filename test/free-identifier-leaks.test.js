@@ -298,6 +298,7 @@ const RENDERER_SCANNED_MODULES = [
   // (intent-scanner) — so the guard that it never also reaches for a
   // renderer.js name is the cheap half of keeping it a pure leaf.
   'renderer/lib/intent-marks.js',
+  'renderer/lib/effort-options.js',
   // Its island half (t402), scanned for the same reason every other island is:
   // it runs per-terminal inside createTerminal's scope, where `sessions` and
   // `activeSession` are in easy reach, and a decoration lifecycle that grabbed

@@ -1489,6 +1489,9 @@ and are not, which is why the judgement worth testing is pushed down here.
   `inert` one (intent-shaped, will not fire), or unmarked (escaped/fenced).
   Uses intent-scanner's own grammar, never a private regex: a mark is believed,
   so one promising a turn that never happens is worse than no mark.
+- **effort-options.js** — `effortOptions`: the Effort select's rows for a seat
+  type, read from cli-adapters' `effort.values`, plus a marked row for a saved
+  value the CLI no longer accepts.
 - **path-scan.js** — find path-like tokens (with an optional `:line`) in a line
   of plain text, as offsets. Answers "what LOOKS like a path here" and nothing
   about existence — resolution is main-side (`file-resolve.js`), because only
