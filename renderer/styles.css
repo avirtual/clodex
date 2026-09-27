@@ -2103,8 +2103,7 @@ body.drawer-dragging #drawer, body.drawer-dragging #work-row { transition: none;
 .dock-pane { flex: 1 1 0; min-height: 0; }
 #dock > .dock-pane.dock-pane-hidden { display: none; }
 .plugin-pane { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
-#dock > .dock-pane:not(.dock-pane-hidden) ~ .plugin-pane:not(.dock-pane-hidden) { border-top: 1px solid var(--border); }
-#dock > #dock-split:not(.dock-closed) + .plugin-pane { border-top: 0; }
+#dock > .dock-pane:not(.dock-pane-hidden) ~ .plugin-pane:not(.dock-pane-hidden):not(.dock-pane-first) { border-top: 1px solid var(--border); }
 #side-pane { display: flex; flex-direction: column; min-width: 0; }
 #side-pane-head {
   flex: none; display: flex; align-items: center; gap: 6px;
@@ -3942,7 +3941,8 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
   transition: height 0.2s ease, bottom 0.2s ease;
   height: var(--drawer-h);
   max-height: 70%;
-  overflow: hidden;
+  overflow: clip;
+  overflow-clip-margin: 3px;
 }
 /* The class is on #main, so the drawer is matched through its parent. */
 #main.has-proxy-bar #drawer { bottom: 24px; }
@@ -3967,7 +3967,7 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
 
 #drawer-resize {
   position: absolute;
-  top: 0;
+  top: -3px;
   left: 0;
   right: 0;
   height: 5px;

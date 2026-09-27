@@ -388,6 +388,31 @@ const ROWS = [
     },
   },
   {
+    name: 'the first shown plugin pane after the split carries dock-pane-first, past a hidden one',
+    opts: { innerWidth: 1000, split: true },
+    async run(r) {
+      const files = fakeEl('side-pane');
+      const tickets = fakeEl('tickets');
+      const notes = fakeEl('notes');
+      r.dock.addPane('files', files, 0);
+      r.dock.addPane('tickets', tickets, 1);
+      r.dock.addPane('notes', notes, 2);
+      r.dock.setShown('files', true);
+      r.dock.setShown('notes', true);
+      assert.deepStrictEqual(r.dockEl.children.map((c) => c.id), ['side-pane', 'dock-split', 'tickets', 'notes']);
+      assert.ok(tickets.classList.contains('dock-pane-hidden'), 'ENTER: the middle pane is hidden');
+      assert.strictEqual(r.splitEl.classList.contains('dock-closed'), false, 'ENTER: the split is up');
+      assert.ok(notes.classList.contains('dock-pane-first'));
+      assert.strictEqual(tickets.classList.contains('dock-pane-first'), false);
+      assert.strictEqual(files.classList.contains('dock-pane-first'), false);
+      r.dock.setShown('tickets', true);
+      assert.ok(tickets.classList.contains('dock-pane-first'));
+      assert.strictEqual(notes.classList.contains('dock-pane-first'), false);
+      r.dock.setShown('files', false);
+      assert.strictEqual(tickets.classList.contains('dock-pane-first'), false, 'no split → no first pane');
+    },
+  },
+  {
     name: 'the split handle is absent on the web sheet',
     opts: { innerWidth: 500, web: true, split: true },
     async run(r) {
@@ -451,3 +476,9 @@ for (const row of ROWS) {
     await row.run(rig(row.opts));
   });
 }
+
+test('dock: the plugin-pane divider skips dock-pane-first, and no sibling rule strips it', () => {
+  const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  assert.match(css, /\.plugin-pane:not\(\.dock-pane-hidden\):not\(\.dock-pane-first\) \{ border-top: 1px solid var\(--border\); \}/);
+  assert.doesNotMatch(css, /#dock-split[^{,]*\+ \.plugin-pane/);
+});

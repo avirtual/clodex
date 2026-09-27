@@ -2979,11 +2979,8 @@ body.drawer-dragging #work-row {
   min-width: 0;
   overflow: hidden;
 }
-#dock > .dock-pane:not(.dock-pane-hidden) ~ .plugin-pane:not(.dock-pane-hidden) {
+#dock > .dock-pane:not(.dock-pane-hidden) ~ .plugin-pane:not(.dock-pane-hidden):not(.dock-pane-first) {
   border-top: 1px solid var(--border);
-}
-#dock > #dock-split:not(.dock-closed) + .plugin-pane {
-  border-top: 0;
 }
 #side-pane {
   display: flex;
@@ -5725,7 +5722,8 @@ input.env-locked {
   transition: height 0.2s ease, bottom 0.2s ease;
   height: var(--drawer-h);
   max-height: 70%;
-  overflow: hidden;
+  overflow: clip;
+  overflow-clip-margin: 3px;
 }
 #main.has-proxy-bar #drawer {
   bottom: 24px;
@@ -5743,7 +5741,7 @@ input.env-locked {
 }
 #drawer-resize {
   position: absolute;
-  top: 0;
+  top: -3px;
   left: 0;
   right: 0;
   height: 5px;
@@ -28781,9 +28779,20 @@ ${m[2].replace(/^\r?\n/, "")}`;
           defaultFraction: null,
           containerPx: mainEl.clientHeight
         });
-        function applyHeight() {
+        let heightRetry = false;
+        function applyHeight(retry = true) {
           if (storedHeight == null) {
             mainEl.style.removeProperty("--drawer-h");
+            return;
+          }
+          if (mainEl.clientHeight === 0 && retry) {
+            if (!heightRetry) {
+              heightRetry = true;
+              requestAnimationFrame(() => {
+                heightRetry = false;
+                applyHeight(false);
+              });
+            }
             return;
           }
           const px = mainEl.clientHeight > 0 ? clampHeight(storedHeight) : storedHeight;
@@ -41252,6 +41261,10 @@ void main() {
           for (const [id, p] of panes) p.el.classList.toggle("dock-pane-hidden", sheet ? id !== top : !shown.includes(id));
           splitUp = up && !sheet && shown.length >= 2 && shown.includes("files");
           if (split) split.classList.toggle("dock-closed", !splitUp);
+          const sorted = [...panes.entries()].sort(([, a], [, b]) => a.order - b.order || a.added - b.added);
+          const filesAt = sorted.findIndex(([id]) => id === "files");
+          const first = splitUp ? sorted.slice(filesAt + 1).find(([id]) => shown.includes(id)) : null;
+          for (const [id, p] of panes) p.el.classList.toggle("dock-pane-first", !!first && first[0] === id);
           applySplit();
         }
         function placeSplit() {

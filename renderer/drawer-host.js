@@ -143,8 +143,16 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   const clampHeight = (px) => clampPx(px, {
     min: DRAWER_MIN_H, maxFraction: DRAWER_MAX_FRACTION, defaultFraction: null, containerPx: mainEl.clientHeight,
   });
-  function applyHeight() {
+  let heightRetry = false;
+  function applyHeight(retry = true) {
     if (storedHeight == null) { mainEl.style.removeProperty('--drawer-h'); return; }
+    if (mainEl.clientHeight === 0 && retry) {
+      if (!heightRetry) {
+        heightRetry = true;
+        requestAnimationFrame(() => { heightRetry = false; applyHeight(false); });
+      }
+      return;
+    }
     const px = mainEl.clientHeight > 0 ? clampHeight(storedHeight) : storedHeight;
     mainEl.style.setProperty('--drawer-h', `${px}px`);
   }

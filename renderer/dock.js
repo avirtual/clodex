@@ -53,6 +53,10 @@ function createDock({ showToast, getSettings, setSettings, loadView, saveView, d
     for (const [id, p] of panes) p.el.classList.toggle('dock-pane-hidden', sheet ? id !== top : !shown.includes(id));
     splitUp = up && !sheet && shown.length >= 2 && shown.includes('files');
     if (split) split.classList.toggle('dock-closed', !splitUp);
+    const sorted = [...panes.entries()].sort(([, a], [, b]) => (a.order - b.order) || (a.added - b.added));
+    const filesAt = sorted.findIndex(([id]) => id === 'files');
+    const first = splitUp ? sorted.slice(filesAt + 1).find(([id]) => shown.includes(id)) : null;
+    for (const [id, p] of panes) p.el.classList.toggle('dock-pane-first', !!first && first[0] === id);
     applySplit();
   }
 
