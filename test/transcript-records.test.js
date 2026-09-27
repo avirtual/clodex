@@ -56,7 +56,7 @@ const ROWS = [
     id: '83f269a5-0297-43ea-9cd9-b01f9d896722', kind: 'notification', ts: 1790229144666, turn: 1, text: 'Agent "Survey terminal highlighting helpers" finished',
   }]],
   ['a compact boundary carries its trigger and token counts; the compact summary record is not a row', 'compact', [{
-    id: '274aa083-fe20-4c40-b35c-c85fd2cdab56', kind: 'boundary', ts: 1790226815132, turn: 0, what: 'compact', trigger: 'manual', preTokens: 209703, postTokens: 7870,
+    id: '274aa083-fe20-4c40-b35c-c85fd2cdab56', kind: 'boundary', ts: 1790226815132, turn: 1, what: 'compact', trigger: 'manual', preTokens: 209703, postTokens: 7870,
   }]],
   ['a turn_duration becomes a turn-end', 'turn-duration', [{
     id: '049fa266-9353-472d-b84f-bd94b922716f', kind: 'turn-end', ts: 1790198758874, turn: 0, durationMs: 201184, messageCount: 81,
@@ -154,7 +154,7 @@ test('local_command records become command and command-output records; a command
 
 const typed = (uuid, promptId, content) => rec({ type: 'user', uuid, promptId, message: { role: 'user', content } });
 
-test('a typed /compact echoed back as <command-name> is no prompt row; the boundary keeps turn 0 because no turn-opening record precedes it', () => {
+test('a typed /compact echoed back as <command-name> is no prompt row; the boundary opens turn 1 on its own', () => {
   const { records } = recordsOf([
     typed('p1', 'P', '/compact'),
     typed('p2', 'P', '<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>'),
@@ -162,7 +162,7 @@ test('a typed /compact echoed back as <command-name> is no prompt row; the bound
     rec({ type: 'system', subtype: 'compact_boundary', uuid: 'b1', compactMetadata: { trigger: 'manual', preTokens: 100, postTokens: 10 } }),
   ].join('\n'));
   assert.deepStrictEqual(records, [
-    { id: 'b1', kind: 'boundary', ts: null, turn: 0, what: 'compact', trigger: 'manual', preTokens: 100, postTokens: 10 },
+    { id: 'b1', kind: 'boundary', ts: null, turn: 1, what: 'compact', trigger: 'manual', preTokens: 100, postTokens: 10 },
   ]);
   assert.doesNotMatch(JSON.stringify(records), /\/compact/);
 });
@@ -178,9 +178,21 @@ test('a typed /compact whose echo lands after the compact_boundary is no prompt 
   assert.ok(text.indexOf('"compact_boundary"') < text.indexOf('<command-name>/compact'));
   const { records } = recordsOf(text);
   assert.deepStrictEqual(records, [
-    { id: 'b1', kind: 'boundary', ts: null, turn: 0, what: 'compact', trigger: 'manual', preTokens: 100, postTokens: 10 },
+    { id: 'b1', kind: 'boundary', ts: null, turn: 1, what: 'compact', trigger: 'manual', preTokens: 100, postTokens: 10 },
   ]);
   assert.doesNotMatch(JSON.stringify(records), /\/compact/);
+});
+
+test('a compact boundary opens its own turn: the turn before it ends at the compact and the next prompt opens the one after', () => {
+  const { records } = recordsOf([
+    rec({ type: 'user', uuid: 'i1', message: { role: 'user', content: '[agent:from bob] hi' } }),
+    rec({ type: 'assistant', uuid: 'a-t1', message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }] } }),
+    rec({ type: 'assistant', uuid: 'a1', message: { content: [{ type: 'text', text: '[agent:context compact]' }] } }),
+    rec({ type: 'system', subtype: 'compact_boundary', uuid: 'b1', compactMetadata: { trigger: 'manual', preTokens: 100, postTokens: 10 } }),
+    typed('p1', 'P', 'Continue from here'),
+  ].join('\n'));
+  assert.deepStrictEqual(records.map((r) => [r.id, r.kind]), [['i1', 'inbound'], ['t1', 'tool'], ['a1', 'assistant'], ['b1', 'boundary'], ['p1', 'prompt']]);
+  assert.deepStrictEqual(records.map((r) => r.turn), [1, 1, 1, 2, 3]);
 });
 
 test('a record with no uuid after a spliced echo mints a fresh line id, never one a shifted record already holds', () => {
@@ -191,8 +203,8 @@ test('a record with no uuid after a spliced echo mints a fresh line id, never on
     typed(undefined, 'Q', 'next thing'),
   ].join('\n'));
   assert.deepStrictEqual(records, [
-    { id: 'line:1', kind: 'boundary', ts: null, turn: 0, what: 'compact', trigger: 'manual', preTokens: 100, postTokens: 10 },
-    { id: 'line:2', kind: 'prompt', ts: null, turn: 1, text: 'next thing', source: 'typed' },
+    { id: 'line:1', kind: 'boundary', ts: null, turn: 1, what: 'compact', trigger: 'manual', preTokens: 100, postTokens: 10 },
+    { id: 'line:2', kind: 'prompt', ts: null, turn: 2, text: 'next thing', source: 'typed' },
   ]);
 });
 
@@ -719,6 +731,22 @@ test('a mid-turn [agent:task] attachment stays a reply card with no state and an
 const QTS = '2026-09-27T10:43:00.000Z';
 const queueOp = (operation, content, reason) => rec({ type: 'queue-operation', operation, timestamp: QTS, sessionId: 'S', ...(content === undefined ? {} : { content }), ...(reason ? { reason } : {}) });
 const queuedOf = (records) => records.filter((r) => r.state === 'queued');
+
+const boundaryLine = rec({ type: 'system', subtype: 'compact_boundary', uuid: 'b1', compactMetadata: { trigger: 'auto', preTokens: 100, postTokens: 10 } });
+
+test('a compact boundary between a mid-turn prompt and the next assistant record leaves the prompt to be marked read', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), midTurn('q', 'hi'), boundaryLine, replied('a1', 'ok')].join('\n'));
+  const mid = records.find((r) => r.id === 'q');
+  const reply = records.find((r) => r.id === 'a1');
+  assert.strictEqual(reply.turn, mid.turn + 1, 'ENTER: the boundary opened a turn between them');
+  assert.strictEqual(mid.state, 'read');
+});
+
+test('a compact boundary after an enqueue keeps the queued row: the boundary dequeues nothing', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), queueOp('enqueue', 'hi'), boundaryLine].join('\n'));
+  assert.ok(records.some((r) => r.kind === 'boundary'), 'ENTER: the boundary parsed');
+  assert.strictEqual(queuedOf(records).length, 1);
+});
 
 test('an enqueued message is a queued mid-turn prompt at the end of the running turn', () => {
   const { records } = recordsOf([typed('p1', 'P', 'go'), queueOp('enqueue', 'hi')].join('\n'));

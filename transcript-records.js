@@ -543,7 +543,7 @@ function recordsOf(text, max = RECORD_CAP) {
     for (const r of produced) {
       if (r.kind === 'prompt' && r.source !== 'mid-turn') typedPrompt = { at: all.length, promptId: rec.promptId || null, record: r };
       const midTurn = r.source === 'mid-turn';
-      if (TURN_KINDS.has(r.kind) && !midTurn) { turn += 1; unread = []; queued = []; }
+      if (TURN_KINDS.has(r.kind) && !midTurn) { turn += 1; if (r.kind !== 'boundary') { unread = []; queued = []; } }
       r.turn = turn;
       if ((r.kind === 'assistant' && !r.apiError) || r.kind === 'tool') {
         for (const u of unread) u.state = 'read';

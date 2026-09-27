@@ -713,15 +713,13 @@ function filesOf(tools) {
 
 function footerOf(records) {
   const end = records.find((r) => r.kind === 'turn-end');
-  const boundary = records.find((r) => r.kind === 'boundary' && r.what === 'compact' && r.preTokens != null && r.postTokens != null);
-  if (!end && !boundary) return null;
+  if (!end) return null;
   const tools = records.filter((r) => r.kind === 'tool');
   return {
-    durationMs: end && end.durationMs != null ? end.durationMs : null,
+    durationMs: end.durationMs != null ? end.durationMs : null,
     tools: tools.length,
     errors: tools.filter((r) => r.state === 'error' || r.state === 'denied').length,
     files: filesOf(tools),
-    compacted: boundary ? [boundary.preTokens, boundary.postTokens] : null,
   };
 }
 
@@ -738,7 +736,6 @@ function footerParts(doc, row, f, ctx, linked) {
       row.appendChild(doc.createTextNode(` +${file.add} ${MINUS}${file.del}`));
     });
   }
-  if (f.compacted) parts.push(() => row.appendChild(doc.createTextNode(`compacted ${tokensText(f.compacted[0])} → ${tokensText(f.compacted[1])}`)));
   parts.forEach((add, i) => {
     if (i) row.appendChild(doc.createTextNode(' · '));
     add();
@@ -754,7 +751,6 @@ function runStatsOf(records) {
   const ends = records.filter((r) => r.kind === 'turn-end');
   const timed = ends.filter((r) => r.durationMs != null);
   const tools = records.filter((r) => r.kind === 'tool');
-  const boundary = records.find((r) => r.kind === 'boundary' && r.what === 'compact' && r.preTokens != null && r.postTokens != null);
   return {
     ended: ends.length > 0,
     durationMs: timed.length ? timed.reduce((n, r) => n + r.durationMs, 0) : null,
@@ -762,7 +758,6 @@ function runStatsOf(records) {
     errors: tools.filter((r) => r.state === 'error' || r.state === 'denied').length,
     injected: records.filter(isInternalRow).length,
     files: filesOf(tools),
-    compacted: boundary ? [boundary.preTokens, boundary.postTokens] : null,
   };
 }
 
@@ -1015,7 +1010,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         },
       };
     }
-    if (!stats.ended && !stats.compacted) return null;
+    if (!stats.ended) return null;
     return { key: 'footer', sig: JSON.stringify(stats), build: () => buildFooter(doc, stats, deps) };
   }
 
