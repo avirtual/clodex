@@ -5438,7 +5438,6 @@ const { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
   },
 });
 voiceBarActionHtml = voiceActionHtml;
-// The bar holds the core open for the life of the window.
 voiceCore.start();
 
 
