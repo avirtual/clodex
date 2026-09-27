@@ -132,3 +132,43 @@ test('docs oneLine(): the snippet itself contains no raw control byte', () => {
   assert.ok(/new RegExp\(/.test(src),
     'the snippet must build its patterns from strings, not regex literals');
 });
+
+function loadPaneSnippet() {
+  const doc = fs.readFileSync(DOCS, 'utf8');
+  const blocks = doc.match(/```js\n[\s\S]*?\n```/g) || [];
+  const hits = blocks.filter((b) => /surfaces\.pane\(\{/.test(b));
+  assert.strictEqual(hits.length, 1, 'plugins/plugin-api.md must show surfaces.pane in exactly one fenced js block');
+  const src = hits[0].replace(/^```js\n/, '').replace(/\n```$/, '');
+  return new Function(`${src}\nreturn activate;`)();
+}
+
+test('docs §6.8 pane snippet: polls only between onShow and onHide, and disposes its pane', () => {
+  const activate = loadPaneSnippet();
+  const intervals = new Map();
+  let next = 1;
+  let spec = null;
+  let disposed = 0;
+  const logged = [];
+  const rhost = {
+    log: { info: (m) => logged.push(m) },
+    setInterval: (fn, ms) => { const h = next++; intervals.set(h, { fn, ms }); return h; },
+    clearInterval: (h) => { intervals.delete(h); },
+    ui: { surfaces: { pane: (s) => { spec = s; return { dispose: () => { disposed += 1; } }; } } },
+  };
+  const teardown = activate(rhost);
+  assert.strictEqual(spec.id, 'main');
+  assert.strictEqual(typeof spec.mount, 'function');
+  const root = { textContent: '' };
+  spec.mount(root);
+  assert.strictEqual(root.textContent, 'Loading…');
+  assert.strictEqual(intervals.size, 0, 'nothing polls before the first show');
+  spec.onShow();
+  spec.onShow();
+  assert.strictEqual(intervals.size, 1, 'one poll however many shows');
+  assert.strictEqual([...intervals.values()][0].ms, 15000);
+  assert.strictEqual(logged.length, 2, 'each show refreshes at once');
+  spec.onHide();
+  assert.strictEqual(intervals.size, 0, 'a hidden pane polls nothing');
+  teardown();
+  assert.strictEqual(disposed, 1);
+});

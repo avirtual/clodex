@@ -5,16 +5,10 @@
  * open tickets on the right, recently-closed below them. The left pane lists
  * PROJECTS, not teams: the board belongs to the project (t301), so a solo
  * operator with no team reaches every one of these actions.
- *
- * Pull-on-open, no ambient state and no poll, matching memory-viewer: nothing
- * is read until the overlay is opened, and what you see is as of that moment.
- * A live board would need a watcher on every project's tickets.json for a
- * surface a user looks at for ten seconds at a time. Every mutation refreshes
- * the board it changed, which is what keeps a pull-on-open surface honest after
- * a write.
  */
 
 const SEARCH_DEBOUNCE_MS = 250;
+const POLL_MS = 15000;
 
 // Core's humanizeAge, deliberately reproduced: the board sits beside
 // `[agent:task list]` output and two different roundings of the same age read
@@ -221,12 +215,26 @@ module.exports.activate = (rhost) => {
     rhost.ui.showToast((res && res.error) || 'the tickets engine did not answer', { kind: 'error' });
   }
 
-  let refresh = null; // assigned by mount; mount always precedes onOpen
+  let view = null;
+  let poll = null;
 
-  const surface = rhost.ui.surfaces.overlay({
+  function tick() {
+    if (view && !view.busy()) view.refresh();
+  }
+
+  const pane = rhost.ui.surfaces.pane({
     id: 'main',
-    mount(rootEl) { refresh = wire(rootEl); },
-    onOpen() { if (refresh) refresh(); },
+    title: 'Tickets',
+    glyph: '▤',
+    tip: 'The project ticket board',
+    mount(rootEl) { view = wire(rootEl); },
+    onShow() {
+      if (view) view.refresh();
+      if (poll === null) poll = rhost.setInterval(tick, POLL_MS);
+    },
+    onHide() {
+      if (poll !== null) { rhost.clearInterval(poll); poll = null; }
+    },
   });
 
   function el(tag, cls, text) {
@@ -247,13 +255,13 @@ module.exports.activate = (rhost) => {
 
   function wire(rootEl) {
     rootEl.innerHTML = '';
-    const modal = el('div', 'tv-modal');
+    const modal = el('div', 'tv-root');
     const topbar = el('div', 'tv-topbar');
     topbar.appendChild(el('div', 'tv-title', 'Tickets'));
     topbar.appendChild(el('div', 'tv-subtitle', 'the project ticket board'));
     const closeBtn = el('button', 'tv-close', '×');
     closeBtn.title = 'Close';
-    closeBtn.addEventListener('click', () => surface.close());
+    closeBtn.addEventListener('click', () => pane.hide());
     topbar.appendChild(closeBtn);
 
     const body = el('div', 'tv-body');
@@ -274,6 +282,8 @@ module.exports.activate = (rhost) => {
     let closedView = null;
     let feedSeq = 0;
     let feedView = null;
+    let inDetail = false;
+    let mutating = 0;
 
     const searchEl = el('input', 'tv-search');
     searchEl.type = 'search';
@@ -284,12 +294,14 @@ module.exports.activate = (rhost) => {
     function clearBoardPane() {
       boardPane.innerHTML = '';
       shellMounted = false;
+      inDetail = false;
       editorEl = null;
     }
 
     function mountBoardShell() {
       if (shellMounted) return;
       boardPane.innerHTML = '';
+      inDetail = false;
       boardPane.appendChild(searchEl);
       boardPane.appendChild(sectionsEl);
       shellMounted = true;
@@ -317,6 +329,15 @@ module.exports.activate = (rhost) => {
      * assignment written but not delivered.
      */
     async function mutate(method, payload, note) {
+      mutating += 1;
+      try {
+        return await mutateNow(method, payload, note);
+      } finally {
+        mutating -= 1;
+      }
+    }
+
+    async function mutateNow(method, payload, note) {
       const res = await ask(method, payload);
       if (!alive()) return res;
       if (!res.ok) { toastError(res); return res; }
@@ -581,6 +602,7 @@ module.exports.activate = (rhost) => {
       const my = ++selectSeq;
       const myReload = reloadSeq;
       clearBoardPane();
+      inDetail = true;
       const pane = el('div', 'tv-detail');
       pane.appendChild(el('div', 'tv-empty', 'Loading…'));
       boardPane.appendChild(pane);
@@ -588,6 +610,7 @@ module.exports.activate = (rhost) => {
       const res = await ask('ticket', { project, id });
       if (!alive() || my !== selectSeq || myReload !== reloadSeq) return;
       clearBoardPane();
+      inDetail = true;
       if (!res.ok || !res.ticket) {
         boardPane.appendChild(button('tv-back', '← Back', 'Back to the board', () => { goBack(); }));
         boardPane.appendChild(el('div', 'tv-error', `Could not read ${id}: ${res.error || 'unknown error'}`));
@@ -1129,32 +1152,34 @@ module.exports.activate = (rhost) => {
         });
         projectsPane.appendChild(row);
       }
-      if (!selected || !list.some((p) => p.key === selected)) {
-        selected = list[0].key;
+      if (selected && list.some((p) => p.key === selected)) {
+        goBack();
+        return;
       }
+      selected = list[0].key;
       selectProject(selected).catch((e) => rhost.log.error('select failed', e));
     }
 
     async function reload() {
       const my = ++reloadSeq;
-      projectsPane.innerHTML = '';
-      projectsPane.appendChild(el('div', 'tv-empty', 'Loading…'));
+      if (!projectsPane.firstChild) projectsPane.appendChild(el('div', 'tv-empty', 'Loading…'));
       const res = await ask('projects');
       if (!alive() || my !== reloadSeq) return;
       renderProjects(res);
     }
 
     cancelPending = () => { if (searchTimer !== null) { clearTimeout(searchTimer); searchTimer = null; } };
-    return () => { reload().catch((e) => rhost.log.error('reload failed', e)); };
-  }
+    function busy() {
+      const focused = document.activeElement;
+      if (focused && typeof rootEl.contains === 'function' && rootEl.contains(focused)) return true;
+      return !!editorEl || inDetail || mutating > 0 || searchTimer !== null || !!String(searchEl.value || '').trim();
+    }
 
-  rhost.ui.sidebar.footerButton({
-    id: 'open',
-    glyph: '▤',
-    label: 'Tickets',
-    tip: 'The project ticket board',
-    onClick: () => surface.open(),
-  });
+    return {
+      refresh: () => { reload().catch((e) => rhost.log.error('reload failed', e)); },
+      busy,
+    };
+  }
 
   return () => { torn = true; if (cancelPending) cancelPending(); };
 };

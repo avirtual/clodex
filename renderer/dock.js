@@ -2,15 +2,19 @@
 
 const { SIDE_PANE_REFIT_THROTTLE_MS, sidePaneFits, clampSidePaneWidth } = require('./lib/side-pane-tabs');
 
-function createDock({ showToast, getSettings, setSettings, doc = document, win = window }) {
+function createDock({ showToast, getSettings, setSettings, loadView, saveView, doc = document, win = window }) {
   const dock = doc.getElementById('dock');
   const handle = doc.getElementById('dock-handle');
   const isWeb = !!win.__CLODEX_WEB__;
 
   const panes = new Map();
   let shown = [];
+  const front = () => shown[shown.length - 1] || null;
   let added = 0;
   let storedWidth = null;
+  let intents = {};
+  let viewLoaded = false;
+  const viewWaiters = [];
 
   function onScreen() {
     return shown.length > 0 && (isWeb || sidePaneFits(win.innerWidth));
@@ -26,16 +30,19 @@ function createDock({ showToast, getSettings, setSettings, doc = document, win =
     dock.classList.toggle('dock-closed', !up);
     dock.classList.toggle('dock-sheet', sheet);
     handle.classList.toggle('dock-closed', !up || sheet);
-    for (const [id, p] of panes) p.el.classList.toggle('dock-pane-hidden', !shown.includes(id));
+    const top = front();
+    for (const [id, p] of panes) p.el.classList.toggle('dock-pane-hidden', sheet ? id !== top : !shown.includes(id));
   }
 
   function addPane(id, el, order = 0) {
     if (panes.has(id)) removePane(id);
     el.classList.add('dock-pane');
     el.dataset.pane = id;
-    panes.set(id, { el, order, added: added++ });
+    const entry = { el, order, added: added++ };
+    panes.set(id, entry);
     const sorted = [...panes.values()].sort((a, b) => (a.order - b.order) || (a.added - b.added));
-    for (const p of sorted) dock.appendChild(p.el);
+    const i = sorted.indexOf(entry);
+    dock.insertBefore(el, i + 1 < sorted.length ? sorted[i + 1].el : null);
     render();
   }
 
@@ -64,7 +71,23 @@ function createDock({ showToast, getSettings, setSettings, doc = document, win =
   }
 
   const isShown = (id) => shown.includes(id);
-  const front = () => shown[shown.length - 1] || null;
+
+  function intent(id) {
+    return intents[id] === true;
+  }
+
+  function setIntent(id, on) {
+    intents = { ...intents, [id]: !!on };
+    if (typeof saveView !== 'function') return;
+    Promise.resolve()
+      .then(() => saveView({ panes: { ...intents } }))
+      .catch(() => {});
+  }
+
+  function onViewLoaded(fn) {
+    if (viewLoaded) fn();
+    else viewWaiters.push(fn);
+  }
 
   let dragging = false;
   let pendingPx = null;
@@ -109,10 +132,25 @@ function createDock({ showToast, getSettings, setSettings, doc = document, win =
       applyWidth();
     })
     .catch(() => {});
+  Promise.resolve()
+    .then(() => (typeof loadView === 'function' ? loadView() : null))
+    .then((v) => {
+      const saved = v && v.panes && typeof v.panes === 'object' ? v.panes : {};
+      const kept = {};
+      for (const [k, on] of Object.entries(saved)) if (on === true) kept[k] = true;
+      intents = { ...kept, ...intents };
+    })
+    .catch(() => {})
+    .then(() => {
+      viewLoaded = true;
+      for (const fn of viewWaiters.splice(0)) {
+        try { fn(); } catch {}
+      }
+    });
   applyWidth();
   render();
 
-  return { addPane, removePane, setShown, isShown, onScreen, front, reveal };
+  return { addPane, removePane, setShown, isShown, onScreen, front, reveal, intent, setIntent, onViewLoaded };
 }
 
 module.exports = { createDock };

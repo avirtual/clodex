@@ -4,17 +4,15 @@
  * elements — nothing that can match core's DOM or another plugin's.
  */
 
-.tv-modal {
+.tv-root {
   display: flex;
   flex-direction: column;
-  width: min(900px, 92vw);
-  height: min(620px, 84vh);
-  margin: 6vh auto 0;
-  background: var(--surface-overlay);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   color: inherit;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
   overflow: hidden;
+  container-type: inline-size;
 }
 
 .tv-topbar {
@@ -758,4 +756,30 @@
 
 .tv-feed-row:hover {
   background: var(--surface-hover);
+}
+
+@container (max-width: 560px) {
+  .tv-body {
+    flex-direction: column;
+  }
+
+  .tv-teams {
+    width: auto;
+    display: flex;
+    flex-direction: row;
+    flex-shrink: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 0 6px;
+  }
+
+  .tv-team-row {
+    flex-shrink: 0;
+  }
+
+  .tv-board {
+    min-height: 0;
+  }
 }

@@ -90,8 +90,8 @@ const RHOST_CONTRACT = [
   { name: 'log', kind: 'ns', members: ['info', 'error'] },
 ];
 
-// The seven UI slots, as `rhost.ui.<area>.<method>` paths. This is the list
-// plugins/plugin-api.md §6 enumerates one section each; "seven" is a number the
+// The eight UI slots, as `rhost.ui.<area>.<method>` paths. This is the list
+// plugins/plugin-api.md §6 enumerates one section each; "eight" is a number the
 // document states in prose, so it is pinned as a number too.
 const UI_SLOTS = [
   ['statusBar', 'addAction'],
@@ -101,6 +101,7 @@ const UI_SLOTS = [
   ['sessionMenu', 'addProvider'],
   ['settings', 'section'],
   ['surfaces', 'overlay'],
+  ['surfaces', 'pane'],
 ];
 
 // `sidebar.requestRelayout` is NOT a slot — it is the companion to rowBadge's
@@ -287,13 +288,13 @@ test('the renderer rhost carries EXACTLY the published contract', () => {
   assert.strictEqual(rhost.workspaceId, 'ws-1', 'the getter reads through to the live value');
 });
 
-test('rhost exposes the seven UI slots and nothing that reaches window.api', () => {
+test('rhost exposes the eight UI slots and nothing that reaches window.api', () => {
   const { rhost } = realRendererHost();
   for (const [area, method] of [...UI_SLOTS, ...UI_EXTRA]) {
     assert.strictEqual(typeof rhost.ui[area][method], 'function',
       `rhost.ui.${area}.${method} is published`);
   }
-  assert.strictEqual(UI_SLOTS.length, 7, 'plugins/plugin-api.md §6 says SEVEN slots in prose');
+  assert.strictEqual(UI_SLOTS.length, 8, 'plugins/plugin-api.md §6 says EIGHT slots in prose');
   // The no-backdoor rule as a SHAPE, complementing the static lint in
   // plugin-boundary.test.js: even a plugin that ignored the lint has nothing on
   // its own surface to reach core with.
@@ -535,7 +536,7 @@ test('plugins/plugin-api.md covers the sections the freeze promised', () => {
     '## 2. The manifest',
     '## 4. The engine `host` object',
     '## 5. The renderer `rhost` object',
-    '## 6. The seven UI slots',
+    '## 6. The eight UI slots',
     '## 10. Lifecycle: enable, disable, failure, quarantine',
     '## 11. The transport, and why it is five rows',
     '## 13. What is deliberately not exposed',

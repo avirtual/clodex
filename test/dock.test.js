@@ -22,9 +22,15 @@ function fakeEl(id) {
     addEventListener: (type, fn) => { (listeners[type] ||= []).push(fn); },
     fire: (type, e = {}) => { for (const fn of listeners[type] || []) fn(e); },
     appendChild(child) {
+      return el.insertBefore(child, null);
+    },
+    insertBefore(child, ref) {
       if (child.parent) child.remove();
       child.parent = el;
-      el.children.push(child);
+      child.inserts = (child.inserts || 0) + 1;
+      const i = ref ? el.children.indexOf(ref) : -1;
+      if (i < 0) el.children.push(child);
+      else el.children.splice(i, 0, child);
       return child;
     },
     remove() {
@@ -37,7 +43,7 @@ function fakeEl(id) {
   return el;
 }
 
-function rig({ innerWidth = 1000, web = false, settings = {} } = {}) {
+function rig({ innerWidth = 1000, web = false, settings = {}, view } = {}) {
   const dockEl = fakeEl('dock');
   const handle = fakeEl('dock-handle');
   dockEl.classList.add('dock-closed');
@@ -49,13 +55,16 @@ function rig({ innerWidth = 1000, web = false, settings = {} } = {}) {
   if (web) win.__CLODEX_WEB__ = true;
   const toasts = [];
   const saved = [];
+  const views = [];
   const dock = createDock({
     doc, win,
     showToast: (text, opts) => toasts.push({ text, opts }),
     getSettings: () => settings,
     setSettings: (patch) => saved.push(patch),
+    loadView: view === undefined ? undefined : () => view,
+    saveView: (patch) => views.push(patch),
   });
-  return { dock, dockEl, handle, doc, win, toasts, saved };
+  return { dock, dockEl, handle, doc, win, toasts, saved, views };
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -183,6 +192,85 @@ const ROWS = [
       assert.deepStrictEqual(r.dockEl.children.map((c) => c.id), ['tickets']);
       assert.strictEqual(r.dock.front(), null);
       assert.strictEqual(r.dock.onScreen(), false);
+    },
+  },
+  {
+    name: 'adding a second pane inserts only the new element; the first keeps its identity and slot',
+    opts: { innerWidth: 1000 },
+    async run(r) {
+      const files = fakeEl('side-pane');
+      r.dock.addPane('files', files, 0);
+      assert.strictEqual(files.inserts, 1, 'ENTER: files was inserted once');
+      const tickets = fakeEl('tickets');
+      r.dock.addPane('tickets', tickets, 1);
+      assert.strictEqual(files.inserts, 1, 'files was not re-inserted');
+      assert.strictEqual(r.dockEl.children[0], files);
+      assert.deepStrictEqual(r.dockEl.children.map((c) => c.id), ['side-pane', 'tickets']);
+      const early = fakeEl('early');
+      r.dock.addPane('early', early, -1);
+      assert.deepStrictEqual(r.dockEl.children.map((c) => c.id), ['early', 'side-pane', 'tickets']);
+      assert.strictEqual(files.inserts, 1);
+      assert.strictEqual(tickets.inserts, 1);
+    },
+  },
+  {
+    name: 'a drag sets the width, the window shrinks, reveal() re-clamps it',
+    opts: { innerWidth: 1000 },
+    async run(r) {
+      r.dock.addPane('files', fakeEl('side-pane'), 0);
+      r.dock.setShown('files', true);
+      r.handle.fire('mousedown', { button: 0, preventDefault() {} });
+      r.win.fire('mousemove', { clientX: 100 });
+      r.win.fire('mouseup');
+      assert.strictEqual(r.dockEl.style.width, '600px', 'ENTER: the drag stored 600');
+      r.win.innerWidth = 800;
+      r.dockEl.style.width = 'stale';
+      r.dock.reveal();
+      assert.strictEqual(r.dockEl.style.width, '480px');
+    },
+  },
+  {
+    name: 'intent: loaded from the view, written whole, and a tick before the load survives it',
+    opts: { innerWidth: 1000, view: { panes: { 'p:a': true, 'p:b': true, 'p:c': 'yes' } } },
+    async run(r) {
+      let loaded = 0;
+      r.dock.onViewLoaded(() => { loaded += 1; });
+      r.dock.setIntent('p:b', false);
+      assert.strictEqual(loaded, 0, 'ENTER: the view has not loaded yet');
+      await flush();
+      assert.strictEqual(loaded, 1);
+      assert.strictEqual(r.dock.intent('p:a'), true);
+      assert.strictEqual(r.dock.intent('p:b'), false, 'the earlier untick wins over the loaded tick');
+      assert.strictEqual(r.dock.intent('p:c'), false, 'only a literal true is a tick');
+      r.dock.onViewLoaded(() => { loaded += 1; });
+      assert.strictEqual(loaded, 2, 'a waiter after the load runs at once');
+      r.dock.setIntent('p:d', true);
+      await flush();
+      assert.deepStrictEqual(r.views[r.views.length - 1], { panes: { 'p:a': true, 'p:b': false, 'p:d': true } });
+    },
+  },
+  {
+    name: 'web sheet shows only the front pane; the others stay shown underneath',
+    opts: { innerWidth: 500, web: true },
+    async run(r) {
+      const files = fakeEl('side-pane');
+      const tickets = fakeEl('tickets');
+      r.dock.addPane('files', files, 0);
+      r.dock.addPane('tickets', tickets, 1);
+      r.dock.setShown('files', true);
+      r.dock.setShown('tickets', true);
+      assert.ok(r.dockEl.classList.contains('dock-sheet'), 'ENTER: the dock is a sheet');
+      assert.ok(files.classList.contains('dock-pane-hidden'));
+      assert.strictEqual(tickets.classList.contains('dock-pane-hidden'), false);
+      assert.strictEqual(r.dock.isShown('files'), true);
+      r.dock.setShown('tickets', false);
+      assert.strictEqual(files.classList.contains('dock-pane-hidden'), false);
+      assert.ok(tickets.classList.contains('dock-pane-hidden'));
+      r.win.innerWidth = 1000;
+      r.dock.setShown('tickets', true);
+      r.win.fire('resize');
+      assert.strictEqual(files.classList.contains('dock-pane-hidden'), false, 'at full width both show');
+      assert.strictEqual(tickets.classList.contains('dock-pane-hidden'), false);
     },
   },
 ];
