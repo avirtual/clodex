@@ -7991,6 +7991,16 @@ test('t535: accepting a merged ticket clears the stale merge failure, on the rec
     'ENTER: a stamped ticket takes t536\'s veto, which clears the mark WITHOUT tearing down — so this subject alone no longer covers the merged arm');
 });
 
+test('t1273: a merge-failure stamp appends a merge-failed event and its clear appends none', () => {
+  const f = mkAccept({ ok: true, merged: true, base: 'master' });
+  openAndDone(f);
+  f.m._stampMergeError(f.team, 't1', 'clean-tree');
+  f.m._stampMergeError(f.team, 't1', null);
+  const failed = f.one('t1').events.filter((e) => e.kind === 'merge-failed');
+  assert.strictEqual(failed.length, 1, 'one stamp, one event; the clear is not a transition');
+  assert.deepStrictEqual({ ...failed[0], at: typeof failed[0].at }, { at: 'number', kind: 'merge-failed', by: 'ticket-loop', step: 'clean-tree' });
+});
+
 // The MERGED arm's own clear. Split out of the subject above rather than
 // replacing it: that one is the canonical recovery (loop stamps, lead merges by
 // hand, lead accepts) and its path is worth keeping pinned, but after t536 it

@@ -369,6 +369,14 @@ test('the merge stamps mergedAt, which is what arms the reminder', () => {
   assert.strictEqual(t.mergedNudgedAt, undefined, 'nothing has been nudged yet — the notice just went out');
 });
 
+test('t1273: the merge appends one merged event carrying the sha the notice names', () => {
+  const f = mkLoop();
+  f.m._notifyMergeLanded(f.team, 't1', LANDED);
+  const t = f.one();
+  assert.deepStrictEqual(t.events.filter((e) => e.kind === 'merged'),
+    [{ at: t.mergedAt, kind: 'merged', by: 'ticket-loop', sha: 'abc1234' }]);
+});
+
 test('the stamp survives a notice the lead never received', () => {
   const f = mkLoop();
   // HELD: the lead is blocked on a permission dialog, so the notice reaches

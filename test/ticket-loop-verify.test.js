@@ -1185,6 +1185,36 @@ test('closing a ticket that was already nudged starts a fresh stall episode', as
   assert.strictEqual(nudges.length, 1, 'a dead verify step is still surfaced');
 });
 
+test('t1273: add, start, done, verdict, accept each append one event, in order', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, []);
+  f.m.destroy = async () => ({ ok: true, worktreeRemoved: true });
+  f.m.archive = async () => {};
+
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', id: null, who: 'team-hand', body: 'chain spec — tasks/loop-fixture' });
+  const id = f.tstore.load(f.team.root)[0].id;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', id, who: null, body: '' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id, who: null, body: 'r' });
+  f.tstore.save(f.team.root, [{ ...f.one(id), loopStep: 'review' }]);
+  f.m._landVerdictOnTicket(f.seat('rev', repo.dir), id, '- **VERDICT**: ACCEPT\n- **MUST-FIX**: none');
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id, who: null, body: '' }, () => {});
+
+  const events = f.one(id).events;
+  assert.deepStrictEqual(events.map(({ at, ...rest }) => rest), [
+    { kind: 'add', by: 'lead' },
+    { kind: 'start', by: 'lead', to: 'team-hand' },
+    { kind: 'done', by: 'team-hand', round: 1 },
+    { kind: 'verdict', by: 'rev', verdict: 'ACCEPT', round: 1 },
+    { kind: 'accept', by: 'lead', closedOut: true },
+  ]);
+  const ats = events.map((e) => e.at);
+  for (let i = 0; i < ats.length; i += 1) {
+    assert.ok(Number.isFinite(ats[i]), `event ${i} at is finite`);
+    if (i > 0) assert.ok(ats[i] >= ats[i - 1], `event ${i} at does not go backwards`);
+  }
+});
+
 test('accept clears the hold, so a late verdict cannot land on torn-down work', async () => {
   // The MF3 interleaving: the lead accepts before the verdict returns, which
   // retires the seat, removes the worktree and deletes the branch. A surviving
@@ -1566,7 +1596,10 @@ test('an in-flight done ticket still gets ONE nudge per episode, not one per swe
   // on every single sweep — the episode rule inverted on exactly the tickets
   // the sweep was extended to cover.
   assert.strictEqual(nudges.length, 1, 'the stamp was recorded, so later sweeps stay quiet');
-  assert.ok(f.tstore.load(f.team.root).find((t) => t.id === 'held').nudgedAt, 'nudgedAt is on disk');
+  const held = f.tstore.load(f.team.root).find((t) => t.id === 'held');
+  assert.ok(held.nudgedAt, 'nudgedAt is on disk');
+  assert.deepStrictEqual(held.events, [{ at: held.nudgedAt, kind: 'nudge', by: 'ticket-loop' }],
+    'one nudge event, stamped with the sweep instant the nudge was judged at');
 });
 
 // ── the verdict still lands ────────────────────────────────────────────────
@@ -4465,6 +4498,8 @@ test('t345: the escalation is STAMPED on the record, not only DMed', async () =>
   assert.strictEqual(t.verifyHold.step, 'verify: commits-on-branch', 'it names the check that failed');
   assert.match(t.verifyHold.evidence, /0 commits beyond/, 'and carries the evidence, so the board does not lie');
   assert.ok(t.verifyHold.at > 0, 'and when');
+  assert.deepStrictEqual(t.events.filter((e) => e.kind === 'verify-hold').map(({ at, ...rest }) => rest),
+    [{ kind: 'verify-hold', by: 'ticket-loop', step: 'verify: commits-on-branch' }], 'one verify-hold event naming the step, no evidence');
 });
 
 test('t345: task done RE-ENTERS the loop on a held ticket and REACHES A REVIEWER', async () => {
@@ -4488,6 +4523,7 @@ test('t345: task done RE-ENTERS the loop on a held ticket and REACHES A REVIEWER
   assert.strictEqual(t.state, 'done', 'it was never reopened — no fake rejection');
   assert.strictEqual(Number(t.reworkRound) || 0, 0, 'and no rework round was invented');
   assert.ok(!('verifyHold' in t), 'the hold is cleared once the loop moves past it');
+  assert.deepStrictEqual(t.events.filter((e) => e.kind === 'done'), [], 'a re-entry close is not a new close, so it records no done event');
 });
 
 test('t345: the re-entry replaces the report, so the reviewer reads the CURRENT one', async () => {

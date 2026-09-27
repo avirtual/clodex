@@ -861,9 +861,12 @@ function ticketRounds(rec, dir, id) {
   }, dir, d.round));
 }
 
+const EVENT_FIELDS = ['kind', 'by', 'to', 'round', 'verdict', 'cause', 'followUp', 'sha', 'step', 'reason', 'closedOut'];
+
 function eventRow(e) {
   const out = {};
-  for (const [k, v] of Object.entries(e)) {
+  for (const k of EVENT_FIELDS) {
+    const v = e[k];
     if (typeof v === 'string') out[k] = v.slice(0, 200);
     else if (typeof v === 'boolean') out[k] = v;
     else if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;

@@ -367,6 +367,10 @@ test('respec records the supersession — that it happened, and by whom', () => 
   assert.strictEqual(t.respecs[0].title, 'first spec', 'names what was superseded');
   assert.strictEqual(t.respecs[1].title, 'second spec');
   assert.ok(t.respecs[0].at > 0 && t.respecs[1].at >= t.respecs[0].at, 'stamped in order');
+  assert.deepStrictEqual(t.events.filter((e) => e.kind === 'respec'), [
+    { at: t.respecs[0].at, kind: 'respec', by: 'lead' },
+    { at: t.respecs[1].at, kind: 'respec', by: 'lead' },
+  ], 'one respec event per supersession, at the same instant its respecs entry carries');
 });
 
 // t392: the title alone was not enough. A respec is written as a delta against

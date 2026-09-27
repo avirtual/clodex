@@ -648,6 +648,8 @@ test('a verdict for a ticket that is no longer open falls through to the lead', 
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't1', body: 'never mind' });
   assert.strictEqual(f.one('t1').state, 'cancelled', 'ENTER: the ticket really left the open state');
   const before = f.one('t1');
+  assert.deepStrictEqual(before.events.filter((e) => e.kind === 'cancel'),
+    [{ at: before.closedAt, kind: 'cancel', by: 'lead', reason: 'never mind' }]);
   f.gated.length = 0;
 
   await f.m._handleReviewDone(f.m.sessions.get(rec.name), 'VERDICT: ACCEPT\nlooks right');
@@ -655,6 +657,7 @@ test('a verdict for a ticket that is no longer open falls through to the lead', 
   const t = f.one('t1');
   assert.ok(!('verdict' in t), 'a closed ticket is not stamped — the loop step is over and nobody would act on it');
   assert.ok(!('reviewRound' in t), 'and no round is burned');
+  assert.deepStrictEqual(t.events, before.events, 'and no verdict event is recorded');
   assert.strictEqual(t.lastActivityAt, before.lastActivityAt, 'its clock is untouched');
   assert.strictEqual(t.closedAt, before.closedAt, 'and it stays closed');
   assert.strictEqual(f.gated.length, 1,

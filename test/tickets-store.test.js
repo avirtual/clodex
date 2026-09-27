@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { createTicketsStore, nextTicketId, titleLine, ticketTitle, extractTaskDir, branchSlug, countMustFix, extractMustFix } = require('../tickets-store');
+const { createTicketsStore, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, branchSlug, countMustFix, extractMustFix } = require('../tickets-store');
 const { projectDirFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -363,4 +363,55 @@ test('extractMustFix: a bare "empty" or qualified "none" body is null; a sentenc
   assert.strictEqual(extractMustFix('MUST-FIX: none blocking'), null);
   assert.strictEqual(extractMustFix('MUST-FIX: none — blocking'), null);
   assert.strictEqual(extractMustFix('MUST-FIX: none of the guards are checked'), 'none of the guards are checked');
+});
+
+test('recordEvent appends to an existing list in call order', () => {
+  const t = { id: 't1', events: [{ at: 1, kind: 'add', by: 'lead' }] };
+  recordEvent(t, { at: 2, kind: 'start', by: 'lead', to: 'hand-1' });
+  recordEvent(t, { at: 3, kind: 'done', by: 'hand-1', round: 1 });
+  assert.deepStrictEqual(t.events, [
+    { at: 1, kind: 'add', by: 'lead' },
+    { at: 2, kind: 'start', by: 'lead', to: 'hand-1' },
+    { at: 3, kind: 'done', by: 'hand-1', round: 1 },
+  ]);
+});
+
+test('recordEvent creates the list on a record without one', () => {
+  const t = { id: 't1' };
+  recordEvent(t, { at: 5, kind: 'nudge', by: 'ticket-loop' });
+  assert.deepStrictEqual(t.events, [{ at: 5, kind: 'nudge', by: 'ticket-loop' }]);
+});
+
+test('recordEvent keeps a finite at and defaults any other to now', () => {
+  const t = {};
+  recordEvent(t, { at: 1234, kind: 'add', by: 'lead' });
+  const before = Date.now();
+  recordEvent(t, { kind: 'start', by: 'lead' });
+  recordEvent(t, { at: NaN, kind: 'done', by: 'hand' });
+  recordEvent(t, { at: '99', kind: 'verdict', by: 'rev' });
+  const after = Date.now();
+  assert.strictEqual(t.events[0].at, 1234);
+  for (const e of t.events.slice(1)) assert.ok(e.at >= before && e.at <= after, `${e.kind} at ${e.at}`);
+});
+
+test('recordEvent throws on a missing kind or by and records nothing', () => {
+  const t = { events: [] };
+  assert.throws(() => recordEvent(t, { at: 1, by: 'lead' }), /kind required/);
+  assert.throws(() => recordEvent(t, { at: 1, kind: '', by: 'lead' }), /kind required/);
+  assert.throws(() => recordEvent(t, { at: 1, kind: 'add' }), /by required/);
+  assert.throws(() => recordEvent(t, { at: 1, kind: 'add', by: '' }), /by required/);
+  assert.deepStrictEqual(t.events, []);
+});
+
+test('recordEvent truncates a string field to 200 chars', () => {
+  const t = {};
+  recordEvent(t, { at: 1, kind: 'cancel', by: 'lead', reason: 'x'.repeat(300) });
+  assert.strictEqual(t.events[0].reason, 'x'.repeat(200));
+});
+
+test('recordEvent refuses an object or array field and records nothing', () => {
+  const t = { events: [] };
+  assert.throws(() => recordEvent(t, { at: 1, kind: 'done', by: 'hand', report: { body: 'r' } }), /report must be a scalar/);
+  assert.throws(() => recordEvent(t, { at: 1, kind: 'done', by: 'hand', rounds: [1] }), /rounds must be a scalar/);
+  assert.deepStrictEqual(t.events, []);
 });
