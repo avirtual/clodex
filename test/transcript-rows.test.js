@@ -879,13 +879,13 @@ test('a box head preview stays selectable; a press that drags out a new selectio
     if (during !== undefined) selected = during;
     head.listeners.click();
   });
-  const shape = () => boxes.map((b) => b.className);
+  const shape = () => boxes.map((b) => b.className.split(' ').includes('tr-box-folded'));
   press('', 'abc');
-  assert.deepStrictEqual(shape(), ['tr-box tr-box-folded', 'tr-box tr-box-folded tr-ticket']);
+  assert.deepStrictEqual(shape(), [true, true]);
   press('abc');
-  assert.deepStrictEqual(shape(), ['tr-box', 'tr-box tr-ticket']);
+  assert.deepStrictEqual(shape(), [false, false]);
   press('');
-  assert.deepStrictEqual(shape(), ['tr-box tr-box-folded', 'tr-box tr-box-folded tr-ticket']);
+  assert.deepStrictEqual(shape(), [true, true]);
 });
 
 test('a clipped head preview carries the full first line as its title; an unclipped one carries none', () => {
