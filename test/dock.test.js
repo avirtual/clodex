@@ -22,9 +22,14 @@ function fakeEl(id) {
     addEventListener: (type, fn) => { (listeners[type] ||= []).push(fn); },
     fire: (type, e = {}) => { for (const fn of listeners[type] || []) fn(e); },
     appendChild(child) {
+      return el.insertBefore(child, null);
+    },
+    insertBefore(child, ref) {
       if (child.parent) child.remove();
       child.parent = el;
-      el.children.push(child);
+      const at = ref ? el.children.indexOf(ref) : -1;
+      if (at < 0) el.children.push(child);
+      else el.children.splice(at, 0, child);
       return child;
     },
     remove() {
@@ -70,7 +75,8 @@ const ROWS = [
       await flush();
       assert.strictEqual(r.dock.onScreen(), false, 'ENTER: nothing shown yet');
       assert.ok(r.dockEl.classList.contains('dock-closed'), 'ENTER: the dock starts closed');
-      r.dock.setShown('files', true, { reveal: true });
+      r.dock.setShown('files', true);
+      r.dock.reveal();
       assert.strictEqual(r.dock.onScreen(), true);
       assert.strictEqual(r.dock.isShown('files'), true);
       assert.strictEqual(r.dockEl.classList.contains('dock-closed'), false);
@@ -103,11 +109,13 @@ const ROWS = [
     async run(r) {
       r.dock.addPane('files', fakeEl('side-pane'), 0);
       assert.deepStrictEqual(r.toasts, [], 'ENTER: no toast before a pane is shown');
-      r.dock.setShown('files', true, { reveal: true });
+      r.dock.setShown('files', true);
       assert.strictEqual(r.dock.isShown('files'), true);
       assert.strictEqual(r.dock.onScreen(), false);
       assert.ok(r.dockEl.classList.contains('dock-closed'));
       assert.ok(r.handle.classList.contains('dock-closed'));
+      assert.deepStrictEqual(r.toasts, [], 'ENTER: setShown alone does not toast');
+      r.dock.reveal();
       assert.deepStrictEqual(r.toasts, [
         { text: 'Widen the window to see the side pane', opts: { kind: 'warn', duration: 4000 } },
       ]);
@@ -124,7 +132,8 @@ const ROWS = [
     opts: { innerWidth: 500, web: true },
     async run(r) {
       r.dock.addPane('files', fakeEl('side-pane'), 0);
-      r.dock.setShown('files', true, { reveal: true });
+      r.dock.setShown('files', true);
+      r.dock.reveal();
       assert.strictEqual(r.dock.onScreen(), true);
       assert.ok(r.dockEl.classList.contains('dock-sheet'));
       assert.strictEqual(r.dockEl.classList.contains('dock-closed'), false);
@@ -148,6 +157,21 @@ const ROWS = [
     },
   },
   {
+    name: 'reveal re-clamps the dragged width against the current window',
+    opts: { innerWidth: 1000 },
+    async run(r) {
+      r.dock.addPane('files', fakeEl('side-pane'), 0);
+      r.dock.setShown('files', true);
+      r.handle.fire('mousedown', { button: 0, preventDefault() {} });
+      r.win.fire('mousemove', { clientX: 450 });
+      r.win.fire('mouseup');
+      assert.strictEqual(r.dockEl.style.width, '550px', 'ENTER: the drag stored 550px');
+      r.win.innerWidth = 800;
+      r.dock.reveal();
+      assert.strictEqual(r.dockEl.style.width, '480px');
+    },
+  },
+  {
     name: 'a mouseup with no drag started persists nothing',
     opts: { innerWidth: 1000 },
     async run(r) {
@@ -165,6 +189,13 @@ const ROWS = [
       r.dock.addPane('tickets', tickets, 1);
       r.dock.addPane('files', files, 0);
       assert.deepStrictEqual(r.dockEl.children.map((c) => c.id), ['side-pane', 'tickets']);
+      const moved = [];
+      const origInsert = r.dockEl.insertBefore;
+      r.dockEl.insertBefore = (child, ref) => { moved.push(child.id); return origInsert(child, ref); };
+      r.dock.addPane('feed', fakeEl('feed'), 2);
+      assert.deepStrictEqual(moved, ['feed'], 'adding a pane moves no other pane');
+      assert.deepStrictEqual(r.dockEl.children.map((c) => c.id), ['side-pane', 'tickets', 'feed']);
+      r.dock.removePane('feed');
       assert.strictEqual(files.dataset.pane, 'files');
       assert.ok(files.classList.contains('dock-pane'));
       assert.strictEqual(r.dock.front(), null, 'ENTER: nothing shown, no front');

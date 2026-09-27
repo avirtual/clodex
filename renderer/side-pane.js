@@ -220,7 +220,7 @@ function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFile
       const v = views.get(viewKey(seat, id));
       if (view !== 'edit' || (v && v.canEdit())) dispatch(seat, { type: 'view', id, view });
     }
-    dock.setShown('files', true, { reveal: true });
+    dock.reveal();
     runEffect(seat, id, effect, { forceView: view });
   }
 

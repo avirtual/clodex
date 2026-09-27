@@ -33,9 +33,11 @@ function createDock({ showToast, getSettings, setSettings, doc = document, win =
     if (panes.has(id)) removePane(id);
     el.classList.add('dock-pane');
     el.dataset.pane = id;
-    panes.set(id, { el, order, added: added++ });
+    const entry = { el, order, added: added++ };
+    panes.set(id, entry);
     const sorted = [...panes.values()].sort((a, b) => (a.order - b.order) || (a.added - b.added));
-    for (const p of sorted) dock.appendChild(p.el);
+    const i = sorted.indexOf(entry);
+    dock.insertBefore(el, i + 1 < sorted.length ? sorted[i + 1].el : null);
     render();
   }
 
@@ -48,13 +50,15 @@ function createDock({ showToast, getSettings, setSettings, doc = document, win =
     render();
   }
 
-  function setShown(id, on, { reveal = false } = {}) {
+  function setShown(id, on) {
     if (!panes.has(id)) return;
     const was = shown.includes(id);
     if (on && !was) shown.push(id);
     if (!on && was) shown = shown.filter((s) => s !== id);
     render();
-    if (!on || !reveal) return;
+  }
+
+  function reveal() {
     applyWidth();
     if (!isWeb && !sidePaneFits(win.innerWidth)) {
       showToast('Widen the window to see the side pane', { kind: 'warn', duration: 4000 });
@@ -110,7 +114,7 @@ function createDock({ showToast, getSettings, setSettings, doc = document, win =
   applyWidth();
   render();
 
-  return { addPane, removePane, setShown, isShown, onScreen, front };
+  return { addPane, removePane, setShown, isShown, onScreen, front, reveal };
 }
 
 module.exports = { createDock };
