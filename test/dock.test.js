@@ -477,6 +477,32 @@ for (const row of ROWS) {
   });
 }
 
+test('web: the three drag handles get a 10px hit area from ::before while the visual stays 5px', () => {
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = (sel) => {
+    const m = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(([, s]) => s.split(',').map((x) => x.trim()).includes(sel));
+    assert.ok(m.length, `styles.css has a rule for ${sel}`);
+    return m.map((x) => x[2]).join(';');
+  };
+  const px = (body, k) => { const m = body.match(new RegExp(`(?:^|[;\\s])${k}\\s*:\\s*(-?\\d+)px`)); return m ? Number(m[1]) : 0; };
+  assert.match(rule('#dock-handle'), /width:\s*5px/);
+  assert.match(rule('#dock-split'), /height:\s*5px/);
+  assert.match(rule('#drawer-resize'), /height:\s*5px/);
+  assert.match(rule('body.web-frontend #drawer-resize::before'), /content:\s*''/);
+  assert.match(rule('body.web-frontend #dock-handle::before'), /position:\s*absolute/);
+  const h = rule('body.web-frontend #dock-handle::before');
+  assert.strictEqual(5 - px(h, 'left') - px(h, 'right'), 10);
+  const s = rule('body.web-frontend #dock-split::before');
+  assert.strictEqual(5 - px(s, 'top') - px(s, 'bottom'), 10);
+  const d = rule('body.web-frontend #drawer-resize::before');
+  assert.strictEqual(5 - px(d, 'top') - px(d, 'bottom'), 10);
+  assert.match(rule('#drawer'), /overflow:\s*clip/, 'the drawer clips rather than hides, so the margin applies');
+  const reach = -(px(rule('#drawer-resize'), 'top') + px(d, 'top'));
+  assert.ok(px(rule('body.web-frontend #drawer'), 'overflow-clip-margin') >= reach, `the web drawer's clip margin covers the ${reach}px the hit area reaches above it`);
+  assert.match(rule('body.web-frontend #dock-split'), /position:\s*relative/);
+  assert.match(rule('#drawer-resize'), /touch-action:\s*none/);
+});
+
 test('dock: the plugin-pane divider skips dock-pane-first, and no sibling rule strips it', () => {
   const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
   assert.match(css, /\.plugin-pane:not\(\.dock-pane-hidden\):not\(\.dock-pane-first\) \{ border-top: 1px solid var\(--border\); \}/);

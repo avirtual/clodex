@@ -417,7 +417,7 @@ html, body {
    attribute, is deliberate: the chrome of the sidebar footer is core's, so a
    plugin gets a button that looks native without shipping — or being able to
    override — the footer's look. */
-#inbox-open, #sidebar-footer [data-plugin-footer] {
+#files-toggle, #inbox-open, #sidebar-footer [data-plugin-footer] {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -431,7 +431,7 @@ html, body {
   font-size: 12px;
 }
 
-#inbox-open:hover, #sidebar-footer [data-plugin-footer]:hover { background: var(--sidebar-hover); color: var(--text); }
+#files-toggle:hover, #inbox-open:hover, #sidebar-footer [data-plugin-footer]:hover { background: var(--sidebar-hover); color: var(--text); }
 .footer-glyph { font-size: 13px; line-height: 1; }
 /* The host creates the badge span unconditionally, so a button whose plugin
    declares no badge() still has one — as a flex item it would otherwise draw
@@ -439,13 +439,13 @@ html, body {
    uses badge() yet, and inventing its look before a caller exists would be
    guessing. */
 .footer-badge:empty { display: none; }
-#sidebar-footer [data-plugin-footer].footer-on { background: var(--accent-soft); color: var(--text); }
-#sidebar-footer [data-plugin-footer].footer-on .footer-glyph { color: var(--accent); }
+#files-toggle.footer-on, #sidebar-footer [data-plugin-footer].footer-on { background: var(--accent-soft); color: var(--text); }
+#files-toggle.footer-on .footer-glyph, #sidebar-footer [data-plugin-footer].footer-on .footer-glyph { color: var(--accent); }
 
 /* The `#inbox-open, #sidebar-footer [data-plugin-footer]` rule's `display: flex`
    beats the UA's `[hidden] { display: none }`, so the host's `el.hidden = true`
    needs this rule to actually hide anything. */
-#sidebar-footer [data-plugin-footer][hidden] { display: none; }
+#files-toggle[hidden], #sidebar-footer [data-plugin-footer][hidden] { display: none; }
 
 .inbox-count {
   margin-left: auto;
@@ -2097,6 +2097,13 @@ body.dock-dragging { cursor: col-resize; user-select: none; }
 #dock-split:hover, body.dock-split-dragging #dock-split { background: var(--accent); }
 body.dock-split-dragging { cursor: row-resize; user-select: none; }
 #dock-handle, #dock-split, #drawer-resize { touch-action: none; }
+body.web-frontend #dock-handle, body.web-frontend #dock-split { position: relative; z-index: 2; }
+body.web-frontend #dock-handle::before, body.web-frontend #dock-split::before,
+body.web-frontend #drawer-resize::before { content: ''; position: absolute; }
+body.web-frontend #dock-handle::before { top: 0; bottom: 0; left: -3px; right: -2px; }
+body.web-frontend #dock-split::before { left: 0; right: 0; top: -3px; bottom: -2px; }
+body.web-frontend #drawer-resize::before { left: 0; right: 0; top: -5px; bottom: 0; }
+body.web-frontend #drawer { overflow-clip-margin: 8px; }
 body.dock-dragging #drawer, body.dock-dragging #work-row,
 body.dock-split-dragging #drawer, body.dock-split-dragging #work-row,
 body.drawer-dragging #drawer, body.drawer-dragging #work-row { transition: none; }
@@ -5519,7 +5526,7 @@ body.web-frontend #sidebar-header {
 .diag-dot { color: var(--warn); }
 
 #sidebar-footer { padding: var(--sp-2); border-top: 1px solid var(--border); }
-#inbox-open, #sidebar-footer [data-plugin-footer] {
+#files-toggle, #inbox-open, #sidebar-footer [data-plugin-footer] {
   padding: 6px var(--sp-2);
   font-size: var(--fs-sm);
   color: var(--text-secondary);
@@ -6643,7 +6650,7 @@ button.seat-status-chip {
 #sidebar[data-folded="1"] #diag-actions,
 #sidebar[data-folded="1"] #auth-text,
 #sidebar[data-folded="1"] .footer-label,
-#sidebar[data-folded="1"] #sidebar-footer [data-plugin-footer] {
+#sidebar[data-folded="1"] .footer-badge {
   display: none;
 }
 #sidebar[data-folded="1"] #sidebar-header {
@@ -6711,7 +6718,9 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main { top: var(--rail-t
   font-size: 10px;
 }
 #sidebar[data-folded="1"] #sidebar-footer { padding: var(--sp-1) 2px; }
-#sidebar[data-folded="1"] #inbox-open {
+#sidebar[data-folded="1"] #files-toggle,
+#sidebar[data-folded="1"] #inbox-open,
+#sidebar[data-folded="1"] #sidebar-footer [data-plugin-footer] {
   justify-content: center;
   gap: 2px;
   padding: 5px 0;

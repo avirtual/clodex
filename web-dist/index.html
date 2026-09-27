@@ -598,6 +598,7 @@ body {
   border-top: 1px solid var(--border);
   padding: 6px 8px;
 }
+#files-toggle,
 #inbox-open,
 #sidebar-footer [data-plugin-footer] {
   display: flex;
@@ -612,6 +613,7 @@ body {
   cursor: pointer;
   font-size: 12px;
 }
+#files-toggle:hover,
 #inbox-open:hover,
 #sidebar-footer [data-plugin-footer]:hover {
   background: var(--sidebar-hover);
@@ -624,13 +626,16 @@ body {
 .footer-badge:empty {
   display: none;
 }
+#files-toggle.footer-on,
 #sidebar-footer [data-plugin-footer].footer-on {
   background: var(--accent-soft);
   color: var(--text);
 }
+#files-toggle.footer-on .footer-glyph,
 #sidebar-footer [data-plugin-footer].footer-on .footer-glyph {
   color: var(--accent);
 }
+#files-toggle[hidden],
 #sidebar-footer [data-plugin-footer][hidden] {
   display: none;
 }
@@ -2957,6 +2962,38 @@ body.dock-split-dragging {
 #dock-split,
 #drawer-resize {
   touch-action: none;
+}
+body.web-frontend #dock-handle,
+body.web-frontend #dock-split {
+  position: relative;
+  z-index: 2;
+}
+body.web-frontend #dock-handle::before,
+body.web-frontend #dock-split::before,
+body.web-frontend #drawer-resize::before {
+  content: "";
+  position: absolute;
+}
+body.web-frontend #dock-handle::before {
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -2px;
+}
+body.web-frontend #dock-split::before {
+  left: 0;
+  right: 0;
+  top: -3px;
+  bottom: -2px;
+}
+body.web-frontend #drawer-resize::before {
+  left: 0;
+  right: 0;
+  top: -5px;
+  bottom: 0;
+}
+body.web-frontend #drawer {
+  overflow-clip-margin: 8px;
 }
 body.dock-dragging #drawer,
 body.dock-dragging #work-row,
@@ -7584,6 +7621,7 @@ body.web-frontend #sidebar-header {
   padding: var(--sp-2);
   border-top: 1px solid var(--border);
 }
+#files-toggle,
 #inbox-open,
 #sidebar-footer [data-plugin-footer] {
   padding: 6px var(--sp-2);
@@ -9432,7 +9470,7 @@ button.seat-status-chip {
 #sidebar[data-folded="1"] #diag-actions,
 #sidebar[data-folded="1"] #auth-text,
 #sidebar[data-folded="1"] .footer-label,
-#sidebar[data-folded="1"] #sidebar-footer [data-plugin-footer] {
+#sidebar[data-folded="1"] .footer-badge {
   display: none;
 }
 #sidebar[data-folded="1"] #sidebar-header {
@@ -9512,7 +9550,9 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
 #sidebar[data-folded="1"] #sidebar-footer {
   padding: var(--sp-1) 2px;
 }
-#sidebar[data-folded="1"] #inbox-open {
+#sidebar[data-folded="1"] #files-toggle,
+#sidebar[data-folded="1"] #inbox-open,
+#sidebar[data-folded="1"] #sidebar-footer [data-plugin-footer] {
   justify-content: center;
   gap: 2px;
   padding: 5px 0;
@@ -9661,6 +9701,11 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
       <span id="auth-text">Claude login expired</span>
     </div>
     <div id="sidebar-footer">
+      <button id="files-toggle" data-tip="Show or hide the Files pane" type="button" aria-pressed="false" hidden>
+        <span class="footer-glyph">&#9776;</span>
+        <span class="footer-label">Files</span>
+        <span class="footer-badge zero"></span>
+      </button>
       <button id="inbox-open" data-tip="Operator inbox — notes agents raised for you" type="button">
         <span class="footer-glyph">&#9993;</span>
         <span class="footer-label">Inbox</span>
@@ -40646,6 +40691,8 @@ void main() {
             return { set: patchTab(set, a.id, { dirty: !!a.dirty }), effect: null };
           case "closePane":
             return { set: { ...set, open: false }, effect: null };
+          case "openPane":
+            return set.tabs.length ? { set: { ...set, open: true }, effect: "revalidate" } : { set, effect: null };
           case "changed":
             return agentChanged(set, a);
           case "loaded":
@@ -40940,6 +40987,7 @@ void main() {
         const views = /* @__PURE__ */ new Map();
         const seenTs = /* @__PURE__ */ new Map();
         let shownSeat = null;
+        const listeners = [];
         const setOf = (seat) => sets.get(seat) || emptyTabSet();
         const tabOf = (seat, id) => setOf(seat).tabs.find((t) => t.id === id) || null;
         const viewKey = (seat, id) => `${seat}\0${id}`;
@@ -40966,6 +41014,7 @@ void main() {
         }
         function renderChrome() {
           dock.setShown("files", !!shownSeat && setOf(shownSeat).open);
+          for (const fn of listeners) fn();
           if (!shownSeat) {
             strip.replaceChildren();
             strip.dataset.count = "0";
@@ -41141,8 +41190,28 @@ void main() {
             const v = views.get(viewKey(seat, id));
             if (view !== "edit" || v && v.canEdit()) dispatch(seat, { type: "view", id, view });
           }
+          showTab(seat, id, effect, { forceView: view });
+        }
+        function showTab(seat, id, effect, extra) {
           dock.reveal();
-          runEffect(seat, id, effect, { forceView: view });
+          runEffect(seat, id, effect, extra);
+        }
+        const hasTabs = (seat) => setOf(seat).tabs.length > 0;
+        const isOpen = (seat) => !!seat && seat === shownSeat && setOf(seat).open;
+        function toggle(seat) {
+          if (!seat) return;
+          if (isOpen(seat)) {
+            dispatch(seat, { type: "closePane" });
+            renderChrome();
+            return;
+          }
+          if (!hasTabs(seat)) return;
+          shownSeat = seat;
+          const { set, effect } = dispatch(seat, { type: "openPane" });
+          showTab(seat, set.active, effect);
+        }
+        function onChange(fn) {
+          listeners.push(fn);
         }
         function showSeat(seat) {
           shownSeat = seat || null;
@@ -41206,9 +41275,26 @@ void main() {
         });
         dock.addPane("files", pane, 0);
         renderChrome();
-        return { open, showSeat, forgetSeat, noteFiles, noteToolRecord };
+        return { open, showSeat, forgetSeat, noteFiles, noteToolRecord, toggle, hasTabs, isOpen, onChange };
       }
-      module.exports = { createSidePane };
+      function bindFilesToggle({ button, sidePane, getActiveSession }) {
+        const badge = button.querySelector(".footer-badge");
+        function refresh() {
+          const seat = getActiveSession();
+          const has = !!seat && sidePane.hasTabs(seat);
+          const on = has && sidePane.isOpen(seat);
+          button.hidden = !has;
+          button.setAttribute("aria-pressed", on ? "true" : "false");
+          button.classList.toggle("footer-on", on);
+          badge.textContent = on ? "\u2713" : "";
+          badge.classList.toggle("zero", !on);
+        }
+        button.addEventListener("click", () => sidePane.toggle(getActiveSession()));
+        sidePane.onChange(refresh);
+        refresh();
+        return { refresh };
+      }
+      module.exports = { createSidePane, bindFilesToggle };
     }
   });
 
@@ -47601,7 +47687,7 @@ ${detail}` });
       var { initBustPopover } = require_bust_popover();
       var { initSessionInfoPopover } = require_session_info_popover();
       var { initFilesPopover } = require_files_popover();
-      var { createSidePane } = require_side_pane();
+      var { createSidePane, bindFilesToggle } = require_side_pane();
       var { createDock } = require_dock();
       var { initVoicePopover } = require_voice_popover();
       var { initSelectionPopover } = require_selection_popover();
@@ -49993,6 +50079,7 @@ ${detail}` });
         if (wasActive && wasActive !== name) drawerHost.onSessionChanged();
         else drawerHost.syncSeatAvailability();
         sidePane.showSeat(name);
+        filesToggle.refresh();
         for (const [n, s] of sessions) {
           s.wrapperEl.classList.toggle("visible", n === name);
         }
@@ -52595,6 +52682,11 @@ Click for live activity`;
           if (s && s.terminal) focusPtySeat(s);
           else if (s && s.stream) s.stream.focus();
         }
+      });
+      var filesToggle = bindFilesToggle({
+        button: document.getElementById("files-toggle"),
+        sidePane,
+        getActiveSession: () => activeSession
       });
       var { openFilesPopover, openFilePeek, isFilesPopoverForKey } = initFilesPopover({
         popoverApi,

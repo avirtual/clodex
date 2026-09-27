@@ -95,7 +95,7 @@ const { initCostPopover } = require('./popovers/cost-popover');
 const { initBustPopover } = require('./popovers/bust-popover');
 const { initSessionInfoPopover } = require('./popovers/session-info-popover');
 const { initFilesPopover } = require('./popovers/files-popover');
-const { createSidePane } = require('./side-pane');
+const { createSidePane, bindFilesToggle } = require('./side-pane');
 const { createDock } = require('./dock');
 const { initVoicePopover } = require('./popovers/voice-popover');
 const { initSelectionPopover } = require('./popovers/selection-popover');
@@ -2526,6 +2526,7 @@ function switchSession(name) {
   // switch path calling both is a repeated read and nothing more.
   else drawerHost.syncSeatAvailability();
   sidePane.showSeat(name);
+  filesToggle.refresh();
 
   // Toggle visibility — use visibility so xterm can still measure
   for (const [n, s] of sessions) {
@@ -5329,6 +5330,12 @@ const sidePane = createSidePane({
     if (s && s.terminal) focusPtySeat(s);
     else if (s && s.stream) s.stream.focus();
   },
+});
+
+const filesToggle = bindFilesToggle({
+  button: document.getElementById('files-toggle'),
+  sidePane,
+  getActiveSession: () => activeSession,
 });
 
 const { openFilesPopover, openFilePeek, isFilesPopoverForKey } = initFilesPopover({

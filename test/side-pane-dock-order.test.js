@@ -21,14 +21,20 @@ function all(re) {
   return out;
 }
 
-test('side-pane open(): dock.reveal() once, before runEffect', () => {
-  const open = body('open');
+test('side-pane open() and toggle(): one dock.reveal(), in showTab(), before runEffect', () => {
+  const show = body('showTab');
   const reveals = all(/dock\.reveal\(\)/g);
   assert.strictEqual(reveals.length, 1, 'dock.reveal() appears exactly once in side-pane.js');
-  assert.ok(reveals[0] > open.start && reveals[0] < open.end, 'and it is inside open()');
-  const effect = open.text.indexOf('runEffect(seat, id, effect');
-  assert.ok(effect >= 0, 'ENTER: open() runs the effect');
-  assert.ok(reveals[0] - open.start < effect, 'dock.reveal() precedes runEffect(seat, id, effect');
+  assert.ok(reveals[0] > show.start && reveals[0] < show.end, 'and it is inside showTab()');
+  const effect = show.text.indexOf('runEffect(seat, id, effect');
+  assert.ok(effect >= 0, 'ENTER: showTab() runs the effect');
+  assert.ok(reveals[0] - show.start < effect, 'dock.reveal() precedes runEffect(seat, id, effect');
+  const open = body('open');
+  assert.ok(open.text.includes('showTab(seat, id, effect'), 'open() reveals through showTab()');
+  assert.ok(!open.text.includes('runEffect('), 'open() runs no effect outside showTab()');
+  const toggle = body('toggle');
+  assert.ok(toggle.text.includes('showTab(seat, set.active, effect'), 'toggle() reopens through showTab()');
+  assert.ok(!toggle.text.includes('runEffect('), 'toggle() runs no effect outside showTab()');
 });
 
 test('side-pane: every dock.setShown( call is inside renderChrome()', () => {

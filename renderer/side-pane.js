@@ -17,6 +17,7 @@ function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFile
   const views = new Map();
   const seenTs = new Map();
   let shownSeat = null;
+  const listeners = [];
 
   const setOf = (seat) => sets.get(seat) || emptyTabSet();
   const tabOf = (seat, id) => setOf(seat).tabs.find((t) => t.id === id) || null;
@@ -48,6 +49,7 @@ function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFile
 
   function renderChrome() {
     dock.setShown('files', !!shownSeat && setOf(shownSeat).open);
+    for (const fn of listeners) fn();
     if (!shownSeat) { strip.replaceChildren(); strip.dataset.count = '0'; return; }
     const set = setOf(shownSeat);
     const view = stripState(set);
@@ -220,8 +222,32 @@ function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFile
       const v = views.get(viewKey(seat, id));
       if (view !== 'edit' || (v && v.canEdit())) dispatch(seat, { type: 'view', id, view });
     }
+    showTab(seat, id, effect, { forceView: view });
+  }
+
+  function showTab(seat, id, effect, extra) {
     dock.reveal();
-    runEffect(seat, id, effect, { forceView: view });
+    runEffect(seat, id, effect, extra);
+  }
+
+  const hasTabs = (seat) => setOf(seat).tabs.length > 0;
+  const isOpen = (seat) => !!seat && seat === shownSeat && setOf(seat).open;
+
+  function toggle(seat) {
+    if (!seat) return;
+    if (isOpen(seat)) {
+      dispatch(seat, { type: 'closePane' });
+      renderChrome();
+      return;
+    }
+    if (!hasTabs(seat)) return;
+    shownSeat = seat;
+    const { set, effect } = dispatch(seat, { type: 'openPane' });
+    showTab(seat, set.active, effect);
+  }
+
+  function onChange(fn) {
+    listeners.push(fn);
   }
 
   function showSeat(seat) {
@@ -291,7 +317,25 @@ function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFile
   dock.addPane('files', pane, 0);
   renderChrome();
 
-  return { open, showSeat, forgetSeat, noteFiles, noteToolRecord };
+  return { open, showSeat, forgetSeat, noteFiles, noteToolRecord, toggle, hasTabs, isOpen, onChange };
 }
 
-module.exports = { createSidePane };
+function bindFilesToggle({ button, sidePane, getActiveSession }) {
+  const badge = button.querySelector('.footer-badge');
+  function refresh() {
+    const seat = getActiveSession();
+    const has = !!seat && sidePane.hasTabs(seat);
+    const on = has && sidePane.isOpen(seat);
+    button.hidden = !has;
+    button.setAttribute('aria-pressed', on ? 'true' : 'false');
+    button.classList.toggle('footer-on', on);
+    badge.textContent = on ? '✓' : '';
+    badge.classList.toggle('zero', !on);
+  }
+  button.addEventListener('click', () => sidePane.toggle(getActiveSession()));
+  sidePane.onChange(refresh);
+  refresh();
+  return { refresh };
+}
+
+module.exports = { createSidePane, bindFilesToggle };
