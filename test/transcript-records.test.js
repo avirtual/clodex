@@ -197,6 +197,7 @@ test('meta, sidechain, attachment, bookkeeping and orphan tool_result records pr
     rec({ type: 'user', uuid: 'm', isMeta: true, message: { content: 'meta' } }),
     rec({ type: 'user', uuid: 's', isSidechain: true, message: { content: 'sub' } }),
     rec({ type: 'attachment', uuid: 'a', attachment: { type: 'x' } }),
+    rec({ type: 'attachment', uuid: 'n', attachment: { type: 'queued_command', origin: null, commandMode: 'task-notification', prompt: '<task-notification>done</task-notification>' }, rendered: null }),
     rec({ type: 'ai-title', uuid: 't', aiTitle: 'x' }),
     rec({ type: 'user', uuid: 'o', message: { content: [{ type: 'tool_result', tool_use_id: 'gone', content: 'x' }] } }),
     rec({ type: 'user', uuid: 'x', message: { content: '<local-command-caveat>x</local-command-caveat>' } }),
@@ -541,4 +542,48 @@ test('id-less append stability: appending two lines leaves the first run head at
   const after = recordsOf(`${T}\n${rec({ type: 'user', message: { content: 'again' } })}\n${rec({ type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] } })}`).records;
   assert.strictEqual(after.length, before.length + 2, 'ENTER: the append parsed');
   assert.deepStrictEqual(after.slice(0, before.length).map((r) => r.id), ['line:0', 'line:1', 't1']);
+});
+
+const WRAPPER = '<system-reminder>\nThe user sent a new message while you were working:\nhi\n</system-reminder>';
+const midTurn = (uuid, prompt, rendered = WRAPPER) => rec({ type: 'attachment', uuid, timestamp: '2026-09-27T10:42:00.000Z', attachment: { type: 'queued_command', origin: { kind: 'human' }, commandMode: 'prompt', humanTurn: true, prompt }, rendered });
+const replied = (uuid, text) => rec({ type: 'assistant', uuid, message: { content: [{ type: 'text', text }] } });
+const TS = Date.parse('2026-09-27T10:42:00.000Z');
+
+test('ENTER: the mid-turn fixture carries the CLI wrapper in rendered', () => {
+  assert.ok(JSON.parse(midTurn('q', 'hi')).rendered.includes('The user sent a new message'));
+});
+
+test('a human queued_command attachment is one mid-turn prompt in the running turn, delivered, and the wrapper shows nowhere', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), midTurn('q', 'hi')].join('\n'));
+  assert.deepStrictEqual(records[1], { id: 'q', kind: 'prompt', ts: TS, turn: 1, text: 'hi', source: 'mid-turn', state: 'delivered' });
+  assert.ok(!JSON.stringify(records).includes('The user sent a new message'));
+});
+
+test('an assistant record after a mid-turn prompt in the same turn marks it read and shares its turn', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), midTurn('q', 'hi'), replied('a1', 'ok')].join('\n'));
+  const mid = records.find((r) => r.id === 'q');
+  const reply = records.find((r) => r.id === 'a1');
+  assert.strictEqual(mid.state, 'read');
+  assert.strictEqual(reply.turn, mid.turn);
+});
+
+test('only a tool_result after a mid-turn prompt leaves it delivered', () => {
+  const { records } = recordsOf([
+    typed('p1', 'P', 'go'),
+    rec({ type: 'assistant', uuid: 'a0', message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }] } }),
+    midTurn('q', 'hi'),
+    rec({ type: 'user', uuid: 'r1', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'x' }] } }),
+  ].join('\n'));
+  assert.strictEqual(records.find((r) => r.id === 'q').state, 'delivered');
+});
+
+test('a mid-turn prompt with a text block and an image block carries images like a typed prompt', () => {
+  const { records } = recordsOf(midTurn('q', [{ type: 'text', text: '[Image #1]see' }, image('iVBORw0KGgo=')], null));
+  assert.deepStrictEqual(records[0].images, [{ n: 1, mediaType: 'image/png', data: 'iVBORw0KGgo=' }]);
+  assert.strictEqual(records[0].source, 'mid-turn');
+});
+
+test('a mid-turn prompt joins the running turn: prompt, mid-turn, assistant, prompt are turns 1, 1, 1, 2', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), midTurn('q', 'hi'), replied('a1', 'ok'), typed('p2', 'Q', 'next')].join('\n'));
+  assert.deepStrictEqual(records.map((r) => r.turn), [1, 1, 1, 2]);
 });

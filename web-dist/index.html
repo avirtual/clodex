@@ -8525,6 +8525,30 @@ body.web-frontend #sidebar-header {
   -webkit-line-clamp: unset;
   overflow: visible;
 }
+.tr-prompt-mid {
+  border-left: 2px dashed var(--text-tertiary);
+  padding-left: var(--sp-2);
+}
+.tr-mid {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.tr-mid-state {
+  flex: none;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.tr-mid-state[data-state=delivered] {
+  color: var(--text-tertiary);
+  opacity: 0.8;
+}
+.tr-mid-state[data-state=read] {
+  color: var(--accent);
+}
 .tr-image-thumb {
   height: 48px;
   width: auto;
@@ -31593,12 +31617,21 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (at < rec.text.length || !at) appendProse(doc, text, rec.text.slice(at), ctx);
       }
       function promptRow(doc, rec, ctx) {
-        const row = headRow(doc, "tr-prompt", rec);
+        const mid = rec.source === "mid-turn";
+        const row = headRow(doc, mid ? "tr-prompt tr-prompt-mid" : "tr-prompt", rec);
+        if (mid) row.appendChild(el(doc, "span", "tr-mid", "mid-turn"));
         const text = el(doc, "span", "tr-head-text");
         if (rec.pastes || rec.images) appendPrompt(doc, text, rec, ctx);
         else appendProse(doc, text, rec.text, ctx);
         row.appendChild(text);
-        return withTime(doc, row, rec);
+        withTime(doc, row, rec);
+        if (mid) {
+          const read = rec.state === "read";
+          const state = el(doc, "span", "tr-mid-state", read ? "\u2713 read" : "delivered");
+          state.dataset.state = read ? "read" : "delivered";
+          row.appendChild(state);
+        }
+        return row;
       }
       function senderBadge(doc, from) {
         const { cls, label, glyph } = classifySender(from);

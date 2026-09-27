@@ -414,8 +414,16 @@ function systemRecords(rec, base) {
   return [];
 }
 
+function midTurnRecords(rec, base, tools) {
+  const a = rec.attachment;
+  if (!a || a.type !== 'queued_command' || !a.origin || a.origin.kind !== 'human') return [];
+  const user = { type: 'user', uuid: rec.uuid, timestamp: rec.timestamp, message: { role: 'user', content: a.prompt } };
+  return userRecords(user, base, tools).map((r) => (r.kind === 'prompt' ? { ...r, source: 'mid-turn', state: 'delivered' } : r));
+}
+
 function recordsOfLine(rec, base, tools) {
   if (rec.type === 'system') return systemRecords(rec, base);
+  if (rec.type === 'attachment') return midTurnRecords(rec, base, tools);
   if (!rec.message) return [];
   if (rec.type === 'user') return userRecords(rec, base, tools);
   if (rec.type === 'assistant') return assistantRecords(rec, base, tools);
@@ -473,6 +481,7 @@ function recordsOf(text, max = RECORD_CAP) {
   const all = [];
   let turn = 0;
   let lastPromptId = null;
+  let unread = [];
   const lines = [];
   for (const line of String(text).split('\n')) {
     if (!line.trim()) continue;
@@ -495,8 +504,14 @@ function recordsOf(text, max = RECORD_CAP) {
     const produced = recordsOfLine(rec, base, tools);
     if (produced.length) lastPromptId = rec.promptId || null;
     for (const r of produced) {
-      if (TURN_KINDS.has(r.kind)) { turn += 1; r.turn = turn; }
-      else r.turn = turn;
+      const midTurn = r.kind === 'prompt' && r.source === 'mid-turn';
+      if (TURN_KINDS.has(r.kind) && !midTurn) { turn += 1; unread = []; }
+      r.turn = turn;
+      if (r.kind === 'assistant' || r.kind === 'tool') {
+        for (const u of unread) u.state = 'read';
+        unread = [];
+      }
+      if (midTurn) unread.push(r);
       all.push(r);
     }
   }
