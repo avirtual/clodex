@@ -72,7 +72,7 @@ const { VOICE_ENGINE_NAME } = require('../voice-engine');
 const {
   DEFAULT_SUBMIT_PHRASE, readVoiceSubmitSettings, spaceTriggerAction, ptyTypedSinceEnter,
 } = require('./lib/voice-submit');
-const { createLiveSplitView, renderTranscript, transcriptRowsFor, internalsBar, TRANSCRIPT_PULL_MS } = require('./live-split-view');
+const { createLiveSplitView, renderTranscript, transcriptRowsFor, modeBar, TRANSCRIPT_PULL_MS } = require('./live-split-view');
 const { initBanners } = require('./banners');
 const { initThemes } = require('./themes');
 const { createEchoRewriter } = require('./lib/prompt-echo');
@@ -117,33 +117,23 @@ function markSeatIo(name, io) {
 let activeSession = null;
 let terminalWebglEnabled = false;
 let transcriptPaneEnabled = false;
-let transcriptPaneInternals = true;
-let transcriptPaneTools = true;
+let transcriptPaneMode = 'conversation';
 function refreshTranscriptPanes() {
   for (const entry of sessions.values()) {
     if (entry.liveSplit) entry.liveSplit.refresh();
-    if (entry.stream) {
-      entry.stream.setInternals(transcriptPaneInternals);
-      entry.stream.setTools(transcriptPaneTools);
-    }
+    if (entry.stream) entry.stream.setMode(transcriptPaneMode);
   }
 }
-function setTranscriptPaneInternals(on) {
-  transcriptPaneInternals = !!on;
-  try { window.api.setSettings({ transcriptPaneInternals }); } catch {}
-  refreshTranscriptPanes();
-}
-function setTranscriptPaneTools(on) {
-  transcriptPaneTools = !!on;
-  try { window.api.setSettings({ transcriptPaneTools }); } catch {}
+function setTranscriptPaneMode(next) {
+  transcriptPaneMode = next === 'internals' ? 'internals' : 'conversation';
+  try { window.api.setSettings({ transcriptPaneMode }); } catch {}
   refreshTranscriptPanes();
 }
 const terminalWebglReady = window.api.getSettings()
   .then((s) => {
     terminalWebglEnabled = !!(s && s.terminalWebgl === true);
     transcriptPaneEnabled = !!(s && s.transcriptPane === true);
-    transcriptPaneInternals = !(s && s.transcriptPaneInternals === false);
-    transcriptPaneTools = !(s && s.transcriptPaneTools === false);
+    transcriptPaneMode = s && s.transcriptPaneMode === 'internals' ? 'internals' : 'conversation';
     refreshTranscriptPanes();
   })
   .catch(() => {});
@@ -1672,7 +1662,7 @@ function createStreamSeatPane(name, wrapperEl) {
   const paneEl = document.createElement('div');
   paneEl.className = 'transcript-pane transcript-pane-full';
   wrapperEl.appendChild(paneEl);
-  const internalsToggle = internalsBar(document, paneEl, transcriptPaneInternals, setTranscriptPaneInternals, transcriptPaneTools, setTranscriptPaneTools);
+  const modeToggle = modeBar(document, paneEl, transcriptPaneMode, setTranscriptPaneMode);
   const composer = document.createElement('textarea');
   const composerKit = attachComposer(composer, {
     onSend: () => sendComposer(),
@@ -1859,9 +1849,8 @@ function createStreamSeatPane(name, wrapperEl) {
     openExternal: (url) => window.api.openExternal(url),
     toast: showToast,
     echoPalette: currentEchoPalette,
-    lead: internalsToggle.bar,
-    internals: transcriptPaneInternals,
-    tools: transcriptPaneTools,
+    lead: modeToggle.bar,
+    mode: transcriptPaneMode,
   };
   const pull = (force = false) => {
     if (pulling || disposed) return;
@@ -2068,13 +2057,9 @@ function createStreamSeatPane(name, wrapperEl) {
       composer.classList.toggle('voice-recording', !!on);
       applyPlaceholder();
     },
-    setInternals(on) {
-      internalsToggle.box.checked = !!on;
-      transcriptRowsFor(document, paneEl, rowsCtx).setInternals(on);
-    },
-    setTools(on) {
-      internalsToggle.toolsBox.checked = !!on;
-      transcriptRowsFor(document, paneEl, rowsCtx).setTools(on);
+    setMode(next) {
+      modeToggle.setMode(next);
+      transcriptRowsFor(document, paneEl, rowsCtx).setMode(next);
     },
     setTurnRunning(activity, since) {
       turnRunning = activity === 'thinking' || activity === 'attention';
@@ -2381,10 +2366,8 @@ function createTerminal(name, peer = null) {
     openExternal: (url) => window.api.openExternal(url),
     toast: showToast,
     echoPalette: currentEchoPalette,
-    internals: () => transcriptPaneInternals,
-    onInternals: setTranscriptPaneInternals,
-    tools: () => transcriptPaneTools,
-    onTools: setTranscriptPaneTools,
+    mode: () => transcriptPaneMode,
+    onMode: setTranscriptPaneMode,
     composerEl,
     menuMirror,
     sheet: true,

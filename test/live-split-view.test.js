@@ -562,28 +562,33 @@ test('a render that replaces a changed row keeps the unchanged rows and leaves a
   } finally { m.view.dispose(); m.restore(); }
 });
 
-test('the pane leads with an Internals checkbox that stays first, and unticking it hides injected rows and reports the choice', async () => {
-  let shown = true;
+test('the pane leads with a Conversation / Internals mode control that stays first; Conversation hides injected rows and reports the choice', async () => {
+  let current = 'internals';
   const reported = [];
   const recs = [HEAD, { id: 'n1', kind: 'notice', ts: null, turn: 1, level: 'info', text: 'filed' }];
-  const m = mountView({ internals: () => shown, onInternals: (on) => reported.push(on), pullTranscript: () => ({ ok: true, rev: 1, records: recs }) });
+  const m = mountView({ mode: () => current, onMode: (next) => reported.push(next), pullTranscript: () => ({ ok: true, rev: 1, records: recs }) });
   try {
     m.write();
     await settle();
     const [bar, turn] = m.pane.childNodes;
     assert.strictEqual(bar.className, 'transcript-bar');
-    const label = bar.childNodes[0];
-    const box = label.childNodes[0];
-    assert.deepStrictEqual([box.tag, box.type, box.checked, label.textContent], ['input', 'checkbox', true, 'Internals']);
+    const control = bar.childNodes[0];
+    assert.strictEqual(control.className, 'transcript-mode');
+    const [conv, internals] = control.childNodes;
+    const pressed = () => control.childNodes.map((b) => [b.tag, b.type, b.textContent, b.getAttribute('aria-pressed')]);
+    assert.deepStrictEqual(pressed(), [['button', 'button', 'Conversation', 'false'], ['button', 'button', 'Internals', 'true']]);
     const notice = () => turn.childNodes.find((n) => n.dataset.id === 'n1');
     assert.strictEqual(notice().className, 'tr-box');
-    box.checked = false;
-    box.listeners.change();
-    assert.deepStrictEqual(reported, [false]);
+    conv.listeners.click();
+    assert.deepStrictEqual(reported, ['conversation']);
     assert.strictEqual(notice().className, 'tr-box tr-hidden');
-    shown = true;
+    assert.deepStrictEqual(pressed().map((p) => p[3]), ['true', 'false']);
+    internals.listeners.click();
+    internals.listeners.click();
+    assert.deepStrictEqual(reported, ['conversation', 'internals']);
+    current = 'conversation';
     m.view.refresh();
-    assert.deepStrictEqual([box.checked, notice().className], [true, 'tr-box']);
+    assert.deepStrictEqual([pressed().map((p) => p[3]), notice().className], [['true', 'false'], 'tr-box tr-hidden']);
   } finally { m.view.dispose(); m.restore(); }
 });
 
@@ -1299,31 +1304,28 @@ test('a picker that hides the composer clears the pending tag, so a later block 
   } finally { m.done(); }
 });
 
-test('the transcript bar renders Internals and Tools checkboxes; changing Tools reports through onTools and hides the tool block; refresh follows the tools getter', async () => {
-  let toolsOn = true;
+test('the transcript bar renders exactly the Conversation and Internals buttons; Conversation reports through onMode and hides the tool block; refresh follows the mode getter', async () => {
+  let current = 'internals';
   const reported = [];
-  const m = await mountSplit(undefined, { tools: () => toolsOn, onTools: (on) => reported.push(on) });
+  const m = await mountSplit(undefined, { mode: () => current, onMode: (next) => reported.push(next) });
   try {
     const bar = m.pane.childNodes.find((n) => n.className === 'transcript-bar');
-    const labels = bar.childNodes.map((l) => textOf(l));
-    assert.deepStrictEqual(labels, ['Internals', 'Tools']);
-    const toolsBox = bar.childNodes[1].childNodes[0];
-    assert.strictEqual(toolsBox.checked, true);
+    assert.strictEqual(bar.childNodes.length, 1);
+    const [conv, internals] = bar.childNodes[0].childNodes;
+    assert.deepStrictEqual(bar.childNodes[0].childNodes.map((b) => textOf(b)), ['Conversation', 'Internals']);
     const block = () => m.pane.childNodes.find((n) => /\btr-turn\b/.test(n.className)).childNodes.find((n) => /\btr-tool-block\b/.test(n.className));
     assert.ok(!/\btr-hidden\b/.test(block().className));
-    toolsBox.checked = false;
-    toolsBox.listeners.change();
-    assert.deepStrictEqual(reported, [false]);
+    conv.listeners.click();
+    assert.deepStrictEqual(reported, ['conversation']);
     assert.ok(/\btr-hidden\b/.test(block().className));
-    toolsBox.checked = true;
-    toolsBox.listeners.change();
-    toolsOn = false;
+    internals.listeners.click();
+    current = 'conversation';
     m.view.refresh();
-    assert.strictEqual(toolsBox.checked, false);
+    assert.strictEqual(conv.getAttribute('aria-pressed'), 'true');
     assert.ok(/\btr-hidden\b/.test(block().className));
-    toolsOn = true;
+    current = 'internals';
     m.view.refresh();
-    assert.strictEqual(toolsBox.checked, true);
+    assert.strictEqual(internals.getAttribute('aria-pressed'), 'true');
     assert.ok(!/\btr-hidden\b/.test(block().className));
   } finally { m.view.dispose(); m.restore(); }
 });

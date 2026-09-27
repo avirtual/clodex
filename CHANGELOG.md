@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Transcript pane: a Conversation / Internals switch replaces the Internals/Tools checkboxes. Conversation, the new default (your previous checkbox choice is not carried over), shows your prompts, the agent's prose and messages, and ticket lifecycle. Internals shows the full trace.
 - Ticket verdict messages now open with a `[ticket tN ACCEPT|REWORK]` marker, and done/cancel/reassign notices delivered as attachments keep their `[ticket tN …]` marker on the pointer line.
 - Ticket loop: must-fixes that have to wait for a busy seat keep the pending rejection's reasons with them, so a rejection whose Enter was eaten is not lost when the follow-up is parked.
 - Ticket loop: must-fixes added before a seat has taken its turn on a rejection are typed together with that rejection's reasons, so a rejection whose Enter was eaten is not lost even when the follow-up lands.

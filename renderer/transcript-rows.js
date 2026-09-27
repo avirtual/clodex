@@ -7,6 +7,7 @@ const { scanLinks } = require('./lib/path-scan');
 const { rewriteEchoSgr } = require('./lib/prompt-echo');
 const { isExternallyOpenable } = require('../external-link');
 const { isInternalRow } = require('../transcript-internal');
+const { surfaceOf, segmentSurface } = require('./lib/transcript-surface');
 
 const OUTPUT_LINE_CAP = 400;
 const CLAMP_LINES = 2;
@@ -452,6 +453,23 @@ function internalBox(doc, rec, row, opened, att) {
   return box;
 }
 
+function ticketChip(doc, node, ticket) {
+  toggleClass(node, 'tr-ticket', true);
+  const chip = el(doc, 'span', 'tr-ticket-chip', ticket.tag ? `${ticket.id} ${ticket.tag}` : ticket.id);
+  const head = node.childNodes.find((c) => c.className === 'tr-box-head');
+  if (head) head.insertBefore(chip, head.childNodes.find((c) => c.className === 'tr-box-preview') || null);
+  else node.insertBefore(chip, node.firstChild);
+  return node;
+}
+
+function isTalk(r) {
+  return r.kind !== 'turn-end' && surfaceOf(r) === 'conversation';
+}
+
+function hasInternalSeg(r) {
+  return r.kind === 'assistant' && Array.isArray(r.segments) && isTalk(r) && r.segments.some((s) => segmentSurface(s) !== 'conversation');
+}
+
 function buildRow(doc, rec, ctx, attached) {
   switch (rec.kind) {
     case 'prompt': return promptRow(doc, rec, ctx);
@@ -636,11 +654,10 @@ function groupTurns(records) {
 }
 
 function createTranscriptRows(doc, paneEl, ctx = {}) {
-  const deps = { lead: null, internals: true, tools: true, seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
+  const deps = { lead: null, mode: 'internals', seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
   const turnCache = new Map();
   const opened = new Set();
-  let showInternals = deps.internals !== false;
-  let showTools = deps.tools !== false;
+  let mode = deps.mode === 'conversation' ? 'conversation' : 'internals';
   let lastRecords = [];
   let working = null;
   let workingEl = null;
@@ -732,7 +749,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         c.key = key;
         c.tools = tools;
         paintBlock(c);
-        toggleClass(c.el, 'tr-hidden', !showTools);
+        toggleClass(c.el, 'tr-hidden', mode === 'conversation');
       },
     };
   }
@@ -748,16 +765,25 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
       if (r.kind === 'turn-end') continue;
       const att = attached.has(r.id);
       const extra = r.kind === 'command-output' ? JSON.stringify(resolvePalette(deps) || null) : att ? '|attached' : '';
+      const hidden = mode === 'conversation' && !isTalk(r);
+      const after = (c) => toggleClass(c.el, 'tr-hidden', hidden);
       if (isInternalRow(r)) {
         items.push({
           key: r.id,
           sig: recSig(r) + extra,
-          build: () => internalBox(doc, r, buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row'), opened, att),
-          after: (c) => toggleClass(c.el, 'tr-hidden', !showInternals),
+          build: () => {
+            const box = internalBox(doc, r, buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row'), opened, att);
+            return r.ticket ? ticketChip(doc, box, r.ticket) : box;
+          },
+          after,
         });
         continue;
       }
-      items.push({ key: r.id, sig: recSig(r) + extra, build: () => buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row') });
+      const full = mode === 'internals';
+      const omit = !full && hasInternalSeg(r);
+      const view = omit ? { ...r, segments: r.segments.filter((s) => segmentSurface(s) === 'conversation') } : r;
+      const sig = recSig(r) + extra + (hasInternalSeg(r) ? (full ? '|full' : '|conv') : '');
+      items.push({ key: r.id, sig, build: () => buildRow(doc, view, deps, att) || el(doc, 'div', 'tr-row'), after });
     }
     const footer = footerOf(records);
     if (footer) items.push({ key: 'footer', sig: JSON.stringify(footer), build: () => buildFooter(doc, footer, deps) });
@@ -778,7 +804,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
       after: (c) => {
         if (!c.sub) c.sub = new Map();
         reconcile(c.el, c.sub, rowItems(t.records, attached));
-        toggleClass(c.el, 'tr-hidden', (!showInternals || !showTools) && t.records.every((r) => r.kind === 'turn-end' || (!showInternals && isInternalRow(r)) || (!showTools && r.kind === 'tool')));
+        toggleClass(c.el, 'tr-hidden', mode === 'conversation' && !t.records.some(isTalk));
       },
     }));
     reconcile(paneEl, turnCache, items, deps.lead);
@@ -786,19 +812,41 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     if (working) paintWorking();
   }
 
-  function setInternals(on) {
-    if (showInternals === !!on) return;
-    showInternals = !!on;
-    render(lastRecords);
+  function visibleTurns() {
+    return paneEl.childNodes.filter((n) => /\btr-turn\b/.test(n.className) && !/\btr-hidden\b/.test(n.className));
   }
 
-  function setTools(on) {
-    if (showTools === !!on) return;
-    showTools = !!on;
-    render(lastRecords);
+  function anchorOf() {
+    const top = paneEl.scrollTop;
+    if (typeof top !== 'number' || typeof paneEl.scrollHeight !== 'number') return null;
+    if (top + (paneEl.clientHeight || 0) >= paneEl.scrollHeight - 4) return { bottom: true };
+    const turns = paneEl.childNodes.filter((n) => /\btr-turn\b/.test(n.className));
+    const at = turns.find((n) => !/\btr-hidden\b/.test(n.className) && typeof n.offsetTop === 'number' && n.offsetTop + (n.offsetHeight || 0) > top);
+    if (!at) return null;
+    return { turns: turns.slice(turns.indexOf(at)), offset: at.offsetTop - top };
   }
 
-  return { render, setWorking, setInternals, setTools };
+  function restore(anchor) {
+    if (!anchor) return;
+    if (anchor.bottom) {
+      paneEl.scrollTop = paneEl.scrollHeight;
+      return;
+    }
+    const shown = new Set(visibleTurns());
+    const next = anchor.turns.find((n) => shown.has(n));
+    if (next && typeof next.offsetTop === 'number') paneEl.scrollTop = next.offsetTop - anchor.offset;
+  }
+
+  function setMode(next) {
+    const want = next === 'conversation' ? 'conversation' : 'internals';
+    if (mode === want) return;
+    const anchor = anchorOf();
+    mode = want;
+    render(lastRecords);
+    restore(anchor);
+  }
+
+  return { render, setWorking, setMode };
 }
 
 module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows };

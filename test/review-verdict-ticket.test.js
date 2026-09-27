@@ -1843,7 +1843,7 @@ test('t906: an ACCEPT is untouched — the brief lines are REWORK-only', async (
     'Landed on the ticket record; the board shows it via [agent:task list all].',
     `Full verdict (44 bytes): ${path}`,
   ].join('\n'),
-  'the ACCEPT body is byte-for-byte what it was before the REWORK arm existed — "ACCEPT is out of scope" is the claim, and one extra line here is a change to the merge path\'s only lead signal');
+  '"ACCEPT is out of scope" is the claim, and one extra line here is a change to the merge path\'s only lead signal');
   assert.strictEqual(f.one('t1').reworkRound, undefined, 'and nothing was rejected');
 });
 
