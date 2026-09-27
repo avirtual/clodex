@@ -286,6 +286,7 @@ test('drawer height: a drag clears tall', () => {
     expanded(h);
     assert.equal(h.tall(), true);
     h.drag(600);
+    assert.equal(h.tall(), false);
     h.release();
     assert.equal(h.tall(), false);
     assert.equal(h.store.get('clodex-drawer-tall'), '0');
@@ -352,9 +353,36 @@ test('drawer height: a window resize re-clamps the remembered height to the new 
   }, { storage: { 'clodex-drawer-h': '600' } });
 });
 
-test('#drawer caps its height at 70%, the same ceiling the drag clamps to', () => {
-  const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+test('drawer height: a boot before #main has a height clamps on the next frame, never unclamped', () => {
+  harness((h) => {
+    assert.equal(h.drawerH(), undefined);
+    h.byId.get('main').clientHeight = 500;
+    h.flush();
+    assert.equal(h.drawerH(), '350px');
+  }, { storage: { 'clodex-drawer-h': '600' }, mainHeight: 0 });
+});
+
+test('#drawer caps its height at 70%, the same ceiling the drag clamps to and the tall preset uses', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  const js = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'drawer-host.js'), 'utf8');
   const block = css.match(/\n#drawer \{[^}]*\}/);
   assert.ok(block, 'no #drawer block');
   assert.match(block[0], /max-height: 70%;/);
+  assert.match(css, /--drawer-tall-h: 70%;/);
+  assert.match(js, /const DRAWER_MAX_FRACTION = 0\.7;/);
+});
+
+test('#drawer-resize straddles the drawer top edge instead of covering the header', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  const handle = css.match(/\n#drawer-resize \{[^}]*\}/);
+  assert.ok(handle, 'no #drawer-resize block');
+  assert.match(handle[0], /top: -3px;/);
+  assert.match(handle[0], /height: 5px;/);
+  const block = css.match(/\n#drawer \{[^}]*\}/);
+  assert.match(block[0], /overflow: clip;/);
+  assert.match(block[0], /overflow-clip-margin: 3px;/);
 });

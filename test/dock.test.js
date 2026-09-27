@@ -388,6 +388,31 @@ const ROWS = [
     },
   },
   {
+    name: 'the first shown plugin pane after the split carries dock-pane-first, past a hidden one',
+    opts: { innerWidth: 1000, split: true },
+    async run(r) {
+      const files = fakeEl('side-pane');
+      const tickets = fakeEl('tickets');
+      const notes = fakeEl('notes');
+      r.dock.addPane('files', files, 0);
+      r.dock.addPane('tickets', tickets, 1);
+      r.dock.addPane('notes', notes, 2);
+      r.dock.setShown('files', true);
+      r.dock.setShown('notes', true);
+      assert.deepStrictEqual(r.dockEl.children.map((c) => c.id), ['side-pane', 'dock-split', 'tickets', 'notes']);
+      assert.ok(tickets.classList.contains('dock-pane-hidden'), 'ENTER: the middle pane is hidden');
+      assert.strictEqual(r.splitEl.classList.contains('dock-closed'), false, 'ENTER: the split is up');
+      assert.ok(notes.classList.contains('dock-pane-first'));
+      assert.strictEqual(tickets.classList.contains('dock-pane-first'), false);
+      assert.strictEqual(files.classList.contains('dock-pane-first'), false);
+      r.dock.setShown('tickets', true);
+      assert.ok(tickets.classList.contains('dock-pane-first'));
+      assert.strictEqual(notes.classList.contains('dock-pane-first'), false);
+      r.dock.setShown('files', false);
+      assert.strictEqual(tickets.classList.contains('dock-pane-first'), false, 'no split → no first pane');
+    },
+  },
+  {
     name: 'the split handle is absent on the web sheet',
     opts: { innerWidth: 500, web: true, split: true },
     async run(r) {
@@ -453,7 +478,7 @@ for (const row of ROWS) {
 }
 
 test('web: the three drag handles get a 10px hit area from ::before while the visual stays 5px', () => {
-  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  const css = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
   const rule = (sel) => {
     const m = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(([, s]) => s.split(',').map((x) => x.trim()).includes(sel));
     assert.ok(m.length, `styles.css has a rule for ${sel}`);
@@ -471,9 +496,15 @@ test('web: the three drag handles get a 10px hit area from ::before while the vi
   assert.strictEqual(5 - px(s, 'top') - px(s, 'bottom'), 10);
   const d = rule('body.web-frontend #drawer-resize::before');
   assert.strictEqual(5 - px(d, 'top') - px(d, 'bottom'), 10);
-  const drawer = rule('body.web-frontend #drawer');
-  assert.match(drawer, /overflow:\s*clip/, 'the web drawer clips rather than hides, so the margin applies');
-  assert.ok(px(drawer, 'overflow-clip-margin') >= -px(d, 'top'), 'the drawer lets the handle reach past its top edge');
+  assert.match(rule('#drawer'), /overflow:\s*clip/, 'the drawer clips rather than hides, so the margin applies');
+  const reach = -(px(rule('#drawer-resize'), 'top') + px(d, 'top'));
+  assert.ok(px(rule('body.web-frontend #drawer'), 'overflow-clip-margin') >= reach, `the web drawer's clip margin covers the ${reach}px the hit area reaches above it`);
   assert.match(rule('body.web-frontend #dock-split'), /position:\s*relative/);
   assert.match(rule('#drawer-resize'), /touch-action:\s*none/);
+});
+
+test('dock: the plugin-pane divider skips dock-pane-first, and no sibling rule strips it', () => {
+  const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  assert.match(css, /\.plugin-pane:not\(\.dock-pane-hidden\):not\(\.dock-pane-first\) \{ border-top: 1px solid var\(--border\); \}/);
+  assert.doesNotMatch(css, /#dock-split[^{,]*\+ \.plugin-pane/);
 });
