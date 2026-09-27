@@ -443,23 +443,23 @@ function appBadge(doc, rec) {
   return badge;
 }
 
-function replyRow(doc, rec, ctx, attached) {
+function replyRow(doc, rec, ctx, attached, boxed) {
   const row = headRow(doc, `tr-reply${attached ? ' tr-reply-attached' : ''}`, rec);
   const text = el(doc, 'span', 'tr-head-text');
-  if (attached) text.appendChild(el(doc, 'span', 'tr-reply-lead', '↳'));
-  text.appendChild(appBadge(doc, rec));
+  if (attached && !boxed) text.appendChild(el(doc, 'span', 'tr-reply-lead', '↳'));
+  if (!boxed) text.appendChild(appBadge(doc, rec));
   appendPlain(doc, text, rec.text, ctx);
   row.appendChild(text);
   return withTime(doc, row, rec);
 }
 
-function inboundRow(doc, rec, ctx) {
+function inboundRow(doc, rec, ctx, boxed) {
   const row = headRow(doc, 'tr-inbound', rec);
   const text = el(doc, 'span', 'tr-head-text');
   if (rec.via === 'subagent') row.dataset.via = 'subagent';
-  text.appendChild(inboundBadge(doc, rec));
+  if (!boxed) text.appendChild(inboundBadge(doc, rec));
   if (rec.attached) {
-    const lead = rec.text.slice(0, rec.text.indexOf('Message (')).trim();
+    const lead = boxed ? '' : rec.text.slice(0, rec.text.indexOf('Message (')).trim();
     if (lead) appendProse(doc, text, `${lead} `, ctx);
     text.appendChild(el(doc, 'span', 'tr-dim', `${bytesText(rec.attached.bytes)} `));
     text.appendChild(linkNode(doc, { kind: 'path', text: baseName(rec.attached.path), path: rec.attached.path }, '', ctx));
@@ -491,15 +491,53 @@ function previewText(text, max = PREVIEW_CHARS) {
   return line.length > max ? `${line.slice(0, max)}…` : line;
 }
 
+function restText(text) {
+  const s = String(text == null ? '' : text);
+  const lines = s.split('\n');
+  const i = lines.findIndex((l) => l.trim());
+  if (i < 0 || lines[i].length > PREVIEW_CHARS) return s;
+  return lines.slice(i + 1).join('\n').replace(/^\s*\n/, '');
+}
+
+function previewSpan(doc, text) {
+  const span = el(doc, 'span', 'tr-box-preview', previewText(text));
+  const line = String(text == null ? '' : text).split('\n').find((l) => l.trim()) || '';
+  if (line.length > PREVIEW_CHARS) span.title = line;
+  return span;
+}
+
 function boxHead(doc, rec, att) {
   const head = el(doc, 'div', 'tr-box-head');
   if (att) head.appendChild(el(doc, 'span', 'tr-reply-lead', '↳'));
   if (rec.kind === 'inbound') head.appendChild(inboundBadge(doc, rec));
   else if (rec.kind === 'reply') head.appendChild(appBadge(doc, rec));
   else head.appendChild(el(doc, 'span', 'tr-mark'));
-  head.appendChild(el(doc, 'span', 'tr-box-preview', previewText(rec.text)));
+  head.appendChild(previewSpan(doc, rec.text));
   head.appendChild(el(doc, 'span', 'tr-box-chevron'));
   return head;
+}
+
+function selectedText(doc) {
+  const sel = doc.getSelection && doc.getSelection();
+  return sel && !sel.isCollapsed ? String(sel) : '';
+}
+
+function wireHead(doc, head, box, chevron, opened, id) {
+  const paint = () => {
+    const open = opened.has(id);
+    toggleClass(box, 'tr-box-folded', !open);
+    chevron.textContent = open ? '▾' : '▸';
+  };
+  let before = '';
+  head.addEventListener('mousedown', () => { before = selectedText(doc); });
+  head.addEventListener('click', () => {
+    const now = selectedText(doc);
+    if (now && now !== before) return;
+    if (opened.has(id)) opened.delete(id);
+    else opened.add(id);
+    paint();
+  });
+  paint();
 }
 
 function internalBox(doc, rec, row, opened, att) {
@@ -508,18 +546,8 @@ function internalBox(doc, rec, row, opened, att) {
   if (isLong(rec.text)) {
     const head = boxHead(doc, rec, att);
     const chevron = head.childNodes[head.childNodes.length - 1];
-    const paint = () => {
-      const open = opened.has(rec.id);
-      toggleClass(box, 'tr-box-folded', !open);
-      chevron.textContent = open ? '▾' : '▸';
-    };
-    head.addEventListener('click', () => {
-      if (opened.has(rec.id)) opened.delete(rec.id);
-      else opened.add(rec.id);
-      paint();
-    });
+    wireHead(doc, head, box, chevron, opened, rec.id);
     box.appendChild(head);
-    paint();
   }
   const body = el(doc, 'div', 'tr-box-body');
   body.appendChild(row);
@@ -537,6 +565,18 @@ function ticketParts(rec) {
   return { chip: state ? `${id} ${state}` : id, message };
 }
 
+function ticketOpens(rec, message) {
+  return Boolean(rec.attached || rec.text.trim().includes('\n') || isLong(rec.text) || message.trim().length > PREVIEW_CHARS);
+}
+
+function boxedView(rec) {
+  if (rec.ticket && (rec.kind === 'inbound' || rec.kind === 'reply')) {
+    const { message } = ticketParts(rec);
+    return ticketOpens(rec, message) ? { ...rec, text: restText(message.trim()) } : null;
+  }
+  return isLong(rec.text) ? { ...rec, text: restText(rec.text) } : null;
+}
+
 function ticketBox(doc, rec, row, opened, att) {
   const box = el(doc, 'div', 'tr-box');
   box.dataset.id = rec.id;
@@ -545,22 +585,12 @@ function ticketBox(doc, rec, row, opened, att) {
   if (att) head.appendChild(el(doc, 'span', 'tr-reply-lead', '↳'));
   head.appendChild(el(doc, 'span', 'tr-ticket-chip', chip));
   head.appendChild(rec.kind === 'reply' ? appBadge(doc, rec) : inboundBadge(doc, rec));
-  head.appendChild(el(doc, 'span', 'tr-box-preview', previewText(message.trim())));
+  head.appendChild(previewSpan(doc, message.trim()));
   box.appendChild(head);
-  if (rec.attached || rec.text.trim().includes('\n') || isLong(rec.text) || message.trim().length > PREVIEW_CHARS) {
+  if (ticketOpens(rec, message)) {
     const chevron = el(doc, 'span', 'tr-box-chevron');
     head.appendChild(chevron);
-    const paint = () => {
-      const open = opened.has(rec.id);
-      toggleClass(box, 'tr-box-folded', !open);
-      chevron.textContent = open ? '▾' : '▸';
-    };
-    head.addEventListener('click', () => {
-      if (opened.has(rec.id)) opened.delete(rec.id);
-      else opened.add(rec.id);
-      paint();
-    });
-    paint();
+    wireHead(doc, head, box, chevron, opened, rec.id);
     const body = el(doc, 'div', 'tr-box-body');
     body.appendChild(row);
     box.appendChild(body);
@@ -603,11 +633,11 @@ function hasInternalSeg(r) {
   return r.kind === 'assistant' && !r.apiError && Array.isArray(r.segments) && isTalk(r) && r.segments.some((s) => segmentSurface(s) !== 'conversation');
 }
 
-function buildRow(doc, rec, ctx, attached) {
+function buildRow(doc, rec, ctx, attached, boxed) {
   switch (rec.kind) {
     case 'prompt': return promptRow(doc, rec, ctx);
-    case 'inbound': return inboundRow(doc, rec, ctx);
-    case 'reply': return replyRow(doc, rec, ctx, attached);
+    case 'inbound': return inboundRow(doc, rec, ctx, boxed);
+    case 'reply': return replyRow(doc, rec, ctx, attached, boxed);
     case 'notification': {
       const row = headRow(doc, 'tr-notification', rec);
       row.appendChild(el(doc, 'span', 'tr-head-text', rec.text));
@@ -1003,7 +1033,8 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
           key: r.id,
           sig: recSig(r) + extra,
           build: () => {
-            const row = buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row');
+            const view = r.kind === 'inbound' || r.kind === 'reply' ? boxedView(r) : null;
+            const row = buildRow(doc, view || r, deps, att, Boolean(view)) || el(doc, 'div', 'tr-row');
             if (r.ticket && (r.kind === 'inbound' || r.kind === 'reply')) return ticketBox(doc, r, row, opened, att);
             return internalBox(doc, r, row, opened, att);
           },
