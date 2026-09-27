@@ -826,7 +826,7 @@ function createAppMenus(deps) {
             click: () => sendToFocused('request-open-ipc-log'),
           },
           {
-            label: 'Terminal',
+            label: 'Screen',
             accelerator: 'CmdOrCtrl+Shift+T',
             click: () => sendToFocused('request-toggle-raw-terminal'),
           },
