@@ -6039,6 +6039,11 @@ body.web-frontend #sidebar-header {
   overflow: hidden;
 }
 .tr-prompt > .tr-head-text { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.tr-prompt-mid { border-left: 2px dashed var(--text-tertiary); padding-left: var(--sp-2); }
+.tr-mid { flex: none; color: var(--text-tertiary); font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+.tr-mid-state { flex: none; font-size: var(--fs-xs); white-space: nowrap; }
+.tr-mid-state[data-state="delivered"] { color: var(--text-tertiary); opacity: 0.8; }
+.tr-mid-state[data-state="read"] { color: var(--accent); }
 .tr-image-thumb { height: 48px; width: auto; max-width: 160px; object-fit: cover; border: 1px solid var(--border); vertical-align: middle; cursor: pointer; }
 .tr-image-thumb.tr-image-open { display: block; max-width: 100%; height: auto; margin: var(--sp-1) 0; object-fit: contain; }
 .tr-image-chip { display: inline-block; padding: 0 var(--sp-1); border: 1px solid var(--border); color: var(--text-tertiary); font-size: var(--fs-sm); vertical-align: middle; }

@@ -348,12 +348,21 @@ function appendPrompt(doc, text, rec, ctx) {
 }
 
 function promptRow(doc, rec, ctx) {
-  const row = headRow(doc, 'tr-prompt', rec);
+  const mid = rec.source === 'mid-turn';
+  const row = headRow(doc, mid ? 'tr-prompt tr-prompt-mid' : 'tr-prompt', rec);
+  if (mid) row.appendChild(el(doc, 'span', 'tr-mid', 'mid-turn'));
   const text = el(doc, 'span', 'tr-head-text');
   if (rec.pastes || rec.images) appendPrompt(doc, text, rec, ctx);
   else appendProse(doc, text, rec.text, ctx);
   row.appendChild(text);
-  return withTime(doc, row, rec);
+  withTime(doc, row, rec);
+  if (mid) {
+    const read = rec.state === 'read';
+    const state = el(doc, 'span', 'tr-mid-state', read ? '✓ read' : 'delivered');
+    state.dataset.state = read ? 'read' : 'delivered';
+    row.appendChild(state);
+  }
+  return row;
 }
 
 function senderBadge(doc, from) {

@@ -984,3 +984,32 @@ test('runs: an expander click re-anchors scroll the same as a mode switch', () =
   Object.assign(m.pane, { scrollHeight: 1200 });
   assert.strictEqual(m.pane.scrollTop, 1000);
 });
+
+const midAsk = (state) => ({ id: 'q1', kind: 'prompt', ts: new Date(2026, 8, 27, 10, 42).getTime(), turn: 1, text: 'hi', source: 'mid-turn', state });
+
+test('a mid-turn prompt row reads mid-turn, its text, its time and delivered, and carries tr-prompt-mid', () => {
+  const m = mount();
+  m.render([ask('p1', 1), midAsk('delivered')]);
+  const row = rowIn(m, 'q1');
+  assert.match(row.className, /\btr-prompt tr-prompt-mid\b/);
+  assert.deepStrictEqual(row.childNodes.map((n) => [n.className, n.textContent]), [['tr-mid', 'mid-turn'], ['tr-head-text', 'hi'], ['tr-time', '10:42'], ['tr-mid-state', 'delivered']]);
+  assert.strictEqual(row.childNodes[3].dataset.state, 'delivered');
+});
+
+test('a mid-turn prompt that turns read rebuilds its row and the state reads ✓ read', () => {
+  const m = mount();
+  m.render([ask('p1', 1), midAsk('delivered')]);
+  const before = rowIn(m, 'q1');
+  m.render([ask('p1', 1), midAsk('read')]);
+  const after = rowIn(m, 'q1');
+  assert.notStrictEqual(after, before);
+  const state = after.childNodes[after.childNodes.length - 1];
+  assert.deepStrictEqual([state.className, state.textContent, state.dataset.state], ['tr-mid-state', '✓ read', 'read']);
+});
+
+test('runs: a mid-turn prompt inside a closed run is visible in Conversation mode', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([ask('p1', 1), call('t1', 'Bash', 'ls'), midAsk('read'), talk('a1', 1)]);
+  assert.deepStrictEqual(togglesOf(m).map((t) => t.getAttribute('aria-expanded')), ['false'], 'ENTER: the run is closed');
+  assert.strictEqual(isHidden(rowIn(m, 'q1')), false);
+});

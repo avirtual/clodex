@@ -22,6 +22,7 @@ const said = (...segments) => ({ id: 'a', kind: 'assistant', ts: null, turn: 1, 
 
 const KIND_ROWS = [
   ['prompt', { kind: 'prompt', text: 'hi', source: 'typed' }, C],
+  ['prompt, mid-turn', { kind: 'prompt', text: 'hi', source: 'mid-turn', state: 'read' }, C],
   ['inbound from the operator', { kind: 'inbound', from: 'user', text: 'hi' }, C],
   ['inbound with a ticket marker', { kind: 'inbound', from: 'ticket-loop', text: '[ticket t1 ACCEPT] x', ticket: { id: 't1', tag: 'ACCEPT' } }, C],
   ['inbound with a bare ticket marker', { kind: 'inbound', from: 'ticket-watchdog', text: '[ticket t1] stalled', ticket: { id: 't1', tag: null } }, C],

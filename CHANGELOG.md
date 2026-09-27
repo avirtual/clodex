@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Transcript pane: a message you type while the agent is still working now shows as your own row, marked mid-turn, with a delivered / read state — the CLI folds it into the running turn and never echoed it before.
 - Web UI: pasting an image into a pty seat's composer now uploads it to the Clodex host and hands the seat the file path, instead of refusing with a toast. Desktop paste is unchanged.
 - Transcript pane: a Conversation / Internals switch replaces the Internals/Tools checkboxes. Conversation, the new default (your previous checkbox choice is not carried over), shows your prompts, the agent's prose and messages, and ticket lifecycle. Internals shows the full trace.
 - Transcript pane, Conversation mode: each exchange ends with a one-line summary (time, tools, errors, files changed). Click it to show the tool calls and runtime traffic behind that exchange in place.
