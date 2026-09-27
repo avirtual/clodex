@@ -236,6 +236,7 @@ clodex-snapshot-
 clodex-solo-home-
 clodex-solo-repo-
 clodex-spill-
+clodex-status-capture-
 clodex-surface-
 clodex-surface-gate-
 clodex-sweep-
