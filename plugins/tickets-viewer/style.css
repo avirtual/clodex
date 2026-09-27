@@ -48,39 +48,31 @@
 
 .tv-body {
   display: flex;
+  flex-direction: column;
   flex: 1;
   min-height: 0;
 }
 
-.tv-teams {
-  width: 200px;
-  flex-shrink: 0;
-  overflow-y: auto;
-  border-right: 1px solid var(--border);
-  padding: 6px 0;
-}
-
-.tv-team-row {
+.tv-project-bar {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
   padding: 6px 12px;
-  cursor: pointer;
+  border-bottom: 1px solid var(--border);
 }
 
-.tv-team-row:hover {
-  background: var(--surface-hover);
+.tv-project-select {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
-.tv-team-row.tv-selected {
-  background: var(--surface-selected);
-}
-
-.tv-team-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.tv-project-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .tv-team-count {
@@ -120,6 +112,7 @@
 
 .tv-board {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 10px 16px 16px;
 }
@@ -172,9 +165,6 @@
   background: color-mix(in srgb, var(--error) 8%, transparent);
 }
 
-/* Carries the spec toggle, so it gets .tv-team-row's affordance: without a
-   cursor and a hover the feature is discoverable only through a tooltip that
-   takes a second to appear. */
 .tv-ticket-head {
   display: flex;
   align-items: baseline;
@@ -756,30 +746,4 @@
 
 .tv-feed-row:hover {
   background: var(--surface-hover);
-}
-
-@container (max-width: 560px) {
-  .tv-body {
-    flex-direction: column;
-  }
-
-  .tv-teams {
-    width: auto;
-    display: flex;
-    flex-direction: row;
-    flex-shrink: 0;
-    overflow-x: auto;
-    overflow-y: hidden;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    padding: 0 6px;
-  }
-
-  .tv-team-row {
-    flex-shrink: 0;
-  }
-
-  .tv-board {
-    min-height: 0;
-  }
 }

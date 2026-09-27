@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- The Tickets pane picks its project from a dropdown at the top, in place of the side list that became a sideways-scrolling strip in a narrow pane; each entry carries its open, stalled, backlog and parked counts, and the chips beside the dropdown belong to the project on screen.
 - The Tickets pane opens on the active session's project (its team's board, or the board whose root holds the session's folder) instead of the first project in the list; a project you pick afterwards stays until the pane is reopened.
 - A Files toggle in the sidebar footer reopens the side pane with the tabs you had; it is off when the seat has no files open.
 - With the sidebar folded (Cmd+B), the footer keeps every button as a glyph, so Files, Tickets and the other plugin buttons stay one click away like Inbox; a lit background shows which panes are on.

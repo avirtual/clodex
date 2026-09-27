@@ -636,13 +636,6 @@ test('both merge classes are styled, and not styled alike (t534)', () => {
 // open-only `stalled`/`parked`/`backlog` chain does not cover and the one the
 // text boards call the normal reading: the loop merges after `task done`, so a
 // merge that failed or deferred is usually read on a row that is already done.
-//
-// Both fixtures are STALLED, which is the ordinary shape here rather than an
-// exotic one: the recent window is 24h and the stall threshold 30m, so a row in
-// this block has almost always been quiet long past it. A `stalled: false`
-// fixture would test the closed block in the one condition it is rarely in, and
-// would leave the precedence below asserted only on an OPEN row — where losing
-// it costs nothing, since the amber and the red say the same thing there.
 test('both merge marks render on a recently-CLOSED row too, stalled as they normally are (t534)', async () => {
   await withDom({
     projects: projectsRes([projectRow({ open: 0 })]),
@@ -1536,11 +1529,11 @@ test('the pane: a poll tick keeps the Feed view instead of snapping back to the 
     await settle();
     const active = () => allByClass(root, 'tv-filter-active').map((b) => b.textContent);
     assert.deepEqual(active(), ['Feed'], 'ENTER: the feed is showing');
-    assert.equal(allByClass(root, 'tv-selected').length, 1, 'ENTER: one project is highlighted');
+    assert.equal(allByClass(root, 'tv-project-select')[0].value, 'proj-1234abcd', 'ENTER: the project is selected');
     tick();
     await settle();
     assert.deepEqual(active(), ['Feed']);
-    assert.equal(allByClass(root, 'tv-selected').length, 1, 'the refreshed project list keeps the highlight');
+    assert.equal(allByClass(root, 'tv-project-select')[0].value, 'proj-1234abcd', 'the refreshed project list keeps the selection');
   });
 });
 
@@ -2088,9 +2081,9 @@ function seatStub(state) {
 }
 
 function selectedKey(root) {
-  const rows = allByClass(root, 'tv-selected');
-  assert.equal(rows.length, 1);
-  return rows[0].dataset.tvProject;
+  const selects = allByClass(root, 'tv-project-select');
+  assert.equal(selects.length, 1);
+  return selects[0].value;
 }
 
 const alphaRow = projectRow({ key: 'alpha-1111', root: '/p/alpha', team: 'alpha' });
@@ -2142,7 +2135,7 @@ test('follow: a project picked after onShow survives a poll tick', async () => {
   const state = { name: 'hand-1', rows: [{ name: 'hand-1', cwd: '/p/alpha', team: 'alpha' }] };
   await withDom(crudAnswers({ projects: projectsRes([alphaRow, gammaRow]) }), async ({ rhost, root, settle }) => {
     assert.equal(selectedKey(root), 'alpha-1111', 'ENTER: onShow followed the seat');
-    allByClass(root, 'tv-team-row').find((r) => r.dataset.tvProject === 'gamma-3333').click();
+    allByClass(root, 'tv-project-select')[0].change('gamma-3333');
     await settle();
     [...rhost._intervals.values()][0].fn();
     await settle();
@@ -2160,4 +2153,84 @@ test('follow: a rejecting listWorkspace does not throw and keeps the selection',
     assert.equal(selectedKey(root), 'alpha-1111');
     assert.deepEqual(logged, []);
   }, { sessions: seatStub(state) });
+});
+
+test('follow: a root with a trailing slash still matches the seat\'s cwd equal to it', async () => {
+  const other = projectRow({ key: 'other-1', root: '/z', team: '' });
+  const outer = projectRow({ key: 'outer-2', root: '/r/outer/', team: '' });
+  const state = { name: 'hand-1', rows: [{ name: 'hand-1', cwd: '/r/outer', team: null }] };
+  await withDom(crudAnswers({ projects: projectsRes([other, outer]) }), async ({ root }) => {
+    assert.equal(selectedKey(root), 'outer-2');
+  }, { sessions: seatStub(state) });
+});
+
+test('follow: a project picked while the follow reload is in flight is not overridden when it lands', async () => {
+  const state = { name: 'hand-1', rows: [{ name: 'hand-1', cwd: '/p/alpha', team: 'alpha' }] };
+  const answers = crudAnswers({ projects: projectsRes([alphaRow, gammaRow]) });
+  await withDom(answers, async ({ rhost, root, settle }) => {
+    assert.equal(selectedKey(root), 'alpha-1111', 'ENTER: onShow followed the seat');
+    let land;
+    answers.projects = () => new Promise((r) => { land = r; });
+    rhost._pane.onShow();
+    await settle();
+    assert.equal(typeof land, 'function', 'ENTER: the follow reload is waiting on projects');
+    allByClass(root, 'tv-project-select')[0].change('gamma-3333');
+    await settle();
+    land(projectsRes([alphaRow, gammaRow]));
+    await settle();
+    assert.equal(selectedKey(root), 'gamma-3333');
+  }, { sessions: seatStub(state) });
+});
+
+test('project select: each option carries its label and non-zero counts; an unreadable project shows ! and no counts', async () => {
+  const leaf = projectRow({ key: 'leaf-1', leaf: 'leaf', team: 'team', root: '/l', open: 3, stalled: 1, backlog: 0, parked: 2 });
+  const bad = projectRow({ key: 'bad-2', leaf: 'bad', team: '', root: '/b', open: 0, error: 'registry unreadable' });
+  await withDom(crudAnswers({ projects: projectsRes([leaf, bad]) }), async ({ root }) => {
+    const select = allByClass(root, 'tv-project-select')[0];
+    assert.deepEqual(select.children.map((o) => o.textContent), [
+      'leaf · team · 3 open · 1 stalled · 2 parked',
+      'bad · !',
+    ]);
+    assert.deepEqual(select.children.map((o) => o.value), ['leaf-1', 'bad-2']);
+    assert.deepEqual(select.children.map((o) => o.title), ['leaf-1\n/l', 'bad-2\n/b']);
+  });
+});
+
+test('project select: changing it to gamma fetches gamma\'s board and shows gamma\'s chips beside it', async () => {
+  const alpha = projectRow({ key: 'alpha-1111', root: '/p/alpha', team: 'alpha', open: 1 });
+  const gamma = projectRow({ key: 'gamma-3333', root: '/p/gamma', team: 'gamma', open: 4, stalled: 2 });
+  await withDom(crudAnswers({ projects: projectsRes([alpha, gamma]) }), async ({ root, calls, settle }) => {
+    const chips = () => textOf(allByClass(root, 'tv-project-chips')[0]);
+    assert.deepEqual(chips(), ['1 open'], 'ENTER: alpha\'s chips are showing');
+    const select = allByClass(root, 'tv-project-select')[0];
+    select.change('gamma-3333');
+    await settle();
+    assert.equal(calls.filter((c) => c.method === 'board').at(-1).arg, 'gamma-3333');
+    assert.equal(select.value, 'gamma-3333');
+    assert.deepEqual(chips(), ['2', '4 open']);
+    assert.deepEqual(allByClass(root, 'tv-team-stalled').map((c) => c.title), ['2 open ticket(s) quiet past the stall threshold']);
+  });
+});
+
+test('project select: a poll tick while it has focus keeps the same node and focus, and updates the counts in place', async () => {
+  const counts = { open: 1 };
+  const answers = crudAnswers({ projects: () => projectsRes([projectRow({ open: counts.open })]) });
+  await withDom(answers, async ({ rhost, root, calls, settle }) => {
+    const tick = [...rhost._intervals.values()][0].fn;
+    const select = allByClass(root, 'tv-project-select')[0];
+    assert.equal(select.children[0].textContent, 'proj · alpha · 1 open', 'ENTER: the first count');
+    global.document.activeElement = select;
+    try {
+      const before = calls.filter((c) => c.method === 'projects').length;
+      counts.open = 5;
+      tick();
+      await settle();
+      assert.equal(calls.filter((c) => c.method === 'projects').length, before + 1, 'the tick re-read the projects');
+      assert.strictEqual(allByClass(root, 'tv-project-select')[0], select);
+      assert.equal(select.children[0].textContent, 'proj · alpha · 5 open');
+      assert.strictEqual(global.document.activeElement, select);
+    } finally {
+      delete global.document.activeElement;
+    }
+  });
 });
