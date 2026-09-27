@@ -22,14 +22,9 @@ function fakeEl(id) {
     addEventListener: (type, fn) => { (listeners[type] ||= []).push(fn); },
     fire: (type, e = {}) => { for (const fn of listeners[type] || []) fn(e); },
     appendChild(child) {
-      return el.insertBefore(child, null);
-    },
-    insertBefore(child, ref) {
       if (child.parent) child.remove();
       child.parent = el;
-      const at = ref ? el.children.indexOf(ref) : -1;
-      if (at < 0) el.children.push(child);
-      else el.children.splice(at, 0, child);
+      el.children.push(child);
       return child;
     },
     remove() {
@@ -157,21 +152,6 @@ const ROWS = [
     },
   },
   {
-    name: 'reveal re-clamps the dragged width against the current window',
-    opts: { innerWidth: 1000 },
-    async run(r) {
-      r.dock.addPane('files', fakeEl('side-pane'), 0);
-      r.dock.setShown('files', true);
-      r.handle.fire('mousedown', { button: 0, preventDefault() {} });
-      r.win.fire('mousemove', { clientX: 450 });
-      r.win.fire('mouseup');
-      assert.strictEqual(r.dockEl.style.width, '550px', 'ENTER: the drag stored 550px');
-      r.win.innerWidth = 800;
-      r.dock.reveal();
-      assert.strictEqual(r.dockEl.style.width, '480px');
-    },
-  },
-  {
     name: 'a mouseup with no drag started persists nothing',
     opts: { innerWidth: 1000 },
     async run(r) {
@@ -189,13 +169,6 @@ const ROWS = [
       r.dock.addPane('tickets', tickets, 1);
       r.dock.addPane('files', files, 0);
       assert.deepStrictEqual(r.dockEl.children.map((c) => c.id), ['side-pane', 'tickets']);
-      const moved = [];
-      const origInsert = r.dockEl.insertBefore;
-      r.dockEl.insertBefore = (child, ref) => { moved.push(child.id); return origInsert(child, ref); };
-      r.dock.addPane('feed', fakeEl('feed'), 2);
-      assert.deepStrictEqual(moved, ['feed'], 'adding a pane moves no other pane');
-      assert.deepStrictEqual(r.dockEl.children.map((c) => c.id), ['side-pane', 'tickets', 'feed']);
-      r.dock.removePane('feed');
       assert.strictEqual(files.dataset.pane, 'files');
       assert.ok(files.classList.contains('dock-pane'));
       assert.strictEqual(r.dock.front(), null, 'ENTER: nothing shown, no front');

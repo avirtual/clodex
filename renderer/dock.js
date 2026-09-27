@@ -33,11 +33,9 @@ function createDock({ showToast, getSettings, setSettings, doc = document, win =
     if (panes.has(id)) removePane(id);
     el.classList.add('dock-pane');
     el.dataset.pane = id;
-    const entry = { el, order, added: added++ };
-    panes.set(id, entry);
+    panes.set(id, { el, order, added: added++ });
     const sorted = [...panes.values()].sort((a, b) => (a.order - b.order) || (a.added - b.added));
-    const i = sorted.indexOf(entry);
-    dock.insertBefore(el, i + 1 < sorted.length ? sorted[i + 1].el : null);
+    for (const p of sorted) dock.appendChild(p.el);
     render();
   }
 
