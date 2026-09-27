@@ -1589,6 +1589,24 @@ test('the pane: a quiet tick keeps the old rows up until the new ones load, with
   });
 });
 
+test('the pane: a quiet board read that lands after the operator opened Feed does not paint over it', async () => {
+  const held = heldBoard();
+  await withDom(crudAnswers({ board: held.answer, feed: { ok: true, rows: [] } }), async ({ rhost, root, settle }) => {
+    const tick = [...rhost._intervals.values()][0].fn;
+    const active = () => allByClass(root, 'tv-filter-active').map((b) => b.textContent);
+    tick();
+    await settle();
+    assert.ok(held.release, 'ENTER: the tick is waiting on the board');
+    buttonLabelled(root, 'Feed').click();
+    await settle();
+    assert.deepEqual(active(), ['Feed'], 'ENTER: the feed is showing');
+    held.release(boardRes({ open: [shaped('t2')], counts: { ...boardRes().counts, open: 1 } }));
+    await settle();
+    assert.deepEqual(active(), ['Feed']);
+    assert.deepEqual(allByClass(root, 'tv-id').map((n) => n.textContent), []);
+  });
+});
+
 test('the pane: a quiet tick keeps the board\'s scroll position', async () => {
   await withDom(crudAnswers(), async ({ rhost, root, calls, settle }) => {
     const tick = [...rhost._intervals.values()][0].fn;

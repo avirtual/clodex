@@ -483,19 +483,25 @@ module.exports.activate = (rhost) => {
     function rowActions(t) {
       const bar = el('div', 'tv-actions');
       bar.appendChild(assignControl(t));
-      bar.appendChild(button('tv-btn', 'Edit spec', 'Replace this ticket\'s spec', () => openEditSpec(t)));
+      const edit = button('tv-btn', 'Edit spec', 'Replace this ticket\'s spec', () => openEditSpec(t));
+      edit.dataset.tvFocus = `ticket:${t.id}:edit`;
+      bar.appendChild(edit);
       // Both terminal actions confirm, and the memory-viewer precedent is the
       // reason: a confirmation is for what cannot be undone. Neither can be —
       // the board has no reopen action, so a mis-click is a trip to
       // `[agent:task reject]` or a hand-edit of tickets.json.
-      bar.appendChild(button('tv-btn', 'Close', 'Mark this ticket done', async () => {
+      const close = button('tv-btn', 'Close', 'Mark this ticket done', async () => {
         if (!confirm(`Close ${t.id} as done?\n\n${t.title}`)) return;
         await mutate('close', { project: selected, id: t.id });
-      }));
-      bar.appendChild(button('tv-btn tv-btn-danger', 'Cancel', 'Cancel this ticket', async () => {
+      });
+      close.dataset.tvFocus = `ticket:${t.id}:close`;
+      bar.appendChild(close);
+      const cancel = button('tv-btn tv-btn-danger', 'Cancel', 'Cancel this ticket', async () => {
         if (!confirm(`Cancel ${t.id}?\n\n${t.title}\n\nCancelled tickets are not counted as done.`)) return;
         await mutate('cancel', { project: selected, id: t.id });
-      }));
+      });
+      cancel.dataset.tvFocus = `ticket:${t.id}:cancel`;
+      bar.appendChild(cancel);
       return bar;
     }
 
@@ -1137,6 +1143,7 @@ module.exports.activate = (rhost) => {
       // showing, with a picker that offers nothing. Same for the cost line.
       liveSessions = live.ok && Array.isArray(live.sessions) ? live.sessions : [];
       if (quiet) {
+        if (busy() || feedView || closedView) return;
         swap(() => renderBoard(res, cost));
         return;
       }
