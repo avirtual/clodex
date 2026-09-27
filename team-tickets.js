@@ -4010,8 +4010,19 @@ function createTicketMethods(deps, shared) {
       // unanchored search is the correct one.
       const size = this._seatTranscriptSize(seatName);
       const since = size < 0 ? 0 : size;
+      let carry = null;
+      if (redirect && prior && prior.ticketId === ticketId && prior.kind === 'redirect'
+          && typeof prior.reason === 'string' && prior.reason) {
+        if (prior.reason === redirect.reason) {
+          if (prior.carried) carry = { reason: prior.reason, carried: true };
+        } else if (this._seatTranscriptHas(seatName, ticketId, prior.since) !== true) {
+          const first = prior.carried ? prior.reason
+            : `[ticket ${ticketId} ${prior.label || 'rejected'}] ${prior.reason}`;
+          carry = { reason: `${first}\n[ticket ${ticketId} ${redirect.label}] ${redirect.reason}`, carried: true };
+        }
+      }
       s._specUnconfirmed = redirect
-        ? { ticketId, kind, at: Date.now(), retried, since, ...redirect }
+        ? { ticketId, kind, at: Date.now(), retried, since, ...redirect, ...carry }
         : { ticketId, kind, at: Date.now(), retried, since };
       if (rearmed) s._specUnconfirmed.windowRearmed = true;
       this._armSpecConfirmTimer(s);

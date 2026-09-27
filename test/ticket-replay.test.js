@@ -1913,6 +1913,59 @@ test('t1251: more must-fixes parked by the turn-start window after a typed FIRST
   } finally { app.stop(); }
 });
 
+test('t1252: more must-fixes replacing an UNCONFIRMED rejection latch carry the rejection reason into the redelivery', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await redirected(world);
+  try {
+    assert.ok(s._specUnconfirmed && s._specUnconfirmed.label === 'rejected', 'ENTER: the typed rejection is latched');
+    const t = world.tickets().find((x) => x.id === 't1');
+    assert.ok(t.state === 'open' && Number(t.reworkRound) > 0, 'ENTER: the next reject routes to the FOLLOW-UP path');
+
+    const beforeFollow = app.seen('team-hand');
+    app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
+    const follow = await settled(app, 'team-hand', /ALSO FIX THE LATCH/);
+    assert.match(follow.slice(beforeFollow.length), /ALSO FIX THE LATCH/, 'ENTER: the more-must-fixes write was typed');
+    for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) await new Promise((r) => setTimeout(r, 5));
+    assert.strictEqual(s._specUnconfirmed && s._specUnconfirmed.label, 'more must-fixes', 'ENTER: the latch was replaced by the new write');
+    assert.match(s._specUnconfirmed.reason, /FIX THE WIDGET MOUNT[\s\S]*ALSO FIX THE LATCH/, 'the replacing latch carries the unconfirmed rejection reason first, then the new one');
+
+    const beforeRedo = app.seen('team-hand');
+    fireConfirm(app, s);
+    const redo = await settled(app, 'team-hand', /REDELIVERY[\s\S]*ALSO FIX THE LATCH/);
+    const typed = redo.slice(beforeRedo.length);
+    assert.match(typed, /REDELIVERY/, 'the deadline types a redelivery');
+    assert.match(typed, /\[ticket t1 rejected\] FIX THE WIDGET MOUNT/, 'and it carries the eaten rejection under its own label');
+    assert.match(typed, /\[ticket t1 more must-fixes\] ALSO FIX THE LATCH/, 'and the new must-fixes under theirs');
+    assert.strictEqual((typed.match(/FIX THE WIDGET MOUNT/g) || []).length, 1, 'and the rejection only once');
+    assert.strictEqual((s._specUnconfirmed.reason.match(/FIX THE WIDGET MOUNT/g) || []).length, 1, 'the redelivery re-arm does not carry the combined reason into itself');
+  } finally { app.stop(); }
+});
+
+test('t1252: more must-fixes after the rejection was CONFIRMED by a turn carry only the new text', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await redirected(world);
+  try {
+    app.m._emitActivity('team-hand', 'thinking');
+    app.m._emitActivity('team-hand', 'idle');
+    assert.strictEqual(s._specUnconfirmed, null, 'ENTER: a seen turn confirmed the rejection');
+
+    const beforeFollow = app.seen('team-hand');
+    app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
+    await settled(app, 'team-hand', /ALSO FIX THE LATCH/);
+    for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) await new Promise((r) => setTimeout(r, 5));
+    assert.match(app.seen('team-hand').slice(beforeFollow.length), /ALSO FIX THE LATCH/, 'ENTER: the more-must-fixes write was typed');
+    assert.strictEqual(s._specUnconfirmed && s._specUnconfirmed.label, 'more must-fixes', 'ENTER: the new write is latched');
+    assert.doesNotMatch(s._specUnconfirmed.reason, /FIX THE WIDGET MOUNT/, 'a confirmed rejection carries nothing');
+
+    const beforeRedo = app.seen('team-hand');
+    fireConfirm(app, s);
+    const redo = await settled(app, 'team-hand', /REDELIVERY[\s\S]*ALSO FIX THE LATCH/);
+    const typed = redo.slice(beforeRedo.length);
+    assert.match(typed, /ALSO FIX THE LATCH/, 'the redelivery carries the new must-fixes');
+    assert.doesNotMatch(typed, /FIX THE WIDGET MOUNT/, 'and not the confirmed rejection');
+  } finally { app.stop(); }
+});
+
 // A dispatched ticket whose spec latch has been RETIRED by a real turn, closed,
 // and then rejected by the lead — i.e. a seat holding a redirect and nothing
 // else. The turn matters: without it the spec latch is still armed and every
