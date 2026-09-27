@@ -306,9 +306,6 @@ module.exports.activate = (rhost) => {
       boardPane.appendChild(sectionsEl);
       shellMounted = true;
     }
-    // Live session names for the assign picker. Refreshed with the board rather
-    // than held from activation: a session list captured once would offer seats
-    // that died since the overlay was last opened.
     let liveSessions = [];
 
     /**
