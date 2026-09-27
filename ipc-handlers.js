@@ -840,7 +840,7 @@ function registerIpcHandlers(deps) {
     if (box) rev = `${rev}:o${box.rev}${p.suffix}`;
     if (since === rev) return { ok: true, rev, unchanged: true };
     const records = extra ? mergeCompactNotices(res.records, extra.notices) : res.records;
-    return box ? { ok: true, rev, records, outbox: box.items, ...p.fields } : { ok: true, rev, records };
+    return box ? { ok: true, rev, records, source: res.source, outbox: box.items, ...p.fields } : { ok: true, rev, records, source: res.source };
   });
 
   handle('proxy:snapshot', (_e, name) => proxyPoller.snapshot(name));

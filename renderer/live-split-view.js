@@ -22,8 +22,8 @@ function transcriptRowsFor(doc, paneEl, ctx = {}) {
   return rows;
 }
 
-function renderTranscript(doc, paneEl, records, ctx = {}) {
-  transcriptRowsFor(doc, paneEl, ctx).render(records);
+function renderTranscript(doc, paneEl, records, ctx = {}, source = null) {
+  transcriptRowsFor(doc, paneEl, ctx).render(records, source);
 }
 
 const TRANSCRIPT_MODES = [['conversation', 'Conversation'], ['internals', 'Internals']];
@@ -125,6 +125,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   const composerVisible = () => !!composerEl && !composerEl.hidden;
   const delta = createPaintDelta();
   let fileRecords = [];
+  let fileSource = null;
   const extraRecords = [];
   let paintSeq = 0;
   let paintRows = [];
@@ -163,6 +164,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       if (available && res.rev !== rev) {
         rev = res.rev;
         fileRecords = Array.isArray(res.records) ? res.records : [];
+        fileSource = res.source == null ? null : res.source;
         paint();
         evaluate();
       } else if (available !== was) evaluate();
@@ -180,7 +182,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
 
   function paint() {
     const extras = shownExtras();
-    renderTranscript(document, paneEl, extras.length ? mergeByTs(fileRecords, extras) : fileRecords, rowsCtx);
+    renderTranscript(document, paneEl, extras.length ? mergeByTs(fileRecords, extras) : fileRecords, rowsCtx, fileSource);
     stickToBottom();
   }
 
