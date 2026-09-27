@@ -72,12 +72,12 @@ function mkRenderer(extra = {}) {
   const names = Object.keys(env);
   const body = [
     slice('const seatIoKind', '\n}\n'),
-    fnSrc('markSeatEffort'),
+    fnSrc('markSeatEffort'), fnSrc('markSeatPosture'),
     fnSrc('exitedRowSnapshot'), fnSrc('archivedRowEntry'),
     fnSrc('addSessionToSidebar'), fnSrc('addArchivedSessionToSidebar'),
     fnSrc('addFailedSessionToSidebar'), fnSrc('addExitedSessionToSidebar'),
     fnSrc('moveSessionWithPicker'), fnSrc('moveSessionToPeerWithDialog'), fnSrc('startRename'),
-    'return { markSeatIo, markSeatEffort, exitedRowSnapshot, archivedRowEntry, addSessionToSidebar, addArchivedSessionToSidebar, addFailedSessionToSidebar, addExitedSessionToSidebar, moveSessionWithPicker, moveSessionToPeerWithDialog, startRename };',
+    'return { markSeatIo, markSeatEffort, markSeatPosture, exitedRowSnapshot, archivedRowEntry, addSessionToSidebar, addArchivedSessionToSidebar, addFailedSessionToSidebar, addExitedSessionToSidebar, moveSessionWithPicker, moveSessionToPeerWithDialog, startRename };',
   ].join('\n');
   const fns = new Function(...names, body)(...names.map((n) => env[n]));
   return { rows, env, created, mkNode, ...fns };
@@ -207,9 +207,9 @@ test('markSeatEffort stamps the level on an existing row and removes it on null'
 for (const kind of ['Archived', 'Failed', 'Exited']) {
   test(`${kind.toLowerCase()} rows carry the entry's effort, none when absent`, () => {
     const h = mkRenderer();
-    h[`add${kind}SessionToSidebar`]({ name: 'a', type: 'claude', cwd: '/w', effort: 'max' });
-    h[`add${kind}SessionToSidebar`]({ name: 'b', type: 'claude', cwd: '/w' });
-    assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.effort]), [['a', 'max'], ['b', undefined]]);
+    h[`add${kind}SessionToSidebar`]({ name: 'a', type: 'codex', cwd: '/w', effort: 'max', posture: 'bypass' });
+    h[`add${kind}SessionToSidebar`]({ name: 'b', type: 'claude', cwd: '/w', posture: 'default' });
+    assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.effort, r.dataset.posture]), [['a', 'max', 'bypass'], ['b', undefined, undefined]]);
   });
 }
 
@@ -228,15 +228,29 @@ test('the hovercard of a bash row has no effort row', () => {
   assert.doesNotMatch(html, /<span class="hc-k">effort<\/span>/);
 });
 
+test('the hovercard of an agent row shows its approval posture, default when none, and a bash row shows none', () => {
+  const bypass = hoverCard({ type: 'codex', posture: 'bypass' });
+  assert.ok(bypass.includes('<div class="hc-row"><span class="hc-k">posture</span><span class="hc-v">bypass</span></div>'), bypass);
+  const plain = hoverCard({ type: 'claude' });
+  assert.ok(plain.includes('<div class="hc-row"><span class="hc-k">posture</span><span class="hc-v">default</span></div>'), plain);
+  assert.doesNotMatch(hoverCard({ type: 'bash' }), /<span class="hc-k">posture<\/span>/);
+});
+
 test('a seat that exits or is archived mid-session keeps its effort level on the rebuilt entry', () => {
   const h = mkRenderer();
   h.addSessionToSidebar('s', 'claude', '/w');
   h.markSeatEffort('s', 'xhigh');
+  h.markSeatPosture('s', 'bypass');
   assert.strictEqual(h.exitedRowSnapshot('s', 1, {}).effort, 'xhigh');
   assert.strictEqual(h.archivedRowEntry('s', h.rows[0]).effort, 'xhigh');
+  assert.strictEqual(h.exitedRowSnapshot('s', 1, {}).posture, 'bypass');
+  assert.strictEqual(h.archivedRowEntry('s', h.rows[0]).posture, 'bypass');
   h.markSeatEffort('s', null);
+  h.markSeatPosture('s', 'default');
   assert.strictEqual(h.exitedRowSnapshot('s', 1, {}).effort, null);
   assert.strictEqual(h.archivedRowEntry('s', h.rows[0]).effort, null);
+  assert.strictEqual(h.exitedRowSnapshot('s', 1, {}).posture, null);
+  assert.strictEqual(h.archivedRowEntry('s', h.rows[0]).posture, null);
 });
 
 test('markSeatEffort refreshes the seat\'s live split chips when it stamps a level and again when it clears one', () => {
@@ -250,6 +264,12 @@ test('markSeatEffort refreshes the seat\'s live split chips when it stamps a lev
   h.markSeatEffort('s', null);
   assert.strictEqual('effort' in h.rows[0].dataset, false);
   assert.strictEqual(refreshed, before + 2);
+  h.markSeatPosture('s', 'bypass');
+  assert.strictEqual(h.rows[0].dataset.posture, 'bypass');
+  assert.strictEqual(refreshed, before + 3);
+  h.markSeatPosture('s', 'default');
+  assert.strictEqual('posture' in h.rows[0].dataset, false);
+  assert.strictEqual(refreshed, before + 4);
 });
 
 test('a seat moved to another directory keeps its effort level on the rebuilt row', async () => {
@@ -258,8 +278,9 @@ test('a seat moved to another directory keeps its effort level on the rebuilt ro
   api.moveSession = async () => { h.rows.length = 0; return { ok: true, type: 'claude', cwd: '/new' }; };
   h.addSessionToSidebar('s', 'claude', '/w');
   h.markSeatEffort('s', 'xhigh');
+  h.markSeatPosture('s', 'bypass');
   await h.moveSessionWithPicker('s');
-  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.cwd, r.dataset.effort]), [['s', '/new', 'xhigh']]);
+  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.cwd, r.dataset.effort, r.dataset.posture]), [['s', '/new', 'xhigh', 'bypass']]);
 });
 
 test('a seat moved to a peer leaves an archived row whose entry carries its effort level', async () => {
@@ -267,10 +288,11 @@ test('a seat moved to a peer leaves an archived row whose entry carries its effo
   const h = mkRenderer({ window: { api } });
   h.addSessionToSidebar('s', 'claude', '/w');
   h.markSeatEffort('s', 'xhigh');
+  h.markSeatPosture('s', 'bypass');
   h.moveSessionToPeerWithDialog('s', 'p1', 'far', '/w');
   const res = await h.env.pendingPeerMove.get('s')('/far');
   assert.strictEqual(res.ok, true);
-  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.effort]), [['s', 'xhigh']]);
+  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.effort, r.dataset.posture]), [['s', 'xhigh', 'bypass']]);
   assert.match(h.rows[0].className, /archived/);
 });
 
@@ -280,9 +302,10 @@ test('a peer move that fails but respawns the seat here keeps its effort level o
   api.moveSessionToPeer = async () => { h.rows.length = 0; return { ok: false, kept: true, respawned: true, type: 'claude', cwd: '/w', error: 'far refused' }; };
   h.addSessionToSidebar('s', 'claude', '/w');
   h.markSeatEffort('s', 'xhigh');
+  h.markSeatPosture('s', 'bypass');
   h.moveSessionToPeerWithDialog('s', 'p1', 'far', '/w');
   await h.env.pendingPeerMove.get('s')('/far');
-  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.effort]), [['s', 'xhigh']]);
+  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.effort, r.dataset.posture]), [['s', 'xhigh', 'bypass']]);
   assert.doesNotMatch(h.rows[0].className, /failed|archived/);
 });
 
@@ -292,14 +315,16 @@ test('a failed move that keeps the seat without respawning carries its effort le
   const dir = mkRenderer({ window: { api } });
   dir.addSessionToSidebar('s', 'claude', '/w');
   dir.markSeatEffort('s', 'xhigh');
+  dir.markSeatPosture('s', 'bypass');
   await dir.moveSessionWithPicker('s');
   const peer = mkRenderer({ window: { api } });
   peer.addSessionToSidebar('s', 'claude', '/w');
   peer.markSeatEffort('s', 'high');
+  peer.markSeatPosture('s', 'read-only');
   peer.moveSessionToPeerWithDialog('s', 'p1', 'far', '/w');
   await peer.env.pendingPeerMove.get('s')('/far');
-  assert.deepStrictEqual([dir, peer].map((h) => h.rows.map((r) => [r.dataset.name, r.dataset.effort, /failed/.test(r.className)])),
-    [[['s', 'xhigh', true]], [['s', 'high', true]]]);
+  assert.deepStrictEqual([dir, peer].map((h) => h.rows.map((r) => [r.dataset.name, r.dataset.effort, r.dataset.posture, /failed/.test(r.className)])),
+    [[['s', 'xhigh', 'bypass', true]], [['s', 'high', 'read-only', true]]]);
 });
 
 test('a rename that fails but keeps the seat carries its effort level on the failed row', async () => {
@@ -308,6 +333,7 @@ test('a rename that fails but keeps the seat carries its effort level on the fai
   const h = mkRenderer({ window: { api } });
   h.addSessionToSidebar('s', 'claude', '/w');
   h.markSeatEffort('s', 'xhigh');
+  h.markSeatPosture('s', 'bypass');
   const nameEl = h.mkNode();
   nameEl.textContent = 's';
   h.startRename(h.rows[0], nameEl, 's');
@@ -317,5 +343,5 @@ test('a rename that fails but keeps the seat carries its effort level on the fai
   await renamed;
   await new Promise((r) => setImmediate(r));
   assert.ok(renamed, 'ENTER: the rename reached renameSession');
-  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.effort, /failed/.test(r.className)]), [['s', 'xhigh', true]]);
+  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.effort, r.dataset.posture, /failed/.test(r.className)]), [['s', 'xhigh', 'bypass', true]]);
 });

@@ -1339,12 +1339,12 @@ const chips = (m) => stripOf(m).childNodes.map((c) => [c.tagName || c.tag, c.dat
 const chipOf = (m, kind) => stripOf(m).childNodes.find((c) => c.dataset.chip === kind);
 const fakeEvent = () => { const e = { prevented: 0 }; e.preventDefault = () => { e.prevented += 1; }; return e; };
 
-function mountStatus(name, platform, { effort = null, ...extra } = {}) {
+function mountStatus(name, platform, { effort = null, posture = null, ...extra } = {}) {
   const writes = [];
-  const box = { level: effort };
+  const box = { level: effort, posture };
   const composerEl = fakeComposer();
   let t = 5000;
-  const m = mountView({ platform: () => platform, composerEl, now: () => t, statusChips: { write: (d) => writes.push(d), effort: () => box.level }, ...extra }, { geometry: true });
+  const m = mountView({ platform: () => platform, composerEl, now: () => t, statusChips: { write: (d) => writes.push(d), effort: () => box.level, posture: () => box.posture }, ...extra }, { geometry: true });
   const rows = statusRowsOf(name);
   Object.assign(m.terminal, { rows: rows.length, cols: 100 });
   m.terminal.buffer.active.cursorY = STATUS_CURSOR[name];
@@ -1427,6 +1427,62 @@ test('an effort level of null or default renders no effort chip', async () => {
     m.box.level = 'default';
     m.view.refreshStatus();
     noEffort();
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a codex bypass seat shows a danger Bypass posture chip right after the mode chip', async () => {
+  const m = mountStatus('codex-plan@100', 'codex', { posture: 'bypass' });
+  try {
+    await m.enter();
+    assert.deepStrictEqual(chips(m).slice(0, 2).map((c) => c[1]), ['mode', 'posture']);
+    const chip = chipOf(m, 'posture');
+    assert.deepStrictEqual([chip.tagName || chip.tag, textOf(chip), chip.dataset.tone], ['span', 'Bypass', 'danger']);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a codex read-only seat shows an info Read-only posture chip', async () => {
+  const m = mountStatus('codex-plan@100', 'codex', { posture: 'read-only' });
+  try {
+    await m.enter();
+    const chip = chipOf(m, 'posture');
+    assert.deepStrictEqual([textOf(chip), chip.dataset.tone], ['Read-only', 'info']);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a codex seat with no posture shows no posture chip', async () => {
+  const m = mountStatus('codex-plan@100', 'codex');
+  try {
+    await m.enter();
+    assert.strictEqual(chipOf(m, 'posture'), undefined);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a claude bypass seat shows no posture chip because its mode chip already reads Bypass', async () => {
+  const m = mountStatus('claude-bypass@100', 'claude', { posture: 'bypass' });
+  try {
+    await m.enter();
+    assert.strictEqual(chipOf(m, 'posture'), undefined);
+    assert.strictEqual(textOf(chipOf(m, 'mode')), 'Bypass');
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a muse bypass seat shows no posture chip', async () => {
+  const m = mountStatus('muse-auto-review@100', 'muse', { posture: 'bypass' });
+  try {
+    await m.enter();
+    assert.strictEqual(chipOf(m, 'posture'), undefined);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('refreshStatus adds the posture chip once the posture arrives, without a pty write', async () => {
+  const m = mountStatus('codex-plan@100', 'codex');
+  try {
+    await m.enter();
+    assert.strictEqual(chipOf(m, 'posture'), undefined);
+    m.box.posture = 'bypass';
+    m.view.refreshStatus();
+    assert.strictEqual(textOf(chipOf(m, 'posture')), 'Bypass');
+    assert.deepStrictEqual(m.writes, []);
   } finally { m.view.dispose(); m.restore(); }
 });
 

@@ -174,6 +174,14 @@ function hasBypass(adapter, argv) {
   return false;
 }
 
+function postureOf(adapter, argv) {
+  if (!adapter || !Array.isArray(argv)) return 'default';
+  if (hasBypass(adapter, argv)) return 'bypass';
+  const cap = adapter.readOnlyCap && adapter.readOnlyCap.args;
+  if (Array.isArray(cap) && cap.length > 0 && cap.every((tok) => argv.includes(tok))) return 'read-only';
+  return 'default';
+}
+
 function capsFor(type) {
   const a = adapterFor(type);
   return a ? a.ui : NO_CAPS;
@@ -222,5 +230,5 @@ function stripModelArgs(type, extraArgs) {
 
 module.exports = {
   ADAPTERS, PLATFORMS, DEFAULT_TYPE, CAP_KEYS,
-  adapterFor, isAgentType, capsFor, streamFor, seatType, resolveModelId, resolveEffort, stripModelArgs, hasBypass,
+  adapterFor, isAgentType, capsFor, streamFor, seatType, resolveModelId, resolveEffort, stripModelArgs, hasBypass, postureOf,
 };

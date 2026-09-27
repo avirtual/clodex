@@ -118,7 +118,7 @@ function statusChip(doc, kind, text, tone, title, onChip) {
   return el;
 }
 
-function renderStatusChips(doc, el, read, effort, onChip = NOOP, platform = 'claude') {
+function renderStatusChips(doc, el, read, effort, onChip = NOOP, platform = 'claude', posture = null) {
   const chips = [];
   const mode = read && read.mode;
   if (mode) {
@@ -127,6 +127,7 @@ function renderStatusChips(doc, el, read, effort, onChip = NOOP, platform = 'cla
     const tone = Object.hasOwn(MODE_TONE, mode.key) ? MODE_TONE[mode.key] : 'muted';
     chips.push(statusChip(doc, 'mode', known ? MODE_TEXT[mode.key] : String(mode.label || ''), tone, MODE_TITLES[family], family === 'muse' ? null : onChip));
   }
+  if (platform === 'codex' && (posture === 'bypass' || posture === 'read-only')) chips.push(statusChip(doc, 'posture', posture === 'bypass' ? 'Bypass' : 'Read-only', posture === 'bypass' ? 'danger' : 'info', 'Approval posture set at launch — Codex\'s own status row does not show it', null));
   if (read && read.tasks) chips.push(statusChip(doc, 'tasks', String(read.tasks), 'muted', 'Background work in this seat', null));
   if (read && Number.isInteger(read.warnings)) chips.push(statusChip(doc, 'warnings', `⚠ ${read.warnings}`, 'warn', 'Codex startup warnings — click to view', onChip));
   if (typeof effort === 'string' && effort.trim() && effort.trim() !== 'default') chips.push(statusChip(doc, 'effort', effort.trim(), 'neutral', 'Effort level for this seat', null));
@@ -337,6 +338,11 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     return typeof v === 'string' && v.trim() && v.trim() !== 'default' ? v.trim() : null;
   }
 
+  function postureNow() {
+    const v = statusChips.posture ? statusChips.posture() : null;
+    return v === 'bypass' || v === 'read-only' ? v : null;
+  }
+
   function onChip(kind) {
     if (disposed || raw || state.mode !== 'split' || !composerVisible() || (menuMirror && menuMirror.on())) return;
     if (kind === 'mode') statusChips.write('\x1b[Z');
@@ -345,10 +351,11 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
 
   function reconcileStatus() {
     const effort = effortNow();
-    const key = JSON.stringify({ read: heldRead, effort });
+    const posture = postureNow();
+    const key = JSON.stringify({ read: heldRead, effort, posture });
     if (key === statusKey) return;
     statusKey = key;
-    renderStatusChips(document, statusEl, heldRead, effort, onChip, platform());
+    renderStatusChips(document, statusEl, heldRead, effort, onChip, platform(), posture);
   }
 
   function readStatus(rows, measured) {
