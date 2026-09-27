@@ -162,12 +162,13 @@ test('the two HTML shapes, and nothing else, leave the text stream', () => {
   const ec2 = read('docs/recipes/aws-ec2.md').split('\n');
   assert.strictEqual(ec2[79], '<details><summary>The appliance variant (run the container yourself)</summary>');
   assert.strictEqual(ec2[103], '</details>');
-  const api = read('plugins/plugin-api.md').split('\n');
-  assert.strictEqual(api[953], '<a name="callback-conventions"></a>');
+  const lines = read('plugins/plugin-api.md').split('\n');
+  const anchor = lines.find((l) => l.startsWith('<a name="callback-conventions"'));
+  assert.strictEqual(anchor, '<a name="callback-conventions"></a>');
 
   assert.deepStrictEqual(parseDoc(ec2[79]).blocks, []);
   assert.deepStrictEqual(parseDoc('</details>').blocks, []);
-  assert.deepStrictEqual(parseDoc(api[953]).blocks, [{ type: 'anchor', id: 'callback-conventions' }]);
+  assert.deepStrictEqual(parseDoc(anchor).blocks, [{ type: 'anchor', id: 'callback-conventions' }]);
   assert.deepStrictEqual(parseDoc('<b>hi</b>').blocks, [
     { type: 'paragraph', children: [{ type: 'text', text: '<b>hi</b>' }] },
   ]);
