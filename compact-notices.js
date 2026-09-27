@@ -19,10 +19,10 @@ function mergeCompactNotices(records, notices) {
   const folded = new Set();
   for (const n of notices) {
     if (typeof n.ms === 'number' && n.outcome === 'done') {
-      const b = out.findIndex((r, i) => !folded.has(i) && r.kind === 'boundary' && r.what === 'compact' && r.ts != null && r.ts >= n.ts);
+      const b = out.findIndex((r) => !folded.has(r) && r.kind === 'boundary' && r.what === 'compact' && r.ts != null && r.ts >= n.ts);
       if (b >= 0) {
         out[b] = { ...out[b], elapsedMs: n.ms };
-        folded.add(b);
+        folded.add(out[b]);
         continue;
       }
     }

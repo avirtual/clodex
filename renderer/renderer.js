@@ -62,7 +62,7 @@ const { createDrawerHost } = require('./drawer-host');
 const { createIpcLog } = require('./ipc-log');
 const { createInboxDrawer } = require('./inbox-drawer');
 const { createVoiceCore } = require('./voice-control');
-const { initialSeatView, seatViewSettings, createSeatView, applySeatView, toggleSeatTerminal, seatViewDeps } = require('./lib/seat-view');
+const { initialSeatView, rememberedSeatView, seatViewSettings, createSeatView, applySeatView, toggleSeatTerminal, seatViewDeps } = require('./lib/seat-view');
 const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
 const { createVoiceMirror, engineObserved } = require('./voice-mirror');
@@ -136,11 +136,13 @@ let activeSession = null;
 let terminalWebglEnabled = false;
 let transcriptPaneEnabled = true;
 let transcriptPaneMode = 'conversation';
-const initialViewFor = (name) => initialSeatView({ transcriptPane: transcriptPaneEnabled, transcriptPaneMode, io: streamSeatNames.has(name) ? 'stream' : 'pty' });
+const seatViewMemory = new Map();
+const seatViewPrefs = (name) => ({ transcriptPane: transcriptPaneEnabled, transcriptPaneMode, io: streamSeatNames.has(name) ? 'stream' : 'pty' });
+const initialViewFor = (name) => rememberedSeatView(seatViewMemory.get(name), seatViewPrefs(name));
 const openAtAGlance = () => openHelp('at-a-glance', 'views');
 function refreshTranscriptPanes() {
   for (const [name, entry] of sessions) {
-    if (entry.view && isAgentType(sessionTypeOf(name))) applySeatView(entry, initialViewFor(name));
+    if (entry.view && isAgentType(sessionTypeOf(name))) applySeatView(entry, initialSeatView(seatViewPrefs(name)));
   }
 }
 const terminalWebglReady = window.api.getSettings()
@@ -823,6 +825,7 @@ async function archiveSessionRow(name) {
 async function deleteSessionRow(name) {
   if (!(await window.api.confirmKill(name))) return;
   movingFailed.delete(name);
+  seatViewMemory.delete(name);
   const res = await window.api.killSession(name);
   if (res && res.error) {
     showToast(`Worktree removal failed: ${res.error}`, { kind: 'warn', duration: 12000, name });
@@ -1263,6 +1266,7 @@ function startRename(item, nameEl, sessionName) {
       removeSession(sessionName, { keepPersisted: true });
       markSeatIo(res.name, streamSeatNames.has(sessionName) ? 'stream' : 'pty');
       streamSeatNames.delete(sessionName);
+      seatViewMemory.delete(sessionName);
       createTerminal(res.name);
       addSessionToSidebar(res.name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, res.noWire === true, snapAccount);
       switchSession(res.name);
@@ -2127,6 +2131,7 @@ function createTerminal(name, peer = null) {
     wrapperEl.dataset.name = name;
     terminalContainer.appendChild(wrapperEl);
     const seat = createSeatView(initialViewFor(name));
+    seat.onView = (v) => seatViewMemory.set(name, v);
     const stream = createStreamSeatPane(name, wrapperEl, seat);
     const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
     if (row && (row.dataset.attention || row.dataset.activity)) stream.setTurnRunning(seatActivity(row), Number(row.dataset.thinkingSince) || null);
@@ -2402,6 +2407,7 @@ function createTerminal(name, peer = null) {
   }
   const agentSeat = !peer;
   const seat = agentSeat ? createSeatView(initialViewFor(name)) : {};
+  if (agentSeat) seat.onView = (v) => seatViewMemory.set(name, v);
   const liveSplit = !splitOn ? null : createLiveSplitView(terminal, wrapperEl, {
     isEligible: () => isAgentType(sessionTypeOf(name)),
     platform: () => sessionTypeOf(name),

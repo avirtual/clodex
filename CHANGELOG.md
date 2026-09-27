@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - The Tickets viewer's write actions (new ticket, edit spec, assign, close, cancel) work from the browser as they do on the desktop; they used to render and then fail with "plugin method not available on this surface".
+- A seat keeps its Conversation / Internals / Screen choice when Clodex rebuilds it (restart, move, Edit Session); a ticket or reply row whose message is one line no longer opens onto an empty body; a long one-line ticket message clips like every other preview and its paths stay clickable.
 
 ## 5.87.0 — 2026-09-27 — seats you can read
 

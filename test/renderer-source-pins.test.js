@@ -111,3 +111,15 @@ test('createTerminal gives every local pty seat its per-seat view without readin
   assert.ok(!/const agentSeat = [^\n]*sessionTypeOf\(/.test(src), 'no eager sessionTypeOf for agentSeat');
   assert.ok(src.includes("if (seat.view === 'terminal' && liveSplit) liveSplit.setRaw(true);"));
 });
+
+test('a seat view choice is kept per name across a rebuild, and a delete or a rename drops it', () => {
+  const body = SRC.match(/\nfunction createTerminal\(name, peer = null\) \{[\s\S]*?\n\}\n/);
+  assert.ok(body, 'ENTER: createTerminal is still found by this anchor');
+  assert.ok(SRC.includes('const initialViewFor = (name) => rememberedSeatView(seatViewMemory.get(name), seatViewPrefs(name));'));
+  assert.strictEqual(body[0].split('.onView = (v) => seatViewMemory.set(name, v);').length - 1, 2, 'both the stream and the pty seat record their view');
+  const refresh = SRC.match(/\nfunction refreshTranscriptPanes\(\) \{[\s\S]*?\n\}\n/);
+  assert.ok(refresh && refresh[0].includes('applySeatView(entry, initialSeatView(seatViewPrefs(name)))'), 'a Prefs change applies the Prefs view, not the remembered one');
+  const del = SRC.match(/\nasync function deleteSessionRow\(name\) \{[\s\S]*?\n\}\n/);
+  assert.ok(del && del[0].includes('seatViewMemory.delete(name);'));
+  assert.ok(/streamSeatNames\.delete\(sessionName\);\n\s*seatViewMemory\.delete\(sessionName\);\n\s*createTerminal\(res\.name\);/.test(SRC), 'a rename drops the old name');
+});

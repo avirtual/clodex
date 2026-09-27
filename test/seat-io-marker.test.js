@@ -180,7 +180,6 @@ const whereLine = (html) => (/<span class="hovercard-type">([^<]*)<\/span>/.exec
 test('a stream row renders a hovercard whose head carries data-io="stream" and names the kind', () => {
   const html = hoverCard({ io: 'stream' });
   assert.strictEqual(headIo(html), 'stream');
-  assert.ok(whereLine(html).includes(' · stream'), whereLine(html));
   assert.strictEqual(whereLine(html), 'claude · stream');
 });
 

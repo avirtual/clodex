@@ -144,12 +144,13 @@ function inlineBody(seg) {
   if (seg.verb !== 'task') return null;
   const lines = seg.body.split('\n');
   const at = lines.findIndex((l) => l.trim());
-  return at < 0 ? null : lines[at];
+  return at < 0 ? null : previewText(lines[at], INLINE_CHARS);
 }
 
 function restBody(doc, seg, ctx) {
   const lines = seg.body.split('\n');
-  const rest = lines.slice(lines.findIndex((l) => l.trim()) + 1).join('\n');
+  const at = lines.findIndex((l) => l.trim());
+  const rest = lines.slice(lines[at].length > INLINE_CHARS ? at : at + 1).join('\n');
   if (!rest.trim()) return [];
   const body = el(doc, 'div', 'intent-card-body intent-card-rest');
   appendPlain(doc, body, rest, ctx);
@@ -459,7 +460,8 @@ function inboundRow(doc, rec, ctx, boxed) {
   if (rec.via === 'subagent') row.dataset.via = 'subagent';
   if (!boxed) text.appendChild(inboundBadge(doc, rec));
   if (rec.attached) {
-    const lead = boxed ? '' : rec.text.slice(0, rec.text.indexOf('Message (')).trim();
+    const cut = rec.text.indexOf('Message (');
+    const lead = (cut < 0 ? rec.text : rec.text.slice(0, cut)).trim();
     if (lead) appendProse(doc, text, `${lead} `, ctx);
     text.appendChild(el(doc, 'span', 'tr-dim', `${bytesText(rec.attached.bytes)} `));
     text.appendChild(linkNode(doc, { kind: 'path', text: baseName(rec.attached.path), path: rec.attached.path }, '', ctx));
@@ -540,10 +542,10 @@ function wireHead(doc, head, box, chevron, opened, id) {
   paint();
 }
 
-function internalBox(doc, rec, row, opened, att) {
+function internalBox(doc, rec, row, opened, att, opens) {
   const box = el(doc, 'div', 'tr-box');
   box.dataset.id = rec.id;
-  if (isLong(rec.text)) {
+  if (opens) {
     const head = boxHead(doc, rec, att);
     const chevron = head.childNodes[head.childNodes.length - 1];
     wireHead(doc, head, box, chevron, opened, rec.id);
@@ -566,7 +568,8 @@ function ticketParts(rec) {
 }
 
 function ticketOpens(rec, message) {
-  return Boolean(rec.attached || rec.text.trim().includes('\n') || isLong(rec.text) || message.trim().length > PREVIEW_CHARS);
+  if (rec.attached) return true;
+  return Boolean((rec.text.trim().includes('\n') || isLong(rec.text) || message.trim().length > PREVIEW_CHARS) && restText(message.trim()));
 }
 
 function boxedView(rec) {
@@ -574,10 +577,10 @@ function boxedView(rec) {
     const { message } = ticketParts(rec);
     return ticketOpens(rec, message) ? { ...rec, text: restText(message.trim()) } : null;
   }
-  return isLong(rec.text) ? { ...rec, text: restText(rec.text) } : null;
+  return isLong(rec.text) && restText(rec.text) ? { ...rec, text: restText(rec.text) } : null;
 }
 
-function ticketBox(doc, rec, row, opened, att) {
+function ticketBox(doc, rec, row, opened, att, ctx) {
   const box = el(doc, 'div', 'tr-box');
   box.dataset.id = rec.id;
   const { chip, message } = ticketParts(rec);
@@ -585,9 +588,12 @@ function ticketBox(doc, rec, row, opened, att) {
   if (att) head.appendChild(el(doc, 'span', 'tr-reply-lead', '↳'));
   head.appendChild(el(doc, 'span', 'tr-ticket-chip', chip));
   head.appendChild(rec.kind === 'reply' ? appBadge(doc, rec) : inboundBadge(doc, rec));
-  head.appendChild(previewSpan(doc, message.trim()));
+  const opens = ticketOpens(rec, message);
+  const preview = opens ? previewSpan(doc, message.trim()) : el(doc, 'span', 'tr-box-preview');
+  if (!opens) appendLinked(doc, preview, message.trim(), '', ctx);
+  head.appendChild(preview);
   box.appendChild(head);
-  if (ticketOpens(rec, message)) {
+  if (opens) {
     const chevron = el(doc, 'span', 'tr-box-chevron');
     head.appendChild(chevron);
     wireHead(doc, head, box, chevron, opened, rec.id);
@@ -1035,8 +1041,8 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
           build: () => {
             const view = r.kind === 'inbound' || r.kind === 'reply' ? boxedView(r) : null;
             const row = buildRow(doc, view || r, deps, att, Boolean(view)) || el(doc, 'div', 'tr-row');
-            if (r.ticket && (r.kind === 'inbound' || r.kind === 'reply')) return ticketBox(doc, r, row, opened, att);
-            return internalBox(doc, r, row, opened, att);
+            if (r.ticket && (r.kind === 'inbound' || r.kind === 'reply')) return ticketBox(doc, r, row, opened, att, deps);
+            return internalBox(doc, r, row, opened, att, r.kind === 'inbound' || r.kind === 'reply' ? Boolean(view) : isLong(r.text));
           },
           after,
         });

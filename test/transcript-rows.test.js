@@ -1436,3 +1436,54 @@ test('one ticket shape: a colon after the ticket id is not a state word, and a t
   assert.deepStrictEqual(['i1', 'i2'].map((id) => boxHeadOf(boxOf(m, id)).childNodes.map((n) => n.textContent).slice(0, 1).concat(boxHeadOf(boxOf(m, id)).childNodes[2].textContent)),
     [['t5', 'its worktree is held'], ['t12 merged', 'a → b']]);
 });
+
+test('one ticket shape: a task report whose first line outruns 120 chars clips it inline and keeps it whole above the rest', () => {
+  const m = mount();
+  const first = 'a'.repeat(130);
+  m.render([said('a1', 0, `[agent:task done t4] ${first}\nline two\n[agent:end]`)]);
+  const card = cardAt(m);
+  assert.strictEqual(card.childNodes[0].childNodes[3].textContent, `${'a'.repeat(120)}…`);
+  const [, body, foot] = card.childNodes;
+  assert.strictEqual(body.textContent, `${first}\nline two`);
+  assert.strictEqual(foot.textContent, '+ 2 more lines');
+});
+
+const headOnlyCases = [
+  { name: 'a one-line ticket message keeps its path clickable in the head', rec: inb('i1', 1, 'ticket-loop', '[ticket t7 MERGED] see /Users/x/notes.md now'),
+    head: ['tr-ticket-chip', 'tr-sender', 'tr-box-preview'], preview: 'see /Users/x/notes.md now', paths: ['/Users/x/notes.md'] },
+  { name: 'a tag line whose message sits on the next line is the head alone', rec: inb('i1', 1, 'ticket-loop', '[ticket t7 MERGED]\nmerged into master'),
+    head: ['tr-ticket-chip', 'tr-sender', 'tr-box-preview'], preview: 'merged into master', paths: [] },
+];
+for (const c of headOnlyCases) {
+  test(`one ticket shape: ${c.name}`, () => {
+    const m = mount();
+    m.render([c.rec]);
+    const box = boxOf(m, 'i1');
+    assert.strictEqual(box.className, 'tr-box tr-ticket');
+    const head = boxHeadOf(box);
+    assert.deepStrictEqual(head.childNodes.map((n) => n.className.split(' ')[0]), c.head);
+    assert.strictEqual(head.childNodes[2].textContent, c.preview);
+    assert.deepStrictEqual(withPath(head.childNodes[2]).map((n) => n.dataset.path), c.paths);
+    assert.strictEqual(bodyOf(box), undefined);
+    assert.strictEqual(head.listeners.click, undefined);
+  });
+}
+
+test('an internal reply whose lines after the first are blank renders open with no head', () => {
+  const m = mount();
+  m.render([replyRec('r1', 1, 'task', '⇄', 'task', 'done\n\n')]);
+  const box = boxOf(m, 'r1');
+  assert.strictEqual(box.className, 'tr-box');
+  assert.deepStrictEqual(box.childNodes.map((n) => n.className), ['tr-box-body']);
+  assert.ok(!/[▸▾]/.test(m.pane.textContent));
+});
+
+test('one ticket shape: an attached inbound whose lead outruns the preview keeps the whole lead above the size and link', () => {
+  const m = mount();
+  const lead = 'w'.repeat(130);
+  m.render([{ ...inb('i1', 1, 'clodex', `[ticket t9 RESPEC] ${lead} Message (2337 bytes) attached: @${ATT}`), attached: { path: ATT, bytes: 2337 } }]);
+  const box = boxOf(m, 'i1');
+  assert.strictEqual(boxHeadOf(box).childNodes[2].textContent, `${'w'.repeat(120)}…`);
+  assert.strictEqual(bodyOf(box).textContent, `${lead} 2.3 KB msg-1-2.txt`);
+  assert.ok(withPath(bodyOf(box)).some((n) => n.dataset.path === ATT));
+});
