@@ -131,6 +131,7 @@ test('a live move rewrites both fields, tells the OLD window moved-out and the N
     cwd: '/work',
     label: 'My Seat',
     effort: null,
+    posture: 'default',
     backend: 'pty',
     team: null,
     replay: 'buffered bytes',
@@ -215,6 +216,7 @@ test('an archived row moves record-only and its moved-in carries archived:true',
     archivedAt: 900,
     createdAt: 111,
     movedTo: null,
+    posture: 'default',
   }]]);
 });
 
