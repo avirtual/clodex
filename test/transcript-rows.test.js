@@ -1229,7 +1229,7 @@ test('folds: a machine-driven turn in Conversation mode shows one fold head with
   head.listeners.click();
   const open = turnOf(m, 'i1');
   assert.ok(!/\btr-turn-folded\b/.test(open.className));
-  assert.deepStrictEqual(shown(open), ['tr-row tr-turn-fold', 'tr-box tr-box-folded tr-ticket', 'tr-row tr-tool-block', 'tr-row tr-prose', 'tr-row tr-footer']);
+  assert.deepStrictEqual(shown(open), ['tr-row tr-turn-fold', 'tr-box tr-box-folded tr-ticket', 'tr-row tr-prose', 'tr-row tr-footer']);
   assert.strictEqual(open.childNodes[0].childNodes[0].textContent, '▾');
 });
 
@@ -1244,8 +1244,32 @@ test('folds: Internals mode has no fold head, and switching back re-folds a turn
   turnOf(m, 'i1').childNodes[0].listeners.click();
   m.rows.setMode('internals');
   m.rows.setMode('conversation');
-  assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-row tr-turn-fold', 'tr-box tr-box-folded tr-ticket', 'tr-row tr-tool-block', 'tr-row tr-prose', 'tr-row tr-footer']);
+  assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-row tr-turn-fold', 'tr-box tr-box-folded tr-ticket', 'tr-row tr-prose', 'tr-row tr-footer']);
   assert.strictEqual(turnOf(m, 'i1').childNodes[0].getAttribute('aria-expanded'), 'true');
+});
+
+test('folds: an opened fold in Conversation hides its tool block; Internals and the run expander show it', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render(accepted());
+  turnOf(m, 'i1').childNodes[0].listeners.click();
+  const block = () => findCls(turnOf(m, 'i1'), 'tr-tool-block')[0];
+  const prose = () => findCls(turnOf(m, 'i1'), 'tr-prose')[0];
+  const footer = () => findCls(turnOf(m, 'i1'), 'tr-footer')[0];
+  assert.ok(block());
+  assert.strictEqual(isHidden(block()), true);
+  assert.strictEqual(isHidden(prose()), false);
+  assert.strictEqual(isHidden(footer()), false);
+  m.rows.setMode('internals');
+  assert.ok(block());
+  assert.strictEqual(isHidden(block()), false);
+
+  const r = mount({ mode: 'conversation' });
+  r.render([ask('p1', 1), talk('a1', 1), inb('m2', 2, 'reminder', 'continue'), call('t2', 'Bash', 'ls', 'ok', { turn: 2 }), talk('a2', 2, 'carrying on')]);
+  assert.deepStrictEqual(shown(turnOf(r, 'm2')), ['tr-row tr-turn-fold']);
+  clickToggle(r);
+  const opened = findCls(turnOf(r, 'm2'), 'tr-tool-block')[0];
+  assert.ok(opened);
+  assert.strictEqual(isHidden(opened), false);
 });
 
 test('folds: the operator\'s mid-turn prompt inside a ticket-loop turn keeps the turn open and visible', () => {
