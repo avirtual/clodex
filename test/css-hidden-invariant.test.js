@@ -84,4 +84,5 @@ test('no transcript-pane rule sets visibility:visible (it escapes the hidden sea
   assert.deepStrictEqual(visible.filter((r) => !transcript(r.sel)).map((r) => r.sel), ['.terminal-wrapper.visible', '.drawer-pane.active'],
     'ENTER: the scan sees exactly the two intended visibility toggles outside the transcript');
   assert.deepStrictEqual(visible.filter((r) => transcript(r.sel)).map((r) => r.sel), []);
+  assert.deepStrictEqual(rules.filter((r) => r.sel.includes('.tr-box-preview') && /visibility\s*:/.test(r.body)).map((r) => r.sel), []);
 });
