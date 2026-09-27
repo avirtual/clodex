@@ -114,8 +114,8 @@ const SUITE_STUBS = {
 // the checkout, and the merge's step 3 refuses a dirty tree. Without it every
 // subject here would escalate at clean-tree and the assertions downstream would
 // be measuring that escalation instead of the merge.
-function mkRepo({ trunk = 'master' } = {}) {
-  const dir = mkTmpRoot('clodex-merge-repo-');
+function seedRepo(trunk) {
+  const dir = mkTmpRoot('clodex-merge-repo-seed-');
   git(dir, ['init', '-q', '-b', trunk]);
   git(dir, ['config', 'user.email', 't@t.t']);
   git(dir, ['config', 'user.name', 'T']);
@@ -130,6 +130,15 @@ function mkRepo({ trunk = 'master' } = {}) {
   const baseSha = git(dir, ['rev-parse', 'HEAD']);
   git(dir, ['branch', 'tl-1']);
   return { dir, baseSha };
+}
+
+const REPO_SEEDS = new Map();
+function mkRepo({ trunk = 'master' } = {}) {
+  if (!REPO_SEEDS.has(trunk)) REPO_SEEDS.set(trunk, seedRepo(trunk));
+  const seed = REPO_SEEDS.get(trunk);
+  const dir = mkTmpRoot('clodex-merge-repo-');
+  fsReal.cpSync(seed.dir, dir, { recursive: true });
+  return { dir, baseSha: seed.baseSha };
 }
 
 // One commit on the ticket branch, through git, so the merge moves real content.
