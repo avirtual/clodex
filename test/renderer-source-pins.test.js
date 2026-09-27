@@ -58,7 +58,7 @@ test('session:retrySpawn returns the seat io, so a row built without one is stil
 });
 
 test('the stream seat pane mounts its permission cards before the composer and renders them from every pull', () => {
-  const pane = SRC.match(/function createStreamSeatPane\(name, wrapperEl\) \{[\s\S]*?\n\}\n/);
+  const pane = SRC.match(/function createStreamSeatPane\(name, wrapperEl, seat\) \{[\s\S]*?\n\}\n/);
   assert.ok(pane, 'ENTER: createStreamSeatPane is still found by this anchor');
   const src = pane[0];
   const permAt = src.indexOf('wrapperEl.appendChild(permEl);');
@@ -72,7 +72,7 @@ test('the stream seat pane mounts its permission cards before the composer and r
 });
 
 test('t1199: Escape in the stream composer interrupts the seat before any other key handling, and the turn state drives the placeholder', () => {
-  const pane = SRC.match(/function createStreamSeatPane\(name, wrapperEl\) \{[\s\S]*?\n\}\n/);
+  const pane = SRC.match(/function createStreamSeatPane\(name, wrapperEl, seat\) \{[\s\S]*?\n\}\n/);
   assert.ok(pane, 'ENTER: createStreamSeatPane is still found by this anchor');
   const src = pane[0];
   const kit = SRC.match(/function attachComposer\(composer, \{[^\n]*\) \{[\s\S]*?\n\}\n/);
