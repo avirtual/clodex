@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 - Tickets is a pane now: the sidebar's Tickets button ticks a board + Feed pane on the right, beside the conversation instead of over it. It stays up while you work, refreshes itself while shown, and each window remembers whether it is on.
+- The Effort field in New Session, Edit Session and templates is a pick list of the levels the seat's CLI accepts (Claude low…max; Codex and Muse none…ultra) instead of a text box; a saved value the CLI no longer accepts stays selectable and is marked.
 - A run of a single test file killed at the runner's ceiling names that file even when node had not yet written its interrupted line.
 - The Tickets viewer's write actions (new ticket, edit spec, assign, close, cancel) work from the browser as they do on the desktop; they used to render and then fail with "plugin method not available on this surface".
 - A seat keeps its Conversation / Internals / Screen choice when Clodex rebuilds it (restart, move, Edit Session); a ticket or reply row whose message is one line no longer opens onto an empty body; a long one-line ticket message clips like every other preview and its paths stay clickable.
