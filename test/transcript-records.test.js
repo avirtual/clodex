@@ -745,6 +745,11 @@ test('a subagent report the CLI attaches as a teammate message is an inbound car
   assert.deepStrictEqual(records, [{ id: 'u', kind: 'inbound', ts: null, turn: 1, from: 'nits-coords', via: 'subagent', text: 'hello lead' }]);
 });
 
+test('a subagent report longer than the prompt cap is cut to the cap and marked truncated', () => {
+  const { records } = recordsOf(typed('u', 'p1', teammate('x'.repeat(5000))));
+  assert.deepStrictEqual(records.map((r) => [r.kind, r.via, r.truncated, r.text.length]), [['inbound', 'subagent', true, 4096]]);
+});
+
 test('a subagent idle notification shows its JSON result as the card text', () => {
   const body = '{"type":"idle_notification","from":"nits-coords","timestamp":"2026-09-27T10:11:34.123Z","idleReason":"available","result":"done: 17 open"}';
   const { records } = recordsOf(typed('u', 'p1', teammate(body)));

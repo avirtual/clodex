@@ -1212,6 +1212,7 @@ function startRename(item, nameEl, sessionName) {
     input.replaceWith(newNameEl);
     if (!wanted) return;
     const snapType = item ? item.dataset.type || null : null;
+    const snapEffort = item ? item.dataset.effort || null : null;
     const snapBackend = item ? item.dataset.backend || null : null;
     const snapAccount = accountOfRow(sessionName);
     window.api.renameSession(sessionName, wanted).then((res) => {
@@ -1220,6 +1221,7 @@ function startRename(item, nameEl, sessionName) {
           const row = {
             name: res.name, type: res.type || snapType, cwd: res.cwd,
             error: res.error, team: res.team || null, backend: snapBackend,
+            effort: snapEffort,
           };
           if (res.name === sessionName && sessions.has(sessionName)) {
             newNameEl.textContent = current;

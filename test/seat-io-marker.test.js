@@ -20,15 +20,18 @@ const fnSrc = (name) => slice(`function ${name}(`, '\n}\n');
 
 function mkRenderer(extra = {}) {
   const rows = [];
+  const created = [];
   const mkNode = () => {
     const stub = () => ({ dataset: {}, addEventListener() {} });
     const node = {
-      className: '', dataset: {}, innerHTML: '',
+      className: '', dataset: {}, innerHTML: '', on: {},
       chip: { dataset: {} },
-      addEventListener() {},
+      addEventListener(ev, fn) { node.on[ev] = fn; },
+      focus() {}, select() {}, replaceWith() {},
       querySelector(sel) { return sel === '.session-chip' ? node.chip : stub(); },
       remove() { const i = rows.indexOf(node); if (i >= 0) rows.splice(i, 1); },
     };
+    created.push(node);
     return node;
   };
   const env = {
@@ -73,11 +76,11 @@ function mkRenderer(extra = {}) {
     fnSrc('exitedRowSnapshot'), fnSrc('archivedRowEntry'),
     fnSrc('addSessionToSidebar'), fnSrc('addArchivedSessionToSidebar'),
     fnSrc('addFailedSessionToSidebar'), fnSrc('addExitedSessionToSidebar'),
-    fnSrc('moveSessionWithPicker'), fnSrc('moveSessionToPeerWithDialog'),
-    'return { markSeatIo, markSeatEffort, exitedRowSnapshot, archivedRowEntry, addSessionToSidebar, addArchivedSessionToSidebar, addFailedSessionToSidebar, addExitedSessionToSidebar, moveSessionWithPicker, moveSessionToPeerWithDialog };',
+    fnSrc('moveSessionWithPicker'), fnSrc('moveSessionToPeerWithDialog'), fnSrc('startRename'),
+    'return { markSeatIo, markSeatEffort, exitedRowSnapshot, archivedRowEntry, addSessionToSidebar, addArchivedSessionToSidebar, addFailedSessionToSidebar, addExitedSessionToSidebar, moveSessionWithPicker, moveSessionToPeerWithDialog, startRename };',
   ].join('\n');
   const fns = new Function(...names, body)(...names.map((n) => env[n]));
-  return { rows, env, ...fns };
+  return { rows, env, created, mkNode, ...fns };
 }
 
 const chipTip = (row) => (/<span class="session-chip"[^>]*>/.exec(row.innerHTML) || [''])[0].includes('data-tip=') ? 'tip' : null;
@@ -297,4 +300,22 @@ test('a failed move that keeps the seat without respawning carries its effort le
   await peer.env.pendingPeerMove.get('s')('/far');
   assert.deepStrictEqual([dir, peer].map((h) => h.rows.map((r) => [r.dataset.name, r.dataset.effort, /failed/.test(r.className)])),
     [[['s', 'xhigh', true]], [['s', 'high', true]]]);
+});
+
+test('a rename that fails but keeps the seat carries its effort level on the failed row', async () => {
+  let renamed;
+  const api = { renameSession: async () => { const res = { ok: false, kept: true, name: 's', type: 'claude', cwd: '/w', error: 'boom' }; renamed = Promise.resolve(); return res; } };
+  const h = mkRenderer({ window: { api } });
+  h.addSessionToSidebar('s', 'claude', '/w');
+  h.markSeatEffort('s', 'xhigh');
+  const nameEl = h.mkNode();
+  nameEl.textContent = 's';
+  h.startRename(h.rows[0], nameEl, 's');
+  const input = h.created[h.created.length - 1];
+  input.value = 't';
+  input.on.blur();
+  await renamed;
+  await new Promise((r) => setImmediate(r));
+  assert.ok(renamed, 'ENTER: the rename reached renameSession');
+  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.effort, /failed/.test(r.className)]), [['s', 'xhigh', true]]);
 });

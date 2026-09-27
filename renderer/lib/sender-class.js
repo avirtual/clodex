@@ -41,4 +41,4 @@ function classifySender(from) {
   return { cls: 'seat', label: name, glyph: initial(name) };
 }
 
-module.exports = { classifySender, SYSTEM_GLYPHS };
+module.exports = { classifySender, initial, SYSTEM_GLYPHS };
