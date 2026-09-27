@@ -2377,6 +2377,16 @@ function registerIpcHandlers(deps) {
     return manager.seatSend(s.name, typeof text === 'string' ? text : '', checked.images);
   });
 
+  handle('seat:image-upload', (e, name, images) => {
+    const s = manager.sessions.get(String(name || ''));
+    if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };
+    if (!isAgentType(s.agentType)) return { ok: false, error: 'not an agent session' };
+    if (!Array.isArray(images) || !images.length) return { ok: false, error: 'no image to upload' };
+    const checked = validateSeatImages(images);
+    if (!checked.ok) return checked;
+    return { ok: true, paths: manager._writeImageFiles(s.name, checked.images) };
+  });
+
   handle('seat:commands', (e, name) => {
     const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
     if (surface !== 'desktop') return { ok: false, error: 'seat:commands is local only' };

@@ -7,7 +7,7 @@ One row per gate site, in source order. Symbols, not line numbers; `test/web-par
 | file | symbol | what differs on web | verdict |
 |---|---|---|---|
 | renderer/renderer.js | `updateWindowTitle` | tab title carries the attention count | KEPT: substitute — the desktop window hides its title bar (`titleBarStyle: 'hiddenInset'`), so only a browser tab ever shows the title |
-| renderer/renderer.js | `composerEl` | an image paste into the pty composer shows a toast instead of sending Ctrl-V | KEPT: inability — Ctrl-V makes the CLI read the HOST's clipboard, not the browser's; a web path needs an upload (FOLLOW-UP) |
+| renderer/renderer.js | `composerEl` | an image paste into the pty composer uploads the image to the host and hands the seat its file path instead of sending Ctrl-V | KEPT: inability — Ctrl-V makes the CLI read the HOST's clipboard, not the browser's, so the web paste uploads and the seat gets the path |
 | renderer/renderer.js | `terminalContainer` | dropping files onto the terminal shows a toast instead of pasting paths | KEPT: inability — no `webUtils.getPathForFile`, a browser never exposes a dropped file's path |
 | renderer/renderer.js | `webNotifier` | attention raises a browser `Notification` while the tab is unfocused | KEPT: substitute — desktop notifies through the main process `notifyOS`, which cannot reach a browser |
 | renderer/renderer.js | `updateWindowTitle` | attention change repaints the tab title badge | KEPT: substitute — same as the first row |

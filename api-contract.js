@@ -142,6 +142,7 @@ const API_CONTRACT = [
   { name: 'onTranscriptChanged', kind: 'on', channel: 'transcript-changed' },
   { name: 'writeToSession', kind: 'send', channel: 'pty-input' },
   { name: 'seatSend', kind: 'invoke', channel: 'seat:send' },
+  { name: 'seatImageUpload', kind: 'invoke', channel: 'seat:image-upload' },
   { name: 'seatPermission', kind: 'invoke', channel: 'seat:permission' },
   { name: 'seatInterrupt', kind: 'invoke', channel: 'seat:interrupt' },
   { name: 'seatDraft', kind: 'send', channel: 'seat:draft' },
