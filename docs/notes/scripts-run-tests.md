@@ -99,6 +99,7 @@ the suite's comment ratchet refuses new comment lines.
 20 minutes. The `clodex-run-tests` exec ceiling (36 minutes) exceeds the wrapper's
 15-minute lock wait plus these 20, pinned in test/test-digest-lock.test.js, so
 a wedged run must end in this runner's own `TIMEOUT after <m>m in <file>` line
-(the file comes from node's `# Interrupted while running:` tap line on SIGTERM)
+(the file comes from node's `# Interrupted while running:` tap line on SIGTERM;
+a one-file run killed before node wrote that line names the file it was given)
 rather than be killed from outside with no file named. `CLODEX_TEST_RUN_TIMEOUT_MS`
 overrides it for the runner's own tests only.
