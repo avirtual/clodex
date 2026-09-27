@@ -1021,6 +1021,42 @@ function closed(payload) {
   };
 }
 
+const FEED_LIMIT_DEFAULT = 200;
+const FEED_LIMIT_MAX = 1000;
+
+function feedLimit(v) {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return FEED_LIMIT_DEFAULT;
+  return Math.min(FEED_LIMIT_MAX, Math.max(1, Math.floor(v)));
+}
+
+function feed(payload) {
+  const projectKey = str(payload && payload.project);
+  const loc = resolveProject(projectKey);
+  if (!loc.ok) return loc;
+  const read = readTicketsAt(loc.dir);
+  if (!read.ok) return read;
+  const limit = feedLimit(payload && payload.limit);
+
+  const scored = [];
+  for (const t of read.tickets) {
+    if (!Array.isArray(t.events)) continue;
+    const id = str(t.id);
+    const title = str(t.title);
+    for (const e of t.events) {
+      if (!e || typeof e !== 'object' || Array.isArray(e)) continue;
+      const ev = eventRow(e);
+      if (ev.at === null) continue;
+      const row = { at: ev.at, id, title, kind: ev.kind || '', by: ev.by || '' };
+      if (ev.verdict !== undefined) row.verdict = ev.verdict;
+      if (ev.round !== undefined) row.round = ev.round;
+      if (ev.step !== undefined) row.step = ev.step;
+      scored.push({ seq: scored.length, row });
+    }
+  }
+  scored.sort((a, b) => (b.row.at - a.row.at) || (b.seq - a.seq));
+  return { ok: true, rows: scored.slice(0, limit).map((s) => s.row), limit };
+}
+
 function teamCost(projectKey) {
   const known = teamIndex().get(projectKey);
   if (!known || !known.team) return { ok: true, team: '', usd: null, counts: null, since: null };
@@ -1278,6 +1314,7 @@ module.exports.activate = (h) => {
   host.ipc.handle('ticket', (p) => ticketDetail(p));
   host.ipc.handle('search', (p) => search(p));
   host.ipc.handle('closed', (p) => closed(p));
+  host.ipc.handle('feed', (p) => feed(p));
 
   // Deliberately absent from manifest.json's `surfaces`, which is what keeps these
   // desktop-only: a board reachable from a browser is one a browser can close
@@ -1307,6 +1344,7 @@ module.exports._internals = {
   ticketDetail, search, closed, diffStat, parseVerdict, ticketRounds, deriveRounds,
   VERDICT_RE, TEXT_CAP, TEXT_CAP_MARKER, SEARCH_HIT_CAP, SNIPPET_CHARS,
   CLOSED_PAGE_DEFAULT, CLOSED_PAGE_MAX,
+  feed, FEED_LIMIT_DEFAULT, FEED_LIMIT_MAX,
   VIEWER_ACTOR, closeLine,
   DEFAULT_STALL_MS, WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, RECENT_DONE_MS, RECENT_DONE_CAP,
   // Overrides the HOME rather than teams/ or projects/, which must move together:

@@ -139,7 +139,46 @@ function deliveryNote(assignee, delivered) {
   return delivered ? '' : `${assignee} is not running — the ticket is assigned but the spec was not delivered.`;
 }
 
+const FEED_CHIPS = [
+  ['Filed', ['add']],
+  ['Working', ['start', 'assign', 'nudge']],
+  ['Review', ['done', 'verdict', 'reject', 'respec', 'verify-hold']],
+  ['Landed', ['merged', 'accept']],
+  ['Trouble', ['merge-failed', 'cancel', 'undelivered']],
+];
+
+const FEED_EMPTY = 'No ticket events yet — history is recorded from this release on.';
+
+function feedChipFor(kind) {
+  for (const [label, kinds] of FEED_CHIPS) if (kinds.includes(kind)) return label;
+  return null;
+}
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+function clockText(at) {
+  const d = new Date(at);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function dayText(at) {
+  const d = new Date(at);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+function feedRowText(r) {
+  return `${clockText(r.at)} · ${r.id} · ${r.kind} · by ${r.by || 'unknown'} · ${r.title}`;
+}
+
 module.exports.SEARCH_DEBOUNCE_MS = SEARCH_DEBOUNCE_MS;
+module.exports.FEED_CHIPS = FEED_CHIPS;
+module.exports.FEED_EMPTY = FEED_EMPTY;
+module.exports.feedChipFor = feedChipFor;
+module.exports.clockText = clockText;
+module.exports.dayText = dayText;
+module.exports.feedRowText = feedRowText;
 module.exports.humanizeAge = humanizeAge;
 module.exports.ageLine = ageLine;
 module.exports.hitAgeText = hitAgeText;
@@ -233,6 +272,8 @@ module.exports.activate = (rhost) => {
     let searchTimer = null;
     let closedSeq = 0;
     let closedView = null;
+    let feedSeq = 0;
+    let feedView = null;
 
     const searchEl = el('input', 'tv-search');
     searchEl.type = 'search';
@@ -479,6 +520,10 @@ module.exports.activate = (rhost) => {
         renderClosed(selected, closedView).catch((e) => rhost.log.error('closed failed', e));
         return;
       }
+      if (!q && feedView) {
+        renderFeed(selected).catch((e) => rhost.log.error('feed failed', e));
+        return;
+      }
       if (q) {
         mountBoardShell();
         sectionsEl.innerHTML = '';
@@ -667,10 +712,25 @@ module.exports.activate = (rhost) => {
       return row;
     }
 
+    function viewSwitch(active) {
+      const bar = el('div', 'tv-view-switch');
+      bar.appendChild(button(active === 'board' ? 'tv-filter tv-filter-active' : 'tv-filter', 'Board',
+        'Show the board of open and recently closed tickets', () => {
+          feedView = null;
+          selectProject(selected).catch((e) => rhost.log.error('select failed', e));
+        }));
+      bar.appendChild(button(active === 'feed' ? 'tv-filter tv-filter-active' : 'tv-filter', 'Feed',
+        'Show every ticket event on this board, newest first', () => {
+          renderFeed(selected).catch((e) => rhost.log.error('feed failed', e));
+        }));
+      return bar;
+    }
+
     function renderBoard(res, cost) {
       mountBoardShell();
       editorEl = null;
       sectionsEl.innerHTML = '';
+      sectionsEl.appendChild(viewSwitch('board'));
       if (!res.ok) {
         // Not the same as an empty board, and the difference is the whole
         // point: one says "nothing open", the other says "do not believe me".
@@ -880,6 +940,80 @@ module.exports.activate = (rhost) => {
       sectionsEl.appendChild(pager);
     }
 
+    function feedRow(project, r) {
+      const row = el('div', 'tv-feed-row', feedRowText(r));
+      row.dataset.tvKind = r.kind;
+      row.setAttribute('role', 'button');
+      row.tabIndex = 0;
+      row.title = r.verdict ? `${r.title}\nverdict: ${r.verdict}` : r.title;
+      row.addEventListener('click', () => {
+        renderDetail(project, r.id).catch((e) => rhost.log.error('detail failed', e));
+      });
+      return row;
+    }
+
+    function paintFeed(project, res) {
+      editorEl = null;
+      sectionsEl.innerHTML = '';
+      sectionsEl.appendChild(viewSwitch('feed'));
+      const chip = feedView && feedView.chip ? feedView.chip : null;
+      const head = el('div', 'tv-section-head tv-feed-head', 'Feed');
+      for (const [label] of FEED_CHIPS) {
+        head.appendChild(button(label === chip ? 'tv-filter tv-filter-active' : 'tv-filter', label,
+          label === chip ? 'Show every event again' : `Show only ${label.toLowerCase()} events`, () => {
+            feedView = { chip: label === chip ? null : label };
+            paintFeed(project, res);
+          }));
+      }
+      head.appendChild(button('tv-btn tv-feed-refresh', 'Refresh', 'Read the feed again', () => {
+        renderFeed(project).catch((e) => rhost.log.error('feed failed', e));
+      }));
+      sectionsEl.appendChild(head);
+
+      if (!res.ok) {
+        sectionsEl.appendChild(el('div', 'tv-error', `Could not read this project's ticket events: ${res.error || 'unknown error'}`));
+        return;
+      }
+      const all = Array.isArray(res.rows) ? res.rows : [];
+      if (!all.length) {
+        sectionsEl.appendChild(el('div', 'tv-empty', FEED_EMPTY));
+        return;
+      }
+      const rows = chip ? all.filter((r) => feedChipFor(r.kind) === chip) : all;
+      if (!rows.length) {
+        sectionsEl.appendChild(el('div', 'tv-empty', `No ${chip.toLowerCase()} events.`));
+        return;
+      }
+      const list = el('div', 'tv-feed');
+      let day = null;
+      for (const r of rows) {
+        const d = dayText(r.at);
+        if (d !== day) {
+          list.appendChild(el('div', 'tv-feed-day', d));
+          day = d;
+        }
+        list.appendChild(feedRow(project, r));
+      }
+      sectionsEl.appendChild(list);
+    }
+
+    async function renderFeed(project) {
+      if (!feedView) feedView = { chip: null };
+      closedView = null;
+      const my = ++feedSeq;
+      const mySelect = selectSeq;
+      const myReload = reloadSeq;
+      mountBoardShell();
+      editorEl = null;
+      sectionsEl.innerHTML = '';
+      sectionsEl.appendChild(viewSwitch('feed'));
+      sectionsEl.appendChild(el('div', 'tv-empty', 'Loading…'));
+
+      const res = await ask('feed', { project });
+      if (!alive() || my !== feedSeq || mySelect !== selectSeq || myReload !== reloadSeq) return;
+      paintFeed(project, res);
+    }
+
     async function runSearch(q) {
       const my = ++searchSeq;
       const mySelect = selectSeq;
@@ -916,6 +1050,7 @@ module.exports.activate = (rhost) => {
       const myReload = reloadSeq;
       selected = key;
       closedView = null;
+      feedView = null;
       for (const row of projectsPane.querySelectorAll('.tv-team-row')) {
         row.classList.toggle('tv-selected', row.dataset.tvProject === key);
       }

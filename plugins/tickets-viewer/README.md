@@ -23,6 +23,16 @@ omission prevents. The reads are listed there and serve any surface — `project
 which read past tickets' history — because reading a board from a browser closes
 nothing.
 
+`feed` is a read too, listed in `surfaces` and so reachable from the browser: it
+flattens the `events` of every ticket on the board, open and closed, into one
+newest-first list (`limit` 200 by default, 1000 at most) that the pane's
+`Board | Feed` switch shows with `Filed · Working · Review · Landed · Trouble`
+filters. Records written before events were recorded contribute no rows.
+
+The plugin is enabled by default (`enabledByDefault: true` since 0.4.0). A stored
+`plugins.enabled` list still wins over that default, so an install that already
+turned Tickets off stays off; only an install that never chose flips on.
+
 A write here is the operator's own edit of the board, **not an impersonation of
 the intent path**, and that is a capability boundary rather than a taste
 judgement: `[agent:task …]` also drains the closed seat's queue, rebuilds the
