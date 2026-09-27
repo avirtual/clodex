@@ -1868,6 +1868,42 @@ test('t1250: more must-fixes parked by the turn-start window after a typed redel
     fireConfirm(app, s);
     const redo = await settled(app, 'team-hand', /ALSO FIX THE LATCH/);
     assert.match(redo.slice(beforeRedo.length), /REDELIVERY/, 'the next deadline types the redelivery once the window has closed');
+    assert.match(redo.slice(beforeRedo.length), /ALSO FIX THE LATCH/, 'and the typed redelivery carries the new must-fixes');
+
+    lead._awaitingTurnSince = null;
+    const beforeLead = app.seen('lead');
+    fireConfirm(app, s);
+    const leadSaw = await settled(app, 'lead', /ESCALATED/);
+    assert.match(leadSaw.slice(beforeLead.length), /ESCALATED/, 'a typed redelivery with no turn after it escalates');
+  } finally { app.stop(); }
+});
+
+test('t1251: more must-fixes parked by the turn-start window after a typed FIRST rejection keeps its latch and escalates', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await redirected(world, { deps: { turnStartWindowMs: 60_000 } });
+  try {
+    s._awaitingTurnSince = Date.now();
+    assert.ok(s._specUnconfirmed && s._specUnconfirmed.kind === 'redirect', 'ENTER: the typed rejection is latched');
+    assert.strictEqual(s._specUnconfirmed.retried, false, 'ENTER: and its retry is unspent');
+    const t = world.tickets().find((x) => x.id === 't1');
+    assert.ok(t.state === 'open' && Number(t.reworkRound) > 0, 'ENTER: the next reject routes to the FOLLOW-UP path');
+
+    const beforeFollow = app.seen('team-hand');
+    app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
+    for (let i = 0; i < 400 && app.parked('team-hand', /ALSO FIX THE LATCH/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.strictEqual(app.parked('team-hand', /ALSO FIX THE LATCH/), 1, 'ENTER: the window parked the more-must-fixes write');
+    assert.strictEqual(app.seen('team-hand'), beforeFollow, 'ENTER: and nothing was typed');
+    assert.ok(s._specUnconfirmed, 'the latch watching the typed rejection survives the window divert');
+    assert.strictEqual(s._specUnconfirmed.kind, 'redirect', 'and it is still the REDIRECT latch');
+    assert.strictEqual(s._specUnconfirmed.retried, false, 'and the retry is still unspent');
+    assert.strictEqual(s._specUnconfirmed.windowRearmed, true, 'and the window re-arm is spent');
+
+    s._awaitingTurnSince -= 61_000;
+    const beforeRedo = app.seen('team-hand');
+    fireConfirm(app, s);
+    const redo = await settled(app, 'team-hand', /ALSO FIX THE LATCH/);
+    assert.match(redo.slice(beforeRedo.length), /REDELIVERY/, 'the next deadline types the redelivery once the window has closed');
+    assert.match(redo.slice(beforeRedo.length), /ALSO FIX THE LATCH/, 'and the typed redelivery carries the new must-fixes');
 
     lead._awaitingTurnSince = null;
     const beforeLead = app.seen('lead');

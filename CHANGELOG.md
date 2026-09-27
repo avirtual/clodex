@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Ticket loop: must-fixes added while a seat is still starting its turn on a just-typed rejection keep the delivery watcher instead of dropping it.
 - Ticket loop: a rejection or added must-fixes written inside a seat's turn-start window keeps its delivery watcher, the same as a rejection redelivery.
 - Ticket loop: a rejection redelivery parked by a seat's turn-start window is retried once more instead of escalating, the same as a spec replay.
 

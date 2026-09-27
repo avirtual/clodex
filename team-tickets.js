@@ -3922,10 +3922,10 @@ function createTicketMethods(deps, shared) {
       const kind = redirect ? 'redirect' : 'spec';
       const live = s._specUnconfirmed;
       if (disposition === 'parked' && divertedBy === 'window' && live && live.ticketId === ticketId
-          && live.kind === kind && live.retried && !live.windowRearmed) {
+          && live.kind === kind && !live.windowRearmed) {
         live.retried = false;
         live.windowRearmed = true;
-        log.info('intent', `${kind} replay of ${ticketId} parked by the turn-start window on ${seatName} — latch kept for one typed redelivery`);
+        log.info('intent', `${kind} write of ${ticketId} parked by the turn-start window on ${seatName} — latch kept for one typed redelivery`);
         return;
       }
       if (disposition !== 'injected') {
