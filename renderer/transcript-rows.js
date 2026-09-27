@@ -539,11 +539,7 @@ function pendingToolName(records) {
   return null;
 }
 
-function footerOf(records) {
-  const end = records.find((r) => r.kind === 'turn-end');
-  const boundary = records.find((r) => r.kind === 'boundary' && r.what === 'compact' && r.preTokens != null && r.postTokens != null);
-  if (!end && !boundary) return null;
-  const tools = records.filter((r) => r.kind === 'tool');
+function filesOf(tools) {
   const files = new Map();
   for (const r of tools) {
     if (r.state !== 'ok' || !r.sum || !r.sum.file || r.sum.add == null) continue;
@@ -552,11 +548,19 @@ function footerOf(records) {
     f.del += r.sum.del;
     files.set(r.sum.file, f);
   }
+  return [...files.values()];
+}
+
+function footerOf(records) {
+  const end = records.find((r) => r.kind === 'turn-end');
+  const boundary = records.find((r) => r.kind === 'boundary' && r.what === 'compact' && r.preTokens != null && r.postTokens != null);
+  if (!end && !boundary) return null;
+  const tools = records.filter((r) => r.kind === 'tool');
   return {
     durationMs: end && end.durationMs != null ? end.durationMs : null,
     tools: tools.length,
     errors: tools.filter((r) => r.state === 'error' || r.state === 'denied').length,
-    files: [...files.values()],
+    files: filesOf(tools),
     compacted: boundary ? [boundary.preTokens, boundary.postTokens] : null,
   };
 }
@@ -591,21 +595,13 @@ function runStatsOf(records) {
   const timed = ends.filter((r) => r.durationMs != null);
   const tools = records.filter((r) => r.kind === 'tool');
   const boundary = records.find((r) => r.kind === 'boundary' && r.what === 'compact' && r.preTokens != null && r.postTokens != null);
-  const files = new Map();
-  for (const r of tools) {
-    if (r.state !== 'ok' || !r.sum || !r.sum.file || r.sum.add == null) continue;
-    const f = files.get(r.sum.file) || { file: r.sum.file, add: 0, del: 0 };
-    f.add += r.sum.add;
-    f.del += r.sum.del;
-    files.set(r.sum.file, f);
-  }
   return {
     ended: ends.length > 0,
     durationMs: timed.length ? timed.reduce((n, r) => n + r.durationMs, 0) : null,
     tools: tools.length,
     errors: tools.filter((r) => r.state === 'error' || r.state === 'denied').length,
     injected: records.filter(isInternalRow).length,
-    files: [...files.values()],
+    files: filesOf(tools),
     compacted: boundary ? [boundary.preTokens, boundary.postTokens] : null,
   };
 }
@@ -816,6 +812,13 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     };
   }
 
+  function runToggleOf(key) {
+    for (const turn of paneEl.childNodes) {
+      for (const n of turn.childNodes || []) if (n.dataset && n.dataset.run === key) return n;
+    }
+    return null;
+  }
+
   function runToggleItem(run, open) {
     const stats = runStatsOf(run.records);
     if (suppressesClosed(run.records)) {
@@ -825,14 +828,20 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         build: () => {
           const btn = el(doc, 'button', 'tr-row tr-footer tr-run-toggle');
           btn.type = 'button';
-          btn.appendChild(el(doc, 'span', 'tr-run-glyph'));
+          btn.dataset.run = run.key;
+          const glyph = btn.appendChild(el(doc, 'span', 'tr-run-glyph'));
+          glyph.setAttribute('aria-hidden', 'true');
           footerParts(doc, btn, stats, deps, false);
+          if (btn.childNodes.length === 1) btn.setAttribute('aria-label', 'Show or hide this run\'s steps');
           btn.addEventListener('click', () => {
+            const focused = doc.activeElement === btn;
             const anchor = anchorOf();
             if (openRuns.has(run.key)) openRuns.delete(run.key);
             else openRuns.add(run.key);
             render(lastRecords);
             restore(anchor);
+            const next = focused ? runToggleOf(run.key) : null;
+            if (next) next.focus({ preventScroll: true });
           });
           return btn;
         },

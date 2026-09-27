@@ -6,7 +6,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseTranscript } = require('../transcript-spike');
-const { renderTranscript, createLiveSplitView } = require('../renderer/live-split-view');
+const { renderTranscript, renderStatusChips, createLiveSplitView } = require('../renderer/live-split-view');
 const { OUTPUT_LINE_CAP } = require('../renderer/transcript-rows');
 const { fakeDocument, textOf } = require('./lib/fake-dom');
 const { fakeLine } = require('./lib/fake-cells');
@@ -1436,15 +1436,31 @@ test('refreshStatus re-renders a changed effort level without a pty write or a s
     await m.enter();
     assert.deepStrictEqual(chips(m), [['button', 'mode', 'Bypass'], ['span', 'effort', 'high']]);
     const pulls = m.calls.pull;
+    const buf = m.terminal.buffer.active;
+    const getLine = buf.getLine;
+    let lineReads = 0;
+    buf.getLine = (i) => { lineReads += 1; return getLine(i); };
     m.box.level = 'xhigh';
     m.view.refreshStatus();
     assert.deepStrictEqual(chips(m), [['button', 'mode', 'Bypass'], ['span', 'effort', 'xhigh']]);
     assert.deepStrictEqual(m.writes, []);
     assert.strictEqual(m.calls.pull, pulls);
+    assert.strictEqual(lineReads, 0);
     m.box.level = null;
     m.view.refreshStatus();
     assert.deepStrictEqual(chips(m), [['button', 'mode', 'Bypass']]);
   } finally { m.view.dispose(); m.restore(); }
+});
+
+test('the mode chip title follows the platform, not the label casing', () => {
+  const read = { mode: { key: 'plan', label: 'Plan', cycles: true } };
+  const titleFor = (platform) => {
+    const el = fakeDoc().createElement('div');
+    renderStatusChips(fakeDoc(), el, read, null, () => {}, platform);
+    return el.childNodes[0].title;
+  };
+  assert.strictEqual(titleFor('codex'), 'Collaboration mode — click to toggle (shift+tab in the terminal)');
+  assert.strictEqual(titleFor('claude'), 'Permission mode — click to cycle (shift+tab in the terminal)');
 });
 
 test('a slash menu frame holds the screen chips but still refreshes the effort chip', async () => {

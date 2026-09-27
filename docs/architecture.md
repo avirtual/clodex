@@ -1278,7 +1278,7 @@ Own state + DOM, `init*(deps)`:
   other escape sequence; the view builds the spans with `textContent`.
 - **transcript-spike.js** — the main-side reader behind `transcript:pull`:
   re-reads `run/<name>/transcript.jsonl` after `fs.watch` fires and returns
-  `{ ok, rev, records }` built by `transcript-records.js`.
+  `{ ok, rev, records, source }` built by `transcript-records.js`; `source` = `hash(realpath):epoch`.
 - **transcript-records.js** — pure, electron-free record builder:
   `recordsOf(text)` turns transcript JSONL into typed records (prompt, inbound,
   reply, notification, assistant, tool paired with its result summary, command,
@@ -1288,7 +1288,7 @@ Own state + DOM, `init*(deps)`:
   See docs/explorations/pane-app-view.md §1 and intent-cards.md §4.
 - **transcript-internal.js** — `isInternalRow(rec)`, the one predicate for which
   transcript records Clodex injected (non-operator inbound, reply, notice,
-  notification). Dependency-free so the renderer and the web bundle can require it;
+  notification), and `TURN_KINDS`. Dependency-free so the renderer and the web bundle can require it;
   re-exported by transcript-records.js.
 - **transcript-rows.js** — DOM builders per record kind and the keyed reconcile
   behind the transcript pane: turn blocks keyed by their first record, rows keyed
@@ -1515,8 +1515,9 @@ and are not, which is why the judgement worth testing is pushed down here.
   `slashMenuKey` (arrow/Tab/Enter/Escape while the menu is open). Pure.
 - **pty-composer.js** — `ptyComposerWrites`: a pty seat composer draft as the
   writes sent to the CLI, the text as a bracketed paste, then CR as its own write. Pure.
-- **clipboard-images.js** — `clipboardImages`: clipboard image items read into
-  `{ mediaType, data }` base64 through an injected FileReader; shared by both seat composers' paste.
+- **clipboard-images.js** — `readImageFile` / `clipboardImages`: a file or the clipboard's image
+  items read into `{ mediaType, data }` base64 through an injected FileReader; `readImageFile`
+  serves the stream-seat attach, `clipboardImages` the pty-composer paste.
 - **prompt-echo.js** — recolour the CLI's submitted-prompt echo on the wire,
   before `terminal.write`. The echo is truecolor SGR, which xterm renders as
   inline styles that `options.theme` cannot reach, so the bytes are rewritten

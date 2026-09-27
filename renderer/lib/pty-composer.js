@@ -33,7 +33,7 @@ function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, app
     let paths = [null];
     if (web) {
       const images = await readImages(items);
-      const r = images.length ? await upload(images) : { ok: false, error: 'No readable image on the clipboard.' };
+      const r = images.length ? await Promise.resolve().then(() => upload(images)).catch((err) => ({ ok: false, error: String((err && err.message) || err) })) : { ok: false, error: 'No readable image on the clipboard.' };
       if (!r || !r.ok) {
         toast(String((r && r.error) || 'Image upload failed.'));
         return;

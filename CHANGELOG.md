@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Transcript pane: activating a run's expander from the keyboard keeps focus on it after the pane re-renders, and a pasted image whose upload fails now shows one error toast instead of breaking the composer. Moving a seat to a peer keeps its effort level on the rebuilt or failed row.
 - Pty seats with the composer now show a row of chips under it: the CLI's mode (click to cycle permission mode on Claude or toggle Plan mode on Codex, as shift+tab does), Claude's background-shell count, Codex's startup-warning count (click to open Codex's warning list) and the seat's effort level. The CLI's own status and hint rows no longer compete for that space.
 - Transcript pane: your own messages now sit on an accent-tinted row with a solid accent edge, so they stand apart from the agent's text on every theme (on Midnight the old raised-surface shade was nearly invisible); a mid-turn message keeps its dashed edge.
 - Transcript pane: an inline image thumbnail (and the `Image #n` chip that stands in for one) now keeps a little space from the text beside it instead of touching it.

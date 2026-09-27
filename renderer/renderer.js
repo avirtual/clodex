@@ -957,7 +957,7 @@ function moveSessionWithPicker(name) {
         if (res && res.kept) {
           const row = {
             name, type: res.type || snapType, cwd: res.cwd,
-            error: res.error, team: res.team || null, backend: snapBackend,
+            error: res.error, team: res.team || null, backend: snapBackend, effort: snapEffort,
           };
           if (sessions.has(name)) {
             movingFailed.set(name, row);
@@ -1040,11 +1040,12 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
         createTerminal(name);
         addSessionToSidebar(name, res.type || snapType, res.cwd, snapLabel,
           snapBackend, res.team || null, snapNoWire, snapAccount);
+        markSeatEffort(name, snapEffort);
         switchSession(name);
       } else {
         const row = {
           name, type: res.type || snapType, cwd: res.cwd,
-          error: res.error, team: res.team || null, backend: snapBackend,
+          error: res.error, team: res.team || null, backend: snapBackend, effort: snapEffort,
         };
         if (sessions.has(name)) {
           movingFailed.set(name, row);

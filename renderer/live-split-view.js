@@ -97,7 +97,6 @@ function renderMenuMirror(doc, el, read) {
 
 const MODE_TEXT = { bypass: 'Bypass', 'accept-edits': 'Accept edits', auto: 'Auto', plan: 'Plan', manual: 'Manual' };
 const MODE_TONE = { bypass: 'danger', 'accept-edits': 'warn', auto: 'warn', plan: 'info' };
-const CODEX_MODE_LABELS = new Set(['Default', 'Plan']);
 const MODE_TITLES = {
   claude: 'Permission mode — click to cycle (shift+tab in the terminal)',
   codex: 'Collaboration mode — click to toggle (shift+tab in the terminal)',
@@ -119,12 +118,12 @@ function statusChip(doc, kind, text, tone, title, onChip) {
   return el;
 }
 
-function renderStatusChips(doc, el, read, effort, onChip = NOOP) {
+function renderStatusChips(doc, el, read, effort, onChip = NOOP, platform = 'claude') {
   const chips = [];
   const mode = read && read.mode;
   if (mode) {
     const known = Object.hasOwn(MODE_TEXT, mode.key);
-    const family = !mode.cycles ? 'muse' : (mode.key === 'default' || mode.key === 'plan') && CODEX_MODE_LABELS.has(mode.label) ? 'codex' : 'claude';
+    const family = !mode.cycles ? 'muse' : platform === 'codex' ? 'codex' : 'claude';
     const tone = Object.hasOwn(MODE_TONE, mode.key) ? MODE_TONE[mode.key] : 'muted';
     chips.push(statusChip(doc, 'mode', known ? MODE_TEXT[mode.key] : String(mode.label || ''), tone, MODE_TITLES[family], family === 'muse' ? null : onChip));
   }
@@ -349,7 +348,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     const key = JSON.stringify({ read: heldRead, effort });
     if (key === statusKey) return;
     statusKey = key;
-    renderStatusChips(document, statusEl, heldRead, effort, onChip);
+    renderStatusChips(document, statusEl, heldRead, effort, onChip, platform());
   }
 
   function readStatus(rows, measured) {
