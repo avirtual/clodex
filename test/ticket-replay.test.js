@@ -1966,6 +1966,46 @@ test('t1252: more must-fixes after the rejection was CONFIRMED by a turn carry o
   } finally { app.stop(); }
 });
 
+test('t1253: more must-fixes typed over an UNCONFIRMED rejection type the rejection first in the first write', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await redirected(world);
+  try {
+    assert.ok(s._specUnconfirmed && s._specUnconfirmed.label === 'rejected', 'ENTER: the typed rejection is latched with no turn');
+    const beforeFollow = app.seen('team-hand');
+    app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
+    await settled(app, 'team-hand', /ALSO FIX THE LATCH/);
+    for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) await new Promise((r) => setTimeout(r, 5));
+    const first = app.seen('team-hand').slice(beforeFollow.length);
+    assert.doesNotMatch(first, /REDELIVERY/, 'ENTER: these are the bytes of the first write, not a redelivery');
+    assert.match(first, /\[ticket t1 rejected\] FIX THE WIDGET MOUNT[\s\S]*\[ticket t1 more must-fixes\] ALSO FIX THE LATCH/,
+      'the first write types the eaten rejection under its label, then the new must-fixes under theirs');
+    assert.strictEqual((first.match(/FIX THE WIDGET MOUNT/g) || []).length, 1, 'and the rejection only once');
+  } finally { app.stop(); }
+});
+
+test('t1253: more must-fixes over a rejection the TRANSCRIPT confirmed, latch still set, carry only the new text', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await redirected(world);
+  try {
+    assert.ok(s._specUnconfirmed && s._specUnconfirmed.label === 'rejected', 'ENTER: the rejection latch is still SET');
+    const priorSince = s._specUnconfirmed.since;
+    app.m._seatTranscriptHas = (seat, id, since) => seat === 'team-hand' && id === 't1' && since === priorSince;
+    const armedOver = [];
+    const arm = app.m._armSpecConfirm;
+    app.m._armSpecConfirm = function (...a) { armedOver.push(s._specUnconfirmed && s._specUnconfirmed.label); return arm.apply(this, a); };
+
+    const beforeFollow = app.seen('team-hand');
+    app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
+    await settled(app, 'team-hand', /ALSO FIX THE LATCH/);
+    for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) await new Promise((r) => setTimeout(r, 5));
+    assert.deepStrictEqual(armedOver, ['rejected'], 'ENTER: the prior rejection latch was set when the new write armed');
+    assert.strictEqual(s._specUnconfirmed && s._specUnconfirmed.label, 'more must-fixes', 'ENTER: the new write is latched');
+    assert.doesNotMatch(s._specUnconfirmed.reason, /FIX THE WIDGET MOUNT/, 'a transcript-confirmed rejection carries nothing');
+    assert.ok(!s._specUnconfirmed.carried, 'and the replacing latch is not marked carried');
+    assert.doesNotMatch(app.seen('team-hand').slice(beforeFollow.length), /FIX THE WIDGET MOUNT/, 'nor is it typed again');
+  } finally { app.stop(); }
+});
+
 // A dispatched ticket whose spec latch has been RETIRED by a real turn, closed,
 // and then rejected by the lead — i.e. a seat holding a redirect and nothing
 // else. The turn matters: without it the spec latch is still armed and every

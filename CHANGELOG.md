@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Ticket loop: must-fixes added before a seat has taken its turn on a rejection are typed together with that rejection's reasons, so a rejection whose Enter was eaten is not lost even when the follow-up lands.
 - Ticket loop: when must-fixes are added before a seat has taken its turn on a rejection and the follow-up itself has to be redelivered, that redelivery carries the rejection's reasons too instead of only the new text.
 - Ticket loop: must-fixes added while a seat is still starting its turn on a just-typed rejection keep the delivery watcher instead of dropping it.
 - Ticket loop: a rejection or added must-fixes written inside a seat's turn-start window keeps its delivery watcher, the same as a rejection redelivery.

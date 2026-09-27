@@ -8839,7 +8839,8 @@ function createSessionManager(deps) {
         if (typeof onWrite === 'function') { try { onWrite('parked'); } catch {} }
         return superseded && superseded.claimed > 0 ? { queued: true, superseded } : { queued: true };
       }
-      this._deliverMessage(targetName, senderTag, body, 'dm', tag, onWrite, key);
+      this._deliverMessage(targetName, senderTag, body, 'dm', tag, onWrite, key, null,
+        opts && typeof opts.rebody === 'function' ? opts.rebody : null);
       // `queued`, not `delivered`: _deliverMessage returns once the text is parked
       // or handed to the inject queue, and the queue writes it later — within one
       // poll of the seat's readiness latch. Every negative verdict above IS decided
@@ -9374,14 +9375,17 @@ function createSessionManager(deps) {
     // out-of-process hook mid-loop, and a seat already `thinking` produces no fresh
     // activity edge for it. A caller that waits for such an edge must therefore arm
     // on 'injected' only.
-    _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null, parkKey = null, images = null) {
+    _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null, parkKey = null, images = null, rebody = null) {
       const target = this.sessions.get(targetName);
       if (!target) return;
       if (this._refuseStreamInject(target, body, `${mtype || 'message'} from ${senderName}`)) return;
       const pics = Array.isArray(images) ? images : [];
       let finalText = this._buildDeliveryText(target, senderName, body, mtype, tag);
       const fire = typeof onWrite === 'function' ? onWrite : null;
-      if (target.io !== 'stream' && pics.length) finalText += this._writeImageFiles(target.name, pics).map((p, i) => `\nImage #${i + 1}: ${p}`).join('');
+      const imageTail = target.io !== 'stream' && pics.length
+        ? this._writeImageFiles(target.name, pics).map((p, i) => `\nImage #${i + 1}: ${p}`).join('')
+        : '';
+      finalText += imageTail;
       if (target.io === 'stream') {
         this._streamEnqueue(target, { text: finalText, images: pics, origin: senderName === 'user' ? 'operator' : 'system' },
           fire ? () => fire('injected') : null, null, parkKey);
@@ -9392,11 +9396,18 @@ function createSessionManager(deps) {
           human: senderName === 'user',
           // A park via the fire-time divert is durable too, so the stamp is taken
           // once the producer runs and the write is imminent — the same instant the
-          // divert decides. Returning the text unchanged keeps this a pure hook.
+          // divert decides.
           // Reports 'parked' when the divert claims it: the bytes become a file, not
           // a write, and an observer keying on consumption must see that difference.
           ...(fire ? {
-            produce: () => { try { fire('injected'); } catch {} return finalText; },
+            produce: () => {
+              try { fire('injected'); } catch {}
+              let b = null;
+              if (rebody) { try { b = rebody(); } catch { b = null; } }
+              return typeof b === 'string' && b
+                ? this._buildDeliveryText(target, senderName, b, mtype, tag) + imageTail
+                : finalText;
+            },
             onDivert: (why) => { try { fire('parked', why); } catch {} },
           } : {}),
         });

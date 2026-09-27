@@ -4648,7 +4648,7 @@ function createTicketMethods(deps, shared) {
         (disposition, why) => {
           try {
             this._armSpecConfirm(seatName, ticket.id, disposition,
-              { label: u.label, reason: u.reason, from: u.from }, why);
+              { label: u.label, reason: u.reason, from: u.from, ...(u.carried ? { carried: true } : {}) }, why);
           } catch (e) { log.error('intent', `redirect latch arm failed for ${seatName} on ${ticket.id}: ${e.message}`); }
           finally { if (onWrite) { try { onWrite(disposition); } catch {} } }
         });
@@ -7565,7 +7565,14 @@ function createTicketMethods(deps, shared) {
         : this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'more must-fixes', reason), true,
           `[ticket ${ticket.id} more must-fixes] close with ${ticketCloseVerb(ticket.id)}`,
           (disposition, why) => this._armSpecConfirm(seat, ticket.id, disposition,
-            { label: 'more must-fixes', reason, from: session.name }, why));
+            { label: 'more must-fixes', reason, from: session.name }, why),
+          { rebody: () => {
+            const live = this.sessions.get(seat);
+            const u = live && live._specUnconfirmed;
+            return u && u.carried && u.kind === 'redirect' && u.ticketId === ticket.id && typeof u.reason === 'string'
+              ? this._redirectDeliveryText(ticket.id, 'more must-fixes', u.reason)
+              : null;
+          } });
       if (!(r && (r.queued || r.parked))) {
         reply(`error: ${ticket.id} is already open for rework and the follow-up did NOT reach ${rework.seat} `
           + `(${(r && (r.error || r.held)) || 'unknown delivery failure'})`
