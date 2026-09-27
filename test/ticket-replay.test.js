@@ -1319,6 +1319,35 @@ test('t349: a spec DIVERTED to a park at write time drops the latch it already a
   } finally { app.stop(); }
 });
 
+test('t1246: a spec REPLAY parked by the turn-start window keeps its latch and gets one typed redelivery', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await dispatched(world, { deps: { turnStartWindowMs: 60_000 } });
+  try {
+    assert.strictEqual(typeof s._awaitingTurnSince, 'number', 'ENTER: the spec\'s Enter opened the window just before the replay');
+    const first = app.seen('team-hand');
+    fireConfirm(app, s);
+    for (let i = 0; i < 400 && app.parked('team-hand', /REPLAY/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.strictEqual(app.parked('team-hand', /REPLAY/), 1, 'ENTER: the window diverted the replay to the park');
+    assert.strictEqual(app.seen('team-hand'), first, 'ENTER: and nothing was typed');
+    assert.ok(s._specUnconfirmed, 'the latch survives the window divert, so the replay is still watched');
+    assert.strictEqual(s._specUnconfirmed.retried, false,
+      'and the retry is not spent: a replay that was never typed has not had its attempt');
+
+    s._awaitingTurnSince -= 61_000;
+    fireConfirm(app, s);
+    const after = await settled(app, 'team-hand', /REPLAY/);
+    assert.match(after.slice(first.length), /REPLAY/, 'the next deadline types the replay once the window has closed');
+    assert.strictEqual(s._specUnconfirmed && s._specUnconfirmed.retried, true, 'and that attempt spends the retry');
+
+    lead._awaitingTurnSince = null;
+    const beforeLead = app.seen('lead');
+    fireConfirm(app, s);
+    const leadSaw = await settled(app, 'lead', /ESCALATED/);
+    assert.match(leadSaw.slice(beforeLead.length), /ESCALATED/,
+      'a typed replay with no turn after it escalates, so a window-parked replay can no longer go silent');
+  } finally { app.stop(); }
+});
+
 test('t349: a ticket reassigned during the window is not redelivered to the old seat', async () => {
   const world = mkWorld();
   const { app, s } = await dispatched(world);

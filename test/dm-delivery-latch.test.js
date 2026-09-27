@@ -20,7 +20,7 @@
 // produces a report, and a spy pins the call while proving nothing about the
 // gates between the intent and the write.
 
-const { test } = require('node:test');
+const { test, mock } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('node:crypto');
 const os = require('node:os');
@@ -175,6 +175,7 @@ function boot(opts = {}) {
   };
   return {
     m, spawn, stop, casts, home,
+    pendingDir: path.join(root, 'pending'),
     seen: (name) => writes.get(name) || '',
     // How many parked entries MATCH, never how many exist: "nothing reached the
     // PTY" is equally true of a park that THREW, so a park must be proven
@@ -1646,3 +1647,102 @@ test('t1240: a dm arriving after the previous unit\'s turn was observed to start
   } finally { app.stop(); }
 });
 
+
+test('t1246: a unit typed into a seat already working opens no turn-start window', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000, turnStartWindowMs: 60_000 } });
+  try {
+    await app.spawn('target');
+    const target = app.m.sessions.get('target');
+    target.activityState = 'thinking';
+    app.m._injectText(target, 'FIRST UNIT WHILE WORKING', { bypassHold: true });
+    await settled(app, 'target', /FIRST UNIT WHILE WORKING/);
+    await complete(app, 'target');
+    assert.notStrictEqual(typeof target._awaitingTurnSince, 'number',
+      'an Enter written into a turn already running starts no new turn, so no window is opened for it');
+    target.activityState = 'idle';
+    target.activityTs = Date.now();
+    app.m._gatedDeliver('target', 'bob', 'SECOND PLAIN DM', false);
+    await settled(app, 'target', /SECOND PLAIN DM/);
+    await complete(app, 'target');
+    assert.strictEqual((app.seen('target').match(/SECOND PLAIN DM/g) || []).length, 1,
+      'the next delivery is typed, not parked behind a window no turn start will ever close');
+    assert.strictEqual(app.parked('target', /SECOND PLAIN DM/), 0, 'and nothing is parked');
+  } finally { app.stop(); }
+});
+
+test('t1246: a park after a hook drain gets its own park-cap deadline, not the drained park\'s', async () => {
+  const ps = require('../pending-store');
+  const app = boot({ deps: { INJECT_QUIET_MAXWAIT: 300_000, countPending: ps.countPending, oldestActiveParkTs: ps.oldestActiveParkTs } });
+  try {
+    await app.spawn('target');
+    const target = app.m.sessions.get('target');
+    target.activityState = 'thinking';
+    const flushes = [];
+    app.m._flushParkedNow = (t, tag, kind) => { flushes.push({ kind, parked: app.parked('target', /PARK/) }); return { ok: true, count: 0 }; };
+    mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+    try {
+      assert.ok(app.m._maybeParkDelivery(target, 'FIRST PARK'), 'ENTER: the first delivery parks at a busy seat');
+      mock.timers.tick(100_000);
+      ps.drainPending(app.pendingDir, 'target', 'hook.test');
+      assert.strictEqual(app.parked('target', /PARK/), 0, 'ENTER: the hook drain emptied the park');
+      app.m._deliverPassive('target', 'team', 'ROSTER DELTA', 'dm');
+      assert.strictEqual(app.parked('target', /ROSTER DELTA/), 1, 'ENTER: an uncapped passive entry sits in the mailbox');
+      mock.timers.tick(50_000);
+      assert.ok(app.m._maybeParkDelivery(target, 'SECOND PARK'), 'ENTER: the second delivery parks');
+      mock.timers.tick(150_001);
+      assert.deepStrictEqual(flushes, [],
+        'the first park\'s deadline passed, but the park it guarded was drained; it must not force out a later park early');
+      mock.timers.tick(100_000);
+      assert.deepStrictEqual(flushes, [],
+        'the passive entry is older than the second park but arms no cap, so its age must not bring the deadline forward');
+      mock.timers.tick(50_000);
+      assert.deepStrictEqual(flushes, [{ kind: 'park-cap', parked: 1 }],
+        'the second park is flushed at its own deadline');
+    } finally { mock.timers.reset(); }
+  } finally { app.stop(); }
+});
+
+test('t1246: the boot-ready drain landing in the turn-start window parks instead of typing', async () => {
+  const ps = require('../pending-store');
+  const app = boot({ deps: { specConfirmMs: 60_000, turnStartWindowMs: 60_000, drainPending: ps.drainPending, hasActivePending: ps.hasActivePending } });
+  try {
+    await app.spawn('target');
+    const target = app.m.sessions.get('target');
+    target.activityState = 'idle';
+    target.activityTs = Date.now();
+    app.m._gatedDeliver('target', 'alice', 'FIRST PLAIN DM', false);
+    await settled(app, 'target', /FIRST PLAIN DM/);
+    await complete(app, 'target');
+    assert.strictEqual(typeof target._awaitingTurnSince, 'number', 'ENTER: the first unit\'s Enter opened the window');
+    ps.parkDelivery(app.pendingDir, 'target', 'BOOT PARKED DM', 1);
+    app.m._drainPendingAtBootReady(target);
+    await target._injectPtyQueue.settled();
+    assert.strictEqual((app.seen('target').match(/BOOT PARKED DM/g) || []).length, 0,
+      'the boot-ready drain must not type into the turn the previous unit\'s Enter is starting');
+    assert.strictEqual(app.parked('target', /BOOT PARKED DM/), 1, 'it goes back to the park instead');
+  } finally { app.stop(); }
+});
+
+test('t1246: a stale park cap leaves a passive-only mailbox parked', async () => {
+  const ps = require('../pending-store');
+  const app = boot({ deps: { INJECT_QUIET_MAXWAIT: 300_000, countPending: ps.countPending, oldestActiveParkTs: ps.oldestActiveParkTs } });
+  try {
+    await app.spawn('target');
+    const target = app.m.sessions.get('target');
+    target.activityState = 'thinking';
+    const flushes = [];
+    app.m._flushParkedNow = (t, tag, kind) => { flushes.push({ kind, parked: app.parked('target', /PARK/) }); return { ok: true, count: 0 }; };
+    mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+    try {
+      assert.ok(app.m._maybeParkDelivery(target, 'FIRST PARK'), 'ENTER: the first delivery parks at a busy seat');
+      mock.timers.tick(100_000);
+      ps.drainPending(app.pendingDir, 'target', 'hook.test');
+      app.m._deliverPassive('target', 'team', 'ROSTER DELTA', 'dm');
+      assert.strictEqual(app.parked('target', /ROSTER DELTA/), 1, 'ENTER: only a passive entry is left in the mailbox');
+      mock.timers.tick(200_001);
+      assert.deepStrictEqual(flushes, [],
+        'the drained park\'s deadline must not type a passive-only mailbox: a passive entry never earns a turn');
+      assert.strictEqual(app.parked('target', /ROSTER DELTA/), 1, 'the passive entry stays parked');
+    } finally { mock.timers.reset(); }
+  } finally { app.stop(); }
+});

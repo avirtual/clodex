@@ -311,6 +311,7 @@ function mkLoop({
   // which no real filesystem can be talked into from here on demand.
   wrapFs = (f) => f,
   parkedTexts = null,
+  extraDeps = {},
 } = {}) {
   stubSuite(repo, suite);
   const home = mkTmpRoot('clodex-loop-');
@@ -415,7 +416,8 @@ function mkLoop({
     // rather than a fixture-only one; only the hang subject overrides it.
     ...(suiteTimeoutMs == null ? {} : { ticketSuiteTimeoutMs: suiteTimeoutMs }),
     countPending: require('../pending-store').countPending,
-    ...(parkedTexts ? { parkedTexts } : {}),
+    parkedTexts: parkedTexts || require('../pending-store').parkedTexts,
+    PENDING_DIR: pathReal.join(home, 'pending'),
     isDraftOpen: require('../proxy-util').isDraftOpen,
     drainPending: require('../pending-store').drainPending,
     hasActivePending: require('../pending-store').hasActivePending,
@@ -460,6 +462,7 @@ function mkLoop({
     getRemindScheduler: () => scheduler,
     resolveTeam: (cwd) => (cwd && cwd.startsWith(repo.dir) ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(repo.dir) ? repo.dir : null),
+    ...extraDeps,
   };
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
@@ -5649,6 +5652,33 @@ test('t1235: a review-spawn escalation that PARKED keeps loopStep; one that was 
   assert.strictEqual(run('injected'), undefined, 'an injected one releases the hold as before');
   assert.ok(f.gated.every((g) => g.opts && g.opts.parkBehindQueue === true),
     'the escalation asks to park behind a queued unit rather than be written into the turn that unit starts');
+});
+
+test('t1246: an escalation the turn-start window diverts with an EMPTY queue parks and keeps loopStep', () => {
+  const repo = mkRepo();
+  const pending = mkTmpRoot('clodex-loop-');
+  const ps = require('../pending-store');
+  const f = mkLoop({ repo, extraDeps: {
+    PENDING_DIR: pending,
+    parkDelivery: ps.parkDelivery,
+    claimParkedByKey: ps.claimParkedByKey,
+    shouldHoldDm: require('../proxy-util').shouldHoldDm,
+    turnStartWindowMs: 60_000,
+  } });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'review', report: 'r', reportedBy: 'team-hand' }]);
+  delete f.m._gatedDeliver;
+  const lead = f.m.sessions.get('lead');
+  lead.activityTs = Date.now();
+  lead._awaitingTurnSince = Date.now();
+  assert.ok(!(lead._injectPtyQueue && lead._injectPtyQueue.length > 0), 'ENTER: the lead\'s inject queue is empty');
+  f.m._escalateTicket(f.team, 't1', 'review: spawn', 'the reviewer seat did not spawn', 'spawning a reviewer seat');
+  assert.ok(ps.parkedTexts(pending, 'lead').some((t) => t.includes('[ticket t1 ESCALATED]')),
+    'the escalation is parked, not typed into the turn the previous unit\'s Enter is starting');
+  assert.ok(!f.injected.some((t) => t.includes('ESCALATED')), 'and nothing was handed to the pty');
+  assert.strictEqual(f.one().loopStep, 'review',
+    'a window-diverted escalation has not been seen, so it keeps the hold exactly like one parked behind a queued unit');
+  assert.ok(lead._parkedEscalations && lead._parkedEscalations.has('t1'),
+    'and it is recorded for release when the lead\'s next turn drains it');
 });
 
 test('t1240: a parked escalation releases loopStep once the lead has drained it, not before', () => {
