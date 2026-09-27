@@ -1922,6 +1922,7 @@ test('tickets-viewer: the engine registers its reads and its writes, and nothing
       'tickets-viewer:close',
       'tickets-viewer:closed',
       'tickets-viewer:editSpec',
+      'tickets-viewer:feed',
       'tickets-viewer:projects',
       'tickets-viewer:search',
       'tickets-viewer:sessions',
@@ -2432,4 +2433,71 @@ test('tickets-viewer: the `closed` response carries no token/auth/secret/passwor
     assert.equal(res.rows[0].rounds, 1, 'and its rounds were counted, not copied');
     assert.equal(findSecretKey(res), null, 'a secret-named key anywhere in the response');
   } finally { cleanup(); }
+});
+
+test('tickets-viewer: `feed` flattens every ticket\'s events newest-first, and an eventless record contributes nothing', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/feed/order');
+    const tickets = [
+      histTicket('t1', { title: 'legacy' }),
+      histTicket('t2', {
+        title: 'closed one',
+        events: [
+          { at: 1000, kind: 'add', by: 'lead', to: 'hand', sha: 'x' },
+          { at: 3000, kind: 'verdict', by: 'reviewer', verdict: 'ACCEPT', round: 1 },
+          { at: 4000, kind: 'merged', by: 'ticket-loop', sha: 'abc' },
+          { at: 'soon', kind: 'nudge', by: 'watchdog' },
+        ],
+      }),
+      histTicket('t3', {
+        title: 'open one',
+        state: 'open',
+        closedAt: null,
+        events: [
+          { at: 2000, kind: 'start', by: 'lead' },
+          { at: 5000, kind: 'merge-failed', by: 'ticket-loop', step: 'verify' },
+        ],
+      }),
+    ];
+    assert.equal(tickets.filter((t) => !('events' in t)).length, 1, 'ENTER: the fixture holds one record without `events`');
+    writeTicketsAt(home, key, tickets);
+
+    const res = await host.dispatch('tickets-viewer', 'feed', [{ project: key }], 'web');
+    assert.deepStrictEqual(res, {
+      ok: true,
+      limit: 200,
+      rows: [
+        { at: 5000, id: 't3', title: 'open one', kind: 'merge-failed', by: 'ticket-loop', step: 'verify' },
+        { at: 4000, id: 't2', title: 'closed one', kind: 'merged', by: 'ticket-loop' },
+        { at: 3000, id: 't2', title: 'closed one', kind: 'verdict', by: 'reviewer', verdict: 'ACCEPT', round: 1 },
+        { at: 2000, id: 't3', title: 'open one', kind: 'start', by: 'lead' },
+        { at: 1000, id: 't2', title: 'closed one', kind: 'add', by: 'lead' },
+      ],
+    });
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: `feed` keeps the newest `limit` rows, defaults to 200 and caps at 1000', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/feed/limit');
+    const events = Array.from({ length: 1005 }, (_, i) => ({ at: i + 1, kind: 'nudge', by: 'watchdog' }));
+    writeTicketsAt(home, key, [histTicket('t1', { state: 'open', closedAt: null, events })]);
+
+    const two = await host.dispatch('tickets-viewer', 'feed', [{ project: key, limit: 2 }], 'desktop');
+    assert.deepStrictEqual(two.rows.map((r) => r.at), [1005, 1004]);
+    const dflt = await host.dispatch('tickets-viewer', 'feed', [{ project: key }], 'desktop');
+    assert.equal(dflt.rows.length, 200);
+    const big = await host.dispatch('tickets-viewer', 'feed', [{ project: key, limit: 5000 }], 'desktop');
+    assert.equal(big.rows.length, 1000);
+    assert.equal(big.limit, 1000);
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: `feed` is a read listed in manifest surfaces, and the plugin is on by default', () => {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(__dirname, '..', 'plugins', 'tickets-viewer', 'manifest.json'), 'utf8'));
+  assert.equal(manifest.surfaces.feed, 'any');
+  assert.equal(manifest.enabledByDefault, true);
 });

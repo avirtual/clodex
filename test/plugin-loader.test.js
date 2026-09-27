@@ -244,6 +244,16 @@ test('an explicit enabled list overrides manifest defaults in BOTH directions', 
   assert.deepStrictEqual(by, { off: true, on: false });
 });
 
+test('the shipped Tickets plugin is on for a never-chosen install and stays off for one that chose without it', () => {
+  const shipped = path.join(__dirname, '..', 'plugins');
+  const tickets = (loader) => loader.discover().find((r) => r.id === 'tickets-viewer');
+  const fresh = mkLoader(shipped).loader;
+  assert.equal(tickets(fresh).manifest.enabledByDefault, true, 'ENTER: the manifest default is on');
+  assert.equal(fresh.isEnabled(tickets(fresh)), true);
+  const chose = mkLoader(shipped, { plugins: { enabled: ['memory-viewer'] } }).loader;
+  assert.equal(chose.isEnabled(tickets(chose)), false);
+});
+
 test('the FIRST toggle materializes the current effective set before mutating', () => {
   // The bug this pins: writing `['b']` on the first-ever enable of `b` would
   // silently DISABLE every default-on plugin, because absence means "defaults"

@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- **Tickets is on by default, with a Feed**: the board of open and recently closed tickets, and a time-ordered feed of every filing, review, merge and acceptance, filterable, in the desktop app and the browser. An install that already turned the plugin off stays off.
 - Codex seats launched with approvals and the sandbox bypassed now show a `Bypass` chip under the composer (`Read-only` for a capped reviewer seat), since Codex's own status row does not say so; every agent seat's hovercard gains a `posture` row.
 - Every ticket transition (filed, started, assigned, reported, verdict, rejected, respec'd, merged, merge-failed, verify-hold, nudged, accepted, cancelled) is now appended to the ticket record as an `events` list with who and when, and the Tickets viewer's ticket read returns it. Records from before this change have no list and gain one from their next transition.
 - Transcript pane, Conversation mode: a turn driven by a ticket notice, a hand's report, a reminder or another machine input now folds to one line (sender, ticket chip, first line, duration · tools · injected); click to open it. A turn where the agent shouted or dm'd stays open. Internals mode is unchanged. A message the CLI stored as pasted text (long multi-line injections) now keeps its sender badge and ticket chip instead of rendering as an operator paste.
