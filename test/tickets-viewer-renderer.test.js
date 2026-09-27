@@ -1785,3 +1785,85 @@ test('Back from the closed LIST returns to the board, and selecting a project fo
         'and it was re-read rather than restored from a stale render');
     });
 });
+
+test('every event kind a record carries lands under exactly the chip the design names', () => {
+  const table = [
+    ['add', 'Filed'],
+    ['start', 'Working'],
+    ['assign', 'Working'],
+    ['nudge', 'Working'],
+    ['done', 'Review'],
+    ['verdict', 'Review'],
+    ['reject', 'Review'],
+    ['respec', 'Review'],
+    ['verify-hold', 'Review'],
+    ['merged', 'Landed'],
+    ['accept', 'Landed'],
+    ['merge-failed', 'Trouble'],
+    ['cancel', 'Trouble'],
+    ['undelivered', 'Trouble'],
+  ];
+  for (const [kind, chip] of table) assert.equal(viewer.feedChipFor(kind), chip, kind);
+  assert.equal(viewer.feedChipFor('something-new'), null);
+  assert.deepStrictEqual(viewer.FEED_CHIPS.map(([label]) => label), ['Filed', 'Working', 'Review', 'Landed', 'Trouble']);
+});
+
+function feedBoard(feed) {
+  return { projects: projectsRes([projectRow()]), board: boardRes(), feed };
+}
+
+test('the Feed switch asks `feed` and paints a row per event, with day separators', async () => {
+  const at = new Date(2026, 8, 27, 9, 5).getTime();
+  const earlier = new Date(2026, 8, 26, 23, 40).getTime();
+  const rows = [
+    { at, id: 't7', title: 'ship the feed', kind: 'merged', by: 'ticket-loop' },
+    { at: earlier, id: 't6', title: 'older', kind: 'add', by: 'lead' },
+  ];
+  await withDom(feedBoard({ ok: true, rows, limit: 200 }), async ({ root, settle, calls }) => {
+    buttonLabelled(root, 'Feed').click();
+    await settle();
+    assert.deepStrictEqual(calls.filter((c) => c.method === 'feed').map((c) => c.arg), [{ project: 'proj-1234abcd' }]);
+    const feedRows = allByClass(root, 'tv-feed-row').map((n) => n.textContent);
+    assert.deepStrictEqual(feedRows, [
+      '09:05 · t7 · merged · by ticket-loop · ship the feed',
+      '23:40 · t6 · add · by lead · older',
+    ]);
+    assert.deepStrictEqual(allByClass(root, 'tv-feed-day').map((n) => n.textContent), ['2026-09-27', '2026-09-26']);
+    assert.ok(buttonLabelled(root, 'Refresh'), 'a Refresh button, since nothing re-reads on a timer');
+  });
+});
+
+test('a Feed chip narrows the rows to its kinds, and a row opens the ticket detail', async () => {
+  const rows = [
+    { at: 3000, id: 't7', title: 'a', kind: 'merged', by: 'ticket-loop' },
+    { at: 2000, id: 't8', title: 'b', kind: 'undelivered', by: 'lead' },
+  ];
+  await withDom({ ...feedBoard({ ok: true, rows, limit: 200 }), ticket: { ok: false, error: 'nope' } },
+    async ({ root, settle, calls }) => {
+      buttonLabelled(root, 'Feed').click();
+      await settle();
+      buttonLabelled(root, 'Trouble').click();
+      await settle();
+      const shown = allByClass(root, 'tv-feed-row');
+      assert.deepStrictEqual(shown.map((n) => n.dataset.tvKind), ['undelivered']);
+      shown[0].click();
+      await settle();
+      assert.deepStrictEqual(calls.filter((c) => c.method === 'ticket').map((c) => c.arg), [{ project: 'proj-1234abcd', id: 't8' }]);
+    });
+});
+
+test('an empty feed says history starts now, and a failed one does not paint the same', async () => {
+  await withDom(feedBoard({ ok: true, rows: [], limit: 200 }), async ({ root, settle }) => {
+    buttonLabelled(root, 'Feed').click();
+    await settle();
+    assert.match(textOf(root).join('\n'), /No ticket events yet — history is recorded from this release on\./);
+    assert.doesNotMatch(classesOf(root).join(' '), /tv-error/);
+  });
+  await withDom(feedBoard({ ok: false, error: 'tickets.json is not valid JSON' }), async ({ root, settle }) => {
+    buttonLabelled(root, 'Feed').click();
+    await settle();
+    const text = textOf(root).join('\n');
+    assert.match(text, /Could not read this project's ticket events: tickets.json is not valid JSON/);
+    assert.doesNotMatch(text, /No ticket events yet/);
+  });
+});

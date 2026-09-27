@@ -715,3 +715,47 @@
   opacity: 0.35;
   cursor: default;
 }
+
+.tv-view-switch {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.tv-feed-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tv-feed-refresh {
+  margin-left: auto;
+}
+
+.tv-feed {
+  display: flex;
+  flex-direction: column;
+}
+
+.tv-feed-day {
+  font-size: 0.75em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  padding: 8px 0 4px;
+  border-bottom: 1px solid var(--border-strong);
+}
+
+.tv-feed-row {
+  font-size: 0.85em;
+  padding: 4px 2px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tv-feed-row:hover {
+  background: var(--surface-hover);
+}

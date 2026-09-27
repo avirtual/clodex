@@ -2,13 +2,13 @@
   "id": "tickets-viewer",
   "name": "Tickets",
   "hostApi": "1",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "entry": {
     "engine": "engine.js",
     "renderer": "renderer.js"
   },
   "style": "style.css",
-  "enabledByDefault": false,
+  "enabledByDefault": true,
   "announce": "The project ticket board: what is open, who holds it, how long it has been quiet, and where its spec lives on disk. Opens, edits, assigns, closes and cancels tickets. No team required. Closing here does NOT drain the seat's queue or write COST.json the way [agent:task \u2026] does.",
   "surfaces": {
     "projects": "any",
@@ -18,6 +18,7 @@
     "teamCost": "any",
     "ticket": "any",
     "search": "any",
-    "closed": "any"
+    "closed": "any",
+    "feed": "any"
   }
 }
