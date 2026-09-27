@@ -443,23 +443,23 @@ function appBadge(doc, rec) {
   return badge;
 }
 
-function replyRow(doc, rec, ctx, attached) {
+function replyRow(doc, rec, ctx, attached, boxed) {
   const row = headRow(doc, `tr-reply${attached ? ' tr-reply-attached' : ''}`, rec);
   const text = el(doc, 'span', 'tr-head-text');
-  if (attached) text.appendChild(el(doc, 'span', 'tr-reply-lead', '↳'));
-  text.appendChild(appBadge(doc, rec));
+  if (attached && !boxed) text.appendChild(el(doc, 'span', 'tr-reply-lead', '↳'));
+  if (!boxed) text.appendChild(appBadge(doc, rec));
   appendPlain(doc, text, rec.text, ctx);
   row.appendChild(text);
   return withTime(doc, row, rec);
 }
 
-function inboundRow(doc, rec, ctx) {
+function inboundRow(doc, rec, ctx, boxed) {
   const row = headRow(doc, 'tr-inbound', rec);
   const text = el(doc, 'span', 'tr-head-text');
   if (rec.via === 'subagent') row.dataset.via = 'subagent';
-  text.appendChild(inboundBadge(doc, rec));
+  if (!boxed) text.appendChild(inboundBadge(doc, rec));
   if (rec.attached) {
-    const lead = rec.text.slice(0, rec.text.indexOf('Message (')).trim();
+    const lead = boxed ? '' : rec.text.slice(0, rec.text.indexOf('Message (')).trim();
     if (lead) appendProse(doc, text, `${lead} `, ctx);
     text.appendChild(el(doc, 'span', 'tr-dim', `${bytesText(rec.attached.bytes)} `));
     text.appendChild(linkNode(doc, { kind: 'path', text: baseName(rec.attached.path), path: rec.attached.path }, '', ctx));
@@ -489,6 +489,14 @@ function isLong(text) {
 function previewText(text, max = PREVIEW_CHARS) {
   const line = String(text == null ? '' : text).split('\n').find((l) => l.trim()) || '';
   return line.length > max ? `${line.slice(0, max)}…` : line;
+}
+
+function restText(text) {
+  const s = String(text == null ? '' : text);
+  const lines = s.split('\n');
+  const i = lines.findIndex((l) => l.trim());
+  if (i < 0 || lines[i].length > PREVIEW_CHARS) return s;
+  return lines.slice(i + 1).join('\n').replace(/^\s*\n/, '');
 }
 
 function boxHead(doc, rec, att) {
@@ -537,6 +545,18 @@ function ticketParts(rec) {
   return { chip: state ? `${id} ${state}` : id, message };
 }
 
+function ticketOpens(rec, message) {
+  return Boolean(rec.attached || rec.text.trim().includes('\n') || isLong(rec.text) || message.trim().length > PREVIEW_CHARS);
+}
+
+function boxedView(rec) {
+  if (rec.ticket && (rec.kind === 'inbound' || rec.kind === 'reply')) {
+    const { message } = ticketParts(rec);
+    return ticketOpens(rec, message) ? { ...rec, text: restText(message.trim()) } : null;
+  }
+  return isLong(rec.text) ? { ...rec, text: restText(rec.text) } : null;
+}
+
 function ticketBox(doc, rec, row, opened, att) {
   const box = el(doc, 'div', 'tr-box');
   box.dataset.id = rec.id;
@@ -547,7 +567,7 @@ function ticketBox(doc, rec, row, opened, att) {
   head.appendChild(rec.kind === 'reply' ? appBadge(doc, rec) : inboundBadge(doc, rec));
   head.appendChild(el(doc, 'span', 'tr-box-preview', previewText(message.trim())));
   box.appendChild(head);
-  if (rec.attached || rec.text.trim().includes('\n') || isLong(rec.text) || message.trim().length > PREVIEW_CHARS) {
+  if (ticketOpens(rec, message)) {
     const chevron = el(doc, 'span', 'tr-box-chevron');
     head.appendChild(chevron);
     const paint = () => {
@@ -603,11 +623,11 @@ function hasInternalSeg(r) {
   return r.kind === 'assistant' && !r.apiError && Array.isArray(r.segments) && isTalk(r) && r.segments.some((s) => segmentSurface(s) !== 'conversation');
 }
 
-function buildRow(doc, rec, ctx, attached) {
+function buildRow(doc, rec, ctx, attached, boxed) {
   switch (rec.kind) {
     case 'prompt': return promptRow(doc, rec, ctx);
-    case 'inbound': return inboundRow(doc, rec, ctx);
-    case 'reply': return replyRow(doc, rec, ctx, attached);
+    case 'inbound': return inboundRow(doc, rec, ctx, boxed);
+    case 'reply': return replyRow(doc, rec, ctx, attached, boxed);
     case 'notification': {
       const row = headRow(doc, 'tr-notification', rec);
       row.appendChild(el(doc, 'span', 'tr-head-text', rec.text));
@@ -1003,7 +1023,8 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
           key: r.id,
           sig: recSig(r) + extra,
           build: () => {
-            const row = buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row');
+            const view = r.kind === 'inbound' || r.kind === 'reply' ? boxedView(r) : null;
+            const row = buildRow(doc, view || r, deps, att, Boolean(view)) || el(doc, 'div', 'tr-row');
             if (r.ticket && (r.kind === 'inbound' || r.kind === 'reply')) return ticketBox(doc, r, row, opened, att);
             return internalBox(doc, r, row, opened, att);
           },

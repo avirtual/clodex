@@ -204,14 +204,15 @@ test('an inbound from a seat draws a seat badge inline: role initial, team prefi
   assert.deepStrictEqual(badge.childNodes.map((n) => [n.className, n.textContent]), [['tr-sender-glyph', 'H'], ['tr-sender-name', 'hand-1138-r2']]);
 });
 
-test('a two-paragraph inbound renders the badge once, first in the text span, with the prose following in the same span', () => {
+test('a two-paragraph inbound renders the badge once, on the head with the first paragraph, and the body span holds only the second', () => {
   const m = mount();
   m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'reminder', text: 'first para\n\nsecond para' }]);
-  const card = unbox(m.pane.childNodes[0].childNodes[0]);
+  const box = m.pane.childNodes[0].childNodes[0];
+  assert.deepStrictEqual(boxHeadOf(box).childNodes.map((n) => [n.className, n.textContent]),
+    [['tr-sender tr-sender-system', '◷reminder'], ['tr-box-preview', 'first para'], ['tr-box-chevron', '▸']]);
+  const card = unbox(box);
   assert.deepStrictEqual(card.childNodes.map((n) => n.className), ['tr-head-text']);
-  const text = card.childNodes[0];
-  assert.deepStrictEqual(text.childNodes.map((n) => n.className), ['tr-sender tr-sender-system', undefined, undefined, undefined, undefined]);
-  assert.deepStrictEqual(text.childNodes.map((n) => n.data ?? n.textContent), ['◷reminder', 'first para', '\n', '\n', 'second para']);
+  assert.deepStrictEqual(card.childNodes[0].childNodes.map((n) => n.data ?? n.textContent), ['second para']);
 });
 
 test('a prompt head carries its local clock time; a boundary reads its token drop; an API error is an error notice', () => {
@@ -654,7 +655,12 @@ test('a 30-line task reply folds to a head of badge, first line and chevron; a c
   ]);
   head.listeners.click();
   assert.strictEqual(box.className, 'tr-box');
-  assert.strictEqual(head.childNodes[2].textContent, '▾');
+  assert.deepStrictEqual(head.childNodes.map((n) => [n.className, n.textContent]), [
+    ['tr-sender tr-sender-app', '⇄task'], ['tr-box-preview', 'tickets on clodex:'], ['tr-box-chevron', '▾'],
+  ]);
+  const inner = unbox(box);
+  assert.deepStrictEqual(['tr-sender', 'tr-reply-lead'].flatMap((c) => findCls(inner, c)), []);
+  assert.ok(inner.textContent.startsWith('t1 open hand'), inner.textContent);
   m.render([{ ...rec, text: `${rec.text}\nt31 open hand` }]);
   const rebuilt = boxOf(m, 'r1');
   assert.notStrictEqual(rebuilt, box);
@@ -676,6 +682,7 @@ test('a folded head clips a long first line to 120 characters', () => {
   m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'reminder', text: 'x'.repeat(300) }]);
   const preview = boxHeadOf(boxOf(m, 'i1')).childNodes[1];
   assert.strictEqual(preview.textContent, `${'x'.repeat(120)}…`);
+  assert.strictEqual(unbox(boxOf(m, 'i1')).textContent, 'x'.repeat(300));
 });
 
 test('a 13-call Bash block shows its header and only the last call; a click on the header shows all 13 and a re-render keeps them', () => {
@@ -803,6 +810,9 @@ test('a ticket lifecycle row carries tr-ticket and a chip reading the id and tag
   assert.strictEqual(chip(boxOf(m, 'i7')).textContent, 't7 MERGED');
   assert.strictEqual(chip(boxOf(m, 'i8')).parentNode.className, 'tr-box-head');
   assert.strictEqual(chip(boxOf(m, 'i8')).textContent, 't8 REJECTED');
+  const i8 = boxOf(m, 'i8').childNodes.find((n) => n.className === 'tr-box-body');
+  assert.deepStrictEqual(['tr-ticket-chip', 'tr-sender', 'tr-reply-lead'].flatMap((k) => findCls(i8, k)), []);
+  assert.ok(i8.textContent.startsWith('line 1\n'), i8.textContent);
   assert.strictEqual(chip(boxOf(m, 'r1')).textContent, 't1 created');
   assert.strictEqual(boxOf(m, 'i9').className, 'tr-box');
   assert.strictEqual(chip(boxOf(m, 'i9')), undefined);
@@ -836,6 +846,9 @@ test('a long attached reply folds to a head led by ↳ and an unattached one doe
   const head = boxHeadOf(m.pane.childNodes[1].childNodes[0]);
   assert.strictEqual(head.childNodes[0].className, 'tr-reply-lead');
   assert.strictEqual(head.childNodes[0].textContent, '↳');
+  const inner = unbox(m.pane.childNodes[1].childNodes[0]);
+  assert.deepStrictEqual(findCls(inner, 'tr-reply-lead'), []);
+  assert.ok(!inner.textContent.includes('↳'), inner.textContent);
   m.render([{ id: 'a0', kind: 'assistant', ts: null, turn: 0, text: 'no card' }, replyRec('r1', 1, 'task', '⇄', 'task', long)]);
   const plain = boxHeadOf(m.pane.childNodes[1].childNodes[0]);
   assert.notStrictEqual(plain.childNodes[0].className, 'tr-reply-lead');
@@ -1149,14 +1162,17 @@ test('runs: the expander carries its tooltip whether or not it has footer text',
   assert.strictEqual(togglesOf(bare)[0].title, 'Show or hide the steps behind this reply');
 });
 
-test('a long subagent report folds under a box head whose badge matches the inner row badge in label, glyph and title', () => {
+test('a long subagent report folds under a box head that carries the subagent badge, and the inner row carries none', () => {
   const m = mount();
   m.render([{ id: 'i9', kind: 'inbound', ts: null, turn: 1, from: 'nits-coords', via: 'subagent', text: Array.from({ length: 5 }, (_, i) => `line ${i}`).join('\n') }]);
   const box = boxOf(m, 'i9');
   assert.strictEqual(box.className, 'tr-box tr-box-folded');
-  const badges = [boxHeadOf(box).childNodes[0], unbox(box).childNodes[0].childNodes[0]];
-  const want = ['tr-sender tr-sender-seat', 'Nnits-coords', 'Report from a subagent of this seat — attached by the CLI, not typed'];
-  assert.deepStrictEqual(badges.map((b) => [b.className, b.textContent, b.title]), [want, want]);
+  const badge = boxHeadOf(box).childNodes[0];
+  assert.deepStrictEqual([badge.className, badge.textContent, badge.title],
+    ['tr-sender tr-sender-seat', 'Nnits-coords', 'Report from a subagent of this seat — attached by the CLI, not typed']);
+  assert.deepStrictEqual(findCls(unbox(box), 'tr-sender'), []);
+  assert.strictEqual(unbox(box).dataset.via, 'subagent');
+  assert.strictEqual(unbox(box).textContent, 'line 1\nline 2\nline 3\nline 4');
 });
 
 const accepted = () => [
@@ -1309,7 +1325,7 @@ const ticketCases = [
   { name: 'a one-line inbound notice is the head alone', rec: inb('i1', 1, 'ticket-loop', '[ticket t7 MERGED] merged into master'),
     box: 'tr-box tr-ticket', head: ['tr-ticket-chip', 'tr-sender', 'tr-box-preview'], chip: 't7 MERGED', preview: 'merged into master', body: null },
   { name: 'a three-line inbound notice folds behind the same head', rec: inb('i1', 1, 'ticket-loop', '[ticket t7 MERGED] merged into master\nsha abc\nsuite green'),
-    box: 'tr-box tr-box-folded tr-ticket', head: ['tr-ticket-chip', 'tr-sender', 'tr-box-preview', 'tr-box-chevron'], chip: 't7 MERGED', preview: 'merged into master', body: '[ticket t7 MERGED] merged into master\nsha abc\nsuite green' },
+    box: 'tr-box tr-box-folded tr-ticket', head: ['tr-ticket-chip', 'tr-sender', 'tr-box-preview', 'tr-box-chevron'], chip: 't7 MERGED', preview: 'merged into master', body: 'sha abc\nsuite green' },
   { name: 'a runtime task reply chips its own state word', rec: taskReply('i1', 1, 'ticket t1 accepted — merged into master; 3 files'),
     box: 'tr-box tr-ticket', head: ['tr-ticket-chip', 'tr-sender', 'tr-box-preview'], chip: 't1 accepted', preview: 'merged into master; 3 files', body: null },
   { name: 'an inbound with an attachment folds, the lead text in the head and the link in the body',
@@ -1328,8 +1344,10 @@ for (const c of ticketCases) {
     assert.strictEqual(head.childNodes[2].textContent, c.preview);
     const body = bodyOf(box);
     if (c.body === null) assert.strictEqual(body, undefined);
-    if (c.body) assert.ok(body.textContent.endsWith(c.body), body.textContent);
+    if (c.body) assert.strictEqual(body.textContent, c.body);
     if (c.link) assert.ok(withPath(body).some((n) => n.dataset.path === c.link));
+    if (body) assert.deepStrictEqual(['tr-ticket-chip', 'tr-sender', 'tr-reply-lead'].flatMap((k) => findCls(body, k)), []);
+    if (c.link) assert.ok(!body.textContent.includes(c.preview), body.textContent);
   });
 }
 
@@ -1375,7 +1393,7 @@ test('one ticket shape: a one-line reply whose message outruns the preview folds
   const box = boxOf(m, 'i1');
   assert.strictEqual(box.className, 'tr-box tr-box-folded tr-ticket');
   assert.strictEqual(boxHeadOf(box).childNodes[0].textContent, 't1277 accepted');
-  assert.ok(bodyOf(box).textContent.endsWith(msg));
+  assert.strictEqual(bodyOf(box).textContent, msg);
 });
 
 test('one ticket shape: a colon after the ticket id is not a state word, and a trailing colon is dropped from one', () => {
