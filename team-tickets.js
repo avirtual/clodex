@@ -3931,6 +3931,7 @@ function createTicketMethods(deps, shared) {
       if (disposition !== 'injected') {
         if (disposition === 'parked' && redirect && redirect.carried && live
             && live.ticketId === ticketId && live.kind === kind) {
+          this._pruneOwedSpent(s, { ticketId, kind });
           s._specUnconfirmed = { ...live, ...redirect };
           log.info('intent', `${kind} write of ${ticketId} parked on ${seatName} carrying the unconfirmed ${live.label || 'rejection'} — latch kept`);
           return s._specUnconfirmed;
@@ -4655,7 +4656,7 @@ function createTicketMethods(deps, shared) {
         (disposition, why) => {
           try {
             this._armSpecConfirm(seatName, ticket.id, disposition,
-              { label: u.label, reason: u.reason, from: u.from, ...(u.carried ? { carried: true } : {}) }, why);
+              { label: u.label, reason: u.reason, from: u.from, ...(u.carried && disposition === 'injected' ? { carried: true } : {}) }, why);
           } catch (e) { log.error('intent', `redirect latch arm failed for ${seatName} on ${ticket.id}: ${e.message}`); }
           finally { if (onWrite) { try { onWrite(disposition); } catch {} } }
         });

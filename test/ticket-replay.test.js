@@ -2039,6 +2039,8 @@ test('t1254: more must-fixes HELD for a dialog park the unconfirmed rejection wi
     assert.strictEqual(app.parked('team-hand', /ALSO FIX THE LATCH/), 1, 'ENTER: the must-fixes were parked by the hold');
     assert.ok(s._specUnconfirmed && s._specUnconfirmed.kind === 'redirect' && s._specUnconfirmed.ticketId === 't1',
       'the park keeps a redirect latch for the ticket instead of dropping the unconfirmed rejection');
+    assert.ok(s._specUnconfirmed.carried, 'and the kept latch is marked carried');
+    assert.match(s._specUnconfirmed.reason, /FIX THE WIDGET MOUNT[\s\S]*ALSO FIX THE LATCH/, 'and holds the rejection first, then the new must-fixes');
 
     s.needsAttention = null;
     app.m.flushPending('team-hand');
@@ -2062,11 +2064,38 @@ test('t1254: more must-fixes parked at a BUSY seat park the unconfirmed rejectio
     assert.strictEqual(app.parked('team-hand', /ALSO FIX THE LATCH/), 1, 'ENTER: the must-fixes were parked at the busy seat');
     assert.ok(s._specUnconfirmed && s._specUnconfirmed.kind === 'redirect' && s._specUnconfirmed.ticketId === 't1',
       'the park keeps a redirect latch for the ticket instead of dropping the unconfirmed rejection');
+    assert.ok(s._specUnconfirmed.carried, 'and the kept latch is marked carried');
+    assert.match(s._specUnconfirmed.reason, /FIX THE WIDGET MOUNT[\s\S]*ALSO FIX THE LATCH/, 'and holds the rejection first, then the new must-fixes');
 
     s.activityState = 'idle';
     app.m.flushPending('team-hand');
     const typed = (await settled(app, 'team-hand', /ALSO FIX THE LATCH/)).slice(beforeFollow.length);
     assert.match(typed, /FIX THE WIDGET MOUNT[\s\S]*ALSO FIX THE LATCH/, 'the drained park types the rejection first, then the new must-fixes');
+  } finally { app.stop(); }
+});
+
+test('t1254: a REDELIVERY of a park-kept latch that parks again drops the latch and never escalates', async () => {
+  const world = mkWorld();
+  const store = require('../pending-store');
+  const { app, s, lead } = await redirected(world, {
+    deps: { drainPending: store.drainPending, countPending: store.countPending, INJECT_QUIET_MAXWAIT: 60_000 },
+  });
+  try {
+    s.activityState = 'thinking';
+    app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
+    for (let i = 0; i < 200 && app.parked('team-hand', /ALSO FIX THE LATCH/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(s._specUnconfirmed && s._specUnconfirmed.carried, 'ENTER: the busy park kept a carried latch');
+
+    fireConfirm(app, s);
+    for (let i = 0; i < 200 && app.parked('team-hand', /REDELIVERY/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.strictEqual(app.parked('team-hand', /REDELIVERY/), 1, 'ENTER: the redelivery parked at the still-busy seat');
+    assert.strictEqual(s._specUnconfirmed, null, 'a parked redelivery drops the latch: the park owns it from here');
+
+    const escalated = [];
+    const esc = app.m._escalateTicket;
+    app.m._escalateTicket = function (...a) { escalated.push(a[2]); return esc.apply(this, a); };
+    fireConfirm(app, s);
+    assert.deepStrictEqual(escalated, [], 'and nothing escalates a seat whose must-fixes are parked');
   } finally { app.stop(); }
 });
 
