@@ -1236,7 +1236,7 @@ Own state + DOM, `init*(deps)`:
   dialog is open. The Preferences row is never hidden and never disabled — the
   file is writable with no session open; the bar button is absent outright for a
   non-Claude seat, since Codex has no `/voice`.
-- **live-split-view.js** + **lib/live-split.js** — the experimental transcript
+- **live-split-view.js** + **lib/live-split.js** — the transcript
   pane (t1122 spike, `transcriptPane` setting, off by default). The pure half
   finds the composer anchor on the visible screen and applies the hysteresis; the
   view translates and clips the unresized xterm into a bottom strip under a
