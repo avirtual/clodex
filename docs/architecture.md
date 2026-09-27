@@ -1219,6 +1219,12 @@ Own state + DOM, `init*(deps)`:
   save button and the agent-changed banner. The git diff is still rendered
   through `renderDiffHtml` into `innerHTML`; the file view is built with DOM
   nodes.
+- **splitter.js** — `attachSplitter`, the one pointer-capture drag behind the
+  dock width handle and the Files/Tickets `#dock-split`: moves coalesce to one
+  rAF with an optional throttle, one `commit` on release, `reset` on
+  double-click.
+- **lib/split.js** — the pure size math `splitter.js` and its callers share:
+  `clampPx`, `sizeFromPointer`, `clampFraction`. Tested by `test/split.test.js`.
 - **lib/side-pane-tabs.js** — the pure tab reducer behind `side-pane.js`
   (preview / permanent / dedupe, the 12-tab LRU cap, the agent-edit matrix),
   plus `peekEditable` (the truncation guard) and `saveArgs` (the save always

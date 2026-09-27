@@ -1,10 +1,17 @@
 'use strict';
 
 const { SIDE_PANE_REFIT_THROTTLE_MS, sidePaneFits, clampSidePaneWidth } = require('./lib/side-pane-tabs');
+const { clampFraction } = require('./lib/split');
+const { attachSplitter } = require('./splitter');
 
-function createDock({ showToast, getSettings, setSettings, loadView, saveView, doc = document, win = window }) {
+const DOCK_SPLIT_MIN = 0.2;
+const DOCK_SPLIT_MAX = 0.8;
+const DOCK_SPLIT_FALLBACK = 0.5;
+
+function createDock({ showToast, getSettings, setSettings, loadView, saveView, doc = document, win = window, now = () => Date.now() }) {
   const dock = doc.getElementById('dock');
   const handle = doc.getElementById('dock-handle');
+  const split = doc.getElementById('dock-split');
   const isWeb = !!win.__CLODEX_WEB__;
 
   const panes = new Map();
@@ -12,6 +19,7 @@ function createDock({ showToast, getSettings, setSettings, loadView, saveView, d
   const front = () => shown[shown.length - 1] || null;
   let added = 0;
   let storedWidth = null;
+  let storedSplit = null;
   let intents = {};
   let viewLoaded = false;
   const viewWaiters = [];
@@ -24,6 +32,19 @@ function createDock({ showToast, getSettings, setSettings, loadView, saveView, d
     dock.style.width = `${clampSidePaneWidth(storedWidth, win.innerWidth)}px`;
   }
 
+  const splitFraction = (f) => clampFraction(f, { min: DOCK_SPLIT_MIN, max: DOCK_SPLIT_MAX, fallback: DOCK_SPLIT_FALLBACK });
+  let splitUp = false;
+
+  function applySplit() {
+    const f = splitFraction(storedSplit);
+    const others = shown.filter((id) => id !== 'files');
+    for (const [id, p] of panes) {
+      if (!splitUp) p.el.style.flex = '';
+      else if (id === 'files') p.el.style.flex = `${f} 1 0px`;
+      else p.el.style.flex = others.includes(id) ? `${(1 - f) / others.length} 1 0px` : '';
+    }
+  }
+
   function render() {
     const up = onScreen();
     const sheet = up && isWeb && !sidePaneFits(win.innerWidth);
@@ -32,6 +53,17 @@ function createDock({ showToast, getSettings, setSettings, loadView, saveView, d
     handle.classList.toggle('dock-closed', !up || sheet);
     const top = front();
     for (const [id, p] of panes) p.el.classList.toggle('dock-pane-hidden', sheet ? id !== top : !shown.includes(id));
+    splitUp = up && !sheet && shown.length >= 2 && shown.includes('files');
+    if (split) split.classList.toggle('dock-closed', !splitUp);
+    applySplit();
+  }
+
+  function placeSplit() {
+    const files = panes.get('files');
+    if (!split || !files) return;
+    const sorted = [...panes.values()].sort((a, b) => (a.order - b.order) || (a.added - b.added));
+    const next = sorted[sorted.indexOf(files) + 1];
+    dock.insertBefore(split, next ? next.el : null);
   }
 
   function addPane(id, el, order = 0) {
@@ -43,6 +75,7 @@ function createDock({ showToast, getSettings, setSettings, loadView, saveView, d
     const sorted = [...panes.values()].sort((a, b) => (a.order - b.order) || (a.added - b.added));
     const i = sorted.indexOf(entry);
     dock.insertBefore(el, i + 1 < sorted.length ? sorted[i + 1].el : null);
+    placeSplit();
     render();
   }
 
@@ -91,47 +124,47 @@ function createDock({ showToast, getSettings, setSettings, loadView, saveView, d
     else viewWaiters.push(fn);
   }
 
-  let dragging = false;
-  let pendingPx = null;
-  let lastApply = 0;
-  let timer = null;
-  function flushDrag() {
-    timer = null;
-    if (pendingPx == null) return;
-    storedWidth = pendingPx;
-    lastApply = Date.now();
-    applyWidth();
+  attachSplitter(handle, {
+    edge: 'left',
+    rect: () => dock.getBoundingClientRect(),
+    clamp: (px) => clampSidePaneWidth(px, win.innerWidth),
+    apply: (px) => { storedWidth = px; applyWidth(); },
+    commit: (px) => { try { setSettings({ sidePaneWidth: px }); } catch {} },
+    reset: () => {
+      storedWidth = null;
+      applyWidth();
+      try { setSettings({ sidePaneWidth: null }); } catch {}
+    },
+    throttleMs: SIDE_PANE_REFIT_THROTTLE_MS,
+    dragClass: 'dock-dragging',
+    doc, win, now,
+  });
+  if (split) {
+    attachSplitter(split, {
+      edge: 'bottom',
+      rect: () => (panes.get('files') || { el: dock }).el.getBoundingClientRect(),
+      clamp: (px) => splitFraction(px / dock.getBoundingClientRect().height),
+      apply: (f) => { storedSplit = f; applySplit(); },
+      commit: (f) => { try { setSettings({ dockSplit: f }); } catch {} },
+      reset: () => {
+        storedSplit = null;
+        applySplit();
+        try { setSettings({ dockSplit: null }); } catch {}
+      },
+      throttleMs: 0,
+      dragClass: 'dock-split-dragging',
+      doc, win, now,
+    });
   }
-  handle.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    dragging = true;
-    doc.body.classList.add('dock-dragging');
-  });
-  win.addEventListener('mousemove', (e) => {
-    if (!dragging) return;
-    const right = dock.getBoundingClientRect().right;
-    pendingPx = clampSidePaneWidth(right - e.clientX, win.innerWidth);
-    const wait = SIDE_PANE_REFIT_THROTTLE_MS - (Date.now() - lastApply);
-    if (wait <= 0) flushDrag();
-    else if (!timer) timer = setTimeout(flushDrag, wait);
-  });
-  win.addEventListener('mouseup', () => {
-    if (!dragging) return;
-    dragging = false;
-    doc.body.classList.remove('dock-dragging');
-    if (timer) { clearTimeout(timer); timer = null; }
-    flushDrag();
-    pendingPx = null;
-    try { setSettings({ sidePaneWidth: storedWidth }); } catch {}
-  });
   win.addEventListener('resize', () => { applyWidth(); render(); });
 
   Promise.resolve()
     .then(() => getSettings())
     .then((s) => {
       if (s && typeof s.sidePaneWidth === 'number') storedWidth = s.sidePaneWidth;
+      if (s && typeof s.dockSplit === 'number') storedSplit = s.dockSplit;
       applyWidth();
+      applySplit();
     })
     .catch(() => {});
   Promise.resolve()
