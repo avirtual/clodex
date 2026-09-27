@@ -476,3 +476,9 @@ for (const row of ROWS) {
     await row.run(rig(row.opts));
   });
 }
+
+test('dock: the plugin-pane divider skips dock-pane-first, and no sibling rule strips it', () => {
+  const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  assert.match(css, /\.plugin-pane:not\(\.dock-pane-hidden\):not\(\.dock-pane-first\) \{ border-top: 1px solid var\(--border\); \}/);
+  assert.doesNotMatch(css, /#dock-split[^{,]*\+ \.plugin-pane/);
+});
