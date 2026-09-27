@@ -476,12 +476,22 @@ function claudeShaped(rec) {
   return out;
 }
 
+function queueStep(queued, rec) {
+  if (rec.operation === 'enqueue') return typeof rec.content === 'string' ? [...queued, { ts: tsOf(rec), text: rec.content }] : queued;
+  if (rec.operation === 'dequeue') return queued.slice(1);
+  if (rec.operation === 'popAll') return [];
+  if (rec.operation !== 'remove') return queued;
+  const at = queued.findIndex((q) => q.text === rec.content);
+  return queued.filter((_, i) => i !== (at < 0 ? 0 : at));
+}
+
 function recordsOf(text, max = RECORD_CAP) {
   const tools = new Map();
   const all = [];
   let turn = 0;
   let lastPromptId = null;
   let unread = [];
+  let queued = [];
   const lines = [];
   for (const line of String(text).split('\n')) {
     if (!line.trim()) continue;
@@ -494,6 +504,10 @@ function recordsOf(text, max = RECORD_CAP) {
   }
   for (const rec of lines) {
     if (rec.isSidechain) continue;
+    if (rec.type === 'queue-operation') {
+      queued = queueStep(queued, rec);
+      continue;
+    }
     const echoed = echoedCommand(rec);
     const prev = all[all.length - 1];
     if (echoed && prev && prev.kind === 'prompt' && prev.source !== 'mid-turn' && rec.promptId && lastPromptId === rec.promptId && isTypedEcho(prev, echoed)) {
@@ -505,7 +519,7 @@ function recordsOf(text, max = RECORD_CAP) {
     if (produced.length) lastPromptId = rec.promptId || null;
     for (const r of produced) {
       const midTurn = r.source === 'mid-turn';
-      if (TURN_KINDS.has(r.kind) && !midTurn) { turn += 1; unread = []; }
+      if (TURN_KINDS.has(r.kind) && !midTurn) { turn += 1; unread = []; queued = []; }
       r.turn = turn;
       if ((r.kind === 'assistant' && !r.apiError) || r.kind === 'tool') {
         for (const u of unread) u.state = 'read';
@@ -515,6 +529,12 @@ function recordsOf(text, max = RECORD_CAP) {
       all.push(r);
     }
   }
+  queued.forEach((q, i) => {
+    const user = { type: 'user', message: { role: 'user', content: q.text } };
+    for (const r of userRecords(user, { id: `queued:${q.ts}:${i}`, kind: '', ts: q.ts, turn }, tools)) {
+      if (r.kind === 'prompt') all.push({ ...r, source: 'mid-turn', state: 'queued' });
+    }
+  });
   return { records: cutOnTurn(all, max) };
 }
 

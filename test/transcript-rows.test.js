@@ -1007,6 +1007,26 @@ test('a mid-turn prompt that turns read rebuilds its row and the state reads ✓
   assert.deepStrictEqual([state.className, state.textContent, state.dataset.state], ['tr-mid-state', '✓ read', 'read']);
 });
 
+const queuedAsk = (state) => ({ id: 'queued:1', kind: 'prompt', ts: new Date(2026, 8, 27, 10, 43).getTime(), turn: 1, text: 'hi', source: 'mid-turn', state });
+
+test('a queued mid-turn prompt row reads mid-turn, its text, its time and queued', () => {
+  const m = mount();
+  m.render([ask('p1', 1), queuedAsk('queued')]);
+  const row = rowIn(m, 'queued:1');
+  assert.deepStrictEqual(row.childNodes.map((n) => [n.className, n.textContent]), [['tr-mid', 'mid-turn'], ['tr-head-text', 'hi'], ['tr-time', '10:43'], ['tr-mid-state', 'queued']]);
+  assert.strictEqual(row.childNodes[3].dataset.state, 'queued');
+});
+
+test('a queued prompt replaced by its delivered attachment leaves only the delivered row', () => {
+  const m = mount();
+  m.render([ask('p1', 1), queuedAsk('queued')]);
+  assert.ok(rowIn(m, 'queued:1'), 'ENTER: the queued row painted');
+  m.render([ask('p1', 1), midAsk('delivered')]);
+  assert.strictEqual(rowIn(m, 'queued:1'), undefined);
+  const state = rowIn(m, 'q1').childNodes[3];
+  assert.deepStrictEqual([state.className, state.textContent, state.dataset.state], ['tr-mid-state', 'delivered', 'delivered']);
+});
+
 test('runs: a mid-turn prompt inside a closed run is visible in Conversation mode', () => {
   const m = mount({ mode: 'conversation' });
   m.render([ask('p1', 1), call('t1', 'Bash', 'ls'), midAsk('read'), talk('a1', 1)]);
