@@ -137,7 +137,7 @@ function spillPeek(ctx, path) {
   hit.promise = Promise.resolve().then(() => ctx.peekFile(path)).catch(() => null).then((res) => {
     const ok = Boolean(res && res.ok && !res.binary && typeof res.content === 'string');
     hit.done = true;
-    hit.res = ok ? res : null;
+    hit.res = ok ? { ok: true, size: typeof res.size === 'number' ? res.size : res.content.length, content: res.content.slice(0, SPILL_INLINE_BYTES) } : null;
     if (!ok && spillCache.get(path) === hit) spillCache.delete(path);
   });
   spillCache.set(path, hit);
@@ -150,9 +150,9 @@ function fillSpill(doc, body, res, spill, name, ctx) {
     body.textContent = `Could not read ${name}`;
     return;
   }
-  const size = typeof res.size === 'number' ? res.size : res.content.length;
+  const size = res.size;
   const over = size > SPILL_INLINE_BYTES;
-  body.textContent = over ? res.content.slice(0, SPILL_INLINE_BYTES) : res.content;
+  body.textContent = res.content;
   if (!over) return;
   const foot = el(doc, 'div', 'tr-spill-more');
   foot.appendChild(linkNode(doc, { kind: 'path', text: `… ${bytesText(size - SPILL_INLINE_BYTES)} more — open the file`, path: spill.path }, '', ctx));
@@ -169,7 +169,7 @@ function filedFold(doc, spill, ctx, host) {
     return { head: wrap, mount: NOOP };
   }
   const key = `spill:${spill.path}`;
-  const opened = ctx.opened || new Set();
+  const opened = ctx.opened;
   const label = el(doc, 'span', 'tr-spill-label');
   wrap.appendChild(label);
   wrap.appendChild(linkNode(doc, { kind: 'path', text: name, path: spill.path }, '', ctx, true));
@@ -187,7 +187,7 @@ function filedFold(doc, spill, ctx, host) {
     if (filled) return;
     const hit = spillPeek(ctx, spill.path);
     const fill = () => {
-      filled = true;
+      filled = Boolean(hit.res);
       fillSpill(doc, body, hit.res, spill, name, ctx);
     };
     if (hit.done) fill();
@@ -1249,4 +1249,4 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
   return { render, setWorking, setMode };
 }
 
-module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows };
+module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows, spillCache };
