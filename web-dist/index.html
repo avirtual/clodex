@@ -8959,6 +8959,63 @@ body.web-frontend #sidebar-header {
 .seat-composer[hidden] {
   display: none;
 }
+.terminal-wrapper.has-status-strip {
+  --seat-status-h: 22px;
+}
+.seat-status-strip {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 4px;
+  height: var(--seat-status-h);
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--sp-2);
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  z-index: 2;
+}
+.seat-status-strip[hidden] {
+  display: none;
+}
+.terminal-wrapper.has-status-strip .seat-composer.seat-composer-pty {
+  bottom: calc(4px + var(--seat-status-h));
+}
+.seat-status-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: inherit;
+  font-size: var(--fs-xs);
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  border: 0;
+  color: inherit;
+}
+.seat-status-chip[data-chip=mode] {
+  flex-shrink: 0;
+}
+button.seat-status-chip {
+  cursor: pointer;
+}
+.seat-status-chip[data-tone=danger] {
+  color: var(--danger);
+}
+.seat-status-chip[data-tone=warn] {
+  color: var(--warn);
+}
+.seat-status-chip[data-tone=info] {
+  color: var(--info);
+}
+.seat-status-chip[data-tone=muted] {
+  color: var(--text-tertiary);
+}
+.seat-status-chip[data-tone=neutral] {
+  color: var(--text-secondary);
+}
 .seat-slash-menu {
   flex: 0 0 auto;
   display: flex;
@@ -32508,6 +32565,84 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // renderer/lib/status-rows.js
+  var require_status_rows = __commonJS({
+    "renderer/lib/status-rows.js"(exports, module) {
+      "use strict";
+      var { CODEX_STATUS_ROW } = require_live_split();
+      var CLOSING_RULE = /^─{3,}\s*$/u;
+      var CLAUDE_MODE = /^\s{2}(⏵⏵|⏸)\s(.+?) on(?=\s|$)/u;
+      var RIGHT_COLUMN = /\s{3,}\S.*$/u;
+      var CYCLE_HINT = "(shift+tab to cycle)";
+      var MODE_KEYS = { "bypass permissions": "bypass", "accept edits": "accept-edits", "auto mode": "auto", "plan mode": "plan", "manual mode": "manual" };
+      var TASK = /^\d+ [a-z]+(?: [a-z]+)*$/u;
+      var CODEX_PLAN = /^(?:.*… )?Plan mode(?: \(shift\+tab to cycle\))?$/u;
+      var CODEX_WARNINGS = /⚠ (\d+) warnings?\b/u;
+      var CODEX_REACH = 6;
+      var MUSE_LABEL_MAX = 32;
+      var isBlank = (r) => !/\S/u.test(r || "");
+      function closingRule(rows, at) {
+        let j = at + 2;
+        while (j < rows.length && !CLOSING_RULE.test(rows[j] || "")) j++;
+        return j < rows.length ? j : -1;
+      }
+      function rowsBelowClosingRule(rows, at) {
+        const j = closingRule(rows, at);
+        if (j < 0) return null;
+        const out = [];
+        for (let k = j + 1; k < rows.length && !isBlank(rows[k]); k++) out.push(rows[k]);
+        return out;
+      }
+      function readClaude(rows, at) {
+        const below = rowsBelowClosingRule(rows, at);
+        if (!below) return null;
+        for (let i = below.length - 1; i >= 0; i--) {
+          const cut = below[i].replace(RIGHT_COLUMN, "");
+          const m = CLAUDE_MODE.exec(cut);
+          if (!m) continue;
+          const segs = cut.slice(m[0].length).split(" \xB7 ").map((s) => s.replace(CYCLE_HINT, "").trim()).filter(Boolean);
+          return { mode: { key: Object.hasOwn(MODE_KEYS, m[2]) ? MODE_KEYS[m[2]] : "other", label: m[2], cycles: true }, tasks: segs.find((s) => TASK.test(s)) || null, warnings: null };
+        }
+        return null;
+      }
+      function readCodex(rows, at) {
+        let s = -1;
+        for (let i = at + 1; i <= at + CODEX_REACH && i < rows.length; i++) {
+          if (CODEX_STATUS_ROW.test(rows[i] || "")) {
+            s = i;
+            break;
+          }
+        }
+        if (s < 0) return null;
+        const block = [];
+        for (let k = s; k < rows.length && k <= at + CODEX_REACH && !isBlank(rows[k]); k++) block.push(rows[k]);
+        const plan = block.flatMap((r) => r.trim().split(/\s{2,}/u)).some((c) => CODEX_PLAN.test(c));
+        const warn = block.map((r) => CODEX_WARNINGS.exec(r)).find(Boolean);
+        const mode = plan ? { key: "plan", label: "Plan", cycles: true } : { key: "default", label: "Default", cycles: true };
+        return { mode, tasks: null, warnings: warn ? Number(warn[1]) : null };
+      }
+      function readMuse(rows, at) {
+        const j = closingRule(rows, at);
+        if (j < 0) return null;
+        let k = j + 1;
+        while (k < rows.length && isBlank(rows[k])) k++;
+        if (k >= rows.length) return null;
+        const segs = rows[k].trim().split(" \xB7 ");
+        if (segs.length < 4 || !/^[~/]/u.test(segs[2])) return null;
+        const label = segs[segs.length - 1];
+        if (/^[~/.]/u.test(label) || label.length > MUSE_LABEL_MAX) return null;
+        return { mode: { key: "posture", label, cycles: false }, tasks: null, warnings: null };
+      }
+      var READERS = { claude: readClaude, codex: readCodex, muse: readMuse };
+      function readStatusRows(rows, at, platform) {
+        if (!Array.isArray(rows) || !Number.isInteger(at) || at < 0) return null;
+        const read = Object.hasOwn(READERS, platform) ? READERS[platform] : null;
+        return read ? read(rows, at) : null;
+      }
+      module.exports = { readStatusRows };
+    }
+  });
+
   // renderer/live-split-view.js
   var require_live_split_view = __commonJS({
     "renderer/live-split-view.js"(exports, module) {
@@ -32518,6 +32653,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { readMenuRows } = require_menu_rows();
       var { rowCells } = require_menu_cells();
       var { createPaintDelta, mergeByTs, isBusyScreen, blockText } = require_paint_delta();
+      var { readStatusRows } = require_status_rows();
       var TRANSCRIPT_PULL_MS = 1e3;
       var PAINT_TAG_MS = 1e4;
       var PAINT_PLATFORMS = /* @__PURE__ */ new Set(["codex", "muse"]);
@@ -32599,7 +32735,43 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         el.hidden = rows.length === 0;
       }
-      function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => "claude", pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, mode = () => "internals", onMode = NOOP }) {
+      var MODE_TEXT = { bypass: "Bypass", "accept-edits": "Accept edits", auto: "Auto", plan: "Plan", manual: "Manual" };
+      var MODE_TONE = { bypass: "danger", "accept-edits": "warn", auto: "warn", plan: "info" };
+      var CODEX_MODE_LABELS = /* @__PURE__ */ new Set(["Default", "Plan"]);
+      var MODE_TITLES = {
+        claude: "Permission mode \u2014 click to cycle (shift+tab in the terminal)",
+        codex: "Collaboration mode \u2014 click to toggle (shift+tab in the terminal)",
+        muse: "Approval posture (set at launch)"
+      };
+      function statusChip(doc, kind, text, tone, title, onChip) {
+        const el = doc.createElement(onChip ? "button" : "span");
+        if (onChip) {
+          el.type = "button";
+          el.addEventListener("mousedown", (e) => e.preventDefault());
+          el.addEventListener("click", () => onChip(kind));
+        }
+        el.className = "seat-status-chip";
+        el.dataset.chip = kind;
+        el.dataset.tone = tone;
+        el.title = title;
+        el.textContent = text;
+        return el;
+      }
+      function renderStatusChips(doc, el, read, effort, onChip = NOOP) {
+        const chips = [];
+        const mode = read && read.mode;
+        if (mode) {
+          const known = Object.hasOwn(MODE_TEXT, mode.key);
+          const family = !mode.cycles ? "muse" : (mode.key === "default" || mode.key === "plan") && CODEX_MODE_LABELS.has(mode.label) ? "codex" : "claude";
+          const tone = Object.hasOwn(MODE_TONE, mode.key) ? MODE_TONE[mode.key] : "muted";
+          chips.push(statusChip(doc, "mode", known ? MODE_TEXT[mode.key] : String(mode.label || ""), tone, MODE_TITLES[family], family === "muse" ? null : onChip));
+        }
+        if (read && read.tasks) chips.push(statusChip(doc, "tasks", String(read.tasks), "muted", "Background work in this seat", null));
+        if (read && Number.isInteger(read.warnings)) chips.push(statusChip(doc, "warnings", `\u26A0 ${read.warnings}`, "warn", "Codex startup warnings \u2014 click to view", onChip));
+        if (typeof effort === "string" && effort.trim() && effort.trim() !== "default") chips.push(statusChip(doc, "effort", effort.trim(), "neutral", "Effort level for this seat", null));
+        el.replaceChildren(...chips);
+      }
+      function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => "claude", pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, statusChips = null, mode = () => "internals", onMode = NOOP }) {
         const paneEl = document.createElement("div");
         paneEl.className = "transcript-pane";
         paneEl.hidden = true;
@@ -32614,6 +32786,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
           menuEl.hidden = true;
           wrapperEl.appendChild(menuEl);
         }
+        const statusEl = statusChips ? document.createElement("div") : null;
+        if (statusEl) {
+          statusEl.className = "seat-status-strip";
+          statusEl.hidden = true;
+          wrapperEl.appendChild(statusEl);
+          wrapperEl.classList.add("has-status-strip");
+        }
+        let heldRead = null;
+        let statusKey = null;
         let state = initialSplitState();
         let wakeTimer = null;
         let available = false;
@@ -32628,6 +32809,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let sheetRows = 0;
         let sheetRange = null;
         const composerVisible = () => !!composerEl && !composerEl.hidden;
+        const dockPx = () => (composerEl.offsetHeight || 0) + (statusEl && !statusEl.hidden ? statusEl.offsetHeight || 0 : 0);
         const delta = createPaintDelta();
         let fileRecords = [];
         let fileSource = null;
@@ -32762,7 +32944,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           const read = !raw && state.mode === "split" && composerVisible() && menuMirror.on() ? readMenuRows(rows || screenRows(), screenCells(), platform()) : null;
           menuMirror.setRead(read);
           if (!read && menuEl.hidden) return null;
-          if (read && composerEl) menuEl.style.bottom = `${(composerEl.offsetHeight || 0) + 8}px`;
+          if (read && composerEl) menuEl.style.bottom = `${dockPx() + 8}px`;
           renderMenuMirror(document, menuEl, read);
           return read;
         }
@@ -32770,11 +32952,37 @@ ${m[2].replace(/^\r?\n/, "")}`;
           const el = terminal.element;
           const active = typeof document !== "undefined" ? document.activeElement : null;
           const hadTerminalFocus = !!active && active === terminal.textarea;
-          const hadComposerFocus = !!active && active === composerEl;
+          const hadDockFocus = !!active && (active === composerEl || !!statusEl && (active === statusEl || statusEl.contains(active)));
           el.style.visibility = on ? "hidden" : "";
           composerEl.hidden = !on;
+          if (statusEl) statusEl.hidden = !on;
           if (on && hadTerminalFocus) composerEl.focus();
-          else if (!on && hadComposerFocus) terminal.focus();
+          else if (!on && hadDockFocus) terminal.focus();
+        }
+        function effortNow() {
+          const v = statusChips.effort ? statusChips.effort() : null;
+          return typeof v === "string" && v.trim() && v.trim() !== "default" ? v.trim() : null;
+        }
+        function onChip(kind) {
+          if (disposed || raw || state.mode !== "split" || !composerVisible() || menuMirror && menuMirror.on()) return;
+          if (kind === "mode") statusChips.write("\x1B[Z");
+          else if (kind === "warnings") statusChips.write("\x1BOQ");
+        }
+        function reconcileStatus() {
+          const effort = effortNow();
+          const key = JSON.stringify({ read: heldRead, effort });
+          if (key === statusKey) return;
+          statusKey = key;
+          renderStatusChips(document, statusEl, heldRead, effort, onChip);
+        }
+        function readStatus(rows, measured) {
+          if (!statusEl) return;
+          const readable = !raw && state.mode === "split" && !!measured && measured.mode === "split" && !!rows && !(menuMirror && menuMirror.on());
+          if (readable) {
+            const read = readStatusRows(rows, measured.at, platform());
+            if (read) heldRead = read;
+          }
+          reconcileStatus();
         }
         function sheetRowsOf(rows) {
           if (!sheet || !composerEl || state.mode !== "full") return null;
@@ -32822,7 +33030,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             el.style.transform = "";
             el.style.clipPath = "";
             showComposer(true);
-            const composerTop = wrapperEl.clientHeight - padBottom - composerEl.offsetHeight;
+            const composerTop = wrapperEl.clientHeight - padBottom - dockPx();
             wrapperEl.classList.add("live-split");
             paneEl.style.height = `${Math.max(0, Math.round(composerTop - padTop))}px`;
             paneEl.hidden = false;
@@ -32853,6 +33061,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           const prevSheet = sheetRange;
           state = reduceSplit(state, measured, now(), void 0, raw ? 0 : void 0);
           const menuRead = readMenu(rows);
+          readStatus(rows, measured);
           if (turnRunning) showWorking(rows ? spinnerText(rows, state.top, platform()) : null);
           const busy = !menuRead && !!measured && (measured.mode === "split" || !!measured.busy);
           trackPaint(raw ? null : rows, measured);
@@ -32929,6 +33138,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
             evaluate();
           },
           raw: () => raw,
+          refreshStatus() {
+            if (!disposed && statusEl) reconcileStatus();
+          },
           composerSent(text) {
             const s = String(text || "");
             sent = { text: s, at: now() };
@@ -32953,10 +33165,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
             paneEl.removeEventListener("scroll", onPaneScroll);
             paneEl.remove();
             if (menuEl) menuEl.remove();
+            if (statusEl) {
+              statusEl.remove();
+              wrapperEl.classList.remove("has-status-strip");
+            }
           }
         };
       }
-      module.exports = { TRANSCRIPT_PULL_MS, transcriptRowsFor, renderTranscript, renderMenuMirror, modeBar, createLiveSplitView };
+      module.exports = { TRANSCRIPT_PULL_MS, transcriptRowsFor, renderTranscript, renderMenuMirror, renderStatusChips, modeBar, createLiveSplitView };
     }
   });
 
@@ -46191,6 +46407,8 @@ ${detail}` });
         if (!item) return;
         if (effort) item.dataset.effort = effort;
         else delete item.dataset.effort;
+        const seat = sessions.get(name);
+        if (seat && seat.liveSplit) seat.liveSplit.refreshStatus();
       }
       var activeSession = null;
       var terminalWebglEnabled = false;
@@ -46991,6 +47209,7 @@ ${detail}` });
         const snapNoWire = item ? item.dataset.noWire === "1" : false;
         const snapAccount = accountOfRow(name);
         const snapIo = streamSeatNames.has(name) ? "stream" : "pty";
+        const snapEffort = item ? item.dataset.effort || null : null;
         return window.api.selectDirectory().then((dir) => {
           if (!dir) return;
           return window.api.moveSession(name, dir).then((res) => {
@@ -47018,6 +47237,7 @@ ${detail}` });
               markSeatIo(name, snapIo);
               createTerminal(name);
               addSessionToSidebar(name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, snapNoWire, snapAccount);
+              markSeatEffort(name, snapEffort);
               switchSession(name);
             }
             showToast(`${name} moved to ${res.cwd}, restarting`, { name });
@@ -47051,6 +47271,7 @@ ${detail}` });
         const snapNoWire = item ? item.dataset.noWire === "1" : false;
         const snapAccount = accountOfRow(name);
         const snapIo = streamSeatNames.has(name) ? "stream" : "pty";
+        const snapEffort = item ? item.dataset.effort || null : null;
         pendingPeerMove.set(name, async (farCwd) => {
           if (movingToPeer.has(name)) return { ok: false, error: "move already in progress" };
           const toast = showToast(`Moving ${name} to ${peerLabel}\u2026`, { sticky: true, name });
@@ -47075,6 +47296,7 @@ ${detail}` });
               label: snapLabel,
               backend: snapBackend,
               team: snapTeam,
+              effort: snapEffort,
               archivedAt: Date.now(),
               createdAt: snapCreatedAt,
               movedTo: { peer: peerId, peerLabel: res.peer || peerLabel, farCwd: res.farCwd }
@@ -48417,6 +48639,10 @@ ${detail}` });
           onMode: setTranscriptPaneMode,
           composerEl,
           menuMirror,
+          statusChips: composerEl ? { write: writePty, effort: () => {
+            const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+            return row && row.dataset.effort || null;
+          } } : null,
           sheet: true,
           onChange: () => {
             if (composerKit) composerKit.fit();

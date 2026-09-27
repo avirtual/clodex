@@ -1329,3 +1329,306 @@ test('the transcript bar renders exactly the Conversation and Internals buttons;
     assert.ok(!/\btr-hidden\b/.test(block().className));
   } finally { m.view.dispose(); m.restore(); }
 });
+
+const STATUS_DIR = path.join(__dirname, 'fixtures', 'status-states');
+const STATUS_PX = 22;
+const STATUS_CURSOR = { 'claude-bypass@100': 6, 'claude-shell@100': 16, 'codex-plan@100': 13, 'muse-auto-review@100': 7 };
+const statusRowsOf = (name) => fs.readFileSync(path.join(STATUS_DIR, `${name}.screen.txt`), 'utf8').replace(/\n$/, '').split('\n');
+const stripOf = (m) => m.appended.find((el) => el.className === 'seat-status-strip');
+const chips = (m) => stripOf(m).childNodes.map((c) => [c.tagName || c.tag, c.dataset.chip, textOf(c)]);
+const chipOf = (m, kind) => stripOf(m).childNodes.find((c) => c.dataset.chip === kind);
+const fakeEvent = () => { const e = { prevented: 0 }; e.preventDefault = () => { e.prevented += 1; }; return e; };
+
+function mountStatus(name, platform, { effort = null, ...extra } = {}) {
+  const writes = [];
+  const box = { level: effort };
+  const composerEl = fakeComposer();
+  let t = 5000;
+  const m = mountView({ platform: () => platform, composerEl, now: () => t, statusChips: { write: (d) => writes.push(d), effort: () => box.level }, ...extra }, { geometry: true });
+  const rows = statusRowsOf(name);
+  Object.assign(m.terminal, { rows: rows.length, cols: 100 });
+  m.terminal.buffer.active.cursorY = STATUS_CURSOR[name];
+  m.show(rows);
+  const strip = stripOf(m);
+  strip.offsetHeight = STATUS_PX;
+  strip.contains = (el) => strip.childNodes.includes(el);
+  const enter = async () => {
+    m.write();
+    await settle();
+    t += 250;
+    m.write();
+    assert.deepStrictEqual([m.view.state().mode, m.view.composerVisible()], ['split', true]);
+  };
+  return { ...m, rows, writes, box, composerEl, strip, enter, advance: (ms) => { t += ms; } };
+}
+
+test('a status strip is appended hidden at construction and marks the wrapper', () => {
+  const m = mountStatus('claude-bypass@100', 'claude');
+  try {
+    assert.strictEqual(stripOf(m).hidden, true);
+    assert.strictEqual(m.wrapper.classList.contains('has-status-strip'), true);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('the status strip shows in split and the pane sizes above the composer and the strip', async () => {
+  const m = mountStatus('claude-bypass@100', 'claude');
+  try {
+    await m.enter();
+    assert.strictEqual(stripOf(m).hidden, false);
+    assert.strictEqual(m.pane.clientHeight, WRAPPER_PX - COMPOSER_PX - STATUS_PX);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('raw hides the status strip with the composer', async () => {
+  const m = mountStatus('claude-bypass@100', 'claude');
+  try {
+    await m.enter();
+    assert.strictEqual(stripOf(m).hidden, false);
+    m.view.setRaw(true);
+    assert.strictEqual(stripOf(m).hidden, true);
+    assert.strictEqual(m.composerEl.hidden, true);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+const CHIP_SCREENS = [
+  { name: 'claude-bypass@100', platform: 'claude', effort: null, enter: (rows) => assert.strictEqual(rows[9], '  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'),
+    expected: [['button', 'mode', 'Bypass']], modeTone: 'danger' },
+  { name: 'claude-shell@100', platform: 'claude', effort: 'xhigh', enter: (rows) => assert.strictEqual(rows[19].trimEnd(), '  ⏵⏵ bypass permissions on · 1 shell · ← for agents'),
+    expected: [['button', 'mode', 'Bypass'], ['span', 'tasks', '1 shell'], ['span', 'effort', 'xhigh']], modeTone: 'danger' },
+  { name: 'codex-plan@100', platform: 'codex', effort: 'high', enter: (rows) => assert.ok(rows[15].includes('Plan mode    ⚠ 3 warnings'), rows[15]),
+    expected: [['button', 'mode', 'Plan'], ['button', 'warnings', '⚠ 3'], ['span', 'effort', 'high']], modeTone: 'info' },
+  { name: 'muse-auto-review@100', platform: 'muse', effort: null, enter: (rows) => assert.ok(rows[9].trimEnd().endsWith('· Auto-review'), rows[9]),
+    expected: [['span', 'mode', 'Auto-review']], modeTone: 'muted' },
+];
+
+for (const c of CHIP_SCREENS) {
+  test(`${c.name} renders the chips ${JSON.stringify(c.expected)} with effort ${c.effort}`, async () => {
+    const m = mountStatus(c.name, c.platform, { effort: c.effort });
+    try {
+      assert.strictEqual(m.rows.length, 40);
+      c.enter(m.rows);
+      await m.enter();
+      assert.deepStrictEqual(chips(m), c.expected);
+      assert.strictEqual(chipOf(m, 'mode').dataset.tone, c.modeTone);
+    } finally { m.view.dispose(); m.restore(); }
+  });
+}
+
+test('an effort level of null or default renders no effort chip', async () => {
+  const m = mountStatus('claude-bypass@100', 'claude');
+  try {
+    await m.enter();
+    assert.ok(chipOf(m, 'mode'));
+    const noEffort = () => {
+      assert.strictEqual(chipOf(m, 'effort'), undefined);
+      assert.strictEqual(stripOf(m).childNodes.some((n) => textOf(n) === 'default'), false);
+    };
+    noEffort();
+    m.box.level = 'default';
+    m.view.refreshStatus();
+    noEffort();
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('refreshStatus re-renders a changed effort level without a pty write or a screen evaluate', async () => {
+  const m = mountStatus('claude-bypass@100', 'claude', { effort: 'high' });
+  try {
+    await m.enter();
+    assert.deepStrictEqual(chips(m), [['button', 'mode', 'Bypass'], ['span', 'effort', 'high']]);
+    const pulls = m.calls.pull;
+    m.box.level = 'xhigh';
+    m.view.refreshStatus();
+    assert.deepStrictEqual(chips(m), [['button', 'mode', 'Bypass'], ['span', 'effort', 'xhigh']]);
+    assert.deepStrictEqual(m.writes, []);
+    assert.strictEqual(m.calls.pull, pulls);
+    m.box.level = null;
+    m.view.refreshStatus();
+    assert.deepStrictEqual(chips(m), [['button', 'mode', 'Bypass']]);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a slash menu frame holds the screen chips but still refreshes the effort chip', async () => {
+  const menuMirror = createMenuMirror();
+  const m = mountStatus('claude-bypass@100', 'claude', { effort: 'high', menuMirror });
+  try {
+    await m.enter();
+    assert.deepStrictEqual(chips(m), [['button', 'mode', 'Bypass'], ['span', 'effort', 'high']]);
+    menuMirror.draft('/c');
+    const f = menuFixture('claude-one-char@100');
+    m.show(f.rows, f.cells);
+    assert.strictEqual(menuMirror.on(), true);
+    m.box.level = 'xhigh';
+    m.write();
+    assert.deepStrictEqual(chips(m), [['button', 'mode', 'Bypass'], ['span', 'effort', 'xhigh']]);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a split frame whose status rows read nothing holds the last chips', async () => {
+  const { readStatusRows } = require('../renderer/lib/status-rows');
+  const m = mountStatus('claude-bypass@100', 'claude');
+  try {
+    await m.enter();
+    assert.deepStrictEqual(chips(m), [['button', 'mode', 'Bypass']]);
+    const blank = m.rows.map((r, i) => (i === 8 || i === 9 ? '' : r));
+    assert.strictEqual(readStatusRows(blank, 5, 'claude'), null);
+    m.show(blank);
+    m.write();
+    assert.strictEqual(m.view.state().mode, 'split');
+    assert.deepStrictEqual(chips(m), [['button', 'mode', 'Bypass']]);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('the same screen written again keeps the chip nodes', async () => {
+  const m = mountStatus('claude-bypass@100', 'claude');
+  try {
+    await m.enter();
+    const node = chipOf(m, 'mode');
+    assert.ok(node);
+    m.write();
+    assert.strictEqual(stripOf(m).childNodes[0], node);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+const enterChip = (m, kind) => {
+  assert.strictEqual(m.view.state().mode, 'split');
+  assert.strictEqual(stripOf(m).hidden, false);
+  const chip = chipOf(m, kind);
+  assert.ok(chip, kind);
+  return chip;
+};
+
+test('a claude mode chip click writes shift+tab and its mousedown keeps focus where it was', async () => {
+  const m = mountStatus('claude-bypass@100', 'claude');
+  try {
+    await m.enter();
+    const chip = enterChip(m, 'mode');
+    const e = fakeEvent();
+    chip.listeners.mousedown(e);
+    assert.strictEqual(e.prevented, 1);
+    chip.listeners.click();
+    assert.deepStrictEqual(m.writes, ['\x1b[Z']);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a codex warnings chip click writes F2', async () => {
+  const m = mountStatus('codex-plan@100', 'codex');
+  try {
+    await m.enter();
+    const chip = enterChip(m, 'warnings');
+    const e = fakeEvent();
+    chip.listeners.mousedown(e);
+    assert.strictEqual(e.prevented, 1);
+    chip.listeners.click();
+    assert.deepStrictEqual(m.writes, ['\x1bOQ']);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a mode chip click with the slash mirror on writes nothing', async () => {
+  const menuMirror = createMenuMirror();
+  const m = mountStatus('claude-bypass@100', 'claude', { menuMirror });
+  try {
+    await m.enter();
+    const chip = enterChip(m, 'mode');
+    menuMirror.draft('/c');
+    assert.strictEqual(menuMirror.on(), true);
+    chip.listeners.click();
+    assert.deepStrictEqual(m.writes, []);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a muse mode chip is a span with no click listener', async () => {
+  const m = mountStatus('muse-auto-review@100', 'muse');
+  try {
+    await m.enter();
+    const chip = enterChip(m, 'mode');
+    assert.strictEqual(chip.tag, 'span');
+    assert.strictEqual(chip.listeners.click, undefined);
+    assert.deepStrictEqual(m.writes, []);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+async function mountFocus() {
+  const m = mountStatus('codex-plan@100', 'codex');
+  const focus = { term: 0 };
+  m.terminal.textarea = { tag: 'xterm-helper' };
+  m.terminal.focus = () => { focus.term += 1; global.document.activeElement = m.terminal.textarea; };
+  await m.enter();
+  return { ...m, focus };
+}
+
+test('a keyboard F2 from the warnings chip hands focus to the terminal and the return hands it to the composer', async () => {
+  const m = await mountFocus();
+  try {
+    const chip = enterChip(m, 'warnings');
+    assert.strictEqual(chip.tag, 'button');
+    global.document.activeElement = chip;
+    chip.listeners.click();
+    assert.deepStrictEqual(m.writes, ['\x1bOQ']);
+    const overlayRows = statusRowsOf('codex-warnings-overlay@100');
+    assert.strictEqual(overlayRows.length, 40);
+    assert.strictEqual(overlayRows[12].trimEnd(), '  Warnings · 1 of 3 · Startup');
+    m.show(overlayRows);
+    m.terminal.buffer.active.cursorY = 23;
+    m.write();
+    m.advance(50);
+    m.write();
+    assert.strictEqual(m.view.state().mode, 'full');
+    assert.strictEqual(stripOf(m).hidden, true);
+    assert.strictEqual(m.focus.term, 1);
+    assert.strictEqual(global.document.activeElement, m.terminal.textarea);
+    m.show(m.rows);
+    m.terminal.buffer.active.cursorY = 13;
+    m.write();
+    await settle();
+    m.advance(250);
+    m.write();
+    assert.strictEqual(m.view.state().mode, 'split');
+    assert.strictEqual(stripOf(m).hidden, false);
+    assert.strictEqual(m.composerEl.focused, 1);
+    assert.strictEqual(global.document.activeElement, m.composerEl);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('hiding the strip leaves focus outside the composer and the strip where it was', async () => {
+  const m = await mountFocus();
+  try {
+    assert.strictEqual(stripOf(m).hidden, false);
+    const sidebar = { tag: 'sidebar-input' };
+    global.document.activeElement = sidebar;
+    m.view.setRaw(true);
+    assert.strictEqual(m.focus.term, 0);
+    assert.strictEqual(global.document.activeElement, sidebar);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('the slash list sits above the composer and the status strip', async () => {
+  const m = await mountMenu('claude-one-char@100', 'claude', { statusChips: { write: () => {}, effort: () => null } });
+  try {
+    stripOf(m).offsetHeight = STATUS_PX;
+    m.menuMirror.draft('/c');
+    await m.enter();
+    assert.strictEqual(m.menuMirror.on(), true);
+    assert.strictEqual(m.menuEl.hidden, false);
+    assert.strictEqual(itemsOf(m.menuEl).length, 14);
+    assert.strictEqual(m.menuEl.style.bottom, `${COMPOSER_PX + STATUS_PX + 8}px`);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('dispose removes the status strip and the wrapper class, and a later refreshStatus renders nothing', async () => {
+  const m = mountStatus('claude-bypass@100', 'claude', { effort: 'high' });
+  try {
+    await m.enter();
+    const strip = stripOf(m);
+    assert.ok(strip);
+    assert.strictEqual(m.wrapper.classList.contains('has-status-strip'), true);
+    let removed = 0;
+    strip.remove = () => { removed += 1; };
+    const before = chips(m);
+    m.view.dispose();
+    assert.strictEqual(removed, 1);
+    assert.strictEqual(m.wrapper.classList.contains('has-status-strip'), false);
+    m.box.level = 'xhigh';
+    m.view.refreshStatus();
+    assert.deepStrictEqual(chips(m), before);
+  } finally { m.restore(); }
+});

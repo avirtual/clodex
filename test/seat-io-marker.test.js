@@ -18,7 +18,7 @@ function slice(startMarker, endMarker) {
 }
 const fnSrc = (name) => slice(`function ${name}(`, '\n}\n');
 
-function mkRenderer() {
+function mkRenderer(extra = {}) {
   const rows = [];
   const mkNode = () => {
     const stub = () => ({ dataset: {}, addEventListener() {} });
@@ -52,6 +52,19 @@ function mkRenderer() {
     applyFixChip() {},
     scheduleSidebarRelayout() {},
     exitedLabel: () => 'exited',
+    sessions: new Map(),
+    accountOfRow: () => null,
+    movingFailed: new Map(),
+    movingToPeer: new Map(),
+    pendingPeerMove: new Map(),
+    createTerminal() {},
+    switchSession() {},
+    showToast: () => () => {},
+    removeSession: (name) => { const i = rows.findIndex((r) => r.dataset.name === name); if (i >= 0) rows.splice(i, 1); },
+    refreshSidebarView() {},
+    peerStatuses: new Map(),
+    openPeerSessionDialog() {},
+    ...extra,
   };
   const names = Object.keys(env);
   const body = [
@@ -60,7 +73,8 @@ function mkRenderer() {
     fnSrc('exitedRowSnapshot'), fnSrc('archivedRowEntry'),
     fnSrc('addSessionToSidebar'), fnSrc('addArchivedSessionToSidebar'),
     fnSrc('addFailedSessionToSidebar'), fnSrc('addExitedSessionToSidebar'),
-    'return { markSeatIo, markSeatEffort, exitedRowSnapshot, archivedRowEntry, addSessionToSidebar, addArchivedSessionToSidebar, addFailedSessionToSidebar, addExitedSessionToSidebar };',
+    fnSrc('moveSessionWithPicker'), fnSrc('moveSessionToPeerWithDialog'),
+    'return { markSeatIo, markSeatEffort, exitedRowSnapshot, archivedRowEntry, addSessionToSidebar, addArchivedSessionToSidebar, addFailedSessionToSidebar, addExitedSessionToSidebar, moveSessionWithPicker, moveSessionToPeerWithDialog };',
   ].join('\n');
   const fns = new Function(...names, body)(...names.map((n) => env[n]));
   return { rows, env, ...fns };
@@ -220,4 +234,39 @@ test('a seat that exits or is archived mid-session keeps its effort level on the
   h.markSeatEffort('s', null);
   assert.strictEqual(h.exitedRowSnapshot('s', 1, {}).effort, null);
   assert.strictEqual(h.archivedRowEntry('s', h.rows[0]).effort, null);
+});
+
+test('markSeatEffort refreshes the seat\'s live split chips when it stamps a level and again when it clears one', () => {
+  const h = mkRenderer();
+  let refreshed = 0;
+  h.env.sessions.set('s', { liveSplit: { refreshStatus: () => { refreshed += 1; } } });
+  h.addSessionToSidebar('s', 'claude', '/w');
+  const before = refreshed;
+  h.markSeatEffort('s', 'high');
+  assert.strictEqual(refreshed, before + 1);
+  h.markSeatEffort('s', null);
+  assert.strictEqual('effort' in h.rows[0].dataset, false);
+  assert.strictEqual(refreshed, before + 2);
+});
+
+test('a seat moved to another directory keeps its effort level on the rebuilt row', async () => {
+  const api = { selectDirectory: async () => '/new' };
+  const h = mkRenderer({ window: { api } });
+  api.moveSession = async () => { h.rows.length = 0; return { ok: true, type: 'claude', cwd: '/new' }; };
+  h.addSessionToSidebar('s', 'claude', '/w');
+  h.markSeatEffort('s', 'xhigh');
+  await h.moveSessionWithPicker('s');
+  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.cwd, r.dataset.effort]), [['s', '/new', 'xhigh']]);
+});
+
+test('a seat moved to a peer leaves an archived row whose entry carries its effort level', async () => {
+  const api = { moveSessionToPeer: async () => ({ ok: true, peer: 'far', farCwd: '/far' }) };
+  const h = mkRenderer({ window: { api } });
+  h.addSessionToSidebar('s', 'claude', '/w');
+  h.markSeatEffort('s', 'xhigh');
+  h.moveSessionToPeerWithDialog('s', 'p1', 'far', '/w');
+  const res = await h.env.pendingPeerMove.get('s')('/far');
+  assert.strictEqual(res.ok, true);
+  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.effort]), [['s', 'xhigh']]);
+  assert.match(h.rows[0].className, /archived/);
 });

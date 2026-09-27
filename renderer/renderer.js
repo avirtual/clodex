@@ -120,6 +120,8 @@ function markSeatEffort(name, effort) {
   if (!item) return;
   if (effort) item.dataset.effort = effort;
   else delete item.dataset.effort;
+  const seat = sessions.get(name);
+  if (seat && seat.liveSplit) seat.liveSplit.refreshStatus();
 }
 let activeSession = null;
 let terminalWebglEnabled = false;
@@ -947,6 +949,7 @@ function moveSessionWithPicker(name) {
   const snapNoWire = item ? item.dataset.noWire === '1' : false;
   const snapAccount = accountOfRow(name);
   const snapIo = streamSeatNames.has(name) ? 'stream' : 'pty';
+  const snapEffort = item ? item.dataset.effort || null : null;
   return window.api.selectDirectory().then((dir) => {
     if (!dir) return;
     return window.api.moveSession(name, dir).then((res) => {
@@ -970,6 +973,7 @@ function moveSessionWithPicker(name) {
         markSeatIo(name, snapIo);
         createTerminal(name);
         addSessionToSidebar(name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, snapNoWire, snapAccount);
+        markSeatEffort(name, snapEffort);
         switchSession(name);
       }
       showToast(`${name} moved to ${res.cwd}, restarting`, { name });
@@ -1006,6 +1010,7 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
   const snapNoWire = item ? item.dataset.noWire === '1' : false;
   const snapAccount = accountOfRow(name);
   const snapIo = streamSeatNames.has(name) ? 'stream' : 'pty';
+  const snapEffort = item ? item.dataset.effort || null : null;
   pendingPeerMove.set(name, async (farCwd) => {
     if (movingToPeer.has(name)) return { ok: false, error: 'move already in progress' };
     const toast = showToast(`Moving ${name} to ${peerLabel}…`, { sticky: true, name });
@@ -1022,7 +1027,7 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
       removeSession(name, { keepPersisted: true });
       addArchivedSessionToSidebar({
         name, type: snapType, cwd: snapCwd, label: snapLabel, backend: snapBackend,
-        team: snapTeam, archivedAt: Date.now(), createdAt: snapCreatedAt,
+        team: snapTeam, effort: snapEffort, archivedAt: Date.now(), createdAt: snapCreatedAt,
         movedTo: { peer: peerId, peerLabel: res.peer || peerLabel, farCwd: res.farCwd },
       });
       refreshSidebarView();
@@ -2379,6 +2384,7 @@ function createTerminal(name, peer = null) {
     onMode: setTranscriptPaneMode,
     composerEl,
     menuMirror,
+    statusChips: composerEl ? { write: writePty, effort: () => { const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`); return (row && row.dataset.effort) || null; } } : null,
     sheet: true,
     onChange: () => { if (composerKit) composerKit.fit(); },
   });
