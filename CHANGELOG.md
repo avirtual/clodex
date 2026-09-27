@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Layout round 2: a Files toggle, drawer and dock sizing, the Tickets pane as a pane, clodexctl node versions
+## Unreleased
+
+## 5.88.0 — 2026-09-28 — Layout round 2: a Files toggle, drawer and dock sizing, the Tickets pane as a pane, clodexctl node versions
 - clodexctl: `describe node <name>` shows the Clodex version and host the node is running (fetched live; "(unreachable: …)" when it cannot be reached), and `get nodes --versions` adds a VERSION column; the plain listing stays offline.
 - The Tickets pane picks its project from a dropdown at the top, in place of the side list that became a sideways-scrolling strip in a narrow pane; each entry carries its open, stalled, backlog and parked counts, and the chips beside the dropdown belong to the project on screen.
 - In Conversation and Internals, a filed body ("882 B filed · …") unfolds in place: click the line to read the spilled text there, up to 16 KB, with the file link kept for the rest and for opening it in the viewer.
