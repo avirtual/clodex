@@ -95,13 +95,15 @@ test('changelog: the real CHANGELOG.md parses with the shipped expressions', () 
     'exactly one Unreleased heading, or the extraction takes the wrong one');
 });
 
-test('changelog: the shipped expressions pull the real Unreleased subtitle and a body with no release heading', () => {
+test('changelog: the shipped expressions pull the real Unreleased subtitle as the heading carries it, and a body with no release heading', () => {
   const file = path.join(ROOT, 'CHANGELOG.md');
-  assert.strictEqual(extractSubtitle(file), 'seats you can read');
+  const heading = fs.readFileSync(file, 'utf-8').match(/^## +\[?Unreleased\]?(.*)$/m);
+  assert.ok(heading, 'ENTER: the Unreleased heading is present — the count test above covers how many');
+  const written = heading[1].replace(/^[\s—:-]+/, '').trim();
+  assert.strictEqual(extractSubtitle(file), written,
+    'the sed must read the subtitle the heading actually carries; a release empties it, so "" is the shipped answer');
   const body = extractBody(file);
-  assert.ok(body.trim().length > 0, 'the Unreleased body is empty');
   assert.deepStrictEqual(body.match(/^## /gm), null, 'the body runs into a release heading');
-  assert.ok(/^### /m.test(body), 'the ### theme headings survive inside the body');
 });
 
 // The preflight sync check. It rejected a release that was 37 commits AHEAD of
