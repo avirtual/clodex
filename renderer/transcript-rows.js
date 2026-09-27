@@ -953,7 +953,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     }
   }
 
-  function toolBlockItem(tools, open, m) {
+  function toolBlockItem(tools, open, m, hideTools) {
     const key = `tools:${tools[0].id}`;
     return {
       key,
@@ -968,7 +968,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         c.key = key;
         c.tools = tools;
         paintBlock(c);
-        toggleClass(c.el, 'tr-hidden', m === 'conversation' && !open);
+        toggleClass(c.el, 'tr-hidden', hideTools || (m === 'conversation' && !open));
       },
     };
   }
@@ -1019,12 +1019,12 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     return { key: 'footer', sig: JSON.stringify(stats), build: () => buildFooter(doc, stats, deps) };
   }
 
-  function rowItems(records, attached, open, tail, live, m) {
+  function rowItems(records, attached, open, tail, live, m, hideTools) {
     const items = [];
     for (const run of toolRuns(records)) {
       if (run.tools) {
         live.add(`tools:${run.tools[0].id}`);
-        items.push(toolBlockItem(run.tools, open, m));
+        items.push(toolBlockItem(run.tools, open, m, hideTools));
         continue;
       }
       const r = run.rec;
@@ -1126,7 +1126,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
           const unfolded = folds && openTurns.has(t.key);
           const m = unfolded ? 'internals' : mode;
           const tail = m === 'conversation' && t === host ? runToggleItem(run, open) : null;
-          const rows = rowItems(t.records, attached, open, tail, live, m);
+          const rows = rowItems(t.records, attached, open, tail, live, m, unfolded);
           reconcile(c.el, c.sub, folds ? [foldItem(t, unfolded), ...(unfolded ? rows : [])] : rows);
           toggleClass(c.el, 'tr-turn-folded', folds && !unfolded);
           toggleClass(c.el, 'tr-hidden', mode === 'conversation' && !open && !t.records.some(isTalk));
