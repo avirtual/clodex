@@ -2075,20 +2075,23 @@ html, body {
   100% { box-shadow: 0 0 0 7px transparent; }
 }
 
-#side-pane {
+#dock {
   flex: none; display: flex; flex-direction: column; min-width: 0;
   background: var(--bg); border-left: 1px solid var(--border);
 }
-#side-pane.side-pane-closed, #side-pane-handle.side-pane-closed { display: none; }
-#side-pane.side-pane-sheet {
+#dock.dock-closed, #dock-handle.dock-closed { display: none; }
+#dock.dock-sheet {
   position: fixed; inset: 0; z-index: 60; width: auto !important;
   border-left: 0;
 }
-#side-pane-handle {
+#dock-handle {
   flex: none; width: 5px; cursor: col-resize; background: var(--border);
 }
-#side-pane-handle:hover, body.side-pane-dragging #side-pane-handle { background: var(--accent); }
-body.side-pane-dragging { cursor: col-resize; user-select: none; }
+#dock-handle:hover, body.dock-dragging #dock-handle { background: var(--accent); }
+body.dock-dragging { cursor: col-resize; user-select: none; }
+.dock-pane { flex: 1 1 0; min-height: 0; }
+#dock > .dock-pane.dock-pane-hidden { display: none; }
+#side-pane { display: flex; flex-direction: column; min-width: 0; }
 #side-pane-head {
   flex: none; display: flex; align-items: center; gap: 6px;
   padding: 4px 6px; border-bottom: 1px solid var(--border);

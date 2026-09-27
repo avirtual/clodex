@@ -21,13 +21,14 @@ One row per gate site, in source order. Symbols, not line numbers; `test/web-par
 | renderer/renderer.js | `warningText` | update warning, same wording | KEPT: wording — same as the row above |
 | renderer/renderer.js | `showPluginsFolderListing` | Reveal lists the folder in-app instead of opening Finder | KEPT: inability — a browser has no file manager to show a host path in; on web `file:reveal` only toasts |
 | renderer/renderer.js | `revealBtn` | the Reveal button is relabelled Show Plugins Folder | KEPT: inability — same as the row above |
-| renderer/side-pane.js | `isWeb` | the flag itself | KEPT: declaration of the four rows below |
-| renderer/side-pane.js | `paneVisible` | the side pane opens at any viewport width | KEPT: layout — narrow viewports get a sheet instead of hiding the pane |
-| renderer/side-pane.js | `renderChrome` | a narrow viewport shows the pane as a sheet | KEPT: layout |
+| renderer/side-pane.js | `isWeb` | the flag itself | KEPT: declaration of the row below |
 | renderer/side-pane.js | `showOpen` | file tabs hide Open | KEPT: inability — a browser has no default app to open a host path with; on web `file:open` only toasts |
-| renderer/side-pane.js | `sidePaneFits` | no "widen the window" toast | KEPT: layout — the sheet row above replaces it |
+| renderer/dock.js | `isWeb` | the flag itself | KEPT: declaration of the three rows below |
+| renderer/dock.js | `onScreen` | the dock opens at any viewport width | KEPT: layout — narrow viewports get a sheet instead of hiding the dock |
+| renderer/dock.js | `render` | a narrow viewport shows the dock as a sheet | KEPT: layout |
+| renderer/dock.js | `sidePaneFits` | no "widen the window" toast | KEPT: layout — the sheet row above replaces it |
 
-Counts: 21 sites audited — 19 kept with a named reason (inability, substitute, layout, wording or host refusal), 2 removed.
+Counts: 22 sites audited — 20 kept with a named reason (inability, substitute, layout, wording or host refusal), 2 removed.
 
 Removed (the gate is gone, so the rows above no longer carry it):
 

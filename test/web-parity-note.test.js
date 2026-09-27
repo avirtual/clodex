@@ -11,6 +11,7 @@ const NOTE = path.join(REPO, 'docs', 'notes', 'web-host-parity.md');
 const SITES = [
   { file: 'renderer/renderer.js', marker: /__CLODEX_WEB__/ },
   { file: 'renderer/side-pane.js', marker: /\bisWeb\b/ },
+  { file: 'renderer/dock.js', marker: /\bisWeb\b/ },
 ];
 
 function noteRows() {
@@ -33,7 +34,7 @@ test('ENTER: the parity note states the ruling', () => {
   assert.match(text, /A gate without such a reason is a defect/);
 });
 
-test('every web gate site in renderer.js and side-pane.js has its row in the parity note, in order', () => {
+test('every web gate site in renderer.js, side-pane.js and dock.js has its row in the parity note, in order', () => {
   const rows = noteRows();
   for (const { file, marker } of SITES) {
     const src = fs.readFileSync(path.join(REPO, file), 'utf8');

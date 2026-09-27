@@ -419,6 +419,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/ipc-log.js',
   'renderer/inbox-drawer.js',
   'renderer/side-pane.js',
+  'renderer/dock.js',
   'renderer/file-tab.js',
   'renderer/lib/side-pane-tabs.js',
   'renderer/term-search.js',
