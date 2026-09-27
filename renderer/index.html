@@ -309,14 +309,16 @@
     </div>
     <div id="work-row">
       <div id="terminal-container"></div>
-      <div id="side-pane-handle" class="side-pane-closed"></div>
-      <div id="side-pane" class="side-pane-closed">
-        <div id="side-pane-head">
-          <div id="side-pane-tabs" class="side-strip"></div>
-          <span id="side-pane-seat" hidden></span>
-          <button type="button" class="popover-close" id="side-pane-close" title="Close the side pane (its tabs are kept)" aria-label="Close">&times;</button>
+      <div id="dock-handle" class="dock-closed"></div>
+      <div id="dock" class="dock-closed">
+        <div id="side-pane" class="dock-pane" data-pane="files">
+          <div id="side-pane-head">
+            <div id="side-pane-tabs" class="side-strip"></div>
+            <span id="side-pane-seat" hidden></span>
+            <button type="button" class="popover-close" id="side-pane-close" title="Close the side pane (its tabs are kept)" aria-label="Close">&times;</button>
+          </div>
+          <div id="side-pane-body"></div>
         </div>
-        <div id="side-pane-body"></div>
       </div>
     </div>
     <div id="peer-bar" class="hidden"></div>

@@ -2,13 +2,11 @@
 
 const { createFileTab } = require('./file-tab');
 const {
-  SIDE_PANE_REFIT_THROTTLE_MS, emptyTabSet, fileTabId, sidePaneFits, clampSidePaneWidth,
-  saveArgs, shouldKeepBuffer, reduceTabs, stripState,
+  emptyTabSet, fileTabId, saveArgs, shouldKeepBuffer, reduceTabs, stripState,
 } = require('./lib/side-pane-tabs');
 
-function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, focusTerminal, doc = document, win = window }) {
+function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFiles, focusTerminal, doc = document, win = window }) {
   const pane = doc.getElementById('side-pane');
-  const handle = doc.getElementById('side-pane-handle');
   const strip = doc.getElementById('side-pane-tabs');
   const seatEl = doc.getElementById('side-pane-seat');
   const closeBtn = doc.getElementById('side-pane-close');
@@ -19,7 +17,6 @@ function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, foc
   const views = new Map();
   const seenTs = new Map();
   let shownSeat = null;
-  let storedWidth = null;
 
   const setOf = (seat) => sets.get(seat) || emptyTabSet();
   const tabOf = (seat, id) => setOf(seat).tabs.find((t) => t.id === id) || null;
@@ -42,23 +39,15 @@ function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, foc
   }
 
   function paneVisible() {
-    return !!shownSeat && setOf(shownSeat).open && (isWeb || sidePaneFits(win.innerWidth));
+    return !!shownSeat && setOf(shownSeat).open && dock.onScreen();
   }
 
   function isVisible(seat, id) {
     return seat === shownSeat && paneVisible() && setOf(seat).active === id;
   }
 
-  function applyWidth() {
-    pane.style.width = `${clampSidePaneWidth(storedWidth, win.innerWidth)}px`;
-  }
-
   function renderChrome() {
-    const shown = paneVisible();
-    const sheet = shown && isWeb && !sidePaneFits(win.innerWidth);
-    pane.classList.toggle('side-pane-closed', !shown);
-    pane.classList.toggle('side-pane-sheet', sheet);
-    handle.classList.toggle('side-pane-closed', !shown || sheet);
+    dock.setShown('files', !!shownSeat && setOf(shownSeat).open);
     if (!shownSeat) { strip.replaceChildren(); strip.dataset.count = '0'; return; }
     const set = setOf(shownSeat);
     const view = stripState(set);
@@ -231,10 +220,7 @@ function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, foc
       const v = views.get(viewKey(seat, id));
       if (view !== 'edit' || (v && v.canEdit())) dispatch(seat, { type: 'view', id, view });
     }
-    applyWidth();
-    if (!isWeb && !sidePaneFits(win.innerWidth)) {
-      showToast('Widen the window to see the side pane', { kind: 'warn', duration: 4000 });
-    }
+    dock.reveal();
     runEffect(seat, id, effect, { forceView: view });
   }
 
@@ -302,50 +288,7 @@ function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, foc
     renderChrome();
   });
 
-  let dragging = false;
-  let pendingPx = null;
-  let lastApply = 0;
-  let timer = null;
-  function flushDrag() {
-    timer = null;
-    if (pendingPx == null) return;
-    storedWidth = pendingPx;
-    lastApply = Date.now();
-    applyWidth();
-  }
-  handle.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    dragging = true;
-    doc.body.classList.add('side-pane-dragging');
-  });
-  win.addEventListener('mousemove', (e) => {
-    if (!dragging) return;
-    const right = pane.getBoundingClientRect().right;
-    pendingPx = clampSidePaneWidth(right - e.clientX, win.innerWidth);
-    const wait = SIDE_PANE_REFIT_THROTTLE_MS - (Date.now() - lastApply);
-    if (wait <= 0) flushDrag();
-    else if (!timer) timer = setTimeout(flushDrag, wait);
-  });
-  win.addEventListener('mouseup', () => {
-    if (!dragging) return;
-    dragging = false;
-    doc.body.classList.remove('side-pane-dragging');
-    if (timer) { clearTimeout(timer); timer = null; }
-    flushDrag();
-    pendingPx = null;
-    try { win.api.setSettings({ sidePaneWidth: storedWidth }); } catch {}
-  });
-  win.addEventListener('resize', () => { applyWidth(); renderChrome(); });
-
-  Promise.resolve()
-    .then(() => win.api.getSettings())
-    .then((s) => {
-      if (s && typeof s.sidePaneWidth === 'number') storedWidth = s.sidePaneWidth;
-      applyWidth();
-    })
-    .catch(() => {});
-  applyWidth();
+  dock.addPane('files', pane, 0);
   renderChrome();
 
   return { open, showSeat, forgetSeat, noteFiles, noteToolRecord };

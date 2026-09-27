@@ -2898,7 +2898,7 @@ body {
     box-shadow: 0 0 0 7px transparent;
   }
 }
-#side-pane {
+#dock {
   flex: none;
   display: flex;
   flex-direction: column;
@@ -2906,30 +2906,42 @@ body {
   background: var(--bg);
   border-left: 1px solid var(--border);
 }
-#side-pane.side-pane-closed,
-#side-pane-handle.side-pane-closed {
+#dock.dock-closed,
+#dock-handle.dock-closed {
   display: none;
 }
-#side-pane.side-pane-sheet {
+#dock.dock-sheet {
   position: fixed;
   inset: 0;
   z-index: 60;
   width: auto !important;
   border-left: 0;
 }
-#side-pane-handle {
+#dock-handle {
   flex: none;
   width: 5px;
   cursor: col-resize;
   background: var(--border);
 }
-#side-pane-handle:hover,
-body.side-pane-dragging #side-pane-handle {
+#dock-handle:hover,
+body.dock-dragging #dock-handle {
   background: var(--accent);
 }
-body.side-pane-dragging {
+body.dock-dragging {
   cursor: col-resize;
   user-select: none;
+}
+.dock-pane {
+  flex: 1 1 0;
+  min-height: 0;
+}
+#dock > .dock-pane.dock-pane-hidden {
+  display: none;
+}
+#side-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 #side-pane-head {
   flex: none;
@@ -9788,14 +9800,16 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
     </div>
     <div id="work-row">
       <div id="terminal-container"></div>
-      <div id="side-pane-handle" class="side-pane-closed"></div>
-      <div id="side-pane" class="side-pane-closed">
-        <div id="side-pane-head">
-          <div id="side-pane-tabs" class="side-strip"></div>
-          <span id="side-pane-seat" hidden></span>
-          <button type="button" class="popover-close" id="side-pane-close" title="Close the side pane (its tabs are kept)" aria-label="Close">&times;</button>
+      <div id="dock-handle" class="dock-closed"></div>
+      <div id="dock" class="dock-closed">
+        <div id="side-pane" class="dock-pane" data-pane="files">
+          <div id="side-pane-head">
+            <div id="side-pane-tabs" class="side-strip"></div>
+            <span id="side-pane-seat" hidden></span>
+            <button type="button" class="popover-close" id="side-pane-close" title="Close the side pane (its tabs are kept)" aria-label="Close">&times;</button>
+          </div>
+          <div id="side-pane-body"></div>
         </div>
-        <div id="side-pane-body"></div>
       </div>
     </div>
     <div id="peer-bar" class="hidden"></div>
@@ -40505,19 +40519,15 @@ void main() {
       "use strict";
       var { createFileTab } = require_file_tab();
       var {
-        SIDE_PANE_REFIT_THROTTLE_MS,
         emptyTabSet,
         fileTabId,
-        sidePaneFits,
-        clampSidePaneWidth,
         saveArgs,
         shouldKeepBuffer,
         reduceTabs,
         stripState
       } = require_side_pane_tabs();
-      function createSidePane({ popoverApi, showToast, getActiveSession, getFiles, focusTerminal, doc = document, win = window }) {
+      function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFiles, focusTerminal, doc = document, win = window }) {
         const pane = doc.getElementById("side-pane");
-        const handle = doc.getElementById("side-pane-handle");
         const strip = doc.getElementById("side-pane-tabs");
         const seatEl = doc.getElementById("side-pane-seat");
         const closeBtn = doc.getElementById("side-pane-close");
@@ -40527,7 +40537,6 @@ void main() {
         const views = /* @__PURE__ */ new Map();
         const seenTs = /* @__PURE__ */ new Map();
         let shownSeat = null;
-        let storedWidth = null;
         const setOf = (seat) => sets.get(seat) || emptyTabSet();
         const tabOf = (seat, id) => setOf(seat).tabs.find((t) => t.id === id) || null;
         const viewKey = (seat, id) => `${seat}\0${id}`;
@@ -40547,20 +40556,13 @@ void main() {
           return { set, effect };
         }
         function paneVisible() {
-          return !!shownSeat && setOf(shownSeat).open && (isWeb || sidePaneFits(win.innerWidth));
+          return !!shownSeat && setOf(shownSeat).open && dock.onScreen();
         }
         function isVisible(seat, id) {
           return seat === shownSeat && paneVisible() && setOf(seat).active === id;
         }
-        function applyWidth() {
-          pane.style.width = `${clampSidePaneWidth(storedWidth, win.innerWidth)}px`;
-        }
         function renderChrome() {
-          const shown = paneVisible();
-          const sheet = shown && isWeb && !sidePaneFits(win.innerWidth);
-          pane.classList.toggle("side-pane-closed", !shown);
-          pane.classList.toggle("side-pane-sheet", sheet);
-          handle.classList.toggle("side-pane-closed", !shown || sheet);
+          dock.setShown("files", !!shownSeat && setOf(shownSeat).open);
           if (!shownSeat) {
             strip.replaceChildren();
             strip.dataset.count = "0";
@@ -40736,10 +40738,7 @@ void main() {
             const v = views.get(viewKey(seat, id));
             if (view !== "edit" || v && v.canEdit()) dispatch(seat, { type: "view", id, view });
           }
-          applyWidth();
-          if (!isWeb && !sidePaneFits(win.innerWidth)) {
-            showToast("Widen the window to see the side pane", { kind: "warn", duration: 4e3 });
-          }
+          dock.reveal();
           runEffect(seat, id, effect, { forceView: view });
         }
         function showSeat(seat) {
@@ -40802,6 +40801,73 @@ void main() {
           dispatch(shownSeat, { type: "closePane" });
           renderChrome();
         });
+        dock.addPane("files", pane, 0);
+        renderChrome();
+        return { open, showSeat, forgetSeat, noteFiles, noteToolRecord };
+      }
+      module.exports = { createSidePane };
+    }
+  });
+
+  // renderer/dock.js
+  var require_dock = __commonJS({
+    "renderer/dock.js"(exports, module) {
+      "use strict";
+      var { SIDE_PANE_REFIT_THROTTLE_MS, sidePaneFits, clampSidePaneWidth } = require_side_pane_tabs();
+      function createDock({ showToast, getSettings, setSettings, doc = document, win = window }) {
+        const dock = doc.getElementById("dock");
+        const handle = doc.getElementById("dock-handle");
+        const isWeb = !!win.__CLODEX_WEB__;
+        const panes = /* @__PURE__ */ new Map();
+        let shown = [];
+        let added = 0;
+        let storedWidth = null;
+        function onScreen() {
+          return shown.length > 0 && (isWeb || sidePaneFits(win.innerWidth));
+        }
+        function applyWidth() {
+          dock.style.width = `${clampSidePaneWidth(storedWidth, win.innerWidth)}px`;
+        }
+        function render() {
+          const up = onScreen();
+          const sheet = up && isWeb && !sidePaneFits(win.innerWidth);
+          dock.classList.toggle("dock-closed", !up);
+          dock.classList.toggle("dock-sheet", sheet);
+          handle.classList.toggle("dock-closed", !up || sheet);
+          for (const [id, p] of panes) p.el.classList.toggle("dock-pane-hidden", !shown.includes(id));
+        }
+        function addPane(id, el, order = 0) {
+          if (panes.has(id)) removePane(id);
+          el.classList.add("dock-pane");
+          el.dataset.pane = id;
+          panes.set(id, { el, order, added: added++ });
+          const sorted = [...panes.values()].sort((a, b) => a.order - b.order || a.added - b.added);
+          for (const p of sorted) dock.appendChild(p.el);
+          render();
+        }
+        function removePane(id) {
+          const p = panes.get(id);
+          if (!p) return;
+          panes.delete(id);
+          shown = shown.filter((s) => s !== id);
+          p.el.remove();
+          render();
+        }
+        function setShown(id, on) {
+          if (!panes.has(id)) return;
+          const was = shown.includes(id);
+          if (on && !was) shown.push(id);
+          if (!on && was) shown = shown.filter((s) => s !== id);
+          render();
+        }
+        function reveal() {
+          applyWidth();
+          if (!isWeb && !sidePaneFits(win.innerWidth)) {
+            showToast("Widen the window to see the side pane", { kind: "warn", duration: 4e3 });
+          }
+        }
+        const isShown = (id) => shown.includes(id);
+        const front = () => shown[shown.length - 1] || null;
         let dragging = false;
         let pendingPx = null;
         let lastApply = 0;
@@ -40817,11 +40883,11 @@ void main() {
           if (e.button !== 0) return;
           e.preventDefault();
           dragging = true;
-          doc.body.classList.add("side-pane-dragging");
+          doc.body.classList.add("dock-dragging");
         });
         win.addEventListener("mousemove", (e) => {
           if (!dragging) return;
-          const right = pane.getBoundingClientRect().right;
+          const right = dock.getBoundingClientRect().right;
           pendingPx = clampSidePaneWidth(right - e.clientX, win.innerWidth);
           const wait = SIDE_PANE_REFIT_THROTTLE_MS - (Date.now() - lastApply);
           if (wait <= 0) flushDrag();
@@ -40830,7 +40896,7 @@ void main() {
         win.addEventListener("mouseup", () => {
           if (!dragging) return;
           dragging = false;
-          doc.body.classList.remove("side-pane-dragging");
+          doc.body.classList.remove("dock-dragging");
           if (timer) {
             clearTimeout(timer);
             timer = null;
@@ -40838,24 +40904,24 @@ void main() {
           flushDrag();
           pendingPx = null;
           try {
-            win.api.setSettings({ sidePaneWidth: storedWidth });
+            setSettings({ sidePaneWidth: storedWidth });
           } catch {
           }
         });
         win.addEventListener("resize", () => {
           applyWidth();
-          renderChrome();
+          render();
         });
-        Promise.resolve().then(() => win.api.getSettings()).then((s) => {
+        Promise.resolve().then(() => getSettings()).then((s) => {
           if (s && typeof s.sidePaneWidth === "number") storedWidth = s.sidePaneWidth;
           applyWidth();
         }).catch(() => {
         });
         applyWidth();
-        renderChrome();
-        return { open, showSeat, forgetSeat, noteFiles, noteToolRecord };
+        render();
+        return { addPane, removePane, setShown, isShown, onScreen, front, reveal };
       }
-      module.exports = { createSidePane };
+      module.exports = { createDock };
     }
   });
 
@@ -46916,6 +46982,7 @@ ${detail}` });
       var { initSessionInfoPopover } = require_session_info_popover();
       var { initFilesPopover } = require_files_popover();
       var { createSidePane } = require_side_pane();
+      var { createDock } = require_dock();
       var { initVoicePopover } = require_voice_popover();
       var { initSelectionPopover } = require_selection_popover();
       var { initChecklistPopovers } = require_checklist_popovers();
@@ -51878,7 +51945,13 @@ Click for live activity`;
       var { openCostPopover } = initCostPopover({ popoverApi, proxyState, barPopovers });
       var { openSessionInfoPopover } = initSessionInfoPopover({ sessionList });
       var { openBustPopover } = initBustPopover({ popoverApi, proxyState, barPopovers });
+      var dock = createDock({
+        showToast,
+        getSettings: () => window.api.getSettings(),
+        setSettings: (patch) => window.api.setSettings(patch)
+      });
       var sidePane = createSidePane({
+        dock,
         popoverApi,
         showToast,
         getActiveSession: () => activeSession,

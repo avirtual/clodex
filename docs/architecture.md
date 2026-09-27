@@ -1205,11 +1205,14 @@ Own state + DOM, `init*(deps)`:
   the sidebar-footer unread badge; no core state, but takes `openFilePeek`
   and `showToast` by injection so a link in a note lands in the same side
   pane and toasts the same miss a path click in the terminal does.
-- **side-pane.js** — the right-side file pane beside `#terminal-container`
-  inside `#work-row`: per-seat tab sets (memory-only), the drag handle with a
-  150 ms apply throttle (the terminal refits through the existing
-  `ResizeObserver` → `refitActiveTerminal`, never on its own), `sidePaneWidth`
-  persistence, and the agent-edit refresh rules fed by `noteFiles` (the
+- **dock.js** — the right dock `#dock` beside `#terminal-container` inside
+  `#work-row`: its panes, the drag handle with a 150 ms apply throttle (the
+  terminal refits through the existing `ResizeObserver` →
+  `refitActiveTerminal`, never on its own), `sidePaneWidth` persistence, and
+  the under-700px hide and toast (a sheet on web). No pane holding an xterm
+  may be added: the closed dock is `display: none`.
+- **side-pane.js** — the Files pane, the dock's first pane: per-seat tab sets
+  (memory-only) and the agent-edit refresh rules fed by `noteFiles` (the
   `onSessionFiles` push) and by an mtime revalidation whenever a tab becomes
   visible. Every `openFilePeek` caller lands here.
 - **file-tab.js** — one file tab's DOM: the Diff / File / Edit views, the

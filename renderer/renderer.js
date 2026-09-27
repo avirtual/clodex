@@ -95,6 +95,7 @@ const { initBustPopover } = require('./popovers/bust-popover');
 const { initSessionInfoPopover } = require('./popovers/session-info-popover');
 const { initFilesPopover } = require('./popovers/files-popover');
 const { createSidePane } = require('./side-pane');
+const { createDock } = require('./dock');
 const { initVoicePopover } = require('./popovers/voice-popover');
 const { initSelectionPopover } = require('./popovers/selection-popover');
 const { initChecklistPopovers } = require('./popovers/checklist-popovers');
@@ -5297,8 +5298,14 @@ const { openSessionInfoPopover } = initSessionInfoPopover({ sessionList });
 
 const { openBustPopover } = initBustPopover({ popoverApi, proxyState, barPopovers });
 
+const dock = createDock({
+  showToast,
+  getSettings: () => window.api.getSettings(),
+  setSettings: (patch) => window.api.setSettings(patch),
+});
+
 const sidePane = createSidePane({
-  popoverApi, showToast,
+  dock, popoverApi, showToast,
   getActiveSession: () => activeSession,
   getFiles: (name) => filesState.get(name),
   focusTerminal: () => {
