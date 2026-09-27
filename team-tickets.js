@@ -12,7 +12,7 @@
 //      test/ticket-mixin-surface.test.js gates the seam instead: deleting a core
 //      method these bodies call is a runtime TypeError only that gate catches.
 
-const { nextTicketId, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, branchSlug, appendReworkReason } = require('./tickets-store');
+const { nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, branchSlug, appendReworkReason } = require('./tickets-store');
 const teamCost = require('./team-cost');
 const { buildReviewScope, reviewBeginLine } = require('./ticket-review-scope');
 const { projectDirFor } = require('./clodex-paths');
@@ -1387,6 +1387,7 @@ function createTicketMethods(deps, shared) {
       ticket.reviewRound = (Number(ticket.reviewRound) || 0) + 1;
       ticket.reviewedAt = Date.now();
       ticket.lastActivityAt = ticket.reviewedAt;
+      recordEvent(ticket, { at: ticket.reviewedAt, kind: 'verdict', by: session.name, verdict: ticket.verdict, round: ticket.reviewRound });
       if (!Array.isArray(ticket.rounds)) ticket.rounds = [];
       let entry = ticket.rounds.find((r) => r && Number(r.round) === ticket.reviewRound);
       if (!entry) {
@@ -1950,7 +1951,10 @@ function createTicketMethods(deps, shared) {
         const rec = tickets.find((t) => t.id === ticketId);
         if (!rec) return;
         if (!step) { if (!('mergeError' in rec) && !('escalationUndelivered' in rec)) return; delete rec.mergeError; }
-        else rec.mergeError = step;
+        else {
+          rec.mergeError = step;
+          recordEvent(rec, { kind: 'merge-failed', by: 'ticket-loop', step });
+        }
         delete rec.escalationUndelivered;
         rec.lastActivityAt = Date.now();
         ticketsStore.save(team.root, tickets);
@@ -2650,7 +2654,7 @@ function createTicketMethods(deps, shared) {
           // verb is not, and line 2 has already said it.
           ...(closedOutOk || (closeOut && closeOut.reopened) ? [] : [`Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`]),
         ].join('\n');
-        this._stampMerged(team, ticketId);
+        this._stampMerged(team, ticketId, sha);
         const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticketId} MERGED]`);
         if (!(r && (r.queued || r.parked))) {
           log.error('ticket', `ticket ${ticketId} merged as ${sha} but ${team.lead} was NOT told (${(r && (r.error || r.held)) || 'unknown delivery failure'})`);
@@ -4669,6 +4673,7 @@ function createTicketMethods(deps, shared) {
     _recordUndeliveredDispatch(team, tickets, ticket, d) {
       if (!d || !d.undelivered) return;
       ticket.undeliveredAt = Date.now();
+      recordEvent(ticket, { at: ticket.undeliveredAt, kind: 'undelivered', by: 'ticket-loop' });
       ticketsStore.save(team.root, tickets);
     },
 
@@ -5975,6 +5980,7 @@ function createTicketMethods(deps, shared) {
         ...(parked ? { parked: true } : {}),
         ...(reviewerTemplate ? { reviewerTemplate } : {}),
       };
+      recordEvent(ticket, { at: now, kind: 'add', by: session.name });
       const taskDir = extractTaskDir(spec);
       if (taskDir) ticket.taskDir = taskDir;
       tickets.push(ticket);
@@ -6121,6 +6127,7 @@ function createTicketMethods(deps, shared) {
       // dispatch without recording that it did — an unstamped dispatched ticket
       // is startable a second time, which is the tree collision this fixes.
       ticket.startedAt = ticket.lastActivityAt;
+      recordEvent(ticket, { at: ticket.startedAt, kind: 'start', by: session.name, to: (minted && minted.ok) ? minted.name : assignee });
       if (startReviewer) ticket.reviewerTemplate = startReviewer;
       const rvNote = startReviewer ? ` — reviewer template: ${startReviewer}` : '';
       const unparked = wasParked ? ' (unparked)' : '';
@@ -6244,6 +6251,7 @@ function createTicketMethods(deps, shared) {
       }
       ticket.assignee = assignee;
       ticket.lastActivityAt = Date.now();
+      recordEvent(ticket, { at: ticket.lastActivityAt, kind: 'assign', by: session.name, to: assignee });
       ticket.nudgedAt = null; // fresh assignment starts a new stall episode
       // Assign IS the dispatch, so it unparks: the spec goes out two lines below
       // whatever the flag said, and leaving it set would mean a ticket that was
@@ -6412,6 +6420,7 @@ function createTicketMethods(deps, shared) {
       ticket.reportedBy = session.name;
       const reportedAt = reentry ? Date.now() : ticket.closedAt;
       const roundNo = (Number(ticket.reviewRound) || 0) + 1;
+      if (!reentry) recordEvent(ticket, { at: ticket.closedAt, kind: 'done', by: session.name, round: roundNo });
       if (!Array.isArray(ticket.rounds)) ticket.rounds = [];
       const lastRound = ticket.rounds[ticket.rounds.length - 1];
       if (lastRound && Number(lastRound.round) === roundNo && lastRound.verdict === null) {
@@ -7419,6 +7428,7 @@ function createTicketMethods(deps, shared) {
           return { ok: false, error: `no live seat holds ${ticket.role || ticket.assignee || 'the ticket'} to send the rework to` };
         }
         ticket.state = 'open';
+        recordEvent(ticket, { kind: 'reject', by: 'ticket-loop', cause });
         ticket.closedAt = null;
         ticket.closedBy = null;
         delete ticket.closedOut;       // same reason as _taskReject's reopen
@@ -7610,6 +7620,7 @@ function createTicketMethods(deps, shared) {
       // stamps above are: a record of a rework reason nobody received would send
       // the next reviewer looking for a fix that was never asked for.
       appendReworkReason(ticket, { round: Number(ticket.reworkRound) || 1, by: session.name, reason });
+      recordEvent(ticket, { at: ticket.lastActivityAt, kind: 'reject', by: session.name, followUp: true });
       ticketsStore.save(team.root, tickets);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || rework.seat, body: `ticket ${ticket.id} follow-up must-fixes${replaced}` });
       log.info('intent', `task reject ${ticket.id} by ${session.name} → follow-up to ${rework.seat} (already open for rework)${replaced}`);
@@ -7708,6 +7719,7 @@ function createTicketMethods(deps, shared) {
           // close would put this episode's first alarm on a rung it never climbed.
           rec.lastActivityAt = Date.now();
           rec.nudgedAt = null;
+          recordEvent(rec, { at: rec.lastActivityAt, kind: 'verify-hold', by: 'ticket-loop', step: String(hold.step == null ? '' : hold.step) });
         }
         ticketsStore.save(team.root, tickets);
       } catch (e) {
@@ -7766,12 +7778,13 @@ function createTicketMethods(deps, shared) {
       }
     },
 
-    _stampMerged(team, ticketId) {
+    _stampMerged(team, ticketId, sha) {
       try {
         const tickets = ticketsStore.load(team.root);
         const rec = tickets.find((t) => t.id === ticketId);
         if (!rec) return;
         rec.mergedAt = Date.now();
+        recordEvent(rec, { at: rec.mergedAt, kind: 'merged', by: 'ticket-loop', sha: String(sha == null ? '' : sha) });
         ticketsStore.save(team.root, tickets);
       } catch (e) {
         log.error('ticket', `merged stamp for ${ticketId} failed: ${e.message}`);
@@ -8491,6 +8504,7 @@ function createTicketMethods(deps, shared) {
         return;
       }
       ticket.state = 'open';
+      recordEvent(ticket, { kind: 'reject', by: session.name });
       ticket.closedAt = null;
       ticket.closedBy = null;
       // A reopened ticket is not terminal. Left set, `ticketTerminalReason` keeps
@@ -8618,7 +8632,9 @@ function createTicketMethods(deps, shared) {
       const prevTitle = ticket.title;
       const prevSpec = ticket.spec;
       if (!Array.isArray(ticket.respecs)) ticket.respecs = [];
-      ticket.respecs.push({ at: Date.now(), by: session.name, title: prevTitle, spec: prevSpec });
+      const respecAt = Date.now();
+      ticket.respecs.push({ at: respecAt, by: session.name, title: prevTitle, spec: prevSpec });
+      recordEvent(ticket, { at: respecAt, kind: 'respec', by: session.name });
       ticket.spec = spec;
       // Derived from the spec, so both are recomputed — the same pair, from the same
       // helpers, that the board's editSpec re-derives. A stale title is the board's
@@ -8692,6 +8708,7 @@ function createTicketMethods(deps, shared) {
       ticket.closedAt = Date.now();
       ticket.closedBy = session.name;  // one shape across both close verbs
       ticket.lastActivityAt = ticket.closedAt;
+      recordEvent(ticket, { at: ticket.closedAt, kind: 'cancel', by: session.name, reason: reason.split('\n')[0] });
       ticketsStore.save(team.root, tickets);
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (reason && seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} cancelled] ${reason}`, false, `[ticket ${ticket.id} cancelled]`);
@@ -8814,6 +8831,7 @@ function createTicketMethods(deps, shared) {
     _finishAccept(team, ticket, tickets, { by, note, seatName, msg, closedOut, complete, actedStamp }) {
       ticket.acceptedAt = Date.now();
       ticket.acceptedBy = by;
+      const acceptEvent = recordEvent(ticket, { at: ticket.acceptedAt, kind: 'accept', by: String(by || 'ticket-loop'), closedOut: !!closedOut });
       if (closedOut) ticket.closedOut = true;
       // What makes a later `task accept` a no-op, stamped ONLY where the loop
       // left nothing to finish. Carries the TEXT: the tree is gone by then.
@@ -8895,6 +8913,7 @@ function createTicketMethods(deps, shared) {
       if (row) {
         row.acceptedAt = ticket.acceptedAt;
         row.acceptedBy = ticket.acceptedBy;
+        recordEvent(row, acceptEvent);
         if (closedOut) row.closedOut = true;
         if (loopClosed) row.loopClosedOut = loopClosed;
         if (note) row.acceptNote = note;
@@ -10638,6 +10657,7 @@ function createTicketMethods(deps, shared) {
               // then also dies) is not suppressed by the first round's stamp.
               if (orphanNow) rec.orphanNudgedAt = now;
               else delete rec.orphanNudgedAt;
+              recordEvent(rec, { at: now, kind: 'nudge', by: 'ticket-loop' });
               ticketsStore.save(team.root, fresh);
             } catch (e) { log.error('ticket', `nudge stamp for ${tid} failed: ${e.message}`); }
           });

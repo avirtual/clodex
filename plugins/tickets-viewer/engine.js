@@ -861,6 +861,20 @@ function ticketRounds(rec, dir, id) {
   }, dir, d.round));
 }
 
+const EVENT_FIELDS = ['kind', 'by', 'to', 'round', 'verdict', 'cause', 'followUp', 'sha', 'step', 'reason', 'closedOut'];
+
+function eventRow(e) {
+  const out = {};
+  for (const k of EVENT_FIELDS) {
+    const v = e[k];
+    if (typeof v === 'string') out[k] = v.slice(0, 200);
+    else if (typeof v === 'boolean') out[k] = v;
+    else if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
+  }
+  out.at = num(e.at);
+  return out;
+}
+
 function ticketDetail(payload) {
   const projectKey = str(payload && payload.project);
   const id = str(payload && payload.id);
@@ -900,6 +914,9 @@ function ticketDetail(payload) {
         ? rec.respecs
           .filter((r) => r && typeof r === 'object' && !Array.isArray(r))
           .map((r) => ({ at: num(r.at), spec: str(r.spec) }))
+        : [],
+      events: Array.isArray(rec.events)
+        ? rec.events.filter((e) => e && typeof e === 'object' && !Array.isArray(e)).map(eventRow)
         : [],
       report: str(rec.report),
       rounds: ticketRounds(rec, dir, id),

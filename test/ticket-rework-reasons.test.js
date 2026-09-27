@@ -295,12 +295,14 @@ for (const arm of [
     by: 'lead',
     run: (f) => reject(f, 't1', 'the retry bound is still off by one'),
     reason: 'the retry bound is still off by one',
+    event: { kind: 'reject', by: 'lead' },
   },
   {
     what: "the loop's reject",
     by: 'ticket-loop',
     run: (f) => f.m._rejectTicketFromLoop(f.team, 't1', 'SUITE RED: three failures in widget.test.js'),
     reason: 'SUITE RED: three failures in widget.test.js',
+    event: { kind: 'reject', by: 'ticket-loop', cause: 'suite red' },
   },
 ]) {
   test(`${arm.what} records its reason on the ticket, attributed and under the round it opens`, () => {
@@ -324,6 +326,8 @@ for (const arm of [
     assert.strictEqual(e.by, arm.by, 'attributed to whoever sent it back');
     assert.strictEqual(e.round, 1, 'filed under the round it OPENED, not the one it ended');
     assert.strictEqual(typeof e.at, 'number', 'and timestamped');
+    const rejects = (t.events || []).filter((x) => x.kind === 'reject').map(({ at, ...rest }) => rest);
+    assert.deepStrictEqual(rejects, [arm.event], 'one reject event, attributed the same way');
   });
 }
 
@@ -371,6 +375,10 @@ test('a follow-up must-fix files under the round ALREADY open, inventing none', 
     [1, 'round one: the guard is inverted'],
     [1, 'while you are in there, the empty case too'],
   ], 'the follow-up shares round 1 with the reject that opened it — the grouping is what makes it readable');
+  assert.deepStrictEqual(t.events.filter((x) => x.kind === 'reject').map(({ at, ...rest }) => rest), [
+    { kind: 'reject', by: 'lead' },
+    { kind: 'reject', by: 'lead', followUp: true },
+  ]);
 });
 
 test('a follow-up that never reached the seat records nothing', () => {
@@ -383,6 +391,7 @@ test('a follow-up that never reached the seat records nothing', () => {
   reject(f, 't1', 'must-fixes nobody will ever read');
 
   assert.match(f.injected.join('\n'), /did NOT reach/, 'ENTER: the delivery-failure arm was taken');
+  assert.strictEqual(f.one('t1').events.filter((x) => x.followUp).length, 0, 'no follow-up event for a follow-up nobody received');
   assert.strictEqual(f.one('t1').reworkReasons.length, before,
     'the FOLLOW-UP path changes no state, so an undelivered reason leaves no trace either — '
     + 'unlike the two reopening paths, which record whether or not a seat was told');

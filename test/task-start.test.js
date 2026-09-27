@@ -741,6 +741,8 @@ test('t550: a dispatch to a role with no live seat is recorded as undelivered', 
   assert.ok(typeof t.undeliveredAt === 'number' && t.undeliveredAt >= before,
     'the miss is on the RECORD, so a reader after the dispatching turn can still tell it happened — '
     + 'the delivery-time NOTE says so once, into that turn`s reply, and is gone');
+  assert.deepStrictEqual(t.events.filter((e) => e.kind === 'undelivered'),
+    [{ at: t.undeliveredAt, kind: 'undelivered', by: 'ticket-loop' }]);
 });
 
 test('t550: assign records the same miss, and a later delivery clears it', () => {

@@ -71,6 +71,22 @@ function nextTicketId(tickets) {
   return `t${max + 1}`;
 }
 
+function recordEvent(ticket, ev) {
+  const { at, kind, by, ...rest } = ev || {};
+  if (typeof kind !== 'string' || !kind) throw new Error('recordEvent: kind required');
+  if (typeof by !== 'string' || !by) throw new Error('recordEvent: by required');
+  const entry = { at: Number.isFinite(at) ? at : Date.now(), kind, by };
+  for (const [k, v] of Object.entries(rest)) {
+    if (v === undefined) continue;
+    if (v !== null && typeof v === 'object') throw new Error(`recordEvent: field ${k} must be a scalar`);
+    if (typeof v === 'function') throw new Error(`recordEvent: field ${k} must be a scalar`);
+    entry[k] = typeof v === 'string' ? v.slice(0, 200) : v;
+  }
+  if (!Array.isArray(ticket.events)) ticket.events = [];
+  ticket.events.push(entry);
+  return entry;
+}
+
 // Uncapped. ticketTitle's 80-char cap must not be pushed down here or branchSlug's
 // own 40-char word-boundary cap never engages.
 function titleLine(specText) {
@@ -313,4 +329,4 @@ function ticketTerminalReason(ticket) {
 
 const ticketTerminal = (ticket) => ticketTerminalReason(ticket) !== null;
 
-module.exports = { createTicketsStore, appendReworkReason, nextTicketId, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, ticketTerminal, ticketTerminalReason, branchSlug, TICKETS_FILE };
+module.exports = { createTicketsStore, appendReworkReason, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, ticketTerminal, ticketTerminalReason, branchSlug, TICKETS_FILE };

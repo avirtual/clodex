@@ -2116,6 +2116,7 @@ test('tickets-viewer: `ticket` serves a record\'s own rounds[] plus verdictText 
         mergeError: '',
         cost: null,
         respecs: [{ at: 1699000000000, spec: 'the old spec' }],
+        events: [],
         report: 'the latest report',
         rounds: [{
           round: 1,
@@ -2288,12 +2289,45 @@ test('tickets-viewer: the `ticket` response carries no token/auth/secret/passwor
       report: 'done',
       token: 'sk-do-not-serve-this',
       respecs: [{ at: 1, by: 'lead', spec: 's', secret: 'nope' }],
+      events: [{ at: 1, kind: 'add', by: 'lead', token: 'sk-do-not-serve-this' }],
     })]);
 
     const res = await host.dispatch('tickets-viewer', 'ticket', [{ project: key, id: 't8' }], 'desktop');
     assert.equal(res.ok, true);
     assert.ok(res.ticket.rounds.length > 0, 'ENTER: the response really has a rounds subtree to walk');
     assert.equal(findSecretKey(res), null, 'a secret-named key anywhere in the response');
+  } finally { cleanup(); }
+});
+
+test('t1273: tickets-viewer `ticket` serves the events list, sanitized, and [] for a record without one', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/hist/events');
+    writeTicketsAt(home, key, [
+      histTicket('t1', {
+        taskDir: '',
+        events: [
+          { at: 1699000000000, kind: 'add', by: 'lead' },
+          'not an event',
+          [1, 2],
+          { at: 'soon', kind: 'start', by: 'lead', to: 'hand-1', note: { deep: true } },
+          { at: 1699000000002, kind: 'done', by: 'hand-1', round: 1, reason: 'y'.repeat(300) },
+          { at: 1699000000003, kind: 'accept', by: 'lead', closedOut: true },
+        ],
+      }),
+      histTicket('t2', { taskDir: '' }),
+    ]);
+    const res = await host.dispatch('tickets-viewer', 'ticket', [{ project: key, id: 't1' }], 'desktop');
+    assert.equal(res.ok, true);
+    assert.deepStrictEqual(res.ticket.events, [
+      { at: 1699000000000, kind: 'add', by: 'lead' },
+      { at: null, kind: 'start', by: 'lead', to: 'hand-1' },
+      { at: 1699000000002, kind: 'done', by: 'hand-1', round: 1, reason: 'y'.repeat(200) },
+      { at: 1699000000003, kind: 'accept', by: 'lead', closedOut: true },
+    ]);
+    const old = await host.dispatch('tickets-viewer', 'ticket', [{ project: key, id: 't2' }], 'desktop');
+    assert.equal(old.ok, true);
+    assert.deepStrictEqual(old.ticket.events, [], 'a pre-upgrade record with no events key reads as an empty list');
   } finally { cleanup(); }
 });
 
