@@ -293,9 +293,9 @@ function tmpCtxFile() {
   const dir = mkTmpRoot('clodexctl-cloud-');
   return path.join(dir, 'contexts.json');
 }
-async function cli(argv, contextsFile) {
+async function cli(argv, contextsFile, extra = {}) {
   let stdout = '', stderr = '';
-  const code = await run(argv, { stdout: (s) => (stdout += s), stderr: (s) => (stderr += s), env: {}, contextsFile });
+  const code = await run(argv, { stdout: (s) => (stdout += s), stderr: (s) => (stderr += s), env: {}, contextsFile, ...extra });
   return { code, stdout, stderr };
 }
 
@@ -365,7 +365,7 @@ test('get nodes / describe node: honest per-kind target rendering', async () => 
   assert.match(list.stdout, /k8s\s+kubectl\s+pod\/clodex-node-0 -n cust/);
   assert.match(list.stdout, /gcp\s+gcloud-iap\s+clodex-node \(us-central1-a\)/);
   assert.match(list.stdout, /azvm\s+az-bastion\s+cust-bastion → vm1/);
-  const show = await cli(['describe', 'node', 'fargate'], f);
+  const show = await cli(['describe', 'node', 'fargate'], f, { openTransport: async () => { throw new Error('offline (test)'); } });
   assert.match(show.stdout, /kind        ssm-ecs/);
   assert.match(show.stdout, /locator     ecs CLUSTER\/clodex-node \(resolved at connect\)/);
 });

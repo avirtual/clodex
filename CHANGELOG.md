@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- clodexctl: `describe node <name>` shows the Clodex version and host the node is running (fetched live; "(unreachable: …)" when it cannot be reached), and `get nodes --versions` adds a VERSION column; the plain listing stays offline.
 - The Tickets pane picks its project from a dropdown at the top, in place of the side list that became a sideways-scrolling strip in a narrow pane; each entry carries its open, stalled, backlog and parked counts, and the chips beside the dropdown belong to the project on screen.
 - In Conversation and Internals, a filed body ("882 B filed · …") unfolds in place: click the line to read the spilled text there, up to 16 KB, with the file link kept for the rest and for opening it in the viewer.
 - The Tickets pane opens on the active session's project (its team's board, or the board whose root holds the session's folder) instead of the first project in the list; a project you pick afterwards stays until the pane is reopened.

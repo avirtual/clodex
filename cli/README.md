@@ -131,7 +131,8 @@ clodexctl create node k8s  --token <T> --tunnel kubectl port-forward pod/clodex-
 clodexctl use node home
 clodexctl get nodes             # * marks the current
 clodexctl get nodes --current   # the current node NAME alone (exit 5 when none)
-clodexctl describe node home    # token redacted
+clodexctl get nodes --versions  # adds a VERSION column (dials every node, 4 at a time)
+clodexctl describe node home    # token redacted; dials once for the version and host
 clodexctl create node --import  # seed nodes from THIS machine's Clodex GUI stores
 clodexctl describe node --test  # open the transport + GET hello; relays child stderr verbatim
 ```
@@ -321,8 +322,9 @@ Read (all but `describe` support `-o json` — stable raw wire payload — and `
 | `get catalogs` | `GET /api/catalogs` |
 | `describe <singular> <name>` / `describe catalogs` | the same routes, `/:name` for a single object, rendered as a labeled block (no `-o json`) |
 | `get nodes [--current]` | none — the local nodes file; `--current` prints the current node name alone (exit `5` when none) |
-| `describe node [name]` | none — the local nodes file, token redacted |
-| `describe node [name] --test` | opens the transport → `GET /api/peer/hello`; the one node verb that dials |
+| `get nodes --versions` | the local nodes file, then `GET /api/peer/hello` on every node (4 at a time, 10 s each) for the VERSION column |
+| `describe node [name]` | the local nodes file (token redacted), then `GET /api/peer/hello` (10 s) for the `version` / `host` lines — `(unreachable: …)` when it fails, exit stays 0 |
+| `describe node [name] --test` | opens the transport → `GET /api/peer/hello`; fails the command when the node cannot be reached |
 | `create node <name> <transport flag>` / `create node --import` | none — writes the local nodes file |
 | `delete node <name>` / `use node <name>` | none — writes the local nodes file |
 | `api-resources` | `GET /api/resources` — what this node serves |

@@ -21,6 +21,8 @@ async function cli(argv, file, extra = {}) {
   return { code, stdout, stderr };
 }
 
+const offline = { openTransport: async () => { throw new Error('offline (test)'); } };
+
 test('create/use/get/describe/delete node round-trip through the file', async () => {
   const f = tmpCtx();
   let r = await cli(['create', 'node', 'home', '--url', 'http://127.0.0.1:7900', '--token', 'sek'], f);
@@ -39,7 +41,7 @@ test('create/use/get/describe/delete node round-trip through the file', async ()
   r = await cli(['get', 'nodes', '-o', 'json'], f);
   assert.strictEqual(JSON.parse(r.stdout).current, 'work');
 
-  r = await cli(['describe', 'node', 'home'], f);
+  r = await cli(['describe', 'node', 'home'], f, offline);
   assert.match(r.stdout, /token\s+\(set\)/);
   assert.doesNotMatch(r.stdout, /sek/);
 
@@ -53,7 +55,7 @@ test('the singular/plural spellings behave like every other resource', async () 
   const f = tmpCtx();
   await cli(['create', 'nodes', 'home', '--url', 'http://127.0.0.1:7900'], f);
   assert.match((await cli(['get', 'node'], f)).stdout, /home/, 'get node is get nodes');
-  assert.match((await cli(['describe', 'nodes'], f)).stdout, /name\s+home/, 'describe nodes is describe node');
+  assert.match((await cli(['describe', 'nodes'], f, offline)).stdout, /name\s+home/, 'describe nodes is describe node');
   assert.strictEqual(R.resolveResource('nodes').singular, 'node');
   assert.strictEqual(R.resolveResource('node').plural, 'nodes');
   const bad = await cli(['get', 'pods'], f);
@@ -127,7 +129,7 @@ test('no node output carries a token — json, yaml, wide, name, or describe', a
     ['describe', 'node', 'home'],
     ['describe', 'node', 'k8s'],
   ]) {
-    const r = await cli(argv, f);
+    const r = await cli(argv, f, offline);
     assert.strictEqual(r.code, 0, `${argv.join(' ')} -> ${r.code}: ${r.stderr}`);
     assert.ok(r.stdout.length > 0, `ENTER: ${argv.join(' ')} printed nothing, so the absences below are vacuous`);
     assert.doesNotMatch(r.stdout, /SUPERSECRET/, `${argv.join(' ')} printed the current node's token`);
@@ -214,7 +216,7 @@ test('verbs.js exports the node family and no ctx spelling', () => {
     'DEPLOYABLE', 'KIND_FIELDS', 'QUERY_KINDS', 'RESOURCE_VERBS', 'SESSION_SUBRESOURCES',
     'apiResources', 'checkResourceWord', 'create', 'createSession',
     'delete', 'deleteSession', 'describe', 'dm', 'entryKind', 'entryTarget',
-    'exec', 'execPty', 'filterWorkspace', 'get', 'info', 'input', 'logs',
+    'exec', 'execPty', 'filterWorkspace', 'get', 'helloLines', 'info', 'input', 'logs',
     'nodeCreate', 'nodeCurrent', 'nodeDelete', 'nodeDescribe', 'nodeList', 'nodeUse',
     'parseIntOr', 'patch', 'patchSession', 'query', 'requireName',
     'restart', 'restartNode', 'restartSession', 'sessionType',
@@ -548,4 +550,129 @@ test('describe node --test (tunnel): relays child stderr verbatim on failure', a
   const r = await cli(['describe', 'node', 'k8s', '--test'], f, { spawnFn });
   assert.strictEqual(r.code, 3, 'EXIT.CONNECT');
   assert.match(r.stderr, /pods "x" not found/);
+});
+
+async function helloServer(t) {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    seen.push(req.url);
+    res.writeHead(200);
+    res.end(JSON.stringify({ ok: true, app: 'clodex', host: 'fakebox.local', version: '3.4.0', caps: ['send'], srcDir: '/SRC_DIR_LEAK', dmOrigins: ['DMORIGIN_LEAK'], webHost: 'WEBHOST_LEAK', wirescope: 'WIRESCOPE_LEAK' }));
+  });
+  const port = await new Promise((res) => server.listen(0, '127.0.0.1', () => res(server.address().port)));
+  t.after(() => server.close());
+  return { port, seen };
+}
+
+test('describe node <name> dials once and prints the version and host lines', async (t) => {
+  const { port, seen } = await helloServer(t);
+  const f = tmpCtx();
+  await cli(['create', 'node', 'work', '--url', `http://127.0.0.1:${port}`, '--token', 'SUPERSECRET'], f);
+  const r = await cli(['describe', 'node', 'work'], f);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /^version     3\.4\.0$/m);
+  assert.match(r.stdout, /^host        fakebox\.local$/m);
+  assert.match(r.stdout, /^token       \(set\)$/m);
+  assert.doesNotMatch(r.stdout, /SUPERSECRET|_LEAK/);
+  assert.deepStrictEqual(seen, ['/api/peer/hello'], 'exactly one hello request');
+});
+
+test('describe node <name> --test prints the OK line and the version line from ONE hello', async (t) => {
+  const { port, seen } = await helloServer(t);
+  const f = tmpCtx();
+  await cli(['create', 'node', 'work', '--url', `http://127.0.0.1:${port}`], f);
+  const r = await cli(['describe', 'node', 'work', '--test'], f);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /OK — clodex host=fakebox\.local version=3\.4\.0/);
+  assert.match(r.stdout, /^version     3\.4\.0$/m);
+  assert.match(r.stdout, /^host        fakebox\.local$/m);
+  assert.deepStrictEqual(seen, ['/api/peer/hello'], 'exactly one hello request');
+});
+
+test('describe node on an unreachable node still prints the local fields and exits 0', async () => {
+  const f = tmpCtx();
+  await cli(['create', 'node', 'dead', '--ssh', 'user@box', '--token', 'SUPERSECRET'], f);
+  const failing = { openTransport: async () => { throw new Error('ssh: connect to host box port 22: Connection refused\nsecond line'); } };
+  const r = await cli(['describe', 'node', 'dead'], f, failing);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /^version     \(unreachable: ssh: connect to host box port 22: Connection refused\)$/m);
+  assert.doesNotMatch(r.stdout, /^host /m);
+  assert.doesNotMatch(r.stdout, /second line/);
+  assert.match(r.stdout, /^name        dead/m);
+  assert.match(r.stdout, /^kind        ssh$/m);
+  assert.match(r.stdout, /^locator     user@box$/m);
+});
+
+test('describe node answering 401 reads as unreachable, exit 0', async (t) => {
+  const server = http.createServer((req, res) => { res.writeHead(401); res.end(JSON.stringify({ error: 'unauthorized' })); });
+  const port = await new Promise((res) => server.listen(0, '127.0.0.1', () => res(server.address().port)));
+  t.after(() => server.close());
+  const f = tmpCtx();
+  await cli(['create', 'node', 'locked', '--url', `http://127.0.0.1:${port}`], f);
+  const r = await cli(['describe', 'node', 'locked'], f);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /^version     \(unreachable: describe node failed: unauthorized\)$/m);
+  assert.doesNotMatch(r.stdout, /^host /m);
+});
+
+test('describe node: a transport that never opens is cut at the dial timeout', async () => {
+  const f = tmpCtx();
+  await cli(['create', 'node', 'hang', '--ssh', 'user@box'], f);
+  const r = await cli(['describe', 'node', 'hang'], f, { openTransport: () => new Promise(() => {}), dialTimeoutMs: 20 });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /^version     \(unreachable: timed out after 0\.02s\)$/m);
+});
+
+test('get nodes without --versions never dials and has no VERSION column', async (t) => {
+  const { port, seen } = await helloServer(t);
+  const f = tmpCtx();
+  await cli(['create', 'node', 'work', '--url', `http://127.0.0.1:${port}`], f);
+  let opened = 0;
+  const counting = { openTransport: async () => { opened++; throw new Error('dialed'); } };
+  for (const argv of [['get', 'nodes'], ['get', 'nodes', '-o', 'wide'], ['get', 'nodes', '-o', 'json']]) {
+    const r = await cli(argv, f, counting);
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.doesNotMatch(r.stdout, /VERSION/);
+  }
+  const json = JSON.parse((await cli(['get', 'nodes', '-o', 'json'], f)).stdout);
+  assert.strictEqual('version' in json.nodes[0], false);
+  assert.strictEqual('versionError' in json.nodes[0], false);
+  assert.strictEqual(opened, 0);
+  assert.deepStrictEqual(seen, [], 'the plain listing sent zero requests');
+});
+
+test('get nodes --versions adds a VERSION column, (unreachable) for a dead node', async (t) => {
+  const { port } = await helloServer(t);
+  const f = tmpCtx();
+  await cli(['create', 'node', 'work', '--url', `http://127.0.0.1:${port}`], f);
+  await cli(['create', 'node', 'dead', '--url', 'http://127.0.0.1:1'], f);
+  let r = await cli(['get', 'nodes', '--versions'], f);
+  assert.strictEqual(r.code, 0, r.stderr);
+  const lines = r.stdout.split('\n');
+  assert.match(lines[0], /VERSION\s*$/);
+  assert.match(r.stdout, /work\s+url\s+\S+\s+3\.4\.0/);
+  assert.match(r.stdout, /dead\s+url\s+\S+\s+\(unreachable\)/);
+
+  r = await cli(['get', 'nodes', '--versions', '-o', 'wide'], f);
+  assert.match(r.stdout.split('\n')[0], /TOKEN\s+VERSION\s*$/);
+
+  r = await cli(['get', 'nodes', '--versions', '-o', 'json'], f);
+  const nodes = JSON.parse(r.stdout).nodes;
+  const work = nodes.find((n) => n.name === 'work');
+  const dead = nodes.find((n) => n.name === 'dead');
+  assert.strictEqual(work.version, '3.4.0');
+  assert.strictEqual(work.versionError, null);
+  assert.strictEqual(dead.version, null);
+  assert.ok(typeof dead.versionError === 'string' && dead.versionError.length > 0);
+});
+
+test('--versions is refused on describe node and on get nodes -o name', async () => {
+  const f = tmpCtx();
+  await cli(['create', 'node', 'work', '--url', 'http://127.0.0.1:1'], f);
+  let r = await cli(['describe', 'node', 'work', '--versions'], f);
+  assert.strictEqual(r.code, 2);
+  assert.strictEqual(r.stderr, 'clodexctl: describe node always shows the version\n');
+  r = await cli(['get', 'nodes', '--versions', '-o', 'name'], f);
+  assert.strictEqual(r.code, 2);
+  assert.match(r.stderr, /get nodes --versions -o name: name output has one column/);
 });
