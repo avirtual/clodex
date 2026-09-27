@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — seats you can read
+## Unreleased
+
+## 5.87.0 — 2026-09-27 — seats you can read
 
 ### Seats show their conversation
 
