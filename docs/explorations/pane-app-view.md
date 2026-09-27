@@ -284,8 +284,7 @@ no rows.
   tertiary:
   - the duration and the tool count;
   - `n errors` in `--error`, when there are any;
-  - the files changed, each a link that opens a file tab;
-  - `compacted 209k → 8k` on a turn that contains a boundary.
+  - the files changed, each a link that opens a file tab.
 - **Between turns:** `--sp-4` of space and a 1 px `--border` rule. There is no
   box around a turn, because boxes cost two rows per turn.
 - **The pane's text column starts at the same x as the composer's `❯`** in the

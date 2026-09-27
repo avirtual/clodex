@@ -990,7 +990,7 @@ test('runs: a compact notice merged at index 0 does not change the run key, so t
 test('Conversation: a compact boundary stands in its own turn block, outside the ticket fold before it, and no footer repeats its token drop', () => {
   const m = mount({ mode: 'conversation' });
   m.render([
-    replyRec('r1', 1, 'task', '⇄', 'task', 'ticket t1 created'),
+    taskReply('r1', 1, 'ticket t1 created'),
     call('t1', 'Bash', 'ls'),
     said('a1', 1, '[agent:context compact]'),
     { id: 'b1', kind: 'boundary', ts: null, turn: 2, what: 'compact', trigger: 'manual', preTokens: 214000, postTokens: 5000 },
@@ -1001,6 +1001,7 @@ test('Conversation: a compact boundary stands in its own turn block, outside the
   assert.deepStrictEqual(blocks.map((n) => n.dataset.turn), ['r1', 'b1', 'p3'], 'ENTER: three turn blocks');
   const fold = turnOf(m, 'r1');
   assert.match(fold.className, /\btr-turn-folded\b/, 'ENTER: the ticket turn folds');
+  assert.strictEqual(isHidden(fold), false, 'ENTER: the ticket fold is visible');
   assert.deepStrictEqual(findCls(fold, 'tr-boundary'), []);
   assert.deepStrictEqual(findCls(fold, 'tr-footer'), []);
   const own = turnOf(m, 'b1');

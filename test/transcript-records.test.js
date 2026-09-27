@@ -732,6 +732,22 @@ const QTS = '2026-09-27T10:43:00.000Z';
 const queueOp = (operation, content, reason) => rec({ type: 'queue-operation', operation, timestamp: QTS, sessionId: 'S', ...(content === undefined ? {} : { content }), ...(reason ? { reason } : {}) });
 const queuedOf = (records) => records.filter((r) => r.state === 'queued');
 
+const boundaryLine = rec({ type: 'system', subtype: 'compact_boundary', uuid: 'b1', compactMetadata: { trigger: 'auto', preTokens: 100, postTokens: 10 } });
+
+test('a compact boundary between a mid-turn prompt and the next assistant record leaves the prompt to be marked read', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), midTurn('q', 'hi'), boundaryLine, replied('a1', 'ok')].join('\n'));
+  const mid = records.find((r) => r.id === 'q');
+  const reply = records.find((r) => r.id === 'a1');
+  assert.strictEqual(reply.turn, mid.turn + 1, 'ENTER: the boundary opened a turn between them');
+  assert.strictEqual(mid.state, 'read');
+});
+
+test('a compact boundary after an enqueue keeps the queued row: the boundary dequeues nothing', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), queueOp('enqueue', 'hi'), boundaryLine].join('\n'));
+  assert.ok(records.some((r) => r.kind === 'boundary'), 'ENTER: the boundary parsed');
+  assert.strictEqual(queuedOf(records).length, 1);
+});
+
 test('an enqueued message is a queued mid-turn prompt at the end of the running turn', () => {
   const { records } = recordsOf([typed('p1', 'P', 'go'), queueOp('enqueue', 'hi')].join('\n'));
   assert.strictEqual(records[0].id, 'p1');
