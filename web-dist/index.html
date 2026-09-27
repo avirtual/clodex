@@ -8409,12 +8409,27 @@ body.web-frontend #sidebar-header {
   font-size: var(--fs-xs);
   color: var(--text-tertiary);
 }
-.transcript-bar-toggle {
+.transcript-mode {
   display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.transcript-mode-btn {
+  font: inherit;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 0;
+  padding: 0 var(--sp-2);
   cursor: pointer;
-  user-select: none;
+}
+.transcript-mode-btn[aria-pressed=true] {
+  color: var(--text-primary);
+  background: var(--surface-raised);
+}
+.transcript-mode-btn:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 .tr-box {
   margin: 0;
@@ -8452,6 +8467,37 @@ body.web-frontend #sidebar-header {
   display: block;
   -webkit-line-clamp: unset;
   overflow: visible;
+}
+.tr-ticket {
+  border-left: 2px solid var(--accent);
+}
+.tr-ticket:not(.tr-hidden) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--sp-2);
+}
+.tr-ticket > .tr-box-head {
+  flex: 1 1 100%;
+}
+.tr-ticket > .tr-box-body {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.tr-ticket > .tr-box-head + .tr-box-body {
+  flex-basis: 100%;
+}
+.tr-ticket-chip {
+  flex: none;
+  padding: 0 var(--sp-1);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--text-primary);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+.tr-ticket > .tr-ticket-chip {
+  margin-left: var(--sp-1);
 }
 .tr-head {
   display: flex;
@@ -31094,6 +31140,55 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // renderer/lib/transcript-surface.js
+  var require_transcript_surface = __commonJS({
+    "renderer/lib/transcript-surface.js"(exports, module) {
+      "use strict";
+      var { classifySender } = require_sender_class();
+      var CONVERSATION = "conversation";
+      var INTERNALS = "internals";
+      var TALK_VERBS = /* @__PURE__ */ new Set(["dm", "shout", "file", "review-done"]);
+      var ALWAYS_TALK = /* @__PURE__ */ new Set(["prompt", "command", "command-output", "boundary"]);
+      var LOUD_LEVELS = /* @__PURE__ */ new Set(["warning", "error"]);
+      var MERGED_NAG_RE = /^merged\b.*not accepted$/;
+      function isNagTag(tag) {
+        if (typeof tag !== "string") return false;
+        return tag === "REPLAY" || tag === "wake" || tag.endsWith(" REDELIVERY") || MERGED_NAG_RE.test(tag);
+      }
+      function segmentSurface(seg) {
+        if (!seg || typeof seg !== "object") return INTERNALS;
+        if (seg.kind === "prose") return typeof seg.text === "string" && seg.text.trim() ? CONVERSATION : INTERNALS;
+        if (seg.kind !== "intent") return INTERNALS;
+        if (TALK_VERBS.has(seg.verb)) return CONVERSATION;
+        if (seg.verb === "task" && seg.sub !== "list") return CONVERSATION;
+        return INTERNALS;
+      }
+      function inboundSurface(rec) {
+        if (rec.from === "user") return CONVERSATION;
+        if (rec.ticket) return isNagTag(rec.ticket.tag) ? INTERNALS : CONVERSATION;
+        return classifySender(rec.from).cls === "system" ? INTERNALS : CONVERSATION;
+      }
+      function surfaceOf(rec) {
+        if (!rec || typeof rec !== "object") return INTERNALS;
+        if (ALWAYS_TALK.has(rec.kind)) return CONVERSATION;
+        switch (rec.kind) {
+          case "inbound":
+            return inboundSurface(rec);
+          case "reply":
+            return rec.verb === "task" && rec.ticket ? CONVERSATION : INTERNALS;
+          case "notice":
+            return LOUD_LEVELS.has(rec.level) ? CONVERSATION : INTERNALS;
+          case "assistant":
+            if (rec.apiError || !Array.isArray(rec.segments) || !rec.segments.length) return CONVERSATION;
+            return rec.segments.some((s) => segmentSurface(s) === CONVERSATION) ? CONVERSATION : INTERNALS;
+          default:
+            return INTERNALS;
+        }
+      }
+      module.exports = { surfaceOf, segmentSurface };
+    }
+  });
+
   // renderer/transcript-rows.js
   var require_transcript_rows = __commonJS({
     "renderer/transcript-rows.js"(exports, module) {
@@ -31105,6 +31200,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { rewriteEchoSgr } = require_prompt_echo();
       var { isExternallyOpenable } = require_external_link();
       var { isInternalRow } = require_transcript_internal();
+      var { surfaceOf, segmentSurface } = require_transcript_surface();
       var OUTPUT_LINE_CAP = 400;
       var CLAMP_LINES = 2;
       var CLAMP_CHARS = 240;
@@ -31520,6 +31616,20 @@ ${m[2].replace(/^\r?\n/, "")}`;
         box.appendChild(body);
         return box;
       }
+      function ticketChip(doc, node, ticket) {
+        toggleClass(node, "tr-ticket", true);
+        const chip = el(doc, "span", "tr-ticket-chip", ticket.tag ? `${ticket.id} ${ticket.tag}` : ticket.id);
+        const head = Array.from(node.childNodes).find((c) => c.className === "tr-box-head");
+        if (head) head.insertBefore(chip, Array.from(head.childNodes).find((c) => c.className === "tr-box-preview") || null);
+        else node.insertBefore(chip, node.firstChild);
+        return node;
+      }
+      function isTalk(r) {
+        return r.kind !== "turn-end" && surfaceOf(r) === "conversation";
+      }
+      function hasInternalSeg(r) {
+        return r.kind === "assistant" && !r.apiError && Array.isArray(r.segments) && isTalk(r) && r.segments.some((s) => segmentSurface(s) !== "conversation");
+      }
       function buildRow(doc, rec, ctx, attached) {
         switch (rec.kind) {
           case "prompt":
@@ -31697,11 +31807,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return turns;
       }
       function createTranscriptRows(doc, paneEl, ctx = {}) {
-        const deps = { lead: null, internals: true, tools: true, seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
+        const deps = { lead: null, mode: "internals", seatName: null, resolveFile: NOOP, openFilePeek: NOOP, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
         const turnCache = /* @__PURE__ */ new Map();
         const opened = /* @__PURE__ */ new Set();
-        let showInternals = deps.internals !== false;
-        let showTools = deps.tools !== false;
+        let mode = deps.mode === "conversation" ? "conversation" : "internals";
         let lastRecords = [];
         let working = null;
         let workingEl = null;
@@ -31787,7 +31896,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
               c.key = key;
               c.tools = tools;
               paintBlock(c);
-              toggleClass(c.el, "tr-hidden", !showTools);
+              toggleClass(c.el, "tr-hidden", mode === "conversation");
             }
           };
         }
@@ -31802,16 +31911,25 @@ ${m[2].replace(/^\r?\n/, "")}`;
             if (r.kind === "turn-end") continue;
             const att = attached.has(r.id);
             const extra = r.kind === "command-output" ? JSON.stringify(resolvePalette(deps) || null) : att ? "|attached" : "";
+            const hidden = mode === "conversation" && !isTalk(r);
+            const after = (c) => toggleClass(c.el, "tr-hidden", hidden);
             if (isInternalRow(r)) {
               items.push({
                 key: r.id,
                 sig: recSig(r) + extra,
-                build: () => internalBox(doc, r, buildRow(doc, r, deps, att) || el(doc, "div", "tr-row"), opened, att),
-                after: (c) => toggleClass(c.el, "tr-hidden", !showInternals)
+                build: () => {
+                  const box = internalBox(doc, r, buildRow(doc, r, deps, att) || el(doc, "div", "tr-row"), opened, att);
+                  return r.ticket ? ticketChip(doc, box, r.ticket) : box;
+                },
+                after
               });
               continue;
             }
-            items.push({ key: r.id, sig: recSig(r) + extra, build: () => buildRow(doc, r, deps, att) || el(doc, "div", "tr-row") });
+            const full = mode === "internals";
+            const omit = !full && hasInternalSeg(r);
+            const view = omit ? { ...r, segments: r.segments.filter((s) => segmentSurface(s) === "conversation") } : r;
+            const sig = recSig(r) + extra + (hasInternalSeg(r) ? full ? "|full" : "|conv" : "");
+            items.push({ key: r.id, sig, build: () => buildRow(doc, view, deps, att) || el(doc, "div", "tr-row"), after });
           }
           const footer = footerOf(records);
           if (footer) items.push({ key: "footer", sig: JSON.stringify(footer), build: () => buildFooter(doc, footer, deps) });
@@ -31831,24 +31949,44 @@ ${m[2].replace(/^\r?\n/, "")}`;
             after: (c) => {
               if (!c.sub) c.sub = /* @__PURE__ */ new Map();
               reconcile(c.el, c.sub, rowItems(t.records, attached));
-              toggleClass(c.el, "tr-hidden", (!showInternals || !showTools) && t.records.every((r) => r.kind === "turn-end" || !showInternals && isInternalRow(r) || !showTools && r.kind === "tool"));
+              toggleClass(c.el, "tr-hidden", mode === "conversation" && !t.records.some(isTalk));
             }
           }));
           reconcile(paneEl, turnCache, items, deps.lead);
           lastRecords = list;
           if (working) paintWorking();
         }
-        function setInternals(on) {
-          if (showInternals === !!on) return;
-          showInternals = !!on;
-          render(lastRecords);
+        function visibleTurns() {
+          return Array.from(paneEl.childNodes).filter((n) => /\btr-turn\b/.test(n.className) && !/\btr-hidden\b/.test(n.className));
         }
-        function setTools(on) {
-          if (showTools === !!on) return;
-          showTools = !!on;
-          render(lastRecords);
+        function anchorOf() {
+          const top = paneEl.scrollTop;
+          if (typeof top !== "number" || typeof paneEl.scrollHeight !== "number") return null;
+          if (top + (paneEl.clientHeight || 0) >= paneEl.scrollHeight - 4) return { bottom: true };
+          const turns = Array.from(paneEl.childNodes).filter((n) => /\btr-turn\b/.test(n.className));
+          const at = turns.find((n) => !/\btr-hidden\b/.test(n.className) && typeof n.offsetTop === "number" && n.offsetTop + (n.offsetHeight || 0) > top);
+          if (!at) return null;
+          return { turns: turns.slice(turns.indexOf(at)), offset: at.offsetTop - top };
         }
-        return { render, setWorking, setInternals, setTools };
+        function restore(anchor) {
+          if (!anchor) return;
+          if (anchor.bottom) {
+            paneEl.scrollTop = paneEl.scrollHeight;
+            return;
+          }
+          const shown = new Set(visibleTurns());
+          const next = anchor.turns.find((n) => shown.has(n));
+          if (next && typeof next.offsetTop === "number") paneEl.scrollTop = next.offsetTop - anchor.offset;
+        }
+        function setMode(next) {
+          const want = next === "conversation" ? "conversation" : "internals";
+          if (mode === want) return;
+          const anchor = anchorOf();
+          mode = want;
+          render(lastRecords);
+          restore(anchor);
+        }
+        return { render, setWorking, setMode };
       }
       module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows };
     }
@@ -32185,25 +32323,34 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function renderTranscript(doc, paneEl, records, ctx = {}) {
         transcriptRowsFor(doc, paneEl, ctx).render(records);
       }
-      function barToggle(doc, bar, text, checked, onChange) {
-        const label = doc.createElement("label");
-        label.className = "transcript-bar-toggle";
-        const box = doc.createElement("input");
-        box.type = "checkbox";
-        box.checked = !!checked;
-        box.addEventListener("change", () => onChange(!!box.checked));
-        label.appendChild(box);
-        label.appendChild(doc.createTextNode(text));
-        bar.appendChild(label);
-        return box;
-      }
-      function internalsBar(doc, paneEl, checked, onChange, toolsChecked = true, onToolsChange = NOOP) {
+      var TRANSCRIPT_MODES = [["conversation", "Conversation"], ["internals", "Internals"]];
+      function modeBar(doc, paneEl, mode, onMode = NOOP) {
         const bar = doc.createElement("div");
         bar.className = "transcript-bar";
-        const box = barToggle(doc, bar, "Internals", checked, onChange);
-        const toolsBox = barToggle(doc, bar, "Tools", toolsChecked, onToolsChange);
+        const control = doc.createElement("div");
+        control.className = "transcript-mode";
+        let current = null;
+        const buttons = TRANSCRIPT_MODES.map(([value, label]) => {
+          const btn = doc.createElement("button");
+          btn.type = "button";
+          btn.className = "transcript-mode-btn";
+          btn.textContent = label;
+          btn.addEventListener("click", () => {
+            if (current === value) return;
+            setMode(value);
+            onMode(value);
+          });
+          control.appendChild(btn);
+          return btn;
+        });
+        function setMode(next) {
+          current = next === "conversation" ? "conversation" : "internals";
+          TRANSCRIPT_MODES.forEach(([value], i) => buttons[i].setAttribute("aria-pressed", value === current ? "true" : "false"));
+        }
+        setMode(mode);
+        bar.appendChild(control);
         paneEl.insertBefore(bar, paneEl.firstChild);
-        return { bar, box, toolsBox };
+        return { bar, control, buttons, setMode };
       }
       function markedText(doc, text, spans) {
         const frag = [];
@@ -32240,17 +32387,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         el.hidden = rows.length === 0;
       }
-      function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => "claude", pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, internals = () => true, onInternals = NOOP, tools = () => true, onTools = NOOP }) {
+      function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => "claude", pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, mode = () => "internals", onMode = NOOP }) {
         const paneEl = document.createElement("div");
         paneEl.className = "transcript-pane";
         paneEl.hidden = true;
         wrapperEl.appendChild(paneEl);
-        const toggle = internalsBar(document, paneEl, internals(), (on) => {
-          transcriptRowsFor(document, paneEl, rowsCtx).setInternals(on);
-          onInternals(on);
-        }, tools(), (on) => {
-          transcriptRowsFor(document, paneEl, rowsCtx).setTools(on);
-          onTools(on);
+        const toggle = modeBar(document, paneEl, mode(), (next) => {
+          transcriptRowsFor(document, paneEl, rowsCtx).setMode(next);
+          onMode(next);
         });
         const menuEl = menuMirror ? document.createElement("div") : null;
         if (menuEl) {
@@ -32282,7 +32426,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let tag = null;
         let fileHead = null;
         const bandKey = (b) => b ? `${b.top}:${b.bottom}` : "";
-        const rowsCtx = { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette, now, lead: toggle.bar, internals: internals(), tools: tools() };
+        const rowsCtx = { seatName, resolveFile, openFilePeek, openExternal, toast, echoPalette, now, lead: toggle.bar, mode: mode() };
         let turnRunning = false;
         let working = null;
         function stickToBottom() {
@@ -32553,12 +32697,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         return {
           refresh() {
-            const on = !!internals();
-            toggle.box.checked = on;
-            transcriptRowsFor(document, paneEl, rowsCtx).setInternals(on);
-            const toolsOn = !!tools();
-            toggle.toolsBox.checked = toolsOn;
-            transcriptRowsFor(document, paneEl, rowsCtx).setTools(toolsOn);
+            const next = mode();
+            toggle.setMode(next);
+            transcriptRowsFor(document, paneEl, rowsCtx).setMode(next);
             evaluate();
             layout();
           },
@@ -32601,7 +32742,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
         };
       }
-      module.exports = { TRANSCRIPT_PULL_MS, transcriptRowsFor, renderTranscript, renderMenuMirror, internalsBar, createLiveSplitView };
+      module.exports = { TRANSCRIPT_PULL_MS, transcriptRowsFor, renderTranscript, renderMenuMirror, modeBar, createLiveSplitView };
     }
   });
 
@@ -45788,7 +45929,7 @@ ${detail}` });
         spaceTriggerAction,
         ptyTypedSinceEnter
       } = require_voice_submit();
-      var { createLiveSplitView, renderTranscript, transcriptRowsFor, internalsBar, TRANSCRIPT_PULL_MS } = require_live_split_view();
+      var { createLiveSplitView, renderTranscript, transcriptRowsFor, modeBar, TRANSCRIPT_PULL_MS } = require_live_split_view();
       var { initBanners } = require_banners();
       var { initThemes } = require_themes();
       var { createEchoRewriter } = require_prompt_echo();
@@ -45831,29 +45972,17 @@ ${detail}` });
       var activeSession = null;
       var terminalWebglEnabled = false;
       var transcriptPaneEnabled = false;
-      var transcriptPaneInternals = true;
-      var transcriptPaneTools = true;
+      var transcriptPaneMode = "conversation";
       function refreshTranscriptPanes() {
         for (const entry of sessions.values()) {
           if (entry.liveSplit) entry.liveSplit.refresh();
-          if (entry.stream) {
-            entry.stream.setInternals(transcriptPaneInternals);
-            entry.stream.setTools(transcriptPaneTools);
-          }
+          if (entry.stream) entry.stream.setMode(transcriptPaneMode);
         }
       }
-      function setTranscriptPaneInternals(on) {
-        transcriptPaneInternals = !!on;
+      function setTranscriptPaneMode(next) {
+        transcriptPaneMode = next === "internals" ? "internals" : "conversation";
         try {
-          window.api.setSettings({ transcriptPaneInternals });
-        } catch {
-        }
-        refreshTranscriptPanes();
-      }
-      function setTranscriptPaneTools(on) {
-        transcriptPaneTools = !!on;
-        try {
-          window.api.setSettings({ transcriptPaneTools });
+          window.api.setSettings({ transcriptPaneMode });
         } catch {
         }
         refreshTranscriptPanes();
@@ -45861,8 +45990,7 @@ ${detail}` });
       var terminalWebglReady = window.api.getSettings().then((s) => {
         terminalWebglEnabled = !!(s && s.terminalWebgl === true);
         transcriptPaneEnabled = !!(s && s.transcriptPane === true);
-        transcriptPaneInternals = !(s && s.transcriptPaneInternals === false);
-        transcriptPaneTools = !(s && s.transcriptPaneTools === false);
+        transcriptPaneMode = s && s.transcriptPaneMode === "internals" ? "internals" : "conversation";
         refreshTranscriptPanes();
       }).catch(() => {
       });
@@ -47366,7 +47494,7 @@ ${detail}` });
         const paneEl = document.createElement("div");
         paneEl.className = "transcript-pane transcript-pane-full";
         wrapperEl.appendChild(paneEl);
-        const internalsToggle = internalsBar(document, paneEl, transcriptPaneInternals, setTranscriptPaneInternals, transcriptPaneTools, setTranscriptPaneTools);
+        const modeToggle = modeBar(document, paneEl, transcriptPaneMode, setTranscriptPaneMode);
         const composer = document.createElement("textarea");
         const composerKit = attachComposer(composer, {
           onSend: () => sendComposer(),
@@ -47560,9 +47688,8 @@ ${detail}` });
           openExternal: (url) => window.api.openExternal(url),
           toast: showToast,
           echoPalette: currentEchoPalette,
-          lead: internalsToggle.bar,
-          internals: transcriptPaneInternals,
-          tools: transcriptPaneTools
+          lead: modeToggle.bar,
+          mode: transcriptPaneMode
         };
         const pull = (force = false) => {
           if (pulling || disposed) return;
@@ -47791,13 +47918,9 @@ ${detail}` });
             composer.classList.toggle("voice-recording", !!on);
             applyPlaceholder();
           },
-          setInternals(on) {
-            internalsToggle.box.checked = !!on;
-            transcriptRowsFor(document, paneEl, rowsCtx).setInternals(on);
-          },
-          setTools(on) {
-            internalsToggle.toolsBox.checked = !!on;
-            transcriptRowsFor(document, paneEl, rowsCtx).setTools(on);
+          setMode(next) {
+            modeToggle.setMode(next);
+            transcriptRowsFor(document, paneEl, rowsCtx).setMode(next);
           },
           setTurnRunning(activity, since) {
             turnRunning = activity === "thinking" || activity === "attention";
@@ -48065,10 +48188,8 @@ ${detail}` });
           openExternal: (url) => window.api.openExternal(url),
           toast: showToast,
           echoPalette: currentEchoPalette,
-          internals: () => transcriptPaneInternals,
-          onInternals: setTranscriptPaneInternals,
-          tools: () => transcriptPaneTools,
-          onTools: setTranscriptPaneTools,
+          mode: () => transcriptPaneMode,
+          onMode: setTranscriptPaneMode,
           composerEl,
           menuMirror,
           sheet: true,

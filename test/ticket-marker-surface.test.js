@@ -129,3 +129,16 @@ test('a spilled done report keeps its ticket marker on the pointer line, claude 
     assert.strictEqual(surfaceOf(r), 'conversation', agentType);
   }
 });
+
+test('a spilled cancel reason keeps its ticket marker on the pointer line', () => {
+  const f = mkLoop();
+  f.seat('team-hand');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'cancel', id: 't1', who: null, body: 'c'.repeat(THRESHOLD + 50) });
+  const g = f.gated.find((d) => d.target === 'team-hand' && d.tag === '[ticket t1 cancelled]');
+  assert.ok(g, `ENTER: the cancel reason went to the hand. Gated: ${JSON.stringify(f.gated.map((d) => [d.target, d.tag]))}`);
+  const text = f.m._buildDeliveryText({ name: g.target, agentType: 'claude' }, g.sender, g.body, 'dm', g.tag);
+  assert.ok(text.includes('attached:'), `ENTER: the delivery really spilled. Got:\n${text}`);
+  const r = recordOf(text);
+  assert.deepStrictEqual(r.ticket, { id: 't1', tag: 'cancelled' });
+  assert.strictEqual(surfaceOf(r), 'conversation');
+});

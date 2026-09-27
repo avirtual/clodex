@@ -44,4 +44,4 @@ function surfaceOf(rec) {
   }
 }
 
-module.exports = { surfaceOf, segmentSurface, isNagTag };
+module.exports = { surfaceOf, segmentSurface };

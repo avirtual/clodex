@@ -110,8 +110,7 @@ const DEFAULT_UI_SETTINGS = {
   theme: 'midnight',
   terminalWebgl: false,
   transcriptPane: false,
-  transcriptPaneInternals: true,
-  transcriptPaneTools: true,
+  transcriptPaneMode: 'conversation',
   sidebarWidth: 220,
   sidebarFolded: false,
   sidePaneWidth: null,
@@ -390,6 +389,7 @@ function sanitizeRebootNotice(v) {
 const TERMINAL_REPORTS = ['off', 'asked', 'all'];
 const TERMINAL_REMOTE = ['off', 'on'];
 const INTENT_SPILL = ['off', 'on'];
+const TRANSCRIPT_PANE_MODES = ['conversation', 'internals'];
 const SESSION_MODES = ['optimized', 'standard'];
 const SETUP_CHOICES = ['optimized', 'standard', 'skipped'];
 
@@ -1512,8 +1512,7 @@ function initStores(userDataPath, {
           theme: THEME_KEYS.includes(raw?.theme) ? raw.theme : DEFAULT_UI_SETTINGS.theme,
           terminalWebgl: raw?.terminalWebgl === true,
           transcriptPane: raw?.transcriptPane === true,
-          transcriptPaneInternals: typeof raw?.transcriptPaneInternals === 'boolean' ? raw.transcriptPaneInternals : true,
-          transcriptPaneTools: typeof raw?.transcriptPaneTools === 'boolean' ? raw.transcriptPaneTools : true,
+          transcriptPaneMode: raw?.transcriptPaneMode === 'internals' ? 'internals' : 'conversation',
           sidebarWidth: clampSidebarWidth(raw?.sidebarWidth),
           sidebarFolded: raw?.sidebarFolded === true,
           sidePaneWidth: sanitizeSidePaneWidth(raw?.sidePaneWidth),
@@ -1608,8 +1607,7 @@ function initStores(userDataPath, {
         theme: THEME_KEYS.includes(partial?.theme) ? partial.theme : cur.theme,
         terminalWebgl: typeof partial?.terminalWebgl === 'boolean' ? partial.terminalWebgl : cur.terminalWebgl,
         transcriptPane: typeof partial?.transcriptPane === 'boolean' ? partial.transcriptPane : cur.transcriptPane,
-        transcriptPaneInternals: typeof partial?.transcriptPaneInternals === 'boolean' ? partial.transcriptPaneInternals : cur.transcriptPaneInternals,
-        transcriptPaneTools: typeof partial?.transcriptPaneTools === 'boolean' ? partial.transcriptPaneTools : cur.transcriptPaneTools,
+        transcriptPaneMode: TRANSCRIPT_PANE_MODES.includes(partial?.transcriptPaneMode) ? partial.transcriptPaneMode : cur.transcriptPaneMode,
         sidebarWidth: clampSidebarWidth(partial?.sidebarWidth ?? cur.sidebarWidth),
         sidebarFolded: typeof partial?.sidebarFolded === 'boolean' ? partial.sidebarFolded : cur.sidebarFolded,
         sidePaneWidth: (partial && 'sidePaneWidth' in partial) ? sanitizeSidePaneWidth(partial.sidePaneWidth) : cur.sidePaneWidth,

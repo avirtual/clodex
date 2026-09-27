@@ -640,106 +640,138 @@ test('a 13-call Bash block shows its header and only the last call; a click on t
   assert.strictEqual(linesOf(block).length, 13);
 });
 
-test('with internals off the injected rows carry tr-hidden and the operator, agent and tool rows do not; on again clears it', () => {
+const { ticketOf } = require('../transcript-records');
+const { segmentSurface } = require('../renderer/lib/transcript-surface');
+const inb = (id, turn, from, body) => {
+  const ticket = ticketOf(body);
+  return { id, kind: 'inbound', ts: null, turn, from, text: body, ...(ticket ? { ticket } : {}) };
+};
+const taskReply = (id, turn, body) => {
+  const ticket = ticketOf(body, 'reply');
+  return { ...replyRec(id, turn, 'task', '⇄', 'task', body), ...(ticket ? { ticket } : {}) };
+};
+const isHidden = (n) => /\btr-hidden\b/.test(n.className);
+
+test('in Conversation mode internal rows and tool blocks carry tr-hidden while prompts, prose and ticket lifecycle rows do not; Internals clears it', () => {
   const m = mount();
   m.render([
     { id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' },
-    { id: 'u1', kind: 'inbound', ts: null, turn: 1, from: 'user', text: 'from the panel' },
+    inb('u1', 1, 'user', 'from the panel'),
     { id: 'a1', kind: 'assistant', ts: null, turn: 1, text: 'on it' },
-    replyRec('r1', 1, 'task', '⇄', 'task', 'ticket t1 created'),
-    { id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'ticket-loop', text: 'ticket t1 accepted' },
+    taskReply('r1', 1, 'ticket t1 created'),
+    inb('i1', 1, 'ticket-loop', '[ticket t1 ACCEPT] review round 2, no must-fixes.'),
+    inb('i2', 1, 'ticket-loop', 'ticket t1 accepted'),
     { id: 'n1', kind: 'notice', ts: null, turn: 1, level: 'info', text: 'filed' },
     call('t1', 'Bash', 'ls'),
     call('t2', 'Bash', 'pwd'),
   ]);
-  const hidden = () => m.pane.childNodes[0].childNodes.map((n) => [n.dataset.id, /\btr-hidden\b/.test(n.className)]);
-  m.rows.setInternals(false);
+  const hidden = () => m.pane.childNodes[0].childNodes.map((n) => [n.dataset.id, isHidden(n)]);
+  assert.deepStrictEqual(hidden().filter(([, h]) => h), []);
+  m.rows.setMode('conversation');
   assert.deepStrictEqual(hidden(), [
-    ['p1', false], ['u1', false], ['a1', false], ['r1', true], ['i1', true], ['n1', true], ['tools:t1', false],
+    ['p1', false], ['u1', false], ['a1', false], ['r1', false], ['i1', false], ['i2', true], ['n1', true], ['tools:t1', true],
   ]);
-  m.rows.setInternals(true);
+  m.rows.setMode('internals');
   assert.deepStrictEqual(hidden().filter(([, h]) => h), []);
 });
 
-test('a pane created with internals off hides a ticket-loop inbound on first render', () => {
-  const m = mount({ internals: false });
-  m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'ticket-loop', text: 'ticket t1 accepted' }]);
-  assert.ok(/\btr-hidden\b/.test(boxOf(m, 'i1').className));
+test('a pane created in Conversation mode hides a markerless ticket-loop inbound on first render and shows a marked one', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([inb('i1', 1, 'ticket-loop', 'ticket t1 accepted'), inb('i2', 1, 'ticket-loop', '[ticket t1 MERGED] merged')]);
+  assert.strictEqual(isHidden(boxOf(m, 'i1')), true);
+  assert.strictEqual(isHidden(boxOf(m, 'i2')), false);
 });
 
-test('with internals off a turn of only injected rows is hidden and a turn with a prompt or assistant row is not; on again clears it', () => {
+test('in Conversation mode a turn with no conversation row is hidden, and a turn headed by a reminder stays visible for its prose or API error', () => {
   const m = mount();
   m.render([
     { id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' },
-    { id: 'i0', kind: 'inbound', ts: null, turn: 1, from: 'ticket-loop', text: 'ticket t0 accepted' },
-    { id: 'i1', kind: 'inbound', ts: null, turn: 2, from: 'ticket-loop', text: 'ticket t1 accepted' },
+    inb('i0', 1, 'ticket-loop', 'ticket t0 accepted'),
+    inb('i1', 2, 'ticket-loop', 'ticket t1 accepted'),
     { id: 'e1', kind: 'turn-end', ts: null, turn: 2, durationMs: 5, messageCount: 1 },
-    { id: 'i2', kind: 'inbound', ts: null, turn: 3, from: 'ticket-loop', text: 'ticket t2 accepted' },
+    inb('i2', 3, 'ticket-loop', 'ticket t2 accepted'),
     { id: 'a2', kind: 'assistant', ts: null, turn: 3, text: 'noted' },
+    inb('m4', 4, 'reminder', 'continue: t9 build'),
+    { id: 'a4', kind: 'assistant', ts: null, turn: 4, text: 'carrying on' },
+    inb('m5', 5, 'reminder', 'continue: t9 build'),
+    { id: 'a5', kind: 'assistant', ts: null, turn: 5, apiError: true, text: 'API Error: 500' },
   ]);
-  const turns = () => m.pane.childNodes.map((n) => [n.childNodes.map((c) => c.dataset.id).join(','), /\btr-hidden\b/.test(n.className)]);
-  m.rows.setInternals(false);
-  assert.deepStrictEqual(turns(), [['p1,i0', false], ['i1,', true], ['i2,a2', false]]);
-  m.rows.setInternals(true);
+  const turns = () => m.pane.childNodes.map((n) => [n.childNodes.map((c) => c.dataset.id).join(','), isHidden(n)]);
+  m.rows.setMode('conversation');
+  assert.deepStrictEqual(turns(), [['p1,i0', false], ['i1,', true], ['i2,a2', false], ['m4,a4', false], ['m5,a5', false]]);
+  assert.deepStrictEqual([3, 4].map((i) => isHidden(m.pane.childNodes[i].childNodes[0])), [true, true]);
+  m.rows.setMode('internals');
   assert.deepStrictEqual(turns().filter(([, h]) => h), []);
 });
 
-test('with tools off the tool blocks carry tr-hidden and the prompt, assistant and inbound rows do not; on again clears it', () => {
-  const m = mount();
-  m.render([
-    { id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' },
-    { id: 'u1', kind: 'inbound', ts: null, turn: 1, from: 'user', text: 'from the panel' },
-    { id: 'a1', kind: 'assistant', ts: null, turn: 1, text: 'on it' },
-    call('t1', 'Bash', 'ls'),
-    call('t2', 'Read', 'a.js'),
-  ]);
-  const hidden = () => m.pane.childNodes[0].childNodes.map((n) => [n.dataset.id, /\btr-hidden\b/.test(n.className)]);
-  m.rows.setTools(false);
-  assert.deepStrictEqual(hidden(), [['p1', false], ['u1', false], ['a1', false], ['tools:t1', true], ['tools:t2', true]]);
-  m.rows.setTools(true);
-  assert.deepStrictEqual(hidden().filter(([, h]) => h), []);
-});
-
-test('a turn of only tool calls and a turn-end is hidden with tools off and not with tools on', () => {
+test('a turn of only tool calls and a turn-end is hidden in Conversation and shown in Internals', () => {
   const m = mount();
   m.render([
     { id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' },
     call('t1', 'Bash', 'ls', 'ok', { turn: 2 }),
     { id: 'e1', kind: 'turn-end', ts: null, turn: 2, durationMs: 5, messageCount: 1 },
   ]);
-  const turns = () => m.pane.childNodes.map((n) => [n.childNodes.map((c) => c.dataset.id).join(','), /\btr-hidden\b/.test(n.className)]);
+  const turns = () => m.pane.childNodes.map((n) => [n.childNodes.map((c) => c.dataset.id).join(','), isHidden(n)]);
   assert.deepStrictEqual(turns(), [['p1', false], ['tools:t1,', false]]);
-  m.rows.setTools(false);
+  m.rows.setMode('conversation');
   assert.deepStrictEqual(turns(), [['p1', false], ['tools:t1,', true]]);
-  m.rows.setTools(true);
+  m.rows.setMode('internals');
   assert.deepStrictEqual(turns().filter(([, h]) => h), []);
 });
 
-test('a turn of internal rows and tool calls is hidden only when both internals and tools are off', () => {
-  const m = mount();
-  m.render([
-    { id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'ticket-loop', text: 'ticket t1 accepted' },
-    call('t1', 'Bash', 'ls'),
-    { id: 'e1', kind: 'turn-end', ts: null, turn: 1, durationMs: 5, messageCount: 1 },
-  ]);
-  const turnHidden = () => /\btr-hidden\b/.test(m.pane.childNodes[0].className);
-  m.rows.setInternals(false);
-  assert.strictEqual(turnHidden(), false);
-  m.rows.setInternals(true);
-  m.rows.setTools(false);
-  assert.strictEqual(turnHidden(), false);
-  m.rows.setInternals(false);
-  assert.strictEqual(turnHidden(), true);
-  m.rows.setTools(true);
-  assert.strictEqual(turnHidden(), false);
+test('an exec card inside a visible prose row is absent in Conversation, present after a switch to Internals, absent again after switching back; a pure-prose row keeps its node', () => {
+  const mixed = said('a1', 1, 'looking now\n[agent:exec clodex-run-tests] {}\nall green');
+  assert.deepStrictEqual(mixed.segments.map((g) => [g.kind, segmentSurface(g)]), [['prose', 'conversation'], ['intent', 'internals'], ['prose', 'conversation']], 'ENTER: the row has an internal segment');
+  const plain = { id: 'a2', kind: 'assistant', ts: null, turn: 1, text: 'plain' };
+  const m = mount({ mode: 'conversation' });
+  m.render([{ id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' }, mixed, plain]);
+  const row = () => boxOf(m, 'a1');
+  const shape = () => row().childNodes.map((n) => n.className);
+  const plainNode = boxOf(m, 'a2');
+  assert.strictEqual(isHidden(row()), false);
+  assert.deepStrictEqual(shape(), ['tr-seg-prose', 'tr-seg-prose']);
+  assert.deepStrictEqual(row().childNodes.map((n) => n.textContent), ['looking now', 'all green']);
+  m.rows.setMode('internals');
+  assert.deepStrictEqual(shape(), ['tr-seg-prose', 'intent-stack', 'tr-seg-prose']);
+  assert.strictEqual(row().childNodes[1].childNodes.filter((n) => /\bintent-card\b/.test(n.className)).length, 1);
+  m.rows.setMode('conversation');
+  assert.deepStrictEqual(shape(), ['tr-seg-prose', 'tr-seg-prose']);
+  assert.strictEqual(boxOf(m, 'a2'), plainNode);
 });
 
-test('a pane created with tools off hides the tool block on first render and setTools(true) clears it', () => {
-  const m = mount({ tools: false });
-  m.render([{ id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' }, call('t1', 'Bash', 'ls')]);
-  assert.ok(/\btr-hidden\b/.test(boxOf(m, 'tools:t1').className));
-  m.rows.setTools(true);
-  assert.ok(!/\btr-hidden\b/.test(boxOf(m, 'tools:t1').className));
+test('a ticket lifecycle row carries tr-ticket and a chip reading the id and tag, short or folded', () => {
+  const long = `[ticket t8 REJECTED] round 2\n${Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n')}`;
+  const m = mount();
+  m.render([inb('i7', 1, 'ticket-loop', '[ticket t7 MERGED] merged into master'), inb('i8', 1, 'ticket-loop', long), taskReply('r1', 1, 'ticket t1 created'), inb('i9', 1, 'ticket-loop', 'plain')]);
+  const chip = (box) => [box, boxHeadOf(box)].filter(Boolean).flatMap((n) => n.childNodes).find((n) => n.className === 'tr-ticket-chip');
+  assert.strictEqual(boxOf(m, 'i7').className, 'tr-box tr-ticket');
+  assert.strictEqual(chip(boxOf(m, 'i7')).textContent, 't7 MERGED');
+  assert.strictEqual(chip(boxOf(m, 'i8')).parentNode.className, 'tr-box-head');
+  assert.strictEqual(chip(boxOf(m, 'i8')).textContent, 't8 REJECTED');
+  assert.strictEqual(chip(boxOf(m, 'r1')).textContent, 't1');
+  assert.strictEqual(boxOf(m, 'i9').className, 'tr-box');
+  assert.strictEqual(chip(boxOf(m, 'i9')), undefined);
+});
+
+test('a mode switch keeps a pane that follows the bottom at the bottom, and otherwise re-anchors on the next visible turn when the anchored one hides', () => {
+  const m = mount();
+  m.render([
+    { id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' },
+    inb('i2', 2, 'reminder', 'continue'),
+    { id: 'p3', kind: 'prompt', ts: null, turn: 3, text: 'again', source: 'typed' },
+  ]);
+  const [t1, t2, t3] = m.pane.childNodes;
+  Object.assign(t1, { offsetTop: 0, offsetHeight: 100 });
+  Object.assign(t2, { offsetTop: 100, offsetHeight: 50 });
+  Object.assign(t3, { offsetTop: 150, offsetHeight: 50 });
+  Object.assign(m.pane, { scrollTop: 120, clientHeight: 100, scrollHeight: 1000 });
+  m.rows.setMode('conversation');
+  assert.strictEqual(isHidden(t2), true);
+  assert.strictEqual(m.pane.scrollTop, 170);
+  m.rows.setMode('internals');
+  Object.assign(m.pane, { scrollTop: 900, scrollHeight: 1000 });
+  m.rows.setMode('conversation');
+  assert.strictEqual(m.pane.scrollTop, 1000);
 });
 
 test('a long attached reply folds to a head led by ↳ and an unattached one does not', () => {
@@ -752,6 +784,19 @@ test('a long attached reply folds to a head led by ↳ and an unattached one doe
   m.render([{ id: 'a0', kind: 'assistant', ts: null, turn: 0, text: 'no card' }, replyRec('r1', 1, 'task', '⇄', 'task', long)]);
   const plain = boxHeadOf(m.pane.childNodes[1].childNodes[0]);
   assert.notStrictEqual(plain.childNodes[0].className, 'tr-reply-lead');
+});
+
+test('the pane modules never call array methods on childNodes, which is a NodeList in the browser', () => {
+  const read = (f) => require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', f), 'utf8');
+  for (const f of ['transcript-rows.js', 'live-split-view.js']) {
+    assert.doesNotMatch(read(f), /childNodes\.(find|filter|map|some|every|reduce|flatMap|slice|indexOf|includes|forEach)\(/, f);
+  }
+});
+
+test('a hidden ticket row stays hidden: the ticket layout applies display only when the row is not tr-hidden', () => {
+  const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  assert.match(css, /^\.tr-ticket:not\(\.tr-hidden\) \{[^}]*display: flex/m);
+  assert.doesNotMatch(css, /^\.tr-ticket \{[^}]*display:/m);
 });
 
 test('a turn separator follows only a visible turn, so a hidden leading turn leaves no line above the first visible one', () => {
