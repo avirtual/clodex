@@ -37,7 +37,7 @@ function readClaude(rows, at) {
     const m = CLAUDE_MODE.exec(cut);
     if (!m) continue;
     const segs = cut.slice(m[0].length).split(' · ').map((s) => s.replace(CYCLE_HINT, '').trim()).filter(Boolean);
-    return { mode: { key: MODE_KEYS[m[2]] || 'other', label: m[2], cycles: true }, tasks: segs.find((s) => TASK.test(s)) || null, warnings: null };
+    return { mode: { key: Object.hasOwn(MODE_KEYS, m[2]) ? MODE_KEYS[m[2]] : 'other', label: m[2], cycles: true }, tasks: segs.find((s) => TASK.test(s)) || null, warnings: null };
   }
   return null;
 }

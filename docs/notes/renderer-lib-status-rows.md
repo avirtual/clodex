@@ -8,7 +8,7 @@ On all three the spinner (`✻ Thinking…`, `• Working (…)`, `◆ Thinking 
 ## readClaude
 The rows below the closing rule are the Clodex statusline (`[clodex:<name>] …`, absent under headless) and the mode line, last. A custom statusline can paint a mode lookalike, so the scan is bottom-up.
 
-Mode labels and glyphs: `⏵⏵` bypass permissions, accept edits, auto mode; `⏸` plan mode, manual mode (manual prints no `(shift+tab to cycle)`). Label colours are theme-dependent and unused. shift+tab cycle, five presses back to the start. With bypass (only when launched with it): bypass permissions → auto mode → manual mode → accept edits → plan mode. Without: manual mode → accept edits → plan mode → auto mode.
+Mode labels and glyphs: `⏵⏵` bypass permissions, accept edits, auto mode; `⏸` plan mode, manual mode (manual prints no `(shift+tab to cycle)`). Label colours are theme-dependent and unused. shift+tab cycle. With bypass (only when launched with it): bypass permissions → auto mode → manual mode → accept edits → plan mode. Without: manual mode → accept edits → plan mode → auto mode.
 
 Right-hand column transients, cut before matching: `● high · /effort` shows at boot and after each submit and is gone after 5.9 s (claude-bypass-effort@100 vs claude-bypass@100: row 8 differs, row 9 identical); `Ctrl+Y to paste deleted text` after a Ctrl-U kill, which the inject queue's Ctrl-U writes trigger. A draft in the input drops `· ← for agents`; a `· 1 shell` segment drops `(shift+tab to cycle)`. `N shell` is the only background segment measured.
 

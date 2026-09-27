@@ -6,6 +6,7 @@ const { spinnerText } = require('./lib/working-row');
 const { readMenuRows } = require('./lib/menu-rows');
 const { rowCells } = require('./lib/menu-cells');
 const { createPaintDelta, mergeByTs, isBusyScreen, blockText } = require('./lib/paint-delta');
+const { readStatusRows } = require('./lib/status-rows');
 
 const TRANSCRIPT_PULL_MS = 1000;
 const PAINT_TAG_MS = 10000;
@@ -94,7 +95,46 @@ function renderMenuMirror(doc, el, read) {
   el.hidden = rows.length === 0;
 }
 
-function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, mode = () => 'internals', onMode = NOOP }) {
+const MODE_TEXT = { bypass: 'Bypass', 'accept-edits': 'Accept edits', auto: 'Auto', plan: 'Plan', manual: 'Manual' };
+const MODE_TONE = { bypass: 'danger', 'accept-edits': 'warn', auto: 'warn', plan: 'info' };
+const CODEX_MODE_LABELS = new Set(['Default', 'Plan']);
+const MODE_TITLES = {
+  claude: 'Permission mode — click to cycle (shift+tab in the terminal)',
+  codex: 'Collaboration mode — click to toggle (shift+tab in the terminal)',
+  muse: 'Approval posture (set at launch)',
+};
+
+function statusChip(doc, kind, text, tone, title, onChip) {
+  const el = doc.createElement(onChip ? 'button' : 'span');
+  if (onChip) {
+    el.type = 'button';
+    el.addEventListener('mousedown', (e) => e.preventDefault());
+    el.addEventListener('click', () => onChip(kind));
+  }
+  el.className = 'seat-status-chip';
+  el.dataset.chip = kind;
+  el.dataset.tone = tone;
+  el.title = title;
+  el.textContent = text;
+  return el;
+}
+
+function renderStatusChips(doc, el, read, effort, onChip = NOOP) {
+  const chips = [];
+  const mode = read && read.mode;
+  if (mode) {
+    const known = Object.hasOwn(MODE_TEXT, mode.key);
+    const family = !mode.cycles ? 'muse' : (mode.key === 'default' || mode.key === 'plan') && CODEX_MODE_LABELS.has(mode.label) ? 'codex' : 'claude';
+    const tone = Object.hasOwn(MODE_TONE, mode.key) ? MODE_TONE[mode.key] : 'muted';
+    chips.push(statusChip(doc, 'mode', known ? MODE_TEXT[mode.key] : String(mode.label || ''), tone, MODE_TITLES[family], family === 'muse' ? null : onChip));
+  }
+  if (read && read.tasks) chips.push(statusChip(doc, 'tasks', String(read.tasks), 'muted', 'Background work in this seat', null));
+  if (read && Number.isInteger(read.warnings)) chips.push(statusChip(doc, 'warnings', `⚠ ${read.warnings}`, 'warn', 'Codex startup warnings — click to view', onChip));
+  if (typeof effort === 'string' && effort.trim() && effort.trim() !== 'default') chips.push(statusChip(doc, 'effort', effort.trim(), 'neutral', 'Effort level for this seat', null));
+  el.replaceChildren(...chips);
+}
+
+function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, statusChips = null, mode = () => 'internals', onMode = NOOP }) {
   const paneEl = document.createElement('div');
   paneEl.className = 'transcript-pane';
   paneEl.hidden = true;
@@ -109,6 +149,15 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     menuEl.hidden = true;
     wrapperEl.appendChild(menuEl);
   }
+  const statusEl = statusChips ? document.createElement('div') : null;
+  if (statusEl) {
+    statusEl.className = 'seat-status-strip';
+    statusEl.hidden = true;
+    wrapperEl.appendChild(statusEl);
+    wrapperEl.classList.add('has-status-strip');
+  }
+  let heldRead = null;
+  let statusKey = null;
   let state = initialSplitState();
   let wakeTimer = null;
   let available = false;
@@ -123,6 +172,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   let sheetRows = 0;
   let sheetRange = null;
   const composerVisible = () => !!composerEl && !composerEl.hidden;
+  const dockPx = () => (composerEl.offsetHeight || 0) + (statusEl && !statusEl.hidden ? statusEl.offsetHeight || 0 : 0);
   const delta = createPaintDelta();
   let fileRecords = [];
   let fileSource = null;
@@ -266,7 +316,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     const read = !raw && state.mode === 'split' && composerVisible() && menuMirror.on() ? readMenuRows(rows || screenRows(), screenCells(), platform()) : null;
     menuMirror.setRead(read);
     if (!read && menuEl.hidden) return null;
-    if (read && composerEl) menuEl.style.bottom = `${(composerEl.offsetHeight || 0) + 8}px`;
+    if (read && composerEl) menuEl.style.bottom = `${dockPx() + 8}px`;
     renderMenuMirror(document, menuEl, read);
     return read;
   }
@@ -275,11 +325,41 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     const el = terminal.element;
     const active = typeof document !== 'undefined' ? document.activeElement : null;
     const hadTerminalFocus = !!active && active === terminal.textarea;
-    const hadComposerFocus = !!active && active === composerEl;
+    const hadDockFocus = !!active && (active === composerEl || (!!statusEl && (active === statusEl || statusEl.contains(active))));
     el.style.visibility = on ? 'hidden' : '';
     composerEl.hidden = !on;
+    if (statusEl) statusEl.hidden = !on;
     if (on && hadTerminalFocus) composerEl.focus();
-    else if (!on && hadComposerFocus) terminal.focus();
+    else if (!on && hadDockFocus) terminal.focus();
+  }
+
+  function effortNow() {
+    const v = statusChips.effort ? statusChips.effort() : null;
+    return typeof v === 'string' && v.trim() && v.trim() !== 'default' ? v.trim() : null;
+  }
+
+  function onChip(kind) {
+    if (disposed || raw || state.mode !== 'split' || !composerVisible() || (menuMirror && menuMirror.on())) return;
+    if (kind === 'mode') statusChips.write('\x1b[Z');
+    else if (kind === 'warnings') statusChips.write('\x1bOQ');
+  }
+
+  function reconcileStatus() {
+    const effort = effortNow();
+    const key = JSON.stringify({ read: heldRead, effort });
+    if (key === statusKey) return;
+    statusKey = key;
+    renderStatusChips(document, statusEl, heldRead, effort, onChip);
+  }
+
+  function readStatus(rows, measured) {
+    if (!statusEl) return;
+    const readable = !raw && state.mode === 'split' && !!measured && measured.mode === 'split' && !!rows && !(menuMirror && menuMirror.on());
+    if (readable) {
+      const read = readStatusRows(rows, measured.at, platform());
+      if (read) heldRead = read;
+    }
+    reconcileStatus();
   }
 
   function sheetRowsOf(rows) {
@@ -330,7 +410,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       el.style.transform = '';
       el.style.clipPath = '';
       showComposer(true);
-      const composerTop = wrapperEl.clientHeight - padBottom - composerEl.offsetHeight;
+      const composerTop = wrapperEl.clientHeight - padBottom - dockPx();
       wrapperEl.classList.add('live-split');
       paneEl.style.height = `${Math.max(0, Math.round(composerTop - padTop))}px`;
       paneEl.hidden = false;
@@ -362,6 +442,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     const prevSheet = sheetRange;
     state = reduceSplit(state, measured, now(), undefined, raw ? 0 : undefined);
     const menuRead = readMenu(rows);
+    readStatus(rows, measured);
     if (turnRunning) showWorking(rows ? spinnerText(rows, state.top, platform()) : null);
     const busy = !menuRead && !!measured && (measured.mode === 'split' || !!measured.busy);
     trackPaint(raw ? null : rows, measured);
@@ -436,6 +517,9 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       evaluate();
     },
     raw: () => raw,
+    refreshStatus() {
+      if (!disposed && statusEl) reconcileStatus();
+    },
     composerSent(text) {
       const s = String(text || '');
       sent = { text: s, at: now() };
@@ -455,8 +539,12 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       paneEl.removeEventListener('scroll', onPaneScroll);
       paneEl.remove();
       if (menuEl) menuEl.remove();
+      if (statusEl) {
+        statusEl.remove();
+        wrapperEl.classList.remove('has-status-strip');
+      }
     },
   };
 }
 
-module.exports = { TRANSCRIPT_PULL_MS, transcriptRowsFor, renderTranscript, renderMenuMirror, modeBar, createLiveSplitView };
+module.exports = { TRANSCRIPT_PULL_MS, transcriptRowsFor, renderTranscript, renderMenuMirror, renderStatusChips, modeBar, createLiveSplitView };

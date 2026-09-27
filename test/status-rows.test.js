@@ -191,3 +191,8 @@ SYNTHETIC.forEach((c, i) => {
     assert.deepStrictEqual(readStatusRows(c.rows, 0, c.platform), c.expected);
   });
 });
+
+test('a synthetic mode line labelled constructor reads as other, not an Object.prototype member', () => {
+  const rows = ['─'.repeat(40), '❯ ', '─'.repeat(40), '  ⏵⏵ constructor on · ← for agents'];
+  assert.deepStrictEqual(readStatusRows(rows, 0, 'claude'), { mode: { key: 'other', label: 'constructor', cycles: true }, tasks: null, warnings: null });
+});
