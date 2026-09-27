@@ -9405,7 +9405,7 @@ function createSessionManager(deps) {
         this._streamEnqueue(target, { text: plainText(), images: pics, origin: senderName === 'user' ? 'operator' : 'system' },
           fire ? () => fire('injected') : null, null, parkKey);
       } else if (!this._maybeParkDelivery(target, () => textFor('parked'), parkKey)) {
-        this._injectText(target, fire ? '' : plainText(), {
+        this._injectText(target, fire && rebody ? '' : plainText(), {
           parkable: true,
           parkKey,
           human: senderName === 'user',
