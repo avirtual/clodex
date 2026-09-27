@@ -148,6 +148,13 @@ test('turnFolds: a shout or a dm in a machine-driven turn keeps it open; a non-t
   assert.strictEqual(turnFolds([report, said2(intent('exec'), intent('remind'))], C), true);
 });
 
+test('turnFolds: a machine-driven turn holding the operator\'s mid-turn prompt or panel message never folds', () => {
+  const notice = { kind: 'inbound', from: 'ticket-loop', text: '[ticket t1 MERGED] x', ticket: { id: 't1', tag: 'MERGED' } };
+  assert.strictEqual(turnFolds([notice, tool, { kind: 'prompt', text: 'hi', source: 'mid-turn', state: 'queued' }], C), false);
+  assert.strictEqual(turnFolds([notice, tool, { kind: 'prompt', text: 'hi', source: 'mid-turn', state: 'delivered' }], C), false);
+  assert.strictEqual(turnFolds([notice, tool, { kind: 'inbound', from: 'user', text: 'from the panel' }], C), false);
+});
+
 test('ENTER: every record kind userRecords emits has a driver row', () => {
   const text = src('transcript-records.js');
   const body = text.slice(text.indexOf('function userRecords('), text.indexOf('\n}\n', text.indexOf('function userRecords(')));

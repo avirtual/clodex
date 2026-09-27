@@ -51,9 +51,8 @@ function turnDriver(records) {
   return records.find((r) => r && DRIVER_KINDS.has(r.kind)) || null;
 }
 
-function operatorDriven(driver) {
-  if (!driver) return true;
-  return driver.kind === 'prompt' || (driver.kind === 'inbound' && driver.from === 'user');
+function fromOperator(rec) {
+  return Boolean(rec) && (rec.kind === 'prompt' || (rec.kind === 'inbound' && rec.from === 'user'));
 }
 
 function talksBack(rec) {
@@ -63,8 +62,8 @@ function talksBack(rec) {
 
 function turnFolds(records, mode) {
   if (mode !== CONVERSATION) return false;
-  if (operatorDriven(turnDriver(records))) return false;
-  return !records.some(talksBack);
+  if (!turnDriver(records)) return false;
+  return !records.some((r) => fromOperator(r) || talksBack(r));
 }
 
 module.exports = { surfaceOf, segmentSurface, turnDriver, turnFolds };

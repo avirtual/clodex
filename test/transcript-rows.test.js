@@ -1168,6 +1168,29 @@ test('folds: Internals mode has no fold head, and switching back re-folds a turn
   assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-box tr-ticket', 'tr-row tr-tool-block', 'tr-row tr-prose', 'tr-row tr-footer']);
   m.rows.setMode('conversation');
   assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-row tr-turn-fold']);
+  turnOf(m, 'i1').childNodes[0].listeners.click();
+  m.rows.setMode('internals');
+  m.rows.setMode('conversation');
+  assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-row tr-turn-fold', 'tr-box tr-ticket', 'tr-row tr-tool-block', 'tr-row tr-prose', 'tr-row tr-footer']);
+  assert.strictEqual(turnOf(m, 'i1').childNodes[0].getAttribute('aria-expanded'), 'true');
+});
+
+test('folds: the operator\'s mid-turn prompt inside a ticket-loop turn keeps the turn open and visible', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([inb('i1', 1, 'ticket-loop', '[ticket t1 MERGED] merged'), call('t1', 'Bash', 'ls'), midAsk('queued'), talk('a1', 1, 'on it')]);
+  assert.deepStrictEqual(findCls(m.pane, 'tr-turn-fold'), []);
+  assert.strictEqual(isHidden(rowIn(m, 'q1')), false);
+});
+
+test('folds: in a talk turn followed by a reminder turn, the run expander reveals the reminder', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([ask('p1', 1), talk('a1', 1), inb('m2', 2, 'reminder', 'continue'), talk('a2', 2, 'carrying on')]);
+  assert.deepStrictEqual(shown(turnOf(m, 'm2')), ['tr-row tr-turn-fold']);
+  assert.strictEqual(togglesOf(m).length, 1);
+  clickToggle(m);
+  assert.strictEqual(findCls(turnOf(m, 'm2'), 'tr-turn-fold').length, 0);
+  assert.strictEqual(isHidden(rowIn(m, 'm2')), false);
+  assert.strictEqual(togglesOf(m)[0].parentNode, turnOf(m, 'm2'));
 });
 
 test('folds: an operator-driven turn and a machine-driven turn that shouted never get a fold head', () => {

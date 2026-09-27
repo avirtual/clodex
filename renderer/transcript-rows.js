@@ -492,7 +492,8 @@ function ticketChip(doc, node, ticket) {
 }
 
 function foldHead(doc, driver, stats) {
-  const head = el(doc, 'div', 'tr-row tr-turn-fold');
+  const head = el(doc, 'button', 'tr-row tr-turn-fold');
+  head.type = 'button';
   head.appendChild(el(doc, 'span', 'tr-box-chevron'));
   if (driver.kind === 'inbound') head.appendChild(inboundBadge(doc, driver));
   else if (driver.kind === 'reply') head.appendChild(appBadge(doc, driver));
@@ -952,6 +953,8 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
       after: (c) => {
         const glyph = unfolded ? '▾' : '▸';
         if (c.el.firstChild.textContent !== glyph) c.el.firstChild.textContent = glyph;
+        const want = unfolded ? 'true' : 'false';
+        if (c.el.getAttribute('aria-expanded') !== want) c.el.setAttribute('aria-expanded', want);
       },
     };
   }
@@ -977,7 +980,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     const items = [];
     for (const run of runs) {
       const open = openRuns.has(run.key);
-      const hostable = run.turns.filter((t) => !turnFolds(t.records, mode));
+      const hostable = run.turns.filter((t) => open || !turnFolds(t.records, mode));
       const host = open ? hostable[hostable.length - 1] : run.hosted ? hostable.filter((t) => t.records.some(isTalk)).pop() : null;
       run.turns.forEach((t, i) => items.push({
         key: t.key,
@@ -989,7 +992,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         },
         after: (c) => {
           if (!c.sub) c.sub = new Map();
-          const folds = turnFolds(t.records, mode);
+          const folds = turnFolds(t.records, mode) && !open;
           const unfolded = folds && openTurns.has(t.key);
           const m = unfolded ? 'internals' : mode;
           const tail = m === 'conversation' && t === host ? runToggleItem(run, open) : null;
