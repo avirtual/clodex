@@ -197,13 +197,18 @@ test('meta, sidechain, attachment, bookkeeping and orphan tool_result records pr
     rec({ type: 'user', uuid: 'm', isMeta: true, message: { content: 'meta' } }),
     rec({ type: 'user', uuid: 's', isSidechain: true, message: { content: 'sub' } }),
     rec({ type: 'attachment', uuid: 'a', attachment: { type: 'x' } }),
-    rec({ type: 'attachment', uuid: 'n', attachment: { type: 'queued_command', origin: null, commandMode: 'task-notification', prompt: '<task-notification>done</task-notification>' }, rendered: null }),
+    rec({ type: 'attachment', uuid: 'n', attachment: { type: 'queued_command', origin: null, commandMode: 'task-notification', prompt: 'done' }, rendered: null }),
     rec({ type: 'ai-title', uuid: 't', aiTitle: 'x' }),
     rec({ type: 'user', uuid: 'o', message: { content: [{ type: 'tool_result', tool_use_id: 'gone', content: 'x' }] } }),
     rec({ type: 'user', uuid: 'x', message: { content: '<local-command-caveat>x</local-command-caveat>' } }),
     'not json',
   ].join('\n'));
   assert.deepStrictEqual(records, []);
+});
+
+test('ENTER: the origin-less plain-text queued_command fixture parses to a prompt once the origin is human', () => {
+  const { records } = recordsOf(rec({ type: 'attachment', uuid: 'n', attachment: { type: 'queued_command', origin: { kind: 'human' }, commandMode: 'task-notification', prompt: 'done' }, rendered: null }));
+  assert.deepStrictEqual(records.map((r) => [r.kind, r.text]), [['prompt', 'done']]);
 });
 
 test('an assistant record with two text blocks suffixes each id with its block index; thinking yields nothing', () => {
@@ -586,4 +591,54 @@ test('a mid-turn prompt with a text block and an image block carries images like
 test('a mid-turn prompt joins the running turn: prompt, mid-turn, assistant, prompt are turns 1, 1, 1, 2', () => {
   const { records } = recordsOf([typed('p1', 'P', 'go'), midTurn('q', 'hi'), replied('a1', 'ok'), typed('p2', 'Q', 'next')].join('\n'));
   assert.deepStrictEqual(records.map((r) => r.turn), [1, 1, 1, 2]);
+});
+
+test('a human mid-turn [agent:task] attachment is one mid-turn reply card in the running turn', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), midTurn('q', '[agent:task] ticket t9 created')].join('\n'));
+  assert.deepStrictEqual(records[1], { id: 'q', kind: 'reply', ts: TS, turn: 1, verb: 'task', glyph: '⇄', label: 'task', ticket: { id: 't9', tag: null }, text: 'ticket t9 created', source: 'mid-turn' });
+  assert.strictEqual(records.length, 2);
+});
+
+test('a human mid-turn [agent:from] attachment is one mid-turn inbound card in the running turn', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), midTurn('q', '[agent:from ticket-loop] [ticket t9 MERGED] x')].join('\n'));
+  assert.strictEqual(records.length, 2);
+  assert.strictEqual(records[1].kind, 'inbound');
+  assert.deepStrictEqual(records[1].ticket, { id: 't9', tag: 'MERGED' });
+  assert.strictEqual(records[1].source, 'mid-turn');
+  assert.strictEqual(records[1].turn, 1);
+});
+
+test('a mid-turn reply card joins the running turn: prompt, mid-turn reply, assistant, prompt are turns 1, 1, 1, 2', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), midTurn('q', '[agent:task] ticket t9 created'), replied('a1', 'ok'), typed('p2', 'Q', 'next')].join('\n'));
+  assert.deepStrictEqual(records.map((r) => [r.kind, r.turn]), [['prompt', 1], ['reply', 1], ['assistant', 1], ['prompt', 2]]);
+});
+
+test('a new typed turn clears the unread list: a mid-turn prompt from the previous turn stays delivered', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), midTurn('q', 'hi'), typed('p2', 'Q', 'next'), replied('a2', 'ok')].join('\n'));
+  const q = records.find((r) => r.id === 'q');
+  assert.strictEqual(q.state, 'delivered');
+  assert.strictEqual(records.find((r) => r.id === 'p2').turn, q.turn + 1);
+});
+
+test('a <command-name> echo sharing a mid-turn /compact prompt\'s promptId does not pop it or take back a turn', () => {
+  const mid = JSON.stringify({ ...JSON.parse(midTurn('q', '/compact')), promptId: 'P' });
+  const { records } = recordsOf([
+    typed('p1', 'P', 'go'),
+    mid,
+    typed('p2', 'P', '<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>'),
+    replied('a1', 'ok'),
+  ].join('\n'));
+  assert.deepStrictEqual(records.map((r) => [r.id, r.turn]), [['p1', 1], ['q', 1], ['a1', 1]]);
+});
+
+test('an apiError assistant record after a mid-turn prompt leaves it delivered', () => {
+  const apiErr = rec({ type: 'assistant', uuid: 'e1', isApiErrorMessage: true, message: { content: [{ type: 'text', text: 'API Error: 500' }] } });
+  const { records } = recordsOf([typed('p1', 'P', 'go'), midTurn('q', 'hi'), apiErr].join('\n'));
+  assert.strictEqual(records.find((r) => r.id === 'e1').apiError, true, 'ENTER: the fixture parses as an apiError assistant');
+  assert.strictEqual(records.find((r) => r.id === 'q').state, 'delivered');
+});
+
+test('ENTER: the same sequence with a plain assistant record marks the mid-turn prompt read', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), midTurn('q', 'hi'), replied('e1', 'API Error: 500')].join('\n'));
+  assert.strictEqual(records.find((r) => r.id === 'q').state, 'read');
 });
