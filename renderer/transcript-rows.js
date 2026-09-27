@@ -357,9 +357,9 @@ function promptRow(doc, rec, ctx) {
   row.appendChild(text);
   withTime(doc, row, rec);
   if (mid) {
-    const read = rec.state === 'read';
-    const state = el(doc, 'span', 'tr-mid-state', read ? '✓ read' : 'delivered');
-    state.dataset.state = read ? 'read' : 'delivered';
+    const word = rec.state === 'read' || rec.state === 'queued' ? rec.state : 'delivered';
+    const state = el(doc, 'span', 'tr-mid-state', word === 'read' ? '✓ read' : word);
+    state.dataset.state = word;
     row.appendChild(state);
   }
   return row;
