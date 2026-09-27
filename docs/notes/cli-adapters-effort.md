@@ -6,4 +6,4 @@
 
 Claude stream (`claude -p --settings <file with effortLevel low> --output-format stream-json --verbose`, measured 2026-09-26): the `init` event carries no effort field, so the level is not observable there; the evidence is the generated settings file carrying `effortLevel`, which `test/seat-effort.test.js` pins for pty and stream alike.
 
-The sidebar hovercard shows the level the sessions.json entry records, which is the level asked for at spawn — also when it was not applied because the seat's extra args carry their own `--settings`.
+The sidebar hovercard shows the level the sessions.json entry records, which is the level asked for at spawn — also when it was not applied because the seat's extra args carry their own `--settings` (claude) or effort flag (codex, muse).

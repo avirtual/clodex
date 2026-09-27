@@ -57,9 +57,10 @@ function mkRenderer() {
   const body = [
     slice('const seatIoKind', '\n}\n'),
     fnSrc('markSeatEffort'),
+    fnSrc('exitedRowSnapshot'), fnSrc('archivedRowEntry'),
     fnSrc('addSessionToSidebar'), fnSrc('addArchivedSessionToSidebar'),
     fnSrc('addFailedSessionToSidebar'), fnSrc('addExitedSessionToSidebar'),
-    'return { markSeatIo, markSeatEffort, addSessionToSidebar, addArchivedSessionToSidebar, addFailedSessionToSidebar, addExitedSessionToSidebar };',
+    'return { markSeatIo, markSeatEffort, exitedRowSnapshot, archivedRowEntry, addSessionToSidebar, addArchivedSessionToSidebar, addFailedSessionToSidebar, addExitedSessionToSidebar };',
   ].join('\n');
   const fns = new Function(...names, body)(...names.map((n) => env[n]));
   return { rows, env, ...fns };
@@ -208,4 +209,15 @@ test('the hovercard of an agent row with no recorded level shows effort default'
 test('the hovercard of a bash row has no effort row', () => {
   const html = hoverCard({ type: 'bash' });
   assert.doesNotMatch(html, /<span class="hc-k">effort<\/span>/);
+});
+
+test('a seat that exits or is archived mid-session keeps its effort level on the rebuilt entry', () => {
+  const h = mkRenderer();
+  h.addSessionToSidebar('s', 'claude', '/w');
+  h.markSeatEffort('s', 'xhigh');
+  assert.strictEqual(h.exitedRowSnapshot('s', 1, {}).effort, 'xhigh');
+  assert.strictEqual(h.archivedRowEntry('s', h.rows[0]).effort, 'xhigh');
+  h.markSeatEffort('s', null);
+  assert.strictEqual(h.exitedRowSnapshot('s', 1, {}).effort, null);
+  assert.strictEqual(h.archivedRowEntry('s', h.rows[0]).effort, null);
 });

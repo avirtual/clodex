@@ -612,6 +612,7 @@ function addFailedSessionToSidebar(entry) {
     markSeatIo(entry.name, res.io || entry.io);
     createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
+    markSeatEffort(entry.name, entry.effort);
     switchSession(entry.name);
   });
 
@@ -662,6 +663,7 @@ function addArchivedSessionToSidebar(entry) {
     markSeatIo(entry.name, res.io || entry.io);
     createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
+    markSeatEffort(entry.name, entry.effort);
     if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
     switchSession(entry.name);
     refreshSidebarView();
@@ -705,6 +707,7 @@ function exitedRowSnapshot(name, code, meta) {
     team: item.dataset.team || null,
     noWire: item.dataset.noWire === '1',
     io: streamSeatNames.has(name) ? 'stream' : 'pty',
+    effort: item.dataset.effort || null,
     createdAt: (sidebarMeta.get(name) || {}).createdAt || null,
     exitCode: typeof code === 'number' ? code : null,
     exitSignal: (meta && meta.signal) || null,
@@ -744,6 +747,7 @@ function addExitedSessionToSidebar(entry) {
     markSeatIo(entry.name, res.io || entry.io);
     createTerminal(entry.name);
     addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
+    markSeatEffort(entry.name, entry.effort);
     if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
     switchSession(entry.name);
     refreshSidebarView();
@@ -772,24 +776,28 @@ function addExitedSessionToSidebar(entry) {
 // — archiveSession triggers a session-exit — so we stash the row's identity here
 // and let onSessionExit rebuild it as archived (staying silent; an archive exit
 // is expected). Peer rows never reach here (they detach/hide instead).
-const archivingSessions = new Map(); // name -> { name, type, cwd, label, backend, archivedAt, createdAt }
-async function archiveSessionRow(name) {
-  movingFailed.delete(name);
-  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-  if (!item) return;
+const archivingSessions = new Map();
+function archivedRowEntry(name, item) {
   const nameEl = item.querySelector('.session-name');
   const displayed = nameEl ? nameEl.textContent : name;
   const meta = sidebarMeta.get(name) || {};
-  archivingSessions.set(name, {
+  return {
     name,
     type: item.dataset.type,
     cwd: item.dataset.cwd || '',
     label: displayed && displayed !== name ? displayed : null,
     backend: item.dataset.backend || null,
-    team: item.dataset.team || null, // carry the group-by-project key onto the archived row
+    team: item.dataset.team || null,
+    effort: item.dataset.effort || null,
     archivedAt: Date.now(),
     createdAt: meta.createdAt || null,
-  });
+  };
+}
+async function archiveSessionRow(name) {
+  movingFailed.delete(name);
+  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (!item) return;
+  archivingSessions.set(name, archivedRowEntry(name, item));
   const res = await window.api.archiveSession(name);
   if (!res || !res.ok) {
     archivingSessions.delete(name);
@@ -1143,19 +1151,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
       if (disposition === 'discard') break;
       const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
       if (!item) break;
-      const nameEl = item.querySelector('.session-name');
-      const displayed = nameEl ? nameEl.textContent : name;
-      const meta = sidebarMeta.get(name) || {};
-      archivingSessions.set(name, {
-        name,
-        type: item.dataset.type,
-        cwd: item.dataset.cwd || '',
-        label: displayed && displayed !== name ? displayed : null,
-        backend: item.dataset.backend || null,
-        team: item.dataset.team || null, // carry the group-by-project key onto the archived row
-        archivedAt: Date.now(),
-        createdAt: meta.createdAt || null,
-      });
+      archivingSessions.set(name, archivedRowEntry(name, item));
       break;
     }
     case 'export':
