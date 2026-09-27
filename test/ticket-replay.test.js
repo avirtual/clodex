@@ -262,7 +262,10 @@ async function until(fn) {
 }
 
 async function leadDrained(app) {
-  await until(() => !(app.m.sessions.get('lead')._injectPtyQueue || []).length);
+  const leadQ = () => (app.m.sessions.get('lead')._injectPtyQueue || []).length;
+  await until(() => leadQ() === 0);
+  assert.strictEqual(leadQ(), 0,
+    'ENTER: the lead\'s own dispatch replies must have drained, or the escalation parks behind them');
 }
 
 // The one-shot is spent exactly when the replay pass has run, so it is the
@@ -1397,10 +1400,7 @@ test('t349: a stranded ticket that resolves to no live seat escalates instead of
     // resolves to nobody. Dropping this alongside the reassignment case would be
     // silent in exactly the shape this ticket exists to report: an open ticket whose
     // spec reached no one, and no one told.
-    const leadQ = () => (app.m.sessions.get('lead')._injectPtyQueue || { length: 0 }).length;
-    await until(() => leadQ() === 0);
-    assert.strictEqual(leadQ(), 0,
-      'ENTER: the lead\'s own dispatch replies must have drained, or the escalation parks behind them');
+    await leadDrained(app);
     app.m.sessions.delete('team-hand');
     fireConfirm(app, s);
     const leadSaw = await settled(app, 'lead', /ESCALATED/);
@@ -1900,6 +1900,7 @@ test('t1251: more must-fixes parked by the turn-start window after a typed FIRST
     assert.strictEqual(app.parked('team-hand', /ALSO FIX THE LATCH/), 1, 'ENTER: the window parked the more-must-fixes write');
     assert.strictEqual(app.seen('team-hand'), beforeFollow, 'ENTER: and nothing was typed');
     assert.ok(s._specUnconfirmed, 'the more-must-fixes latch that replaced the rejection\'s survives the window divert, with `retried` carried');
+    assert.strictEqual(s._specUnconfirmed.label, 'more must-fixes', 'and it is the more-must-fixes latch');
     assert.strictEqual(s._specUnconfirmed.kind, 'redirect', 'and it is still the REDIRECT latch');
     assert.strictEqual(s._specUnconfirmed.retried, false, 'and the retry is still unspent');
     assert.strictEqual(s._specUnconfirmed.windowRearmed, true, 'and the window re-arm is spent');
@@ -2608,12 +2609,12 @@ test('t357: a displaced ticket displaced AGAIN after its redelivery escalates ra
     await writeComplete(app, 'team-hand');
     assert.ok(s._specOwedSpent && s._specOwedSpent.has('t1:spec'),
       'ENTER: t1`s one redelivery must be recorded as spent, or the bound under test does not exist yet');
+    await leadDrained(app);
     assert.doesNotMatch(app.seen('lead'), /ESCALATED/,
       'ENTER: the lead must not already hold an escalation, or `settled` below returns text this test did not cause');
 
     // A third dispatch displaces the redelivered copy. The budget is gone, so this
     // must reach the LEAD rather than queueing a third write at the seat.
-    await leadDrained(app);
     const beforeSeat = app.seen('team-hand');
     const beforeLead = app.seen('lead');
     app.m._armSpecConfirm('team-hand', 't2', 'injected');
@@ -3524,7 +3525,7 @@ test('a minted ticket seat is handed its spec ONCE — the boot replay finds the
     // receives, not on a record read that happens to run first, or the subject
     // reports a bookkeeping miss for a defect whose whole cost is a second
     // injection.
-    await until(() => world.tickets().find((x) => x.id === 't1').deliveredTo);
+    await until(() => world.tickets().find((x) => x.id === 't1').deliveredTo || !s._replayTicketsPending);
     const drainStillPending = s._replayTicketsPending;
     const preDrainStamp = world.tickets().find((x) => x.id === 't1').deliveredTo || null;
 
@@ -3552,10 +3553,10 @@ test('a minted ticket seat is handed its spec ONCE — the boot replay finds the
     // The mechanism behind those counts. Without it the subject would also pass
     // against a drain suppressed some other way — a skipped boot pass, a filter on
     // seat age — none of which survives the respawn the next subject demands.
+    assert.ok(preDrainStamp, 'the spawn path stamps the record before the boot replay ever looks at it');
     assert.strictEqual(drainStillPending, true,
       'ENTER: the drain was still pending when the stamp was read, so the stamp below is the SPAWN path`s and '
       + 'not the drain`s own');
-    assert.ok(preDrainStamp, 'the spawn path stamps the record before the boot replay ever looks at it');
     assert.strictEqual(preDrainStamp.seat, seat,
       'naming the seat it minted — this is the whole fix: the minted seat records its own delivery');
     assert.strictEqual(preDrainStamp.incarnation, s.incarnation,

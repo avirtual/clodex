@@ -721,4 +721,17 @@ test('a queued paste shows its chip text, not the raw wrapper', () => {
   const { records } = recordsOf([typed('p1', 'P', 'go'), queueOp('enqueue', '<pasted_content id="1">line one\nline two</pasted_content>')].join('\n'));
   const [q] = queuedOf(records);
   assert.ok(q && !q.text.includes('<pasted_content'), JSON.stringify(q));
+  assert.strictEqual(q.text, '[Pasted text #1 +2 lines]');
+  assert.strictEqual(q.pastes.length, 1);
+});
+
+test('a queued row keeps its id when an earlier unshown entry leaves the queue', () => {
+  const N = '<task-notification>x</task-notification>';
+  const head = [typed('p1', 'P', 'go'), queueOp('enqueue', N), queueOp('enqueue', 'hi')];
+  const idOf = (lines) => queuedOf(recordsOf(lines.join('\n')).records).find((r) => r.text === 'hi');
+  const before = idOf(head);
+  const after = idOf([...head, queueOp('remove', N)]);
+  assert.ok(before && after, 'ENTER: the hi row is queued on both cuts');
+  assert.strictEqual(before.id, `queued:${Date.parse(QTS)}:1`);
+  assert.strictEqual(after.id, before.id);
 });

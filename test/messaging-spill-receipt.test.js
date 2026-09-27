@@ -19,7 +19,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { sweepSpilledMessages } = require('../engine');
+const { sweepSpilledMessages, sweepSeatMessages } = require('../engine');
 const { parkDelivery, drainPending, allParkedTexts } = require('../pending-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -178,6 +178,15 @@ test('t1265: an unreferenced seat image younger than imgMaxAgeSec survives a swe
   const img = spill(msgDir, 'alice', 'img-1700000000000-1.png', OLD);
   const txt = spill(msgDir, 'alice', 'msg-55910-40.txt', OLD);
   sweepSpilledMessages(msgDir, pendingDir, MAX_AGE, NOW, 24 * 3600);
+  assert.strictEqual(fs.existsSync(txt), false, 'ENTER: a text spill file of this age is collected by the same call');
+  assert.strictEqual(fs.existsSync(img), true);
+});
+
+test('sweepSeatMessages keeps an unreferenced image past MSG_MAX_AGE but under IMG_MAX_AGE, and collects text of the same age', () => {
+  const { msgDir, pendingDir } = tmpDirs();
+  const img = spill(msgDir, 'alice', 'img-1700000000000-1.png', OLD);
+  const txt = spill(msgDir, 'alice', 'msg-55910-41.txt', OLD);
+  sweepSeatMessages(msgDir, pendingDir, NOW);
   assert.strictEqual(fs.existsSync(txt), false, 'ENTER: a text spill file of this age is collected by the same call');
   assert.strictEqual(fs.existsSync(img), true);
 });

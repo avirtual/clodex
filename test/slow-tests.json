@@ -1,4 +1,5 @@
 {
+  "a minted ticket seat is handed its spec ONCE — the boot replay finds the spawn stamp": "measured 3.5 s alone: the boot drain runs on its real 3s bootDrainSettleMs settle timer, which must stay far out so the spawn-path stamp is ordered before the drain rather than raced",
   "the console hook prunes the OLDEST records past its cap": "writes CONSOLE_MAX_RECORDS + 1 = 2001 record files through fsync'd writes, then one spawnSync of the prune — the cap constant is the subject",
   "tree: two runs naming DIFFERENT trees still serialize on the root lock": "holds the real root suite lock for a second runner (a stubbed suite sleeping 3s, an 800ms settle); the elapsed wait IS the assertion",
   "the exit-timeout kept arm names the OLD seat — nothing was renamed yet": "a pty stub that never frees its sessions slot, so _waitForExit runs out session-manager.js's real exit-timeout constant — the arm under test",

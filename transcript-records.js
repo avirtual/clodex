@@ -476,8 +476,8 @@ function claudeShaped(rec) {
   return out;
 }
 
-function queueStep(queued, rec) {
-  if (rec.operation === 'enqueue') return typeof rec.content === 'string' ? [...queued, { ts: tsOf(rec), text: rec.content }] : queued;
+function queueStep(queued, rec, n) {
+  if (rec.operation === 'enqueue') return typeof rec.content === 'string' ? [...queued, { ts: tsOf(rec), text: rec.content, n }] : queued;
   if (rec.operation === 'dequeue') return queued.slice(1);
   if (rec.operation === 'popAll') return [];
   if (rec.operation !== 'remove') return queued;
@@ -492,6 +492,7 @@ function recordsOf(text, max = RECORD_CAP) {
   let lastPromptId = null;
   let unread = [];
   let queued = [];
+  let enqueues = 0;
   const lines = [];
   for (const line of String(text).split('\n')) {
     if (!line.trim()) continue;
@@ -505,7 +506,8 @@ function recordsOf(text, max = RECORD_CAP) {
   for (const rec of lines) {
     if (rec.isSidechain) continue;
     if (rec.type === 'queue-operation') {
-      queued = queueStep(queued, rec);
+      queued = queueStep(queued, rec, enqueues);
+      if (rec.operation === 'enqueue') enqueues += 1;
       continue;
     }
     const echoed = echoedCommand(rec);
@@ -529,9 +531,9 @@ function recordsOf(text, max = RECORD_CAP) {
       all.push(r);
     }
   }
-  queued.forEach((q, i) => {
+  queued.forEach((q) => {
     const user = { type: 'user', message: { role: 'user', content: q.text } };
-    for (const r of userRecords(user, { id: `queued:${q.ts}:${i}`, kind: '', ts: q.ts, turn }, tools)) {
+    for (const r of userRecords(user, { id: `queued:${q.ts}:${q.n}`, kind: '', ts: q.ts, turn }, tools)) {
       if (r.kind === 'prompt') all.push({ ...r, source: 'mid-turn', state: 'queued' });
     }
   });
