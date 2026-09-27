@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
+const fs = require('node:fs');
 
 const views = [];
 const fileTabPath = require.resolve(path.join(__dirname, '..', 'renderer', 'file-tab.js'));
@@ -61,7 +62,7 @@ function setup() {
   for (const id of ['side-pane', 'side-pane-tabs', 'side-pane-seat', 'side-pane-close', 'side-pane-body']) ids[id] = el('div', id);
   const doc = { getElementById: (id) => ids[id] || null, createElement: (tag) => el(tag) };
   const dock = { shown: {}, reveals: 0, addPane() {}, setShown(name, on) { dock.shown[name] = on; }, onScreen: () => true, reveal() { dock.reveals += 1; } };
-  const api = { remote: false, diff: async () => ({ ok: true }), peek: async () => ({ ok: true, mtime: 7 }) };
+  const api = { remote: false, mtime: 7, diff: async () => ({ ok: true }), peek: async () => api.peekRes || ({ ok: true, mtime: api.mtime }) };
   let active = 'A';
   const sp = createSidePane({
     dock, popoverApi: () => api, showToast() {}, getActiveSession: () => active, getFiles: () => [],
@@ -69,7 +70,8 @@ function setup() {
   });
   const button = el('button', 'files-toggle');
   for (const cls of ['footer-glyph', 'footer-label', 'footer-badge']) { const s = el('span'); s.className = cls; button.appendChild(s); }
-  bindFilesToggle({ button, sidePane: sp, getActiveSession: () => active });
+  const toggle = bindFilesToggle({ button, sidePane: sp, getActiveSession: () => active });
+  const setActive = (seat) => { active = seat; };
   const switchTo = (seat) => { active = seat; sp.showSeat(seat); };
   const state = () => ({
     hidden: button.hidden,
@@ -78,7 +80,7 @@ function setup() {
     badge: button.querySelector('.footer-badge').textContent,
     pane: !!dock.shown.files,
   });
-  return { sp, dock, button, ids, switchTo, state };
+  return { sp, dock, button, ids, api, toggle, setActive, switchTo, state };
 }
 
 const flush = () => new Promise((r) => setImmediate(r));
@@ -157,4 +159,88 @@ test('files toggle: unticking keeps a dirty edit tab and its buffer', async () =
   const tabEl = t.ids['side-pane-tabs'].children[0];
   assert.ok(tabEl.children.some((c) => c.className === 'file-peek-dirty'), 'the tab still shows unsaved changes');
   assert.strictEqual(v.setDataCalls.length, 0, 'the reopen did not push data over the dirty buffer');
+});
+
+test('files toggle: a dirty tab whose file changed on disk shows the banner and pushes no data', async () => {
+  const t = setup();
+  t.switchTo('A');
+  t.sp.open('A', { kind: 'file', path: '/w/a.js' });
+  await flush();
+  const v = views[0];
+  v.on.dirty(true);
+  v.setDataCalls.length = 0;
+  let banners = 0;
+  v.showBanner = () => { banners += 1; };
+  t.api.mtime = 8;
+  t.button.fire('click');
+  t.button.fire('click');
+  await flush();
+  assert.deepStrictEqual(t.state(), ON);
+  assert.strictEqual(banners, 1);
+  assert.strictEqual(v.setDataCalls.length, 0);
+});
+
+test('files toggle: a dirty tab whose file was deleted re-renders with keepBuffer', async () => {
+  const t = setup();
+  t.switchTo('A');
+  t.sp.open('A', { kind: 'file', path: '/w/a.js' });
+  await flush();
+  const v = views[0];
+  v.on.dirty(true);
+  v.setDataCalls.length = 0;
+  t.api.peekRes = { ok: false, code: 'not-found' };
+  t.button.fire('click');
+  t.button.fire('click');
+  await flush();
+  assert.deepStrictEqual(v.setDataCalls, [{ keepBuffer: true }]);
+});
+
+test('files toggle: lit when another seat\'s file is on screen, and a click closes it', async () => {
+  const t = setup();
+  t.switchTo('A');
+  t.sp.open('B', { kind: 'file', path: '/w/b.js' });
+  await flush();
+  assert.strictEqual(t.button.hidden, false);
+  assert.strictEqual(t.button.getAttribute('aria-pressed'), 'true');
+  t.button.fire('click');
+  assert.strictEqual(t.sp.paneOpen(), false);
+  assert.deepStrictEqual(t.state(), NONE);
+});
+
+test('files toggle: a click with another seat on screen closes it instead of opening the active seat', async () => {
+  const t = setup();
+  t.switchTo('A');
+  t.sp.open('A', { kind: 'file', path: '/w/a.js' });
+  await flush();
+  t.sp.open('B', { kind: 'file', path: '/w/b.js' });
+  await flush();
+  assert.deepStrictEqual(t.state(), ON);
+  const reveals = t.dock.reveals;
+  t.button.fire('click');
+  await flush();
+  assert.strictEqual(t.sp.paneOpen(), false);
+  assert.strictEqual(t.sp.isOpen('A'), false);
+  assert.strictEqual(t.dock.reveals, reveals);
+  assert.deepStrictEqual(t.state(), OFF);
+});
+
+test('files toggle: hidden once the last seat closes, even with a dirty tab kept', async () => {
+  const t = setup();
+  t.switchTo('A');
+  t.sp.open('A', { kind: 'file', path: '/w/a.js' });
+  await flush();
+  views[0].on.dirty(true);
+  t.sp.forgetSeat('A');
+  assert.strictEqual(t.button.hidden, false);
+  t.setActive(null);
+  t.toggle.refresh();
+  assert.deepStrictEqual(t.state(), NONE);
+});
+
+test('files toggle: the renderer refreshes it on the no-seat-left branch', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('      activeSession = null;');
+  assert.ok(at > 0);
+  const branch = src.slice(at, src.indexOf('\n    }\n', at));
+  assert.ok(branch.includes('filesToggle.refresh();'));
 });

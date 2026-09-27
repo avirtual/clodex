@@ -2683,6 +2683,7 @@ function removeSession(name, { keepPersisted = false } = {}) {
       // branch is not a switch, so onSeatSwitched never runs for it.
       pluginBar.renderFooterButtons();
       renderProxyBar();
+      filesToggle.refresh();
     }
   }
 }

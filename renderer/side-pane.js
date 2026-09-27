@@ -232,14 +232,15 @@ function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFile
 
   const hasTabs = (seat) => setOf(seat).tabs.length > 0;
   const isOpen = (seat) => !!seat && seat === shownSeat && setOf(seat).open;
+  const paneOpen = () => !!shownSeat && setOf(shownSeat).open;
 
   function toggle(seat) {
-    if (!seat) return;
-    if (isOpen(seat)) {
-      dispatch(seat, { type: 'closePane' });
+    if (paneOpen()) {
+      dispatch(shownSeat, { type: 'closePane' });
       renderChrome();
       return;
     }
+    if (!seat) return;
     if (!hasTabs(seat)) return;
     shownSeat = seat;
     const { set, effect } = dispatch(seat, { type: 'openPane' });
@@ -317,15 +318,15 @@ function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFile
   dock.addPane('files', pane, 0);
   renderChrome();
 
-  return { open, showSeat, forgetSeat, noteFiles, noteToolRecord, toggle, hasTabs, isOpen, onChange };
+  return { open, showSeat, forgetSeat, noteFiles, noteToolRecord, toggle, hasTabs, isOpen, paneOpen, onChange };
 }
 
 function bindFilesToggle({ button, sidePane, getActiveSession }) {
   const badge = button.querySelector('.footer-badge');
   function refresh() {
     const seat = getActiveSession();
-    const has = !!seat && sidePane.hasTabs(seat);
-    const on = has && sidePane.isOpen(seat);
+    const on = sidePane.paneOpen();
+    const has = on || (!!seat && sidePane.hasTabs(seat));
     button.hidden = !has;
     button.setAttribute('aria-pressed', on ? 'true' : 'false');
     button.classList.toggle('footer-on', on);
