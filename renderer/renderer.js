@@ -11,6 +11,7 @@ const { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota, 
 const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require('./lib/constants');
 const { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require('./lib/format');
 const { renderDiffHtml, costStackBlock, bustRow } = require('./lib/render-html');
+const { effortOptions } = require('./lib/effort-options');
 const { renderMarkdown } = require('./lib/render-markdown');
 const { placeAboveAnchor } = require('./lib/popover-place');
 const { classifySender } = require('./lib/sender-class');
@@ -490,6 +491,17 @@ function fillPlatformSelect(select) {
     opt.textContent = id;
     select.appendChild(opt);
   }
+}
+
+function fillEffort(selectEl, type, current) {
+  selectEl.innerHTML = '';
+  for (const row of effortOptions(type, current)) {
+    const opt = document.createElement('option');
+    opt.value = row.value;
+    opt.textContent = row.label;
+    selectEl.appendChild(opt);
+  }
+  selectEl.value = current || '';
 }
 
 function modelAliasHint(type) {
@@ -2689,6 +2701,7 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   if (effortRow) effortRow.style.display = agentType ? '' : 'none';
   if (modelHint) modelHint.textContent = modelAliasHint(type);
   if (!skipAsyncRefresh) inputModel.value = '';
+  if (inputEffort) fillEffort(inputEffort, type, skipAsyncRefresh ? inputEffort.value : '');
   if (!skipAsyncRefresh && inputEffort) inputEffort.value = '';
   systemPromptRow.style.display = agentType ? '' : 'none';
   if (appendPromptsRow) appendPromptsRow.style.display = agentType ? '' : 'none';
@@ -3583,7 +3596,7 @@ inputTemplate.addEventListener('change', async () => {
     const { model, rest } = splitModelArg(t.extraArgs || []);
     inputModel.value = model;
     inputArgs.value = rest.join(' ');
-    if (inputEffort) inputEffort.value = (typeof t.effort === 'string' && t.effort) || '';
+    if (inputEffort) fillEffort(inputEffort, t.type, (typeof t.effort === 'string' && t.effort) || '');
   }
   argsHint.textContent = ARGS_HINTS[t.type] || '';
   applyTypeDefaults({ skipAsyncRefresh: true });
@@ -3919,7 +3932,7 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
     const { model, rest } = splitModelArg((tpl && tpl.extraArgs) || []);
     inputModel.value = model;
     inputArgs.value = rest.join(' ');
-    if (inputEffort) inputEffort.value = (tpl && typeof tpl.effort === 'string' && tpl.effort) || '';
+    if (inputEffort) fillEffort(inputEffort, inputType.value, (tpl && typeof tpl.effort === 'string' && tpl.effort) || '');
   }
   argsHint.textContent = ARGS_HINTS[inputType.value] || '';
   if (inputStripLevel) inputStripLevel.value = String((tpl && tpl.stripLevel) || 0);
@@ -8633,7 +8646,7 @@ async function openArgsDialog(name, argsSource = null) {
     argsModel.value = model;
     argsInput.value = rest.map(a => /\s/.test(a) ? `"${a}"` : a).join(' ');
   }
-  if (argsEffort) argsEffort.value = (typeof res.effort === 'string' && res.effort) || '';
+  if (argsEffort) fillEffort(argsEffort, res.type, (typeof res.effort === 'string' && res.effort) || '');
   const isAgent = isAgentType(res.type);
   if (argsModelRow) argsModelRow.style.display = isAgent ? '' : 'none';
   if (argsEffortRow) argsEffortRow.style.display = (isAgent && !argsSource) ? '' : 'none';
