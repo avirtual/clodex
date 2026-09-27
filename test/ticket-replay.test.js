@@ -1837,6 +1837,46 @@ test('t1249: a REDIRECT redelivery parked by the turn-start window keeps its lat
   } finally { app.stop(); }
 });
 
+test('t1250: more must-fixes parked by the turn-start window after a typed redelivery keeps its latch and escalates', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await redirected(world, { deps: { turnStartWindowMs: 60_000 } });
+  try {
+    const first = app.seen('team-hand');
+    s._awaitingTurnSince -= 61_000;
+    fireConfirm(app, s);
+    const typed = await settled(app, 'team-hand', /REDELIVERY/);
+    assert.match(typed.slice(first.length), /REDELIVERY/, 'ENTER: the rejection redelivery was typed');
+    assert.strictEqual(s._specUnconfirmed && s._specUnconfirmed.retried, true, 'ENTER: and it spent the retry');
+    const t = world.tickets().find((x) => x.id === 't1');
+    assert.ok(t.state === 'open' && Number(t.reworkRound) > 0, 'ENTER: the next reject routes to the FOLLOW-UP path');
+
+    for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(app.seen('team-hand').endsWith('\r'), 'ENTER: the redelivery write is complete before the baseline');
+    s._awaitingTurnSince = Date.now();
+    const beforeFollow = app.seen('team-hand');
+    app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
+    for (let i = 0; i < 400 && app.parked('team-hand', /ALSO FIX THE LATCH/) === 0; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.strictEqual(app.parked('team-hand', /ALSO FIX THE LATCH/), 1, 'ENTER: the window parked the more-must-fixes write');
+    assert.strictEqual(app.seen('team-hand'), beforeFollow, 'ENTER: and nothing was typed');
+    assert.ok(s._specUnconfirmed, 'the latch survives the window divert of a first-write redirect');
+    assert.strictEqual(s._specUnconfirmed.kind, 'redirect', 'and it is still the REDIRECT latch');
+    assert.strictEqual(s._specUnconfirmed.retried, false, 'and the parked write gets its one typed redelivery back');
+    assert.strictEqual(s._specUnconfirmed.windowRearmed, true, 'and the window re-arm is spent');
+
+    s._awaitingTurnSince -= 61_000;
+    const beforeRedo = app.seen('team-hand');
+    fireConfirm(app, s);
+    const redo = await settled(app, 'team-hand', /ALSO FIX THE LATCH/);
+    assert.match(redo.slice(beforeRedo.length), /REDELIVERY/, 'the next deadline types the redelivery once the window has closed');
+
+    lead._awaitingTurnSince = null;
+    const beforeLead = app.seen('lead');
+    fireConfirm(app, s);
+    const leadSaw = await settled(app, 'lead', /ESCALATED/);
+    assert.match(leadSaw.slice(beforeLead.length), /ESCALATED/, 'a typed redelivery with no turn after it escalates');
+  } finally { app.stop(); }
+});
+
 // A dispatched ticket whose spec latch has been RETIRED by a real turn, closed,
 // and then rejected by the lead — i.e. a seat holding a redirect and nothing
 // else. The turn matters: without it the spec latch is still armed and every
