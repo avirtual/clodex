@@ -1,6 +1,6 @@
 'use strict';
 
-const TURN_KINDS = new Set(['prompt', 'inbound', 'reply', 'notification', 'command']);
+const TURN_KINDS = new Set(['prompt', 'inbound', 'reply', 'notification', 'command', 'boundary']);
 
 function isInternalRow(rec) {
   if (!rec) return false;

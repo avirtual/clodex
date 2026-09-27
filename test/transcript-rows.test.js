@@ -108,7 +108,7 @@ test('a turn with a turn-end gets a footer of duration, tool count, errors and f
   const end = { id: 'e1', kind: 'turn-end', ts: null, turn: 1, durationMs: 14000, messageCount: 9 };
   assert.strictEqual(footerOf([prompt, done, edit]), null);
   assert.deepStrictEqual(footerOf([prompt, done, edit, failed, end]), {
-    durationMs: 14000, tools: 3, errors: 1, files: [{ file: '/r/notes.txt', add: 1, del: 1 }], compacted: null,
+    durationMs: 14000, tools: 3, errors: 1, files: [{ file: '/r/notes.txt', add: 1, del: 1 }],
   });
   const m = mount();
   m.render([prompt, done, edit, failed, end]);
@@ -985,6 +985,30 @@ test('runs: a compact notice merged at index 0 does not change the run key, so t
   m.render(merged);
   assert.strictEqual(cardsOf(m).length, 1);
   assert.strictEqual(togglesOf(m)[0].getAttribute('aria-expanded'), 'true');
+});
+
+test('Conversation: a compact boundary stands in its own turn block, outside the ticket fold before it, and no footer repeats its token drop', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([
+    replyRec('r1', 1, 'task', '⇄', 'task', 'ticket t1 created'),
+    call('t1', 'Bash', 'ls'),
+    said('a1', 1, '[agent:context compact]'),
+    { id: 'b1', kind: 'boundary', ts: null, turn: 2, what: 'compact', trigger: 'manual', preTokens: 214000, postTokens: 5000 },
+    ask('p3', 3, 'Continue from here'),
+    talk('a3', 3, 'picking up'),
+  ]);
+  const blocks = m.pane.childNodes;
+  assert.deepStrictEqual(blocks.map((n) => n.dataset.turn), ['r1', 'b1', 'p3'], 'ENTER: three turn blocks');
+  const fold = turnOf(m, 'r1');
+  assert.match(fold.className, /\btr-turn-folded\b/, 'ENTER: the ticket turn folds');
+  assert.deepStrictEqual(findCls(fold, 'tr-boundary'), []);
+  assert.deepStrictEqual(findCls(fold, 'tr-footer'), []);
+  const own = turnOf(m, 'b1');
+  assert.strictEqual(own.className, 'tr-turn');
+  assert.deepStrictEqual(own.childNodes.map(cls), ['tr-row tr-boundary']);
+  const stats = [...findCls(m.pane, 'tr-footer'), ...findCls(m.pane, 'tr-turn-fold-stats'), ...findCls(m.pane, 'tr-run-toggle')].map((n) => n.textContent);
+  assert.deepStrictEqual(stats.filter((t) => t.includes('compacted')), []);
+  assert.doesNotMatch(turnOf(m, 'p3').className, /\btr-turn-cont\b/);
 });
 
 test('runs: a run whose head is evicted re-keys to the first surviving turn and starts closed', () => {
