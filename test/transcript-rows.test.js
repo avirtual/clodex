@@ -293,9 +293,9 @@ test('consecutive intents form one stack of cards: head of glyph, label, target 
   assert.deepStrictEqual(row.childNodes.map(cls), ['intent-stack', 'tr-seg-prose']);
   const [dm, done] = row.childNodes[0].childNodes;
   assert.deepStrictEqual(dm.childNodes[0].childNodes.map((n) => [n.className, n.textContent]),
-    [['intent-card-glyph', '→'], ['intent-card-label', 'message'], ['intent-card-target', 'bob'], ['intent-chip', 'urgent']]);
-  assert.strictEqual(dm.childNodes[1].textContent, 'hi');
-  assert.strictEqual(done.childNodes[0].textContent, '✓donet4');
+    [['intent-card-glyph', '→'], ['intent-card-label', 'message'], ['intent-card-target', 'bob'], ['intent-card-inline', 'hi'], ['intent-chip', 'urgent']]);
+  assert.strictEqual(dm.childNodes.length, 1);
+  assert.strictEqual(done.childNodes[0].textContent, '✓donet4ok');
   assert.strictEqual(row.childNodes[1].textContent, 'tail words');
   assert.ok(!row.textContent.includes('[agent:'), row.textContent);
   assert.ok(!/fire|fired/.test(row.textContent));
@@ -319,8 +319,10 @@ test('a filed body becomes a link to the spill, opened through the file peek', a
   rows.render([said('a1', 0, `[agent:dm clodex] Design saved — 6.2 KB filed at ${FILED}\n[agent:end]`)]);
   const card = pane.childNodes[0].childNodes[0].childNodes[0].childNodes[0];
   assert.strictEqual(card.className, 'intent-card intent-card-filed');
-  assert.strictEqual(card.childNodes[1].textContent, '▢ 6.2 KB filed · Design saved');
-  const link = card.childNodes[1].childNodes[0].childNodes[1];
+  assert.strictEqual(card.childNodes.length, 1);
+  const inline = findCls(card.childNodes[0], 'intent-card-inline')[0];
+  assert.strictEqual(inline.textContent, '▢ 6.2 KB filed · Design saved');
+  const link = inline.childNodes[0].childNodes[1];
   assert.strictEqual(link.dataset.path, FILED);
   link.listeners.click({ preventDefault() {} });
   await new Promise((r) => setImmediate(r));
@@ -1211,4 +1213,79 @@ test('folds: an operator-driven turn and a machine-driven turn that shouted neve
   assert.deepStrictEqual(findCls(m.pane, 'tr-turn-fold'), []);
   assert.deepStrictEqual(shown(turnOf(m, 'p1')), ['tr-row tr-head tr-prompt', 'tr-row tr-prose', 'tr-row tr-footer']);
   assert.deepStrictEqual(shown(turnOf(m, 'i2')), ['tr-box', 'tr-row tr-prose tr-segs', 'tr-row tr-footer']);
+});
+
+const headCls = (card) => card.childNodes[0].childNodes.map(cls);
+const cardAt = (m) => m.pane.childNodes[0].childNodes[0].childNodes[0].childNodes[0];
+
+test('inline: a one-line remind body sits on the head after the target, with no body block', () => {
+  const m = mount();
+  m.render([said('a1', 0, '[agent:remind in 10m] continue: t1276 awaiting own digest\n[agent:end]')]);
+  const card = cardAt(m);
+  assert.deepStrictEqual(card.childNodes.map(cls), ['intent-card-head']);
+  assert.deepStrictEqual(headCls(card), ['intent-card-glyph', 'intent-card-label', 'intent-card-target', 'intent-card-inline']);
+  const inline = card.childNodes[0].childNodes[3];
+  assert.strictEqual(inline.textContent, 'continue: t1276 awaiting own digest');
+  assert.strictEqual(inline.title, 'continue: t1276 awaiting own digest');
+  assert.deepStrictEqual(findCls(card, 'intent-card-body'), []);
+});
+
+test('inline: a two-line dm body keeps its block under the head', () => {
+  const m = mount();
+  m.render([said('a1', 0, '[agent:dm bob] one\ntwo\n[agent:end]')]);
+  const card = cardAt(m);
+  assert.deepStrictEqual(card.childNodes.map(cls), ['intent-card-head', 'intent-card-body']);
+  assert.deepStrictEqual(findCls(card, 'intent-card-inline'), []);
+});
+
+test('inline: 120 chars renders inline, 121 renders the block', () => {
+  const at = (body) => {
+    const m = mount();
+    m.render([said('a1', 0, `[agent:dm bob] ${body}\n[agent:end]`)]);
+    return cardAt(m).childNodes.map(cls);
+  };
+  assert.deepStrictEqual(at('x'.repeat(120)), ['intent-card-head']);
+  assert.deepStrictEqual(at('x'.repeat(121)), ['intent-card-head', 'intent-card-body']);
+});
+
+test('inline: an exec one-liner keeps the mono block', () => {
+  const m = mount();
+  m.render([said('a1', 0, 'x\n[agent:exec clodex-team] {"a":1}')]);
+  const card = m.pane.childNodes[0].childNodes[0].childNodes[1].childNodes[0];
+  assert.deepStrictEqual(card.childNodes.map(cls), ['intent-card-head', 'intent-card-body intent-card-body-mono']);
+  assert.deepStrictEqual(findCls(card, 'intent-card-inline'), []);
+});
+
+test('inline: a filed task done carries the filed link inside the inline span', () => {
+  const m = mount();
+  m.render([said('a1', 0, `[agent:task done t1276] Report — 2.7 KB filed at ${FILED}\n[agent:end]`)]);
+  const card = cardAt(m);
+  assert.strictEqual(card.className, 'intent-card intent-card-filed');
+  assert.deepStrictEqual(card.childNodes.map(cls), ['intent-card-head']);
+  const inline = findCls(card, 'intent-card-inline')[0];
+  assert.strictEqual(inline.textContent, '▢ 2.7 KB filed · Report');
+  assert.strictEqual(inline.childNodes[0].childNodes[1].dataset.path, FILED);
+  assert.deepStrictEqual(findCls(card, 'intent-card-body'), []);
+});
+
+test('inline: an unclosed one-liner keeps the block and the unclosed chip', () => {
+  const m = mount();
+  m.render([said('a1', 0, '[agent:remind in 5m] watchdog')]);
+  const card = cardAt(m);
+  assert.strictEqual(card.className, 'intent-card intent-card-open');
+  assert.deepStrictEqual(card.childNodes.map(cls), ['intent-card-head', 'intent-card-body']);
+  assert.deepStrictEqual(findCls(card, 'intent-card-inline'), []);
+  const head = card.childNodes[0];
+  assert.strictEqual(head.childNodes[head.childNodes.length - 1].textContent, 'unclosed');
+});
+
+test('folds: an opened turn that leaves the records does not pre-open a new turn reusing its line:N key', () => {
+  const m = mount({ mode: 'conversation' });
+  const machine = () => inb('line:5', 2, 'ticket-loop', '[ticket t1 ACCEPT] t1-x accepted');
+  m.render([ask('line:0', 1), talk('line:1', 1), machine(), talk('line:6', 2)]);
+  turnOf(m, 'line:5').childNodes[0].listeners.click();
+  assert.ok(!/\btr-turn-folded\b/.test(turnOf(m, 'line:5').className));
+  m.render([ask('line:0', 1), talk('line:1', 1)]);
+  m.render([ask('line:0', 1), talk('line:1', 1), machine(), talk('line:6', 2)]);
+  assert.ok(/\btr-turn-folded\b/.test(turnOf(m, 'line:5').className));
 });

@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Transcript pane: an intent whose body is a single short line (a reminder, a one-line dm, a filed report) now shows it on the same line as its label instead of on a second row; longer bodies keep the clamped block.
 
 - Codex seats launched with approvals and the sandbox bypassed now show a `Bypass` chip under the composer (`Read-only` for a capped reviewer seat), since Codex's own status row does not say so; every agent seat's hovercard gains a `posture` row.
 - Every ticket transition (filed, started, assigned, reported, verdict, rejected, respec'd, merged, merge-failed, verify-hold, nudged, accepted, cancelled) is now appended to the ticket record as an `events` list with who and when, and the Tickets viewer's ticket read returns it. Records from before this change have no list and gain one from their next transition.

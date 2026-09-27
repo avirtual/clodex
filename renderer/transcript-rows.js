@@ -13,6 +13,7 @@ const OUTPUT_LINE_CAP = 400;
 const CLAMP_LINES = 2;
 const CLAMP_CHARS = 240;
 const PREVIEW_CHARS = 120;
+const INLINE_CHARS = 120;
 const FOLD_CHARS = 80;
 const NOOP = () => {};
 const MINUS = '−';
@@ -135,7 +136,13 @@ function filedLink(doc, spill, ctx) {
   return wrap;
 }
 
-function cardHead(doc, seg, ctx) {
+function inlineBody(seg) {
+  if (seg.open) return false;
+  if (seg.state === 'filed' && seg.spill) return true;
+  return !!seg.body && seg.verb !== 'exec' && !seg.body.includes('\n') && seg.body.trim().length <= INLINE_CHARS;
+}
+
+function cardHead(doc, seg, ctx, inline) {
   const head = el(doc, 'div', 'intent-card-head');
   const h = seg.head;
   head.appendChild(el(doc, 'span', 'intent-card-glyph', h.glyph));
@@ -145,6 +152,15 @@ function cardHead(doc, seg, ctx) {
     if (seg.verb === 'file') target.appendChild(linkNode(doc, { kind: 'path', text: baseName(h.target), path: h.target }, '', ctx));
     else target.textContent = h.target;
     head.appendChild(target);
+  }
+  if (inline) {
+    const span = el(doc, 'span', 'intent-card-inline');
+    if (seg.state === 'filed' && seg.spill) span.appendChild(filedLink(doc, seg.spill, ctx));
+    else {
+      appendPlain(doc, span, seg.body, ctx);
+      span.title = seg.body;
+    }
+    head.appendChild(span);
   }
   for (const chip of h.chips) head.appendChild(el(doc, 'span', 'intent-chip', chip));
   if (seg.open) {
@@ -183,7 +199,9 @@ function intentCard(doc, seg, ctx) {
   }
   const card = el(doc, 'div', `intent-card${seg.state === 'filed' ? ' intent-card-filed' : ''}${seg.open ? ' intent-card-open' : ''}`);
   card.dataset.verb = seg.verb;
-  card.appendChild(cardHead(doc, seg, ctx));
+  const inline = inlineBody(seg);
+  card.appendChild(cardHead(doc, seg, ctx, inline));
+  if (inline) return card;
   if (seg.state === 'filed' && seg.spill) {
     const row = el(doc, 'div', 'intent-card-body');
     row.appendChild(filedLink(doc, seg.spill, ctx));
@@ -977,6 +995,8 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     const runs = groupRuns(groupTurns(list));
     const keys = new Set(runs.filter((run) => run.hosted).map((run) => run.key));
     for (const k of [...openRuns]) if (!keys.has(k)) openRuns.delete(k);
+    const turnKeys = new Set(runs.flatMap((run) => run.turns.map((t) => t.key)));
+    for (const k of [...openTurns]) if (!turnKeys.has(k)) openTurns.delete(k);
     const live = new Set();
     const items = [];
     for (const run of runs) {

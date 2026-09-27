@@ -6093,6 +6093,7 @@ body.web-frontend #sidebar-header {
 .intent-card-glyph { color: var(--text-secondary); min-width: 1em; text-align: center; }
 .intent-card-label { font-weight: 600; }
 .intent-card-target { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; }
+.intent-card-inline { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 auto; }
 .intent-chip {
   font-size: var(--fs-xs);
   color: var(--text-tertiary);
