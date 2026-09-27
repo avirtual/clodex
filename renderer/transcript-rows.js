@@ -374,6 +374,16 @@ function senderBadge(doc, from) {
   return badge;
 }
 
+function inboundBadge(doc, rec) {
+  if (rec.via !== 'subagent') return senderBadge(doc, rec.from);
+  const name = String(rec.from);
+  const badge = el(doc, 'span', `tr-sender tr-sender-${classifySender(name).cls}`);
+  badge.title = 'Report from a subagent of this seat — attached by the CLI, not typed';
+  badge.appendChild(el(doc, 'span', 'tr-sender-glyph', (Array.from(name)[0] || '?').toUpperCase()));
+  badge.appendChild(el(doc, 'span', 'tr-sender-name', name));
+  return badge;
+}
+
 function appBadge(doc, rec) {
   const badge = el(doc, 'span', 'tr-sender tr-sender-app');
   badge.title = 'Clodex runtime';
@@ -395,13 +405,8 @@ function replyRow(doc, rec, ctx, attached) {
 function inboundRow(doc, rec, ctx) {
   const row = headRow(doc, 'tr-inbound', rec);
   const text = el(doc, 'span', 'tr-head-text');
-  const badge = senderBadge(doc, rec.from);
-  if (rec.via === 'subagent') {
-    row.dataset.via = 'subagent';
-    badge.title = 'Report from a subagent of this seat — attached by the CLI, not typed';
-    badge.childNodes[1].textContent = String(rec.from);
-  }
-  text.appendChild(badge);
+  if (rec.via === 'subagent') row.dataset.via = 'subagent';
+  text.appendChild(inboundBadge(doc, rec));
   if (rec.attached) {
     const lead = rec.text.slice(0, rec.text.indexOf('Message (')).trim();
     if (lead) appendProse(doc, text, `${lead} `, ctx);
@@ -435,7 +440,7 @@ function previewText(text) {
 function boxHead(doc, rec, att) {
   const head = el(doc, 'div', 'tr-box-head');
   if (att) head.appendChild(el(doc, 'span', 'tr-reply-lead', '↳'));
-  if (rec.kind === 'inbound') head.appendChild(senderBadge(doc, rec.from));
+  if (rec.kind === 'inbound') head.appendChild(inboundBadge(doc, rec));
   else if (rec.kind === 'reply') head.appendChild(appBadge(doc, rec));
   else head.appendChild(el(doc, 'span', 'tr-mark'));
   head.appendChild(el(doc, 'span', 'tr-box-preview', previewText(rec.text)));

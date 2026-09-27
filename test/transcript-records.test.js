@@ -762,3 +762,10 @@ test('a teammate message absorbed mid-turn is the same inbound card, stamped mid
   assert.deepStrictEqual(card, { id: 'q', kind: 'inbound', ts: TS, turn: 1, from: 'nits-coords', via: 'subagent', text: 'hello lead', source: 'mid-turn' });
   assert.deepStrictEqual(records.filter((r) => r.kind === 'prompt').map((r) => r.id), ['p1']);
 });
+
+test('a > inside the summary attribute does not end the teammate tag early, for prose and for an idle notification', () => {
+  const attrs = 'teammate_id="nits-coords" color="blue" summary="Review done -> 2 must-fixes"';
+  const idle = '{"type":"idle_notification","from":"nits-coords","idleReason":"available","result":"done: 17 open"}';
+  const { records } = recordsOf([typed('u1', 'p1', teammate('hello lead', attrs)), typed('u2', 'p2', teammate(idle, attrs))].join('\n'));
+  assert.deepStrictEqual(records.map((r) => [r.kind, r.from, r.text]), [['inbound', 'nits-coords', 'hello lead'], ['inbound', 'nits-coords', 'done: 17 open']]);
+});
