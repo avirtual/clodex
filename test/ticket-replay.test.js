@@ -2006,6 +2006,26 @@ test('t1253: more must-fixes over a rejection the TRANSCRIPT confirmed, latch st
   } finally { app.stop(); }
 });
 
+test('t1253: more must-fixes whose arm leaves an older carried latch in place type their own text', async () => {
+  const world = mkWorld();
+  const { app, s, lead } = await redirected(world);
+  try {
+    app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'ALSO FIX THE LATCH' });
+    await settled(app, 'team-hand', /ALSO FIX THE LATCH/);
+    for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(s._specUnconfirmed && s._specUnconfirmed.carried, 'ENTER: the first follow-up left a carried latch');
+    const older = s._specUnconfirmed;
+    app.m._armSpecConfirm = () => {};
+
+    const beforeSecond = app.seen('team-hand');
+    app.m._handleTask(lead, { type: 'task', sub: 'reject', who: null, id: 't1', body: 'THEN FIX THE SECOND THING' });
+    await settled(app, 'team-hand', /THEN FIX THE SECOND THING|ALSO FIX THE LATCH[\s\S]*ALSO FIX THE LATCH/);
+    for (let i = 0; i < 200 && !app.seen('team-hand').endsWith('\r'); i++) await new Promise((r) => setTimeout(r, 5));
+    assert.strictEqual(s._specUnconfirmed, older, 'ENTER: the arm left the older carried latch in place');
+    assert.match(app.seen('team-hand').slice(beforeSecond.length), /THEN FIX THE SECOND THING/, 'the write types its own must-fixes');
+  } finally { app.stop(); }
+});
+
 // A dispatched ticket whose spec latch has been RETIRED by a real turn, closed,
 // and then rejected by the lead — i.e. a seat holding a redirect and nothing
 // else. The turn matters: without it the spec latch is still armed and every

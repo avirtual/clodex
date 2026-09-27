@@ -4026,6 +4026,7 @@ function createTicketMethods(deps, shared) {
         : { ticketId, kind, at: Date.now(), retried, since };
       if (rearmed) s._specUnconfirmed.windowRearmed = true;
       this._armSpecConfirmTimer(s);
+      return s._specUnconfirmed;
     },
 
     // The bytes of a seat-bound ticket REDIRECT — a rejection or a follow-up set
@@ -7560,19 +7561,18 @@ function createTicketMethods(deps, shared) {
       }
       const rework = this._reworkSeatFor(team, ticket, seat,
         this._redirectDeliveryText(ticket.id, 'more must-fixes', reason));
+      let armed = null;
       const r = rework.replaced
         ? { queued: true }
         : this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'more must-fixes', reason), true,
           `[ticket ${ticket.id} more must-fixes] close with ${ticketCloseVerb(ticket.id)}`,
-          (disposition, why) => this._armSpecConfirm(seat, ticket.id, disposition,
-            { label: 'more must-fixes', reason, from: session.name }, why),
-          { rebody: () => {
-            const live = this.sessions.get(seat);
-            const u = live && live._specUnconfirmed;
-            return u && u.carried && u.kind === 'redirect' && u.ticketId === ticket.id && typeof u.reason === 'string'
-              ? this._redirectDeliveryText(ticket.id, 'more must-fixes', u.reason)
-              : null;
-          } });
+          (disposition, why) => {
+            armed = this._armSpecConfirm(seat, ticket.id, disposition,
+              { label: 'more must-fixes', reason, from: session.name }, why) || null;
+          },
+          { rebody: () => (armed && armed.carried && typeof armed.reason === 'string'
+            ? this._redirectDeliveryText(ticket.id, 'more must-fixes', armed.reason)
+            : null) });
       if (!(r && (r.queued || r.parked))) {
         reply(`error: ${ticket.id} is already open for rework and the follow-up did NOT reach ${rework.seat} `
           + `(${(r && (r.error || r.held)) || 'unknown delivery failure'})`
