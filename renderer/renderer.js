@@ -66,7 +66,8 @@ const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
 const { createVoiceMirror, engineObserved } = require('./voice-mirror');
 const { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require('./lib/composer-voice');
-const { ptyComposerWrites, pasteKind, imageChip, stripImageChips } = require('./lib/pty-composer');
+const { ptyComposerWrites, expandImageChips, ptyImagePasteHandler } = require('./lib/pty-composer');
+const { readImageFile, clipboardImages } = require('./lib/clipboard-images');
 const { createMenuMirror } = require('./lib/menu-mirror');
 const { VOICE_ENGINE_NAME } = require('../voice-engine');
 const {
@@ -1810,15 +1811,12 @@ function createStreamSeatPane(name, wrapperEl) {
     }
     for (const file of taken) {
       reading += 1;
-      const reader = new FileReader();
-      reader.onloadend = () => { reading -= 1; };
-      reader.onload = () => {
-        const m = /^data:([^;,]+);base64,(.*)$/.exec(String(reader.result || ''));
-        if (!m || disposed) return;
-        pending = [...pending, { mediaType: m[1], data: m[2] }];
+      readImageFile(file, FileReader).then((img) => {
+        reading -= 1;
+        if (!img || disposed) return;
+        pending = [...pending, img];
         renderAttachments();
-      };
-      reader.readAsDataURL(file);
+      });
     }
   };
   composer.addEventListener('paste', (e) => {
@@ -2278,15 +2276,18 @@ function createTerminal(name, peer = null) {
   const composerEl = splitOn ? document.createElement('textarea') : null;
   const menuMirror = composerEl ? createMenuMirror() : null;
   let pastedImages = 0;
+  let pastedImagePaths = {};
   const sendPtyComposer = () => {
     const text = composerEl.value;
     if (!text.trim()) return;
     composerEl.value = '';
     pastedImages = 0;
+    const imagePaths = pastedImagePaths;
+    pastedImagePaths = {};
     composerKit.fit();
     composerTrigger.resetSpan();
     const mirrored = menuMirror.on() ? menuMirror.draft(text) : [];
-    const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(stripImageChips(text));
+    const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(expandImageChips(text, imagePaths));
     for (const w of [...mirrored, ...writes]) writePty(w);
     if (liveSplit) liveSplit.composerSent(text);
   };
@@ -2339,21 +2340,24 @@ function createTerminal(name, peer = null) {
     composerEl.hidden = true;
     wrapperEl.appendChild(composerEl);
     composerEl.addEventListener('input', syncMenuMirror);
-    composerEl.addEventListener('paste', (e) => {
-      if (pasteKind(e.clipboardData && e.clipboardData.items) !== 'image') return;
-      e.preventDefault();
-      if (window.__CLODEX_WEB__ || !window.require) {
-        showToast('Pasting images needs the desktop app — the CLI reads its own machine\'s clipboard, not this browser\'s.', { kind: 'peer-ui' });
-        return;
-      }
-      pastedImages += 1;
-      composerEl.value += imageChip(pastedImages);
-      if (menuMirror.on()) syncMenuMirror();
-      writePty('\x16');
-      const end = composerEl.value.length;
-      composerEl.setSelectionRange(end, end);
-      composerKit.fit();
-    });
+    composerEl.addEventListener('paste', ptyImagePasteHandler({
+      isWeb: () => Boolean(window.__CLODEX_WEB__ || !window.require),
+      readImages: (items) => clipboardImages(items, FileReader),
+      upload: (images) => window.api.seatImageUpload(name, images),
+      toast: (message) => showToast(message, { kind: 'error', name }),
+      nextImage: () => { pastedImages += 1; return pastedImages; },
+      append: (added) => {
+        for (const { n, chip, path } of added) {
+          composerEl.value += chip;
+          if (path) pastedImagePaths[n] = path;
+        }
+        if (menuMirror.on()) syncMenuMirror();
+        const end = composerEl.value.length;
+        composerEl.setSelectionRange(end, end);
+        composerKit.fit();
+      },
+      writePty,
+    }));
   }
   const liveSplit = !splitOn ? null : createLiveSplitView(terminal, wrapperEl, {
     isEligible: () => transcriptPaneEnabled && isAgentType(sessionTypeOf(name)),

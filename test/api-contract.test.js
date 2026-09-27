@@ -46,7 +46,7 @@ const PINNED_NAMES = [
   'getVersion', 'getDiagnostics', 'toolsCheck', 'invalidateToolCache', 'onUpdateAvailable', 'onSessionContextAction',
   // t412: the focus decision's read of main-side draft state.
   'draftOpen', 'transcriptPull', 'onTranscriptChanged',
-  'writeToSession', 'seatSend', 'seatPermission', 'seatInterrupt', 'seatDraft', 'seatCommands', 'seatControl', 'selectDirectory', 'confirmKill', 'restoreSessions',
+  'writeToSession', 'seatSend', 'seatImageUpload', 'seatPermission', 'seatInterrupt', 'seatDraft', 'seatCommands', 'seatControl', 'selectDirectory', 'confirmKill', 'restoreSessions',
   'onPtyData', 'onSessionExit', 'onIpcMessage', 'onSessionActivity',
   // Retires the drawer status line's claim about a delivery that had not
   // happened yet — the CLI's own hook drains the queue, so the app cannot
@@ -242,8 +242,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 324-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 324, 'pinned list is the full 324-method surface');
+test('contract covers exactly the pinned 325-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 325, 'pinned list is the full 325-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -267,7 +267,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 324, 'window.api has exactly 324 methods');
+    assert.equal(generated.length, 325, 'window.api has exactly 325 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

@@ -10884,6 +10884,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "onTranscriptChanged", kind: "on", channel: "transcript-changed" },
         { name: "writeToSession", kind: "send", channel: "pty-input" },
         { name: "seatSend", kind: "invoke", channel: "seat:send" },
+        { name: "seatImageUpload", kind: "invoke", channel: "seat:image-upload" },
         { name: "seatPermission", kind: "invoke", channel: "seat:permission" },
         { name: "seatInterrupt", kind: "invoke", channel: "seat:interrupt" },
         { name: "seatDraft", kind: "send", channel: "seat:draft" },
@@ -30650,7 +30651,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
     "renderer/lib/pty-composer.js"(exports, module) {
       "use strict";
       var { PASTE_OPEN, PASTE_CLOSE } = require_composer_voice();
-      var IMAGE_CHIP_RE = /\[Image #\d+\] ?/gu;
+      var IMAGE_CHIP_RE = /\[Image #(\d+)\] ?/gu;
       function ptyComposerWrites(text) {
         return [`${PASTE_OPEN}${String(text)}${PASTE_CLOSE}`, "\r"];
       }
@@ -30663,10 +30664,59 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function imageChip(n) {
         return `[Image #${n}] `;
       }
-      function stripImageChips(text) {
-        return String(text).replace(IMAGE_CHIP_RE, "");
+      function expandImageChips(text, paths) {
+        const map = paths || {};
+        return String(text).replace(IMAGE_CHIP_RE, (chip, n) => map[n] ? `Image #${n}: ${map[n]} ` : "");
       }
-      module.exports = { ptyComposerWrites, pasteKind, imageChip, stripImageChips };
+      function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, append, writePty }) {
+        return async (e) => {
+          const items = e.clipboardData && e.clipboardData.items;
+          if (pasteKind(items) !== "image") return;
+          e.preventDefault();
+          const web = isWeb();
+          let paths = [null];
+          if (web) {
+            const images = await readImages(items);
+            const r = images.length ? await upload(images) : { ok: false, error: "No readable image on the clipboard." };
+            if (!r || !r.ok) {
+              toast(String(r && r.error || "Image upload failed."));
+              return;
+            }
+            paths = r.paths;
+          }
+          append(paths.map((p) => {
+            const n = nextImage();
+            return { n, chip: imageChip(n), path: p };
+          }));
+          if (!web) writePty("");
+        };
+      }
+      module.exports = { ptyComposerWrites, pasteKind, imageChip, expandImageChips, ptyImagePasteHandler };
+    }
+  });
+
+  // renderer/lib/clipboard-images.js
+  var require_clipboard_images = __commonJS({
+    "renderer/lib/clipboard-images.js"(exports, module) {
+      "use strict";
+      function dataUrlImage(url) {
+        const m = /^data:([^;,]+);base64,(.*)$/u.exec(String(url || ""));
+        return m ? { mediaType: m[1], data: m[2] } : null;
+      }
+      function readImageFile(file, Reader) {
+        return new Promise((resolve) => {
+          const reader = new Reader();
+          reader.onload = () => resolve(dataUrlImage(reader.result));
+          reader.onerror = () => resolve(null);
+          reader.readAsDataURL(file);
+        });
+      }
+      async function clipboardImages(items, Reader) {
+        const files = Array.from(items || []).filter((it) => it && it.kind === "file" && /^image\//u.test(String(it.type))).map((it) => it.getAsFile()).filter(Boolean);
+        const read = await Promise.all(files.map((f) => readImageFile(f, Reader)));
+        return read.filter(Boolean);
+      }
+      module.exports = { dataUrlImage, readImageFile, clipboardImages };
     }
   });
 
@@ -46048,7 +46098,8 @@ ${detail}` });
       var { createIntentHighlight } = require_intent_highlight();
       var { createVoiceMirror, engineObserved } = require_voice_mirror();
       var { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require_composer_voice();
-      var { ptyComposerWrites, pasteKind, imageChip, stripImageChips } = require_pty_composer();
+      var { ptyComposerWrites, expandImageChips, ptyImagePasteHandler } = require_pty_composer();
+      var { readImageFile, clipboardImages } = require_clipboard_images();
       var { createMenuMirror } = require_menu_mirror();
       var { VOICE_ENGINE_NAME } = require_voice_engine();
       var {
@@ -47773,17 +47824,12 @@ ${detail}` });
           }
           for (const file of taken) {
             reading += 1;
-            const reader = new FileReader();
-            reader.onloadend = () => {
+            readImageFile(file, FileReader).then((img) => {
               reading -= 1;
-            };
-            reader.onload = () => {
-              const m = /^data:([^;,]+);base64,(.*)$/.exec(String(reader.result || ""));
-              if (!m || disposed) return;
-              pending = [...pending, { mediaType: m[1], data: m[2] }];
+              if (!img || disposed) return;
+              pending = [...pending, img];
               renderAttachments();
-            };
-            reader.readAsDataURL(file);
+            });
           }
         };
         composer.addEventListener("paste", (e) => {
@@ -48225,15 +48271,18 @@ ${detail}` });
         const composerEl = splitOn ? document.createElement("textarea") : null;
         const menuMirror = composerEl ? createMenuMirror() : null;
         let pastedImages = 0;
+        let pastedImagePaths = {};
         const sendPtyComposer = () => {
           const text = composerEl.value;
           if (!text.trim()) return;
           composerEl.value = "";
           pastedImages = 0;
+          const imagePaths = pastedImagePaths;
+          pastedImagePaths = {};
           composerKit.fit();
           composerTrigger.resetSpan();
           const mirrored = menuMirror.on() ? menuMirror.draft(text) : [];
-          const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(stripImageChips(text));
+          const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(expandImageChips(text, imagePaths));
           for (const w of [...mirrored, ...writes]) writePty(w);
           if (liveSplit) liveSplit.composerSent(text);
         };
@@ -48286,21 +48335,27 @@ ${detail}` });
           composerEl.hidden = true;
           wrapperEl.appendChild(composerEl);
           composerEl.addEventListener("input", syncMenuMirror);
-          composerEl.addEventListener("paste", (e) => {
-            if (pasteKind(e.clipboardData && e.clipboardData.items) !== "image") return;
-            e.preventDefault();
-            if (window.__CLODEX_WEB__ || !window.require) {
-              showToast("Pasting images needs the desktop app \u2014 the CLI reads its own machine's clipboard, not this browser's.", { kind: "peer-ui" });
-              return;
-            }
-            pastedImages += 1;
-            composerEl.value += imageChip(pastedImages);
-            if (menuMirror.on()) syncMenuMirror();
-            writePty("");
-            const end = composerEl.value.length;
-            composerEl.setSelectionRange(end, end);
-            composerKit.fit();
-          });
+          composerEl.addEventListener("paste", ptyImagePasteHandler({
+            isWeb: () => Boolean(window.__CLODEX_WEB__ || !window.require),
+            readImages: (items) => clipboardImages(items, FileReader),
+            upload: (images) => window.api.seatImageUpload(name, images),
+            toast: (message) => showToast(message, { kind: "error", name }),
+            nextImage: () => {
+              pastedImages += 1;
+              return pastedImages;
+            },
+            append: (added) => {
+              for (const { n, chip, path } of added) {
+                composerEl.value += chip;
+                if (path) pastedImagePaths[n] = path;
+              }
+              if (menuMirror.on()) syncMenuMirror();
+              const end = composerEl.value.length;
+              composerEl.setSelectionRange(end, end);
+              composerKit.fit();
+            },
+            writePty
+          }));
         }
         const liveSplit = !splitOn ? null : createLiveSplitView(terminal, wrapperEl, {
           isEligible: () => transcriptPaneEnabled && isAgentType(sessionTypeOf(name)),

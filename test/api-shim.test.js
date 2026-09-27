@@ -853,3 +853,17 @@ test('t655: every plugin-axis invoke crosses the web shim at full arity', async 
       'session:setArgs arg[15] is the plugins list, intact at the far end of the wire');
   } finally { restore(); }
 });
+
+test('seatImageUpload crosses the web shim as an invoke on seat:image-upload with name and images intact', async () => {
+  const { ws, restore } = await connected();
+  try {
+    assert.deepEqual(API_CONTRACT.find((r) => r.name === 'seatImageUpload'),
+      { name: 'seatImageUpload', kind: 'invoke', channel: 'seat:image-upload' });
+    const images = [{ mediaType: 'image/png', data: 'iVBORw0KGgo=' }];
+    global.window.api.seatImageUpload('seat', images);
+    await tick();
+    const inv = ws.frames().find((f) => f.t === 'invoke' && f.channel === 'seat:image-upload');
+    assert.ok(inv, 'seatImageUpload sent an invoke on seat:image-upload');
+    assert.deepEqual(inv.args, ['seat', images]);
+  } finally { restore(); }
+});
