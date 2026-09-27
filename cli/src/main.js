@@ -277,21 +277,31 @@ async function dispatchNode(verb, args, flags, printer, io) {
   return await handler({
     store, saveStore, printer, flags, args,
     env: io.env || process.env, prompt: io.prompt,
-    dialHello: (name) => dialNodeHello(store, name, io),
+    dialHello: (name) => dialNodeHello(() => (verb === 'describe'
+      ? describeCtx(store, name, flags, io)
+      : contexts.resolve(store, { ctxName: name, env: {}, flags: {} })), io),
   }) ?? EXIT.OK;
+}
+
+function describeCtx(store, ctxName, flags, io) {
+  const env = { ...(io.env || process.env) };
+  if (ctxName || store.current) delete env.CLODEX_URL;
+  return contexts.resolve(store, { ctxName, env, flags });
 }
 
 const NODE_DIAL_TIMEOUT_MS = 10000;
 
 function oneLine(msg, token) {
-  const first = String(msg || 'unknown error').split('\n').map((l) => l.trim()).find(Boolean) || 'unknown error';
-  return token ? first.split(token).join('***') : first;
+  const lines = String(msg || 'unknown error').split('\n').map((l) => l.trim()).filter(Boolean);
+  const first = lines[0] || 'unknown error';
+  const joined = first.endsWith(':') && lines[1] ? `${first} ${lines[1]}` : first;
+  return token ? joined.split(token).join('***') : joined;
 }
 
-async function dialNodeHello(store, name, io) {
+async function dialNodeHello(resolveCtx, io) {
   let ctx;
   try {
-    ctx = contexts.resolve(store, { ctxName: name, env: {}, flags: {} });
+    ctx = resolveCtx();
   } catch (e) {
     return { hello: null, error: oneLine(e && e.message) };
   }
@@ -343,7 +353,7 @@ async function dispatchDeploy(rest, flags, printer, io) {
 
 async function nodeTest(store, args, flags, printer, io) {
   const target = R.parseTarget(args, 'describe');
-  const ctx = contexts.resolve(store, { ctxName: target.name || flags.ctx || null, env: io.env || process.env, flags });
+  const ctx = describeCtx(store, target.name || flags.ctx || null, flags, io);
   if (flags.verbose) {
     printer.line(`transport: ${V.entryKind(ctx)} ${V.entryTarget(ctx)}`);
   }

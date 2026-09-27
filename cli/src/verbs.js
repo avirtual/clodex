@@ -967,6 +967,9 @@ async function nodeList({ store, printer, flags, args, dialHello }) {
   if (target.name && flags.current) {
     throw new CliError(EXIT.USAGE, `get node ${target.name} --current: --current prints the current node and takes no name (try: get nodes --current, or describe node ${target.name})`);
   }
+  if (flags.current && flags.versions) {
+    throw new CliError(EXIT.USAGE, 'get nodes --current --versions: --current prints a name alone (drop --versions)');
+  }
   if (flags.current) return nodeCurrent({ store, printer });
   if (target.name) {
     throw new CliError(EXIT.USAGE, `get nodes takes no name (try: describe node ${target.name})`);
@@ -1019,15 +1022,14 @@ async function nodeDescribe({ store, printer, args, dialHello }) {
   const e = store.contexts[name];
   if (!e) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
   const r = nodeRow(name, e, store.current);
-  const dialed = await dialHello(name);
   printer.line([
     `name        ${name}${r.current ? ' (current)' : ''}`,
     `kind        ${r.kind}`,
     `locator     ${r.locator}`,
     r.remotePort ? `remotePort  ${r.remotePort}` : null,
     `token       ${r.tokenSet ? '(set)' : '(none)'}`,
-    ...helloLines(dialed),
   ].filter(Boolean).join('\n'));
+  printer.line(helloLines(await dialHello(name)).join('\n'));
 }
 
 function nodeCreate(bundle) {

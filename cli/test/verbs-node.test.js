@@ -618,9 +618,75 @@ test('describe node answering 401 reads as unreachable, exit 0', async (t) => {
 test('describe node: a transport that never opens is cut at the dial timeout', async () => {
   const f = tmpCtx();
   await cli(['create', 'node', 'hang', '--ssh', 'user@box'], f);
-  const r = await cli(['describe', 'node', 'hang'], f, { openTransport: () => new Promise(() => {}), dialTimeoutMs: 20 });
+  let guard;
+  const bounded = new Promise((_, reject) => {
+    guard = setTimeout(() => reject(new Error('describe node did not return within 2s: the dial timeout is not bounding the open')), 2000);
+  });
+  try {
+    const r = await Promise.race([cli(['describe', 'node', 'hang'], f, { openTransport: () => new Promise(() => {}), dialTimeoutMs: 20 }), bounded]);
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.match(r.stdout, /^version     \(unreachable: timed out after 0\.02s\)$/m);
+  } finally {
+    clearTimeout(guard);
+  }
+});
+
+test('describe node prints the stored fields BEFORE the dial opens, then the version', async (t) => {
+  const { port } = await helloServer(t);
+  const f = tmpCtx();
+  await cli(['create', 'node', 'slow', '--ssh', 'user@box', '--token', 'SUPERSECRET'], f);
+  const writes = [];
+  let seenLocal;
+  const localPrinted = new Promise((res) => { seenLocal = res; });
+  const stdout = (s) => { writes.push(s); if (/^token /m.test(s)) seenLocal(); };
+  const openTransport = async () => {
+    await localPrinted;
+    return { baseUrl: `http://127.0.0.1:${port}`, close: () => {} };
+  };
+  const code = await run(['describe', 'node', 'slow'], { stdout, stderr: () => {}, env: {}, contextsFile: f, openTransport, dialTimeoutMs: 500 });
+  assert.strictEqual(code, 0);
+  const all = writes.join('');
+  assert.match(all, /^version     3\.4\.0$/m, 'the open waited on the local lines and they came first');
+  assert.ok(all.indexOf('locator     user@box') < all.indexOf('version     3.4.0'));
+});
+
+test('describe node keeps the tunnel reason that follows a trailing colon', async () => {
+  const f = tmpCtx();
+  await cli(['create', 'node', 'k8s', '--token', 'SUPERSECRET', '--tunnel', 'kubectl', 'port-forward', 'x', '{port}:7900'], f);
+  const failing = { openTransport: async () => { throw new Error('tunnel command exited before the port opened:\nkubectl: pods "x" not found\nthird'); } };
+  const r = await cli(['describe', 'node', 'k8s'], f, failing);
   assert.strictEqual(r.code, 0, r.stderr);
-  assert.match(r.stdout, /^version     \(unreachable: timed out after 0\.02s\)$/m);
+  assert.match(r.stdout, /^version     \(unreachable: tunnel command exited before the port opened: kubectl: pods "x" not found\)$/m);
+});
+
+test('describe node honours CLODEX_TOKEN as --test does, and both dial the stored locator over CLODEX_URL', async (t) => {
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    seen.push(req.headers.authorization);
+    if (req.headers.authorization !== 'Bearer ENVTOKEN') { res.writeHead(401); res.end(JSON.stringify({ error: 'unauthorized' })); return; }
+    res.writeHead(200); res.end(JSON.stringify({ ok: true, app: 'clodex', host: 'tokbox', version: '9.9.9', caps: [] }));
+  });
+  const port = await new Promise((res) => server.listen(0, '127.0.0.1', () => res(server.address().port)));
+  t.after(() => server.close());
+  const f = tmpCtx();
+  await cli(['create', 'node', 'bare', '--url', `http://127.0.0.1:${port}`], f);
+  const env = { CLODEX_TOKEN: 'ENVTOKEN', CLODEX_URL: 'http://127.0.0.1:1' };
+  const plain = await cli(['describe', 'node', 'bare'], f, { env });
+  assert.strictEqual(plain.code, 0, plain.stderr);
+  assert.match(plain.stdout, /^version     9\.9\.9$/m);
+  const tested = await cli(['describe', 'node', 'bare', '--test'], f, { env });
+  assert.strictEqual(tested.code, 0, tested.stderr);
+  assert.match(tested.stdout, /^version     9\.9\.9$/m);
+  assert.deepStrictEqual(seen, ['Bearer ENVTOKEN', 'Bearer ENVTOKEN']);
+});
+
+test('get nodes --versions still dials the stored entry only', async (t) => {
+  const { port } = await helloServer(t);
+  const f = tmpCtx();
+  await cli(['create', 'node', 'work', '--url', `http://127.0.0.1:${port}`], f);
+  const r = await cli(['get', 'nodes', '--versions'], f, { env: { CLODEX_URL: 'http://127.0.0.1:1' } });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /work\s+url\s+\S+\s+3\.4\.0/);
 });
 
 test('get nodes without --versions never dials and has no VERSION column', async (t) => {
@@ -675,4 +741,8 @@ test('--versions is refused on describe node and on get nodes -o name', async ()
   r = await cli(['get', 'nodes', '--versions', '-o', 'name'], f);
   assert.strictEqual(r.code, 2);
   assert.match(r.stderr, /get nodes --versions -o name: name output has one column/);
+  r = await cli(['get', 'nodes', '--current', '--versions'], f);
+  assert.strictEqual(r.code, 2);
+  assert.strictEqual(r.stderr, 'clodexctl: get nodes --current --versions: --current prints a name alone (drop --versions)\n');
+  assert.strictEqual(r.stdout, '');
 });
