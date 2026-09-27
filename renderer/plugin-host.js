@@ -29,6 +29,7 @@ function initPluginHost({
 // is what a host built before this existed did — the default is today's
 // behaviour, not a refusal.
   pluginReachesSession,
+  dock,
 } = {}) {
   // The `reaches(` call sites below are the list — deliberately uncounted here,
   // since a comment that counts its siblings goes stale as one is added.
@@ -51,6 +52,7 @@ function initPluginHost({
   const menuProviders = [];   // { pluginId, id, entriesFor, onPick }
   const settingsSections = []; // { pluginId, id, title, render, collect }
   const overlays = [];        // { pluginId, id, mount, onOpen, onClose, el, mounted }
+  const panes = [];
   const eventListeners = [];  // { pluginId, topic, fn }
 
   const resources = new Map();
@@ -260,7 +262,7 @@ function initPluginHost({
 
   function renderFooterButtons() {
     const footer = document.getElementById('sidebar-footer');
-    if (!footer) return;
+    if (!footer) { syncPanes(); return; }
     for (const el of [...footer.querySelectorAll('[data-plugin-footer]')]) {
       if (!footerButtons.some((b) => b.id === el.getAttribute('data-plugin-footer'))) el.remove();
     }
@@ -301,9 +303,55 @@ function initPluginHost({
       if (typeof b.badge === 'function') {
         try { badge = b.badge(); } catch (e) { warn(b.pluginId, e); }
       }
+      if (b.pane) {
+        const on = paneIntent(b.id);
+        el.setAttribute('aria-pressed', on ? 'true' : 'false');
+        el.classList.toggle('footer-on', on);
+        badge = on ? '✓' : '';
+      }
       const bEl = el.querySelector('.footer-badge');
       bEl.textContent = badge ? String(badge) : '';
       bEl.classList.toggle('zero', !badge);
+    }
+    syncPanes();
+  }
+
+  function paneIntent(id) {
+    return !!(dock && dock.intent(id));
+  }
+
+  let viewReady = !dock;
+  if (dock) dock.onViewLoaded(() => { viewReady = true; renderFooterButtons(); });
+
+  function setPaneLive(p, on) {
+    if (p.live === on) return;
+    p.live = on;
+    if (on) {
+      if (!p.el) {
+        p.el = document.createElement('div');
+        p.el.className = 'dock-pane plugin-pane';
+        p.el.setAttribute('data-plugin', p.pluginId);
+        p.el.setAttribute('data-pane', p.id);
+        dock.addPane(p.id, p.el, 1);
+        try { p.mount(p.el); } catch (e) { warn(p.pluginId, e); }
+      }
+      dock.setShown(p.id, true);
+      if (typeof p.onShow === 'function') {
+        try { p.onShow(); } catch (e) { warn(p.pluginId, e); }
+      }
+    } else {
+      if (p.el) dock.setShown(p.id, false);
+      if (typeof p.onHide === 'function') {
+        try { p.onHide(); } catch (e) { warn(p.pluginId, e); }
+      }
+    }
+  }
+
+  function syncPanes() {
+    if (!dock) return;
+    const seat = getActiveSession ? getActiveSession() : null;
+    for (const p of [...panes]) {
+      setPaneLive(p, viewReady && paneIntent(p.id) && reaches(p.pluginId, seat));
     }
   }
 
@@ -420,6 +468,50 @@ function initPluginHost({
   }
 
   const surfaces = {
+    pane(spec) {
+      const owner = spec && spec.pluginId;
+      if (!dock) throw new Error(`[plugin:${owner}] surfaces.pane: this window has no dock`);
+      const dispose = register(panes, spec, ['mount']);
+      const entry = panes[panes.length - 1];
+      entry.live = false;
+      entry.el = null;
+      const offToggle = register(footerButtons, {
+        id: spec.id, glyph: spec.glyph, label: spec.title, tip: spec.tip, pane: true,
+        onClick: () => { toggle(); },
+      }, ['onClick'], entry.pluginId);
+      function show() {
+        const seat = getActiveSession ? getActiveSession() : null;
+        if (!reaches(entry.pluginId, seat)) {
+          if (showToast) showToast(`${entry.pluginId} is not enabled for ${seat}`);
+          return;
+        }
+        if (!panes.includes(entry)) return;
+        dock.setIntent(entry.id, true);
+        renderFooterButtons();
+        if (entry.live) dock.reveal();
+      }
+      function hide() {
+        if (!panes.includes(entry)) return;
+        dock.setIntent(entry.id, false);
+        renderFooterButtons();
+      }
+      function toggle() {
+        if (paneIntent(entry.id)) hide();
+        else show();
+      }
+      renderFooterButtons();
+      return {
+        show, hide, toggle,
+        isShown: () => entry.live,
+        dispose() {
+          setPaneLive(entry, false);
+          if (entry.el) { dock.removePane(entry.id); entry.el.remove(); entry.el = null; }
+          offToggle();
+          dispose();
+          renderFooterButtons();
+        },
+      };
+    },
     overlay(spec) {
       const dispose = register(overlays, spec, ['mount']);
       const entry = overlays[overlays.length - 1];
@@ -521,6 +613,7 @@ function initPluginHost({
         }),
         surfaces: Object.freeze({
           overlay: (s) => surfaces.overlay({ ...s, pluginId }),
+          pane: (s) => surfaces.pane({ ...s, pluginId }),
         }),
       }),
       lib: Object.freeze({ renderDiffHtml, renderMarkdown }),
@@ -601,6 +694,11 @@ function initPluginHost({
 // Before the disposers: a registry disposer splices the entry out of `overlays`,
 // so the sweep below would miss it — onClose lost, openOverlay left dangling.
     if (openOverlay && openOverlay.pluginId === pluginId) closeOpenOverlay();
+    for (const p of panes) {
+      if (p.pluginId !== pluginId) continue;
+      setPaneLive(p, false);
+      if (p.el) { dock.removePane(p.id); p.el.remove(); p.el = null; }
+    }
     for (const h of r.intervals) clearInterval(h);
     r.intervals.clear();
     for (const h of r.timers) clearTimeout(h);
@@ -619,7 +717,7 @@ function initPluginHost({
       }
     }
     if (r.styleEl) { r.styleEl.remove(); r.styleEl = null; }
-    for (const list of [statusActions, statusSegments, footerButtons, rowBadges, menuProviders, settingsSections, overlays, eventListeners]) {
+    for (const list of [statusActions, statusSegments, footerButtons, rowBadges, menuProviders, settingsSections, overlays, panes, eventListeners]) {
       purge(list, pluginId);
     }
     for (const el of [...document.querySelectorAll(`[data-plugin="${CSS.escape(pluginId)}"]`)]) el.remove();
@@ -653,7 +751,7 @@ function initPluginHost({
       footer: footerButtons.length, badges: rowBadges.length,
       events: eventListeners.length,
       menus: menuProviders.length, sections: settingsSections.length,
-      overlays: overlays.length,
+      overlays: overlays.length, panes: panes.length,
     }),
     _liveResources: (pluginId) => {
       const r = resources.get(pluginId);

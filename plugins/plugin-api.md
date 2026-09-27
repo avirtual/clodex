@@ -18,7 +18,7 @@ merely violate the spirit of the thing: the test suite fails the build for it
 - [4.1 `inject` is typing, not messaging](#41-inject-is-typing-not-messaging--four-rules)
 - [4.2 `fsScope` — the local-cwd gate, and what it does not do](#42-fsscope--the-local-cwd-gate-and-what-it-does-not-do)
 - [5. The renderer `rhost` object](#5-the-renderer-rhost-object)
-- [6. The seven UI slots](#6-the-seven-ui-slots)
+- [6. The eight UI slots](#6-the-eight-ui-slots)
 - [7. Intents — contributing an `[agent:…]` verb](#7-intents--contributing-an-agent-verb)
 - [8. Talking between your halves: `invoke`](#8-talking-between-your-halves-invoke)
 - [9. Events](#9-events)
@@ -315,6 +315,7 @@ plugin *reaches*:
 | `rhost.ui.sidebar.footerButton` | live | absent while an unticked seat is active; a click that races a seat switch toasts and refuses |
 | `rhost.ui.settings.section` | always | **always** |
 | `rhost.ui.surfaces.overlay` | openable | refused while an unticked seat is active; an open one closes on switch |
+| `rhost.ui.surfaces.pane` | shown while ticked, with its footer toggle | hidden with its toggle while an unticked seat is active; the tick is kept, so switching back shows it again; `show()` toasts and refuses |
 | `host.sessions.*` / `rhost.sessions.*` *(enumeration)* | unchanged | **unchanged at every scope** |
 | `host.sessions.onAgentText` | only with `scope: "session"` AND the `turns` grant | never delivers |
 
@@ -1263,7 +1264,7 @@ at all (§3.4), and a native dialog is not something a plugin can raise for
 itself. Treat the result as an operator *gesture*, not as an authorization: if
 the path then crosses to your engine half, validate it there, at the point where
 you act on it — a picked path is still just a string by the time it arrives.
-Neither this nor `openPath` is one of the seven UI slots; they take no spec and
+Neither this nor `openPath` is one of the eight UI slots; they take no spec and
 register nothing.
 
 `rhost.lib.renderDiffHtml` renders a unified diff to HTML, the same way core's
@@ -1321,10 +1322,10 @@ what 1–3 are for.
 
 ---
 
-## 6. The seven UI slots
+## 6. The eight UI slots
 
-All seven are registered from your **renderer** half, all return a dispose
-function (or, for overlays, an object containing one), and all take a spec whose
+All eight are registered from your **renderer** half, all return a dispose
+function (or, for overlays and panes, an object containing one), and all take a spec whose
 `id` is a plain string that the host namespaces to `"<yourId>:<id>"` before it
 reaches the DOM. **For `id`, the prefix is the host's business in both
 directions**: you never write it, and you never see it. Anything the host hands
@@ -1343,7 +1344,7 @@ bare class name in `style.css` and it matches.
 escaped by the host and inserted as text. This is not only an injection defence:
 it is what lets these same specs survive a future out-of-process plugin tier
 unchanged. The one place you build DOM directly is inside a container the host
-created and owns (`settings.section`, `surfaces.overlay`).
+created and owns (`settings.section`, `surfaces.overlay`, `surfaces.pane`).
 
 Registration failures **throw**, immediately, out of your `activate()`: a missing
 `id`, or a required callback that isn't a function. A throwing `activate()` is
@@ -1602,6 +1603,51 @@ You own everything inside `rootEl`. Scope your lookups to it —
 ids inside your overlay are per-window unique (each window is its own document),
 so they will not collide across windows, but they *can* collide with core's ids
 in the same document if you pick a common one. Prefix them.
+
+### 6.8 `rhost.ui.surfaces.pane(spec)`
+
+A pane in the right dock, beside the conversation rather than over it — the slot
+for a surface the operator keeps up while working. The host renders its toggle in
+the sidebar footer (glyph and title, pressed while ticked), so do **not** also
+register a `footerButton` for it: a pane has exactly one control.
+
+```js
+function activate(rhost) {
+  let poll = null;
+  function refresh() { rhost.log.info('refresh'); }
+  const pane = rhost.ui.surfaces.pane({
+    id: 'main',
+    title: 'Board',
+    glyph: '▤',
+    tip: 'The board',
+    mount(rootEl) { rootEl.textContent = 'Loading…'; },
+    onShow() {
+      refresh();
+      if (poll === null) poll = rhost.setInterval(refresh, 15000);
+    },
+    onHide() {
+      if (poll !== null) { rhost.clearInterval(poll); poll = null; }
+    },
+  });
+  return () => pane.dispose();
+}
+// pane -> { show(), hide(), toggle(), isShown(), dispose() }
+```
+
+The host creates `<div class="dock-pane plugin-pane" data-plugin="<yourId>"
+data-pane="<yourId>:<id>">` in the dock and calls `mount(rootEl)` **once, lazily,
+at the first show**. `onShow` and `onHide` strictly alternate — never two of
+either in a row — so a pane that polls only between them polls nothing while
+hidden. Fill `rootEl` (it is a flex column); `container-type: inline-size` on
+your root lets you restyle a narrow dock with a container query.
+
+Whether the pane is ticked is the operator's, persisted per window
+(`workspace.view.panes`) and restored at the next launch. `show()`/`hide()` set
+that tick exactly as the footer toggle does. On a seat that does not have your
+plugin the pane is hidden (`onHide`) and its toggle removed, with the tick kept;
+switching back shows it again (`onShow`). Escape never hides a pane — it belongs
+to the seat's composer. Disabling your plugin removes the container and the
+toggle wholesale and keeps the tick.
 
 ### Slot ordering
 

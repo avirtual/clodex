@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Tickets is a pane now: the sidebar's Tickets button ticks a board + Feed pane on the right, beside the conversation instead of over it. It stays up while you work, refreshes itself while shown, and each window remembers whether it is on.
 - The Effort field in New Session, Edit Session and templates is a pick list of the levels the seat's CLI accepts (Claude low…max; Codex and Muse none…ultra) instead of a text box; a saved value the CLI no longer accepts stays selectable and is marked.
 - In Conversation, a context compact stands on its own between turns: the ticket or prompt before it no longer folds the compact row and its token drop into its block.
 - A run of a single test file killed at the runner's ceiling names that file even when node had not yet written its interrupted line.

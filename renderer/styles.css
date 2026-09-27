@@ -439,6 +439,8 @@ html, body {
    uses badge() yet, and inventing its look before a caller exists would be
    guessing. */
 .footer-badge:empty { display: none; }
+#sidebar-footer [data-plugin-footer].footer-on { background: var(--accent-soft); color: var(--text); }
+#sidebar-footer [data-plugin-footer].footer-on .footer-glyph { color: var(--accent); }
 
 /* The `#inbox-open, #sidebar-footer [data-plugin-footer]` rule's `display: flex`
    beats the UA's `[hidden] { display: none }`, so the host's `el.hidden = true`
@@ -2091,6 +2093,8 @@ html, body {
 body.dock-dragging { cursor: col-resize; user-select: none; }
 .dock-pane { flex: 1 1 0; min-height: 0; }
 #dock > .dock-pane.dock-pane-hidden { display: none; }
+.plugin-pane { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+#dock > .dock-pane:not(.dock-pane-hidden) ~ .plugin-pane:not(.dock-pane-hidden) { border-top: 1px solid var(--border); }
 #side-pane { display: flex; flex-direction: column; min-width: 0; }
 #side-pane-head {
   flex: none; display: flex; align-items: center; gap: 6px;

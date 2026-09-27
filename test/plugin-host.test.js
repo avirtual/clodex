@@ -195,7 +195,7 @@ test('with no plugin registered every seam returns the empty answer', () => {
   assert.deepEqual(host.settingsSectionOwners(), [], 'no plugin row grows a Settings button');
   assert.equal(host.collectSectionsFrom('demo', el('div')), null, 'Save issues zero');
   assert.deepEqual(host._counts(), {
-    actions: 0, segments: 0, footer: 0, badges: 0, events: 0, menus: 0, sections: 0, overlays: 0,
+    actions: 0, segments: 0, footer: 0, badges: 0, events: 0, menus: 0, sections: 0, overlays: 0, panes: 0,
   });
 });
 
@@ -650,7 +650,7 @@ test('the host removes containers wholesale — teardown never trusts the plugin
   assert.equal(footer.querySelector('[data-plugin-footer="demo:f"]'), null);
   assert.equal(host.statusBarHtml(), '', 'and every registry row with it');
   assert.deepEqual(host._counts(), {
-    actions: 0, segments: 0, footer: 0, badges: 0, events: 0, menus: 0, sections: 0, overlays: 0,
+    actions: 0, segments: 0, footer: 0, badges: 0, events: 0, menus: 0, sections: 0, overlays: 0, panes: 0,
   });
 });
 
@@ -954,7 +954,7 @@ test('W9 gate 1: disable removes button, overlay, styles and rows from BOTH wind
         timers: 0, intervals: 0, listeners: 0, disposers: 0, style: false,
       }, `${w.id}: zero live resources`);
       assert.deepEqual(w.host._counts(), {
-        actions: 0, segments: 0, footer: 0, badges: 0, events: 0, menus: 0, sections: 0, overlays: 0,
+        actions: 0, segments: 0, footer: 0, badges: 0, events: 0, menus: 0, sections: 0, overlays: 0, panes: 0,
       }, `${w.id}: every registry empty`);
       assert.equal(targets[w.id].listenerCount('click'), 0, `${w.id}: listener unregistered from the real target`);
     });
@@ -1408,4 +1408,152 @@ test('t655: a refused open leaves an unrelated open overlay alone', () => {
   bad.open();
   assert.deepEqual(log, [], 'the refused open neither mounted itself nor closed the open one');
   assert.deepEqual(toasted, ['no is not enabled for seat-a']);
+});
+
+function makePaneHost(reaches, view, toasted = []) {
+  const dom = installDom();
+  const dockEl = el('div', 'dock');
+  const handle = el('div', 'dock-handle');
+  dom.body.appendChild(handle);
+  dom.body.appendChild(dockEl);
+  const footer = el('div', 'sidebar-footer');
+  dom.body.appendChild(footer);
+  const win = { innerWidth: 1200, addEventListener() {} };
+  const views = [];
+  const { createDock } = require('../renderer/dock');
+  const dock = createDock({
+    doc: global.document, win,
+    showToast: (m) => toasted.push(String(m)),
+    getSettings: () => ({}),
+    setSettings: () => {},
+    loadView: () => view,
+    saveView: (patch) => views.push(patch),
+  });
+  const state = { active: 'seat-a' };
+  const initPluginHost = load();
+  const host = initPluginHost({
+    getActiveSession: () => state.active,
+    showToast: (m) => toasted.push(String(m)),
+    pluginReachesSession: (pluginId, session) => reaches.get(`${pluginId}|${session}`) !== false,
+    dock,
+  });
+  return { host, state, dom, dock, dockEl, footer, views, toasted };
+}
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+function paneLog(host, id = 'demo') {
+  const log = [];
+  let pane = null;
+  host.activate(id, {
+    activate: (rhost) => {
+      pane = rhost.ui.surfaces.pane({
+        id: 'p', title: 'Board', glyph: '▤', tip: 'The board',
+        mount: (root) => { log.push('mount'); root.textContent = 'hello'; },
+        onShow: () => log.push('show'),
+        onHide: () => log.push('hide'),
+      });
+    },
+  });
+  return { log, pane: () => pane };
+}
+
+test('pane: a tick loaded from the view shows the pane and presses its toggle', async () => {
+  const h = makePaneHost(new Map(), { panes: { 'demo:p': true } });
+  const { log, pane } = paneLog(h.host);
+  const btn = h.footer.querySelector('[data-plugin-footer="demo:p"]');
+  assert.ok(btn, 'ENTER: the host painted the toggle');
+  assert.equal(btn.getAttribute('aria-pressed'), 'false', 'ENTER: before the view loads the toggle is up');
+  assert.deepEqual(log, [], 'ENTER: nothing mounted before the view loads');
+  await settle();
+  assert.equal(btn.getAttribute('aria-pressed'), 'true');
+  assert.ok(btn.classList.contains('footer-on'));
+  assert.equal(btn.querySelector('.footer-badge').textContent, '✓');
+  assert.equal(btn.querySelector('.footer-label').textContent, 'Board');
+  assert.deepEqual(log, ['mount', 'show']);
+  assert.equal(pane().isShown(), true);
+  const container = h.dockEl.children.find((c) => c.getAttribute('data-plugin') === 'demo');
+  assert.ok(container, 'the container lives in the dock');
+  assert.equal(container.getAttribute('data-pane'), 'demo:p');
+  assert.ok(container.classList.contains('plugin-pane'));
+  assert.ok(container.classList.contains('dock-pane'));
+  btn.fire('click');
+  assert.equal(btn.getAttribute('aria-pressed'), 'false');
+  assert.equal(btn.classList.contains('footer-on'), false);
+  assert.deepEqual(log, ['mount', 'show', 'hide']);
+  await settle();
+  assert.deepEqual(h.views[h.views.length - 1], { panes: { 'demo:p': false } });
+});
+
+test('pane: onShow and onHide strictly alternate across show, hide, toggle, switch and disable', async () => {
+  const reaches = new Map([['demo|seat-b', false]]);
+  const h = makePaneHost(reaches, null);
+  const { log, pane } = paneLog(h.host);
+  await settle();
+  assert.deepEqual(log, [], 'ENTER: the pane starts off');
+  pane().show();
+  pane().show();
+  assert.deepEqual(log, ['mount', 'show'], 'a second show() is no second onShow');
+  pane().hide();
+  pane().hide();
+  assert.deepEqual(log, ['mount', 'show', 'hide']);
+  pane().toggle();
+  h.state.active = 'seat-b';
+  h.host.onSeatSwitched();
+  h.host.onSeatSwitched();
+  h.state.active = 'seat-a';
+  h.host.onSeatSwitched();
+  h.host.renderFooterButtons();
+  h.host.dispose('demo');
+  assert.deepEqual(log, ['mount', 'show', 'hide', 'show', 'hide', 'show', 'hide'],
+    'mount once, then strict alternation, ending hidden');
+});
+
+test('pane: a seat without the plugin hides the pane and its toggle, keeping the tick', async () => {
+  const reaches = new Map([['demo|seat-b', false]]);
+  const h = makePaneHost(reaches, { panes: { 'demo:p': true } });
+  const { log, pane } = paneLog(h.host);
+  await settle();
+  const btn = h.footer.querySelector('[data-plugin-footer="demo:p"]');
+  assert.equal(pane().isShown(), true, 'ENTER: shown on seat-a');
+  h.state.active = 'seat-b';
+  h.host.onSeatSwitched();
+  assert.equal(pane().isShown(), false);
+  assert.equal(btn.hidden, true, 'the toggle goes with it');
+  assert.equal(h.dock.intent('demo:p'), true, 'the tick is kept');
+  const container = h.dockEl.children.find((c) => c.getAttribute('data-plugin') === 'demo');
+  assert.ok(container.classList.contains('dock-pane-hidden'));
+  pane().show();
+  assert.deepEqual(h.toasted, ['demo is not enabled for seat-b']);
+  h.state.active = 'seat-a';
+  h.host.onSeatSwitched();
+  assert.equal(pane().isShown(), true, 'switching back restores the pane');
+  assert.equal(btn.hidden, false, 'and the toggle');
+  assert.equal(btn.getAttribute('aria-pressed'), 'true');
+  assert.deepEqual(log, ['mount', 'show', 'hide', 'show']);
+});
+
+test('pane: disable removes the container and the toggle wholesale and keeps the tick', async () => {
+  const h = makePaneHost(new Map(), { panes: { 'demo:p': true } });
+  paneLog(h.host);
+  await settle();
+  assert.ok(h.dockEl.children.some((c) => c.getAttribute('data-plugin') === 'demo'), 'ENTER: mounted');
+  assert.equal(h.host._counts().panes, 1);
+  h.host.dispose('demo');
+  assert.equal(h.dockEl.children.some((c) => c.getAttribute('data-plugin') === 'demo'), false);
+  assert.equal(h.footer.querySelector('[data-plugin-footer="demo:p"]'), null);
+  assert.equal(h.host._counts().panes, 0);
+  assert.equal(h.host._counts().footer, 0);
+  assert.equal(h.dock.intent('demo:p'), true);
+  assert.equal(h.dock.onScreen(), false, 'an emptied dock closes');
+});
+
+test('pane: Escape does not hide a shown pane', async () => {
+  const h = makePaneHost(new Map(), { panes: { 'demo:p': true } });
+  const { log, pane } = paneLog(h.host);
+  await settle();
+  assert.equal(pane().isShown(), true, 'ENTER: shown');
+  global.document.fire('keydown', { key: 'Escape', stopPropagation() {} });
+  assert.equal(pane().isShown(), true);
+  assert.deepEqual(log, ['mount', 'show']);
 });

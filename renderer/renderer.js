@@ -4415,6 +4415,14 @@ function pluginReachesSession(pluginId, sessionName) {
   return seatHasPlugin(pluginId, (sidebarMeta.get(sessionName) || {}).plugins, !!(rec && rec.shipped));
 }
 
+const dock = createDock({
+  showToast,
+  getSettings: () => window.api.getSettings(),
+  setSettings: (patch) => window.api.setSettings(patch),
+  loadView: () => window.api.getSidebarView().then((res) => (res && res.ok ? res.view : null)),
+  saveView: (patch) => window.api.setSidebarView(patch),
+});
+
 const pluginBar = initPluginHost({
   getActiveSession: () => activeSession,
   sessionTypeOf, activeIsAgent, activePeerQueryable, activePeerConfigurable,
@@ -4425,6 +4433,7 @@ const pluginBar = initPluginHost({
   showToast,
   selectDirectory: () => window.api.selectDirectory(),
   pluginReachesSession,
+  dock,
 });
 
 async function activatePluginRenderer(id) {
@@ -5310,12 +5319,6 @@ const { openSessionInfoPopover } = initSessionInfoPopover({ sessionList });
 
 
 const { openBustPopover } = initBustPopover({ popoverApi, proxyState, barPopovers });
-
-const dock = createDock({
-  showToast,
-  getSettings: () => window.api.getSettings(),
-  setSettings: (patch) => window.api.setSettings(patch),
-});
 
 const sidePane = createSidePane({
   dock, popoverApi, showToast,

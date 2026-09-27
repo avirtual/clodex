@@ -110,6 +110,11 @@ function fakeDom() {
         return c;
       },
       get firstChild() { return this.children[0] || null; },
+      matches(sel) { return String(sel).split(',').map((x) => x.trim()).includes(this.tag); },
+      contains(n) {
+        for (let x = n; x; x = x.parentNode) if (x === this) return true;
+        return false;
+      },
       // Form-control state the CRUD surface reads back. `value` is a plain
       // field: the renderer writes it (seeding the editor with an existing
       // spec) and reads it (on submit), and a test drives an edit by setting it.
@@ -261,18 +266,23 @@ function withDom(answers, fn) {
     },
     log: { info: () => {}, error: (...m) => logged.push(m) },
     ui: {
-      surfaces: { overlay: (spec) => { rhost._overlay = spec; return { open: () => {}, close: () => {} }; } },
+      surfaces: { pane: (spec) => { rhost._pane = spec; return rhost._paneApi; } },
       sidebar: { footerButton: (spec) => { rhost._button = spec; return () => {}; }, requestRelayout: () => {} },
       showToast: (msg, opts) => toasts.push({ msg: String(msg), kind: opts && opts.kind }),
     },
+    _paneApi: { hides: 0, hide() { this.hides += 1; } },
+    _intervals: new Map(),
+    _nextInterval: 1,
+    setInterval(fn, ms) { const h = rhost._nextInterval++; rhost._intervals.set(h, { fn, ms }); return h; },
+    clearInterval(h) { rhost._intervals.delete(h); },
     _calls: calls,
     _toasts: toasts,
   };
   const settle = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
   const run = async () => {
     const teardown = viewer.activate(rhost);
-    rhost._overlay.mount(root);
-    await rhost._overlay.onOpen();
+    rhost._pane.mount(root);
+    await rhost._pane.onShow();
     // The mount's refresh is fire-and-forget; let its promise chain settle.
     await settle();
     return { rhost, root, teardown, logged, toasts, calls, settle };
@@ -1196,18 +1206,20 @@ test('a board fetch that lands after a RELOAD does not paint over it', async () 
     },
     log: { info: () => {}, error: () => {} },
     ui: {
-      surfaces: { overlay: (spec) => { rhost._overlay = spec; return { open: () => {}, close: () => {} }; } },
+      surfaces: { pane: (spec) => { rhost._pane = spec; return { hide: () => {} }; } },
       sidebar: { footerButton: () => () => {}, requestRelayout: () => {} },
       showToast: () => {},
     },
+    setInterval: () => 1,
+    clearInterval: () => {},
   };
   const settle = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
   const teardown = viewer.activate(rhost);
   try {
-    rhost._overlay.mount(root);
-    await rhost._overlay.onOpen();   // list ok → selects the project → board hangs
+    rhost._pane.mount(root);
+    await rhost._pane.onShow();   // list ok → selects the project → board hangs
     await settle();
-    await rhost._overlay.onOpen();   // reload: the list now fails, no new select
+    await rhost._pane.onShow();   // reload: the list now fails, no new select
     await settle();
     resolveBoard(boardRes({ open: [shaped('t-stale')], counts: { ...boardRes().counts, open: 1 } }));
     await settle();
@@ -1439,9 +1451,105 @@ test('a CLOSED ticket offers no lifecycle action', async () => {
   });
 });
 
-test('the surface contributes one footer button and no other entry point', async () => {
+test('the surface is one pane titled Tickets and registers no footer button of its own', async () => {
   await withDom(crudAnswers(), ({ rhost }) => {
-    assert.equal(rhost._button.label, 'Tickets');
+    assert.equal(rhost._pane.title, 'Tickets');
+    assert.equal(rhost._pane.glyph, '▤');
+    assert.equal(rhost._button, undefined);
+  });
+});
+
+test('the pane: onShow twice in a row starts one 15 s poll, onHide clears it', async () => {
+  await withDom(crudAnswers(), async ({ rhost }) => {
+    assert.equal(rhost._intervals.size, 1, 'ENTER: the first onShow started one poll');
+    await rhost._pane.onShow();
+    assert.equal(rhost._intervals.size, 1);
+    assert.equal([...rhost._intervals.values()][0].ms, 15000);
+    rhost._pane.onHide();
+    assert.equal(rhost._intervals.size, 0);
+    rhost._pane.onHide();
+    await rhost._pane.onShow();
+    assert.equal(rhost._intervals.size, 1);
+  });
+});
+
+test('the pane: × hides the pane', async () => {
+  await withDom(crudAnswers(), ({ rhost, root }) => {
+    const x = allByClass(root, 'tv-close')[0];
+    assert.ok(x, 'ENTER: the head has a ×');
+    x.click();
+    assert.equal(rhost._paneApi.hides, 1);
+  });
+});
+
+test('the pane: a poll tick re-reads the board, and is skipped while focus is inside the pane', async () => {
+  await withDom(crudAnswers(), async ({ rhost, root, calls, settle }) => {
+    const tick = [...rhost._intervals.values()][0].fn;
+    const projectsAsked = () => calls.filter((c) => c.method === 'projects').length;
+    const before = projectsAsked();
+    tick();
+    await settle();
+    assert.equal(projectsAsked(), before + 1, 'ENTER: an idle tick re-reads');
+    const input = allByClass(root, 'tv-search')[0];
+    global.document.activeElement = input;
+    try {
+      tick();
+      await settle();
+      assert.equal(projectsAsked(), before + 1, 'a tick while focus is in the pane reads nothing');
+    } finally {
+      delete global.document.activeElement;
+    }
+    tick();
+    await settle();
+    assert.equal(projectsAsked(), before + 2);
+  });
+});
+
+test('the pane: a poll tick is skipped while the edit form is open', async () => {
+  await withDom(crudAnswers(), async ({ rhost, root, calls, settle }) => {
+    const tick = [...rhost._intervals.values()][0].fn;
+    const projectsAsked = () => calls.filter((c) => c.method === 'projects').length;
+    const add = buttonLabelled(root, '+ New ticket') || buttonLabelled(root, 'New ticket');
+    assert.ok(add, 'ENTER: the board offers a new-ticket button');
+    add.click();
+    assert.equal(allByClass(root, 'tv-editor').length, 1, 'ENTER: the editor is open');
+    const before = projectsAsked();
+    tick();
+    await settle();
+    assert.equal(projectsAsked(), before);
+  });
+});
+
+test('the pane: a poll tick keeps the Feed view instead of snapping back to the board', async () => {
+  await withDom({ ...crudAnswers(), feed: { ok: true, events: [] } }, async ({ rhost, root, settle }) => {
+    const tick = [...rhost._intervals.values()][0].fn;
+    buttonLabelled(root, 'Feed').click();
+    await settle();
+    const active = () => allByClass(root, 'tv-filter-active').map((b) => b.textContent);
+    assert.deepEqual(active(), ['Feed'], 'ENTER: the feed is showing');
+    assert.equal(allByClass(root, 'tv-selected').length, 1, 'ENTER: one project is highlighted');
+    tick();
+    await settle();
+    assert.deepEqual(active(), ['Feed']);
+    assert.equal(allByClass(root, 'tv-selected').length, 1, 'the refreshed project list keeps the highlight');
+  });
+});
+
+test('the pane: focus on a button in the pane does not park the poll', async () => {
+  await withDom(crudAnswers(), async ({ rhost, root, calls, settle }) => {
+    const tick = [...rhost._intervals.values()][0].fn;
+    const projectsAsked = () => calls.filter((c) => c.method === 'projects').length;
+    const feed = buttonLabelled(root, 'Feed');
+    assert.ok(feed && root.contains(feed), 'ENTER: the Feed button is inside the pane');
+    const before = projectsAsked();
+    global.document.activeElement = feed;
+    try {
+      tick();
+      await settle();
+    } finally {
+      delete global.document.activeElement;
+    }
+    assert.equal(projectsAsked(), before + 1);
   });
 });
 
