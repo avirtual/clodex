@@ -27,7 +27,19 @@ const DENIED_RE = /^(?:The user doesn't want to proceed with this tool use|Permi
 const INTERRUPT_RE = /^\[Request interrupted by user[^\]]*\]/;
 const PASTE_RE = /<pasted_content id="([A-Za-z0-9]+)">\n?([\s\S]*?)<\/pasted_content(?: id="\1")?>/g;
 const PASTE_OPEN = '<pasted_content id="';
+const TICKET_RE = /^\[ticket (t\d+)(?: ([^\]]+))?\]/;
+const TICKET_REPLY_RE = /^ticket (t\d+)\b/;
 const TODO_TOOLS = new Set(['TodoWrite', 'TaskCreate', 'TaskUpdate']);
+
+function ticketOf(text, form = 'inbound') {
+  const s = String(text == null ? '' : text);
+  if (form === 'reply') {
+    const m = TICKET_REPLY_RE.exec(s);
+    return m ? { id: m[1], tag: null } : null;
+  }
+  const m = TICKET_RE.exec(s);
+  return m ? { id: m[1], tag: m[2] == null ? null : m[2] } : null;
+}
 
 function firstLine(s, max = 160) {
   const line = String(s == null ? '' : s).split('\n').find((l) => l.trim()) || '';
@@ -245,14 +257,17 @@ function userRecords(rec, base, tools) {
   if (from) {
     const rest = text.slice(from[0].length);
     const att = ATTACHED_RE.exec(rest);
-    const card = capped({ ...base, kind: 'inbound', from: from[1] }, 'text', rest, PROMPT_CAP);
+    const ticket = ticketOf(rest);
+    const card = capped({ ...base, kind: 'inbound', from: from[1], ...(ticket ? { ticket } : {}) }, 'text', rest, PROMPT_CAP);
     return [att ? { ...card, attached: { path: att[2], bytes: Number(att[1]) } } : card];
   }
   const runtime = RUNTIME_RE.exec(text);
   if (runtime) {
     const verb = runtime[1];
     const { glyph, label } = replyGlyphFor(verb, pluginRowFor(verb));
-    return [capped({ ...base, kind: 'reply', verb, glyph, label }, 'text', text.slice(runtime[0].length), PROMPT_CAP)];
+    const said = text.slice(runtime[0].length);
+    const ticket = verb === 'task' ? ticketOf(said, 'reply') : null;
+    return [capped({ ...base, kind: 'reply', verb, glyph, label, ...(ticket ? { ticket } : {}) }, 'text', said, PROMPT_CAP)];
   }
   const fields = { ...base, kind: 'prompt' };
   const pasted = pastesOf(text);
@@ -489,4 +504,4 @@ function recordsOf(text, max = RECORD_CAP) {
   return { records: cutOnTurn(all, max) };
 }
 
-module.exports = { RECORD_CAP, PROMPT_CAP, PROSE_CAP, IMAGE_CAP, recordsOf, segmentsOf, toolInputLine, isInternalRow };
+module.exports = { RECORD_CAP, PROMPT_CAP, PROSE_CAP, IMAGE_CAP, recordsOf, segmentsOf, toolInputLine, isInternalRow, ticketOf };

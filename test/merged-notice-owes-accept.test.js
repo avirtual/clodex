@@ -118,7 +118,7 @@ test('an ACCEPT verdict names NO step: the loop merges, then closes the ticket o
 
   assert.strictEqual(f.gated.length, 1, 'ENTER: the lead was notified at all');
   const body = f.gated[0].body;
-  assert.ok(body.includes('ACCEPT on ticket t1'),
+  assert.ok(body.includes('[ticket t1 ACCEPT]'),
     `ENTER: this really is the verdict body, or every absence below is about the wrong message. Got:\n${body}`);
   assert.ok(!body.includes('Nothing to do yet'),
     'the sentence promised a step the lead would owe LATER; on a green merge no step is ever owed, so promising '
@@ -135,7 +135,7 @@ test('the verdict dm still says what landed and where the full text is', () => {
   // Removing the step must not turn the summary into a bare verdict word: the
   // round and the must-fix count are what a lead reads to decide whether to open
   // the full verdict at all.
-  assert.match(body, /^ACCEPT on ticket t1 \(review round 2, no must-fixes\)\./m,
+  assert.match(body, /^\[ticket t1 ACCEPT\] review round 2, no must-fixes\./m,
     `the summary line survives the step's removal. Got:\n${body}`);
   assert.ok(body.includes('Full verdict ('), 'and the pointer to the full prose does too');
 });
@@ -147,7 +147,7 @@ test('a REWORK verdict is unchanged: its own body already says what to do', () =
 
   assert.strictEqual(f.gated.length, 1, 'ENTER: the REWORK notification still goes out');
   const body = f.gated[0].body;
-  assert.ok(body.includes('REWORK on ticket t1 (review round 1, 1 must-fix)'),
+  assert.ok(body.includes('[ticket t1 REWORK] review round 1, 1 must-fix'),
     `the summary is the message on this arm. Got:\n${body}`);
   assert.ok(!body.includes('[agent:task accept'),
     'accepting a ticket that was just sent back would retire the seat mid-rework');

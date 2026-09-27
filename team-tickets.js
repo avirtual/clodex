@@ -1739,7 +1739,7 @@ function createTicketMethods(deps, shared) {
         // itself, so a verb here invites an accept that destroys the worktree
         // the merge is about to read.
         const body = [
-          `${landedOn.verdict} on ticket ${ticketId} (review round ${landedOn.reviewRound}, ${mf}).`,
+          `[ticket ${ticketId} ${landedOn.verdict}] review round ${landedOn.reviewRound}, ${mf}.`,
           `Landed on the ticket record; the board shows it via [agent:task list all].`,
           ...this._verdictBriefLines(ticketId, landedOn, dispatch),
           where,
@@ -6239,7 +6239,7 @@ function createTicketMethods(deps, shared) {
       if (reassigning) {
         const oldSeat = this._ticketAssigneeSeat(team, { assignee: prev });
         if (oldSeat && oldSeat !== team.lead) {
-          this._gatedDeliver(oldSeat, session.name, `[ticket ${ticket.id} reassigned] this ticket moved to ${assignee}`, false);
+          this._gatedDeliver(oldSeat, session.name, `[ticket ${ticket.id} reassigned] this ticket moved to ${assignee}`, false, `[ticket ${ticket.id} reassigned]`);
         }
       }
       ticket.assignee = assignee;
@@ -6386,7 +6386,7 @@ function createTicketMethods(deps, shared) {
       if (!isAssignee && !isLead) { reply(`error: only ticket ${intent.id}'s assignee (${ticket.role || ticket.assignee || 'unassigned'}) or the team lead (${team.lead}) can close it${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       const lead = team.lead;
       if (!isLead) {
-        const r = this._gatedDeliver(lead, session.name, `[ticket ${ticket.id} done] ${report}`, false);
+        const r = this._gatedDeliver(lead, session.name, `[ticket ${ticket.id} done] ${report}`, false, `[ticket ${ticket.id} done]`);
         // Spilled like every other rejecting return, and MORE needed here: the others
         // invite an immediate retry, this one tells the sender to wait on an
         // unreachable lead — an interval that can outlive its context or its process.
@@ -8694,7 +8694,7 @@ function createTicketMethods(deps, shared) {
       ticket.lastActivityAt = ticket.closedAt;
       ticketsStore.save(team.root, tickets);
       const seat = this._ticketAssigneeSeat(team, ticket);
-      if (reason && seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} cancelled] ${reason}`, false);
+      if (reason && seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} cancelled] ${reason}`, false, `[ticket ${ticket.id} cancelled]`);
       this._reconcileTickets(team);
       const next = seat ? this._advanceSeat(team, seat, ticket) : null;
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} cancelled` });

@@ -1495,6 +1495,9 @@ and are not, which is why the judgement worth testing is pushed down here.
 - **sender-class.js** — `classifySender`: an inbound `[agent:from X]` token as
   a transcript-pane badge (`system`, `seat`, `operator` or `peer`, a glyph and a
   short label). Pure; no live roster is consulted, seats are recognised by shape.
+- **transcript-surface.js** — `surfaceOf(rec)` / `segmentSurface(seg)`: a
+  transcript record or assistant segment as `conversation` or `internals`, by
+  kind, sender class, ticket marker tag and intent verb. Pure.
 - **outbox-rows.js** — `outboxRowOf`: a queued stream-seat outbox item as a
   dimmed row above the composer (first line, origin, and for a runtime reply the
   intent reply glyph). Pure.
