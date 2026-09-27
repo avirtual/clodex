@@ -251,7 +251,7 @@ function projectsRes(rows) {
 // the engine said and the assertions are about what the renderer did with it.
 // Every invocation is RECORDED: a mutating case asserts what the renderer asked
 // the engine to do, which is the only thing this half can be responsible for.
-function withDom(answers, fn) {
+function withDom(answers, fn, opts = {}) {
   const { root, restore } = fakeDom();
   const logged = [];
   const toasts = [];
@@ -286,6 +286,7 @@ function withDom(answers, fn) {
     _calls: calls,
     _toasts: toasts,
   };
+  if (opts.sessions) rhost.sessions = opts.sessions;
   const settle = async () => { for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r)); };
   const run = async () => {
     const teardown = viewer.activate(rhost);
@@ -2074,4 +2075,89 @@ test('an empty feed says history starts now, and a failed one does not paint the
     assert.match(text, /Could not read this project's ticket events: tickets.json is not valid JSON/);
     assert.doesNotMatch(text, /No ticket events yet/);
   });
+});
+
+function seatStub(state) {
+  return {
+    active: () => state.name,
+    listWorkspace: async () => {
+      if (state.reject) throw new Error('listWorkspace down');
+      return state.rows;
+    },
+  };
+}
+
+function selectedKey(root) {
+  const rows = allByClass(root, 'tv-selected');
+  assert.equal(rows.length, 1);
+  return rows[0].dataset.tvProject;
+}
+
+const alphaRow = projectRow({ key: 'alpha-1111', root: '/p/alpha', team: 'alpha' });
+const betaRow = projectRow({ key: 'beta-2222', root: '/p/beta', team: 'beta' });
+const gammaRow = projectRow({ key: 'gamma-3333', root: '/p/gamma', team: 'gamma' });
+
+test('follow: onShow selects the active seat\'s team project over an earlier selection', async () => {
+  const state = { name: null, rows: [] };
+  await withDom(crudAnswers({ projects: projectsRes([betaRow, alphaRow]) }), async ({ rhost, root, settle }) => {
+    assert.equal(selectedKey(root), 'beta-2222', 'ENTER: no active seat falls to the first project');
+    state.name = 'hand-1';
+    state.rows = [{ name: 'hand-0', cwd: '/p/beta', team: 'beta' }, { name: 'hand-1', cwd: '/elsewhere', team: 'alpha' }];
+    await rhost._pane.onShow();
+    await settle();
+    assert.equal(selectedKey(root), 'alpha-1111');
+  }, { sessions: seatStub(state) });
+});
+
+test('follow: with no team the deepest root holding the seat\'s cwd wins', async () => {
+  const outer = projectRow({ key: 'outer-1', root: '/r/outer', team: '' });
+  const inner = projectRow({ key: 'inner-2', root: '/r/outer/inner', team: '' });
+  const state = { name: 'hand-1', rows: [{ name: 'hand-1', cwd: '/r/outer/inner/x', team: null }] };
+  await withDom(crudAnswers({ projects: projectsRes([outer, inner]) }), async ({ root }) => {
+    assert.equal(selectedKey(root), 'inner-2');
+  }, { sessions: seatStub(state) });
+});
+
+test('follow: a root is not a prefix of a sibling folder that merely starts with its name', async () => {
+  const other = projectRow({ key: 'other-1', root: '/z', team: '' });
+  const outer = projectRow({ key: 'outer-2', root: '/r/outer', team: '' });
+  const state = { name: 'hand-1', rows: [{ name: 'hand-1', cwd: '/r/outerX', team: null }] };
+  await withDom(crudAnswers({ projects: projectsRes([other, outer]) }), async ({ root }) => {
+    assert.equal(selectedKey(root), 'other-1');
+  }, { sessions: seatStub(state) });
+});
+
+test('follow: no matching project keeps the previous selection, not the first row', async () => {
+  const state = { name: 'hand-1', rows: [{ name: 'hand-1', cwd: '/p/alpha', team: 'alpha' }] };
+  await withDom(crudAnswers({ projects: projectsRes([betaRow, alphaRow]) }), async ({ rhost, root, settle }) => {
+    assert.equal(selectedKey(root), 'alpha-1111', 'ENTER: the seat\'s team project is selected');
+    state.rows = [{ name: 'hand-1', cwd: '/nowhere', team: 'zeta' }];
+    await rhost._pane.onShow();
+    await settle();
+    assert.equal(selectedKey(root), 'alpha-1111');
+  }, { sessions: seatStub(state) });
+});
+
+test('follow: a project picked after onShow survives a poll tick', async () => {
+  const state = { name: 'hand-1', rows: [{ name: 'hand-1', cwd: '/p/alpha', team: 'alpha' }] };
+  await withDom(crudAnswers({ projects: projectsRes([alphaRow, gammaRow]) }), async ({ rhost, root, settle }) => {
+    assert.equal(selectedKey(root), 'alpha-1111', 'ENTER: onShow followed the seat');
+    allByClass(root, 'tv-team-row').find((r) => r.dataset.tvProject === 'gamma-3333').click();
+    await settle();
+    [...rhost._intervals.values()][0].fn();
+    await settle();
+    assert.equal(selectedKey(root), 'gamma-3333');
+  }, { sessions: seatStub(state) });
+});
+
+test('follow: a rejecting listWorkspace does not throw and keeps the selection', async () => {
+  const state = { name: 'hand-1', rows: [{ name: 'hand-1', cwd: '/p/alpha', team: 'alpha' }] };
+  await withDom(crudAnswers({ projects: projectsRes([betaRow, alphaRow]) }), async ({ rhost, root, settle, logged }) => {
+    assert.equal(selectedKey(root), 'alpha-1111', 'ENTER: onShow followed the seat');
+    state.reject = true;
+    await rhost._pane.onShow();
+    await settle();
+    assert.equal(selectedKey(root), 'alpha-1111');
+    assert.deepEqual(logged, []);
+  }, { sessions: seatStub(state) });
 });
