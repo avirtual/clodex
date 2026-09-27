@@ -27,7 +27,10 @@ function renderTranscript(doc, paneEl, records, ctx = {}, source = null) {
   transcriptRowsFor(doc, paneEl, ctx).render(records, source);
 }
 
-const TRANSCRIPT_MODES = [['conversation', 'Conversation'], ['internals', 'Internals']];
+const TRANSCRIPT_MODES = [
+  ['conversation', 'Conversation', 'Your messages and the agent\'s replies. Machine traffic folds to one line.'],
+  ['internals', 'Internals', 'Everything the seat did: tool calls, deliveries from Clodex and other seats, runtime notices.'],
+];
 
 function modeBar(doc, paneEl, mode, onMode = NOOP) {
   const bar = doc.createElement('div');
@@ -35,11 +38,12 @@ function modeBar(doc, paneEl, mode, onMode = NOOP) {
   const control = doc.createElement('div');
   control.className = 'transcript-mode';
   let current = null;
-  const buttons = TRANSCRIPT_MODES.map(([value, label]) => {
+  const buttons = TRANSCRIPT_MODES.map(([value, label, title]) => {
     const btn = doc.createElement('button');
     btn.type = 'button';
     btn.className = 'transcript-mode-btn';
     btn.textContent = label;
+    btn.title = title;
     btn.addEventListener('click', () => {
       if (current === value) return;
       setMode(value);

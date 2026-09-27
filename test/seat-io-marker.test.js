@@ -180,8 +180,8 @@ const whereLine = (html) => (/<span class="hovercard-type">([^<]*)<\/span>/.exec
 test('a stream row renders a hovercard whose head carries data-io="stream" and names the kind', () => {
   const html = hoverCard({ io: 'stream' });
   assert.strictEqual(headIo(html), 'stream');
-  assert.ok(whereLine(html).includes(' · streamed'), whereLine(html));
-  assert.strictEqual(whereLine(html), 'claude · streamed');
+  assert.ok(whereLine(html).includes(' · stream'), whereLine(html));
+  assert.strictEqual(whereLine(html), 'claude · stream');
 });
 
 test('a pty row renders a hovercard whose head carries data-io="pty" and names it terminal', () => {
@@ -192,7 +192,7 @@ test('a pty row renders a hovercard whose head carries data-io="pty" and names i
 
 test('the kind follows the backend segment on the hovercard where-line', () => {
   const html = hoverCard({ io: 'stream', backend: 'bedrock' });
-  assert.strictEqual(whereLine(html), 'claude · bedrock · streamed');
+  assert.strictEqual(whereLine(html), 'claude · bedrock · stream');
 });
 
 test('markSeatEffort stamps the level on an existing row and removes it on null', () => {

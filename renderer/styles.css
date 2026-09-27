@@ -6464,6 +6464,14 @@ button.seat-status-chip {
   text-overflow: ellipsis;
 }
 
+.seat-outbox-state {
+  flex: none;
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  color: var(--warn);
+}
+
 .seat-permissions {
   flex: 0 0 auto;
   display: flex;

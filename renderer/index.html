@@ -314,7 +314,7 @@
         <div id="side-pane-head">
           <div id="side-pane-tabs" class="side-strip"></div>
           <span id="side-pane-seat" hidden></span>
-          <button type="button" class="popover-close" id="side-pane-close" title="Close the pane (its tabs are kept)" aria-label="Close">&times;</button>
+          <button type="button" class="popover-close" id="side-pane-close" title="Close the side pane (its tabs are kept)" aria-label="Close">&times;</button>
         </div>
         <div id="side-pane-body"></div>
       </div>
@@ -701,10 +701,10 @@
               <input type="checkbox" id="input-no-wire" style="margin: 0;">
               <span class="hint-text" style="margin: 0;">Spawn this seat with no <code>ANTHROPIC_BASE_URL</code> at all — no Clodex tee, no API proxy. Needed for Anthropic's remote access (attaching from the phone app), which refuses to run when that variable is set. Costs the wire-only features: warmth, wire telemetry and protocol-accurate activity. Intents and the touched-file list still work (both come from the transcript), but edits are no longer attributed to the subagent that made them. Wire-off seats show a <code>⊘</code> in the sidebar.</span>
             </label>
-          <label id="stream-io-row">Stream transport (experimental)
+          <label id="stream-io-row">Stream seat — no terminal
             <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
               <input type="checkbox" id="input-stream-io" style="margin: 0;">
-              <span class="hint-text" style="margin: 0;">Run the seat headless over the CLI's stream protocol, with no terminal: the transcript pane is its view and a composer below it is its input. It survives a Clodex relaunch.</span>
+              <span class="hint-text" style="margin: 0;">Clodex runs the CLI over its stream protocol instead of in a terminal. The seat is its conversation view and a message box: dms, permission prompts, slash commands, images and voice all go through them, and there is no terminal to fall back to. It survives a Clodex relaunch.</span>
             </label>
           </label>
           </label>
@@ -865,10 +865,10 @@
         <input type="text" id="args-effort" placeholder="(CLI default)" spellcheck="false">
         <span class="hint-text">The reasoning effort level, in the CLI's own words. Empty leaves the CLI's setting alone.</span>
       </label>
-      <label id="args-stream-io-row">Stream transport (experimental)
+      <label id="args-stream-io-row">Stream seat — no terminal
         <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
           <input type="checkbox" id="args-stream-io" style="margin: 0;">
-          <span class="hint-text" style="margin: 0;">Run the seat headless over the CLI's stream protocol. Takes effect at the next restart.</span>
+          <span class="hint-text" style="margin: 0;">Clodex runs the CLI over its stream protocol instead of in a terminal. The seat is its conversation view and a message box: dms, permission prompts, slash commands, images and voice all go through them, and there is no terminal to fall back to. It survives a Clodex relaunch. Takes effect at the next restart.</span>
         </label>
       </label>
       <details id="args-append-section" class="dialog-section">
@@ -993,12 +993,12 @@
         <p class="hint-text">Faster repaint on busy seats. Takes effect for terminals opened after saving.</p>
         <label class="prefs-check">
           <input type="checkbox" id="prefs-transcript-pane">
-          <span>Transcript pane (experimental)</span>
+          <span>Open agent seats in the conversation view</span>
         </label>
-        <p class="hint-text">Claude seats on this desktop show their conversation from the transcript above a live strip of the terminal from the composer down. Dialogs and menus fall back to the full terminal.</p>
+        <p class="hint-text">Claude, Codex and Muse terminal seats show their conversation, rendered from the CLI's own transcript, with a Clodex message box under it. When the CLI shows a picker, a dialog or a running turn, its terminal opens underneath; View ▸ Terminal (⌘⇧T) shows the whole terminal. Shell and peer seats always show the terminal.</p>
       </details>
       <details class="prefs-group" data-group="voice">
-        <summary><h4>Voice input</h4><span class="prefs-group-sub">Off or on</span></summary>
+        <summary><h4>Voice input</h4><span class="prefs-group-sub">Per seat</span></summary>
         <p class="hint-text">Applies as soon as you pick it — Cancel does not undo it. The mode belongs to the focused seat, and the voice button on that seat’s bar is the same control.</p>
         <div class="prefs-row">
           <span>Mode</span>
@@ -1010,7 +1010,7 @@
         </div>
         <span id="prefs-voice-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
         <h5>Hands-free submit</h5>
-        <p class="hint-text">End what you are saying with the phrase below and Clodex erases the phrase and presses Enter for you. The CLI submits on its own only when the last transcribed chunk runs to three words or more, so trailing off leaves your sentence sitting in the box — this is the way out of that. Never fires while a session is asking permission for something (Enter would answer the dialog), and a phrase spoken then is dropped rather than sent once the dialog clears.</p>
+        <p class="hint-text">End what you are saying with the phrase below and Clodex erases the phrase and presses Enter for you. Never fires while a session is asking permission for something (Enter would answer the dialog), and a phrase spoken then is dropped rather than sent once the dialog clears.</p>
         <label class="prefs-check">
           <input type="checkbox" id="prefs-voice-submit">
           <span>Submit when I say the phrase</span>

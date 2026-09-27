@@ -6,7 +6,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseTranscript } = require('../transcript-spike');
-const { renderTranscript, renderStatusChips, createLiveSplitView } = require('../renderer/live-split-view');
+const { renderTranscript, renderStatusChips, createLiveSplitView, modeBar } = require('../renderer/live-split-view');
 const { OUTPUT_LINE_CAP } = require('../renderer/transcript-rows');
 const { fakeDocument, textOf } = require('./lib/fake-dom');
 const { fakeLine } = require('./lib/fake-cells');
@@ -1704,3 +1704,16 @@ test('dispose removes the status strip and the wrapper class, and a later refres
     assert.deepStrictEqual(chips(m), before);
   } finally { m.restore(); }
 });
+
+for (const [label, title] of [
+  ['Conversation', 'Your messages and the agent\'s replies. Machine traffic folds to one line.'],
+  ['Internals', 'Everything the seat did: tool calls, deliveries from Clodex and other seats, runtime notices.'],
+]) {
+  test(`the ${label} view button carries its tooltip`, () => {
+    const doc = fakeDocument();
+    const pane = doc.createElement('div');
+    const btn = modeBar(doc, pane, 'conversation').buttons.find((b) => b.textContent === label);
+    assert.ok(btn, label);
+    assert.strictEqual(btn.title, title);
+  });
+}

@@ -1126,6 +1126,15 @@ test('runs: an expander with no footer parts carries an aria-label; one with foo
   assert.strictEqual(togglesOf(counted)[0].getAttribute('aria-label'), null);
 });
 
+test('runs: the expander carries its tooltip whether or not it has footer text', () => {
+  const counted = mount({ mode: 'conversation' });
+  counted.render(movingRun());
+  assert.strictEqual(togglesOf(counted)[0].title, 'Show or hide the steps behind this reply');
+  const bare = mount({ mode: 'conversation' });
+  bare.render([ask('p1', 1), execSaid('a1', 1)]);
+  assert.strictEqual(togglesOf(bare)[0].title, 'Show or hide the steps behind this reply');
+});
+
 test('a long subagent report folds under a box head whose badge matches the inner row badge in label, glyph and title', () => {
   const m = mount();
   m.render([{ id: 'i9', kind: 'inbound', ts: null, turn: 1, from: 'nits-coords', via: 'subagent', text: Array.from({ length: 5 }, (_, i) => `line ${i}`).join('\n') }]);
