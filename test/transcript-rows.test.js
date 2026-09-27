@@ -295,7 +295,7 @@ test('consecutive intents form one stack of cards: head of glyph, label, target 
   assert.deepStrictEqual(dm.childNodes[0].childNodes.map((n) => [n.className, n.textContent]),
     [['intent-card-glyph', '→'], ['intent-card-label', 'message'], ['intent-card-target', 'bob'], ['intent-card-inline', 'hi'], ['intent-chip', 'urgent']]);
   assert.strictEqual(dm.childNodes.length, 1);
-  assert.strictEqual(done.childNodes[0].textContent, '✓donet4ok');
+  assert.strictEqual(done.childNodes[0].textContent, '✓t4doneok');
   assert.strictEqual(row.childNodes[1].textContent, 'tail words');
   assert.ok(!row.textContent.includes('[agent:'), row.textContent);
   assert.ok(!/fire|fired/.test(row.textContent));
@@ -791,7 +791,7 @@ test('a ticket lifecycle row carries tr-ticket and a chip reading the id and tag
   assert.strictEqual(chip(boxOf(m, 'i7')).textContent, 't7 MERGED');
   assert.strictEqual(chip(boxOf(m, 'i8')).parentNode.className, 'tr-box-head');
   assert.strictEqual(chip(boxOf(m, 'i8')).textContent, 't8 REJECTED');
-  assert.strictEqual(chip(boxOf(m, 'r1')).textContent, 't1');
+  assert.strictEqual(chip(boxOf(m, 'r1')).textContent, 't1 created');
   assert.strictEqual(boxOf(m, 'i9').className, 'tr-box');
   assert.strictEqual(chip(boxOf(m, 'i9')), undefined);
 });
@@ -1167,7 +1167,7 @@ test('folds: a machine-driven turn in Conversation mode shows one fold head with
   head.listeners.click();
   const open = turnOf(m, 'i1');
   assert.ok(!/\btr-turn-folded\b/.test(open.className));
-  assert.deepStrictEqual(shown(open), ['tr-row tr-turn-fold', 'tr-box tr-ticket', 'tr-row tr-tool-block', 'tr-row tr-prose', 'tr-row tr-footer']);
+  assert.deepStrictEqual(shown(open), ['tr-row tr-turn-fold', 'tr-box tr-box-folded tr-ticket', 'tr-row tr-tool-block', 'tr-row tr-prose', 'tr-row tr-footer']);
   assert.strictEqual(open.childNodes[0].childNodes[0].textContent, '▾');
 });
 
@@ -1176,13 +1176,13 @@ test('folds: Internals mode has no fold head, and switching back re-folds a turn
   m.render(accepted());
   m.rows.setMode('internals');
   assert.deepStrictEqual(findCls(m.pane, 'tr-turn-fold'), []);
-  assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-box tr-ticket', 'tr-row tr-tool-block', 'tr-row tr-prose', 'tr-row tr-footer']);
+  assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-box tr-box-folded tr-ticket', 'tr-row tr-tool-block', 'tr-row tr-prose', 'tr-row tr-footer']);
   m.rows.setMode('conversation');
   assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-row tr-turn-fold']);
   turnOf(m, 'i1').childNodes[0].listeners.click();
   m.rows.setMode('internals');
   m.rows.setMode('conversation');
-  assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-row tr-turn-fold', 'tr-box tr-ticket', 'tr-row tr-tool-block', 'tr-row tr-prose', 'tr-row tr-footer']);
+  assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-row tr-turn-fold', 'tr-box tr-box-folded tr-ticket', 'tr-row tr-tool-block', 'tr-row tr-prose', 'tr-row tr-footer']);
   assert.strictEqual(turnOf(m, 'i1').childNodes[0].getAttribute('aria-expanded'), 'true');
 });
 
@@ -1288,4 +1288,49 @@ test('folds: an opened turn that leaves the records does not pre-open a new turn
   m.render([ask('line:0', 1), talk('line:1', 1)]);
   m.render([ask('line:0', 1), talk('line:1', 1), machine(), talk('line:6', 2)]);
   assert.ok(/\btr-turn-folded\b/.test(turnOf(m, 'line:5').className));
+});
+
+const ATT = '/Users/x/.clodex/messages/clodex-hand-1/msg-1-2.txt';
+const withPath = (n) => [...(n.dataset && n.dataset.path ? [n] : []), ...(n.childNodes || []).flatMap(withPath)];
+const bodyOf = (box) => box.childNodes.find((n) => n.className === 'tr-box-body');
+const ticketCases = [
+  { name: 'a one-line inbound notice is the head alone', rec: inb('i1', 1, 'ticket-loop', '[ticket t7 MERGED] merged into master'),
+    box: 'tr-box tr-ticket', head: ['tr-ticket-chip', 'tr-sender', 'tr-box-preview'], chip: 't7 MERGED', preview: 'merged into master', body: null },
+  { name: 'a three-line inbound notice folds behind the same head', rec: inb('i1', 1, 'ticket-loop', '[ticket t7 MERGED] merged into master\nsha abc\nsuite green'),
+    box: 'tr-box tr-box-folded tr-ticket', head: ['tr-ticket-chip', 'tr-sender', 'tr-box-preview', 'tr-box-chevron'], chip: 't7 MERGED', preview: 'merged into master', body: '[ticket t7 MERGED] merged into master\nsha abc\nsuite green' },
+  { name: 'a runtime task reply chips its own state word', rec: taskReply('i1', 1, 'ticket t1 accepted — merged into master; 3 files'),
+    box: 'tr-box tr-ticket', head: ['tr-ticket-chip', 'tr-sender', 'tr-box-preview'], chip: 't1 accepted', preview: 'merged into master; 3 files', body: null },
+  { name: 'an inbound with an attachment folds, the lead text in the head and the link in the body',
+    rec: { ...inb('i1', 1, 'clodex', `[ticket t9 RESPEC] close with done Message (2337 bytes) attached: @${ATT}`), attached: { path: ATT, bytes: 2337 } },
+    box: 'tr-box tr-box-folded tr-ticket', head: ['tr-ticket-chip', 'tr-sender', 'tr-box-preview', 'tr-box-chevron'], chip: 't9 RESPEC', preview: 'close with done', link: ATT },
+];
+for (const c of ticketCases) {
+  test(`one ticket shape: ${c.name}`, () => {
+    const m = mount();
+    m.render([c.rec]);
+    const box = boxOf(m, 'i1');
+    assert.strictEqual(box.className, c.box);
+    const head = boxHeadOf(box);
+    assert.deepStrictEqual(head.childNodes.map((n) => n.className.split(' ')[0]), c.head);
+    assert.strictEqual(head.childNodes[0].textContent, c.chip);
+    assert.strictEqual(head.childNodes[2].textContent, c.preview);
+    const body = bodyOf(box);
+    if (c.body === null) assert.strictEqual(body, undefined);
+    if (c.body) assert.ok(body.textContent.endsWith(c.body), body.textContent);
+    if (c.link) assert.ok(withPath(body).some((n) => n.dataset.path === c.link));
+  });
+}
+
+test('one ticket shape: a multi-line task done puts the target before the label, the first line inline and the rest behind + 1 more line', () => {
+  const m = mount();
+  m.render([said('a1', 0, '[agent:task done t4] line one\nline two\n[agent:end]')]);
+  const card = cardAt(m);
+  assert.deepStrictEqual(headCls(card), ['intent-card-glyph', 'intent-card-target', 'intent-card-label', 'intent-card-inline']);
+  assert.strictEqual(card.childNodes[0].childNodes[3].textContent, 'line one');
+  const [, body, foot] = card.childNodes;
+  assert.strictEqual(body.className, 'intent-card-body intent-card-clamped');
+  assert.strictEqual(body.textContent, 'line two');
+  assert.strictEqual(foot.textContent, '+ 1 more line');
+  foot.listeners.click();
+  assert.strictEqual(body.className, 'intent-card-body');
 });

@@ -137,28 +137,47 @@ function filedLink(doc, spill, ctx) {
 }
 
 function inlineBody(seg) {
-  if (seg.open) return false;
+  if (seg.open) return null;
   if (seg.state === 'filed' && seg.spill) return true;
-  return !!seg.body && seg.verb !== 'exec' && !seg.body.includes('\n') && seg.body.trim().length <= INLINE_CHARS;
+  if (!seg.body || seg.verb === 'exec') return null;
+  if (!seg.body.includes('\n')) return seg.body.trim().length <= INLINE_CHARS ? seg.body : null;
+  return seg.verb === 'task' ? seg.body.split('\n')[0] : null;
+}
+
+function restBody(doc, seg, ctx) {
+  const rest = seg.body.split('\n').slice(1).join('\n');
+  const body = el(doc, 'div', 'intent-card-body intent-card-clamped');
+  appendPlain(doc, body, rest, ctx);
+  const more = rest.split('\n').length;
+  const foot = el(doc, 'div', 'intent-card-more', `+ ${countText(more, 'more line', 'more lines')}`);
+  const expand = () => {
+    body.className = 'intent-card-body';
+    foot.hidden = true;
+  };
+  foot.addEventListener('click', expand);
+  body.addEventListener('click', expand);
+  return [body, foot];
 }
 
 function cardHead(doc, seg, ctx, inline) {
   const head = el(doc, 'div', 'intent-card-head');
   const h = seg.head;
   head.appendChild(el(doc, 'span', 'intent-card-glyph', h.glyph));
-  head.appendChild(el(doc, 'span', 'intent-card-label', h.label));
+  const label = el(doc, 'span', 'intent-card-label', h.label);
+  if (seg.verb !== 'task') head.appendChild(label);
   if (h.target) {
     const target = el(doc, 'span', 'intent-card-target');
     if (seg.verb === 'file') target.appendChild(linkNode(doc, { kind: 'path', text: baseName(h.target), path: h.target }, '', ctx));
     else target.textContent = h.target;
     head.appendChild(target);
   }
+  if (seg.verb === 'task') head.appendChild(label);
   if (inline) {
     const span = el(doc, 'span', 'intent-card-inline');
     if (seg.state === 'filed' && seg.spill) span.appendChild(filedLink(doc, seg.spill, ctx));
     else {
-      appendPlain(doc, span, seg.body, ctx);
-      span.title = seg.body;
+      appendPlain(doc, span, inline, ctx);
+      span.title = inline;
     }
     head.appendChild(span);
   }
@@ -201,6 +220,9 @@ function intentCard(doc, seg, ctx) {
   card.dataset.verb = seg.verb;
   const inline = inlineBody(seg);
   card.appendChild(cardHead(doc, seg, ctx, inline));
+  if (inline && seg.body && seg.body.includes('\n') && !(seg.state === 'filed' && seg.spill)) {
+    for (const n of restBody(doc, seg, ctx)) card.appendChild(n);
+  }
   if (inline) return card;
   if (seg.state === 'filed' && seg.spill) {
     const row = el(doc, 'div', 'intent-card-body');
@@ -497,6 +519,50 @@ function internalBox(doc, rec, row, opened, att) {
   const body = el(doc, 'div', 'tr-box-body');
   body.appendChild(row);
   box.appendChild(body);
+  return box;
+}
+
+function ticketParts(rec) {
+  const { id, tag } = rec.ticket;
+  const text = rec.attached ? rec.text.slice(0, rec.text.indexOf('Message (')) : rec.text;
+  if (rec.kind !== 'reply') return { chip: tag ? `${id} ${tag}` : id, message: text.replace(/^\[ticket [^\]]*\]\s*/, '') };
+  const m = /^ticket t\d+[ \t]*(\S*)[ \t]*/.exec(text);
+  const state = m ? m[1] : '';
+  const message = (m ? text.slice(m[0].length) : text).replace(/^[—–:-][ \t]*/, '');
+  return { chip: state ? `${id} ${state}` : id, message };
+}
+
+function ticketBox(doc, rec, row, opened, att) {
+  const box = el(doc, 'div', 'tr-box');
+  box.dataset.id = rec.id;
+  const { chip, message } = ticketParts(rec);
+  const head = el(doc, 'div', 'tr-box-head');
+  if (att) head.appendChild(el(doc, 'span', 'tr-reply-lead', '↳'));
+  head.appendChild(el(doc, 'span', 'tr-ticket-chip', chip));
+  head.appendChild(rec.kind === 'reply' ? appBadge(doc, rec) : inboundBadge(doc, rec));
+  head.appendChild(el(doc, 'span', 'tr-box-preview', previewText(message.trim())));
+  box.appendChild(head);
+  if (rec.attached || rec.text.trim().includes('\n') || isLong(rec.text)) {
+    const chevron = el(doc, 'span', 'tr-box-chevron');
+    head.appendChild(chevron);
+    const paint = () => {
+      const open = opened.has(rec.id);
+      toggleClass(box, 'tr-box-folded', !open);
+      chevron.textContent = open ? '▾' : '▸';
+    };
+    head.addEventListener('click', () => {
+      if (opened.has(rec.id)) opened.delete(rec.id);
+      else opened.add(rec.id);
+      paint();
+    });
+    paint();
+    const body = el(doc, 'div', 'tr-box-body');
+    body.appendChild(row);
+    box.appendChild(body);
+  } else {
+    withTime(doc, head, rec);
+  }
+  toggleClass(box, 'tr-ticket', true);
   return box;
 }
 
@@ -932,7 +998,9 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
           key: r.id,
           sig: recSig(r) + extra,
           build: () => {
-            const box = internalBox(doc, r, buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row'), opened, att);
+            const row = buildRow(doc, r, deps, att) || el(doc, 'div', 'tr-row');
+            if (r.ticket && (r.kind === 'inbound' || r.kind === 'reply')) return ticketBox(doc, r, row, opened, att);
+            const box = internalBox(doc, r, row, opened, att);
             return r.ticket ? ticketChip(doc, box, r.ticket) : box;
           },
           after,
