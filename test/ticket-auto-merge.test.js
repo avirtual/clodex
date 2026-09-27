@@ -3337,7 +3337,7 @@ test('a REWORK verdict merges NOTHING, and is dispatched instead of merged', asy
   const toLead = f.gated.filter((g) => g.target === 'lead');
   assert.strictEqual(toLead.length, 1,
     't906: exactly one verdict notification to the lead, and it is the brief — the second delivery is the rework going to the seat, and the merge path this file pins stayed out of both');
-  assert.match(toLead[0].body, /REWORK on ticket t1/);
+  assert.match(toLead[0].body, /\[ticket t1 REWORK\]/);
 });
 
 test('an ad-hoc review with no ticket never reaches the merge path', async () => {

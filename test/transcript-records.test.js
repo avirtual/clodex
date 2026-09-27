@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { RECORD_CAP, PROMPT_CAP, PROSE_CAP, IMAGE_CAP, recordsOf, segmentsOf, isInternalRow } = require('../transcript-records');
+const { RECORD_CAP, PROMPT_CAP, PROSE_CAP, IMAGE_CAP, recordsOf, segmentsOf, isInternalRow, ticketOf } = require('../transcript-records');
 
 const FIXTURES = path.join(__dirname, 'fixtures', 'transcript-records');
 const fixture = (name) => fs.readFileSync(path.join(FIXTURES, `${name}.jsonl`), 'utf8');
@@ -332,7 +332,7 @@ test('an inbound delivery with an image block carries no images', () => {
 test('a runtime reply Clodex injects is a reply record with its verb and no sender; an agent:from delivery keeps its sender; a mid-line bracket stays a typed prompt', () => {
   const rows = [
     ['[agent:reboot] reboot queued — restarting once idle', { id: 'u', kind: 'reply', ts: null, turn: 1, verb: 'reboot', glyph: '↻', label: 'reboot', text: 'reboot queued — restarting once idle' }],
-    ['[agent:task] ticket t1 created', { id: 'u', kind: 'reply', ts: null, turn: 1, verb: 'task', glyph: '⇄', label: 'task', text: 'ticket t1 created' }],
+    ['[agent:task] ticket t1 created', { id: 'u', kind: 'reply', ts: null, turn: 1, verb: 'task', glyph: '⇄', label: 'task', ticket: { id: 't1', tag: null }, text: 'ticket t1 created' }],
     ['[agent:branch] main', { id: 'u', kind: 'reply', ts: null, turn: 1, verb: 'branch', glyph: '◇', label: 'branch', text: 'main' }],
     ['[agent:task done t1] report', { id: 'u', kind: 'prompt', ts: null, turn: 1, text: '[agent:task done t1] report', source: 'typed' }],
     ['[agent:from wirescope] hi', { id: 'u', kind: 'inbound', ts: null, turn: 1, from: 'wirescope', text: 'hi' }],
@@ -491,4 +491,42 @@ test('isInternalRow is true for what Clodex injects and false for the operator a
     [null, false],
   ];
   assert.deepStrictEqual(rows.map(([r]) => isInternalRow(r)), rows.map(([, want]) => want));
+});
+
+test('ticketOf reads the bracket marker on inbound text and the bare ticket id on a task reply', () => {
+  const rows = [
+    ['[ticket t5]', 'inbound', { id: 't5', tag: null }],
+    ['[ticket t5 MERGED] landed on master', 'inbound', { id: 't5', tag: 'MERGED' }],
+    ['[ticket t5 REVIEW REDELIVERY] again', 'inbound', { id: 't5', tag: 'REVIEW REDELIVERY' }],
+    ['[ticket t5 merged 3h ago, not accepted]', 'inbound', { id: 't5', tag: 'merged 3h ago, not accepted' }],
+    ['[ticket t5 merged, not accepted]', 'inbound', { id: 't5', tag: 'merged, not accepted' }],
+    ['[tickets t5]', 'inbound', null],
+    ['see [ticket t5 MERGED]', 'inbound', null],
+    ['ticket t5 created and started', 'inbound', null],
+    ['ticket t5 created and started', 'reply', { id: 't5', tag: null }],
+    ['error: ticket t5 not found', 'reply', null],
+    ['tickets t5', 'reply', null],
+  ];
+  for (const [text, form, want] of rows) assert.deepStrictEqual(ticketOf(text, form), want, `${form}: ${text}`);
+});
+
+test('an inbound record carries the ticket marker read after its sender prefix; a task reply carries the id; other replies and markerless inbounds carry none', () => {
+  const one = (text) => recordsOf(rec({ type: 'user', uuid: 'u', message: { content: text } })).records[0];
+  assert.deepStrictEqual(one('[agent:from ticket-loop] [ticket t3 ACCEPT] review round 1, no must-fixes.').ticket, { id: 't3', tag: 'ACCEPT' });
+  assert.deepStrictEqual(one('[agent:from ticket-watchdog] [ticket t3] stalled: quiet').ticket, { id: 't3', tag: null });
+  assert.deepStrictEqual(one('[agent:from team-hand] [ticket t3 done] Message (900 bytes) attached: @/tmp/m.txt ').ticket, { id: 't3', tag: 'done' });
+  assert.deepStrictEqual(one('[agent:task] ticket t3 accepted').ticket, { id: 't3', tag: null });
+  assert.strictEqual(one('[agent:task] error: no such ticket').ticket, undefined);
+  assert.strictEqual(one('[agent:dm] ticket t3 delivered').ticket, undefined);
+  assert.strictEqual(one('[agent:from reminder] continue t3').ticket, undefined);
+});
+
+test('the cap clip drops the whole head turn when a later turn opens inside the window', () => {
+  const lines = [
+    rec({ type: 'user', uuid: 'p', message: { content: 'go' } }),
+    rec({ type: 'assistant', uuid: 'a', message: { content: [{ type: 'text', text: 'on it' }] } }),
+    rec({ type: 'user', uuid: 'r', message: { content: '[agent:task] ticket t1 created' } }),
+    rec({ type: 'assistant', uuid: 'b', message: { content: [{ type: 'text', text: 'filed' }] } }),
+  ];
+  assert.deepStrictEqual(recordsOf(lines.join('\n'), 2).records.map((r) => r.id), ['r', 'b']);
 });

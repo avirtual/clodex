@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Ticket verdict messages now open with a `[ticket tN ACCEPT|REWORK]` marker, and done/cancel/reassign notices delivered as attachments keep their `[ticket tN …]` marker on the pointer line.
 - Ticket loop: must-fixes that have to wait for a busy seat keep the pending rejection's reasons with them, so a rejection whose Enter was eaten is not lost when the follow-up is parked.
 - Ticket loop: must-fixes added before a seat has taken its turn on a rejection are typed together with that rejection's reasons, so a rejection whose Enter was eaten is not lost even when the follow-up lands.
 - Ticket loop: when must-fixes are added before a seat has taken its turn on a rejection and the follow-up itself has to be redelivered, that redelivery carries the rejection's reasons too instead of only the new text.

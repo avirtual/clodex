@@ -1839,7 +1839,7 @@ test('t906: an ACCEPT is untouched — the brief lines are REWORK-only', async (
   const path = (body.match(/\S*review-t1-r1\.verdict\.md/) || [null])[0];
   assert.ok(path, 'ENTER: the ACCEPT brief still cites its verdict file');
   assert.strictEqual(body, [
-    'ACCEPT on ticket t1 (review round 1, no must-fixes).',
+    '[ticket t1 ACCEPT] review round 1, no must-fixes.',
     'Landed on the ticket record; the board shows it via [agent:task list all].',
     `Full verdict (44 bytes): ${path}`,
   ].join('\n'),
