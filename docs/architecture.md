@@ -1230,7 +1230,7 @@ Own state + DOM, `init*(deps)`:
   is the surface over it and owns only its own painting. Keeping the core
   DOM-free is what lets `test/voice-core.test.js` pin it with no jsdom. The bar
   button is absent outright for a non-Claude seat, since Codex has no `/voice`.
-- **live-split-view.js** + **lib/live-split.js** — the experimental transcript
+- **live-split-view.js** + **lib/live-split.js** — the transcript
   pane (t1122 spike, `transcriptPane` setting). The pure half
   finds the composer anchor on the visible screen and applies the hysteresis; the
   view translates and clips the unresized xterm into a bottom strip under a

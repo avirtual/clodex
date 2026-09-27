@@ -140,7 +140,7 @@ const initialViewFor = (name) => initialSeatView({ transcriptPane: transcriptPan
 const openAtAGlance = () => openHelp('at-a-glance', 'views');
 function refreshTranscriptPanes() {
   for (const [name, entry] of sessions) {
-    if (entry.view) applySeatView(entry, initialViewFor(name));
+    if (entry.view && isAgentType(sessionTypeOf(name))) applySeatView(entry, initialViewFor(name));
   }
 }
 const terminalWebglReady = window.api.getSettings()
@@ -2400,7 +2400,7 @@ function createTerminal(name, peer = null) {
       writePty,
     }));
   }
-  const agentSeat = !peer && isAgentType(sessionTypeOf(name));
+  const agentSeat = !peer;
   const seat = agentSeat ? createSeatView(initialViewFor(name)) : {};
   const liveSplit = !splitOn ? null : createLiveSplitView(terminal, wrapperEl, {
     isEligible: () => isAgentType(sessionTypeOf(name)),
@@ -5438,10 +5438,7 @@ const { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
   },
 });
 voiceBarActionHtml = voiceActionHtml;
-// The bar holds the core open for the life of the window: unlike the
-// Preferences row, its label is on screen with no dialog to open, so the poll
-// behind it must keep running. Preferences takes a second, refcounted hold
-// while its dialog is up.
+// The bar holds the core open for the life of the window.
 voiceCore.start();
 
 
@@ -5493,7 +5490,7 @@ resizeObserver.observe(terminalContainer);
 window.api.onZoomNudge(refitActiveTerminal);
 window.api.onRequestToggleRawTerminal(() => {
   const entry = activeSession ? sessions.get(activeSession) : null;
-  if (entry && entry.view && entry.liveSplit) toggleSeatTerminal(entry);
+  if (entry && entry.view && entry.liveSplit && isAgentType(sessionTypeOf(activeSession))) toggleSeatTerminal(entry);
 });
 
 

@@ -6003,7 +6003,6 @@ body.web-frontend #sidebar-header {
 .transcript-bar-chips[hidden] { display: flex; visibility: hidden; }
 .transcript-bar-views { display: inline-flex; align-items: center; gap: var(--sp-2); flex: none; }
 .transcript-help-btn, .transcript-terminal-btn { font: inherit; color: var(--text-tertiary); background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 var(--sp-2); cursor: pointer; }
-.transcript-terminal-btn[aria-pressed="true"] { color: var(--text-primary); background: var(--surface-raised); }
 .transcript-help-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .transcript-pane[data-raw] { height: auto; overflow: hidden; }
 .transcript-pane[data-raw] > :not(.transcript-bar) { display: none; }

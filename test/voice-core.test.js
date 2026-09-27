@@ -141,8 +141,6 @@ test('choosing no mode writes nothing, but the repaint is FORCED', async () => {
     assert.strictEqual(h.core.choose(''), false, 'an empty pick is not a mode');
     // `force` is the field that matters here: it is what lets the surface repaint
     // out of a selection the core refused, even while the picker holds focus.
-    // Without it the row keeps showing "Not set" beneath a line saying the value
-    // came from the file — the r2 defect, in the shape reachable from the picker.
     assert.deepStrictEqual(h.last(), {
       state: fileSays('tap'), pending: null, mode: 'tap', capable: true, cause: null, force: true,
     });

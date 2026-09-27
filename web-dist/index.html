@@ -8467,10 +8467,6 @@ body.web-frontend #sidebar-header {
   padding: 0 var(--sp-2);
   cursor: pointer;
 }
-.transcript-terminal-btn[aria-pressed=true] {
-  color: var(--text-primary);
-  background: var(--surface-raised);
-}
 .transcript-help-btn:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
@@ -46928,7 +46924,7 @@ ${detail}` });
       var openAtAGlance = () => openHelp("at-a-glance", "views");
       function refreshTranscriptPanes() {
         for (const [name, entry] of sessions) {
-          if (entry.view) applySeatView(entry, initialViewFor(name));
+          if (entry.view && isAgentType(sessionTypeOf(name))) applySeatView(entry, initialViewFor(name));
         }
       }
       var terminalWebglReady = window.api.getSettings().then((s) => {
@@ -49156,7 +49152,7 @@ ${detail}` });
             writePty
           }));
         }
-        const agentSeat = !peer && isAgentType(sessionTypeOf(name));
+        const agentSeat = !peer;
         const seat = agentSeat ? createSeatView(initialViewFor(name)) : {};
         const liveSplit = !splitOn ? null : createLiveSplitView(terminal, wrapperEl, {
           isEligible: () => isAgentType(sessionTypeOf(name)),
@@ -52032,7 +52028,7 @@ Click for live activity`;
       window.api.onZoomNudge(refitActiveTerminal);
       window.api.onRequestToggleRawTerminal(() => {
         const entry = activeSession ? sessions.get(activeSession) : null;
-        if (entry && entry.view && entry.liveSplit) toggleSeatTerminal(entry);
+        if (entry && entry.view && entry.liveSplit && isAgentType(sessionTypeOf(activeSession))) toggleSeatTerminal(entry);
       });
       var overlayElementById = (id) => document.getElementById(id);
       var overlayElementsByClass = (cls) => Array.from(document.getElementsByClassName(cls));
