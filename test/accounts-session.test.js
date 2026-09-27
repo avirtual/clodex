@@ -31,7 +31,7 @@ function mkRows(seats, { entries = {}, accounts } = {}) {
     knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
-    getPersistence: () => ({ list: () => [], get: (n) => entries[n] || null }),
+    getPersistence: () => ({ list: () => Object.entries(entries).map(([name, e]) => ({ name, ...e })), get: (n) => entries[n] || null }),
     getAccounts: accounts === undefined ? undefined : () => accounts,
     notifyOS: () => {},
     log: { info() {}, warn() {}, error() {}, debug() {} },
@@ -49,6 +49,14 @@ function mkRows(seats, { entries = {}, accounts } = {}) {
   }
   return Object.fromEntries(m.list().map((r) => [r.name, r]));
 }
+
+test('list(): a row carries the effort level of its persisted entry, null when the entry has none', () => {
+  const rows = mkRows([{ name: 'deep' }, { name: 'plain' }], {
+    entries: { deep: { effort: 'max' }, plain: {} },
+  });
+  assert.strictEqual(rows.deep.effort, 'max');
+  assert.strictEqual(rows.plain.effort, null);
+});
 
 // One registry for the row tests: `/minted/sub-2` is registered, `~/.claude` is
 // the default, and anything else falls back to its basename.

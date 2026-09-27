@@ -37237,6 +37237,7 @@ void main() {
       var { esc, fmtCountdown, fmtTokens } = require_format();
       var { turnLine, reqLine, costLine } = require_turn_stat();
       var IO_KINDS = { stream: "streamed", pty: "terminal" };
+      var AGENT_TYPES = /* @__PURE__ */ new Set(["claude", "codex", "muse"]);
       function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, proxyPollMs, typeGlyph }) {
         const HOVER_DELAY_MS = 350;
         const TICK_MS = 1e3;
@@ -37312,6 +37313,7 @@ void main() {
           if (warm) rows.push(statRow("cache", esc(warm.text), ` data-state="${warm.state}"`));
           const ctx = contextText(name, p && p.linked ? p : null);
           if (ctx) rows.push(statRow("context", esc(ctx)));
+          if (AGENT_TYPES.has(type)) rows.push(statRow("effort", esc(item.dataset.effort || "default")));
           if (p && p.linked) {
             if (p.model) rows.push(statRow("model", esc(p.model)));
             const cl = costLine(p);
@@ -46181,6 +46183,12 @@ ${detail}` });
         if (!item) return;
         item.dataset.io = seatIoKind(io);
       }
+      function markSeatEffort(name, effort) {
+        const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+        if (!item) return;
+        if (effort) item.dataset.effort = effort;
+        else delete item.dataset.effort;
+      }
       var activeSession = null;
       var terminalWebglEnabled = false;
       var transcriptPaneEnabled = false;
@@ -46657,6 +46665,7 @@ ${detail}` });
         if (entry.error) item.dataset.error = entry.error;
         if (entry.backend) item.dataset.backend = entry.backend;
         item.dataset.io = seatIoKind(entry.io);
+        if (entry.effort) item.dataset.effort = entry.effort;
         const displayName = entry.label || entry.name;
         item.innerHTML = `
     <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ""}>${typeGlyph(entry.type, entry.backend)}</span>
@@ -46701,6 +46710,7 @@ ${detail}` });
         if (entry.backend) item.dataset.backend = entry.backend;
         if (entry.team) item.dataset.team = entry.team;
         item.dataset.io = seatIoKind(entry.io);
+        if (entry.effort) item.dataset.effort = entry.effort;
         const displayName = entry.label || entry.name;
         item.innerHTML = `
     <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ""}>${typeGlyph(entry.type, entry.backend)}</span>
@@ -46780,6 +46790,7 @@ ${detail}` });
         if (entry.backend) item.dataset.backend = entry.backend;
         if (entry.team) item.dataset.team = entry.team;
         item.dataset.io = seatIoKind(entry.io);
+        if (entry.effort) item.dataset.effort = entry.effort;
         const displayName = entry.label || entry.name;
         item.innerHTML = `
     <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ""}>${typeGlyph(entry.type, entry.backend)}</span>
@@ -47583,6 +47594,7 @@ ${detail}` });
           if (Array.isArray(live)) for (const s of live) {
             applyAccountChip(s.name, s.account || null);
             markSeatVoice(s.name, s.voice);
+            markSeatEffort(s.name, s.effort);
           }
         } catch {
         }
@@ -54573,6 +54585,7 @@ ${res.stderr}` : "");
         markSeatVoice(entry.name, entry.voice);
         const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
         addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true, null, entry.fixFor || null);
+        markSeatEffort(entry.name, entry.effort);
         if (entry.createdAt) sidebarMeta.set(entry.name, { ...sidebarMeta.get(entry.name) || {}, createdAt: entry.createdAt });
         const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
         if (item) {

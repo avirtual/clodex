@@ -115,6 +115,12 @@ function markSeatIo(name, io) {
   if (!item) return;
   item.dataset.io = seatIoKind(io);
 }
+function markSeatEffort(name, effort) {
+  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (!item) return;
+  if (effort) item.dataset.effort = effort;
+  else delete item.dataset.effort;
+}
 let activeSession = null;
 let terminalWebglEnabled = false;
 let transcriptPaneEnabled = false;
@@ -582,6 +588,7 @@ function addFailedSessionToSidebar(entry) {
   if (entry.error) item.dataset.error = entry.error;
   if (entry.backend) item.dataset.backend = entry.backend;
   item.dataset.io = seatIoKind(entry.io);
+  if (entry.effort) item.dataset.effort = entry.effort;
   const displayName = entry.label || entry.name;
   item.innerHTML = `
     <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''}>${typeGlyph(entry.type, entry.backend)}</span>
@@ -630,6 +637,7 @@ function addArchivedSessionToSidebar(entry) {
   if (entry.backend) item.dataset.backend = entry.backend;
   if (entry.team) item.dataset.team = entry.team; // group-by-project team key
   item.dataset.io = seatIoKind(entry.io);
+  if (entry.effort) item.dataset.effort = entry.effort;
   const displayName = entry.label || entry.name;
   item.innerHTML = `
     <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''}>${typeGlyph(entry.type, entry.backend)}</span>
@@ -714,6 +722,7 @@ function addExitedSessionToSidebar(entry) {
   if (entry.backend) item.dataset.backend = entry.backend;
   if (entry.team) item.dataset.team = entry.team;
   item.dataset.io = seatIoKind(entry.io);
+  if (entry.effort) item.dataset.effort = entry.effort;
   const displayName = entry.label || entry.name;
   item.innerHTML = `
     <span class="session-chip" data-type="${esc(entry.type)}"${entry.backend ? ` data-backend="${esc(entry.backend)}"` : ''}>${typeGlyph(entry.type, entry.backend)}</span>
@@ -1534,7 +1543,7 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
   } catch {} finally { metaRefreshInFlight = false; }
   try {
     const live = await window.api.listSessions();
-    if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); }
+    if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); }
   } catch {}
   refreshSidebarView();
   // Which footer buttons show is answered off sidebarMeta, which does not exist
@@ -8790,6 +8799,7 @@ function mountRestoredSession(entry) {
   markSeatVoice(entry.name, entry.voice);
   const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
   addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true, null, entry.fixFor || null);
+  markSeatEffort(entry.name, entry.effort);
   if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
   const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);
   if (item) {

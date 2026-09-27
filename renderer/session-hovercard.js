@@ -15,6 +15,7 @@ const { esc, fmtCountdown, fmtTokens } = require('./lib/format');
 const { turnLine, reqLine, costLine } = require('./lib/turn-stat');
 
 const IO_KINDS = { stream: 'streamed', pty: 'terminal' };
+const AGENT_TYPES = new Set(['claude', 'codex', 'muse']);
 
 function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, proxyPollMs, typeGlyph }) {
   const HOVER_DELAY_MS = 350;
@@ -109,6 +110,7 @@ function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, prox
     if (warm) rows.push(statRow('cache', esc(warm.text), ` data-state="${warm.state}"`));
     const ctx = contextText(name, p && p.linked ? p : null);
     if (ctx) rows.push(statRow('context', esc(ctx)));
+    if (AGENT_TYPES.has(type)) rows.push(statRow('effort', esc(item.dataset.effort || 'default')));
     if (p && p.linked) {
       if (p.model) rows.push(statRow('model', esc(p.model)));
       const cl = costLine(p);

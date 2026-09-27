@@ -191,7 +191,7 @@ rather than skipped as model-less; a seat with neither says so in its reason.
 Every `session:list` row carries `account`, read
 off the persisted entry's env (a dir outside the registry shows as its basename,
 so a hand-typed `~/sub-2` still reads `sub-2`), and a claude row also carries
-`model` — that same effective model, `null` on a non-claude row. `create()` refuses to spawn when
+`model` — that same effective model, `null` on a non-claude row — and `effort`, the level the seat was spawned with, `null` when none was set. `create()` refuses to spawn when
 the merged env names a `CLAUDE_CONFIG_DIR` that is not a directory — the CLI
 would otherwise mint an empty config there and loop on onboarding silently. Like
 session env and exec grants the whole family is LOCAL-only, and by the
