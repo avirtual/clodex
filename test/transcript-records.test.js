@@ -656,7 +656,7 @@ const queuedOf = (records) => records.filter((r) => r.state === 'queued');
 test('an enqueued message is a queued mid-turn prompt at the end of the running turn', () => {
   const { records } = recordsOf([typed('p1', 'P', 'go'), queueOp('enqueue', 'hi')].join('\n'));
   assert.strictEqual(records[0].id, 'p1');
-  assert.deepStrictEqual(records.slice(1), [{ id: `queued:${Date.parse(QTS)}`, kind: 'prompt', ts: Date.parse(QTS), turn: 1, text: 'hi', source: 'mid-turn', state: 'queued' }]);
+  assert.deepStrictEqual(records.slice(1), [{ id: `queued:${Date.parse(QTS)}:0`, kind: 'prompt', ts: Date.parse(QTS), turn: 1, text: 'hi', source: 'mid-turn', state: 'queued' }]);
 });
 
 test('a queued message absorbed mid-turn leaves one row, the delivered one from the attachment', () => {
@@ -689,4 +689,36 @@ test('an assistant record does not consume a queued message', () => {
 test('a typed prompt clears the queue and the queue operations never advance the turn', () => {
   const { records } = recordsOf([typed('p1', 'P', 'go'), queueOp('enqueue', 'x'), typed('p2', 'Q', 'next')].join('\n'));
   assert.deepStrictEqual(records.map((r) => [r.id, r.turn]), [['p1', 1], ['p2', 2]]);
+});
+
+test('a queued task-notification is no queued record', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), queueOp('enqueue', '<task-notification>x</task-notification>')].join('\n'));
+  assert.deepStrictEqual(records.map((r) => r.id), ['p1']);
+});
+
+test('a queued peer message is no queued prompt', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), queueOp('enqueue', '[agent:from lead] hi')].join('\n'));
+  assert.deepStrictEqual(records.map((r) => r.id), ['p1']);
+});
+
+test('the queue keeps non-prompt entries so their remove matches them, not the operator message', () => {
+  const N = '<task-notification>x</task-notification>';
+  const { records } = recordsOf([typed('p1', 'P', 'go'), queueOp('enqueue', N), queueOp('enqueue', 'hi'), queueOp('remove', N)].join('\n'));
+  assert.deepStrictEqual(queuedOf(records).map((r) => r.text), ['hi']);
+});
+
+test('popAll pulls every queued message back to the editor', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), queueOp('enqueue', 'hi'), queueOp('popAll', 'hi')].join('\n'));
+  assert.deepStrictEqual(queuedOf(records), []);
+});
+
+test('two queued messages with the same timestamp keep distinct ids', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), queueOp('enqueue', 'a'), queueOp('enqueue', 'b')].join('\n'));
+  assert.deepStrictEqual(queuedOf(records).map((r) => [r.id, r.text]), [[`queued:${Date.parse(QTS)}:0`, 'a'], [`queued:${Date.parse(QTS)}:1`, 'b']]);
+});
+
+test('a queued paste shows its chip text, not the raw wrapper', () => {
+  const { records } = recordsOf([typed('p1', 'P', 'go'), queueOp('enqueue', '<pasted_content id="1">line one\nline two</pasted_content>')].join('\n'));
+  const [q] = queuedOf(records);
+  assert.ok(q && !q.text.includes('<pasted_content'), JSON.stringify(q));
 });

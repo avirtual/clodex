@@ -8,5 +8,5 @@ Every record parsed from the attachment (prompt, inbound or reply card) is stamp
 
 ## recordsOf
 
-A `queue-operation` `enqueue` (string `content`) is written when the operator sends while the agent works; `remove` with `reason:'absorbed_mid_turn'` and the same `content` lands 1-2 lines before the `queued_command` attachment that carries the enqueue's timestamp.
-`dequeue` carries no `content` and pops the queue FIFO when the CLI starts the next turn; the popped message then arrives as an ordinary `user` record.
+A `queue-operation` `enqueue` (string `content`) is written for anything queued while the agent works — operator sends, but also task notifications and typed-in agent messages, which is why the emit step classifies each entry through `userRecords` and keeps only prompts; `remove` with `reason:'absorbed_mid_turn'` and the same `content` lands 1-2 lines before the `queued_command` attachment that carries the enqueue's timestamp.
+`dequeue` carries no `content` and pops the queue FIFO when the CLI starts the next turn; the popped message then arrives as an ordinary `user` record. `popAll` pulls the queue back into the editor.

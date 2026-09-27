@@ -479,6 +479,7 @@ function claudeShaped(rec) {
 function queueStep(queued, rec) {
   if (rec.operation === 'enqueue') return typeof rec.content === 'string' ? [...queued, { ts: tsOf(rec), text: rec.content }] : queued;
   if (rec.operation === 'dequeue') return queued.slice(1);
+  if (rec.operation === 'popAll') return [];
   if (rec.operation !== 'remove') return queued;
   const at = queued.findIndex((q) => q.text === rec.content);
   return queued.filter((_, i) => i !== (at < 0 ? 0 : at));
@@ -528,9 +529,12 @@ function recordsOf(text, max = RECORD_CAP) {
       all.push(r);
     }
   }
-  for (const q of queued) {
-    all.push(capped({ id: `queued:${q.ts}`, kind: 'prompt', ts: q.ts, turn, source: 'mid-turn', state: 'queued' }, 'text', q.text, PROMPT_CAP));
-  }
+  queued.forEach((q, i) => {
+    const user = { type: 'user', message: { role: 'user', content: q.text } };
+    for (const r of userRecords(user, { id: `queued:${q.ts}:${i}`, kind: '', ts: q.ts, turn }, tools)) {
+      if (r.kind === 'prompt') all.push({ ...r, source: 'mid-turn', state: 'queued' });
+    }
+  });
   return { records: cutOnTurn(all, max) };
 }
 

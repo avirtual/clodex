@@ -1017,14 +1017,13 @@ test('a queued mid-turn prompt row reads mid-turn, its text, its time and queued
   assert.strictEqual(row.childNodes[3].dataset.state, 'queued');
 });
 
-test('a queued prompt that turns delivered rebuilds its row and the state reads delivered', () => {
+test('a queued prompt replaced by its delivered attachment leaves only the delivered row', () => {
   const m = mount();
   m.render([ask('p1', 1), queuedAsk('queued')]);
-  const before = rowIn(m, 'queued:1');
-  m.render([ask('p1', 1), queuedAsk('delivered')]);
-  const after = rowIn(m, 'queued:1');
-  assert.notStrictEqual(after, before);
-  const state = after.childNodes[after.childNodes.length - 1];
+  assert.ok(rowIn(m, 'queued:1'), 'ENTER: the queued row painted');
+  m.render([ask('p1', 1), midAsk('delivered')]);
+  assert.strictEqual(rowIn(m, 'queued:1'), undefined);
+  const state = rowIn(m, 'q1').childNodes[3];
   assert.deepStrictEqual([state.className, state.textContent, state.dataset.state], ['tr-mid-state', 'delivered', 'delivered']);
 });
 
