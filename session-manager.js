@@ -5603,12 +5603,7 @@ function createSessionManager(deps) {
       }, COMPACTING_VALVE_MS);
       if (session.compacting) return;
       session.compacting = { since: Date.now(), trigger: kind };
-      if (!session._compactNotices) session._compactNotices = [];
-      session._compactNotices.push({ id: `compact:${session.compacting.since}`, ts: session.compacting.since, text: noticeTextFor('start') });
-      if (session._compactNotices.length > COMPACT_NOTICE_CAP) session._compactNotices.shift();
-      session._compactNoticeRev = (session._compactNoticeRev || 0) + 1;
       this._sendToSession(session.name, 'session-compacting', session.name, session.compacting);
-      this._sendToSession(session.name, 'transcript-changed', session.name);
       this._broadcast('ipc-message', {
         type: 'context', from: session.name, to: session.name,
         body: `compact started (${kind})`,
@@ -5622,9 +5617,10 @@ function createSessionManager(deps) {
       if (!c) return;
       session.compacting = null;
       const ms = Date.now() - c.since;
-      const notice = (session._compactNotices || []).find((n) => n.id === `compact:${c.since}`);
-      if (notice && outcome !== 'exit') {
-        notice.text = noticeTextFor(outcome, ms);
+      if (outcome !== 'exit') {
+        if (!session._compactNotices) session._compactNotices = [];
+        session._compactNotices.push({ id: `compact:${c.since}`, ts: c.since, ms, outcome, text: noticeTextFor(outcome, ms) });
+        if (session._compactNotices.length > COMPACT_NOTICE_CAP) session._compactNotices.shift();
         session._compactNoticeRev = (session._compactNoticeRev || 0) + 1;
       }
       this._sendToSession(session.name, 'session-compacting', session.name, null, { outcome, ms });

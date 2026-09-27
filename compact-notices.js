@@ -11,13 +11,21 @@ function elapsedText(ms) {
 
 function noticeTextFor(outcome, ms) {
   if (outcome === 'done') return `Compacted in ${elapsedText(ms)}`;
-  if (outcome === 'valve') return 'Compact did not report back';
-  return 'Compacting context…';
+  return 'Compact did not report back';
 }
 
 function mergeCompactNotices(records, notices) {
   const out = Array.isArray(records) ? records.slice() : [];
+  const folded = new Set();
   for (const n of notices) {
+    if (typeof n.ms === 'number' && n.outcome === 'done') {
+      const b = out.findIndex((r, i) => !folded.has(i) && r.kind === 'boundary' && r.what === 'compact' && r.ts != null && r.ts >= n.ts);
+      if (b >= 0) {
+        out[b] = { ...out[b], elapsedMs: n.ms };
+        folded.add(b);
+        continue;
+      }
+    }
     let at = 0;
     for (let i = out.length - 1; i >= 0; i--) {
       if (out[i].ts != null && out[i].ts <= n.ts) { at = i + 1; break; }

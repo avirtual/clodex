@@ -230,6 +230,18 @@ test('a prompt head carries its local clock time; a boundary reads its token dro
   assert.deepStrictEqual(notice.childNodes[1].childNodes.map((n) => n.data ?? n.textContent), ['API Error: 500']);
 });
 
+test('a compact boundary carrying elapsedMs ends its label with the elapsed time; without it the label is unchanged', () => {
+  const m = mount();
+  m.render([
+    { ...prompt },
+    { id: 'b1', kind: 'boundary', ts: null, turn: 1, what: 'compact', trigger: 'manual', preTokens: 156000, postTokens: 16000, elapsedMs: 27000 },
+    { id: 'b2', kind: 'boundary', ts: null, turn: 1, what: 'compact', trigger: 'manual', preTokens: 156000, postTokens: 16000 },
+  ]);
+  const [, timed, plain] = m.pane.childNodes[0].childNodes;
+  assert.strictEqual(timed.textContent, 'compacted · 156k → 16k tokens · manual · 27s');
+  assert.strictEqual(plain.textContent, 'compacted · 156k → 16k tokens · manual');
+});
+
 test('a notice row links the path in its text, and clicking it resolves the path and opens it in the file peek', async () => {
   const calls = [];
   const doc = fakeDocument();
@@ -919,7 +931,7 @@ test('runs: a compact notice merged at index 0 does not change the run key, so t
   m.render(records);
   clickToggle(m);
   assert.strictEqual(cardsOf(m).length, 1, 'ENTER: the run is open');
-  const merged = mergeCompactNotices(records, [{ id: 'cn1', ts: 0, text: 'Compacting context…' }]);
+  const merged = mergeCompactNotices(records, [{ id: 'cn1', ts: 0, text: 'Compact did not report back' }]);
   assert.strictEqual(merged[0].id, 'cn1', 'ENTER: the notice took index 0');
   m.render(merged);
   assert.strictEqual(cardsOf(m).length, 1);

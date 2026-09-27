@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Transcript pane: a compact is one row — "compacted 156k → 16k tokens · manual · 27s" on the boundary — instead of the typed `/compact` echo, a "Compacting context…" notice and the boundary; the CLI's own progress line still shows in the working row while it runs. Codex and Muse seats, which write no boundary record, keep the "Compacted in 27s" row.
 - **Tickets is on by default, with a Feed**: the board of open and recently closed tickets, and a time-ordered feed of every filing, review, merge and acceptance, filterable, in the desktop app and the browser. An install that already turned the plugin off stays off.
 - Codex seats launched with approvals and the sandbox bypassed now show a `Bypass` chip under the composer (`Read-only` for a capped reviewer seat), since Codex's own status row does not say so; every agent seat's hovercard gains a `posture` row.
 - Every ticket transition (filed, started, assigned, reported, verdict, rejected, respec'd, merged, merge-failed, verify-hold, nudged, accepted, cancelled) is now appended to the ticket record as an `events` list with who and when, and the Tickets viewer's ticket read returns it. Records from before this change have no list and gain one from their next transition.

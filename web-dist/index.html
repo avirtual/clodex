@@ -32092,7 +32092,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           case "boundary": {
             const row = el(doc, "div", "tr-row tr-boundary");
             row.dataset.id = rec.id;
-            const label = rec.what === "compact" ? ["compacted", rec.preTokens != null && rec.postTokens != null ? `${tokensText(rec.preTokens)} \u2192 ${tokensText(rec.postTokens)} tokens` : null, rec.trigger].filter(Boolean).join(" \xB7 ") : "cleared";
+            const label = rec.what === "compact" ? ["compacted", rec.preTokens != null && rec.postTokens != null ? `${tokensText(rec.preTokens)} \u2192 ${tokensText(rec.postTokens)} tokens` : null, rec.trigger, typeof rec.elapsedMs === "number" ? elapsedText(rec.elapsedMs) : null].filter(Boolean).join(" \xB7 ") : "cleared";
             row.appendChild(el(doc, "span", "tr-boundary-label", label));
             return row;
           }

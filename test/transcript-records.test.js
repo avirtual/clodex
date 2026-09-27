@@ -167,6 +167,34 @@ test('a typed /compact echoed back as <command-name> is no prompt row; the bound
   assert.doesNotMatch(JSON.stringify(records), /\/compact/);
 });
 
+test('a typed /compact whose echo lands after the compact_boundary is no prompt row, as the CLI writes it', () => {
+  const lines = [
+    typed('p1', 'P', '/compact'),
+    rec({ type: 'system', subtype: 'compact_boundary', uuid: 'b1', compactMetadata: { trigger: 'manual', preTokens: 100, postTokens: 10 } }),
+    typed('p2', 'P', '<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>'),
+    typed('p3', 'P', '<local-command-stdout>Compacted (ctrl+o to see full summary)</local-command-stdout>'),
+  ];
+  const text = lines.join('\n');
+  assert.ok(text.indexOf('"compact_boundary"') < text.indexOf('<command-name>/compact'));
+  const { records } = recordsOf(text);
+  assert.deepStrictEqual(records, [
+    { id: 'b1', kind: 'boundary', ts: null, turn: 0, what: 'compact', trigger: 'manual', preTokens: 100, postTokens: 10 },
+  ]);
+  assert.doesNotMatch(JSON.stringify(records), /\/compact/);
+});
+
+test('an echo matches only the last typed prompt: an earlier /compact with the same promptId stays a row', () => {
+  const { records } = recordsOf([
+    typed('p1', 'P', '/compact'),
+    typed('p2', 'Q', 'next thing'),
+    typed('p3', 'P', '<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>'),
+  ].join('\n'));
+  assert.deepStrictEqual(records, [
+    { id: 'p1', kind: 'prompt', ts: null, turn: 1, text: '/compact', source: 'typed' },
+    { id: 'p2', kind: 'prompt', ts: null, turn: 2, text: 'next thing', source: 'typed' },
+  ]);
+});
+
 test('a /compact-shaped prompt with no echo after it stays a typed prompt row', () => {
   const { records } = recordsOf([
     typed('p1', 'P', '/compact'),
