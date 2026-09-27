@@ -967,6 +967,7 @@ module.exports.activate = (rhost) => {
       if (!alive() || my !== closedSeq || mySelect !== selectSeq || myReload !== reloadSeq) return;
 
       if (quiet) {
+        if (busy()) return;
         swap(() => {
           mountBoardShell();
           editorEl = null;
@@ -1014,11 +1015,13 @@ module.exports.activate = (rhost) => {
         renderClosed(project, { state, offset: Math.max(0, res.offset - res.limit) })
           .catch((e) => rhost.log.error('closed failed', e));
       });
+      newer.dataset.tvFocus = 'newer';
       newer.disabled = res.offset <= 0;
       const older = button('tv-pager-btn', 'Older', 'The next page', () => {
         renderClosed(project, { state, offset: res.offset + res.limit })
           .catch((e) => rhost.log.error('closed failed', e));
       });
+      older.dataset.tvFocus = 'older';
       older.disabled = res.offset + rows.length >= res.total;
       pager.appendChild(newer);
       pager.appendChild(older);
@@ -1053,9 +1056,11 @@ module.exports.activate = (rhost) => {
         chipBtn.dataset.tvFocus = `chip:${label}`;
         head.appendChild(chipBtn);
       }
-      head.appendChild(button('tv-btn tv-feed-refresh', 'Refresh', 'Read the feed again', () => {
+      const refresh = button('tv-btn tv-feed-refresh', 'Refresh', 'Read the feed again', () => {
         renderFeed(project).catch((e) => rhost.log.error('feed failed', e));
-      }));
+      });
+      refresh.dataset.tvFocus = 'refresh';
+      head.appendChild(refresh);
       sectionsEl.appendChild(head);
 
       if (!res.ok) {
@@ -1102,6 +1107,7 @@ module.exports.activate = (rhost) => {
       const res = await ask('feed', { project });
       if (!alive() || my !== feedSeq || mySelect !== selectSeq || myReload !== reloadSeq) return;
       if (quiet) {
+        if (busy()) return;
         swap(() => {
           mountBoardShell();
           paintFeed(project, res);
