@@ -423,6 +423,7 @@ clx-idle-
 clx-idle-seed-reg-
 clx-idle-seed-ud-
 clx-idle-ud-
+clx-img-upload-
 clx-keepwarm-
 clx-label-
 clx-lib-

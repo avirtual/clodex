@@ -1510,6 +1510,8 @@ and are not, which is why the judgement worth testing is pushed down here.
   `slashMenuKey` (arrow/Tab/Enter/Escape while the menu is open). Pure.
 - **pty-composer.js** — `ptyComposerWrites`: a pty seat composer draft as the
   writes sent to the CLI, the text as a bracketed paste, then CR as its own write. Pure.
+- **clipboard-images.js** — `clipboardImages`: clipboard image items read into
+  `{ mediaType, data }` base64 through an injected FileReader; shared by both seat composers' paste.
 - **prompt-echo.js** — recolour the CLI's submitted-prompt echo on the wire,
   before `terminal.write`. The echo is truecolor SGR, which xterm renders as
   inline styles that `options.theme` cannot reach, so the bytes are rewritten
