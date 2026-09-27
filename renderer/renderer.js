@@ -61,7 +61,8 @@ const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
 const { createDrawerHost } = require('./drawer-host');
 const { createIpcLog } = require('./ipc-log');
 const { createInboxDrawer } = require('./inbox-drawer');
-const { createVoiceCore, createVoiceControl } = require('./voice-control');
+const { createVoiceCore } = require('./voice-control');
+const { initialSeatView, seatViewSettings, createSeatView, applySeatView, toggleSeatTerminal, seatViewDeps } = require('./lib/seat-view');
 const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
 const { createVoiceMirror, engineObserved } = require('./voice-mirror');
@@ -133,23 +134,19 @@ function markSeatPosture(name, posture) {
 }
 let activeSession = null;
 let terminalWebglEnabled = false;
-let transcriptPaneEnabled = false;
+let transcriptPaneEnabled = true;
 let transcriptPaneMode = 'conversation';
+const initialViewFor = (name) => initialSeatView({ transcriptPane: transcriptPaneEnabled, transcriptPaneMode, io: streamSeatNames.has(name) ? 'stream' : 'pty' });
+const openAtAGlance = () => openHelp('at-a-glance', 'views');
 function refreshTranscriptPanes() {
-  for (const entry of sessions.values()) {
-    if (entry.liveSplit) entry.liveSplit.refresh();
-    if (entry.stream) entry.stream.setMode(transcriptPaneMode);
+  for (const [name, entry] of sessions) {
+    if (entry.view) applySeatView(entry, initialViewFor(name));
   }
-}
-function setTranscriptPaneMode(next) {
-  transcriptPaneMode = next === 'internals' ? 'internals' : 'conversation';
-  try { window.api.setSettings({ transcriptPaneMode }); } catch {}
-  refreshTranscriptPanes();
 }
 const terminalWebglReady = window.api.getSettings()
   .then((s) => {
     terminalWebglEnabled = !!(s && s.terminalWebgl === true);
-    transcriptPaneEnabled = !!(s && s.transcriptPane === true);
+    transcriptPaneEnabled = !(s && s.transcriptPane === false);
     transcriptPaneMode = s && s.transcriptPaneMode === 'internals' ? 'internals' : 'conversation';
     refreshTranscriptPanes();
   })
@@ -943,6 +940,8 @@ function restartSessionWithReattach(name) {
   const snapTeam = item ? item.dataset.team || null : null; // cwd is unchanged by a restart → team persists
   const snapNoWire = item ? item.dataset.noWire === '1' : false; // spawn-time config, unchanged by a restart
   const snapIo = streamSeatNames.has(name) ? 'stream' : 'pty';
+  const snapEffort = item ? item.dataset.effort || null : null;
+  const snapPosture = item ? item.dataset.posture || null : null;
   return window.api.restartSession(name).then((res) => {
     if (!res || !res.ok) {
       alert(`Restart failed: ${res && res.error ? res.error : 'unknown error'}`);
@@ -952,6 +951,8 @@ function restartSessionWithReattach(name) {
       markSeatIo(name, res.io || snapIo);
       createTerminal(name);
       addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam, snapNoWire, snapAccount);
+      markSeatEffort(name, snapEffort);
+      markSeatPosture(name, snapPosture);
       switchSession(name);
     }
   });
@@ -1693,12 +1694,12 @@ function attachComposer(composer, { onSend, onSlash = null, onEscape, onEmptySpa
   };
 }
 
-function createStreamSeatPane(name, wrapperEl) {
+function createStreamSeatPane(name, wrapperEl, seat) {
   wrapperEl.classList.add('stream-seat');
   const paneEl = document.createElement('div');
   paneEl.className = 'transcript-pane transcript-pane-full';
   wrapperEl.appendChild(paneEl);
-  const modeToggle = modeBar(document, paneEl, transcriptPaneMode, setTranscriptPaneMode);
+  const modeToggle = modeBar(document, paneEl, seat.lastView, (next) => applySeatView(seat, next), { onHelp: openAtAGlance });
   const composer = document.createElement('textarea');
   const composerKit = attachComposer(composer, {
     onSend: () => sendComposer(),
@@ -1887,7 +1888,7 @@ function createStreamSeatPane(name, wrapperEl) {
     toast: showToast,
     echoPalette: currentEchoPalette,
     lead: modeToggle.bar,
-    mode: transcriptPaneMode,
+    mode: seat.lastView,
   };
   const pull = (force = false) => {
     if (pulling || disposed) return;
@@ -2125,10 +2126,11 @@ function createTerminal(name, peer = null) {
     wrapperEl.className = 'terminal-wrapper';
     wrapperEl.dataset.name = name;
     terminalContainer.appendChild(wrapperEl);
-    const stream = createStreamSeatPane(name, wrapperEl);
+    const seat = createSeatView(initialViewFor(name));
+    const stream = createStreamSeatPane(name, wrapperEl, seat);
     const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
     if (row && (row.dataset.attention || row.dataset.activity)) stream.setTurnRunning(seatActivity(row), Number(row.dataset.thinkingSince) || null);
-    sessions.set(name, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, peer: null, stream, liveSplit: null });
+    sessions.set(name, Object.assign(seat, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, peer: null, stream, liveSplit: null }));
     updateWindowTitle();
     return { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, echoRewrite: (chunk) => chunk };
   }
@@ -2398,8 +2400,10 @@ function createTerminal(name, peer = null) {
       writePty,
     }));
   }
+  const agentSeat = !peer && isAgentType(sessionTypeOf(name));
+  const seat = agentSeat ? createSeatView(initialViewFor(name)) : {};
   const liveSplit = !splitOn ? null : createLiveSplitView(terminal, wrapperEl, {
-    isEligible: () => transcriptPaneEnabled && isAgentType(sessionTypeOf(name)),
+    isEligible: () => isAgentType(sessionTypeOf(name)),
     platform: () => sessionTypeOf(name),
     pullTranscript: (since) => window.api.transcriptPull(name, since),
     seatName: name,
@@ -2409,8 +2413,8 @@ function createTerminal(name, peer = null) {
     openExternal: (url) => window.api.openExternal(url),
     toast: showToast,
     echoPalette: currentEchoPalette,
-    mode: () => transcriptPaneMode,
-    onMode: setTranscriptPaneMode,
+    ...(agentSeat ? seatViewDeps(seat, { onHelp: openAtAGlance }) : { mode: () => 'conversation' }),
+    onInset: () => { if (activeSession === name) refitActiveTerminal(); },
     composerEl,
     menuMirror,
     statusChips: composerEl ? { write: writePty, effort: () => { const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`); return (row && row.dataset.effort) || null; }, posture: () => { const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`); return (row && row.dataset.posture) || null; } } : null,
@@ -2423,7 +2427,8 @@ function createTerminal(name, peer = null) {
     if (liveSplit) liveSplit.setTurnRunning(activity, Number(activityRow.dataset.thinkingSince) || null);
     if (composerEl && activity !== 'idle') composerEl.placeholder = COMPOSER_RUNNING_PLACEHOLDER;
   }
-  sessions.set(name, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger, menuMirror, syncMenuMirror });
+  sessions.set(name, Object.assign(seat, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger, menuMirror, syncMenuMirror }));
+  if (seat.view === 'terminal' && liveSplit) liveSplit.setRaw(true);
   updateWindowTitle();
   return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
 }
@@ -5419,7 +5424,6 @@ window.api.onSeatVoice((name, mode) => {
   markSeatVoice(name, mode);
   if (name === activeSession) voiceCore.refresh();
 });
-const voiceControl = createVoiceControl({ core: voiceCore });
 
 const { actionHtml: voiceActionHtml, openVoicePopover } = initVoicePopover({
   core: voiceCore,
@@ -5489,7 +5493,7 @@ resizeObserver.observe(terminalContainer);
 window.api.onZoomNudge(refitActiveTerminal);
 window.api.onRequestToggleRawTerminal(() => {
   const entry = activeSession ? sessions.get(activeSession) : null;
-  if (entry && entry.liveSplit) entry.liveSplit.setRaw(!entry.liveSplit.raw());
+  if (entry && entry.view && entry.liveSplit) toggleSeatTerminal(entry);
 });
 
 
@@ -5834,7 +5838,7 @@ const prefsCodexBox = document.getElementById('prefs-codex-components');
 const prefsProxyEnabled = document.getElementById('prefs-proxy-enabled');
 const prefsDisableDesignMcp = document.getElementById('prefs-disable-design-mcp');
 const prefsTerminalWebgl = document.getElementById('prefs-terminal-webgl');
-const prefsTranscriptPane = document.getElementById('prefs-transcript-pane');
+const prefsSeatView = document.getElementById('prefs-seat-view');
 const prefsCompactOnResume = document.getElementById('prefs-compact-on-resume');
 const prefsContextHints = document.getElementById('prefs-context-hints');
 const prefsSemanticHints = document.getElementById('prefs-semantic-hints');
@@ -8297,7 +8301,7 @@ async function openPrefs() {
   prefsProxyEnabled.checked = !!s.proxyEnabled;
   prefsDisableDesignMcp.checked = s.disableClaudeDesignMcp !== false;
   if (prefsTerminalWebgl) prefsTerminalWebgl.checked = s.terminalWebgl === true;
-  if (prefsTranscriptPane) prefsTranscriptPane.checked = s.transcriptPane === true;
+  if (prefsSeatView) prefsSeatView.value = initialSeatView({ transcriptPane: s.transcriptPane !== false, transcriptPaneMode: s.transcriptPaneMode, io: 'pty' });
   prefsCompactOnResume.checked = !!s.compactOnResume;
   prefsContextHints.checked = !!s.contextHints;
   if (prefsSemanticHints) prefsSemanticHints.checked = !!s.semanticHints;
@@ -8315,12 +8319,6 @@ async function openPrefs() {
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   restorePrefsGroups();
   applyPrefsGate();
-  // Starts the island's poll and does the open-time read: the row lives in this
-  // dialog, so the poll has nothing to serve while it is closed. Reading here
-  // rather than trusting the 15s poll matters because a `/voice` typed in a
-  // terminal would otherwise show stale for up to that long, on the one screen
-  // that claims to say what the mode IS.
-  voiceControl.start();
   prefsRemoteEnabled.checked = !!s.remoteEnabled;
   prefsEnvLocked = (s && s.envLockedSettings) || {};
   if (prefsRemoteBasePath) {
@@ -8356,7 +8354,6 @@ async function openPrefs() {
 function closePrefs() {
   prefsOverlay.classList.add('hidden');
   if (wsPollTimer) { clearInterval(wsPollTimer); wsPollTimer = null; }
-  voiceControl.stop();
 }
 
 const setupOverlay = document.getElementById('setup-overlay');
@@ -8399,6 +8396,7 @@ function collectChecked(container) {
 document.getElementById('btn-prefs-cancel').addEventListener('click', closePrefs);
 prefsOverlay.addEventListener('mousedown', (e) => { if (e.target === prefsOverlay) closePrefs(); });
 document.getElementById('btn-prefs-save').addEventListener('click', async () => {
+  const seatView = prefsSeatView ? seatViewSettings(prefsSeatView.value, transcriptPaneMode) : null;
   await window.api.setSettings({
     statusline: {
       claude: collectChecked(prefsClaudeBox),
@@ -8408,7 +8406,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     proxyEnabled: prefsProxyEnabled.checked,
     disableClaudeDesignMcp: prefsDisableDesignMcp.checked,
     terminalWebgl: prefsTerminalWebgl ? prefsTerminalWebgl.checked : false,
-    transcriptPane: prefsTranscriptPane ? prefsTranscriptPane.checked : false,
+    ...(seatView || {}),
     compactOnResume: prefsCompactOnResume.checked,
     contextHints: prefsContextHints.checked,
     semanticHints: prefsSemanticHints ? prefsSemanticHints.checked : false,
@@ -8437,8 +8435,11 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
       : {}),
   });
   terminalWebglEnabled = prefsTerminalWebgl ? prefsTerminalWebgl.checked : false;
-  transcriptPaneEnabled = prefsTranscriptPane ? prefsTranscriptPane.checked : false;
-  for (const entry of sessions.values()) if (entry.liveSplit) entry.liveSplit.refresh();
+  if (seatView && (seatView.transcriptPane !== transcriptPaneEnabled || seatView.transcriptPaneMode !== transcriptPaneMode)) {
+    transcriptPaneEnabled = seatView.transcriptPane;
+    transcriptPaneMode = seatView.transcriptPaneMode;
+    refreshTranscriptPanes();
+  }
   await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
   await window.api.setDefaultSkillDeny(collectPrefsSkillDefaults());
   await window.api.setDefaultBuiltinDeny(collectBuiltinChecklist(prefsAgentsList));

@@ -991,24 +991,19 @@
           <span>GPU-accelerated terminal (WebGL)</span>
         </label>
         <p class="hint-text">Faster repaint on busy seats. Takes effect for terminals opened after saving.</p>
-        <label class="prefs-check">
-          <input type="checkbox" id="prefs-transcript-pane">
-          <span>Open agent seats in the conversation view</span>
-        </label>
-        <p class="hint-text">Claude, Codex and Muse terminal seats show their conversation, rendered from the CLI's own transcript, with a Clodex message box under it. When the CLI shows a picker, a dialog or a running turn, its terminal opens underneath; View ▸ Terminal (⌘⇧T) shows the whole terminal. Shell and peer seats always show the terminal.</p>
+        <div class="prefs-row">
+          <span>Agent seats open in</span>
+          <select id="prefs-seat-view" style="flex: none;">
+            <option value="conversation">Conversation</option>
+            <option value="internals">Internals</option>
+            <option value="terminal">Terminal</option>
+          </select>
+        </div>
+        <p class="hint-text">Where Claude, Codex and Muse seats start. Switch any seat from its bar. When the CLI shows a picker or a dialog, its terminal opens under the conversation. Shell and peer seats always show the terminal.</p>
       </details>
       <details class="prefs-group" data-group="voice">
         <summary><h4>Voice input</h4><span class="prefs-group-sub">Per seat</span></summary>
-        <p class="hint-text">Applies as soon as you pick it — Cancel does not undo it. The mode belongs to the focused seat, and the voice button on that seat’s bar is the same control.</p>
-        <div class="prefs-row">
-          <span>Mode</span>
-          <select id="prefs-voice-mode" style="flex: none;">
-            <option value="">Not set</option>
-            <option value="off">Off — no voice input</option>
-            <option value="tap">On — press space on an empty prompt to dictate</option>
-          </select>
-        </div>
-        <span id="prefs-voice-state" class="hint-text" style="display: block; margin-top: 6px;"></span>
+        <p class="hint-text">Voice is on or off per seat — use the 🎤 button on the seat's bar. The settings below apply to every seat.</p>
         <h5>Hands-free submit</h5>
         <p class="hint-text">End what you are saying with the phrase below and Clodex erases the phrase and presses Enter for you. Never fires while a session is asking permission for something (Enter would answer the dialog), and a phrase spoken then is dropped rather than sent once the dialog clears.</p>
         <label class="prefs-check">

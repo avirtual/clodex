@@ -1226,18 +1226,12 @@ Own state + DOM, `init*(deps)`:
   over `setVoiceMode`, which routes through the manager's `voiceMode` so the
   write stamps the voice-mode settle memo — no session in the path, so both
   surfaces work with none open. `createVoiceCore` owns all of it — state, the pending
-  affordance and the poll — and publishes snapshots; `createVoiceControl` (the
-  Preferences row) and `popovers/voice-popover.js` (the session bar's 🎤 button)
-  are surfaces over it that own only their own painting. The setting is box-wide,
-  so both surfaces show the same value; the split exists because that
-  reconciliation must have exactly one copy, and keeping the core DOM-free is
-  what lets `test/voice-core.test.js` pin it with no jsdom. `start`/`stop` are
-  REFCOUNTED: the bar holds for the window's life, Preferences only while its
-  dialog is open. The Preferences row is never hidden and never disabled — the
-  file is writable with no session open; the bar button is absent outright for a
-  non-Claude seat, since Codex has no `/voice`.
+  affordance and the poll — and publishes snapshots; `popovers/voice-popover.js` (the session bar's 🎤 button)
+  is the surface over it and owns only its own painting. Keeping the core
+  DOM-free is what lets `test/voice-core.test.js` pin it with no jsdom. The bar
+  button is absent outright for a non-Claude seat, since Codex has no `/voice`.
 - **live-split-view.js** + **lib/live-split.js** — the experimental transcript
-  pane (t1122 spike, `transcriptPane` setting, off by default). The pure half
+  pane (t1122 spike, `transcriptPane` setting). The pure half
   finds the composer anchor on the visible screen and applies the hysteresis; the
   view translates and clips the unresized xterm into a bottom strip under a
   `<div>` pane. See docs/explorations/split-proof.md.

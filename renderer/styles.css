@@ -5986,7 +5986,9 @@ body.web-frontend #sidebar-header {
   top: calc(-1 * var(--sp-1));
   z-index: 1;
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--sp-2);
   margin: calc(-1 * var(--sp-1)) 0 var(--sp-1);
   padding: var(--sp-1) 0;
   background: var(--bg);
@@ -5997,6 +5999,14 @@ body.web-frontend #sidebar-header {
 .transcript-mode-btn { font: inherit; color: var(--text-tertiary); background: transparent; border: 0; padding: 0 var(--sp-2); cursor: pointer; }
 .transcript-mode-btn[aria-pressed="true"] { color: var(--text-primary); background: var(--surface-raised); }
 .transcript-mode-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.transcript-bar-chips { display: flex; flex-wrap: nowrap; gap: var(--sp-2); align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+.transcript-bar-chips[hidden] { display: flex; visibility: hidden; }
+.transcript-bar-views { display: inline-flex; align-items: center; gap: var(--sp-2); flex: none; }
+.transcript-help-btn, .transcript-terminal-btn { font: inherit; color: var(--text-tertiary); background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 var(--sp-2); cursor: pointer; }
+.transcript-terminal-btn[aria-pressed="true"] { color: var(--text-primary); background: var(--surface-raised); }
+.transcript-help-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+.transcript-pane[data-raw] { height: auto; overflow: hidden; }
+.transcript-pane[data-raw] > :not(.transcript-bar) { display: none; }
 
 .tr-box { margin: 0; }
 .tr-box-head {
@@ -6281,33 +6291,6 @@ body.web-frontend #sidebar-header {
 
 .seat-composer[hidden] {
   display: none;
-}
-
-.terminal-wrapper.has-status-strip {
-  --seat-status-h: 22px;
-}
-
-.seat-status-strip {
-  position: absolute;
-  left: 4px;
-  right: 4px;
-  bottom: 4px;
-  height: var(--seat-status-h);
-  display: flex;
-  flex-wrap: nowrap;
-  gap: var(--sp-2);
-  align-items: center;
-  white-space: nowrap;
-  overflow: hidden;
-  z-index: 2;
-}
-
-.seat-status-strip[hidden] {
-  display: none;
-}
-
-.terminal-wrapper.has-status-strip .seat-composer.seat-composer-pty {
-  bottom: calc(4px + var(--seat-status-h));
 }
 
 .seat-status-chip {

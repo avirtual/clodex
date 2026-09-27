@@ -16,24 +16,26 @@ function openStores(dir) {
   });
 }
 
-test('transcriptPane defaults to false', () => {
+test('transcriptPane defaults to true', () => {
   const dir = mkTmpRoot('clodex-uisettings-');
-  assert.strictEqual(openStores(dir).uiSettings.get().transcriptPane, false);
+  assert.strictEqual(openStores(dir).uiSettings.get().transcriptPane, true);
 });
 
 test('transcriptPane survives set() then get() and a reload from disk', () => {
   const dir = mkTmpRoot('clodex-uisettings-');
   const ui = openStores(dir).uiSettings;
-  ui.set({ transcriptPane: true });
-  assert.strictEqual(ui.get().transcriptPane, true);
-  assert.strictEqual(openStores(dir).uiSettings.get().transcriptPane, true);
+  ui.set({ transcriptPane: false });
+  assert.strictEqual(ui.get().transcriptPane, false);
+  assert.strictEqual(openStores(dir).uiSettings.get().transcriptPane, false);
   ui.set({ theme: 'midnight' });
-  assert.strictEqual(ui.get().transcriptPane, true);
+  assert.strictEqual(ui.get().transcriptPane, false);
 });
 
-test('a non-boolean transcriptPane on disk normalises to false', () => {
+test('a non-boolean transcriptPane on disk normalises to the default, true; a stored false stays false', () => {
   const dir = mkTmpRoot('clodex-uisettings-');
   fs.writeFileSync(path.join(dir, 'ui-settings.json'), JSON.stringify({ transcriptPane: 'yes' }), { mode: 0o600 });
+  assert.strictEqual(openStores(dir).uiSettings.get().transcriptPane, true);
+  fs.writeFileSync(path.join(dir, 'ui-settings.json'), JSON.stringify({ transcriptPane: false }), { mode: 0o600 });
   assert.strictEqual(openStores(dir).uiSettings.get().transcriptPane, false);
 });
 
@@ -75,5 +77,5 @@ test('set Internals, write recentCwds through the same setter, reload: still Int
 test('legacy transcriptPaneInternals/transcriptPaneTools on disk are ignored, not mapped', () => {
   const dir = mkTmpRoot('clodex-uisettings-');
   fs.writeFileSync(path.join(dir, 'ui-settings.json'), JSON.stringify({ transcriptPaneInternals: false, transcriptPaneTools: false }), { mode: 0o600 });
-  assert.deepStrictEqual(paneSlice(openStores(dir).uiSettings.get()), { transcriptPane: false, transcriptPaneMode: 'conversation' });
+  assert.deepStrictEqual(paneSlice(openStores(dir).uiSettings.get()), { transcriptPane: true, transcriptPaneMode: 'conversation' });
 });

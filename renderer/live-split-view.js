@@ -32,34 +32,61 @@ const TRANSCRIPT_MODES = [
   ['internals', 'Internals', 'Everything the seat did: tool calls, deliveries from Clodex and other seats, runtime notices.'],
 ];
 
-function modeBar(doc, paneEl, mode, onMode = NOOP) {
+const TERMINAL_TITLE = 'Show the CLI\'s own screen (⌘⇧T)';
+const HELP_TITLE = 'Clodex at a glance';
+
+function barButton(doc, className, text, title, onClick) {
+  const btn = doc.createElement('button');
+  btn.type = 'button';
+  btn.className = className;
+  btn.textContent = text;
+  btn.title = title;
+  btn.addEventListener('click', onClick);
+  return btn;
+}
+
+function modeBar(doc, paneEl, mode, onMode = NOOP, { onHelp = null, onTerminal = null } = {}) {
   const bar = doc.createElement('div');
   bar.className = 'transcript-bar';
+  const chips = doc.createElement('div');
+  chips.className = 'transcript-bar-chips';
+  const views = doc.createElement('div');
+  views.className = 'transcript-bar-views';
   const control = doc.createElement('div');
   control.className = 'transcript-mode';
   let current = null;
+  let rawOn = false;
   const buttons = TRANSCRIPT_MODES.map(([value, label, title]) => {
-    const btn = doc.createElement('button');
-    btn.type = 'button';
-    btn.className = 'transcript-mode-btn';
-    btn.textContent = label;
-    btn.title = title;
-    btn.addEventListener('click', () => {
-      if (current === value) return;
+    const btn = barButton(doc, 'transcript-mode-btn', label, title, () => {
+      if (current === value && !rawOn) return;
       setMode(value);
       onMode(value);
     });
     control.appendChild(btn);
     return btn;
   });
+  views.appendChild(control);
+  const help = onHelp ? barButton(doc, 'transcript-help-btn', '?', HELP_TITLE, () => onHelp()) : null;
+  if (help) views.appendChild(help);
+  const terminalBtn = onTerminal ? barButton(doc, 'transcript-mode-btn transcript-terminal-btn', 'Terminal', TERMINAL_TITLE, () => onTerminal()) : null;
+  if (terminalBtn) views.appendChild(terminalBtn);
+  function paint() {
+    TRANSCRIPT_MODES.forEach(([value], i) => buttons[i].setAttribute('aria-pressed', !rawOn && value === current ? 'true' : 'false'));
+    if (terminalBtn) terminalBtn.setAttribute('aria-pressed', rawOn ? 'true' : 'false');
+  }
   function setMode(next) {
     current = next === 'conversation' ? 'conversation' : 'internals';
-    TRANSCRIPT_MODES.forEach(([value], i) => buttons[i].setAttribute('aria-pressed', value === current ? 'true' : 'false'));
+    paint();
+  }
+  function setRaw(on) {
+    rawOn = !!on;
+    paint();
   }
   setMode(mode);
-  bar.appendChild(control);
+  bar.appendChild(chips);
+  bar.appendChild(views);
   paneEl.insertBefore(bar, paneEl.firstChild);
-  return { bar, control, buttons, setMode };
+  return { bar, chips, control, buttons, help, terminal: terminalBtn, setMode, setRaw };
 }
 
 function markedText(doc, text, spans) {
@@ -103,9 +130,11 @@ const MODE_TEXT = { bypass: 'Bypass', 'accept-edits': 'Accept edits', auto: 'Aut
 const MODE_TONE = { bypass: 'danger', 'accept-edits': 'warn', auto: 'warn', plan: 'info' };
 const MODE_TITLES = {
   claude: 'Permission mode — click to cycle (shift+tab in the terminal)',
-  codex: 'Collaboration mode — click to toggle (shift+tab in the terminal)',
+  codex: 'Collaboration mode — click to toggle Plan (shift+tab in the terminal)',
   muse: 'Approval posture (set at launch)',
 };
+const POSTURE_TEXT = { bypass: 'Bypass', 'read-only': 'Read-only' };
+const POSTURE_TONE = { bypass: 'danger', 'read-only': 'info' };
 
 function statusChip(doc, kind, text, tone, title, onChip) {
   const el = doc.createElement(onChip ? 'button' : 'span');
@@ -128,38 +157,37 @@ function renderStatusChips(doc, el, read, effort, onChip = NOOP, platform = 'cla
   if (mode) {
     const known = Object.hasOwn(MODE_TEXT, mode.key);
     const family = !mode.cycles ? 'muse' : platform === 'codex' ? 'codex' : 'claude';
-    const tone = Object.hasOwn(MODE_TONE, mode.key) ? MODE_TONE[mode.key] : 'muted';
-    chips.push(statusChip(doc, 'mode', known ? MODE_TEXT[mode.key] : String(mode.label || ''), tone, MODE_TITLES[family], family === 'muse' ? null : onChip));
+    const folded = family === 'codex' && Object.hasOwn(POSTURE_TEXT, posture) ? posture : null;
+    const modeText = known ? MODE_TEXT[mode.key] : String(mode.label || '');
+    const text = !folded ? modeText : mode.key === 'plan' ? `${POSTURE_TEXT[folded]} · ${modeText}` : POSTURE_TEXT[folded];
+    const tone = folded ? POSTURE_TONE[folded] : Object.hasOwn(MODE_TONE, mode.key) ? MODE_TONE[mode.key] : 'muted';
+    const title = folded ? `Approvals: ${POSTURE_TEXT[folded]}, set at launch. ${MODE_TITLES.codex}` : MODE_TITLES[family];
+    chips.push(statusChip(doc, 'mode', text, tone, title, family === 'muse' ? null : onChip));
   }
-  if (platform === 'codex' && (posture === 'bypass' || posture === 'read-only')) chips.push(statusChip(doc, 'posture', posture === 'bypass' ? 'Bypass' : 'Read-only', posture === 'bypass' ? 'danger' : 'info', 'Approval posture set at launch — Codex\'s own status row does not show it', null));
   if (read && read.tasks) chips.push(statusChip(doc, 'tasks', String(read.tasks), 'muted', 'Background work in this seat', null));
   if (read && Number.isInteger(read.warnings)) chips.push(statusChip(doc, 'warnings', `⚠ ${read.warnings}`, 'warn', 'Codex startup warnings — click to view', onChip));
   if (typeof effort === 'string' && effort.trim() && effort.trim() !== 'default') chips.push(statusChip(doc, 'effort', effort.trim(), 'neutral', 'Effort level for this seat', null));
   el.replaceChildren(...chips);
 }
 
-function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, statusChips = null, mode = () => 'internals', onMode = NOOP }) {
+function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => 'claude', pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, statusChips = null, mode = () => 'internals', onMode = NOOP, onHelp = null, onTerminal = null, onInset = NOOP }) {
   const paneEl = document.createElement('div');
   paneEl.className = 'transcript-pane';
   paneEl.hidden = true;
   wrapperEl.appendChild(paneEl);
   const toggle = modeBar(document, paneEl, mode(), (next) => {
     transcriptRowsFor(document, paneEl, rowsCtx).setMode(next);
+    if (raw) setRawView(false);
     onMode(next);
-  });
+  }, { onHelp, onTerminal: onTerminal || (() => setRawView(!raw)) });
   const menuEl = menuMirror ? document.createElement('div') : null;
   if (menuEl) {
     menuEl.className = 'seat-slash-menu seat-slash-menu-pty';
     menuEl.hidden = true;
     wrapperEl.appendChild(menuEl);
   }
-  const statusEl = statusChips ? document.createElement('div') : null;
-  if (statusEl) {
-    statusEl.className = 'seat-status-strip';
-    statusEl.hidden = true;
-    wrapperEl.appendChild(statusEl);
-    wrapperEl.classList.add('has-status-strip');
-  }
+  const statusEl = statusChips ? toggle.chips : null;
+  if (statusEl) statusEl.hidden = true;
   let heldRead = null;
   let statusKey = null;
   let state = initialSplitState();
@@ -173,10 +201,11 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   let follow = true;
   let pinnedTop = null;
   let raw = false;
+  let layouts = 0;
   let sheetRows = 0;
   let sheetRange = null;
   const composerVisible = () => !!composerEl && !composerEl.hidden;
-  const dockPx = () => (composerEl.offsetHeight || 0) + (statusEl && !statusEl.hidden ? statusEl.offsetHeight || 0 : 0);
+  const dockPx = () => composerEl.offsetHeight || 0;
   const delta = createPaintDelta();
   let fileRecords = [];
   let fileSource = null;
@@ -388,6 +417,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   }
 
   function layout() {
+    layouts += 1;
     const el = terminal.element;
     if (!el) return;
     const screen = el.querySelector('.xterm-screen');
@@ -400,8 +430,10 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       wrapperEl.classList.remove('live-sheet');
       paneEl.hidden = true;
       if (composerEl) showComposer(false);
+      showRawBar(raw && isEligible());
       return;
     }
+    showRawBar(false);
     const cs = getComputedStyle(wrapperEl);
     const padTop = parseFloat(cs.paddingTop) || 0;
     const padBottom = parseFloat(cs.paddingBottom) || 0;
@@ -500,6 +532,31 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     if (!sel || sel.isCollapsed) (composerVisible() ? composerEl : terminal).focus();
   });
 
+  function setRawView(on) {
+    if (raw === !!on) return;
+    raw = !!on;
+    toggle.setRaw(raw);
+    const before = layouts;
+    evaluate();
+    if (layouts === before) layout();
+  }
+
+  function showRawBar(on) {
+    if (on) {
+      paneEl.dataset.raw = '1';
+      wrapperEl.classList.add('live-raw');
+      paneEl.style.height = '';
+      paneEl.hidden = false;
+    } else {
+      delete paneEl.dataset.raw;
+      wrapperEl.classList.remove('live-raw');
+    }
+    const inset = on ? `${paneEl.offsetTop + paneEl.offsetHeight}px` : '';
+    if (wrapperEl.style.paddingTop === inset) return;
+    wrapperEl.style.paddingTop = inset;
+    onInset();
+  }
+
   function showWorking(text) {
     const next = text || 'Working';
     if (!working || working.text === next) return;
@@ -521,11 +578,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       transcriptRowsFor(document, paneEl, rowsCtx).setWorking(working);
       stickToBottom();
     },
-    setRaw(on) {
-      if (raw === !!on) return;
-      raw = !!on;
-      evaluate();
-    },
+    setRaw: setRawView,
     raw: () => raw,
     refreshStatus() {
       if (!disposed && statusEl) reconcileStatus();
@@ -549,10 +602,8 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       paneEl.removeEventListener('scroll', onPaneScroll);
       paneEl.remove();
       if (menuEl) menuEl.remove();
-      if (statusEl) {
-        statusEl.remove();
-        wrapperEl.classList.remove('has-status-strip');
-      }
+      wrapperEl.style.paddingTop = '';
+      wrapperEl.classList.remove('live-raw');
     },
   };
 }

@@ -22,8 +22,7 @@ function prefsMarkup() {
 // Captured from the markup BEFORE the grouping rewrite. Adding a setting means
 // adding it here on purpose; losing one to a careless move fails.
 const CONTROLS = [
-  'prefs-overlay', 'prefs-dialog', 'prefs-theme', 'prefs-terminal-webgl', 'prefs-transcript-pane',
-  'prefs-voice-mode', 'prefs-voice-state',
+  'prefs-overlay', 'prefs-dialog', 'prefs-theme', 'prefs-terminal-webgl', 'prefs-seat-view',
   'prefs-voice-submit', 'prefs-voice-submit-phrase',
   'prefs-speak-replies', 'prefs-speak-voice', 'prefs-speak-rate',
   'prefs-claude-components', 'prefs-claude-sl-cmd', 'prefs-codex-components',
