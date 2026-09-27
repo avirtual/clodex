@@ -8,6 +8,7 @@ const path = require('node:path');
 const { parseTranscript } = require('../transcript-spike');
 const { renderTranscript, renderStatusChips, createLiveSplitView, modeBar } = require('../renderer/live-split-view');
 const { OUTPUT_LINE_CAP } = require('../renderer/transcript-rows');
+const { segmentsOf } = require('../transcript-records');
 const { fakeDocument, textOf } = require('./lib/fake-dom');
 const { fakeLine } = require('./lib/fake-cells');
 const { createMenuMirror } = require('../renderer/lib/menu-mirror');
@@ -1784,5 +1785,22 @@ test('the toggle ⌘⇧T calls takes Internals to Screen and back to Internals, 
     assert.deepStrictEqual([entry.view, m.view.raw()], ['terminal', true]);
     modeButtons(m)[0].listeners.click();
     assert.deepStrictEqual([entry.view, entry.lastView, m.view.raw(), pressed(m)], ['conversation', 'conversation', false, ['true', 'false', 'false']]);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('the live view hands its peekFile to the rows, so unfolding a filed body reads the spill through it', async () => {
+  const spill = '/Users/x/.clodex/spill/clodex/b000000000000001.md';
+  const text = `[agent:task done t1] Report — 2.7 KB filed at ${spill}\n[agent:end]`;
+  const recs = [HEAD, { id: 'a1', kind: 'assistant', ts: null, turn: 1, text, segments: segmentsOf(text) }];
+  const peeked = [];
+  const m = mountView({ peekFile: (p) => { peeked.push(p); return Promise.resolve({ ok: true, size: 4, content: 'body' }); }, pullTranscript: () => ({ ok: true, rev: 1, records: recs }) });
+  try {
+    m.write();
+    await settle();
+    const fold = findByClass([m.pane], 'intent-card-filed-link');
+    fold.listeners.click();
+    await settle();
+    assert.deepStrictEqual(peeked, [spill]);
+    assert.strictEqual(findByClass([m.pane], 'tr-spill-body').textContent, 'body');
   } finally { m.view.dispose(); m.restore(); }
 });

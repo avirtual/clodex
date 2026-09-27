@@ -292,6 +292,7 @@ test('a theme change rebuilds command output with the new echo palette and leave
 });
 
 const { segmentsOf } = require('../transcript-records');
+const { spillCache } = require('../renderer/transcript-rows');
 const { attachedReplies } = require('../renderer/transcript-rows');
 const said = (id, turn, text) => ({ id, kind: 'assistant', ts: null, turn, text, segments: segmentsOf(text) });
 const replyRec = (id, turn, verb, glyph, label, body) => ({ id, kind: 'reply', ts: null, turn, verb, glyph, label, text: body });
@@ -1591,7 +1592,7 @@ test('spill fold: a click on the file link opens the viewer and stops there, lea
 
 test('spill fold: over 16 KB shows the first 16384 chars and a foot link to the rest', async () => {
   const path = spillAt('a000000000000003');
-  const p = peeker({ ok: true, size: 40000, content: 'x'.repeat(20000), truncated: false });
+  const p = peeker({ ok: true, size: 40000, content: 'x'.repeat(40000), truncated: false });
   const opened = [];
   const m = mount({ seatName: 's', peekFile: p.peekFile, resolveFile: (q) => ({ ok: true, path: q }), openFilePeek: (...a) => opened.push(a) });
   m.render([filedReport(path)]);
@@ -1608,6 +1609,53 @@ test('spill fold: over 16 KB shows the first 16384 chars and a foot link to the 
   link.listeners.click({ preventDefault() {}, stopPropagation() {} });
   await tick();
   assert.deepStrictEqual(opened, [['s', path, 'file', undefined]]);
+  assert.deepStrictEqual(Object.keys(spillCache.get(path).res).sort(), ['content', 'ok', 'size']);
+  assert.strictEqual(spillCache.get(path).res.content.length, 16384);
+  assert.strictEqual(spillCache.get(path).res.size, 40000);
+});
+
+test('spill fold: a peek that failed is tried again when the same row is folded and unfolded', async () => {
+  const path = spillAt('a000000000000009');
+  const calls = [];
+  const replies = [Promise.reject(new Error('EACCES')), Promise.resolve({ ok: true, size: 6, content: 'second' })];
+  replies[0].catch(() => {});
+  const m = mount({ peekFile: (q) => { calls.push(q); return replies[calls.length - 1]; } });
+  m.render([filedReport(path)]);
+  const card = cardAt(m);
+  const head = foldOf(card);
+  head.listeners.click();
+  await tick();
+  assert.strictEqual(findCls(card, 'tr-spill-body')[0].textContent, 'Could not read Report');
+  head.listeners.click();
+  assert.deepStrictEqual(findCls(card, 'tr-spill-body'), []);
+  head.listeners.click();
+  await tick();
+  assert.deepStrictEqual(calls, [path, path]);
+  assert.strictEqual(findCls(card, 'tr-spill-body')[0].textContent, 'second');
+});
+
+test('spill fold: an ok:false peek is tried again on the next unfold of the same row', async () => {
+  const path = spillAt('a00000000000000a');
+  const calls = [];
+  const replies = [{ ok: false }, { ok: true, size: 5, content: 'later' }];
+  const m = mount({ peekFile: (q) => { calls.push(q); return Promise.resolve(replies[calls.length - 1]); } });
+  m.render([filedReport(path)]);
+  const card = cardAt(m);
+  const head = foldOf(card);
+  head.listeners.click();
+  await tick();
+  assert.strictEqual(findCls(card, 'tr-spill-body')[0].textContent, 'Could not read Report');
+  head.listeners.click();
+  head.listeners.click();
+  await tick();
+  assert.deepStrictEqual(calls, [path, path]);
+  assert.strictEqual(findCls(card, 'tr-spill-body')[0].textContent, 'later');
+});
+
+test('spill fold: the fold reads its open set from the rows deps with no private fallback, and renderer.js wires peekFile beside openFilePeek in both row contexts', () => {
+  const read = (f) => require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', f), 'utf8');
+  assert.doesNotMatch(read('transcript-rows.js'), /ctx\.opened \|\|/);
+  assert.strictEqual(read('renderer.js').match(/peekFile: \(p\) => popoverApi\(name\)\.peek\(p\),\n\s*openFilePeek: /g).length, 2);
 });
 
 test('spill fold: a failed peek says it could not read the file and keeps the link', async () => {
