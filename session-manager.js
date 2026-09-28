@@ -3963,6 +3963,14 @@ function createSessionManager(deps) {
       try { s.pty.kill(); } catch {}
     }
 
+    async _stopForRespawn(s, name) {
+      if (s.stream) { s.stream.kill(); return; }
+      const ptyPid = s.pty && s.pty.pid;
+      if (ptyPid) setTimeout(() => { sigkillPid(ptyPid, name, log); }, 5000);
+      await reapPtyDescendants({ ptyPid, name, log, childProcess });
+      try { s.pty.kill(); } catch {}
+    }
+
     _renameDirs(oldName, newName) {
       return [
         [path.join(REGISTRY_DIR, 'pending', oldName), path.join(REGISTRY_DIR, 'pending', newName)],
@@ -4000,20 +4008,18 @@ function createSessionManager(deps) {
         if (pathInUse(fs, dest)) return { ok: false, error: `${newName} already owns ${dest} — a leftover from an earlier seat; clear it first` };
       }
       if (this._movingNames.has(name)) return { ok: false, error: 'move already in progress' };
+      if (this._movingNames.has(newName)) return { ok: false, error: `${newName} is already being claimed by another rename` };
 
       this._movingNames.add(name);
+      this._movingNames.add(newName);
       try {
         const s = this.sessions.get(name);
         if (s) {
           log.info('session', `rename ${name} → ${newName} pid=${this._procPid(s)}`);
           s._moving = true;
-          if (s.stream) {
-            s.stream.kill();
-          } else {
-            try { s.pty.kill(); } catch {}
-            setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
-          }
+          await this._stopForRespawn(s, name);
           if (!await this._waitForExit(name)) {
+            s._moving = false;
             return {
               ok: false, kept: true,
               error: 'old process did not exit in time — session not renamed',
@@ -4021,7 +4027,13 @@ function createSessionManager(deps) {
             };
           }
         }
-        getPersistence().rename(name, newName);
+        if (!getPersistence().rename(name, newName)) {
+          return {
+            ok: false, kept: true,
+            error: `${newName} was taken while ${name} was stopping — session kept as ${name}; retry from the sidebar row, or forget it.`,
+            name, type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+          };
+        }
         const sched = getRemindScheduler && getRemindScheduler();
         if (sched && typeof sched.renameAgent === 'function') {
           try { sched.renameAgent(name, newName); } catch {}
@@ -4089,6 +4101,7 @@ function createSessionManager(deps) {
         };
       } finally {
         this._movingNames.delete(name);
+        this._movingNames.delete(newName);
       }
     }
 
@@ -4114,13 +4127,9 @@ function createSessionManager(deps) {
         if (s) {
           log.info('session', `move ${name} ${entry.cwd} → ${newCwd} pid=${this._procPid(s)}`);
           s._moving = true;
-          if (s.stream) {
-            s.stream.kill();
-          } else {
-            try { s.pty.kill(); } catch {}
-            setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
-          }
+          await this._stopForRespawn(s, name);
           if (!await this._waitForExit(name)) {
+            s._moving = false;
             return {
               ok: false, kept: true,
               error: 'old process did not exit in time — session not moved',
@@ -4189,6 +4198,9 @@ function createSessionManager(deps) {
       if (oldId === workspaceId) return { ok: false, error: `${name} is already in ${workspaceName}` };
 
       const s = this.sessions.get(name);
+      if (this._movingNames.has(name) || (s && s._reloadInFlight)) {
+        return { ok: false, error: `${name} is being respawned — try again once it is back` };
+      }
       getPersistence().upsert({ name, workspaceId });
       if (s) s.workspaceId = workspaceId;
 
@@ -4323,13 +4335,9 @@ function createSessionManager(deps) {
         if (s) {
           log.info('session', `move-to-peer ${name} → ${peerLabel}:${destCwd} pid=${this._procPid(s)}`);
           s._moving = true;
-          if (s.stream) {
-            s.stream.kill();
-          } else {
-            try { s.pty.kill(); } catch {}
-            setTimeout(() => { sigkillPid(s.pty.pid, name, log); }, 5000);
-          }
+          await this._stopForRespawn(s, name);
           if (!await this._waitForExit(name)) {
+            s._moving = false;
             try { await conn.importAbort(stagingId); } catch {}
             return {
               ok: false, kept: true,
@@ -5700,7 +5708,7 @@ function createSessionManager(deps) {
       session._compactContinuation = null;
       this._clearCompactValve(session);
       const onKilled = () => { if (sched) { try { sched.fireCompactFor(name); } catch {} } };
-      if (!this._coldRespawn(name, entry, session, cont, 'compact', { resume: true, onKilled })) return true;
+      if (!this._coldRespawn(name, entry, session, cont, 'compact', { resume: true, onKilled })) return false;
       log.info('intent', `compact ${name} → resumed with a regenerated prompt (${regen.bytes} bytes)`);
       this._broadcast('ipc-message', {
         type: 'context', from: name, to: name, body: 'context compact → resumed with a regenerated prompt',
@@ -7656,6 +7664,7 @@ function createSessionManager(deps) {
           if (fresh && session._scratchVoid) fresh._scratchVoid = session._scratchVoid;
           if (fresh && handoff) this._injectReloadHandoff(fresh, handoff, undefined, why);
         } catch (err) {
+          session._reloadInFlight = false;
           this._freshBakeOnce.delete(name);
           console.error(`[agent:context ${why}] ${name} failed:`, err.message);
           // Never let a failed respawn eat the entry — but not its `worktree` if
@@ -8246,10 +8255,7 @@ function createSessionManager(deps) {
     async _scratchRecycle(session, entry) {
       const name = session.name;
       session._moving = true;
-      const pid = session.pty && session.pty.pid;
-      if (session.stream) session.stream.kill();
-      else { try { session.pty.kill(); } catch {} }
-      if (pid) setTimeout(() => { sigkillPid(pid, name, log); }, 5000);
+      await this._stopForRespawn(session, name);
       if (!await this._waitForExit(name)) {
         session._moving = false;
         return false;

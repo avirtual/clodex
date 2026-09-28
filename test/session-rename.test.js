@@ -806,3 +806,30 @@ test('renderer startRename calls renameSession, and no longer sets a label', () 
   assert.doesNotMatch(body, /setSessionLabel/,
     'and does not also write a label — a label would show a name the backend does not know');
 });
+
+test('two concurrent renames to one name: one wins and the other\'s record is untouched', async () => {
+  const { m, store } = mkRename({
+    entries: [{ ...BASE, name: 'a', cwd: '/a', sessionId: 'sess-a' }, { ...BASE, name: 'b', cwd: '/b', sessionId: 'sess-b' }],
+  });
+  const stubCreate = m.create;
+  m.create = async (...args) => {
+    if (m.sessions.has(args[0])) throw new Error(`Session "${args[0]}" already exists`);
+    return stubCreate(...args);
+  };
+  for (const name of ['a', 'b']) {
+    m.sessions.set(name, {
+      name, agentType: 'claude',
+      pty: { pid: 4242, kill() { setImmediate(() => m.sessions.delete(name)); } },
+    });
+  }
+  const results = await Promise.all([m.rename('a', 'x'), m.rename('b', 'x')]);
+  const winners = results.filter((r) => r.ok === true);
+  assert.strictEqual(winners.length, 1, `exactly one rename may claim x: ${JSON.stringify(results)}`);
+  const winner = results[0].ok ? 'a' : 'b';
+  const loser = winner === 'a' ? 'b' : 'a';
+  const x = store.filter((e) => e.name === 'x');
+  assert.strictEqual(x.length, 1);
+  assert.strictEqual(x[0].cwd, `/${winner}`, 'x carries the winner\'s cwd, not the loser\'s');
+  assert.strictEqual(x[0].sessionId, `sess-${winner}`);
+  assert.ok(store.some((e) => e.name === loser), `the loser's own record (${loser}) still exists`);
+});
