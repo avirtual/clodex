@@ -1077,7 +1077,7 @@ function nodeUse({ store, saveStore, printer, flags = {}, args: raw }) {
 
 function nodeImport({ store, saveStore, printer, flags, env }) {
   const meta = imp.resolveDataDir({ dataDirFlag: flags['data-dir'], env });
-  const candidates = imp.collectCandidates(meta.dir);
+  const candidates = imp.collectCandidates(meta.dir, { env });
   const { store: nextStore, results } = imp.applyImport(store, candidates, { force: !!flags.force });
   const dryRun = !!flags['dry-run'];
   if (!dryRun) {

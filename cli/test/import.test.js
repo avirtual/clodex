@@ -90,7 +90,7 @@ test('platformDataDirs: covers both names per platform', () => {
 // ── leaf: candidate collection ───────────────────────────────────────────────
 test('collect: local engine → url+token; wire-off adds a warning reason', () => {
   const dir = fixture({ ui: { remoteEnabled: false, remotePort: 7911 }, remoteToken: 'sek' });
-  const cands = imp.collectCandidates(dir);
+  const cands = imp.collectCandidates(dir, { env: {} });
   const local = cands.find((c) => c.name === 'local');
   assert.deepStrictEqual(local.entry, { url: 'http://127.0.0.1:7911', token: 'sek' });
   assert.strictEqual(local.tokenState, 'set');
@@ -99,9 +99,30 @@ test('collect: local engine → url+token; wire-off adds a warning reason', () =
 
 test('collect: local defaults port 7900 when absent, no token → tokenState none', () => {
   const dir = fixture({ ui: {} });
-  const local = imp.collectCandidates(dir).find((c) => c.name === 'local');
+  const local = imp.collectCandidates(dir, { env: {} }).find((c) => c.name === 'local');
   assert.deepStrictEqual(local.entry, { url: 'http://127.0.0.1:7900' });
   assert.strictEqual(local.tokenState, 'none');
+});
+
+test('collect: inside a box, env CLODEX_REMOTE_TOKEN with no remote.env seeds local with that token', () => {
+  const dir = fixture({ ui: {} });
+  const local = imp.collectCandidates(dir, { env: { CLODEX_REMOTE_TOKEN: 'box-tok' } }).find((c) => c.name === 'local');
+  assert.deepStrictEqual(local.entry, { url: 'http://127.0.0.1:7900', token: 'box-tok' });
+  assert.strictEqual(local.tokenState, 'set');
+});
+
+test('collect: env CLODEX_REMOTE_TOKEN wins over the remote.env token', () => {
+  const dir = fixture({ ui: {}, remoteToken: 'file-tok' });
+  const local = imp.collectCandidates(dir, { env: { CLODEX_REMOTE_TOKEN: 'env-tok' } }).find((c) => c.name === 'local');
+  assert.strictEqual(local.entry.token, 'env-tok');
+  assert.strictEqual(local.tokenState, 'set');
+});
+
+test('collect: a whitespace-only env CLODEX_REMOTE_TOKEN falls back to the remote.env token', () => {
+  const dir = fixture({ ui: {}, remoteToken: 'file-tok' });
+  const local = imp.collectCandidates(dir, { env: { CLODEX_REMOTE_TOKEN: '  \t ' } }).find((c) => c.name === 'local');
+  assert.strictEqual(local.entry.token, 'file-tok');
+  assert.strictEqual(local.tokenState, 'set');
 });
 
 test('collect: peers → ssh/url mapping; disabled skipped; tokenless imports', () => {
@@ -201,6 +222,19 @@ test('create node --import (e2e): writes contexts, human report, no token values
   assert.strictEqual(saved.contexts.local.token, 'localSecret');
   assert.strictEqual(saved.contexts.work.ssh, 'user@box');
   assert.strictEqual((fs.statSync(cf).mode & 0o777), 0o600);
+});
+
+test('create node --import (e2e): the local token comes from the injected env, never the process CLODEX_REMOTE_TOKEN', async () => {
+  const dir = fixture({ ui: { remotePort: 7900 }, remoteToken: 'fileSecret' });
+  const cf = tmpCtxFile();
+  const saved = process.env.CLODEX_REMOTE_TOKEN;
+  process.env.CLODEX_REMOTE_TOKEN = 'leak';
+  try {
+    assert.strictEqual((await cli(['create', 'node', '--import', '--data-dir', dir], cf)).code, 0);
+  } finally {
+    if (saved === undefined) delete process.env.CLODEX_REMOTE_TOKEN; else process.env.CLODEX_REMOTE_TOKEN = saved;
+  }
+  assert.strictEqual(JSON.parse(fs.readFileSync(cf, 'utf8')).contexts.local.token, 'fileSecret');
 });
 
 test('create node --import --dry-run writes nothing', async () => {

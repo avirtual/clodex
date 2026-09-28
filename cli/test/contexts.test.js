@@ -121,6 +121,17 @@ test('resolve: the local engine falls back to remote.env for the token and 7900 
   assert.deepStrictEqual(C.resolve(EMPTY(), { env }), { url: 'http://127.0.0.1:7900', token: 'filetok', name: '(local engine)' });
 });
 
+test('resolve: the local engine reads the injected env, never the process CLODEX_REMOTE_TOKEN', () => {
+  const env = { CLODEX_DATA_DIR: emptyDataDir({ 'remote.env': 'CLODEX_REMOTE_TOKEN=filetok\n' }) };
+  const saved = process.env.CLODEX_REMOTE_TOKEN;
+  process.env.CLODEX_REMOTE_TOKEN = 'leak';
+  try {
+    assert.strictEqual(C.resolve(EMPTY(), { env }).token, 'filetok');
+  } finally {
+    if (saved === undefined) delete process.env.CLODEX_REMOTE_TOKEN; else process.env.CLODEX_REMOTE_TOKEN = saved;
+  }
+});
+
 test('resolve: a current context beats the local engine', () => {
   const env = { CLODEX_REMOTE_TOKEN: 'abc', CLODEX_DATA_DIR: emptyDataDir() };
   const r = C.resolve({ current: 'foo', contexts: { foo: { url: 'http://x.example' } } }, { env });
@@ -134,6 +145,32 @@ test('resolve: CLODEX_URL beats the local engine', () => {
   const r = C.resolve(EMPTY(), { env });
   assert.strictEqual(r.name, '(env)');
   assert.strictEqual(r.url, 'http://env.example');
+});
+
+test('resolve: a tokenless current node on the local engine inherits the env wire token and keeps its name', () => {
+  const env = { CLODEX_REMOTE_TOKEN: 'box-tok', CLODEX_DATA_DIR: emptyDataDir() };
+  const r = C.resolve({ current: 'local', contexts: { local: { url: 'http://127.0.0.1:7900' } } }, { env });
+  assert.deepStrictEqual(r, { url: 'http://127.0.0.1:7900', token: 'box-tok', name: 'local' });
+});
+
+test('resolve: a local-engine node carrying its own token keeps it over the engine token', () => {
+  const env = { CLODEX_REMOTE_TOKEN: 'box-tok', CLODEX_DATA_DIR: emptyDataDir() };
+  const r = C.resolve({ current: 'local', contexts: { local: { url: 'http://127.0.0.1:7900', token: 'own-tok' } } }, { env });
+  assert.strictEqual(r.token, 'own-tok');
+});
+
+test('resolve: a tokenless url node on another port or another host inherits no token', () => {
+  const env = { CLODEX_REMOTE_TOKEN: 'box-tok', CLODEX_DATA_DIR: emptyDataDir() };
+  const store = { current: null, contexts: { port: { url: 'http://127.0.0.1:7901' }, host: { url: 'http://10.0.0.5:7900' } } };
+  assert.strictEqual(C.resolve(store, { ctxName: 'port', env }).token, undefined);
+  assert.strictEqual(C.resolve(store, { ctxName: 'host', env }).token, undefined);
+});
+
+test('resolve: a tokenless localhost node inherits the local engine token like 127.0.0.1', () => {
+  const env = { CLODEX_DATA_DIR: emptyDataDir({ 'remote.env': 'CLODEX_REMOTE_TOKEN=filetok\n', 'ui-settings.json': JSON.stringify({ remotePort: 7912 }) }) };
+  const r = C.resolve({ current: 'lh', contexts: { lh: { url: 'http://localhost:7912' } } }, { env });
+  assert.strictEqual(r.token, 'filetok');
+  assert.strictEqual(r.name, 'lh');
 });
 
 test('resolve: with no data dir and no token anywhere the usage error names the box', () => {
