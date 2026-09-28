@@ -1400,9 +1400,6 @@
           <button id="sandbox-workdir-clear" class="secondary" type="button" title="Use a named volume instead of a host folder">Clear</button>
         </div>
       </div>
-      <!-- Ports are engine-managed (collision-bumped at Start); there's no field to
-           edit them (settings-file only, for a fixed-port firewall need). While the
-           box runs we show what it's ACTUALLY listening on — M6b bug #4 follow-on. -->
       <p class="hint-text sandbox-row hidden" id="sandbox-ports-line"></p>
       <label class="sandbox-check"><input id="sandbox-autostart" type="checkbox" /> Start the sandbox automatically when Clodex launches</label>
       <div class="sandbox-field" id="sandbox-mounts-field">
@@ -1425,6 +1422,13 @@
         <label for="sandbox-ref">Track git ref</label>
         <input id="sandbox-ref" type="text" spellcheck="false" autocomplete="off" maxlength="128" placeholder="(the running app's version)" />
         <p class="hint-text" id="sandbox-ref-hint">Build this sandbox from a commit, branch or tag of the Clodex checkout instead of the running app's version. Rebuild to pick up new commits.</p>
+      </div>
+      <div class="sandbox-field" id="sandbox-ports-field">
+        <div class="sandbox-ports-row">
+          <div><label for="sandbox-web-port">Web port</label><input id="sandbox-web-port" type="number" min="1024" max="65535" step="1" /></div>
+          <div><label for="sandbox-wirescope-port">Wirescope port</label><input id="sandbox-wirescope-port" type="number" min="1024" max="65535" step="1" /></div>
+          <div><label for="sandbox-wire-port">Wire port</label><input id="sandbox-wire-port" type="number" min="1024" max="65535" step="1" /></div>
+        </div>
       </div>
       <div id="sandbox-open-row" class="sandbox-row hidden"><a id="sandbox-open-link" role="button" tabindex="0">Open in browser →</a></div>
       <div class="dialog-actions">

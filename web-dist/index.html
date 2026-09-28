@@ -4322,6 +4322,18 @@ body.drawer-dragging #work-row {
 #sandbox-ref {
   width: 100%;
 }
+.sandbox-ports-row {
+  display: flex;
+  gap: 6px;
+}
+.sandbox-ports-row > div {
+  flex: 1;
+  min-width: 0;
+}
+.sandbox-ports-row input {
+  width: 100%;
+  box-sizing: border-box;
+}
 .sandbox-check {
   display: flex;
   align-items: center;
@@ -11013,9 +11025,6 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <button id="sandbox-workdir-clear" class="secondary" type="button" title="Use a named volume instead of a host folder">Clear</button>
         </div>
       </div>
-      <!-- Ports are engine-managed (collision-bumped at Start); there's no field to
-           edit them (settings-file only, for a fixed-port firewall need). While the
-           box runs we show what it's ACTUALLY listening on — M6b bug #4 follow-on. -->
       <p class="hint-text sandbox-row hidden" id="sandbox-ports-line"></p>
       <label class="sandbox-check"><input id="sandbox-autostart" type="checkbox" /> Start the sandbox automatically when Clodex launches</label>
       <div class="sandbox-field" id="sandbox-mounts-field">
@@ -11038,6 +11047,13 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         <label for="sandbox-ref">Track git ref</label>
         <input id="sandbox-ref" type="text" spellcheck="false" autocomplete="off" maxlength="128" placeholder="(the running app's version)" />
         <p class="hint-text" id="sandbox-ref-hint">Build this sandbox from a commit, branch or tag of the Clodex checkout instead of the running app's version. Rebuild to pick up new commits.</p>
+      </div>
+      <div class="sandbox-field" id="sandbox-ports-field">
+        <div class="sandbox-ports-row">
+          <div><label for="sandbox-web-port">Web port</label><input id="sandbox-web-port" type="number" min="1024" max="65535" step="1" /></div>
+          <div><label for="sandbox-wirescope-port">Wirescope port</label><input id="sandbox-wirescope-port" type="number" min="1024" max="65535" step="1" /></div>
+          <div><label for="sandbox-wire-port">Wire port</label><input id="sandbox-wire-port" type="number" min="1024" max="65535" step="1" /></div>
+        </div>
       </div>
       <div id="sandbox-open-row" class="sandbox-row hidden"><a id="sandbox-open-link" role="button" tabindex="0">Open in browser →</a></div>
       <div class="dialog-actions">
@@ -26779,17 +26795,26 @@ ${i3.join("\n")}
       function openUrl(webPort) {
         return `http://localhost:${webPort}`;
       }
-      function portsLineText(effective) {
+      function portsLineText(effective, asked) {
         if (!effective) return "";
         const roles = [["web", "Web"], ["wirescope", "Wirescope"], ["wire", "Peer wire"]];
         const parts = [];
         for (const [role, label] of roles) {
           const p = Number(effective[role]);
-          if (Number.isFinite(p)) parts.push(`${label} ${p}`);
+          if (!Number.isFinite(p)) continue;
+          const a = asked ? Number(asked[role]) : NaN;
+          parts.push(Number.isFinite(a) && a !== p ? `${label} ${p} (asked ${a})` : `${label} ${p}`);
         }
         return parts.join(" \xB7 ");
       }
-      module.exports = { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText };
+      var PORTS_INVALID = "Ports must be distinct integers between 1024 and 65535.";
+      function validatePorts(ports) {
+        const vals = ["web", "wirescope", "wire"].map((k) => ports ? ports[k] : void 0);
+        if (!vals.every((v) => Number.isInteger(v) && v >= 1024 && v <= 65535)) return PORTS_INVALID;
+        if (new Set(vals).size !== vals.length) return PORTS_INVALID;
+        return null;
+      }
+      module.exports = { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts };
     }
   });
 
@@ -47824,7 +47849,7 @@ ${detail}` });
       var { altChordAction } = require_web_shortcuts();
       var { filterSummary, setFilterFolded } = require_sidebar_filter_fold();
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
-      var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require_sandbox_view();
+      var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
       var { bumpDefaultName, teamNamePrefill } = require_name_suggest();
       var { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require_name_validity();
@@ -55304,6 +55329,10 @@ ${res.stderr}` : "");
       var sbWorkdir = document.getElementById("sandbox-workdir");
       var sbRef = document.getElementById("sandbox-ref");
       var sbAutoStart = document.getElementById("sandbox-autostart");
+      var sbPortsField = document.getElementById("sandbox-ports-field");
+      var sbWebPort = document.getElementById("sandbox-web-port");
+      var sbWirescopePort = document.getElementById("sandbox-wirescope-port");
+      var sbWirePort = document.getElementById("sandbox-wire-port");
       var sbToggleBtn = document.getElementById("btn-sandbox-toggle");
       var sbRebuildBtn = document.getElementById("btn-sandbox-rebuild");
       var sbOpenRow = document.getElementById("sandbox-open-row");
@@ -55329,6 +55358,7 @@ ${res.stderr}` : "");
       var sbGate = SB_GATE_UNKNOWN;
       var sbForeign = null;
       var sbEffectivePorts = null;
+      var sbAskedPorts = null;
       var sbCurrentBox = "sandbox";
       var sbBoxes = [];
       var sbMounts = [];
@@ -55347,7 +55377,13 @@ ${res.stderr}` : "");
         sbRunning = running;
         sbEffectivePorts = running ? ports || null : null;
         sbToggleBtn.textContent = running ? "Stop" : "Start";
-        const portsLine = sandboxPortsLineText(sbEffectivePorts);
+        const portsLine = sandboxPortsLineText(sbEffectivePorts, sbAskedPorts);
+        const portsHint = running ? "Ports apply on the next Start \u2014 stop the sandbox to change them." : "";
+        for (const el of [sbWebPort, sbWirescopePort, sbWirePort]) {
+          el.disabled = running;
+          el.title = portsHint;
+        }
+        sbPortsField.title = portsHint;
         if (running && portsLine) {
           sbPortsLine.textContent = portsLine;
           sbPortsLine.classList.remove("hidden");
@@ -55505,6 +55541,7 @@ ${res.stderr}` : "");
         sbDetailLabel.textContent = box && box.label || sbCurrentBox;
         sbWorkdir.value = cfg.workDir || "";
         sbRef.value = cfg.ref || "";
+        applyAskedPorts(cfg);
         sbAutoStart.checked = !!cfg.autoStart;
         sbMounts = Array.isArray(cfg.mounts) ? cfg.mounts.map((m) => ({ host: m.host, ro: !!m.ro })) : [];
         sbMountsDirty = false;
@@ -55562,19 +55599,42 @@ ${res.stderr}` : "");
         }
         sandboxOverlay.classList.add("hidden");
       }
+      function applyAskedPorts(cfg) {
+        sbAskedPorts = { web: cfg.webPort, wirescope: cfg.wirescopePort, wire: cfg.wirePort };
+        sbWebPort.value = cfg.webPort != null ? String(cfg.webPort) : "";
+        sbWirescopePort.value = cfg.wirescopePort != null ? String(cfg.wirescopePort) : "";
+        sbWirePort.value = cfg.wirePort != null ? String(cfg.wirePort) : "";
+      }
+      function portInputValue(el) {
+        const s = el.value.trim();
+        return s === "" ? NaN : Number(s);
+      }
       function collectSandboxConfig() {
-        return {
+        const cfg = {
           workDir: sbWorkdir.value.trim() || null,
           ref: sbRef.value.trim() || null,
           autoStart: sbAutoStart.checked
         };
+        if (!sbWebPort.disabled) {
+          cfg.webPort = portInputValue(sbWebPort);
+          cfg.wirescopePort = portInputValue(sbWirescopePort);
+          cfg.wirePort = portInputValue(sbWirePort);
+        }
+        return cfg;
       }
       async function saveSandboxConfig() {
-        const r = await window.api.sandboxSetConfig(collectSandboxConfig(), sbCurrentBox);
+        const cfg = collectSandboxConfig();
+        const bad = "webPort" in cfg && sandboxValidatePorts({ web: cfg.webPort, wirescope: cfg.wirescopePort, wire: cfg.wirePort });
+        if (bad) {
+          showToast(bad, { kind: "error", duration: 1e4 });
+          return false;
+        }
+        const r = await window.api.sandboxSetConfig(cfg, sbCurrentBox);
         if (r && r.ok === false) {
           showToast(r.error || "Sandbox settings were rejected.", { kind: "error", duration: 1e4 });
           return false;
         }
+        if (r && r.webPort != null) applyAskedPorts(r);
         return true;
       }
       var sbWorkdirPick = document.getElementById("sandbox-workdir-pick");
