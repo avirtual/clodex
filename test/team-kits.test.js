@@ -617,3 +617,39 @@ test('t891: a KITLESS create — the majority path — seeds the reviewer its ow
   assert.ok(team.templatesCopied.includes('reviewer'),
     'and the create REPORTS the copy, which is how a lead learns the team owns the file');
 });
+
+test('a brief create keeps a kit\'s extra role', async () => {
+  const f = mkTeamCreate({ makeRepo: true });
+  seedKits(f.home);
+  const kits = path.join(f.home, 'library', 'kits');
+  fs.cpSync(path.join(kits, 'default'), path.join(kits, 'extra'), { recursive: true });
+  const kitFile = path.join(kits, 'extra', 'kit.json');
+  const kit = JSON.parse(fs.readFileSync(kitFile, 'utf-8'));
+  kit.roles.docs = { brief: 'docs', dispatch: 'standing' };
+  fs.writeFileSync(kitFile, JSON.stringify(kit, null, 2));
+  assert.ok('docs' in JSON.parse(fs.readFileSync(kitFile, 'utf-8')).roles, 'ENTER: the extra kit lists docs');
+
+  await f.m._handleIntent('a', {
+    type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, kit: 'extra', body: 'build a thing',
+  });
+
+  assert.deepStrictEqual(f.readTeam('shop').roles, {
+    lead: {
+      prompt: 'lead',
+      brief: 'team lead; holds durable context, dispatches specs, verifies and integrates the work.',
+      template: 'lead',
+    },
+    hand: {
+      prompt: 'hand',
+      brief: 'implementer; executes a spec to done, one distilled report per task.',
+      template: 'hand',
+      dispatch: 'worktree',
+    },
+    reviewer: {
+      prompt: 'reviewer',
+      brief: 'reviewer; an independent verification pass, invoked on demand.',
+      template: 'reviewer',
+    },
+    docs: { brief: 'docs', dispatch: 'standing' },
+  });
+});

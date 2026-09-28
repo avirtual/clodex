@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Tickets: the slow-test gate now counts a branch's `cli/test/` changes as owned tests, so a CLI-only branch is no longer sent through the full suite twice; a spec-confirm probe survives a transcript repoint (a hand that /clear'd right after dispatch is no longer read as never having confirmed); a tracked `.codex/.gitignore` in a ticket tree is left alone instead of overwritten (Codex ticket trees no longer start dirty); a briefed `team create` keeps every kit role, not just lead/hand/reviewer.
 - Team popover ▸ Roles: the reviewer role's template is now a picker over the installed reviewer templates (the team's own first, then the library), so a box whose library is read-only can point its reviewer at another template instead of editing the stock one; agents still cannot repoint a reviewer through [agent:team role-set].
 - Codex stream seats: a refused sandbox/approval flag written as --flag=value is now stripped whatever its arity (only the arity-1 form was), so it can no longer reach the app-server argv.
 - Templates: "Export as Template…" reports a failed save instead of closing silently (the library is read-only inside a sandbox box); a failed template removal now says why, and a box pinned to a commit says so once in its rebuild toast.

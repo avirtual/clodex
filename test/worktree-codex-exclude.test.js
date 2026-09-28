@@ -61,3 +61,21 @@ test('t1076: a failure is returned as a sentence, never thrown', () => {
   assert.match(e, /could not write .*\.codex\/\.gitignore/);
   assert.match(e, /will show \.codex\/ as untracked/);
 });
+
+test('t1076: a TRACKED .codex/.gitignore is left alone and the worktree stays clean', () => {
+  const root = mkTmpRoot('t1076-exclude-');
+  const repo = path.join(root, 'repo');
+  fs.mkdirSync(path.join(repo, '.codex'), { recursive: true });
+  git(repo, 'init', '-q', '-b', 'master');
+  git(repo, 'config', 'user.email', 'x@y');
+  git(repo, 'config', 'user.name', 'x');
+  fs.writeFileSync(path.join(repo, '.codex', '.gitignore'), 'hooks.json\n');
+  git(repo, 'add', '.codex/.gitignore');
+  git(repo, 'commit', '-q', '-m', 'init');
+  const wt = path.join(root, 'wt');
+  git(repo, 'worktree', 'add', '-q', '-b', 't-branch', wt, 'master');
+  const note = ignoreCwdDir(fs, wt, '.codex');
+  assert.strictEqual(git(wt, 'status', '--porcelain'), '');
+  assert.strictEqual(fs.readFileSync(path.join(wt, '.codex', '.gitignore'), 'utf8'), 'hooks.json\n');
+  assert.match(note, /left as is/);
+});

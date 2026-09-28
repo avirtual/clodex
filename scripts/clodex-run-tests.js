@@ -338,6 +338,9 @@ function reexecInMeasured(measure, rawStdin) {
   process.exit(res.status);
 }
 
+module.exports = { TEST_ROOTS };
+if (require.main !== module) return;
+
 const rawStdin = readStdin();
 const payload = parsePayload(rawStdin);
 const measure = resolveMeasure(payload);
