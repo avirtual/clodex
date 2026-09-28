@@ -5235,7 +5235,12 @@ function openCreateTeamDialog() {
         okBtn.textContent = 'Create';
       }
       if (!res || !res.ok) {
-        errEl.textContent = (res && res.error) || 'could not create the team';
+        const msg = (res && res.error) || 'could not create the team';
+        if (!overlay.isConnected) {
+          showToast(`Create team ${name} failed: ${msg}`, { kind: 'error', duration: 12000 });
+          return;
+        }
+        errEl.textContent = msg;
         errEl.classList.remove('hidden');
         return;
       }
@@ -5948,7 +5953,6 @@ async function refreshPrefsEnv() {
     setPrefsEnvState((res && res.error) || 'Environment scopes unavailable on this host.', 'error');
     return;
   }
-  setPrefsEnvState('');
   const vars = res.vars || [];
   if (!vars.length) {
     const empty = document.createElement('span');
@@ -5977,6 +5981,7 @@ async function refreshPrefsEnv() {
     delBtn.addEventListener('click', async () => {
       const r = await window.api.envScopesDelete(scope, v.key);
       if (!r || r.ok === false) { setPrefsEnvState((r && r.error) || 'Delete failed.', 'error'); return; }
+      setPrefsEnvState('');
       refreshPrefsEnv();
     });
     row.append(editBtn, delBtn);
@@ -6037,7 +6042,6 @@ async function refreshPrefsAccounts() {
     if (prefsAccountModel) prefsAccountModel.textContent = '';
     return;
   }
-  setPrefsAccountsState('');
   const accounts = res.accounts || [];
   let live = [];
   try { const l = await window.api.listSessions(); if (Array.isArray(l)) live = l; } catch {}
@@ -6089,6 +6093,7 @@ async function refreshPrefsAccounts() {
         if (!confirm(`Remove account "${account.label}"? Its config dir and login are left on disk.`)) return;
         const r = await window.api.accountsRemove({ label: account.label });
         if (!r || r.ok === false) { setPrefsAccountsState((r && r.error) || 'Remove failed.', 'error'); return; }
+        setPrefsAccountsState('');
         refreshPrefsAccounts();
       });
     }
@@ -6323,15 +6328,15 @@ wsLogsClearBtn.addEventListener('click', async () => {
     wsLogsSize.textContent = `${wsLogsSizeText()} — clearing…`;
     const r = await window.api.wirescopePrune({ olderThan: older, tier: 'receipts', scope: 'all' });
     if (!r || !r.ok || !r.data) {
-      wsLogsSize.textContent = (r && r.error) ? `Error: ${r.error}` : 'Clear failed';
+      showToast(`Clear failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 12000 });
       return;
     }
   } catch (e) {
-    wsLogsSize.textContent = `Error: ${(e && e.message) || e}`;
+    showToast(`Clear failed: ${(e && e.message) || e}`, { kind: 'error', duration: 12000 });
   } finally {
     wsLogsClearBusy = false;
+    await refreshWsLogs();
   }
-  await refreshWsLogs();
 });
 
 function renderRemoteStatus(st) {
@@ -7930,7 +7935,7 @@ async function renderBoxList() {
     tog.disabled = rowStartGated;
     tog.classList.toggle('sandbox-gated', rowStartGated);
     if (rowStartGated) tog.title = (sn.foreign && sn.foreign.text) || sbGate.reason || '';
-    tog.addEventListener('click', (e) => { e.stopPropagation(); toggleBox(b.id, sn.running); });
+    tog.addEventListener('click', (e) => { e.stopPropagation(); toggleBox(b.id); });
     row.append(dot, label, tog);
     row.addEventListener('click', () => selectBox(b.id));
     sbBoxList.appendChild(row);
@@ -7963,10 +7968,13 @@ async function selectBox(id) {
   await refreshSandboxStatus();
 }
 
-async function toggleBox(id, running) {
+async function toggleBox(id) {
   if (sbBusy) return;
   sbBusy = true;
+  let running = false;
   try {
+    const s = await window.api.sandboxStatus(id);
+    running = sandboxStatusNotice(s && s.state).running;
     const r = running ? await window.api.sandboxDown(id) : await window.api.sandboxUp(id);
     if (!r || r.ok === false) {
       showToast(`Sandbox ${running ? 'stop' : 'start'} failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 12000 });

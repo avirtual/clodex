@@ -52755,7 +52755,12 @@ Click for live activity`;
               okBtn.textContent = "Create";
             }
             if (!res || !res.ok) {
-              errEl.textContent = res && res.error || "could not create the team";
+              const msg = res && res.error || "could not create the team";
+              if (!overlay.isConnected) {
+                showToast(`Create team ${name} failed: ${msg}`, { kind: "error", duration: 12e3 });
+                return;
+              }
+              errEl.textContent = msg;
               errEl.classList.remove("hidden");
               return;
             }
@@ -53404,7 +53409,6 @@ Click for live activity`;
           setPrefsEnvState(res && res.error || "Environment scopes unavailable on this host.", "error");
           return;
         }
-        setPrefsEnvState("");
         const vars = res.vars || [];
         if (!vars.length) {
           const empty = document.createElement("span");
@@ -53436,6 +53440,7 @@ Click for live activity`;
               setPrefsEnvState(r && r.error || "Delete failed.", "error");
               return;
             }
+            setPrefsEnvState("");
             refreshPrefsEnv();
           });
           row.append(editBtn, delBtn);
@@ -53506,7 +53511,6 @@ Click for live activity`;
           if (prefsAccountModel) prefsAccountModel.textContent = "";
           return;
         }
-        setPrefsAccountsState("");
         const accounts = res.accounts || [];
         let live = [];
         try {
@@ -53571,6 +53575,7 @@ Click for live activity`;
                 setPrefsAccountsState(r && r.error || "Remove failed.", "error");
                 return;
               }
+              setPrefsAccountsState("");
               refreshPrefsAccounts();
             });
           }
@@ -53842,15 +53847,15 @@ Billing/cost history is preserved \u2014 only detailed request forensics are rem
           wsLogsSize.textContent = `${wsLogsSizeText()} \u2014 clearing\u2026`;
           const r = await window.api.wirescopePrune({ olderThan: older, tier: "receipts", scope: "all" });
           if (!r || !r.ok || !r.data) {
-            wsLogsSize.textContent = r && r.error ? `Error: ${r.error}` : "Clear failed";
+            showToast(`Clear failed: ${r && r.error || "unknown error"}`, { kind: "error", duration: 12e3 });
             return;
           }
         } catch (e) {
-          wsLogsSize.textContent = `Error: ${e && e.message || e}`;
+          showToast(`Clear failed: ${e && e.message || e}`, { kind: "error", duration: 12e3 });
         } finally {
           wsLogsClearBusy = false;
+          await refreshWsLogs();
         }
-        await refreshWsLogs();
       });
       function renderRemoteStatus(st) {
         if (!st) return;
@@ -55428,7 +55433,7 @@ ${res.stderr}` : "");
           if (rowStartGated) tog.title = sn.foreign && sn.foreign.text || sbGate.reason || "";
           tog.addEventListener("click", (e) => {
             e.stopPropagation();
-            toggleBox(b.id, sn.running);
+            toggleBox(b.id);
           });
           row.append(dot, label, tog);
           row.addEventListener("click", () => selectBox(b.id));
@@ -55458,10 +55463,13 @@ ${res.stderr}` : "");
         await renderBoxList();
         await refreshSandboxStatus();
       }
-      async function toggleBox(id, running) {
+      async function toggleBox(id) {
         if (sbBusy) return;
         sbBusy = true;
+        let running = false;
         try {
+          const s = await window.api.sandboxStatus(id);
+          running = sandboxStatusNotice(s && s.state).running;
           const r = running ? await window.api.sandboxDown(id) : await window.api.sandboxUp(id);
           if (!r || r.ok === false) {
             showToast(`Sandbox ${running ? "stop" : "start"} failed: ${r && r.error || "unknown error"}`, { kind: "error", duration: 12e3 });
