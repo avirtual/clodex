@@ -144,7 +144,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_handleReviewDone` | Closes out a reviewer seat's review-done verdict: lands it on the ticket (else delivers to the lead), books spend, retires the seat, kicks merge or rework | ticket record, verdict body file, review cost row, reviewer persistence record (dropped by kill) | _landVerdictOnTicket, _queueAutoMerge, _dispatchReworkFromVerdict, _notifyLeadOfVerdict | review-verdict-ticket.test.js review-cost-durable.test.js ticket-auto-merge.test.js |
+| `_handleReviewDone` | Closes out a review-done verdict: lands it on the ticket (else to the lead), books spend, retires the seat, kicks merge or rework | ticket record, verdict body file, review cost row, reviewer persistence record (dropped by kill) | _landVerdictOnTicket, _queueAutoMerge, _dispatchReworkFromVerdict, _notifyLeadOfVerdict | review-verdict-ticket.test.js review-cost-durable.test.js ticket-auto-merge.test.js |
 | `_handleReviewDone.bookReview` | Books the review's cost row once, called right before each kill because both teardowns destroy the record joining spend to ticket | closure booked latch, review cost ledger | _writeReviewCost, _loadTicket | review-verdict-ticket.test.js |
 
 ### Invariants
@@ -153,7 +153,7 @@
 - On ACCEPT, `_handleReviewDone` queues the merge through `_queueAutoMerge` unawaited and only after the verdict is durable and the reviewer is retired.
 
 ### Hazards
-- In `_handleReviewDone` nothing between the durable verdict and the kill may throw, yet `_notifyLeadOfVerdict` runs unwrapped there, so a throw strands a live reviewer on a decided ticket.
+- In `_handleReviewDone` the broadcast and context-action sends between the landed verdict and `kill` are unwrapped, so a throw there strands a live reviewer on a decided ticket.
 - Calling `bookReview` in the undelivered-verdict arm of `_handleReviewDone` (where the seat stays live) books a row that a re-fire books again.
 - Widening the return of `_landVerdictOnTicket` to carry the team is warned against; `_handleReviewDone` re-resolves the team from the reviewer's cwd instead.
 
@@ -161,11 +161,11 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_classifyTeamRoot` | Classifies a would-be team root as new-absent, new-empty or takeover, or refuses it (parent-missing, is-file, files-no-repo, repo-no-commits) | none (stats and reads the root) | gitWorktree.repoToplevel, gitWorktree.hasCommit | team-create-root.test.js team-kits.test.js |
-| `_handleTeamCreate` | Handles team create: validates, dry-runs createTeam, creates and git-inits a new root, writes the team, saves the brief, spawns and briefs the lead | root dir and its git repo, team dir files, team-project append prompt, new lead seat | _classifyTeamRoot, createTeam, teamPromptSave, _handleSpawnIntent | team-manifest.test.js team-hand-template-portable.test.js session-manager.test.js |
-| `_handleTeam` | Lead-only dispatcher for team metadata verbs: role add, set, rm, rename, gather, set-lead, watchdog, template and prompt save or rm, trunk, sandbox | team.json, team templates and prompts dirs, app menu | _deriveRoleModelTemplate, _deriveRoleEffortTemplate, _handleTeamTrunk, _handleTeamSandbox | team-file-intents.test.js team-role-kvs.test.js team-gather.test.js |
+| `_classifyTeamRoot` | Classifies a would-be team root as new-absent, new-empty or takeover, or refuses it (parent-missing, is-file, files-no-repo, no-commits) | none (stats and reads the root) | gitWorktree.repoToplevel, gitWorktree.hasCommit | team-create-root.test.js team-kits.test.js |
+| `_handleTeamCreate` | Handles team create: validates, dry-runs createTeam, creates and git-inits the root, writes the team and brief, spawns the lead | root dir and its git repo, team dir files, team-project append prompt, new lead seat | _classifyTeamRoot, createTeam, teamPromptSave, _handleSpawnIntent | team-manifest.test.js team-hand-template-portable.test.js session-manager.test.js |
+| `_handleTeam` | Lead-only dispatcher for team verbs: role add/set/rm/rename, gather, set-lead, watchdog, template and prompt save or rm, trunk, sandbox | team.json, team templates and prompts dirs, app menu | _deriveRoleModelTemplate, _deriveRoleEffortTemplate, _handleTeamTrunk, _handleTeamSandbox | team-file-intents.test.js team-role-kvs.test.js team-gather.test.js |
 | `_handleTeamTrunk` | Reports the team's trunk (explicit or repo default) or sets it after checking the branch exists locally | team.json trunk | gitWorktree.mergeTargetFor, gitWorktree.localBranches, setTeamTrunk | ticket-auto-merge.test.js |
-| `_shipTeamIntoBox` | Copies the team's prompts, templates and exec into the box state dir, then writes a translated team.json last; an existing box manifest is kept | box state dir teams copy | ensureDirMode700, atomicWriteFileSync | team-sandbox-verb.test.js |
+| `_shipTeamIntoBox` | Copies the team's prompts, templates and exec into the box state dir, then writes a translated team.json last, keeping an existing box manifest | box state dir teams copy | ensureDirMode700, atomicWriteFileSync | team-sandbox-verb.test.js |
 | `_handleTeamSandbox` | Lead verb sandbox up, rebuild, down or status for the team's dedicated box; reports or removes a stale record when there is no box | sandbox manager registry, box container, sandbox.json (unlinked on down) | _teamSandboxFile, _bringUpTeamBox | unpinned |
 | `_bringUpTeamBox` | Brings a team box up or rebuilds it: config, token seed, ship the team, write sandbox.json, wait healthy, seed a bash seat and the lead | box config and container, sandbox.json with tokens, in-box sessions | _shipTeamIntoBox, _teamSandboxFile, seedClaudeToken, seedSandboxSessions | team-sandbox-verb.test.js teams-menu.test.js |
 | `_deriveRoleModelTemplate` | For a role add or set with model, saves a team template named after the role with the model pinned, returning an undo restoring prior bytes | team templates dir file | _rolesNaming, teamTemplateSave, deriveModelTemplate, _refreshAppMenuQuietly | unpinned |
@@ -191,7 +191,7 @@
 |---|---|---|---|---|
 | `_handleTask` | Entry point for task intents: resolves team or solo context, adds the stale-host suffix, dispatches the sub-verb with a parkable reply | none directly (verbs mutate the board) | _soloContext, _staleHostSuffix, _taskAccept, _taskAdd | task-start.test.js solo-tickets.test.js session-manager.test.js |
 | `_resolveAssignee` | Returns who if it is a team role key or a live seat name on the team root, else null | none | _teamLiveSeatNames | task-start.test.js task-respec.test.js accept-standing-seat.test.js |
-| `_ticketAssigneeSeat` | The single resolver from ticket to receiving seat: role to first live seat, live pin to itself, then mint-pending or role degradation for non-worktree tickets | reads live seats and persistence | _seatMintPending, matchSeatRole | stores.test.js team-cost-wiring.test.js task-start.test.js |
+| `_ticketAssigneeSeat` | The one ticket-to-seat resolver: role to first live seat, live pin to itself, else mint-pending or role degradation off-worktree | reads live seats and persistence | _seatMintPending, matchSeatRole | stores.test.js team-cost-wiring.test.js task-start.test.js |
 | `_repinTicketToSeat` | Re-pins a role-assigned or dead-pinned ticket in memory to the seat delivery will reach; never pins the lead; caller saves | ticket role and assignee (in memory) | _ticketAssigneeSeat | ticket-replay.test.js task-start.test.js tickets-viewer-plugin.test.js |
 
 ### Invariants
@@ -208,8 +208,8 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_deliverTicketSpec` | Renders and sends a ticket dispatch (fresh, REPLAY or RESPEC head plus context lines) to the resolved seat and arms the spec latch from the write | seat latch via hook, spill file under messages dir | _ticketAssigneeSeat, _gatedDeliver, _armSpecConfirm, _ticketTaskDirRender | tickets-viewer-path-parity.test.js ticket-replay.test.js task-start.test.js |
-| `_armSpecConfirm` | At write time arms, keeps or drops the per-seat spec-or-redirect latch, carrying the retry budget and owing a redelivery for a displaced ticket | session spec latch and confirm timer, owed-spent set | _oweDisplacedSpec, _pruneOwedSpent, _seatTranscriptSize, _armSpecConfirmTimer | ticket-replay.test.js |
+| `_deliverTicketSpec` | Renders and sends a ticket dispatch (fresh, REPLAY or RESPEC head plus context) to the resolved seat and arms the spec latch | seat latch via hook, spill file under messages dir | _ticketAssigneeSeat, _gatedDeliver, _armSpecConfirm, _ticketTaskDirRender | tickets-viewer-path-parity.test.js ticket-replay.test.js task-start.test.js |
+| `_armSpecConfirm` | At write time arms, keeps or drops the per-seat spec latch, carrying the retry budget and owing redelivery for a displaced ticket | session spec latch and confirm timer, owed-spent set | _oweDisplacedSpec, _pruneOwedSpent, _seatTranscriptSize, _armSpecConfirmTimer | ticket-replay.test.js |
 | `_redirectDeliveryText` | One builder for a seat-bound rejection or must-fix redirect, optionally with a REDELIVERY head | none | ticketCloseLine | unpinned |
 | `_armSpecConfirmTimer` | Arms the unref'd confirm-window timer that runs the spec check inside a logging try | session confirm timer | _checkSpecConfirm | dm-delivery-latch.test.js ticket-replay.test.js |
 | `_oweDisplacedSpec` | For a latch displaced by another ticket's write: escalates if its budget is spent, else queues one owed redelivery and arms the drain | session owed queue | _escalateTicket, _armSpecOwedTimer, _soloOpenerTeam | ticket-replay.test.js |
@@ -376,7 +376,7 @@
 
 ### Hazards
 - A disposition that turns parked after the delivery call returns is re-held in `_escalateTicket` from the step its reached branch saved, so dropping that save releases a hold `_releaseDrainedEscalations` should have watched.
-- `_costSeatFor` merges prev seats' whole-life session ids while keeping the current seat's attribution, so a standing prev seat can inflate a ticket labelled exact.
+- `_costSeatFor` merges prev seats' whole-life session ids while keeping the current seat's attribution, and only `_reworkSeatFor`'s ephemeral check keeps a standing seat out of seatReplacements, so dropping it inflates a ticket labelled exact.
 - `_writeTicketCost` counts commits against the mint-time fork SHA, and dropping the baseSha argument makes it fall back to a merge-base.
 
 ## Verbs: reject, respec, cancel, accept — _taskReject … _taskAccept
