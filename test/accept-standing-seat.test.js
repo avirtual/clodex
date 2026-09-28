@@ -903,8 +903,8 @@ function scanDestroy(fullSrc) {
   const body = fullSrc.slice(fullSrc.indexOf('async destroy(name)'));
   const end = body.indexOf('\n    async archive(');
   const destroySrc = stripComments(body.slice(0, end > 0 ? end : body.length));
-  const failReturn = destroySrc.indexOf('worktreeRemoved: false');
   const removeAt = destroySrc.indexOf('gitWorktree.removeWorktree(');
+  const failReturn = destroySrc.indexOf('worktreeRemoved: false', removeAt);
   const calls = [...destroySrc.matchAll(/dropRecord\(\)/g)].map((mm) => mm.index);
 
   // Brace-match the success arm so its interior can be excluded by SPAN rather
