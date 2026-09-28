@@ -6821,7 +6821,7 @@ function createTicketMethods(deps, shared) {
           if (again.ran) {
             firstRed = suite;
             suite = again;
-            this._stampSuiteRemeasured(team, ticketId, firstRed);
+            if (again.green || again.slowOnly) this._stampSuiteRemeasured(team, ticketId, firstRed);
           } else {
             remeasureError = again.error;
           }
