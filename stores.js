@@ -497,7 +497,6 @@ function initStores(userDataPath, {
     _load() {
       const primary = readStoreJson(PERSIST_FILE);
       this._unreadable = primary.state === 'unreadable';
-      if (primary.state !== 'unreadable') persistRefusedLogged = false;
       let all = primary.value;
       if (primary.state !== 'ok') {
         const bak = readStoreJson(PERSIST_FILE + '.bak');
@@ -506,6 +505,7 @@ function initStores(userDataPath, {
         all = bak.value;
         console.error('sessions.json unreadable; recovered from .bak');
       }
+      if (!this._unreadable) persistRefusedLogged = false;
       if (!Array.isArray(all)) return [];
       let changed = false;
       for (const e of all) {

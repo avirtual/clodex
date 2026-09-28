@@ -484,7 +484,7 @@ function exitDisposition({ agentType, userKilled, shuttingDown, archived, moving
 function missingToolOnExit({ expected, exitCode, signal, elapsedMs, cmd, whichBin }) {
   if (expected || exitCode !== 1 || signal) return null;
   if (!(elapsedMs <= 5000)) return null;
-  const resolved = cmd && cmd.includes('/') ? cmd : whichBin(cmd);
+  const resolved = whichBin(cmd);
   return resolved ? null : (cmd || null);
 }
 
@@ -2307,7 +2307,7 @@ function createSessionManager(deps) {
       } catch (e) {
         unwindSpawn();
         const d = collectSystemDiagnostics();
-        const resolved = cmd && cmd.includes('/') ? cmd : whichBin(cmd);
+        const resolved = whichBin(cmd);
         const warning = diagWarning(d);
         throw new Error(
           `${e.message}${warning ? ` — ${warning}` : ''} `
