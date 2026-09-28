@@ -1397,7 +1397,7 @@ const SessionManager = createSessionManager({
 });
 const manager = new SessionManager();
 const { deleteCheck: teamDeleteCheck, deleteGated: teamDeleteGated } = createTeamDelete({
-  loadManifest, deleteTeam, getManager: () => manager, getSandboxManager: () => sandboxManager,
+  loadManifest, deleteTeam, getManager: () => manager, getSandboxManager: () => sandboxManager, teamsDir,
 });
 const proxyPoller = new ProxyPoller(manager);
 manager._proxyPoller = proxyPoller;
