@@ -32,7 +32,7 @@ test('status(): sessions AND the top-level quota block come back', async () => {
     json(res, 200, { proxy: { version: 'v0.6.53' }, quota, sessions });
   });
   try {
-    const out = await ProxyClient.status(base);
+    const out = await ProxyClient.status(base, { env: {} });
     assert.deepStrictEqual(out, { sessions, quota, authRefresh: null });
   } finally { srv.close(); }
 });
@@ -43,7 +43,7 @@ test('status(): a proxy with no quota block yields sessions plus a null quota', 
   const sessions = [{ agent: 'clodex-a-1' }];
   const { srv, base } = await serve((_req, res) => json(res, 200, { sessions }));
   try {
-    assert.deepStrictEqual(await ProxyClient.status(base), { sessions, quota: null, authRefresh: null });
+    assert.deepStrictEqual(await ProxyClient.status(base, { env: {} }), { sessions, quota: null, authRefresh: null });
   } finally { srv.close(); }
 });
 
@@ -53,12 +53,12 @@ test('status(): a non-200, or a body with no sessions array, degrades to empty',
     json(res, 200, {});
   });
   try {
-    assert.deepStrictEqual(await ProxyClient.status(base), { sessions: [], quota: null, authRefresh: null });
+    assert.deepStrictEqual(await ProxyClient.status(base, { env: {} }), { sessions: [], quota: null, authRefresh: null });
   } finally { srv.close(); }
 
   const { srv: s2, base: b2 } = await serve((_req, res) => json(res, 200, { proxy: {} }));
   try {
-    assert.deepStrictEqual(await ProxyClient.status(b2), { sessions: [], quota: null, authRefresh: null });
+    assert.deepStrictEqual(await ProxyClient.status(b2, { env: {} }), { sessions: [], quota: null, authRefresh: null });
   } finally { s2.close(); }
 });
 
@@ -75,10 +75,10 @@ test('status(): a stalled auth_refresh block comes back beside the sessions', as
   };
   const { srv, base } = await serve((_req, res) => json(res, 200, { proxy: { version: 'v0.6.59', auth_refresh: authRefresh }, sessions }));
   try {
-    assert.deepStrictEqual(await ProxyClient.status(base), {
+    assert.deepStrictEqual(await ProxyClient.status(base, { env: {} }), {
       sessions,
       quota: null,
-      authRefresh: { stalled: true, lapsed: true, lastOutcome: 'refresh_failed', readError: null },
+      authRefresh: { stalled: true, lapsed: true, lastOutcome: 'refresh_failed', readError: null, stalledStores: [] },
     });
   } finally { srv.close(); }
 });
@@ -91,10 +91,10 @@ test('status(): a healthy auth_refresh block reads as not stalled', async () => 
   };
   const { srv, base } = await serve((_req, res) => json(res, 200, { proxy: { auth_refresh: authRefresh }, sessions }));
   try {
-    assert.deepStrictEqual(await ProxyClient.status(base), {
+    assert.deepStrictEqual(await ProxyClient.status(base, { env: {} }), {
       sessions,
       quota: null,
-      authRefresh: { stalled: false, lapsed: false, lastOutcome: 'refreshed', readError: null },
+      authRefresh: { stalled: false, lapsed: false, lastOutcome: 'refreshed', readError: null, stalledStores: [] },
     });
   } finally { srv.close(); }
 });
@@ -107,8 +107,36 @@ test('status(): a proxy with no auth_refresh block yields a null readout', async
   const sessions = [{ agent: 'clodex-a-1' }];
   const { srv, base } = await serve((_req, res) => json(res, 200, { proxy: { version: 'v0.6.53' }, sessions }));
   try {
-    assert.deepStrictEqual(await ProxyClient.status(base), { sessions, quota: null, authRefresh: null });
+    assert.deepStrictEqual(await ProxyClient.status(base, { env: {} }), { sessions, quota: null, authRefresh: null });
   } finally { srv.close(); }
+});
+
+async function readStalled(storeList, env) {
+  const authRefresh = { token_lapsed: true, last_outcome: 'refresh_failed', read_error: null, stalled: true, stalled_stores: storeList };
+  const { srv, base } = await serve((_req, res) => json(res, 200, { proxy: { auth_refresh: authRefresh }, sessions: [] }));
+  try {
+    const { authRefresh: view } = await ProxyClient.status(base, { env });
+    return { stalled: view.stalled, stalledStores: view.stalledStores };
+  } finally { srv.close(); }
+}
+
+test('status(): inside a box signing with the env token, a stalled default store is not owed', async () => {
+  assert.deepStrictEqual(
+    await readStalled(['default'], { CLODEX_IN_SANDBOX: '1', CLAUDE_CODE_OAUTH_TOKEN: 'tok' }),
+    { stalled: false, stalledStores: [] },
+  );
+});
+
+test('status(): a stalled default store stays owed without the env token, and outside a box', async () => {
+  assert.deepStrictEqual(await readStalled(['default'], { CLODEX_IN_SANDBOX: '1' }), { stalled: true, stalledStores: ['default'] });
+  assert.deepStrictEqual(await readStalled(['default'], { CLAUDE_CODE_OAUTH_TOKEN: 'tok' }), { stalled: true, stalledStores: ['default'] });
+});
+
+test('status(): inside a box with the env token, a stalled config_dir store still counts', async () => {
+  assert.deepStrictEqual(
+    await readStalled(['default', '/home/x/.clodex/accounts/a'], { CLODEX_IN_SANDBOX: '1', CLAUDE_CODE_OAUTH_TOKEN: 'tok' }),
+    { stalled: true, stalledStores: ['/home/x/.clodex/accounts/a'] },
+  );
 });
 
 test('status(): every caller in the tree destructures rather than treating it as an array', () => {

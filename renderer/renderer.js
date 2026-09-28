@@ -5700,7 +5700,11 @@ if (window.__CLODEX_WEB__) {
 
 
 
-const { refreshDiagBanner, refreshAuthBanner } = initBanners({ openInstallSession });
+let sandboxSelfLabel = null;
+const { refreshDiagBanner, refreshAuthBanner } = initBanners({ openInstallSession, getBoxLabel: () => sandboxSelfLabel });
+Promise.resolve(window.api.sandboxSelf && window.api.sandboxSelf())
+  .then((self) => { if (self && self.inBox && typeof self.label === 'string') sandboxSelfLabel = self.label; })
+  .catch(() => {});
 
 window.api.onRequestSwitchSession((name) => switchSession(name));
 window.api.onRequestOpenNewDialog(() => openDialog());

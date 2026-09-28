@@ -282,6 +282,7 @@ const API_CONTRACT = [
   { name: 'sandboxRebuild', kind: 'invoke', channel: 'sandbox:rebuild' },
   { name: 'sandboxDown', kind: 'invoke', channel: 'sandbox:down' },
   { name: 'sandboxLogsTail', kind: 'invoke', channel: 'sandbox:logsTail' },
+  { name: 'sandboxSelf', kind: 'invoke', channel: 'sandbox:self' },
   { name: 'sandboxSetToken', kind: 'invoke', channel: 'sandbox:setToken' },
   { name: 'sandboxClearToken', kind: 'invoke', channel: 'sandbox:clearToken' },
   // Box registry CRUD (M6b P2).

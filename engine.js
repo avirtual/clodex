@@ -2490,7 +2490,7 @@ const toolCache = createToolCache({ whichBin });
     setRemoteToken: (token) => writeRemoteEnvToken(userDataPath, token),
     hasRemoteToken: () => hasRemoteEnvToken(userDataPath),
     listSpeakVoices: () => voiceCatalog.list(),
-    REGISTRY_DIR, proxyPoller, wirescope, ProxyClient, pty,
+    REGISTRY_DIR, SELF_LABEL, proxyPoller, wirescope, ProxyClient, pty,
     getRemoteServer: () => remoteServer,
     getRemoteError: () => remoteError,
     getPeerManager: () => peerManager,

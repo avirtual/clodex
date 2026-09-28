@@ -49,6 +49,16 @@ test('one stalled payload among many shows the notice', () => {
   assert.match(v.text, /keep-warm/i, 'and says what is paused meanwhile');
 });
 
+test('inside a box the notice names the box; without a label it keeps the desktop text', () => {
+  const inBox = loginOwedView([stalled(true)], { boxLabel: 'team-clodex-ios' });
+  assert.strictEqual(inBox.hidden, false);
+  assert.ok(inBox.text.includes('in box team-clodex-ios'), inBox.text);
+  assert.ok(inBox.tip.includes('team-clodex-ios'), inBox.tip);
+  assert.strictEqual(loginOwedView([stalled(true)]).text,
+    'Claude login expired — run "claude login" in a terminal; keep-warm holds are paused until then');
+  assert.strictEqual(loginOwedView([stalled(true)], { boxLabel: '' }).text, loginOwedView([stalled(true)]).text);
+});
+
 test('it accepts a Map values() iterator, which is what proxyState hands it', () => {
   const proxyState = new Map([['alpha', stalled(false)], ['beta', stalled(true)]]);
   assert.strictEqual(loginOwedView(proxyState.values()).hidden, false);
@@ -116,6 +126,14 @@ test('refreshAuthBanner shows #auth-banner on a stalled payload and hides it the
   });
 });
 
+test('refreshAuthBanner names the box getBoxLabel reports', () => {
+  withDom((nodes) => {
+    const { refreshAuthBanner } = initBanners({ getBoxLabel: () => 'team-clodex-ios' });
+    refreshAuthBanner([stalled(true)]);
+    assert.ok(nodes.get('auth-text').textContent.includes('in box team-clodex-ios'), nodes.get('auth-text').textContent);
+  });
+});
+
 // renderer.js is DOM-bound and has no harness, so the call that drives the
 // banner is pinned by source shape. Without it the decision above is correct and
 // nothing on screen ever changes — which is the state this feature replaces.
@@ -123,6 +141,8 @@ test('renderer.js drives the banner from the same sweep that feeds the quota chi
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   assert.match(src, /const \{ refreshDiagBanner, refreshAuthBanner \} = initBanners\(/,
     'the setter must be destructured off initBanners');
+  assert.match(src, /getBoxLabel: \(\) => sandboxSelfLabel/, 'the banner reads the box label the renderer holds');
+  assert.match(src, /window\.api\.sandboxSelf\(\)/, 'and the renderer fetches it from main');
   const fn = src.slice(src.indexOf('function refreshQuotaChip()'));
   const body = fn.slice(0, fn.indexOf('\n}\n'));
   assert.ok(body.length > 0 && body.includes('drawerHost.setQuota('),
