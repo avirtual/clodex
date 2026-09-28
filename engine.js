@@ -80,6 +80,7 @@ function diagLines(d = {}) {
   lines.push(
     `claude:       ${d.claude || 'NOT FOUND on PATH'}`,
     `codex:        ${d.codex || 'NOT FOUND on PATH'}`,
+    `muse:         ${d.muse || 'NOT FOUND on PATH'}`,
   );
   const warning = diagWarning(d);
   if (warning) lines.push(`⚠ ${warning}`);

@@ -27279,7 +27279,7 @@ ${i3.join("\n")}
           return { label: "Install", enabled: false, reason: LIBRARY_REASONS.registered, action: null };
         }
         if (r.installed === "fetched") {
-          if (repo && r.installedRepo && r.installedRepo !== repo) {
+          if (repo && r.installedRepo && String(r.installedRepo).toLowerCase() !== String(repo).toLowerCase()) {
             return { label: "Install", enabled: false, reason: LIBRARY_REASONS.otherRepo, action: null };
           }
           if (r.upToDate) return { label: "Install", enabled: false, reason: LIBRARY_REASONS.upToDate, action: null };
@@ -27369,7 +27369,7 @@ ${i3.join("\n")}
           return { kind: "core", glyph: ORIGIN_GLYPHS.core, label: "Built in" };
         }
         const repo = row.source && row.source.repo || "";
-        if (repo === LIBRARY_REPO) {
+        if (repo.toLowerCase() === LIBRARY_REPO) {
           return { kind: "library", glyph: ORIGIN_GLYPHS.library, label: "From the clodex-plugins library" };
         }
         if (repo) {
@@ -28096,8 +28096,8 @@ ${i3.join("\n")}
         const now = sc && typeof sc.requests === "number" ? sc.requests : null;
         if (now == null) return total != null ? `req ${total}` : null;
         if (total == null) return `req ${now}`;
-        if (sc.compacted) return `req ${now} (${total} total)`;
         if (p.costRun) return `req ${now} (${total} all-time)`;
+        if (sc.compacted) return `req ${now} (${total} total)`;
         return `req ${now}`;
       }
       function fmtCost(v) {
@@ -41031,7 +41031,7 @@ void main() {
       function agentChanged(set, a) {
         const tab = set.tabs.find((t) => t.id === a.id);
         if (!tab) return { set, effect: null };
-        if (tab.dirty) return { set: patchTab(set, a.id, { banner: true }), effect: "banner" };
+        if (tab.dirty) return { set: patchTab(set, a.id, { banner: true, kept: false }), effect: "banner" };
         if (a.visible) return { set, effect: "reload" };
         return { set: patchTab(set, a.id, { stale: true }), effect: null };
       }
@@ -41043,11 +41043,14 @@ void main() {
         }
         const mtime = a.peek && a.peek.ok ? a.peek.mtime : null;
         if (tab.dirty) {
-          if (mtime != null && mtime !== (tab.seenMtime ?? tab.mtime)) return { set: patchTab(set, a.id, { banner: true, deleted: false, seenMtime: mtime }), effect: "banner" };
-          return { set: patchTab(set, a.id, { deleted: false }), effect: null };
+          if (mtime != null && mtime !== (tab.seenMtime ?? tab.mtime)) {
+            if (tab.kept) return { set: patchTab(set, a.id, { deleted: false, seenMtime: mtime, kept: false }), effect: null };
+            return { set: patchTab(set, a.id, { banner: true, deleted: false, seenMtime: mtime }), effect: "banner" };
+          }
+          return { set: patchTab(set, a.id, { deleted: false, kept: false }), effect: null };
         }
         if (!a.force && tab.mtime != null && mtime === tab.mtime && !tab.deleted && !tab.stale) return { set, effect: null };
-        return { set: patchTab(set, a.id, { mtime, seenMtime: null, deleted: false, stale: false, banner: false }), effect: "render" };
+        return { set: patchTab(set, a.id, { mtime, seenMtime: null, kept: false, deleted: false, stale: false, banner: false }), effect: "render" };
       }
       function reduceTabs(set, a) {
         switch (a.type) {
@@ -41077,11 +41080,11 @@ void main() {
           case "loaded":
             return loaded(set, a);
           case "saved":
-            return { set: patchTab(set, a.id, { mtime: a.mtime, seenMtime: null, dirty: false, banner: false, deleted: false }), effect: null };
+            return { set: patchTab(set, a.id, { mtime: a.mtime, seenMtime: null, kept: false, dirty: false, banner: false, deleted: false }), effect: null };
           case "discard":
             return { set: patchTab(set, a.id, { dirty: false, banner: false }), effect: "reload" };
           case "keep":
-            return { set: patchTab(set, a.id, { banner: false }), effect: null };
+            return { set: patchTab(set, a.id, { banner: false, kept: true }), effect: null };
           default:
             return { set, effect: null };
         }
@@ -42227,7 +42230,8 @@ void main() {
           });
         }
         if (rows.length) {
-          if (proxyNote) rows.push({ kind: "note", title: "", text: "", meta: "", note: proxyNote, warn: Boolean(proxyError) });
+          const stated = proxyError && rows.some((r) => r.kind === "peek-gone");
+          if (proxyNote && !stated) rows.push({ kind: "note", title: "", text: "", meta: "", note: proxyNote, warn: Boolean(proxyError) });
           return { rows, note: "" };
         }
         if (proxyError) return { rows, note: `Nothing queued. ${proxyNote}` };
@@ -46732,7 +46736,7 @@ ${detail}` });
           const key = peerKey(id, name);
           if (!sessions.has(key)) return;
           if (tele.proxy) {
-            proxyState.set(key, { payload: tele.proxy, at: typeof tele.proxy.ts === "number" ? tele.proxy.ts : Date.now() });
+            proxyState.set(key, { payload: tele.proxy, at: Date.now() });
             applyWarmBadge(key);
           }
           if (tele.ctx && typeof tele.ctx.pct === "number") {
@@ -56777,7 +56781,7 @@ ${res.stderr}` : "");
           ctxTokens.set(entry.name, { used: entry.ctxTok, size: entry.ctxSize, cost: typeof entry.ctxCost === "number" ? entry.ctxCost : null, model: entry.ctxModel || null });
         }
         if (entry.proxy) {
-          proxyState.set(entry.name, { payload: entry.proxy, at: Date.now() });
+          proxyState.set(entry.name, { payload: entry.proxy, at: typeof entry.proxy.ts === "number" ? entry.proxy.ts : Date.now() });
           applyWarmBadge(entry.name);
         }
         if (typeof entry.pendingCount === "number") applyPendingBadge(entry.name, entry.pendingCount);

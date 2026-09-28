@@ -8,7 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { diagWarning } = require('../engine');
+const { diagWarning, diagLines } = require('../engine');
 const { missingToolOnExit } = require('../session-manager');
 
 // A healthy-helper darwin base so the fatal-helper block passes and control reaches
@@ -49,6 +49,8 @@ test('diagWarning: any one AGENT_TOOLS CLI present is enough, and the collector 
   assert.ok(start > 0, 'ENTER: collectSystemDiagnostics is found by this anchor');
   const body = src.slice(start, src.indexOf('\n}\n', start));
   for (const t of AGENT_TOOLS) assert.ok(body.includes(`${t}: whichBin('${t}')`), `collectSystemDiagnostics probes ${t}`);
+  const lines = diagLines({ ...healthyHelper, ...none });
+  for (const t of AGENT_TOOLS) assert.ok(lines.some((l) => l.startsWith(`${t}:`)), `diagLines prints ${t}`);
 });
 
 test('diagWarning: a failed PATH merge is a first-class warning (root cause, over the symptom)', () => {

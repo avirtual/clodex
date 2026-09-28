@@ -509,6 +509,22 @@ test('side-pane tabs: Keep editing stays dismissed when the tab is refocused on 
   assert.strictEqual(reduceTabs(again.set, { type: 'loaded', id: 'a', peek: { ok: true, mtime: 300, content: 'newer' } }).effect, 'banner');
 });
 
+test('side-pane tabs: Keep editing on an agent-change banner stays dismissed when the refocus finds that change', () => {
+  let s = set([tab('a', { path: '/w/a.js', view: 'edit', dirty: true, mtime: 100 })], 'a');
+  const raised = reduceTabs(s, { type: 'changed', id: 'a', visible: true });
+  assert.strictEqual(raised.effect, 'banner', 'ENTER: the agent write raised the banner without a peek');
+  s = reduceTabs(raised.set, { type: 'keep', id: 'a' }).set;
+  s = reduceTabs(s, { type: 'focus', id: 'a' }).set;
+  const again = reduceTabs(s, { type: 'loaded', id: 'a', peek: { ok: true, mtime: 200, content: 'theirs' } });
+  assert.strictEqual(again.effect, null);
+  assert.strictEqual(again.set.tabs[0].banner, false);
+  assert.deepStrictEqual(saveArgs('hand-1', again.set.tabs[0], 'mine'), ['hand-1', '/w/a.js', 'mine', 100]);
+  assert.strictEqual(reduceTabs(again.set, { type: 'loaded', id: 'a', peek: { ok: true, mtime: 300, content: 'newer' } }).effect, 'banner');
+  const rewrote = reduceTabs(again.set, { type: 'changed', id: 'a', visible: true });
+  assert.strictEqual(rewrote.effect, 'banner', 'a second agent write raises it again');
+  assert.strictEqual(reduceTabs(rewrote.set, { type: 'loaded', id: 'a', peek: { ok: true, mtime: 400, content: 'x' } }).effect, 'banner');
+});
+
 test('side-pane tabs: a mtime seen under a banner does not outlive a save or a render that adopts a new one', () => {
   const peek300 = { type: 'loaded', id: 'a', peek: { ok: true, mtime: 300, content: 'x' } };
   let s = set([tab('a', { path: '/w/a.js', view: 'edit', dirty: true, mtime: 100, seenMtime: 200 })], 'a');

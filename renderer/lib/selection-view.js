@@ -164,7 +164,8 @@ function buildRows(data) {
   }
 
   if (rows.length) {
-    if (proxyNote) rows.push({ kind: 'note', title: '', text: '', meta: '', note: proxyNote, warn: Boolean(proxyError) });
+    const stated = proxyError && rows.some((r) => r.kind === 'peek-gone');
+    if (proxyNote && !stated) rows.push({ kind: 'note', title: '', text: '', meta: '', note: proxyNote, warn: Boolean(proxyError) });
     return { rows, note: '' };
   }
   if (proxyError) return { rows, note: `Nothing queued. ${proxyNote}` };

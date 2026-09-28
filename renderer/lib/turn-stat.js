@@ -70,8 +70,8 @@ function reqLine(p) {
   const now = sc && typeof sc.requests === 'number' ? sc.requests : null;
   if (now == null) return total != null ? `req ${total}` : null;
   if (total == null) return `req ${now}`;
-  if (sc.compacted) return `req ${now} (${total} total)`;
   if (p.costRun) return `req ${now} (${total} all-time)`;
+  if (sc.compacted) return `req ${now} (${total} total)`;
   return `req ${now}`;
 }
 

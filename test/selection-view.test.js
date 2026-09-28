@@ -140,6 +140,13 @@ test('a proxy error or an unrouted session is still stated when the Copy tier bu
   }
 });
 
+test('a proxy error already said on the peek-gone row is not said again', () => {
+  const memo = { text: 'sel', bytes: 3, truncated: false, expiresInMs: 9000 };
+  const { rows } = buildRows(data({ local: { peek: memo, pending: [] }, proxy: { routed: true, hints: null, error: 'timeout' } }));
+  assert.ok(rows.some((r) => r.kind === 'peek-gone' && /timeout/.test(r.note)), 'ENTER: the peek-gone row carries the error');
+  assert.strictEqual(rows.filter((r) => /timeout/.test(r.note)).length, 1);
+});
+
 test('a queue read error is said as an error, not as an empty file', () => {
   const { rows } = buildRows(data({ local: { peek: null, pending: ['a'] }, queued: { error: 'EACCES' } }));
   assert.ok(rows.length, 'ENTER: something was said');

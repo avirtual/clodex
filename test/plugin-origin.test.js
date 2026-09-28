@@ -70,6 +70,12 @@ test('a library spec typed in another case is recorded as the library repo, so t
   assert.strictEqual(pluginOrigin({ id: 'lib-demo', root: 'user', source: { repo: parsed.repo, ref: null } }).kind, 'library');
 });
 
+test('a sidecar recorded before specs were lowercased, in another case, still reads library', () => {
+  const row = { id: 'lib-demo', root: 'user', source: { repo: 'Avirtual/Clodex-Plugins', ref: null } };
+  assert.strictEqual(row.source.repo.toLowerCase(), LIBRARY_REPO, 'ENTER: the row is a case variant of the library repo');
+  assert.strictEqual(pluginOrigin(row).kind, 'library');
+});
+
 test('a plugin authored in place, with no link and no source, is local', () => {
   const got = pluginOrigin({ id: 'plain', root: 'user', linkedFrom: null, source: null });
   assert.strictEqual(got.kind, 'local');

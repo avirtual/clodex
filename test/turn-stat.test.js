@@ -78,6 +78,8 @@ test('reqLine leads with reqSeg\'s headline when the session never compacted but
   const p = { cost: { requests: 500 }, costRun: { usd: 1, requests: 20 }, sinceCompact: { requests: 20, compacted: false } };
   assert.strictEqual(reqSeg(p).text, 'req 20', 'ENTER: the fixture reaches the never-compacted branch');
   assert.strictEqual(reqLine(p), 'req 20 (500 all-time)');
+  assert.strictEqual(reqLine({ ...p, sinceCompact: { requests: 20, compacted: true } }), 'req 20 (500 all-time)',
+    'the same all-time scope is named the same after a compact, as costLine names it');
 });
 
 test('reqLine: both inline post-compact, plain otherwise', () => {

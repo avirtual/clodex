@@ -754,6 +754,11 @@ const LIBRARY_CASES = [
     },
   },
   {
+    label: 'fetched from the library, recorded in another case before specs were lowercased',
+    row: { id: 'notes', installed: 'fetched', installedRepo: 'Avirtual/Clodex-Plugins', upToDate: false },
+    expected: { label: 'Update', enabled: true, reason: '', action: 'update' },
+  },
+  {
     label: 'fetched from a DIFFERENT repo',
     row: { id: 'notes', installed: 'fetched', installedRepo: 'someone/else', upToDate: false },
     expected: {
