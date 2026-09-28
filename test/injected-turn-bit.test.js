@@ -188,3 +188,13 @@ test('lastOperatorInputAt: an injected dm does not count as the operator typing'
   assert.strictEqual(h.m.lastOperatorInputAt(), 0);
   cleanup(h);
 });
+
+test('a terminal auto-reply or a write to a missing seat does not count as operator input', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 5_000_000 });
+  const h = boot();
+  h.m.write('hand', '\x1b[12;40R');
+  h.m.write('ghost', 'x');
+  assert.ok(h.writes.includes('\x1b[12;40R'), 'ENTER: the pty still received the auto-reply');
+  assert.strictEqual(h.m.lastOperatorInputAt(), 0);
+  cleanup(h);
+});

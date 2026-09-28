@@ -25732,7 +25732,7 @@ ${i3.join("\n")}
           posture: { bypassArgs: ["--dangerously-bypass-approvals-and-sandbox"] },
           account: { envKey: "CODEX_HOME", bootstrap: "codex-home" },
           cwdDir: ".codex",
-          readOnlyCap: { enforce: "argv", args: ["--sandbox", "read-only", "--ask-for-approval", "never"] },
+          readOnlyCap: { enforce: "argv", args: ["--sandbox", "read-only", "--ask-for-approval", "never"], shortFlags: { "-s": "--sandbox", "-a": "--ask-for-approval" } },
           seatSettings: null,
           skills: null,
           instructions: "model-instructions-file",
@@ -25838,11 +25838,36 @@ ${i3.join("\n")}
         }
         return false;
       }
+      function hasReadOnlyCap(adapter, argv) {
+        const cap = adapter && adapter.readOnlyCap && adapter.readOnlyCap.args;
+        if (!Array.isArray(cap) || cap.length === 0 || cap.length % 2 !== 0 || !Array.isArray(argv)) return false;
+        const short = adapter.readOnlyCap.shortFlags || {};
+        const norm = [];
+        for (const tok of argv) {
+          if (typeof tok !== "string") {
+            norm.push(tok);
+            continue;
+          }
+          const eq = tok.startsWith("--") ? tok.indexOf("=") : -1;
+          if (eq > 2) norm.push(tok.slice(0, eq), tok.slice(eq + 1));
+          else norm.push(Object.prototype.hasOwnProperty.call(short, tok) ? short[tok] : tok);
+        }
+        for (let c = 0; c < cap.length; c += 2) {
+          let value;
+          for (let i = 0; i + 1 < norm.length; i += 1) {
+            if (norm[i] === cap[c]) {
+              value = norm[i + 1];
+              i += 1;
+            }
+          }
+          if (value !== cap[c + 1]) return false;
+        }
+        return true;
+      }
       function postureOf(adapter, argv) {
         if (!adapter || !Array.isArray(argv)) return "default";
         if (hasBypass(adapter, argv)) return "bypass";
-        const cap = adapter.readOnlyCap && adapter.readOnlyCap.args;
-        if (Array.isArray(cap) && cap.length > 0 && cap.every((tok) => argv.includes(tok))) return "read-only";
+        if (hasReadOnlyCap(adapter, argv)) return "read-only";
         return "default";
       }
       function capsFor(type) {
@@ -25902,6 +25927,7 @@ ${i3.join("\n")}
         resolveEffort,
         stripModelArgs,
         hasBypass,
+        hasReadOnlyCap,
         postureOf
       };
     }

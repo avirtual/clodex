@@ -225,6 +225,7 @@ test('readOnlyCap: claude is a tool denylist, codex is the argv sandbox pair, mu
   assert.deepStrictEqual(ADAPTERS.codex.readOnlyCap, {
     enforce: 'argv',
     args: ['--sandbox', 'read-only', '--ask-for-approval', 'never'],
+    shortFlags: { '-s': '--sandbox', '-a': '--ask-for-approval' },
   });
   assert.deepStrictEqual(ADAPTERS.muse.readOnlyCap, {
     enforce: 'settings-profile',

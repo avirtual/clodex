@@ -23214,3 +23214,120 @@ test('kill() under an unreadable sessions.json does not reject and still kills t
     fsReal.rmSync(registryDir, { recursive: true, force: true });
   }
 });
+
+test('a codex stream seat whose read-only cap is written in the short or fused flag form still gets a read-only codec', async (t) => {
+  const { postureOf, adapterFor } = require('../cli-adapters');
+  const rows = [
+    { argv: ['--sandbox', 'read-only', '--ask-for-approval', 'never'], readOnly: true },
+    { argv: ['-s', 'read-only', '-a', 'never'], readOnly: true },
+    { argv: ['--sandbox=read-only', '--ask-for-approval=never'], readOnly: true },
+    { argv: ['-s', 'read-only', '--ask-for-approval=never'], readOnly: true },
+    { argv: ['--sandbox', 'workspace-write', '--ask-for-approval', 'never', '--add-dir', 'read-only'], readOnly: false },
+  ];
+  for (const [i, row] of rows.entries()) {
+    const c = mkCodexStreamSeat({ extraArgs: row.argv });
+    t.after(() => c.h.stopAll());
+    await c.create(`cxro-f1-${i}`);
+    assert.strictEqual(c.created[0].readOnly, row.readOnly, `codec readOnly for ${row.argv.join(' ')}`);
+    assert.strictEqual(postureOf(adapterFor('codex'), row.argv), row.readOnly ? 'read-only' : 'default', `posture for ${row.argv.join(' ')}`);
+  }
+});
+
+test('a relay from a spoke whose configured label is a URL still carries a sender the destination accepts', () => {
+  const dm = [];
+  const conn = { dm: (payload, cb) => { dm.push(payload); cb && cb({ ok: true }); } };
+  const m = mk({
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+    getUiSettings: () => ({ get: () => ({ peers: [
+      { id: 'p1', label: 'http://10.0.0.5:7900', relayAllowed: true },
+      { id: 'p2', label: 'murmurfi', relayAllowed: true },
+    ] }) }),
+    getPeerManager: () => ({
+      statuses: () => [
+        { id: 'p1', label: 'http://10.0.0.5:7900', host: 'spoke', online: true, caps: ['dm', 'relay'], sessions: [] },
+        { id: 'p2', label: 'murmurfi', online: true, caps: ['dm', 'relay'], sessions: [] },
+      ],
+      get: (id) => (id === 'p2' ? conn : null),
+    }),
+  });
+  m._broadcast = () => {};
+  m._deliverClaimedDms('p1', [{ rv: 1, to: 'murmur', finalTarget: 'murmur@murmurfi', from: 'alice', body: 'x', hops: 1, ts: 1 }]);
+  assert.strictEqual(dm.length, 1, 'ENTER: the terminal leg was sent');
+  assert.strictEqual(dm[0].from, 'alice@spoke');
+  assert.strictEqual(require('../relay-protocol').isQualifiedSender(dm[0].from), true);
+});
+
+test('_scratchMark: re-setting a label whose rewind is still pending refuses the re-mark and keeps the pending rewind', (t) => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  scratchNamed(f, tape, 'a');
+  const prior = f.s._scratchMarks.get('a');
+  t.after(() => { if (prior._closeTimer) clearTimeout(prior._closeTimer); });
+  f.s._flushTurnEnd = false;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'rewind', label: 'a', body: 'neg', replay: false });
+  assert.ok(prior.closing, 'ENTER: the rewind is pending on its timer');
+  scratchNamed(f, tape, 'a');
+  assert.strictEqual(f.s._scratchMarks.get('a'), prior, 'the original mark is still the slot\'s mark');
+  assert.ok(prior.closing !== null, 'the pending rewind is not orphaned');
+  assert.ok(f.injected[f.injected.length - 1].startsWith('[agent:scratch] mark refused'), f.injected[f.injected.length - 1]);
+});
+
+test('_streamEnqueue: after the init watchdog fires, a second composer send queues behind the kept item instead of overtaking it', async (t) => {
+  const c = mkStalledInitSeat(t);
+  await c.create('si-f4');
+  const s = c.h.m.sessions.get('si-f4');
+  t.after(() => c.clearTimers(s));
+  c.h.m.seatSend('si-f4', 'hello');
+  t.mock.timers.tick(5000);
+  assert.strictEqual(s.streamBusy, false, 'ENTER: the watchdog freed the seat');
+  assert.deepStrictEqual(s.outbox.map((q) => q.text), ['hello'], 'ENTER: hello is kept');
+  const before = c.sent().length;
+  assert.deepStrictEqual(c.h.m.seatSend('si-f4', 'second'), { ok: true, queued: 2 });
+  assert.strictEqual(c.sent().length, before);
+  assert.deepStrictEqual(s.outbox.map((q) => q.text), ['hello', 'second']);
+});
+
+test('a team create still classifying its root is on the open mark before the same reply\'s scratch end validates', async () => {
+  const f = mkScratch({ deps: { intentEnabledForSeat: () => true } });
+  scratchOpen(f);
+  scratchResearch(f);
+  f.m._handleTeamCreate = () => new Promise((r) => setTimeout(r, 20));
+  const seen = [];
+  const validate = f.m._scratchValidate.bind(f.m);
+  f.m._scratchValidate = (mark, ...rest) => {
+    seen.push(mark.dispatched.map((d) => d.token));
+    return validate(mark, ...rest);
+  };
+  f.m._handleIntent('a', { type: 'team-create', name: 'X', root: '/tmp/r', lead: null, body: '' });
+  f.s._flushTurnEnd = true;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', body: 'summary', replay: false });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(seen.length > 0, 'ENTER: the end validated');
+  assert.ok(seen[0].includes('X'), JSON.stringify(seen));
+});
+
+test('escapeSafeTail: a detached seat\'s buffer trimmed at the cap does not begin inside an escape sequence', () => {
+  const m = mk();
+  m.windowForSession = () => null;
+  m.sessions.set('a', { name: 'a', workspaceId: 'w' });
+  const MAX = 2 * 1024 * 1024;
+  const esc = '\x1b[38;5;196m';
+  const tail = 'x'.repeat(MAX - 5);
+  m._sendToSession('a', 'pty-data', 'a', 'y'.repeat(100) + esc);
+  m._sendToSession('a', 'pty-data', 'a', tail);
+  const s = m.sessions.get('a');
+  assert.ok(s.pendingOutput.length <= MAX, 'ENTER: the buffer was trimmed');
+  assert.ok(!/^[0-9;]*m/.test(s.pendingOutput), JSON.stringify(s.pendingOutput.slice(0, 16)));
+  assert.strictEqual(s.pendingOutput, tail);
+});
+
+test('escapeSafeTail: a detached seat\'s buffer trimmed at the cap does not begin on half a surrogate pair', () => {
+  const m = mk();
+  m.windowForSession = () => null;
+  m.sessions.set('a', { name: 'a', workspaceId: 'w' });
+  const MAX = 2 * 1024 * 1024;
+  m._sendToSession('a', 'pty-data', 'a', '😀' + 'x'.repeat(MAX - 1));
+  const s = m.sessions.get('a');
+  assert.ok(!/^[\uDC00-\uDFFF]/.test(s.pendingOutput));
+  assert.strictEqual(s.pendingOutput, 'x'.repeat(MAX - 1));
+});

@@ -177,12 +177,11 @@ function dupIdentity(intent) {
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
-const { isAgentType, adapterFor, streamFor: adapterStreamFor, hasBypass, postureOf, resolveModelId, resolveEffort } = require('./cli-adapters');
+const { isAgentType, adapterFor, streamFor: adapterStreamFor, hasBypass, hasReadOnlyCap, postureOf, resolveModelId, resolveEffort } = require('./cli-adapters');
 
 function streamCodecCtx(type, extraArgs) {
   const a = adapterFor(type);
   const argv = Array.isArray(extraArgs) ? extraArgs : [];
-  const roArgs = a && a.readOnlyCap && Array.isArray(a.readOnlyCap.args) ? a.readOnlyCap.args : [];
   let model = null;
   const flags = a ? a.model.flags : [];
   for (let i = 0; i < argv.length; i += 1) {
@@ -195,7 +194,7 @@ function streamCodecCtx(type, extraArgs) {
   }
   return {
     bypass: hasBypass(a, argv),
-    readOnly: roArgs.length > 0 && roArgs.every((tok) => argv.includes(tok)),
+    readOnly: hasReadOnlyCap(a, argv),
     model: model ? resolveModelId(type, model) : null,
   };
 }
@@ -204,6 +203,22 @@ const TERM_ESCAPE_RE = /\x1b\[[0-9;?<>=]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|
 const BOOT_NUDGE_PROBE_CHARS = 32;
 const BOOT_NUDGE_ECHO_CAP = 65536;
 const BOOT_NUDGE_PASTE_PLACEHOLDER = '[Pastedtext#';
+
+const TERM_ESCAPE_STICKY_RE = new RegExp(TERM_ESCAPE_RE.source, 'y');
+const ESCAPE_RESYNC_WINDOW = 4096;
+
+function escapeSafeTail(buf, max) {
+  if (buf.length <= max) return buf;
+  let start = buf.length - max;
+  const esc = buf.lastIndexOf('\x1b', start - 1);
+  if (esc >= 0 && start - esc <= ESCAPE_RESYNC_WINDOW) {
+    TERM_ESCAPE_STICKY_RE.lastIndex = esc;
+    const hit = TERM_ESCAPE_STICKY_RE.exec(buf);
+    if (hit && esc + hit[0].length > start) start = esc + hit[0].length;
+  }
+  if (/[\uDC00-\uDFFF]/.test(buf[start] || '')) start += 1;
+  return buf.slice(start);
+}
 
 function inkVisibleText(s) {
   return String(s).replace(TERM_ESCAPE_RE, '').replace(/\s+/g, '');
@@ -1650,7 +1665,7 @@ function createSessionManager(deps) {
         session.pendingOutput += args[1];
         const MAX_BUFFER = 2 * 1024 * 1024; // 2M UTF-16 code units per session, not bytes
         if (session.pendingOutput.length > MAX_BUFFER) {
-          session.pendingOutput = session.pendingOutput.slice(-MAX_BUFFER);
+          session.pendingOutput = escapeSafeTail(session.pendingOutput, MAX_BUFFER);
         }
       }
     }
@@ -3140,12 +3155,13 @@ function createSessionManager(deps) {
       if (produce) Object.defineProperty(item, 'produce', { value: produce, enumerable: false });
       if (parkKey) Object.defineProperty(item, 'parkKey', { value: parkKey, enumerable: false });
       const held = !s.streamBusy && this._streamHintHeld(s);
-      if (!s.streamBusy && !held && item.wire) {
+      const idle = !s.streamBusy && !held;
+      if (idle && !s.outbox.length && item.wire) {
         this._streamDeliver(s, { text: '', images: [], wire: item.wire });
         this._streamSent([item]);
         return 0;
       }
-      if (!s.streamBusy && !held) {
+      if (idle && !s.outbox.length) {
         const payload = this._streamJoin([item]);
         if (!payload.text.trim() && !payload.images.length) return 0;
         this._streamDeliver(s, payload);
@@ -3164,6 +3180,7 @@ function createSessionManager(deps) {
       }
       if (held) this._streamHoldPoll(s);
       this._streamOutboxChanged(s);
+      if (idle && !s._streamInitStalled) this._streamTurnEnd(s);
       return s.outbox.length;
     }
 
@@ -3487,7 +3504,6 @@ function createSessionManager(deps) {
     }
 
     write(name, data) {
-      this._lastOperatorInputAt = Date.now();
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
       if (s.io === 'stream') {
@@ -3500,6 +3516,7 @@ function createSessionManager(deps) {
       }
       if (isHumanPtyInput(data)) {
         s.lastUserInputTs = Date.now();
+        this._lastOperatorInputAt = s.lastUserInputTs;
         if (!s.firstInputAt) s.firstInputAt = s.lastUserInputTs;
         const wasInPaste = s._inPaste;
         const sig = draftChunkSignal(data, s._inPaste);
@@ -6316,6 +6333,8 @@ function createSessionManager(deps) {
       const scratchWatched = !!(session && this._scratchOpenMarks(session).length && SCRATCH_DISPATCH_TYPES.has(intent.type));
       const scratchBefore = scratchWatched && intent.type === 'task' && intent.sub === 'add'
         ? this._scratchTicketIds(session) : new Set();
+      const scratchEarly = scratchWatched && (intent.type === 'team-create' || intent.type === 'spawn');
+      if (scratchEarly) this._recordScratchDispatch(session, intent, scratchBefore);
 
       switch (intent.type) {
         case 'dm': {
@@ -6571,7 +6590,7 @@ function createSessionManager(deps) {
           break;
       }
 
-      if (scratchWatched) this._recordScratchDispatch(session, intent, scratchBefore);
+      if (scratchWatched && !scratchEarly) this._recordScratchDispatch(session, intent, scratchBefore);
     }
 
     _dispatchPluginIntent(session, intent) {
@@ -7974,6 +7993,8 @@ function createSessionManager(deps) {
       }
       const taken = this._scratchOpenMarks(session).find((m) => m.label && m.label !== label && m.sizeAtBegin === v.t.size);
       if (taken) return refuse(`"${taken.label}" already marks this exact point`);
+      const pending = this._scratchMarksOf(session).get(label);
+      if (pending && pending.closing) return refuse(`${pending.closing.verb} already pending for mark ${pending.nonce}`);
       const reply = (msg) => this._injectText(session, msg, { parkable: true });
       const mark = this._scratchMark(session, v, reply, { label, operator: true, atEnd: true });
       if (!mark) return refuse('another label already marks this point');
@@ -8180,6 +8201,11 @@ function createSessionManager(deps) {
           reply(`[agent:scratch] mark refused: "${taken.label}" already marks this exact point — one label per point. Not marked.`);
           return null;
         }
+      }
+      if (prior && prior.closing) {
+        reply(`[agent:scratch] mark refused: ${prior.closing.verb} already pending for mark ${prior.nonce}${label ? ` (${label})` : ''} — `
+          + `it fires first. Not marked; mark again after it settles.`);
+        return null;
       }
       if (prior && prior._closeTimer) clearTimeout(prior._closeTimer);
       const end = cutOffset - (t.size - buf.length);
@@ -9386,7 +9412,7 @@ function createSessionManager(deps) {
         || String(peerId);
       for (const m of (Array.isArray(messages) ? messages : [])) {
         if (!m || typeof m.to !== 'string') continue;
-        if (isRelayEnvelope(m)) { this._relayClaimedDm(peerId, peerLabel, cfg, m); continue; }
+        if (isRelayEnvelope(m)) { this._relayClaimedDm(peerId, peerLabel, cfg, m, origin); continue; }
         const senderTag = `${m.from || 'peer'}@${origin}`;
         const local = this.sessions.get(m.to);
         if (!local || !local.agentType) {
@@ -9423,7 +9449,7 @@ function createSessionManager(deps) {
       }
     }
 
-    _relayClaimedDm(srcId, srcLabel, srcCfg, m) {
+    _relayClaimedDm(srcId, srcLabel, srcCfg, m, srcOrigin) {
       const drop = (why) => {
         log.info('peer', `relay from ${srcLabel} → ${m.finalTarget} dropped: ${why}`);
         this._broadcast('ipc-message', { type: 'dm', from: m.from || srcLabel, to: m.finalTarget, body: `WIRE relay DROPPED (${why}): ${m.body || ''}` });
@@ -9450,7 +9476,7 @@ function createSessionManager(deps) {
       if (!conn) return drop(`destination peer '${destOrigin}' not reachable`);
       const fromAt = String(m.from || '').indexOf('@');
       const senderLocal = fromAt > 0 ? String(m.from).slice(0, fromAt) : String(m.from || '');
-      const relayFrom = `${senderLocal || 'peer'}@${srcLabel}`;
+      const relayFrom = `${senderLocal || 'peer'}@${srcOrigin || peerOriginSuffix({ label: srcLabel, id: srcId }, AGENT_NAME_RE) || String(srcId)}`;
       conn.dm(buildTerminalDm({ to: destName, from: relayFrom, body: m.body || '', urgent: m.urgent === true }), (resp) => {
         if (!(resp && resp.ok)) log.info('peer', `relay → ${m.finalTarget} not delivered: ${(resp && resp.error) || 'no response'}`);
       });
