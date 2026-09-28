@@ -34,14 +34,20 @@ function bumpDefaultName(base, reserved) {
 //   - the DEFAULT lead seat is `<team>-lead`, so a team name over 59 chars mints
 //     a seat past the 64-char NAME_RE limit (team-manifest.js).
 //
-// Both refusals would otherwise land on a name the operator never typed. The
-// clamp is applied after the dedupe too: a `-2` suffix must not push it back over.
+// Both refusals would otherwise land on a name the operator never typed.
 const TEAM_NAME_MAX = 64 - '-lead'.length;
 
 function teamNamePrefill(slug, taken) {
   const base = String(slug || '').replace(/^\.+/, '').slice(0, TEAM_NAME_MAX);
   if (!base) return '';
-  return bumpDefaultName(base, taken).slice(0, TEAM_NAME_MAX);
+  const set = taken instanceof Set ? taken : new Set(taken || []);
+  let stem = base;
+  let name = bumpDefaultName(stem, set);
+  while (name.length > TEAM_NAME_MAX) {
+    stem = stem.slice(0, Math.max(0, TEAM_NAME_MAX - (name.length - stem.length)));
+    name = bumpDefaultName(stem, new Set([...set, stem]));
+  }
+  return name;
 }
 
 module.exports = { bumpDefaultName, teamNamePrefill, TEAM_NAME_MAX };
