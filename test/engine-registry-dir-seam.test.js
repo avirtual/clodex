@@ -230,7 +230,7 @@ test('initStores refuses to seed the home root under node --test whatever the sp
   withFakeHome((fakeHome) => {
     const { initStores } = require('../stores');
     assert.ok(process.env.NODE_TEST_CONTEXT, 'ENTER: node --test marks the process');
-    const linkParent = mkTmpRoot('clx-t359-link-');
+    const linkParent = mkTmpRoot('clx-t359-home-');
     fs.mkdirSync(path.join(fakeHome, '.clodex'), { recursive: true });
     fs.symlinkSync(path.join(fakeHome, '.clodex'), path.join(linkParent, 'reg'));
     try {
