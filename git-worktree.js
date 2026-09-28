@@ -567,6 +567,16 @@ async function diffNames(cwd, base, head, pathspec = []) {
   return { ok: true, names: r.stdout.split('\n').map((s) => s.trim()).filter(Boolean), error: null };
 }
 
+async function mergeBase(cwd, a, b) {
+  const repo = await repoToplevel(cwd);
+  if (!repo) return { ok: false, sha: null, error: 'not a git repository' };
+  if (!a || !b) return { ok: false, sha: null, error: 'no refs given' };
+  const r = await git(repo, ['merge-base', a, b]);
+  const sha = r.ok ? r.stdout.trim() : '';
+  if (!r.ok || !sha) return { ok: false, sha: null, error: (r.stderr || 'git merge-base found no common ancestor').trim() };
+  return { ok: true, sha, error: null };
+}
+
 async function fileAt(cwd, ref, relPath, { maxBuffer = 8 * 1024 * 1024 } = {}) {
   const repo = await repoToplevel(cwd);
   if (!repo) return { ok: false, text: null, error: 'not a git repository' };
@@ -744,6 +754,6 @@ async function revertCommit(cwd, sha) {
 module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
   defaultBranch, defaultBranchSync, mergeTargetFor, mergeTargetForSync, localBranches, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch,
-  diffText, diffNames, fileAt, currentBranch, mergeNoFf, revertCommit, initRepo, hasCommit,
+  diffText, diffNames, mergeBase, fileAt, currentBranch, mergeNoFf, revertCommit, initRepo, hasCommit,
   checkoutDetached, headSha, headShaSync, headLogSync, revParse,
 };

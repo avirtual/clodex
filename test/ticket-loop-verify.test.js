@@ -1741,6 +1741,45 @@ test('an OWNED slow gate rejects, and the rejection says slow gate rather than F
   assert.strictEqual(f.one().state, 'open', 'the ticket is reopened for rework');
 });
 
+function mergeMasterInto(dir, branch) {
+  const cur = git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  git(dir, ['checkout', '-q', branch]);
+  git(dir, ['merge', '-q', '--no-edit', 'master']);
+  git(dir, ['checkout', '-q', cur]);
+}
+
+function mkMasterBroughtTest() {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  commitOnBranch(repo.dir, 'master', 'test/master-brought.test.js', `test('${SLOW_ONE}', () => {});\n`);
+  mergeMasterInto(repo.dir, 'tl-1');
+  return repo;
+}
+
+test('slow gate: a test file master brought in after the ticket\'s base is NOT owned by the branch', async () => {
+  const repo = mkMasterBroughtTest();
+  const f = mkLoop({ repo });
+  const gw = require('../git-worktree');
+  const there = await gw.fileAt(repo.dir, 'tl-1', 'test/master-brought.test.js');
+  assert.ok(there.ok && there.text.includes(SLOW_ONE), 'ENTER: the merged file is on the branch');
+  const d = await gw.diffNames(repo.dir, repo.baseSha, 'tl-1', ['test/']);
+  assert.deepStrictEqual(d.names, ['test/master-brought.test.js'], 'ENTER: the recorded-base range does see it');
+  assert.deepStrictEqual(await f.m._slowTestsOwned(f.team, f.one(), [SLOW_ONE]), []);
+});
+
+test('slow gate: a test the branch itself added after the merge IS still owned', async () => {
+  const repo = mkMasterBroughtTest();
+  commitOnBranch(repo.dir, 'tl-1', 'test/own.test.js', `test('${SLOW_TWO}', () => {});\n`);
+  const f = mkLoop({ repo });
+  assert.deepStrictEqual(await f.m._slowTestsOwned(f.team, f.one(), [SLOW_ONE, SLOW_TWO]), [SLOW_TWO]);
+});
+
+test('slow gate: no merge-base falls back to the recorded baseSha', async () => {
+  const repo = mkMasterBroughtTest();
+  const f = mkLoop({ repo, wrapGit: (gw) => ({ ...gw, mergeBase: async () => ({ ok: false, sha: null, error: 'stub' }) }) });
+  assert.deepStrictEqual(await f.m._slowTestsOwned(f.team, f.one(), [SLOW_ONE]), [SLOW_ONE]);
+});
+
 test('a stale allowlist entry is a real defect, not a slow gate to wave through', async () => {
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');

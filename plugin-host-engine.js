@@ -72,7 +72,7 @@ function createPluginHostEngine(deps) {
 // lent, being read-only metadata of exactly the kind the rest of the lent set
 // returns.
   const LIB_GIT_WITHHELD = new Set([
-    'deleteBranch', 'isMerged', 'diffText', 'diffNames', 'fileAt', 'mergeNoFf', 'revertCommit',
+    'deleteBranch', 'isMerged', 'diffText', 'diffNames', 'mergeBase', 'fileAt', 'mergeNoFf', 'revertCommit',
     'initRepo', 'hasCommit', 'checkoutDetached', 'headSha', 'headShaSync', 'headLogSync',
     'defaultBranchSync', 'mergeTargetFor', 'mergeTargetForSync', 'localBranches', 'revParse',
   ]);

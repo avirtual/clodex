@@ -2007,6 +2007,23 @@ test('an UNOWNED slow gate after the merge does NOT revert: the merge stands and
   assert.ok(notes[0].body.includes(MERGE_SLOW), 'naming the test');
 });
 
+test('an OWNED slow gate after the merge still reverts', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  commitOnBranch(repo.dir, 'tl-1', 'test/mine.test.js', `test('${MERGE_SLOW}', () => {});\n`);
+  const f = mkMerge({ repo, suite: 'slowgate' });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'work.txt')), 'the merge is reverted');
+  assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'test', 'mine.test.js')), 'including the owned test');
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation');
+  assert.match(esc[0].body, /SLOW GATE/);
+  assert.ok(esc[0].body.includes(MERGE_SLOW), 'naming the owned test');
+  assert.deepStrictEqual(f.landed(), [], 'a reverted merge is never announced as landed');
+});
+
 test('a suite that could not RUN reverts the merge too, rather than leaving master unverified', async () => {
   // The spec names only RED. `ran:false` is undone as well, on the ground that
   // an UNVERIFIED merge sitting on master is exactly the state the revert

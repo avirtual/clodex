@@ -1035,7 +1035,8 @@ the caller names. Core added them for its own ticket loop. A function that reads
 out the contents of a repo is not lent because core happens to call it; ask, with
 the use case. `diffNames` returns only paths and would fit the lent set on shape
 alone; it is withheld as the ticket loop's own half of that pair, on the same
-footing as `hasCommit` below.
+footing as `hasCommit` below. `mergeBase` is withheld on the same footing: it is the
+slow gate's way of scoping that `diffNames` range.
 
 `initRepo` and `hasCommit` are the pair `[agent:team create]` classifies a team
 root with. `initRepo` is the mutation rule one step earlier than the others: it

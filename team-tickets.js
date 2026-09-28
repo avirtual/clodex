@@ -2249,6 +2249,8 @@ function createTicketMethods(deps, shared) {
           return;
         }
 
+        const ownBase = await gitWorktree.mergeBase(team.root, target, branch).catch(() => ({ ok: false }));
+
         // STEP 4 — the merge itself, always with a merge commit.
         //
         // RE-READ THE STATE ONE LAST TIME, and keep this the last statement
@@ -2349,7 +2351,7 @@ function createTicketMethods(deps, shared) {
         // escalate with the evidence second.
         const suite = await this._runTicketSuite(team, ticket, team.root);
         const mergeSlowOwned = suite.ran && suite.slowOnly
-          ? await this._slowTestsOwned(team, ticket, suite.slow)
+          ? await this._slowTestsOwned(team, ticket, suite.slow, ownBase && ownBase.ok ? ownBase.sha : null)
           : [];
         const slowPass = suite.ran && suite.slowOnly && !mergeSlowOwned.length;
         if ((!suite.ran || !suite.green) && !slowPass) {
@@ -7774,13 +7776,27 @@ function createTicketMethods(deps, shared) {
       }
     },
 
-    async _slowTestsOwned(team, ticket, names) {
+    async _slowTestsOwned(team, ticket, names, preMergeBase) {
       const wanted = (names || []).map((n) => String(n)).filter(Boolean);
       if (!wanted.length) return [];
       const wt = (ticket && ticket.worktree) || {};
-      const base = wt.baseSha;
       const branch = wt.branch;
-      if (!base || !branch) return [];
+      if (!branch) return [];
+      if (preMergeBase !== undefined) return this._slowTestsOwnedFrom(team, branch, wanted, preMergeBase || wt.baseSha || null);
+      const target = await gitWorktree.mergeTargetFor(team).catch(() => null);
+      const mb = target
+        ? await gitWorktree.mergeBase(team.root, target, branch).catch((e) => ({ ok: false, error: e.message }))
+        : { ok: false, error: 'no merge target resolved' };
+      let base = mb && mb.ok ? mb.sha : null;
+      if (!base) {
+        base = wt.baseSha || null;
+        log.info('ticket', `slow gate: no merge-base of ${target || '(no trunk)'} and ${branch} (${(mb && mb.error) || 'unknown'}) — scoping ${ticket && ticket.id} by recorded base ${base || '(none)'}`);
+      }
+      return this._slowTestsOwnedFrom(team, branch, wanted, base);
+    },
+
+    async _slowTestsOwnedFrom(team, branch, wanted, base) {
+      if (!base) return [];
       const d = await gitWorktree.diffNames(team.root, base, branch, ['test/'])
         .catch(() => ({ ok: false, names: null }));
       if (!d || !d.ok || !Array.isArray(d.names) || !d.names.length) return [];
