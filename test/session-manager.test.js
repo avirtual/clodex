@@ -22463,6 +22463,7 @@ test('a jsonl-activity seat that takes a turn after the park is presumed deliver
   const { m, state, parks, disarm } = mkNotice({
     notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
   });
+  t.after(disarm);
   m.maybeDeliverRebootNotice();
   assert.strictEqual(parks.length, 1, 'ENTER: parked');
   t.mock.timers.tick(1);
@@ -22473,7 +22474,6 @@ test('a jsonl-activity seat that takes a turn after the park is presumed deliver
   fireRebootRetry(m, 'a');
   assert.ok(state.pendingRebootNotice === null && parks.length === 1,
     'a turn seen on the activity edge is a turn: the notice clears and is not re-parked');
-  disarm();
 });
 
 test('the compact guard gets a full INJECT_HOLD_TIMEOUT from when it goes up', (t) => {
@@ -22526,10 +22526,11 @@ test('an offline reboot notice survives its park until the seat resumes', () => 
   assert.ok(state.pendingRebootNotice !== null, 'the settings copy is the durable one until a turn confirms it');
 });
 
-test('a reboot notice parked offline and re-offered once the seat is live nets one copy on disk', () => {
+test('a reboot notice parked offline and re-offered once the seat is live nets one copy on disk', (t) => {
   const { m, state, parks, disarm } = mkNotice({
     notice: { name: 'a', at: Date.now(), reason: '' }, live: false, persisted: { type: 'claude' }, onDisk: true,
   });
+  t.after(disarm);
   m.maybeDeliverRebootNotice();
   assert.strictEqual(parks.length, 1, 'ENTER: parked while the seat was offline');
   assert.ok(state.pendingRebootNotice, 'ENTER: retained for the next offer');
@@ -22537,7 +22538,6 @@ test('a reboot notice parked offline and re-offered once the seat is live nets o
   m.maybeDeliverRebootNotice();
   assert.strictEqual(parks.length, 1, 'the live offer supersedes the offline copy instead of stacking a second notice');
   assert.strictEqual(state.pendingRebootNotice.attempts, 1, 'and the ladder starts at its first rung');
-  disarm();
 });
 
 test('a reboot notice re-offered to a seat that stays offline keeps one copy on disk', () => {
