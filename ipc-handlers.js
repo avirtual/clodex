@@ -18,7 +18,7 @@ const {
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
 const { validateSeatImages } = require('./seat-images');
-const { BOX_ID_RE } = require('./sandbox');
+const { BOX_ID_RE, runningInSandboxBox } = require('./sandbox');
 const { SETUP_CHOICES } = require('./stores');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
@@ -102,7 +102,7 @@ function registerIpcHandlers(deps) {
     accounts, moveAccountByModel,
     syncTerminalReports,
     getPluginHost, getPluginLoader, listAllTemplates, listAllPrompts, surfaceOfSender,
-    getHelpCorpus,
+    getHelpCorpus, SELF_LABEL,
   } = deps;
 
   function refreshMenusAfterWrite(channel, ...refreshers) {
@@ -1994,6 +1994,10 @@ function registerIpcHandlers(deps) {
     const mgr = getSandboxManager();
     if (!mgr) return { ok: false, error: 'sandbox manager unavailable' };
     return mgr.detect();
+  });
+  handle('sandbox:self', () => {
+    const inBox = runningInSandboxBox(process.env);
+    return { inBox, label: inBox ? (process.env.CLODEX_BOX_LABEL || SELF_LABEL || null) : null };
   });
   handle('sandbox:status', (_e, boxId) => withBox(boxId, (s) => s.status()));
   handle('sandbox:openWeb', (_e, boxId) => withBox(boxId, async (s) => {

@@ -3,6 +3,7 @@ const http = require('http');
 const https = require('https');
 const { PROXY_AGENT_PREFIX, pickProxyRecord, shapeProxyRecord, shapeQuota, shouldAutoCompact, autoCompactDecision, AUTO_COMPACT } = require('./proxy-util');
 const { isInjectInFlight } = require('./inject-queue');
+const { runningInSandboxBox } = require('./sandbox');
 
 const PROXY_POLL_INTERVAL = 5000; // ms
 const PROXY_HTTP_TIMEOUT = 4000;  // ms — default; keeps polling/handshake snappy
@@ -18,14 +19,22 @@ const PROXY_LINK_GRACE = 20000;   // ms (~4 polls)
 const PROXY_STRIP_REPOST_MS = 4000; // ms — debounce identical strip re-POSTs to at
 const PROXY_PRODUCTS = new Set(['wirescope']);
 
-function authRefreshView(proxyBlock) {
+function authRefreshView(proxyBlock, { env = process.env } = {}) {
   const a = proxyBlock && proxyBlock.auth_refresh;
   if (!a || typeof a !== 'object') return null;
+  let stalledStores = Array.isArray(a.stalled_stores) ? a.stalled_stores.filter((s) => typeof s === 'string') : [];
+  let stalled = !!a.stalled;
+  const token = env && env.CLAUDE_CODE_OAUTH_TOKEN;
+  if (runningInSandboxBox(env) && typeof token === 'string' && token !== '') {
+    stalledStores = stalledStores.filter((s) => s !== 'default');
+    stalled = stalledStores.length > 0;
+  }
   return {
-    stalled: !!a.stalled,
+    stalled,
     lapsed: !!a.token_lapsed,
     lastOutcome: a.last_outcome ?? null,
     readError: a.read_error ?? null,
+    stalledStores,
   };
 }
 
@@ -185,13 +194,13 @@ const ProxyClient = {
   // Returns the WHOLE /_status envelope, not just the session array. Always an
   // object with a `sessions` array, so callers destructure rather than branch —
   // an unreachable or malformed /_status degrades to the empty reading.
-  async status(base) {
+  async status(base, { env = process.env } = {}) {
     const st = await this._getJson(base, '/_status');
     if (st.status === 200 && st.json && Array.isArray(st.json.sessions)) {
       return {
         sessions: st.json.sessions,
         quota: st.json.quota || null,
-        authRefresh: authRefreshView(st.json.proxy),
+        authRefresh: authRefreshView(st.json.proxy, { env }),
       };
     }
     return { sessions: [], quota: null, authRefresh: null };
@@ -223,6 +232,7 @@ function createProxyPoller({
   // persistence/remoteServer/CONTEXT_COMMANDS are assigned after this factory runs,
   // so they cross as getters — passing the values here captures undefined.
   autoCompactOf, peerProxyView, getPersistence, getRemoteServer, getContextCommands,
+  env = process.env,
 }) {
   class ProxyPoller {
     constructor(manager) {
@@ -299,7 +309,7 @@ function createProxyPoller({
           }
           let records, quotaRaw, authRefresh;
           try {
-            ({ sessions: records, quota: quotaRaw, authRefresh } = await ProxyClient.status(base));
+            ({ sessions: records, quota: quotaRaw, authRefresh } = await ProxyClient.status(base, { env }));
           } catch { continue; }
           // Account-scoped, so it is the SAME block for every session on this
           // base — shaped once per base, not once per session.

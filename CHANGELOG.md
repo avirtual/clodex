@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Sandbox: a box whose seats sign with the seeded CLAUDE_CODE_OAUTH_TOKEN no longer raises "Claude login expired" for a stale claude login left in the box's own credential file (its seats never use it); when the notice does fire inside a box it names the box and says to log in there.
 - clodexctl: a node that points at the local engine (loopback host, the engine's port) no longer needs its token spelled out — a tokenless entry inherits the engine's own wire token, and `create node --import` run inside a sandbox box now seeds `local` with the box's token (it read only the GUI's remote.env, so the imported node was tokenless and every call after it answered unauthorized).
 - Tests: direct pins for stores' quarantine-rename failure path, the uiSettings sanitizers, and the codex stream seat's read-only/strip argv rules (previously reached only through their callers).
 - Sandbox: the Rebuild toast names what it built — the tracked ref and sha, the dev checkout, or the pinned image — and flags a box pinned to a fixed sha, instead of always saying "on the current code".

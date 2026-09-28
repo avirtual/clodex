@@ -15,7 +15,7 @@
 const { agentInstallButtons } = require('./lib/tool-gate');
 const { loginOwedView } = require('./lib/login-owed');
 
-function initBanners({ openInstallSession } = {}) {
+function initBanners({ openInstallSession, getBoxLabel = () => null } = {}) {
   // ---- Update banner ----
   const updateBanner = document.getElementById('update-banner');
   const updateText = document.getElementById('update-text');
@@ -106,7 +106,7 @@ function initBanners({ openInstallSession } = {}) {
 
   function refreshAuthBanner(proxyEntries) {
     if (!authBanner) return;
-    const v = loginOwedView(proxyEntries);
+    const v = loginOwedView(proxyEntries, { boxLabel: getBoxLabel() });
     if (v.hidden) {
       authBanner.classList.add('hidden');
       return;

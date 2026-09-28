@@ -141,7 +141,7 @@ test('poller: a stalled auth_refresh reaches the emitted payload', async () => {
   });
   assert.strictEqual(emitted.length, 1, 'ENTER: the poller must emit for the seat — zero payloads makes the assertion below vacuous');
   assert.deepStrictEqual(emitted[0].payload.authRefresh,
-    { stalled: true, lapsed: true, lastOutcome: 'refresh_failed', readError: null });
+    { stalled: true, lapsed: true, lastOutcome: 'refresh_failed', readError: null, stalledStores: [] });
 });
 
 test('poller: no auth_refresh block (older proxy) → null on the payload', async () => {

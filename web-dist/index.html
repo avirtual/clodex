@@ -11367,6 +11367,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "sandboxRebuild", kind: "invoke", channel: "sandbox:rebuild" },
         { name: "sandboxDown", kind: "invoke", channel: "sandbox:down" },
         { name: "sandboxLogsTail", kind: "invoke", channel: "sandbox:logsTail" },
+        { name: "sandboxSelf", kind: "invoke", channel: "sandbox:self" },
         { name: "sandboxSetToken", kind: "invoke", channel: "sandbox:setToken" },
         { name: "sandboxClearToken", kind: "invoke", channel: "sandbox:clearToken" },
         // Box registry CRUD (M6b P2).
@@ -34389,7 +34390,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       "use strict";
       var LOGIN_OWED_TEXT = 'Claude login expired \u2014 run "claude login" in a terminal; keep-warm holds are paused until then';
       var LOGIN_OWED_TIP = "The bundled proxy can no longer refresh the Claude OAuth token; keep-warm holds stay paused until you log in again";
-      function loginOwedView(entries) {
+      function loginOwedView(entries, { boxLabel = null } = {}) {
         let owed = false;
         if (entries && typeof entries[Symbol.iterator] === "function") {
           for (const st of entries) {
@@ -34401,6 +34402,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
         }
         if (!owed) return { hidden: true, text: "", tip: "" };
+        if (typeof boxLabel === "string" && boxLabel !== "") {
+          return {
+            hidden: false,
+            text: `Claude login expired in box ${boxLabel} \u2014 run "claude login" inside it; keep-warm holds there are paused until then`,
+            tip: `The proxy inside ${boxLabel} can no longer refresh its Claude OAuth token; holds in that box stay paused until someone logs in there`
+          };
+        }
         return { hidden: false, text: LOGIN_OWED_TEXT, tip: LOGIN_OWED_TIP };
       }
       module.exports = { loginOwedView };
@@ -34412,7 +34420,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
     "renderer/banners.js"(exports, module) {
       var { agentInstallButtons } = require_tool_gate();
       var { loginOwedView } = require_login_owed();
-      function initBanners({ openInstallSession } = {}) {
+      function initBanners({ openInstallSession, getBoxLabel = () => null } = {}) {
         const updateBanner = document.getElementById("update-banner");
         const updateText = document.getElementById("update-text");
         function showUpdateBanner(info) {
@@ -34491,7 +34499,7 @@ helper=${d.helperPath}`;
         const authText = document.getElementById("auth-text");
         function refreshAuthBanner(proxyEntries) {
           if (!authBanner) return;
-          const v = loginOwedView(proxyEntries);
+          const v = loginOwedView(proxyEntries, { boxLabel: getBoxLabel() });
           if (v.hidden) {
             authBanner.classList.add("hidden");
             return;
@@ -53268,7 +53276,12 @@ Click for live activity`;
         document.addEventListener("pointerdown", askOnce, true);
         document.addEventListener("keydown", askOnce, true);
       }
-      var { refreshDiagBanner, refreshAuthBanner } = initBanners({ openInstallSession });
+      var sandboxSelfLabel = null;
+      var { refreshDiagBanner, refreshAuthBanner } = initBanners({ openInstallSession, getBoxLabel: () => sandboxSelfLabel });
+      Promise.resolve(window.api.sandboxSelf && window.api.sandboxSelf()).then((self2) => {
+        if (self2 && self2.inBox && typeof self2.label === "string") sandboxSelfLabel = self2.label;
+      }).catch(() => {
+      });
       window.api.onRequestSwitchSession((name) => switchSession(name));
       window.api.onRequestOpenNewDialog(() => openDialog());
       var discoveryOverlay = document.getElementById("discovery-overlay");
