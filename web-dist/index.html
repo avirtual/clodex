@@ -46228,7 +46228,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             if (on) entry.peer._acquiring = false;
           }
           if (on && sessions.get(peerKey(peerId, peerName)) !== entry) {
-            if (res && res.ok) window.api.peerControl(peerId, peerName, false);
+            if (res && res.ok && !sessions.has(peerKey(peerId, peerName))) dropPersistedControl(peerId, peerName);
             return;
           }
           if (on) {

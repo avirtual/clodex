@@ -5,6 +5,8 @@ const assert = require('node:assert');
 const os = require('node:os');
 
 const { localFromHome } = require('../renderer/lib/far-cwd-guess');
+const { registerIpcHandlers } = require('../ipc-handlers');
+const { updateApplies } = require('../proxy-util');
 
 const LOCAL = localFromHome(os.homedir());
 
@@ -210,6 +212,25 @@ test('a create-mode open after a move needs no close to be clean', () => {
   assert.strictEqual(byId('peer-input-name').value, '', 'and the moved seat name is not left behind');
 });
 
+function peerRowMenu(payload) {
+  const listeners = new Map();
+  const menus = [];
+  registerIpcHandlers({
+    handle: () => {},
+    on: (channel, fn) => listeners.set(channel, fn),
+    popupMenu: (template) => menus.push(template),
+    uiSettings: { get: () => ({ peers: [] }) },
+    getPeerManager: () => null,
+    updateApplies,
+    log: { info: () => {}, warn: () => {} },
+  });
+  const fn = listeners.get('peer:context-menu');
+  assert.ok(fn, 'ENTER: peer:context-menu registered');
+  fn({ sender: { send: () => {} } }, payload);
+  assert.strictEqual(menus.length, 1, 'ENTER: the handler popped exactly one menu');
+  return menus[0];
+}
+
 for (const row of [
   { type: 'claude', expectEditSkills: true, expectReloadFresh: true },
   { type: 'codex', expectEditSkills: false, expectReloadFresh: true },
@@ -224,14 +245,16 @@ for (const row of [
     h.withDom(() => item.listeners.contextmenu.forEach((fn) => fn({ preventDefault() {} })));
     const sent = h.calls.filter((c) => c.fn === 'showPeerContextMenu');
     assert.strictEqual(sent.length, 1, 'ENTER: the row menu was requested');
-    const { type } = sent[0].args[0];
-    assert.strictEqual(type, row.type);
-    assert.strictEqual(type === 'claude', row.expectEditSkills, 'ipc-handlers peer:context-menu offers Edit Skills only for claude');
-    assert.strictEqual(type !== 'bash', row.expectReloadFresh, 'ipc-handlers peer:context-menu hides Reload (fresh) only for bash');
+    assert.strictEqual(sent[0].args[0].type, row.type);
+    const template = peerRowMenu(sent[0].args[0]);
+    const find = (prefix) => template.some((i) => typeof i.label === 'string' && i.label.startsWith(prefix));
+    assert.ok(find('Edit Session'), 'ENTER: the menu reached the per-seat items');
+    assert.strictEqual(find('Edit Skills'), row.expectEditSkills);
+    assert.strictEqual(find('Reload'), row.expectReloadFresh);
   });
 }
 
-test('a control acquire that resolves after its tab was detached releases the far control instead of adopting it', async () => {
+test('a control acquire that resolves after its tab was detached forgets the persisted claim instead of adopting it', async () => {
   const pending = deferred();
   const h = mkPeersUi({ api: { peerControl: (id, name, on) => (on ? pending.promise : Promise.resolve({ ok: true })) } });
   h.peerStatuses.set('p1', { online: true, caps: ['args', 'create'], sessions: [] });
@@ -252,29 +275,38 @@ test('a control acquire that resolves after its tab was detached releases the fa
   } finally { restore(); }
   assert.deepStrictEqual(h.calls.filter((c) => c.fn === 'peerResize' || c.fn === 'peerInput'), [],
     'nothing is resized or typed into a detached tab');
+  assert.deepStrictEqual(h.calls.filter((c) => c.fn === 'peerForgetControlled').map((c) => c.args),
+    [['p1', 'a']], 'main is told to forget the claim its late remember re-saved');
   assert.deepStrictEqual(h.calls.filter((c) => c.fn === 'peerControl').map((c) => c.args),
-    [['p1', 'a', true], ['p1', 'a', false]], 'the late grant is released, so main forgets the claim');
+    [['p1', 'a', true]], 'no release is sent: it would hit a re-attached tab of the same name');
   assert.strictEqual(entry.peer.controlled, false);
 });
 
-test('a create that resolves after the dialog was reopened for a move leaves the new dialog open', async () => {
-  const pending = deferred();
-  const h = mkPeersUi({ api: { peerCreateSession: () => pending.promise } });
-  h.ui.openPeerSessionDialog('p1', 'box1');
-  h.byId('peer-input-name').value = 'fresh';
-  h.byId('peer-input-type').value = 'claude';
-  h.byId('peer-input-cwd').value = '/work';
-  const restore = h.install();
-  try {
-    h.byId('peer-session-create').listeners.click.forEach((fn) => fn({}));
-    assert.strictEqual(h.calls.filter((c) => c.fn === 'peerCreateSession').length, 1, 'ENTER: the create is in flight');
-    h.ui.closePeerSessionDialog();
-    h.ui.openPeerSessionDialog('p2', 'box2', { move: { name: 'seat', cwd: '/x' } });
-    assert.strictEqual(h.shape().title, 'Move seat to box2', 'ENTER: the move dialog is open');
-    pending.resolve({ ok: false, error: 'name taken' });
-    await settle();
-  } finally { restore(); }
-  assert.strictEqual(h.byId('peer-session-error').textContent, '', 'the stale create error is not painted into the move dialog');
-  assert.strictEqual(h.byId('peer-session-overlay').classList.contains('hidden'), false, 'the move dialog stays open');
-  assert.strictEqual(h.shape().title, 'Move seat to box2');
-});
+for (const row of [
+  { res: { ok: false, error: 'name taken' }, outcome: 'fails' },
+  { res: { ok: true, name: 'fresh', type: 'claude' }, outcome: 'succeeds' },
+]) {
+  test(`a create that ${row.outcome} after the dialog was reopened for a move leaves the new dialog untouched`, async () => {
+    const pending = deferred();
+    const h = mkPeersUi({ api: { peerCreateSession: () => pending.promise } });
+    h.ui.openPeerSessionDialog('p1', 'box1');
+    h.byId('peer-input-name').value = 'fresh';
+    h.byId('peer-input-type').value = 'claude';
+    h.byId('peer-input-cwd').value = '/work';
+    const restore = h.install();
+    try {
+      h.byId('peer-session-create').listeners.click.forEach((fn) => fn({}));
+      assert.strictEqual(h.calls.filter((c) => c.fn === 'peerCreateSession').length, 1, 'ENTER: the create is in flight');
+      h.ui.closePeerSessionDialog();
+      h.ui.openPeerSessionDialog('p2', 'box2', { move: { name: 'seat', cwd: '/x' } });
+      assert.strictEqual(h.shape().title, 'Move seat to box2', 'ENTER: the move dialog is open');
+      assert.strictEqual(h.byId('peer-session-overlay').classList.contains('hidden'), false, 'ENTER: the overlay is shown');
+      pending.resolve(row.res);
+      await settle();
+    } finally { restore(); }
+    assert.strictEqual(h.byId('peer-session-error').textContent, '');
+    assert.strictEqual(h.byId('peer-session-overlay').classList.contains('hidden'), false);
+    assert.strictEqual(h.byId('peer-input-name').disabled, true);
+    assert.strictEqual(h.shape().title, 'Move seat to box2');
+  });
+}
