@@ -53418,6 +53418,7 @@ Click for live activity`;
               setPrefsEnvState(r && r.error || "Delete failed.", "error");
               return;
             }
+            setPrefsEnvState("");
             refreshPrefsEnv();
           });
           row.append(editBtn, delBtn);
@@ -53552,6 +53553,7 @@ Click for live activity`;
                 setPrefsAccountsState(r && r.error || "Remove failed.", "error");
                 return;
               }
+              setPrefsAccountsState("");
               refreshPrefsAccounts();
             });
           }
@@ -53823,11 +53825,11 @@ Billing/cost history is preserved \u2014 only detailed request forensics are rem
           wsLogsSize.textContent = `${wsLogsSizeText()} \u2014 clearing\u2026`;
           const r = await window.api.wirescopePrune({ olderThan: older, tier: "receipts", scope: "all" });
           if (!r || !r.ok || !r.data) {
-            wsLogsSize.textContent = r && r.error ? `Error: ${r.error}` : "Clear failed";
+            showToast(`Clear failed: ${r && r.error || "unknown error"}`, { kind: "error", duration: 12e3 });
             return;
           }
         } catch (e) {
-          wsLogsSize.textContent = `Error: ${e && e.message || e}`;
+          showToast(`Clear failed: ${e && e.message || e}`, { kind: "error", duration: 12e3 });
         } finally {
           wsLogsClearBusy = false;
           await refreshWsLogs();

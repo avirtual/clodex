@@ -5964,6 +5964,7 @@ async function refreshPrefsEnv() {
     delBtn.addEventListener('click', async () => {
       const r = await window.api.envScopesDelete(scope, v.key);
       if (!r || r.ok === false) { setPrefsEnvState((r && r.error) || 'Delete failed.', 'error'); return; }
+      setPrefsEnvState('');
       refreshPrefsEnv();
     });
     row.append(editBtn, delBtn);
@@ -6075,6 +6076,7 @@ async function refreshPrefsAccounts() {
         if (!confirm(`Remove account "${account.label}"? Its config dir and login are left on disk.`)) return;
         const r = await window.api.accountsRemove({ label: account.label });
         if (!r || r.ok === false) { setPrefsAccountsState((r && r.error) || 'Remove failed.', 'error'); return; }
+        setPrefsAccountsState('');
         refreshPrefsAccounts();
       });
     }
@@ -6309,11 +6311,11 @@ wsLogsClearBtn.addEventListener('click', async () => {
     wsLogsSize.textContent = `${wsLogsSizeText()} — clearing…`;
     const r = await window.api.wirescopePrune({ olderThan: older, tier: 'receipts', scope: 'all' });
     if (!r || !r.ok || !r.data) {
-      wsLogsSize.textContent = (r && r.error) ? `Error: ${r.error}` : 'Clear failed';
+      showToast(`Clear failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 12000 });
       return;
     }
   } catch (e) {
-    wsLogsSize.textContent = `Error: ${(e && e.message) || e}`;
+    showToast(`Clear failed: ${(e && e.message) || e}`, { kind: 'error', duration: 12000 });
   } finally {
     wsLogsClearBusy = false;
     await refreshWsLogs();

@@ -141,4 +141,33 @@ test('Clear is usable again after the operator cancels the confirm', async () =>
   assert.ok(listener, 'ENTER: the handler was registered');
   await listener();
   assert.strictEqual(wsLogsClearBtn.disabled, false);
+  assert.strictEqual(refreshes, 1, 'the re-enable came through the finally refresh');
+});
+
+test('a failed Clear still tells the operator why, after the refresh repaints the size line', async () => {
+  const vm = require('node:vm');
+  const head = "wsLogsClearBtn.addEventListener('click', async () => {";
+  const start = RENDERER.indexOf(head);
+  assert.ok(start > 0, 'ENTER: the Clear click handler was located');
+  const block = RENDERER.slice(start, RENDERER.indexOf('\n});\n', start) + 4);
+  for (const failure of [async () => ({ ok: false, error: 'boom' }), async () => { throw new Error('boom'); }]) {
+    let listener = null;
+    const toasts = [];
+    const wsLogsClearBtn = { disabled: false, addEventListener: (t, cb) => { listener = cb; } };
+    const wsLogsSize = { textContent: '' };
+    const ctx = {
+      wsLogsClearBtn, wsLogsClearBusy: false, wsLogsSize,
+      wsSelectedAge: () => '7d', wsAgeLabel: () => '7 days', fmtBytes: (n) => `${n} B`, wsLogsSizeText: () => 'Capture logs',
+      previewWsLogs: async () => {}, confirm: () => true, showToast: (m) => toasts.push(String(m)),
+      refreshWsLogs: async () => { wsLogsSize.textContent = 'Capture logs: measuring…'; wsLogsClearBtn.disabled = false; },
+      window: { api: { wirescopePrune: async (o) => (o.dryRun
+        ? { ok: true, data: { bytes_reclaimed: 5, files_deleted: 1, sessions_pruned: 1 } }
+        : failure()) } },
+    };
+    vm.createContext(ctx);
+    vm.runInContext(block, ctx);
+    await listener();
+    assert.ok(toasts.some((t) => t.includes('boom')), `a toast carries the failure; got ${JSON.stringify(toasts)}`);
+    assert.strictEqual(wsLogsClearBtn.disabled, false);
+  }
 });
