@@ -273,6 +273,10 @@ const {
 });
 
 
+function persistWs(write) {
+  try { write(); } catch (e) { log.warn('workspace', `not persisted: ${(e && e.message) || e}`); }
+}
+
 function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
   const existing = manager.windowForWorkspace(workspaceId);
   if (existing) {
@@ -288,7 +292,7 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
       name: workspaceId === DEFAULT_WORKSPACE_ID ? 'Workspace' : 'New Workspace',
       bounds: null,
     };
-    workspaces.upsert(ws);
+    persistWs(() => workspaces.upsert(ws));
   }
 
   const bounds = ws.bounds || { width: 1200, height: 800 };
@@ -332,20 +336,20 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
 
   const saveBounds = () => {
     if (win.isDestroyed()) return;
-    workspaces.setBounds(workspaceId, win.getBounds());
+    persistWs(() => workspaces.setBounds(workspaceId, win.getBounds()));
   };
   win.on('resize', saveBounds);
   win.on('move', saveBounds);
 
-  workspaces.touch(workspaceId);
-  workspaces.setOpen(workspaceId, true);
-  win.on('focus', () => workspaces.touch(workspaceId));
+  persistWs(() => workspaces.touch(workspaceId));
+  persistWs(() => workspaces.setOpen(workspaceId, true));
+  win.on('focus', () => persistWs(() => workspaces.touch(workspaceId)));
 
   win.on('closed', () => {
     // An EXPLICIT close drops the workspace from the restore set; quit teardown
     // must not (quit closes every window — clearing here would collapse the
     // next launch to one window).
-    if (!appQuitting) workspaces.setOpen(workspaceId, false);
+    if (!appQuitting) persistWs(() => workspaces.setOpen(workspaceId, false));
     // A workbench terminal belongs to its window and has no record to resume
     // from, so it dies with the window — unlike sessions, which survive a close
     // detached and replay their buffered output on reattach.
