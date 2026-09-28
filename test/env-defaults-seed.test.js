@@ -265,9 +265,9 @@ function realUserData(home) {
 
 test('refuseEnvWriteUnderTest: a temp userDataPath is seeded under node --test even when registryDir is the home ~/.clodex', () => {
   const prevHome = process.env.HOME;
-  const fakeHome = mkTmpRoot('envdef-home3-');
-  const userData = mkTmpRoot('envdef-tmpud3-');
-  const src = mkTmpRoot('envdef-src3-');
+  const fakeHome = mkTmpRoot('envdef-home-');
+  const userData = mkTmpRoot('envdef-ud-');
+  const src = mkTmpRoot('envdef-src-');
   process.env.HOME = fakeHome;
   const warnings = [];
   try {
