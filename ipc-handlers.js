@@ -647,16 +647,24 @@ function registerIpcHandlers(deps) {
   });
 
   handle('templates:list', () => (listAllTemplates ? listAllTemplates() : templates.list()));
-  handle('templates:save', (_e, template) => { templates.save(template); refreshAppMenu(); return templates.list(); });
+  handle('templates:save', (_e, template) => {
+    try { templates.save(template); }
+    catch (e) { return { ok: false, error: e.message, templates: templates.list() }; }
+    refreshAppMenu();
+    return { ok: true, templates: templates.list() };
+  });
   handle('templates:saveByName', (_e, template) => {
-    const t = templates.saveByName(template);
+    let t;
+    try { t = templates.saveByName(template); }
+    catch (e) { return { ok: false, error: e.message, templates: templates.list() }; }
     refreshAppMenu();
     return { ok: true, template: t, templates: templates.list() };
   });
   handle('templates:remove', (_e, id) => {
-    try { templates.remove(id); } catch { /* refused name — nothing was deleted */ }
+    try { templates.remove(id); }
+    catch (e) { return { ok: false, error: e.message, templates: templates.list() }; }
     refreshAppMenu();
-    return templates.list();
+    return { ok: true, templates: templates.list() };
   });
 
   const teamFileDeps = { fs, path, teamsDir, listTeams };
@@ -1997,7 +2005,8 @@ function registerIpcHandlers(deps) {
   });
   handle('sandbox:self', () => {
     const inBox = runningInSandboxBox(process.env);
-    return { inBox, label: inBox ? (process.env.CLODEX_BOX_LABEL || SELF_LABEL || null) : null };
+    const libraryWritable = !inBox || !templates || typeof templates.dirWritable !== 'function' || templates.dirWritable();
+    return { inBox, label: inBox ? (process.env.CLODEX_BOX_LABEL || SELF_LABEL || null) : null, libraryWritable };
   });
   handle('sandbox:status', (_e, boxId) => withBox(boxId, (s) => s.status()));
   handle('sandbox:openWeb', (_e, boxId) => withBox(boxId, async (s) => {

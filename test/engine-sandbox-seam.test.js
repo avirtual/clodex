@@ -181,8 +181,8 @@ function withBoxEnv(value, fn) {
 
 test('sandbox:self answers the box label inside a box and nothing outside one', () => {
   const self = captureSandboxSelf({ SELF_LABEL: 'team-clodex-ios' });
-  assert.deepStrictEqual(withBoxEnv('1', () => self()), { inBox: true, label: 'team-clodex-ios' });
-  assert.deepStrictEqual(withBoxEnv(undefined, () => self()), { inBox: false, label: null });
+  assert.deepStrictEqual(withBoxEnv('1', () => self()), { inBox: true, label: 'team-clodex-ios', libraryWritable: true });
+  assert.deepStrictEqual(withBoxEnv(undefined, () => self()), { inBox: false, label: null, libraryWritable: true });
 });
 
 test('the engine hands SELF_LABEL to the hosts, so sandbox:self can name the box', () => {
@@ -190,7 +190,28 @@ test('the engine hands SELF_LABEL to the hosts, so sandbox:self can name the box
   assert.strictEqual(typeof eng.SELF_LABEL, 'string');
   assert.ok(eng.SELF_LABEL.length > 0, 'a non-empty label');
   const self = captureSandboxSelf({ ...eng });
-  assert.deepStrictEqual(withBoxEnv('1', () => self()), { inBox: true, label: eng.SELF_LABEL });
+  assert.deepStrictEqual(withBoxEnv('1', () => self()), { inBox: true, label: eng.SELF_LABEL, libraryWritable: true });
+});
+
+test('sandbox:self reports a read-only library templates dir inside a box, and writable outside one', { skip: !!(process.getuid && process.getuid() === 0) && 'root ignores 0555' }, () => {
+  const tmp = mkTmpRoot('clx-eng-sbx-ro-');
+  const registryDir = path.join(tmp, 'clodex-home');
+  const eng = createEngine({
+    userDataPath: tmp,
+    seams: { noSeed: true, registryDir, enableSandbox: false },
+    log: { info() {}, warn() {}, error() {} },
+  });
+  const dir = path.join(registryDir, 'library', 'templates');
+  fs.mkdirSync(dir, { recursive: true });
+  const self = captureSandboxSelf({ ...eng, ...eng.stores });
+  assert.strictEqual(withBoxEnv('1', () => self()).libraryWritable, true, 'ENTER: a writable dir reads writable');
+  fs.chmodSync(dir, 0o555);
+  try {
+    assert.strictEqual(withBoxEnv('1', () => self()).libraryWritable, false, 'a :ro mount reads read-only inside the box');
+    assert.strictEqual(withBoxEnv(undefined, () => self()).libraryWritable, true, 'outside a box the library is never reported read-only');
+  } finally { fs.chmodSync(dir, 0o755); }
+  fs.rmSync(dir, { recursive: true, force: true });
+  assert.strictEqual(withBoxEnv('1', () => self()).libraryWritable, true, 'a missing dir counts writable');
 });
 
 // createEngine's background timers keep the loop alive; exit once results flush.

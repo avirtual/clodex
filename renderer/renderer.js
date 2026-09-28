@@ -365,16 +365,31 @@ const nameHint = document.getElementById('name-hint');
 let dialogNameState = { ok: true, kind: 'free', message: '' };
 let dialogToolGate = { ok: true, disabled: false, notice: null };
 let createInFlight = false;
+let libraryWritable = true;
+let templateLibraryLocked = false;
+const LIBRARY_READONLY_NOTE = 'The library is a read-only mount inside a sandbox box — edit this template on the host, or save a copy into a team (Roles ▸ Save as team template)';
+const templateLibraryNote = document.getElementById('template-library-note');
 
 function nameFieldEls() {
   return { input: inputName, hint: nameHint, overlay: dialogOverlay };
 }
 
 function refreshCreateButton() {
-  const state = createButtonState({ nameState: dialogNameState, toolGate: dialogToolGate, mode: dialogMode, inFlight: createInFlight });
+  const state = templateLibraryLocked
+    ? { disabled: true, title: LIBRARY_READONLY_NOTE }
+    : createButtonState({ nameState: dialogNameState, toolGate: dialogToolGate, mode: dialogMode, inFlight: createInFlight });
   btnCreate.disabled = state.disabled;
   btnCreate.title = state.title;
   return state;
+}
+
+function applyLibraryLock(locked) {
+  templateLibraryLocked = locked;
+  if (templateLibraryNote) {
+    templateLibraryNote.textContent = locked ? LIBRARY_READONLY_NOTE : '';
+    templateLibraryNote.classList.toggle('hidden', !locked);
+  }
+  refreshCreateButton();
 }
 
 function refreshNameValidity() {
@@ -3379,6 +3394,7 @@ async function openDialog(prefill = null) {
   editingTemplateTeam = null;
   editingTemplateAppendPrev = [];
   inputName.readOnly = false;
+  applyLibraryLock(false);
   overlayDismissed = false; // fresh open re-checks: the prominence overlay may re-raise
   if (toolOverlay) toolOverlay.classList.add('hidden');
   setDialogMode('create'); // reset chrome if the last use was a template edit
@@ -3605,7 +3621,11 @@ btnTemplateDelete.addEventListener('click', async () => {
     showToast('That template comes from a plugin — remove it from the plugin folder.', { kind: 'warn' });
     return;
   }
-  await window.api.removeTemplate(id);
+  const res = await window.api.removeTemplate(id);
+  if (res && res.ok === false) {
+    showToast(`Could not remove template: ${res.error}`, { kind: 'error', duration: 10000 });
+    return;
+  }
   await refreshTemplatesDropdown();
   inputTemplate.value = '';
 });
@@ -3619,6 +3639,10 @@ btnSaveTemplate.addEventListener('click', async () => {
     return;
   }
   const res = await window.api.saveTemplateByName({ name, ...collectFormConfig() });
+  if (res && res.ok === false) {
+    alert(`Could not save template: ${res.error}`);
+    return;
+  }
   await refreshTemplatesDropdown();
   if (res && res.template) inputTemplate.value = res.template.id;
   if (templatesDrawerRefresh) templatesDrawerRefresh();
@@ -3843,7 +3867,7 @@ async function doCreate() {
 }
 
 function submitDialog() {
-  if (dialogMode === 'template') saveTemplateFromForm();
+  if (dialogMode === 'template') { if (!templateLibraryLocked) saveTemplateFromForm(); }
   else doCreate();
 }
 
@@ -3906,6 +3930,7 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
   inputType.value = (tpl && tpl.type) || 'claude';
   inputName.value = (tpl && tpl.name) || '';
   inputName.readOnly = !!bundle || !!editingTemplateTeam;
+  applyLibraryLock(!libraryWritable && !bundle && !editingTemplateTeam);
   inputCwd.value = (tpl && tpl.cwd) || homeDir;
   {
     const { model, rest } = splitModelArg((tpl && tpl.extraArgs) || []);
@@ -4001,9 +4026,17 @@ async function saveTemplateFromForm() {
       const list = (await window.api.listTemplates()).filter((t) => !t.team);
       const clash = list.find(t => t.id !== editingTemplateId && (t.name || '').toLowerCase() === name.toLowerCase());
       if (clash) { inputName.style.borderColor = '#e94560'; return; }
-      await window.api.saveTemplate({ ...cfg, id: editingTemplateId, name }); // rename-in-place
+      const res = await window.api.saveTemplate({ ...cfg, id: editingTemplateId, name }); // rename-in-place
+      if (res && res.ok === false) {
+        alert(`Could not save template: ${res.error}`);
+        return;
+      }
     } else {
-      await window.api.saveTemplateByName({ ...cfg, name });
+      const res = await window.api.saveTemplateByName({ ...cfg, name });
+      if (res && res.ok === false) {
+        alert(`Could not save template: ${res.error}`);
+        return;
+      }
     }
     closeDialog();
     await refreshTemplatesDropdown();
@@ -5703,7 +5736,10 @@ if (window.__CLODEX_WEB__) {
 let sandboxSelfLabel = null;
 const { refreshDiagBanner, refreshAuthBanner } = initBanners({ openInstallSession, getBoxLabel: () => sandboxSelfLabel });
 Promise.resolve(window.api.sandboxSelf && window.api.sandboxSelf())
-  .then((self) => { if (self && self.inBox && typeof self.label === 'string') sandboxSelfLabel = self.label; })
+  .then((self) => {
+    if (self && self.inBox && typeof self.label === 'string') sandboxSelfLabel = self.label;
+    if (self && self.libraryWritable === false) libraryWritable = false;
+  })
   .catch(() => {});
 
 window.api.onRequestSwitchSession((name) => switchSession(name));
@@ -8882,6 +8918,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   getActiveSession: () => activeSession,
   setAgentLibCache, setSkillLibCache,
   openTemplateEditor,
+  showToast,
   bundleSectionsOf,
   refreshPluginCatalog: async () => {
     try { setPluginCatalogCache((await window.api.pluginCatalog()) || []); } catch {}

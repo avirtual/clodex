@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Sandbox web UI: saving or removing a library template inside a box no longer fails silently — the library is a read-only mount there, so the editor now opens library templates with Save disabled and says to edit them on the host or save a team copy, and a write that does fail reports its error instead of leaving the dialog open.
 - Sandbox: a box whose seats sign with the seeded CLAUDE_CODE_OAUTH_TOKEN no longer raises "Claude login expired" for a stale claude login left in the box's own credential file (its seats never use it); when the notice does fire inside a box it names the box and says to log in there.
 - clodexctl: a node that points at the local engine (loopback host, the engine's port) no longer needs its token spelled out — a tokenless entry inherits the engine's own wire token, and `create node --import` run inside a sandbox box now seeds `local` with the box's token (it read only the GUI's remote.env, so the imported node was tokenless and every call after it answered unauthorized).
 - Tests: direct pins for stores' quarantine-rename failure path, the uiSettings sanitizers, and the codex stream seat's read-only/strip argv rules (previously reached only through their callers).

@@ -84,7 +84,7 @@ function appendBundleGroups(listEl, sections, { onEdit = null, onReveal = null }
   }
 }
 
-function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor, bundleSectionsOf, refreshPluginCatalog }) {
+function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor, showToast, bundleSectionsOf, refreshPluginCatalog }) {
   const bundleGroups = (kind) => (typeof bundleSectionsOf === 'function' ? bundleSectionsOf(kind) : []);
 
   const revealBundle = (sec) => {
@@ -880,7 +880,8 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       el.querySelector('[data-action="delete"]').addEventListener('click', async (e) => {
         e.stopPropagation();
         if (!confirm(`Delete template "${t.name}"?`)) return;
-        await window.api.removeTemplate(t.id);
+        const res = await window.api.removeTemplate(t.id);
+        if (res && res.ok === false) showToast(`Could not remove template: ${res.error}`, { kind: 'error', duration: 10000 });
         refreshTemplatesList();
       });
       for (const btn of el.querySelectorAll('[data-action="team"]')) {
