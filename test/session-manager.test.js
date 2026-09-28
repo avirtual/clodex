@@ -22466,3 +22466,64 @@ test('t1199: seatInterrupt sends the codec frame on a live stream seat and refus
   assert.deepStrictEqual(c.h.m.seatInterrupt('ghost'), { ok: false, error: 'not a live stream seat' });
   c.h.m.sessions.delete('pty1');
 });
+
+test('[agent:memory remember] a digest refresh that throws after the save still acks the unit', () => {
+  const store = [];
+  const m = mk({
+    memoryStore: { remember: (agent, opts) => { store.push([agent, opts.text]); return { id: 'mem-1-aaaaaa' }; } },
+    getPersistence: () => ({ markDigested: () => {} }),
+    writeClaudeDigestFile: () => { throw new Error('ENOSPC writing hook-digest.json'); },
+    log: { info() {}, warn() {}, error() {} },
+  });
+  const acks = [];
+  const injected = [];
+  m._memoryAck = (_s, line) => acks.push(line);
+  m._injectText = (_s, line) => injected.push(line);
+  m._handleMemoryIntent({ name: 'a', agentType: 'claude' }, 'remember', 'x');
+  assert.deepStrictEqual(store, [['a', 'x']]);
+  for (const line of injected) assert.doesNotMatch(line, /could not remember/);
+  assert.match(acks.join('\n'), /remembered mem-1-aaaaaa/);
+});
+
+test('reboot: a relaunch that throws keeps the scratch mark and leaves no rate limit', async () => {
+  const { m, injected } = mkReboot({ intents: ['reboot'], relaunchThrows: true });
+  const mark = { nonce: 'n1', label: null, sizeAtBegin: 0 };
+  m.sessions.get('a')._scratch = mark;
+  await m._handleIntent('a', { type: 'reboot', body: 'x' });
+  assert.strictEqual(m.sessions.get('a')._scratch, mark);
+  await m._handleIntent('a', { type: 'reboot', body: 'x' });
+  assert.ok(!injected.some((t) => /rate-limited/.test(t)), JSON.stringify(injected));
+});
+
+test('scratch rewind: REFUSED while a Move/Rename holds the name tells the seat to re-emit rewind', async () => {
+  const f = mkScratch();
+  scratchOpen(f);
+  scratchResearch(f);
+  f.s._flushTurnEnd = true;
+  f.m._movingNames.add('a');
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'rewind', replay: false, body: 'a summary' });
+  f.m._movingNames.delete('a');
+  assert.match(f.injected[f.injected.length - 1], /re-emit rewind/);
+});
+
+test('scratch rewind: a write that throws after the kill tells the seat it can re-emit rewind', async () => {
+  const f = mkScratch({
+    fsWrap: (base) => ({
+      ...base,
+      renameSync: () => { throw new Error('EXDEV: rename across devices'); },
+    }),
+  });
+  scratchOpen(f);
+  scratchResearch(f);
+  f.s._flushTurnEnd = true;
+  await f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'rewind', replay: false, body: 'a summary' });
+  assert.match(f.injected[f.injected.length - 1], /can re-emit rewind/);
+});
+
+test('_scanPtyOutput: carriage-return-only progress output keeps the line buffer bounded', () => {
+  const m = mk({});
+  const s = { name: 'b', agentType: 'bash', lineBuffer: '' };
+  const chunk = '\rprogress 50%'.repeat(5000);
+  for (let fed = 0; fed < 4 * 1024 * 1024; fed += chunk.length) m._scanPtyOutput(s, chunk);
+  assert.ok(s.lineBuffer.length <= 64 * 1024, `lineBuffer ${s.lineBuffer.length}`);
+});
