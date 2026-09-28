@@ -2015,6 +2015,7 @@ function createTicketMethods(deps, shared) {
         this._escalateTicket(team, ticketId, `merge: ${step}`, evidence, tried);
       };
       let merged = null;
+      let target = null;
       try {
         const ticket = this._loadTicket(team, ticketId);
         if (!ticket) return;
@@ -2056,7 +2057,7 @@ function createTicketMethods(deps, shared) {
         // as it had no loop to run. Silent, not an escalation: nothing went
         // wrong, there is simply nothing to land.
         if (!branch || !baseSha) return;
-        const target = await gitWorktree.mergeTargetFor(team).catch(() => null);
+        target = await gitWorktree.mergeTargetFor(team).catch(() => null);
         if (!target) {
           fail('on-master', `could not resolve the merge target branch for ${team.name}: no trunk is set and ${team.root} has no origin/HEAD, main, master or checked-out branch`,
             'nothing was merged; set one with [agent:team trunk <branch>]');
@@ -2306,6 +2307,7 @@ function createTicketMethods(deps, shared) {
             'nothing was merged — the message file is written before the merge so a failure here costs nothing');
           return;
         }
+        const mergeStartedAt = Date.now();
         merged = await gitWorktree.mergeNoFf(team.root, branch, msgFile)
           .catch((e) => ({ ok: false, error: e.message }));
         if (!merged.ok) {
@@ -2448,7 +2450,7 @@ function createTicketMethods(deps, shared) {
           // `state` FIRST: a reopened row can still carry an older `acceptedAt`.
           const rejectedSince = !!row && this._verdictRejectedSince(row, landedOn);
           const reopened = row && (row.state !== 'done' || rejectedSince);
-          const acceptedInFlight = !reopened && row && (row.acceptedAt || row.closedOut);
+          const acceptedInFlight = !reopened && row && ((row.acceptedAt && row.acceptedAt >= mergeStartedAt) || row.closedOut);
           // `closedOut`, NOT the stamp, picks that accept's SENTENCE: `!m.ok` and
           // `!m.merged` stamp and keep a tree that, called a close-out, is never
           // mentioned again. Neither records a reason, so neither is quoted.
@@ -7449,6 +7451,8 @@ function createTicketMethods(deps, shared) {
         appendReworkReason(ticket, { round: ticket.reworkRound, by: 'ticket-loop', reason });
         delete ticket.loopStep;
         delete ticket.mergedNudgedAt;
+        delete ticket.escalationUndelivered;
+        delete ticket.mergeError;
         const rework = this._reworkSeatFor(team, ticket, seat,
           this._redirectDeliveryText(ticket.id, 'rejected', reason));
         ticketsStore.save(team.root, tickets);
@@ -8546,6 +8550,8 @@ function createTicketMethods(deps, shared) {
       // on a ticket that is being worked, in a body that tells the hand to re-close.
       delete ticket.verifyHold;
       delete ticket.mergedNudgedAt;
+      delete ticket.escalationUndelivered;
+      delete ticket.mergeError;
       const cancelsMerge = ticket.verdict === 'ACCEPT';
       delete ticket.mergeWaiting;
       const seat = this._ticketAssigneeSeat(team, ticket);
@@ -9375,8 +9381,8 @@ function createTicketMethods(deps, shared) {
         try {
           const fresh = ticketsStore.load(team.root);
           const row = fresh.find((t) => t.id === ticket.id);
-          if (row && row.revival && row.revival.mergeVetoed) {
-            row.revival.mergeVetoedClearedAt = Date.now();
+          if (row && row.revival && (row.revival.mergeVetoed || row.revival.mergedInto === undefined)) {
+            if (row.revival.mergeVetoed) row.revival.mergeVetoedClearedAt = Date.now();
             row.revival.mergedInto = (measured && c.count === 0) ? null : m.base;
             delete row.revival.mergeVetoed;
             row.lastActivityAt = Date.now();

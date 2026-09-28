@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Ticket loop: a failure after a merge already landed (for example in the CHANGELOG conflict check) now stamps MERGE FAILED and escalates with the revert command instead of dying on an internal ReferenceError that left an unverified merge on master with no notice; rejecting a ticket clears its previous round's merge escalation so the sweep no longer re-sends it after the rework closes; the MERGED notice says "accepted while the post-merge suite ran" only for an accept that actually landed during the merge; a ticket accepted both before and after its merge records where it merged.
 
 - Export as Template… now carries the seat's io, effort and plugin grants into the template (an exported template no longer re-grants plugins it had turned off) and refreshes the app menu so the new template appears at once.
 - Codex seats: the conversation history menu now resolves rollouts by session id and this project's cwd instead of reading one day directory of the shared rollout store, so older conversations are no longer shown as missing and another project's same-day rollout is never offered for resume; the session context menu shows Prompts, Move Session… and Export as Template… for every agent type, including muse.
