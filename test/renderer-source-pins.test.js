@@ -151,6 +151,61 @@ test('running a control command from a line below other text keeps the other tex
   assert.strictEqual(composer.value, 'keep this\n');
 });
 
+function slashFixture(seatControl) {
+  const start = SRC.indexOf('  const pickSlash = (run) => {');
+  assert.ok(start > 0, 'ENTER: pickSlash is still found by this anchor');
+  const end = SRC.indexOf('\n  };\n', start);
+  assert.ok(end > start, 'ENTER: the end of pickSlash was found');
+  const body = SRC.slice(start, end + 5);
+  const composer = { value: 'keep this\n/comp', dispatchEvent() {}, setSelectionRange() {} };
+  const toasts = [];
+  const env = {
+    slashItems: [{ kind: 'control', name: '/compact' }],
+    slashIndex: 0,
+    slashRange: { start: 10, end: 15 },
+    composer,
+    closeSlash() {},
+    window: { api: { seatControl } },
+    pull() {},
+    showToast(msg) { toasts.push(msg); },
+    sendComposer() {},
+    name: 's',
+  };
+  const names = Object.keys(env);
+  const pickSlash = new Function(...names, `${body}\nreturn pickSlash;`)(...names.map((n) => env[n]));
+  return { pickSlash, composer, toasts };
+}
+
+test('a control command the seat refuses puts the slash line back', async () => {
+  const { pickSlash, composer, toasts } = slashFixture(() => Promise.resolve({ ok: false, error: 'busy' }));
+  pickSlash(true);
+  assert.strictEqual(composer.value, 'keep this\n', 'ENTER: the slash line was cut before the seat answered');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(composer.value, 'keep this\n/comp');
+  assert.strictEqual(toasts.length, 1);
+  assert.match(toasts[0], /\/compact failed: busy/);
+});
+
+test('a control command whose IPC throws puts the slash line back', async () => {
+  const { pickSlash, composer, toasts } = slashFixture(() => Promise.reject(new Error('gone')));
+  pickSlash(true);
+  assert.strictEqual(composer.value, 'keep this\n', 'ENTER: the slash line was cut before the IPC settled');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(composer.value, 'keep this\n/comp');
+  assert.strictEqual(toasts.length, 1);
+  assert.match(toasts[0], /failed: gone/);
+});
+
+test('put-back is skipped when the operator typed meanwhile', async () => {
+  const { pickSlash, composer, toasts } = slashFixture(() => Promise.resolve({ ok: false, error: 'busy' }));
+  pickSlash(true);
+  assert.strictEqual(composer.value, 'keep this\n', 'ENTER: the slash line was cut before the seat answered');
+  composer.value = 'edited';
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(composer.value, 'edited');
+  assert.strictEqual(toasts.length, 1, 'ENTER: the refusal path ran');
+});
+
 test('the 1 s tick re-classifies subagent rows', () => {
   const { fakeDocument } = require('./lib/fake-dom');
   const { classifySubagent } = require('../renderer/lib/subagent-policy');
@@ -192,7 +247,10 @@ test('the 1 s tick re-classifies subagent rows', () => {
   assert.deepStrictEqual(root.childNodes.map((n) => n.className), ['session-item'],
     'ENTER: applySubagents drops a child whose payload is 400 s old');
 
-  const ticks = SRC.split('\nsetInterval(() => {').slice(1).map((s) => s.slice(0, s.indexOf('\n}, 1000);')));
+  const ticks = SRC.split('\nsetInterval(() => {').slice(1)
+    .filter((s) => s.indexOf('\n}, 1000);') >= 0)
+    .map((s) => s.slice(0, s.indexOf('\n}, 1000);')));
+  assert.ok(ticks.length >= 1, 'ENTER: at least one 1 s interval block was cut');
   const tick = ticks.find((s) => s.includes('tickProxyBar()'));
   assert.ok(tick, 'ENTER: the 1 s interval that runs tickProxyBar is found');
   assert.ok(tick.includes('refreshQuotaChip()'), 'ENTER: it is the block that refreshes the quota chip');
