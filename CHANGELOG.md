@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Teams: a ticket worktree's linked `node_modules` no longer reads as uncommitted work on repos whose .gitignore lists only `node_modules/`, so accept can reclaim the tree; a failure after a spawned seat came up no longer force-removes the live seat's worktree; a team create refused for a duplicate or invalid name leaves the fresh root untouched instead of initializing a repo there; an unreadable seat-cost cursor books nothing rather than re-billing the seat's whole lifetime and erasing the other cursors; `role-add … model:` refuses to overwrite a template another role names; `team sandbox status` and `down` no longer create a box for a team that has none.
 
 - Stores: a case-only template rename (Foo → foo) no longer deletes the template on macOS; duplicate peer ids collapse to the first entry so a token-less Peers save cannot hand one host's token to another; a seat named `__proto__` can no longer set the thinking-strip level on every object in the process; a box config built from the defaults gets its own mounts array; a label-less Azure peer is labelled by its target VM, not its bastion.
 - Export as Template… now carries the seat's io, effort and plugin grants into the template (an exported template no longer re-grants plugins it had turned off) and refreshes the app menu so the new template appears at once.
