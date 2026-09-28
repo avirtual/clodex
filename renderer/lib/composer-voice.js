@@ -8,8 +8,12 @@ const VOICE_STOP_TRIES = 2;
 const PASTE_OPEN = '\x1b[200~';
 const PASTE_CLOSE = '\x1b[201~';
 
+const PASTE_MARK = /\x1b\[20[01]~/gu;
+
 function bracketPaste(text) {
-  return `${PASTE_OPEN}${String(text).replace(/\x1b\[20[01]~/gu, '')}${PASTE_CLOSE}`;
+  let body = String(text);
+  for (let prev; prev !== body;) { prev = body; body = body.replace(PASTE_MARK, ''); }
+  return `${PASTE_OPEN}${body}${PASTE_CLOSE}`;
 }
 
 function applyDraft(value, span, text) {

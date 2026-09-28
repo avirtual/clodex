@@ -132,3 +132,21 @@ test('opening the prompt editor resets the invalid-name border a previous failed
     assert.strictEqual(r.byId('prompt-name').style.borderColor, '', 'typing clears it');
   } finally { r.restore(); }
 });
+
+for (const k of KINDS) {
+  test(`a ${k.kind} rename whose old-name removal is refused says so`, async () => {
+    const store = caseInsensitiveStore({ Foo: 'body' });
+    const [save, remove, get, list] = k.api;
+    const r = await rig({ [save]: store.save, [remove]: async () => ({ ok: false, error: 'locked' }), [get]: store.get, [list]: store.list });
+    try {
+      r.opens[k.kind]('Foo');
+      await flush();
+      r.byId(k.input).value = 'Bar';
+      await r.byId(k.save).fire('click');
+      await flush();
+      assert.ok(store.m.has('bar'), 'ENTER: the save under the new name landed');
+      assert.strictEqual(r.alerts.length, 1, `one alert; got ${JSON.stringify(r.alerts)}`);
+      assert.match(r.alerts[0], /locked/);
+    } finally { r.restore(); }
+  });
+}

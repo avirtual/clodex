@@ -29,6 +29,8 @@ test('a draft carrying a paste-close marker cannot end the bracketed paste early
   assert.strictEqual(body.indexOf(PASTE_CLOSE), body.length - PASTE_CLOSE.length);
   assert.strictEqual(body.lastIndexOf(PASTE_OPEN), 0);
   assert.strictEqual(body, `${PASTE_OPEN}ab\ncd${PASTE_CLOSE}`);
+  assert.strictEqual(ptyComposerWrites('a\x1b[20\x1b[201~1~b\nc')[0], `${PASTE_OPEN}ab\nc${PASTE_CLOSE}`, 'a marker nested inside another cannot reassemble itself');
+  assert.strictEqual(ptyComposerWrites('a\x1b\x1b[201~b')[0], `${PASTE_OPEN}a\x1bb${PASTE_CLOSE}`);
 });
 
 test('an empty draft still yields the two writes', () => {

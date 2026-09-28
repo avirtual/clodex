@@ -502,7 +502,8 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     }
     // Rename: a changed Name field writes a new file — drop the old one.
     if (editingAgentName && editingAgentName.toLowerCase() !== name.toLowerCase()) {
-      await window.api.removeAgent(editingAgentName);
+      const gone = await window.api.removeAgent(editingAgentName);
+      if (gone && gone.ok === false) alert(`Saved as "${name}", but could not remove "${editingAgentName}": ${gone.error || 'unknown error'}`);
     }
     closeAgentEditor();
     refreshAgentsList();
@@ -647,7 +648,8 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     }
     // Rename: a changed Name field writes a new file — drop the old one.
     if (editingSkillName && editingSkillName.toLowerCase() !== name.toLowerCase()) {
-      await window.api.removeSkillLib(editingSkillName);
+      const gone = await window.api.removeSkillLib(editingSkillName);
+      if (gone && gone.ok === false) alert(`Saved as "${name}", but could not remove "${editingSkillName}": ${gone.error || 'unknown error'}`);
     }
     closeSkillEditor();
     refreshSkillsLibList();
@@ -773,7 +775,8 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     }
     // Rename: a changed Name field writes a new file — drop the old one.
     if (editingExecName && editingExecName.toLowerCase() !== name.toLowerCase()) {
-      await window.api.removeExecCommand(editingExecName);
+      const gone = await window.api.removeExecCommand(editingExecName);
+      if (gone && gone.ok === false) alert(`Saved as "${name}", but could not remove "${editingExecName}": ${gone.error || 'unknown error'}`);
     }
     closeExecEditor();
     refreshExecList();

@@ -60,7 +60,7 @@ function rowEditBlock() {
 }
 
 function compileAfterMutation(env) {
-  const body = sliceBetween(POPOVER, '  async function afterMutation(res, okMsg) {', '\n  }\n');
+  const body = sliceBetween(POPOVER, '  async function afterMutation(res, okMsg, name) {', '\n  }\n');
   const names = Object.keys(env);
   return new Function(...names, `${body}\nreturn afterMutation;`)(...names.map((n) => env[n]));
 }
@@ -125,14 +125,14 @@ test('roles popover: a saved row is clean again; a refused save stays dirty', as
   current.field.account.value = 'opsguru';
   syncRowDirty(current.row);
   assert.strictEqual(current.row.classList.contains('dirty'), true, 'ENTER: the edit made the row dirty');
-  await afterMutation(await window.api.teamSetRole('clodex', 'hand', buildSavePatch(rowFormValues(current.row))), 'saved');
+  await afterMutation(await window.api.teamSetRole('clodex', 'hand', buildSavePatch(rowFormValues(current.row))), 'saved', 'clodex');
   assert.strictEqual(current.row.classList.contains('dirty'), false, 'a successful save rebuilds the row clean');
   assert.strictEqual(current.save.disabled, true, 'and its Save goes quiet');
 
   current.field.account.value = '';
   syncRowDirty(current.row);
   const before = current;
-  await afterMutation(await window.api.teamSetRole('clodex', 'hand', buildSavePatch(rowFormValues(current.row))), 'saved');
+  await afterMutation(await window.api.teamSetRole('clodex', 'hand', buildSavePatch(rowFormValues(current.row))), 'saved', 'clodex');
   assert.strictEqual(current, before, 'a refused save does not rebuild the rows');
   assert.strictEqual(current.row.classList.contains('dirty'), true, 'a refused save leaves the row dirty');
   assert.strictEqual(current.save.disabled, false, 'with Save still enabled for a retry');
@@ -382,8 +382,22 @@ test('roles popover: a mutation that lands after the popover closed does not ref
     setStatus: () => {}, formatBlockedBy: lib.formatBlockedBy, teamName: () => null,
     refresh: async (n) => { refreshed.push(n); return true; },
   });
-  await afterMutation({ ok: true }, 'ok');
+  await afterMutation({ ok: true }, 'ok', 'clodex');
   assert.deepStrictEqual(refreshed, []);
+});
+
+test('roles popover: a mutation that lands after the popover re-bound to another team neither reports nor refreshes there', async () => {
+  const refreshed = [];
+  const status = [];
+  const afterMutation = compileAfterMutation({
+    setStatus: (m) => status.push(m), formatBlockedBy: lib.formatBlockedBy, teamName: () => 'team-b',
+    refresh: async (n) => { refreshed.push(n); return true; },
+  });
+  await afterMutation({ ok: true }, 'role "x" added', 'team-a');
+  assert.deepStrictEqual(status, []);
+  assert.deepStrictEqual(refreshed, []);
+  await afterMutation({ ok: true }, 'role "x" added', 'team-b');
+  assert.deepStrictEqual(refreshed, ['team-b'], 'ENTER: a mutation on the bound team still refreshes it');
 });
 
 test('roles popover: a re-open whose refresh fails hides the popover instead of leaving the previous team on screen', async () => {

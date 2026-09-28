@@ -429,3 +429,13 @@ test('BUST_COMPACT_MSG_RATIO matches the vendored wirescope default', () => {
   assert.ok(proxy && client, 'ENTER: both defaults were found');
   assert.strictEqual(Number(client[1]), Number(proxy[1]));
 });
+
+test('renderDiffHtml: a whitespace-stripped blank context line inside a hunk counts as context, so the next file header stays a header', () => {
+  const diff = ['@@ -1,3 +1,3 @@', ' a', '', '-b', '+c', 'diff --git a/y b/y', '--- a/y', '+++ b/y'].join('\n');
+  const r = rows(renderDiffHtml(diff, { lineNumbers: true }));
+  assert.equal(r.length, 8, 'ENTER: every row parsed');
+  assert.deepStrictEqual(r.map(x => [x[0], x[1]]), [
+    ['diff-hunk', ''], ['diff-ctx', '1'], ['diff-ctx', '2'], ['diff-del', '3'], ['diff-add', '3'],
+    ['diff-file', ''], ['diff-file', ''], ['diff-file', ''],
+  ]);
+});

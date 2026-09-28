@@ -25575,7 +25575,7 @@ ${i3.join("\n")}
             return { n: null, inHunk: false };
           }
           const inHunk = oldLeft > 0 || newLeft > 0;
-          if (oldN == null || ln.startsWith("\\") || ln === "") return { n: null, inHunk };
+          if (oldN == null || ln.startsWith("\\") || ln === "" && !inHunk) return { n: null, inHunk };
           if (!inHunk && (ln.startsWith("+++") || ln.startsWith("---") || ln.startsWith("diff ") || ln.startsWith("index "))) return { n: null, inHunk };
           if (ln.startsWith("+")) {
             newLeft = Math.max(0, newLeft - 1);
@@ -31254,8 +31254,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var VOICE_STOP_TRIES = 2;
       var PASTE_OPEN = "\x1B[200~";
       var PASTE_CLOSE = "\x1B[201~";
+      var PASTE_MARK = /\x1b\[20[01]~/gu;
       function bracketPaste(text) {
-        return `${PASTE_OPEN}${String(text).replace(/\x1b\[20[01]~/gu, "")}${PASTE_CLOSE}`;
+        let body = String(text);
+        for (let prev; prev !== body; ) {
+          prev = body;
+          body = body.replace(PASTE_MARK, "");
+        }
+        return `${PASTE_OPEN}${body}${PASTE_CLOSE}`;
       }
       function applyDraft(value, span, text) {
         const v = typeof value === "string" ? value : "";
@@ -35095,7 +35101,8 @@ Opening it here and saving would overwrite the file with what this editor could 
             return;
           }
           if (editingAgentName && editingAgentName.toLowerCase() !== name.toLowerCase()) {
-            await window.api.removeAgent(editingAgentName);
+            const gone = await window.api.removeAgent(editingAgentName);
+            if (gone && gone.ok === false) alert(`Saved as "${name}", but could not remove "${editingAgentName}": ${gone.error || "unknown error"}`);
           }
           closeAgentEditor();
           refreshAgentsList();
@@ -35227,7 +35234,8 @@ Opening it here and saving would overwrite the file with what this editor could 
             return;
           }
           if (editingSkillName && editingSkillName.toLowerCase() !== name.toLowerCase()) {
-            await window.api.removeSkillLib(editingSkillName);
+            const gone = await window.api.removeSkillLib(editingSkillName);
+            if (gone && gone.ok === false) alert(`Saved as "${name}", but could not remove "${editingSkillName}": ${gone.error || "unknown error"}`);
           }
           closeSkillEditor();
           refreshSkillsLibList();
@@ -35342,7 +35350,8 @@ Opening it here and saving would overwrite the file with what this editor could 
             return;
           }
           if (editingExecName && editingExecName.toLowerCase() !== name.toLowerCase()) {
-            await window.api.removeExecCommand(editingExecName);
+            const gone = await window.api.removeExecCommand(editingExecName);
+            if (gone && gone.ok === false) alert(`Saved as "${name}", but could not remove "${editingExecName}": ${gone.error || "unknown error"}`);
           }
           closeExecEditor();
           refreshExecList();
@@ -44174,15 +44183,15 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           return true;
         }
         const teamName = () => popover.dataset.name || null;
-        async function afterMutation(res, okMsg) {
+        async function afterMutation(res, okMsg, name) {
+          if (teamName() !== name) return;
           if (!res || !res.ok) {
             const block = res && res.blockedBy ? formatBlockedBy(res.blockedBy) : "";
             setStatus(block ? `can't: ${block} \u2014 reassign/retire them first` : res && res.error || "update failed", true);
             return;
           }
           setStatus(okMsg || "");
-          const bound = teamName();
-          if (bound) await refresh(bound);
+          await refresh(name);
         }
         let promptNames = [];
         let allPromptNames = [];
@@ -44307,7 +44316,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               return;
             }
             const res = await window.api.teamSetLead(name, seat);
-            await afterMutation(res, `lead seat set to "${seat}"`);
+            await afterMutation(res, `lead seat set to "${seat}"`, name);
             return;
           }
           if (act === "set-trunk") {
@@ -44322,7 +44331,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               return;
             }
             const res = await window.api.teamSetTrunk(name, want || null);
-            await afterMutation(res, want ? `merge target set to "${want}"` : "merge target cleared (back to the repo default)");
+            await afterMutation(res, want ? `merge target set to "${want}"` : "merge target cleared (back to the repo default)", name);
             return;
           }
           if (act === "create-lead") {
@@ -44345,12 +44354,12 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             const repicked = reviewerTemplate && reviewerTemplate !== shownTemplate;
             const patch = rowEl.classList.contains("read-only") ? { account: String(v.account || "").trim(), ...repicked ? { template: reviewerTemplate } : {} } : buildSavePatch(v);
             const res = await window.api.teamSetRole(name, role, patch);
-            await afterMutation(res, `role "${role}" saved`);
+            await afterMutation(res, `role "${role}" saved`, name);
           } else if (act === "rename") {
             const to = (await promptText(`Rename role "${role}" to:`, role) || "").trim();
             if (!to || to === role) return;
             const res = await window.api.teamRenameRole(name, role, to);
-            await afterMutation(res, `role "${role}" renamed to "${to}"`);
+            await afterMutation(res, `role "${role}" renamed to "${to}"`, name);
           } else if (act === "remove") {
             const warn = REMOVABLE_RESERVED_ROLE_KEYS.has(role) ? `
 
@@ -44359,7 +44368,7 @@ ${reservedRemovalWarning(role)}
 You can add it back from this popover.` : "";
             if (!window.confirm(`Remove role "${role}" from team "${name}"?${warn}`)) return;
             const res = await window.api.teamRemoveRole(name, role);
-            await afterMutation(res, `role "${role}" removed`);
+            await afterMutation(res, `role "${role}" removed`, name);
           } else if (act === "readd") {
             if (btn.disabled) return;
             btn.disabled = true;
@@ -44369,7 +44378,7 @@ You can add it back from this popover.` : "";
             } finally {
               btn.disabled = false;
             }
-            await afterMutation(res, `role "${role}" added back`);
+            await afterMutation(res, `role "${role}" added back`, name);
           }
         });
         const resetAddForm = () => {
@@ -44496,7 +44505,7 @@ You can add it back from this popover.` : "";
           }
           const res = await window.api.teamAddRole(name, v.name, def);
           if (res && res.ok) setAddPanel(false);
-          await afterMutation(res, `role "${v.name}" added`);
+          await afterMutation(res, `role "${v.name}" added`, name);
         });
         watchdogSet.addEventListener("click", async () => {
           const name = teamName();
@@ -44504,7 +44513,7 @@ You can add it back from this popover.` : "";
           if (!confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
           if (!watchdogInput.value.trim()) {
             const res2 = await window.api.teamSetWatchdog(name, null);
-            await afterMutation(res2, "watchdog cleared (back to default)");
+            await afterMutation(res2, "watchdog cleared (back to default)", name);
             return;
           }
           const parsed = parseDuration(watchdogInput.value);
@@ -44516,14 +44525,14 @@ You can add it back from this popover.` : "";
           const res = await window.api.teamSetWatchdog(name, ms);
           const applied = res && res.ok ? res.team.watchdogMs : ms;
           const clamped = res && res.ok && applied !== ms ? " (clamped to the 5min\u20137d range)" : "";
-          await afterMutation(res, `watchdog set to ${formatDuration(applied)}${clamped}`);
+          await afterMutation(res, `watchdog set to ${formatDuration(applied)}${clamped}`, name);
         });
         watchdogClear.addEventListener("click", async () => {
           const name = teamName();
           if (!name) return;
           if (!confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
           const res = await window.api.teamSetWatchdog(name, null);
-          await afterMutation(res, "watchdog cleared (back to default)");
+          await afterMutation(res, "watchdog cleared (back to default)", name);
         });
         const submitOnEnter = (input, button) => {
           input.addEventListener("keydown", (e) => {

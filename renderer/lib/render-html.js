@@ -29,7 +29,7 @@ function diffLineNumbers(lines) {
       return { n: null, inHunk: false };
     }
     const inHunk = oldLeft > 0 || newLeft > 0;
-    if (oldN == null || ln.startsWith('\\') || ln === '') return { n: null, inHunk };
+    if (oldN == null || ln.startsWith('\\') || (ln === '' && !inHunk)) return { n: null, inHunk };
     if (!inHunk && (ln.startsWith('+++') || ln.startsWith('---')
       || ln.startsWith('diff ') || ln.startsWith('index '))) return { n: null, inHunk };
     if (ln.startsWith('+')) { newLeft = Math.max(0, newLeft - 1); return { n: newN++, inHunk }; }

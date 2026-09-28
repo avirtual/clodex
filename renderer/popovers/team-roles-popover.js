@@ -1053,7 +1053,8 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   const teamName = () => popover.dataset.name || null;
 
   // Re-fetch + re-render after a mutation, keeping any error visible.
-  async function afterMutation(res, okMsg) {
+  async function afterMutation(res, okMsg, name) {
+    if (teamName() !== name) return;
     if (!res || !res.ok) {
       const block = res && res.blockedBy ? formatBlockedBy(res.blockedBy) : '';
       setStatus(block ? `can't: ${block} — reassign/retire them first` : (res && res.error) || 'update failed', true);
@@ -1061,8 +1062,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       return;
     }
     setStatus(okMsg || '');
-    const bound = teamName();
-    if (bound) await refresh(bound);
+    await refresh(name);
   }
 
   // Populate the add-role prompt picker, rail-filtered and scoped to THIS team
@@ -1206,7 +1206,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       // reports whether it resolves — a refusal here would block the case the
       // field is explicitly meant to accept.
       const res = await window.api.teamSetLead(name, seat);
-      await afterMutation(res, `lead seat set to "${seat}"`);
+      await afterMutation(res, `lead seat set to "${seat}"`, name);
       return;
     }
     if (act === 'set-trunk') {
@@ -1215,7 +1215,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       if (!trunkInfo || typeof window.api.teamSetTrunk !== 'function') { setStatus('the merge target cannot be read here', true); return; }
       if (!trunkInfo.trunk && want === (trunkInfo.derived || '')) { setStatus(`merge target is already the repo default (${want})`); return; }
       const res = await window.api.teamSetTrunk(name, want || null);
-      await afterMutation(res, want ? `merge target set to "${want}"` : 'merge target cleared (back to the repo default)');
+      await afterMutation(res, want ? `merge target set to "${want}"` : 'merge target cleared (back to the repo default)', name);
       return;
     }
     if (act === 'create-lead') {
@@ -1245,12 +1245,12 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
         ? { account: String(v.account || '').trim(), ...(repicked ? { template: reviewerTemplate } : {}) }
         : buildSavePatch(v);
       const res = await window.api.teamSetRole(name, role, patch);
-      await afterMutation(res, `role "${role}" saved`);
+      await afterMutation(res, `role "${role}" saved`, name);
     } else if (act === 'rename') {
       const to = ((await promptText(`Rename role "${role}" to:`, role)) || '').trim();
       if (!to || to === role) return;
       const res = await window.api.teamRenameRole(name, role, to);
-      await afterMutation(res, `role "${role}" renamed to "${to}"`);
+      await afterMutation(res, `role "${role}" renamed to "${to}"`, name);
     } else if (act === 'remove') {
       // A reserved role's removal names what is LOST, not just what is removed:
       // it is one click, it is destructive, and its only other symptom arrives a
@@ -1260,7 +1260,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
         : '';
       if (!window.confirm(`Remove role "${role}" from team "${name}"?${warn}`)) return;
       const res = await window.api.teamRemoveRole(name, role);
-      await afterMutation(res, `role "${role}" removed`);
+      await afterMutation(res, `role "${role}" removed`, name);
     } else if (act === 'readd') {
       // Latched before the await: a second click while the first is in flight
       // finds the role already minted, falls past the re-mint branch (gated on
@@ -1284,7 +1284,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
         // survives, and a stuck-disabled control would strand the only way back.
         btn.disabled = false;
       }
-      await afterMutation(res, `role "${role}" added back`);
+      await afterMutation(res, `role "${role}" added back`, name);
     }
   });
 
@@ -1443,7 +1443,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     // Collapse on success: the role now has a row of its own in the list above,
     // and a still-open form holding the values that made it invites a duplicate.
     if (res && res.ok) setAddPanel(false);
-    await afterMutation(res, `role "${v.name}" added`);
+    await afterMutation(res, `role "${v.name}" added`, name);
   });
 
   watchdogSet.addEventListener('click', async () => {
@@ -1454,7 +1454,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     // must BE Clear — not a parse error contradicting the hint the user just read.
     if (!watchdogInput.value.trim()) {
       const res = await window.api.teamSetWatchdog(name, null);
-      await afterMutation(res, 'watchdog cleared (back to default)');
+      await afterMutation(res, 'watchdog cleared (back to default)', name);
       return;
     }
     // Friendly units: "30m", "2h", "90s", or a bare number (minutes). parseDuration
@@ -1468,7 +1468,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     // rather than silently reporting a different number.
     const applied = res && res.ok ? res.team.watchdogMs : ms;
     const clamped = res && res.ok && applied !== ms ? ' (clamped to the 5min–7d range)' : '';
-    await afterMutation(res, `watchdog set to ${formatDuration(applied)}${clamped}`);
+    await afterMutation(res, `watchdog set to ${formatDuration(applied)}${clamped}`, name);
   });
 
   watchdogClear.addEventListener('click', async () => {
@@ -1476,7 +1476,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     if (!name) return;
     if (!confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
     const res = await window.api.teamSetWatchdog(name, null);
-    await afterMutation(res, 'watchdog cleared (back to default)');
+    await afterMutation(res, 'watchdog cleared (back to default)', name);
   });
 
   // Enter-to-submit on the single-line text inputs: pressing Enter fires the same
