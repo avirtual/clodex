@@ -385,8 +385,9 @@ test('sweep removes a staging older than an hour by manifest startedAt and keeps
   const imp = createSeatImport({ root, claudeProjects: root, reminders: stubReminders(), fs, now: () => clock });
 
   const stale = imp.begin({ name: 'ana', record: record() });
-  clock += 61 * 60 * 1000;
+  clock += 30 * 60 * 1000;
   const fresh = imp.begin({ name: 'bob', record: record() });
+  clock += 31 * 60 * 1000;
 
   assert.deepStrictEqual(imp.sweep(), [stale.id]);
   assert.strictEqual(fs.existsSync(path.join(root, 'import', stale.id)), false);
@@ -429,4 +430,103 @@ test('commit counts a reminder row the store refuses as dropped instead of faili
   assert.deepStrictEqual(reminders.added.map((r) => r.spec), ['30m']);
   assert.deepStrictEqual(res.dropped, ['reminders.refused:1']);
   assert.ok(lines.some((l) => /^seat-import: reminder row refused for ana: invalid spec$/.test(l)), lines.join('\n'));
+});
+
+test('a commit that fails after the seat dir is made rolls the install back so a fresh import of the name can begin', () => {
+  const { root, claudeProjects } = mkRoots();
+  const failing = {
+    ...fs,
+    renameSync(a, b) {
+      if (b.endsWith('ana.jsonl') && b.includes('memory-loadlog')) throw new Error('EIO');
+      return fs.renameSync(a, b);
+    },
+  };
+  const imp = createSeatImport({ root, claudeProjects, reminders: stubReminders(), fs: failing });
+  const { id } = imp.begin({ name: 'ana', record: record() });
+  put(imp, id, 'transcript.jsonl', '{"t":1}\n');
+  put(imp, id, 'seat/memory/u.md', 'mem');
+  put(imp, id, 'loadlog.jsonl', '{"l":1}\n');
+
+  const res = imp.commit({ id });
+  assert.strictEqual(res.ok, false);
+  assert.match(res.error, /^install failed/);
+  assert.strictEqual(res.installed, undefined);
+  assert.strictEqual(fs.existsSync(path.join(root, 'sessions', 'ana')), false);
+  assert.strictEqual(fs.existsSync(path.join(claudeProjects, SLUG, `${SID}.jsonl`)), false);
+  assert.strictEqual(fs.existsSync(legacySeatPathFor(root, 'ana', 'memory')), false);
+  assert.strictEqual(fs.existsSync(path.join(root, 'import', id)), false);
+  assert.strictEqual(imp.begin({ name: 'ana', record: record() }).ok, true);
+});
+
+test('a failed commit keeps an identical transcript that was already in place', () => {
+  const { root, claudeProjects } = mkRoots();
+  const failing = {
+    ...fs,
+    renameSync(a, b) {
+      if (b.includes('memory-loadlog')) throw new Error('EIO');
+      return fs.renameSync(a, b);
+    },
+  };
+  const target = path.join(claudeProjects, SLUG, `${SID}.jsonl`);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, '{"t":1}\n');
+  const imp = createSeatImport({ root, claudeProjects, reminders: stubReminders(), fs: failing });
+  const { id } = imp.begin({ name: 'ana', record: record() });
+  put(imp, id, 'transcript.jsonl', '{"t":1}\n');
+  put(imp, id, 'loadlog.jsonl', '{"l":1}\n');
+
+  assert.match(imp.commit({ id }).error, /^install failed/);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), '{"t":1}\n');
+  assert.strictEqual(fs.existsSync(path.join(root, 'sessions', 'ana')), false);
+});
+
+test('begin reaps a stale staging for the same name instead of refusing it as in progress', () => {
+  const { root } = mkRoots();
+  let clock = 1_000_000_000_000;
+  const imp = createSeatImport({ root, claudeProjects: root, reminders: stubReminders(), fs, now: () => clock });
+  const first = imp.begin({ name: 'ana', record: record() });
+  assert.strictEqual(first.ok, true);
+  clock += 61 * 60 * 1000;
+  assert.strictEqual(imp.begin({ name: 'ana', record: record() }).ok, true);
+  assert.strictEqual(fs.existsSync(path.join(root, 'import', first.id)), false);
+});
+
+test('begin reaps a fresh staging the byte cap marked failed instead of refusing it as in progress', () => {
+  const { root } = mkRoots();
+  const imp = createSeatImport({ root, claudeProjects: root, reminders: stubReminders(), fs, maxBytes: 4 });
+  const first = imp.begin({ name: 'ana', record: record() });
+  assert.strictEqual(put(imp, first.id, 'transcript.jsonl', '0123456789').error, 'import exceeds the 4 byte cap');
+  assert.strictEqual(imp.begin({ name: 'ana', record: record() }).ok, true);
+  assert.strictEqual(fs.existsSync(path.join(root, 'import', first.id)), false);
+});
+
+test('a transcript copy that fails leaves no .import- temp file in the project dir', () => {
+  const { root, claudeProjects } = mkRoots();
+  const failing = {
+    ...fs,
+    copyFileSync(a, b) {
+      fs.writeFileSync(b, 'partial');
+      const e = new Error('ENOSPC: no space left on device');
+      e.code = 'ENOSPC';
+      throw e;
+    },
+  };
+  const imp = createSeatImport({ root, claudeProjects, reminders: stubReminders(), fs: failing });
+  const { id } = imp.begin({ name: 'ana', record: record() });
+  put(imp, id, 'transcript.jsonl', '{"t":1}\n');
+
+  assert.strictEqual(imp.commit({ id }).ok, false);
+  assert.deepStrictEqual(fs.readdirSync(path.join(claudeProjects, SLUG)).filter((f) => f.includes('.import-')), []);
+});
+
+test('begin refuses a far cwd that reaches a refuseUnder root through a symlink', () => {
+  const { root, claudeProjects } = mkRoots();
+  const guarded = mkTmpRoot('clodex-seatimp-home-');
+  const imp = createSeatImport({ root, claudeProjects, reminders: stubReminders(), fs, refuseUnder: [guarded] });
+  const linkParent = mkTmpRoot('clodex-seatimp-far-');
+  fs.symlinkSync(guarded, path.join(linkParent, 'l'));
+
+  assert.match(imp.begin({ name: 'ana', record: record({ cwd: path.join(linkParent, 'l', 'proj') }) }).error,
+    /inside Clodex's own data/);
+  assert.strictEqual(imp.begin({ name: 'ana', record: record({ cwd: path.join(linkParent, 'proj') }) }).ok, true);
 });

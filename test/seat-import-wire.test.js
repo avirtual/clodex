@@ -618,3 +618,33 @@ test('abort removes the staging and the id it names cannot be committed after', 
     assert.strictEqual(w.createCalls.length, 0);
   });
 });
+
+test('an install that fails before anything lands aborts the staging so the same name can be moved again', async () => {
+  const w = mkWiring();
+  const cwd = path.join(w.home, 'proj');
+  fs.mkdirSync(path.join(w.home, '.claude'), { recursive: true });
+  fs.writeFileSync(w.claudeProjects, 'not a dir');
+  await withServer({
+    seatImport: w.opts.seatImport, importCreate: w.opts.importCreate, getSessions: () => [],
+  }, async (s) => {
+    const conn = new PeerConnection({
+      id: 'box', label: 'boxy', url: `http://127.0.0.1:${s.port}`,
+      emit: () => {}, helloIntervalMs: 10000,
+    });
+    conn.start();
+    try {
+      await waitFor(() => conn.status().canImport === true, 'the import cap in status()');
+      const out = await conn.importSeat({
+        name: 'ana',
+        record: record({ cwd }),
+        files: [{ relPath: 'transcript.jsonl', bytes: Buffer.from('{"t":1}\n') }],
+      });
+      assert.strictEqual(out.ok, false);
+      assert.match(out.error, /install failed/);
+      assert.deepStrictEqual(fs.readdirSync(path.join(w.root, 'import')), []);
+      const again = await conn.importBegin({ name: 'ana', record: record({ cwd }) });
+      assert.strictEqual(again.ok, true, again.error);
+    } finally { conn.stop(); }
+    assert.strictEqual(w.createCalls.length, 0);
+  });
+});

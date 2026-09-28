@@ -39,10 +39,7 @@ outlive a restart mid-transfer and an in-memory counter does not.
 ## commit
 
 Checked entirely, then written, so a CHECK-phase refusal leaves the tree
-byte-identical. The write phase cannot promise that: an fs error there (the
-transcript copy, a seat-kind rename, the pending or loadlog rename, a reminder
-add) comes back as `install failed: <msg>` carrying `installed`, which names
-what did land — a return rather than a throw, but not a rollback. The collision
+byte-identical. The collision
 set is `renameTargets` plus `pending/<name>`, reused from seat-layout, so
 rename's refusal and this one cannot drift apart.
 
