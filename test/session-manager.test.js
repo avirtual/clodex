@@ -22835,5 +22835,7 @@ test('kill() under an unreadable sessions.json does not reject and still kills t
   } finally {
     console.error = origError;
     try { fsReal.chmodSync(file, 0o600); } catch {}
+    fsReal.rmSync(userData, { recursive: true, force: true });
+    fsReal.rmSync(registryDir, { recursive: true, force: true });
   }
 });
