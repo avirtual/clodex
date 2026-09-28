@@ -156,13 +156,7 @@ const {
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk,
 } = require('./relay-protocol');
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
-// Sender labels the MANAGER writes on system-originated deliveries; no agent is
-// on the other end of any of them. They must never collect the "(reply: …)"
-// trailer, and reachability is the wrong test for that: session names are a
-// global namespace, so an unrelated seat that happens to be called `team` makes
-// `team` look answerable and every seat on the box gets told to reply to it.
-// Keep in sync with the senderName literals at the _deliver* call sites.
-const SYSTEM_SENDERS = new Set(['team', 'clodex-team', 'reminder', 'memory', 'reboot', 'clodex', 'ticket-loop', 'user', 'ticket-watchdog', 'terminal']);
+const { SYSTEM_SENDERS } = require('./system-senders');
 
 const SCRATCH_TAIL_SCAN = 64 * 1024;
 const SCRATCH_MARK_TAIL = 512;

@@ -26153,11 +26153,11 @@ ${i3.join("\n")}
     }
   });
 
-  // renderer/lib/sender-class.js
-  var require_sender_class = __commonJS({
-    "renderer/lib/sender-class.js"(exports, module) {
+  // system-senders.js
+  var require_system_senders = __commonJS({
+    "system-senders.js"(exports, module) {
       "use strict";
-      var SYSTEM_GLYPHS = {
+      var SYSTEM_SENDER_GLYPHS = {
         reminder: "\u25F7",
         reboot: "\u21BB",
         "ticket-loop": "\u21C4",
@@ -26170,6 +26170,16 @@ ${i3.join("\n")}
         "clodex-team": "\u229E",
         wirescope: "\u223F"
       };
+      var SYSTEM_SENDERS = /* @__PURE__ */ new Set([...Object.keys(SYSTEM_SENDER_GLYPHS), "clodex", "user"]);
+      module.exports = { SYSTEM_SENDER_GLYPHS, SYSTEM_SENDERS };
+    }
+  });
+
+  // renderer/lib/sender-class.js
+  var require_sender_class = __commonJS({
+    "renderer/lib/sender-class.js"(exports, module) {
+      "use strict";
+      var { SYSTEM_SENDER_GLYPHS: SYSTEM_GLYPHS } = require_system_senders();
       var SEAT_SHAPE = /^([A-Za-z0-9]+)-([A-Za-z]+)((?:-\d+)?(?:-r\d+)?)$/;
       function systemGlyph(name) {
         if (Object.prototype.hasOwnProperty.call(SYSTEM_GLYPHS, name)) return SYSTEM_GLYPHS[name];

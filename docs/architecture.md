@@ -1116,6 +1116,9 @@ accept teardown removes.
   the bar's `{sep}`/`{head}` vocabulary) because the web bundle cannot require a
   root module, and test/library-menu-shape.test.js measures both against one
   table.
+- **system-senders.js** — the one list of system sender names: `SYSTEM_SENDER_GLYPHS`
+  (renderer transcript glyphs via `renderer/lib/sender-class.js`) and `SYSTEM_SENDERS`
+  (session-manager's no-reply-trailer set = the glyph names plus `clodex`, `user`).
 - **sidebar-width.js** — the clamp/reset decision for the resizable sidebar.
   Pure leaf shared by both hosts: `stores.js` clamps on read AND write through
   it, and the renderer clamps every drag frame and the pre-paint localStorage
