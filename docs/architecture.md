@@ -663,9 +663,9 @@ the checkout, so the claim runs straight after `create()` and again in the catch
 and splitting them is worse than either half — writing this seat's pointer alone
 on the reuse path leaves two records naming one tree, which is the collision the
 scan exists to close.
-`resolveSeatShape` decides a seat's system prompt by one rule on every arm: the
-template's `systemPromptFile` when the template names one, the role's `prompt`
-otherwise — and a role prompt that did not ride as the system prompt is appended
+`resolveSeatShape` takes the template's `systemPromptFile` when the template names
+one and the role's `prompt` otherwise — except on the review arm, where a team-owned role
+prompt outranks a seeded or implied template — and a role prompt that did not ride as the system prompt is appended
 after the team block by `_teamBlockFor` (session-manager.js), so nothing is
 dropped.
 A worktree-dispatch seat's cwd IS its tree (`seatCwdInTree` re-roots a role area
