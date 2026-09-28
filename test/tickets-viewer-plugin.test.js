@@ -54,7 +54,7 @@ const {
 } = viewerEngine._internals;
 const HOUR = 60 * 60 * 1000;
 
-function boot() {
+function boot(opts = {}) {
   const home = mkTmpRoot('clodex-tv-home-');
   const teams = path.join(home, 'teams');
   fs.mkdirSync(teams, { recursive: true });
@@ -79,6 +79,7 @@ function boot() {
     getUiSettings: () => ({ get: () => ({}), set: () => {} }),
     log: { info: () => {}, error: () => {} },
     userDataPath: dataDir,
+    telemetrySnapshot: opts.telemetrySnapshot,
     fs, path,
     gitWorktree: {},
     // Declared so a plugin that tried to delete through the seam would be
@@ -383,6 +384,43 @@ test('tickets-viewer: non-object records inside a valid array are COUNTED, not s
     assert.equal(res.open.length, 1);
     // A half-eaten registry would otherwise render as a shorter healthy board.
     assert.equal(res.counts.malformed, 3, 'the dropped records are reported');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: a viewer write never erases the malformed records a board read only counted', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/w/malformed');
+    const file = writeRawBoardAt(home, key, JSON.stringify([ticket('t1'), 42, null]));
+    assertWritesLandInFixture(home, key);
+    const before = fs.readFileSync(file, 'utf8');
+    assert.equal(onDisk(home, key).length, 3, 'ENTER: the board carries two malformed records');
+    const res = await host.dispatch('tickets-viewer', 'editSpec', [{ project: key, id: 't1', spec: 'tasks/x — y' }], 'desktop');
+    assert.equal(res.ok, false);
+    assert.match(res.error, /refusing to write: 2 malformed/);
+    assert.equal(fs.readFileSync(file, 'utf8'), before, 'the board bytes are untouched');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: an unstarted ticket filed to a role carries no live cost, even when a session has that name', async () => {
+  const calls = [];
+  const { host, home, cleanup } = boot({ telemetrySnapshot: (n) => { calls.push(n); return { cost: { usd: 3 } }; } });
+  try {
+    const key = mkProject(home, '/live/unstarted');
+    writeTicketsAt(home, key, [
+      ticket('t1', { assignee: 'dev', startedAt: null }),
+      ticket('t2', { assignee: 'seat-2', startedAt: Date.now() - HOUR, parked: true }),
+      ticket('t3', { assignee: 'seat-3', startedAt: Date.now() - HOUR }),
+    ]);
+    const res = await host.dispatch('tickets-viewer', 'board', [key], 'desktop');
+    assert.equal(res.open.length, 3);
+    const byId = Object.fromEntries(res.open.map((t) => [t.id, t]));
+    assert.equal(byId.t1.stalled, false, 'ENTER: t1 was never dispatched');
+    assert.deepEqual(byId.t3.cost, { usd: 3, reviewsUsd: null, rounds: 0, attribution: 'live', live: true },
+      'ENTER: a started seat does read the snapshot');
+    assert.equal(byId.t1.cost, null);
+    assert.equal(byId.t2.cost, null, 'a parked ticket does not carry its seat\'s other work');
+    assert.deepEqual(calls, ['seat-3']);
   } finally { cleanup(); }
 });
 
@@ -2243,6 +2281,36 @@ test('tickets-viewer: an oversized verdict is truncated, and the raw diff body i
   } finally { cleanup(); }
 });
 
+test('tickets-viewer: a teamless project\'s recently-closed ticket still reads its COST.json', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/solo/cost');
+    const dir = mkTaskDir(home, key, 'tasks/t1-w');
+    fs.writeFileSync(path.join(dir, 'COST.json'), JSON.stringify({ usd: 2.5, sessions: { attribution: 'ticket' } }));
+    writeTicketsAt(home, key, [ticket('t1', { state: 'done', taskDir: 'tasks/t1-w', closedAt: Date.now() - 1000 })]);
+    const res = await host.dispatch('tickets-viewer', 'board', [key], 'desktop');
+    assert.equal(res.recent.length, 1);
+    assert.equal(res.root, '', 'ENTER: no manifest names this project');
+    const cost = { usd: 2.5, reviewsUsd: null, rounds: 0, attribution: 'ticket', live: false };
+    assert.deepEqual(res.recent[0].cost, cost);
+    const detail = await host.dispatch('tickets-viewer', 'ticket', [{ project: key, id: 't1' }], 'desktop');
+    assert.deepEqual(detail.ticket.cost, cost, 'the detail pane agrees with the board');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: a search snippet contains the match even when lowercasing lengthens the text before it', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/search/fold');
+    writeTicketsAt(home, key, [ticket('t1', { spec: 'İ'.repeat(200) + 'NeedLe' + 'x'.repeat(500) })]);
+    const res = await host.dispatch('tickets-viewer', 'search', [{ project: key, q: 'needle' }], 'desktop');
+    assert.equal(res.hits.length, 1);
+    assert.ok(res.hits[0].snippet.includes('NeedLe'), res.hits[0].snippet);
+    const lit = await host.dispatch('tickets-viewer', 'search', [{ project: key, q: 'x.x' }], 'desktop');
+    assert.equal(lit.hits.length, 0, 'the query is a literal, not a pattern');
+  } finally { cleanup(); }
+});
+
 test('tickets-viewer: `search` matches a word only in a closed ticket\'s report, and caps at 50', async () => {
   const { host, home, cleanup } = boot();
   try {
@@ -2378,6 +2446,21 @@ test('tickets-viewer: `ticket`, `search` and `closed` serve the WEB surface, unl
       assert.equal((await host.dispatch('tickets-viewer', method, [payload], 'desktop')).ok, true,
         `${method} serves the desktop too`);
     }
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: `closed` counts the rounds `ticket` would serve, including ones derived from disk', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/closed/derived');
+    const dir = mkTaskDir(home, key, 'tasks/t9-work');
+    fs.writeFileSync(path.join(dir, 'review-t9-r1.verdict.md'), 'VERDICT: REWORK\n');
+    fs.writeFileSync(path.join(dir, 'review-t9-r2.verdict.md'), 'VERDICT: ACCEPT\n');
+    writeTicketsAt(home, key, [histTicket('t9', { taskDir: 'tasks/t9-work' })]);
+    const detail = await host.dispatch('tickets-viewer', 'ticket', [{ project: key, id: 't9' }], 'desktop');
+    assert.equal(detail.ticket.rounds.length, 2, 'ENTER: the detail pane derives two rounds');
+    const res = await host.dispatch('tickets-viewer', 'closed', [{ project: key }], 'desktop');
+    assert.equal(res.rows[0].rounds, 2);
   } finally { cleanup(); }
 });
 
