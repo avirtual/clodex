@@ -2400,6 +2400,12 @@ test('a run that executed ZERO tests escalates — it is not a green suite', asy
   assert.match(esc[0].body, /ZERO tests/, 'and it says the run executed nothing, not that tests failed');
   assert.deepStrictEqual(f.gated.filter((g) => /rejected/.test(g.body)), [],
     'the hand is not sent rework for a run that discovered no tests');
+
+  const zero = await f.m._runTicketSuite(f.team, f.one());
+  assert.match(zero.error || '', /ZERO tests/, 'ENTER: the direct run is the zero-tests arm');
+  const kept = await f.m._writeTicketSuiteFailure(f.team, f.one(), zero);
+  assert.strictEqual(kept.ok, true, `the zero-tests run carries its output to the writer (${kept.error})`);
+  assert.strictEqual(keptFiles(f, f.home).length, 1, 'and the failure file is on disk');
 });
 
 test('the LAST TOTALS line decides, not the first a test file happened to print', async () => {
@@ -3108,6 +3114,21 @@ test('t362: a follow-up on a SELF-HELD ticket says the lead holds it, not that n
     'the false claim is gone: a seat that resolved is not "no live seat"');
   assert.ok(f.injected.some((x) => /spill-stub/.test(x)), 'the payload is still spilled, as before');
   assert.deepStrictEqual(f.gated, [], 'and nothing was delivered');
+});
+
+test('rb-tt-bugs R33: a loop reject of a lead-held ticket names the lead, not "no live seat"', () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, ticketOver: { assignee: 'lead', role: 'lead' } });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'lead' }]);
+  assert.strictEqual(f.m._ticketAssigneeSeat(f.team, f.one()), f.team.lead,
+    'ENTER: the ticket really resolves to the lead itself');
+
+  const r = f.m._rejectTicketFromLoop(f.team, 't1', 'suite red');
+
+  assert.strictEqual(r.ok, false, 'ENTER: the reject still refuses');
+  assert.match(r.error, /^lead is holding t1 itself — the must-fixes are yours to act on$/);
+  assert.doesNotMatch(r.error, /no live seat/);
+  assert.strictEqual(f.one().state, 'done', 'the ticket stays done for the lead to act on');
 });
 
 test('t362: a follow-up that does NOT reach the seat leaves the stall stamps alone', () => {
@@ -5444,7 +5465,12 @@ test('t465 nit1: a RE-ENTRY broadcasts "re-verifying", not a second "done"', asy
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const release = holdInSuite(f);
   f.broadcasts.length = 0;
+  f.gated.length = 0;
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' });
+  const toLead = f.gated.filter((g) => g.target === 'lead');
+  assert.strictEqual(toLead.length, 1, 'ENTER: the re-entry DMed the lead once');
+  assert.ok(toLead[0].body.startsWith('[ticket t1 re-verifying] fixed it'),
+    `the lead DM says re-verifying, not a second done: ${toLead[0].body}`);
   // MEASURED, and it is the STAMP that carries the guarantee, not `loopStep`:
   // `strand()` already leaves `loopStep: 'verify'` and the escalation arm keeps
   // it there, so asserting the step fails only if `strand` breaks. Probed either

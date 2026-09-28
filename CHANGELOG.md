@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Sandbox image: about 800 MB smaller unpacked (roughly 450 MB less to pull) — two layers that duplicated /opt/muse and /app are gone, and the npm/node-gyp build caches no longer ship.
+- Ticket loop: advancing a seat to its next ticket now reports a held or parked spec instead of "delivered"; a re-verified close DMs the lead as re-verifying, not done; a solo-board reject names the lead instead of "no live seat"; a post-merge run that executed zero tests keeps its output file.
 - Sidebar: an Active status chosen in a workspace that had no saved view survives the next open; a peer row that fails validation is expanded so its error is visible; Settings lists a context-threshold override for a model family Clodex ships no row for.
 - Session manager: a seat whose spawn fails at the skills gate or the muse settings write no longer leaves a stale proxy route row; Delete Session… keeps the worktree (and says so) when the old process has not exited within 8s instead of removing a checkout something still runs in; cancelling a scratch mark whose begin is still pending is acknowledged rather than refused; a reboot-notice flush on a recycling seat disarms its timer.
 - Docs: an ssh-installed node's clodexctl context needs --url with its --token (a token alone names no transport); cli/README corrected.

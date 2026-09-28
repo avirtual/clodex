@@ -8402,6 +8402,27 @@ test('t89 cancel advances too — it frees the seat exactly as done does', () =>
   assert.ok(f.injected.some((x) => /cancelled — next: t2 delivered to team-hand/.test(x)));
 });
 
+for (const sub of ['done', 'cancel']) {
+  test(`rb-tt-bugs R15: ${sub} over a HELD advance says the spec was not delivered`, () => {
+    const f = mkTasks();
+    f.seat('lead'); f.seat('team-hand');
+    f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec one' });
+    f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec two' });
+    f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+    f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
+    const delivered = [];
+    f.m._deliverTicketSpec = (team, t) => { delivered.push(t.id); return { held: true, reason: 'blocked on a permission dialog' }; };
+    f.injected.length = 0;
+
+    f.m._handleTask(f.seat('lead'), { type: 'task', sub, id: 't1', body: 'closing it' });
+
+    assert.deepStrictEqual(delivered, ['t2'], 'ENTER: the advance reached t2 and its delivery came back held');
+    const line = f.injected.find((x) => /next: t2 delivered to team-hand/.test(x));
+    assert.ok(line, `ENTER: the ${sub} reply names the advance`);
+    assert.match(line, /spec NOT delivered \(blocked on a permission dialog\)/);
+  });
+}
+
 // ── t351: the advance must not fire on a close that freed nothing ──────────
 // `_advanceSeat` resolves its seat from the ticket BEING CLOSED. A backlog ticket
 // still sitting on its ROLE resolves to whichever seat holds that role — a seat
