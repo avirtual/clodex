@@ -33,9 +33,9 @@ function el(tag) {
       // equality below is what makes this stub fail loudly if the collector's
       // selector changes, rather than quietly answering the wrong set — it is
       // how the `:not(:disabled)` regression was caught on the way OUT.
-      if (sel === '.check-group, .bundle-row') {
-        return flat.filter((c) => c.className === 'check-group'
-          || String(c.className).split(' ').includes('bundle-row'));
+      if (sel === '.bundle-group, .bundle-row') {
+        return flat.filter((c) => String(c.className).split(' ')
+          .some((k) => k === 'bundle-group' || k === 'bundle-row'));
       }
       if (sel === '.hint-text') {
         return flat.filter((c) => String(c.className).split(' ').includes('hint-text'));
@@ -65,7 +65,7 @@ function withDom(fn) {
 }
 
 const {
-  renderAppendChecklist, collectAppendChecklist,
+  renderAppendChecklist, collectAppendChecklist, appendRepaintTicks,
   setPromptLibCache, setPluginCatalogCache, bundleSectionsOf, repaintBundleSections,
 } = withDom(() => require('../renderer/lib/checklists'));
 
@@ -88,12 +88,13 @@ const CATALOG = [
   },
 ];
 
-const laidOut = (c) => c.children.map((n) => (n.className === 'check-group'
+const isHead = (n) => String(n.className).split(' ').includes('check-group');
+const laidOut = (c) => c.children.map((n) => (isHead(n)
   ? ['head', n.textContent]
   : ['row', n.children.find((x) => x.tagName === 'input').value]));
 
 const rowsOf = (c) => c.children
-  .filter((n) => n.className !== 'check-group')
+  .filter((n) => !isHead(n))
   .map((row) => {
     const cb = row.children.find((x) => x.tagName === 'input');
     return {
@@ -271,6 +272,50 @@ test('t679: APPEND: repaint preserves the operator\'s ticks across a plugin togg
     ['row', 'lib-a'], ['head', 'Reviewer'], ['row', 'rev:rules'], ['row', 'rev:extra'],
   ], 'exactly one bundle section after the swap, not two');
 }));
+
+test('a plugin repaint keeps the team group header of the append checklist', () => withDom(() => {
+  setPluginCatalogCache(CATALOG);
+  setPromptLibCache(LIB);
+  const c = el('div');
+  renderAppendChecklist(c, new Set(), { plugins: [] }, [{ name: 't1', team: 'T', body: '' }]);
+  assert.ok(laidOut(c).some(([k, v]) => k === 'head' && v === 'team T'), 'ENTER: the team header drew');
+
+  repaintBundleSections(c, 'prompts/append', { plugins: ['rev'] }, new Set(collectAppendChecklist(c)));
+
+  assert.deepStrictEqual(laidOut(c), [
+    ['row', 'lib-a'], ['head', 'team T'], ['row', 't1'],
+    ['head', 'Reviewer'], ['row', 'rev:rules'], ['row', 'rev:extra'],
+  ]);
+}));
+
+test('a bundle append tick survives un-holding and re-holding its plugin in one dialog', () => withDom(() => {
+  setPluginCatalogCache(CATALOG);
+  setPromptLibCache(LIB);
+  const opened = ['rev:rules'];
+  const c = el('div');
+  renderAppendChecklist(c, new Set(opened), { plugins: ['rev'] });
+  assert.ok(collectAppendChecklist(c).includes('rev:rules'), 'ENTER: the persisted tick drew checked');
+
+  repaintBundleSections(c, 'prompts/append', { plugins: [] }, appendRepaintTicks(c, opened));
+  assert.ok(!collectAppendChecklist(c).includes('rev:rules'), 'ENTER: un-holding the plugin unticks its row');
+  repaintBundleSections(c, 'prompts/append', { plugins: ['rev'] }, appendRepaintTicks(c, opened));
+
+  assert.deepStrictEqual(collectAppendChecklist(c), ['rev:rules']);
+}));
+
+test('both dialogs repaint the append bundle rows with the opening append set folded in', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const calls = [...src.matchAll(/repaintBundleSections\((\w+), 'prompts\/append', seat,\s*([^;]+)\);/g)]
+    .map((m) => [m[1], m[2].trim()]);
+  assert.deepStrictEqual(calls, [
+    ['inputAppendList', 'appendRepaintTicks(inputAppendList, newSessionAppendOpened)'],
+    ['argsAppendList', 'appendRepaintTicks(argsAppendList, argsAppendPersisted)'],
+  ]);
+  assert.match(src, /newSessionAppendOpened = \(tpl && tpl\.appendPromptFiles\) \|\| \[\];/,
+    'the template editor records the set it opened with');
+  assert.match(src, /argsAppendPersisted = res\.appendPromptFiles \|\| \[\];/,
+    'ENTER: the args dialog records the set it opened with');
+});
 
 // ── The system rail is a <select>, so it is pinned at source ────────────────
 // fillSystemPromptSelect lives in renderer.js among ~6,400 lines of dialog

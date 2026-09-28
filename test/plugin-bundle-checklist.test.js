@@ -29,9 +29,9 @@ function el(tag) {
       // answered every selector with everything would make the collect
       // assertions vacuous, and the `:not(:disabled)` clause IS the fix under
       // test, so a loose stub would pass against the unfixed collector.
-      if (sel === '.check-group, .bundle-row') {
-        return flat.filter((c) => c.className === 'check-group'
-          || String(c.className).split(' ').includes('bundle-row'));
+      if (sel === '.bundle-group, .bundle-row') {
+        return flat.filter((c) => String(c.className).split(' ')
+          .some((k) => k === 'bundle-group' || k === 'bundle-row'));
       }
       if (sel === '.hint-text') {
         return flat.filter((c) => String(c.className).split(' ').includes('hint-text'));
@@ -94,12 +94,13 @@ const CATALOG = [
 // Headers and rows are both direct children, so one flat list keeps their
 // INTERLEAVING visible: a header count alone would pass a render that drew every
 // header up front, detached from the rows it names.
-const laidOut = (c) => c.children.map((n) => (n.className === 'check-group'
+const isHead = (n) => String(n.className).split(' ').includes('check-group');
+const laidOut = (c) => c.children.map((n) => (isHead(n)
   ? ['head', n.textContent]
   : ['row', n.children.find((x) => x.tagName === 'input').value]));
 
 const rowsOf = (c) => c.children
-  .filter((n) => n.className !== 'check-group')
+  .filter((n) => !isHead(n))
   .map((row) => {
     const cb = row.children.find((x) => x.tagName === 'input');
     return {
