@@ -499,15 +499,19 @@ function rehome_orphans() {
     if (!Number.isInteger(pid) || pid <= 0 || pid_alive(pid)) continue;
     const mine = d + '.draining.rehome.' + process.pid;
     try { fs.renameSync(path.join(parent, s), mine); } catch (e) { continue; }
-    let ok = true;
+    const json = function (n) { return n.endsWith('.json'); };
     let files = [];
-    try { files = fs.readdirSync(mine).filter(function (n) { return n.endsWith('.json'); }); } catch (e) { ok = false; }
+    try { files = fs.readdirSync(mine).filter(json); } catch (e) { continue; }
     for (const f of files) {
       try {
-        if (fs.existsSync(path.join(d, f)) || !restore_parked(f, fs.readFileSync(path.join(mine, f), 'utf8'))) ok = false;
-      } catch (e) { ok = false; }
+        if (fs.existsSync(path.join(d, f)) || restore_parked(f, fs.readFileSync(path.join(mine, f), 'utf8'))) {
+          fs.unlinkSync(path.join(mine, f));
+        }
+      } catch (e) {}
     }
-    if (ok) { try { fs.rmSync(mine, { recursive: true, force: true }); } catch (e) {} }
+    let left = null;
+    try { left = fs.readdirSync(mine).filter(json); } catch (e) {}
+    if (left && !left.length) { try { fs.rmSync(mine, { recursive: true, force: true }); } catch (e) {} }
   }
 }
 rehome_orphans();
@@ -833,7 +837,15 @@ OUTPUT="\${RUNDIR}/hook-output.json"
     fs.mkdirSync(codexDir, { recursive: true });
     const body = codexHooksBody(scriptPath);
     const holdsOurs = (p) => {
-      try { return fs.readFileSync(p, 'utf8') === body; } catch { return false; }
+      let raw;
+      try { raw = fs.readFileSync(p, 'utf8'); } catch { return false; }
+      if (raw === body) return true;
+      try {
+        const hooks = JSON.parse(raw).hooks;
+        const entries = hooks.SessionStart;
+        return Object.keys(hooks).length === 1 && entries.length === 1 && entries[0].hooks.length === 1
+          && path.basename(entries[0].hooks[0].command) === 'codex-session-hook.sh';
+      } catch { return false; }
     };
     // Our bytes in either slot are not a user config: backing them up hands the
     // next cleanup our hook to restore as theirs.
@@ -886,7 +898,7 @@ OUTPUT="\${RUNDIR}/hook-output.json"
         === codexHooksBody(path.join(REGISTRY_DIR, 'codex-session-hook.sh'));
     } catch {}
     if (fs.existsSync(backupPath)) {
-      if (ours) {
+      if (ours || !fs.existsSync(hooksPath)) {
         try { fs.renameSync(backupPath, hooksPath); } catch {}
       } else {
         try { fs.unlinkSync(backupPath); } catch {}

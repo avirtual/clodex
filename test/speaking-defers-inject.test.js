@@ -36,7 +36,7 @@ const settle = (ms) => new Promise((r) => setTimeout(r, ms));
 // each waits out a few hundred virtual ms at 50ms a turn.
 const MAX_TURNS = 1000;
 
-function vqueue({ speaking, maxWaitMs = 10_000, onCapFire }) {
+function vqueue({ speaking, maxWaitMs = 10_000, onCapFire, hintHeld }) {
   const writes = [];
   const clock = { t: 1_000 };
   // The clock at the FIRST byte — i.e. how long the GATE held. Measured here
@@ -58,6 +58,7 @@ function vqueue({ speaking, maxWaitMs = 10_000, onCapFire }) {
     speaking: () => speaking(clock),
     isDead: () => false,
     onCapFire,
+    hintHeld,
     now: () => clock.t,
     sleep: (ms) => {
       clock.t += ms;
@@ -155,6 +156,15 @@ test('a cap that expires while he is still speaking raises onCapFire, as it woul
   assert.strictEqual(h.writes[0], '\x15');
   assert.ok(h.firstWriteAt() - 1_000 >= 500);
   assert.deepStrictEqual(fired, ['msg']);
+});
+
+test('a cap that expires on a hint hold alone, not speaking or typing, stays silent', async () => {
+  const fired = [];
+  const h = vqueue({ speaking: () => false, hintHeld: () => true, maxWaitMs: 500, onCapFire: (t) => fired.push(t) });
+  await h.q.enqueue('msg');
+  assert.strictEqual(h.writes[0], '\x15');
+  assert.ok(h.firstWriteAt() - 1_000 >= 500);
+  assert.deepStrictEqual(fired, []);
 });
 
 test('the cap is checked BEFORE speaking, so an already-expired wait injects at once', async () => {
