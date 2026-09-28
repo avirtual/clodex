@@ -1583,7 +1583,10 @@ function createTicketMethods(deps, shared) {
         if (!standingSeat(entry)) return { ok: false, error: 'not a standing seat' };
         const { ledger } = this._seatLedger(name, entry);
         const cursors = this._readSeatCursors(team);
-        if (!cursors) return { ok: false, error: 'the seat-cost cursor file is unreadable' };
+        if (!cursors) {
+          log.warn('cost', `seat ${name} on team ${team.name}: cost stamp dropped — the seat-cost cursor file is unreadable`);
+          return { ok: false, error: 'the seat-cost cursor file is unreadable' };
+        }
         const cursor = cursors[name] || null;
         const row = teamCost.seatLedgerRow({
           seat: name,
@@ -1609,7 +1612,10 @@ function createTicketMethods(deps, shared) {
           turns: (cursor && Number(cursor.turns) || 0) + row.turns,
           at: row.at,
         });
-        if (!wrote) return { ok: false, path: w.path, usd: row.usd, error: 'the seat-cost cursor could not be written' };
+        if (!wrote) {
+          log.warn('cost', `seat ${name} on team ${team.name}: ledger row appended but the seat-cost cursor could not be written — the next stamp will re-count it`);
+          return { ok: false, path: w.path, usd: row.usd, error: 'the seat-cost cursor could not be written' };
+        }
         return { ok: true, path: w.path, usd: row.usd, error: null };
       } catch (e) {
         return { ok: false, error: e.message };
@@ -3312,7 +3318,15 @@ function createTicketMethods(deps, shared) {
       }
       let box = mgr.get(boxId);
       if (!box && (action === 'status' || action === 'down')) {
-        reply(`sandbox ${boxId}: no box — this team has none; [agent:team sandbox up] creates it`);
+        let removed = false;
+        let staleFile = null;
+        if (action === 'down') {
+          staleFile = this._teamSandboxFile(team);
+          try { fs.unlinkSync(staleFile); removed = true; } catch {}
+        }
+        reply(removed
+          ? `sandbox ${boxId}: no box — stale ${staleFile} removed`
+          : `sandbox ${boxId}: no box — this team has none; [agent:team sandbox up] creates it`);
         return;
       }
       if (!box) {
@@ -3461,6 +3475,10 @@ function createTicketMethods(deps, shared) {
       }
       if (intent.sub === 'role-set' && !roles[name]) return { ok: false, error: `role "${name}" not found on team "${team.name}" — use role-add (${team.file})` };
       if (intent.sub === 'role-add' && roles[name]) return { ok: false, error: `role "${name}" already exists on team "${team.name}" — use role-set` };
+      if (!reviewerOnly) {
+        const sharers = this._rolesNaming(team, 'template', name).filter((r) => r !== name);
+        if (sharers.length) return { ok: false, error: `template "${name}" is named by role(s): ${sharers.join(', ')} — effort: would re-effort them too; name a different role or repoint them first` };
+      }
       const current = roles[name] && typeof roles[name] === 'object' ? roles[name].template : null;
       const stem = intent.template || current || (reviewerOnly ? DEFAULT_REVIEWER_TEMPLATE : 'clodex-team-hand');
       let base = readTeamJson({ fs, path }, team, 'templates', stem);

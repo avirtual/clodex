@@ -11070,6 +11070,20 @@ test('role-add with model: refuses to overwrite a template another role names', 
   assert.strictEqual(f.tm.loadManifest('team').roles.foo, undefined, 'no role foo was added');
 });
 
+test('role-set with effort: refuses to overwrite a template another role names', () => {
+  const f = mkTeamModel();
+  fsReal.mkdirSync(pathReal.dirname(f.tplFile('hand')), { recursive: true });
+  fsReal.writeFileSync(f.tplFile('hand'), JSON.stringify({ ...f.shippedHand, name: 'hand', effort: 'low' }));
+  f.tm.addRole('team', 'bar', { brief: 'bar', template: 'hand' });
+  assert.strictEqual(f.tm.loadManifest('team').roles.bar.template, 'hand', 'ENTER: role bar names template hand');
+  const before = fsReal.readFileSync(f.tplFile('hand'));
+
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', effort: 'xhigh', body: '' });
+
+  assert.deepStrictEqual(fsReal.readFileSync(f.tplFile('hand')), before, 'templates/hand.json is byte-identical');
+  assert.match(f.last(), /error: template "hand" is named by role\(s\): bar — effort: would re-effort them too/, f.last());
+});
+
 test('t767: a role-set WITHOUT model: writes no template at all (every path byte-identical to pre-t767)', () => {
   const f = mkTeamModel();
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', dispatch: 'worktree', body: 'new brief' });
