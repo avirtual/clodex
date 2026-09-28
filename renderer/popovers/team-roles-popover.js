@@ -31,6 +31,7 @@ const {
   reconcileReveal, clearableFields,
   reservedRemovalWarning, REMOVABLE_RESERVED_ROLE_KEYS, usesByRole,
   promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor, templatePlatform, accountOptions,
+  rowFormValues, syncRowDirty, snapshotRowForm, confirmDiscardRoleEdits,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
 
@@ -80,8 +81,10 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   };
 
   function closeTeamRolesPopover() {
+    if (!popover.classList.contains('hidden') && !confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return false;
     popover.classList.add('hidden');
     popover.dataset.name = '';
+    return true;
   }
 
   // Render one row per role. Reserved rows TEACH their lock (read-only brief +
@@ -412,7 +415,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     open.addEventListener('click', () => {
       const row = rowFor();
       if (!row) return;
-      closeTeamRolesPopover();
+      if (!closeTeamRolesPopover()) return;
       if (typeof openTemplate === 'function') openTemplate(row);
     });
     return { select, open, platform };
@@ -514,6 +517,8 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
             // looks inert. Nothing is written wrongly either way — Save sends
             // the blank regardless — but the field must not come back.
             if (typeof onClear === 'function') onClear(f);
+            const rowEl = field.closest('.team-role-row');
+            if (rowEl) syncRowDirty(rowEl);
           });
           field.appendChild(clear);
         }
@@ -806,7 +811,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
           open.disabled = !tplRow;
           open.addEventListener('click', () => {
             if (!tplRow) return;
-            closeTeamRolesPopover();
+            if (!closeTeamRolesPopover()) return;
             if (typeof openTemplate === 'function') openTemplate(tplRow);
           });
           holder.appendChild(open);
@@ -996,6 +1001,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
         // the teams that most need to fit.
         body.appendChild(box);
       }
+      snapshotRowForm(el);
       listEl.appendChild(el);
     }
     // Every absent STOCK role gets an offer card — the same component for a
@@ -1127,6 +1133,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   }
 
   async function openTeamRolesPopover(name, anchorEl) {
+    if (!popover.classList.contains('hidden') && !confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
     setStatus('');
     helpPanel.classList.add('hidden'); // help starts collapsed on every open
     resetDrag(popover);                // a fresh open re-anchors; drop any drag offset
@@ -1211,7 +1218,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       // pointer written for a seat that was never created is exactly the orphan
       // state this row exists to fix. Set the pointer after the seat exists.
       const teamRoot = currentRoot;
-      closeTeamRolesPopover();
+      if (!closeTeamRolesPopover()) return;
       // Un-awaited on purpose (the popover is already closed and has no status
       // line left to report into), so the rejection has to be absorbed here:
       // openDialog makes several awaited IPC calls, and one rejecting would
@@ -1221,31 +1228,12 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       return;
     }
     if (act === 'save') {
-      const val = (f) => {
-        // prompt, template and account are <select>s, cwd is an <input> — match on data-f alone.
-        const inp = rowEl.querySelector(`[data-f="${f}"]`);
-        return inp ? inp.value : '';
-      };
-      // dispatch is a RADIO GROUP (B4), so the plain lookup above would return
-      // the first segment rather than the chosen one — i.e. `standing` on every
-      // save, silently reverting a worktree role. Read the checked member.
-      const dispatchVal = () => {
-        const on = rowEl.querySelector('input[data-f="dispatch"]:checked');
-        return on ? on.value : '';
-      };
-      // A field fieldReveal HID is absent from the DOM, and `val` returns '' for
-      // it — which is the right patch value in both cases: `cwd` is hidden only
-      // when it is already blank (so '' is a no-op clear), and buildSavePatch
-      // OMITS a blank `template`, leaving the stored one untouched.
-
+      const v = rowFormValues(rowEl);
       // buildSavePatch OMITS a blank template (setRole throws NAME_RE on ''); a
       // reserved row sends `account` alone, the only key setRole lets one patch.
       const patch = rowEl.classList.contains('read-only')
-        ? { account: String(val('account') || '').trim() }
-        : buildSavePatch({
-          brief: val('brief'), prompt: val('prompt'), template: val('template'), dispatch: dispatchVal(),
-          cwd: val('cwd'), account: val('account'),
-        });
+        ? { account: String(v.account || '').trim() }
+        : buildSavePatch(v);
       const res = await window.api.teamSetRole(name, role, patch);
       await afterMutation(res, `role "${role}" saved`);
     } else if (act === 'rename') {
@@ -1496,6 +1484,15 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   // delegation on the list — same shape as the click delegation above. Enter in a
   // row input fires that row's Save button. The prompt and template <select>s are
   // excluded (Enter there is native option-commit, not a submit).
+  const ROW_SAVE_EXEMPT_FIELDS = new Set(['lead-seat', 'lead-pick', 'trunk']);
+  const onRowFieldEdit = (e) => {
+    const inp = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-f]') : null;
+    if (!inp || ROW_SAVE_EXEMPT_FIELDS.has(inp.dataset.f)) return;
+    const rowEl = inp.closest('.team-role-row');
+    if (rowEl) syncRowDirty(rowEl);
+  };
+  listEl.addEventListener('input', onRowFieldEdit);
+  listEl.addEventListener('change', onRowFieldEdit);
   listEl.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || e.isComposing) return;
     const inp = e.target.closest('input[data-f]');

@@ -104,6 +104,38 @@ function buildSavePatch(formValues) {
   return patch;
 }
 
+function rowFormValues(rowEl) {
+  const val = (f) => {
+    const inp = rowEl.querySelector(`[data-f="${f}"]`);
+    return inp ? inp.value : '';
+  };
+  const on = rowEl.querySelector('input[data-f="dispatch"]:checked');
+  return {
+    brief: val('brief'), prompt: val('prompt'), template: val('template'),
+    dispatch: on ? on.value : '', cwd: val('cwd'), account: val('account'),
+  };
+}
+
+function syncRowDirty(rowEl) {
+  const dirty = typeof rowEl._saved === 'string' && JSON.stringify(rowFormValues(rowEl)) !== rowEl._saved;
+  rowEl.classList.toggle('dirty', dirty);
+  const save = rowEl.querySelector('button[data-act="save"]');
+  if (save) save.disabled = !dirty;
+  return dirty;
+}
+
+function snapshotRowForm(rowEl) {
+  rowEl._saved = JSON.stringify(rowFormValues(rowEl));
+  return syncRowDirty(rowEl);
+}
+
+const DISCARD_ROLE_EDITS_PROMPT = 'Discard unsaved role changes?';
+
+function confirmDiscardRoleEdits(root, confirmFn) {
+  if (!root || !root.querySelector('.team-role-row.dirty')) return true;
+  return !!(typeof confirmFn === 'function' && confirmFn(DISCARD_ROLE_EDITS_PROMPT));
+}
+
 function promptOptionGroups(names, teamOwned, team) {
   const owned = new Set(team ? (teamOwned || []) : []);
   const ownedNames = (names || []).filter((n) => owned.has(n));
@@ -701,6 +733,7 @@ module.exports = {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, reservedRoleTemplate, preflightByRole, usesByRole,
   promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor, templatePlatform, accountOptions,
   reservedRemovalWarning,
+  rowFormValues, syncRowDirty, snapshotRowForm, confirmDiscardRoleEdits, DISCARD_ROLE_EDITS_PROMPT,
   parseDuration, formatDuration, formatBlockedBy,
   leadSeatCandidates, leadResolution,
   teamStage, roleSummaries, activityTime, ticketLine, absentStockRoles, absentStockNote, offerDispatchLine, fieldReveal,

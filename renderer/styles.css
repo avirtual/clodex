@@ -5846,6 +5846,10 @@ body.web-frontend #sidebar-header {
   background: var(--accent);
   color: var(--accent-fg);
 }
+.team-role-row.dirty .team-role-actions button[data-act="save"] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
 #btn-create:hover, #btn-plugins-source-install:hover,
 .popover-actions button:not(.secondary):hover, .dialog-actions button:not(.secondary):hover {
   opacity: 1;
