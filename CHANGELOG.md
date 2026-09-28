@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Edit Session with restart: revoking an exec grant now stays revoked after the restart (the respawn used to be handed the pre-edit grants), and a restart that fails keeps the edited plugin list and exec grants like every other edited field; a restarted reviewer seat keeps its `reviewerTemplate` so its round is billed to the right template; switching a seat to a past conversation from the history menu keeps that conversation in the seat's history (cost panel and Discover no longer treat it as foreign), and a failed switch keeps the chosen id; editing a seat whose record is gone now reports the error instead of ok.
 
 - Export as Template… now carries the seat's io, effort and plugin grants into the template (an exported template no longer re-grants plugins it had turned off) and refreshes the app menu so the new template appears at once.
 - Codex seats: the conversation history menu now resolves rollouts by session id and this project's cwd instead of reading one day directory of the shared rollout store, so older conversations are no longer shown as missing and another project's same-day rollout is never offered for resume; the session context menu shows Prompts, Move Session… and Export as Template… for every agent type, including muse.

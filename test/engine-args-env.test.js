@@ -130,3 +130,29 @@ test('args-edit with env omitted preserves the persisted env (no-restart save)',
 
 // createEngine's background timers keep the loop alive; exit once results flush.
 after(() => { setImmediate(() => process.exit(0)); });
+
+test('args-edit restart threads the EDITED exec grants into create(), so a revoke stays revoked', async () => {
+  const rows = [
+    { before: ['old-grant'], patch: [], want: [] },
+    { before: undefined, patch: ['new-grant'], want: ['new-grant'] },
+  ];
+  for (const row of rows) {
+    const eng = mkEngine();
+    eng.stores.persistence.upsert({ name: 'x', type: 'bash', cwd: '/tmp', ...(row.before ? { execCommands: row.before } : {}) });
+    const captured = [];
+    spyCreate(eng.manager, captured);
+    const res = await eng.applySessionArgs('x', { extraArgs: [], restart: true, execCommands: row.patch }, 'default');
+    assert.strictEqual(res.restarted, true, 'ENTER: the restart happened');
+    assert.strictEqual(captured.length, 1, 'ENTER: create was called once');
+    assert.deepStrictEqual(captured[0][16], row.want,
+      `the 17th positional is the edited grant list ${JSON.stringify(row.want)}, not the pre-edit one`);
+  }
+});
+
+test('an args edit for a seat with no record refuses, like the restart arm does', async () => {
+  const eng = mkEngine();
+  assert.strictEqual(eng.stores.persistence.get('ghost'), null, 'ENTER: there is no record for ghost');
+  const res = await eng.applySessionArgs('ghost', { extraArgs: ['--x'] }, 'default');
+  assert.strictEqual(res.ok, false, 'a save against a deleted seat must not report success');
+  assert.strictEqual(eng.stores.persistence.get('ghost'), null, 'and it writes nothing');
+});
