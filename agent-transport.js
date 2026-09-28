@@ -13,6 +13,7 @@ const SOCKET_PROBE_TIMEOUT = 250;
 
 function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
   function isAlive(pid) {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
     try { process.kill(pid, 0); return true; }
     catch (e) { return e.code === 'EPERM'; }
   }
@@ -137,10 +138,8 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
     stop() {
       return new Promise((resolve) => {
         if (this._server) {
-          this._server.close(() => {
-            try { fs.unlinkSync(this._path); } catch {}
-            resolve();
-          });
+          try { fs.unlinkSync(this._path); } catch {}
+          this._server.close(() => resolve());
         } else {
           resolve();
         }

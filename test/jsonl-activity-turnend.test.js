@@ -133,3 +133,24 @@ test('the wire activity event carries false for a tool flush and true at end_tur
   assert.deepStrictEqual(idles, [false, true],
     `the tool-result idle must reach the wire false and only the end_turn idle true — got ${JSON.stringify(wire)}`);
 });
+
+test('one poll consumes a backlog larger than the read buffer, so text behind a big tool_result is not stalled', () => {
+  const dir = mkTmpRoot('clodex-watcher-');
+  try {
+    const file = path.join(dir, 'transcript.jsonl');
+    fs.writeFileSync(file, [
+      { type: 'user', message: { content: [{ type: 'tool_result', content: 'x'.repeat(100_000) }] } },
+      { type: 'assistant', requestId: 'r2', message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'after the dump' }] } },
+    ].map((e) => JSON.stringify(e)).join('\n') + '\n');
+    const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR: dir });
+    const w = new JsonlWatcher('seat', () => {}, () => {}, () => {});
+    w._fd = fs.openSync(file, 'r');
+    w._position = 0;
+    w._readLines();
+    assert.ok(w._position > 8192);
+    assert.strictEqual(w._pendingText, 'after the dump');
+    w.stop();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

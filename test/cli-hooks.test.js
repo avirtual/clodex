@@ -77,7 +77,7 @@ test('setupClaudeHook: writes the transcript-symlink script + name-only output +
   // additionalContext Claude Code may silently drop. Pin the derivation so a
   // regression back to a hardcoded event name is caught.
   const pendingBody = fs.readFileSync(pendingCmd, 'utf-8');
-  assert.match(pendingBody, /IN="\$\(cat\)"/, 'pending drain must read the hook input off stdin');
+  assert.match(pendingBody, /JSON\.parse\(fs\.readFileSync\(0, 'utf8'\)\)/, 'pending drain must read the hook input off stdin');
   assert.match(pendingBody, /hook_event_name/, 'pending drain must derive the output event from stdin');
   assert.match(pendingBody, /hookEventName: ev/, 'output event name must be the derived variable, not a literal');
 });
@@ -1163,4 +1163,127 @@ test('every claude seat settings turn the CLI recorder off so a user-level voice
     assert.deepStrictEqual(s.voice, { enabled: false }, n);
     assert.strictEqual(s.voiceEnabled, false, n);
   }
+});
+
+test('cleanupCodexHook: a hooks.json that no longer holds our bytes is never overwritten by the backup', () => {
+  const REGISTRY_DIR = tmp();
+  const cwd = tmp();
+  const h = mk(REGISTRY_DIR);
+  const hooksPath = path.join(cwd, '.codex', 'hooks.json');
+  const backup = hooksPath + '.wb-wrap-backup';
+  fs.mkdirSync(path.join(cwd, '.codex'), { recursive: true });
+  fs.writeFileSync(hooksPath, '{"v":1}');
+  h.setupCodexHook('cx', cwd);
+  fs.writeFileSync(hooksPath, '{"v":2}');
+  assert.strictEqual(fs.readFileSync(backup, 'utf8'), '{"v":1}');
+  h.cleanupCodexHook('cx', cwd);
+  assert.strictEqual(fs.readFileSync(hooksPath, 'utf8'), '{"v":2}');
+  assert.ok(!fs.existsSync(backup));
+
+  fs.writeFileSync(hooksPath, '{"v":1}');
+  h.setupCodexHook('cx', cwd);
+  fs.writeFileSync(hooksPath, '{"v":2}');
+  h.setupCodexHook('cx', cwd);
+  h.cleanupCodexHook('cx', cwd);
+  assert.strictEqual(fs.readFileSync(hooksPath, 'utf8'), '{"v":2}');
+
+  fs.writeFileSync(hooksPath, '{"v":1}');
+  h.setupCodexHook('cx', cwd);
+  fs.unlinkSync(hooksPath);
+  h.cleanupCodexHook('cx', cwd);
+  assert.strictEqual(fs.readFileSync(hooksPath, 'utf8'), '{"v":1}');
+});
+
+test('setupCodexHook: a crash-left Clodex body from another build never overwrites the user backup', () => {
+  const REGISTRY_DIR = tmp();
+  const cwd = tmp();
+  const h = mk(REGISTRY_DIR);
+  const hooksPath = path.join(cwd, '.codex', 'hooks.json');
+  fs.mkdirSync(path.join(cwd, '.codex'), { recursive: true });
+  fs.writeFileSync(hooksPath, '{"v":1}');
+  h.setupCodexHook('cx', cwd);
+  const foreign = JSON.stringify({ hooks: { SessionStart: [{ matcher: '', hooks: [{ type: 'command', command: '/elsewhere/codex-session-hook.sh' }] }] } });
+  fs.writeFileSync(hooksPath, foreign);
+  h.setupCodexHook('cx', cwd);
+  assert.strictEqual(fs.readFileSync(hooksPath + '.wb-wrap-backup', 'utf8'), '{"v":1}');
+  h.cleanupCodexHook('cx', cwd);
+  assert.strictEqual(fs.readFileSync(hooksPath, 'utf8'), '{"v":1}');
+});
+
+test('cleanupCodexHook: a failing backup restore does not throw out of the teardown', () => {
+  const REGISTRY_DIR = tmp();
+  const cwd = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupCodexHook('cy', cwd);
+  const backup = path.join(cwd, '.codex', 'hooks.json.wb-wrap-backup');
+  fs.mkdirSync(path.join(backup, 'x'), { recursive: true });
+  assert.ok(fs.statSync(backup).isDirectory());
+  assert.doesNotThrow(() => h.cleanupCodexHook('cy', cwd));
+});
+
+test('pending drain: an orphaned claim dir left by a dead drainer is delivered, not stranded', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('orph');
+  const orphan = path.join(REGISTRY_DIR, 'pending', 'orph.draining.hook.999999');
+  fs.mkdirSync(orphan, { recursive: true });
+  fs.writeFileSync(path.join(orphan, 'm0.json'), JSON.stringify({ text: 'stranded' }));
+  assert.throws(() => process.kill(999999, 0));
+  const out = runPending(REGISTRY_DIR, 'orph', JSON.stringify({ hook_event_name: 'UserPromptSubmit' }));
+  assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /stranded/);
+  assert.ok(!fs.existsSync(orphan));
+});
+
+test("pending drain: a LIVE drainer's claim dir is left alone", () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('busy');
+  const claim = path.join(REGISTRY_DIR, 'pending', 'busy.draining.idle.' + process.pid);
+  fs.mkdirSync(claim, { recursive: true });
+  fs.writeFileSync(path.join(claim, 'm0.json'), JSON.stringify({ text: 'mid-drain' }));
+  const out = runPending(REGISTRY_DIR, 'busy', JSON.stringify({ hook_event_name: 'UserPromptSubmit' }));
+  assert.strictEqual(out.trim(), '');
+  assert.deepStrictEqual(fs.readdirSync(claim), ['m0.json']);
+  assert.ok(!fs.existsSync(path.join(REGISTRY_DIR, 'pending', 'busy')));
+});
+
+test('pending drain: a hook input larger than ARG_MAX still drains the parked message', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('big');
+  parkFor(REGISTRY_DIR, 'big', { 'm0.json': { text: 'hello parked' } });
+  const input = JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: { content: 'x'.repeat(2 * 1024 * 1024) } });
+  assert.ok(input.length > 1048576);
+  const r = cp.spawnSync('bash', [pathFor(REGISTRY_DIR, 'big', 'pendingScript')], { input, encoding: 'utf-8' });
+  assert.strictEqual(r.status, 0);
+  assert.match(JSON.parse(r.stdout).hookSpecificOutput.additionalContext, /hello parked/);
+});
+
+test('SessionStart hook: the digest is emitted even when the input carries no transcript_path', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('nt');
+  assert.match(fs.readFileSync(pathFor(REGISTRY_DIR, 'nt', 'hookDigest'), 'utf-8'), /named 'nt'/);
+  const out = cp.execFileSync('bash', [pathFor(REGISTRY_DIR, 'nt', 'hook')],
+    { input: JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup' }), encoding: 'utf-8' });
+  assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /named 'nt'/);
+});
+
+test('SessionStart hook: the digest is emitted even when the transcript relink fails', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('rl');
+  const runDir = path.dirname(pathFor(REGISTRY_DIR, 'rl', 'transcript'));
+  fs.chmodSync(runDir, 0o500);
+  let out;
+  try {
+    assert.throws(() => fs.writeFileSync(path.join(runDir, 'probe'), ''));
+    out = cp.execFileSync('bash', [pathFor(REGISTRY_DIR, 'rl', 'hook')], {
+      input: JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup', transcript_path: path.join(REGISTRY_DIR, 't.jsonl') }),
+      encoding: 'utf-8',
+    });
+  } finally {
+    fs.chmodSync(runDir, 0o700);
+  }
+  assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /named 'rl'/);
 });
