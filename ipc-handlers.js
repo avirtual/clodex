@@ -704,7 +704,11 @@ function registerIpcHandlers(deps) {
     // Opt-out field like stripLevel/autoCompact: written only when ON, so an
     // ordinary (wired) session exports a template with no `noWire` key at all.
     if (entry.noWire === true) t.noWire = true;
+    if (entry.io === 'stream') t.io = 'stream';
+    if (typeof entry.effort === 'string' && entry.effort) t.effort = entry.effort;
+    if (Array.isArray(entry.plugins)) t.plugins = [...entry.plugins];
     templates.saveByName(t);
+    refreshAppMenu();
     return { ok: true, templates: templates.list() };
   });
 

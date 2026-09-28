@@ -689,6 +689,7 @@ test('t680: saving or removing a prompt, template or exec command through IPC re
     promptLibrary: { save: list, remove: list, list },
     templates: { save: list, saveByName: () => ({}), remove: list, list },
     execLibrary: { save: list, remove: list, list },
+    persistence: { get: () => ({ name: 's', type: 'claude' }) },
   }, { get(t, k) { return k in t ? t[k] : stub(); } });
   registerIpcHandlers(deps);
   const calls = [
@@ -696,12 +697,29 @@ test('t680: saving or removing a prompt, template or exec command through IPC re
     ['templates:save', [{ name: 't' }]], ['templates:saveByName', [{ name: 't' }]], ['templates:remove', ['t']],
     ['exec:save', ['c', JSON.stringify({ argv: ['/usr/bin/true'], schema: { type: 'object', additionalProperties: false, required: [], properties: {} } })]],
     ['exec:remove', ['c']],
+    ['templates:exportFromSession', ['s', 'tpl']],
   ];
   for (const [ch, args] of calls) {
     assert.strictEqual(typeof handlers[ch], 'function', `ENTER: ${ch} registered`);
     handlers[ch]({}, ...args);
   }
   assert.strictEqual(refreshed.length, calls.length, 'one rebuild per library write');
+});
+
+test('templates:exportFromSession carries io, effort and an empty plugins list into the template', () => {
+  const { registerIpcHandlers } = require('../ipc-handlers');
+  const handlers = {};
+  let saved = null;
+  const list = () => [];
+  const deps = new Proxy({
+    handle: (ch, fn) => { handlers[ch] = fn; }, on: () => {},
+    persistence: { get: () => ({ name: 's', type: 'claude', io: 'stream', effort: 'high', plugins: [] }) },
+    templates: { save: list, saveByName: (t) => { saved = t; return {}; }, remove: list, list },
+  }, { get(t, k) { return k in t ? t[k] : () => () => {}; } });
+  registerIpcHandlers(deps);
+  const res = handlers['templates:exportFromSession']({}, 's', 'tpl');
+  assert.strictEqual(res.ok, true, 'ENTER: the export landed');
+  assert.deepStrictEqual([saved.io, saved.effort, saved.plugins], ['stream', 'high', []]);
 });
 
 // Build the FULL app-menu template with electron stubbed, capturing what
