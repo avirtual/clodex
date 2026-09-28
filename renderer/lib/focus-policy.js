@@ -33,8 +33,9 @@ function shouldFocusNewSession({
 // behaviour for the manual path; the provenance rule still holds an agent
 // spawn back, so a lost query cannot revive the theft this ticket is about.
 async function decideNewSessionFocus({
-  name, focused = null, agentInitiated = false, queryDraftOpen = null,
+  name, focused = null, wasFocused = null, agentInitiated = false, queryDraftOpen = null,
 } = {}) {
+  if (wasFocused && wasFocused === name) return name;
   let focusedDraftOpen = false;
   // Not asked when the new session IS the focused one (nothing to steal from)
   // or when there is no focused session — a query whose answer cannot change

@@ -130,6 +130,21 @@ test('a session created into its own focus is not asked about itself', async () 
   assert.strictEqual(target, 'clodex');
 });
 
+test('a seat that was focused when it exited takes focus back on its respawn, even when the push is background', async () => {
+  const asked = [];
+  const target = await decideNewSessionFocus({
+    name: 'clodex', focused: 'other', wasFocused: 'clodex', agentInitiated: true,
+    queryDraftOpen: draftQuery(true, asked),
+  });
+  assert.deepStrictEqual(asked, [], 'the interim seat\'s draft is not the operator\'s');
+  assert.strictEqual(target, 'clodex');
+  const unrelated = await decideNewSessionFocus({
+    name: 'fresh', focused: 'other', wasFocused: 'clodex', agentInitiated: true,
+    queryDraftOpen: draftQuery(false),
+  });
+  assert.strictEqual(unrelated, null, 'ENTER: another seat\'s respawn memory does not move focus to a new one');
+});
+
 test('the full decision surface, so a silently dropped input is visible', () => {
   // deepStrictEqual on the whole matrix rather than four spot checks: an
   // argument that stops being read still satisfies the case that agrees with
@@ -264,6 +279,21 @@ test('the renderer routes new sessions through the policy, not straight to switc
   assert.ok(reattach, 'ENTER: the reattach case is still there to check');
   assert.match(reattach[0], /switchToNewSession\(\s*name,\s*\{\s*agentInitiated:\s*background === true/);
   assert.doesNotMatch(reattach[0], /\bswitchSession\(/, 'must not bypass the policy');
+});
+
+test('an expected exit of the focused seat is remembered and handed to the policy on its respawn', () => {
+  const src = read('renderer/renderer.js');
+  const exit = src.match(/window\.api\.onSessionExit\([\s\S]*?\n\}\);/);
+  assert.ok(exit, 'ENTER: the session-exit handler is still there to check');
+  const remember = exit[0].indexOf('respawnFocus.add(name)');
+  assert.ok(remember > 0, 'the exit handler must remember the focused seat');
+  assert.ok(remember < exit[0].indexOf('removeSession(name)'),
+    'and must read activeSession BEFORE removeSession moves it off the exiting seat');
+  assert.match(exit[0], /if \(activeSession === name && meta && meta\.expected[^\n]*\) respawnFocus\.add\(name\);/);
+  const fn = src.match(/async function switchToNewSession[\s\S]*?\n\}/);
+  assert.ok(fn, 'ENTER: switchToNewSession is still the create-time activation step');
+  assert.match(fn[0], /const wasFocused = respawnFocus\.has\(name\) \? name : null;/);
+  assert.match(fn[0], /planNewSession\(\{[^}]*\bwasFocused\b/);
 });
 
 test('session:draftOpen is contracted, so the renderer can actually ask', () => {
