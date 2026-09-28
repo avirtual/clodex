@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Session manager: a seat whose spawn fails at the skills gate or the muse settings write no longer leaves a stale proxy route row; Delete Session… keeps the worktree (and says so) when the old process has not exited within 8s instead of removing a checkout something still runs in; cancelling a scratch mark whose begin is still pending is acknowledged rather than refused; a reboot-notice flush on a recycling seat disarms its timer.
 - Docs: an ssh-installed node's clodexctl context needs --url with its --token (a token alone names no transport); cli/README corrected.
 - Sandbox on Linux: a work volume whose root was already re-owned by 5.90.0 but whose files were not is fixed on the next start; a peer note claimed into an unreadable inbox is logged and skipped instead of crashing the claim.
 - Sandbox: a work volume first populated by the image user is fully re-owned on a Linux host, a desktop uid with no passwd entry no longer breaks box start, and Stop no longer overwrites port numbers you were still typing.
