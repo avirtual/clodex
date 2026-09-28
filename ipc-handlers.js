@@ -34,6 +34,7 @@ const { readBashConsole, RECORD_NAME_RE } = require('./bash-console');
 const { createTranscriptSpikeReader } = require('./transcript-spike');
 const { mergeCompactNotices } = require('./compact-notices');
 const { isAgentType } = require('./cli-adapters');
+const { findCodexRollout, codexRolloutsForCwd } = require('./seat-config');
 // The shipped thresholds, read from the module that DECIDES with them rather
 // than restated here: Preferences shows them as the values in force when the
 // operator has set nothing, and a second copy would show a number the reminder
@@ -972,13 +973,49 @@ function registerIpcHandlers(deps) {
 
   handle('session:getArgs', (_e, name) => readSessionArgs(name));
 
-  handle('session:history', (_e, name) => {
-    const entry = persistence.get(name);
-    if (!entry) return { ok: false, error: 'Session not found' };
-    if (entry.type !== 'claude' && entry.type !== 'codex') return { ok: true, sessions: [], activeId: null };
+  const claudeHistoryLayout = (name, entry) => {
     let slugDir = null;
     try { slugDir = path.dirname(fs.realpathSync(pathFor(REGISTRY_DIR, name, 'transcript'))); } catch {}
     if (!slugDir) slugDir = claudeProjectDir(entry.cwd);
+    return {
+      fileOf: (sid) => (slugDir ? path.join(slugDir, `${sid}.jsonl`) : null),
+      recent: (cutoff) => {
+        const found = [];
+        try {
+          for (const fn of fs.readdirSync(slugDir)) {
+            if (!fn.endsWith('.jsonl')) continue;
+            let st; try { st = fs.statSync(path.join(slugDir, fn)); } catch { continue; }
+            if (st.mtimeMs >= cutoff) found.push(fn.slice(0, -6));
+          }
+        } catch {}
+        return found;
+      },
+    };
+  };
+  const codexHistoryLayout = (name, entry) => {
+    let home = null;
+    try {
+      const real = fs.realpathSync(pathFor(REGISTRY_DIR, name, 'transcript'));
+      const sessions = path.dirname(path.dirname(path.dirname(path.dirname(real))));
+      if (path.basename(sessions) === 'sessions') home = path.dirname(sessions);
+    } catch {}
+    if (!home) home = (entry.env && entry.env.CODEX_HOME) || path.join(os.homedir(), '.codex');
+    const uuidTail = (sid) => (String(sid).match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i) || [null, sid])[1];
+    return {
+      fileOf: (sid) => findCodexRollout({ fs, path }, home, { sessionId: uuidTail(sid) }),
+      recent: (cutoff) => (entry.cwd
+        ? codexRolloutsForCwd({ fs, path }, home, { cwd: entry.cwd, sinceMs: cutoff }).map((p) => path.basename(p, '.jsonl'))
+        : []),
+    };
+  };
+  const historyLayouts = { claude: claudeHistoryLayout, codex: codexHistoryLayout };
+
+  handle('session:history', (_e, name) => {
+    const entry = persistence.get(name);
+    if (!entry) return { ok: false, error: 'Session not found' };
+    const layoutFor = isAgentType(entry.type) ? historyLayouts[entry.type] : null;
+    if (!layoutFor) return { ok: true, sessions: [], activeId: null };
+    const layout = layoutFor(name, entry);
     const activeId = entry.sessionId || null;
     const tracked = new Set([...(Array.isArray(entry.sessionIds) ? entry.sessionIds : []), ...(activeId ? [activeId] : [])]);
     const out = [];
@@ -986,7 +1023,8 @@ function registerIpcHandlers(deps) {
     const add = (sid, inferred) => {
       if (!sid || seen.has(sid)) return;
       seen.add(sid);
-      const meta = slugDir ? readSessionMeta(path.join(slugDir, `${sid}.jsonl`)) : null;
+      const file = layout.fileOf(sid);
+      const meta = file ? readSessionMeta(file) : null;
       if (!meta) {
         if (!inferred) out.push({ sessionId: sid, title: null, lastActive: null, active: sid === activeId, inferred: false, missing: true });
         return;
@@ -994,16 +1032,9 @@ function registerIpcHandlers(deps) {
       out.push({ sessionId: sid, title: meta.title, firstActive: meta.first, lastActive: meta.last, turns: meta.turns, active: sid === activeId, inferred });
     };
     for (const sid of tracked) add(sid, false);
-    try {
-      const cutoff = Date.now() - 7 * 24 * 3600 * 1000;
-      for (const fn of fs.readdirSync(slugDir)) {
-        if (!fn.endsWith('.jsonl')) continue;
-        const sid = fn.slice(0, -6);
-        if (tracked.has(sid)) continue;
-        let st; try { st = fs.statSync(path.join(slugDir, fn)); } catch { continue; }
-        if (st.mtimeMs >= cutoff) add(sid, true);
-      }
-    } catch {}
+    for (const sid of layout.recent(Date.now() - 7 * 24 * 3600 * 1000)) {
+      if (!tracked.has(sid)) add(sid, true);
+    }
     out.sort((a, b) => (Date.parse(b.lastActive || 0) || 0) - (Date.parse(a.lastActive || 0) || 0));
     return { ok: true, sessions: out, activeId };
   });
@@ -2026,7 +2057,7 @@ function registerIpcHandlers(deps) {
 
   on('session:context-menu', (e, { name, cwd }) => {
     const entry = persistence.get(name) || {};
-    const isAgent = entry.type === 'claude' || entry.type === 'codex';
+    const isAgent = isAgentType(entry.type);
     let seatDir = null;
     let seatDirExists = false;
     try {

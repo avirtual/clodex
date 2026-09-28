@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Codex seats: the conversation history menu now resolves rollouts by session id and this project's cwd instead of reading one day directory of the shared rollout store, so older conversations are no longer shown as missing and another project's same-day rollout is never offered for resume; the session context menu shows Prompts, Move Session… and Export as Template… for every agent type, including muse.
 - Seats no longer receive the CLI's per-call "list what you need next" nudge or its secondary reminder: Clodex's shipped env defaults turn both off, since the seat prompts already say when to write and what to request.
 - A filed body whose file could not be read the first time is read again when you unfold it again.
 - The Tickets pane's quiet refresh keeps keyboard focus on the Feed's Refresh button and the Closed list's Newer/Older pager, and never repaints the Closed or Feed view over an edit you started while it was loading.
