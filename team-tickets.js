@@ -813,8 +813,11 @@ function createTicketMethods(deps, shared) {
             + (envBadType.length ? ` — env keys [${envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)` : ''));
         } catch (err) {
           log.error('intent', `spawn by ${spawner.name} → ${name} failed: ${err.message}`);
-          // The worktree outlives a failed spawn otherwise: create() threw, so no
-          // session record exists and nothing on the UI can offer to remove it.
+          if (this.sessions.has(name)) {
+            reply(`warning: "${name}" is running, but its spawn did not finish: ${err.message}`
+              + (wt ? ` — its worktree ${wt.path} is kept` : ''));
+            return;
+          }
           if (wt) {
             const r = await gitWorktree.removeWorktree(wt.path).catch(() => ({ ok: false }));
             log.info('worktree', `${r && r.ok ? 'removed' : 'ORPHANED'} ${wt.path} after failed spawn of ${name}`);
@@ -1545,10 +1548,12 @@ function createTicketMethods(deps, shared) {
     _readSeatCursors(team) {
       const file = this._seatCursorPath(team);
       if (!file) return {};
+      let raw;
+      try { raw = fs.readFileSync(file, 'utf8'); } catch (e) { return e && e.code === 'ENOENT' ? {} : null; }
       try {
-        const o = JSON.parse(fs.readFileSync(file, 'utf8'));
-        return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
-      } catch { return {}; }
+        const o = JSON.parse(raw);
+        return (o && typeof o === 'object' && !Array.isArray(o)) ? o : null;
+      } catch { return null; }
     },
 
     _writeSeatCursor(team, seat, cursor) {
@@ -1556,9 +1561,10 @@ function createTicketMethods(deps, shared) {
       if (!file || !seat) return false;
       try {
         const all = this._readSeatCursors(team);
+        if (!all) return false;
         all[seat] = cursor;
         ensureDir(path.dirname(file));
-        fs.writeFileSync(file, JSON.stringify(all, null, 2));
+        atomicWriteFileSync(file, JSON.stringify(all, null, 2));
         return true;
       } catch { return false; }
     },
@@ -1575,7 +1581,9 @@ function createTicketMethods(deps, shared) {
         if (!entry) return { ok: false, error: 'no record' };
         if (!standingSeat(entry)) return { ok: false, error: 'not a standing seat' };
         const { ledger } = this._seatLedger(name, entry);
-        const cursor = this._readSeatCursors(team)[name] || null;
+        const cursors = this._readSeatCursors(team);
+        if (!cursors) return { ok: false, error: 'the seat-cost cursor file is unreadable' };
+        const cursor = cursors[name] || null;
         const row = teamCost.seatLedgerRow({
           seat: name,
           team: team.name,
@@ -1593,13 +1601,14 @@ function createTicketMethods(deps, shared) {
         if (!row) return { ok: false, error: 'nothing new since the last stamp' };
         const w = this._appendTeamLedger(team, row);
         if (!w.ok) return w;
-        this._writeSeatCursor(team, name, {
+        const wrote = this._writeSeatCursor(team, name, {
           usd: row.to,
           tokens: (cursor && Number(cursor.tokens) || 0) + row.tokens,
           requests: (cursor && Number(cursor.requests) || 0) + row.requests,
           turns: (cursor && Number(cursor.turns) || 0) + row.turns,
           at: row.at,
         });
+        if (!wrote) return { ok: false, path: w.path, usd: row.usd, error: 'the seat-cost cursor could not be written' };
         return { ok: true, path: w.path, usd: row.usd, error: null };
       } catch (e) {
         return { ok: false, error: e.message };
@@ -2897,6 +2906,12 @@ function createTicketMethods(deps, shared) {
           return;
         }
       }
+      try {
+        createTeam({ name, root, lead, kit: intent.kit, dryRun: true });
+      } catch (err) {
+        reply(`error: ${err.message}`);
+        return;
+      }
       if (cls.kind !== 'takeover') {
         if (cls.kind === 'new-absent') {
           try { fs.mkdirSync(root); } catch (err) {
@@ -3293,6 +3308,10 @@ function createTicketMethods(deps, shared) {
         return;
       }
       let box = mgr.get(boxId);
+      if (!box && (action === 'status' || action === 'down')) {
+        reply(`sandbox ${boxId}: no box — this team has none; [agent:team sandbox up] creates it`);
+        return;
+      }
       if (!box) {
         const made = mgr.create(boxId, `${team.name} team`);
         if (made && made.ok === false) { reply(`error: ${made.error}`); return; }
@@ -3392,6 +3411,8 @@ function createTicketMethods(deps, shared) {
       if (intent.sub === 'role-set' && !roles[name]) return { ok: false, error: `role "${name}" not found on team "${team.name}" — use role-add (${team.file})` };
       if (intent.sub === 'role-add' && roles[name]) return { ok: false, error: `role "${name}" already exists on team "${team.name}" — use role-set` };
       const current = roles[name] && typeof roles[name] === 'object' ? roles[name].template : null;
+      const sharers = this._rolesNaming(team, 'template', name).filter((r) => r !== name);
+      if (sharers.length) return { ok: false, error: `template "${name}" is named by role(s): ${sharers.join(', ')} — model: would re-model them too; name a different role or repoint them first` };
       const stem = intent.template || current || 'clodex-team-hand';
       let base = readTeamJson({ fs, path }, team, 'templates', stem);
       if (!base) {
