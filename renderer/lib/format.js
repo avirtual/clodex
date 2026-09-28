@@ -38,7 +38,7 @@ function fmtMinutes(remaining_s) {
 // Anything not a finite number formats as '0' — never as itself.
 function fmtTokens(n) {
   if (typeof n !== 'number' || !Number.isFinite(n)) return '0';
-  if (n >= 1e6 || Math.round(n / 1000) >= 1000) return `${+(n / 1e6).toFixed(1)}M`;
+  if (Math.round(n / 1000) >= 1000) return `${+(n / 1e6).toFixed(1)}M`;
   if (n >= 1000) return Math.round(n / 1000) + 'k';
   return String(n);
 }

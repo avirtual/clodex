@@ -8,8 +8,8 @@
 
 function fmtUsd(v) {
   if (typeof v !== 'number' || !isFinite(v)) return null;
-  if (v >= 100) return `$${v.toFixed(0)}`;
-  return v >= 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(4)}`;
+  if (+v.toFixed(2) >= 100) return `$${v.toFixed(0)}`;
+  return +v.toFixed(4) >= 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(4)}`;
 }
 
 function fmtInt(v) {
@@ -18,15 +18,15 @@ function fmtInt(v) {
 
 function fmtTokens(n) {
   if (typeof n !== 'number' || !isFinite(n)) return null;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (Math.round(n / 1000) >= 1000) return `${(n / 1e6).toFixed(1)}M`;
   if (n >= 1000) return `${Math.round(n / 1000)}k`;
   return String(n);
 }
 
 function fmtBytes(n) {
   if (typeof n !== 'number' || !isFinite(n)) return null;
-  if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
-  if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
+  if (Math.round(n / 1e6) >= 1000) return `${(n / 1e9).toFixed(1)} GB`;
+  if (Math.round(n / 1000) >= 1000) return `${Math.round(n / 1e6)} MB`;
   if (n >= 1000) return `${Math.round(n / 1000)} KB`;
   return `${n} B`;
 }
@@ -42,13 +42,18 @@ function fmtAge(ms) {
 
 function row(k, v, tip) { return v == null ? null : { k, v, tip }; }
 
+function ago(ms) {
+  const age = fmtAge(ms);
+  return age == null ? null : `${age} ago`;
+}
+
 // Identity + provenance.
 function aboutSection(info, now) {
   const rows = [
     row('type', info.type ? `${info.type}${info.backend ? ` · ${info.backend}` : ''}` : null),
     row('model', info.model),
     row('team', info.team),
-    row('created', info.createdAt ? `${fmtAge(now - info.createdAt)} ago` : null,
+    row('created', info.createdAt ? ago(now - info.createdAt) : null,
       info.createdAt ? new Date(info.createdAt).toLocaleString() : null),
     row('conversation', info.sessionId ? info.sessionId.slice(0, 8) : null, info.sessionId),
     // The count of session_ids this seat has held. Every /clear mints a new one,
@@ -83,15 +88,15 @@ function costSection(info) {
   const rows = [];
   const sc = info.sinceCompact;
   if (sc && typeof sc.estUsd === 'number') {
-    rows.push({
-      k: sc.compacted ? 'since last compact' : 'since start',
-      v: fmtUsd(sc.estUsd),
-      tip: sc.compacted ? 'Spend since the most recent compact boundary' : 'This conversation has never compacted',
-    });
+    rows.push(row(
+      sc.compacted ? 'since last compact' : 'since start',
+      fmtUsd(sc.estUsd),
+      sc.compacted ? 'Spend since the most recent compact boundary' : 'This conversation has never compacted',
+    ));
   }
-  if (info.run) rows.push({ k: 'this run', v: fmtUsd(info.run.usd), tip: "Since the agent's CLI process started (resets when the seat respawns)" });
+  if (info.run) rows.push(row('this run', fmtUsd(info.run.usd), "Since the agent's CLI process started (resets when the seat respawns)"));
   if (info.session) {
-    rows.push({ k: 'this conversation', v: fmtUsd(info.session.usd), tip: 'Whole current conversation, across app restarts. Reset by /clear.' });
+    rows.push(row('this conversation', fmtUsd(info.session.usd), 'Whole current conversation, across app restarts. Reset by /clear.'));
   }
   const a = info.agent;
   if (a && a.total > 0) {
@@ -99,16 +104,16 @@ function costSection(info) {
     // ledger keeps only the newest 500 conversations, so an old seat's earliest
     // spend is genuinely gone and a bare total would read as complete.
     const partial = a.known < a.total;
-    rows.push({
-      k: 'this agent, all time',
-      v: fmtUsd(a.usd),
-      tip: partial
+    rows.push(row(
+      'this agent, all time',
+      fmtUsd(a.usd),
+      partial
         ? `Every conversation this seat has held. ${a.known} of ${a.total} are still in the ledger — older ones have been pruned, so the real figure is higher.`
         : `Every conversation this seat has held (${a.total}), summed. Never resets.`,
-    });
+    ));
     if (partial) rows.push({ k: '', v: `${a.known}/${a.total} conversations in the ledger`, tip: null });
   }
-  return { title: 'Cost', rows };
+  return { title: 'Cost', rows: rows.filter(Boolean) };
 }
 
 // Volume. `requests` is API roundtrips (tool loops included), not prompts.
@@ -134,7 +139,7 @@ function contextSection(info, now) {
     row('messages', fmtInt(ctx.messages)),
     row('strip level', info.stripLevel ? `L${info.stripLevel}` : null, 'Thinking-block stripping configured for this session'),
     row('transcript', t ? fmtBytes(t.bytes) : null, t && t.lines ? `${fmtInt(t.lines)} records on disk` : null),
-    row('last write', t && t.lastTs ? `${fmtAge(now - Date.parse(t.lastTs))} ago` : null),
+    row('last write', t && t.lastTs ? ago(now - Date.parse(t.lastTs)) : null),
   ].filter(Boolean);
   return { title: 'Context', rows };
 }
