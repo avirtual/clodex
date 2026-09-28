@@ -45,21 +45,23 @@ function initSelectionPopover({ getActiveSession }) {
     catch { return null; }
   }
 
-  // The badge is a hint that opening is worth it, so a failed read leaves it
-  // alone rather than clearing: "0" would be a claim, and the one thing this
-  // module must not do is assert a state it could not confirm.
   const activeName = () => (getActiveSession ? getActiveSession() : null);
+  let badgeFor = null;
+
+  function clearBadge() { btn.classList.remove('live'); countEl.textContent = ''; badgeFor = null; }
 
   function paintBadge(name, data) {
-    if (!data || activeName() !== name) return;
+    if (activeName() !== name) return;
+    if (!data) { if (badgeFor !== name) clearBadge(); return; }
     const n = liveCount(data);
     btn.classList.toggle('live', n > 0);
     countEl.textContent = n > 0 ? String(n) : '';
+    badgeFor = name;
   }
 
   async function refreshBadge() {
     const name = activeName();
-    if (!name) { btn.classList.remove('live'); countEl.textContent = ''; return; }
+    if (!name) { clearBadge(); return; }
     paintBadge(name, await fetchFor(name));
   }
 

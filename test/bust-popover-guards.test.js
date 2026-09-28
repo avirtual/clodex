@@ -75,6 +75,7 @@ test('the bust panel\'s genuine count agrees with the chip that opened it', asyn
     await h.open();
     assert.ok(!h.body().includes('Loading'), 'ENTER: the fetch resolved and painted');
     assert.ok(h.body().includes(`<b>${chip}</b> genuine`), `panel disagrees with 💥 ${chip}: ${h.body()}`);
+    assert.ok(!h.body().includes('Amber ='), 'no row legend when no row is listed');
   } finally { h.restore(); }
 });
 
@@ -115,6 +116,7 @@ test('the later open\'s bust response wins over an earlier open still in flight'
     d1.resolve({ ok: true, data: { count: 10, busts: [content(1)] } });
     await first;
     assert.ok(h.body().includes('<b>5</b> genuine'), h.body());
+    assert.ok(h.body().includes('Amber ='), 'listed rows keep their legend');
   } finally { h.restore(); }
 });
 

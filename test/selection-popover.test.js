@@ -52,7 +52,6 @@ function harness(inspect, getActiveSession) {
     btn,
     countEl,
     body: () => els.get('selection-popover-body').innerHTML,
-    setLive(n) { btn.classList.add('live'); countEl.textContent = String(n); },
     restore() { global.document = prev.document; global.window = prev.window; },
   };
 }
@@ -60,9 +59,11 @@ function harness(inspect, getActiveSession) {
 const withHints = (n) => ({ enabled: true, proxy: { hints: Array.from({ length: n }, () => ({})) }, queued: [] });
 
 test('a failed inspect read on open leaves the live badge exactly as it was', async () => {
-  const h = harness(async () => { throw new Error('proxy down'); }, () => 'a');
+  const reads = [async () => withHints(2), async () => { throw new Error('proxy down'); }];
+  const h = harness(() => reads.shift()(), () => 'a');
   try {
-    h.setLive(2);
+    await h.api.refreshSelectionBadge();
+    assert.strictEqual(h.countEl.textContent, '2', 'ENTER: a successful read painted a');
     await h.api.openSelectionPopover();
     assert.ok(h.body().includes('Could not read what is queued.'), 'ENTER: the failed-read branch ran');
     assert.strictEqual(h.countEl.textContent, '2');
@@ -87,6 +88,19 @@ test('a refresh started for a session that is no longer active does not repaint 
     await rb;
     pending.get('a')(withHints(2));
     await ra;
+    assert.strictEqual(h.countEl.textContent, '');
+    assert.ok(!h.btn.classList.contains('live'));
+  } finally { h.restore(); }
+});
+
+test('a failed read for a newly active seat clears the count the badge held for the previous seat', async () => {
+  let active = 'a';
+  const h = harness(async (name) => (name === 'a' ? withHints(2) : null), () => active);
+  try {
+    await h.api.refreshSelectionBadge();
+    assert.strictEqual(h.countEl.textContent, '2', 'ENTER: a successful read painted a');
+    active = 'b';
+    await h.api.refreshSelectionBadge();
     assert.strictEqual(h.countEl.textContent, '');
     assert.ok(!h.btn.classList.contains('live'));
   } finally { h.restore(); }

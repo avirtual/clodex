@@ -607,6 +607,9 @@ test('a peer ctx query that asks for the plain read gets the plain read, not the
   caps = null;
   f.query('seat', 'ctx', { utilization: true });
   assert.deepStrictEqual(recorded[2], { utilization: false }, 'the owner still decides whether a scan is possible');
+  caps = { context_utilization: true };
+  f.query('seat', 'ctx', undefined);
+  assert.deepStrictEqual(recorded[3], { utilization: true }, 'an older viewer sending no args still gets the scan');
 });
 
 test('the peer popoverApi forwards ctx opts, and a scan-capable owner advertises ctxScan to its viewers', () => {

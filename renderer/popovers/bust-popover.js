@@ -101,7 +101,7 @@ function initBustPopover({ popoverApi, proxyState, barPopovers }) {
     // a treatment nothing in the list has. A cold-cache row that DID cost tokens
     // is still listed and still reads dim.
     const note = '<div class="cost-note">Amber = a real injected-prefix change worth fixing (model swap, date rollover, CLAUDE.md edit). Dim = expected (a one-time deploy tax that self-heals, or a compact rewriting its own summary).</div>';
-    return triad + head + `<div class="bust-list">${rows}</div>` + designedNote + lapseNote + note + link;
+    return triad + head + `<div class="bust-list">${rows}</div>` + designedNote + lapseNote + (listed.length ? note : '') + link;
   }
 
   let openSeq = 0;

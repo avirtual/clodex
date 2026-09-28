@@ -260,7 +260,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, switchSes
       const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
       const rr = await window.api.restartSession(name, { resumeId: sid });
       if (!rr || !rr.ok) { alert(`Resume failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
-      if (snap.type) { rebuildLiveRow(name, snap, { io: rr.io }); switchSession(name); }
+      if (snap.type) { rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend }); switchSession(name); }
     });
     document.body.appendChild(historyMenu);
     placeAboveAnchor(historyMenu, anchorBtn, BAR_ANCHOR.session);
@@ -293,7 +293,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, switchSes
     const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
     const rr = await window.api.restartSession(name, { fresh: true });
     if (!rr || !rr.ok) { alert(`Hard restart failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
-    if (snap.type) { rebuildLiveRow(name, snap, { io: rr.io }); switchSession(name); }
+    if (snap.type) { rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend }); switchSession(name); }
   }
 
   // --- Consolidated session-actions menu (the `⚙ session ▾` bar button) ------

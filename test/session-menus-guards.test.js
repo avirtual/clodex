@@ -119,21 +119,21 @@ function rebuildHarness(api) {
 }
 
 test('hard restart rebuilds the row through rebuildLiveRow with the snapshot it took', async () => {
-  const { h, rebuilt } = rebuildHarness({ restartSession: async () => ({ ok: true, io: 'pty' }) });
+  const { h, rebuilt } = rebuildHarness({ restartSession: async () => ({ ok: true, io: 'pty', backend: 'kimi' }) });
   try {
     await h.menus.doHardRestart('s');
     assert.strictEqual(rebuilt.length, 1, 'the injected rebuild ran');
     assert.strictEqual(rebuilt[0].snap.account, 'sub-2');
     assert.strictEqual(rebuilt[0].snap.noWire, true);
     assert.strictEqual(rebuilt[0].snap.label, 'Renamed');
-    assert.deepStrictEqual(rebuilt[0].res, { io: 'pty' });
+    assert.deepStrictEqual(rebuilt[0].res, { io: 'pty', backend: 'kimi' });
   } finally { h.restore(); }
 });
 
 test('a history resume rebuilds the row through rebuildLiveRow with the snapshot it took', async () => {
   const { h, rebuilt } = rebuildHarness({
     getSessionHistory: async () => ({ ok: true, sessions: [{ sessionId: 'abcdef1234', title: 't' }] }),
-    restartSession: async () => ({ ok: true, io: 'stream' }),
+    restartSession: async () => ({ ok: true, io: 'stream', backend: 'kimi' }),
   });
   try {
     await h.menus.openHistoryMenu('a', mkEl());
@@ -142,7 +142,7 @@ test('a history resume rebuilds the row through rebuildLiveRow with the snapshot
     await h.last().fire('click', item);
     assert.strictEqual(rebuilt.length, 1, 'the injected rebuild ran');
     assert.strictEqual(rebuilt[0].snap.account, 'sub-2');
-    assert.deepStrictEqual(rebuilt[0].res, { io: 'stream' });
+    assert.deepStrictEqual(rebuilt[0].res, { io: 'stream', backend: 'kimi' });
   } finally { h.restore(); }
 });
 

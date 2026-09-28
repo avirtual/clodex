@@ -696,7 +696,7 @@ function createRemoteWiring(deps) {
             case 'ctx': {
               const snap = proxyPoller.snapshot(name);
               const caps = (snap && snap.capabilities) || {};
-              return fetchProxyContext(name, { utilization: !!a.utilization && !!(caps.context_utilization || caps.context_skills) });
+              return fetchProxyContext(name, { utilization: a.utilization !== false && !!(caps.context_utilization || caps.context_skills) });
             }
             case 'report': return fetchProxyReport(name, { detail: !!a.detail });
             case 'bust': return fetchProxyBust(name);

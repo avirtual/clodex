@@ -140,7 +140,7 @@ function isInherentCompact(t, loc) {
 // moment of the lapse rather than against that turn. It carries no locus, no
 // diff, and `0 tok rewritten · 0%`, which is the row contradicting itself: a
 // FULL-REWRITE that rewrote nothing. Listing them buries the busts that did cost
-// something, and the count in the header stops meaning "what this session paid".
+// something.
 //
 // BOTH clauses are required, and the second is the one that keeps this honest.
 // A zero-token row that DOES carry a locus still says WHAT changed (a CLAUDE.md
