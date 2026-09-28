@@ -225,3 +225,17 @@ test('a team prompt row offers no Inject — that is a library affordance', () =
 // createEngine starts background timers that keep the loop alive.
 const { after } = require('node:test');
 after(() => { setImmediate(() => process.exit(0)); });
+
+test('a prompt kind outside PROMPT_KINDS lists no team rows — the team half is confined like the library half', () => {
+  const { tmp, registryDir, eng } = mkEngine('rb-f5-', { teams: { x: { system: { a: 'body' } } } });
+  const outside = path.join(tmp, 'outside');
+  fs.mkdirSync(outside, { recursive: true });
+  fs.writeFileSync(path.join(outside, 'private-note.md'), 'secret');
+  const promptsDir = path.join(registryDir, 'teams', 'x', 'prompts');
+  const rel = path.relative(promptsDir, outside);
+
+  assert.ok(eng.listAllPrompts('system').some((r) => r.team === 'x' && r.name === 'a'), 'team rows are reachable');
+  assert.ok(fs.existsSync(path.join(promptsDir, rel, 'private-note.md')), 'the traversing kind resolves to the outside file');
+
+  assert.deepStrictEqual(eng.listAllPrompts(rel), []);
+});
