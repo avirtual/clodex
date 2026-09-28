@@ -245,3 +245,42 @@ test('the wire exposes its served base path read-only, like its port', () => {
     getSessions: () => [], getTranscript: () => ({ ok: true, messages: [] }), send: () => ({ ok: true }),
   }).basePath, '', 'and an unset prefix reads as the empty string, not undefined');
 });
+
+async function until(label, pred) {
+  for (let i = 0; i < 400; i += 1) {
+    if (pred()) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`timed out waiting for: ${label}`);
+}
+
+test('turning the wire off before the first listen completes leaves nothing listening on the port', async () => {
+  const uiSettings = mkStores();
+  const port = await freePort();
+  uiSettings.set({ remoteEnabled: true, remotePort: port });
+  const w = mkWiring(uiSettings);
+  try {
+    w.sync();
+    uiSettings.set({ remoteEnabled: false });
+    w.sync();
+    await until('the disable path to drop the engine handle', () => w.server() === null);
+    await assert.rejects(req(port, '/api/sessions'), /ECONNREFUSED/,
+      'the operator turned the wire off, so the port must not answer');
+    assert.deepStrictEqual(w.errors(), []);
+  } finally { w.stop(); }
+});
+
+test('two syncs in one tick leave exactly one server the engine can see', async () => {
+  const uiSettings = mkStores();
+  const port = await freePort();
+  uiSettings.set({ remoteEnabled: true, remotePort: port });
+  const w = mkWiring(uiSettings);
+  try {
+    w.sync();
+    w.sync();
+    assert.ok(await serving(port, '/api/sessions'), 'ENTER: the wire came up');
+    await new Promise((r) => setImmediate(r));
+    assert.ok(w.server() && w.server().running, 'the engine holds the listening server');
+    assert.deepStrictEqual(w.errors(), [], 'and no second bind collided with it');
+  } finally { w.stop(); }
+});

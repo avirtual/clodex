@@ -345,7 +345,24 @@ function createRemoteWiring(deps) {
   }
   importCreate.check = importNameTaken;
 
+  let startPending = null;
+  let resyncWanted = false;
+  let tokenRefreshWanted = false;
+
+  function settleStart() {
+    startPending = null;
+    if (tokenRefreshWanted) {
+      tokenRefreshWanted = false;
+      resyncWanted = false;
+      refreshRemoteToken();
+    } else if (resyncWanted) {
+      resyncWanted = false;
+      syncRemoteServer();
+    }
+  }
+
   function syncRemoteServer() {
+    if (startPending) { resyncWanted = true; return; }
     watchInbox();
     const s = getUiSettings().get();
     const envEnabled = process.env.CLODEX_REMOTE_ENABLE === '1';
@@ -716,15 +733,18 @@ function createRemoteWiring(deps) {
     getRemoteServer().setWtermCallbacks(wterm.wtermOpen ? wterm : null);
     setRemoteError(null);
     const started = getRemoteServer();
-    started.start().then(() => {
+    const run = started.start().then(() => {
       if (!constructed) return;
       try {
         log.info('remote', `serving on ${bindHost}:${started.port}${started.basePath ? ` under ${started.basePath}` : ' with no prefix'}`);
       } catch {}
     }).catch((e) => {
+      if (getRemoteServer() !== started) return;
       setRemoteError(e.message);
       setRemoteServer(null);
     });
+    if (!constructed) return;
+    startPending = run.then(settleStart);
   }
 
   // The four peer-terminal callbacks, or an all-null bundle when nothing grants
@@ -827,8 +847,9 @@ function createRemoteWiring(deps) {
   // The RemoteServer reads its operator token only at construct, so a token
   // change (remote:setToken) must tear down any live server before reconciling:
   // the token is not among the fields syncRemoteServer's own stop/start
-  // compares. Forcing the teardown here makes the new gate live immediately.
+  // compares.
   function refreshRemoteToken() {
+    if (startPending) { tokenRefreshWanted = true; return; }
     if (getRemoteServer()) { getRemoteServer().stop(); setRemoteServer(null); }
     syncRemoteServer();
   }

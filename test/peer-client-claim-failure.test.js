@@ -55,7 +55,9 @@ function claimServer(claimReply) {
     } else if (p === '/api/dm/claim') {
       state.claims++;
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(claimReply(state.claims));
+      const reply = claimReply(state.claims);
+      if (Array.isArray(reply)) { res.write(reply[0]); setTimeout(() => res.end(reply[1]), 30); }
+      else res.end(reply);
     } else if (p === '/api/sessions') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, sessions: [] }));
@@ -193,5 +195,17 @@ test('a claim reply past the 1MB guard reports an error instead of losing the ca
       `ENTER: the guard must resolve the callback exactly once, got ${calls.length} calls`);
     assert.deepStrictEqual(calls[0], { ok: false, error: 'response too large' },
       'the aborted oversize response must reach the caller as an error, not as silence');
+  });
+});
+
+test('a DM whose UTF-8 is split across TCP chunks arrives intact', async () => {
+  const body = 'é'.repeat(100);
+  const bytes = Buffer.from(JSON.stringify({ ok: true, messages: [{ from: 'x', body }] }));
+  const cut = bytes.indexOf(0xc3) + 1;
+  await withPeer(() => [bytes.subarray(0, cut), bytes.subarray(cut)], async (emits) => {
+    await waitFor('peer-dms to fire', () => emits.some((e) => e[0] === 'peer-dms'));
+    const msgs = emits.find((e) => e[0] === 'peer-dms')[2];
+    assert.strictEqual(msgs.length, 1);
+    assert.strictEqual(msgs[0].body, body);
   });
 });

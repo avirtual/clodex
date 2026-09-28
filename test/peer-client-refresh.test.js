@@ -90,3 +90,21 @@ test('an SSE reopen resyncs the session list (Rebuild/recreate gap regression)',
     server.close();
   }
 });
+
+test('two openEvents calls before the first 200 open one stream, not two', () => {
+  const conn = new PeerConnection({
+    id: 'box', label: 'box', url: 'http://127.0.0.1:1', emit: () => {}, helloIntervalMs: 10000,
+  });
+  const calls = [];
+  conn._sse = (p, opts) => { calls.push({ p, opts }); };
+  conn._refreshSessions = () => {};
+  conn.online = true;
+  conn._openEvents();
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].p, '/api/events');
+  conn._openEvents();
+  assert.strictEqual(calls.length, 1, 'a second open while the first is in flight is refused');
+  calls[0].opts.onClose();
+  assert.strictEqual(conn._eventsOpening, false, 'a failed open clears the in-flight mark');
+  conn.stop();
+});

@@ -91,9 +91,11 @@ function fakeClock() {
 // body bytes, closed at once; 'hold' is the healthy idle shape — a live 200 held
 // open, silent but for whatever the test writes into it.
 function box({ mode = 'die', limit = null } = {}) {
-  const state = { mode, streams: [], events: 0, attaches: 0 };
+  const state = { mode, streams: [], events: 0, attaches: 0, refuseAttaches: 0, parkAttach: false, pending: [] };
   const serve = (res, kind) => {
     if (kind === 'events') state.events++; else state.attaches++;
+    if (kind === 'attach' && state.refuseAttaches > 0) { state.refuseAttaches--; res.writeHead(404).end(); return; }
+    if (kind === 'attach' && state.parkAttach) { state.pending.push(res); return; }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     // flushHeaders and no preamble: Node holds headers back until the first body
     // write, so without this a "silent" response would never reach 200 on the
@@ -334,6 +336,55 @@ test('a closed stream leaves no stability timer armed and resets nothing after t
     clock.advance((STALE_MS + FLOOR_MS) * 2);
     assert.strictEqual(conn._eventsBackoff, before,
       'no reset arrived from a stream that had already closed');
+  } finally {
+    teardown(conn, server, state);
+  }
+});
+
+test('an attach answered 404 comes back on backoff and opens once the session exists', async () => {
+  const { server, state } = box({ mode: 'hold' });
+  state.refuseAttaches = 1;
+  const port = await listen(server);
+  const clock = fakeClock();
+  const conn = connect(port, clock);
+  conn.start();
+  try {
+    await waitFor('the peer to come online', () => conn.online);
+    conn.attach('sess');
+    conn._attachments.get('sess').backoff = 10;
+    await waitFor('the first attach to be refused', () => state.attaches >= 1 && state.refuseAttaches === 0);
+    await waitFor('the refused attach to be retried', () => state.attaches >= 2);
+    await waitFor('the retry to hold a live stream', () => conn._attachments.get('sess').req !== null);
+    assert.strictEqual(conn._attachments.get('sess').opening, false);
+  } finally {
+    teardown(conn, server, state);
+  }
+});
+
+test('a detach that lands while the attach is still opening reaps the stream when it arrives', async () => {
+  const { server, state } = box({ mode: 'hold' });
+  state.parkAttach = true;
+  const port = await listen(server);
+  const clock = fakeClock();
+  const data = [];
+  const conn = connect(port, clock, {
+    emit: (ch, id, name) => { if (ch === 'peer-data') data.push(name); },
+  });
+  conn.start();
+  try {
+    await waitFor('the peer to come online', () => conn.online);
+    conn.attach('x');
+    conn.detach('x');
+    await waitFor('the attach GET to reach the box', () => state.attaches === 1 && state.pending.length === 1);
+    const res = state.pending[0];
+    state.streams.push(res);
+    let closed = false;
+    res.on('close', () => { closed = true; });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write(`event: output\ndata: ${JSON.stringify({ b64: Buffer.from('hi').toString('base64') })}\n\n`);
+    await waitFor('the orphaned stream to be reaped', () => closed, 2000);
+    assert.deepStrictEqual(data, [], 'no output was emitted for a detached name');
+    assert.strictEqual(conn._attachments.has('x'), false);
   } finally {
     teardown(conn, server, state);
   }
