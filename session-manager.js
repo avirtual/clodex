@@ -5,10 +5,10 @@
 //
 // A handle is an OPAQUE OBJECT. Everything here touches exactly five methods:
 //
-//   .webContents.send(channel, ...args)   _sendToSession, _broadcast, file-view
-//   .isDestroyed()                        windowForWorkspace, allLiveWindows
-//   .isFocused()                          the notify/attention focus gate
-//   .show() / .focus()                    the [agent:file view] path only
+//   .webContents.send(channel, ...args)
+//   .isDestroyed()
+//   .isFocused()
+//   .show() / .focus()
 //
 // …plus reference identity: `workspaceForWindow()` compares handles with `===`,
 // so a handle must be the same object at register time and at lookup time.
@@ -472,7 +472,7 @@ async function reapPtyDescendants({ ptyPid, name, log, childProcess }) {
 
 // A blocking registry file (agent.json) is STALE — safe to force-clean and
 // re-register over — when the process it names is dead, OR when it names OUR OWN
-// pid for a session this process isn't running. The latter is the deterministic-
+// pid and the caller has already ruled out a live session of that name. The latter is the deterministic-
 // pid case: in Docker the engine is the same pid every boot, so an agent.json
 // surviving an unclean shutdown always points at the new engine itself and a bare
 // isAlive() check would read it as "running elsewhere" forever, wedging restore
@@ -523,7 +523,7 @@ function nameConflict({ liveHas, persistedHas }) {
 const DENIED_SPILL_CAP = 3;
 
 // What to do with the body of an intent the gate just refused. Keyed on the
-// INTENT rather than the type because `memory` and `context` split on `sub`.
+// INTENT rather than the type because `memory` splits on `sub`.
 //   'spill' — hand the payload back on disk. Reserved for bodies whose value IS
 //             the composition: prose the sender wrote once and cannot regenerate.
 //   'note'  — tell the sender the body is gone, write nothing.
@@ -824,10 +824,7 @@ function createSessionManager(deps) {
   // asymmetry — never the reverse.
   const tiersOf = digestTiers || (() => null);
 
-  // Contextual hint arming, off unless engine.js built one (feature-gated).
-  // A no-op stand-in rather than a null check at each call site: the draft fold
-  // still runs and s._draft still tracks, so turning the flag on mid-life needs
-  // no state that only exists when armed.
+  // No-op stand-in for deps objects without an armer; engine.js always builds one and the contextHints pref gates inside it per call, so the draft fold must run regardless.
   const NO_ARM = { onDraft() {}, disarm() {}, onSubmit() {}, onContextReset() {}, forget() {}, holding() { return false; } };
   const arm = hintArm || NO_ARM;
 
@@ -910,7 +907,7 @@ function createSessionManager(deps) {
       this.sessions = new Map();
       this._freshBakeOnce = new Set();
       this._creating = new Set();
-      this.windows = new Map(); // workspaceId -> BrowserWindow
+      this.windows = new Map(); // workspaceId -> window handle (opaque, see header)
       // The seat the operator is LOOKING at, as last reported by a renderer.
       // Global rather than per-window on purpose: the external tap has to pick
       // ONE seat for the whole box, and the last report is the one that moved
@@ -952,7 +949,7 @@ function createSessionManager(deps) {
       // alarm twice on one stall.
       this._stallProbing = new Set();
       this._movingNames = new Set();
-      this._wire = null;       // in-process tee (WIRE_SHADOW only in W1)
+      this._wire = null;
       this._voiceEngine = null;
       this._voiceEnginePending = null;
       this._voiceOp = Promise.resolve();
@@ -985,7 +982,7 @@ function createSessionManager(deps) {
 
     // The write goes through atomicWriteFileSync, not fs.writeFileSync. This is
     // all-time per-session cost history rewritten IN FULL on wire-telemetry's 1s
-    // debounce, and the read side above swallows a parse error by design — so a
+    // debounce, and WireTelemetry's constructor swallows a `read` parse error by design — so a
     // torn write drops the whole ledger with nothing reporting it.
     //
     // Two consequences worth stating so neither is rediscovered as a mystery:
@@ -1335,7 +1332,6 @@ function createSessionManager(deps) {
       return wire;
     }
 
-    // Lazily built because REGISTRY_DIR resolves post-whenReady.
     _shadowLog(rec) {
       try {
         if (!this._shadowSink) {
@@ -1652,7 +1648,7 @@ function createSessionManager(deps) {
         if (!session) return;
         if (!session.pendingOutput) session.pendingOutput = '';
         session.pendingOutput += args[1];
-        const MAX_BUFFER = 2 * 1024 * 1024; // 2MB per session
+        const MAX_BUFFER = 2 * 1024 * 1024; // 2M UTF-16 code units per session, not bytes
         if (session.pendingOutput.length > MAX_BUFFER) {
           session.pendingOutput = session.pendingOutput.slice(-MAX_BUFFER);
         }
@@ -1848,8 +1844,7 @@ function createSessionManager(deps) {
 
       // The POST above lands before the session exists, so kill() cannot clear it
       // if create() throws on the way to sessions.set — the route would keep a row
-      // in a TTL-less table forever. Called at every throw site past this point,
-      // mirroring the registry.unregister unwind below.
+      // in a TTL-less table forever.
       const abandonHint = () => {
         if (!spawnerHintSet) return;
         try {
@@ -2432,7 +2427,7 @@ function createSessionManager(deps) {
         // Ticket-replay incarnation key. Minted here and NEVER persisted, so that
         // its absence from a resumed record is itself the signal that this process
         // has not been handed its open tickets' specs (_replayOpenTickets).
-        // `sessionId` cannot serve — it is assigned from `resumeId` just below, so
+        // `sessionId` cannot serve — it is assigned from `resumeId` above, so
         // a --resume carries the SAME id, which is exactly the case that loses a
         // delivery.
         //
@@ -3939,8 +3934,7 @@ function createSessionManager(deps) {
     // recreate the same seat, and destroying its checkout there would delete the
     // tree out from under a session that is coming right back.
     //
-    // Captured BEFORE the kill and removed AFTER the pty exits, so git is not
-    // racing a live cwd.
+    // Captured BEFORE the kill; removal waits for the pty exit, but only up to _waitForExit's 8s.
     //
     // A seat that has ALREADY exited still gets its record dropped here, and
     // that is this method's own drop, not kill()'s: kill() returns at `if (!s)`
@@ -3962,8 +3956,7 @@ function createSessionManager(deps) {
       // clearHintForRecord BEFORE remove, for the reason its own header gives:
       // this is an exit with no live session to read `spawnerHintSet` off, the
       // hint table has no TTL, and the record is the last place the route id
-      // exists. Both are no-ops once kill() has already dropped the record, so
-      // this is a live seat's second call, not a double drop.
+      // exists. A live seat skips both: kill() already cleared its hint and dropped its record.
       const dropRecord = () => {
         if (wasLive) return;
         this.clearHintForRecord(name);
@@ -6869,7 +6862,7 @@ function createSessionManager(deps) {
             // drain claims destructively (the claim renames the dir away) and its
             // pty.write can then evaporate into a booting CLI, leaving no copy
             // anywhere and no trace that anything was lost. Retention is what makes
-            // a retry possible at all; the ceiling below is what keeps at-least-once
+            // a retry possible at all; the REBOOT_NOTICE_MAX_ATTEMPTS give-up above is what keeps at-least-once
             // from becoming forever.
             this._armRebootNoticeRetry(target, notice);
             log.info('intent', `reboot notice parked for ${notice.name} (live claude — boot-safe, cap armed; retry armed, attempt ${(Number.isFinite(notice.attempts) ? notice.attempts : 0) + 1}/${REBOOT_NOTICE_MAX_ATTEMPTS})`);
@@ -7335,7 +7328,7 @@ function createSessionManager(deps) {
         }));
         child.on('exit', (code, signal) => finish(() => {
           if (code === 0) {
-            // A widened def (replyMaxBytes) returns stderr from the TOP, not the
+            // On exit 0 a widened def (replyMaxBytes) returns stderr from the TOP, not the
             // last line: its output is a listing whose first rows are the answer
             // (a ticket board, one error per bad file), and the last line of a
             // listing is its footer. The narrow default keeps taking the last
@@ -7775,8 +7768,7 @@ function createSessionManager(deps) {
             entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
             Array.isArray(entry.execCommands) ? entry.execCommands : [],
             Array.isArray(entry.intents) ? entry.intents : null,
-            // Session env, same expression as the other two kill()-based
-            // respawns (engine.js restartSession, session-restore.js). Omitting
+            // Session env. Omitting
             // it defaults sessionEnv to null and the reloaded seat spawns with
             // NO session env at all — silently, since create() then re-persists
             // the entry without it, so every later --resume is wrong too.
@@ -8195,7 +8187,7 @@ function createSessionManager(deps) {
       if (!label) {
         session._scratch = mark;
         let ack = `${SCRATCH_ACK_PREFIX}${n}. Research now. Close with \`[agent:scratch end] <summary>\` … `
-          + '`[agent:end]` as the last thing in a reply; `[agent:scratch cancel]` keeps everything.';
+          + '`[agent:end]` as the last thing in a reply; a bare `[agent:scratch cancel]` drops the most recent mark and cuts nothing.';
         if (prior) {
           ack += `\nEpisode re-opened: the earlier mark ${prior.nonce} is dropped; what you read since it is `
             + 'now ordinary history and will NOT be cut.';
@@ -9702,7 +9694,7 @@ function createSessionManager(deps) {
 
     _flushParkedNow(target, tag, kind = 'park-flush') {
       if (target._dead || target._recycling) return { ok: true, count: 0 };
-      // Any forced flush ends the notice's deferral chain, not just the operator's
+      // A forced flush past the dead/recycling return ends the notice's deferral chain, not just the operator's
       // (flushPending). The chain otherwise dies only on a real turn or its own
       // flush, so a pane kept warm past the 300s park cap left it alive after the
       // cap had already delivered the notice — and the next unrelated park would
@@ -9766,8 +9758,6 @@ function createSessionManager(deps) {
       }
       const r = this._flushParkedNow(target, `flush.${process.pid}`, 'park-flush');
       if (target._parkCapTimer) { clearTimeout(target._parkCapTimer); target._parkCapTimer = null; }
-      // The notice's own deadline is cleared inside _flushParkedNow, for every
-      // forced flush rather than only this one.
       this._lastPendingCounts.delete(name);
       this._broadcast('pending-count', { name, count: 0 });
       return r;
@@ -9818,14 +9808,6 @@ function createSessionManager(deps) {
       this._injectQueueFor(session).enqueue(produce ? '' : text, Object.keys(qopts).length ? qopts : undefined);
     }
 
-    // A dictated draft reads as open here and NOWHERE ELSE. `isDraftOpen` is
-    // fed only by `isHumanPtyInput` in write(), i.e. by TYPING — dictation is
-    // recorded by the CLI and painted into its own composer, so a dictated
-    // draft never sets those stamps and the divert that protects a typed draft
-    // never engaged for one. This is the parity, kept to the divert rather than
-    // widened into `isDraftOpen`, whose five other call sites ask a question
-    // about keystrokes that this cannot answer.
-    //
     // An EXPIRING stamp, so it releases on its own: he submits (the composer
     // empties, the renderer stops reporting, and the submit drains the park),
     // he clears it, the seat loses focus, the window closes, the screen becomes
@@ -10070,7 +10052,7 @@ function createSessionManager(deps) {
     // stamp — and the stamp is what makes the old mail undeliverable to the new
     // seat. A dm lands on the live seat and drains the park with it.
     //
-    // Re-checks rather than delivering on schedule: a drain forced while the latch
+    // Re-checks until `deadline` rather than delivering on schedule: a drain forced while the latch
     // is still missing puts the write back inside the boot re-render window with
     // the messages already claimed off disk. Deferring to an armed _bootDrainTimer
     // is what preserves BOOT_DRAIN_SETTLE_MS as the margin — this timer never
