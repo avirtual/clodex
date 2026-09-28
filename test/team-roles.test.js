@@ -590,15 +590,23 @@ test('reservedRoleTemplate: a stored template wins over the default, and an unkn
 test('reservedRoleNote tells the operator the template is editable even though the role is locked', () => {
   // The lock note was the ONLY text on the row and it said "locked" without
   // qualification, so an operator reading it concluded the model was unreachable.
-  for (const key of ['lead', 'reviewer']) {
-    const note = reservedRoleNote(key);
-    assert.match(note, /template/,
-      `ENTER: the ${key} note must mention the template at all, or the assertions below are vacuous`);
-    assert.match(note, /model/,
-      `the ${key} note must say the MODEL is what the template carries: that is the setting the operator came to change`);
-    assert.match(note, /yours to edit/,
-      `the ${key} note must say the template is editable — "locked" alone is what sent the operator to hand-edit JSON`);
-  }
+  const lead = reservedRoleNote('lead');
+  assert.match(lead, /template/, 'ENTER: the lead note must mention the template at all, or the assertions below are vacuous');
+  assert.match(lead, /model/,
+    'the lead note must say the MODEL is what the template carries: that is the setting the operator came to change');
+  assert.match(lead, /yours to edit/,
+    'the lead note must say the template is editable — "locked" alone is what sent the operator to hand-edit JSON');
+  assert.match(reservedRoleNote('reviewer'), /which template it runs is yours to pick below/,
+    'the reviewer row carries a template picker, so its note names the pick');
+});
+
+test('t1377: isReviewerTemplateRow keys on a clodex-team-reviewer* system prompt', () => {
+  const { isReviewerTemplateRow } = require('../renderer/lib/team-roles');
+  assert.strictEqual(isReviewerTemplateRow({ systemPromptFile: 'clodex-team-reviewer-codex' }), true);
+  assert.strictEqual(isReviewerTemplateRow({ systemPromptFile: 'clodex-team-reviewer' }), true);
+  assert.strictEqual(isReviewerTemplateRow({ systemPromptFile: 'clodex-team-hand' }), false);
+  assert.strictEqual(isReviewerTemplateRow({ name: 'clodex-team-reviewer' }), false, 'no systemPromptFile, no purpose');
+  assert.strictEqual(isReviewerTemplateRow(null), false);
 });
 
 // `reservedRoleTemplate: a reserved role with no stored template…` above hardcodes

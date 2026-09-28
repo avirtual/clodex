@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Team popover ▸ Roles: the reviewer role's template is now a picker over the installed reviewer templates (the team's own first, then the library), so a box whose library is read-only can point its reviewer at another template instead of editing the stock one; agents still cannot repoint a reviewer through [agent:team role-set].
 - Codex stream seats: a refused sandbox/approval flag written as --flag=value is now stripped whatever its arity (only the arity-1 form was), so it can no longer reach the app-server argv.
 - Templates: "Export as Template…" reports a failed save instead of closing silently (the library is read-only inside a sandbox box); a failed template removal now says why, and a box pinned to a commit says so once in its rebuild toast.
 - Sandbox web UI: saving or removing a library template inside a box no longer fails silently — the library is a read-only mount there, so the editor now opens library templates with Save disabled and says to edit them on the host or save a team copy, and a write that does fail reports its error instead of leaving the dialog open.

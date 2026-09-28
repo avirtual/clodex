@@ -29,7 +29,7 @@ const DOOR_ACCOUNTS = [
   { label: 'work', configDir: '/home/u/.clodex/accounts/work' },
 ];
 
-function mkDoor(roles, { accounts = DOOR_ACCOUNTS, log = { info() {}, error() {}, warn() {} } } = {}) {
+function mkDoor(roles, { accounts = DOOR_ACCOUNTS, log = { info() {}, error() {}, warn() {} }, templates = [], manager } = {}) {
   const home = mkTmpRoot('ipc-team-home-');
   const root = mkTmpRoot('ipc-team-root-');
   const dir = path.join(home, 'teams', 't');
@@ -46,6 +46,8 @@ function mkDoor(roles, { accounts = DOOR_ACCOUNTS, log = { info() {}, error() {}
     loadManifest: tm.loadManifest,
     addRole: tm.addRole,
     setRole: tm.setRole,
+    listAllTemplates: () => templates,
+    manager,
     accounts: {
       list: () => accounts,
       configDirFor: (label) => (accounts.find((a) => a.label === label) || {}).configDir || null,
@@ -168,6 +170,49 @@ test('t830: team:setRole accepts a registered label, and a blank one clears', ()
     assert.strictEqual(d.setRole('hand', { account: '' }).ok, true,
       'blank is a CLEAR, not an unknown label — refusing it would make the pin one-way');
     assert.ok(!('account' in d.read().hand), 'and the key is gone');
+  } finally { d.cleanup(); }
+});
+
+const REVIEWER_PICK_TEMPLATES = [
+  { name: 'clodex-team-reviewer', systemPromptFile: 'clodex-team-reviewer' },
+  { name: 'clodex-team-hand', systemPromptFile: 'clodex-team-hand' },
+  { name: 'box-reviewer', systemPromptFile: 'clodex-team-reviewer-codex', team: 't' },
+  { name: 'other-team-reviewer', systemPromptFile: 'clodex-team-reviewer', team: 'elsewhere' },
+];
+const REVIEWER_PICK_MANAGER = {
+  _reviewerTemplateNames: () => REVIEWER_PICK_TEMPLATES
+    .filter((t) => !t.team && t.systemPromptFile.startsWith('clodex-team-reviewer')).map((t) => t.name),
+};
+
+test('t1377: team:setRole refuses a reviewer template whose prompt is not a reviewer prompt', () => {
+  const d = mkDoor({ ...LEAD_ONLY, reviewer: { prompt: 'clodex-team-reviewer' } },
+    { templates: REVIEWER_PICK_TEMPLATES, manager: REVIEWER_PICK_MANAGER });
+  try {
+    const before = JSON.stringify(d.read());
+    for (const stem of ['clodex-team-hand', 'other-team-reviewer', 'nope']) {
+      const res = d.setRole('reviewer', { template: stem });
+      assert.strictEqual(res.ok, false, `${stem}: expected a refusal, got ${JSON.stringify(res)}`);
+      assert.match(res.error, /is not a reviewer template/);
+      assert.match(res.error, /available: \[box-reviewer, clodex-team-reviewer\]/,
+        'the list names the team\'s own reviewer templates first, then the library');
+    }
+    assert.strictEqual(JSON.stringify(d.read()), before, 'nothing landed');
+  } finally { d.cleanup(); }
+});
+
+test('t1377: team:setRole lets the operator point the reviewer at a library or team reviewer template', () => {
+  const d = mkDoor({ ...LEAD_ONLY, reviewer: { prompt: 'clodex-team-reviewer' } },
+    { templates: REVIEWER_PICK_TEMPLATES, manager: REVIEWER_PICK_MANAGER });
+  try {
+    const lib = d.setRole('reviewer', { account: '', template: 'clodex-team-reviewer' });
+    assert.strictEqual(lib.ok, true, lib.error);
+    assert.strictEqual(d.read().reviewer.template, 'clodex-team-reviewer');
+    const own = d.setRole('reviewer', { account: 'work', template: 'box-reviewer' });
+    assert.strictEqual(own.ok, true, own.error);
+    assert.strictEqual(d.read().reviewer.template, 'box-reviewer', 'a team-owned reviewer template is pickable');
+    assert.strictEqual(d.read().reviewer.account, 'work');
+    const lead = d.setRole('lead', { template: 'clodex-team-reviewer' });
+    assert.strictEqual(lead.ok, false, 'the lead row gains nothing');
   } finally { d.cleanup(); }
 });
 

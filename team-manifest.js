@@ -835,7 +835,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     }
     if (RESERVED_ROLE_KEYS.has(roleName)) {
       const ownDerived = (k) => k === 'template' && !!(opts && opts.ownDerivedTemplate) && patch.template === roleName;
-      const outside = Object.keys(patch).filter((k) => !RESERVED_ROLE_PATCH_FIELDS.has(k) && !ownDerived(k));
+      const operatorPick = (k) => k === 'template' && roleName === 'reviewer' && !!(opts && opts.operator === true);
+      const outside = Object.keys(patch).filter((k) => !RESERVED_ROLE_PATCH_FIELDS.has(k) && !ownDerived(k) && !operatorPick(k));
       if (outside.length) {
         throw new Error(`the "${roleName}" role is operator-owned topology; edit it via the app, not an intent/mutator — only ${[...RESERVED_ROLE_PATCH_FIELDS].join(', ')} may be patched here, not ${outside.join(', ')} (${team.file})`);
       }
