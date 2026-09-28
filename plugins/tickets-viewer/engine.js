@@ -496,12 +496,12 @@ function rollupTeam(rows) {
   return { usd, counts, byTicket, byRole, since };
 }
 
-function ticketTaskDir(t, projectRoot) {
-  if (!t || !t.taskDir || typeof projectRoot !== 'string' || !projectRoot) return null;
+function ticketTaskDir(t, projectDir) {
+  if (!t || !t.taskDir || typeof projectDir !== 'string' || !projectDir) return null;
   try {
     return resolveTaskDir({
       taskDir: t.taskDir,
-      projectDir: projectDirFor(clodexHome(), projectRoot),
+      projectDir,
       projectsRoot: projectsRoot(),
       homedir: os.homedir(),
     });
@@ -510,10 +510,10 @@ function ticketTaskDir(t, projectRoot) {
   }
 }
 
-function ticketCost(t, projectRoot) {
+function ticketCost(t, projectDir) {
   const state = str(t && t.state);
   if (state === 'done' || state === 'cancelled') {
-    const dir = ticketTaskDir(t, projectRoot);
+    const dir = ticketTaskDir(t, projectDir);
     if (!dir) return null;
     let rec = null;
     try { rec = JSON.parse(fs.readFileSync(path.join(dir, COST_FILE), 'utf8')); } catch (_) { rec = null; }
@@ -537,6 +537,7 @@ function ticketCost(t, projectRoot) {
       live: false,
     };
   }
+  if (!ticketStarted(t) || t.parked === true) return null;
   const seat = str(t && t.assignee);
   if (!seat || !host || !host.telemetry) return null;
   let snap = null;
@@ -546,7 +547,7 @@ function ticketCost(t, projectRoot) {
   return { usd, reviewsUsd: null, rounds: 0, attribution: 'live', live: true };
 }
 
-function shape(t, now, stallMs, projectRoot = null) {
+function shape(t, now, stallMs, projectDir = null) {
   const openedAt = num(t.openedAt);
   // `??`, not `||`: a timestamp of 0 is not "no timestamp", and num() has already
   // turned every genuinely absent value into null.
@@ -589,7 +590,7 @@ function shape(t, now, stallMs, projectRoot = null) {
     // wire what core keeps apart on disk.
     mergeWaiting: str(t.mergeWaiting),
     mergeError: str(t.mergeError),
-    cost: ticketCost(t, projectRoot),
+    cost: ticketCost(t, projectDir),
   };
 }
 
@@ -704,7 +705,7 @@ function board(projectKey) {
 
   const open = all
     .filter((t) => t.state === 'open')
-    .map((t) => shape(t, now, stallMs, root))
+    .map((t) => shape(t, now, stallMs, loc.dir))
     // Newest first, NOT quietest-first: the stall flag, the `tv-stalled` class and
     // the header count already surface stalls wherever the row sits.
     .sort((a, b) => {
@@ -722,7 +723,7 @@ function board(projectKey) {
   const recentAll = doneAll
     .filter((t) => num(t.closedAt) !== null && now - t.closedAt < RECENT_DONE_MS)
     .sort((a, b) => b.closedAt - a.closedAt);
-  const recent = recentAll.slice(0, RECENT_DONE_CAP).map((t) => shape(t, now, stallMs, root));
+  const recent = recentAll.slice(0, RECENT_DONE_CAP).map((t) => shape(t, now, stallMs, loc.dir));
 
   return {
     ok: true,
@@ -844,6 +845,13 @@ function deriveRounds(dir, id) {
   });
 }
 
+function roundCount(rec, dir, id) {
+  if (Array.isArray(rec.rounds) && rec.rounds.length) {
+    return rec.rounds.filter((e) => e && typeof e === 'object' && !Array.isArray(e)).length;
+  }
+  return dir ? deriveRounds(dir, id).length : 0;
+}
+
 function ticketRounds(rec, dir, id) {
   if (Array.isArray(rec.rounds) && rec.rounds.length) {
     return rec.rounds
@@ -900,7 +908,7 @@ function ticketDetail(payload) {
   }
 
   const known = teamIndex().get(projectKey);
-  const base = shape(rec, Date.now(), stallMsFor(known && known.manifest), projectRootFor(projectKey, known));
+  const base = shape(rec, Date.now(), stallMsFor(known && known.manifest), loc.dir);
   const mergeRaw = dir === null ? null : readInDir(dir, `merge-${id}.msg`);
 
   return {
@@ -949,14 +957,14 @@ function search(payload) {
   if (!read.ok) return read;
   if (!q) return { ok: true, hits: [] };
 
-  const needle = q.toLowerCase();
+  const needle = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
   const scored = [];
   for (const t of read.tickets) {
     let snippet = null;
     for (const field of [str(t.id), str(t.title), str(t.spec), str(t.report)]) {
-      const at = field.toLowerCase().indexOf(needle);
-      if (at < 0) continue;
-      snippet = snippetAround(field, at, needle.length);
+      const m = needle.exec(field);
+      if (!m) continue;
+      snippet = snippetAround(field, m.index, m[0].length);
       break;
     }
     if (snippet === null) continue;
@@ -1013,7 +1021,7 @@ function closed(payload) {
         assignee: str(t.assignee),
         closedAt,
         verdict: str(t.verdict) || null,
-        rounds: Array.isArray(t.rounds) ? t.rounds.length : 0,
+        rounds: roundCount(t, ticketTaskDir(t, loc.dir), str(t.id)),
       },
     });
   }
@@ -1104,6 +1112,9 @@ function mutateBoard(projectKey, mutate) {
   if (!loc.ok) return loc;
   const read = readTicketsAt(loc.dir);
   if (!read.ok) return { ok: false, error: `refusing to write: ${read.error}` };
+  if (read.malformed) {
+    return { ok: false, error: `refusing to write: ${read.malformed} malformed record(s) in ${TICKETS_FILE} would be erased` };
+  }
 
   const outcome = mutate(read.tickets);
   if (outcome && outcome.error) return { ok: false, error: outcome.error };
