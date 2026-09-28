@@ -273,8 +273,13 @@ const {
 });
 
 
+let wsWarnedOnce = false;
 function persistWs(write) {
-  try { write(); } catch (e) { log.warn('workspace', `not persisted: ${(e && e.message) || e}`); }
+  try { write(); } catch (e) {
+    if (wsWarnedOnce) return;
+    wsWarnedOnce = true;
+    log.warn('workspace', `not persisted: ${(e && e.message) || e}`);
+  }
 }
 
 function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {

@@ -590,6 +590,8 @@ ipc-hist-reg-
 ipc-team-home-
 ipc-team-root-
 ipc-tpull-
+kill-unreadable-reg-
+kill-unreadable-ud-
 legib-home-
 legib-proj-
 linger-fallback-

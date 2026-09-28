@@ -456,6 +456,7 @@ function initStores(userDataPath, {
   let launchBakTaken = false;
 
   const unreadableLogged = new Set();
+  let persistRefusedLogged = false;
   const quarantinedFiles = new Set();
   function readStoreJson(file) {
     let text;
@@ -496,6 +497,7 @@ function initStores(userDataPath, {
     _load() {
       const primary = readStoreJson(PERSIST_FILE);
       this._unreadable = primary.state === 'unreadable';
+      if (primary.state === 'ok') persistRefusedLogged = false;
       let all = primary.value;
       if (primary.state !== 'ok') {
         const bak = readStoreJson(PERSIST_FILE + '.bak');
@@ -513,7 +515,13 @@ function initStores(userDataPath, {
       return all;
     },
     _save(entries, touched = null) {
-      if (this._unreadable) refuseUnreadable(PERSIST_FILE);
+      if (this._unreadable) {
+        if (!persistRefusedLogged) {
+          persistRefusedLogged = true;
+          console.error('sessions.json could not be read; changes this launch are not persisted');
+        }
+        return false;
+      }
       try {
         if (!launchBakTaken) {
           launchBakTaken = true;
@@ -528,6 +536,7 @@ function initStores(userDataPath, {
         console.error('persistence save failed:', e);
       }
       if (touched) this._writeSeatJson(touched, entries.find((s) => s && s.name === touched) || null);
+      return true;
     },
     list() {
       return this._load();
@@ -2051,7 +2060,7 @@ function initStores(userDataPath, {
       const data = this._load();
       const target = scope === 'global'
         ? data.global
-        : (Object.hasOwn(data.workspaces, scope) ? data.workspaces[scope] : (data.workspaces[scope] = {}));
+        : (Object.hasOwn(data.workspaces, scope) && data.workspaces[scope] ? data.workspaces[scope] : (data.workspaces[scope] = {}));
       target[key] = { value: String(value == null ? '' : value), secret: secret === true };
       this._save(data);
     },
@@ -2060,7 +2069,7 @@ function initStores(userDataPath, {
       const data = this._load();
       if (scope === 'global') {
         delete data.global[key];
-      } else if (Object.hasOwn(data.workspaces, scope)) {
+      } else if (Object.hasOwn(data.workspaces, scope) && data.workspaces[scope] && typeof data.workspaces[scope] === 'object') {
         delete data.workspaces[scope][key];
         if (!Object.keys(data.workspaces[scope]).length) delete data.workspaces[scope];
       }

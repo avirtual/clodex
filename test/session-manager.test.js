@@ -22814,3 +22814,28 @@ test('a reboot notice re-offered to a seat that stays offline keeps one copy on 
   m.maybeDeliverRebootNotice();
   assert.strictEqual(parks.length, 1, 'launch after launch, the archived seat holds one notice, not one per launch');
 });
+
+test('kill() under an unreadable sessions.json does not reject and still kills the process', { skip: typeof process.getuid === 'function' && process.getuid() === 0 && 'root reads a 000 file' }, async () => {
+  const userData = mkTmpRoot('kill-unreadable-ud-');
+  const registryDir = mkTmpRoot('kill-unreadable-reg-');
+  const stores = initStoresReal(userData, { log: { info() {}, warn() {}, error() {} }, registryDir });
+  const file = require('path').join(userData, 'sessions.json');
+  const origError = console.error;
+  try {
+    stores.persistence.upsert({ name: 'seat', type: 'claude', workspaceId: 'default' });
+    fsReal.chmodSync(file, 0o000);
+    assert.throws(() => fsReal.readFileSync(file), /EACCES|EPERM/, 'ENTER: the file is unreadable');
+    console.error = () => {};
+    const m = mk({ getPersistence: () => stores.persistence, log: { info() {}, warn() {}, error() {} } });
+    m._notifyComposition = () => {};
+    let killed = 0;
+    m.sessions.set('seat', { name: 'seat', agentType: 'claude', cwd: '/proj', stream: { kill: () => { killed++; } } });
+    await assert.doesNotReject(() => m.kill('seat'));
+    assert.strictEqual(killed, 1, 'the process was still killed');
+  } finally {
+    console.error = origError;
+    try { fsReal.chmodSync(file, 0o600); } catch {}
+    fsReal.rmSync(userData, { recursive: true, force: true });
+    fsReal.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
