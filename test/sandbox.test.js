@@ -1071,6 +1071,33 @@ test('up twice with our own ports "busy" keeps the three ports byte-stable', asy
   assert.strictEqual(settings._state().peers[0].url, 'http://127.0.0.1:7820');
 });
 
+test('manager: a sibling box\'s published ports are taken even while its container is down', async () => {
+  const ud = freshUserData();
+  const reg = mkTmpDirIn(TMP_USERDATA, 'reg-');
+  const settings = fakeSettings({ boxes: [
+    { id: 'sandbox', label: 'sandbox', config: { ...DEFAULT_CONFIG } },
+    { id: 'test', label: 'test', config: { ...DEFAULT_CONFIG } },
+  ] });
+  const mgr = createSandboxManager({ registryDir: reg,
+    getUiSettings: () => settings,
+    getUserDataPath: () => ud,
+    spawn: okComposeSpawn(),
+    isPortInUse: () => Promise.resolve(false),
+  });
+  const first = await mgr.get('sandbox').writeComposeFile();
+  assert.deepStrictEqual(first.ports, { web: 7810, wirescope: 7811, wire: 7820 });
+  const second = mgr.get('test');
+  fs.mkdirSync(path.dirname(second.composePath()), { recursive: true });
+  fs.copyFileSync(mgr.get('sandbox').composePath(), second.composePath());
+  const bumped = await second.writeComposeFile();
+  assert.deepStrictEqual(bumped.ports, { web: 7812, wirescope: 7813, wire: 7821 });
+  const yaml = fs.readFileSync(second.composePath(), 'utf8');
+  assert.ok(yaml.includes('"127.0.0.1:7812:8080"'));
+  assert.ok(!yaml.includes('"127.0.0.1:7810:'));
+  const again = await mgr.get('sandbox').writeComposeFile();
+  assert.deepStrictEqual(again.ports, { web: 7810, wirescope: 7811, wire: 7820 });
+});
+
 test('up: a GENUINE squatter on 7810 (not our own port) still bumps', async () => {
   const settings = fakeSettings();
   const ud = freshUserData();
@@ -1239,6 +1266,77 @@ test('writeComposeFile: ensure-dirs the host library sources and binds them read
   assert.ok(yaml.includes(`- "${path.join(reg, 'library', 'prompts')}:/home/clodex/.clodex/library/prompts:ro"`));
   assert.ok(!yaml.includes(`- "${path.join(reg, 'library')}:/home/clodex/.clodex/library:ro"`));
   assert.ok(!yaml.includes('library/templates'));
+});
+
+async function composeFor(platform, { entrypoint = true, packaged = false, override = null, workDir = null } = {}) {
+  const ud = freshUserData();
+  const reg = mkTmpDirIn(TMP_USERDATA, 'reg-');
+  const ctx = mkTmpDirIn(TMP_USERDATA, 'ctx-');
+  if (entrypoint) {
+    fs.mkdirSync(path.join(ctx, 'docker', 'web'), { recursive: true });
+    fs.writeFileSync(path.join(ctx, 'docker', 'web', 'entrypoint.sh'), '#!/bin/sh\n');
+  }
+  const infos = [];
+  const sb = createSandbox({
+    getUiSettings: () => fakeSettings({ sandbox: { image: override, workDir } }),
+    getUserDataPath: () => ud,
+    registryDir: reg,
+    isPortInUse: () => Promise.resolve(false),
+    repoRoot: ctx,
+    isPackaged: () => packaged,
+    appVersion: '9.9.9',
+    log: { info: (...a) => infos.push(a.join(' ')), error() {} },
+    platform,
+    userInfo: () => ({ uid: 1002, gid: 1003, username: 'op' }),
+  });
+  await sb.writeComposeFile();
+  const plain = generateCompose({
+    image: resolveImage({ isPackaged: packaged, appVersion: '9.9.9', override, repoRoot: ctx }),
+    ports: { web: 7810, wirescope: 7811, wire: 7820 }, workDir, authEnvFile: null,
+    libDir: reg, hostname: SANDBOX_PEER_ID, stateDir: sb.stateDir(),
+  });
+  return { yaml: fs.readFileSync(sb.composePath(), 'utf8'), plain, infos };
+}
+
+const HOST_USER_LINE = /^    user: "0:0"$|^      CLODEX_HOST_(UID|GID): |^      CLODEX_WORK_VOLUME: /;
+
+test('writeComposeFile: on a linux host the box starts as root with the host uid/gid to remap to', async () => {
+  const { yaml, plain } = await composeFor('linux');
+  const stripped = yaml.split('\n').filter((l) => !HOST_USER_LINE.test(l)).join('\n');
+  assert.strictEqual(stripped, plain);
+  assert.ok(yaml.includes('\n    user: "0:0"\n    ports:\n'));
+  assert.ok(yaml.includes('\n      XDG_DATA_HOME: /home/clodex/.local/share\n      CLODEX_HOST_UID: "1002"\n      CLODEX_HOST_GID: "1003"\n      CLODEX_WORK_VOLUME: "1"\n'));
+});
+
+test('writeComposeFile: a linux box with a host workDir does not flag the work volume for chown', async () => {
+  const { yaml } = await composeFor('linux', { workDir: '/srv/project' });
+  assert.ok(yaml.includes('\n      CLODEX_HOST_GID: "1003"\n    volumes:\n'));
+  assert.ok(!yaml.includes('CLODEX_WORK_VOLUME'));
+});
+
+test('writeComposeFile: the packaged image of this version gets the linux root start', async () => {
+  const { yaml } = await composeFor('linux', { packaged: true, entrypoint: false });
+  assert.ok(yaml.includes('\n    image: ghcr.io/'));
+  assert.ok(yaml.includes('\n    user: "0:0"\n'));
+  assert.ok(yaml.includes('\n      CLODEX_HOST_UID: "1002"\n'));
+});
+
+test('writeComposeFile: on linux, an image that may lack the entrypoint is never started as root', async () => {
+  const noScript = await composeFor('linux', { entrypoint: false });
+  assert.strictEqual(noScript.yaml, noScript.plain);
+  assert.ok(!/user:|CLODEX_HOST_|CLODEX_WORK_VOLUME/.test(noScript.yaml));
+  const override = await composeFor('linux', { override: 'ghcr.io/example/clodex:0.1.0' });
+  assert.strictEqual(override.yaml, override.plain);
+  assert.ok(!/user:|CLODEX_HOST_|CLODEX_WORK_VOLUME/.test(override.yaml));
+  assert.ok(override.infos.some((l) => l.includes('ghcr.io/example/clodex:0.1.0') && l.includes('image user')));
+});
+
+test('writeComposeFile: on darwin and win32 the compose carries no user or host ids', async () => {
+  for (const platform of ['darwin', 'win32']) {
+    const { yaml, plain } = await composeFor(platform);
+    assert.strictEqual(yaml, plain, platform);
+    assert.ok(!/user:|CLODEX_HOST_|CLODEX_WORK_VOLUME/.test(yaml), platform);
+  }
 });
 
 test('writeComposeFile: creates the box state dirs 0700 under <registryDir>/boxes/<id> and binds them', async () => {

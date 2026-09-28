@@ -43,7 +43,7 @@ FROM node:22-slim AS runtime
 # `sudo apt-get install` away.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git bash procps ca-certificates python3 python3-venv make g++ sudo \
-      curl jq vim less tree unzip zip ripgrep openssh-client \
+      curl jq vim less tree unzip zip ripgrep openssh-client util-linux \
  && rm -rf /var/lib/apt/lists/*
 
 # The agent CLIs, globally. Pin nothing — agents self-update.
@@ -60,7 +60,8 @@ RUN mkdir -p /opt/muse \
 # etc.). Root-inside-the-container is fine — the container is the isolation
 # boundary, and the interesting state (volumes, host mounts) is reachable as
 # the clodex user already; the host library mounts stay ro either way.
-RUN useradd --create-home --shell /bin/bash clodex \
+RUN userdel -r node \
+ && useradd --uid 1001 --create-home --shell /bin/bash clodex \
  && printf 'clodex ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/clodex \
  && chmod 0440 /etc/sudoers.d/clodex \
  && chown -R clodex:clodex /opt/muse
@@ -78,6 +79,8 @@ RUN npm ci --omit=dev --ignore-scripts \
 COPY . .
 COPY --from=builder /build/web-dist ./web-dist
 RUN ln -s /app/cli/bin/clodexctl.js /usr/local/bin/clodexctl
+COPY docker/web/entrypoint.sh /usr/local/bin/clodex-entrypoint
+RUN chmod 0755 /usr/local/bin/clodex-entrypoint
 
 # Mount points owned by clodex so the named volumes come up writable by the user
 # (Docker seeds an empty named volume from the image path's ownership).
@@ -125,6 +128,12 @@ ENV HOME=/home/clodex \
 USER clodex
 EXPOSE 8080
 
-# No ENTRYPOINT wrapper: compose `init: true` supplies PID-1 reaping (PTYs fork
-# real process trees; without a reaper, zombies accumulate).
+# ENTRYPOINT is docker/web/entrypoint.sh (installed as clodex-entrypoint). Run as
+# USER clodex it execs CMD unchanged. On a Linux host sandbox.js starts the box as
+# root (compose `user: "0:0"` overrides USER) with CLODEX_HOST_UID/GID: the script
+# remaps clodex to the host uid/gid so bind mounts are writable on both sides,
+# chowns only image-owned paths, then drops to clodex via setpriv.
+# compose `init: true` supplies PID-1 reaping (PTYs fork real process trees;
+# without a reaper, zombies accumulate).
+ENTRYPOINT ["/usr/local/bin/clodex-entrypoint"]
 CMD ["node", "headless-main.js"]
