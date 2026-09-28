@@ -13,6 +13,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { CliError, EXIT } = require('./errors');
+const { resolveDataDir, localEngine, DEFAULT_REMOTE_PORT, SANDBOX_TOKEN_KEY } = require('./import');
 
 function cliDir() { return path.join(os.homedir(), '.clodex', 'cli'); }
 function contextsPath() { return path.join(cliDir(), 'contexts.json'); }
@@ -154,7 +155,7 @@ function validateAz(az) {
 // Resolve the effective context: pick the named/current file entry, then layer
 // env, then flags. Returns { url? , ssh?, tunnel?, remotePort?, token, name }.
 // `name` is the source label for messages ('(flags)' / '(env)' / ctx name).
-function resolve(store, { ctxName = null, env = process.env, flags = {} } = {}) {
+function resolve(store, { ctxName = null, env = process.env, flags = {}, platform = process.platform, home = os.homedir() } = {}) {
   let entry = null;
   let label = null;
 
@@ -186,11 +187,26 @@ function resolve(store, { ctxName = null, env = process.env, flags = {} } = {}) 
   if (flags.remotePort && entry && entry.ssh && !flags.ssh) entry.remotePort = flags.remotePort;
 
   if (!entry) {
+    entry = localEngineEntry({ env, platform, home });
+    if (entry) label = '(local engine)';
+  }
+  if (!entry) {
     throw new CliError(EXIT.USAGE,
-      'no context selected — set one with `clodexctl create node … && clodexctl use node …`, or pass --url/--token (or CLODEX_URL/CLODEX_TOKEN)');
+      'no context selected — set one with `clodexctl create node … && clodexctl use node …`, or pass --url/--token (or CLODEX_URL/CLODEX_TOKEN), or run inside a Clodex box, where the local engine is the default');
   }
   validateEntry(entry);
   return { ...entry, name: label };
+}
+
+function localEngineEntry({ env, platform, home }) {
+  let dataDir = null;
+  try { dataDir = resolveDataDir({ env, platform, home }).dir; } catch (e) {
+    if (!(e instanceof CliError) || e.exitCode !== EXIT.NOTFOUND) throw e;
+  }
+  const found = dataDir ? localEngine(dataDir) : { url: `http://127.0.0.1:${DEFAULT_REMOTE_PORT}`, token: null };
+  const envToken = env[SANDBOX_TOKEN_KEY] && String(env[SANDBOX_TOKEN_KEY]).trim();
+  const token = envToken || found.token;
+  return token ? { url: found.url, token } : null;
 }
 
 function defaultWarn(msg) { process.stderr.write(`clodexctl: warning: ${msg}\n`); }

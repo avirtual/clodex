@@ -99,8 +99,46 @@ test('resolve: flags beat env and file; --url forces direct', () => {
   assert.strictEqual(r.name, '(flags)');
 });
 
+function emptyDataDir(files = {}) {
+  const d = mkTmpRoot('ctx-');
+  for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(d, name), body);
+  return d;
+}
+const EMPTY = () => ({ current: null, contexts: {} });
+
 test('resolve: no context anywhere is a usage error', () => {
-  assert.throws(() => C.resolve({ current: null, contexts: {} }, { env: {} }), /no context selected/);
+  const env = { CLODEX_DATA_DIR: emptyDataDir() };
+  assert.throws(() => C.resolve(EMPTY(), { env }), /no context selected/);
+});
+
+test('resolve: in a box the env wire token and ui-settings remotePort make the local engine the default', () => {
+  const env = { CLODEX_REMOTE_TOKEN: 'abc', CLODEX_DATA_DIR: emptyDataDir({ 'ui-settings.json': JSON.stringify({ remotePort: 7912 }) }) };
+  assert.deepStrictEqual(C.resolve(EMPTY(), { env }), { url: 'http://127.0.0.1:7912', token: 'abc', name: '(local engine)' });
+});
+
+test('resolve: the local engine falls back to remote.env for the token and 7900 for the port', () => {
+  const env = { CLODEX_DATA_DIR: emptyDataDir({ 'remote.env': 'CLODEX_REMOTE_TOKEN=filetok\n' }) };
+  assert.deepStrictEqual(C.resolve(EMPTY(), { env }), { url: 'http://127.0.0.1:7900', token: 'filetok', name: '(local engine)' });
+});
+
+test('resolve: a current context beats the local engine', () => {
+  const env = { CLODEX_REMOTE_TOKEN: 'abc', CLODEX_DATA_DIR: emptyDataDir() };
+  const r = C.resolve({ current: 'foo', contexts: { foo: { url: 'http://x.example' } } }, { env });
+  assert.strictEqual(r.name, 'foo');
+  assert.strictEqual(r.url, 'http://x.example');
+  assert.strictEqual(r.token, undefined);
+});
+
+test('resolve: CLODEX_URL beats the local engine', () => {
+  const env = { CLODEX_URL: 'http://env.example', CLODEX_REMOTE_TOKEN: 'abc', CLODEX_DATA_DIR: emptyDataDir() };
+  const r = C.resolve(EMPTY(), { env });
+  assert.strictEqual(r.name, '(env)');
+  assert.strictEqual(r.url, 'http://env.example');
+});
+
+test('resolve: with no data dir and no token anywhere the usage error names the box', () => {
+  const home = mkTmpRoot('ctx-');
+  assert.throws(() => C.resolve(EMPTY(), { env: {}, home, platform: 'linux' }), /inside a Clodex box/);
 });
 
 test('resolve: --url and --ssh together is rejected, not silently ordered', () => {

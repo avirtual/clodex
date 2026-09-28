@@ -48,3 +48,12 @@ for (const [name, text] of [['docker/web/Dockerfile', DOCKERFILE], ['docker/Dock
     assert.match(mk[0], /^RUN mkdir -p [^\n&]*\/home\/clodex\/\.local\/share(\s|$)/);
   });
 }
+
+test('docker/web/Dockerfile links clodexctl onto PATH as root, before USER clodex', () => {
+  const all = instructions(DOCKERFILE);
+  const link = all.findIndex((i) => /^RUN ln -sf? \/app\/cli\/bin\/clodexctl\.js \/usr\/local\/bin\/clodexctl$/.test(i));
+  const user = all.findIndex((i) => /^USER clodex\b/.test(i));
+  assert.ok(link >= 0, 'a RUN ln links /app/cli/bin/clodexctl.js to /usr/local/bin/clodexctl');
+  assert.ok(user >= 0, 'ENTER: the USER clodex instruction exists');
+  assert.ok(link < user, 'the link runs as root, before USER clodex');
+});

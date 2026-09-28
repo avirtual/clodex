@@ -77,6 +77,7 @@ RUN npm ci --omit=dev --ignore-scripts \
 # App source (filtered by .dockerignore) + the built browser bundle from stage 1.
 COPY . .
 COPY --from=builder /build/web-dist ./web-dist
+RUN ln -s /app/cli/bin/clodexctl.js /usr/local/bin/clodexctl
 
 # Mount points owned by clodex so the named volumes come up writable by the user
 # (Docker seeds an empty named volume from the image path's ownership).

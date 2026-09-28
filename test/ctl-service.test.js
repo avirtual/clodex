@@ -38,11 +38,8 @@ function tmpCtxFile() {
   return path.join(dir, 'contexts.json');
 }
 
-// A service with an EMPTY env: the real process env may carry CLODEX_URL /
-// CLODEX_TOKEN, which would resolve a context out from under the "no context"
-// tests and make them pass for the wrong reason (or dial a real node).
 function mkService(file = tmpCtxFile()) {
-  return { svc: createCtlService({ contextsFile: file, env: {} }), file };
+  return { svc: createCtlService({ contextsFile: file, env: { CLODEX_DATA_DIR: path.dirname(file) } }), file };
 }
 
 test('tokenize: quotes, escapes, and the shell things it is NOT', () => {

@@ -265,6 +265,15 @@ npm ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error >&2 \
 npm rebuild node-pty >&2 || fail npm-install "node-pty-rebuild-failed"
 ok npm-install
 
+# --- clodexctl: on PATH next to the node ensure_node links ------------------
+link_clodexctl() {
+  mkdir -p "$HOME/.local/bin" \
+    && ln -sf "$SRC_DIR/cli/bin/clodexctl.js" "$HOME/.local/bin/clodexctl"
+}
+step clodexctl
+link_clodexctl || fail clodexctl "clodexctl-link-failed"
+ok clodexctl
+
 # --- ui-settings.json: enable the peer server, MERGE (don't clobber) --------
 step settings
 mkdir -p "$CONFIG_DIR"
