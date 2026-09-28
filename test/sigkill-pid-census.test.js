@@ -190,9 +190,14 @@ const CENSUS = [
     why: "groupKill, the one funnel for a stream seat's SIGTERM, its 5s SIGKILL and the boot reap; the negation makes it a group signal, so a non-positive pid is refused before it",
   },
   {
-    file: 'team-tickets.js', pid: '-child.pid', sig: "'SIGKILL'", count: 1,
-    guard: 'if (child.pid > 0) {',
-    why: 'the suite runner\'s group kill; this guard predates the incident and is what the others were missing',
+    file: 'team-tickets.js', pid: '-pid', sig: "'SIGKILL'", count: 1,
+    guard: 'if (!(pid > 0)) return false;',
+    why: '_killRunner, the one funnel for the suite runner\'s group kill: the timeout arm and every abandoned-runner reap go through it',
+  },
+  {
+    file: 'team-tickets.js', pid: 'pid', sig: "'SIGKILL'", count: 1,
+    guard: 'if (!(pid > 0)) return false;',
+    why: '_killRunner\'s plain-kill fallback, behind the same refusal',
   },
   {
     file: 'wirescope-supervisor.js', pid: 'pid', sig: "'SIGTERM'", count: 2,
@@ -225,6 +230,10 @@ const CENSUS = [
   {
     file: 'stream-seat.js', pid: 'pid', sig: '0', count: 1, probe: true,
     why: 'isAlive for the boot reap, behind its own `> 0` refusal; a lying probe reads a dead orphan as alive, and the start-time match then leaves it alone',
+  },
+  {
+    file: 'team-tickets.js', pid: 'pid', sig: '0', count: 1, probe: true,
+    why: '_reapRunner\'s liveness check, behind its own `> 0` and own-pid refusal; a lying probe skips a kill the runner would have needed',
   },
   {
     file: 'wirescope-supervisor.js', pid: 'rec.pid', sig: '0', count: 1, probe: true,

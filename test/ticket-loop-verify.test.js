@@ -20,7 +20,7 @@ const assert = require('node:assert');
 const fsReal = require('node:fs');
 const pathReal = require('node:path');
 const osReal = require('node:os');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn: spawnReal } = require('node:child_process');
 
 const { createSessionManager } = require('../session-manager');
 const ticketsMod = require('../tickets-store');
@@ -174,6 +174,7 @@ const SUITE_STUBS = {
   hungfile: 'console.log("..");\nconsole.error("run-tests: TIMEOUT after 20m in test/wedged.test.js");\nprocess.exit(1);\n',
   // Ran, exited 0, but never printed a summary. The false green this guards.
   silent: 'process.exit(0);\n',
+  lockGaveUp: 'console.error("run-tests: lock not acquired within 1s");\nprocess.exit(1);\n',
   totalsOnStderrOnly: 'console.error("TOTALS: 22 pass, 0 fail, 22 tests");\nprocess.exit(0);\n',
   // A sweep that discovered NO test files: node prints a valid summary and exits
   // 0, so this satisfies exit-0 and fail-0 both. It is a run that verified
@@ -5894,4 +5895,151 @@ test('a dependency trunk added after the fork is not blamed on the branch', asyn
   assert.match(String(own.error || ''), /\+is-odd@\^3\.0\.0 \(added by the branch\)/,
     'a dependency the branch itself added still escalates');
   assert.doesNotMatch(String(own.error || ''), /left-pad/, 'without blaming the one trunk added');
+});
+
+const sleeper = (t) => {
+  const c = spawnReal('sleep', ['60'], { detached: true, stdio: 'ignore' });
+  c.unref();
+  t.after(() => { try { process.kill(-c.pid, 'SIGKILL'); } catch {} try { process.kill(c.pid, 'SIGKILL'); } catch {} });
+  return c.pid;
+};
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const untilDead = async (pid) => { for (let i = 0; i < 80 && alive(pid); i++) await new Promise((r) => setTimeout(r, 25)); };
+
+test('verify: a suite that could not run has its runner killed on escalation', async (t) => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  const pid = sleeper(t);
+  f.m._runTicketSuite = async () => ({ ran: false, green: false, slowOnly: false, slow: [], error: 'lock', runnerPid: pid });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  assert.ok(alive(pid), 'ENTER: the runner is alive before the loop runs');
+
+  await f.m._runTicketLoop(f.team, 't1');
+  assert.strictEqual(f.esc().length, 1, 'ENTER: the loop escalated');
+  await untilDead(pid);
+
+  assert.ok(!alive(pid), 'the abandoned runner is killed, not left queued on the lock');
+  assert.ok(f.logs.some((l) => l.msg === `ticket t1: killed the abandoned suite runner ${pid}`), 'and the kill is logged');
+});
+
+test('verify: a superseded loop kills its own runner, not the newer loop\'s', async (t) => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  const pidA = sleeper(t);
+  const pidB = sleeper(t);
+  const calls = [];
+  f.m._runTicketSuite = () => new Promise((resolve) => { calls.push(resolve); });
+  const red = (pid) => ({ ran: true, green: false, slowOnly: false, slow: [], code: 1, failing: 'a fails', summary: '1 fail', output: '', runnerPid: pid });
+  const until = async (pred) => { for (let i = 0; i < 120 && !pred(); i++) await new Promise((r) => setTimeout(r, 25)); };
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'r' });
+  await until(() => calls.length >= 1);
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'fix the bound' });
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed' });
+  await until(() => calls.length >= 2);
+  assert.strictEqual(calls.length, 2, 'ENTER: both loops are inside their suite runs');
+  assert.ok(alive(pidA) && alive(pidB), 'ENTER: both runners are alive');
+
+  calls[0](red(pidA));
+  await untilDead(pidA);
+
+  assert.ok(!alive(pidA), 'the superseded loop kills the runner it abandoned');
+  assert.ok(alive(pidB), 'and leaves the newer loop\'s runner alone');
+  assert.strictEqual(calls.length, 2, 'the superseded loop did not re-measure');
+});
+
+test('verify: a re-close kills the previous attempt\'s runner before spawning', async (t) => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  const pid = sleeper(t);
+  const seq = [];
+  f.m._runTicketSuite = async () => {
+    await untilDead(pid);
+    if (!alive(pid)) seq.push('killed');
+    seq.push('spawned');
+    return { ran: false, green: false, slowOnly: false, slow: [], error: 'lock', runnerPid: null };
+  };
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand',
+    verifyHold: { step: 'verify: suite', at: Date.now(), evidence: 'lock', recovery: 'infra' },
+  }]);
+  f.m._stampRunnerPid(f.team, 't1', pid);
+  assert.strictEqual(f.one().runnerPid, pid, 'ENTER: this process stamped the previous attempt\'s runner');
+  assert.ok(alive(pid), 'ENTER: the previous attempt\'s runner is alive');
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'again' });
+  for (let i = 0; i < 120 && !seq.includes('spawned'); i++) await new Promise((r) => setTimeout(r, 25));
+
+  assert.deepStrictEqual(seq, ['killed', 'spawned'], 'the old runner is dead before the new suite is asked for');
+  assert.strictEqual(f.one().runnerPid, undefined, 'and the record no longer names it');
+});
+
+test('verify: the no-TOTALS error carries the runner\'s last note line', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, suite: 'lockGaveUp' });
+
+  const r = await f.m._runTicketSuite(f.team, f.one());
+
+  assert.strictEqual(r.ran, false, 'ENTER: the runner gave up without a summary');
+  assert.match(r.error, /last stdout line: \(no stdout\)/, 'ENTER: the stdout side is empty');
+  assert.match(r.error, /lock not acquired within 1s/, 'the escalation names why the runner gave up');
+});
+
+test('verify: the loop keeps its runner pid on the record while the suite runs, and clears it after', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'lockGaveUp' });
+  const during = [];
+  const real = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = (team, ticket, runIn, opts) => real(team, ticket, runIn, {
+    onSpawn: (pid) => { opts.onSpawn(pid); during.push([pid, f.one().runnerPid]); },
+  });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+
+  assert.strictEqual(during.length, 1, 'ENTER: the runner spawned once');
+  assert.strictEqual(during[0][1], during[0][0], 'the record names the live runner while it runs, for a re-close to find');
+  assert.strictEqual(f.one().runnerPid, undefined, 'and the loop clears it on exit');
+});
+
+test('verify: a re-close never kills a runner pid stamped by another process lifetime, and clears it', async (t) => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  const pid = sleeper(t);
+  let asked = 0;
+  f.m._runTicketSuite = async () => { asked++; return { ran: false, green: false, slowOnly: false, slow: [], error: 'lock', runnerPid: null }; };
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand',
+    runnerPid: pid, runnerOwner: 'a-previous-host-lifetime',
+    verifyHold: { step: 'verify: suite', at: Date.now(), evidence: 'lock', recovery: 'infra' },
+  }]);
+  assert.ok(alive(pid), 'ENTER: a process answers to the persisted pid, as a recycled one would');
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'again' });
+  for (let i = 0; i < 120 && !asked; i++) await new Promise((r) => setTimeout(r, 25));
+
+  assert.strictEqual(asked, 1, 'ENTER: the re-close reached the suite');
+  assert.ok(alive(pid), 'a pid this process did not spawn is never signalled');
+  assert.strictEqual(f.one().runnerPid, undefined, 'and the stale pid is dropped from the record');
+  assert.strictEqual(f.one().runnerOwner, undefined, 'with its owner');
+});
+
+test('verify: a resumed verify drops the runner pid a previous host lifetime left on the record', () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  f.m._runTicketLoop = () => {};
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand',
+    runnerPid: 424242, runnerOwner: 'a-previous-host-lifetime',
+  }]);
+
+  f.m._resumeOrphanedVerify(f.team);
+
+  assert.strictEqual(f.one().runnerPid, undefined, 'the resumed loop starts without a pid it cannot vouch for');
+  assert.strictEqual(f.one().runnerOwner, undefined, 'or its owner');
 });
