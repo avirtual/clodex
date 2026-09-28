@@ -107,6 +107,7 @@ const DEFAULT_UI_SETTINGS = {
   defaultSessionMode: 'optimized',
   discoverOnStartup: false,
   recentCwds: [],
+  recentCwdsByWorkspace: {},
   disableClaudeDesignMcp: false,
   theme: 'midnight',
   terminalWebgl: false,
@@ -151,6 +152,13 @@ function sanitizeDockSplit(f) {
   return typeof f === 'number' && f >= DOCK_SPLIT_MIN && f <= DOCK_SPLIT_MAX ? f : null;
 }
 
+function sanitizeRecentCwdsByWorkspace(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  return Object.fromEntries(Object.entries(raw)
+    .filter(([, list]) => Array.isArray(list))
+    .map(([wsId, list]) => [wsId, list.filter((c) => typeof c === 'string').slice(0, 12)]));
+}
+
 function defaultUiSettings() { return JSON.parse(JSON.stringify(DEFAULT_UI_SETTINGS)); }
 
 // Shape-only, by design (see DEFAULT_UI_SETTINGS.plugins). Anything that isn't
@@ -177,10 +185,10 @@ function sanitizePlugins(raw) {
 // presence to decide whether to emit a flag. `reject` marks a field this side
 // cannot dial: present ⇒ refuse the whole block rather than half-accept it.
 const PEER_CLOUD_KINDS = {
-  ssm:     { required: ['target'],   optional: ['region', 'profile'], reject: ['ecs'] },
-  kubectl: { required: ['target'],   optional: ['namespace', 'context'] },
-  gcloud:  { required: ['instance'], optional: ['zone', 'project'] },
-  az:      { required: ['bastion', 'resourceGroup', 'target'] },
+  ssm:     { label: 'target',   required: ['target'],   optional: ['region', 'profile'], reject: ['ecs'] },
+  kubectl: { label: 'target',   required: ['target'],   optional: ['namespace', 'context'] },
+  gcloud:  { label: 'instance', required: ['instance'], optional: ['zone', 'project'] },
+  az:      { label: 'target',   required: ['bastion', 'resourceGroup', 'target'] },
 };
 
 // DATA ONLY. A raw `tunnel` argv must NEVER become a peer-record field: this
@@ -208,12 +216,9 @@ function sanitizePeerCloud(kind, raw) {
   return out;
 }
 
-// The human-facing name of a cloud destination, for a peer with no label of its
-// own. Each kind's FIRST required field is the identifying one (ssm/kubectl
-// target, gcloud instance), which is exactly what the table already knows.
 function cloudLabel(cloud) {
   if (!cloud) return null;
-  return cloud.block[PEER_CLOUD_KINDS[cloud.kind].required[0]] || null;
+  return cloud.block[PEER_CLOUD_KINDS[cloud.kind].label] || null;
 }
 
 function sanitizePeers(raw, prior) {
@@ -222,8 +227,9 @@ function sanitizePeers(raw, prior) {
     (Array.isArray(prior) ? prior : []).map((p) => [String(p && p.id), p]),
   );
   const out = [];
+  const seen = new Set();
   for (const p of raw) {
-    if (!p || typeof p.id !== 'string') continue;
+    if (!p || typeof p.id !== 'string' || seen.has(p.id)) continue;
     const url = typeof p.url === 'string' && /^https?:\/\//.test(p.url) ? p.url : null;
     const sshHost = typeof p.sshHost === 'string' && /^[a-zA-Z0-9._@-]{1,128}$/.test(p.sshHost) ? p.sshHost : null;
     let cloud = null;
@@ -264,6 +270,7 @@ function sanitizePeers(raw, prior) {
       token = (prev && typeof prev.token === 'string' && prev.token) ? prev.token : null;
     }
     if (token) entry.token = token;
+    seen.add(p.id);
     out.push(entry);
   }
   return out;
@@ -366,7 +373,7 @@ function sanitizeBoxes(rawBoxes) {
     if (!id || seen.has(id) || RESERVED_BOX_IDS.has(id)) continue;
     seen.add(id);
     const label = typeof b.label === 'string' && b.label.trim() ? b.label.trim().slice(0, 64) : id;
-    const config = sanitizeSandbox(b.config) ?? { ...DEFAULT_SANDBOX_CONFIG };
+    const config = sanitizeSandbox(b.config) ?? { ...DEFAULT_SANDBOX_CONFIG, mounts: [] };
     out.push({ id, label, config });
   }
   return out;
@@ -821,6 +828,13 @@ function initStores(userDataPath, {
     // actually becomes a path, and a bare-name check would pass `../evil` only
     // to have the suffix land it outside anyway.
     _file(name) { return confineOrThrow(TEMPLATES_DIR, `${name}.json`, 'template name'); },
+    _sameFile(a, b) {
+      try {
+        const sa = fs.statSync(this._file(a));
+        const sb = fs.statSync(this._file(b));
+        return sa.ino === sb.ino && sa.dev === sb.dev;
+      } catch { return false; }
+    },
     _read(name) {
       try { const o = JSON.parse(fs.readFileSync(this._file(name), 'utf-8')); return (o && typeof o === 'object') ? o : null; }
       catch { return null; }
@@ -848,8 +862,7 @@ function initStores(userDataPath, {
       fs.writeFileSync(this._file(name), JSON.stringify(body, null, 2), { mode: 0o600 });
     },
     // Rename-in-place: the caller passes the OLD name as `id` and the NEW one as
-    // `name`. When they differ, write the new file and unlink the old or it
-    // orphans. Dest-collision is the caller's check; this trusts it.
+    // `name`. Dest-collision is the caller's check; this trusts it.
     save(template) {
       const prior = this._read(template.id);
       const merged = {};
@@ -858,7 +871,9 @@ function initStores(userDataPath, {
       }
       Object.assign(merged, template);
       this._write(template.name, merged);
-      if (template.id && template.id !== template.name) {
+      if (template.id && template.id !== template.name && this._sameFile(template.id, template.name)) {
+        fs.renameSync(this._file(template.id), this._file(template.name));
+      } else if (template.id && template.id !== template.name) {
         // Rename cleanup. A refused `id` is swallowed here and that is not the
         // false-green the other verbs had: _write() confines on the way IN, so
         // a name-illegal id can never name a file this store wrote, and there
@@ -1070,13 +1085,14 @@ function initStores(userDataPath, {
       } catch (e) { console.error('agent-defaults save failed:', e); }
     },
     getStrip(name) {
-      const e = this._load()[name];
+      const map = this._load();
+      const e = Object.hasOwn(map, name) ? map[name] : null;
       return (e && (e.strip === 1 || e.strip === 2)) ? e.strip : 0;
     },
     setStrip(name, level) {
       const map = this._load();
       const lvl = (level === 1 || level === 2) ? level : 0;
-      const e = map[name] || {};
+      const e = (Object.hasOwn(map, name) && map[name]) || {};
       if (lvl > 0) e.strip = lvl; else delete e.strip;
       if (Object.keys(e).length) map[name] = e; else delete map[name];
       this._save(map);
@@ -1514,6 +1530,7 @@ function initStores(userDataPath, {
           defaultSessionMode: SESSION_MODES.includes(raw?.defaultSessionMode) ? raw.defaultSessionMode : DEFAULT_UI_SETTINGS.defaultSessionMode,
           discoverOnStartup: typeof raw?.discoverOnStartup === 'boolean' ? raw.discoverOnStartup : DEFAULT_UI_SETTINGS.discoverOnStartup,
           recentCwds: Array.isArray(raw?.recentCwds) ? raw.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : defaultUiSettings().recentCwds,
+          recentCwdsByWorkspace: sanitizeRecentCwdsByWorkspace(raw?.recentCwdsByWorkspace) || {},
           disableClaudeDesignMcp: typeof raw?.disableClaudeDesignMcp === 'boolean' ? raw.disableClaudeDesignMcp : DEFAULT_UI_SETTINGS.disableClaudeDesignMcp,
           theme: THEME_KEYS.includes(raw?.theme) ? raw.theme : DEFAULT_UI_SETTINGS.theme,
           terminalWebgl: raw?.terminalWebgl === true,
@@ -1610,6 +1627,7 @@ function initStores(userDataPath, {
         defaultSessionMode: SESSION_MODES.includes(partial?.defaultSessionMode) ? partial.defaultSessionMode : cur.defaultSessionMode,
         discoverOnStartup: partial?.discoverOnStartup ?? cur.discoverOnStartup,
         recentCwds: Array.isArray(partial?.recentCwds) ? partial.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : cur.recentCwds,
+        recentCwdsByWorkspace: sanitizeRecentCwdsByWorkspace(partial?.recentCwdsByWorkspace) || cur.recentCwdsByWorkspace,
         disableClaudeDesignMcp: partial?.disableClaudeDesignMcp ?? cur.disableClaudeDesignMcp,
         theme: THEME_KEYS.includes(partial?.theme) ? partial.theme : cur.theme,
         terminalWebgl: typeof partial?.terminalWebgl === 'boolean' ? partial.terminalWebgl : cur.terminalWebgl,
