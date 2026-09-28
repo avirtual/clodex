@@ -46,6 +46,7 @@ const { CLAUDE_TOOLS } = require('./catalogs');
 const { BOX_ID_RE } = require('./sandbox');
 const { ensureDir: ensureDirMode700, atomicWriteFileSync } = require('./fs-util');
 const { seedSandboxSessions } = require('./sandbox-seeds');
+const RUNNER_OWNER = require('crypto').randomUUID();
 
 const SANDBOX_ACTIONS = ['up', 'rebuild', 'down', 'status'];
 const SANDBOX_DEFAULT_REF = 'master';
@@ -6502,10 +6503,9 @@ function createTicketMethods(deps, shared) {
       // ticket nothing ever nudges — the one outcome this design must not have.
       const loopEligible = !!(ticket.worktree && ticket.worktree.branch && ticket.worktree.baseSha);
       if (loopEligible) {
-        if (ticket.runnerPid) {
-          this._reapRunner(ticket.id, ticket.runnerPid);
-          delete ticket.runnerPid;
-        }
+        if (ticket.runnerPid && ticket.runnerOwner === RUNNER_OWNER) this._reapRunner(ticket.id, ticket.runnerPid);
+        delete ticket.runnerPid;
+        delete ticket.runnerOwner;
         ticket.loopStep = 'verify';
         // THE RE-VERIFY WINDOW. Cleared HERE, in the same write that re-stamps the
         // step — not in `_runTicketLoop`, which is fired unawaited below and whose
@@ -6601,6 +6601,8 @@ function createTicketMethods(deps, shared) {
         if (this._liveReviewerSeat(team, t)) continue;
         t.lastActivityAt = Date.now();
         t.nudgedAt = null;
+        delete t.runnerPid;
+        delete t.runnerOwner;
         resume.push(t.id);
       }
       if (!resume.length) return;
@@ -7265,10 +7267,6 @@ function createTicketMethods(deps, shared) {
           // commands have no grandchildren"; that reasoning does not reach here,
           // where grandchildren are the point. Falls back to the plain kill so a
           // platform or a fake child without a real pid still gets signalled.
-          // `> 0` is load-bearing, not defensive noise: kill(-0) signals OUR
-          // OWN process group — the whole app — and childProcess is an injected
-          // seam, so a stubbed child's pid shape is not guaranteed to be a real
-          // pid. cli/src/dial.js guards the identical call the same way.
           if (!this._killRunner(child.pid)) {
             try { child.kill('SIGKILL'); } catch {}
           }
@@ -7804,6 +7802,10 @@ function createTicketMethods(deps, shared) {
     },
 
     _killRunner(pid) {
+      // `> 0` is load-bearing, not defensive noise: kill(-0) signals OUR
+      // OWN process group — the whole app — and childProcess is an injected
+      // seam, so a stubbed child's pid shape is not guaranteed to be a real
+      // pid. cli/src/dial.js guards the identical call the same way.
       if (!(pid > 0)) return false;
       try { process.kill(-pid, 'SIGKILL'); } catch {
         try { process.kill(pid, 'SIGKILL'); } catch {}
@@ -7824,9 +7826,9 @@ function createTicketMethods(deps, shared) {
         const tickets = ticketsStore.load(team.root);
         const rec = tickets.find((t) => t.id === ticketId);
         if (!rec) return;
-        if (pid) rec.runnerPid = pid;
+        if (pid) { rec.runnerPid = pid; rec.runnerOwner = RUNNER_OWNER; }
         else if (!('runnerPid' in rec) || (only != null && rec.runnerPid !== only)) return;
-        else delete rec.runnerPid;
+        else { delete rec.runnerPid; delete rec.runnerOwner; }
         ticketsStore.save(team.root, tickets);
       } catch (e) {
         log.error('ticket', `runner pid stamp for ${ticketId} failed: ${e.message}`);

@@ -174,7 +174,7 @@ const SUITE_STUBS = {
   hungfile: 'console.log("..");\nconsole.error("run-tests: TIMEOUT after 20m in test/wedged.test.js");\nprocess.exit(1);\n',
   // Ran, exited 0, but never printed a summary. The false green this guards.
   silent: 'process.exit(0);\n',
-  lockGaveUp: 'require("fs").writeSync(Number(process.env.CLODEX_TEST_LOCK_NOTE_FD) || 2, "run-tests: lock not acquired within 1s\\n");\nprocess.exit(1);\n',
+  lockGaveUp: 'console.error("run-tests: lock not acquired within 1s");\nprocess.exit(1);\n',
   totalsOnStderrOnly: 'console.error("TOTALS: 22 pass, 0 fail, 22 tests");\nprocess.exit(0);\n',
   // A sweep that discovered NO test files: node prints a valid summary and exits
   // 0, so this satisfies exit-0 and fail-0 both. It is a run that verified
@@ -5924,9 +5924,11 @@ test('verify: a re-close kills the previous attempt\'s runner before spawning', 
     return { ran: false, green: false, slowOnly: false, slow: [], error: 'lock', runnerPid: null };
   };
   f.tstore.save(f.team.root, [{
-    ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand', runnerPid: pid,
+    ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand',
     verifyHold: { step: 'verify: suite', at: Date.now(), evidence: 'lock', recovery: 'infra' },
   }]);
+  f.m._stampRunnerPid(f.team, 't1', pid);
+  assert.strictEqual(f.one().runnerPid, pid, 'ENTER: this process stamped the previous attempt\'s runner');
   assert.ok(alive(pid), 'ENTER: the previous attempt\'s runner is alive');
 
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'again' });
@@ -5963,4 +5965,42 @@ test('verify: the loop keeps its runner pid on the record while the suite runs, 
   assert.strictEqual(during.length, 1, 'ENTER: the runner spawned once');
   assert.strictEqual(during[0][1], during[0][0], 'the record names the live runner while it runs, for a re-close to find');
   assert.strictEqual(f.one().runnerPid, undefined, 'and the loop clears it on exit');
+});
+
+test('verify: a re-close never kills a runner pid stamped by another process lifetime, and clears it', async (t) => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  const pid = sleeper(t);
+  let asked = 0;
+  f.m._runTicketSuite = async () => { asked++; return { ran: false, green: false, slowOnly: false, slow: [], error: 'lock', runnerPid: null }; };
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand',
+    runnerPid: pid, runnerOwner: 'a-previous-host-lifetime',
+    verifyHold: { step: 'verify: suite', at: Date.now(), evidence: 'lock', recovery: 'infra' },
+  }]);
+  assert.ok(alive(pid), 'ENTER: a process answers to the persisted pid, as a recycled one would');
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'again' });
+  for (let i = 0; i < 120 && !asked; i++) await new Promise((r) => setTimeout(r, 25));
+
+  assert.strictEqual(asked, 1, 'ENTER: the re-close reached the suite');
+  assert.ok(alive(pid), 'a pid this process did not spawn is never signalled');
+  assert.strictEqual(f.one().runnerPid, undefined, 'and the stale pid is dropped from the record');
+  assert.strictEqual(f.one().runnerOwner, undefined, 'with its owner');
+});
+
+test('verify: a resumed verify drops the runner pid a previous host lifetime left on the record', () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  f.m._runTicketLoop = () => {};
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand',
+    runnerPid: 424242, runnerOwner: 'a-previous-host-lifetime',
+  }]);
+
+  f.m._resumeOrphanedVerify(f.team);
+
+  assert.strictEqual(f.one().runnerPid, undefined, 'the resumed loop starts without a pid it cannot vouch for');
+  assert.strictEqual(f.one().runnerOwner, undefined, 'or its owner');
 });
