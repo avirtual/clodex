@@ -22653,6 +22653,17 @@ test('t1372: stripCodexStreamArgs drops the = and short forms of refused flags, 
   assert.strictEqual(d.h.spawns[0].args.includes('--dangerously-bypass-approvals-and-sandbox=1'), false);
 });
 
+test('t1394: stripCodexStreamArgs drops the attached short forms -mNAME, -sX and -aX', async (t) => {
+  const c = mkCodexStreamSeat({ extraArgs: ['-mgpt-z', '-sdanger-full-access', '-anever', '--keep'] });
+  t.after(() => c.h.stopAll());
+  await c.create('cxst3');
+  const { args } = c.h.spawns[0];
+  for (const tok of ['-mgpt-z', '-sdanger-full-access', '-anever']) {
+    assert.ok(!args.includes(tok), `${tok} must not reach app-server: ${args.join(' ')}`);
+  }
+  assert.ok(args.includes('--keep'), args.join(' '));
+});
+
 test('t1222: a codex seat with an effort carries -c model_reasoning_effort="high"; without one, no such arg', async (t) => {
   const c = mkCodexStreamSeat({ effort: 'high' });
   t.after(() => c.h.stopAll());

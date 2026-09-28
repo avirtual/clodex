@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
 const { WireProxy } = require('../wire/proxy');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Synthetic Anthropic SSE turn: usage on message_start, an intent split
 // across two text deltas, final output_tokens on message_delta.
@@ -553,7 +554,12 @@ test('per-agent upstream override chains through an external proxy base', async 
 test('chatgpt-backend mode tees an application/json Responses stream as SSE', async (t) => {
   const BODY = 'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"hi"}\n\n'
     + 'event: response.completed\ndata: {"type":"response.completed","response":{"status":"completed"}}\n\n';
+  const home = process.env.HOME;
+  process.env.HOME = mkTmpRoot('clx-home-');
+  t.after(() => { process.env.HOME = home; });
+  const seen = [];
   const server = http.createServer((req, res) => {
+    seen.push(req.headers);
     req.resume();
     req.on('end', () => {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -574,6 +580,8 @@ test('chatgpt-backend mode tees an application/json Responses stream as SSE', as
   assert.equal(res.body.toString('utf8'), BODY);
   assert.equal(events.response.length, 1);
   assert.equal(events.response[0].sse, true);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].authorization, undefined, 'the fake upstream never receives a codex token read from the real ~/.codex/auth.json');
 });
 
 test('malformed SSE degrades to an empty receipt, session unbroken', async (tc) => {

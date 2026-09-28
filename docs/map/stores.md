@@ -304,7 +304,7 @@
 | `record` | unions new skill names into skills-seen.json, writing only when the set grew | skills-seen.json | list, refuseUnreadable, fs-util.atomicWriteFileSync | optimized-late-skills.test.js |
 | `read` | setupMarker: first-run setup is done only when setup.json parses with a string completedAt | setup.json under registryDir | none | first-run-setup.test.js |
 | `write` | setupMarker: stamps completion time, version and a SETUP_CHOICES choice (default skipped); a write error reaches the caller | setup.json under registryDir | fs-util.atomicWriteFileSync | first-run-setup.test.js |
-| `renameWorkspaceScope` | rewrites workspace frontmatter from an old to a new display name across agent and skill .md files, leading fence only; refuses (0, logged) a new name holding CR/LF or wrapped in matching quotes; returns the count | agents/*.md, skills/*.md under registryDir | fs-util.atomicWriteFileSync | stores.test.js |
+| `renameWorkspaceScope` | rewrites workspace frontmatter from an old to a new display name across agent and skill .md files, leading fence only; refuses (0, logged) a new name holding a line break (CR, LF, U+2028, U+2029) or wrapped in matching quotes; returns the count | agents/*.md, skills/*.md under registryDir | fs-util.atomicWriteFileSync | stores.test.js |
 
 ### Invariants
 - `renameWorkspaceScope` matches the trimmed old name exactly, the same comparison visibleTo makes, so a rename cannot orphan a scoped item it would otherwise match.

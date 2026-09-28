@@ -1012,23 +1012,20 @@ function closed(payload) {
     if (!CLOSED_STATES.includes(state)) continue;
     if (stateArg !== 'all' && state !== stateArg) continue;
     const closedAt = num(t.closedAt);
-    scored.push({
-      order: closedAt ?? num(t.openedAt) ?? 0,
-      row: {
-        id: str(t.id),
-        title: str(t.title),
-        state,
-        assignee: str(t.assignee),
-        closedAt,
-        verdict: str(t.verdict) || null,
-        rounds: roundCount(t, ticketTaskDir(t, loc.dir), str(t.id)),
-      },
-    });
+    scored.push({ order: closedAt ?? num(t.openedAt) ?? 0, t, state, closedAt });
   }
   scored.sort((a, b) => b.order - a.order);
   return {
     ok: true,
-    rows: scored.slice(offset, offset + limit).map((s) => s.row),
+    rows: scored.slice(offset, offset + limit).map(({ t, state, closedAt }) => ({
+      id: str(t.id),
+      title: str(t.title),
+      state,
+      assignee: str(t.assignee),
+      closedAt,
+      verdict: str(t.verdict) || null,
+      rounds: roundCount(t, ticketTaskDir(t, loc.dir), str(t.id)),
+    })),
     total: scored.length,
     offset,
     limit,

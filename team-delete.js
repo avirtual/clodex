@@ -2,9 +2,12 @@
 
 const path = require('path');
 
-function createTeamDelete({ loadManifest, deleteTeam, getManager, getSandboxManager, teamsDir = null, fs = require('fs') }) {
+const TEAM_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+
+function createTeamDelete({ loadManifest, deleteTeam, getManager, getSandboxManager, teamsDir, fs = require('fs') }) {
+  if (typeof teamsDir !== 'string' || !teamsDir) throw new Error('createTeamDelete: teamsDir is required');
   function pointerBoxId(name) {
-    if (!teamsDir) return null;
+    if (typeof name !== 'string' || !TEAM_NAME_RE.test(name)) return null;
     try {
       const rec = JSON.parse(fs.readFileSync(path.join(teamsDir, name, 'sandbox.json'), 'utf8'));
       return rec && typeof rec.boxId === 'string' && rec.boxId ? rec.boxId : null;

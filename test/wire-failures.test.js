@@ -26,6 +26,7 @@ function request(port, path, body, opts = {}) {
       },
     );
     req.on('error', reject);
+    if (opts.timeout) req.on('timeout', () => req.destroy(new Error(`no response within ${opts.timeout}ms`)));
     req.end(body);
   });
 }
@@ -181,7 +182,7 @@ test('client aborts mid-stream: upstream released, stream-end fires', async (t) 
 
 });
 
-test('corrupt gzip: observer dies quietly, client gets exact bytes', async (t) => {
+test('corrupt gzip: no receipt is synthesized, client gets exact bytes', async (t) => {
   const GARBAGE = Buffer.from('this is definitely not gzip', 'utf8');
   const { server, port } = await serveOnce((req, res) => {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'content-encoding': 'gzip' });
@@ -205,21 +206,26 @@ test('corrupt gzip: observer dies quietly, client gets exact bytes', async (t) =
 });
 
 test('corrupt gzip: the lost receipt is reported as a tee-failure so the seat\'s activity and recovery are released', async (t) => {
-  for (const contentType of ['text/event-stream', 'application/json']) {
+  const subjects = [
+    ['anthropic', 'text/event-stream', '/agent/t/v1/messages'],
+    ['anthropic', 'application/json', '/agent/t/v1/messages'],
+    ['openai', 'text/event-stream', '/agent/t/openai/v1/responses'],
+  ];
+  for (const [provider, contentType, route] of subjects) {
     const { server, port } = await serveOnce((req, res) => {
       res.writeHead(200, { 'content-type': contentType, 'content-encoding': 'gzip' });
       res.end(Buffer.from('this is definitely not gzip', 'utf8'));
     });
     t.after(() => server.close());
-    const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${port}` } });
+    const proxy = new WireProxy({ upstreams: { [provider]: `http://127.0.0.1:${port}` } });
     await proxy.listen();
     t.after(() => proxy.close());
     const events = collect(proxy, ['turn.started', 'turn.completed', 'tee-failure']);
 
-    const res = await request(proxy.port, '/agent/t/v1/messages', '{}');
+    const res = await request(proxy.port, route, '{}');
     assert.equal(res.status, 200);
-    assert.equal(events['turn.started'].length, 1, `${contentType}: the turn started`);
-    assert.ok(await whenEvent(events, 'tee-failure'), `${contentType}: tee-failure emitted`);
+    assert.equal(events['turn.started'].length, 1, `${provider} ${contentType}: the turn started`);
+    assert.ok(await whenEvent(events, 'tee-failure'), `${provider} ${contentType}: tee-failure emitted`);
     assert.equal(events['tee-failure'].length, 1);
     assert.match(events['tee-failure'][0].error, /decompressor died/);
     assert.equal(events['turn.completed'].length, 0);
@@ -232,10 +238,10 @@ test('an upstream base with a non-http scheme answers 502 and emits proxy-error 
   t.after(() => proxy.close());
   const events = collect(proxy, ['proxy-error', 'turn.started']);
 
-  const res = await request(proxy.port, '/agent/t/v1/messages', '{"messages":[]}');
+  const res = await request(proxy.port, '/agent/t/v1/messages', '{"messages":[]}', { timeout: 5000 });
   assert.equal(res.status, 502);
   assert.equal(events['proxy-error'].length, 1);
-  const again = await request(proxy.port, '/agent/t/v1/messages', '{"messages":[]}');
+  const again = await request(proxy.port, '/agent/t/v1/messages', '{"messages":[]}', { timeout: 5000 });
   assert.equal(again.status, 502, 'the host is still serving');
   assert.equal(events['proxy-error'].length, 2);
 });

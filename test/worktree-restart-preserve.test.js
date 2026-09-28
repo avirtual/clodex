@@ -79,11 +79,6 @@ function mkRepo() {
   return dir;
 }
 
-// Realpath'd: on macOS /tmp is a symlink to /private/tmp, and git prints the
-// canonical form while the record carries the path as created. Comparing raw
-// strings would make the two halves below differ for the wrong reason.
-const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
-
 function liveSession(eng, name, entry) {
   const s = {
     name,

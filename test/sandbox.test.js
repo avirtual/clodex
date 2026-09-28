@@ -1820,6 +1820,25 @@ test('manager: remove() during an in-flight up() leaves no peer row and no state
   assert.strictEqual(fs.existsSync(path.join(reg, 'boxes', 'r')), false);
 });
 
+test('manager: an up() started while remove() is in flight does not bring the deleted box up', async () => {
+  const reg = mkTmpDirIn(TMP_USERDATA, 'reg-');
+  const settings = fakeBoxSettings([{ id: 'r', label: 'r', config: {} }]);
+  const ud = freshUserData();
+  const mgr = createSandboxManager({ registryDir: reg,
+    spawn: recordingSpawn([]),
+    getUiSettings: () => settings,
+    getUserDataPath: () => ud,
+    isPortInUse: () => new Promise((r) => setImmediate(() => r(false))),
+  });
+  const inst = mgr.get('r');
+  const [removed, upped] = await Promise.all([mgr.remove('r'), inst.up()]);
+  assert.strictEqual(removed.ok, true, 'ENTER: the remove ran');
+  assert.strictEqual(upped.ok, false);
+  assert.match(upped.error, /no such sandbox/);
+  assert.strictEqual(settings._state().peers.find((x) => x.id === 'r'), undefined);
+  assert.strictEqual(fs.existsSync(path.join(reg, 'boxes', 'r')), false);
+});
+
 test('manager: remove() deletes the box\'s auth.env and compose.yaml, and a re-created box has no token', async () => {
   const ud = freshUserData();
   const settings = fakeBoxSettings([{ id: 'proj', label: 'proj', config: {} }]);

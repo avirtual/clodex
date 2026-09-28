@@ -46231,8 +46231,9 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
           } finally {
             if (on) entry.peer._acquiring = false;
           }
-          if (on && sessions.get(peerKey(peerId, peerName)) !== entry) {
-            if (res && res.ok && !sessions.has(peerKey(peerId, peerName))) dropPersistedControl(peerId, peerName);
+          const live = sessions.get(peerKey(peerId, peerName));
+          if (on && live !== entry) {
+            if (res && res.ok && !(live && live.peer && (live.peer.controlled || live.peer._acquiring))) dropPersistedControl(peerId, peerName);
             return;
           }
           if (on) {
@@ -46473,7 +46474,7 @@ ${detail}` });
         document.getElementById("peer-session-dialog").addEventListener("keydown", (e) => {
           if (e.key === "Enter" && e.target.tagName !== "BUTTON") {
             e.preventDefault();
-            submitPeerSessionDialog();
+            if (!document.getElementById("peer-session-create").disabled) submitPeerSessionDialog();
           }
         });
         async function peerHideFromList(id, name) {
@@ -48522,11 +48523,12 @@ ${detail}` });
           try {
             await window.api.setWorkspaceName(newName);
           } catch (e) {
-            showToast(`Rename failed: ${e && e.message || "unknown error"}`, { kind: "error", duration: 1e4 });
+            const why = String(e && e.message || "unknown error").replace(/^Error invoking remote method '[^']*': (?:Error: )?/, "");
+            showToast(`Rename failed: ${why}`, { kind: "error", duration: 1e4 });
             return;
           }
           currentWorkspaceName = newName;
-          newSpan.textContent = newName;
+          if (document.getElementById("workspace-name") === newSpan) newSpan.textContent = newName;
           document.title = newName;
         };
         input.addEventListener("blur", () => finish(true));

@@ -1171,7 +1171,7 @@ function formatRoster(team, liveSeats = [], { seat = null, grants = null, effort
       : (seat && seat === team.lead ? 'via [agent:team-review]' : 'lead-only');
     // Suppressed on the reviewer: [agent:team-review] resolves the template
     // itself, so printing one invites the hand-spawn the row exists to prevent.
-    const tmpl = (role !== 'reviewer' && def && typeof def.template === 'string' && def.template) ? `, tmpl ${def.template}` : '';
+    const tmpl = (role !== 'reviewer' && def && typeof def.template === 'string' && def.template) ? `, tmpl ${def.template.replace(/[\r\n]+/g, ' ')}` : '';
     const brief = def && def.brief ? ` — ${String(def.brief).replace(/[\r\n]+/g, ' ')}` : '';
     // Liveness is STATED in this slot, never inferred from a missing tail: a
     // definition row and a live row are otherwise identical in shape, and a
@@ -1181,7 +1181,7 @@ function formatRoster(team, liveSeats = [], { seat = null, grants = null, effort
       ? ` · live: ${live.join(', ')}`
       : ' · no live seat — role definition only, not addressable';
     const account = (def && typeof def.account === 'string' && def.account) ? ` · account: ${def.account.replace(/[\r\n]+/g, ' ')}` : '';
-    const effortStr = (efforts && typeof efforts[role] === 'string' && efforts[role]) ? ` · effort ${efforts[role]}` : '';
+    const effortStr = (efforts && typeof efforts[role] === 'string' && efforts[role]) ? ` · effort ${efforts[role].replace(/[\r\n]+/g, ' ')}` : '';
     lines.push(`- ${role} (${cls}${tmpl})${effortStr}${account}${brief}${liveStr}`);
     for (const l of retiredFieldLines(team, role)) lines.push(l);
   }

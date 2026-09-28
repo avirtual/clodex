@@ -50,6 +50,17 @@ function createSeatImport({
     return path.join(stagingDir(id), 'failed');
   }
 
+  function activityPath(id) {
+    return path.join(stagingDir(id), 'activity');
+  }
+
+  function lastActivity(id) {
+    try {
+      const t = Number(fs.readFileSync(activityPath(id), 'utf8'));
+      return Number.isFinite(t) ? t : null;
+    } catch { return null; }
+  }
+
   function exists(p) {
     try { fs.lstatSync(p); return true; } catch { return false; }
   }
@@ -247,6 +258,7 @@ function createSeatImport({
     } catch (e) {
       return fail(`cannot stage ${relPath}: ${e.message}`);
     }
+    try { fs.writeFileSync(activityPath(id), String(now())); } catch {}
     return { ok: true, size: sizeOf(target) };
   }
 
@@ -267,6 +279,8 @@ function createSeatImport({
         try { st = fs.statSync(stagingDir(id)); } catch { continue; }
         startedAt = st.mtimeMs;
       }
+      const touched = lastActivity(id);
+      if (touched !== null && touched > startedAt) startedAt = touched;
       if (startedAt < cutoff) {
         rmStaging(id);
         removed.push(id);

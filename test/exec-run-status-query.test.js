@@ -270,6 +270,21 @@ test('a reply that fits once its last tail empties leaves every cmd whole', asyn
   } finally { cleanup(); }
 });
 
+test('the whole overshoot comes off the longest tail in one cut', async () => {
+  const { m, session, replies, cleanup } = harness();
+  try {
+    session.execRuns = [
+      { seq: 1, cmd: 'c', state: 'ok', startedAt: 0, endedAt: 1000, tail: 'a'.repeat(200), ceilingMin: 7 },
+      { seq: 2, cmd: 'c', state: 'ok', startedAt: 0, endedAt: 1000, tail: 'b'.repeat(199), ceilingMin: 7 },
+    ];
+    m._handleExecIntent(session, 'status', '{}');
+    await settle();
+    const line = statusOf(replies);
+    assert.ok(line.length <= '[agent:exec] '.length + 400, `got ${line.length}`);
+    assert.ok(line.includes(`: ${'b'.repeat(199)};`), `the shorter tail was cut too: ${line}`);
+  } finally { cleanup(); }
+});
+
 test('a narrow tail cut on half a surrogate pair drops the lone high half even when nothing is trimmed', async () => {
   const { m, session, replies, children, cleanup } = harness();
   try {

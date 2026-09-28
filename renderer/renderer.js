@@ -579,11 +579,12 @@ function startWorkspaceRename() {
     try {
       await window.api.setWorkspaceName(newName);
     } catch (e) {
-      showToast(`Rename failed: ${(e && e.message) || 'unknown error'}`, { kind: 'error', duration: 10000 });
+      const why = String((e && e.message) || 'unknown error').replace(/^Error invoking remote method '[^']*': (?:Error: )?/, '');
+      showToast(`Rename failed: ${why}`, { kind: 'error', duration: 10000 });
       return;
     }
     currentWorkspaceName = newName;
-    newSpan.textContent = newName;
+    if (document.getElementById('workspace-name') === newSpan) newSpan.textContent = newName;
     document.title = newName;
   };
 

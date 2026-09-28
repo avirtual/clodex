@@ -152,7 +152,7 @@ test('a reload re-opens the seat: one stream, one shell, and a snapshot for the 
     // it could have arrived. Asserting immediately would pass against a leak
     // that is merely slower than the assertion.
     await waitFor('the re-opened stream to reach the serving box', () => watched(server).length === 1);
-    await new Promise((r) => setTimeout(r, 250));
+    await waitFor('the second replay', () => chan(conn, 'peer-wterm-replay').length === 2);
 
     assert.deepStrictEqual(watched(server), ['alice'],
       'still exactly one seat watched — the reload did not leave a second stream behind');

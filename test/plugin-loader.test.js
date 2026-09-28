@@ -522,6 +522,17 @@ test('a renderer half that throws on two consecutive launches is quarantined eve
   assert.strictEqual(b.loader.isQuarantined('rend'), true);
 });
 
+test('an engine half that loads drops the stale engine error while a renderer strike is kept', () => {
+  const root = mkTree({ alpha: { manifest: OK_MANIFEST, files: { 'engine.js': 'module.exports.activate = () => {};' } } });
+  const { loader } = mkLoader(root, {
+    plugins: { _failures: { alpha: { count: 1, engine: 1, renderer: 1, error: 'engine activate() threw: old', at: 0 } } },
+  });
+  loader.loadAll(fakeHost());
+  const row = loader.status().plugins.find((p) => p.id === 'alpha');
+  assert.strictEqual(row.failCount, 1, 'ENTER: the renderer strike survived the engine clear');
+  assert.strictEqual(row.lastError, null);
+});
+
 test('a renderer half that succeeds clears an engine-half strike', () => {
   const { loader } = mkLoader(BOOM_TREE());
   loader.loadAll(fakeHost());
@@ -1257,7 +1268,27 @@ test('re-scan keeps restart-required across a removal while the old engine stays
   fs.writeFileSync(path.join(user, 'gamma', 'style.css'), '');
   const r = loader.rescan(host);
   assert.deepStrictEqual(r.changed, ['gamma']);
-  assert.ok(loader.status().plugins.find((p) => p.id === 'gamma').restartRequired);
+  const held = loader.status().plugins.find((p) => p.id === 'gamma').restartRequired;
+  assert.ok(held);
+  assert.strictEqual(held.now, '1.0.0', 'the kept flag names the version now on disk, not the removed v2');
+});
+
+test('re-scan reports a never-flagged plugin re-installed at the same version and path as added', () => {
+  const user = freshTree('gamma', '1.0.0');
+  const { loader } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
+  const host = rescanHost();
+  loader.loadAll(host);
+  const dir = path.join(user, 'gamma');
+  const saved = Object.fromEntries(fs.readdirSync(dir).map((f) => [f, fs.readFileSync(path.join(dir, f), 'utf8')]));
+  fs.rmSync(dir, { recursive: true, force: true });
+  assert.deepStrictEqual(loader.rescan(host).removed, ['gamma']);
+
+  fs.mkdirSync(dir);
+  for (const [f, body] of Object.entries(saved)) fs.writeFileSync(path.join(dir, f), body);
+  const r = loader.rescan(host);
+  assert.deepStrictEqual(r.added, ['gamma']);
+  assert.deepStrictEqual(r.changed, []);
+  assert.strictEqual(loader.status().plugins.find((p) => p.id === 'gamma').restartRequired, null);
 });
 
 test('re-scan takes NO strike when a plugin fails to activate', () => {

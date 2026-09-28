@@ -89,3 +89,26 @@ test('a refused rename keeps the old name and surfaces the refusal as a toast', 
   assert.match(world.toasts[0].msg, /^Rename failed: .*control characters/);
   assert.strictEqual(world.toasts[0].opts.kind, 'error');
 });
+
+test('the refusal toast drops Electron\'s IPC wrapper and shows only the reason', async () => {
+  const api = load(() => Promise.reject(new Error("Error invoking remote method 'set-workspace-name': Error: workspace name may not contain a line break")));
+  rename(api, 'a');
+  await flush();
+  await flush();
+  assert.strictEqual(world.toasts.length, 1);
+  assert.strictEqual(world.toasts[0].msg, 'Rename failed: workspace name may not contain a line break');
+});
+
+test('a rename that resolves after its header span was replaced does not write into the stale span', async () => {
+  let resolve;
+  const api = load(() => new Promise((r) => { resolve = r; }));
+  rename(api, 'New');
+  const first = world.header;
+  assert.strictEqual(first.tag, 'span', 'ENTER: the first rename put a span back');
+  api.start();
+  assert.notStrictEqual(world.header, first, 'ENTER: a second rename replaced the first span');
+  resolve(true);
+  await flush();
+  assert.strictEqual(first.textContent, 'Old', 'the detached span was written after the await');
+  assert.strictEqual(api.current(), 'New');
+});

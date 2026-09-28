@@ -88,6 +88,17 @@ test('validateCandidate accepts a well-formed folder and reports what it found',
   });
 });
 
+test('validateCandidate normalises a trailing slash or a .. segment before the entry-path check', () => {
+  const dir = mkCandidate('alpha');
+  fs.mkdirSync(path.join(path.dirname(dir), 'y'));
+  const { loader } = mkLoaderWithUserRoot();
+  for (const given of [`${dir}/`, `${path.dirname(dir)}/y/../alpha`]) {
+    const r = loader.validateCandidate(given);
+    assert.strictEqual(r.ok, true, `${given}: ${r.error}`);
+    assert.strictEqual(r.id, 'alpha');
+  }
+});
+
 test('validateCandidate refuses a path that is not a directory', () => {
   const dir = mkCandidate('alpha');
   const { loader } = mkLoaderWithUserRoot();
