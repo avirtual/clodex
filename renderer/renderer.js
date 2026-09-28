@@ -107,7 +107,7 @@ const { initPeersUi } = require('./peers-ui');
 const { initPluginHost } = require('./plugin-host');
 
 
-const sessions = new Map(); // name -> { terminal, fitAddon, wrapperEl }
+const sessions = new Map();
 const transcriptChangedSubs = new Set();
 const streamSeatNames = new Set();
 const seatIoKind = (io) => (io === 'stream' ? 'stream' : 'pty');
@@ -939,7 +939,6 @@ function accountOfRow(name) {
   return item ? item.dataset.account || null : null;
 }
 
-// Handle context menu actions from main process
 // Restart a session and re-create its sidebar tab + terminal. Snapshots sidebar
 // metadata first because the kill+respawn wipes the tab via session-exit (same
 // dance as the Edit Session save path).
@@ -1578,9 +1577,7 @@ async function initSidebarView() {
     const res = await window.api.getSidebarView();
     if (res && res.ok && res.view) {
       const v = { ...res.view };
-      // One-time migration: normalize a persisted 'active' status to 'all'. The
-      // statusMigrated marker makes it fire ONCE per workspace, so a deliberate
-      // later Active choice survives.
+      // One-time migration: normalize a persisted 'active' status to 'all'.
       if (!v.statusMigrated) {
         if (v.status === 'active') v.status = 'all';
         window.api.setSidebarView({ status: v.status, statusMigrated: true });
@@ -2166,9 +2163,9 @@ function createTerminal(name, peer = null) {
   //
   // xterm ranges are 1-BASED and INCLUSIVE at both ends; scanPaths returns
   // 0-based half-open offsets. Both conversions below are that difference.
-  // Read a logical line as text. A row xterm WRAPPED is a continuation of the
-  // row above it, not a line of its own — walking rows naively would read the
-  // tail of a wrapped edit as a fresh line and find gutter numbers mid-sentence.
+  // A row xterm WRAPPED is a continuation of the row above it, not a line of its
+  // own — walking rows naively would read the tail of a wrapped edit as a fresh
+  // line and find gutter numbers mid-sentence.
   const rowText = (row) => {
     const l = terminal.buffer.active.getLine(row);
     return l ? l.translateToString(true) : null;
@@ -2489,9 +2486,8 @@ function switchSession(name) {
   // switch, and a peek left behind rides a request the operator is no longer
   // watching. Not on first activation (nothing was armed yet).
   if (wasActive && wasActive !== name) drawerHost.onSessionChanged();
-  // Unconditional: the FIRST activation takes the branch above's else, and the
-  // seat it lands on may be one the terminal cannot serve. Idempotent, so the
-  // switch path calling both is a repeated read and nothing more.
+  // The first activation takes this else and may land on a seat the terminal
+  // cannot serve; the switch arm syncs inside onSessionChanged.
   else drawerHost.syncSeatAvailability();
   sidePane.showSeat(name);
   filesToggle.refresh();
@@ -2926,7 +2922,7 @@ async function restoreHostCatalogs() {
   // populateHostCatalogs doesn't cover it (openDialog loads prompts through the
   // separate refreshSystemPromptDropdown), so reload the Mac's library here or the
   // dropdown/append checklist keep showing the box's prompts labeled as host's.
-  // A selected box-only prompt ref falls back to (CLI default), gracefully.
+  // A selected box-only prompt ref stays selected; the host spawn resolves no file for it and runs the CLI default without a word.
   await refreshSystemPromptDropdown();
   // The skill-lib cache has the identical exposure and is NOT gracefully
   // degrading: populateChecklistsFromCatalogs seeds it from the box, and a
@@ -3409,7 +3405,7 @@ async function openDialog(prefill = null) {
   dialogTeamName = null;
   lastTeamAutoName = null;
   refreshCwdSuggestions();
-  if (inputStripLevel) inputStripLevel.value = '0'; // default off each open
+  if (inputStripLevel) inputStripLevel.value = '0';
   if (inputAutoCompact) inputAutoCompact.checked = true; // default ON (opt-out unchecked)
   if (inputNoWire) inputNoWire.checked = false; // default wired each open
   if (inputStreamIo) inputStreamIo.checked = false;
@@ -5263,7 +5259,7 @@ function openCreateTeamDialog() {
         else if (e.key === 'Escape') done(null);
       });
     }
-    // dedupeTeamName reads the same dialogTeamNames the new-session dialog fills;
+    // teamNamePrefill reads the same dialogTeamNames the new-session dialog fills;
     // refresh it here so a duplicate suffix reflects teams created since.
     window.api.teamNames()
       .then((r) => { dialogTeamNames = (r && r.names) || []; })
@@ -6461,7 +6457,7 @@ function peerRowDest(row) {
   return el ? el.value.trim() : '';
 }
 
-// Duplicates the kind tables in stores.js (PEER_CLOUD_KINDS) and peer-tunnel.js (CLOUD_KINDS)
+// Duplicates the kind tables in stores.js (PEER_CLOUD_KINDS) and tunnel-supervisor.js (CLOUD_KINDS)
 // on purpose: those are main-process modules and this decides only what the dialog SAYS.
 // `cli` is named in the badge because "it needs that CLI on YOUR machine" is the misconfig
 // a cloud destination invites.
@@ -6886,7 +6882,7 @@ function closePeersDialog() { peersOverlay.classList.add('hidden'); }
 document.getElementById('btn-peers-cancel').addEventListener('click', closePeersDialog);
 document.getElementById('btn-peers-save').addEventListener('click', async () => {
   const collected = collectPeers();
-  if (!collected.ok) return;   // invalid port/folder — inline error already shown, keep the dialog open
+  if (!collected.ok) return;   // invalid port/folder — keep the dialog open
   // Re-merge the managed box peers FRESH at write time, never from a dialog-open stash: a box
   // Rebuild since open re-registers its peer with a new url/token, and setSettings replaces the
   // whole peers array. Strip hasToken (derived); omitted tokens carry forward by id.
@@ -8259,9 +8255,7 @@ function setTerminalReports(value) {
   }
 }
 
-// Baseline only. The per-model rows are rendered read-only rather than left out:
-// a surface that showed one pair while the code ran on another would read as the
-// whole truth. Editing them is a settings-file edit, and the store's merge keeps
+// Baseline only. Editing them is a settings-file edit, and the store's merge keeps
 // such a row across a Save from here.
 function setCtxThresholds(s) {
   const shipped = s.ctxThresholdDefaults || {};
@@ -8812,7 +8806,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const disabledTools = argsToolsRow.style.display === 'none' ? [] : collectToolChecklist(argsToolsList);
   // null here reaches session-args as an explicit clear of the allowlist; a hidden section must send undefined (untouched), as plugins below.
   const intents = argsIntentsSection.style.display === 'none' ? undefined : collectIntentChecklist(argsIntentsList);
-  // undefined = "untouched", never []: a hidden section or a checklist that drew
+  // plugins: undefined = "untouched", never []: a hidden section or a checklist that drew
   // no rows is an absence of options, not the operator's answer.
   const plugins = (argsPluginsSection.style.display === 'none' || !argsPluginsRendered.length)
     ? undefined

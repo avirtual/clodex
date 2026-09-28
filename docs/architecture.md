@@ -1147,8 +1147,8 @@ accept teardown removes.
   sidebar render loop + session context menus, PTY data routing, the
   new-session dialog, proxy/ctx telemetry state + `renderProxyBar`,
   `popoverApi` (the local-vs-peer data seam), the peers-SETUP dialog
-  (connection config; reads the core peerStatuses/peerTunnels Maps),
-  preferences/edit-args dialogs, keyboard shortcuts, restore IIFE, and the
+  (connection config; reads the core peerStatuses Map),
+  preferences/edit-args dialogs, the Manage Plugins dialog (library + install-from-source), keyboard shortcuts, restore IIFE, and the
   island init sites.
 
 ### Islands

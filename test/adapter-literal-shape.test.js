@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
-test('m0: renderer.js gates the warmth segment on caps.warmth, not on a codex literal', () => {
+test('m0: renderProxyBar gates its warmth segment on caps.warmth, not on a codex literal', () => {
   const src = read('renderer/renderer.js');
   assert.ok(!src.includes("!== 'codex'"), "renderer.js carries no `!== 'codex'`");
   assert.match(src, /if \(p\.warmth && adapterFor\(seatTypeOf\(activeSession\)\)\?\.caps\.warmth\)/);
