@@ -201,3 +201,37 @@ test('styles.css keeps every footer button as a glyph under the fold, pane toggl
     assert.doesNotMatch(sel, /data-plugin-footer|#files-toggle|#inbox-open/, `${sel} hides a footer button under the fold`);
   }
 });
+
+test('a meta refresh requested during an in-flight one still runs', async () => {
+  const start = rendererSrc.indexOf('let metaRefreshInFlight');
+  assert.ok(start >= 0, 'ENTER: metaRefreshInFlight is declared in the shipped renderer');
+  const fnAt = rendererSrc.indexOf('async function refreshSidebarMeta(', start);
+  const end = rendererSrc.indexOf('\n}\n', fnAt);
+  assert.ok(fnAt > start && end > fnAt, 'ENTER: refreshSidebarMeta follows it');
+  const body = rendererSrc.slice(start, end + 2);
+  const calls = [];
+  const pending = [];
+  const noop = () => {};
+  const env = {
+    window: { api: {
+      sidebarMeta: (opts) => { calls.push(opts); return new Promise((resolve) => pending.push(resolve)); },
+      listSessions: () => Promise.resolve([]),
+    } },
+    sidebarMeta: new Map(),
+    mergeMeta: (a, b) => ({ ...a, ...b }),
+    applyAccountChip: noop, markSeatVoice: noop, markSeatEffort: noop, markSeatPosture: noop,
+    refreshSidebarView: noop,
+    pluginBar: { renderFooterButtons: noop },
+  };
+  const names = Object.keys(env);
+  const refreshSidebarMeta = new Function(...names, `${body}\nreturn refreshSidebarMeta;`)(...names.map((n) => env[n]));
+  const flush = () => new Promise((r) => setImmediate(r));
+  const first = refreshSidebarMeta();
+  const second = refreshSidebarMeta({ includePr: false });
+  for (let i = 0; i < 10; i++) {
+    while (pending.length) pending.shift()({ ok: true, meta: {} });
+    await flush();
+  }
+  await Promise.all([first, second]);
+  assert.deepStrictEqual(calls, [{ includePr: true }, { includePr: false }]);
+});

@@ -82,7 +82,8 @@ function scanClaudeDisk({ maxAgeMs = DEFAULT_MAX_AGE_MS, readMeta = null } = {})
       out.push(rec);
     }
   }
-  out.sort((a, b) => (b.lastActive || b.mtime) - (a.lastActive || a.mtime));
+  const recency = (r) => Date.parse(r.lastActive) || r.mtime;
+  out.sort((a, b) => recency(b) - recency(a));
   return out;
 }
 
