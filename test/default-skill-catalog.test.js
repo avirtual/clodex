@@ -212,6 +212,32 @@ test('a seat with no transcript at all is skipped, not fatal', () => {
   assert.ok(res.names.includes(DISCOVERED[0]));
 });
 
+test('on Linux the policy layer is read from /etc/claude-code, so a policy deny is reported locked', () => {
+  const LINUX_POLICY = '/etc/claude-code/managed-settings.json';
+  const stub = JSON.stringify({ permissions: { deny: ['SendMessage'] }, strictPluginOnlyCustomization: ['skills'] });
+  const home = mkTmpRoot('clx-policy-linux-');
+  const origHome = process.env.HOME;
+  const platDesc = Object.getOwnPropertyDescriptor(process, 'platform');
+  const origRead = fs.readFileSync;
+  try {
+    process.env.HOME = home;
+    Object.defineProperty(process, 'platform', { ...platDesc, value: 'linux' });
+    fs.readFileSync = function (p, ...rest) {
+      if (p === LINUX_POLICY) return stub;
+      return origRead.call(this, p, ...rest);
+    };
+    assert.strictEqual(fs.readFileSync(LINUX_POLICY, 'utf8'), stub);
+    const { engine } = mkBox();
+    assert.deepStrictEqual(engine.readEffectiveToolState(null).overrides,
+      { SendMessage: { value: 'off', source: 'policy', locked: true } });
+    assert.strictEqual(engine.readEffectiveSkillState(null).skillsLocked, true);
+  } finally {
+    fs.readFileSync = origRead;
+    Object.defineProperty(process, 'platform', platDesc);
+    if (origHome === undefined) delete process.env.HOME; else process.env.HOME = origHome;
+  }
+});
+
 // The engine leaves background timers running (proxy poll, pending poll); the
 // same force-exit every other createEngine file uses.
 test('done', () => { setImmediate(() => process.exit(0)); });

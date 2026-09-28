@@ -127,3 +127,31 @@ test('discoverLiveProcesses: empty on win32 (no pgrep/lsof)', async () => {
     Object.defineProperty(process, 'platform', orig);
   }
 });
+
+test('readSessionMeta counts operator prompts, not tool_result lines', () => {
+  const { createEngine } = require('../engine');
+  const tmp = mkTmpRoot('clodex-meta-turns-');
+  const eng = createEngine({
+    userDataPath: tmp,
+    seams: { registryDir: path.join(tmp, 'clodex-home') },
+    log: { info() {}, warn() {}, error() {} },
+  });
+  const toolResult = (id) => ({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] } });
+  const lines = [
+    { type: 'user', message: { role: 'user', content: 'first prompt' }, timestamp: '2026-07-09T00:00:00.000Z' },
+    { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] } },
+    toolResult('a'),
+    toolResult('b'),
+    toolResult('c'),
+    { type: 'user', message: { role: 'user', content: 'second prompt' }, timestamp: '2026-07-09T00:05:00.000Z' },
+  ];
+  const file = path.join(tmp, 's.jsonl');
+  fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+
+  const meta = eng.readSessionMeta(file);
+  assert.ok(meta && meta.first, 'the transcript was read');
+  assert.strictEqual(meta.turns, 2);
+});
+
+const { after } = require('node:test');
+after(() => { setImmediate(() => process.exit(0)); });

@@ -89,3 +89,28 @@ test('missingToolOnExit: an absolute-path cmd is never flagged (assumed explicit
     null,
   );
 });
+
+test('a directory named claude on PATH is not an installed CLI', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { createEngine } = require('../engine');
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const tmp = mkTmpRoot('clx-diag-dir-');
+  const eng = createEngine({
+    userDataPath: tmp,
+    seams: { registryDir: path.join(tmp, 'clodex-home') },
+    log: { info() {}, warn() {}, error() {} },
+  });
+  const binDir = path.join(tmp, 'bin');
+  fs.mkdirSync(path.join(binDir, 'claude'), { recursive: true });
+  const origPath = process.env.PATH;
+  try {
+    process.env.PATH = binDir;
+    assert.ok(fs.statSync(path.join(binDir, 'claude')).isDirectory());
+    assert.strictEqual(eng.collectSystemDiagnostics().claude, null);
+  } finally {
+    process.env.PATH = origPath;
+  }
+});
+
+test.after(() => { setImmediate(() => process.exit(0)); });

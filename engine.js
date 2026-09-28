@@ -261,7 +261,7 @@ function whichBin(cmd) {
   if (cmd.includes('/')) { try { fs.accessSync(cmd, fs.constants.X_OK); return cmd; } catch { return null; } }
   for (const d of (process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
     const p = path.join(d, cmd);
-    try { fs.accessSync(p, fs.constants.X_OK); return p; } catch {}
+    try { fs.accessSync(p, fs.constants.X_OK); if (fs.statSync(p).isFile()) return p; } catch {}
   }
   return null;
 }
@@ -502,7 +502,7 @@ function teamPromptStems(team, kind) {
 }
 
 function teamPromptRows(kind) {
-  const kinds = kind ? [kind] : PROMPT_KINDS;
+  const kinds = kind ? (PROMPT_KINDS.includes(kind) ? [kind] : []) : PROMPT_KINDS;
   const rows = [];
   const shadows = new Map();
   let names;
@@ -943,6 +943,11 @@ function parseSkillRoster(name) {
   } catch { return emptyRoster(); }
 }
 
+const MANAGED_SETTINGS = {
+  darwin: '/Library/Application Support/ClaudeCode/managed-settings.json',
+  linux: '/etc/claude-code/managed-settings.json',
+}[process.platform];
+
 function readEffectiveSkillState(cwd) {
   const layers = [
     { src: 'global', file: path.join(os.homedir(), '.claude', 'settings.json') },
@@ -961,8 +966,8 @@ function readEffectiveSkillState(cwd) {
     }
   }
   let skillsLocked = false;
-  if (process.platform === 'darwin') {
-    const managed = readJsonSafe('/Library/Application Support/ClaudeCode/managed-settings.json');
+  if (MANAGED_SETTINGS) {
+    const managed = readJsonSafe(MANAGED_SETTINGS);
     const lock = managed && managed.strictPluginOnlyCustomization;
     if (lock === true) skillsLocked = true;
     else if (Array.isArray(lock) && lock.includes('skills')) skillsLocked = true;
@@ -980,9 +985,7 @@ function readEffectiveToolState(cwd) {
     { src: 'project', file: cwd ? path.join(cwd, '.claude', 'settings.json') : null },
     { src: 'local', file: cwd ? path.join(cwd, '.claude', 'settings.local.json') : null },
   ];
-  if (process.platform === 'darwin') {
-    layers.push({ src: 'policy', file: '/Library/Application Support/ClaudeCode/managed-settings.json' });
-  }
+  if (MANAGED_SETTINGS) layers.push({ src: 'policy', file: MANAGED_SETTINGS });
   const overrides = {}; // tool -> { value:'off', source, locked } — later layer wins
   for (const { src, file } of layers) {
     if (!file) continue;
@@ -1065,7 +1068,13 @@ function readSessionMeta(file) {
       try { title = JSON.parse(lines[i]).aiTitle || null; } catch {}
     }
   }
-  for (const ln of lines) if (ln.includes('"type":"user"')) turns++;
+  for (const ln of lines) {
+    if (!ln.includes('"type":"user"')) continue;
+    let content;
+    try { content = JSON.parse(ln).message?.content; } catch { continue; }
+    if (Array.isArray(content) && content.length && content.every((b) => b && b.type === 'tool_result')) continue;
+    turns++;
+  }
   if (!first && !last && !title) return null;
   return { title, first, last, turns };
 }
@@ -1122,7 +1131,7 @@ function spillToFile(sender, body, recipient) {
   msgCounter++;
   const fname = `msg-${process.pid}-${msgCounter}.txt`;
   const fpath = path.join(dir, fname);
-  const header = `From: ${sender}\nTime: ${new Date().toTimeString().slice(0, 8)}\nSize: ${body.length} bytes\n\n`;
+  const header = `From: ${sender}\nTime: ${new Date().toTimeString().slice(0, 8)}\nSize: ${Buffer.byteLength(body)} bytes\n\n`;
   fs.writeFileSync(fpath, header + body);
   return fpath;
 }

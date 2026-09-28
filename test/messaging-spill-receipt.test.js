@@ -8,10 +8,6 @@
 // Parking has no expiry, the spill file had one (MSG_MAX_AGE, 30 min), so a
 // delivery parked longer arrived pointing at a deleted file — silently, because
 // nothing re-reads the file at delivery.
-//
-// These tests drive engine.sweepSpilledMessages directly (module-level and
-// fully parameterized — no engine construction, no timers, no PTY) against real
-// temp dirs, and pending-store.allParkedTexts, the read-only scan it uses.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -208,3 +204,27 @@ test('t1265: with imgMaxAgeSec omitted a seat image ages out at maxAgeSec', () =
 test('t1265: IMG_MAX_AGE is 24 hours', () => {
   assert.strictEqual(require('../engine').IMG_MAX_AGE, 86400);
 });
+
+test("a spilled body's header states its size in bytes", () => {
+  const { createEngine } = require('../engine');
+  const tmp = mkTmpRoot('clx-spill-bytes-');
+  const registryDir = path.join(tmp, 'clodex-home');
+  const eng = createEngine({
+    userDataPath: tmp,
+    seams: { registryDir },
+    log: { info() {}, warn() {}, error() {} },
+  });
+  eng.manager.sessions.set('bob', {
+    name: 'bob', agentType: 'claude', type: 'claude', pty: { pid: -1, write() {}, kill() {} },
+  });
+  eng.manager._deliverMessage('bob', 'alice', 'é'.repeat(600), 'dm');
+
+  const dir = path.join(registryDir, 'messages', 'bob');
+  const files = fs.readdirSync(dir).filter((f) => /^msg-.*\.txt$/.test(f));
+  assert.strictEqual(files.length, 1);
+  const lines = fs.readFileSync(path.join(dir, files[0]), 'utf8').split('\n');
+  assert.strictEqual(lines[2], 'Size: 1200 bytes');
+});
+
+const { after } = require('node:test');
+after(() => { setImmediate(() => process.exit(0)); });
