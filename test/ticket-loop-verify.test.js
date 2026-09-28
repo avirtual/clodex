@@ -5946,3 +5946,21 @@ test('verify: the no-TOTALS error carries the runner\'s last note line', async (
   assert.match(r.error, /last stdout line: \(no stdout\)/, 'ENTER: the stdout side is empty');
   assert.match(r.error, /lock not acquired within 1s/, 'the escalation names why the runner gave up');
 });
+
+test('verify: the loop keeps its runner pid on the record while the suite runs, and clears it after', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'lockGaveUp' });
+  const during = [];
+  const real = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = (team, ticket, runIn, opts) => real(team, ticket, runIn, {
+    onSpawn: (pid) => { opts.onSpawn(pid); during.push([pid, f.one().runnerPid]); },
+  });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+
+  assert.strictEqual(during.length, 1, 'ENTER: the runner spawned once');
+  assert.strictEqual(during[0][1], during[0][0], 'the record names the live runner while it runs, for a re-close to find');
+  assert.strictEqual(f.one().runnerPid, undefined, 'and the loop clears it on exit');
+});
