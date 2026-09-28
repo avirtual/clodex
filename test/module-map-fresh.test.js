@@ -10,7 +10,23 @@ const { extractFile, indexFile, parseMap, checkMap } = require('../scripts/symbo
 const REPO = path.join(__dirname, '..');
 const MAP_DIR = path.join(REPO, 'docs', 'map');
 
-const EXPECTED_MAPS = [];
+// One slot per giant, each on its own line with a blank line between, so the
+// six map tickets landing in parallel edit non-adjacent lines and merge clean.
+// A commented slot is a placeholder, not coverage: the map ticket that lands
+// the file uncomments its line, and a map on disk that is still commented reds.
+const EXPECTED_MAPS = [
+  // 'engine.md',
+
+  // 'ipc-handlers.md',
+
+  // 'renderer.md',
+
+  // 'session-manager.md',
+
+  // 'stores.md',
+
+  // 'team-tickets.md',
+];
 
 const WHY_EMPTY_IS_NOT_VACUOUS = 'no maps ship with the gate; each giant lands in its own ticket, which appends its file to EXPECTED_MAPS. '
   + 'Until then the extractor floors and the per-rule fixture subjects carry the coverage, and this listing check still reds a map that lands unlisted, '
