@@ -550,6 +550,32 @@ test('per-agent upstream override chains through an external proxy base', async 
 
 });
 
+test('chatgpt-backend mode tees an application/json Responses stream as SSE', async (t) => {
+  const BODY = 'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"hi"}\n\n'
+    + 'event: response.completed\ndata: {"type":"response.completed","response":{"status":"completed"}}\n\n';
+  const server = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(BODY);
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const proxy = new WireProxy({
+    upstreams: { openai: `http://127.0.0.1:${server.address().port}/chatgpt.com/backend-api` },
+  });
+  await proxy.listen();
+  t.after(() => proxy.close());
+  const events = collect(proxy, ['response']);
+
+  const res = await request(proxy.port, '/agent/t/openai/v1/responses', '{"model":"gpt-5","input":[]}');
+  assert.equal(res.status, 200);
+  assert.equal(res.body.toString('utf8'), BODY);
+  assert.equal(events.response.length, 1);
+  assert.equal(events.response[0].sse, true);
+});
+
 test('malformed SSE degrades to an empty receipt, session unbroken', async (tc) => {
   // Upstream streams garbage that is not valid SSE JSON — the client must
   // still receive the exact bytes; the observer sees no usage/text but

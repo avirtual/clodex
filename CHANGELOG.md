@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Wire: an upstream URL with an unsupported scheme answers 502 instead of crashing the host; a bad upstream URL or a failed decompressor now ends the turn with an error instead of leaving the seat "thinking" for 15 minutes; the chatgpt-backend SSE detection now fires; re-opening a peer after its box turned token-gated no longer leaves the old ungated forward running, and a failed tunnel open lowers the forward it raised.
 - Sessions: a failed move-to-peer of a seat that was not running here no longer starts it; moving a stopped seat to another workspace now removes its row from the source window; renaming a seat carries its memory load log along instead of leaving it for the next seat of that name; an exec whose process fails to start is reported as failed, not "started (pid undefined)"; the exec status reply stays under its 400-character cap without splitting an emoji.
 
 - Tickets: the slow-test gate now counts a branch's `cli/test/` changes as owned tests, so a CLI-only branch is no longer sent through the full suite twice; a spec-confirm probe survives a transcript repoint (a hand that /clear'd right after dispatch is no longer read as never having confirmed); a tracked `.codex/.gitignore` in a ticket tree is left alone instead of overwritten (Codex ticket trees no longer start dirty); a briefed `team create` keeps every kit role, not just lead/hand/reviewer.
