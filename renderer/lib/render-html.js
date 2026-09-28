@@ -140,7 +140,7 @@ function isInherentCompact(t, loc) {
 // moment of the lapse rather than against that turn. It carries no locus, no
 // diff, and `0 tok rewritten · 0%`, which is the row contradicting itself: a
 // FULL-REWRITE that rewrote nothing. Listing them buries the busts that did cost
-// something, and the count in the header stops meaning "what this session paid".
+// something.
 //
 // BOTH clauses are required, and the second is the one that keeps this honest.
 // A zero-token row that DOES carry a locus still says WHAT changed (a CLAUDE.md
@@ -156,6 +156,16 @@ function isZeroCostBust(t) {
   const o = typeof loc.old === 'string' ? loc.old : '';
   const n = typeof loc.new === 'string' ? loc.new : '';
   return !o && !n;
+}
+
+function genuineBustWeight(t) {
+  if (!t || !t.fault || t.fault === 'self') return 0;
+  const n = typeof t.count === 'number' ? t.count : 1;
+  return Math.max(0, n - (Number(t.restart_between) || 0));
+}
+
+function genuineBustCount(items) {
+  return Array.isArray(items) ? items.reduce((n, t) => n + genuineBustWeight(t), 0) : 0;
 }
 
 // A divergence snippet: raw request bytes, so esc() first, and only then swap
@@ -230,5 +240,5 @@ function bustRow(t, base, sid) {
     + `</div>`;
 }
 
-module.exports = { renderDiffHtml, costStackBlock, bustRow, isZeroCostBust };
+module.exports = { renderDiffHtml, costStackBlock, bustRow, isZeroCostBust, genuineBustWeight, genuineBustCount };
 

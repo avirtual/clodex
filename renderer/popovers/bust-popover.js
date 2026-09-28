@@ -4,11 +4,9 @@
 // island: DOM handles + dismiss wiring live here; data comes through
 // popoverApi(name).bust(); proxyState is the live poll-payload Map (base/
 // sessionId). openExternal/openWirescope are window.api shell actions.
-//
-// The painters are DOM-bound, so no unit tests per the R1 rule; the group wiring is not.
 
 const { esc, fmtAgo } = require('../lib/format');
-const { bustRow, isZeroCostBust } = require('../lib/render-html');
+const { bustRow, isZeroCostBust, genuineBustWeight } = require('../lib/render-html');
 
 // The bust_summary's age triad (wirescope /_status → shaped `p.busts`). first_ts
 // (v0.6.33+) is the set-once epoch of the session's FIRST real bust; last_ts (=
@@ -73,17 +71,14 @@ function initBustPopover({ popoverApi, proxyState, barPopovers }) {
     // counted and summarised separately because they mean different things — one
     // is a cost we chose, the other is a cost nobody paid — and merging them into
     // a single "hidden" line would make the panel unable to say which.
-    const genuine = busts.filter((t) => t.fault !== 'self' && !isZeroCostBust(t));
+    const counted = busts.filter((t) => genuineBustWeight(t) > 0);
+    const listed = busts.filter((t) => t.fault !== 'self' && !isZeroCostBust(t));
     const designed = busts.filter((t) => t.fault === 'self');
     const freeRows = busts.filter((t) => t.fault !== 'self' && isZeroCostBust(t));
     const lapseNote = freeRows.length
       ? `<div class="cost-note">+ ${freeRows.length} zero-token prefix lapse${freeRows.length === 1 ? '' : 's'} (idle cache expired, nothing rewritten) — not shown.</div>`
       : '';
-    if (!genuine.length) {
-      // "the prefix stayed warm" is only true when nothing was recorded at all.
-      // Once the free rows are hidden this branch is reachable with a long list of
-      // lapses behind it — the prefix went cold repeatedly and cost nothing to
-      // re-establish, which is a different sentence and must not borrow that one.
+    if (!counted.length && !listed.length) {
       const only = designed.length
         ? `<div class="cost-note">No genuine cache busts — the ${designed.length} recorded event${designed.length === 1 ? ' is' : 's are'} the designed per-turn strip cost (thinking falling behind the boundary), not a cache problem.</div>`
         : freeRows.length
@@ -92,12 +87,12 @@ function initBustPopover({ popoverApi, proxyState, barPopovers }) {
       return triad + only + lapseNote + link;
     }
     const nStatic = d.n_static_prefix_busts != null ? d.n_static_prefix_busts : null;
-    const head = `<div class="cost-head"><b>${genuine.length}</b> genuine cache-bust${genuine.length === 1 ? '' : 's'}`
+    const head = `<div class="cost-head"><b>${counted.length}</b> genuine cache-bust${counted.length === 1 ? '' : 's'}`
       + (nT != null ? ` over <b>${nT}</b> transitions` : '')
       + (nStatic ? ` · <b>${nStatic}</b> touched the static prefix` : '')
       + `</div>`;
     // Newest first — the operator usually cares about what just broke.
-    const rows = genuine.slice().reverse().map((t) => bustRow(t, base, sid)).join('');
+    const rows = listed.slice().reverse().map((t) => bustRow(t, base, sid)).join('');
     const designedNote = designed.length
       ? `<div class="cost-note">+ ${designed.length} designed strip-cost microbust${designed.length === 1 ? '' : 's'} (fault:self) — expected every turn, not shown.</div>`
       : '';
@@ -106,10 +101,12 @@ function initBustPopover({ popoverApi, proxyState, barPopovers }) {
     // a treatment nothing in the list has. A cold-cache row that DID cost tokens
     // is still listed and still reads dim.
     const note = '<div class="cost-note">Amber = a real injected-prefix change worth fixing (model swap, date rollover, CLAUDE.md edit). Dim = expected (a one-time deploy tax that self-heals, or a compact rewriting its own summary).</div>';
-    return triad + head + `<div class="bust-list">${rows}</div>` + designedNote + lapseNote + note + link;
+    return triad + head + `<div class="bust-list">${rows}</div>` + designedNote + lapseNote + (listed.length ? note : '') + link;
   }
 
+  let openSeq = 0;
   async function openBustPopover(name, anchor) {
+    const seq = ++openSeq;
     closeSiblings();
     const p = (proxyState.get(name) || {}).payload;
     const base = p && p.base, sid = p && p.sessionId;
@@ -122,8 +119,10 @@ function initBustPopover({ popoverApi, proxyState, barPopovers }) {
     const w = bustPopover.offsetWidth;
     bustPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
     bustPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
-    const res = await popoverApi(name).bust();
-    if (bustPopover.dataset.name !== name || bustPopover.classList.contains('hidden')) return;
+    let res;
+    try { res = await popoverApi(name).bust(); }
+    catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
+    if (seq !== openSeq || bustPopover.dataset.name !== name || bustPopover.classList.contains('hidden')) return;
     if (!res || !res.ok) {
       bustPopoverBody.innerHTML = `<div class="cost-note">${esc(res && res.error ? res.error : 'Cache-bust forensics unavailable')}</div>`;
       return;

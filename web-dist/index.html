@@ -25640,6 +25640,14 @@ ${i3.join("\n")}
         const n = typeof loc.new === "string" ? loc.new : "";
         return !o && !n;
       }
+      function genuineBustWeight(t) {
+        if (!t || !t.fault || t.fault === "self") return 0;
+        const n = typeof t.count === "number" ? t.count : 1;
+        return Math.max(0, n - (Number(t.restart_between) || 0));
+      }
+      function genuineBustCount(items) {
+        return Array.isArray(items) ? items.reduce((n, t) => n + genuineBustWeight(t), 0) : 0;
+      }
       function bustSnip(s) {
         return esc(s).replace(/\n/g, '<span class="bust-nl">\u23CE</span>');
       }
@@ -25664,7 +25672,7 @@ ${i3.join("\n")}
         const diff = oldSnip || newSnip ? `<div class="bust-diff">${at}<div class="diff-line diff-del">- ${bustSnip(oldSnip)}</div><div class="diff-line diff-add">+ ${bustSnip(newSnip)}</div></div>` : "";
         return `<div class="bust-row bust-sev-${esc(sev)}"><div class="bust-row-head"><span class="bust-what">${esc(what)}</span>${faultBadge}${healBadge}</div><div class="bust-row-meta"><span class="bust-sev">${esc(sev)}</span>${mag}${stamp}${turnLink}</div>` + hint + diff + `</div>`;
       }
-      module.exports = { renderDiffHtml, costStackBlock, bustRow, isZeroCostBust };
+      module.exports = { renderDiffHtml, costStackBlock, bustRow, isZeroCostBust, genuineBustWeight, genuineBustCount };
     }
   });
 
@@ -40070,7 +40078,12 @@ void main() {
         let at = -1;
         let showSeq = 0;
         async function loadIndex() {
-          const res = await api.helpIndex();
+          let res;
+          try {
+            res = await api.helpIndex();
+          } catch {
+            res = null;
+          }
           if (!res || !res.ok || !Array.isArray(res.sections)) {
             indexPromise = null;
             return indexData || { sections: [] };
@@ -40086,7 +40099,12 @@ void main() {
           return indexPromise;
         }
         async function loadPage(name) {
-          const res = await api.helpPage(name);
+          let res;
+          try {
+            res = await api.helpPage(name);
+          } catch {
+            res = null;
+          }
           if (!res || !res.ok) pageCache.delete(name);
           return res;
         }
@@ -40112,7 +40130,7 @@ void main() {
           if (!repoPath) return null;
           const name = pageOfRepoPath(repoPath);
           if (name && pageNames.has(name)) return { kind: "page", name, slug: frag || null };
-          return { kind: "external", url: `${REPO_BLOB}${repoPath}` };
+          return { kind: "external", url: `${REPO_BLOB}${repoPath}${frag ? `#${frag}` : ""}` };
         }
         function row(tag, cls, text) {
           const el = document.createElement(tag);
@@ -40489,7 +40507,7 @@ void main() {
   var require_bust_popover = __commonJS({
     "renderer/popovers/bust-popover.js"(exports, module) {
       var { esc, fmtAgo } = require_format();
-      var { bustRow, isZeroCostBust } = require_render_html();
+      var { bustRow, isZeroCostBust, genuineBustWeight } = require_render_html();
       function absStamp(sec) {
         try {
           return new Date(sec * 1e3).toLocaleString(void 0, {
@@ -40530,22 +40548,25 @@ void main() {
           const busts = Array.isArray(d && d.busts) ? d.busts : [];
           const nT = d && d.count != null ? d.count : null;
           const link = base && sid ? `<span class="px-link-ext" data-url="${esc(`${base}/_session?session=${encodeURIComponent(sid)}`)}" title="Open the session in the wirescope navigator (\u2318-click for browser)">Open navigator \u2192</span>` : "";
-          const genuine = busts.filter((t) => t.fault !== "self" && !isZeroCostBust(t));
+          const counted = busts.filter((t) => genuineBustWeight(t) > 0);
+          const listed = busts.filter((t) => t.fault !== "self" && !isZeroCostBust(t));
           const designed = busts.filter((t) => t.fault === "self");
           const freeRows = busts.filter((t) => t.fault !== "self" && isZeroCostBust(t));
           const lapseNote = freeRows.length ? `<div class="cost-note">+ ${freeRows.length} zero-token prefix lapse${freeRows.length === 1 ? "" : "s"} (idle cache expired, nothing rewritten) \u2014 not shown.</div>` : "";
-          if (!genuine.length) {
+          if (!counted.length && !listed.length) {
             const only = designed.length ? `<div class="cost-note">No genuine cache busts \u2014 the ${designed.length} recorded event${designed.length === 1 ? " is" : "s are"} the designed per-turn strip cost (thinking falling behind the boundary), not a cache problem.</div>` : freeRows.length ? `<div class="cost-note">No cache busts that cost anything${nT != null ? ` across ${nT} turn transition${nT === 1 ? "" : "s"}` : ""} \u2014 the prefix lapsed while idle and was re-established free.</div>` : `<div class="cost-note">No cache busts recorded${nT != null ? ` across ${nT} turn transition${nT === 1 ? "" : "s"}` : ""} \u2014 the prefix stayed warm.</div>`;
             return triad + only + lapseNote + link;
           }
           const nStatic = d.n_static_prefix_busts != null ? d.n_static_prefix_busts : null;
-          const head = `<div class="cost-head"><b>${genuine.length}</b> genuine cache-bust${genuine.length === 1 ? "" : "s"}` + (nT != null ? ` over <b>${nT}</b> transitions` : "") + (nStatic ? ` \xB7 <b>${nStatic}</b> touched the static prefix` : "") + `</div>`;
-          const rows = genuine.slice().reverse().map((t) => bustRow(t, base, sid)).join("");
+          const head = `<div class="cost-head"><b>${counted.length}</b> genuine cache-bust${counted.length === 1 ? "" : "s"}` + (nT != null ? ` over <b>${nT}</b> transitions` : "") + (nStatic ? ` \xB7 <b>${nStatic}</b> touched the static prefix` : "") + `</div>`;
+          const rows = listed.slice().reverse().map((t) => bustRow(t, base, sid)).join("");
           const designedNote = designed.length ? `<div class="cost-note">+ ${designed.length} designed strip-cost microbust${designed.length === 1 ? "" : "s"} (fault:self) \u2014 expected every turn, not shown.</div>` : "";
           const note = '<div class="cost-note">Amber = a real injected-prefix change worth fixing (model swap, date rollover, CLAUDE.md edit). Dim = expected (a one-time deploy tax that self-heals, or a compact rewriting its own summary).</div>';
-          return triad + head + `<div class="bust-list">${rows}</div>` + designedNote + lapseNote + note + link;
+          return triad + head + `<div class="bust-list">${rows}</div>` + designedNote + lapseNote + (listed.length ? note : "") + link;
         }
+        let openSeq = 0;
         async function openBustPopover(name, anchor) {
+          const seq = ++openSeq;
           closeSiblings();
           const p = (proxyState.get(name) || {}).payload;
           const base = p && p.base, sid = p && p.sessionId;
@@ -40558,8 +40579,13 @@ void main() {
           const w = bustPopover.offsetWidth;
           bustPopover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
           bustPopover.style.bottom = `${Math.max(8, window.innerHeight - r.top + 6)}px`;
-          const res = await popoverApi(name).bust();
-          if (bustPopover.dataset.name !== name || bustPopover.classList.contains("hidden")) return;
+          let res;
+          try {
+            res = await popoverApi(name).bust();
+          } catch (e) {
+            res = { ok: false, error: String(e && e.message || e) };
+          }
+          if (seq !== openSeq || bustPopover.dataset.name !== name || bustPopover.classList.contains("hidden")) return;
           if (!res || !res.ok) {
             bustPopoverBody.innerHTML = `<div class="cost-note">${esc(res && res.error ? res.error : "Cache-bust forensics unavailable")}</div>`;
             return;
@@ -40804,7 +40830,10 @@ void main() {
         sessionList.addEventListener("scroll", () => {
           if (!pop.classList.contains("hidden")) close();
         });
-        return { openSessionInfoPopover: open, closeSessionInfoPopover: close };
+        function closeIfShowing(name) {
+          if (name && pop.dataset.name === name) close();
+        }
+        return { openSessionInfoPopover: open, closeSessionInfoPopover: close, closeIfShowing };
       }
       module.exports = { initSessionInfoPopover };
     }
@@ -40818,6 +40847,7 @@ void main() {
         const filesPopover = document.getElementById("files-popover");
         const filesPopoverName = document.getElementById("files-popover-name");
         const filesPopoverBody = document.getElementById("files-popover-body");
+        const cwdByName = /* @__PURE__ */ new Map();
         window.api.onSessionFiles((name, files) => {
           filesState.set(name, files || []);
           sidePane.noteFiles(name, files || []);
@@ -40842,18 +40872,19 @@ void main() {
             filesPopoverBody.innerHTML = `<div class="cost-note">No file edits observed yet \u2014 rows appear as the agent's file tools run.</div>`;
             return;
           }
-          const cwd = filesPopover.dataset.cwd || "";
+          const cwd = cwdByName.get(name) || "";
+          const outside = (f) => !!cwd && !f.path.startsWith(cwd + "/");
           const rows = files.map((f) => {
-            const inCwd = cwd && f.path.startsWith(cwd + "/");
+            const inCwd = !!cwd && f.path.startsWith(cwd + "/");
             const rel = inCwd ? f.path.slice(cwd.length + 1) : f.path;
             const base = rel.split("/").pop();
             const dir = rel.slice(0, rel.length - base.length);
             const badges = [];
             if (f.count > 1) badges.push(`<span class="file-badge" title="Touched ${f.count} times">\xD7${f.count}</span>`);
             if (f.sub) badges.push('<span class="file-badge file-badge-sub" title="Touched via a subagent">sub</span>');
-            return `<div class="file-row${inCwd ? "" : " file-row-out"}" data-path="${esc(f.path)}" title="${esc(f.path)} \u2014 click to view / diff"><span class="file-row-main"><span class="file-row-dir">${esc(dir)}</span><span class="file-row-name">${esc(base)}</span>${badges.join("")}</span><span class="file-row-meta">${esc(f.tool)} \xB7 ${fmtAgo(f.ts)}</span></div>`;
+            return `<div class="file-row${outside(f) ? " file-row-out" : ""}" data-path="${esc(f.path)}" title="${esc(f.path)} \u2014 click to view / diff"><span class="file-row-main"><span class="file-row-dir">${esc(dir)}</span><span class="file-row-name">${esc(base)}</span>${badges.join("")}</span><span class="file-row-meta">${esc(f.tool)} \xB7 ${fmtAgo(f.ts)}</span></div>`;
           }).join("");
-          filesPopoverBody.innerHTML = `<div class="file-rows">${rows}</div>` + (files.some((f) => !(cwd && f.path.startsWith(cwd + "/"))) ? `<div class="cost-note">Dimmed rows are outside the session's working directory.</div>` : "");
+          filesPopoverBody.innerHTML = `<div class="file-rows">${rows}</div>` + (files.some(outside) ? `<div class="cost-note">Dimmed rows are outside the session's working directory.</div>` : "");
         }
         async function openFilesPopover(name, anchor) {
           if (!filesPopover.classList.contains("hidden") && filesPopover.dataset.name === name) {
@@ -40862,7 +40893,6 @@ void main() {
           const r = anchor.getBoundingClientRect();
           filesPopoverName.textContent = name;
           filesPopover.dataset.name = name;
-          filesPopover.dataset.cwd = "";
           if (filesUnseen.delete(name)) renderProxyBar();
           filesPopoverBody.innerHTML = '<div class="cost-note">Loading\u2026</div>';
           filesPopover.classList.remove("hidden");
@@ -40875,7 +40905,7 @@ void main() {
             filesPopoverBody.innerHTML = `<div class="cost-note">${esc(res && res.error || "Session not running")}</div>`;
             return;
           }
-          filesPopover.dataset.cwd = res.cwd || "";
+          if (res.cwd) cwdByName.set(name, res.cwd);
           filesState.set(name, res.files || []);
           if (peerFilesCount.has(name)) peerFilesCount.set(name, (res.files || []).length);
           renderFilesRows(name);
@@ -42008,7 +42038,8 @@ void main() {
         let speak = null;
         function speakHtml() {
           if (!speak) return "";
-          const voices = speak.voices.length ? `<select class="speak-voice" ${speak.on ? "" : "disabled"}>` + speak.voices.map((v) => `<option value="${esc(v.name)}"${v.name === speak.voice ? " selected" : ""}>${esc(v.name)} (${esc(v.locale)})</option>`).join("") + "</select>" : `<span class="speak-voice-fixed">${esc(speak.voice)}</span>`;
+          const voiceList = speak.voice && speak.voices.length && !speak.voices.some((v) => v.name === speak.voice) ? [{ name: speak.voice, locale: "set elsewhere" }, ...speak.voices] : speak.voices;
+          const voices = speak.voices.length ? `<select class="speak-voice" ${speak.on ? "" : "disabled"}>` + voiceList.map((v) => `<option value="${esc(v.name)}"${v.name === speak.voice ? " selected" : ""}>${esc(v.name)} (${esc(v.locale)})</option>`).join("") + "</select>" : `<span class="speak-voice-fixed">${esc(speak.voice)}</span>`;
           const want = speak.rate === null ? DEFAULT_SPEAK_RATE : speak.rate;
           const offered = SPEAK_RATES.some((r) => r.rate === want) ? SPEAK_RATES : [{ rate: want, label: `${want} \u2014 set elsewhere` }, ...SPEAK_RATES];
           const rates = `<select class="speak-rate" ${speak.on ? "" : "disabled"}>` + offered.map((r) => `<option value="${r.rate}"${r.rate === want ? " selected" : ""}>${esc(r.label)}</option>`).join("") + "</select>";
@@ -42070,7 +42101,7 @@ void main() {
         let lastKey = null;
         let failedOnce = false;
         core.subscribe((snap) => {
-          const key = `${snap.pending || ""}|${snap.mode || ""}|${snap.capable === false ? "no" : ""}`;
+          const key = `${snap.pending || ""}|${snap.mode || ""}|${snap.capable === false ? `no|${snap.cause || ""}` : ""}`;
           if (key === lastKey) return;
           try {
             if (!pop.classList.contains("hidden")) renderRows();
@@ -42264,21 +42295,34 @@ void main() {
             return null;
           }
         }
-        async function refreshBadge() {
-          const name = getActiveSession ? getActiveSession() : null;
-          if (!name) {
-            btn.classList.remove("live");
-            countEl.textContent = "";
+        const activeName = () => getActiveSession ? getActiveSession() : null;
+        let badgeFor = null;
+        function clearBadge() {
+          btn.classList.remove("live");
+          countEl.textContent = "";
+          badgeFor = null;
+        }
+        function paintBadge(name, data) {
+          if (activeName() !== name) return;
+          if (!data) {
+            if (badgeFor !== name) clearBadge();
             return;
           }
-          const data = await fetchFor(name);
-          if (!data) return;
           const n = liveCount(data);
           btn.classList.toggle("live", n > 0);
           countEl.textContent = n > 0 ? String(n) : "";
+          badgeFor = name;
+        }
+        async function refreshBadge() {
+          const name = activeName();
+          if (!name) {
+            clearBadge();
+            return;
+          }
+          paintBadge(name, await fetchFor(name));
         }
         async function open() {
-          const name = getActiveSession ? getActiveSession() : null;
+          const name = activeName();
           if (!name) return;
           if (pop.dataset.name === name && !pop.classList.contains("hidden")) {
             close();
@@ -42295,9 +42339,7 @@ void main() {
           if (pop.dataset.name !== name || pop.classList.contains("hidden")) return;
           body.innerHTML = data ? render(data) : '<div class="sel-empty">Could not read what is queued.</div>';
           pop.style.top = `${Math.round(Math.max(8, r.top - pop.offsetHeight - 8))}px`;
-          const n = liveCount(data);
-          btn.classList.toggle("live", n > 0);
-          countEl.textContent = n > 0 ? String(n) : "";
+          paintBadge(name, data);
         }
         btn.addEventListener("click", open);
         document.addEventListener("mousedown", (e) => {
@@ -42737,6 +42779,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         async function repaintPluginChildren(name) {
           const ticked = collectPluginChecklist(intentsPluginsList);
           const checkedIntents = collectIntentChecklist(popoverIntentsList);
+          const drawnGrants = new Set(Array.from(intentsGrantsList.querySelectorAll('input[type="checkbox"]')).map((cb) => cb.value));
+          const liveGrants = collectPluginGrants();
           setIntentCatalogCache(await window.api.getIntentCatalog(name, ticked) || []);
           renderIntentChecklist(popoverIntentsList, checkedIntents);
           let g = null;
@@ -42744,7 +42788,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             g = await window.api.getSessionPluginGrants(name, ticked);
           } catch {
           }
-          renderPluginGrants(g && g.ok ? g : null);
+          const granted = g && g.ok ? [.../* @__PURE__ */ new Set([...(g.granted || []).filter((t) => !drawnGrants.has(t)), ...liveGrants])] : null;
+          renderPluginGrants(granted ? { ...g, granted } : null);
           refreshExecReadoutInertState();
         }
         intentsPluginsList.addEventListener("change", () => {
@@ -44890,7 +44935,7 @@ You can add it back from this popover.` : "";
           const pl = proxyState.get(name)?.payload || {};
           const caps = pl.capabilities || {};
           const peerQueries = Array.isArray(pl.queries) ? pl.queries : [];
-          const wantUtil = !!(caps.context_utilization || caps.context_skills);
+          const wantUtil = !!(caps.context_utilization || caps.context_skills) || peerQueries.includes("ctxScan");
           const res = await popoverApi(name).ctx({ utilization: false });
           if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains("hidden")) return;
           if (!res || !res.ok) {
@@ -45011,7 +45056,7 @@ You can add it back from this popover.` : "";
         strip: '#proxy-bar [data-act="strip-menu"]',
         session: '#proxy-bar [data-act="session-menu"]'
       };
-      function initSessionMenus({ getActiveSession, proxyState, sessionList, createTerminal, addSessionToSidebar, switchSession, markSeatIo }) {
+      function initSessionMenus({ getActiveSession, proxyState, sessionList, switchSession, rowSnapshot, rebuildLiveRow }) {
         let warmMenu = null;
         function closeWarmMenu() {
           if (warmMenu) {
@@ -45060,6 +45105,10 @@ You can add it back from this popover.` : "";
         }
         async function doWarmHold(name, opts) {
           const holdApi = holdApiFor(name);
+          if (opts.always && holdApi !== window.api.wireHold) {
+            alert(`The keep-warm hold for "${name}" is no longer owned by the in-process wire, so "Always" is unavailable. Reopen the menu to choose again.`);
+            return;
+          }
           if (opts.off) {
             const r2 = await holdApi(name, 0, false);
             if (!r2.ok) alert("Disarm hold failed: " + r2.error);
@@ -45103,7 +45152,8 @@ The proxy auto-pings to refresh the cache until ${hours}h after the last turn; e
         }
         function openStripMenu(anchorBtn, currentLevel) {
           closeStripMenu();
-          const caps = getActiveSession() && proxyState.get(getActiveSession())?.payload?.capabilities || {};
+          const ownerName = getActiveSession();
+          const caps = ownerName && proxyState.get(ownerName)?.payload?.capabilities || {};
           const toolsAvail = caps.strip_thinking && caps.strip_thinking.max_level >= 2;
           stripMenu = document.createElement("div");
           stripMenu.className = "warm-menu strip-menu";
@@ -45118,9 +45168,13 @@ The proxy auto-pings to refresh the cache until ${hours}h after the last turn; e
           stripMenu.innerHTML = items.join("");
           stripMenu.addEventListener("click", async (e) => {
             const item = e.target.closest(".strip-item");
-            if (!item || item.disabled || !getActiveSession()) return;
+            if (!item || item.disabled || !ownerName) return;
+            if (getActiveSession() !== ownerName) {
+              closeStripMenu();
+              return;
+            }
             const level = Number(item.dataset.level) || 0;
-            const name = getActiveSession();
+            const name = ownerName;
             closeStripMenu();
             if (level === currentLevel) return;
             const pl = proxyState.get(name)?.payload;
@@ -45164,9 +45218,12 @@ Set ${(STRIP_LEVELS.find((s) => s.lvl === level) || {}).name || `level ${level}`
           if (s < 7 * 86400) return `${Math.floor(s / 86400)}d ago`;
           return shortTs(iso);
         }
+        let historySeq = 0;
         async function openHistoryMenu(name, anchorBtn) {
+          const seq = ++historySeq;
           closeHistoryMenu();
           const res = await window.api.getSessionHistory(name);
+          if (seq !== historySeq) return;
           if (getActiveSession() !== name) return;
           historyMenu = document.createElement("div");
           historyMenu.className = "history-menu";
@@ -45193,18 +45250,14 @@ Set ${(STRIP_LEVELS.find((s) => s.lvl === level) || {}).name || `level ${level}`
             if (!confirm(`Switch "${name}" to this past conversation?
 
 The session restarts with --resume on ${sid.slice(0, 8)}\u2026. The current conversation is kept and stays re-selectable here.`)) return;
-            const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-            const snapType = el ? el.dataset.type || null : null;
-            const snapCwd = el ? el.dataset.cwd : null;
+            const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
             const rr = await window.api.restartSession(name, { resumeId: sid });
             if (!rr || !rr.ok) {
               alert(`Resume failed: ${rr && rr.error ? rr.error : "unknown error"}`);
               return;
             }
-            markSeatIo(name, rr.io || "pty");
-            if (snapType) {
-              createTerminal(name);
-              addSessionToSidebar(name, snapType, snapCwd, null);
+            if (snap.type) {
+              rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend });
               switchSession(name);
             }
           });
@@ -45225,18 +45278,14 @@ The session restarts with --resume on ${sid.slice(0, 8)}\u2026. The current conv
 
 Starts a fresh conversation so the CLI reloads tools, skills, and settings from disk (a plain restart, --resume, or /clear keeps the old roster). The current conversation isn't lost \u2014 it stays available under \u{1F558} history.`
           )) return;
-          const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-          const snapType = el ? el.dataset.type || null : null;
-          const snapCwd = el ? el.dataset.cwd : null;
+          const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
           const rr = await window.api.restartSession(name, { fresh: true });
           if (!rr || !rr.ok) {
             alert(`Hard restart failed: ${rr && rr.error ? rr.error : "unknown error"}`);
             return;
           }
-          markSeatIo(name, rr.io || "pty");
-          if (snapType) {
-            createTerminal(name);
-            addSessionToSidebar(name, snapType, snapCwd, null);
+          if (snap.type) {
+            rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend });
             switchSession(name);
           }
         }
@@ -45253,7 +45302,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
           if (!entries.length) return;
           sessionMenu = document.createElement("div");
           sessionMenu.className = "warm-menu session-menu";
-          sessionMenu.innerHTML = entries.map((en) => `<button class="warm-item session-item" data-act="${en.act}">${esc(en.label)}</button>`).join("");
+          sessionMenu.innerHTML = entries.map((en) => `<button class="warm-item session-item" data-act="${esc(en.act)}">${esc(en.label)}</button>`).join("");
           sessionMenu.addEventListener("click", (e) => {
             const item = e.target.closest(".session-item");
             if (!item) return;
@@ -48054,7 +48103,7 @@ ${detail}` });
       var { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota, isHumanPtyInput } = require_proxy_util();
       var { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require_constants();
       var { esc, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require_format();
-      var { renderDiffHtml, costStackBlock, bustRow } = require_render_html();
+      var { renderDiffHtml, costStackBlock, bustRow, genuineBustWeight, genuineBustCount } = require_render_html();
       var { effortOptions } = require_effort_options();
       var { renderMarkdown } = require_render_markdown();
       var { placeAboveAnchor } = require_popover_place();
@@ -49305,6 +49354,7 @@ ${detail}` });
         sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(name)}"]`).forEach((c) => c.remove());
         dropActivityFeeds(name);
         sidebarMeta.delete(name);
+        closeSessionInfoIfShowing(name);
         if (typeof refreshSidebarView === "function") refreshSidebarView();
       }
       function updateSidebarActive() {
@@ -50522,8 +50572,10 @@ ${detail}` });
         window.api.setSidebarView({ activeSession: name }).catch(() => {
         });
         reportFocusedSession();
-        if (wasActive && wasActive !== name) drawerHost.onSessionChanged();
-        else drawerHost.syncSeatAvailability();
+        if (wasActive && wasActive !== name) {
+          drawerHost.onSessionChanged();
+          refreshSelectionBadge();
+        } else drawerHost.syncSeatAvailability();
         sidePane.showSeat(name);
         filesToggle.refresh();
         for (const [n, s] of sessions) {
@@ -52572,12 +52624,10 @@ ${detail}` });
         if (p.refusals > 0) segs.push(`<span class="px-seg px-refusal">\u26A0 ${p.refusals}</span>`);
         const bsum = p.busts;
         if (bsum && Array.isArray(bsum.classes)) {
-          const real = (c) => Math.max(0, (c.count || 0) - (c.restart_between || 0));
-          const genuine = bsum.classes.filter((c) => c && c.fault && c.fault !== "self");
-          const genuineCount = genuine.reduce((n, c) => n + real(c), 0);
+          const genuineCount = genuineBustCount(bsum.classes);
           if (genuineCount > 0) {
-            const contentCls = genuine.filter((c) => c.fault === "content" && real(c) > 0);
-            const contentCount = contentCls.reduce((n, c) => n + real(c), 0);
+            const contentCls = bsum.classes.filter((c) => c && c.fault === "content" && genuineBustWeight(c) > 0);
+            const contentCount = genuineBustCount(contentCls);
             const loud = contentCount > 0;
             const clickable = !!(p.base && p.sessionId) || peerQueries.includes("bust");
             const cls = `px-seg px-bust${loud ? " px-bust-loud" : ""}${clickable ? " px-ctx-btn" : ""}`;
@@ -52986,10 +53036,9 @@ Click for live activity`;
         getActiveSession: () => activeSession,
         proxyState,
         sessionList,
-        createTerminal,
-        addSessionToSidebar,
         switchSession,
-        markSeatIo
+        rowSnapshot,
+        rebuildLiveRow
       });
       function routeSessionAction(act, anchor) {
         if (!activeSession) return;
@@ -53142,8 +53191,7 @@ Click for live activity`;
           const q = (kind, args) => window.api.peerQuery(entry.peer.id, entry.peer.name, kind, args);
           return {
             remote: true,
-            ctx: () => q("ctx"),
-            // utilization opt-in is the owner's call
+            ctx: (opts) => q("ctx", opts),
             report: (opts) => q("report", opts),
             bust: () => q("bust"),
             files: () => q("files"),
@@ -53163,7 +53211,7 @@ Click for live activity`;
       }
       var barPopovers = createPopoverGroup();
       var { openCostPopover } = initCostPopover({ popoverApi, proxyState, barPopovers });
-      var { openSessionInfoPopover } = initSessionInfoPopover({ sessionList });
+      var { openSessionInfoPopover, closeIfShowing: closeSessionInfoIfShowing } = initSessionInfoPopover({ sessionList });
       var { openBustPopover } = initBustPopover({ popoverApi, proxyState, barPopovers });
       var sidePane = createSidePane({
         dock,

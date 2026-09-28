@@ -407,11 +407,16 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
   async function repaintPluginChildren(name) {
     const ticked = collectPluginChecklist(intentsPluginsList);
     const checkedIntents = collectIntentChecklist(popoverIntentsList);
+    const drawnGrants = new Set(Array.from(intentsGrantsList.querySelectorAll('input[type="checkbox"]')).map((cb) => cb.value));
+    const liveGrants = collectPluginGrants();
     setIntentCatalogCache((await window.api.getIntentCatalog(name, ticked)) || []);
     renderIntentChecklist(popoverIntentsList, checkedIntents);
     let g = null;
     try { g = await window.api.getSessionPluginGrants(name, ticked); } catch {}
-    renderPluginGrants(g && g.ok ? g : null);
+    const granted = g && g.ok
+      ? [...new Set([...(g.granted || []).filter((t) => !drawnGrants.has(t)), ...liveGrants])]
+      : null;
+    renderPluginGrants(granted ? { ...g, granted } : null);
     refreshExecReadoutInertState();
   }
 

@@ -1560,6 +1560,7 @@ function peerProxyView(p) {
   const caps = p.capabilities || {};
   const queries = [];
   if (caps.context_composition || caps.context_view || caps.context_utilization) queries.push('ctx');
+  if (caps.context_utilization || caps.context_skills) queries.push('ctxScan');
   if (caps.context_timeline && p.base && p.sessionId) queries.push('cost');
   if (p.base && p.sessionId) queries.push('bust');
   if (caps.context_report && p.base && p.sessionId) queries.push('report');

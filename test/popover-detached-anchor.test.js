@@ -404,7 +404,16 @@ function installDom() {
 
   const prev = { document: global.document, window: global.window };
   global.document = {
-    createElement: () => mkEl(),
+    createElement: () => {
+      const el = mkEl();
+      let text = '';
+      Object.defineProperty(el, 'textContent', { set(v) { text = String(v); } });
+      Object.defineProperty(el, 'innerHTML', {
+        set(html) { this.children = [...html.matchAll(/data-act="([^"]+)"/g)].map((m) => ({ dataset: { act: m[1] }, closest: (sel) => (sel === '.session-item' ? el.children.find((c) => c.dataset.act === m[1]) : null) })); },
+        get() { return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); },
+      });
+      return el;
+    },
     addEventListener() {},
     body: { appendChild: (el) => appended.push(el) },
     querySelector: (sel) => {

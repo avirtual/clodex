@@ -68,7 +68,8 @@ function initHelpPanel({ api }) {
   let showSeq = 0;
 
   async function loadIndex() {
-    const res = await api.helpIndex();
+    let res;
+    try { res = await api.helpIndex(); } catch { res = null; }
     if (!res || !res.ok || !Array.isArray(res.sections)) {
       indexPromise = null;
       return indexData || { sections: [] };
@@ -86,7 +87,8 @@ function initHelpPanel({ api }) {
   }
 
   async function loadPage(name) {
-    const res = await api.helpPage(name);
+    let res;
+    try { res = await api.helpPage(name); } catch { res = null; }
     if (!res || !res.ok) pageCache.delete(name);
     return res;
   }
@@ -115,7 +117,7 @@ function initHelpPanel({ api }) {
     if (!repoPath) return null;
     const name = pageOfRepoPath(repoPath);
     if (name && pageNames.has(name)) return { kind: 'page', name, slug: frag || null };
-    return { kind: 'external', url: `${REPO_BLOB}${repoPath}` };
+    return { kind: 'external', url: `${REPO_BLOB}${repoPath}${frag ? `#${frag}` : ''}` };
   }
 
   function row(tag, cls, text) {

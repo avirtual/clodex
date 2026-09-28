@@ -220,3 +220,11 @@ test('a re-click for a session whose fetch is pending repaints Loading… when t
     assert.match(body, /ctx-links/, 'with the links row re-emitted, or Manage tools / skills / Full report stay unreachable');
   } finally { h.restore(); }
 });
+
+test('a peer payload advertising ctxScan gets the plain read first, then the scan', async () => {
+  const h = harness({ payload: { queries: ['ctx', 'ctxScan'] }, ctxImpl: okCtx([MCP_AGENT]) });
+  try {
+    await h.open();
+    assert.deepStrictEqual(h.calls.map((c) => c.utilization), [false, true]);
+  } finally { h.restore(); }
+});

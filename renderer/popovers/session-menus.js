@@ -6,9 +6,8 @@
 //
 // These are LOCAL session-action menus — no popoverApi. They act via window.api
 // directly (proxyHold/wireHold/setAutoCompact/setStripLevel/getSessionHistory/
-// restartSession). The restart re-attach dance needs core sessionList/
-// createTerminal/addSessionToSidebar/switchSession; proxyState is the live poll
-// payload; getActiveSession reads the live active tab (a reassigned core let).
+// restartSession). proxyState is the live poll payload; getActiveSession reads
+// the live active tab (a reassigned core let).
 // isWarmMenuOpen/isStripMenuOpen let the bar's toggle dispatch query open-state
 // without touching the element (the subagent-popover predicate idiom).
 
@@ -23,7 +22,7 @@ const BAR_ANCHOR = {
   session: '#proxy-bar [data-act="session-menu"]',
 };
 
-function initSessionMenus({ getActiveSession, proxyState, sessionList, createTerminal, addSessionToSidebar, switchSession, markSeatIo }) {
+function initSessionMenus({ getActiveSession, proxyState, sessionList, switchSession, rowSnapshot, rebuildLiveRow }) {
   // --- Keep-warm duration dropdown ----------------------------------------
   // The fire button in the bottom bar opens this; items arm/extend a hold
   // (1h/4h/8h) or stop it. Floats above the button, dismissed on outside-click.
@@ -97,6 +96,10 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
 
   async function doWarmHold(name, opts) {
     const holdApi = holdApiFor(name);
+    if (opts.always && holdApi !== window.api.wireHold) {
+      alert(`The keep-warm hold for "${name}" is no longer owned by the in-process wire, so "Always" is unavailable. Reopen the menu to choose again.`);
+      return;
+    }
     if (opts.off) {
       const r = await holdApi(name, 0, false);
       if (!r.ok) alert('Disarm hold failed: ' + r.error);
@@ -142,7 +145,8 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
 
   function openStripMenu(anchorBtn, currentLevel) {
     closeStripMenu();
-    const caps = (getActiveSession() && proxyState.get(getActiveSession())?.payload?.capabilities) || {};
+    const ownerName = getActiveSession();
+    const caps = (ownerName && proxyState.get(ownerName)?.payload?.capabilities) || {};
     // L2 folds into strip_thinking as a level; gate on the advertised max_level.
     const toolsAvail = (caps.strip_thinking && caps.strip_thinking.max_level >= 2);
     stripMenu = document.createElement('div');
@@ -159,9 +163,10 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
     stripMenu.innerHTML = items.join('');
     stripMenu.addEventListener('click', async (e) => {
       const item = e.target.closest('.strip-item');
-      if (!item || item.disabled || !getActiveSession()) return;
+      if (!item || item.disabled || !ownerName) return;
+      if (getActiveSession() !== ownerName) { closeStripMenu(); return; }
       const level = Number(item.dataset.level) || 0;
-      const name = getActiveSession();
+      const name = ownerName;
       closeStripMenu();
       if (level === currentLevel) return;
       // Changing strip state on a WARM cache forces a one-time full-window premium
@@ -217,9 +222,12 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
     return shortTs(iso);
   }
 
+  let historySeq = 0;
   async function openHistoryMenu(name, anchorBtn) {
+    const seq = ++historySeq;
     closeHistoryMenu();
     const res = await window.api.getSessionHistory(name);
+    if (seq !== historySeq) return;
     if (getActiveSession() !== name) return; // user switched away while it loaded
     historyMenu = document.createElement('div');
     historyMenu.className = 'history-menu';
@@ -249,13 +257,10 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
       const sid = item.dataset.sid;
       closeHistoryMenu();
       if (!confirm(`Switch "${name}" to this past conversation?\n\nThe session restarts with --resume on ${sid.slice(0, 8)}…. The current conversation is kept and stays re-selectable here.`)) return;
-      const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-      const snapType = el ? el.dataset.type || null : null;
-      const snapCwd = el ? el.dataset.cwd : null;
+      const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
       const rr = await window.api.restartSession(name, { resumeId: sid });
       if (!rr || !rr.ok) { alert(`Resume failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
-      markSeatIo(name, rr.io || 'pty');
-      if (snapType) { createTerminal(name); addSessionToSidebar(name, snapType, snapCwd, null); switchSession(name); }
+      if (snap.type) { rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend }); switchSession(name); }
     });
     document.body.appendChild(historyMenu);
     placeAboveAnchor(historyMenu, anchorBtn, BAR_ANCHOR.session);
@@ -285,13 +290,10 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
       `from disk (a plain restart, --resume, or /clear keeps the old roster). ` +
       `The current conversation isn't lost — it stays available under 🕘 history.`
     )) return;
-    const el = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-    const snapType = el ? el.dataset.type || null : null;
-    const snapCwd = el ? el.dataset.cwd : null;
+    const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
     const rr = await window.api.restartSession(name, { fresh: true });
     if (!rr || !rr.ok) { alert(`Hard restart failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
-    markSeatIo(name, rr.io || 'pty');
-    if (snapType) { createTerminal(name); addSessionToSidebar(name, snapType, snapCwd, null); switchSession(name); }
+    if (snap.type) { rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend }); switchSession(name); }
   }
 
   // --- Consolidated session-actions menu (the `⚙ session ▾` bar button) ------
@@ -301,9 +303,6 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
   let sessionMenu = null;
   function closeSessionMenu() { if (sessionMenu) { sessionMenu.remove(); sessionMenu = null; } }
 
-  // `extra` is the plugin-contributed tail (renderer/plugin-host.js) —
-  // already namespaced and label-validated by the host, appended after core's
-  // table. Empty by default, so the menu is byte-identical without plugins.
   function openSessionMenu(anchorBtn, type, onPick, extra = []) {
     closeSessionMenu();
     const entries = [...sessionMenuEntries(type), ...extra];
@@ -311,7 +310,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, createTer
     sessionMenu = document.createElement('div');
     sessionMenu.className = 'warm-menu session-menu';
     sessionMenu.innerHTML = entries
-      .map((en) => `<button class="warm-item session-item" data-act="${en.act}">${esc(en.label)}</button>`)
+      .map((en) => `<button class="warm-item session-item" data-act="${esc(en.act)}">${esc(en.label)}</button>`)
       .join('');
     sessionMenu.addEventListener('click', (e) => {
       const item = e.target.closest('.session-item');

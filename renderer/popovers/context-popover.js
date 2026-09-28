@@ -370,7 +370,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     const pl = proxyState.get(name)?.payload || {};
     const caps = pl.capabilities || {};
     const peerQueries = Array.isArray(pl.queries) ? pl.queries : [];
-    const wantUtil = !!(caps.context_utilization || caps.context_skills);
+    const wantUtil = !!(caps.context_utilization || caps.context_skills) || peerQueries.includes('ctxScan');
     const res = await popoverApi(name).ctx({ utilization: false });
     // Bail if the popover was closed or retargeted while the fetch was in flight.
     if (ctxPopover.dataset.name !== name || ctxPopover.classList.contains('hidden')) return;

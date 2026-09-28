@@ -10,7 +10,7 @@ const { PendingInput } = require('../peer-input-queue');
 const { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota, isHumanPtyInput } = require('../proxy-util');
 const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require('./lib/constants');
 const { esc, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require('./lib/format');
-const { renderDiffHtml, costStackBlock, bustRow } = require('./lib/render-html');
+const { renderDiffHtml, costStackBlock, bustRow, genuineBustWeight, genuineBustCount } = require('./lib/render-html');
 const { effortOptions } = require('./lib/effort-options');
 const { renderMarkdown } = require('./lib/render-markdown');
 const { placeAboveAnchor } = require('./lib/popover-place');
@@ -1278,6 +1278,7 @@ function removeSessionFromSidebar(name) {
   // bounds the drawer's retained history against a long-lived window.
   dropActivityFeeds(name);
   sidebarMeta.delete(name);
+  closeSessionInfoIfShowing(name);
   if (typeof refreshSidebarView === 'function') refreshSidebarView();
 }
 
@@ -2509,7 +2510,7 @@ function switchSession(name) {
   // leaving that session has to take it back — the drawer cannot see this
   // switch, and a peek left behind rides a request the operator is no longer
   // watching. Not on first activation (nothing was armed yet).
-  if (wasActive && wasActive !== name) drawerHost.onSessionChanged();
+  if (wasActive && wasActive !== name) { drawerHost.onSessionChanged(); refreshSelectionBadge(); }
   // The first activation takes this else and may land on a seat the terminal
   // cannot serve; the switch arm syncs inside onSessionChanged.
   else drawerHost.syncSeatAvailability();
@@ -4683,12 +4684,10 @@ function renderProxyBar() {
   // No chip at all when nothing genuine remains, which is every steady session by design.
   const bsum = p.busts;
   if (bsum && Array.isArray(bsum.classes)) {
-    const real = (c) => Math.max(0, (c.count || 0) - (c.restart_between || 0));
-    const genuine = bsum.classes.filter((c) => c && c.fault && c.fault !== 'self');
-    const genuineCount = genuine.reduce((n, c) => n + real(c), 0);
+    const genuineCount = genuineBustCount(bsum.classes);
     if (genuineCount > 0) {
-      const contentCls = genuine.filter((c) => c.fault === 'content' && real(c) > 0);
-      const contentCount = contentCls.reduce((n, c) => n + real(c), 0);
+      const contentCls = bsum.classes.filter((c) => c && c.fault === 'content' && genuineBustWeight(c) > 0);
+      const contentCount = genuineBustCount(contentCls);
       const loud = contentCount > 0;
       const clickable = !!(p.base && p.sessionId) || peerQueries.includes('bust');
       const cls = `px-seg px-bust${loud ? ' px-bust-loud' : ''}${clickable ? ' px-ctx-btn' : ''}`;
@@ -5151,7 +5150,7 @@ const {
   openHistoryMenu, doHardRestart,
 } = initSessionMenus({
   getActiveSession: () => activeSession, proxyState, sessionList,
-  createTerminal, addSessionToSidebar, switchSession, markSeatIo,
+  switchSession, rowSnapshot, rebuildLiveRow,
 });
 
 function routeSessionAction(act, anchor) {
@@ -5325,7 +5324,7 @@ function popoverApi(name) {
     const q = (kind, args) => window.api.peerQuery(entry.peer.id, entry.peer.name, kind, args);
     return {
       remote: true,
-      ctx: () => q('ctx'),               // utilization opt-in is the owner's call
+      ctx: (opts) => q('ctx', opts),
       report: (opts) => q('report', opts),
       bust: () => q('bust'),
       files: () => q('files'),
@@ -5351,7 +5350,7 @@ const { openCostPopover } = initCostPopover({ popoverApi, proxyState, barPopover
 
 // Sidebar-row ⓘ. Anchored to the row rather than the proxy bar, so it works for
 // any row — including one that isn't the active session.
-const { openSessionInfoPopover } = initSessionInfoPopover({ sessionList });
+const { openSessionInfoPopover, closeIfShowing: closeSessionInfoIfShowing } = initSessionInfoPopover({ sessionList });
 
 
 const { openBustPopover } = initBustPopover({ popoverApi, proxyState, barPopovers });
