@@ -227,7 +227,7 @@
 
 ### Hazards
 
-- A new getPersistence().remove() call site outside the documented list (`kill`, `destroy`, forget, workspace delete, retire-with-discard, the ticket-seat spawn rollbacks) is a record dropped where nobody expects one.
+- The full record-dropper set is CLAUDE.md's Session lifecycle list (not re-copied here so it cannot drift); `kill` and `destroy` are the two that live in this file, and a new getPersistence().remove() call site outside that list is a record dropped where nobody expects one.
 - `destroy` ignores the result of `_waitForExit`, so after the 8s timeout removeWorktree runs against a cwd that may still be live.
 - `destroy` on a live seat relies on `kill` having already cleared the proxy hint, since its dropRecord is a no-op when the seat was live; its comment calling that a second `clearHintForRecord` call is inaccurate.
 - `rename` writes a notice saying memory moved with the seat, but only renameSeat and `_renameDirs` (pending/) move state; anything else keyed by name, such as the memory load log `_moveShipment` ships, stays under the old name.
@@ -346,7 +346,7 @@
 
 ### Invariants
 
-- `_cleanup` is reached from `create`'s process-exit handler after the record disposition, and it never removes parked deliveries or the frozen prompt under any gate, `_userKilled` included, because restart also routes through `kill`.
+- `_cleanup` is reached from `_createReserved`'s process-exit handler after the record disposition, and it never removes parked deliveries or the frozen prompt under any gate, `_userKilled` included, because restart also routes through `kill`.
 - `_cleanup` stops the watcher before speaker.stop(), because the watcher's final flush re-enters `_maybeSpeak` and can start a narration for the dead seat.
 - `_cleanup` passes the dying session's `_armCtx` to selectionArm.forget, because a name-glob fallback would otherwise keep the attachment matching a same-named replacement.
 - `_emitActivity` stamps activityTs from the wire's last event, not Date.now(), so an inferred idle edge cannot make a cold seat look fresh and get its dm delivered instead of held.
@@ -387,8 +387,8 @@
 - `_drainPendingAtIdle` must guard dictated drafts as well as typed ones via `_anyDraftOpen`, or a passive park is re-parked active and wakes the seat.
 - `_drainPendingAtBootReady` logs its claimed-but-empty bail apart from the silent deferred bails, and that split is the only evidence left when a boot-window delivery goes missing.
 - `_maybeFlushInjectQueue` with force set skips `_injectHoldReason`, so the inject-hold valve writes into a seat that may still be busy or behind a dialog.
-- `_recordBootNudgeProbe` depends on the PTY onData handler in `create` appending to the echo buffer only while it is a string, so nulling it early disables the echo gate and the nudge never fires.
-- `_armBootNudge` declares a local arm closure that shadows the module-level hint arm used by `_cleanup` and `_fireCompactContinuation`.
+- `_recordBootNudgeProbe` depends on the PTY onData handler in `_createReserved` appending to the echo buffer only while it is a string, so nulling it early disables the echo gate and the nudge never fires.
+- `_armBootNudge` declares a local arm closure that shadows the factory-scope hint arm used by `_cleanup` and `_fireCompactContinuation`.
 
 ## Intent extraction and agent-text publication — _pointerStubOf … _maybeSpeak
 

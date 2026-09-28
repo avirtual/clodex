@@ -38,7 +38,7 @@ payloads are documented in `docs/renderer-events.md`.
 | promptText | promise-returning single-line text modal; resolves the string on OK/Enter and null on Cancel/Escape | `.prompt-modal-overlay` on body | none | chord-overlay-guard.test.js dialog-escape-parity.test.js |
 
 ### Invariants
-- `closePromptEditor`, `closeAgentEditor`, `closeSkillEditor` and `closeExecEditor` are declared as no-op `let`s so the hoisted Escape table can reference them before `initLibraryDrawers` assigns the real closers.
+- `closePromptEditor`, `closeAgentEditor`, `closeSkillEditor` and `closeExecEditor` are declared as no-op `let`s so the Escape table can reference them before `initLibraryDrawers` assigns the real closers.
 - `refreshNameValidity` treats every name as valid in template mode, because a template name is not a session name.
 
 ### Hazards
@@ -127,7 +127,6 @@ payloads are documented in `docs/renderer-events.md`.
 
 ### Invariants
 - `createStreamSeatPane` returns a handle with no xterm, so every caller of a `sessions` entry must test `terminal` before measuring or writing.
-
 - `pickSlash` cuts only the command's own range for a control command and restores it if the control call fails.
 
 ### Hazards
@@ -155,7 +154,7 @@ payloads are documented in `docs/renderer-events.md`.
 ### Hazards
 - `createTerminal` routes typing on a peer seat to `peerInput` only when the seat is controlled, draining any buffered input first; otherwise the keystroke asks to take control.
 - The anonymous `window.api.onPtyData` handler writes through each seat's `echoRewrite`, which `createTerminal` builds; a seat created without it shows raw echo colours.
-- `createTerminal` detects the web bundle with `window.__CLODEX_WEB__ || !window.require`; desktop-only paths such as file drop and absolute `require` sit behind that test.
+- `createTerminal` detects the web bundle with `window.__CLODEX_WEB__ || !window.require` for its paste handler; the file-drop gate is the anonymous `terminalContainer` drop handler declared after it, behind the same test.
 
 ## New-session dialog: type, placement, catalogs — applyTypeDefaults … refreshNewSessionTools
 
@@ -223,7 +222,7 @@ payloads are documented in `docs/renderer-events.md`.
 - That exit handler invalidates the tool cache before its archived early return, so closing an installer tab still re-probes `refreshNewSessionToolGate`.
 
 ### Hazards
-- PTY routing (`onPtyData`, `onSessionExit`, `onSessionActivity`, `onSessionAttention`, `onSessionCtx`, `onPendingCount`, `onSessionTicket`) is anonymous and sits between `seatVoiceFired` and `applyTicketBadge`; search by the channel, not a name.
+- PTY routing (`onPtyData`, `onSessionExit`, `onSessionActivity`, `onSessionAttention`, `onSessionCtx`, `onPendingCount`, `onSessionTicket`) is anonymous and sits between `seatVoiceFired` and `sessionTypeOf` (`onSessionTicket` follows `applyTicketBadge`); search by the channel, not a name.
 - The exit toast fires only for agent seats with an unexpected non-zero exit, so an intent-spawned bash seat that fast-fails does not storm toasts; `addExitedSessionToSidebar` is likewise agent-only.
 - Detached `pty-data` is buffered by the main process, not here; the renderer replays it once through `mountRestoredSession`.
 
@@ -287,6 +286,7 @@ payloads are documented in `docs/renderer-events.md`.
 
 ### Hazards
 - The web frontend mirrors Cmd+T/W/1-9 onto Alt in a second anonymous keydown handler gated on `window.__CLODEX_WEB__`; a new chord added only to the Cmd handler is missing on web, next to `askOnce`.
+- The diagnostic and auth banners are not in this file's symbol table: `initBanners` (islands/banners) is called between `askOnce` and `closeDiscovery` and returns `refreshDiagBanner`/`refreshAuthBanner`, which `createTerminal`'s spawn-failure path and the proxy-state refresh call.
 - Cmd+1..9 counts `.session-item` rows in DOM order, so a change to `refreshSidebarView` ordering changes what `switchSession` each digit reaches.
 
 ## Discovery and Preferences: env, accounts, wirescope — closeDiscovery … renderRemoteStatus
@@ -397,7 +397,7 @@ payloads are documented in `docs/renderer-events.md`.
 
 ### Invariants
 - `restoreSessions` and the anonymous `onSessionMovedIn` handler share `mountRestoredSession`, so a moved-in live seat mounts exactly like a restored one.
-- `restoreSessions` calls `initSidebarView` on every path, including an empty workspace, and always tags the body `sessions-restored`.
+- `restoreSessions` calls `initSidebarView` on both the empty and the populated path (the IIFE is try/finally with no catch, so a rejected restore skips it), and always tags the body `sessions-restored`.
 - `maybeDiscoverOnStartup` re-checks window focus after its settle delay, because every workspace window runs the same script.
 
 ### Hazards
