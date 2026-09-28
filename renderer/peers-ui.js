@@ -14,6 +14,7 @@ const { servedBannerView } = require('./lib/served-banner');
 const { placeAboveAnchor } = require('./lib/popover-place');
 const { classifySender } = require('./lib/sender-class');
 const { farCwdGuess, localFromHome } = require('./lib/far-cwd-guess');
+const { sandboxRebuiltLine } = require('./lib/sandbox-view');
 
 function initPeersUi({
   sessions, sessionList, getActiveSession, createTerminal, switchSession,
@@ -162,7 +163,7 @@ function initPeersUi({
     try { res = await window.api.sandboxRebuild(id); } catch (e) { res = { ok: false, error: (e && e.message) || String(e) }; }
     finally { rebuildingBoxes.delete(id); }
     if (res && res.ok !== false) {
-      showToast(`Rebuilt ${label} on the current code.`, { kind: 'peer-ui' });
+      showToast(sandboxRebuiltLine(label, res.image), { kind: 'peer-ui' });
     } else {
       showToast(`Rebuild failed on ${label}: ${(res && res.error) || 'no response'}`, { kind: 'warm' });
     }

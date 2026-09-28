@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Sandbox: the Rebuild toast names what it built — the tracked ref and sha, the dev checkout, or the pinned image — and flags a box pinned to a fixed sha, instead of always saying "on the current code".
 - Sandbox image: about 800 MB smaller unpacked (roughly 450 MB less to pull) — two layers that duplicated /opt/muse and /app are gone, and the npm/node-gyp build caches no longer ship.
 - Ticket loop: advancing a seat to its next ticket now reports a held or parked spec instead of "delivered"; a re-verified close DMs the lead as re-verifying, not done; a solo-board reject names the lead instead of "no live seat"; a post-merge run that executed zero tests keeps its output file.
 - Sidebar: an Active status chosen in a workspace that had no saved view survives the next open; a peer row that fails validation is expanded so its error is visible; Settings lists a context-threshold override for a model family Clodex ships no row for.

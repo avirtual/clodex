@@ -26819,7 +26819,16 @@ ${i3.join("\n")}
         if (new Set(vals).size !== vals.length) return PORTS_INVALID;
         return null;
       }
-      module.exports = { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts };
+      var FIXED_SHA_RE = /^[0-9a-f]{7,40}$/;
+      function sandboxRebuiltLine(label, image) {
+        if (!image) return `Rebuilt ${label} on the current code.`;
+        if (image.kind === "image") return `Rebuilt ${label} from image ${image.image}`;
+        if (!image.ref) return `Rebuilt ${label} on the dev checkout`;
+        const at = image.sha ? `${image.ref} @ ${String(image.sha).slice(0, 8)}` : image.ref;
+        const pinned = FIXED_SHA_RE.test(image.ref) ? " \u2014 pinned; set ref to a branch to track it" : "";
+        return `Rebuilt ${label} on ${at}${pinned}`;
+      }
+      module.exports = { sandboxRebuiltLine, detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts };
     }
   });
 
@@ -45700,6 +45709,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       var { placeAboveAnchor } = require_popover_place();
       var { classifySender } = require_sender_class();
       var { farCwdGuess, localFromHome } = require_far_cwd_guess();
+      var { sandboxRebuiltLine } = require_sandbox_view();
       function initPeersUi({
         sessions,
         sessionList,
@@ -45861,7 +45871,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
             rebuildingBoxes.delete(id);
           }
           if (res && res.ok !== false) {
-            showToast(`Rebuilt ${label} on the current code.`, { kind: "peer-ui" });
+            showToast(sandboxRebuiltLine(label, res.image), { kind: "peer-ui" });
           } else {
             showToast(`Rebuild failed on ${label}: ${res && res.error || "no response"}`, { kind: "warm" });
           }
@@ -47859,7 +47869,7 @@ ${detail}` });
       var { altChordAction } = require_web_shortcuts();
       var { filterSummary, setFilterFolded } = require_sidebar_filter_fold();
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
-      var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts } = require_sandbox_view();
+      var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
       var { bumpDefaultName, teamNamePrefill } = require_name_suggest();
       var { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require_name_validity();
@@ -55724,7 +55734,7 @@ ${res.stderr}` : "");
             showToast(`Sandbox rebuild failed: ${r && r.error || "unknown error"}`, { kind: "error", duration: 12e3 });
           } else {
             sbMountsDirty = false;
-            showToast("Sandbox rebuilt on the current code.", { kind: "peer-ui" });
+            showToast(sandboxRebuiltLine("Sandbox", r.image), { kind: "peer-ui" });
           }
         } catch (e) {
           showToast(`Sandbox rebuild failed: ${e && e.message || e}`, { kind: "error", duration: 12e3 });

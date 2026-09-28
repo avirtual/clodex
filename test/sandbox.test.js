@@ -982,6 +982,7 @@ test('rebuild: dev build kind uses `up -d --build`, then registers the peer', as
   assert.deepStrictEqual(composeCalls, [['up', '-d', '--build']]);
   assert.strictEqual(settings._state().peers.length, 1);
   assert.strictEqual(settings._state().peers[0].id, 'sandbox');
+  assert.deepStrictEqual(r.image, { kind: 'build', ref: null, sha: null });
 });
 
 test('rebuild: packaged pinned image kind pulls then `up -d`', async () => {
@@ -1000,6 +1001,7 @@ test('rebuild: packaged pinned image kind pulls then `up -d`', async () => {
   const composeCalls = composeSubcommands(calls);
   assert.deepStrictEqual(composeCalls, [['pull'], ['up', '-d']]);
   assert.strictEqual(settings._state().peers.length, 1);
+  assert.deepStrictEqual(r.image, { kind: 'image', image: 'ghcr.io/avirtual/clodex:9.9.9' });
 });
 
 test('rebuild: a failed pull surfaces stderr, skips up, and does NOT register the peer', async () => {
@@ -1960,8 +1962,10 @@ test('rebuild: refreshes src to the ref before building it', async () => {
   sb.setConfig({ ref: 'master' });
   assert.strictEqual((await sb.up()).ok, true);
   const second = commitOn(repo, 'master', 'two');
-  assert.strictEqual((await sb.rebuild()).ok, true);
+  const r = await sb.rebuild();
+  assert.strictEqual(r.ok, true);
   assert.strictEqual(gitIn(sb.srcDir(), ['rev-parse', 'HEAD']), second);
+  assert.deepStrictEqual(r.image, { kind: 'build', ref: 'master', sha: second });
   await removeWorktree(sb.srcDir());
 });
 
