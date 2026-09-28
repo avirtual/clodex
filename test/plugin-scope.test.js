@@ -1630,7 +1630,7 @@ test('t655 r1: refreshSidebarMeta repaints the footer, closing the boot race', (
   assert.ok(at > 0, 'ENTER: refreshSidebarMeta was located');
   const end = src.indexOf('\n}', at);
   const body = src.slice(at, end);
-  assert.ok(body.length < 1200, 'ENTER: the slice is one function');
+  assert.ok(!/\n(async )?function /.test(body.slice(1)), 'ENTER: the slice is one function');
   assert.match(body, /refreshSidebarView\(\);/,
     'ENTER: the existing repaint call is still here — this pin sits beside it');
   assert.match(body, /pluginBar\.renderFooterButtons\(\);/,
