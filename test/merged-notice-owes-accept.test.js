@@ -195,7 +195,7 @@ test('a dm from ticket-loop carries neither a reply address nor a no-reply marke
     'a loop notice is not a correspondent that failed to answer: marking it reports a fault that is not there');
 });
 
-test('system senders ticket-watchdog and terminal carry no no-reply marker', () => {
+test('system senders ticket-watchdog, terminal, monitor, exec and wirescope carry no no-reply marker', () => {
   const mkOne = (receiverIntents) => mk({
     getPeerManager: () => ({ statuses: () => [] }),
     getPersistence: () => ({ list: () => [], get: (n) => (n === 'lead' ? { intents: receiverIntents } : null) }),
