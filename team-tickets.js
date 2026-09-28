@@ -6502,6 +6502,10 @@ function createTicketMethods(deps, shared) {
       // ticket nothing ever nudges — the one outcome this design must not have.
       const loopEligible = !!(ticket.worktree && ticket.worktree.branch && ticket.worktree.baseSha);
       if (loopEligible) {
+        if (ticket.runnerPid) {
+          this._reapRunner(ticket.id, ticket.runnerPid);
+          delete ticket.runnerPid;
+        }
         ticket.loopStep = 'verify';
         // THE RE-VERIFY WINDOW. Cleared HERE, in the same write that re-stamps the
         // step — not in `_runTicketLoop`, which is fired unawaited below and whose
@@ -6625,6 +6629,7 @@ function createTicketMethods(deps, shared) {
       // any of them is a ticket that alarms forever about a check that passed.
       let held = false;
       let superseded = false;
+      let ownPid = null;
       // A verify escalation is a HOLD, not an exit. Deleting `loopStep` on a
       // DELIVERED one leaves `state=done` with nothing in flight: the stall sweep
       // skips it forever (ticketInFlight is false), `task done` bounces as "is done,
@@ -6837,7 +6842,8 @@ function createTicketMethods(deps, shared) {
         atStep = 'verify: suite';
         this._stampSuiteRemeasured(team, ticketId, null);
         this._stampSuiteSlow(team, ticketId, null);
-        let suite = await this._runTicketSuite(team, ticket);
+        const runOpts = { onSpawn: (pid) => { ownPid = pid; this._stampRunnerPid(team, ticketId, pid); } };
+        let suite = await this._runTicketSuite(team, ticket, null, runOpts);
         // Checks 1-3 were milliseconds of git; this await is MINUTES, and the
         // entry guard above is now a snapshot that old. A lead `task accept`
         // landing inside that window deletes loopStep, retires the seat, removes
@@ -6848,27 +6854,28 @@ function createTicketMethods(deps, shared) {
         // reviewer spawned for a ticket that is already open again. Re-load and
         // bail, the same don't-trust-the-snapshot rule _setLoopStep states.
         let still = this._loadTicket(team, ticketId);
-        if (!current(still)) return;
+        if (!current(still)) { this._reapRunner(ticketId, suite.runnerPid); return; }
         let firstRed = null;
         let remeasureError = null;
         let slowOwned = [];
         if (suite.ran && !suite.slowOnly && !suite.green) {
           log.info('ticket', `ticket ${ticketId}: verify suite red (${suite.summary}) — re-measuring once`);
-          const again = await this._runTicketSuite(team, ticket);
+          const again = await this._runTicketSuite(team, ticket, null, runOpts);
           still = this._loadTicket(team, ticketId);
-          if (!current(still)) return;
+          if (!current(still)) { this._reapRunner(ticketId, again.runnerPid); return; }
           if (again.ran) {
             firstRed = suite;
             suite = again;
             if (again.green || again.slowOnly) this._stampSuiteRemeasured(team, ticketId, firstRed);
           } else {
+            this._reapRunner(ticketId, again.runnerPid);
             remeasureError = again.error;
           }
         }
         if (suite.ran && suite.slowOnly) {
           slowOwned = await this._slowTestsOwned(team, still, suite.slow);
           still = this._loadTicket(team, ticketId);
-          if (!current(still)) return;
+          if (!current(still)) { this._reapRunner(ticketId, suite.runnerPid); return; }
           if (!slowOwned.length) this._stampSuiteSlow(team, ticketId, suite.slow);
         }
         if (!suite.ran) {
@@ -6876,6 +6883,7 @@ function createTicketMethods(deps, shared) {
           // hand cannot fix a lock it does not hold or a runner that would not
           // start, and sending it back with "the suite did not run" is a rework
           // round nobody can close.
+          this._reapRunner(ticketId, suite.runnerPid);
           fail('verify: suite', `the test suite could not be run on ${branch}: ${suite.error}`,
             `ran the suite in ${suite.cwd || 'the ticket worktree'}; no reviewer spawned`, 'infra');
           return;
@@ -6987,6 +6995,7 @@ function createTicketMethods(deps, shared) {
         // predecessor's stamp. Costs one load per run and no save unless the field
         // is actually there.
         if (!held && !superseded) this._stampVerifyHold(team, ticketId, null);
+        if (ownPid) this._stampRunnerPid(team, ticketId, null, ownPid);
       }
     },
 
@@ -7066,7 +7075,7 @@ function createTicketMethods(deps, shared) {
     // exactly that: it verifies MASTER, in the root checkout, and must still
     // serialize against the loop's worktree runs and the lead's exec grant —
     // three producers on one mutex.
-    async _runTicketSuite(team, ticket, runIn = null) {
+    async _runTicketSuite(team, ticket, runIn = null, opts = {}) {
       const wt = (ticket && ticket.worktree) || {};
       const cwd = runIn ? String(runIn) : (wt.path ? String(wt.path) : null);
       // `runnerPid` is surfaced so a caller probing the root lock can tell OUR
@@ -7218,6 +7227,9 @@ function createTicketMethods(deps, shared) {
         // resolves a shape that carries only an error, and the pid is needed on
         // exactly that path.
         out.runnerPid = child.pid > 0 ? child.pid : null;
+        if (out.runnerPid && opts && typeof opts.onSpawn === 'function') {
+          try { opts.onSpawn(out.runnerPid); } catch {}
+        }
 
         // Bounded and drained. The output is read to keep the pipes from filling
         // (a full pipe blocks the child forever, which the timeout would then
@@ -7257,11 +7269,7 @@ function createTicketMethods(deps, shared) {
           // OWN process group — the whole app — and childProcess is an injected
           // seam, so a stubbed child's pid shape is not guaranteed to be a real
           // pid. cli/src/dial.js guards the identical call the same way.
-          if (child.pid > 0) {
-            try { process.kill(-child.pid, 'SIGKILL'); } catch {
-              try { child.kill('SIGKILL'); } catch {}
-            }
-          } else {
+          if (!this._killRunner(child.pid)) {
             try { child.kill('SIGKILL'); } catch {}
           }
           finish({ error: `the suite did not finish within ${TICKET_SUITE_TIMEOUT}ms (killed)`, stdout, stderr });
@@ -7316,9 +7324,11 @@ function createTicketMethods(deps, shared) {
       if (!totals) {
         const hung = String(res.stderr || '').split('\n').filter((l) => /^run-tests: TIMEOUT after .* in .+$/.test(l)).pop();
         const last = String(res.stdout || '').trim().split('\n').filter((l) => l.trim()).pop() || '(no stdout)';
+        const note = String(res.stderr || '').split('\n').map((l) => l.trim()).filter((l) => /^run-tests: /.test(l)).pop();
         out.error = hung
           ? `the runner printed no "TOTALS: <n> pass, <n> fail, <n> tests" line on stdout (exit ${res.code}) — ${hung.slice(0, 300)}`
-          : `the runner printed no "TOTALS: <n> pass, <n> fail, <n> tests" line on stdout (exit ${res.code}) — last stdout line: ${last.slice(0, 300)}`;
+          : `the runner printed no "TOTALS: <n> pass, <n> fail, <n> tests" line on stdout (exit ${res.code}) — last stdout line: ${last.slice(0, 300)}`
+            + (note ? `; last runner note: ${note.slice(0, 300)}` : '');
         out.output = text;
         return out;
       }
@@ -7791,6 +7801,36 @@ function createTicketMethods(deps, shared) {
         for (const n of wanted) if (f.text.includes(n)) owned.add(n);
       }
       return wanted.filter((n) => owned.has(n));
+    },
+
+    _killRunner(pid) {
+      if (!(pid > 0)) return false;
+      try { process.kill(-pid, 'SIGKILL'); } catch {
+        try { process.kill(pid, 'SIGKILL'); } catch {}
+      }
+      return true;
+    },
+
+    _reapRunner(ticketId, pid) {
+      if (!(pid > 0) || pid === process.pid) return false;
+      try { process.kill(pid, 0); } catch { return false; }
+      this._killRunner(pid);
+      log.info('ticket', `ticket ${ticketId}: killed the abandoned suite runner ${pid}`);
+      return true;
+    },
+
+    _stampRunnerPid(team, ticketId, pid, only = null) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec) return;
+        if (pid) rec.runnerPid = pid;
+        else if (!('runnerPid' in rec) || (only != null && rec.runnerPid !== only)) return;
+        else delete rec.runnerPid;
+        ticketsStore.save(team.root, tickets);
+      } catch (e) {
+        log.error('ticket', `runner pid stamp for ${ticketId} failed: ${e.message}`);
+      }
     },
 
     _stampSuiteSlow(team, ticketId, names) {
