@@ -4609,6 +4609,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
       },
     },
     notifyOS: () => {},
+    cleanupClaudeHook: () => {}, cleanupAgentPlugin: () => {}, cleanupSkills: () => {},
     // Only reached on the pty.spawn failure path, which the abandon-clear tests
     // drive; without them the real ENOENT is masked by a TypeError.
     collectSystemDiagnostics: () => ({}),

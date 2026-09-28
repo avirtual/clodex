@@ -3966,7 +3966,13 @@ function createSessionManager(deps) {
       }
       const error = (r && r.error) || 'unknown error';
       log.info('worktree', `remove failed for ${worktree.path} after destroying ${name}: ${error}`);
-      if (wasLive) getPersistence().upsert({ ...this._stripClaimedTree(entry), archivedAt: Date.now() });
+      if (wasLive) {
+        try {
+          getPersistence().upsert({ ...this._stripClaimedTree(entry), archivedAt: Date.now() });
+        } catch (e) {
+          log.warn('session', `destroy ${name}: record for ${worktree.path} not restored (${e.message})`);
+        }
+      }
       // NO dropRecord() here, and that is the invariant, not an omission: the
       // tree is still on disk and this record is the only thing naming it. The
       // path rides the result so the caller's failure sentence can tell the
