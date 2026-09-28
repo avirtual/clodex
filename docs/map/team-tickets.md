@@ -291,7 +291,7 @@
 | `_taskStart` | the task start verb: one-shot dispatch of an assigned unstarted ticket, minting a seat or delivering to a live standing seat | tickets.json startedAt, assignee, role, parked | _ticketDispatchMode, _mintTicketSeat, _spawnTicketSeat, _deliverTicketSpec | task-respec.test.js tickets-viewer-path-parity.test.js session-manager.test.js |
 | `_taskAssign` | the task assign verb: moves a ticket to a role or seat, re-sending, minting and spawning, or delivering to the answering seat | tickets.json assignee, role, startedAt, assign event | _ticketDispatchMode, _mintTicketSeat, _spawnTicketSeat, _gatedDeliver | task-respec.test.js tickets-viewer-path-parity.test.js session-manager.test.js |
 | `_taskDone` | the task done verb: closes a ticket or re-enters a held verify, persists the report, advances the seat, fires the loop | tickets.json state, report, rounds, loopStep, verifyHold, runnerPid | _gatedDeliver, _advanceSeat, _reapRunner, _runTicketLoop | ticket-loop-verify.test.js ticket-reminder-binding.test.js |
-| `_liveReviewerSeat` | the live agent reviewer seat for the ticket's next review round, or null | reads this.sessions | none | unpinned |
+| `_liveReviewerSeat` | the live agent reviewer seat for the ticket's next review round, or null | reads this.sessions | none | ticket-loop-verify.test.js |
 | `_resumeOrphanedVerify` | after a host restart, re-fires the loop for done tickets at verify with no hold, no live reviewer and no loop this process | this._verifyLooped, tickets.json lastActivityAt and runnerPid | _liveReviewerSeat, _runTicketLoop | ticket-loop-verify.test.js |
 
 ### Invariants
