@@ -47,6 +47,28 @@ test('a network throw becomes EXIT.CONNECT', async () => {
   } finally { global.fetch = orig; }
 });
 
+test('a body-read failure after the headers arrived is EXIT.CONNECT, like any other transport death', async () => {
+  const orig = global.fetch;
+  global.fetch = async () => ({ ok: true, status: 200, text: async () => { const e = new TypeError('terminated'); e.cause = { code: 'UND_ERR_SOCKET' }; throw e; } });
+  try {
+    await assert.rejects(new WireClient('http://h', 'realistic-32char-tok').get('/api/x', 'info'), (e) => {
+      assert.strictEqual(e.name, 'CliError');
+      assert.strictEqual(e.exitCode, 3);
+      assert.match(e.message, /connection lost reading the response: terminated/);
+      return true;
+    });
+  } finally { global.fetch = orig; }
+});
+
+test('a caller abort during the body read is rethrown untouched', async () => {
+  const orig = global.fetch;
+  const abort = Object.assign(new Error('aborted'), { name: 'AbortError' });
+  global.fetch = async () => ({ ok: true, status: 200, text: async () => { throw abort; } });
+  try {
+    await assert.rejects(new WireClient('http://h', 't').get('/api/x', 'info'), (e) => e === abort);
+  } finally { global.fetch = orig; }
+});
+
 test('parseSseBlock: event + data, comments and dataless blocks skipped', () => {
   assert.deepStrictEqual(parseSseBlock('event: output\ndata: {"b64":"aGk="}'), { event: 'output', data: '{"b64":"aGk="}' });
   // leading space after the colon is trimmed (SSE spec), one space only

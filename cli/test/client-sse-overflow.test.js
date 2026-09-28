@@ -129,6 +129,27 @@ test('the overflow is EXIT.SERVER — terminal, not a retryable connect failure'
   } finally { shutdown(server); }
 });
 
+test('an overflow reports exactly one error — the EXIT.SERVER one — and no trailing CONNECT from its own teardown', async () => {
+  const { server } = streamServer('unterminated');
+  const socketClosed = new Promise((resolve) => server.on('connection', (sock) => sock.on('close', resolve)));
+  const port = await listen(server);
+  const client = new WireClient(`http://127.0.0.1:${port}`, null);
+  const errors = [];
+  try {
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('no overflow error arrived')), 15000);
+      client.openEventStream('/api/events', 'logs -f', {
+        onEvent: () => {},
+        onError: (e) => { errors.push(e); clearTimeout(t); resolve(); },
+      });
+    });
+    assert.ok(errors.length >= 1 && errors[0].exitCode === EXIT.SERVER, 'the overflow was reached');
+    await socketClosed;
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    assert.deepStrictEqual(errors.map((e) => e.exitCode), [EXIT.SERVER]);
+  } finally { shutdown(server); }
+});
+
 // WINDOW: the END-TO-END consequence of that code choice, through the real
 // supervisor rather than by reading sse-guard's source. openGuarded must NOT
 // reconnect — one connect, then onGiveUp carrying the original message. With

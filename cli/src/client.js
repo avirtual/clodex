@@ -56,7 +56,13 @@ class WireClient {
 
   // Parse a JSON body; tolerate an empty/non-JSON body (some errors are text).
   async _body(res) {
-    const text = await res.text();
+    let text;
+    try {
+      text = await res.text();
+    } catch (e) {
+      if (e && e.name === 'AbortError') throw e;
+      throw new CliError(EXIT.CONNECT, scrub(`connection lost reading the response: ${e.message}`, this._token));
+    }
     if (!text) return {};
     try { return JSON.parse(text); }
     catch { return { _text: text }; }
@@ -108,7 +114,7 @@ class WireClient {
     const u = new URL(this._base + pathAndQuery);
     const mod = u.protocol === 'https:' ? https : http;
     let closed = false;
-    const fail = (err) => { if (!closed && onError) onError(err); };
+    const fail = (err) => { if (closed) return; closed = true; if (onError) onError(err); };
     const req = mod.request(u, {
       method: 'GET',
       headers: this._headers({ Accept: 'text/event-stream' }),
