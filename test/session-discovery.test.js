@@ -153,5 +153,34 @@ test('readSessionMeta counts operator prompts, not tool_result lines', () => {
   assert.strictEqual(meta.turns, 2);
 });
 
+test('readSessionMeta parses only user lines that mention tool_result', () => {
+  const { createEngine } = require('../engine');
+  const tmp = mkTmpRoot('clodex-meta-turns-');
+  const eng = createEngine({
+    userDataPath: tmp,
+    seams: { registryDir: path.join(tmp, 'clodex-home') },
+    log: { info() {}, warn() {}, error() {} },
+  });
+  const plain = (t) => JSON.stringify({ type: 'user', message: { role: 'user', content: t } });
+  const lines = [
+    JSON.stringify({ type: 'user', message: { role: 'user', content: 'p1' }, timestamp: '2026-07-09T00:00:00.000Z' }),
+    plain('p2'),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }] } }),
+    '{"type":"user","message":{"content":[{"type":"tool_result"',
+    plain('p3'),
+  ];
+  const file = path.join(tmp, 's.jsonl');
+  fs.writeFileSync(file, lines.join('\n'));
+
+  const orig = JSON.parse;
+  let calls = 0;
+  JSON.parse = function (...a) { calls++; return orig.apply(this, a); };
+  let meta;
+  try { meta = eng.readSessionMeta(file); } finally { JSON.parse = orig; }
+  assert.strictEqual(meta.turns, 3);
+  assert.strictEqual(calls, 1 + 5 + 2,
+    'ts(): line 0 for first; lines 4,3,2,1,0 for last (only line 0 has a timestamp); then the tool_result line and the truncated one');
+});
+
 const { after } = require('node:test');
 after(() => { setImmediate(() => process.exit(0)); });

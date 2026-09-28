@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Messaging and stores: a spilled message's pointer now reports the same byte count as the file's header (non-ASCII bodies used to disagree); an env key named __proto__, constructor or prototype is refused like the matching scope names; the History menu no longer parses every user line of every transcript; a directory on an explicit path is no longer taken for a binary; a session save that failed on disk reports false.
 - Stores: when sessions.json cannot be read, seat changes this launch are kept in memory and logged once instead of throwing out of kill/archive/move; New Workspace still opens its window when workspaces.json is unreadable; an env scope stored as null no longer breaks setting a value in it.
 - Ticket loop: the slow gate now scopes "tests your branch owns" to the diff against the merge-base with the trunk, so a test file master brought in when you merged it no longer gets your branch rejected for running slow under load.
 - Ticket loop: when a verify suite is abandoned (it could not take the test lock, or a newer close superseded it) the loop now kills the runner it left behind instead of letting it queue on the lock; a re-close never leaves two runners for one ticket, and the escalation names why the runner gave up.

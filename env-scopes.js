@@ -41,6 +41,7 @@ const { readEnvFile } = require('./env-file');
 // own gate. Overriding CLAUDE_CODE_OAUTH_TOKEN et al. is a FEATURE (per-session
 // identity), so the deny-list is deliberately just this one key.
 const DENY_KEYS = new Set(['CLODEX_REMOTE_TOKEN']);
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -53,6 +54,9 @@ function envKeyError(key, value) {
   }
   if (DENY_KEYS.has(key)) {
     return `env key "${key}" is not allowed (reserved)`;
+  }
+  if (UNSAFE_KEYS.has(key)) {
+    return `env key "${key}" is not allowed (reserved name)`;
   }
   if (value != null && /[\n\r]/.test(String(value))) {
     return `env value for "${key}" contains a newline — not allowed`;

@@ -113,4 +113,23 @@ test('a directory named claude on PATH is not an installed CLI', () => {
   }
 });
 
+test('whichBin: an explicit path to a directory is not a binary', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { createEngine } = require('../engine');
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const tmp = mkTmpRoot('clx-diag-dir-');
+  const { whichBin } = createEngine({
+    userDataPath: tmp,
+    seams: { registryDir: path.join(tmp, 'clodex-home') },
+    log: { info() {}, warn() {}, error() {} },
+  });
+  const binDir = path.join(tmp, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  const exe = path.join(binDir, 'claude');
+  fs.writeFileSync(exe, '#!/bin/sh\n', { mode: 0o755 });
+  assert.strictEqual(whichBin(binDir), null);
+  assert.strictEqual(whichBin(exe), path.join(tmp, 'bin', 'claude'));
+});
+
 test.after(() => { setImmediate(() => process.exit(0)); });
