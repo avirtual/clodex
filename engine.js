@@ -1,6 +1,3 @@
-// The bootstrap body sits at file-level indentation inside createEngine and must
-// NOT be re-indented: it contains byte-sensitive template literals (generated
-// hook scripts) that a reflow would rewrite.
 'use strict';
 
 const https = require('https');
@@ -248,8 +245,8 @@ function createEngine({ userDataPath, seams = {}, log }) {
   const noSeed = !!seams.noSeed;
   if (noSeed && !process.env.NODE_TEST_CONTEXT) throw new Error('createEngine: seams.noSeed is a test seam');
 
-  // Every path below derives from this, and the suite's twelve createEngine
-  // callers pass a temp one: unseamed, they seeded the operator's live library
+  // Every path below derives from this, and every createEngine caller in the suite
+  // passes a temp one: unseamed, they seeded the operator's live library
   // from whatever branch happened to be checked out.
   const REGISTRY_DIR = resolveRegistryDir(seams);
 
@@ -1512,7 +1509,7 @@ function resolveFilePath(name, raw, baseDir) {
 function writeFilePeek(name, filePath, content, expectMtime) {
   const s = manager.sessions.get(name);
   if (!s) return { ok: false, error: 'Session not running' };
-  if (s.peer) return { ok: false, error: 'remote' }; // no local file behind a peer row
+  if (s.peer) return { ok: false, error: 'remote' };
   const v = vetFileWrite({
     filePath, cwd: s.cwd, content, expectMtime,
     resolve: path.resolve, realpath: fs.realpathSync, stat: fs.statSync,
@@ -1555,7 +1552,7 @@ async function fetchFileDiff(name, filePath) {
 let remoteServer = null;
 let remoteError = null;
 
-// Dropping base/sessionId/capabilities is load-bearing: it is what makes the
+// Dropping capabilities and the owner's loopback base/sessionId is load-bearing: it is
 // viewer's owner-local controls degrade to plain text instead of firing requests
 // at endpoints that exist only on the owner's machine.
 function peerProxyView(p) {
@@ -2026,9 +2023,17 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
     // attachments and the exec-answer fallback, and neither is the operator's to
     // lose when they decline the firehose — an untagged sweep would take all
     // three. Readers ignore the extra key: both cli-hooks' drain script and
-    // readQueue below select `o.text`.
+    // readQueue select `o.text`.
     queueForSeat(seat, text, PASSIVE_TERM_KIND);
   },
+  vetCommand: vetTermCommand,
+  // The peer-terminal fan-out (t219). The SAME bytes the local tab receives,
+  // pushed to any peer watching this seat — one shell, two viewers, which is
+  // what makes a remote shell visible instead of hidden. Cheap no-ops when no
+  // peer is attached (the server drops them when its stream set is empty), and
+  // absent entirely on a host with the remote wire off.
+  onOutput: (seat, data) => { if (remoteServer) remoteServer.pushWtermOutput(seat, data); },
+  onShellEnd: (seat, exitCode) => { if (remoteServer) remoteServer.pushWtermExit(seat, exitCode); },
   // The framing rules for a command the AGENT asked for, which is a different
   // product from the passive report above and differs from it twice: it is not
   // gated on the reporting pref (the pref governs the unasked-for firehose the
@@ -2039,14 +2044,6 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
   // Every branch here delivers SOMETHING. An outcome that produced no message
   // would leave the agent waiting for a turn that never comes, which is the
   // failure this whole path was built to prevent.
-  vetCommand: vetTermCommand,
-  // The peer-terminal fan-out (t219). The SAME bytes the local tab receives,
-  // pushed to any peer watching this seat — one shell, two viewers, which is
-  // what makes a remote shell visible instead of hidden. Cheap no-ops when no
-  // peer is attached (the server drops them when its stream set is empty), and
-  // absent entirely on a host with the remote wire off.
-  onOutput: (seat, data) => { if (remoteServer) remoteServer.pushWtermOutput(seat, data); },
-  onShellEnd: (seat, exitCode) => { if (remoteServer) remoteServer.pushWtermExit(seat, exitCode); },
   onExecResult: (seat, res) => {
     // Worded to fit EVERY branch, not just `ok`: a timeout followed by a window
     // close would otherwise render "closed before the command reported back …
@@ -2482,10 +2479,6 @@ const toolCache = createToolCache({ whichBin });
     // to resume from, so a quit that skipped this would orphan them outright.
     if (drawerPtys) { try { drawerPtys.dispose(); } catch {} }
     try { bashLive.stopAll(); } catch {}
-    // AFTER killAll, not before. killAll runs each session's teardown, and a
-    // watcher stopping flushes its pending text — which can re-enter _maybeSpeak
-    // and START a narration. Stopping first therefore leaves the app exiting
-    // while talking, which is the case this call exists to prevent.
     manager.killAll();
     try { speaker.stop(); } catch {}
   }

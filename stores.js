@@ -138,12 +138,6 @@ const DEFAULT_UI_SETTINGS = {
   plugins: {},
 };
 
-// Every read of a default that a caller could MUTATE goes through here. `get()`
-// hands its result to callers that edit it in place (the prefs dialog collects a
-// settings object, edits, and writes it back), so handing out the module
-// singleton or one of its nested arrays lets one caller's edit become the
-// process-wide default for every later read — including reads by code that never
-// touched settings. Pure JSON data, so the round-trip is the whole clone.
 function sanitizeSidePaneWidth(px) {
   return Number.isInteger(px) && px >= 320 && px <= 10000 ? px : null;
 }
@@ -159,11 +153,17 @@ function sanitizeRecentCwdsByWorkspace(raw) {
     .map(([wsId, list]) => [wsId, list.filter((c) => typeof c === 'string').slice(0, 12)]));
 }
 
+// Every read of a default that a caller could MUTATE goes through here. `get()`
+// hands its result to callers that edit it in place (the prefs dialog collects a
+// settings object, edits, and writes it back), so handing out the module
+// singleton or one of its nested arrays lets one caller's edit become the
+// process-wide default for every later read — including reads by code that never
+// touched settings. Pure JSON data, so the round-trip is the whole clone.
 function defaultUiSettings() { return JSON.parse(JSON.stringify(DEFAULT_UI_SETTINGS)); }
 
-// Shape-only, by design (see DEFAULT_UI_SETTINGS.plugins). Anything that isn't
-// an object collapses to {} — a corrupt value must not make every plugin
-// setting unreadable. Non-string entries in `enabled` are dropped rather than
+// Shape-only. A non-object returns null, not {}: `set` keeps the current bag on
+// null, so collapsing here would let one bad write wipe every plugin's settings.
+// Non-string entries in `enabled` are dropped rather than
 // coerced: an id is matched by exact string equality downstream, so a coerced
 // one would silently never match.
 function sanitizePlugins(raw) {
@@ -291,11 +291,10 @@ function legacyShellGrant(rawPeers) {
   return (Array.isArray(rawPeers) ? rawPeers : []).some((p) => !!(p && p.shellAllowed === true));
 }
 
-// Shared shape for the per-peer name maps (peerAttached, peerVisible): a plain
-// object of peerId -> array of session names held to the same regex sessions
-// use elsewhere. `keepEmpty` distinguishes the two callers: peerAttached drops
-// empty arrays (an empty attach set is just noise), peerVisible keeps them (an
-// empty array means "show none", which is meaningful). A non-object returns
+// Shared shape for the per-peer name maps (peerAttached, peerVisible,
+// peerControlled): peerId -> array of session names held to the session-name
+// regex. `keepEmpty` is true only for peerVisible, where an empty array means
+// "show none"; for the other two an empty set is noise. A non-object returns
 // null so the caller can fall back to {}.
 function sanitizePeerNameMap(raw, { keepEmpty }) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -1147,10 +1146,10 @@ function initStores(userDataPath, {
       if (Object.keys(e).length) map[name] = e; else delete map[name];
       this._save(map);
     },
-    // Tri-state, each set below: key ABSENT -> the matching in-code floor; key
-    // PRESENT with a deny array (including EMPTY) -> the user's explicit choice
-    // wins, so [] means "deny nothing", not "fall back to the floor". Keyed "*",
-    // not a legal session name, so it cannot collide with a per-agent entry.
+    // Tri-state, each set below: key ABSENT -> the in-code floor; key PRESENT
+    // (even EMPTY) -> the stored list, so [] means "deny nothing" — but a non-empty
+    // skill list is upgraded on read (docs/notes/stores.md). Keyed "*", not a legal
+    // session name, so it cannot collide with a per-agent entry.
     getDefaultDeny() {
       const e = this._load()['*'];
       if (e && Array.isArray(e.deny)) return e.deny.filter((t) => CLAUDE_TOOLS.includes(t));
@@ -1673,10 +1672,6 @@ function initStores(userDataPath, {
         voiceSubmitPhrase: typeof partial?.voiceSubmitPhrase === 'string'
           ? (partial.voiceSubmitPhrase.trim() || DEFAULT_UI_SETTINGS.voiceSubmitPhrase)
           : cur.voiceSubmitPhrase,
-        // Validated on the way IN, not just on the way out: an unrecognised
-        // string written here would read back as itself, and every gate
-        // downstream compares against a literal — so `'On'` would silently mean
-        // neither 'all' nor 'off' and disclosure would depend on a typo.
         speakReplies: typeof partial?.speakReplies === 'boolean' ? partial.speakReplies : cur.speakReplies,
         // Same absent-vs-blank split as voiceSubmitPhrase: absent keeps the
         // current value, blank is the operator clearing the field back to the
@@ -1689,6 +1684,10 @@ function initStores(userDataPath, {
         // back as itself and is then SPOKEN at — `say` accepts any integer and
         // narrates at 5 wpm without complaint.
         speakRate: partial?.speakRate === undefined ? cur.speakRate : sanitizeSpeakRate(partial.speakRate),
+        // Validated on the way IN, not just on the way out: an unrecognised
+        // string written here would read back as itself, and every gate
+        // downstream compares against a literal — so `'On'` would silently mean
+        // neither 'all' nor 'off' and disclosure would depend on a typo.
         terminalReports: TERMINAL_REPORTS.includes(partial?.terminalReports) ? partial.terminalReports : cur.terminalReports,
         terminalRemote: TERMINAL_REMOTE.includes(partial?.terminalRemote) ? partial.terminalRemote : cur.terminalRemote,
         intentSpill: INTENT_SPILL.includes(partial?.intentSpill) ? partial.intentSpill : cur.intentSpill,
@@ -1826,8 +1825,8 @@ function initStores(userDataPath, {
   //   dest absent           -> copy, stamp shippedHash.
   //   present + stamped     -> overwrite only if sha256(dest) === stamp AND
   //                            shippedHash !== stamp; else leave it.
-  //   present, NO stamp     -> legacy: cannot prove pristine, so never
-  //                            overwrite; adopt sha256(dest) instead.
+  //   present, NO stamp     -> legacy: adopt sha256(dest), no write this launch;
+  //                            the next launch overwrites it like any pristine copy.
   // A dest that matches NEITHER its stamp nor the shipped bytes is STRANDED:
   // permanently off the upgrade path. That is correct for an operator edit and
   // wrong for a stale shipped copy, and a hash mismatch cannot tell the two
@@ -2041,8 +2040,6 @@ function initStores(userDataPath, {
       if (this._unreadable) refuseUnreadable(ENV_SCOPES_FILE);
       try {
         atomicWriteFileSync(ENV_SCOPES_FILE, JSON.stringify(data, null, 2));
-        // Reassert 0600 on the final file — a secret store must never be group/
-        // world-readable, and the atomic rename can land on an older lax-mode file.
         try { fs.chmodSync(ENV_SCOPES_FILE, 0o600); } catch { /* best-effort */ }
       } catch (e) {
         console.error('env-scopes save failed:', e);
