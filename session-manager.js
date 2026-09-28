@@ -3940,7 +3940,7 @@ function createSessionManager(deps) {
     // recreate the same seat, and destroying its checkout there would delete the
     // tree out from under a session that is coming right back.
     //
-    // Captured BEFORE the kill; removal waits for the pty exit, but only up to _waitForExit's 8s.
+    // Captured BEFORE the kill; removal runs only after the pty exit — _waitForExit's 8s running out keeps the tree.
     //
     // A seat that has ALREADY exited still gets its record dropped here, and
     // that is this method's own drop, not kill()'s: kill() returns at `if (!s)`
