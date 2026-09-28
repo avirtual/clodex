@@ -39,7 +39,8 @@ test('seams.noSeed throws outside node --test', () => {
       () => createEngine({ userDataPath: tmp, seams: { registryDir: path.join(tmp, 'clodex-home'), noSeed: true }, log: quiet }),
       { message: 'createEngine: seams.noSeed is a test seam' });
   } finally {
-    process.env.NODE_TEST_CONTEXT = saved;
+    if (saved === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = saved;
   }
 });
 
