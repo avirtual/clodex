@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- The New Session dialog's recent-folder suggestions are per workspace (a folder used in one workspace no longer appears in another's list); deleting a team or saving an agent or skill library entry no longer reports a failure when only the app-menu rebuild after the write threw.
 - Seats no longer receive the CLI's per-call "list what you need next" nudge or its secondary reminder: Clodex's shipped env defaults turn both off, since the seat prompts already say when to write and what to request.
 - A filed body whose file could not be read the first time is read again when you unfold it again.
 - The Tickets pane's quiet refresh keeps keyboard focus on the Feed's Refresh button and the Closed list's Newer/Older pager, and never repaints the Closed or Feed view over an edit you started while it was loading.

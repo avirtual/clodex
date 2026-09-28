@@ -57,6 +57,13 @@ function envLockedSettings(env = process.env) {
   return out;
 }
 
+function recentCwdsFor(settings, wsId) {
+  const byWs = settings.recentCwdsByWorkspace || {};
+  if (Array.isArray(byWs[wsId])) return byWs[wsId];
+  if (wsId === 'default' && Array.isArray(settings.recentCwds)) return settings.recentCwds;
+  return [];
+}
+
 function registerIpcHandlers(deps) {
   const {
     handle, on,
@@ -96,6 +103,11 @@ function registerIpcHandlers(deps) {
     getPluginHost, getPluginLoader, listAllTemplates, listAllPrompts, surfaceOfSender,
     getHelpCorpus,
   } = deps;
+
+  function refreshMenusAfterWrite(channel, ...refreshers) {
+    try { for (const fn of refreshers) fn(); }
+    catch (err) { log?.error?.('menu', `${channel}: menu rebuild after a landed write failed: ${err.message}`); }
+  }
 
   async function spawnFromParams(e, p) {
     const workspaceId = workspaceOfSender(e);
@@ -281,11 +293,11 @@ function registerIpcHandlers(deps) {
   });
 
   handle('team:delete', async (_e, team) => {
-    try {
-      const r = await teamDeleteGated(team);
-      if (r.ok) { refreshAppMenu(); refreshTrayMenu(); }
-      return r;
-    } catch (err) { return { ok: false, error: err.message }; }
+    let r;
+    try { r = await teamDeleteGated(team); }
+    catch (err) { return { ok: false, error: err.message }; }
+    if (r.ok) refreshMenusAfterWrite('team:delete', refreshAppMenu, refreshTrayMenu);
+    return r;
   });
 
   handle('team:renameRole', (_e, team, from, to) => {
@@ -524,7 +536,7 @@ function registerIpcHandlers(deps) {
   // every other one. See the rule at `session:list` below — this handler was the
   // violation of it, registered thirty lines above where it is stated.
   handle('session:cwdSuggestions', (e) => {
-    const recent = Array.isArray(uiSettings.get().recentCwds) ? uiSettings.get().recentCwds : [];
+    const recent = recentCwdsFor(uiSettings.get(), workspaceOfSender(e));
     const counts = new Map();
     for (const s of manager.listForWorkspace(workspaceOfSender(e))) {
       if (!s.cwd) continue;
@@ -533,12 +545,14 @@ function registerIpcHandlers(deps) {
     const popular = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([cwd, count]) => ({ cwd, count }));
     return { ok: true, recent, popular };
   });
-  handle('session:noteCwd', (_e, cwd) => {
+  handle('session:noteCwd', (e, cwd) => {
     const dir = typeof cwd === 'string' && cwd.trim();
     if (!dir) return { ok: false };
-    const cur = Array.isArray(uiSettings.get().recentCwds) ? uiSettings.get().recentCwds : [];
+    const settings = uiSettings.get();
+    const wsId = workspaceOfSender(e);
+    const cur = recentCwdsFor(settings, wsId);
     const next = [dir, ...cur.filter((c) => c !== dir)].slice(0, 12);
-    uiSettings.set({ recentCwds: next });
+    uiSettings.set({ recentCwdsByWorkspace: { ...(settings.recentCwdsByWorkspace || {}), [wsId]: next } });
     return { ok: true };
   });
   handle('session:markWorktree', (_e, name, worktree) => {
@@ -743,11 +757,11 @@ function registerIpcHandlers(deps) {
   handle('agents:list', () => agentLibrary.list());
   handle('agents:get', (_e, name) => agentLibrary.raw(name));
   handle('agents:save', (_e, name, content) => {
-    try {
-      const agents = agentLibrary.save(name, content);
-      refreshAppMenu(); // Agents menu lists the library — keep it current.
-      return { ok: true, agents };
-    } catch (err) { return { ok: false, error: err.message }; }
+    let agents;
+    try { agents = agentLibrary.save(name, content); }
+    catch (err) { return { ok: false, error: err.message }; }
+    refreshMenusAfterWrite('agents:save', refreshAppMenu);
+    return { ok: true, agents };
   });
   handle('agents:remove', (_e, name) => {
     let agents;
@@ -760,11 +774,11 @@ function registerIpcHandlers(deps) {
   handle('skilllib:list', () => skillLibrary.list());
   handle('skilllib:get', (_e, name) => skillLibrary.raw(name));
   handle('skilllib:save', (_e, name, content) => {
-    try {
-      const skills = skillLibrary.save(name, content);
-      refreshAppMenu();
-      return { ok: true, skills };
-    } catch (err) { return { ok: false, error: err.message }; }
+    let skills;
+    try { skills = skillLibrary.save(name, content); }
+    catch (err) { return { ok: false, error: err.message }; }
+    refreshMenusAfterWrite('skilllib:save', refreshAppMenu);
+    return { ok: true, skills };
   });
   handle('skilllib:remove', (_e, name) => {
     let skills;
