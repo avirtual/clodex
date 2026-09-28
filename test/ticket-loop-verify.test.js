@@ -5774,6 +5774,9 @@ test('a verify loop superseded by reject and re-close does not act on the new cl
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed' });
   await until(() => calls.length >= 2);
   assert.strictEqual(calls.length, 2, 'ENTER: loop B is inside its own suite run');
+  calls[1]({ ran: false, green: false, slowOnly: false, slow: [], error: 'lock' });
+  await until(() => !!f.one().verifyHold);
+  assert.ok(f.one().verifyHold, 'ENTER: loop B stamped its infra hold');
 
   calls[0](red);
   for (let i = 0; i < 20 && calls.length < 3; i++) await new Promise((r) => setImmediate(r));
@@ -5783,6 +5786,8 @@ test('a verify loop superseded by reject and re-close does not act on the new cl
   const t = f.one();
   assert.strictEqual(t.state, 'done', 'loop A\'s red result must not reopen the re-closed ticket');
   assert.strictEqual(t.reworkRound, 1, 'and must not count a rework round nobody asked for');
+  assert.strictEqual(t.loopStep, 'verify', 'the newer loop\'s step stays');
+  assert.ok(t.verifyHold, 'and the stale loop\'s exit does not clear the newer loop\'s hold');
 });
 
 test('a red run followed by a slow-only run records the first run\'s failures', async () => {

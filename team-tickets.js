@@ -6585,11 +6585,11 @@ function createTicketMethods(deps, shared) {
       // THE verifyHold INVARIANT, the shape `_autoMergeTicket` states for
       // `mergeWaiting`: set on the fail arms, cleared on EVERY other exit, and
       // held in a `finally` rather than by clearing at each one. The exits are not
-      // only the ones easy to remember — the green path spawns a review, four
-      // guards return silently on a ticket that moved under the checks, the
+      // only the ones easy to remember — the green path spawns a review, the
       // suite-red arm rejects, and the catch-all throws. A stamp left behind on
       // any of them is a ticket that alarms forever about a check that passed.
       let held = false;
+      let superseded = false;
       // A verify escalation is a HOLD, not an exit. Deleting `loopStep` on a
       // DELIVERED one leaves `state=done` with nothing in flight: the stall sweep
       // skips it forever (ticketInFlight is false), `task done` bounces as "is done,
@@ -6675,7 +6675,11 @@ function createTicketMethods(deps, shared) {
         // reviewers end up on one ticket.
         if (!ticket || ticket.loopStep !== 'verify') return;
         const round = ticket.reworkRound || 0;
-        const current = (t) => !!t && t.loopStep === 'verify' && (t.reworkRound || 0) === round;
+        const current = (t) => {
+          const ok = !!t && t.loopStep === 'verify' && (t.reworkRound || 0) === round;
+          if (!ok) superseded = true;
+          return ok;
+        };
         const wt = ticket.worktree || {};
         const branch = wt.branch;
         const baseSha = wt.baseSha;
@@ -6942,13 +6946,12 @@ function createTicketMethods(deps, shared) {
           atStep === 'review' ? 'verify passed and the diff was written; the throw came at or after the review spawn' : 'no reviewer spawned', 'infra');
       } finally {
         // Every exit that is NOT a fail arm: the green path that spawned a
-        // review, the four guards that return silently on a ticket which moved
-        // under the checks, and the suite-red arm that rejected. A hold surviving
+        // review and the suite-red arm that rejected. A hold surviving
         // any of them makes the sweep alarm about a check that has since passed —
         // and `fail` itself re-stamps, so a second round is not cleared by its own
         // predecessor's stamp. Costs one load per run and no save unless the field
         // is actually there.
-        if (!held) this._stampVerifyHold(team, ticketId, null);
+        if (!held && !superseded) this._stampVerifyHold(team, ticketId, null);
       }
     },
 
@@ -8238,13 +8241,17 @@ function createTicketMethods(deps, shared) {
           if (!returned || disposition !== 'parked') return;
           log.info('ticket', `ticket ${ticketId} escalation at ${step} parked for ${team.lead} after the queue returned`);
           if (keepHold || !released) return;
-          const tickets = ticketsStore.load(team.root);
-          const rec = tickets.find((t) => t.id === ticketId);
-          if (!rec || rec.state !== 'done' || rec.loopStep) return;
-          rec.loopStep = released;
-          ticketsStore.save(team.root, tickets);
-          released = null;
-          this._watchParkedEscalation(team, ticketId);
+          try {
+            const tickets = ticketsStore.load(team.root);
+            const rec = tickets.find((t) => t.id === ticketId);
+            if (!rec || rec.state !== 'done' || rec.loopStep || rec.acceptedAt || rec.closedOut) return;
+            rec.loopStep = released;
+            ticketsStore.save(team.root, tickets);
+            released = null;
+            this._watchParkedEscalation(team, ticketId);
+          } catch (e) {
+            log.error('ticket', `ticket ${ticketId} late-parked escalation could not re-hold: ${e.message}`);
+          }
         };
         const r = this._gatedDeliver(team.lead, 'ticket-loop', body, true, `[ticket ${ticketId} ESCALATED]`, onDisposition, { parkBehindQueue: true });
         returned = true;
