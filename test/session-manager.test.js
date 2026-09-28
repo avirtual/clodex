@@ -19615,6 +19615,38 @@ test('destroy of a live worktree seat whose tree removal fails keeps a record na
   assert.ok(records.get('alive-wt').archivedAt > 0, 'and that record is archived, as an already-dead seat\'s would be');
 });
 
+test('destroy of an archived worktree seat whose directory was deleted by hand drops the record', async () => {
+  const repoDir = mkTmpRoot('clodex-ghostwt-');
+  const runGit = (...a) => require('child_process').execFileSync('git', ['-C', repoDir, ...a], { stdio: 'ignore' });
+  runGit('init', '-q');
+  runGit('config', 'user.email', 't@example.com');
+  runGit('config', 'user.name', 'Test');
+  fsReal.writeFileSync(pathReal.join(repoDir, 'a.txt'), 'hi\n');
+  runGit('add', '-A');
+  runGit('commit', '-qm', 'init');
+  const realWt = require('../git-worktree');
+  const made = await realWt.createWorktree(repoDir, 't906');
+  assert.strictEqual(made.ok, true, made.error);
+  fsReal.rmSync(made.path, { recursive: true, force: true });
+  assert.ok(!fsReal.existsSync(made.path), 'ENTER: the tree directory is gone');
+  const listed = await realWt.listWorktrees(repoDir);
+  assert.ok(listed.worktrees.some((w) => w.branch === 't906' && w.prunable), 'ENTER: git still lists it as prunable');
+  const records = new Map([['ghost-wt', { name: 'ghost-wt', cwd: made.path, worktree: { path: made.path, branch: 't906' } }]]);
+  const m = mk({
+    getPersistence: () => ({
+      list: () => [...records.values()],
+      get: (n) => records.get(n) || null,
+      remove: (n) => { records.delete(n); },
+      upsert: (e) => { records.set(e.name, e); },
+    }),
+    gitWorktree: realWt,
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+  });
+  const r = await m.destroy('ghost-wt');
+  assert.strictEqual(r.worktreeRemoved, true, r.error);
+  assert.strictEqual(records.has('ghost-wt'), false);
+});
+
 test('renderer deleteSessionRow removes the row itself when destroy reports live:false', () => {
   const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   const fn = src.match(/async function deleteSessionRow\(name\)\s*\{[\s\S]*?\n\}\n/);

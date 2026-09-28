@@ -83,7 +83,7 @@ async function createWorktree(cwd, branch, opts = null) {
   if (!repo) return { ok: false, error: `Not inside a git repository: ${cwd || '(none)'}` };
   const br = String(branch || '').trim();
   if (!br) return { ok: false, error: 'Branch name is required for a worktree' };
-  if (!/^[A-Za-z0-9._/-]{1,128}$/.test(br) || br.includes('..')) {
+  if (!/^[A-Za-z0-9._][A-Za-z0-9._/-]{0,127}$/.test(br) || br.includes('..')) {
     return { ok: false, error: `Invalid branch name: ${br}` };
   }
 
@@ -306,6 +306,11 @@ async function isDirty(worktreePath) {
 async function removeWorktree(worktreePath, opts) {
   const wt = worktreePath && path.resolve(String(worktreePath));
   if (!wt) return { ok: false, error: 'No worktree path given' };
+  if (!fs.existsSync(wt)) {
+    const repo = opts && opts.repo ? String(opts.repo) : null;
+    if (repo) await git(repo, ['worktree', 'prune']);
+    return { ok: true, gone: true };
+  }
   // Anchor git at the worktree itself so we can find its repo, then confirm it's
   // a linked worktree (not the primary checkout) before removing anything.
   const list = await git(wt, ['worktree', 'list', '--porcelain']);
@@ -324,8 +329,7 @@ async function removeWorktree(worktreePath, opts) {
   const repo = entries[0] && entries[0].path;
   const r = await git(wt, ['worktree', 'remove', '--force', wt]);
   if (!r.ok) {
-    // A manually-deleted dir leaves a stale admin entry; prune clears it.
-    await git(path.dirname(wt), ['worktree', 'prune']).catch(() => {});
+    await git(repo, ['worktree', 'prune']);
     return { ok: false, error: (r.stderr || 'git worktree remove failed').trim() };
   }
   const branch = opts && opts.deleteBranch ? String(opts.deleteBranch) : null;

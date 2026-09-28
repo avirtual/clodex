@@ -121,6 +121,43 @@ test('createWorktree: rejects a missing / invalid branch name', { skip: !gitAvai
   assert.strictEqual((await wt.createWorktree(repo, 'has space')).ok, false);
 });
 
+test('createWorktree rejects a branch name that starts with a dash', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const r = await wt.createWorktree(repo, '-q');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /Invalid branch name/);
+  assert.strictEqual((await wt.listWorktrees(repo)).worktrees.length, 1);
+});
+
+test('removeWorktree on a hand-deleted linked tree succeeds and clears its admin entry', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const made = await wt.createWorktree(repo, 'wt/gone');
+  assert.strictEqual(made.ok, true, made.error);
+  fs.rmSync(made.path, { recursive: true, force: true });
+  assert.ok((await wt.listWorktrees(repo)).worktrees.some((w) => w.branch === 'wt/gone' && w.prunable), 'ENTER: the entry is prunable');
+  const rm = await wt.removeWorktree(made.path, { repo });
+  assert.strictEqual(rm.ok, true, rm.error);
+  assert.strictEqual((await wt.listWorktrees(repo)).worktrees.some((w) => w.branch === 'wt/gone'), false);
+});
+
+test("removeWorktree's failure path prunes the repo's stale admin entries", { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const a = await wt.createWorktree(repo, 'a');
+  const b = await wt.createWorktree(repo, 'b');
+  assert.strictEqual(a.ok && b.ok, true);
+  fs.rmSync(b.path, { recursive: true, force: true });
+  execFileSync('git', ['-C', repo, 'worktree', 'lock', a.path], { stdio: 'ignore' });
+  try {
+    const rm = await wt.removeWorktree(a.path);
+    assert.strictEqual(rm.ok, false, 'ENTER: the locked tree refuses removal');
+    assert.match(rm.error, /locked/);
+    assert.strictEqual((await wt.listWorktrees(repo)).worktrees.some((w) => w.branch === 'b'), false);
+  } finally {
+    execFileSync('git', ['-C', repo, 'worktree', 'unlock', a.path], { stdio: 'ignore' });
+    await wt.removeWorktree(a.path);
+  }
+});
+
 test('createWorktree: fails cleanly outside a repo', { skip: !gitAvailable() }, async () => {
   const notRepo = mkTmpRoot('clodex-nr2-');
   const r = await wt.createWorktree(notRepo, 'x');
