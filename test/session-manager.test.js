@@ -10916,7 +10916,7 @@ test('role-add with model: refuses to overwrite a template another role names', 
   const f = mkTeamModel();
   fsReal.mkdirSync(pathReal.dirname(f.tplFile('foo')), { recursive: true });
   fsReal.writeFileSync(f.tplFile('foo'), JSON.stringify({ ...f.shippedHand, name: 'foo', extraArgs: ['--model', 'claude-sonnet-5[1m]'] }));
-  f.tm.setRole('team', 'bar', { brief: 'bar', template: 'foo' });
+  f.tm.addRole('team', 'bar', { brief: 'bar', template: 'foo' });
   assert.strictEqual(f.tm.loadManifest('team').roles.bar.template, 'foo', 'ENTER: role bar names template foo');
   const before = fsReal.readFileSync(f.tplFile('foo'));
 
