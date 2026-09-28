@@ -167,6 +167,9 @@ const BLOCKS = [
   ['underscores inside a word are literal', 'a foo_bar_baz b', 'p{a foo_bar_baz b}'],
   ['underscores inside two identifiers are literal', 'call my_func and your_func now', 'p{call my_func and your_func now}'],
   ['double underscores inside a word are literal', 'a foo__bar__baz b', 'p{a foo__bar__baz b}'],
+  ['a tilde fence may carry a backtick in its info string', '~~~ a`b\nx\n~~~', 'pre{code{x}}'],
+  ['a backtick opener whose info string holds a backtick is inline code, not a fence', '```a`\nx', 'p{``code{a} x}'],
+  ['a closer may carry trailing blanks', '```js\nx\n```  \t\nafter', 'pre{code[data-lang=js]{x}}p{after}'],
   ['a longer fence is not closed by a shorter one', '````\n```\nx\n````\nafter', 'pre{code{```\nx}}p{after}'],
   ['a table right after a list item is a table, not continuation text', '- a\nx | y\n|---|---|\n1 | 2', 'ul{li{a}}table{thead{tr{th{x}th{y}}}tbody{tr{td{1}td{2}}}}'],
   ['escaped pipe is one cell, backslash dropped', '| a \\| b |\n| --- |', 'table{thead{tr{th{a | b}}}tbody{}}'],
@@ -427,6 +430,13 @@ test('a deeply nested blockquote is capped rather than overflowing the stack', (
   let out = null;
   assert.doesNotThrow(() => { out = render(src); }, 'must not throw on hostile nesting');
   assert.ok(out.frag.children.length >= 1, 'it still renders something');
+});
+
+test('a fence-like line with a long blank run and a stray backtick parses in linear time', () => {
+  const t0 = Date.now();
+  const { frag } = render('```' + ' '.repeat(3000) + '`\nafter');
+  assert.ok(Date.now() - t0 < 1000, `took ${Date.now() - t0}ms`);
+  assert.strictEqual(frag.children.length, 1);
 });
 
 // CONTROL for the cap: a realistic depth must still nest, or the fix above could

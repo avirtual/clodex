@@ -2,7 +2,7 @@
 
 const SAFE_SCHEME = /^https?:\/\//i;
 const MAX_QUOTE_DEPTH = 8;
-const FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^`\n]*?)[ \t]*$/;
+const FENCE = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/;
 const HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
 const QUOTE = /^ {0,3}> ?(.*)$/;
 const BULLET = /^ {0,3}[-*+][ \t]+(.*)$/;
@@ -30,9 +30,14 @@ function splitRow(line) {
   return s.replace(/\\\|/g, '\u0000').split('|').map((c) => c.replace(/\u0000/g, '|').trim());
 }
 
+function fenceOf(line) {
+  const m = FENCE.exec(line);
+  return m && !(m[1][0] === '`' && m[2].includes('`')) ? m : null;
+}
+
 function startsBlock(line) {
   return !line.trim()
-    || FENCE.test(line)
+    || fenceOf(line) !== null
     || HEADING.test(line)
     || QUOTE.test(line)
     || BULLET.test(line)
@@ -97,19 +102,19 @@ function appendInline(parent, text, doc) {
 }
 
 function renderFence(lines, i, parent, doc) {
-  const open = FENCE.exec(lines[i]);
+  const open = fenceOf(lines[i]);
   const marker = open[1][0];
   const body = [];
   let j = i + 1;
   while (j < lines.length) {
-    const close = FENCE.exec(lines[j]);
-    if (close && close[1][0] === marker && close[1].length >= open[1].length && close[2] === '') break;
+    const close = fenceOf(lines[j]);
+    if (close && close[1][0] === marker && close[1].length >= open[1].length && close[2].trim() === '') break;
     body.push(lines[j]);
     j++;
   }
   const pre = doc.createElement('pre');
   const code = doc.createElement('code');
-  const lang = open[2].split(/\s+/)[0];
+  const lang = open[2].trim().split(/\s+/)[0];
   if (LANG.test(lang)) code.setAttribute('data-lang', lang);
   code.textContent = body.join('\n');
   pre.appendChild(code);
@@ -218,7 +223,7 @@ function renderBlocks(lines, parent, doc, depth = 0) {
   while (i < lines.length) {
     const line = lines[i];
     if (!line.trim()) { i++; continue; }
-    if (FENCE.test(line)) { i = renderFence(lines, i, parent, doc); continue; }
+    if (fenceOf(line)) { i = renderFence(lines, i, parent, doc); continue; }
     const h = HEADING.exec(line);
     if (h) {
       const heading = doc.createElement(`h${h[1].length}`);

@@ -79,17 +79,17 @@ test('the nearest header wins over an earlier one', () => {
 // THE false-positive case, and the reason contiguity exists rather than a line
 // budget: both of these are real lines from this project's notes, and both match
 // any number-then-marker pattern. Prose under a header must NOT link.
-test('a blank row between a finished block and a numbered row ends the search', () => {
-  assert.strictEqual(findGutterFile(['', '   27 +  foo', '  ⎿  Added 3 lines', '● Update(CHANGELOG.md)']), null);
-  assert.strictEqual(findGutterFile(['', '  ', '● Read(a.js)']), null);
-});
-
 test('prose separated from a header by an unrelated row does not resolve', () => {
   const above = [
     'Post-suite orphan check was clean, so:',
     '● Update(journal.md)',
   ];
   assert.strictEqual(findGutterFile(above), null);
+});
+
+test('a blank row between a finished block and a numbered row ends the search', () => {
+  assert.strictEqual(findGutterFile(['', '   27 +  foo', '  ⎿  Added 3 lines', '● Update(CHANGELOG.md)']), null);
+  assert.strictEqual(findGutterFile(['', '  ', '● Read(a.js)']), null);
 });
 
 // Shipped broken: a gutter row whose CONTENT mentions `Update(file.js)` was read

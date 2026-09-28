@@ -39,11 +39,16 @@ const PATH_RE = new RegExp(
 const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
 
 function trimUrl(url) {
-  let s = url.replace(/[.,;:!?'"]+$/, '');
-  while (s.endsWith(')') && s.split('(').length < s.split(')').length) {
-    s = s.slice(0, -1).replace(/[.,;:!?'"]+$/, '');
+  const opens = url.split('(').length;
+  let closes = url.split(')').length;
+  let end = url.length;
+  for (;;) {
+    const c = url[end - 1];
+    if (c !== undefined && `.,;:!?'"`.includes(c)) end -= 1;
+    else if (c === ')' && closes > opens) { end -= 1; closes -= 1; }
+    else break;
   }
-  return s;
+  return url.slice(0, end);
 }
 
 function urlMatches(text) {

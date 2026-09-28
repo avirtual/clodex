@@ -25970,7 +25970,7 @@ ${i3.join("\n")}
       "use strict";
       var SAFE_SCHEME = /^https?:\/\//i;
       var MAX_QUOTE_DEPTH = 8;
-      var FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^`\n]*?)[ \t]*$/;
+      var FENCE = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/;
       var HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
       var QUOTE = /^ {0,3}> ?(.*)$/;
       var BULLET = /^ {0,3}[-*+][ \t]+(.*)$/;
@@ -25991,8 +25991,12 @@ ${i3.join("\n")}
         if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
         return s.replace(/\\\|/g, "\0").split("|").map((c) => c.replace(/\u0000/g, "|").trim());
       }
+      function fenceOf(line) {
+        const m = FENCE.exec(line);
+        return m && !(m[1][0] === "`" && m[2].includes("`")) ? m : null;
+      }
       function startsBlock(line) {
-        return !line.trim() || FENCE.test(line) || HEADING.test(line) || QUOTE.test(line) || BULLET.test(line) || ORDERED.test(line);
+        return !line.trim() || fenceOf(line) !== null || HEADING.test(line) || QUOTE.test(line) || BULLET.test(line) || ORDERED.test(line);
       }
       function endsRun(lines, j) {
         return !lines[j].trim() || startsBlock(lines[j]) || lines[j].includes("|") && isTableRule(lines[j + 1]);
@@ -26046,19 +26050,19 @@ ${i3.join("\n")}
         return parent;
       }
       function renderFence(lines, i, parent, doc) {
-        const open = FENCE.exec(lines[i]);
+        const open = fenceOf(lines[i]);
         const marker = open[1][0];
         const body = [];
         let j = i + 1;
         while (j < lines.length) {
-          const close = FENCE.exec(lines[j]);
-          if (close && close[1][0] === marker && close[1].length >= open[1].length && close[2] === "") break;
+          const close = fenceOf(lines[j]);
+          if (close && close[1][0] === marker && close[1].length >= open[1].length && close[2].trim() === "") break;
           body.push(lines[j]);
           j++;
         }
         const pre = doc.createElement("pre");
         const code = doc.createElement("code");
-        const lang = open[2].split(/\s+/)[0];
+        const lang = open[2].trim().split(/\s+/)[0];
         if (LANG.test(lang)) code.setAttribute("data-lang", lang);
         code.textContent = body.join("\n");
         pre.appendChild(code);
@@ -26164,7 +26168,7 @@ ${i3.join("\n")}
             i++;
             continue;
           }
-          if (FENCE.test(line)) {
+          if (fenceOf(line)) {
             i = renderFence(lines, i, parent, doc);
             continue;
           }
@@ -26509,11 +26513,18 @@ ${i3.join("\n")}
       );
       var URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
       function trimUrl(url) {
-        let s = url.replace(/[.,;:!?'"]+$/, "");
-        while (s.endsWith(")") && s.split("(").length < s.split(")").length) {
-          s = s.slice(0, -1).replace(/[.,;:!?'"]+$/, "");
+        const opens = url.split("(").length;
+        let closes = url.split(")").length;
+        let end = url.length;
+        for (; ; ) {
+          const c = url[end - 1];
+          if (c !== void 0 && `.,;:!?'"`.includes(c)) end -= 1;
+          else if (c === ")" && closes > opens) {
+            end -= 1;
+            closes -= 1;
+          } else break;
         }
-        return s;
+        return url.slice(0, end);
       }
       function urlMatches(text) {
         const out = [];

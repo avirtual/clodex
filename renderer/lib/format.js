@@ -2,12 +2,12 @@
 // value->string helpers used across the sidebar, status bar, popovers, and
 // report/cost panels.
 //
-//   - esc() uses the global `document` (HTML-escape via a detached node); it
-//     works at renderer runtime but must not be CALLED under node --test (no
-//     document). Requiring the module is fine; the tests exercise the others.
-//     textContent→innerHTML escapes & < > but NOT quotes, so esc() ALSO escapes
-//     " and ' explicitly — quote-escaping is safe in both text and attribute
-//     contexts, closing attribute-injection for any interpolation into value="…".
+// esc() uses the global `document` (HTML-escape via a detached node); it
+// works at renderer runtime but must not be CALLED under node --test (no
+// document). Requiring the module is fine; the tests exercise the others.
+// textContent→innerHTML escapes & < > but NOT quotes, so esc() ALSO escapes
+// " and ' explicitly — quote-escaping is safe in both text and attribute
+// contexts, closing attribute-injection for any interpolation into value="…".
 
 const homeDir = require('os').homedir();
 
