@@ -2249,6 +2249,8 @@ function createTicketMethods(deps, shared) {
           return;
         }
 
+        const ownBase = await gitWorktree.mergeBase(team.root, target, branch).catch(() => ({ ok: false }));
+
         // STEP 4 — the merge itself, always with a merge commit.
         //
         // RE-READ THE STATE ONE LAST TIME, and keep this the last statement
@@ -2316,7 +2318,6 @@ function createTicketMethods(deps, shared) {
             'nothing was merged — the message file is written before the merge so a failure here costs nothing');
           return;
         }
-        const ownBase = await gitWorktree.mergeBase(team.root, target, branch).catch(() => ({ ok: false }));
         const mergeStartedAt = Date.now();
         merged = await gitWorktree.mergeNoFf(team.root, branch, msgFile)
           .catch((e) => ({ ok: false, error: e.message }));
