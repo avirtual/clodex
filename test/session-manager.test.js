@@ -10928,6 +10928,21 @@ test('t767: a mutator throw on a role that already owns its derived template res
   assert.deepStrictEqual(f.teamJsonBytes(), teamBefore);
 });
 
+test('role-add with model: refuses to overwrite a template another role names', () => {
+  const f = mkTeamModel();
+  fsReal.mkdirSync(pathReal.dirname(f.tplFile('foo')), { recursive: true });
+  fsReal.writeFileSync(f.tplFile('foo'), JSON.stringify({ ...f.shippedHand, name: 'foo', extraArgs: ['--model', 'claude-sonnet-5[1m]'] }));
+  f.tm.addRole('team', 'bar', { brief: 'bar', template: 'foo' });
+  assert.strictEqual(f.tm.loadManifest('team').roles.bar.template, 'foo', 'ENTER: role bar names template foo');
+  const before = fsReal.readFileSync(f.tplFile('foo'));
+
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-add', name: 'foo', model: 'haiku', body: 'x' });
+
+  assert.deepStrictEqual(fsReal.readFileSync(f.tplFile('foo')), before, 'templates/foo.json is byte-identical');
+  assert.match(f.last(), /error:.*\bbar\b/, f.last());
+  assert.strictEqual(f.tm.loadManifest('team').roles.foo, undefined, 'no role foo was added');
+});
+
 test('t767: a role-set WITHOUT model: writes no template at all (every path byte-identical to pre-t767)', () => {
   const f = mkTeamModel();
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', dispatch: 'worktree', body: 'new brief' });
@@ -11123,6 +11138,19 @@ test('t751 create: a granted seat writes team.json with the root and the default
   assert.match(reply, /lead shop-lead/);
   assert.match(reply, /dir .*teams\/shop/);
   assert.match(reply, /Next: spawn the lead in that root/, 'and told what to do next — the lead seat does not exist yet');
+});
+
+test('a create refused by createTeam leaves a fresh root untouched', async () => {
+  const f = mkTeamCreate();
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: '' });
+  assert.ok(f.teamExists('shop'), 'ENTER: the first create landed');
+  f.injected.length = 0;
+  const fresh = pathReal.join(f.home, 'fresh');
+
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: fresh, lead: null, body: '' });
+
+  assert.ok(f.injected.some((t) => /already exists/.test(t)), `ENTER: the duplicate was refused: ${f.injected.join(' | ')}`);
+  assert.strictEqual(fsReal.existsSync(fresh), false, 'the fresh root was neither created nor git-initialized');
 });
 
 test('t751 create: an UNGRANTED seat gets no manifest and no reply at all', async () => {
@@ -16232,6 +16260,30 @@ test('spawn worktree: the seat boots IN the worktree, on its branch, recorded fo
   assert.strictEqual(head, 't999');
   assert.deepStrictEqual(m._worktreeSet, [{ name: 'child', wt: { path: createdCwd, branch: 't999' } }],
     'the worktree must be recorded on the session, or Delete Session… cannot remove it');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+test('a throw after create() keeps the live seat\'s worktree', async () => {
+  const { root, repo } = mkGitRepo();
+  const m = mkWtManager(repo);
+  let createdCwd = 'UNSET';
+  m.create = async (...args) => {
+    createdCwd = args[2];
+    m.sessions.set(args[0], { name: args[0], agentType: 'claude', cwd: args[2] });
+    return { name: args[0] };
+  };
+  m._applyTemplatePersistence = () => { throw new Error('x'); };
+  const spawner = { name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: repo };
+  m.sessions.set('a', spawner);
+
+  m._handleSpawnIntent(spawner, { name: 'child', cwd: repo, worktree: 't997' });
+  await until(() => m._replies.length);
+
+  assert.notStrictEqual(createdCwd, 'UNSET', `ENTER: create() ran — replies: ${JSON.stringify(m._replies)}`);
+  assert.ok(fsReal.existsSync(createdCwd), 'the live seat\'s worktree is still on disk');
+  assert.ok(!m._replies.some((r) => /^(\[agent:spawn\] )?error:/.test(r)),
+    `no reply reports an error for a running seat: ${JSON.stringify(m._replies)}`);
 
   fsReal.rmSync(root, { recursive: true, force: true });
 });
