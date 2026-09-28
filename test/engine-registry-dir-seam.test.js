@@ -226,6 +226,34 @@ test('initStores refuses to seed the home-derived root when running under node -
   });
 });
 
+test('initStores refuses to seed the home root under node --test whatever the spelling', () => {
+  withFakeHome((fakeHome) => {
+    const { initStores } = require('../stores');
+    assert.ok(process.env.NODE_TEST_CONTEXT, 'ENTER: node --test marks the process');
+    const linkParent = mkTmpRoot('clx-t359-home-');
+    fs.mkdirSync(path.join(fakeHome, '.clodex'), { recursive: true });
+    fs.symlinkSync(path.join(fakeHome, '.clodex'), path.join(linkParent, 'reg'));
+    try {
+      for (const registryDir of [fakeHome + '/.clodex/', fakeHome + '/./.clodex', path.join(linkParent, 'reg')]) {
+        const tmpUserData = mkTmpRoot('clx-t359-guard-');
+        const warnings = [];
+        try {
+          initStores(tmpUserData, {
+            log: { info() {}, warn: (...a) => warnings.push(a.join(' ')), error() {} },
+            registryDir,
+          });
+          assert.ok(warnings.some((w) => /refusing to seed/.test(w)), `${registryDir}: ${JSON.stringify(warnings)}`);
+          assert.strictEqual(fileCount(path.join(fakeHome, '.clodex', 'library')), 0, registryDir);
+        } finally {
+          fs.rmSync(tmpUserData, { recursive: true, force: true });
+        }
+      }
+    } finally {
+      fs.rmSync(linkParent, { recursive: true, force: true });
+    }
+  });
+});
+
 // createEngine starts background timers that keep the loop alive.
 after(() => { setImmediate(() => process.exit(0)); });
 
