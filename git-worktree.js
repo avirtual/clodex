@@ -538,7 +538,7 @@ async function commitsOnBranch(cwd, branch, base = null) {
 //
 // Both refs are verified before the diff so a gone base SHA (rebased, gc'd)
 // lands as a legible error rather than git's bare exit 128.
-async function diffText(cwd, base, head, { maxBuffer = 32 * 1024 * 1024, noRenames = false } = {}) {
+async function diffText(cwd, base, head, { maxBuffer = 32 * 1024 * 1024 } = {}) {
   const repo = await repoToplevel(cwd);
   if (!repo) return { ok: false, text: null, error: 'not a git repository' };
   if (!base || !head) return { ok: false, text: null, error: 'no base or head given' };
@@ -551,7 +551,7 @@ async function diffText(cwd, base, head, { maxBuffer = 32 * 1024 * 1024, noRenam
   // These flags are QUOTED back to the lead by team-tickets.js's CHECK 4 failure
   // messages so they can re-run the command by hand. That copy went stale once;
   // sweep it when this argv changes.
-  const r = await git(repo, ['diff', '--text', '--no-ext-diff', ...(noRenames ? ['--no-renames'] : []), '-U20', `${base}..${head}`], { maxBuffer });
+  const r = await git(repo, ['diff', '--text', '--no-ext-diff', '-U20', `${base}..${head}`], { maxBuffer });
   if (!r.ok) return { ok: false, text: null, headSha: null, error: (r.stderr || 'git diff failed').trim() };
   return { ok: true, text: r.stdout, headSha: resolved[head], error: null };
 }

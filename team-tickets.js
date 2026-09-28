@@ -2564,7 +2564,7 @@ function createTicketMethods(deps, shared) {
     async _mergeTouchedChangelog(team, base, head) {
       try {
         if (!base || !head) return { known: false, error: 'the merge did not report both ends of its range' };
-        const d = await gitWorktree.diffText(team.root, base, head, { noRenames: true })
+        const d = await gitWorktree.diffText(team.root, base, head)
           .catch((e) => ({ ok: false, error: e && e.message ? e.message : String(e) }));
         if (!d || !d.ok || typeof d.text !== 'string') {
           return { known: false, error: (d && d.error) || 'git diff returned nothing readable' };
@@ -2604,15 +2604,14 @@ function createTicketMethods(deps, shared) {
         // `docs/CHANGELOG.md` under `diff.noprefix` reads as CHANGED; a
         // multi-segment prefix (`diff.srcPrefix 'i/w/'`) reads as OWED.
         //
-        // The pattern is NOT widened to chase these: testing each side
-        // independently, or allowing `[^\s]+\/`, swallows nested paths and trades
-        // a safe-direction residual for a false CHANGED. Adjudicated.
-        //
         // `^` stays load-bearing: every hunk-body line carries a `+`, `-` or
         // space, so a file whose CONTENT quotes a diff header cannot spoof it.
         let present = false;
         try { present = fs.statSync(path.join(team.root, 'CHANGELOG.md')).isFile(); } catch { present = false; }
-        return { known: true, touched: /^diff --git (?:[^\s/]+\/)?CHANGELOG\.md (?:[^\s/]+\/)?CHANGELOG\.md$/m.test(d.text), present };
+        const rootChangelog = /^(?:[^\s/]+\/)?CHANGELOG\.md$/;
+        const touched = [...d.text.matchAll(/^diff --git (\S+) (\S+)$/gm)]
+          .some((h) => rootChangelog.test(h[1]) || rootChangelog.test(h[2]));
+        return { known: true, touched, present };
       } catch (e) {
         return { known: false, error: e && e.message ? e.message : String(e) };
       }

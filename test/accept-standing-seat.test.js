@@ -1545,10 +1545,12 @@ test('an accept whose board save fails after the teardown does not claim nothing
     return r;
   };
   const replies = [];
-  f.m._injectText = (_s, text) => { replies.push(text); };
+  let landed = null;
+  const replied = new Promise((r) => { landed = r; });
+  f.m._injectText = (_s, text) => { replies.push(text); landed(); };
 
   f.m._handleTask(lead, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' });
-  for (let i = 0; i < 2000 && !replies.length; i += 1) await new Promise((r) => setImmediate(r));
+  await replied;
 
   assert.ok(replies.length, 'ENTER: a reply landed');
   assert.strictEqual(exists(wt), false, 'ENTER: the teardown removed the worktree');

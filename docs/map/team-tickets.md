@@ -125,7 +125,7 @@
 | `_stampMergeError` | re-load, mutate and save of the board's mergeError: a step sets it with a merge-failed event, null clears it | tickets.json (mergeError, escalationUndelivered) | recordEvent | ticket-auto-merge.test.js task-respec.test.js |
 | `_stampMergeWaiting` | re-load, mutate and save of a deferred merge's mergeWaiting reason, kept apart from mergeError | tickets.json (mergeWaiting) | none | task-respec.test.js |
 | `_autoMergeTicket` | gates an ACCEPTed branch, merges it with --no-ff, runs the suite on the merged trunk, then reverts and stamps MERGE FAILED or closes out | tickets.json, merge message file, git commits in the team root, retry timer | _runTicketSuite, _closeOutMergedTicket, _mergeTouchedChangelog, _notifyMergeLanded | ticket-auto-merge.test.js clodex-team.test.js |
-| `_mergeTouchedChangelog` | measures whether the merged range touched the root CHANGELOG.md (renames off, so a move out of the root reads as touched) and whether it exists, known false for anything unproven | none (reads diff text, stats CHANGELOG.md) | gitWorktree.diffText | ticket-auto-merge.test.js |
+| `_mergeTouchedChangelog` | measures whether the merged range touched the root CHANGELOG.md (a header naming it on either side, so a move out of the root reads as touched) and whether it exists, known false for anything unproven | none (reads diff text, stats CHANGELOG.md) | gitWorktree.diffText | ticket-auto-merge.test.js |
 | `_notifyMergeLanded` | one lead DM for a landed merge: sha, tip drift, close-out or step owed, suite, union and CHANGELOG state; stamps merged | tickets.json (merged stamp), lead inbox | _stampMerged, _gatedDeliver, closeOutDetail | merged-notice-owes-accept.test.js ticket-auto-merge.test.js |
 
 ### Invariants

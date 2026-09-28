@@ -3528,7 +3528,7 @@ test('nothing awaits between the pre-merge state check and the merge itself', ()
   const tt = fsReal.readFileSync(pathReal.join(__dirname, '..', 'team-tickets.js'), 'utf8');
   // Anchored on the two statements themselves, not on line numbers or comment
   // prose: the check's own `const`, and the merge call it protects.
-  const start = tt.indexOf('const stillDone = this._loadTicket(team, ticketId);');
+  const start = tt.indexOf('const why = abandonedWhy();');
   const end = tt.indexOf('merged = await gitWorktree.mergeNoFf(');
   // ENTER, and the reason this pin is worth writing at all. If either anchor
   // stops matching after an innocent rename, `slice` silently yields '' or a

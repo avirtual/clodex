@@ -555,8 +555,8 @@ test('team:activity reports every role\'s seats, open tickets and last landing, 
         ],
         landed: [
           { id: 't3', title: 'three', at: NOW - 1000, outcome: 'accepted', rounds: 1 },
+          { id: 't5', title: 'five', at: NOW - 2000, outcome: 'merge-failed', rounds: 0 },
           { id: 't4', title: 'four', at: NOW - 3000, outcome: 'cancelled', rounds: 0 },
-          { id: 't5', title: 'five', at: NOW - 30 * 60 * 60 * 1000, outcome: 'merge-failed', rounds: 0 },
         ],
       },
     });
