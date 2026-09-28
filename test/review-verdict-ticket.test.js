@@ -625,6 +625,17 @@ test('a QUOTED previous verdict does not win over the reviewer`s own', async () 
   assert.strictEqual(t.mustFix, 'the guard is inverted');
 });
 
+test('a quoted previous verdict does not supply the must-fix list', async () => {
+  const f = mkVerdict();
+  openTicket(f);
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name),
+    '> MUST-FIX:\n> - old\n\nVERDICT: REWORK\nMUST-FIX:\n- new');
+  const t = f.one('t1');
+  assert.strictEqual(t.verdict, 'REWORK');
+  assert.strictEqual(t.mustFix, '- new');
+});
+
 test('ordinary verdict decoration is still accepted, so the anchor did not narrow the grammar', async () => {
   for (const line of ['VERDICT: ACCEPT', '  VERDICT: ACCEPT', '**VERDICT**: ACCEPT', '- VERDICT: ACCEPT', 'VERDICT — ACCEPT', 'verdict: accept']) {
     const f = mkVerdict();

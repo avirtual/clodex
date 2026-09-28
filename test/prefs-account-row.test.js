@@ -172,3 +172,37 @@ test('modelOptions: a non-claude row, a model-less row and junk contribute nothi
     'claude-haiku-4',
   )), [...MODEL_ALIASES, 'claude-haiku-4'], 'ENTER: the one real claude row still landed');
 });
+
+test('the Move "moved N · skipped" line survives the list refresh it triggers', async () => {
+  const vm = require('node:vm');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const sliceNamed = (head) => {
+    const start = src.indexOf(head);
+    assert.ok(start >= 0, `ENTER: ${head} was located`);
+    return src.slice(start, src.indexOf('\n}\n', start) + 2);
+  };
+  const stub = () => ({ textContent: '', value: '', style: {}, appendChild() {} });
+  let moveClick = null;
+  const btn = () => ({ addEventListener() {} });
+  const ctx = {
+    prefsAccountsState: stub(), prefsAccountsList: stub(), prefsAccountModel: null, ACCOUNT_DEFAULT: 'default',
+    document: { createElement: stub },
+    accountRowView: (a) => a, modelOptions: () => [],
+    buildAccountRow: () => ({ row: stub(), login: btn(), resync: null, remove: null,
+      move: { addEventListener: (t, cb) => { moveClick = cb; } } }),
+    startLoginSeat() {}, confirm: () => true,
+    window: { api: {
+      accountsList: async () => ({ ok: true, accounts: [{ label: 'a' }] }),
+      listSessions: async () => [],
+      accountsMoveByModel: async () => ({ ok: true, moved: [{ name: 'x' }], skipped: [{ name: 's', reason: 'r' }] }),
+    } },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(['function setPrefsAccountsState(', 'async function refreshPrefsAccounts('].map(sliceNamed).join('\n'), ctx);
+  await ctx.refreshPrefsAccounts();
+  assert.ok(moveClick, 'ENTER: the Move listener was wired');
+  ctx.prefsAccountModel = { value: 'opus' };
+  await moveClick();
+  for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(ctx.prefsAccountsState.textContent, 'moved 1 · skipped: s (r)');
+});

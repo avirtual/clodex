@@ -2702,6 +2702,25 @@ for (const [label, manifest, verdict] of DEPLESS_ROWS) {
   });
 }
 
+test('a linked node_modules leaves the tree clean when the root ignores only `node_modules/`', async () => {
+  const root = mkTmpRoot('clodex-depless-root-');
+  git(root, ['init', '-q', '-b', 'master']);
+  git(root, ['config', 'user.email', 't@t.t']);
+  git(root, ['config', 'user.name', 'T']);
+  fsReal.writeFileSync(pathReal.join(root, '.gitignore'), 'node_modules/\n');
+  git(root, ['add', '.gitignore']);
+  git(root, ['commit', '-q', '-m', 'base']);
+  fsReal.mkdirSync(pathReal.join(root, 'node_modules', 'a'), { recursive: true });
+  const tree = pathReal.join(mkTmpRoot('clodex-depless-tree-'), 'tree');
+  git(root, ['worktree', 'add', '-q', '-b', 'tl-nm', tree]);
+  const f = mkLoop({ repo: mkRepo() });
+
+  assert.strictEqual(f.m._linkWorktreeNodeModules(root, tree), null);
+  assert.ok(fsReal.lstatSync(pathReal.join(tree, 'node_modules')).isSymbolicLink(), 'ENTER: the tree holds the node_modules symlink');
+
+  assert.deepStrictEqual(await require('../git-worktree').isDirty(tree), { ok: true, dirty: false });
+});
+
 // ── t362: the lead can SEE a loop rejection, and can add to one ─────────────
 //
 // Two defects, one region. (a) the well-behaved rejection — suite red, hand

@@ -915,3 +915,48 @@ test('the web Teams menu re-reads on every open, so a new team is never missing'
     ['one — not loaded', 'two', 'Create Team…'],
     'the second open sees the team created since AND the one that broke since');
 });
+
+test('a create failure after Cancel still reaches the operator', async () => {
+  const vm = require('node:vm');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf('function openCreateTeamDialog()');
+  assert.ok(at > 0, 'ENTER: openCreateTeamDialog was found');
+  const body = src.slice(at, src.indexOf('\n}\n', at) + 2);
+  const el = () => {
+    const e = { value: '', checked: false, disabled: false, textContent: '', listeners: {},
+      classList: { add() {}, remove() {} }, focus() {} };
+    e.addEventListener = (t, cb) => { e.listeners[t] = cb; };
+    return e;
+  };
+  const parts = {};
+  const overlay = { isConnected: false, listeners: {},
+    addEventListener(t, cb) { overlay.listeners[t] = cb; },
+    remove() { overlay.isConnected = false; },
+    querySelector(sel) { if (!parts[sel]) parts[sel] = el(); return parts[sel]; } };
+  let settle;
+  const toasts = [];
+  const ctx = {
+    document: {
+      querySelector: () => null,
+      createElement: () => overlay,
+      body: { appendChild: (o) => { o.isConnected = true; } },
+    },
+    window: { api: {
+      teamCreateBare: () => new Promise((r) => { settle = r; }),
+      teamNames: () => Promise.resolve({ names: [] }),
+    } },
+    showToast: (msg) => toasts.push(String(msg)),
+    openTeamRolesPopover() {}, pathBasename: (p) => p, slugifyTeamName: (s) => s, teamNamePrefill: (s) => s,
+    dialogTeamNames: [], setTimeout: () => 0, Promise,
+  };
+  vm.createContext(ctx);
+  vm.runInContext(body, ctx);
+  ctx.openCreateTeamDialog();
+  assert.strictEqual(overlay.isConnected, true, 'ENTER: the overlay was mounted');
+  parts['[data-act="ok"]'].listeners.click();
+  parts['[data-act="cancel"]'].listeners.click();
+  assert.strictEqual(overlay.isConnected, false, 'ENTER: Cancel removed the overlay');
+  settle({ ok: false, error: 'boom' });
+  for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+  assert.ok(toasts.some((t) => t.includes('boom')), `a toast carries the failure; got ${JSON.stringify(toasts)}`);
+});

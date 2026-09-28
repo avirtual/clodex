@@ -107,8 +107,11 @@ test('DISCOVERY: every restart call site preserves the seat-identity fields', ()
   // as the operator's standing seat and accept skips its teardown, leaks the
   // worktree, and says "it is not a one-shot ticket seat" — false. `reviewFor`
   // and `reviewTicket` are the same fact for reviewer seats.
-  const REQUIRED = ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt'];
+  const REQUIRED = ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt', 'reviewerTemplate'];
   const sites = callSites();
+  const always = /const ALWAYS_PRESERVE = \[([^\]]*)\]/.exec(fs.readFileSync(path.join(ROOT, 'session-manager.js'), 'utf8'));
+  assert.ok(always, 'ENTER: ALWAYS_PRESERVE is readable from session-manager.js');
+  const alwaysFields = always[1].split(',').map((f) => f.trim().replace(/^['"`]|['"`]$/g, '')).filter(Boolean);
   // ENTER: the fields are read off a literal array on the same line. A site that
   // passes a VARIABLE (engine.js builds one) is resolved to its declaration; if
   // neither shape matches, this guard would silently check nothing.
@@ -122,7 +125,7 @@ test('DISCOVERY: every restart call site preserves the seat-identity fields', ()
       if (varName) arr = new RegExp(`${varName[1]}\\s*=\\s*\\[([^\\]]*)\\]`).exec(src);
     }
     assert.ok(arr, `${s.file}:${s.line}: cannot read the field list — this guard must not pass by failing to look`);
-    const fields = arr[1].split(',').map((f) => f.trim().replace(/^['"`]|['"`]$/g, '')).filter(Boolean);
+    const fields = [...arr[1].split(',').map((f) => f.trim().replace(/^['"`]|['"`]$/g, '')).filter(Boolean), ...alwaysFields];
     for (const req of REQUIRED) {
       assert.ok(fields.includes(req),
         `${s.file}:${s.line}: restart drops \`${req}\` — every restart path must carry it, or the seat comes back as a different KIND of seat than it was`);
@@ -183,7 +186,8 @@ test('t491: every restart catch arm restores its snapshot through the tree guard
   // nothing beats one that promises a check it performs badly, so these are what
   // the count's failure message names, nothing more.
   const ARMS = ['restartSession', 'applySessionArgs', 'move', 'moveToPeer', '[agent:context reload]',
-    '[agent:scratch end] respawn-after-cut', '[agent:scratch end] respawn-after-abandon'];
+    '[agent:scratch end] respawn-after-cut', '[agent:scratch end] respawn-after-abandon',
+    'destroy of a live worktree seat whose tree removal failed'];
   const seen = [];
   for (const file of ['engine.js', 'session-manager.js']) {
     const lines = fs.readFileSync(path.join(ROOT, file), 'utf8').split('\n');

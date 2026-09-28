@@ -813,8 +813,11 @@ function createTicketMethods(deps, shared) {
             + (envBadType.length ? ` — env keys [${envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)` : ''));
         } catch (err) {
           log.error('intent', `spawn by ${spawner.name} → ${name} failed: ${err.message}`);
-          // The worktree outlives a failed spawn otherwise: create() threw, so no
-          // session record exists and nothing on the UI can offer to remove it.
+          if (this.sessions.has(name)) {
+            reply(`warning: "${name}" is running, but its spawn did not finish: ${err.message}`
+              + (wt ? ` — its worktree ${wt.path} is kept` : ''));
+            return;
+          }
           if (wt) {
             const r = await gitWorktree.removeWorktree(wt.path).catch(() => ({ ok: false }));
             log.info('worktree', `${r && r.ok ? 'removed' : 'ORPHANED'} ${wt.path} after failed spawn of ${name}`);
@@ -1545,10 +1548,12 @@ function createTicketMethods(deps, shared) {
     _readSeatCursors(team) {
       const file = this._seatCursorPath(team);
       if (!file) return {};
+      let raw;
+      try { raw = fs.readFileSync(file, 'utf8'); } catch (e) { return e && e.code === 'ENOENT' ? {} : null; }
       try {
-        const o = JSON.parse(fs.readFileSync(file, 'utf8'));
-        return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
-      } catch { return {}; }
+        const o = JSON.parse(raw);
+        return (o && typeof o === 'object' && !Array.isArray(o)) ? o : null;
+      } catch { return null; }
     },
 
     _writeSeatCursor(team, seat, cursor) {
@@ -1556,9 +1561,10 @@ function createTicketMethods(deps, shared) {
       if (!file || !seat) return false;
       try {
         const all = this._readSeatCursors(team);
+        if (!all) return false;
         all[seat] = cursor;
         ensureDir(path.dirname(file));
-        fs.writeFileSync(file, JSON.stringify(all, null, 2));
+        atomicWriteFileSync(file, JSON.stringify(all, null, 2));
         return true;
       } catch { return false; }
     },
@@ -1575,7 +1581,9 @@ function createTicketMethods(deps, shared) {
         if (!entry) return { ok: false, error: 'no record' };
         if (!standingSeat(entry)) return { ok: false, error: 'not a standing seat' };
         const { ledger } = this._seatLedger(name, entry);
-        const cursor = this._readSeatCursors(team)[name] || null;
+        const cursors = this._readSeatCursors(team);
+        if (!cursors) return { ok: false, error: 'the seat-cost cursor file is unreadable' };
+        const cursor = cursors[name] || null;
         const row = teamCost.seatLedgerRow({
           seat: name,
           team: team.name,
@@ -1593,13 +1601,14 @@ function createTicketMethods(deps, shared) {
         if (!row) return { ok: false, error: 'nothing new since the last stamp' };
         const w = this._appendTeamLedger(team, row);
         if (!w.ok) return w;
-        this._writeSeatCursor(team, name, {
+        const wrote = this._writeSeatCursor(team, name, {
           usd: row.to,
           tokens: (cursor && Number(cursor.tokens) || 0) + row.tokens,
           requests: (cursor && Number(cursor.requests) || 0) + row.requests,
           turns: (cursor && Number(cursor.turns) || 0) + row.turns,
           at: row.at,
         });
+        if (!wrote) return { ok: false, path: w.path, usd: row.usd, error: 'the seat-cost cursor could not be written' };
         return { ok: true, path: w.path, usd: row.usd, error: null };
       } catch (e) {
         return { ok: false, error: e.message };
@@ -2015,6 +2024,7 @@ function createTicketMethods(deps, shared) {
         this._escalateTicket(team, ticketId, `merge: ${step}`, evidence, tried);
       };
       let merged = null;
+      let target = null;
       try {
         const ticket = this._loadTicket(team, ticketId);
         if (!ticket) return;
@@ -2056,7 +2066,7 @@ function createTicketMethods(deps, shared) {
         // as it had no loop to run. Silent, not an escalation: nothing went
         // wrong, there is simply nothing to land.
         if (!branch || !baseSha) return;
-        const target = await gitWorktree.mergeTargetFor(team).catch(() => null);
+        target = await gitWorktree.mergeTargetFor(team).catch(() => null);
         if (!target) {
           fail('on-master', `could not resolve the merge target branch for ${team.name}: no trunk is set and ${team.root} has no origin/HEAD, main, master or checked-out branch`,
             'nothing was merged; set one with [agent:team trunk <branch>]');
@@ -2306,6 +2316,7 @@ function createTicketMethods(deps, shared) {
             'nothing was merged — the message file is written before the merge so a failure here costs nothing');
           return;
         }
+        const mergeStartedAt = Date.now();
         merged = await gitWorktree.mergeNoFf(team.root, branch, msgFile)
           .catch((e) => ({ ok: false, error: e.message }));
         if (!merged.ok) {
@@ -2449,6 +2460,8 @@ function createTicketMethods(deps, shared) {
           const rejectedSince = !!row && this._verdictRejectedSince(row, landedOn);
           const reopened = row && (row.state !== 'done' || rejectedSince);
           const acceptedInFlight = !reopened && row && (row.acceptedAt || row.closedOut);
+          const duringSuite = !!(row && ((row.acceptedAt && row.acceptedAt >= mergeStartedAt) || row.closedOut));
+          const when = duringSuite ? 'while the post-merge suite ran' : 'before the merge landed';
           // `closedOut`, NOT the stamp, picks that accept's SENTENCE: `!m.ok` and
           // `!m.merged` stamp and keep a tree that, called a close-out, is never
           // mentioned again. Neither records a reason, so neither is quoted.
@@ -2457,7 +2470,7 @@ function createTicketMethods(deps, shared) {
           if (reopened) {
             log.info('ticket', `ticket ${ticketId} was reopened (${row.state}) while the post-merge suite ran — the merge stands and the loop tore nothing down`);
           } else if (acceptedInFlight) {
-            log.info('ticket', `ticket ${ticketId} was accepted by ${who} while the post-merge suite ran — the loop reports that instead of closing out again`);
+            log.info('ticket', `ticket ${ticketId} was accepted by ${who} ${when} — the loop reports that instead of closing out again`);
           }
           closeOut = !row
             ? { ok: false, closedOut: false, text: `the ticket row for ${ticketId} could not be re-read after the merge` }
@@ -2469,7 +2482,7 @@ function createTicketMethods(deps, shared) {
                   text: `ticket ${ticketId} accepted — ${who} accepted it while the post-merge suite ran` }
                 : acceptedInFlight
                   ? { ok: false, closedOut: false, already: true,
-                    text: `${who} accepted it while the post-merge suite ran, but that accept did not finish the cleanup `
+                    text: `${who} accepted it ${when}, but that accept did not finish the cleanup `
                       + '(tree or branch kept)' }
                   : await this._closeOutMergedTicket(team, row, fresh, { by: 'ticket-loop' });
         } catch (e) {
@@ -2893,6 +2906,12 @@ function createTicketMethods(deps, shared) {
           return;
         }
       }
+      try {
+        createTeam({ name, root, lead, kit: intent.kit, dryRun: true });
+      } catch (err) {
+        reply(`error: ${err.message}`);
+        return;
+      }
       if (cls.kind !== 'takeover') {
         if (cls.kind === 'new-absent') {
           try { fs.mkdirSync(root); } catch (err) {
@@ -3289,6 +3308,10 @@ function createTicketMethods(deps, shared) {
         return;
       }
       let box = mgr.get(boxId);
+      if (!box && (action === 'status' || action === 'down')) {
+        reply(`sandbox ${boxId}: no box — this team has none; [agent:team sandbox up] creates it`);
+        return;
+      }
       if (!box) {
         const made = mgr.create(boxId, `${team.name} team`);
         if (made && made.ok === false) { reply(`error: ${made.error}`); return; }
@@ -3388,6 +3411,8 @@ function createTicketMethods(deps, shared) {
       if (intent.sub === 'role-set' && !roles[name]) return { ok: false, error: `role "${name}" not found on team "${team.name}" — use role-add (${team.file})` };
       if (intent.sub === 'role-add' && roles[name]) return { ok: false, error: `role "${name}" already exists on team "${team.name}" — use role-set` };
       const current = roles[name] && typeof roles[name] === 'object' ? roles[name].template : null;
+      const sharers = this._rolesNaming(team, 'template', name).filter((r) => r !== name);
+      if (sharers.length) return { ok: false, error: `template "${name}" is named by role(s): ${sharers.join(', ')} — model: would re-model them too; name a different role or repoint them first` };
       const stem = intent.template || current || 'clodex-team-hand';
       let base = readTeamJson({ fs, path }, team, 'templates', stem);
       if (!base) {
@@ -4104,7 +4129,8 @@ function createTicketMethods(deps, shared) {
       const what = prior.kind === 'redirect'
         ? `${prior.label || 'rejection'} for ${prior.ticketId}` : `spec for ${prior.ticketId}`;
       if (spent) {
-        let team; try { team = resolveTeam(session.cwd); } catch { team = null; }
+        let team; try { team = resolveTeam(session.cwd) || this._soloContext(session); } catch { team = null; }
+        if (team && team.solo) team = this._soloOpenerTeam(team, ticketsStore.load(team.root).find((t) => t.id === prior.ticketId));
         log.error('intent', `${what} was displaced on ${session.name} with its redelivery budget spent — escalating`);
         if (team) {
           this._escalateTicket(team, prior.ticketId,
@@ -4208,12 +4234,13 @@ function createTicketMethods(deps, shared) {
       const isRedirect = u.kind === 'redirect';
       const step = isRedirect ? 'redirect-undelivered' : 'spec-undelivered';
       const what = isRedirect ? `${u.label || 'rejection'} for ${u.ticketId}` : `spec for ${u.ticketId}`;
-      let team; try { team = resolveTeam(session.cwd); } catch { team = null; }
+      let team; try { team = resolveTeam(session.cwd) || this._soloContext(session); } catch { team = null; }
       // Still queued, and the timer is re-armed unconditionally — the retry is the
       // whole point of not consuming it.
       if (!team) { this._armSpecOwedTimer(session); return; }
       queue.shift();
       const ticket = ticketsStore.load(team.root).find((t) => t.id === u.ticketId);
+      team = this._soloOpenerTeam(team, ticket);
       // The three drops, taken with _checkSpecConfirm's own tests rather than new
       // ones that could disagree with it: closed while we waited, reassigned to a
       // live seat that is already working it, or resolving to nobody at all.
@@ -4485,6 +4512,12 @@ function createTicketMethods(deps, shared) {
       return false;
     },
 
+    _soloOpenerTeam(team, ticket) {
+      if (!team || !team.solo || !ticket) return team;
+      const add = (Array.isArray(ticket.events) ? ticket.events : []).find((e) => e && e.kind === 'add');
+      return { ...team, lead: ticket.opener || (add && add.by) || null };
+    },
+
     // Cleared by a non-idle edge that is ATTRIBUTABLE to this write (see
     // _emitActivity): reaching a turn over the delivered text means the seat
     // submitted, and submitting is exactly what a lost write prevents. A turn the
@@ -4527,9 +4560,10 @@ function createTicketMethods(deps, shared) {
         session._specUnconfirmed = null;
         return;
       }
-      let team; try { team = resolveTeam(session.cwd); } catch { return; }
+      let team; try { team = resolveTeam(session.cwd) || this._soloContext(session); } catch { return; }
       if (!team) return;
       const ticket = ticketsStore.load(team.root).find((t) => t.id === u.ticketId);
+      team = this._soloOpenerTeam(team, ticket);
       // Closed while we waited — nothing left to redeliver.
       if (!ticket || ticket.state !== 'open') { session._specUnconfirmed = null; return; }
       // Who holds the ticket NOW. The two ways that stops being this session are
@@ -4873,22 +4907,23 @@ function createTicketMethods(deps, shared) {
     // nature, so the caller keeps its one-shot armed for the next edge.
     _replayOpenTickets(session) {
       if (!session || !session.agentType || session._dead) return true;
-      let team; try { team = resolveTeam(session.cwd); } catch { return true; }
+      let team; try { team = resolveTeam(session.cwd) || this._soloContext(session); } catch { return true; }
       if (!team) return true;
       const open = this._openTicketsFor(team, session.name);
       if (!open.length) return true;
       let held = false;
       for (const t of open) {
+        const board = this._soloOpenerTeam(team, t);
         const d = t.deliveredTo;
         if (d && d.seat === session.name && d.incarnation === session.incarnation) continue;
         // `_openTicketsFor` matches a ROLE ticket to every seat filling that role,
         // but _deliverTicketSpec re-resolves to the FIRST live seat with it. Without
         // this, two seats on one role send the spec to seat #1 twice and stamp it
         // with seat #2, which received nothing.
-        if (this._ticketAssigneeSeat(team, t) !== session.name) continue;
+        if (this._ticketAssigneeSeat(board, t) !== session.name) continue;
         if (!t.spec) continue;   // hand-edited record — delivering it injects literal "undefined"
-        const stamp = () => this._stampSpecDelivered(team, t.id, session, { repin: true });
-        const r = this._deliverTicketSpec(team, t, t.spec, 'clodex-team', true, true, false, stamp);
+        const stamp = () => this._stampSpecDelivered(board, t.id, session, { repin: true });
+        const r = this._deliverTicketSpec(board, t, t.spec, 'clodex-team', true, true, false, stamp);
         // `held` is the one non-delivery worth retrying: it is a property of the seat
         // at this instant, not of the ticket. `self` and `undelivered` are structural
         // and would be identical on every later pass.
@@ -6395,11 +6430,11 @@ function createTicketMethods(deps, shared) {
       const lead = team.lead;
       if (!isLead) {
         const r = this._gatedDeliver(lead, session.name, `[ticket ${ticket.id} done] ${report}`, false, `[ticket ${ticket.id} done]`);
+        const kept = reentry ? `ticket stays held at "${heldAt}" (${holdRecoveryText(ticket.verifyHold && ticket.verifyHold.recovery, ticket.id).trim()})` : 'ticket kept open';
         // Spilled like every other rejecting return, and MORE needed here: the others
         // invite an immediate retry, this one tells the sender to wait on an
         // unreachable lead — an interval that can outlive its context or its process.
-        // Keeping the ticket open preserves the ticket's state, never the report.
-        if (r && r.error) { reply(`error: ${r.error} — report NOT delivered, ticket kept open; re-fire [agent:task done ${ticket.id}] once ${lead} is reachable${this._spillRejectedPayload(session, 'task done', report)}`); return; }
+        if (r && r.error) { reply(`error: ${r.error} — report NOT delivered, ${kept}; re-fire [agent:task done ${ticket.id}] once ${lead} is reachable${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       }
       ticket.state = 'done';
       // FIRST close only. A re-entry is the same close being re-verified, not a
@@ -7449,6 +7484,8 @@ function createTicketMethods(deps, shared) {
         appendReworkReason(ticket, { round: ticket.reworkRound, by: 'ticket-loop', reason });
         delete ticket.loopStep;
         delete ticket.mergedNudgedAt;
+        delete ticket.escalationUndelivered;
+        delete ticket.mergeError;
         const rework = this._reworkSeatFor(team, ticket, seat,
           this._redirectDeliveryText(ticket.id, 'rejected', reason));
         ticketsStore.save(team.root, tickets);
@@ -7523,8 +7560,11 @@ function createTicketMethods(deps, shared) {
           '',
           `WHY: ${firstLine || 'the test suite failed on the branch'}`,
           '',
-          'The rework reached the seat and the ticket is open again; the failing test names are on'
-          + ` the record and in the seat's copy. ${NOTHING_TORN_DOWN}`,
+          (replacedClause
+            ? 'A replacement seat is being spawned with the rework as its first write, and the ticket is open again; '
+              + 'the failing test names are on the record. If the spawn fails, a separate notice follows. '
+            : 'The rework reached the seat and the ticket is open again; the failing test names are on'
+              + " the record and in the seat's copy. ") + NOTHING_TORN_DOWN,
         ].join('\n');
         const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticket.id} REJECTED] round ${round} → ${seat}`);
         if (r && r.error) {
@@ -8546,6 +8586,8 @@ function createTicketMethods(deps, shared) {
       // on a ticket that is being worked, in a body that tells the hand to re-close.
       delete ticket.verifyHold;
       delete ticket.mergedNudgedAt;
+      delete ticket.escalationUndelivered;
+      delete ticket.mergeError;
       const cancelsMerge = ticket.verdict === 'ACCEPT';
       delete ticket.mergeWaiting;
       const seat = this._ticketAssigneeSeat(team, ticket);
@@ -8710,7 +8752,7 @@ function createTicketMethods(deps, shared) {
       ticket.lastActivityAt = ticket.closedAt;
       recordEvent(ticket, { at: ticket.closedAt, kind: 'cancel', by: session.name, reason: reason.split('\n')[0] });
       ticketsStore.save(team.root, tickets);
-      const seat = this._ticketAssigneeSeat(team, ticket);
+      const seat = ticketStarted(ticket) && !ticket.parked ? this._ticketAssigneeSeat(team, ticket) : null;
       if (reason && seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} cancelled] ${reason}`, false, `[ticket ${ticket.id} cancelled]`);
       this._reconcileTickets(team);
       const next = seat ? this._advanceSeat(team, seat, ticket) : null;
@@ -8985,6 +9027,10 @@ function createTicketMethods(deps, shared) {
       // accumulates dead rows. ARCHIVED, never destroyed — no worktree to
       // reclaim, and its work may be UNCOMMITTED in the shared checkout.
       if (!branch) {
+        if (ticket.closedOut && ticket.acceptedAt) {
+          reply(`ticket ${ticket.id} was already accepted at ${new Date(ticket.acceptedAt).toLocaleTimeString()} — nothing was changed${this._spillRejectedPayload(session, 'task accept', note)}`);
+          return;
+        }
         if (seatName) this._stampTicketRevival(team, seatName, { accepted: true }, ticket.id);
         let archived = false;
         if (ephemeralSeat && seatName && this.sessions.has(seatName)) {
@@ -9375,8 +9421,9 @@ function createTicketMethods(deps, shared) {
         try {
           const fresh = ticketsStore.load(team.root);
           const row = fresh.find((t) => t.id === ticket.id);
-          if (row && row.revival && row.revival.mergeVetoed) {
-            row.revival.mergeVetoedClearedAt = Date.now();
+          if (row && row.revival && (row.revival.mergeVetoed || row.revival.mergedInto === undefined)) {
+            if (row.revival.mergeVetoed) row.revival.mergeVetoedClearedAt = Date.now();
+            row.revival.accepted = true;
             row.revival.mergedInto = (measured && c.count === 0) ? null : m.base;
             delete row.revival.mergeVetoed;
             row.lastActivityAt = Date.now();

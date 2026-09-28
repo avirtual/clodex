@@ -164,3 +164,31 @@ test('an empty-string value is a legitimate row, not an absent one', () => {
   assert.strictEqual(valEl.textContent, '');
   assert.strictEqual(valEl.title, 'EMPTY=');
 });
+
+const flush = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
+const sliceNamed = (head) => {
+  const start = rendererSrc.indexOf(head);
+  assert.ok(start >= 0, `ENTER: ${head} was located`);
+  return rendererSrc.slice(start, rendererSrc.indexOf('\n}\n', start) + 2);
+};
+
+test('the Saved confirmation survives the list refresh', async () => {
+  const vm = require('node:vm');
+  const stub = () => ({ textContent: '', value: '', checked: false, style: {}, appendChild() {} });
+  const ctx = {
+    prefsEnvState: stub(), prefsEnvList: stub(), prefsEnvKey: { value: 'K' }, prefsEnvValue: { value: 'v' },
+    prefsEnvSecret: null, prefsEnvScope: null, prefsEnvRestoreRow: null, currentWorkspaceId: 'w',
+    document: { createElement: stub },
+    window: { api: {
+      envScopesSet: async () => ({ ok: true, vars: [] }),
+      envScopesGet: async () => ({ ok: true, vars: [] }),
+      envDefaultsGet: async () => ({ ok: true, defaults: {} }),
+    } },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(['function setPrefsEnvState(', 'function prefsEnvScopeArg(',
+    'async function refreshPrefsEnv(', 'async function addPrefsEnvVar('].map(sliceNamed).join('\n'), ctx);
+  await ctx.addPrefsEnvVar();
+  await flush();
+  assert.strictEqual(ctx.prefsEnvState.textContent, 'Saved K.');
+});
