@@ -47,6 +47,7 @@ const { matchSeatRole } = require('../team-manifest');
 const { projectDirFor } = require('../clodex-paths');
 
 const SEED_DIR = mkTmpRoot('clodex-t827-seed-');
+const REMINDERS = initStores(mkTmpRoot('clodex-t827-ud-'), { log: console, registryDir: SEED_DIR }).reminders;
 
 const real = (p) => { try { return fsReal.realpathSync(p); } catch { return pathReal.resolve(p); } };
 
@@ -85,7 +86,7 @@ function mkFixture(world) {
     now: () => Date.now(),
     setTimer: () => null,
     clearTimer: () => {},
-    store: initStores(userData, { log: console, registryDir: SEED_DIR }).reminders,
+    store: REMINDERS,
     deliver: () => {},
   });
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
