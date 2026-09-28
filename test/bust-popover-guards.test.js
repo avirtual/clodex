@@ -2,6 +2,8 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { createPopoverGroup } = require('../renderer/lib/popover-group');
 const { genuineBustCount } = require('../renderer/lib/render-html');
@@ -114,4 +116,12 @@ test('the later open\'s bust response wins over an earlier open still in flight'
     await first;
     assert.ok(h.body().includes('<b>5</b> genuine'), h.body());
   } finally { h.restore(); }
+});
+
+test('the 💥 chip counts through the same genuineBustCount the panel agrees with', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const block = src.match(/const bsum = p\.busts;[\s\S]*?💥 \$\{genuineCount\}/);
+  assert.ok(block, 'ENTER: the chip block is still found by this anchor');
+  assert.match(block[0], /const genuineCount = genuineBustCount\(bsum\.classes\);/);
+  assert.match(block[0], /const contentCount = genuineBustCount\(contentCls\);/);
 });
