@@ -12,9 +12,6 @@
 // Fetched on OPEN, never polled: a background poll would cost a proxy round
 // trip per session forever to answer a question nobody is asking, and the
 // answer is only wanted at the moment of doubt.
-//
-// DOM-bound, so no unit tests per the R1 rule — the judgement lives in
-// renderer/lib/selection-view.js, which is tested.
 
 const { esc } = require('../lib/format');
 const { buildRows, liveCount } = require('../lib/selection-view');
@@ -51,18 +48,23 @@ function initSelectionPopover({ getActiveSession }) {
   // The badge is a hint that opening is worth it, so a failed read leaves it
   // alone rather than clearing: "0" would be a claim, and the one thing this
   // module must not do is assert a state it could not confirm.
-  async function refreshBadge() {
-    const name = getActiveSession ? getActiveSession() : null;
-    if (!name) { btn.classList.remove('live'); countEl.textContent = ''; return; }
-    const data = await fetchFor(name);
-    if (!data) return;
+  const activeName = () => (getActiveSession ? getActiveSession() : null);
+
+  function paintBadge(name, data) {
+    if (!data || activeName() !== name) return;
     const n = liveCount(data);
     btn.classList.toggle('live', n > 0);
     countEl.textContent = n > 0 ? String(n) : '';
   }
 
+  async function refreshBadge() {
+    const name = activeName();
+    if (!name) { btn.classList.remove('live'); countEl.textContent = ''; return; }
+    paintBadge(name, await fetchFor(name));
+  }
+
   async function open() {
-    const name = getActiveSession ? getActiveSession() : null;
+    const name = activeName();
     if (!name) return;
     if (pop.dataset.name === name && !pop.classList.contains('hidden')) { close(); return; }
     nameEl.textContent = name;
@@ -79,9 +81,7 @@ function initSelectionPopover({ getActiveSession }) {
     // Opens UPWARD off the drawer header, which sits at the bottom of the
     // window, so the top is only knowable once the rows exist.
     pop.style.top = `${Math.round(Math.max(8, r.top - pop.offsetHeight - 8))}px`;
-    const n = liveCount(data);
-    btn.classList.toggle('live', n > 0);
-    countEl.textContent = n > 0 ? String(n) : '';
+    paintBadge(name, data);
   }
 
   btn.addEventListener('click', open);

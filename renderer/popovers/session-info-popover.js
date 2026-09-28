@@ -5,9 +5,6 @@
 //
 // Anchored to the ROW, not the proxy bar, so unlike cost/ctx it can be opened
 // for a session that isn't active.
-//
-// DOM-bound, so no unit tests per the R1 rule — the number/label logic all lives
-// in renderer/lib/session-info-view.js, which is tested.
 
 const { esc } = require('../lib/format');
 const { buildSections } = require('../lib/session-info-view');
@@ -66,11 +63,11 @@ function initSessionInfoPopover({ sessionList }) {
     if (e.key === 'Escape' && !pop.classList.contains('hidden')) close();
   });
   document.getElementById('session-info-popover-close').addEventListener('click', close);
-  // A row removed or re-rendered under an open panel leaves it describing a
-  // session that is gone.
   sessionList.addEventListener('scroll', () => { if (!pop.classList.contains('hidden')) close(); });
 
-  return { openSessionInfoPopover: open, closeSessionInfoPopover: close };
+  function closeIfShowing(name) { if (name && pop.dataset.name === name) close(); }
+
+  return { openSessionInfoPopover: open, closeSessionInfoPopover: close, closeIfShowing };
 }
 
 module.exports = { initSessionInfoPopover };

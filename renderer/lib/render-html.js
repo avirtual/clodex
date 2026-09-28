@@ -158,6 +158,16 @@ function isZeroCostBust(t) {
   return !o && !n;
 }
 
+function genuineBustWeight(t) {
+  if (!t || !t.fault || t.fault === 'self') return 0;
+  const n = typeof t.count === 'number' ? t.count : 1;
+  return Math.max(0, n - (Number(t.restart_between) || 0));
+}
+
+function genuineBustCount(items) {
+  return Array.isArray(items) ? items.reduce((n, t) => n + genuineBustWeight(t), 0) : 0;
+}
+
 // A divergence snippet: raw request bytes, so esc() first, and only then swap
 // the literal newlines the snippets routinely carry for a visible glyph — the
 // window is cut by character offset, not by line, so a real break here would
@@ -230,5 +240,5 @@ function bustRow(t, base, sid) {
     + `</div>`;
 }
 
-module.exports = { renderDiffHtml, costStackBlock, bustRow, isZeroCostBust };
+module.exports = { renderDiffHtml, costStackBlock, bustRow, isZeroCostBust, genuineBustWeight, genuineBustCount };
 
