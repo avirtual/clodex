@@ -54,6 +54,11 @@ function sliceBetween(src, start, end) {
   return src.slice(a, b + end.length);
 }
 
+function rowEditBlock() {
+  const end = "  listEl.addEventListener('keydown'";
+  return sliceBetween(POPOVER, '  const ROW_SAVE_EXEMPT_FIELDS', end).slice(0, -end.length);
+}
+
 function compileAfterMutation(env) {
   const body = sliceBetween(POPOVER, '  async function afterMutation(res, okMsg) {', '\n  }\n');
   const names = Object.keys(env);
@@ -68,7 +73,7 @@ test('roles popover: a row\'s Save is disabled and unstyled until a field change
 
   const handlers = {};
   const listEl = { addEventListener: (type, fn) => { handlers[type] = fn; } };
-  const block = sliceBetween(POPOVER, '  const ROW_SAVE_EXEMPT_FIELDS', "listEl.addEventListener('change', onRowFieldEdit);");
+  const block = rowEditBlock();
   new Function('listEl', 'syncRowDirty', block)(listEl, syncRowDirty);
   assert.strictEqual(typeof handlers.change, 'function', 'the list listens for `change` (a <select> fires no `input` in every engine)');
   assert.strictEqual(typeof handlers.input, 'function', 'the list listens for `input` (typing in brief/cwd)');
@@ -89,7 +94,7 @@ test('roles popover: a lead-seat or trunk edit does not touch the row\'s Save', 
   snapshotRowForm(row);
   row._saved = '{}';
   const handlers = {};
-  const block = sliceBetween(POPOVER, '  const ROW_SAVE_EXEMPT_FIELDS', "listEl.addEventListener('change', onRowFieldEdit);");
+  const block = rowEditBlock();
   new Function('listEl', 'syncRowDirty', block)({ addEventListener: (t, fn) => { handlers[t] = fn; } }, syncRowDirty);
   for (const f of ['lead-seat', 'lead-pick', 'trunk']) {
     const inp = { dataset: { f }, value: 'x' };
