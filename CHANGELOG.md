@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- New Session dialog: Enter in the env textarea starts a new line instead of spawning the seat, and Enter on a focused Cancel no longer creates one; ticking Join replaces the default `session-N` name with the `<team>-<role>` suggestion so the seat actually gets its role, and the Create team name follows the folder you pick instead of sticking to your home directory; a template argument containing spaces (`--append-system-prompt "be terse"`) keeps its quoting when the template is picked or edited instead of splitting into separate arguments.
 
 - Export as Template… now carries the seat's io, effort and plugin grants into the template (an exported template no longer re-grants plugins it had turned off) and refreshes the app menu so the new template appears at once.
 - Codex seats: the conversation history menu now resolves rollouts by session id and this project's cwd instead of reading one day directory of the shared rollout store, so older conversations are no longer shown as missing and another project's same-day rollout is never offered for resume; the session context menu shows Prompts, Move Session… and Export as Template… for every agent type, including muse.

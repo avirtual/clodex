@@ -130,6 +130,13 @@ function extractPress(varName) {
   return m[0];
 }
 
+function extractEnter() {
+  const m = rendererSrc.match(/^dialogOverlay\.addEventListener\('keydown', \(e\) => \{\n[\s\S]*?^\}\);$/m);
+  assert.ok(m, 'ENTER: no dialogOverlay keydown listener found in renderer.js');
+  assert.match(m[0], /submitDialog\(\)/, 'ENTER: the captured keydown block must be the one that submits');
+  return m[0];
+}
+
 function makeFixture(varName, closeNames, { open = [], which = 'escape' } = {}) {
   const overlayListeners = new Map();
   const docListeners = new Map();
@@ -152,7 +159,7 @@ function makeFixture(varName, closeNames, { open = [], which = 'escape' } = {}) 
   if (varName) stubs[varName] = overlay;
   for (const n of closeNames) stubs[n] = () => closed.push(n);
 
-  const block = which === 'press' ? extractPress(varName) : extractEscape();
+  const block = which === 'press' ? extractPress(varName) : which === 'enter' ? extractEnter() : extractEscape();
   const names = Object.keys(stubs);
   new Function(...names, block)(...names.map((n) => stubs[n]));
 
@@ -163,6 +170,7 @@ function makeFixture(varName, closeNames, { open = [], which = 'escape' } = {}) 
     boundOverlayTypes: () => [...overlayListeners.keys()].sort(),
     boundDocTypes: () => [...docListeners.keys()].sort(),
     press: (target) => fire(overlayListeners, 'mousedown', { target }),
+    overlayKey: (e) => fire(overlayListeners, 'keydown', e),
     key: (key) => fire(docListeners, 'keydown', { key }),
   };
 }
@@ -278,4 +286,17 @@ test('no per-dialog Escape listener survives beside the shared table', () => {
     'a per-dialog Escape block is still wired alongside ESCAPE_CLOSES');
   assert.strictEqual((rendererSrc.match(/if \(e\.key !== 'Escape'\) return;/g) || []).length, 1,
     'more than one Escape gate — the mechanism was duplicated, not shared');
+});
+
+test('Enter inside the env textarea or on Cancel does not submit the New Session dialog', () => {
+  const f = makeFixture('dialogOverlay', ['submitDialog'], { which: 'enter' });
+  assert.deepStrictEqual(f.boundOverlayTypes(), ['keydown'], 'ENTER: the Enter binding must be a keydown on the overlay');
+  const prevented = [];
+  const ev = (target, extra = {}) => ({ key: 'Enter', target, ...extra, preventDefault: () => prevented.push(target.id) });
+  f.overlayKey(ev({ tagName: 'TEXTAREA', id: 'input-env' }));
+  f.overlayKey(ev({ tagName: 'BUTTON', id: 'btn-cancel' }));
+  f.overlayKey(ev({ tagName: 'INPUT', id: 'input-cwd' }, { isComposing: true }));
+  f.overlayKey(ev({ tagName: 'INPUT', id: 'input-name' }));
+  assert.deepStrictEqual(f.closed, ['submitDialog'], 'only the name-field Enter may submit');
+  assert.deepStrictEqual(prevented, ['input-name'], 'the submitting Enter must be preventDefault-ed');
 });
