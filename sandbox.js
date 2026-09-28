@@ -447,7 +447,7 @@ async function probeDocker(spawn) {
 
 // Operator-facing docker-remedy copy. KEEP IN SYNC with
 // renderer/lib/sandbox-view.js detectNotice — the dialog shows the same
-// messages for a down/absent daemon, and a late compose failure (daemon died
+// messages, and a late compose failure (daemon died
 // between probe and click) must surface the SAME copy rather than raw stderr.
 const DOCKER_ABSENT_MSG = 'Docker isn’t installed — sandboxes need Docker Desktop.';
 const DOCKER_DOWN_MSG = 'Docker daemon isn’t running — start Docker Desktop.';
@@ -646,7 +646,13 @@ function createSandbox(deps = {}) {
       return null;
     }
     if (image.kind === 'build' && !fs.existsSync(path.join(image.context, 'docker', 'web', 'entrypoint.sh'))) return null;
-    const { uid, gid } = userInfo();
+    let uid, gid;
+    try {
+      ({ uid, gid } = userInfo());
+    } catch (e) {
+      log.info('sandbox', `box ${id}: host uid unresolvable (${e.message}); box runs as the image user`);
+      return null;
+    }
     return Number.isInteger(uid) && Number.isInteger(gid) && uid >= 0 && gid >= 0 ? { uid, gid } : null;
   }
 

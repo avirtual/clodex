@@ -7954,6 +7954,7 @@ async function loadBoxDetail() {
   // Switching boxes: drop the previous box's effective ports so its link/hint can't
   // apply here — the next status poll (refreshSandboxStatus) repopulates them.
   sbEffectivePorts = null;
+  sbAskedPorts = null;
   const cfg = await window.api.sandboxGetConfig(sbCurrentBox);
   const box = sbBoxes.find((b) => b.id === sbCurrentBox);
   sbDetailLabel.textContent = (box && box.label) || sbCurrentBox;
@@ -8051,7 +8052,7 @@ async function saveSandboxConfig() {
     showToast(r.error || 'Sandbox settings were rejected.', { kind: 'error', duration: 10000 });
     return false;
   }
-  if (r && r.webPort != null) applyAskedPorts(r);
+  if ('webPort' in cfg && r && r.webPort != null) applyAskedPorts(r);
   return true;
 }
 

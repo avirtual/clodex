@@ -92,14 +92,16 @@ test('entrypoint: remaps clodex to the host gid and uid, idempotently', () => {
   assert.doesNotMatch(ENTRYPOINT, /usermod/);
 });
 
-test('entrypoint: chowns only image-owned top-level paths, non-recursively, after an owner check', () => {
+test('entrypoint: chowns image-owned top-level paths non-recursively, and only the work volume recursively, after an owner check', () => {
   assert.match(ENTRYPOINT, /IMAGE_UID=\$\(stat -c %u \/app\)/);
   assert.match(ENTRYPOINT, /IMAGE_DEV=\$\(stat -c %d \/app\)/);
   assert.match(ENTRYPOINT, /\[ -e "\$p" \] \|\| continue\n {2}if \[ "\$\(stat -c %d "\$p"\)" != "\$IMAGE_DEV" \]; then\n {4}\[ "\$p" = \/home\/clodex\/work \] && \[ "\$CLODEX_WORK_VOLUME" = 1 \] \|\| continue\n {2}fi\n {2}owner=/);
   assert.match(ENTRYPOINT, /for p in \/data \/home\/clodex \/home\/clodex\/work \/home\/clodex\/\.\[!\.\]\* \/home\/clodex\/\*; do/);
-  assert.match(ENTRYPOINT, /owner=\$\(stat -c %u "\$p"\)\n {2}if \[ "\$owner" = "\$IMAGE_UID" \] && \[ "\$owner" != "\$CLODEX_HOST_UID" \]; then\n {4}chown -h "\$CLODEX_HOST_UID:\$CLODEX_HOST_GID" "\$p"\n {2}fi/);
-  assert.strictEqual((ENTRYPOINT.match(/chown/g) || []).length, 1);
-  assert.doesNotMatch(ENTRYPOINT, /chown -R|\/app\b[^)]*chown/);
+  assert.match(ENTRYPOINT, /owner=\$\(stat -c %u "\$p"\)\n {2}if \[ "\$owner" = "\$IMAGE_UID" \] && \[ "\$owner" != "\$CLODEX_HOST_UID" \]; then\n {4}if \[ "\$p" = \/home\/clodex\/work \] && \[ "\$CLODEX_WORK_VOLUME" = 1 \]; then\n {6}chown -R "\$CLODEX_HOST_UID:\$CLODEX_HOST_GID" "\$p"\n {4}else\n {6}chown -h "\$CLODEX_HOST_UID:\$CLODEX_HOST_GID" "\$p"\n {4}fi\n {2}fi/);
+  assert.strictEqual((ENTRYPOINT.match(/chown/g) || []).length, 2);
+  assert.strictEqual((ENTRYPOINT.match(/chown -R/g) || []).length, 1);
+  assert.doesNotMatch(ENTRYPOINT, /chown -R[^\n]*(\/data|\/home\/clodex\b(?!\/work))/);
+  assert.doesNotMatch(ENTRYPOINT, /\/app\b[^)]*chown/);
 });
 
 test('entrypoint: drops to the remapped user with setpriv as its last step', () => {

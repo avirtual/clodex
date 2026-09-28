@@ -302,3 +302,57 @@ test('the row toggle acts on the box\'s current state, not the state at render',
   for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(calls, ['down']);
 });
+
+function sandboxConfigHarness({ disabled, typed, response }) {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const slice = (head) => {
+    const start = src.indexOf(`\n${head}`);
+    assert.ok(start > 0, `ENTER: ${head} was located`);
+    return src.slice(start + 1, src.indexOf('\n}\n', start) + 2);
+  };
+  const input = (value) => ({ value, disabled });
+  const sent = [];
+  const asked = { web: 1, wirescope: 2, wire: 3 };
+  const ctx = {
+    sbWorkdir: { value: '' }, sbRef: { value: '' }, sbAutoStart: { checked: false },
+    sbWebPort: input(typed[0]), sbWirescopePort: input(typed[1]), sbWirePort: input(typed[2]),
+    sbCurrentBox: 'b', sbAskedPorts: asked,
+    sandboxValidatePorts: validatePorts, showToast() {},
+    window: { api: { sandboxSetConfig: async (cfg, id) => { sent.push([{ ...cfg }, id]); return response; } } },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(['function applyAskedPorts(', 'function portInputValue(', 'function collectSandboxConfig(', 'async function saveSandboxConfig(']
+    .map(slice).join('\n'), ctx);
+  return { ctx, sent, asked };
+}
+
+test('saveSandboxConfig: a save without port keys (Stop, inputs disabled) leaves typed port text and sbAskedPorts alone', async () => {
+  const { ctx, sent, asked } = sandboxConfigHarness({
+    disabled: true, typed: ['9001', '90', ''], response: { ok: true, webPort: 7811, wirescopePort: 7812, wirePort: 7821 },
+  });
+  assert.strictEqual(await ctx.saveSandboxConfig(), true);
+  assert.deepStrictEqual(sent, [[{ workDir: null, ref: null, autoStart: false }, 'b']], 'ENTER: setConfig was called without ports');
+  assert.deepStrictEqual([ctx.sbWebPort.value, ctx.sbWirescopePort.value, ctx.sbWirePort.value], ['9001', '90', '']);
+  assert.strictEqual(ctx.sbAskedPorts, asked);
+});
+
+test('saveSandboxConfig: a save that sends ports applies the stored ports from the response', async () => {
+  const { ctx, sent } = sandboxConfigHarness({
+    disabled: false, typed: ['9001', '9002', '9003'], response: { ok: true, webPort: 9001, wirescopePort: 9002, wirePort: 9004 },
+  });
+  assert.strictEqual(await ctx.saveSandboxConfig(), true);
+  assert.deepStrictEqual(sent, [[{ workDir: null, ref: null, autoStart: false, webPort: 9001, wirescopePort: 9002, wirePort: 9003 }, 'b']]);
+  assert.deepStrictEqual({ ...ctx.sbAskedPorts }, { web: 9001, wirescope: 9002, wire: 9004 });
+  assert.strictEqual(ctx.sbWirePort.value, '9004');
+});
+
+test('loadBoxDetail: switching boxes drops both the effective and the asked ports before the fetch', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const start = src.indexOf('\nasync function loadBoxDetail(');
+  assert.ok(start > 0, 'ENTER: loadBoxDetail was located');
+  const body = src.slice(start, src.indexOf('\n}\n', start));
+  assert.match(body, /\n {2}sbEffectivePorts = null;\n {2}sbAskedPorts = null;\n {2}const cfg = await window\.api\.sandboxGetConfig\(/);
+});
