@@ -136,6 +136,32 @@ test('resolve: CLODEX_URL beats the local engine', () => {
   assert.strictEqual(r.url, 'http://env.example');
 });
 
+test('resolve: a tokenless current node on the local engine inherits the env wire token and keeps its name', () => {
+  const env = { CLODEX_REMOTE_TOKEN: 'box-tok', CLODEX_DATA_DIR: emptyDataDir() };
+  const r = C.resolve({ current: 'local', contexts: { local: { url: 'http://127.0.0.1:7900' } } }, { env });
+  assert.deepStrictEqual(r, { url: 'http://127.0.0.1:7900', token: 'box-tok', name: 'local' });
+});
+
+test('resolve: a local-engine node carrying its own token keeps it over the engine token', () => {
+  const env = { CLODEX_REMOTE_TOKEN: 'box-tok', CLODEX_DATA_DIR: emptyDataDir() };
+  const r = C.resolve({ current: 'local', contexts: { local: { url: 'http://127.0.0.1:7900', token: 'own-tok' } } }, { env });
+  assert.strictEqual(r.token, 'own-tok');
+});
+
+test('resolve: a tokenless url node on another port or another host inherits no token', () => {
+  const env = { CLODEX_REMOTE_TOKEN: 'box-tok', CLODEX_DATA_DIR: emptyDataDir() };
+  const store = { current: null, contexts: { port: { url: 'http://127.0.0.1:7901' }, host: { url: 'http://10.0.0.5:7900' } } };
+  assert.strictEqual(C.resolve(store, { ctxName: 'port', env }).token, undefined);
+  assert.strictEqual(C.resolve(store, { ctxName: 'host', env }).token, undefined);
+});
+
+test('resolve: a tokenless localhost node inherits the local engine token like 127.0.0.1', () => {
+  const env = { CLODEX_DATA_DIR: emptyDataDir({ 'remote.env': 'CLODEX_REMOTE_TOKEN=filetok\n', 'ui-settings.json': JSON.stringify({ remotePort: 7912 }) }) };
+  const r = C.resolve({ current: 'lh', contexts: { lh: { url: 'http://localhost:7912' } } }, { env });
+  assert.strictEqual(r.token, 'filetok');
+  assert.strictEqual(r.name, 'lh');
+});
+
 test('resolve: with no data dir and no token anywhere the usage error names the box', () => {
   const home = mkTmpRoot('ctx-');
   assert.throws(() => C.resolve(EMPTY(), { env: {}, home, platform: 'linux' }), /inside a Clodex box/);

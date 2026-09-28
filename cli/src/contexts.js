@@ -186,6 +186,11 @@ function resolve(store, { ctxName = null, env = process.env, flags = {}, platfor
   if (flags.token) { entry = { ...(entry || {}), token: String(flags.token) }; if (!label) label = '(flags)'; }
   if (flags.remotePort && entry && entry.ssh && !flags.ssh) entry.remotePort = flags.remotePort;
 
+  if (entry && entry.url && !entry.token) {
+    const local = localEngineEntry({ env, platform, home });
+    if (local && targetsLocalEngine(entry.url, local.url)) entry.token = local.token;
+  }
+
   if (!entry) {
     entry = localEngineEntry({ env, platform, home });
     if (entry) label = '(local engine)';
@@ -196,6 +201,21 @@ function resolve(store, { ctxName = null, env = process.env, flags = {}, platfor
   }
   validateEntry(entry);
   return { ...entry, name: label };
+}
+
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+function urlHostPort(url) {
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  const port = u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : 80);
+  return { host: u.hostname.toLowerCase(), port };
+}
+
+function targetsLocalEngine(url, engineUrl) {
+  const target = urlHostPort(url);
+  const engine = urlHostPort(engineUrl);
+  return target != null && engine != null && LOOPBACK_HOSTS.has(target.host) && target.port === engine.port;
 }
 
 function localEngineEntry({ env, platform, home }) {

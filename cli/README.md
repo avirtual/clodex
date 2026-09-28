@@ -153,7 +153,8 @@ knows every connection; `create node --import` reads its userData **read-only**
 and offers node entries:
 
 - the local engine itself → `local` (`http://127.0.0.1:<remotePort>` + the
-  `remote.env` token; warns if the wire is off in Preferences),
+  `remote.env` token — inside a box, the box's `CLODEX_REMOTE_TOKEN`; warns if
+  the wire is off in Preferences),
 - each peer in the GUI's peers list → an `ssh`/`url` context by label
   (disabled peers reported as skipped; a tokenless peer imports fine),
 - each managed sandbox box → a `url` context to its wire port + the box's
@@ -169,7 +170,9 @@ platform default for `Clodex`/`clodex`). Collisions **skip** unless `--force`;
 and are never printed — report lines say `(token set)` / `(no token)`. Imported
 entries only ever carry `url`/`ssh` + token, never a tunnel argv.
 
-- **`--url`** — direct. Speak fetch straight at it.
+- **`--url`** — direct. Speak fetch straight at it. A url node on the local
+  engine's loopback host:port that carries no token uses the engine's own token
+  (env `CLODEX_REMOTE_TOKEN`, else `remote.env`).
 - **`--ssh HOST`** — the CLI shells out to the system `ssh` binary
   (`ssh -N -o BatchMode=yes … -L <free>:127.0.0.1:<remotePort> HOST`); your
   `~/.ssh/config`, keys, and jump hosts all apply. It is a built-in template of
