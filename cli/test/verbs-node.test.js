@@ -760,3 +760,15 @@ test('create node rejects a name that collides with an Object.prototype key, and
   const saved = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : { current: null };
   assert.strictEqual(saved.current, null);
 });
+
+test('use node and --ctx resolve only own keys — an inherited name is "no such node"', async () => {
+  const f = tmpCtx();
+  let r = await cli(['create', 'node', 'home', '--url', 'http://127.0.0.1:7900'], f);
+  assert.strictEqual(r.code, 0);
+  r = await cli(['use', 'node', 'toString'], f);
+  assert.strictEqual(r.code, 2);
+  assert.match(r.stderr, /no such node: toString/);
+  r = await cli(['--ctx', 'toString', 'get', 'sessions'], f);
+  assert.strictEqual(r.code, 2);
+  assert.match(r.stderr, /no such node: toString/);
+});

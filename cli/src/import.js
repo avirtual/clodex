@@ -204,9 +204,8 @@ function collectCandidates(dataDir, { env = process.env } = {}) {
 // add→'added'/'skipped'(exists)/'overwritten' against collisions. `current` is
 // never touched. Skipped candidates (disabled/tokenless) pass through as-is.
 function applyImport(store, candidates, { force = false } = {}) {
-  const next = { current: store.current || null, contexts: { ...(store.contexts || {}) } };
-  const onEntry = next.contexts;
-  next.contexts = { ...onEntry };
+  const onEntry = store.contexts || {};
+  const next = { current: store.current || null, contexts: { ...onEntry } };
   const seen = new Set();
   const results = [];
   for (const c of candidates) {

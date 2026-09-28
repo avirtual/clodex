@@ -483,3 +483,15 @@ test('deploy docker --host rejects an ssh destination that is not a plain user@h
   assert.strictEqual(rec.cmd, undefined, 'docker never ran');
   assert.ok(!fs.existsSync(contextsFile), 'no ctx saved');
 });
+
+test('deploy docker --host rejects a destination that starts with a dash even without an =', async () => {
+  const { EXIT } = require('../src/errors');
+  for (const bad of ['-Jjump', '-Fconf']) {
+    const rec = {};
+    const { code } = await cli(['deploy', 'node', 'edge', '--docker', `--host=${bad}`], {
+      spawnFn: fakeDocker(rec), pollHello: async () => ({ ok: true, hello: {} }), contextsFile: tmpCtxFile(),
+    });
+    assert.strictEqual(code, EXIT.USAGE, bad);
+    assert.strictEqual(rec.cmd, undefined, bad);
+  }
+});

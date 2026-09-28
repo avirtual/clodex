@@ -940,3 +940,35 @@ test('deploy helm: --port still wins over the read-back wirePort, and web stays 
   assert.strictEqual(saved.contexts.n.remotePort, 8200);
   assert.strictEqual(saved.contexts.n.webPort, 8080);
 });
+
+test('deploy helm: a failed post-install read-back is not fatal and keeps the flag-derived ports and web state', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  const { code, stdout, stderr } = await cli(['deploy', 'node', 'n', '--helm', '--port', '8200', '--set', 'web.enabled=false'], {
+    execFn: fakeK8s(rec, { getValuesFail: 'Error: boom' }), probeHelm: async () => ({ app: 'clodex' }), contextsFile,
+  });
+  assert.strictEqual(code, 0, stderr);
+  assert.match(stdout, /could not read back the installed values/);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.strictEqual(saved.contexts.n.remotePort, 8200);
+  assert.strictEqual(saved.contexts.n.webPort, undefined);
+});
+
+test('deploy helm saves into the contexts file as it is at save time, not the copy read before the deploy', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
+  fs.writeFileSync(contextsFile, JSON.stringify({ current: 'x', contexts: { x: { url: 'http://x' } } }));
+  const inner = fakeK8s(rec);
+  const execFn = async (cmd, args) => {
+    if (cmd === 'helm' && args[0] === 'upgrade') {
+      fs.writeFileSync(contextsFile, JSON.stringify({ current: 'b', contexts: { x: { url: 'http://x' }, b: { url: 'http://b' } } }));
+    }
+    return inner(cmd, args);
+  };
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--helm'], { execFn, probeHelm: async () => ({ app: 'clodex' }), contextsFile });
+  assert.strictEqual(code, 0, stderr);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.deepStrictEqual(Object.keys(saved.contexts).sort(), ['b', 'n', 'x']);
+  assert.strictEqual(saved.current, 'b');
+});

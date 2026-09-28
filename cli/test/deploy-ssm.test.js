@@ -481,23 +481,31 @@ test('deliverClaudeToken deletes its throwaway session once the engine answers a
     let body = ''; req.on('data', (c) => (body += c));
     req.on('end', () => {
       seen.push({ method: req.method, url: req.url, body: body ? JSON.parse(body) : null });
-      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.statusCode = 200; res.setHeader('Content-Type', 'application/json');
       if (req.url === '/api/resources') return res.end(JSON.stringify(RESOURCES_DOC));
       if (req.method === 'POST' && /^\/api\/sessions\/[^/]+\/control$/.test(req.url)) return res.end(JSON.stringify({ ok: true, token: 'ctrl-1' }));
-      if (req.url === '/api/peer/hello') return res.end(JSON.stringify({ ok: true, app: 'clodex' }));
+      if (req.url === '/api/peer/hello') {
+        if (helloDown-- > 0) { res.statusCode = 503; return res.end(JSON.stringify({ ok: false, error: 'restarting' })); }
+        return res.end(JSON.stringify({ ok: true, app: 'clodex' }));
+      }
       res.end(JSON.stringify({ ok: true }));
     });
   });
+  let helloDown = 1;
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   try {
     const entry = { url: `http://127.0.0.1:${server.address().port}` };
     await D.deliverClaudeToken(entry, 'wire-tok', 'sk-oauth-9', { pollMs: 1, sleepFn: async () => {} });
     const create = seen.find((s) => s.method === 'POST' && s.url === '/api/sessions');
-    const helloAt = seen.findIndex((s) => s.url === '/api/peer/hello');
+    const helloAt = seen.map((s) => s.url).lastIndexOf('/api/peer/hello');
     const delAt = seen.findIndex((s) => s.method === 'DELETE' && s.url === '/api/sessions/' + create.body.name);
     assert.ok(delAt > helloAt && helloAt >= 0, 'the throwaway session is deleted after the engine answered');
     const input = seen.find((s) => /\/input$/.test(s.url));
     assert.match(input.body.data, /^unset HISTFILE\n/);
+    seen.length = 0;
+    helloDown = 0;
+    await D.deliverClaudeToken(entry, 'wire-tok', 'sk-oauth-9', { pollMs: 1, sleepFn: async () => {} });
+    assert.ok(!seen.some((s) => s.method === 'DELETE'), 'no evidence the engine restarted, so the session may still be running the script — it is left alone');
   } finally { server.close(); }
 });
 
@@ -754,4 +762,22 @@ test('deploy never overwrites a contexts file it could not parse', async () => {
   assert.strictEqual(r.code, EXIT.USAGE);
   assert.match(r.stderr, /contexts file/);
   assert.strictEqual((rec.calls || []).length, 0, 'refused before any remote action');
+});
+
+test('deploy ssm saves into the contexts file as it is at save time, not the copy read before the deploy', async () => {
+  const contextsFile = tmpCtxFile();
+  fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
+  fs.writeFileSync(contextsFile, JSON.stringify({ current: 'x', contexts: { x: { url: 'http://x' } } }));
+  const r = await cli(['deploy', 'node', 'n', '--ssm', 'i-1'], {
+    execFn: fakeAws({}), contextsFile,
+    probeSsm: async () => {
+      fs.writeFileSync(contextsFile, JSON.stringify({ current: 'b', contexts: { x: { url: 'http://x' }, b: { url: 'http://b', token: 'tb' } } }));
+      return { app: 'clodex' };
+    },
+  });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.deepStrictEqual(Object.keys(saved.contexts).sort(), ['b', 'n', 'x']);
+  assert.strictEqual(saved.contexts.b.token, 'tb');
+  assert.strictEqual(saved.current, 'b');
 });

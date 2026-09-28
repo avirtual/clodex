@@ -176,7 +176,7 @@ async function probeHello(dest, port, { spawnFn } = {}) {
   }
 }
 
-const DEST_RE = /^[a-zA-Z0-9._@-]{1,128}$/;
+const DEST_RE = /^(?!-)[a-zA-Z0-9._@-]{1,128}$/;
 
 function parsePortOr(v) {
   const n = parseInt(v, 10);
@@ -220,7 +220,7 @@ async function deployVerb({ printer, flags, args, io = {} }) {
     return;
   }
 
-  const store = loadContextsFor(flags, io);
+  loadContextsFor(flags, io);
   const sudoCmds = [];
   let sawDone = false;
   const writeErr = io.stderr || ((s) => process.stderr.write(s));
@@ -284,6 +284,7 @@ async function deployVerb({ printer, flags, args, io = {} }) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
     return;
   }
+  const store = loadContextsFor(flags, io);
   const exists = Object.prototype.hasOwnProperty.call(store.contexts, ctxName);
   if (exists && !flags.force) {
     if (json) emit({ type: 'context', action: 'skipped', name: ctxName, reason: 'exists — --force to overwrite' });
@@ -417,7 +418,7 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
     return;
   }
 
-  const store = loadContextsFor(flags, io);
+  loadContextsFor(flags, io);
   const childEnv = dockerHost ? { ...(io.env || process.env), DOCKER_HOST: dockerHost } : null;
   const writeErr = io.stderr || ((s) => process.stderr.write(s));
   let res;
@@ -463,6 +464,7 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
     return;
   }
+  const store = loadContextsFor(flags, io);
   const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
   if (exists && !flags.force) {
     if (json) emit({ type: 'context', action: 'skipped', name, reason: 'exists — --force to overwrite' });
@@ -811,6 +813,7 @@ const TOKEN_SESSION_PREFIX = 'clodex-token-';
 async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execFn, timeoutMs = 60000, pollMs = 1000, sleepFn = defaultSleep, ctxName = '<ctx>' } = {}) {
   const sessName = TOKEN_SESSION_PREFIX + crypto.randomBytes(4).toString('hex');
   const t = await openTransport(entry, { spawnFn, execFn });
+  let engineDropped = false;
   try {
     const client = new WireClient(t.baseUrl, wireToken);
     await R.requireResource(client, 'sessions', 'post', ctxName, 'control');
@@ -825,6 +828,7 @@ async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execF
       await client.post(`/api/sessions/${encodeURIComponent(sessName)}/input`, 'deploy ssm (token write)', { token: ctrlToken, data: dropin });
     } catch (e) {
       if (!(e instanceof CliError && e.exitCode === EXIT.CONNECT)) throw e;
+      engineDropped = true;
     }
   } finally {
     try { t.close(); } catch {}
@@ -837,9 +841,11 @@ async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execF
       t2 = await openTransport(entry, { spawnFn, execFn });
       const client = new WireClient(t2.baseUrl, wireToken);
       const hello = await client.get('/api/peer/hello', 'deploy ssm (token verify)');
-      try { await client.del(`/api/sessions/${encodeURIComponent(sessName)}`, 'deploy ssm (token session cleanup)'); } catch {}
+      if (engineDropped) {
+        try { await client.del(`/api/sessions/${encodeURIComponent(sessName)}`, 'deploy ssm (token session cleanup)'); } catch {}
+      }
       return { ok: true, hello };
-    } catch (e) { lastErr = e; }
+    } catch (e) { lastErr = e; engineDropped = true; }
     finally { if (t2) { try { t2.close(); } catch {} } }
     if (Date.now() >= deadline) {
       throw new CliError(EXIT.SERVER, `token delivered but the engine did not come back within ${Math.round(timeoutMs / 1000)}s${lastErr ? `: ${lastErr.message}` : ''}`);
@@ -909,9 +915,8 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
     return;
   }
 
-  const store = loadContextsFor(flags, io);
-  const exists = !!store && Object.prototype.hasOwnProperty.call(store.contexts, name);
-  if (exists && !flags.force) {
+  const early = loadContextsFor(flags, io);
+  if (early && Object.prototype.hasOwnProperty.call(early.contexts, name) && !flags.force) {
     throw new CliError(EXIT.USAGE, `context "${name}" already exists — an SSM deploy mints a new wire token, so keeping it would leave the node on a dead token; re-run with --force to overwrite it, or --no-ctx to leave it alone`);
   }
   const token = crypto.randomBytes(24).toString('hex');
@@ -975,6 +980,8 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
     return;
   }
+  const store = loadContextsFor(flags, io);
+  const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
   const webPort = port + 1;
   store.contexts[name] = { ...entry, webPort, token, deploy: { flavor: 'ssm', target, ...(region ? { region } : {}), ...(profile ? { profile } : {}) } };
   if (!store.current) store.current = name;
@@ -1245,7 +1252,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     return;
   }
 
-  const store = loadContextsFor(flags, io);
+  loadContextsFor(flags, io);
   step('preflight');
   await runVendor(execFn, ['helm', 'version', '--short'], 'version');
   await runVendor(execFn, ['kubectl', 'version', '--client', '--output=yaml'], 'version --client');
@@ -1406,6 +1413,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   if (flags['no-ctx']) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
   } else {
+    const store = loadContextsFor(flags, io);
     const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
     if (exists && !flags.force) {
       if (json) emit({ type: 'context', action: 'skipped', name, reason: 'exists — --force to overwrite' });
@@ -1735,7 +1743,7 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
     return;
   }
 
-  const store = loadContextsFor(flags, io);
+  loadContextsFor(flags, io);
   step('preflight');
   const idOut = await runAws(execFn, callerIdentityArgs({ region, profile }), 'sts get-caller-identity');
   let account = null; let arn = null;
@@ -1782,6 +1790,7 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
   if (flags['no-ctx']) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
   } else {
+    const store = loadContextsFor(flags, io);
     const exists = Object.prototype.hasOwnProperty.call(store.contexts, ctxName);
     if (exists && !flags.force) {
       if (json) emit({ type: 'context', action: 'skipped', name: ctxName, reason: 'exists — --force to overwrite' });

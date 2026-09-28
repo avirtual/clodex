@@ -485,7 +485,7 @@ test('exec (agent mode): a turnEnd that lands before the DM is sent is not our r
       if (/\/dm$/.test(p)) {
         dmHit = true;
         res.writeHead(200); res.end(JSON.stringify({ ok: true }));
-        state.events.write(turnEnd);
+        setTimeout(() => state.events.write(turnEnd), 20);
         return true;
       }
       return false;
