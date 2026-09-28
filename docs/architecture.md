@@ -68,8 +68,9 @@ bundle), whose packaged form is the Docker image under
   remote → peers → sandbox autostart → wirescope watchdog → cleanup → legacy
   sweep → tickets migration → reviewer-graveyard sweep → plugin host, in that
   exact order (restore is not part of it — hosts call
-  `restoreSessionsForWorkspace` after createEngine returns). It constructs the SessionManager and every module above, and returns
-  a **flat handle object**: the six primary handles (`manager`, `stores`,
+  `restoreSessionsForWorkspace` after createEngine returns). It constructs the
+  SessionManager and every module above, and returns a **flat handle
+  object**: the six primary handles (`manager`, `stores`,
   `syncRemoteServer`, `syncPeerManager`, `restoreSessionsForWorkspace`,
   `shutdown`), the shared infra, the `get{RemoteServer,PeerManager,…}`
   accessors, and the helper surface `ipc-handlers.js` / `app-menus.js`
@@ -163,8 +164,9 @@ bundle), whose packaged form is the Docker image under
   electron — verifiably so (`grep -c "^[^/]*require('electron')"` → 0, the
   `^[^/]*` skipping the header's own prohibition of it); it reaches
   renderers through opaque handles, and the file's own WINDOW BRIDGE header
-  states that contract. Its collaborators all arrive through the
-  `createSessionManager(deps)` destructure, which is the list.
+  states that contract. Its collaborators arrive through
+  `createSessionManager(deps)`: the destructure plus the `deps.X || default`
+  reads below it (`grep -n 'deps\.' session-manager.js`).
   It also owns the **dm-delivery latch** — `_armDmConfirm`,
   `_armDmConfirmTimer`, `_checkDmConfirm`, `_clearDmConfirm`,
   `_overflowDmEntry`, `_dmLatchEvidence` — which makes a swallowed plain dm
@@ -1149,8 +1151,9 @@ accept teardown removes.
   new-session dialog, proxy/ctx telemetry state + `renderProxyBar`,
   `popoverApi` (the local-vs-peer data seam), the peers-SETUP dialog
   (connection config; reads the core peerStatuses Map),
-  preferences/edit-args dialogs, the Manage Plugins dialog (library + install-from-source), keyboard shortcuts, restore IIFE, and the
-  island init sites.
+  preferences/edit-args dialogs, the Manage Plugins dialog (library +
+  install-from-source), keyboard shortcuts, restore IIFE, and the island init
+  sites.
 
 ### Islands
 
