@@ -657,7 +657,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     }
   }
 
-  function createTeam({ name, root, lead, roles, kit, sandboxed } = {}) {
+  function createTeam({ name, root, lead, roles, kit, sandboxed, dryRun } = {}) {
     assertTeamName(name);
     const resolvedKit = resolveKit(kit);
     if (typeof root !== 'string' || !path.isAbsolute(root)) {
@@ -678,6 +678,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         throw new Error(`team "${other}" already owns root ${resolvedRoot}`);
       }
     }
+    if (dryRun) return null;
     const kitRoles = resolvedKit && Object.keys(resolvedKit.roles).length ? resolvedKit.roles : null;
     const defaultRoles = kitRoles || {
       lead: { ...STOCK_ROLE_DEFS.lead },

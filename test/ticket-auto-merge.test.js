@@ -687,6 +687,64 @@ test('t825: a lead accept during the post-merge suite is REPORTED, not overwritt
 // `!m.merged` stamp `acceptedAt`, set NO `closedOut`, and reply "accept again
 // once it can" — so reading the stamp alone reports a close-out over a worktree,
 // a branch and a seat that are all still there, with nothing left to say so.
+test('an accept made before the merge is not reported as made during the suite', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  {
+    const ts = f.tstore.load(f.team.root);
+    const row = ts.find((t) => t.id === 't1');
+    row.acceptedAt = Date.now() - 60000;
+    row.acceptedBy = 'lead';
+    f.tstore.save(f.team.root, ts);
+  }
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: the MERGED notice went out');
+  const body = notes[0].body;
+  assert.ok(!body.includes('while the post-merge suite ran'),
+    `an accept that landed before the merge is not reported as landing during the suite. Got:\n${body}`);
+  assert.ok(body.includes('lead accepted it before the merge landed, but that accept did not finish the cleanup'),
+    `the notice says when the accept landed. Got:\n${body}`);
+  assert.strictEqual(f.one().closedOut, undefined, 'the pre-merge accept did not close the ticket out');
+  assert.ok(!body.includes('Closed out:'), `so the notice claims no close-out. Got:\n${body}`);
+  assert.ok(body.includes('Step owed:'), 'and the accept is still owed');
+  assert.notStrictEqual(git(repo.dir, ['branch', '--list', 'tl-1']).trim(), '', 'the branch is kept');
+});
+
+test('a throw after the merge landed escalates with the revert command instead of rejecting', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  f.m._mergeTouchedChangelog = async () => { throw new Error('changelog check exploded'); };
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'exactly one escalation goes out');
+  assert.match(esc[0].body, /IS on master and was NOT verified/, `the escalation names the landed merge. Got:\n${esc[0].body}`);
+  assert.strictEqual(f.one().mergeError, 'unexpected', 'and the board carries the MERGE FAILED mark');
+});
+
+test('reject clears a stale undelivered merge escalation', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver: {
+    loopStep: undefined, verdict: 'ACCEPT', mergeError: 'clean-tree',
+    escalationUndelivered: { step: 'clean-tree', body: 'b' },
+  } });
+  assert.ok(f.one().escalationUndelivered && f.one().mergeError, 'ENTER: the stale escalation and mark are on the saved row');
+  const replies = [];
+  f.m._taskReject(f.m.sessions.get('lead'), f.team,
+    { id: 't1', body: 'round 2: the tree needs another pass' }, (msg) => replies.push(msg));
+  assert.match(replies.join('\n'), /reopened \(rework\)/, 'ENTER: the reject really landed');
+  const row = f.one();
+  assert.ok(!('escalationUndelivered' in row), 'the previous round\'s undelivered escalation goes with the reopen');
+  assert.ok(!('mergeError' in row), 'and so does the merge mark it escalated');
+});
+
 test('t825: an in-flight accept that did NOT close out still owes the step', async () => {
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');

@@ -359,7 +359,8 @@ let dialogTeamName = null;   // resolved team name in join mode
 let dialogTeamNames = [];    // existing team names, for the create dup pre-check
 let dialogReservedNames = new Set(); // globally taken session names (live + persisted/archived), for the auto-suffix
 let dialogReservedSets = reservedSets(null);
-let lastTeamAutoName = null; // the last <team>-<role> suggestion we wrote to inputName
+let lastTeamAutoName = null;
+let lastTeamNameAuto = null;
 const nameHint = document.getElementById('name-hint');
 let dialogNameState = { ok: true, kind: 'free', message: '' };
 let dialogToolGate = { ok: true, disabled: false, notice: null };
@@ -632,11 +633,7 @@ function addFailedSessionToSidebar(entry) {
       return;
     }
     item.remove();
-    markSeatIo(entry.name, res.io || entry.io);
-    createTerminal(entry.name);
-    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
-    markSeatEffort(entry.name, entry.effort);
-    markSeatPosture(entry.name, entry.posture);
+    rebuildLiveRow(entry.name, entry, { io: res.io });
     switchSession(entry.name);
   });
 
@@ -680,17 +677,12 @@ function addArchivedSessionToSidebar(entry) {
 
   item.addEventListener('click', async (e) => {
     if (e.target.closest('.session-close')) return;
-    await window.api.unarchiveSession(entry.name);
     const res = await window.api.retrySpawnSession(entry.name);
     if (!res || !res.ok) { alert(`Resume failed: ${(res && res.error) || 'unknown error'}`); return; }
+    await window.api.unarchiveSession(entry.name);
     item.remove();
     sidebarMeta.delete(entry.name);
-    markSeatIo(entry.name, res.io || entry.io);
-    createTerminal(entry.name);
-    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
-    markSeatEffort(entry.name, entry.effort);
-    markSeatPosture(entry.name, entry.posture);
-    if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
+    rebuildLiveRow(entry.name, entry, { io: res.io });
     switchSession(entry.name);
     refreshSidebarView();
   });
@@ -719,23 +711,45 @@ function exitedLabel(entry) {
   return `exited (${why}) — click to resume`;
 }
 
+function rowSnapshot(name, item) {
+  const nameEl = item ? item.querySelector('.session-name') : null;
+  const displayed = nameEl ? nameEl.textContent : name;
+  const d = item ? item.dataset : {};
+  return {
+    name,
+    type: d.type || null,
+    cwd: d.cwd || '',
+    label: displayed && displayed !== name ? displayed : null,
+    backend: d.backend || null,
+    team: d.team || null,
+    effort: d.effort || null,
+    posture: d.posture || null,
+    io: streamSeatNames.has(name) ? 'stream' : 'pty',
+    noWire: d.noWire === '1',
+    fixFor: d.fixFor || null,
+    account: d.account || null,
+    createdAt: (sidebarMeta.get(name) || {}).createdAt || null,
+  };
+}
+
+function rebuildLiveRow(name, snap, res = {}) {
+  markSeatIo(name, res.io || snap.io);
+  createTerminal(name);
+  addSessionToSidebar(name, res.type || snap.type, res.cwd || snap.cwd, snap.label || null,
+    res.backend ?? snap.backend ?? null, res.team !== undefined ? res.team || null : snap.team || null,
+    (res.noWire ?? snap.noWire) === true, snap.account || null, snap.fixFor || null);
+  markSeatEffort(name, snap.effort);
+  markSeatPosture(name, snap.posture);
+  if (snap.createdAt) sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), createdAt: snap.createdAt });
+}
+
 function exitedRowSnapshot(name, code, meta) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!item) return null;
-  const nameEl = item.querySelector('.session-name');
-  const displayed = nameEl ? nameEl.textContent : name;
+  const { account, fixFor, ...snap } = rowSnapshot(name, item);
   return {
-    name,
-    type: item.dataset.type,
-    cwd: item.dataset.cwd || '',
-    label: displayed && displayed !== name ? displayed : null,
-    backend: item.dataset.backend || null,
-    team: item.dataset.team || null,
-    noWire: item.dataset.noWire === '1',
-    io: streamSeatNames.has(name) ? 'stream' : 'pty',
-    effort: item.dataset.effort || null,
-    posture: item.dataset.posture || null,
-    createdAt: (sidebarMeta.get(name) || {}).createdAt || null,
+    ...snap,
+    ...(fixFor ? { fixFor } : {}),
     exitCode: typeof code === 'number' ? code : null,
     exitSignal: (meta && meta.signal) || null,
   };
@@ -772,12 +786,7 @@ function addExitedSessionToSidebar(entry) {
     if (!res || !res.ok) { alert(`Resume failed: ${(res && res.error) || 'unknown error'}`); return; }
     item.remove();
     sidebarMeta.delete(entry.name);
-    markSeatIo(entry.name, res.io || entry.io);
-    createTerminal(entry.name);
-    addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
-    markSeatEffort(entry.name, entry.effort);
-    markSeatPosture(entry.name, entry.posture);
-    if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
+    rebuildLiveRow(entry.name, entry, { io: res.io });
     switchSession(entry.name);
     refreshSidebarView();
   });
@@ -807,21 +816,8 @@ function addExitedSessionToSidebar(entry) {
 // is expected). Peer rows never reach here (they detach/hide instead).
 const archivingSessions = new Map();
 function archivedRowEntry(name, item) {
-  const nameEl = item.querySelector('.session-name');
-  const displayed = nameEl ? nameEl.textContent : name;
-  const meta = sidebarMeta.get(name) || {};
-  return {
-    name,
-    type: item.dataset.type,
-    cwd: item.dataset.cwd || '',
-    label: displayed && displayed !== name ? displayed : null,
-    backend: item.dataset.backend || null,
-    team: item.dataset.team || null,
-    effort: item.dataset.effort || null,
-    posture: item.dataset.posture || null,
-    archivedAt: Date.now(),
-    createdAt: meta.createdAt || null,
-  };
+  const { account, fixFor, ...snap } = rowSnapshot(name, item);
+  return { ...snap, ...(fixFor ? { fixFor } : {}), archivedAt: Date.now() };
 }
 async function archiveSessionRow(name) {
   movingFailed.delete(name);
@@ -949,26 +945,14 @@ function accountOfRow(name) {
 // dance as the Edit Session save path).
 function restartSessionWithReattach(name) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-  const snapAccount = accountOfRow(name);
-  const snapType = item ? item.dataset.type || null : null;
-  const snapCwd = item ? item.dataset.cwd : null;
-  const snapBackend = item ? item.dataset.backend || null : null;
-  const snapTeam = item ? item.dataset.team || null : null; // cwd is unchanged by a restart → team persists
-  const snapNoWire = item ? item.dataset.noWire === '1' : false; // spawn-time config, unchanged by a restart
-  const snapIo = streamSeatNames.has(name) ? 'stream' : 'pty';
-  const snapEffort = item ? item.dataset.effort || null : null;
-  const snapPosture = item ? item.dataset.posture || null : null;
+  const snap = rowSnapshot(name, item);
   return window.api.restartSession(name).then((res) => {
     if (!res || !res.ok) {
       alert(`Restart failed: ${res && res.error ? res.error : 'unknown error'}`);
       return;
     }
-    if (snapType) {
-      markSeatIo(name, res.io || snapIo);
-      createTerminal(name);
-      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam, snapNoWire, snapAccount);
-      markSeatEffort(name, snapEffort);
-      markSeatPosture(name, snapPosture);
+    if (snap.type) {
+      rebuildLiveRow(name, snap, { io: res.io, backend: res.backend });
       switchSession(name);
     }
   });
@@ -977,13 +961,8 @@ function restartSessionWithReattach(name) {
 const movingFailed = new Map();
 function moveSessionWithPicker(name) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-  const snapType = item ? item.dataset.type || null : null;
-  const snapBackend = item ? item.dataset.backend || null : null;
-  const snapNoWire = item ? item.dataset.noWire === '1' : false;
-  const snapAccount = accountOfRow(name);
-  const snapIo = streamSeatNames.has(name) ? 'stream' : 'pty';
-  const snapEffort = item ? item.dataset.effort || null : null;
-  const snapPosture = item ? item.dataset.posture || null : null;
+  const snap = rowSnapshot(name, item);
+  const { type: snapType, backend: snapBackend, effort: snapEffort, posture: snapPosture } = snap;
   return window.api.selectDirectory().then((dir) => {
     if (!dir) return;
     return window.api.moveSession(name, dir).then((res) => {
@@ -1004,11 +983,7 @@ function moveSessionWithPicker(name) {
         return;
       }
       if (snapType || res.type) {
-        markSeatIo(name, snapIo);
-        createTerminal(name);
-        addSessionToSidebar(name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, snapNoWire, snapAccount);
-        markSeatEffort(name, snapEffort);
-        markSeatPosture(name, snapPosture);
+        rebuildLiveRow(name, snap, { type: res.type, cwd: res.cwd, backend: res.backend, team: res.team });
         switchSession(name);
       }
       showToast(`${name} moved to ${res.cwd}, restarting`, { name });
@@ -1034,19 +1009,9 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
   if (movingToPeer.has(name)) return;
   pendingPeerMove.clear();
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-  const snapType = item ? item.dataset.type || null : null;
-  const snapBackend = item ? item.dataset.backend || null : null;
-  const snapCwd = item ? item.dataset.cwd || '' : (cwd || '');
-  const snapTeam = item ? item.dataset.team || null : null;
-  const nameEl = item ? item.querySelector('.session-name') : null;
-  const displayed = nameEl ? nameEl.textContent : name;
-  const snapLabel = displayed && displayed !== name ? displayed : null;
-  const snapCreatedAt = (sidebarMeta.get(name) || {}).createdAt || null;
-  const snapNoWire = item ? item.dataset.noWire === '1' : false;
-  const snapAccount = accountOfRow(name);
-  const snapIo = streamSeatNames.has(name) ? 'stream' : 'pty';
-  const snapEffort = item ? item.dataset.effort || null : null;
-  const snapPosture = item ? item.dataset.posture || null : null;
+  const snap = rowSnapshot(name, item);
+  if (!item) snap.cwd = cwd || '';
+  const { type: snapType, backend: snapBackend, effort: snapEffort, posture: snapPosture } = snap;
   pendingPeerMove.set(name, async (farCwd) => {
     if (movingToPeer.has(name)) return { ok: false, error: 'move already in progress' };
     const toast = showToast(`Moving ${name} to ${peerLabel}…`, { sticky: true, name });
@@ -1061,9 +1026,9 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
     if (res && res.ok) {
       const dropped = res.dropped && res.dropped.length ? ` (did not travel: ${res.dropped.join(', ')})` : '';
       removeSession(name, { keepPersisted: true });
+      const { account, fixFor, ...archived } = snap;
       addArchivedSessionToSidebar({
-        name, type: snapType, cwd: snapCwd, label: snapLabel, backend: snapBackend,
-        team: snapTeam, effort: snapEffort, posture: snapPosture, archivedAt: Date.now(), createdAt: snapCreatedAt,
+        ...archived, ...(fixFor ? { fixFor } : {}), archivedAt: Date.now(),
         movedTo: { peer: peerId, peerLabel: res.peer || peerLabel, farCwd: res.farCwd },
       });
       refreshSidebarView();
@@ -1072,12 +1037,7 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
     }
     if (res && res.kept) {
       if (res.respawned) {
-        markSeatIo(name, snapIo);
-        createTerminal(name);
-        addSessionToSidebar(name, res.type || snapType, res.cwd, snapLabel,
-          snapBackend, res.team || null, snapNoWire, snapAccount);
-        markSeatEffort(name, snapEffort);
-        markSeatPosture(name, snapPosture);
+        rebuildLiveRow(name, snap, { type: res.type, cwd: res.cwd, team: res.team });
         switchSession(name);
       } else {
         const row = {
@@ -1161,10 +1121,9 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
       break;
     case 'reattach':
       if (type) {
-        const snapAccount = accountOfRow(name);
-        markSeatIo(name, io);
-        createTerminal(name);
-        addSessionToSidebar(name, type, cwd, null, backend || null, null, noWire === true, snapAccount);
+        const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+        const snap = rowSnapshot(name, prior);
+        rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true });
         // `background` marks the agent-initiated emitters (ticket seat, spawn
         // intent, reviewer). The reload respawn sends no flag and keeps focus.
         switchToNewSession(name, { agentInitiated: background === true });
@@ -1240,7 +1199,7 @@ function startRename(item, nameEl, sessionName) {
     const typed = input.value.trim();
     const newNameEl = document.createElement('div');
     newNameEl.className = 'session-name';
-    const wanted = commit && typed && typed !== sessionName ? typed : null;
+    const wanted = commit && typed && typed !== sessionName && typed !== current ? typed : null;
     newNameEl.textContent = wanted || current;
     newNameEl.addEventListener('dblclick', (e) => {
       e.stopPropagation();
@@ -1248,11 +1207,8 @@ function startRename(item, nameEl, sessionName) {
     });
     input.replaceWith(newNameEl);
     if (!wanted) return;
-    const snapType = item ? item.dataset.type || null : null;
-    const snapEffort = item ? item.dataset.effort || null : null;
-    const snapPosture = item ? item.dataset.posture || null : null;
-    const snapBackend = item ? item.dataset.backend || null : null;
-    const snapAccount = accountOfRow(sessionName);
+    const snap = { ...rowSnapshot(sessionName, item), label: null };
+    const { type: snapType, effort: snapEffort, posture: snapPosture, backend: snapBackend } = snap;
     window.api.renameSession(sessionName, wanted).then((res) => {
       if (!res || !res.ok) {
         if (res && res.kept) {
@@ -1277,11 +1233,9 @@ function startRename(item, nameEl, sessionName) {
         return;
       }
       removeSession(sessionName, { keepPersisted: true });
-      markSeatIo(res.name, streamSeatNames.has(sessionName) ? 'stream' : 'pty');
       streamSeatNames.delete(sessionName);
       seatViewMemory.delete(sessionName);
-      createTerminal(res.name);
-      addSessionToSidebar(res.name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, res.noWire === true, snapAccount);
+      rebuildLiveRow(res.name, snap, { type: res.type, cwd: res.cwd, backend: res.backend, team: res.team, noWire: res.noWire });
       switchSession(res.name);
       showToast(`${sessionName} renamed to ${res.name}, restarting`, { name: res.name });
     });
@@ -2752,7 +2706,6 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
     teamRow.style.display = 'none';
     if (teamToggle) teamToggle.checked = false;
     if (teamFields) teamFields.style.display = 'none';
-    lastTeamAutoName = null;
     if (!authoring) refreshTeamForCwd();
   }
 }
@@ -3350,8 +3303,10 @@ async function refreshTeamForCwd() {
     if (teamJoinFields) teamJoinFields.style.display = 'none';
     if (teamCreateFields) teamCreateFields.style.display = '';
     try { const r = await window.api.teamNames(); dialogTeamNames = (r && r.names) || []; } catch { dialogTeamNames = []; }
-    if (teamNameInput && !teamNameInput.value.trim()) {
+    if (token !== teamForCwdToken) return;
+    if (teamNameInput && (!teamNameInput.value.trim() || teamNameInput.value === lastTeamNameAuto)) {
       teamNameInput.value = dedupeTeamName(slugifyTeamName(pathBasename(cwd)));
+      lastTeamNameAuto = teamNameInput.value;
     }
   }
 }
@@ -3435,6 +3390,7 @@ async function openDialog(prefill = null) {
   }
   if (teamToggle) teamToggle.checked = false;
   if (teamNameInput) teamNameInput.value = '';
+  lastTeamNameAuto = null;
   if (teamRoleSelect) teamRoleSelect.value = 'hand';
   if (teamFields) teamFields.style.display = 'none';
   dialogTeamMode = null;
@@ -3474,6 +3430,7 @@ async function openDialog(prefill = null) {
   dialogReservedNames = reservedUnion(dialogReservedSets);
   if (!prefill && inputName.value === defaultName) {
     inputName.value = bumpDefaultName(defaultName, dialogReservedNames);
+    lastTeamAutoName = inputName.value;
   }
   refreshNameValidity();
   dialogHostSettings = settings;
@@ -3599,7 +3556,7 @@ inputTemplate.addEventListener('change', async () => {
   {
     const { model, rest } = splitModelArg(t.extraArgs || []);
     inputModel.value = model;
-    inputArgs.value = rest.join(' ');
+    inputArgs.value = formatArgs(rest);
     if (inputEffort) fillEffort(inputEffort, t.type, (typeof t.effort === 'string' && t.effort) || '');
   }
   argsHint.textContent = ARGS_HINTS[t.type] || '';
@@ -3663,12 +3620,16 @@ function closeDialog() {
 
 function parseArgs(str) {
   const out = [];
-  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  const re = /(?:"[^"]*"|'[^']*'|[^\s"']+|["'])+/g;
   let m;
   while ((m = re.exec(str)) !== null) {
-    out.push(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]);
+    out.push(m[0].replace(/"([^"]*)"|'([^']*)'/g, (_, d, q) => (d !== undefined ? d : q)));
   }
   return out;
+}
+
+function formatArgs(rest) {
+  return rest.map(a => /\s/.test(a) ? `"${a}"` : a).join(' ');
 }
 
 function expandPath(p) {
@@ -3901,7 +3862,11 @@ async function pickSandboxCwd(hostDir) {
 }
 
 dialogOverlay.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') submitDialog();
+  if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+  const tag = e.target && e.target.tagName;
+  if (tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'SUMMARY') return;
+  e.preventDefault();
+  submitDialog();
 });
 dialogOverlay.addEventListener('mousedown', (e) => { if (e.target === dialogOverlay) closeDialog(); });
 
@@ -3935,7 +3900,7 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
   {
     const { model, rest } = splitModelArg((tpl && tpl.extraArgs) || []);
     inputModel.value = model;
-    inputArgs.value = rest.join(' ');
+    inputArgs.value = formatArgs(rest);
     if (inputEffort) fillEffort(inputEffort, inputType.value, (tpl && typeof tpl.effort === 'string' && tpl.effort) || '');
   }
   argsHint.textContent = ARGS_HINTS[inputType.value] || '';
@@ -3988,47 +3953,54 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
   setTimeout(() => inputName.select(), 50);
 }
 
+let templateSaveInFlight = false;
 async function saveTemplateFromForm() {
-  const name = inputName.value.trim();
-  if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
-    inputName.style.borderColor = '#e94560';
-    return;
-  }
-  const cfg = collectFormConfig();
-  if (editingTemplateTeam) {
-    const res = await window.api.saveTeamTemplate(editingTemplateTeam, name, { ...cfg, name });
-    if (res && res.ok === false) {
-      alert(`Could not save into team ${editingTemplateTeam}: ${res.error || 'unknown error'}`);
+  if (templateSaveInFlight) return;
+  templateSaveInFlight = true;
+  try {
+    const name = inputName.value.trim();
+    if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+      inputName.style.borderColor = '#e94560';
       return;
+    }
+    const cfg = collectFormConfig();
+    if (editingTemplateTeam) {
+      const res = await window.api.saveTeamTemplate(editingTemplateTeam, name, { ...cfg, name });
+      if (res && res.ok === false) {
+        alert(`Could not save into team ${editingTemplateTeam}: ${res.error || 'unknown error'}`);
+        return;
+      }
+      closeDialog();
+      await refreshTemplatesDropdown();
+      if (templatesDrawerRefresh) templatesDrawerRefresh();
+      return;
+    }
+    if (editingTemplateBundle) {
+      const res = await window.api.writePluginBundleFile(
+        editingTemplateBundle.id, 'templates', name, JSON.stringify({ ...cfg, name }, null, 2));
+      if (res && res.ok === false) {
+        alert(`Could not save into the ${editingTemplateBundle.name} plugin: ${res.error || 'unknown error'}`);
+        return;
+      }
+      closeDialog();
+      await refreshTemplatesDropdown();
+      if (templatesDrawerRefresh) templatesDrawerRefresh();
+      return;
+    }
+    if (editingTemplateId) {
+      const list = (await window.api.listTemplates()).filter((t) => !t.team);
+      const clash = list.find(t => t.id !== editingTemplateId && (t.name || '').toLowerCase() === name.toLowerCase());
+      if (clash) { inputName.style.borderColor = '#e94560'; return; }
+      await window.api.saveTemplate({ ...cfg, id: editingTemplateId, name }); // rename-in-place
+    } else {
+      await window.api.saveTemplateByName({ ...cfg, name });
     }
     closeDialog();
     await refreshTemplatesDropdown();
     if (templatesDrawerRefresh) templatesDrawerRefresh();
-    return;
+  } finally {
+    templateSaveInFlight = false;
   }
-  if (editingTemplateBundle) {
-    const res = await window.api.writePluginBundleFile(
-      editingTemplateBundle.id, 'templates', name, JSON.stringify({ ...cfg, name }, null, 2));
-    if (res && res.ok === false) {
-      alert(`Could not save into the ${editingTemplateBundle.name} plugin: ${res.error || 'unknown error'}`);
-      return;
-    }
-    closeDialog();
-    await refreshTemplatesDropdown();
-    if (templatesDrawerRefresh) templatesDrawerRefresh();
-    return;
-  }
-  if (editingTemplateId) {
-    const list = (await window.api.listTemplates()).filter((t) => !t.team);
-    const clash = list.find(t => t.id !== editingTemplateId && (t.name || '').toLowerCase() === name.toLowerCase());
-    if (clash) { inputName.style.borderColor = '#e94560'; return; }
-    await window.api.saveTemplate({ ...cfg, id: editingTemplateId, name }); // rename-in-place
-  } else {
-    await window.api.saveTemplateByName({ ...cfg, name });
-  }
-  closeDialog();
-  await refreshTemplatesDropdown();
-  if (templatesDrawerRefresh) templatesDrawerRefresh();
 }
 
 
@@ -8657,7 +8629,7 @@ async function openArgsDialog(name, argsSource = null) {
   {
     const { model, rest } = splitModelArg(res.extraArgs || []);
     argsModel.value = model;
-    argsInput.value = rest.map(a => /\s/.test(a) ? `"${a}"` : a).join(' ');
+    argsInput.value = formatArgs(rest);
   }
   if (argsEffort) fillEffort(argsEffort, res.type, (typeof res.effort === 'string' && res.effort) || '');
   const isAgent = isAgentType(res.type);
@@ -8809,14 +8781,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const name = argsEditingName;
   const source = argsEditingSource;
   const existing = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-  const snapType = existing ? existing.dataset.type || null : null;
-  const snapCwd = existing ? existing.dataset.cwd : null;
-  const snapBackend = existing ? existing.dataset.backend || null : null;
-  // The Edit dialog does not surface wire-off (it is spawn-time config, and
-  // applySessionArgs replays the PERSISTED value), so the rebuilt row must carry
-  // the flag forward or an unrelated edit silently un-marks a wire-off seat.
-  const snapNoWire = existing ? existing.dataset.noWire === '1' : false;
-  const snapIo = streamSeatNames.has(name) ? 'stream' : 'pty';
+  const snap = rowSnapshot(name, existing);
   const snapAccount = env === undefined
     ? accountOfRow(name)
     : accountFromEnv(formatEnvLines(env), argsAccounts || []);
@@ -8838,10 +8803,8 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   }
   if (res.restarted) {
     if (source) source.onRestarted();
-    else if (snapType) {
-      markSeatIo(name, res.io || snapIo);
-      createTerminal(name);
-      addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, null, snapNoWire, snapAccount);
+    else if (snap.type) {
+      rebuildLiveRow(name, { ...snap, account: snapAccount, effort: effort !== undefined ? effort || null : snap.effort }, { io: res.io, backend: res.backend });
       switchSession(name);
     }
   }

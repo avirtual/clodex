@@ -43,9 +43,11 @@ for (const [label, anchor, src = SRC] of [
   test(`${label} marks the seat's io before createTerminal, so a stream seat is not rebuilt as an xterm`, () => {
     const m = src.match(anchor);
     assert.ok(m, `ENTER: ${label} is still found by this anchor`);
-    const at = m[0].indexOf('createTerminal(');
+    const rebuild = SRC.match(/\nfunction rebuildLiveRow\(name, snap, res = \{\}\) \{[\s\S]*?\n\}\n/);
+    const body = !m[0].includes('createTerminal(') && m[0].includes('rebuildLiveRow(') && rebuild ? rebuild[0] : m[0];
+    const at = body.indexOf('createTerminal(');
     assert.ok(at > 0, `ENTER: ${label} still calls createTerminal`);
-    const mark = m[0].indexOf('markSeatIo(');
+    const mark = body.indexOf('markSeatIo(');
     assert.ok(mark >= 0 && mark < at, `${label} must call markSeatIo before createTerminal`);
   });
 }
@@ -121,5 +123,5 @@ test('a seat view choice is kept per name across a rebuild, and a delete or a re
   assert.ok(refresh && refresh[0].includes('applySeatView(entry, initialSeatView(seatViewPrefs(name)))'), 'a Prefs change applies the Prefs view, not the remembered one');
   const del = SRC.match(/\nasync function deleteSessionRow\(name\) \{[\s\S]*?\n\}\n/);
   assert.ok(del && del[0].includes('seatViewMemory.delete(name);'));
-  assert.ok(/streamSeatNames\.delete\(sessionName\);\n\s*seatViewMemory\.delete\(sessionName\);\n\s*createTerminal\(res\.name\);/.test(SRC), 'a rename drops the old name');
+  assert.ok(/streamSeatNames\.delete\(sessionName\);\n\s*seatViewMemory\.delete\(sessionName\);\n\s*rebuildLiveRow\(res\.name, /.test(SRC), 'a rename drops the old name');
 });
