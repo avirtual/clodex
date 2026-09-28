@@ -64,9 +64,11 @@ bundle), whose packaged form is the Docker image under
 [`../docker/web/`](../docker/web/).
 
 - **engine.js** — `createEngine({ userDataPath, seams, log })` owns the whole
-  electron-free bootstrap: stores → pollers → scheduler → log → wirescope +
-  watchdog → remote → peers → cleanup → legacy sweep → restore, in that exact
-  order. It constructs the SessionManager and every module above, and returns
+  electron-free bootstrap: stores → pollers → scheduler → log → wirescope →
+  remote → peers → sandbox autostart → wirescope watchdog → cleanup → legacy
+  sweep → tickets migration → reviewer-graveyard sweep → plugin host, in that
+  exact order (restore is not part of it — hosts call
+  `restoreSessionsForWorkspace` after createEngine returns). It constructs the SessionManager and every module above, and returns
   a **flat handle object**: the six primary handles (`manager`, `stores`,
   `syncRemoteServer`, `syncPeerManager`, `restoreSessionsForWorkspace`,
   `shutdown`), the shared infra, the `get{RemoteServer,PeerManager,…}`
@@ -870,10 +872,9 @@ accept teardown removes.
 
 ### Persistence, paths and stores
 
-- **stores.js** — `initStores(userDataPath, …)` builds every persistence store
-  (sessions/workspaces/templates/prompts/agent+skill libraries/defaults/
-  ui-settings/reminders). Paths derive inside the factory, post-whenReady by
-  construction; the return object is the list.
+- **stores.js** — `initStores(userDataPath, …)` builds every persistence store;
+  the return object is the list. Paths derive inside the factory, post-whenReady
+  by construction.
 - **seat-config.js** — the per-seat XDG overlay for platforms whose adapter row
   says `account.bootstrap: 'xdg-overlay'` (Muse): `bootstrapSeatConfig` rebuilds
   `run/<name>/xdg` on every `create()` (every `~/.config` entry symlinked, a real
