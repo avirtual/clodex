@@ -15,7 +15,7 @@ const MAP_DIR = path.join(REPO, 'docs', 'map');
 // A commented slot is a placeholder, not coverage: the map ticket that lands
 // the file uncomments its line, and a map on disk that is still commented reds.
 const EXPECTED_MAPS = [
-  // 'engine.md',
+  'engine.md',
 
   // 'ipc-handlers.md',
 
