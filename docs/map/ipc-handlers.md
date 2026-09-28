@@ -5,7 +5,7 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `envLockedSettings` | map of settings keys whose value an env var pins (remotePort, remoteBasePath), so Preferences can show them locked | process.env | service-ports.coercePort, remote.coerceRemoteBasePath | remote-base-path-pref.test.js |
-| `recentCwdsFor` | recent cwds for one workspace, falling back to the legacy flat list for the default workspace | ui-settings recentCwdsByWorkspace | none | ipc-unscoped-listing.test.js |
+| `recentCwdsFor` | recent cwds for one workspace, falling back to the legacy flat list for the default workspace | ui-settings recentCwdsByWorkspace | none | unpinned |
 | `registerIpcHandlers` | registers every channel on the injected handle/on seams; the single entry the Electron host and web-host both call | deps (manager, persistence, stores, seams) | handle, on | drawer-services-seam.test.js plugin-kill-switch.test.js transcript-pull-outbox.test.js |
 | `refreshMenusAfterWrite` | rebuilds app/tray menus after a landed write, logging instead of throwing so the write still reports ok | none | refreshAppMenu, refreshTrayMenu | unpinned |
 | `spawnFromParams` | the mint front door: refuses a live or persisted name clash, seeds deny lists and strip level, then creates the session | sessions via manager, persistence strip level | session-manager.nameConflict, manager.create, agentDefaults | session-manager.test.js teams-menu.test.js create-mint-census.test.js |
