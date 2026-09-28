@@ -1123,12 +1123,13 @@ function initStores(userDataPath, {
 
   const agentDefaults = {
     _load() {
-      try {
-        const obj = JSON.parse(fs.readFileSync(AGENT_DEFAULTS_FILE, 'utf-8'));
-        return (obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : {};
-      } catch { return {}; }
+      const r = readStoreJson(AGENT_DEFAULTS_FILE);
+      this._unreadable = r.state === 'unreadable';
+      const obj = r.value;
+      return (r.state === 'ok' && obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : {};
     },
     _save(map) {
+      if (this._unreadable) refuseUnreadable(AGENT_DEFAULTS_FILE);
       try {
         atomicWriteFileSync(AGENT_DEFAULTS_FILE, JSON.stringify(map, null, 2));
       } catch (e) { console.error('agent-defaults save failed:', e); }
@@ -1358,12 +1359,12 @@ function initStores(userDataPath, {
   // accepted or cancelled.
   const reminders = {
     _load() {
-      try {
-        const all = JSON.parse(fs.readFileSync(REMINDERS_FILE, 'utf-8'));
-        return Array.isArray(all) ? all : [];
-      } catch { return []; }
+      const r = readStoreJson(REMINDERS_FILE);
+      this._unreadable = r.state === 'unreadable';
+      return (r.state === 'ok' && Array.isArray(r.value)) ? r.value : [];
     },
     _save(entries) {
+      if (this._unreadable) refuseUnreadable(REMINDERS_FILE);
       try {
         atomicWriteFileSync(REMINDERS_FILE, JSON.stringify(entries, null, 2));
       } catch (e) { console.error('reminders save failed:', e); }
@@ -1434,12 +1435,12 @@ function initStores(userDataPath, {
       }
     },
     _load() {
-      try {
-        const all = JSON.parse(fs.readFileSync(NOTIFICATIONS_FILE, 'utf-8'));
-        return Array.isArray(all) ? all : [];
-      } catch { return []; }
+      const r = readStoreJson(NOTIFICATIONS_FILE);
+      this._unreadable = r.state === 'unreadable';
+      return (r.state === 'ok' && Array.isArray(r.value)) ? r.value : [];
     },
     _save(entries) {
+      if (this._unreadable) refuseUnreadable(NOTIFICATIONS_FILE);
       try {
         atomicWriteFileSync(NOTIFICATIONS_FILE, JSON.stringify(entries, null, 2));
       } catch (e) { console.error('notifications save failed:', e); }
@@ -1747,17 +1748,17 @@ function initStores(userDataPath, {
 
   const skillsSeen = {
     list() {
-      try {
-        const raw = JSON.parse(fs.readFileSync(SKILLS_SEEN_FILE, 'utf-8'));
-        if (!Array.isArray(raw)) return [];
-        return [...new Set(raw.filter((s) => typeof s === 'string' && s))].sort();
-      } catch { return []; }
+      const r = readStoreJson(SKILLS_SEEN_FILE);
+      this._unreadable = r.state === 'unreadable';
+      if (r.state !== 'ok' || !Array.isArray(r.value)) return [];
+      return [...new Set(r.value.filter((s) => typeof s === 'string' && s))].sort();
     },
     record(names) {
       if (!Array.isArray(names) || !names.length) return this.list();
       const cur = this.list();
       const next = [...new Set([...cur, ...names.filter((s) => typeof s === 'string' && s)])].sort();
       if (next.length === cur.length) return cur;
+      if (this._unreadable) refuseUnreadable(SKILLS_SEEN_FILE);
       try {
         atomicWriteFileSync(SKILLS_SEEN_FILE, JSON.stringify(next, null, 2));
       } catch (e) { console.error('skills-seen save failed:', e); }
@@ -2089,10 +2090,19 @@ function initStores(userDataPath, {
 
   const ENV_DEFAULTS_SRC = envDefaultsFile || path.join(__dirname, 'resources', 'env-defaults.json');
 
+  function platformAppDataDir() {
+    const home = os.homedir();
+    if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support');
+    if (process.platform === 'win32') return process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+    return process.env.XDG_CONFIG_HOME || path.join(home, '.config');
+  }
+
   function refuseEnvWriteUnderTest() {
+    const envDir = path.resolve(path.dirname(ENV_SCOPES_FILE));
     if (process.env.NODE_TEST_CONTEXT
-        && registryDir === path.join(os.homedir(), '.clodex')) {
-      if (log) log.warn?.('stores', 'refusing to seed env defaults into the real userData under node --test; pass seams.registryDir');
+        && path.dirname(envDir) === path.resolve(platformAppDataDir())
+        && path.basename(envDir).toLowerCase() === 'clodex') {
+      if (log) log.warn?.('stores', 'refusing to seed env defaults into the real userData under node --test; pass a temp userDataPath');
       return true;
     }
     return false;

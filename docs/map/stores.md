@@ -78,7 +78,7 @@
 - Every store path is derived inside `initStores` from its arguments, never from app.getPath, which is what makes the paths post-whenReady by construction.
 - The return object of `initStores` is the list of stores: persistence, templates, workspaces, promptLibrary, agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings, envScopes, envDefaults, setupMarker, skillsSeen, plus renameWorkspaceScope.
 - `readStoreJson` separates a read error from a parse error: an unparseable file is moved aside and reads as quarantined, while a file that cannot be read or moved reads as unreadable and is never written.
-- Only the stores whose loader goes through `readStoreJson` (sessions.json, workspaces.json, ui-settings.json, env-scopes.json) carry the t1329 refusal; the others still map any read fault to empty.
+- Every JSON store under userDataPath that is rewritten from its own read (sessions.json, workspaces.json, ui-settings.json, env-scopes.json, agent-defaults.json, reminders.json, notifications.json, skills-seen.json) loads through `readStoreJson` and carries the t1329 refusal.
 - `initStores` touches disk on every call, because the one-shot migrations and both seeders run at construction.
 
 ### Hazards
@@ -209,11 +209,11 @@
 ### Invariants
 - Each default deny list is tri-state: an absent key means the floor, and a present empty array means deny nothing, which `getDefaultDeny` honours.
 - The defaults live under a star key, which is not a legal session name, so `setDefaultDeny` cannot collide with a per-agent entry.
+- `setStrip` and every other writer here save only after a `_load` through `readStoreJson`: an unparseable agent-defaults.json is quarantined, and an unreadable one makes the save throw through `refuseUnreadable`.
 
 ### Hazards
-- agent-defaults.json does not load through `readStoreJson`, so an unparseable file reads as empty and the next `setStrip` saves over it.
 - Treating an empty list in `getDefaultSkillDeny` as absent re-imposes the floor on a user who chose deny nothing.
-- `getDefaultSkillDeny` is a read that writes: the first read of a stored plain list rewrites agent-defaults.json through `setDefaultSkillDeny`, so a caller expecting a pure getter gets a disk write.
+- `getDefaultSkillDeny` is a read that writes: the first read of a stored plain list rewrites agent-defaults.json through `setDefaultSkillDeny`, so a caller expecting a pure getter gets a disk write; not while unreadable, where `_load` yields no stored list and the floor is returned unwritten.
 
 ## Agent, skill and exec libraries — listFor … raw
 
@@ -238,7 +238,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_load` | reminders: the reminder array, or empty on absence, corruption or a non-array | reminders.json | none | unpinned |
+| `_load` | reminders: the reminder array, or empty on absence, quarantine, unreadability or a non-array | reminders.json, this._unreadable | readStoreJson | stores.test.js |
 | `_mintId` | a 6-char lowercase base36 id unique in the current array, falling back to a time-based id | none | none | unpinned |
 | `listForAgent` | the reminders owned by one seat name | reminders.json | _load | remind-scheduler.test.js stores.test.js |
 | `add` | reminders: appends a record with id, createdAt, lastFiredAt null and ticket only when bound, and persists it | reminders.json | _mintId, _save | stores.test.js session-manager.test.js |
@@ -249,9 +249,9 @@
 - `_mintId` ids stay pure lowercase base36 with no separator, because a remind cancel token must satisfy the scheduler's id pattern.
 - `add` spreads ticket only onto bound records, so unbound records stay byte-identical and cancelForTicket selects on presence.
 - This store does no timing: `add` round-trips nextFireAt, null for the event-driven on-compact form.
+- `_load` goes through `readStoreJson`: an unparseable reminders.json is quarantined, and an unreadable one makes every `_save` throw through `refuseUnreadable` until a later `_load` reads it.
 
 ### Hazards
-- reminders.json does not load through `readStoreJson`, so an unparseable file reads as empty and the next `add` saves one reminder over every other.
 - The reminder `_save` logs and swallows a write error, so `add` returns a record that may not be on disk.
 
 ## notifications.json (inbox) — onChange … unreadCount
@@ -268,11 +268,11 @@
 ### Invariants
 - The inbox store emits every add, read, read-all and remove through `_emit`, which is what keeps the drawer and the remote inbox live.
 - `markAllRead` emits only when it changed something, so an idle read-all does not wake listeners.
+- `_load` goes through `readStoreJson`: an unparseable inbox is quarantined, and an unreadable one makes every `_save` throw through `refuseUnreadable`, so `add` throws before it emits.
 
 ### Hazards
 - `onChange` has no unsubscribe, so a caller that registers per window or per connection leaks listeners for the process lifetime.
 - The notifications `_save` swallows a write error while add still emits added, so a caller that must know the note landed reads it back, as `seedRoot` does.
-- notifications.json does not load through `readStoreJson`, so an unparseable inbox reads as empty and the next add saves over it.
 
 ## ui-settings.json — warnUiSettingsMode … set
 
@@ -301,7 +301,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `record` | unions new skill names into skills-seen.json, writing only when the set grew | skills-seen.json | fs-util.atomicWriteFileSync | optimized-late-skills.test.js |
+| `record` | unions new skill names into skills-seen.json, writing only when the set grew | skills-seen.json | list, refuseUnreadable, fs-util.atomicWriteFileSync | optimized-late-skills.test.js |
 | `read` | setupMarker: first-run setup is done only when setup.json parses with a string completedAt | setup.json under registryDir | none | first-run-setup.test.js |
 | `write` | setupMarker: stamps completion time, version and a SETUP_CHOICES choice (default skipped); a write error reaches the caller | setup.json under registryDir | fs-util.atomicWriteFileSync | first-run-setup.test.js |
 | `renameWorkspaceScope` | rewrites workspace frontmatter from an old to a new display name across agent and skill .md files, leading fence only; returns the count | agents/*.md, skills/*.md under registryDir | fs-util.atomicWriteFileSync | stores.test.js |
@@ -309,6 +309,7 @@
 ### Invariants
 - `renameWorkspaceScope` matches the trimmed old name exactly, the same comparison visibleTo makes, so a rename cannot orphan a scoped item it would otherwise match.
 - `record` writes only on growth, so a steady-state skill roster never rewrites the file.
+- `record` reads through `readStoreJson` via list: an unparseable skills-seen.json is quarantined, and an unreadable one makes `record` throw through `refuseUnreadable` instead of writing.
 
 ### Hazards
 - `renameWorkspaceScope` does not preserve quoting: it writes the new name bare, so a name whose own first and last characters are matching quotes is stripped on the next read.
@@ -320,7 +321,7 @@
 |---|---|---|---|---|
 | `sha256` | hex SHA-256 of a buffer, the seed manifest's content identity | none | none | stores.test.js |
 | `seedRoot` | reconciles one shipped seed tree into its destination by hash manifest: unedited copies upgrade, edited ones are kept, withheld updates are reported once | destRoot files, destRoot/.seed-state.json, destRoot/.seed-report.json, notifications.json | sha256, fs-util.atomicWriteFileSync, notifications add | unpinned |
-| `seedLibraryDefaults` | seeds the library, skills and agents trees from resources, refusing under node --test when registryDir is the real ~/.clodex | registryDir/library, skills, agents | seedRoot | stores.test.js env-defaults-seed.test.js engine-registry-dir-seam.test.js |
+| `seedLibraryDefaults` | seeds the library, skills and agents trees from resources, refusing under node --test when registryDir is the real ~/.clodex | registryDir/library, skills, agents | seedRoot | stores.test.js engine-registry-dir-seam.test.js |
 
 ### Invariants
 - `seedRoot` overwrites a present file only when it still matches its stamp and the shipped bytes moved; a file matching neither is stranded and reported, never repaired.
@@ -344,7 +345,8 @@
 | `all` | the whole loaded env-scopes object, values unmasked | env-scopes.json | _load | stores.test.js stream-idle-default.test.js |
 | `set` | envScopes: validates scope, key and value (throwing on either) and writes one value-and-secret entry | env-scopes.json | safeScope, env-scopes.envKeyError, _save | stores.test.js env-defaults-seed.test.js |
 | `removeWorkspace` | drops a whole workspace scope, saving only if it existed | env-scopes.json | _save | stores.test.js |
-| `refuseEnvWriteUnderTest` | true, with a warning, under node --test when registryDir is the real ~/.clodex | none | none | unpinned |
+| `platformAppDataDir` | the per-platform app-data root the real userData dir sits in: Application Support on darwin, APPDATA on win32, XDG_CONFIG_HOME or ~/.config elsewhere | none | os.homedir | env-defaults-seed.test.js |
+| `refuseEnvWriteUnderTest` | true, with a warning, under node --test when the directory env-scopes.json lives in is clodex (any case) under the platform app-data root | none | platformAppDataDir | env-defaults-seed.test.js |
 | `seedEnvDefaults` | seeds each shipped env default into the global scope once, recording it in seeded so a deletion is not re-seeded | env-scopes.json | env-defaults.planEnvSeed, _save | env-defaults-seed.test.js session-manager.test.js |
 | `restore` | forgets the seeded mark of every shipped key and re-seeds, bringing deleted defaults back without touching user values | env-scopes.json | seedEnvDefaults | env-defaults-seed.test.js |
 
@@ -357,7 +359,7 @@
 ### Hazards
 - A default written by `seedEnvDefaults` without appending to seeded is re-seeded forever after the user deletes it.
 - `restore` must clear seeded before seeding again, and user values survive only because planEnvSeed skips keys already present.
-- `refuseEnvWriteUnderTest` keys on registryDir while env-scopes.json lives under userDataPath, so a test that passes only a temp registryDir still writes the real store.
+- `refuseEnvWriteUnderTest` keys on the env store's own directory against the default userData location, so a CLODEX_DATA_DIR pointed elsewhere is not recognised as real; under node --test that dir is always a temp one.
 - Converting the throw in `set` to a silent return removes the error message its IPC callers surface.
 
 ## EXEMPT
