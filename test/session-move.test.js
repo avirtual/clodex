@@ -984,6 +984,12 @@ test('the menu offers Move Session… for a local codex seat', () => {
   assert.ok(mkMenu({ name: 'a', type: 'codex', cwd: '/x' }).includes('Move Session…'));
 });
 
+test('the menu offers Prompts, Move Session… and Export as Template… for a local muse seat', () => {
+  const labels = mkMenu({ name: 'm', type: 'muse', cwd: '/x' });
+  assert.ok(labels.includes('Restart Session'), 'ENTER: the menu was built for this row');
+  assert.deepStrictEqual(['Prompts', 'Move Session…', 'Export as Template…'].map((l) => labels.includes(l)), [true, true, true]);
+});
+
 test('the menu does NOT offer Move Session… for a bash row', () => {
   const labels = mkMenu({ name: 'a', type: 'bash', cwd: '/x' });
   assert.ok(!labels.includes('Move Session…'), 'a bash row has no conversation to carry');

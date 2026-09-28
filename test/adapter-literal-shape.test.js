@@ -21,6 +21,12 @@ test('m0: session-manager.js resolves a restored seat type through isAgentType',
   assert.strictEqual(src.split('agentType: isAgentType(entry.type) ? entry.type : null,').length - 1, 2);
 });
 
+test('m0: ipc-handlers.js gates agent-only paths through isAgentType, not a claude||codex literal', () => {
+  const src = read('ipc-handlers.js');
+  assert.ok(!src.includes("entry.type === 'claude' || entry.type === 'codex'"));
+  assert.ok(!src.includes("entry.type !== 'claude' && entry.type !== 'codex'"));
+});
+
 test('m0: team-tickets.js reads posture and the cwd dir from the adapter', () => {
   const src = read('team-tickets.js');
   assert.ok(!src.includes('bypassFlag'));
