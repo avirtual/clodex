@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Stores: a case-only template rename (Foo → foo) no longer deletes the template on macOS; duplicate peer ids collapse to the first entry so a token-less Peers save cannot hand one host's token to another; a seat named `__proto__` can no longer set the thinking-strip level on every object in the process; a box config built from the defaults gets its own mounts array; a label-less Azure peer is labelled by its target VM, not its bastion.
 - Export as Template… now carries the seat's io, effort and plugin grants into the template (an exported template no longer re-grants plugins it had turned off) and refreshes the app menu so the new template appears at once.
 - Seats no longer receive the CLI's per-call "list what you need next" nudge or its secondary reminder: Clodex's shipped env defaults turn both off, since the seat prompts already say when to write and what to request.
 - A filed body whose file could not be read the first time is read again when you unfold it again.
