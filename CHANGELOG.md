@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Tickets board and team popover now show what the loop is doing with a done ticket — "suite running (since 14:02)", "re-measuring", "spawning reviewer" — instead of "in review" from the moment of task done, so a reviewer that has not appeared yet is not mistaken for a stall.
+
 ## 5.90.0 — 2026-09-28
 
 - Test suite: the standing set of slow subjects that tripped every post-merge run is fixed at the mechanism (the shipped library is seeded and the fixture git repo built once per file, then copied per case) or allowlisted with its measured reason (real git and bin subprocess chains), so a ticket is no longer rejected for slowness in files it did not change.

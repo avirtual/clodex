@@ -468,6 +468,11 @@ function ticketLine(t, now) {
   parts.push(t && t.assignee ? String(t.assignee) : 'unassigned');
   const step = t && t.step != null ? String(t.step) : '';
   if (step === 'review') parts.push(`in review (round ${Number(t.round) || 1})`);
+  else if (step === 'suite') {
+    const when = activityTime(t.since, now);
+    const word = Number(t.run) === 2 ? 're-measuring' : 'suite running';
+    parts.push(when ? `${word} (since ${when})` : word);
+  } else if (step === 'reviewer-spawn') parts.push('spawning reviewer');
   else if (step === 'working') {
     const when = activityTime(t.since, now);
     parts.push(when ? `working since ${when}` : 'working');

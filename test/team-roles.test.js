@@ -1097,6 +1097,18 @@ test('ticketLine: an open ticket names its seat and its step, "working since" ca
   assert.strictEqual(open({ since: null }), 't786 · the roles popover · hand-786 · working');
 });
 
+test('ticketLine: a ticket in the loop\'s verify step names its phase — suite, re-measure, reviewer spawn, review', () => {
+  const v = (over) => ticketLine({ id: 't1355', title: 'verify phase', assignee: 'hand-1355', step: 'review', since: null, round: 1, ...over }, NOW);
+  const rows = [
+    [{ step: 'suite', since: TODAY_2116, run: 1 }, 't1355 · verify phase · hand-1355 · suite running (since 21:16)'],
+    [{ step: 'suite', since: TODAY_2116, run: 2 }, 't1355 · verify phase · hand-1355 · re-measuring (since 21:16)'],
+    [{ step: 'suite', since: null, run: 1 }, 't1355 · verify phase · hand-1355 · suite running'],
+    [{ step: 'reviewer-spawn', since: TODAY_2116 }, 't1355 · verify phase · hand-1355 · spawning reviewer'],
+    [{}, 't1355 · verify phase · hand-1355 · in review (round 1)'],
+  ];
+  for (const [over, want] of rows) assert.strictEqual(v(over), want, JSON.stringify(over));
+});
+
 test('ticketLine: a landed ticket names its outcome, its time and its review rounds', () => {
   const landed = (over) => ticketLine({ id: 't785', title: 'team:activity', at: TODAY_2116, outcome: 'accepted', rounds: 2, ...over }, NOW);
   assert.strictEqual(landed(), 't785 · team:activity · merged 21:16 · 2 rounds');

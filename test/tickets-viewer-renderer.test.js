@@ -16,7 +16,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const viewer = require('../plugins/tickets-viewer/renderer');
-const { humanizeAge, ageLine, hitAgeText, summaryText } = viewer;
+const { humanizeAge, ageLine, hitAgeText, summaryText, pendingRoundWord } = viewer;
 
 const HOUR = 60 * 60 * 1000;
 
@@ -1004,6 +1004,13 @@ test('an OPEN hit is never dated as closed — `search` matches open records too
       'the OPEN hit is not dated as closed');
     assert.doesNotMatch(text, /closed 0s ago/, 'and never dated from a null stamp as "just now"');
   });
+});
+
+test('t1355: an unruled round names the verify phase the loop is in', () => {
+  assert.equal(pendingRoundWord({ phase: 'suite', since: 1, run: 1 }), 'suite running…');
+  assert.equal(pendingRoundWord({ phase: 'suite', since: 1, run: 2 }), 're-measuring…');
+  assert.equal(pendingRoundWord({ phase: 'reviewer', since: 1, run: null }), 'awaiting verdict');
+  assert.equal(pendingRoundWord(null), 'awaiting verdict');
 });
 
 test('hitAgeText decides from the STATE, never from the stamp', () => {

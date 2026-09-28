@@ -905,6 +905,31 @@ test('the extracted _taskListText returns exactly what [agent:task list] replies
   }
 });
 
+test('t1355: _taskListText names the verify phase of a done ticket the loop still holds', () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, hand: {} } });
+  const now = 10_000_000;
+  const d = (id, over) => ({ id, state: 'done', role: 'hand', title: id, openedAt: now - 60000, closedAt: now - 1000 - Number(id.slice(1)), loopStep: 'verify', ...over });
+  mkTicketRegistry(home, proj, [
+    d('t1', { verifyPhase: { phase: 'suite', since: now - 130000, run: 1 } }),
+    d('t2', { verifyPhase: { phase: 'suite', since: now - 40000, run: 2 } }),
+    d('t3', { loopStep: 'review', verifyPhase: { phase: 'reviewer', since: now - 1000 } }),
+    d('t4', { loopStep: 'review', reviewRound: 1 }),
+    d('t5', { loopStep: undefined }),
+    { id: 't6', state: 'open', role: 'hand', title: 't6', openedAt: now - 60000 },
+  ]);
+  const team = { name: 'proj', root: proj, lead: 'lead' };
+  const m = new (createSessionManager({ fs, path, REGISTRY_DIR: home, knownSkillNames: () => [] }))();
+  const lines = m._taskListText(team, 'open', now).split('\n');
+  const row = (id) => lines.find((l) => l.startsWith(`${id} [done]`));
+  assert.strictEqual(row('t1'), 't1 [done] in verify: suite run 1 (2m) hand closed 1s ago — t1');
+  assert.strictEqual(row('t2'), 't2 [done] in verify: re-measuring (40s) hand closed 1s ago — t2');
+  assert.strictEqual(row('t3'), 't3 [done] in verify: spawning reviewer hand closed 1s ago — t3');
+  assert.strictEqual(row('t4'), 't4 [done] in verify: review round 2 hand closed 1s ago — t4');
+  assert.strictEqual(row('t5'), 't5 [done] hand closed 1s ago — t5');
+});
+
 test('_taskListText answers the empty board with the same sentence the reply does', () => {
   const home = mkHome();
   const proj = path.join(home, 'proj');
