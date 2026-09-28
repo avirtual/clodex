@@ -1422,7 +1422,7 @@
       <div class="sandbox-field" id="sandbox-ref-field">
         <label for="sandbox-ref">Track git ref</label>
         <input id="sandbox-ref" type="text" spellcheck="false" autocomplete="off" maxlength="128" placeholder="(the running app's version)" />
-        <p class="hint-text" id="sandbox-ref-hint">Build this sandbox from a commit, branch or tag of the Clodex checkout instead of the running app's version. Rebuild to pick up new commits.</p>
+        <p class="hint-text" id="sandbox-ref-hint">Build this sandbox from a commit, branch or tag of the Clodex checkout instead of the running app's version. Rebuild to pick up new commits on a branch ref; a box pinned to a commit rebuilds that commit.</p>
       </div>
       <div class="sandbox-field" id="sandbox-ports-field">
         <div class="sandbox-ports-row">
@@ -1436,7 +1436,7 @@
         <!-- Both start disabled: pessimistic until the open probe confirms docker
              is up (Task 13 defect #2 — the probe can take seconds when down). -->
         <button id="btn-sandbox-toggle" disabled>Start</button>
-        <button id="btn-sandbox-rebuild" class="secondary" disabled title="Rebuild the container image on the current code and recreate the sandbox (its sessions resume automatically)">Rebuild</button>
+        <button id="btn-sandbox-rebuild" class="secondary" disabled title="Rebuild the container image on the box's ref and recreate the sandbox (its sessions resume automatically)">Rebuild</button>
       </div>
       </div><!-- /#sandbox-detail -->
       <div class="dialog-actions">

@@ -130,7 +130,7 @@
 | `handle:templates:remove` | deletes a template and returns `{ok, templates}`; a refused name, or an id still listed after the store's remove (a swallowed EROFS in a box), answers `{ok:false, error, templates}` | templates store | templates.remove, refreshAppMenu | app-menus-plugins.test.js library-template-save-ipc.test.js |
 | `handle:templates:saveTeam` | writes a template into a team's own dir | team templates dir | team-prompt-dir.teamTemplateSave, teamTemplateList | team-template-save-ipc.test.js team-file-intents.test.js |
 | `handle:templates:removeTeam` | deletes a team-owned template | team templates dir | team-prompt-dir.teamTemplateRemove, teamTemplateList | team-template-save-ipc.test.js |
-| `handle:templates:exportFromSession` | saves a persisted session's spawn config as a named template, writing opt-out fields only when set | templates store, sessions.json (read) | persistence.get, templates.saveByName | app-menus-plugins.test.js |
+| `handle:templates:exportFromSession` | saves a persisted session's spawn config as a named template, writing opt-out fields only when set; a store throw answers `{ok:false, error, templates}` | templates store, sessions.json (read) | persistence.get, templates.saveByName | app-menus-plugins.test.js library-template-save-ipc.test.js |
 | `handle:prompts:list` | the prompt library for a kind, team prompts included | prompt library (read) | listAllPrompts | library-prompt-cache.test.js |
 | `handle:prompts:save` | saves a system or append prompt | prompt library | promptLibrary.save, refreshAppMenu | app-menus-plugins.test.js |
 | `handle:prompts:remove` | deletes a prompt | prompt library | promptLibrary.remove, refreshAppMenu | app-menus-plugins.test.js |

@@ -22599,7 +22599,7 @@ test('t1372: streamCodecCtx reads readOnly only when EVERY readOnlyCap token is 
   assert.strictEqual(d.created[0].readOnly, false);
 });
 
-test('t1372: stripCodexStreamArgs drops the = and short forms of refused flags, keeps unknown tokens, and passes an arity-0 flag= form through', async (t) => {
+test('t1372: stripCodexStreamArgs drops the = and short forms of refused flags, keeps unknown tokens, and drops an arity-0 flag= form too', async (t) => {
   const c = mkCodexStreamSeat({ extraArgs: ['--sandbox=workspace-write', '-s', 'danger-full-access', '-a', 'on-request', '--model=gpt-x', '-m', 'gpt-y', '--keep'] });
   t.after(() => c.h.stopAll());
   await c.create('cxst1');
@@ -22611,7 +22611,7 @@ test('t1372: stripCodexStreamArgs drops the = and short forms of refused flags, 
   const d = mkCodexStreamSeat({ extraArgs: ['--dangerously-bypass-approvals-and-sandbox=1'] });
   t.after(() => d.h.stopAll());
   await d.create('cxst2');
-  assert.strictEqual(d.h.spawns[0].args.includes('--dangerously-bypass-approvals-and-sandbox=1'), true);
+  assert.strictEqual(d.h.spawns[0].args.includes('--dangerously-bypass-approvals-and-sandbox=1'), false);
 });
 
 test('t1222: a codex seat with an effort carries -c model_reasoning_effort="high"; without one, no such arg', async (t) => {

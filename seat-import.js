@@ -348,7 +348,6 @@ function createSeatImport({
         let ticketBound = 0;
         let refused = 0;
         for (const row of reminderRows) {
-          if (row.ticket) ticketBound += 1;
           try {
             reminders.add({
               agent: name,
@@ -363,6 +362,7 @@ function createSeatImport({
             if (log) log.info('seat-import', `reminder row refused for ${name}: ${e && e.message}`);
             continue;
           }
+          if (row.ticket) ticketBound += 1;
           installed.reminders += 1;
         }
         if (ticketBound) dropped.push(`reminders.ticket-bound:${ticketBound}`);

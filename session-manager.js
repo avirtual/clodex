@@ -232,7 +232,7 @@ function stripCodexStreamArgs(argv) {
       continue;
     }
     const eq = typeof tok === 'string' ? tok.indexOf('=') : -1;
-    if (eq > 0 && tok.startsWith('--') && CODEX_STREAM_REFUSED.get(tok.slice(0, eq)) === 1) { dropped.push(tok.slice(0, eq)); continue; }
+    if (eq > 0 && tok.startsWith('--') && CODEX_STREAM_REFUSED.has(tok.slice(0, eq))) { dropped.push(tok.slice(0, eq)); continue; }
     out.push(tok);
   }
   return { args: out, dropped };
@@ -7765,7 +7765,7 @@ function createSessionManager(deps) {
           const resumeId = opts.resume === true ? (entry.sessionId || null) : null;
           if (resumeId) this._freshBakeOnce.add(name);
           // Same field set as engine.js's restartSession on a fresh restart — a
-          // reload is a kill()+create() like theirs, and `ephemeral` is what
+          // reload is a kill()+create() like its, and `ephemeral` is what
           // tells `task accept` whether the loop minted this seat. Dropped
           // here, a reloaded ticket seat reads as the operator's standing seat
           // at accept: no teardown, a leaked worktree, and a reply claiming it
