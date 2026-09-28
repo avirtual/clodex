@@ -46,7 +46,7 @@ function registryEntry(agent) {
 function cwdInProject(cwd, root) {
   if (!cwd || !root) return false;
   const rel = path.relative(path.resolve(root), path.resolve(cwd));
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
 }
 
 function resolveTeam(cwd) {

@@ -345,6 +345,18 @@ test('a null closeOut — the loop never reached the teardown — reads as a ste
   assert.ok(body.includes('Nothing was torn down'), 'and nothing was');
 });
 
+test('a close-out that tore down but could not save the board does not claim nothing was torn down', () => {
+  const f = mkLoop();
+  f.m._notifyMergeLanded(f.team, 't1', { ...LANDED, closeOut: {
+    ok: false, closedOut: false, tornDown: true,
+    text: 'error: ticket t1: team-hand retired — but the board could NOT be updated (EACCES) — the ticket still reads done and unaccepted',
+  } });
+  const body = f.gated[0].body;
+  assert.ok(body.includes('the board could NOT be updated'), `ENTER: the failure is reported. Got:\n${body}`);
+  assert.ok(!body.includes('Nothing was torn down'),
+    `the seat, tree and branch are gone, so the reassurance would be false. Got:\n${body}`);
+});
+
 test('a close-out result with a newline in it cannot reach column 1', () => {
   const f = mkLoop();
   // A close-out sentence carries git stderr on the failure rows ("could NOT be

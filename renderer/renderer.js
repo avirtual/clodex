@@ -573,13 +573,18 @@ function startWorkspaceRename() {
     newSpan.id = 'workspace-name';
     newSpan.className = 'workspace-name';
     newSpan.dataset.tip = 'Double-click to rename workspace';
-    newSpan.textContent = newName;
+    newSpan.textContent = current;
     input.replaceWith(newSpan);
-    if (commit && newName !== current) {
-      currentWorkspaceName = newName;
+    if (!commit || newName === current) return;
+    try {
       await window.api.setWorkspaceName(newName);
-      document.title = newName;
+    } catch (e) {
+      showToast(`Rename failed: ${(e && e.message) || 'unknown error'}`, { kind: 'error', duration: 10000 });
+      return;
     }
+    currentWorkspaceName = newName;
+    newSpan.textContent = newName;
+    document.title = newName;
   };
 
   input.addEventListener('blur', () => finish(true));

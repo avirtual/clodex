@@ -2962,7 +2962,7 @@ function createTicketMethods(deps, shared) {
       const rootClause = cls.kind === 'takeover' ? '(existing repo, untouched)' : "(new, git init'd)";
       const kitRoles = (kitDef && Object.keys(kitDef.roles).length) ? kitDef.roles : STOCK_ROLE_DEFS;
       const roles = hasBrief ? {
-        ...Object.fromEntries(Object.entries(kitRoles).map(([k, v]) => [k, { ...v }])),
+        ...kitRoles,
         hand: { ...kitRoles.hand, dispatch: 'worktree' },
       } : undefined;
       let team;
@@ -4399,6 +4399,8 @@ function createTicketMethods(deps, shared) {
       if (!s._reviewStartArmedAt) {
         s._reviewStartArmedAt = Date.now();
         s._reviewStartSize = Math.max(0, this._seatTranscriptSize(seatName));
+        s._reviewStartFile = null;
+        try { s._reviewStartFile = fs.realpathSync(pathFor(REGISTRY_DIR, seatName, 'transcript')); } catch {}
       }
       s._reviewStartTimer = setTimeout(() => {
         s._reviewStartTimer = null;
@@ -4424,7 +4426,7 @@ function createTicketMethods(deps, shared) {
         return;
       }
       if (session.activityState !== 'idle') return;   // it started; nothing owed
-      if (this._seatTurnSince(session.name, session._reviewStartSize || 0) === true) return;
+      if (this._seatTurnSince(session.name, session._reviewStartSize || 0, undefined, session._reviewStartFile || null) === true) return;
 
       // First window: re-send the nudge rather than waking the lead.
       if (!session._reviewNudgeRetried) {
@@ -4508,13 +4510,13 @@ function createTicketMethods(deps, shared) {
     // redirect label.
     //
     // Reads a bounded tail, so a seat with a hundred-megabyte transcript does not
-    // cost that on a 90s timer. Clamped to `from`, never behind it.
+    // cost that on a 90s timer.
     //
     // Three-valued, and the split carries weight. `false` is a POSITIVE finding —
     // the transcript is readable and this write is not in it — which is what keeps
-    // the latch armed. `null` is reserved for a probe that cannot answer at all (no
-    // transcript, unreadable link), where the caller must fall back to trusting the
-    // turn rather than manufacture a redelivery out of a blind spot.
+    // the latch armed. `null` is reserved for a probe that cannot answer at all,
+    // where the caller must fall back to trusting the turn rather than
+    // manufacture a redelivery out of a blind spot.
     _seatTranscriptHas(name, ticketId, from = 0, tailBytes = 1 << 20, fromFile = null) {
       const tail = this._seatTranscriptTail(name, from, tailBytes, fromFile);
       if (tail === null) return null;
@@ -4551,8 +4553,8 @@ function createTicketMethods(deps, shared) {
       finally { if (fd !== undefined) { try { fs.closeSync(fd); } catch {} } }
     },
 
-    _seatTurnSince(name, from = 0, tailBytes = 1 << 20) {
-      const tail = this._seatTranscriptTail(name, from, tailBytes);
+    _seatTurnSince(name, from = 0, tailBytes = 1 << 20, fromFile = null) {
+      const tail = this._seatTranscriptTail(name, from, tailBytes, fromFile);
       if (tail === null) return null;
       const s = this.sessions.get(name);
       const reader = readerFor((((s && adapterFor(s.agentType)) || {}).transcript || {}).reader);

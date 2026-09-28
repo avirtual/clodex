@@ -231,7 +231,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_armReviewStartCheck` | Arms a one-shot unref'd check that a freshly spawned reviewer took its first turn, anchoring arm time and transcript size on the first arm | session review-start armed-at, size and timer | _seatTranscriptSize, _checkReviewStarted | review-scope-in-prompt.test.js session-manager.test.js |
+| `_armReviewStartCheck` | Arms a one-shot unref'd check that a freshly spawned reviewer took its first turn, anchoring arm time, transcript size and the transcript's resolved file on the first arm | session review-start armed-at, size, file and timer | _seatTranscriptSize, _checkReviewStarted | review-scope-in-prompt.test.js session-manager.test.js |
 | `_checkReviewStarted` | At the reviewer start deadline re-arms on a dialog, re-sends the start nudge once, then escalates to the lead with the measured age | session nudge-retried flag | _seatTurnSince, _armReviewStartCheck, _deliverParkedActive | review-scope-in-prompt.test.js |
 | `_seatTranscriptHas` | Three-valued probe for whether a ticket dispatch marker appears in the seat transcript after a byte offset, reading the anchored file from the offset and a repointed current file from 0 | reads seat transcript | _seatTranscriptTail | ticket-replay.test.js |
 | `_checkSpecConfirm` | At the spec-confirm deadline re-arms, confirms from transcript, drops, escalates, or redelivers once then escalates after two silent writes | session spec latch; tickets.json via escalation | _seatTranscriptHas, _ticketAssigneeSeat, _deliverTicketSpec, _escalateTicket | ticket-replay.test.js solo-tickets.test.js |
@@ -422,7 +422,7 @@
 
 ### Hazards
 - `_closeOutMergedTicket` counts commits before destroy and the branch delete, and moving the count below them turns every reply into the unknown case.
-- Letting the board save after `_closeOutMergedTicket`'s teardown throw uncaught makes the accept reply claim nothing was removed after the tree and branch are gone.
+- Letting the board save after `_closeOutMergedTicket`'s teardown throw uncaught makes the loop's MERGED notice say nothing was torn down after the tree and branch are gone.
 - `_closeOutMergedTicket` re-reads the board for the mergeError veto after its awaits, and reading the entry snapshot lets a stamp landed mid-accept be torn down.
 - The dirty-tree arm of `_closeOutMergedTicket` skips the branch delete on purpose, since the second accept it invites reads the branch back through isMerged.
 

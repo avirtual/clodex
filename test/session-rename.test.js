@@ -535,14 +535,21 @@ test('rename on a MIGRATED seat leaves memory reachable at library/memory/<new> 
   assert.strictEqual(memStore.list('newseat').length, 1, 'with its units readable through the link');
 });
 
-for (const key of ['messages', 'pending', 'promptcache', 'notices', 'memory', 'seat']) {
+for (const key of ['messages', 'pending', 'promptcache', 'notices', 'memory', 'seat', 'loadlog']) {
   test(`rename refuses when ${key} already exists under the new name`, async () => {
     const root = mkTmpRoot('clodex-rename-');
     seedDirs(root, 'seat');
+    if (key === 'loadlog') {
+      const logDir = pathReal.join(root, 'library', 'memory-loadlog');
+      fsReal.mkdirSync(logDir, { recursive: true });
+      fsReal.writeFileSync(pathReal.join(logDir, 'newseat.jsonl'), '{"n":1}\n');
+    }
     const dest = key === 'seat'
       ? pathReal.join(root, 'sessions', 'newseat')
-      : dirsUnder(root, 'newseat')[key];
-    fsReal.mkdirSync(dest, { recursive: true });
+      : key === 'loadlog'
+        ? pathReal.join(root, 'library', 'memory-loadlog', 'newseat.jsonl')
+        : dirsUnder(root, 'newseat')[key];
+    if (key !== 'loadlog') fsReal.mkdirSync(dest, { recursive: true });
     const { m, store, created } = mkRename({ root, entries: [BASE] });
     const r = await m.rename('seat', 'newseat');
     assert.strictEqual(r.ok, false, `expected a refusal on a colliding ${key}`);

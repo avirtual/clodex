@@ -255,3 +255,33 @@ test('the status reply stays inside 400 chars with three running long-named runs
     assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(line), 'no lone high surrogate at the cut');
   } finally { b.cleanup(); }
 });
+
+test('a reply that fits once its last tail empties leaves every cmd whole', async () => {
+  const { m, session, replies, cleanup } = harness();
+  try {
+    const base = `status: run #1  ok at 0m 01s: x ${CLOSING}`.length;
+    const cmd = 'c'.repeat(400 + 2 - base);
+    session.execRuns = [{ seq: 1, cmd, state: 'ok', startedAt: 0, endedAt: 1000, tail: 'x', ceilingMin: 7 }];
+    m._handleExecIntent(session, 'status', '{"seq":1}');
+    await settle();
+    const line = statusOf(replies);
+    assert.ok(line.length <= '[agent:exec] '.length + 400, `got ${line.length}`);
+    assert.ok(line.includes(`run #1 ${cmd} ok at 0m 01s ${CLOSING}`), `cmd clipped: ${line}`);
+  } finally { cleanup(); }
+});
+
+test('a narrow tail cut on half a surrogate pair drops the lone high half even when nothing is trimmed', async () => {
+  const { m, session, replies, children, cleanup } = harness();
+  try {
+    m._handleExecIntent(session, 'digest', '{}');
+    await settle();
+    children[0].stderr.emit('data', `x${'\u{1F600}'.repeat(150)}\n`);
+    children[0].emit('exit', 0, null);
+    m._handleExecIntent(session, 'status', '{}');
+    await settle();
+    const line = statusOf(replies);
+    assert.ok(line.length < '[agent:exec] '.length + 400, `trim loop ran: ${line.length}`);
+    assert.ok(line.includes('\u{1F600}'), line);
+    assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(line), 'no lone high surrogate');
+  } finally { cleanup(); }
+});

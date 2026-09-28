@@ -1,0 +1,91 @@
+'use strict';
+
+const { test } = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const rendererSrc = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+
+function sliceFn(name) {
+  const start = rendererSrc.indexOf(`function ${name}(`);
+  assert.ok(start >= 0, `ENTER: ${name} was not found in the shipped renderer`);
+  const end = rendererSrc.indexOf('\n}\n', start);
+  assert.ok(end > start, `ENTER: the end of ${name} was not found`);
+  return rendererSrc.slice(start, end + 2);
+}
+
+function el(tag) {
+  const handlers = {};
+  const node = {
+    tag, dataset: {}, textContent: '', value: '', id: '', className: '',
+    handlers,
+    addEventListener(type, fn) { handlers[type] = fn; },
+    focus() {}, select() {},
+    replaceWith(next) { world.header = next; },
+  };
+  return node;
+}
+
+let world = null;
+
+function load(setWorkspaceName) {
+  const span = el('span');
+  span.textContent = 'Old';
+  world = { header: span, toasts: [], title: 'Old' };
+  const document = {
+    getElementById: (id) => (id === 'workspace-name' ? world.header : null),
+    createElement: (tag) => el(tag),
+    get title() { return world.title; },
+    set title(v) { world.title = v; },
+  };
+  const env = {
+    document,
+    window: { api: { setWorkspaceName } },
+    showToast: (msg, opts) => world.toasts.push({ msg, opts }),
+  };
+  const names = Object.keys(env);
+  const body = sliceFn('startWorkspaceRename');
+  const api = new Function(...names,
+    `let currentWorkspaceName = 'Old'; ${body}; return { start: startWorkspaceRename, current: () => currentWorkspaceName };`)(
+    ...names.map((n) => env[n]));
+  return api;
+}
+
+function rename(api, value) {
+  api.start();
+  const input = world.header;
+  assert.strictEqual(input.tag, 'input', 'ENTER: the header became an input');
+  input.value = value;
+  input.handlers.keydown({ key: 'Enter', stopPropagation() {} });
+}
+
+const flush = () => new Promise((r) => setImmediate(r));
+
+test('the header keeps the old name until setWorkspaceName resolves, then shows the new one', async () => {
+  let resolve;
+  const api = load(() => new Promise((r) => { resolve = r; }));
+  rename(api, 'New');
+  await flush();
+  assert.strictEqual(world.header.textContent, 'Old', 'nothing is shown as saved while the IPC is in flight');
+  assert.strictEqual(api.current(), 'Old');
+  resolve(true);
+  await flush();
+  assert.strictEqual(world.header.textContent, 'New');
+  assert.strictEqual(api.current(), 'New');
+  assert.strictEqual(world.title, 'New');
+  assert.deepStrictEqual(world.toasts, []);
+});
+
+test('a refused rename keeps the old name and surfaces the refusal as a toast', async () => {
+  const api = load(() => Promise.reject(new Error('workspace name may not contain control characters')));
+  rename(api, 'tab\there');
+  await flush();
+  await flush();
+  assert.strictEqual(world.header.textContent, 'Old', 'the header does not show an unsaved name');
+  assert.strictEqual(api.current(), 'Old');
+  assert.strictEqual(world.title, 'Old');
+  assert.strictEqual(world.toasts.length, 1);
+  assert.match(world.toasts[0].msg, /^Rename failed: .*control characters/);
+  assert.strictEqual(world.toasts[0].opts.kind, 'error');
+});

@@ -741,6 +741,31 @@ test('m3: the start check baselines the transcript at the first arm — 0 for a 
   } finally { app.stop(); }
 });
 
+test('the start check reads a turn written after the transcript link moves to a smaller fresh file', async () => {
+  const app = boot();
+  try {
+    app.setPending('lead');
+    await app.m.create('lead', 'claude', app.root, [], null, 'ws');
+    const lead = app.m.sessions.get('lead');
+    app.setPending('crew-reviewer-1');
+    app.m._handleTeamReview(lead, SCOPE);
+    await settled(app, 'crew-reviewer-1');
+    const s = reviewerSeat(app, { transcript: `{"type":"session_meta","payload":{"id":"${'x'.repeat(200)}"}}\n` });
+    armFresh(app, s);
+    const link = pathFor(app.root, 'crew-reviewer-1', 'transcript');
+    const fresh = path.join(app.root, 'fresh-transcript.jsonl');
+    fs.writeFileSync(fresh, '{"type":"assistant"}\n');
+    fs.unlinkSync(link);
+    fs.symlinkSync(fresh, link);
+    assert.ok(app.m._seatTranscriptSize('crew-reviewer-1') < s._reviewStartSize, 'ENTER: the fresh file is smaller than the baseline');
+    const before = nudgeCount(app, 'crew-reviewer-1');
+    app.alarms.length = 0;
+    checkOnce(app, s);
+    assert.strictEqual(nudgeCount(app, 'crew-reviewer-1'), before, 'the turn in the fresh file is a started seat: no nudge');
+    assert.deepStrictEqual(app.alarms, []);
+  } finally { app.stop(); }
+});
+
 test('m3: a seat whose transcript holds a prior turn at arm is re-nudged when only its resume boot lands after the arm, and owed nothing once a turn ends', async () => {
   const app = boot();
   try {

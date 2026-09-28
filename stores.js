@@ -992,7 +992,7 @@ function initStores(userDataPath, {
       this._save(all);
     },
     setName(id, name) {
-      if (/[\x00-\x1f\x7f]/.test(String(name))) throw new Error('workspace name may not contain control characters');
+      if (/[\x00-\x1f\x7f\u2028\u2029]/.test(String(name))) throw new Error('workspace name may not contain control characters');
       const all = this._load();
       const w = all.find(x => x.id === id);
       if (w) { w.name = name; this._save(all); }
@@ -1804,7 +1804,7 @@ function initStores(userDataPath, {
     const from = String(oldName == null ? '' : oldName).trim();
     const to = String(newName == null ? '' : newName).trim();
     if (!from || from === to) return 0;
-    if (/[\r\n]/.test(to) || (to.startsWith('"') && to.endsWith('"')) || (to.startsWith("'") && to.endsWith("'"))) {
+    if (/[\r\n\u2028\u2029]/.test(to) || (to.startsWith('"') && to.endsWith('"')) || (to.startsWith("'") && to.endsWith("'"))) {
       if (log) log.warn?.('stores', `refusing to rescope library files to workspace name ${JSON.stringify(to)}: frontmatter cannot hold it`);
       return 0;
     }

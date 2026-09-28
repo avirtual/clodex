@@ -23272,6 +23272,28 @@ test('_scratchMark: re-setting a label whose rewind is still pending refuses the
   assert.ok(f.injected[f.injected.length - 1].startsWith('[agent:scratch] mark refused'), f.injected[f.injected.length - 1]);
 });
 
+test('_scratchMark: a begin while the open episode\'s end is still pending is refused as a begin, not a mark', (t) => {
+  const f = mkScratch();
+  const { tape } = scratchOpen(f);
+  scratchResearch(f);
+  const prior = f.s._scratch;
+  t.after(() => { if (prior._closeTimer) clearTimeout(prior._closeTimer); });
+  f.s._flushTurnEnd = false;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'first' });
+  assert.ok(prior.closing, 'ENTER: the end is pending on its timer');
+  const b = new ScratchTape();
+  b.parent = tape.parent;
+  b.t = tape.t;
+  b.prompt('go on');
+  b.turn('[agent:scratch begin]');
+  f.append(b.text);
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
+  assert.strictEqual(f.s._scratch, prior, 'the pending episode keeps the slot');
+  const last = f.injected[f.injected.length - 1];
+  assert.ok(last.startsWith('[agent:scratch] begin refused: end already pending'), last);
+  assert.ok(last.endsWith('Not marked; begin again after it settles.'), last);
+});
+
 test('_streamEnqueue: after the init watchdog fires, a second composer send queues behind the kept item instead of overtaking it', async (t) => {
   const c = mkStalledInitSeat(t);
   await c.create('si-f4');
@@ -23285,6 +23307,20 @@ test('_streamEnqueue: after the init watchdog fires, a second composer send queu
   assert.deepStrictEqual(c.h.m.seatSend('si-f4', 'second'), { ok: true, queued: 2 });
   assert.strictEqual(c.sent().length, before);
   assert.deepStrictEqual(s.outbox.map((q) => q.text), ['hello', 'second']);
+});
+
+test('_streamEnqueue: once a late init without a turn end leaves the kept item on an idle seat, the next send drains both in order', async (t) => {
+  const c = mkStalledInitSeat(t);
+  await c.create('si-f4d');
+  const s = c.h.m.sessions.get('si-f4d');
+  t.after(() => c.clearTimers(s));
+  c.h.m.seatSend('si-f4d', 'hello');
+  t.mock.timers.tick(5000);
+  c.h.line('si-f4d', { rec: { kind: 'init', sessionId: 'thr' } });
+  assert.deepStrictEqual(s.outbox.map((q) => q.text), ['hello'], 'ENTER: hello is still kept');
+  const before = c.sent().length;
+  assert.deepStrictEqual(c.h.m.seatSend('si-f4d', 'second'), { ok: true, queued: 0 });
+  assert.deepStrictEqual(c.sent().slice(before), [{ method: 'turn/start', text: 'hello\n\nsecond' }]);
 });
 
 test('a team create still classifying its root is on the open mark before the same reply\'s scratch end validates', async () => {
