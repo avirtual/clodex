@@ -712,6 +712,24 @@ test('hooks.handleFor mints the same SessionHandle the hooks get (one owner)', (
 // A stand-in for the loader with exactly the methods the host reaches through.
 // A fake with only these proves the host isn't quietly using more of the loader
 // than its three named seams.
+test('a subscription made after deactivate is refused, not left running for a disabled plugin', async () => {
+  const { engine } = makeHost({ manager: makeManager([sessionA]) });
+  let h = null;
+  engine.register('demo', { activate(host) { h = host; } });
+  engine.deactivate('demo');
+  let calls = 0;
+  const spy = () => { calls += 1; };
+  h.sessions.onExit(spy);
+  h.sessions.onCreate(spy);
+  h.ipc.handle('m', () => 'x');
+  assert.deepStrictEqual(engine._hookCounts(), { create: 0, exit: 0, text: 0 });
+  assert.deepStrictEqual(engine._dispatchKeys(), []);
+  assert.deepStrictEqual(await engine.dispatch('demo', 'm', [], 'desktop'), { ok: false, error: NO_SUCH_METHOD });
+  engine.hooks.fireExit('a');
+  engine.hooks.fireCreate('a');
+  assert.strictEqual(calls, 0);
+});
+
 function fakeLoader(over = {}) {
   const calls = [];
   return {
@@ -894,6 +912,12 @@ test('a refresh that throws still answers with the cached list', async () => {
   });
   assert.deepEqual(await engine.dispatch('_host', 'plugins.updatesAvailable', [{ refresh: true }], 'desktop'),
     { ok: true, updates: cached });
+});
+
+test('a throwing update cache folds into the error envelope instead of rejecting the dispatch', async () => {
+  const { engine } = makeHost({ loader: fakeLoader(), getPluginUpdates: () => { throw new Error('boom'); } });
+  assert.deepStrictEqual(await engine.dispatch('_host', 'plugins.updatesAvailable', [], 'desktop'),
+    { ok: false, error: 'boom' });
 });
 
 test('a successful applyUpdate spends the badge: updatesAvailable goes empty', async () => {
@@ -1263,6 +1287,34 @@ test('host.notify.user refuses an empty body, an oversized one, and an absent st
   const h2 = noStore.engine.register('demo', { activate() {} });
   assert.deepStrictEqual(h2.notify.user({ body: 'hi' }),
     { ok: false, error: 'the operator inbox is unavailable' });
+});
+
+test('host.notify.user counts the title against the 16KB cap — the stored note, not just the body', () => {
+  const { engine, notes } = makeHost();
+  const host = engine.register('demo', { activate() {} });
+  const r = host.notify.user({ title: 't'.repeat(16 * 1024), body: 'hi' });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /note too long/);
+  assert.strictEqual(notes.length, 0);
+});
+
+test('host.notify.user(null) answers an envelope rather than throwing', () => {
+  const { engine, notes } = makeHost();
+  const host = engine.register('demo', { activate() {} });
+  let r;
+  assert.doesNotThrow(() => { r = host.notify.user(null); });
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /empty note/);
+  assert.strictEqual(notes.length, 0);
+});
+
+test('_host settings.set refuses a non-object patch loudly instead of reporting ok', async () => {
+  const { engine, uiSettings } = makeHost();
+  engine.register('demo', { activate() {} });
+  const r = await engine.dispatch('_host', 'settings.set', ['demo', 'oops'], 'desktop');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /settings patch must be an object/);
+  assert.strictEqual(uiSettings().plugins, undefined);
 });
 
 test('host.notify.user answers an envelope when the inbox store itself throws or stores nothing', () => {

@@ -754,6 +754,62 @@ test('applyUpdate on a loaded plugin leaves it restart-required even at the SAME
   assert.ok(row && row.restartRequired, 'the settings row carries restartRequired');
 });
 
+test('applyUpdate refuses an upstream whose manifest id no longer matches the installed id, leaving the old copy in place', async () => {
+  const { loader, userDir } = mkSourceLoader({
+    script: [
+      { bytes: buildTarballBytes('abc1234', 'demo') },
+      { bytes: buildTarballBytes('def5678', 'other') },
+      { bytes: buildTarballBytes('def5678', 'other') },
+    ],
+  });
+  await loader.installFromSource('owner/repo');
+  const resolved = await loader.resolveUpdate('demo');
+  assert.strictEqual(resolved.ok, false);
+  assert.match(resolved.error, /upstream now declares id "other", not "demo"/);
+  const r = await loader.applyUpdate('demo', 'def5678');
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /upstream now declares id "other", not "demo"/);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(userDir, 'demo', 'manifest.json'), 'utf8')).id, 'demo');
+  assert.ok(loader.discover().some((rec) => rec.id === 'demo'));
+  assert.deepStrictEqual(loader.status().problems, []);
+});
+
+test('applyUpdate flags restart-required for an engine that was required but failed to register', async () => {
+  const { loader } = mkSourceLoader({
+    script: [{ bytes: buildTarballBytes('abc1234', 'demo') }, { bytes: buildTarballBytes('def5678', 'demo') }],
+  });
+  await loader.installFromSource('owner/repo@main');
+  loader.setEnabledInSettings('demo', true);
+  const pluginHost = fakePluginHost();
+  const register = pluginHost.register;
+  let failFirst = true;
+  pluginHost.register = (...args) => {
+    if (failFirst) { failFirst = false; throw new Error('activate exploded'); }
+    return register(...args);
+  };
+  assert.strictEqual(loader.loadAll(pluginHost).find((r) => r.id === 'demo').ok, false);
+
+  const applied = await loader.applyUpdate('demo', 'def5678');
+  assert.strictEqual(applied.ok, true, JSON.stringify(applied));
+  assert.ok(loader.status().plugins.find((p) => p.id === 'demo').restartRequired);
+});
+
+test('resolveSource and resolveUpdate project the fetched manifest\'s announce', async () => {
+  const announced = (sha) => buildTarballBytes(sha, 'demo', {
+    'manifest.json': JSON.stringify(manifestFor('demo', { announce: 'Takes notes.' })),
+  });
+  const { loader } = mkSourceLoader({
+    script: [{ bytes: announced('abc1234') }, { bytes: announced('abc1234') }, { bytes: announced('def5678') }],
+  });
+  const r = await loader.resolveSource('owner/repo');
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.manifest.announce, 'Takes notes.');
+  await loader.installFromSource('owner/repo');
+  const u = await loader.resolveUpdate('demo');
+  assert.strictEqual(u.ok, true, JSON.stringify(u));
+  assert.strictEqual(u.manifest.announce, 'Takes notes.');
+});
+
 // A tarball whose plugin has NO engine and NO renderer half — legal since the
 // directory carries a skills/ entry, and the case the row below is about.
 function buildBundleOnlyTarballBytes(sha, id, skillBody) {

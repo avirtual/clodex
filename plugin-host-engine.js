@@ -344,10 +344,12 @@ function createPluginHostEngine(deps) {
           return { cwd: s.cwd };
         },
         onCreate: (fn) => {
+          if (!registered.has(pluginId)) return () => {};
           createHooks.add(fn);
           return disposable(pluginId, () => createHooks.delete(fn));
         },
         onExit: (fn) => {
+          if (!registered.has(pluginId)) return () => {};
           exitHooks.add(fn);
           return disposable(pluginId, () => exitHooks.delete(fn));
         },
@@ -391,6 +393,7 @@ function createPluginHostEngine(deps) {
 
       ipc: Object.freeze({
         handle: (method, fn) => {
+          if (!registered.has(pluginId)) return () => {};
           const key = namespaced(pluginId, method);
           dispatchMap.set(key, fn);
           return disposable(pluginId, () => dispatchMap.delete(key));
@@ -515,7 +518,10 @@ function createPluginHostEngine(deps) {
       }),
 
       notify: Object.freeze({
-        user: ({ title, body } = {}) => notifyUser(pluginId, title, body),
+        user: (arg) => {
+          const { title, body } = (arg && typeof arg === 'object') ? arg : {};
+          return notifyUser(pluginId, title, body);
+        },
       }),
     });
   }
@@ -535,14 +541,14 @@ function createPluginHostEngine(deps) {
     if (!registered.has(pluginId)) return errorEnvelope('plugin is deactivated');
     const text = String(body == null ? '' : body).trim();
     if (!text) return errorEnvelope('empty note — say what decision you need from the operator');
-    if (Buffer.byteLength(text, 'utf8') > NOTIFY_USER_MAX_BYTES) {
+    const head = String(title == null ? '' : title).trim();
+    const note = head ? `${head}\n\n${text}` : text;
+    if (Buffer.byteLength(note, 'utf8') > NOTIFY_USER_MAX_BYTES) {
       return errorEnvelope(`note too long (>${Math.round(NOTIFY_USER_MAX_BYTES / 1024)}KB) — keep it a summary, not a payload`);
     }
     const store = getNotifications && getNotifications();
     if (!store) return errorEnvelope('the operator inbox is unavailable');
 
-    const head = String(title == null ? '' : title).trim();
-    const note = head ? `${head}\n\n${text}` : text;
     const from = `plugin:${pluginId}`;
     let rec;
     try { rec = store.add({ from, workspaceId: null, body: note }); }
@@ -661,8 +667,7 @@ function createPluginHostEngine(deps) {
     },
     'settings.set': (pluginId, patch) => {
       if (!registered.has(String(pluginId))) return errorEnvelope('no such plugin');
-      buildHost(String(pluginId)).settings.set(patch);
-      return { ok: true };
+      return buildHost(String(pluginId)).settings.set(patch) ? { ok: true } : errorEnvelope('settings patch must be an object');
     },
 // Stylesheet and (on request) renderer TEXT, not paths: text works identically in
 // the file:// window and in the web bundle, where no path resolves.
@@ -835,7 +840,7 @@ function createPluginHostEngine(deps) {
         if (HOST_DESKTOP_ONLY.has(String(method)) && !surfaceAllows(callerSurface, 'desktop')) {
           return errorEnvelope(NOT_ON_THIS_SURFACE);
         }
-        try { return hf(...args); } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
+        try { return await hf(...args); } catch (e) { return errorEnvelope(String((e && e.message) || e)); }
       }
       const fn = dispatchMap.get(namespaced(String(pluginId), String(method)));
       if (typeof fn !== 'function') return errorEnvelope(NO_SUCH_METHOD);

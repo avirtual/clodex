@@ -84,6 +84,7 @@ test('validateCandidate accepts a well-formed folder and reports what it found',
     entry: { engine: 'engine.js', renderer: 'renderer.js' },
     scope: 'session',
     hasRenderer: true,
+    announce: null,
   });
 });
 
@@ -135,6 +136,30 @@ test('validateCandidate does not invent a second validator', () => {
 // ════════════════════════════════════════════════════════════════════════════
 // registerUserPlugin — a link, and the four refusals before it
 // ════════════════════════════════════════════════════════════════════════════
+
+test('registerUserPlugin refuses a plugin whose entry.engine escapes its folder, and creates no link', () => {
+  const dir = mkCandidate('alpha', { manifest: manifestFor('alpha', { entry: { engine: '../x.js' } }) });
+  const { loader, userDir } = mkLoaderWithUserRoot();
+  const r = loader.registerUserPlugin(dir);
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /escapes the plugin directory/);
+  assert.ok(!fs.existsSync(path.join(userDir, 'alpha')));
+});
+
+test('registerUserPlugin refuses an escaping renderer or style path the same way', () => {
+  const rows = [
+    ['renderer', { entry: { engine: 'engine.js', renderer: '../r.js' } }, /entry\.renderer escapes the plugin directory/],
+    ['style', { style: '../s.css' }, /style escapes the plugin directory/],
+  ];
+  for (const [label, extra, want] of rows) {
+    const dir = mkCandidate('alpha', { manifest: manifestFor('alpha', extra) });
+    const { loader, userDir } = mkLoaderWithUserRoot();
+    const r = loader.registerUserPlugin(dir);
+    assert.strictEqual(r.ok, false, label);
+    assert.match(r.error, want, label);
+    assert.ok(!fs.existsSync(path.join(userDir, 'alpha')), label);
+  }
+});
 
 test('registering links the folder into the user root and discovery loads it', () => {
   const dir = mkCandidate('alpha');
